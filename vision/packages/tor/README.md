@@ -4,8 +4,10 @@ Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does no
 disposable.
 
 The real package is `packages/tor`: **16,291 lines** across `src/`, the largest in the tree after the
-compiler. Nothing here rewrites it. One type is written out —
-[`src/verdict.wac`](src/verdict.wac) — because it is the one that carries the whole argument.
+compiler. Nothing here rewrites it. Two files are written out —
+[`src/verdict.wac`](src/verdict.wac), the type that carries the whole argument, and
+[`src/onionaddr.wac`](src/onionaddr.wac), added later because it is the first consumer
+[`@/packages/codec`](../codec/) has.
 
 Same form as [`box`](../box/) and [`crypto`](../crypto/): a count and a proposal rather than a
 package.
@@ -116,7 +118,67 @@ Three readings, and they are not equally likely:
 often the language's answer to failure is one bit; one filed issue is a real number about how often
 that has cost anybody. Both belong in the argument and the packages README had only the first kind.
 
+## The v3 address, and the alphabet the RFC does not have
+
+`onion_address = base32(PUBKEY | CHECKSUM | VERSION) + ".onion"`, and it is written **lowercase**.
+RFC 4648 §6's alphabet is uppercase. So `packages/tor/src/onionaddr.wac` calls the codec's `encode`
+and then **walks the result folding `A-Z` down**, five lines, and five more the other way in the
+decoder.
+
+`Alphabet.Base32Lower` is the codec's seventh variant and it did not exist until this file wanted it.
+That is the **second** time that enum has had to encode what a caller does rather than what the RFC
+says — `Base16Lower` was the first, because `hex.wac`'s `encode` is lowercase and its `encodeUpper`
+is the RFC's. The codec's README predicted it one paragraph after making the decision, which is not
+foresight so much as evidence that the case was already there to be found.
+
+**And `u8[0]()` is the answer to four different questions.** The shipped `onionPubkey`'s doc names
+them — *"wrong length, wrong version, bad base32, wrong checksum"* — and returns an empty array five
+times in one function. The distinction a client acts on is buried in there: a **checksum mismatch is
+a typo**, and is the one case where *check the address you pasted* is the right thing to tell a
+person; the other three mean *that is not an onion address*.
+
+`NotBase32 { CodecFault why; }` wraps rather than nests, for the reason
+[`@/packages/lightclient`](../lightclient/) gives — second use of that shape, and the first outside
+the package that argued for it.
+
+### The first use of a control-flow arm
+
+```wac
+Bytes raw = match (decode(a.toBytes(), Alphabet.Base32Lower)) {
+  Ok(b):    b,
+  Err(why): return Err(NotBase32(why))
+};
+```
+
+`arm_value = expr | "continue" | "break" | "return" , [ expr ]` — one of the ten constructs found on
+the vetted pages that no rewrite had ever written, and this is its first use.
+
+It is also a **partial** answer to `@/packages/lightclient`'s complaint that *"`try` cannot map, so
+wrapping a callee's fault costs four lines"*. In an initialiser it costs one extra line, because the
+value goes where the value goes. In a statement position — which is what `validate.wac` has, since it
+is propagating rather than binding — it does not help at all. So the ask is still a `try` that maps,
+and the construct that already exists covers half the cases.
+
 ## What could not be written
+
+**A digest, from `@/packages/crypto`.** This file names `@/packages/crypto/src/keccak.wac` and the
+rewrite of that package covers `secret.wac` and nothing else — as do
+[`@/packages/tls`](../tls/), which names three unwritten crypto files, and
+[`@/packages/ssz`](../ssz/), which names `sha256.wac`. Three packages want a hash from a package that
+has not got one, which is a fact about where this exercise spent its attention rather than about the
+language.
+
+**A `Slice` cannot concatenate and cannot compare**, which is correct: a join allocates and a view
+owns nothing to allocate into. So the address body is a `Buf` and the checksum comparison is two
+`get`s, and both are the type doing its job. `core/slice.wac`'s rule is *"added when the fifth
+appeared rather than the second"* — this is the first `eq` and the second `concat`, so: not yet.
+
+**The address and the key are the same thing and are two types here.** rend-spec-v3's whole point is
+that `onion_address` *is* the identity key, so `Bytes` and `string` being distinct means the program
+holds two spellings of one value with nothing saying they correspond. A round trip is the only
+relation and it is a test rather than a type — and this is the case where a value type would be
+*wrong*: the string is what a person types and the bytes are what a protocol sends, and collapsing
+them would lose which one is on the wire.
 
 **How wide an error set gets at this scale, which is the question I came to ask and did not answer.**
 The plan was to find out whether `try`'s membership rule survives sixteen thousand lines — whether a

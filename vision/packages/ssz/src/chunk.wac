@@ -36,7 +36,8 @@ export const struct Chunk {
   /** The all-zero chunk, which SSZ needs more often than any other constant. */
   Chunk zero() { … }
 
-  Chunk hashWith(const this, Chunk right) { return unchecked(sha256(this.bytes.concat(right.bytes))); }
+  /** `sha256(a ‖ b)`. The join is a `Buf`, because a `Slice` is a view and cannot concatenate. */
+  Chunk hashWith(const this, Chunk right) { … }
 
   bool eq(const this, Chunk other) { … }
 }

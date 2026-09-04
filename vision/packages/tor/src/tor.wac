@@ -1,0 +1,11 @@
+// The package, as one name — two files out of eight.
+//
+// `packages/tor` is 5,000-odd lines and most of it is the protocol. `./verdict.wac` is the consensus
+// verdict; `./onionaddr.wac` is the v3 address, written because it is the first consumer
+// `@/packages/codec` has and because it is where that package's shape shows.
+
+export { Invalid, Stale, NotEnough, Unsigned, verify, say } from "./verdict.wac";
+export {
+  onionAddress, onionPubkey, AddressFault, WrongKeyLength, WrongAddressLength, WrongVersion,
+  NotBase32, ChecksumMismatch, ADDRESS_LEN, PUBKEY_LEN,
+} from "./onionaddr.wac";

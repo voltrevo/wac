@@ -1,0 +1,145 @@
+// A v3 onion address — the first consumer `@/packages/codec` has, and it needed a seventh alphabet
+// within the day.
+//
+//     onion_address = base32(PUBKEY | CHECKSUM | VERSION) + ".onion"
+//     CHECKSUM      = SHA3-256(".onion checksum" | PUBKEY | VERSION)[:2]
+//
+// 32 + 2 + 1 = 35 bytes, 56 base32 characters, no padding. rend-spec-v3 §6.
+//
+// The shipped `packages/tor/src/onionaddr.wac` is correct and its header is worth keeping whole: the
+// address *is* the key, so there is no registry and no authority; the two checksum bytes catch a typo
+// and nothing else, since an attacker just generates keys until one works; and the version byte is
+// last so that v3 and v2 addresses are distinguishable by length without parsing.
+//
+// What the rewrite is about is the two places where that file works around a signature.
+
+import { Result, Bytes } from "core";
+import { Alphabet, Padding, encode, decode, CodecFault } from "@/packages/codec";
+import { sha3_256 } from "@/packages/crypto/src/keccak.wac";
+
+export const i32 ADDRESS_LEN = 56;
+export const i32 PUBKEY_LEN = 32;
+const i32 VERSION = 3;
+
+/** The identity key was not 32 bytes. A caller with one of those has a bug. */
+export struct WrongKeyLength { i32 got; }
+/** Not 56 characters, with or without the `.onion` suffix. */
+export struct WrongAddressLength { i32 got; }
+/** The last byte is not 3. A v2 address, or something else entirely. */
+export struct WrongVersion { i32 got; }
+/** The base32 did not decode — and *why*, which is the wrapping `@/packages/lightclient` argues for. */
+export struct NotBase32 { CodecFault why; }
+/** Two bytes that do not match. Almost always a typo, which is the whole reason it is checked. */
+export struct ChecksumMismatch { }
+
+export union<WrongAddressLength, WrongVersion, NotBase32, ChecksumMismatch> AddressFault;
+
+/**
+ * The address for an identity key.
+ *
+ * **Answers a `string`, and that is the change.** The shipped one answers `u8[]`, calls the codec's
+ * `encode` — which also answers `u8[]` — and then walks the result folding `A-Z` to lowercase,
+ * because an onion address is written lowercase and RFC 4648 §6's alphabet is not. Five lines of
+ * case folding wrapped around the call, and five more the other way in the decoder.
+ *
+ * `Alphabet.Base32Lower` is the seventh variant and it did not exist until this file wanted it. It is
+ * the second time `@/packages/codec`'s enum has had to encode *what a caller does* rather than what
+ * the RFC says — `Base16Lower` was the first — and the codec's README predicted it one paragraph
+ * after making the decision.
+ */
+export Result<string, WrongKeyLength> onionAddress(Bytes pubkey) {
+  if (pubkey.len() != PUBKEY_LEN) { return Err(WrongKeyLength(pubkey.len())); }
+  return Ok(encode(body(pubkey, checksum(pubkey)), Alphabet.Base32Lower, Padding.Unpadded));
+}
+
+/**
+ * The identity key inside an address, or which of the four rules it broke.
+ *
+ * The shipped doc names all four — *"wrong length, wrong version, bad base32, wrong checksum"* — and
+ * then returns `u8[0]()` for every one of them, five times in one function. Naming them costs a
+ * union and buys the distinction a client actually acts on: a **checksum mismatch is a typo**, and is
+ * the one case where telling a person *check the address you pasted* is right, where the other three
+ * are *that is not an onion address*.
+ */
+export Result<Bytes, AddressFault> onionPubkey(string address) {
+  string a = withoutSuffix(address);
+  if (a.len() != ADDRESS_LEN) { return Err(WrongAddressLength(a.len())); }
+
+  Bytes raw = match (decode(a.toBytes(), Alphabet.Base32Lower)) {
+    Ok(b):    b,
+    Err(why): return Err(NotBase32(why))
+  };
+  // 56 unpadded base32 digits are 35 bytes, so a length check here would be unreachable — which the
+  // shipped version has anyway, because its decoder could answer any length. Removed rather than
+  // kept, because a check nothing can fail is a claim a reader has to disprove.
+  if (raw.get(PUBKEY_LEN + 2) as i32 != VERSION) {
+    return Err(WrongVersion(raw.get(PUBKEY_LEN + 2) as i32));
+  }
+  Bytes pubkey = raw.slice(0, PUBKEY_LEN);
+  Bytes want = checksum(pubkey);
+  // Two `get`s rather than a comparison, because a `Slice` has no `eq` — see the note at the foot.
+  if (raw.get(PUBKEY_LEN) != want.get(0) || raw.get(PUBKEY_LEN + 1) != want.get(1)) {
+    return Err(ChecksumMismatch());
+  }
+  return Ok(pubkey);
+}
+
+/** `SHA3-256(".onion checksum" | PUBKEY | VERSION)[:2]`. Two bytes, always. */
+Bytes checksum(Bytes pubkey) { … }
+
+/** `PUBKEY | CHECKSUM | VERSION`, 35 bytes. A `Buf`, because a `Slice` cannot concatenate. */
+Bytes body(Bytes pubkey, Bytes checksum) { … }
+
+/** The address with `.onion` removed if it was there. A user typed this. */
+string withoutSuffix(string address) { … }
+
+// ## 1. `match` as an expression, with an arm that returns
+//
+// The decode above is written
+//
+//     Bytes raw = match (decode(a.toBytes(), Alphabet.Base32Lower)) {
+//       Ok(b):    b,
+//       Err(why): return Err(NotBase32(why))
+//     };
+//
+// which is `../../../GRAMMAR.ebnf`'s `arm_value = expr | "continue" | "break" | "return" , [ expr ]`
+// — a control-flow arm in a `match` used as an expression, one of the ten constructs found on the
+// vetted pages that no rewrite had written. **This is its first use.**
+//
+// It is also the answer to the four-line `match` that `@/packages/lightclient/src/validate.wac`
+// complained about: *"`try` cannot map, so wrapping a callee's fault costs four lines."* In an
+// initialiser it costs one extra line, because the value goes where the value goes. In a statement
+// position — which is what `validate.wac` has, since it is propagating rather than binding — it does
+// not help at all.
+//
+// So the construct halves the cost in the case where a value is being bound and does nothing in the
+// case where one is not, and the entry in `../../../QUESTIONS.md` should say so: the ask is a `try`
+// that maps, and the control-flow arm is a partial answer that already exists.
+//
+// ## 2. What could not be written
+//
+// **`checksum` answers *two bytes* and the type says `Bytes`.** So does `pubkey`, at 32. The shipped
+// version guards it — `if (ck.len() != 2) { return u8[0](); }`, and `addressChecksum` returns empty
+// on a bad key so that `onionAddress` can propagate it — which is a length check on a value the
+// function computed itself, defending against its own hash being the wrong size. With
+// `Slice<u8, 2>` and `Slice<u8, 32>` that guard and `WrongKeyLength` both disappear, and the fourth
+// package asks for it.
+//
+// **A `Slice` cannot concatenate and cannot compare.** `core/slice.wac` has nine members and none
+// of them joins two slices or asks whether two hold the same bytes, which is correct for a *view* —
+// a join has to allocate and a view does not own anything to allocate into. So `body` is a `Buf`
+// and the checksum comparison is two `get`s, and both are right rather than awkward. Worth a line
+// because it is the shape of the type doing its job: the operations a `Slice` refuses are exactly
+// the ones that are not views, and a reader who expects `a.concat(b)` is expecting an array.
+//
+// `core/slice.wac`'s own rule is *"added when the fifth appeared rather than the second"*. This is
+// the first `eq` and the second `concat` — `@/packages/ssz/src/chunk.wac` wanted one and got a `Buf`
+// too. Not yet.
+//
+// **The address and the key are the same thing and are two types here.** rend-spec-v3's whole point
+// is that `onion_address` *is* the identity key, so `Bytes` and `string` being two types means the
+// program holds two spellings of one value and nothing says they correspond. A round trip is the
+// only relation, and it is a test rather than a type — which is as far as this can be taken and is
+// worth writing down, because it is the case where a value type would be *wrong*: the string is what
+// a person types and the bytes are what a protocol sends, and collapsing them would lose which one
+// is on the wire.

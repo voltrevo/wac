@@ -4685,6 +4685,29 @@ Wrapping is the only one of the three the language already supports, and it is t
 four lines per use. It is also the first case where the two unions are declared in **two packages**,
 so a flattening rule would have to reach across an import — which neither position has considered.
 
+### Half of it already exists, and the half that does not is the one that came up first
+
+`@/packages/tor/src/onionaddr.wac` wrote the **first use** of `arm_value = expr | "continue" |
+"break" | "return" , [ expr ]` — a control-flow arm in a `match` used as an expression, one of the
+ten constructs found on the vetted pages that no rewrite had touched:
+
+```wac
+Bytes raw = match (decode(a.toBytes(), Alphabet.Base32Lower)) {
+  Ok(b):    b,
+  Err(why): return Err(NotBase32(why))
+};
+```
+
+Three lines instead of four, and the value goes where the value goes. **But it only helps when a
+value is being bound.** `validate.wac`'s two sites are propagating rather than binding — there is no
+`raw` to name — so the arm buys nothing there, and the four-line `match` stands.
+
+So the construct that exists covers the initialiser case and the ask is still a `try` that maps. That
+narrows the question usefully: it is not *add a way to handle a Result inline*, which the language
+has; it is **a way to change an error's type while propagating**, which is the one shape `try` is
+defined not to do.
+
+
 ## Where a fault union ends, and whose fault its members are
 
 Two answers from one composition, `@/packages/lightclient/src/branch.wac` over `@/packages/ssz`.

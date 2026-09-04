@@ -32,6 +32,20 @@ export enum Alphabet {
   Base16Upper,
   /** §6, `A-Z2-7`. */
   Base32,
+  /**
+   * §6's alphabet in lowercase, which the RFC does not define and a caller needed within the day.
+   *
+   * `@/packages/tor/src/onionaddr.wac` is the caller: a v3 onion address is
+   * `base32(PUBKEY | CHECKSUM | VERSION) + ".onion"` and is written lowercase, so the shipped
+   * package encodes with `ALPHABET_STANDARD()` and then **hand-writes an ASCII case fold in both
+   * directions**, five lines each way, around the codec it just called.
+   *
+   * This is the second instance of the thing the README warned about one paragraph after making the
+   * decision — *"the type encodes what the package does rather than what the RFC says … worth
+   * knowing before the next enum is named after a specification"* — with `Base16Lower` as the first.
+   * Two independent callers is not a pattern yet and it is enough to stop calling it an exception.
+   */
+  Base32Lower,
   /** §7, `0-9A-V` — extended hex, which sorts in the same order as the data. */
   Base32Hex,
   /** §4, `A-Za-z0-9+/`. */
@@ -45,6 +59,7 @@ export enum Alphabet {
       Base16Lower: { return 4; }
       Base16Upper: { return 4; }
       Base32:      { return 5; }
+      Base32Lower: { return 5; }
       Base32Hex:   { return 5; }
       Base64:      { return 6; }
       Base64Url:   { return 6; }
