@@ -212,12 +212,31 @@ primary_expr   = INT_LITERAL
                                                           them — one of the four places, listed
                                                           at `type_args` *)
                | IDENT                                                  (* variable *)
+               | IDENT , type_args                                       (* a written instantiation,
+                                                                            qualifying what follows:
+                                                                            `Vec<string>.create()`,
+                                                                            `Option<i32>.None`. The
+                                                                            arguments are on the
+                                                                            *type*, and the `.` after
+                                                                            it is an ordinary postfix
+                                                                            — which is why a
+                                                                            payload-less variant needs
+                                                                            no call parentheses *)
                | "this"                                                  (* the receiver, which is
                                                                             an identifier expression
                                                                             like any other *)
                | "(" , expr , ")"                                       (* grouping *)
                | match_expr                                              (* see above *)
+               | lambda_expr
                | construction_expr ;
+
+(* A function value, `design/lang/0002` tier two. `(i32 a, i32 x) => a + x`, and with a block when
+   the body is more than an expression. `async` sits where it does on a function: after anything
+   that introduces the thing and before what it answers with.
+
+   Ambiguous with `"(" , expr , ")"` for as long as it takes to reach the `=>`, which is why
+   `parse.wac` has an `atLambdaFrom` lookahead rather than a decision at the paren. *)
+lambda_expr    = [ "async" ] , "(" , [ param_list ] , ")" , "=>" , ( block | expr ) ;
 
 construction_expr = type_name , "(" , [ arg_list ] , ")"               (* positional or default *)
                   | type_name , "{" , field_init_list , "}"             (* named *)

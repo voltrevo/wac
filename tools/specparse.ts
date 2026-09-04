@@ -409,6 +409,20 @@ function declarations(toks: Token[]): Token[][] {
   return out.filter((c) => c.length > 0);
 }
 
+/**
+ * Whether a file says at the top that it is not supposed to compile.
+ *
+ * `spec/cases/README.md`: *"A case is one `.wac` file. Its first lines are comments:
+ * `// expect: emits | refused | traps <fn> | answers <fn> = <value>`"*. 143 of the cases expect a
+ * refusal and almost all of them are refused for a *semantic* reason — a type error, a missing
+ * override — which the grammar must still parse. So this does not mean "the grammar should refuse
+ * it"; it means a refusal here is uninformative and belongs in its own column.
+ */
+function expectsRefusal(src: string): boolean {
+  const head = src.split("\n", 3).join("\n");
+  return /^\/\/ expect:\s*(refused|declined)\b/m.test(head);
+}
+
 function walk(dir: string, out: string[]): void {
   for (const e of Deno.readDirSync(dir)) {
     const p = `${dir}/${e.name}`;
@@ -473,6 +487,7 @@ function main(argv: string[]): number {
   const bad: string[] = [];
   const slow: string[] = [];
   const gaveUp: string[] = [];
+  const expected: string[] = [];
 
   /**
    * Progress, on stderr, written synchronously.
@@ -512,7 +527,13 @@ function main(argv: string[]): number {
       }
       if (r === "ok") continue;
       const t = chunk[r] ?? chunk[chunk.length - 1];
-      bad.push(`${f}:${t?.line ?? 0}:${t?.col ?? 0}: no rule reaches '${t?.text ?? "<eof>"}'`);
+      const where = `${f}:${t?.line ?? 0}:${t?.col ?? 0}: no rule reaches '${t?.text ?? "<eof>"}'`;
+      // `spec/cases` writes its expectation on the first line. A case that expects to be *refused*
+      // and is refused here proves nothing — it may be refused for a type error the grammar has no
+      // opinion about, and being refused for the wrong reason looks identical. So it is set aside
+      // rather than counted either way, and the count that matters is refusals of code that is
+      // supposed to work.
+      (expectsRefusal(src) ? expected : bad).push(where);
       failed = true;
       break;   // everything after the first refusal in a file is cascade
     }
@@ -520,6 +541,13 @@ function main(argv: string[]): number {
   }
 
   console.log(`\n${ok}/${files.length} files parse`);
+  if (expected.length > 0) {
+    console.log(
+      `\n-- refused, and the case expects a refusal (uninformative: the grammar may be right for ` +
+      `the wrong reason) --`,
+    );
+    for (const e of expected) console.log(`  ${e}`);
+  }
   if (slow.length > 0) {
     console.log(`\n-- over two seconds --`);
     for (const s of slow) console.log(`  ${s}`);
