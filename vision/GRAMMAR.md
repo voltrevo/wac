@@ -178,6 +178,29 @@ It is not a compiler and does not pretend to be: a recogniser answers *does this
 else, so a file it accepts may be meaningless. What it removes is the possibility of a construct
 being used here that nobody has written down.
 
+### Two name checks, because a recogniser cannot see a wrong name
+
+Both are twenty lines of Python and neither is committed, because `vision/` is documentation as far
+as the tooling is concerned. They are described rather than shipped so the next reader can rebuild
+them, and both are **currently zero** — a real zero, proved each time by injecting a name that is
+wrong and watching it come back.
+
+**Every imported name, against what the target exports.** For each `import { A, B } from "…"`,
+resolve the specifier (`core`, `std`, `@/packages/x`, a relative path) and check the target declares
+each name. This started as *does the target file exist* and was widened on 2026-09-04; the widening
+found three calls to a `Buf.empty()` that `@/packages/bytes` does not have, and one import of `Node`
+from `@/packages/page` for a type `core/jsx.wac` declares. Fourteen findings remain and are all the
+same one: the overlay imports `wac.json5` records.
+
+**Every static call `Type.member(…)`, against what `Type` declares.** Collect struct and enum
+members, resolve aliases (`export Slice<u8> Bytes;` means `Bytes` has `Slice`'s statics — without
+that step `Bytes.empty()` is *skipped*, and a skip reads exactly like a pass), then check every
+`[A-Z]\w*\.\w+\(` whose receiver is a type this tree declares. Instance calls are out of reach: the
+receiver's type needs inference, which a regex has not got.
+
+Neither is a type check and together they are most of what one would catch here, because almost
+everything in this directory is a call to something by name.
+
 Three things came out of writing it that this page had wrong or missing:
 
 - **`trap` as an expression** was listed above as unaccounted-for and is now accounted for, as a
