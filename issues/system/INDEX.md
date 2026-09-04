@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0325a](open/0325a-three-copies-of-itoa64-answer-a-single-minus-sign-at-i64-minimum.md) | `itoa64` has five definitions: two byte-identical and correct, three separate re-derivations that all write `i64 n = neg ? 0 - v : v;` and none of which handles `i64` minimum, where that overflows back to itself so the loop never runs. Measured: `itoa64(0x8000000000000000).len()` is **1** — the sign alone — against 3 for `-42` in the same program. Not reachably wrong today, being a bench, a coverage probe and an example, which is `f8d9b489`'s point about `dirOf`: five copies, four answers at `/a`, none reachable. Distinct from `0314b`, which is about byte-identical duplicates found by hashing; these are re-derivations that came out differently and hashing does not find them | bug | a wrong answer, one character long, at one input |
 | [0318a](open/0318a-half-the-module-level-constants-are-functions-and-the-two-forms-do-not-compose.md) | 379 module-level constants across `packages/`, `core/`, `std/` and `tools/`, and **194 of them — 51% — are `export i32 NAME() { return <literal>; }`** rather than `export const`. Both spellings are current and several files use both, so this is a migration rather than a defect. Where it bites: the two forms **do not compose**, since a `const` may be built from a `const` and not from a function — both measured. `std/platform.wac`'s `GRANT_ALL()` is the one site where that costs something, and its own comment argues for the fix, calling a hand-written union *"a fourth thing to keep in step every time a bit is added"*. Filed rather than swept: 194 sites across a dozen packages other agents are working in | missing feature | a constant that cannot be built from another constant |
 | [0317b](closed/0317b-on-the-wasmtime-host-a-dial-to-an-unbound-port-appears-to-succeed.md) | A connection to a port nothing is bound to comes back as though it succeeded, so a readiness probe never waits: two of `daemon_test.wac`'s four tests fail on that host and a third hangs, where the v8 host passes all four in 1.4s. Newly reachable rather than newly broken — 0316b is what let these run at all. | bug | a readiness probe says listening about a port nothing is bound to |
 | [0316b](closed/0316b-the-wasmtime-host-runs-no-tests-and-the-freshness-guard-passes.md) | Every wac test on the wasmtime host fails before running with *"this module was built without Core and Cli"* — its seed payload is stale, and `cargo build` refreshes the binary without touching it. `tools/wac/seedfresh_test.wac` compares the binary against its Rust and passes, so `nativeHostWhyNot()` reports nothing wrong and eleven files either fail on the native arm or compare vacuously. | bug | a whole host's coverage lost silently |
@@ -108,7 +109,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-318 issues, 241 closed.
+319 issues, 241 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on

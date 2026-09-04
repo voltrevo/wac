@@ -72,10 +72,18 @@ written. The original's header says why and what it costs:
 > so unifying them means editing the import line of all forty-odd wac test files that use them […]
 > wac-mono 0072.
 
-So `itoa64` and `utoa64` exist twice, in `packages/fmt/src/itoa.wac` and
-`packages/wactest/src/itoa64.wac`, and the duplicate survives because moving it touches forty files.
-Everybody agrees it is a duplicate. The language has no way to say *this name is also available
-here*.
+So `itoa64` and `utoa64` exist twice in library code, and the duplicate survives because moving it
+touches forty import lines. The language has no way to say *this name is also available here*.
+
+**And the duplication is not merely untidy, measured.** `itoa64` has five definitions, not two: the
+three outside library code are separate re-derivations and **none handles `i64` minimum**. All three
+write `i64 n = neg ? 0 - v : v;`, which at the minimum overflows back to itself, so the loop never
+runs and the answer is the sign alone — `itoa64(0x8000000000000000).len()` is **1**, against 3 for
+`-42` in the same program. `issues/system/open/0325a`.
+
+That is the same shape `f8d9b489` found in `dirOf` — five copies, four different answers at `/a`,
+none reachably wrong — and it is the argument for re-export that the citation I first reached for
+did not actually make.
 
 This is the first gap in seven packages that the repository had **already filed an issue about**,
 which makes it a different kind of finding from the rest: not something this exercise noticed, but
