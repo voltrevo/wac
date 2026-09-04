@@ -46,7 +46,7 @@ export struct Slice<T> {
   i32 len;
 
   /** The whole array, which is what the implicit widening produces. */
-  Slice<T> all(T[] a) { return Slice<T>(a, 0, a.len()); }
+  Slice<T> all(T[] a) { return Slice(a, 0, a.len()); }
 
   i32 len(const this) { return this.len; }
 
@@ -66,7 +66,7 @@ export struct Slice<T> {
   /** A narrower view of the same array. No copy. */
   Slice<T> slice(const this, i32 lo, i32 hi) {
     if (lo < 0 || hi > this.len || lo > hi) { trap "Slice.slice out of range"; }
-    return Slice<T>(this.of, this.from + lo, hi - lo);
+    return Slice(this.of, this.from + lo, hi - lo);
   }
 
   Slice<T> from(const this, i32 lo) { return this.slice(lo, this.len); }

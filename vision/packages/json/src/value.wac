@@ -90,7 +90,7 @@ export struct JsonObject {
   /** Lookups served by a scan so far. Only counted while `index` is null. */
   i32 scans;
 
-  JsonObject create() { return JsonObject(Vec<JsonMember>.create(), null, 0); }
+  JsonObject create() { return JsonObject(Vec.create(), null, 0); }
 
   i32 len(const this) { return this.members.len(); }
 
@@ -121,7 +121,7 @@ export struct JsonObject {
   bool worthIndexing(const this) { return this.members.len() >= 32 && this.scans >= 15; }
 
   void buildIndex(this) {
-    Map<u8[], i32> ix = Map<u8[], i32>.create();
+    Map<u8[], i32> ix = Map.create();
     for (i32 i = 0; i < this.members.len(); i++) {
       u8[] k = this.members.data[i].key;
       if (ix.get(k) is null) { ix.put(k, i); }

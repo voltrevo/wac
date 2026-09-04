@@ -97,6 +97,15 @@ are here because they are written in the tree, not because anything found them:
 - `fn<void()>` as a type — `core/ticket`, replacing today's `fn[void()]`
 - `\{…}` interpolation inside a string — `server/main`
 
+## The grammar file is itself incomplete
+
+`func_decl` has no `type_params`, so by `grammar.md` a generic *function* does not exist. It does:
+`T first<T>(T[] xs)` compiles today and `spec/spec/generics.md` documents the feature at length.
+So the EBNF is behind the language, and a parser written from it alone would reject working code.
+
+Worth knowing before treating this document as a specification for one: `grammar.md` is the
+authority for what it covers and is not complete.
+
 ## Three claimed additions were already in the language
 
 `static` was listed in the table above and removed. Module-level `const` was called a gap in three
@@ -104,6 +113,14 @@ package READMEs. `trap` with a message was called undescribed in two. All three 
 `spec/spec/grammar.md` — `method_params` makes a `this`-less method static, `const_decl` is in
 `program`, and `trap_stmt = "trap" , [ expr ] , ";"` says outright *the expr is a string message*.
 All three compile today.
+
+A fourth was in `generics.md` rather than the grammar: a method whose type parameter appears only in
+its return type is called with the argument written, `this.fail<JsonValue>(…)`, exactly as
+`Vec<T> empty<T>()` is called as `empty<i32>()`. And a fifth went the other way — I claimed `core`'s
+root *aggregates* its files' exports and argued against generalising it. It does not aggregate:
+`Read` is the only name that crosses from `"core"`, and `Result`, `Option`, `Map` and `hashBytes` are
+each refused with *importing does not re-export*. An invented presence rather than an invented
+absence, and the same failure to check.
 
 **None of them was findable by the tool**, and that is the point rather than an excuse. It reports
 what today's parser refuses; a construct that already exists is accepted, so writing `static` in

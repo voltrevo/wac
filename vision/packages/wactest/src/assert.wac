@@ -38,7 +38,7 @@ export struct T {
   Vec<Failure> kept;
   i32 total;
 
-  T create() { return T(Vec<Failure>.create(), 0); }
+  T create() { return T(Vec.create(), 0); }
 
   /**
    * Record a failure. Assertions funnel through here.
@@ -88,8 +88,13 @@ export struct T {
   /**
    * A `Result` that was supposed to fail, and with what.
    *
-   * `union` membership is what makes this checkable: `wantErr<NotFound>` on a call whose error set
-   * does not contain `NotFound` is a compile error rather than a test that can never pass.
+   * The expected fault arrives as a **value** rather than a written type argument, so all three
+   * letters are inferred from the arguments. Naming it as a type would mean writing all three at
+   * every call — `generics.md` says inference is argument-directed and the count must match the
+   * declaration, so there is no way to write one and infer two.
+   *
+   * `union` membership is what makes it checkable either way: a `W` outside `E` is a call that
+   * could never have succeeded, and should not compile rather than fail at runtime.
    */
-  void wantErr<V, E, W>(this, Result<V, E> r, string what) where W in E { … }
+  void wantErr<V, E, W>(this, Result<V, E> r, W want, string what) { … }
 }

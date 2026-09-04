@@ -137,14 +137,6 @@ operator answers `T?`. That is the one place flattening earns its keep, and wac 
 `??` today — so the question is whether adding one means giving it an explicit flatten, or not
 adding it.
 
-## A generic method whose type parameter is only in the return type
-
-`vision/packages/json`'s parser funnels every failure through
-`Result<T, ParseError> fail<T>(const this, Reason why)`, so a position can never be forgotten. `T`
-appears in no argument, and `return this.fail(Reason.Eof);` has to take it from the enclosing
-function's return type. Whether inference reaches there is unsaid, and the alternative — writing
-`Result.Err(ParseError(this.at, …))` at every site — is the thing `fail` exists to prevent.
-
 ## How an elided body is spelled, and how an abstract one is
 
 `vision/core` writes a method with no body to mean *every subtype must override this, and there is
@@ -204,13 +196,17 @@ about compiling rather than reflecting.
 them touches forty import lines, and *"wac has no re-export — importing a symbol from a file that
 merely imports it is a compile error."*
 
-**The mechanism half-exists and the existing half is the wrong one to generalise.**
-`import { Read } from "core";` works today because `core` is a built-in whose root aggregates every
-file's exports. Aggregation gives a package no internal level: `export` marks what leaves a *file*,
-so a helper two files both need has to be exported, and exporting it makes it public. `http`'s
-`findCrlf` is that exact trade — duplicated between two files in the original rather than shared,
-because *"neither wanted to export a helper the other would then depend on."* A duplicate chosen
-over a leak.
+**The mechanism does not half-exist, which I claimed once and had wrong.** `import { Read } from
+"core";` works and the spec calls `core` *"the root of the tree"*, which reads as an aggregate. It is
+not one: `Read` is the only name that crosses, and `Result`, `Option`, `Map` and `hashBytes` are each
+refused from `"core"` with *"importing does not re-export"*. So `"core"` names one file and nothing
+in the language aggregates anything.
+
+The barrel is therefore the only proposal rather than the better of two, and its argument is its
+own: `export` marks what leaves a *file*, and a package needs a second level. Without one a helper
+two files share has to be public — `http`'s `findCrlf` is what that costs, duplicated between two
+files rather than shared because *"neither wanted to export a helper the other would then depend
+on."* A duplicate chosen over a leak.
 
 So every package here has an explicit barrel instead, and imports name the package
 (`@/packages/http`) rather than a file inside it. Two things follow that want review:

@@ -51,14 +51,14 @@ export struct Parser {
     this.space();
     JsonValue v = try this.value();
     this.space();
-    if (this.at < this.src.len()) { return this.fail(Reason.Trailing); }
+    if (this.at < this.src.len()) { return this.fail<JsonValue>(Reason.Trailing); }
     return Result.Ok(v);
   }
 
   Result<JsonValue, ParseError> value(this) {
-    if (this.depth >= MAX_DEPTH) { return this.fail(Reason.TooDeep); }
+    if (this.depth >= MAX_DEPTH) { return this.fail<JsonValue>(Reason.TooDeep); }
     u8? b = this.peek();
-    if (b is null) { return this.fail(Reason.Eof); }
+    if (b is null) { return this.fail<JsonValue>(Reason.Eof); }
 
     // Each of these consumes what it recognised, or fails saying where.
     if (b! == '{')                    { return this.object(); }
@@ -76,7 +76,7 @@ export struct Parser {
     this.depth += 1;
     defer { this.depth -= 1; }
 
-    Vec<JsonValue> items = Vec<JsonValue>.create();
+    Vec<JsonValue> items = Vec.create();
     this.space();
     if (this.eat(']')) { return Result.Ok(JsonValue.Array(items)); }
 
@@ -84,7 +84,7 @@ export struct Parser {
       items.push(try this.value());
       this.space();
       if (this.eat(']')) { return Result.Ok(JsonValue.Array(items)); }
-      if (!this.eat(',')) { return this.fail(Reason.Unexpected); }
+      if (!this.eat(',')) { return this.fail<JsonValue>(Reason.Unexpected); }
       this.space();
       // JSON5 allows the comma before the bracket; JSON does not, and `eat` already moved past it.
       if (this.json5 && this.eat(']')) { return Result.Ok(JsonValue.Array(items)); }
@@ -103,12 +103,12 @@ export struct Parser {
     while (true) {
       Bytes key = try this.key();
       this.space();
-      if (!this.eat(':')) { return this.fail(Reason.Unexpected); }
+      if (!this.eat(':')) { return this.fail<JsonValue>(Reason.Unexpected); }
       this.space();
       members.push(key, try this.value());
       this.space();
       if (this.eat('}')) { return Result.Ok(JsonValue.Object(members)); }
-      if (!this.eat(',')) { return this.fail(Reason.Unexpected); }
+      if (!this.eat(',')) { return this.fail<JsonValue>(Reason.Unexpected); }
       this.space();
       if (this.json5 && this.eat('}')) { return Result.Ok(JsonValue.Object(members)); }
     }
@@ -133,7 +133,14 @@ export struct Parser {
     return true;
   }
 
-  /** Every failure goes through here, so a position can never be forgotten. */
+  /**
+   * Every failure goes through here, so a position can never be forgotten.
+   *
+   * `T` appears in no argument, so inference cannot reach it and every call writes it:
+   * `this.fail<JsonValue>(Reason.Eof)`. That is the spec's rule rather than a wart —
+   * `generics.md` `[§wacc-written-type-args]` says a slot does not determine a call's type
+   * parameters, and `Vec<T> empty<T>()` is called as `empty<i32>()`.
+   */
   Result<T, ParseError> fail<T>(const this, Reason why) {
     return Result.Err(ParseError(this.at, why));
   }

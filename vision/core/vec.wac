@@ -9,7 +9,7 @@ export struct Vec<T> {
   T[] data;
   i32 len;
 
-  Vec<T> create() { return Vec<T>(T[](), 0); }
+  Vec<T> create() { return Vec(T[](), 0); }
 
   i32 len(const this) { return this.len; }
 

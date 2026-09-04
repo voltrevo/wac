@@ -79,7 +79,7 @@ export struct Query {
  * answer could not be written.
  */
 export Query parseQuery(Bytes raw) {
-  Vec<Param> out = Vec<Param>.create();
+  Vec<Param> out = Vec.create();
   i32 at = 0;
 
   while (at <= raw.len()) {

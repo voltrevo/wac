@@ -67,7 +67,7 @@ export struct Buf {
    * and it is the one the type does not carry: nothing in the signature says *read this before you
    * write again*. It is why `take` still exists and still hands over an array.
    */
-  Bytes bytes(const this) { return Slice<u8>(this.data, 0, this.len); }
+  Bytes bytes(const this) { return Slice(this.data, 0, this.len); }
 
   /** The array, with the buffer left empty. The caller owns it and may keep it. */
   u8[] take(this) { … }

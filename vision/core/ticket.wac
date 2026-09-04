@@ -123,7 +123,7 @@ struct AnyOf<T> : Ticket<T> {
  * The losers of an `any` are not cancelled, because there is no such thing — they carry on as
  * ordinary unawaited work and whoever holds their tickets can still drive them.
  */
-export Ticket<T[]> all<T>(Ticket<T>[] parts) { return AllOf<T>(parts); }
+export Ticket<T[]> all<T>(Ticket<T>[] parts) { return AllOf(parts); }
 
 /** Answers with the first to settle. The others keep going as ordinary unawaited work. */
-export Ticket<T> any<T>(Ticket<T>[] parts) { return AnyOf<T>(parts); }
+export Ticket<T> any<T>(Ticket<T>[] parts) { return AnyOf(parts); }

@@ -62,10 +62,10 @@ of what shrank.
 
 ## What could not be written
 
-**A generic method whose type parameter comes only from the return type.** `fail<T>` answers
-`Result<T, ParseError>` and `T` appears nowhere in its arguments, so `return this.fail(Reason.Eof);`
-needs the type inferred from the enclosing function's return. Nothing on the pages says whether that
-works, and the whole point of `fail` is that every failure goes through one place.
+(A generic method whose type parameter comes only from the return type was listed here as an open
+question and is not one. `generics.md` `[§wacc-written-type-args]` settles it: inference is
+argument-directed, a slot does not determine a call's type parameters, and the fix is to write the
+argument — `this.fail<JsonValue>(Reason.Eof)`, as `Vec<T> empty<T>()` is called as `empty<i32>()`.)
 
 **Two spellings of an elided body.** `core` uses a bodyless method to mean *must be overridden*;
 this file needs *written out in the original, not repeated here*, and uses `{ … }` because the

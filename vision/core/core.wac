@@ -1,19 +1,22 @@
 // The package, as one name.
 //
-// `import { Vec } from "core";` today already works, and the spec says how: *"The root is what
-// `core` names"* — the tree's surface is the union of every file's exports, assembled by the
-// compiler because `core` is a built-in it carries.
+// **Nothing like this exists today, and I got the reason wrong once.** `import { Read } from "core";`
+// works, and the spec calls `core` *"the root of the tree"*, which I read as the root aggregating
+// every file's exports. It does not. Measured: `Read` is the only name that crosses, and
+// `Result`, `Option`, `Map` and `hashBytes` are all refused from `"core"` with
 //
-// **That mechanism exists and is the wrong one to generalise.** Aggregation gives a package no way
-// to have an internal name: `export` marks what leaves a *file*, so a helper two files in a package
-// both need must be exported, and exporting it puts it in the package's public surface whether
-// anybody wanted that or not. `packages/http`'s `findCrlf` is exactly this — duplicated between two
-// files in the original rather than shared, and the header says why: *"neither wanted to export a
-// helper the other would then depend on."* A duplicate chosen over a leak.
+//     = help: import it from the file that declares it — importing does not re-export
 //
-// An explicit barrel is the fix and it is one line longer. The file lists what the package offers;
-// anything a file exports and the barrel does not name is visible to its neighbours and to nobody
-// else. Two levels of visibility, which is what a package is.
+// So `"core"` names one file and there is no aggregation anywhere. Re-export does not exist at all,
+// which is exactly what `packages/fmt`'s header says and what `wac-mono 0072` is open about.
+//
+// That makes an explicit barrel the only proposal on the table rather than the better of two, and
+// it is still the one worth having, for a reason aggregation would not have given: **the list is a
+// judgement.** `export` marks what leaves a *file*; a barrel marks what leaves a *package*. Without
+// the second level a helper two files share has to be public, and `packages/http`'s `findCrlf` is
+// what that costs — duplicated between two files rather than shared, because its header says
+// *"neither wanted to export a helper the other would then depend on."* A duplicate chosen over a
+// leak.
 
 export { Result } from "./result.wac";
 export { Vec } from "./vec.wac";
