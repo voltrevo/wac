@@ -100,12 +100,17 @@ elements disagree is the case that separates them.
 `enum Result<T, E = union>` is what makes `Result<T>` an ordinary generic rather than a special
 form, and it is the thing that lets `Result`'s current blessing expire.
 
-## The shape of `main`
+## What a sync `main` does with a `Result`
 
-`i32 main(Sys sys)` and `async i32 main(Sys sys)` both appear, and a posix-style small integer exit
-code is assumed throughout. Whether `std` should assume it is open. A sync `main` that drives its
-own work holds a `Result` and has nowhere to put it, so it either matches on it to pick an exit code
-or discards it. `Result<i32> main` would answer that and is ugly; nothing else has been proposed.
+Not the exit code, which I had filed and which is not open: `export i32 main(Core core, Cli cli)` is
+the shape today, so a posix-style small integer is already the language rather than something `std`
+would be assuming. Vision changes the *parameters* — `Sys` in place of `(Core, Cli)`, which is the
+shelf's *authority arrives as one thing* — and leaves the return alone.
+
+What is open is narrower. A sync `main` that drives its own work holds a `Result` from `wait` and has
+nowhere to put it, so it matches on it to pick an exit code or discards it. `Result<i32> main` would
+answer that and is ugly. `vision/packages/server` writes the match, which works and means every
+program that can fail to acquire a capability writes the same four lines.
 
 ## Matching in a `while` or `for` condition
 

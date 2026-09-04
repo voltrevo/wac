@@ -139,9 +139,13 @@ syntax, `generics.md` for what inference reaches, `strings.md` for what a litera
 should be read before a README says a thing is missing or present — every one of the six was three
 lines of test away, and most had been repeated across several files by the time they were caught.
 
-The pattern in all six is one habit: asserting what the language does from memory of writing it,
-rather than compiling three lines. The rate matters more than any single correction — six in a tree
-of nine packages is not a run of bad luck.
+A seventh was smaller and the same shape: I filed *the shape of `main`* on the premise that a
+posix-style exit code was a vision assumption. `export i32 main(Core core, Cli cli)` is what the
+tree writes today, so the exit code is already the language and only the parameters change.
+
+The pattern in all seven is one habit: asserting what the language does from memory of writing it,
+rather than compiling three lines. The rate matters more than any single correction — seven in a tree of
+nine packages is not a run of bad luck.
 
 ## What it cannot see
 
