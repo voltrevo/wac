@@ -91,11 +91,45 @@ Nothing on the page mentions it. Candidates: driving a coroutine to completion f
 `Err` when this host cannot be waited on, that it drains the dependency set rather than descending
 depth-first, and the circular case. Four is probably too many for one feature.
 
-## What example should capture `defer`
+## What `defer` means, which no page says and four uses already depend on
 
-And whether `sys.atEnd` wants one beside it, since the pair is the whole cleanup story — `defer`
-runs when the block exits, `atEnd` when the domain does, and cleanup that must happen belongs to a
-system rather than to a block.
+This entry asked which *example* should capture `defer`. Reading the four places the rewrites use it,
+the prior question is what it does: the only statement anywhere is the clause below — *"`defer` runs
+when the block exits"* — and every one of the four turns on something that clause does not settle.
+
+**Does it run when the block is left by a trap?** `core/ticket.wac`:
+
+```wac
+if (this.inWait) { return Result.Err(Circular()); }
+this.inWait = true;
+defer { this.inWait = false; }
+```
+
+`wait` can trap — `0014` D7 makes a chain that cannot advance an error — and if a trap skips the
+`defer` then `inWait` stays true forever and every later `wait` on that ticket answers `Circular`.
+The flag would be *permanently* wrong, in `core`, from one trap. Written as it is, this code assumes
+`defer` runs on the way out however the way out happens; nothing says it does.
+
+**Does it run when a generator is abandoned?** `vision/packages/gzip`'s README says a caller that
+stops iterating stops the machine, and `server`'s `handle` is
+`defer { conn.close(); }` around a loop that four paths leave. If a coroutine can be dropped while
+suspended — which is the whole of *a consumer that stops iterating* — then either its `defer`s run
+at the drop, or a `server` that stops reading leaks the socket the `defer` exists to close. This is
+the hardest of the four and the one with a security-shaped answer.
+
+**When does the body read its captures?** `json/parse.wac` writes `defer { this.depth -= 1; }` at the
+top of a function that mutates `this.depth` below it. Obvious that it reads at exit; worth stating,
+because the alternative — capturing at the `defer` — is what a value-capturing closure would do and
+`spec/cases/0191` says lambdas capture by reference.
+
+**And order, for two in one block.** Reverse, presumably, and nothing in the tree has two yet, which
+is exactly when to write it down.
+
+**Then the original question.** `sys.atEnd` wants an example beside it, since the pair is the whole
+cleanup story — `defer` when the block exits, `atEnd` when the domain does, and cleanup that must
+happen belongs to a system rather than to a block. That pairing is only meaningful once the first
+four are answered: an `atEnd` that runs on a trap and a `defer` that does not is a distinction; two
+that behave the same way is one mechanism with two names.
 
 ## What example should capture the keyword rule
 
