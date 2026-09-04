@@ -22,8 +22,6 @@ helpful, and each one turns a mistake into a program that runs.
 
 ---
 
----
-
 ## What is in here
 
 Three tiers of examples, and one page of rules.
@@ -114,8 +112,8 @@ exactly what stops it working in return position. Neither had an alarm on it.
 
 **4. A capability that is a pair of calls over hidden state does not survive being a value, and the
 tree already knows.** `openInput`/`readChunk`/`closeFeed`, `openOutput`/`outputError`/`closeFeed`,
-`pushChild`/`popChild`. One of the three has already been given a value — `packages/platform/src/
-frame.wac`, made possible by closures — and the other two have not, which is why `tee` buffers a pipe
+`pushChild`/`popChild`. One of the three has already been given a value —
+`packages/platform/src/frame.wac`, made possible by closures — and the other two have not, which is why `tee` buffers a pipe
 that `tee` exists to stand in the middle of. The cost of the third is written down in three separate
 files and filed against none of them.
 
