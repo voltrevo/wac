@@ -49,9 +49,10 @@ numbers already in the tree. Here it would be one dereference per *read*: three 
 thousands of sequences a block, in over half of decode time. **Same proposal, opposite answer, and
 the discriminator is per-operation against per-access.**
 
-## What a language could still do
+## What could not be written
 
-It cannot make `Entry[]` fast. It can make the packing checked:
+A language cannot make `Entry[]` fast — that is the finding above, and it is about WasmGC rather than
+about wac. What could not be written is the packing **as a declaration**:
 
 ```wac
 packed struct Entry { u8 extraBits; u8 nbBits; u16 newState; }   // lowers to one i32

@@ -61,6 +61,21 @@ the parallel-array pair this exercise keeps meeting: same length by convention, 
 one loop, nothing saying so. `@/packages/regex` decided to *keep* that shape for its character
 classes and had a measured layout reason; there is none here.
 
+## The fix needs nothing the language has not got
+
+Measured through `bootstrap/ts/ask_wacc.ts`:
+
+| written | today |
+|---|---|
+| `match` over an enum with an arm missing, no `else` | **1 type error** — and traps `unreachable` if run anyway |
+| the same with every arm | clean |
+| an arm missing **with** `else:` | clean, and answers the default |
+
+So `Command` as an enum and a `match` with no default makes a forgotten command **a compile error**,
+today. Worth saying plainly because most of this directory is asking for something and this is not:
+the guarantee exists, it is exactly the guarantee wanted, and it is unavailable in `grants.wac` only
+because the key is a `string`.
+
 ## What could not be written
 
 **The nine reasons are not disjoint and nothing orders them.** A `wac run --coverage` with no
@@ -111,22 +126,7 @@ reason written out, because a child cannot be handed what its parent does not ho
 "everything" is right four times. What is wrong is that it is also the answer to a question nobody
 asked.
 
-## The fix needs nothing the language has not got
-
-Measured through `bootstrap/ts/ask_wacc.ts`:
-
-| written | today |
-|---|---|
-| `match` over an enum with an arm missing, no `else` | **1 type error** — and traps `unreachable` if run anyway |
-| the same with every arm | clean |
-| an arm missing **with** `else:` | clean, and answers the default |
-
-So `Command` as an enum and a `match` with no default makes a forgotten command **a compile error**,
-today. Worth saying plainly because most of this directory is asking for something and this is not:
-the guarantee exists, it is exactly the guarantee wanted, and it is unavailable in `grants.wac` only
-because the key is a `string`.
-
-## Also in that file, and smaller
+### Also in that file, and smaller
 
 **`Asked(true, true, false, true, false)`** — five positional bools, eleven call sites, differing
 from each other in one or two positions. Named construction is available today and would be correct
