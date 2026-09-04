@@ -79,6 +79,58 @@ that stays true afterwards. **A decisions entry is deleted once it reaches `spec
 spec is the test, since an implementation can have a bug, and a rule written twice is a rule that
 drifts. **A question is deleted once it is answered**, and the answer has to land somewhere first.
 
+## What twenty subjects found, as patterns rather than as a list
+
+`QUESTIONS.md` is fifty-six entries and getting longer, which is the exercise working and is not a
+document anybody can read to find out what it concluded. This section is that, and it is deliberately
+**not an index**: these are findings about how the design behaves under use, and each stays true
+after the question it produced is answered and deleted.
+
+Ordered by how often each one turned up.
+
+**1. Something derived from a source is narrower than the source, and always in the direction of
+whoever consumed it first.** The seven capability projections were argued from a count of the host,
+and every one that has been examined was wrong differently — `Files` short by two methods, `Net`
+short by a *shape*, `Proc` short by its purpose, standard input with no projection at all, `Clock`
+with two of the host's three time capabilities, `Page` with none of twelve. Diffing all 62 host
+capabilities against all 38 projection members took an afternoon and found four more than nine days
+of consumers had. **The check is mechanical and nobody had run it**, because each gap arrived looking
+like a surprise rather than like an instance.
+
+**2. A first consumer finds something, every time, and a construct with no consumer has no
+evidence.** `fs` was the first consumer of `Files`; `quic` the second of `Net`; `wactest` the second
+of `schedule`, and found that `drain` does not compose with it; `tls` the first outside consumer of
+`secret`, and found it has no return position; `within.wac` the first user anywhere of `coroutine`,
+and found the bounded wait; `tee` the first of `Files.create`. Against that, six constructs sat in
+the grammar for nine days with no user at all, added because they appear on an agreed page — and
+`auto`, the most ordinary of them, turns out to have no case: the longest declared type in the tree
+is nineteen characters, and the type worth eliding is a *return* type, where `auto` cannot go.
+
+**3. A design justified by a limitation outlives the limitation, silently.** `packages/fs` is one
+concrete type with a mount table because *"a funcref cannot capture a filesystem because there are no
+closures"* — written a fortnight after lambdas landed, and the design its own header says it wanted is
+writable today. `secret` is modelled on `const` because the machinery exists, and being a name flag is
+exactly what stops it working in return position. Neither had an alarm on it.
+
+**4. A capability that is a pair of calls over hidden state does not survive being a value, and the
+tree already knows.** `openInput`/`readChunk`/`closeFeed`, `openOutput`/`outputError`/`closeFeed`,
+`pushChild`/`popChild`. One of the three has already been given a value — `packages/platform/src/
+frame.wac`, made possible by closures — and the other two have not, which is why `tee` buffers a pipe
+that `tee` exists to stand in the middle of. The cost of the third is written down in three separate
+files and filed against none of them.
+
+**5. Copying a shape reproduces its holes; projecting one does not remove them.** `In.read` said
+*end* with an empty array because `readStdin` does, and that was a hole copied rather than invented.
+The other direction: `tee -a` cannot be written, and that is not the projection's fault — `openOut`
+truncates deliberately and the host has no append, so a faithful projection reproduces a real gap.
+Telling those two apart is most of what reading these packages is for.
+
+**6. A question can be dissolved rather than answered, and the reframe is worth more than either
+answer.** *Does a capability say end with a sum or a sentinel* had a defensible answer on each side.
+Making `In` a stream made the question stop existing, because a generator ending is the loop ending —
+and both earlier answers had been arguing inside the wrong frame. Two entries in `QUESTIONS.md` were
+merged into one by that, rather than one of them winning.
+
 ## Nothing here is checked by anything
 
 No test reads these pages. Nothing here is a fixture, a list some guard walks, or a promise a suite
