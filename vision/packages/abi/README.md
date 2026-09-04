@@ -50,7 +50,8 @@ caller's typo, in a package whose entire subject is refusing malformed input car
 `Vec<AbiType>` cannot say five and hold two.
 
 **Nine `i32 T_X() { return n; }` become nine variants** — third time, after `regex`'s thirteen `OP_*`
-and `tty`'s eight control characters. Worth one line here and no more, except for what sits eight
+and `tty`'s eight control characters, and later counted: 828 such functions in the tree, of which
+these nine are a closed set and most are not. Worth one line here and no more, except for what sits eight
 lines above them in the same file: **`Value` is already an enum with payloads.** The values were a
 sum type and the types were integers in an array, and nothing in the file remarks on it.
 

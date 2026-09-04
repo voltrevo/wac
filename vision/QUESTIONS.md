@@ -4056,3 +4056,62 @@ design question.** `forCommand`'s default hands out ambient authority; `abi`'s r
 and traps, which is bad and is bounded. A rule that treats a dispatch over commands and a dispatch
 over type tags alike will be ignored where it matters, because it will mostly fire where it does
 not — and the thing that separates them is not the shape but what the wrong branch can reach.
+
+## 828 constants are written as functions, and I called it an oddity four times
+
+Four package READMEs here note `i32 NAME() { return n; }` as a curiosity — *"functions returning
+literals, third package running"*, *"fourth package, noted and not argued"*. Counted, it is not a
+curiosity. Over `packages/*/src`:
+
+| form | count |
+|---|---:|
+| `i32 name() { return 5; }` — a nullary function returning one literal | **828** |
+| `const i32 NAME = 5;` | 197 |
+| an `enum` | 47 |
+
+So the function form is the **dominant** idiom by four to one, and it is the older one: a scalar
+`const` is in `spec/spec/variables.md` as a basic feature and `const_decl` is in the top-level
+grammar. `issues/lang/0032` added constants of *aggregate* type in July; scalars never needed it.
+
+**Seven files use both forms**, which is what makes this drift rather than a capability question.
+`packages/tor/src/relay.wac` has 24 functions and 4 consts, and three consecutive lines read:
+
+```wac
+const i32 PAYLOAD_LEN = 509;
+const i32 RELAY_HEADER_LEN = 11;
+export i32 relayDataLen() { return PAYLOAD_LEN - RELAY_HEADER_LEN; }
+```
+
+with `export const i32 NTOR_KEY_MATERIAL = 92;` seventy lines further down — so *exported* is not the
+distinction either.
+
+**One qualification, and it is the honest one.** `packages/wacc` holds 265 of the 828 and **zero**
+consts, and its source must compile on wac-L5. `issues/lang/0285b` establishes that the top rung
+cannot take a module-level const *array*; whether it takes a scalar is not recorded and I have not
+measured it. So a third of the population may be forced, and the other 563 are in packages that
+demonstrably manage both.
+
+### Two different questions live under the number
+
+- **For the ones that are a closed set** — wire tags, opcodes, record types — the answer is neither
+  form. `packages/tls` compares `suite == 0x1301` at five sites in one file and names it
+  `suiteAes128Gcm()`; `packages/regex`'s thirteen `OP_*` and `packages/abi`'s nine `T_*` are the
+  same. That is the *closed set spelled openly* entry above, and this count is its denominator.
+- **For the rest** — a buffer size, a limit, a magic number with no siblings — `const` and a function
+  are the same value and the choice is style. Which would make it a sweep and not a decision, except
+  for one interaction.
+
+### The interaction, which is why it is here and not in a style guide
+
+`issues/lang/0269a` is open and recommends **requiring a `switch` case to be constant**, on the
+grounds that `spec/spec/control.md` justifies the 32-bit restriction by `br_table`, *"which cannot
+dispatch on a value it does not know"*. Under that rule `case RELAY_BEGIN:` compiles and
+`case relayBegin():` does not.
+
+So the two forms are not interchangeable after a decision that is already recommended, and 828 sites
+are on the side that stops working. Nothing dispatches on one today — there are about 30 `switch`
+sites in the tree — so this is a cost that arrives later, which is exactly when a sweep is most
+expensive.
+
+**What is actually being asked**: whether the function form is the idiom or the residue. The pages do
+not say, both are used, and one open issue is about to make them differ.

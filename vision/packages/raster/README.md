@@ -74,8 +74,9 @@ the other way round.
 `Rgba.hex(0x46D9C0FF)` keeps the literal a person writes, because that is how every graphics API
 takes a colour, and the drawing loops read fields.
 
-**`i32 cellWidth() { return 8; }` becomes `const i32 CELL_W`** — fourth package, noted and not
-argued.
+**`i32 cellWidth() { return 8; }` becomes `const i32 CELL_W`.** Noted here as a fourth sighting and
+counted later: it is the dominant idiom in the tree, 828 against 197 `const`s —
+[../../QUESTIONS.md](../../QUESTIONS.md).
 
 ## What could not be written
 
