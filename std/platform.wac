@@ -65,7 +65,8 @@
  * function again".
  *
  * This comment used to say "wac has no closures, so whatever `.wait()` calls has to be
- * inside the ticket". The first half is true and the second does not follow — context can
+ * inside the ticket". Both halves are wrong now and only the second was when this note was
+ * written: lambdas landed 2026-08-16 and capture by reference, `spec/cases/0191`. Context can
  * travel *beside* a funcref, as an unbound method reference with the receiver as its first
  * parameter (`[§wac-fnref-method-h9pd3wn]`). Read as written it says callbacks cannot carry
  * context in wac, which cost agent-b an hour of threading it by hand. Corrected on their
@@ -81,8 +82,10 @@
  */
 // The one type this world does not define itself. `Read` is in `core` — the compiler's own module —
 // because the streaming transforms in `gzip` and `stream` must name it too and have no business
-// depending on a capability world, and because with no closures in the language a second copy of it
-// could never be converted into this one. See wac's `design/0001`.
+// depending on a capability world, and because **nominal typing** means a second copy of it could
+// never be converted into this one. See wac's `design/0001`. (That reason was written as "with no
+// closures in the language", which is both out of date and never the reason: two declarations of a
+// shape are two types whatever a funcref can capture.)
 import { Read } from "core";
 
 /** A handler slot that does nothing, so a table can be filled before anything is registered. */
@@ -2334,9 +2337,16 @@ export struct Cli {
    * those applets send their output, so a capture that took only `write` would lose most of them
    * silently. That is exactly what the first working version of this did.
    *
-   * **Why this exists.** A shell has to run a program and keep its output, and in wac it cannot
-   * do that by handing the program a different `Cli`: there are no closures, so a substitute
-   * capability has nowhere to put what it collected. `packages/sh` therefore had its own small
+   * **Why this exists.** A shell has to run a program and keep its output, and when this was
+   * written it could not do that by handing the program a different `Cli`: there were no closures,
+   * so a substitute capability had nowhere to put what it collected.
+   *
+   * **That stopped being true on 2026-08-16.** Lambdas capture by reference — `spec/cases/0191`,
+   * and `spec/cases/0193 a capability can be faked with lambdas` is the case named for exactly
+   * this — so a substitute `Cli` whose `write` is a lambda closing over a `Buf` is writable now.
+   * Whether this should therefore go is `issues/system/0327a`; it is a decision about a shipped
+   * capability rather than a comment fix, and the argument below is the record of why it was
+   * built. `packages/sh` therefore had its own small
    * `cat`, `wc`, `grep` and nine more — implementations that existed only because the real ones
    * could not be called. With this, `packages/box`'s applets run in the shell unchanged, and one
    * `grep` serves both.
