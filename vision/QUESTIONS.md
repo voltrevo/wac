@@ -264,6 +264,43 @@ checkable at all"*, which for a union is still true by a different route, since 
 listed at the declaration — but it is true for a different reason, and that reason is what a
 `union` as a match arm would have to rest on.
 
+## A fault that is safe to log and unsafe to return
+
+`vision/packages/tor` is the first package here where refusing with a reason is a *security*
+decision rather than an ergonomic one. A relay that answers "your EXTEND2 failed check seven of
+eleven" has told a prober which check it failed; the same sentence in the relay's own log is exactly
+what an operator needs to debug an interop failure against C tor.
+
+So the fault wants two dispositions and `Result` gives it one. `Err(Invalid)` is a value the caller
+receives, and there is nothing in the type that says this one may be written down and not sent back.
+
+Three shapes, none of them obviously right:
+
+- **A convention.** The caller decides, and the type says nothing. Cheapest, and it is what every
+  language does, and it is how a reason ends up in a wire response by accident.
+- **Two error sets.** A function answers `Result<T, union<Public, Private>>` and the boundary that
+  serialises may only see the first. That is a real distinction the compiler could hold, and it
+  doubles the width of every signature that carries either.
+- **`secret` again.** `crypto/src/secret.wac` proposes a qualifier that propagates like `const`, and
+  *"a laundered `secret` is a key in a log line"* is the same sentence with the direction reversed —
+  here what must not escape is a fault rather than a key, and the machinery is the same flag on a
+  name. Worth noticing that the two proposals want opposite defaults: a secret must not reach a log,
+  a private fault must reach only a log.
+
+Nothing in `vision/` discusses this, and the packages that would need it — `tor`, `ssh`, `tls` — are
+the three largest after the compiler.
+
+## Spelling `Ok` when the value is `void`
+
+`Result<void, E>` depends on `design/lang/0014` D5, *"`void` becomes usable as a type argument"*,
+which is settled. What is not settled is how a body says it succeeded.
+
+`gzip`'s rewrite writes `return Ok;` — a variant constructor with no argument list, where `Ok` is
+declared `Ok(T value)` and `T` is `void`. The alternatives are `Ok()`, which reads as a call
+returning nothing rather than a variant carrying nothing, and `Ok(void)`, which names the type where
+a value goes. All three are ugly and one of them has to be chosen the first time somebody writes a
+fallible function that answers nothing — which is most of them.
+
 ## Whether vision's new words are keywords, which nobody had asked
 
 `try`, `gen`, `defer`, `schedule`, `yield`, `in`, `union` and `secret` are written all over these
