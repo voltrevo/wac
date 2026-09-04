@@ -845,6 +845,22 @@ differently cannot be composed without paying.**
 The third is the only one that treats the one-directional rule as information rather than as an
 obstacle, which is a point in its favour.
 
+**None of the three was taken, and the seam this entry predicted now exists.** Measured 2026-09-04:
+four call sites in `@/packages/box` pass a `Bytes` — pulled from a generator — straight into
+`Out.write`, whose parameter is `u8[]`. `u8[] → Bytes` is the direction the widening goes, so these
+are the way it does not, in `cat`, `tee` and `gunzip`, written on three different days by somebody
+who did not look.
+
+And a second write shape arrived while the question was open. `Files.create` answers a `Sink` whose
+`write` is `fn<Ticket<Result<void, NotGranted>>(Bytes)>`, against `Out.write`'s `fn<bool(u8[])>` —
+different parameter type *and* different return. `tee.wac` writes to one of each in the same loop and
+reads as though they were interchangeable.
+
+So the entry's own conclusion — that the mixed rule *"would have made this seam typecheck by
+construction"* — is now the only one of the three that also *repairs* something, since `Out` hands
+bytes over and `Sink` is handed them, which is exactly the split it proposes. That is an argument the
+entry could not make when it was written, because there was one write shape and no consumer.
+
 ## Two constructs the grammar has and no vetted page mentions (it was three)
 
 `GRAMMAR.ebnf` is a list of what vision adds — see the entry above for how incomplete it was in the

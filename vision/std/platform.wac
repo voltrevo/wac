@@ -363,10 +363,43 @@ export struct Env {
  *
  * The narrowest useful projection and the one `box` wants: of its 63 applets, the ten that never
  * touch a filesystem still write, so `Out` is what they should be handed.
+ *
+ * ## `write` answered `void` here and `bool` in the tree, and the `bool` has two jobs
+ *
+ * Found 2026-09-04 by diffing this file against `std/platform.wac` member by member — a thing that
+ * had never been done, because the capability *audit* compared names and not signatures. The shipped
+ * `Cli.write` is `fn[bool(u8[])]`, and its comment gives both reasons:
+ *
+ * > Answers with whether the write succeeded, which most callers discard. The type is not for them:
+ * > `fn[bool(u8[])]` is **the shape every streaming transform in this repo takes for its sink**, so
+ * > `write` can be handed to one directly instead of through an adapter — and `fn[bool(u8[])]` has
+ * > no spare parameter, so an adapter has nowhere to keep one.
+ *
+ * The first job has a named consumer: `packages/box/src/applets/yes.wac` is `while (cli.write(block))
+ * { … }`, and its header says the loop is the backpressure — *"every opcode parks the worker, so
+ * this is a round trip, and a block is already 4096 lines."* With `void` that program cannot be
+ * written at all.
+ *
+ * The second is the one that would have been missed twice: the return type **is** the sink type, so
+ * `write` composes with a transform without an adapter, and the reason an adapter is impossible is
+ * that a funcref has no spare parameter to keep context in. Restored.
+ *
+ * ## And this projection now has a rival that took the other side of an open question
+ *
+ * `Files.create` answers a `Sink`, whose `write` is `fn<Ticket<Result<void, NotGranted>>(Bytes)>`.
+ * So `vision/std` has **two** write shapes — different parameter type, different return — and
+ * nothing can be a sink for both. `@/packages/box/src/tee.wac` writes to one of each in the same
+ * loop and reads as though they were interchangeable.
+ *
+ * That is `../QUESTIONS.md`'s *which byte type a capability speaks* arriving as a real seam rather
+ * than a choice: four call sites in `box` pass a `Bytes` from a generator to this `u8[]` parameter,
+ * and `u8[] → Bytes` is the direction the widening goes. The entry offers three answers and says the
+ * mixed rule *"would have made this seam typecheck by construction"*; the seam that exists does not,
+ * and picking is not this file's to do alone.
  */
 export struct Out {
-  fn<void(u8[])>   write;
-  fn<void(u8[])>   writeErr;
+  fn<bool(u8[])>   write;
+  fn<bool(u8[])>   writeErr;
   fn<void(string)> log;
 }
 
