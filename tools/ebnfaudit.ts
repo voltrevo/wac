@@ -129,8 +129,20 @@ function repsOf(t: Term, into: Term[]): void {
   }
 }
 
-function main(): number {
-  const { all, rules } = readGrammar(GRAMMAR);
+function main(argv: string[]): number {
+  // A path, because until 2026-09-04 this audited `spec/spec/grammar.md` and nothing else — it took
+  // no argument and silently ignored one. So its very first check, *two rules with one name*, had
+  // never been pointed at `vision/GRAMMAR.ebnf`, which had nine of them: 47 entries under 38 names,
+  // with the later definition winning and the earlier one dead text carrying the comment that
+  // explained it. A check that exists, passes, and has never seen the artefact that needs it.
+  const which = argv.find((a) => !a.startsWith("--")) ?? GRAMMAR;
+  const { all, rules } = readGrammar(which);
+  // Nothing to audit is a failure, not a pass. This printed `0 rules, 0 distinct` and then `none`
+  // against every check, which reads exactly like a clean file.
+  if (all.length === 0) {
+    console.log(`no rules in ${which} — is it a grammar?`);
+    return 2;
+  }
   const seen = new Set<string>();
   const dup: string[] = [];
   for (const r of all) {
@@ -138,7 +150,7 @@ function main(): number {
     seen.add(r.name);
   }
 
-  console.log(`${all.length} rules, ${rules.size} distinct, from ${GRAMMAR}`);
+  console.log(`${all.length} rules, ${rules.size} distinct, from ${which}`);
 
   const say = (label: string, lines: string[]) => {
     console.log(`\n-- ${label} --`);
@@ -191,4 +203,4 @@ function main(): number {
   return 0;
 }
 
-Deno.exit(main());
+Deno.exit(main(Deno.args));

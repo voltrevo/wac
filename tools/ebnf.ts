@@ -44,6 +44,12 @@ export interface Rule {
 export function ebnfSource(text: string): { text: string; firstLine: number }[] {
   const out: { text: string; firstLine: number }[] = [];
   const lines = text.split("\n");
+  // A file with no fence in it *is* the block. `spec/spec/grammar.md` carries its grammar inside
+  // ```ebnf fences because it is prose with a grammar in it; `vision/GRAMMAR.ebnf` is a grammar, and
+  // asking for the fences in one returns nothing — which is how `tools/ebnfaudit.ts` came to report
+  // *0 rules, 0 distinct* and a clean bill of health for a file with nine duplicate definitions in
+  // it. Answering the whole text is what every caller meant.
+  if (!lines.some((l) => l.startsWith("```ebnf"))) return [{ text, firstLine: 1 }];
   let i = 0;
   while (i < lines.length) {
     if (lines[i].startsWith("```ebnf")) {
