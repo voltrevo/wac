@@ -668,12 +668,16 @@ bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  *   shape — `runScript` is a blocking call, so while a line ran nothing read the channel and the
  *   `^C` sat in the socket until the command it was meant to end had finished.
  *
- *   The fix is `Shell.askInterrupt`: a funcref and an `anyref` context, so a shell that is already
- *   busy can ask this session whether anything has arrived. `Conn.ready` is the non-blocking half —
- *   `waitAny(ids, 0)` over a read this connection already has outstanding — and `Keystrokes.arrived`
- *   below is the answer. The note that used to be here proposed "a funcref plus a token", which
- *   would have needed a registry to turn the token back into a connection; `anyref` is what the
- *   language grew since, and it carries the connection itself.
+ *   The fix is `Shell.askInterrupt`, so a shell that is already busy can ask this session whether
+ *   anything has arrived. `Conn.ready` is the non-blocking half — `waitAny(ids, 0)` over a read this
+ *   connection already has outstanding — and `Keystrokes.arrived` below is the answer.
+ *
+ *   **It is one `fn[bool()]` now.** It was a funcref *and* an `anyref` context, threaded through two
+ *   fields and rejoined by a downcast at each call, because the language had no way to say "this
+ *   method on this object" — and before that the note here proposed a funcref plus a token, which
+ *   would have needed a registry to turn the token back into a connection. `design/lang/0002` tier
+ *   one gave it a bound method reference, which carries the receiver inside the funcref, so
+ *   `keys.arrived` is the whole of it. See `packages/sh/src/exec.wac`'s field.
  *
  *   Type-ahead is kept: bytes read during a command go through the *same* `Line`, so a command typed
  *   while another runs is there at the next prompt.
@@ -681,8 +685,8 @@ bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
 /**
  * What a busy shell is handed so that it can ask this session whether a keystroke has arrived.
  *
- * The context half of `Shell.askInterrupt` — see the note there for why it is a funcref and an
- * `anyref` rather than a bound method. Everything the poll needs and nothing else: the connection to
+ * The receiver behind `Shell.askInterrupt` — `keys.arrived` is a bound method reference, so this is
+ * what rides inside the funcref. Everything the poll needs and nothing else: the connection to
  * read, the channel to echo on, and the *same* line discipline the session's own loop feeds, which
  * is what keeps type-ahead. A person who types `ls` while a command is running has typed `ls`, and
  * it must still be there at the next prompt.
