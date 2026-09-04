@@ -7,16 +7,21 @@
 //
 // ## Why this is grouped, which is measured rather than chosen
 //
-// The host exposes **50** capabilities. Counting them by what they reach:
+// The host exposes **62** capabilities. This count said 50 until 2026-09-04 and the twelve it was
+// short are `Page`'s: it was taken over `Core` and `Cli`, which is where the command-line ones are,
+// so the whole browser host was outside the derivation that produced the groups. `Page` is the ninth
+// projection and it is below. Counting them by what they reach:
 //
 //     file    14   readFile writeFile stat linkStat readDir mkdir remove rename …
 //     net      9   connect listen accept send recv bindDatagram sendTo …
 //     process  8   spawn spawnSelf execWithIn load call unload validated exitCode
 //     env      4   arg argCount env cwd
 //     io       3   write writeErr readStdin
+//     page    12   render setText setValue setStyle getValue on nextEvent title drawPixels …
 //     other   12   the clock, randomBytes, log, child bookkeeping, askInterrupt
 //
-// 38 of 50 in five groups. A flat `Sys` with fifty methods satisfies *authority arrives as one
+// 50 of 62 in six groups, and the sixth was found by re-running this count rather than by anybody
+// wanting it. A flat `Sys` with sixty-two methods satisfies *authority arrives as one
 // thing* and gives a caller no way to hand over less, which is the half of *no ambient
 // capabilities* that `packages/box` shows going unused: 63 applets all take `(Core, Cli, Fs, Args)`
 // and **ten never mention `fs`**, because a dispatcher calls them all through one shape.
@@ -32,7 +37,7 @@
 // `Node` comes from `core` for the reason `core/jsx.wac` gives: the compiler emits the constructor
 // calls, so *"a tree built in one repository and a renderer in another must name one type or nothing
 // composes"*. `Page.render` is the first capability anywhere to take one.
-import { Ticket, TicketBase, Continuation, Result, Queue, Bytes, Node } from "core";
+import { Ticket, TicketBase, Continuation, Result, Queue, Bytes, Node, AsyncGenerator } from "core";
 
 /** A capability the grant did not include. */
 export struct NotGranted { string what; }
@@ -169,6 +174,42 @@ export struct Files {
   fn<Ticket<Result<void,     NotGranted>>(string, bool)>    remove;
   fn<Ticket<Result<void,     NotGranted>>(string, string)>  rename;
   fn<Ticket<Result<Stat,     NotGranted>>(string)>          linkStat;
+
+  /**
+   * A file as a stream of chunks, and a stream that consumes them.
+   *
+   * **Added 2026-09-04, after every stream package had been written without one.**
+   * `@/packages/stream`, `@/packages/gzip` and `@/packages/unicode` are all transformers taking an
+   * `AsyncGenerator` and there was no producer for one anywhere: `scalars.wac`'s own comment says
+   * *"`E` is whatever the source fails with — a socket's failure, a file's, a fake's"* and a file's
+   * did not exist. Four packages about streaming, and the only thing that could start a stream was
+   * `Socket.recv`.
+   *
+   * **A generator per path, where the host has a global cursor.** The shipped shape is
+   * `openInput(path)` then `readChunk()` — no handle, so it selects *the* input for the whole
+   * program and one source may be open at a time. That is a capability with hidden state, which is
+   * the thing this projection exercise exists to remove, and it is why the answer here is not the
+   * host's two members renamed. `open` answers the stream; two calls answer two streams; nothing is
+   * *the* input.
+   *
+   * `readChunk`'s own type is worth keeping: it is `fn[Read()]` — the same `Data | End | Failed` sum
+   * `Socket.recv` has — so the host already distinguishes end from a short read here. It is `In.read`
+   * that is the odd one out, which `../QUESTIONS.md` records.
+   */
+  fn<Result<AsyncGenerator<Bytes, Result<void, NotGranted>>, NotGranted>(string)>  open;
+  fn<Result<Sink,                                            NotGranted>(string)>  create;
+}
+
+/**
+ * Somewhere to put chunks — the write half of `open`, and the half the host models worst.
+ *
+ * `Cli` has `openOutput(path)`, `outputError()` and `closeFeed(i32)`: a global current output, a
+ * failure read back by a *separate call* after the fact, and a close that takes an integer nothing
+ * else in the pair mentions. Three capabilities and no value tying them together.
+ */
+export struct Sink {
+  fn<Ticket<Result<void, NotGranted>>(Bytes)>  write;
+  fn<Ticket<Result<void, NotGranted>>()>       close;
 }
 
 /**

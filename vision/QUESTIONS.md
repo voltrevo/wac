@@ -1490,3 +1490,54 @@ a driver that can tell an unbounded run from a long one is a driver with a deadl
 describes a driver that cannot be written yet. `core/ticket.wac` does detect *never*, in `wait`, by
 seeing re-entry on a ticket only a continuation can answer; that detection is structural rather than
 temporal and is the right one. The comment on `advance` reads as though it were the same thing.
+
+## Every host capability against every projection, in one pass instead of five accidents
+
+The projections have been found wrong five times and every time by a different accident: `Files`
+short by two when `fs` was written, `Net` short by a shape when `quic` was, `Proc` short by its
+purpose, standard input with no projection at all, and `Clock` two of the host's three. Four of the
+five waited for somebody to pick a subject that wanted the missing thing.
+
+So the check was run properly on 2026-09-04 — every `fn[…]` member of `Core`, `Cli` and `Page`
+against every `fn<…>` member of every projection in `vision/std`.
+
+    host capabilities            62      (Core 8, Cli 42, Page 12)
+    vision projection members    38
+    host names with no vision member of that name   30
+
+**Thirty is not thirty holes.** Roughly ten are renames the exercise made on purpose — `readFile` is
+`Files.read`, `readStdin` is `In.read`, `randomBytes` is `Random.fill`, `accept` is
+`Listener.accepted`, `bindDatagram` is `NetWithDatagrams.bind`. What is left after taking those out
+is the answer, and it has a shape.
+
+**The whole streaming half of the filesystem is missing, and four packages needed it.**
+`openInput`, `readChunk`, `closeFeed`, `openOutput` and `outputError` have no counterpart:
+`Files.read(path)` answers the whole file and there is nothing else. Meanwhile
+`@/packages/stream`, `@/packages/gzip` and `@/packages/unicode` are all transformers taking an
+`AsyncGenerator` and **nothing in the tree produces one from a file** — `scalars.wac`'s own comment
+says *"`E` is whatever the source fails with — a socket's failure, a file's, a fake's"*, and a file's
+did not exist. Four packages about streaming and one possible source, `Socket.recv`.
+
+That one is now fixed in `vision/std` — `Files.open` answers a generator, `Files.create` answers a
+`Sink` — and the fix is not the host's two members renamed, because **the host's streaming is a
+hidden global**. `openInput(path)` then `readChunk()` with no handle between them means there is
+*the* input, one at a time, for the whole program. A projection assembled from that shape inherits
+it. `open` answering a stream per call is the same capability with the state given back to the
+caller, and it is the clearest case yet of the difference between projecting a host and copying one.
+
+**And the rest of what is missing is the process half**, which nothing has been written against:
+`load`, `call`, `unload` and `validated` — invoking another module, which is the *typed exports*
+entry above; `spawnSelf` and `execWithIn`; `pushChild`/`popChild`; `chmod` and `setExecutable`. Nine
+capabilities behind `Proc`'s two, in the projection that was already found *short by its purpose*.
+
+**What the pass is worth is not the list.** It is that it took an afternoon and would have found four
+of the five earlier defects before any of the packages that found them. `QUESTIONS.md` has an entry
+saying the four should have been found by *"checking against the host rather than waiting for a
+consumer"*, and then the fifth was found by a consumer anyway. The check is cheap, mechanical, and
+was not run until three more defects had been discovered one at a time.
+
+The open question is what to do with it, and there are two answers. Either the projections are
+**complete** covers of the host — in which case this is a gate, and something has to run it — or
+they are **what somebody has needed**, in which case the honest thing is to say so on the page and
+stop treating each gap as a discovery. `vision/std`'s header claims the first by implication, since
+it argues from a count of the host. Nothing has ever checked the claim.
