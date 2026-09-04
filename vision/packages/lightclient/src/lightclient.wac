@@ -1,0 +1,8 @@
+// The package, as one name. One function of 1,698 lines — see `../README.md`.
+
+export { validateUpdate, Header } from "./validate.wac";
+export { Store } from "./store.wac";
+export {
+  UpdateFault, NoBits, TooFewParticipants, MalformedHeader, SlotOrder, WrongPeriod, NotRelevant,
+  BadFinalityBranch, BadCommitteeBranch, BadSignature,
+} from "./fault.wac";

@@ -1,0 +1,35 @@
+// Why an update may not be applied — one member per rule the spec states.
+//
+// `validate_light_client_update` in `packages/lightclient/src/store.wac` answers a `bool` and has
+// fourteen `return false;` in it. That alone is the shape this exercise has met in five packages.
+// What makes this one different is in the function's own doc, and it is not about printing.
+
+/** The aggregate carries no participation bits at all. */
+export struct NoBits {}
+
+/** Fewer participants than `MIN_SYNC_COMMITTEE_PARTICIPANTS`. */
+export struct TooFewParticipants { i32 saw; i32 want; }
+
+/** An attested or finalized header that is not there, or whose slot does not read. */
+export struct MalformedHeader { bool attested; }
+
+/** The spec's chain: `current_slot >= signature_slot > attested_slot >= finalized_slot`. */
+export struct SlotOrder { i64 current; i64 signature; i64 attested; i64 finalized; }
+
+/** The signature's committee period is not the store's, nor the one after it. */
+export struct WrongPeriod { i64 signature; i64 store; bool nextKnown; }
+
+/** The update neither advances the finalized header nor supplies the committee the store lacks. */
+export struct NotRelevant { i64 attested; i64 store; }
+
+/** The finality branch does not prove the finalized header against the attested state. */
+export struct BadFinalityBranch {}
+
+/** The committee branch does not prove the next committee against the attested state. */
+export struct BadCommitteeBranch {}
+
+/** `FastAggregateVerify` said no. */
+export struct BadSignature {}
+
+export union<NoBits, TooFewParticipants, MalformedHeader, SlotOrder, WrongPeriod, NotRelevant,
+             BadFinalityBranch, BadCommitteeBranch, BadSignature> UpdateFault;

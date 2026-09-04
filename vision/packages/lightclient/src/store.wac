@@ -1,0 +1,16 @@
+// The store — **not rewritten, elided so `validate.wac` has something to import.**
+//
+// `packages/lightclient/src/store.wac` is 253 of its lines the validator and the rest the store's
+// own transitions, which are the spec's `apply_light_client_update` and its bookkeeping. Nothing in
+// them is a shape this exercise has anything to say about: they assign fields in an order the spec
+// fixes.
+
+import { Bytes } from "core";
+import { Header } from "./validate.wac";
+
+export struct Store {
+  Header finalizedHeader;
+  Bytes currentCommittee;
+  /** `null` until an update supplies it, which is one of the two things an update may be *for*. */
+  Bytes? nextCommittee;
+}

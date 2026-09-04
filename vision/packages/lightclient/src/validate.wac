@@ -1,0 +1,149 @@
+// `validate_light_client_update`, answering which rule refused it.
+//
+// The order is the spec's, and the ordering is load-bearing in one place: participation and the slot
+// relations are checked *before* any signature, so a malformed update is rejected without paying for
+// a pairing. Everything here is supplied by an untrusted peer.
+//
+// ## The three checks that cannot be observed, and why the return type is the reason
+//
+// The shipped function's doc names its own weakest point, which is not something many do:
+//
+// > ## Three of these checks cannot be observed from outside
+// >
+// > Deleting any one of them changes no verdict on any input, and `test/sync_wac.test.ts` says so
+// > rather than pretending otherwise — each is subsumed by a later cryptographic check … But **an
+// > unobservable check is exactly the kind that rots unnoticed**, so it is named here as one.
+//
+// The three are `attested_slot >= finalized_slot`, the signature-period window, and
+// `MIN_SYNC_COMMITTEE_PARTICIPANTS`. Each is subsumed: an update that fails one of them also fails
+// the branch or the signature below, so both spellings answer `false`.
+//
+// **They are indistinguishable because the answer is a `bool`.** With a named reason, an update that
+// violates the slot order answers `Err(SlotOrder(…))`, and the same update with that check deleted
+// answers `Err(BadFinalityBranch)`. Two different answers, so the check is observable.
+//
+// Being precise about what that does and does not buy, because the difference is the whole of the
+// claim:
+//
+//   * It does **not** make the existing vectors kill the mutant. The vendored updates are valid; none
+//     of them reaches the check at all, and `Err` versus `Err` on inputs that never fail is still no
+//     difference.
+//   * It makes the distinguishing test **writable**. Today a hand-built update with the slots out of
+//     order is rejected either way and no assertion can tell the two builds apart — so the test
+//     cannot be written, not merely has not been. With a reason it is one `Err(is SlotOrder)`.
+//
+// So the type does not test the check; it stops the check from being untestable. That is a smaller
+// claim than *the type fixes it* and a larger one than *the type prints better*, and it is the case
+// this package makes better than any other here, because it did the work of finding out and wrote
+// the answer down.
+//
+// **And the package already uses the other two techniques**, which is what makes the third group a
+// gap rather than an oversight. Two checks the vectors also cannot see — `>= 2/3` and `>= 1/3`, where
+// *"a safety threshold of `max/2` and of zero behave identically"* — were pulled out into
+// `hasSupermajority`, *"a named function with its own boundary test at 21 and 22 of 32"*. That is the
+// right answer for a threshold: extract and test directly. It is not available for a *rejection*,
+// because a rejection's whole observable effect is the verdict — which is the thing a `bool` flattens.
+
+import { Result, Bytes } from "core";
+import {
+  UpdateFault, NoBits, TooFewParticipants, MalformedHeader, SlotOrder, WrongPeriod, NotRelevant,
+  BadFinalityBranch, BadCommitteeBranch, BadSignature,
+} from "./fault.wac";
+import { Store } from "./store.wac";
+
+const i32 MIN_SYNC_COMMITTEE_PARTICIPANTS = 1;
+
+/**
+ * Whether `update` may be applied to `store`.
+ *
+ * `Ok` is *apply it*. Every `Err` names the rule, and the order of the checks is the spec's — the
+ * cheap ones first, so an untrusted peer cannot make this pay for a pairing by sending rubbish.
+ */
+export Result<void, UpdateFault> validateUpdate(const Store store, Bytes update, i64 currentSlot,
+                                                Bytes genesisValidatorsRoot) {
+  Bytes bits = try aggregateBits(update);
+  if (bits.len() == 0) { return Err(NoBits()); }
+  i32 seen = countBits(bits);
+  if (seen < MIN_SYNC_COMMITTEE_PARTICIPANTS) {
+    return Err(TooFewParticipants(seen, MIN_SYNC_COMMITTEE_PARTICIPANTS));
+  }
+
+  Header? attested = headerOf(update, true);
+  Header? finalized = headerOf(update, false);
+  if (attested is null)  { return Err(MalformedHeader(true)); }
+  if (finalized is null) { return Err(MalformedHeader(false)); }
+  i64 attestedSlot = attested!.slot;
+  i64 finalizedSlot = finalized!.slot;
+  i64 signatureSlot = signatureSlotOf(update);
+
+  // `current_slot >= signature_slot > attested_slot >= finalized_slot`, all four at once. One member
+  // carrying all four, because a caller looking at a rejected update wants the numbers rather than
+  // which of the three comparisons lost.
+  if (!(currentSlot >= signatureSlot && signatureSlot > attestedSlot
+        && attestedSlot >= finalizedSlot)) {
+    return Err(SlotOrder(currentSlot, signatureSlot, attestedSlot, finalizedSlot));
+  }
+
+  i64 storeSlot = store.finalizedHeader.slot;
+  i64 storePeriod = periodAtSlot(storeSlot);
+  i64 signaturePeriod = periodAtSlot(signatureSlot);
+  bool nextKnown = store.nextCommittee !is null;
+  bool inWindow = nextKnown
+    ? (signaturePeriod == storePeriod || signaturePeriod == storePeriod + 1)
+    : signaturePeriod == storePeriod;
+  if (!inWindow) { return Err(WrongPeriod(signaturePeriod, storePeriod, nextKnown)); }
+
+  // Relevance: it must advance the finalized header, or supply the committee the store lacks.
+  i64 attestedPeriod = periodAtSlot(attestedSlot);
+  bool suppliesCommittee = !nextKnown && isCommitteeUpdate(update) && attestedPeriod == storePeriod;
+  if (!(attestedSlot > storeSlot || suppliesCommittee)) {
+    return Err(NotRelevant(attestedSlot, storeSlot));
+  }
+
+  if (!provesFinality(update, attested!)) { return Err(BadFinalityBranch()); }
+  if (isCommitteeUpdate(update) && !provesCommittee(update, attested!)) {
+    return Err(BadCommitteeBranch());
+  }
+  if (!verifies(store, update, genesisValidatorsRoot)) { return Err(BadSignature()); }
+  return Ok;
+}
+
+/** A beacon header, as much of it as this walk reads. */
+export struct Header { i64 slot; Bytes stateRoot; }
+
+Result<Bytes, UpdateFault> aggregateBits(Bytes update) { … }
+Header? headerOf(Bytes update, bool attested) { … }
+i64 signatureSlotOf(Bytes update) { … }
+i64 periodAtSlot(i64 slot) { … }
+i32 countBits(Bytes bits) { … }
+bool isCommitteeUpdate(Bytes update) { … }
+bool provesFinality(Bytes update, const Header attested) { … }
+bool provesCommittee(Bytes update, const Header attested) { … }
+bool verifies(const Store store, Bytes update, Bytes genesisValidatorsRoot) { … }
+
+// ## What could not be written
+//
+// **The three subsumed checks are still there and the reason for keeping them is now unstated.** The
+// shipped doc keeps them for two reasons — *"each rejects for a few hundred nanoseconds what would
+// otherwise cost a pairing"*, and not wanting this function's correctness to depend on
+// `packages/bls` refusing an empty key list. Both survive here. What does not survive is the *third*
+// sentence, that they are unobservable, because they are not any more — and nothing in this file
+// records that they used to be, except this note. A rewrite that improves a property silently makes
+// the next reader unable to tell the property was ever in doubt.
+//
+// **A `bool` for each of the four cryptographic checks.** `provesFinality`, `provesCommittee` and
+// `verifies` all answer `bool` and this file turns each into one `Err` member, so the same collapse
+// happens one call down: a finality branch that is the wrong *length* and one that hashes to the
+// wrong root are both `BadFinalityBranch`. Stopping here is a choice about where the boundary of
+// this rewrite is, and it is the choice the shipped code made at the level above — which is worth
+// noticing, because the argument for going further is the same argument, and it does not obviously
+// terminate. `@/packages/mpt` is the package that took it one level down and found its own version
+// of the question.
+//
+// **Nothing says the slot relations are a chain.** `SlotOrder` carries all four numbers because a
+// caller wants them, and the *type* still cannot say `current >= signature > attested >= finalized`
+// — so a member with four `i64`s is a comment with fields. The alternative is three members, which
+// answers *which comparison* and loses *what the numbers were*, and the honest reading is that this
+// wants both: a rejection is a claim about an ordering, and an ordering is a relation over a tuple
+// that this language has no way to name. `../../../QUESTIONS.md`'s first entry, from a fourth
+// direction.
