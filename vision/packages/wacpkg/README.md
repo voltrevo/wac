@@ -96,11 +96,16 @@ reader's *policy* — one flag, no language surface — or something a project *
 
 ## What could not be written
 
-**A two-part map key.** `mapped(from, spec)` is a linear scan, in the shipped resolver and here. A
-`Map<string, string>` needs the pair as one key, which means concatenation with a separator, which
-means a character that cannot appear in a path — and there is none. `../../DECISIONS.md`'s *references
-are comparable but not hashable* is the rule underneath. Third package to want this and the first
-where both parts are arbitrary strings.
+**A two-part map key.** `mapped(from, spec)` is a linear scan, in the shipped resolver and here.
+`../../DECISIONS.md`'s *references are comparable but not hashable* means a `Map` key has to be built
+out of the two strings, and `\0` does it — no path contains one. So the answer exists; what is
+missing is that **the key is a string a caller can build wrongly**, and nothing relates
+`key(from, spec)` to the map it belongs to.
+
+One package wants it: this one. [`@/packages/wac`](../wac/)'s build cache composes a key from four
+things and gets away with it by **hashing** them, so the composite is lossy and a wrong lookup is a
+cache miss. Here a wrong lookup is a wrong file. **A composite key is cheap exactly when the lookup
+is allowed to be wrong**, which is the useful form of this and is not a count.
 
 **A `Mapping` is one value where the resolver has three parallel arrays.** `mapFrom`, `mapSpec`,
 `mapTo`, keyed by position — the shape [`@/packages/webrtc`](../webrtc/) found five of in one struct,

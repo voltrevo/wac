@@ -114,10 +114,22 @@ string arithmetic(string from, string spec, string base) { … }
 //
 // **`Known.mapped` is a linear scan and the shipped one is too.** Three parallel arrays or one list
 // of structs, the lookup is *walk until `from` and `spec` both match*. A `Map<string, string>` keyed
-// on the pair needs a composite key, and `../../../DECISIONS.md` says references are comparable but
-// not hashable — so the key is a concatenation with a separator, and a separator is a character that
-// cannot appear in a path. There is no such character. This is the third package to want a
-// **two-part map key** and the first where the parts are both arbitrary strings.
+// on the pair needs a **two-part key**, and `../../../DECISIONS.md` says references are comparable
+// but not hashable, so the key has to be built out of the two strings.
+//
+// A concatenation with `\0` works — no path contains one — and that is the answer, which is worth
+// saying because the first draft of this note said *there is no such character* and there plainly
+// is. What is actually missing is smaller: **the key is then a string a caller can build wrongly**,
+// by forgetting the separator or choosing a different one, and nothing relates
+// `key(from, spec)` to the map it is for. A `Map<K, V>` whose `K` is a struct would, and that is
+// hashing a reference, which the decision declines for a stated reason.
+//
+// One package wants this, this one. `@/packages/wac/src/buildcache.wac` composes a key from four
+// things and gets away with it because it **hashes** them — *"the sources, path and text together,
+// which is what the key eats a pair at a time"* — so the composite is lossy and a lookup that is
+// occasionally wrong is a cache miss. Here it is a resolution, and a wrong answer is a wrong file.
+// That is the distinction, and it is more useful than a count: **a composite key is cheap when the
+// lookup is allowed to be wrong.**
 //
 // **Nothing distinguishes *no mapping* from *mapped to nothing*.** `mapped` answers `string?` and
 // the shipped one answers `""`, which is the sentinel-in-the-value's-own-range shape again — an
