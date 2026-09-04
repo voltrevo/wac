@@ -47,7 +47,7 @@
 // the process's. `../../../QUESTIONS.md` has the three ways out.
 
 import { Result, Ticket, Bytes, Vec } from "core";
-import { Proc, NotGranted } from "std";
+import { Proc, Child, Grant, NotGranted } from "std";
 
 /**
  * What a child may do — the serialisable form of authority.
@@ -93,13 +93,19 @@ import { Proc, NotGranted } from "std";
  * one part of a grant that is neither a category nor a root — `../../../QUESTIONS.md`'s *two
  * dimensions* entry has room for a third and does not have one.
  */
-export enum Grant {
-  Read,       // readFile, stat, readDir, openInput on a path
-  Write,      // writeFile, mkdir, remove, rename, openOutput to a path
-  Net,        // the child's own sockets, not the parent's
-  Env,        // env, which reports every variable unset without it
-  Run         // exec — the one authority the narrowing exists for
-}
+/*
+ * **`Grant` moved to `std/platform.wac` on 2026-09-04, and so did `Child`.**
+ *
+ * They were declared here and named in `Proc.spawn`'s signature, in a `std` that imports nothing
+ * from a package — so the capability layer's own signature used two names it could not resolve.
+ * That is the layering rule broken in the one place it had been *used* to justify a hole: three
+ * entries of `../../../QUESTIONS.md` want `Files.open` to answer `@/packages/fs`'s `Fault` and are
+ * told `std` is below the packages, which was true for `Fault` and not for these two.
+ *
+ * Measured before moving them: of the 49 funcref members in `std/platform.wac`, exactly one had a
+ * type from a package in its signature. One of forty-nine, so the rule holds and the types came
+ * down.
+ */
 
 /**
  * Start `wasm` with at most `want`.
@@ -128,8 +134,9 @@ export enum Grant {
 // that only proves you may spawn is a `Proc` any holder can spawn *with*, through any function that
 // asks for one, which is what a capability is supposed to stop.
 
-/** Funcrefs, for `vision/core/ticket.wac`'s reason — and a spawned child is a thing a test fakes. */
-export struct Child {
-  fn<Ticket<Result<i32,  NotGranted>>()>       exit;
-  fn<Ticket<Result<void, NotGranted>>(Bytes)>  send;
-}
+/*
+ * `Child` is in `std/platform.wac` too, and it gained the two members this file's own note asked
+ * for: it was `exit` and `send`, and *"a shell spawns to get something, so a `Child` with no read is
+ * a capability for programs whose output nobody wants"*. It has `out` and `err` as streams now.
+ * Funcrefs still, for `vision/core/ticket.wac`'s reason — a spawned child is a thing a test fakes.
+ */

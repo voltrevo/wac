@@ -52,7 +52,7 @@
 // `Node` comes from `core` for the reason `core/jsx.wac` gives: the compiler emits the constructor
 // calls, so *"a tree built in one repository and a renderer in another must name one type or nothing
 // composes"*. `Page.render` is the first capability anywhere to take one.
-import { Ticket, TicketBase, Continuation, Result, Queue, Bytes, Node, AsyncGenerator } from "core";
+import { Ticket, TicketBase, Continuation, Result, Queue, Bytes, Node, Vec, AsyncGenerator } from "core";
 
 /** A capability the grant did not include. */
 export struct NotGranted { string what; }
@@ -316,6 +316,59 @@ export struct Net {
 }
 
 /**
+ * What a child may be given. **Declared here since 2026-09-04, and in `@/packages/sh` before that.**
+ *
+ * The move is the layering rule applied to its own counterexample. `Proc.spawn`'s signature named
+ * `Child`, `Grant` and `Vec<Grant>`, all three declared in `@/packages/sh/src/exec.wac`, in a file
+ * that imports nothing from a package — so those names resolved to nothing at all.
+ *
+ * That mattered beyond the dangling name, because **the same rule is what justifies a hole three
+ * entries of `../QUESTIONS.md` complain about**: `Files.open` answers `Result<…, NotGranted>` and
+ * cannot answer `@/packages/fs`'s `Fault`, on the grounds that `std` is below the packages. It is,
+ * for `Fault`. It was not, here, for two types in one signature — so the rule was being enforced
+ * against one caller and broken for another, and only the second had noticed.
+ *
+ * A measurement settles which way to resolve it: of the 49 funcref members in this file, the types
+ * appearing in their signatures are `string`, integers, `Bytes`, `Result`, `Ticket`,
+ * `AsyncGenerator`, `Vec`, `Node`, and types this file declares. Every one of those is `core` or
+ * `std` — **below** the capability layer — except `Child` and `Grant`. One member of forty-nine, so
+ * the rule holds and these two come down rather than the rule going.
+ *
+ * (`Page.render(Node)` is *not* the exception, which this file has said twice and
+ * `../QUESTIONS.md` repeated. `Node` is declared in `core/jsx.wac`, below `std`. What is true of it
+ * is a different claim — that it is the first capability to take a **struct** rather than scalars —
+ * and the two were easy to conflate because one file said both.)
+ */
+export enum Grant {
+  Read,       // readFile, stat, readDir, openInput on a path
+  Write,      // writeFile, mkdir, remove, rename, openOutput to a path
+  Net,        // the child's own sockets, not the parent's
+  Env,        // env, which reports every variable unset without it
+  Run         // exec — the one authority the narrowing exists for
+}
+
+/**
+ * A running child.
+ *
+ * **With the reads it did not have.** The version in `@/packages/sh` was `exit` and `send`, and its
+ * own note said so: the shipped `Child` carries `handle`, `errHandle` and `fsHandle`, and *"a shell
+ * spawns to get something, so a `Child` with no read is a capability for programs whose output
+ * nobody wants"*. `@/packages/sh/src/pipeline.wac` avoided noticing because it runs its stages with
+ * `Proc.run` and never spawns one.
+ *
+ * `out` and `err` are streams for the reason `In` is one: a generator ending is the loop ending, and
+ * the alternative is a ticket and a sentinel drawn from the value's own range.
+ */
+export struct Child {
+  fn<Ticket<Result<i32,  NotGranted>>()>       exit;
+  fn<Ticket<Result<void, NotGranted>>(Bytes)>  send;
+  /** Standard output, as it arrives. */
+  fn<AsyncGenerator<Bytes, Result<void, NotGranted>>()> out;
+  /** Standard error, separately — a pipeline that merged them could not put one on a terminal. */
+  fn<AsyncGenerator<Bytes, Result<void, NotGranted>>()> err;
+}
+
+/**
  * Starting things — which, until 2026-09-04, it could not do.
  *
  * **This had one method and it was `exitCode`.** The host has seven process capabilities and the
@@ -328,24 +381,12 @@ export struct Net {
  */
 export struct Proc {
   /**
-   * **`Child` and `Grant` are declared in `@/packages/sh/src/exec.wac` and this file imports
-   * nothing from a package.** Found 2026-09-04 by the signature diff.
+   * Start `wasm` with at most `want`.
    *
-   * That is the layering rule broken in the one place it has been *used* to justify a hole.
-   * `Files.open` answers `Result<…, NotGranted>` and cannot answer `@/packages/fs`'s `Fault`, and the
-   * reason given — in this file, three entries of `../QUESTIONS.md`, and twice in `@/packages/box` —
-   * is that **`std` is below the packages**. It is, for `Fault`. It is not, here, for two types in
-   * one signature.
-   *
-   * So either the rule holds and these two belong in `std`, or it does not and `Files` may answer a
-   * union the packages define. The second is what every entry complaining about `NotGranted` wants
-   * and none of them noticed it was already being done.
-   *
-   * **And a `Child` you cannot read from.** It is `exit` and `send`; the shipped one carries
-   * `handle`, `errHandle` and `fsHandle` — a child's output, its standard error and its filesystem.
-   * A shell spawns to *get* something, so a `Child` with no read is a capability for programs whose
-   * output nobody wants. `@/packages/sh/src/pipeline.wac` avoids noticing because it runs its stages
-   * with `Proc.run`, in this instance, and never spawns one.
+   * **At most.** The host intersects `want` with what this program holds, so asking for `Run` from a
+   * program that has not got it is not an error and not a refusal — it is a child without `Run`. A
+   * request rather than an instruction, which is what makes a chain of spawns monotonically
+   * narrowing however careless the middle of it is.
    *
    * ## Three of six parameters, and two of the three were added to fix something
    *

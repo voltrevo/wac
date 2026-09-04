@@ -4870,10 +4870,29 @@ one — so:
 **a value that appears in a capability's signature must be declared at or below the capability layer,
 whatever layer first needed it.**
 
-That is checkable. `vision/std` declares 62 capability members; the types in their signatures are
-`string`, integers, `Bytes`, and types `std` itself declares — with `Page.render(Node)` the single
-exception, which `std/platform.wac` flags itself. Nothing enforces it and nothing would have to: a
-package type in a `std` signature is an import from a package into `std`, which is a cycle.
+That is checkable, and it was checked the same day. `vision/std/platform.wac` has **49 funcref
+members**; the types appearing in their signatures are `string`, integers, `Bytes`, `Result`,
+`Ticket`, `AsyncGenerator`, `Vec`, `Node`, and types the file itself declares. Every one of those is
+`core` or `std` — below the capability layer — **except `Child` and `Grant`**, which were declared in
+`@/packages/sh/src/exec.wac` and named in `Proc.spawn`'s signature by a file that imports nothing
+from a package. One member of forty-nine, so the rule held and the two types came down rather than
+the rule going.
+
+That one mattered more than a dangling name, because **the same rule is what justifies a hole three
+entries of this file complain about**: `Files.open` answers `Result<…, NotGranted>` and cannot answer
+`@/packages/fs`'s `Fault`, on the grounds that `std` is below the packages. It is, for `Fault`. It
+was not, in one signature — so the rule was being enforced against one caller and quietly broken for
+another, and only the caller it was enforced against had noticed.
+
+**`Page.render(Node)` is not the exception**, which `std/platform.wac` implied twice and this file
+repeated. `Node` is declared in `core/jsx.wac`, below `std`. What is true of it is a *different*
+claim — that it is the first capability to take a **struct** rather than scalars — and the two were
+easy to conflate because one file made both.
+
+Nothing enforces the rule and nothing would have to: a package type in a `std` signature is an import
+from a package into `std`, which is a cycle. What is missing is only that an unresolvable name in a
+signature was not an error — the file-level import check sees `"core"` and is satisfied, and the
+name-level one only reads import lists, not uses.
 
 ### And it is a different fault from the one it looks like
 
