@@ -156,3 +156,15 @@ file, and no entry mentions the form. The real `packages/json` writes `i32 ERR_D
 — a function returning a literal — which suggests there is no spelling today rather than that nobody
 wanted one.
 
+## Naming a union, and whether a union may contain one
+
+`vision/packages/http` is unwritable without both. It declares
+`export union<BadMethod, BadTarget, …> RequestFault;` because the alternative is repeating ten
+members at every signature, and then `export union<RequestFault, BadStatus> ResponseFault;` because
+the whole point is that the response parser says what it *adds*. The second relies on the first's
+members flattening into it, which set semantics imply and nothing states.
+
+`union<…>` appears all over the pages as a type expression and never with a name. Whether the name
+is a distinct type or an alias decides the related question about a union as a match arm — which
+this package also wants, for the one place that turns a fault into a message.
+

@@ -1,0 +1,71 @@
+// Parsing an HTTP/1.1 request off the front of a buffer.
+//
+// The byte-level work is the original's and is not repeated here — the RFC does not change because
+// the language did. What changed is the shape of the answer and where the shared helpers live.
+
+import { Headers } from "./headers.wac";
+import { RequestFault, BadRequestLine, BadMethod, TooLarge } from "./fault.wac";
+import { findCrlf, isDigit, isToken } from "./bytes.wac";
+
+export struct Request {
+  u8[] method;
+  u8[] target;
+  i32 minor;                        // the `x` of HTTP/1.x
+  Headers headers;
+  u8[] body;
+  i32 consumed;                     // bytes of the input this message used
+}
+
+/**
+ * Complete, refused, or not yet — and it stays three named cases.
+ *
+ * The obvious collapse is `Result<Request?, RequestFault>` with a null meaning *keep reading*, and
+ * it is exactly the cute encoding `vision/README.md` refuses: two of the three outcomes would share
+ * a constructor and a caller could handle the failure, forget the null, and quietly treat a partial
+ * request as a complete one. Only `Bad` changed — it carried an `i32` and now carries what was
+ * wrong.
+ */
+export enum Parsed {
+  Ok(Request request),
+  Bad(RequestFault why),
+  Incomplete
+}
+
+/**
+ * Parse a request from the front of `input`.
+ *
+ * `maxBody` caps the body this will assemble; a longer one is refused rather than buffered, so a
+ * `Content-Length: 999999999999` costs nothing.
+ */
+export Parsed parseRequest(u8[] input, i64 maxBody) {
+  // RFC 9112 §2.2: a server should ignore at least one empty line before the request line. Old
+  // clients emit a stray CRLF after a body, and a parser that treats it as a malformed request line
+  // drops the connection on the message that follows it.
+  i32 begin = skipOneBlankLine(input);
+
+  i32? eol = findCrlf(input, begin);
+  if (eol is null) { return Parsed.Incomplete; }
+
+  match (requestLine(input, begin, eol!)) {
+    Ok(line):  { … }
+    Err(why):  { return Parsed.Bad(why); }
+  }
+  …
+}
+
+/**
+ * The request line, or which part of it was wrong.
+ *
+ * A helper answering a `Result` is what lets `parseRequest` keep one `Bad` arm instead of the
+ * original's eleven `return Parsed.Bad(ERR_…())` sites, each of which had to pick the right number.
+ */
+Result<RequestLine, union<BadRequestLine, BadMethod, BadTarget, BadVersion>>
+requestLine(u8[] input, i32 lo, i32 hi) { … }
+
+struct RequestLine {
+  u8[] method;
+  u8[] target;
+  i32 minor;
+}
+
+i32 skipOneBlankLine(u8[] input) { … }

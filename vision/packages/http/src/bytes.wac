@@ -1,0 +1,25 @@
+// The byte-level predicates both message parsers need.
+//
+// `findCrlf` and `isDigit` are written **twice** in the original, identically, once in
+// `request.wac` and once in `incoming.wac`, both private. Nothing in the language stopped them
+// being shared; they were duplicated because the two files were written apart and neither wanted to
+// export a helper the other would then depend on.
+//
+// That is worth saying because it is *not* a language finding. It is the one thing in this package
+// a rewrite fixes for free, and the redesign gets no credit for it.
+
+/** The index of the next CRLF at or after `at`, or null if the buffer does not have one yet. */
+export i32? findCrlf(u8[] s, i32 at) {
+  for (i32 i = at; i + 1 < s.len(); i++) {
+    if (s[i] == 13 && s[i + 1] == 10) { return i; }
+  }
+  return null;
+}
+
+export bool isDigit(u8 c) { return c >= '0' && c <= '9'; }
+
+/** RFC 9110 §5.6.2 tchar. */
+export bool isToken(u8 c) { … }
+
+/** Optional whitespace: space or horizontal tab. */
+export bool isOws(u8 c) { return c == ' ' || c == 9; }

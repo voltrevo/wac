@@ -1,0 +1,55 @@
+// What can be wrong with a message.
+//
+// The original spells these as exported functions returning literals — `ERR_FRAMING()` is `8` — and
+// the numbering is **shared across two files by hand**: `request.wac` uses 1 to 10 and
+// `incoming.wac` opens with `export i32 ERR_STATUS() { return 11; }`. Nothing enforces that, nothing
+// would notice a collision, and a third module parsing a third kind of message has to read both
+// files to find out where to start.
+//
+// So this is the case the error-set design was for. Each fault is a struct that exists on its own
+// terms; a function says which ones it can produce by naming a union of them; and a module that
+// adds one composes rather than renumbers.
+
+/** The method is not a token. */
+export struct BadMethod { }
+/** An empty or malformed request target. */
+export struct BadTarget { }
+/** Not `HTTP/1.x`. */
+export struct BadVersion { }
+/** The request line is not three parts and a CRLF. */
+export struct BadRequestLine { }
+/** A non-token byte in a header name, or a space before the colon. */
+export struct BadHeaderName { }
+/** A control byte in a header value. */
+export struct BadHeaderValue { }
+/** A continuation line. Obsolete since RFC 7230 and a request-smuggling vector. */
+export struct ObsFold { }
+/** `Content-Length` and `Transfer-Encoding` disagree, so the body length is ambiguous. */
+export struct AmbiguousFraming { }
+/** A malformed chunk header, size or terminator. */
+export struct BadChunk { }
+/** Past a configured limit. */
+export struct TooLarge { i64 wanted; i64 limit; }
+/** The status line is not `HTTP/1.x SSS …`. */
+export struct BadStatus { }
+
+/**
+ * What parsing a *request* can fail with.
+ *
+ * Written out rather than inferred, because this is the boundary a server states: a union left to
+ * inference here would widen silently when somebody added a check.
+ */
+export union<
+  BadMethod, BadTarget, BadVersion, BadRequestLine,
+  BadHeaderName, BadHeaderValue, ObsFold,
+  AmbiguousFraming, BadChunk, TooLarge
+> RequestFault;
+
+/**
+ * And a *response*: the same set, plus the one thing only a response can get wrong.
+ *
+ * This is the line that replaces the shared numbering. `incoming.wac` names what it adds and says
+ * nothing about what `request.wac` already had — no wrapper enum, no conversion at the boundary, and
+ * adding a fault to `RequestFault` reaches here without this file being touched.
+ */
+export union<RequestFault, BadStatus> ResponseFault;
