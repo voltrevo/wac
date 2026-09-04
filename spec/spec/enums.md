@@ -579,18 +579,20 @@ costs 0.9 ns more than an integer. Neither is worth the representation split or 
 Everything else once listed here is implemented: `match` as an expression (0026), methods
 (0028), and narrowing outside `match` in its restricted `if (x is T)` form (0029).
 
-**No nested patterns.** `case Node(Leaf(v), r)` is not accepted. Patterns are one
-level deep.
-
-> Three more paragraphs stood here — *not an expression*, *no methods on enums*, and *no narrowing
-> outside `match`* — each in the present tense, and each superseded by the sentence above them. All
-> three are implemented and were measured before this was cut: an enum method whose body is a
-> `match` **expression** checks clean, and `if (s is Circle) { return s.r; }` compiles. Only nested
-> patterns are still absent, which is why that one is still here.
+> Four paragraphs stood here and all four are gone. Three — *not an expression*, *no methods on
+> enums*, *no narrowing outside `match`* — were in the present tense and superseded by the sentence
+> above them; all three are implemented, measured before cutting. The fourth, *no nested patterns*,
+> is still true and was a **third** statement of it: *What this is not* above already says it with
+> the argument and the issue number.
 >
-> The *no narrowing* paragraph was the one worth removing: it carried an argument —
-> *"that would be flow-sensitive typing, which needs an analysis rather than a scope rule"* — that
-> reads as a decision rather than as a stale note, and `structs.md` documents the feature.
+> The *no narrowing* one was worth removing rather than leaving as history, because it carried a
+> rationale — *"that would be flow-sensitive typing, which needs an analysis rather than a scope
+> rule"* — that reads as a decision, while `structs.md` documents the feature and
+> `issues/lang/closed/0029` implemented it.
+>
+> Every claim that survived elsewhere in this file carries a `[§…]` tag and is checked by the fence
+> tests. Every one that went stale here did not. A rule written twice drifts in the copy nothing
+> runs.
 
 **No integer representation for payload-less enums.** An enum whose variants all
 lack payloads could compile to a plain `i32` rather than heap-allocated structs. That
