@@ -1,0 +1,131 @@
+// `.gitignore` matching — picked because nothing predicted anything about it.
+//
+// The last three files this directory wrote were chosen because a README said they would find
+// nothing, and all three found something. That is a biased sample: a claim like that is made about a
+// file somebody had a reason to think about. **267 of the 312 shipped `src` files have no
+// counterpart here** and only three carried a prediction, so this one was taken from the other 264 —
+// to see whether the rate holds when nobody has said anything either way.
+//
+// It does. Three things, and the second is the one worth the entry.
+//
+// The rules, from `packages/git/src/ignore.wac`'s own summary, which is the best short statement of
+// gitignore anywhere in this repository and is kept whole:
+//
+//     # comment                 a blank line and a `#` line are nothing
+//     build                     matches a file or directory of that name **at any depth**
+//     /build                    only at the root of the directory holding the .gitignore
+//     build/                    directories only
+//     a/b                       a slash anywhere but the end anchors it to that directory
+//     *.o                       `*` matches within one path component and never across `/`
+//     !keep.o                   un-ignores, and **the last matching rule wins**
+
+import { Vec } from "core";
+
+/**
+ * One rule, and the three booleans that are the pattern's own syntax.
+ *
+ * `negated`, `dirOnly` and `anchored` are each *the pattern had this character in this position*,
+ * decided once at parse and stored beside a `pat` the doc says has already had `!` and the trailing
+ * `/` removed. So `Rule` can hold what the syntax cannot produce — a `pat` still carrying its `!`,
+ * or `anchored` false with a `/` in the middle — and the guarantee that it does not is the parser's.
+ *
+ * Fourth instance of *a value whose guarantee comes from how it was made*, after
+ * `@/packages/crypto`'s `Digest32`, `@/packages/ts`'s `Prefix` and `@/packages/http`'s `Headers`.
+ * This one is the mildest and the most ordinary: a parsed thing whose fields agree with the text it
+ * came from, which is most parsed things.
+ */
+export struct Rule {
+  /** The pattern, with `!` and any trailing `/` removed. */
+  string pat;
+  bool negated;
+  bool dirOnly;
+  bool anchored;
+  /** The directory the ignore file sat in. `""` is the work tree's root. */
+  string base;
+}
+
+/**
+ * What the rules say about a path.
+ *
+ * **Three outcomes where the shipped `ignored` answers a `bool`.** Its body computes exactly this
+ * tri-state — `bool decided` and `bool ignore`, two locals — and collapses it at the return.
+ *
+ * `git check-ignore --verbose` keeps them apart, and the distinction is not academic: a status that
+ * wants to say *this file is untracked* needs `Unmatched`, and one that wants to explain *why is
+ * this file not ignored* needs `Reincluded` and the rule that did it.
+ */
+export enum Verdict {
+  /** A rule matched, and it was not a negation. */
+  Ignored,
+  /** The last matching rule was a `!`. */
+  Reincluded,
+  /** Nothing matched at all. */
+  Unmatched
+}
+
+/**
+ * Whether a path is ignored, walking each prefix.
+ *
+ * **An ignored ancestor settles it**, which the shipped comment states and is the rule people are
+ * surprised by: *"git does not look inside one, so a negation deeper down cannot bring a file back.
+ * `!build/keep` after `build/` does not un-ignore it."* That is a property of the *walk* rather than
+ * of any rule, and it is why this cannot be a fold over the rule list.
+ */
+export Verdict verdict(const Rules rules, string path, bool isDir) { … }
+
+/**
+ * The rules, in the order that decides them.
+ *
+ * **This is the finding.** The shipped signature is `ignored(const Vec<Rule> rules, …)` and the
+ * order of that vector is the whole contract — the header says so:
+ *
+ * > the order is the whole contract: **later rules win**, so a caller appends `.git/info/exclude`
+ * > first, then the root `.gitignore`, then each nested one as it descends.
+ *
+ * A `Vec<Rule>` cannot say that, and it is worse than the usual *a list whose order matters*,
+ * because **the order is derivable from data the list already carries.** Every `Rule` has a `base`,
+ * the directory its file sat in; git's precedence is *deeper file wins*, then *later line wins*. So
+ * the required order is `(depth of base, line number)` — and `base` is right there, while the line
+ * number is the only part a caller has to preserve.
+ *
+ * Two facts about ordering are present in the value and one is imposed on the caller, and nothing
+ * checks that they agree. A caller that appended a nested `.gitignore` before the root one gets
+ * silently wrong answers on exactly the paths where the two disagree, which are the paths the nested
+ * file exists for.
+ *
+ * `Rules` is the fix and it is small: a type that can only be built by adding a file's rules with
+ * its base, which sorts or refuses. The cost is that the caller can no longer hand over a list it
+ * built by hand — which is the point.
+ */
+export struct Rules {
+  Vec<Rule> ordered;
+
+  /** Add every rule from one ignore file, at `base`. Ordering is this type's business. */
+  void addFile(this, string base, Vec<Rule> fromFile) { … }
+}
+
+// ## What could not be written
+//
+// **`base` and the line number are two halves of one key and only one is in the type.** `Rules`
+// above sorts on `(depth, arrival)` and keeps arrival implicit in the `Vec`'s order — so the type
+// fixes the caller's mistake and reintroduces it internally, one layer down. A `Rule` carrying its
+// own line would make the ordering total and derivable, and would put a number in a type that is
+// otherwise about matching. Not obviously right, and it is the same shape as `@/packages/ssz`'s
+// `Gindex`: two facts that must agree, where making them one value is the fix and the second fact
+// looks like bookkeeping.
+//
+// **`*` matches within one path component and `**` does not, and both are `pat`.** The pattern
+// language has five constructs and the type has one `string` plus three flags for the parts that
+// happen to be positional. A parsed pattern — `Vec<Segment>` with `Literal`, `Star`, `DoubleStar` —
+// is what a matcher wants and what every regex engine in this tree already does; `@/packages/regex`
+// exists and is not reachable from here, because a gitignore pattern is not a regex and translating
+// one into the other is a well-known source of subtle differences. So the flat `string` is defensible
+// and the reason is *the other package would be wrong*, which is a better reason than *this is
+// simpler* and is not the one written down.
+//
+// **Nothing relates `dirOnly` to the `isDir` a caller passes.** `verdict(rules, path, isDir)` takes
+// the fact from the caller, who got it from a stat — so a caller that passes `false` for a directory
+// gets an answer that is wrong for `build/` and right for `build`. The shipped code has the same
+// parameter and the same exposure. What would remove it is a path type that knows, which is
+// `@/packages/fs`'s territory and the entry about **a path is a `string` in every package that has
+// one** — arriving here as a `bool` beside the string rather than as the string itself.

@@ -101,6 +101,39 @@ the two-column symmetry that makes the rest read like porcelain. Which is the ch
 format, or follow what the format means.** `status.wac` followed the format, correctly, because it
 was rewriting a status — and the first caller that aggregates is where the difference shows.
 
+## The unbiased pick, and the rate held
+
+The three files before this one were written because a README predicted they would say nothing. That
+is a biased sample — such a claim is only made about a file somebody had a reason to think about.
+
+**267 of the 312 shipped `src` files have no counterpart in `vision/`**, measured 2026-09-04, and
+only three of the 267 carried a prediction. [`src/ignore.wac`](src/ignore.wac) was taken from the
+other 264, to see whether the finding rate holds when nobody has said anything either way. It does.
+
+### An order derivable from the data, imposed on the caller instead
+
+The shipped signature is `ignored(const Vec<Rule> rules, string path, bool isDir)`, and the header
+says the order of that vector is the whole contract — *"later rules win, so a caller appends
+`.git/info/exclude` first, then the root `.gitignore`, then each nested one as it descends."*
+
+Every `Rule` carries a `base`, the directory its ignore file sat in, and git's precedence is *deeper
+file wins* then *later line wins*. So the required order is `(depth of base, line number)` and the
+first half is **already a field**. Two facts about ordering are in the value, one is imposed on the
+caller, and nothing checks that they agree — a caller that appends a nested `.gitignore` before the
+root one is silently wrong on exactly the paths the nested file exists for.
+
+That is different from every other ordering finding here. `@/packages/http`'s header order *is* the
+data and cannot be derived. This one is derived, its inputs are in the elements, and the caller is
+asked to do the derivation by hand — a **constructor that should exist and does not**, because
+`Vec<T>` is right there and takes anything.
+
+### And `bool` for three outcomes
+
+`ignored` computes `bool decided` and `bool ignore` — exactly a tri-state — and collapses them at the
+return. `git check-ignore --verbose` keeps them apart, and a status that wants to say *this file is
+untracked* needs `Unmatched` where one explaining *why is this not ignored* needs `Reincluded` and
+the rule that did it.
+
 ## What could not be written
 
 **A mode change is a third dimension and neither git nor this can say so.** The shipped doc names

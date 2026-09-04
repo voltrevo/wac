@@ -2,3 +2,4 @@
 
 export { Change, Entry, WorktreeChange, Rules, worktreeStatus, statusOf, porcelain } from "./status.wac";
 export { Summary, summarise, render } from "./prompt.wac";
+export { Rule, Rules, Verdict, verdict } from "./ignore.wac";

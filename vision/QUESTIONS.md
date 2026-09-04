@@ -5400,3 +5400,44 @@ shape rather than from the file, and each is one `sed -n 1,40p` from being right
 The measurement that would say how much this cost: how many files this exercise skipped on a
 prediction. `packages/README.md`'s table says which packages were rewritten and not which files, so
 nobody can currently answer it.
+
+## An order that is derivable from the data, imposed on the caller instead
+
+`packages/git/src/ignore.wac` matches `.gitignore` rules, and its header states the contract:
+
+> the order is the whole contract: **later rules win**, so a caller appends `.git/info/exclude`
+> first, then the root `.gitignore`, then each nested one as it descends.
+
+The signature is `ignored(const Vec<Rule> rules, string path, bool isDir)`. A `Vec<Rule>` cannot say
+any of that — which is the ordinary *a list whose order matters* — and this is worse, because **the
+order is derivable from data the list already carries.**
+
+Every `Rule` has a `base`, the directory its ignore file sat in. Git's precedence is *deeper file
+wins*, then *later line wins*. So the required order is `(depth of base, line number)`, and `base` is
+already a field. Two facts about ordering are present in the value, one is imposed on the caller, and
+nothing checks that they agree — so a caller that appends a nested `.gitignore` before the root one
+is silently wrong on exactly the paths the nested file exists for.
+
+**A `Rules` type that can only be built by adding a file's rules with its base** fixes it: the
+ordering becomes the type's business and a hand-built list stops being possible, which is the point.
+The cost is one indirection and the loss of `Vec<Rule>` as the interface.
+
+### Which is a general shape, and this directory has been finding the other half of it
+
+Every other *ordering* finding here has been about a list whose order carries information nothing
+else has — `@/packages/http`'s headers, where `Via` order is the record of a path, and
+`@/packages/ssz`'s chunks. Those are irreducible: the order **is** the data.
+
+This is the opposite and is the case worth separating: the order is a *derived* fact, the inputs to
+deriving it are in the elements, and the caller is asked to do the derivation by hand. That is not a
+list-ordering problem at all. It is a **constructor that should exist and does not**, and the reason
+it does not is that `Vec<T>` is right there and takes anything.
+
+Two questions follow and only the first is about the language:
+
+- **Is there a cheap way to say *this list is sorted by this key*?** A `Sorted<T, K>` is a library
+  type and needs the same thing `@/packages/crypto`'s `Digest32` needs — a constructor nobody else
+  can call — which is the private-constructor entry for the fourth time.
+- **How often is a required order derivable?** Nobody has counted, and the answer decides whether
+  this is one package's bug or a shape. The greppable version: a function taking a `Vec<T>` whose doc
+  says *order matters* and whose `T` has a field the order is a function of.
