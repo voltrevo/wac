@@ -316,6 +316,30 @@ discussed are the three most overstated. Stripping comments and strings first gi
 matters for a migration. `Core` and `Cli` barely move, because a capability is passed far more often
 than it is written about.
 
+### Is vision a superset? No, and the whole of the difference is one bracket
+
+Executable now, and worth more than the counts above. Both grammars were run over `spec/cases` —
+323 programs, each the smallest thing that shows one rule:
+
+    spec grammar     316/323 parse      (the 7 are cases written to be refused)
+    vision grammar   269/323 parse
+
+**Forty-seven cases that today's language accepts, vision refuses. All forty-seven contain `fn[`.**
+Not most of them — all of them, checked by grep over the list. Lambdas, funcref tables, bound method
+references, every async case, `0181 a cell in a capture record`, `0245 a method may be called with
+its own type arguments`: they are refused because a funcref slot is written with brackets somewhere
+in the file, and for no other reason.
+
+So the answer to *is this the same language with more in it* is: **it is, apart from one bracket.**
+Everything else the delta adds is additive — 22 rules replaced and one extended, and not one of them
+takes anything away. That is a much smaller claim than the rename table looks like and a much easier
+one to act on: the migration is a mechanical sweep of 444 sites, and the day after it, every one of
+these 323 cases parses under both.
+
+Worth saying because nothing else could have said it. A grep tells you how many lines mention a
+spelling; running both grammars over the same corpus tells you which *programs* stop being programs,
+and it turned out to be one cause with no second.
+
 **And only one row is a grammar change at all.** `fn[T(…)]` → `fn<T(…)>` is the single rename the
 parser can see: `tools/specparse.ts` with `GRAMMAR.ebnf` refuses `fn[void()] cb;` and accepts the
 angle form, so those 444 sites in 80 files stop compiling on the day it lands. Everything else in
