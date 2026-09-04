@@ -5292,3 +5292,44 @@ with its consequence. Three positions:
 The measurement that would settle whether it matters: how many passes in `packages/wacc` invent a
 name. It is 23 fixed plus one arithmetic scheme in `asyncsynth.wac`, and nobody has checked whether
 any other pass wants one.
+
+## A closed set you cannot enumerate is a closed set you cannot tabulate
+
+Every enum this exercise introduced replaced a table of integers or characters — nine `T_*` in
+`@/packages/abi`, thirteen `OP_*` in `@/packages/regex`, eight control characters in
+`@/packages/tty`, porcelain's alphabet in `@/packages/git`. Each swap was right and each is argued in
+its package.
+
+`@/packages/git/src/prompt.wac` is the first consumer that has to **count** by one, and it cannot.
+
+A prompt shows *how many of each kind*, so it wants a count per `Change`. `Map<Change, i32>` is out:
+`DECISIONS.md` says references are comparable but not hashable, and the `Map.create()` entry above
+already records this file's `Map` taking no hash where the tree's takes two funcrefs. Three ways
+round it, each giving something up:
+
+- **A field per variant.** The flat table this directory has met four times, and the first where it
+  is *forced* rather than inherited from the code being rewritten. Adding a variant means adding a
+  field and nothing relates the two lists.
+- **An array indexed by the variant's ordinal.** Needs the ordinal to be nameable, and
+  `spec/spec/enums.md` gives `match`, `is` and construction and no way to say *the index of this
+  variant* — which is precisely what makes an enum a closed set rather than a small integer with
+  names on it. The property is the one this loop wants to borrow for a moment.
+- **Key on the character the enum replaced.** `Change.code()` exists for *formatting* and the first
+  aggregating consumer reaches for it as a **key**. The enum is intact and the character is back one
+  layer down, where the type system is no longer looking.
+
+The third is what the file does. The enum was not wrong — a swapped `Added` and `Deleted` is still
+impossible, which is what it bought — but **tabulating is what the second consumer of any enum
+does**, and four packages have introduced one with no way to do it.
+
+### What would answer it, and the smallest version is not a language feature
+
+- **`Map<K, V>` with a compiler-supplied hash for payload-free enums.** They are a small integer at
+  runtime, and the *no traits* problem the `Map.create()` entry describes does not arise for a type
+  the compiler already knows is a tag.
+- **An `ordinal()` or a `values()`.** Either turns an enum back into something a loop can walk, and
+  both weaken the closedness that is the point — an `ordinal()` is a number a caller can do
+  arithmetic on, and a `values()` is a list whose order becomes an interface.
+- **Nothing, and say so.** *Count by the code, or write a field per variant* is a real answer, and
+  it is what four packages will do silently if it is not written down. That is the cheapest outcome
+  and the one where the same discovery is made a fifth time.

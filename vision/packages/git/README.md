@@ -65,6 +65,42 @@ What it costs is one type. `u8[]` with *"empty bytes mean the setting is unset, 
 case"* puts the absence in a length; `Rules?` puts it in the value, and `null` at the call site is
 what unset looks like.
 
+## The first consumer, and the enum that cannot be tabulated
+
+[`src/prompt.wac`](src/prompt.wac) is a shell prompt's status segment — `main *2 +1 ?3` — and the
+smallest program that has to **aggregate** a status rather than print one.
+
+A prompt that shows *how many of each kind* wants a count per `Change`. `Map<Change, i32>` cannot be
+written: `../../DECISIONS.md` says **references are comparable but not hashable**, and
+`../../QUESTIONS.md` already records `Map.create()` taking nothing here against two funcrefs in the
+tree. Three ways out, each giving something up:
+
+- **Seven fields**, one per variant — the flat table this directory has met four times, and the first
+  where it is *forced*. Adding a variant means adding a field and nothing checks the two lists.
+- **An array indexed by the variant's ordinal**, which needs the ordinal to be nameable.
+  `spec/spec/enums.md` gives `match`, `is` and construction, and no way to say *the index of this
+  variant* — which is exactly what makes an enum a closed set rather than a small integer with names
+  on it.
+- **`Map<u8, i32>` keyed on `Change.code()`** — and that is the character back. `src/status.wac`
+  replaced porcelain's alphabet with an enum and kept `code()` for *formatting*; the first
+  aggregating consumer reaches for it as a **key**.
+
+The third is what the file would do, which is why the first two are written out. The enum was not
+wrong — a swapped `Added` and `Deleted` is still impossible, which is what it bought. It is that **a
+closed set you cannot enumerate is a closed set you cannot tabulate**, and tabulating is what the
+second consumer of any enum does.
+
+### And `Untracked` is in the wrong column, which only a consumer notices
+
+`summarise` opens `if (e.staged is Untracked)`, which reads oddly on purpose: porcelain writes `??`
+in **both** columns, so `Change` has a variant that appears in a field named *the index against
+`HEAD`* and there means *not a tracked file at all*. `Entry` has three states in two fields.
+
+`enum Entry { Tracked(Change staged, Change worktree), Untracked(string path) }` says it and costs
+the two-column symmetry that makes the rest read like porcelain. Which is the choice: **follow the
+format, or follow what the format means.** `status.wac` followed the format, correctly, because it
+was rewriting a status — and the first caller that aggregates is where the difference shows.
+
 ## What could not be written
 
 **A mode change is a third dimension and neither git nor this can say so.** The shipped doc names

@@ -1,0 +1,101 @@
+// A status line for a shell prompt — the first consumer `@/packages/git`'s types have had, and the
+// place where turning characters into an enum costs something.
+//
+//     main *2 +1 ?3
+//
+// A branch, then a count per kind of change. Every shell that shows git state shows roughly this,
+// and it is the smallest program that has to **aggregate** a status rather than print it.
+
+import { Vec } from "core";
+import { Change, Entry } from "./status.wac";
+
+/** What a prompt says. Counts rather than paths, which is the whole difference from `status`. */
+export struct Summary {
+  string branch;
+  /** Files whose index differs from `HEAD`. */
+  i32 staged;
+  /** Files whose working tree differs from the index. */
+  i32 dirty;
+  /** Files git has never seen. */
+  i32 untracked;
+}
+
+/**
+ * Summarise, in the one walk there is.
+ *
+ * The two columns are independent — `@/packages/git/src/status.wac` keeps the shipped doc's reason
+ * for that, *"a file staged and then edited again is `MM`, which is the case that proves they are
+ * computed separately"* — so a file counts in `staged` **and** `dirty`, and this loop is where that
+ * stops being a fact about porcelain and becomes a fact about the arithmetic.
+ */
+export Summary summarise(string branch, Vec<Entry> entries) {
+  Summary s = Summary(branch, 0, 0, 0);
+  for (Entry e in entries.items()) {
+    if (e.staged is Untracked) { s.untracked = s.untracked + 1; continue; }
+    if (!(e.staged is Unmodified))   { s.staged = s.staged + 1; }
+    if (!(e.worktree is Unmodified)) { s.dirty = s.dirty + 1; }
+  }
+  return s;
+}
+
+/** `main *2 +1 ?3`, with absent counts omitted. */
+export string render(const Summary s) { … }
+
+// ## 1. The enum removed a character and counting puts it back
+//
+// This is the finding, and it took the second function to see it.
+//
+// A prompt that shows *how many of each kind* — `2 modified, 1 added, 1 deleted` — wants a count per
+// `Change`. The obvious shape is `Map<Change, i32>`, and it cannot be written:
+// `../../../DECISIONS.md` says **references are comparable but not hashable**, and
+// `../../../QUESTIONS.md` already has `Map.create()` taking nothing here against two funcrefs in the
+// tree. An enum with payload-carrying variants is a reference, so it cannot be a key, and `Change`
+// has no payloads today but is one declaration away from having them.
+//
+// Three ways to count by kind, and each gives something up:
+//
+//   * **Seven fields.** `struct Counts { i32 unmodified; i32 added; … }` — the flat table this
+//     directory has now met four times, and the first where it is *forced* rather than inherited.
+//     Adding a variant means adding a field and nothing checks the two lists against each other.
+//   * **An array indexed by the variant's ordinal**, which needs the ordinal to be a thing a program
+//     can name. `spec/spec/enums.md` gives `match`, `is` and construction, and no way to say *the
+//     index of this variant* — which is what makes an enum a closed set rather than a small integer
+//     with names on it, and is the property this file wants to borrow for one loop.
+//   * **`Map<u8, i32>` keyed on `Change.code()`** — and that is the character. `status.wac` replaced
+//     porcelain's alphabet with an enum, kept `code()` for *formatting*, and the first aggregating
+//     consumer reaches for `code()` as a **key**. The enum is intact and the character is back, one
+//     layer down, with the type system no longer looking at it.
+//
+// The third is what this file would do and is why the first two are written out. It is not that the
+// enum was wrong — a swapped `Added` and `Deleted` is still impossible, which is what it bought. It
+// is that **a closed set you cannot enumerate is a closed set you cannot tabulate**, and tabulating
+// is what the second consumer of any enum does.
+//
+// ## 2. And `Untracked` is in the wrong column, which only a consumer notices
+//
+// `summarise` opens with `if (e.staged is Untracked)`, and that reads oddly on purpose: porcelain
+// writes `??` in **both** columns for an untracked file, so `Change` has an `Untracked` variant that
+// can appear in a field named *the index against `HEAD`* — where it means neither *staged* nor
+// *unstaged* but *not a tracked file at all*.
+//
+// So `Entry` has three states in two fields: staged, unstaged, and a third that occupies both and is
+// neither. `enum Entry { Tracked(Change staged, Change worktree), Untracked(string path) }` says it,
+// and costs the two-column symmetry that makes the rest of the type read like porcelain. Which is
+// the choice: **follow the format, or follow what the format means.** `status.wac` followed the
+// format, correctly, because it was rewriting a status; the first caller that aggregates is where
+// the difference shows.
+//
+// ## 3. What could not be written
+//
+// **A branch name that might not exist.** `Summary.branch` is a `string` and a detached HEAD has no
+// branch — the shell prompt shows a short commit id instead. `string?` would say it and then every
+// `render` starts with a null check for a case that is common enough to have a name. The honest type
+// is `enum Head { On(string branch), Detached(string commit) }`, which is a third type this file
+// would declare about a subject `@/packages/git` owns, and it is the shape the *shipped* `repo.wac`
+// already has internally and does not export.
+//
+// **`Summary` is four fields and three are counts of the same kind of thing.** A swap between
+// `staged` and `dirty` type-checks and produces a prompt that is wrong in the direction nobody
+// checks — `@/packages/wacc/src/ast.wac`'s argument about adjacent same-typed fields, arriving in a
+// four-field struct rather than a seven-field one. Named construction would fix the call site here
+// and the payload version of the same problem is what that file is about.
