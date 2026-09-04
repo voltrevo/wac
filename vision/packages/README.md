@@ -227,7 +227,7 @@ not against it.
 | what | written | against |
 |---|---|---|
 | [core](../core/) | 2026-09-04 | tickets, coroutines, `union`, nested `T?` |
-| [std](../std/) | 2026-09-04 | `Sys` as a value, no singleton, grouped into projections |
+| [std](../std/) | 2026-09-04 | `Sys` as a value, no singleton, grouped into projections — and one scheduler across all seven, per `issues/lang/closed/0298c` |
 | [stream](stream/) | 2026-09-04 | coroutines, `union`, nested `T?`, `try` |
 | [json](json/) | 2026-09-04 | `Result`, `try`, enum-vs-union, nested `T?` |
 | [http](http/) | 2026-09-04 | named unions, error-set composition |

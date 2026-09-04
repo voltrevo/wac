@@ -39,6 +39,23 @@ export struct NotGranted { string what; }
  *
  * The fields are the projections. Reading one is free and hands over exactly that group; there is
  * no method here that answers a capability the caller could not already reach.
+ *
+ * ## One scheduler, and this is the hazard the split creates
+ *
+ * `pending` and `drain` stay on `Sys` and every projection must reference **that** queue rather
+ * than owning one. Not a tidiness rule — `issues/lang/closed/0298c` is what happens otherwise:
+ *
+ *   > the native host builds a non-callback field by calling `<Type>.create` **per capability**, so
+ *   > `Core.sched` and `Cli.sched` were different schedulers and every `Cli` continuation sat on the
+ *   > one nobody drained
+ *
+ * That was **two** capabilities and it cost a compiler that could not rebuild itself. The commit
+ * that fixed it says the host makes *one* scheduler and hands it to both, *"because two would put a
+ * `Cli` ticket's continuation where `core.drain()` never looks."*
+ *
+ * Seven projections are seven chances at the same bug, and the failure is silent: work is
+ * registered, nothing runs it, and `drain` returns having found nothing to do. **This is the cost of
+ * the grouping and it was not visible from the grouping.**
  */
 export struct Sys {
   Files files;
