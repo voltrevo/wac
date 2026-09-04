@@ -288,9 +288,30 @@ export struct Sink {
  *
  * `Files` was short by two methods; this is short by a **shape** — a datagram endpoint is not a
  * `Socket`, since every read answers a peer and there is no accept.
+ *
+ * ## And `listen` had dropped the bind address, which the shipped design added on purpose
+ *
+ * Found 2026-09-04 by the audit's fourth pass — reading what a capability *means* on both sides
+ * rather than comparing its name, its shape or its answer. This was `listen(i32 port)`.
+ * `std/platform.wac`:
+ *
+ * > **`listen` takes the address to bind, and it is not optional.** It used to take a port alone and
+ * > the host bound `0.0.0.0`, so every server written on this platform was reachable from every
+ * > interface and no program could ask for loopback. For most servers that is a deployment surprise;
+ * > for `packages/tor`'s SOCKS proxy it is the difference between serving the person at the keyboard
+ * > and running an open proxy that sources strangers' traffic out of somebody else's exit node. Every
+ * > other SOCKS implementation binds loopback for that reason, so the safe configuration was not only
+ * > unavailable, it was the one people would assume they already had.
+ *
+ * So the port-only form is the exact shape that was removed, and removing it a second time reinstates
+ * the behaviour with the history attached. The parameter is back, and the reason it must stay is the
+ * last sentence: **the surprising configuration has to be a thing somebody typed.**
+ *
+ * `SHOWCASE.md` still writes `sys.listen(8080)`. That page is agreed and is not this file's to edit;
+ * `../QUESTIONS.md` has it beside the other place the pages and the code have diverged.
  */
 export struct Net {
-  fn<Ticket<Result<Listener, NotGranted>>(i32)>          listen;
+  fn<Ticket<Result<Listener, NotGranted>>(string, i32)>  listen;
   fn<Ticket<Result<Socket,   NotGranted>>(string, i32)>  connect;
 }
 

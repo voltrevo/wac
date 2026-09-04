@@ -29,7 +29,11 @@ import { Served, serve } from "./serve.wac";
  * awkwardness is the design's rather than this line's.
  */
 export async i32 main(Net net, Out out, Clock clock, Tasks tasks) {
-  match (await net.listen(7000)) {
+  // `"127.0.0.1"` rather than a bare port: the address is not optional, for the reason
+  // `std/platform.wac` gives — a port alone bound every interface, and the safe configuration was
+  // the one people assumed they already had. A demo server is exactly the program that should not
+  // be reachable from the network by default.
+  match (await net.listen("127.0.0.1", 7000)) {
     Err(e): { out.log("no port: \{e.what}"); return 1; }
     Ok(l): {
       out.log("listening on 7000");

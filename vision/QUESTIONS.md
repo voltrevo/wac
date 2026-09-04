@@ -2834,5 +2834,31 @@ a signature that is complete, a name that matches, a type that fits, and a meani
 carried across. Nothing mechanical detects it, because there is nothing to diff — the shipped
 knowledge is in a paragraph and the rewrite's absence of it is an absence of a paragraph.
 
-That makes it the expensive pass and the one most likely to keep yielding: two hits from two
-capabilities read, against a surface of forty-four.
+That makes it the expensive pass and the one most likely to keep yielding. Three hits from three
+capabilities read, against a surface of forty-four — and the third is the worst of them.
+
+**`Net.listen` had dropped the bind address.** It was `listen(i32 port)`. The shipped one is
+`listen(string host, i32 port)` and the doc says why in the plainest terms this file has:
+
+> **`listen` takes the address to bind, and it is not optional.** It used to take a port alone and
+> the host bound `0.0.0.0`, so every server written on this platform was reachable from every
+> interface and no program could ask for loopback. For most servers that is a deployment surprise;
+> for `packages/tor`'s SOCKS proxy it is the difference between serving the person at the keyboard
+> and running an open proxy that sources strangers' traffic out of somebody else's exit node. Every
+> other SOCKS implementation binds loopback for that reason, so the safe configuration was not only
+> unavailable, it was the one people would assume they already had.
+
+The port-only form is the exact shape that was removed, and the rewrite removed it again. Restored in
+`vision/std`, and `@/packages/server` now binds `"127.0.0.1"` — a demo server being the program that
+should least be reachable from the network by default.
+
+**`SHOWCASE.md` writes `sys.listen(8080)`**, on the front page, and that is not mine to edit: the
+pages are agreed and `vision/packages` is disposable precisely so they need not be. It joins the
+`Sys` escalation as the second place where the code and the reviewed examples have diverged — and it
+is the more urgent of the two, because the other one is a spelling and this one is a default.
+
+**What it says about the exercise is worth more than the fix.** Three passes compared what a
+capability *is* — its name, its shape, the type it answers — and all three passed this signature: one
+parameter fewer is not a missing member, not a changed return, not an unrepresentable outcome. Only
+reading the sentence next to the shipped one finds it, and the sentence exists because somebody
+already made this mistake once.
