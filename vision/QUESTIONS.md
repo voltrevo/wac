@@ -3906,3 +3906,50 @@ currently unrelated types with unrelated syntax — `x!` and `is null` on one, `
 other. Every one of the 139 sites is a place where somebody chose the cheap one; under that reading
 the choice would not have been between two constructs, and a caller that only asks *did it work*
 would not change when the reasons arrive.
+
+## The `bool` half, and the one place collapsing is the design — except in three of its four branches
+
+The entry above measured the `T?` half. The `bool` half is **49 functions with four or more
+`return false;`**, and unlike `T?` it cannot be counted mechanically: a `bool` is also how a
+*predicate* answers, and a predicate loses nothing by saying no.
+
+Read, from the top eighteen by count, the split is about seven to eleven:
+
+- **Predicates**, where `false` is the whole answer: `isCounted` (*"Whether this `for` is the counted
+  loop"*), `returnsOnlyFresh`, `isConstExpr`, `matchFrom`, `readsUnsettledConst`, `awaitInExpr`.
+- **Rejections**, where it is not: `validateUpdate`, `matchTypeParams`, `linkFiles`, `linkHandshake`,
+  `writeTreeOut`, and the four cryptographic verifiers.
+
+And the four verifiers are the interesting ones, because **for a signature check, collapsing is
+supposed to be the design.** `batchVerify`, `aggregateVerify`, `rsaVerifyPss` and
+`certVerifySignature` answer `bool` with 33 `return false;` between them, and the standard reason
+not to say why is that a verifier which distinguishes its failures is an oracle.
+
+That reason is right and it covers **one** of the branches. Reading `packages/bls`'s `batchVerify`,
+its nine are three different populations:
+
+| | branch | who is wrong |
+|---|---|---|
+| 2 | `n == 0`; `messages.len() != n \|\| signatures.len() != n` | **the caller** — a bug in their own code |
+| 5 | a key or signature that is not a point, an infinity key, an infinity signature, a bad pair | **the input**, which may be the caller's own key store or a peer's message |
+| 1–2 | the pairing itself | the security answer, and the only one that must be uniform |
+
+Saying *your arrays are different lengths* leaks nothing about a signature; the caller who passed
+them has a bug and will find it by bisection. Saying *public key 3 is not a curve point* leaks
+nothing either, and it is the difference between a broken key store and a hostile peer. **Only the
+last row needs the silence, and it is buying silence for all three.**
+
+So the shape of the question is not *should verifiers say why* — it is:
+
+- **Does a verifier's failure set have two halves?** *This input is not well-formed* and *this
+  signature does not verify* are different claims, and only the second is about a secret. A
+  `Result<void, Malformed>` answering `Ok` for *verified* and *not verified* alike is the wrong
+  split; `Result<bool, Malformed>` is the right one and reads badly enough to be worth naming.
+- **And who is the audience?** `packages/tls`'s `certVerifySignature` and `packages/tor`'s handshake
+  both need to *log* a rejection differently from a malformed record — that is the operator's
+  question, and it is answered today by there being nothing to log.
+
+Worth stating plainly because the argument cuts both ways and this directory has been making one
+side of it for a week: everything above has been *distinguish your failures*, and here is the one
+family where a false negative on that advice is a security bug. The distinction that survives is
+narrower than the advice and wider than the current answer.
