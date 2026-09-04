@@ -1,0 +1,140 @@
+// Choosing a path — where a wrong answer is a working circuit with no anonymity in it.
+//
+// Fourth file from the 264 shipped sources nobody predicted anything about, picked because the
+// failures are unlike every other package's. `packages/tor/src/pathsel.wac` opens:
+//
+// > This is the part of a Tor client that decides who gets to watch you. Everything else in the
+// > package is mechanism — if the handshake is wrong the circuit fails loudly. If path selection is
+// > wrong the circuit works perfectly and the anonymity is gone, so the failures here are the quiet
+// > kind.
+//
+// Two of the three things it says have to be right are decided by an ordering that a type would make
+// unnecessary, and one of them is stated as a hazard in the file itself.
+
+import { Vec } from "core";
+import { Relay } from "./directory.wac";
+
+/**
+ * Where in the circuit a relay is being chosen for.
+ *
+ * **The shipped code declines to make this an enum, and says why:**
+ *
+ * > Not an enum because the weights are indexed by it and the arithmetic is clearer with a number;
+ * > the three constants exist so nothing has to remember which is which.
+ *
+ * That is `../../../QUESTIONS.md`'s *a closed set you cannot enumerate is a closed set you cannot
+ * tabulate*, arriving from the other side and as a **deliberate decision** rather than a workaround.
+ * The entry was written from `@/packages/git`, where an enum existed and counting by it meant
+ * reaching for the character it replaced. Here the cost was paid in advance: the enum was never
+ * introduced, because the value's job is to index.
+ *
+ * So the entry understates it. The cost of a closed set with no ordinal is not only that tabulating
+ * is awkward — it is that **a package with a table declines the enum**, and then nothing checks that
+ * `positionWeight` is called with 0, 1 or 2. The shipped guard is `if (position < 0 || position > 2)
+ * { trap; }`, which is the check an enum would not need.
+ */
+export enum Position { Guard, Middle, Exit }
+
+/**
+ * A relay's flags as they matter to weighting: the **four** combinations of two booleans.
+ *
+ * This is the finding. The shipped `positionWeight` is an ordered chain:
+ *
+ *     if (isGuard && isExit) { return weights[base + 1]; }
+ *     if (isGuard)           { return weights[base]; }
+ *     if (isExit)            { return weights[base + 2]; }
+ *     return weights[base + 3];
+ *
+ * with a warning above it:
+ *
+ * > The order of those four tests matters. A relay with both flags must take the "both" weight —
+ * > checking Guard first and returning would give a Guard+Exit relay the guard-only weight, which is
+ * > how exit capacity leaks into the guard position.
+ *
+ * The hazard is real, the code is right, and the ordering is doing work no reader can verify without
+ * being told. **Four states of two booleans is a closed set the language can hold**, and a `match`
+ * over it is exhaustive and order-independent: there is no *first* arm, so there is no wrong order to
+ * put the arms in.
+ *
+ * That is a smaller ask than most things in this directory — no feature, one enum, one classifying
+ * function — and it is in the file where a silent wrong answer costs anonymity rather than a test.
+ */
+export enum Role { Both, GuardOnly, ExitOnly, Neither }
+
+/** The consensus weights, one per `(Position, Role)`. */
+export struct Weights {
+  /**
+   * Twelve numbers in a fixed order — `Wgg Wgd Wge Wgm | Wmg Wmd Wme Wmm | Weg Wed Wee Wem` — read
+   * as `position * 4 + role`.
+   *
+   * **A product of two closed sets, flattened to an index.** A `Map<(Position, Role), i64>` is what
+   * this is, and the two-part key is the one `@/packages/wacpkg/src/resolve.wac` also wanted. Here
+   * the flat form is defensible for the reason `@/packages/http`'s headers are: the order is the wire
+   * format, the consensus line packs them exactly so, and re-deriving the layout is a chance to get
+   * it wrong.
+   *
+   * So the arithmetic stays and the *indices* become types. `at(position, role)` is the only reader,
+   * and neither argument can be an arbitrary integer.
+   */
+  Vec<i64> packed;
+
+  i64 at(const this, Position p, Role r) { … }
+}
+
+/** `bandwidth * weight / 10000`, in `i64` — and the reason is a silent failure, not a big number. */
+export Vec<i64> weighted(Vec<Relay> relays, Position p, const Weights w) { … }
+
+/** Which of the four a relay is. One place, so the classification cannot disagree with itself. */
+Role roleOf(const Relay r) { … }
+
+// ## 1. `i64` because `i32` fails invisibly, in the direction that helps an attacker
+//
+// > Kept as i64 throughout. A consensus bandwidth is in kilobytes and the weights reach 10000, so a
+// > large relay's product overflows 32 bits — and the failure is silent, giving a negative weight
+// > that the chooser skips, **which means the biggest relays are never picked and nothing looks
+// > wrong.**
+//
+// `../../../QUESTIONS.md`'s *wrapping is the only arithmetic, and at 64 bits there is no way to
+// notice* has this as its sharpest witness. Everywhere else in the directory the consequence is a
+// wrong number; here it is a **changed distribution**, which is invisible to any test that checks a
+// circuit works, and which shifts traffic away from exactly the relays an attacker does not control.
+//
+// The entry's two directions now have three examples between them: `@/packages/webrtc`'s `tsnBefore`
+// **requires** wrapping, `@/packages/bignum` guards against it, and this is silently wrong in a way
+// no assertion would catch. Only the third is a security property.
+//
+// ## 2. Mutuality is the caller's, and the callee re-checks it anyway
+//
+// > the indices it has *mutually* declared kinship with. The mutuality is resolved by the caller …
+// > Both directions, though the caller has already resolved mutuality: this is cheap, and …
+//
+// A precondition the caller establishes, re-verified by the callee because verifying is cheaper than
+// trusting. That is the honest thing to do and it is the same shape as
+// `@/packages/git/src/ignore.wac`'s rule order — a property of the argument that the type cannot
+// carry, so it is a sentence plus a defensive check.
+//
+// The difference is what the file says about *why* it must hold: *"the declaration must be mutual —
+// A listing B means nothing unless B also lists A — because otherwise anyone could shrink your
+// candidate set by claiming kinship with relays they do not run. That check is the difference
+// between a family list and an attack."* A precondition whose violation is an attack rather than a
+// bug is one a callee should not be able to skip, and *cheap so we check twice* is the only tool
+// available.
+//
+// ## 3. What could not be written
+//
+// **Correctness here is statistical and no type reaches it.** Everything above is about the
+// arithmetic being right; the property that matters is that the *distribution* of chosen paths
+// matches what every other client produces, because a client that concentrates traffic differently
+// *"is itself distinguishing"*. That is not checkable by a type, an assertion or a unit test — it is
+// checkable by a simulation against a real consensus, which is a test this package does not have and
+// which no signature could demand.
+//
+// Worth stating plainly because it bounds the whole exercise: this directory's method is *what could
+// the type have said*, and here the answer for the load-bearing property is **nothing**. The types
+// above are worth having and they secure the mechanism, not the anonymity.
+//
+// **A weight is scaled by 10000 and is an `i64`.** Every arithmetic site divides by 10000 and knows
+// to; a `Weight` type carrying its scale would make `bandwidth * weight` refuse to be assigned to a
+// bandwidth. That is a units question — `@/packages/datetime` has the same one about seconds and
+// milliseconds — and this is the third package to want it and the first where getting it wrong is
+// not visible in the output.

@@ -159,6 +159,47 @@ value goes where the value goes. In a statement position — which is what `vali
 is propagating rather than binding — it does not help at all. So the ask is still a `try` that maps,
 and the construct that already exists covers half the cases.
 
+## Path selection: an ordering that carries a security property
+
+[`src/pathsel.wac`](src/pathsel.wac) is the fourth file taken from the 264 shipped sources nobody
+predicted anything about, picked because its failures are unlike every other package's:
+
+> if the handshake is wrong the circuit fails loudly. If path selection is wrong the circuit works
+> perfectly and the anonymity is gone, so the failures here are the quiet kind.
+
+**Four states of two booleans, decided by an ordered chain.** `positionWeight` tests
+`isGuard && isExit`, then `isGuard`, then `isExit`, then neither — with a warning above it:
+
+> The order of those four tests matters. A relay with both flags must take the "both" weight —
+> checking Guard first and returning would give a Guard+Exit relay the guard-only weight, which is
+> how exit capacity leaks into the guard position.
+
+The hazard is real and the code is right. Four states of two booleans is a closed set the language
+can hold, and a `match` over `Role { Both, GuardOnly, ExitOnly, Neither }` is exhaustive and
+order-independent — **there is no first arm, so there is no wrong order to put the arms in.** One
+enum and one classifying function, in the file where a silent wrong answer costs anonymity.
+
+**And the positions are not an enum, deliberately.** *"Not an enum because the weights are indexed by
+it and the arithmetic is clearer with a number."* That is
+[`../../QUESTIONS.md`](../../QUESTIONS.md)'s *a closed set you cannot enumerate is a closed set you
+cannot tabulate*, from the other side: four packages introduced an enum and could not count by it;
+this one declined the enum in advance and carries `if (position < 0 || position > 2) { trap; }`
+instead — the check an enum would not need.
+
+**`i64` because `i32` fails invisibly in the attacker's favour.** *"a large relay's product overflows
+32 bits — and the failure is silent, giving a negative weight that the chooser skips, which means the
+biggest relays are never picked and nothing looks wrong."* The wrapping entry's sharpest witness:
+everywhere else the consequence is a wrong number, here it is a **changed distribution**, invisible
+to any test that checks a circuit works.
+
+### And the property that matters is not reachable by a type
+
+Everything above secures the arithmetic. What actually matters is that the *distribution* of chosen
+paths matches every other client's, because a client that concentrates traffic differently *"is
+itself distinguishing"* — checkable by simulation against a real consensus, not by a type, an
+assertion or a unit test. Worth stating plainly because it bounds the method: this directory asks
+*what could the type have said*, and here, for the load-bearing property, the answer is nothing.
+
 ## What could not be written
 
 **A digest, from `@/packages/crypto`.** This file names `@/packages/crypto/src/keccak.wac` and the

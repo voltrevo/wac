@@ -5322,6 +5322,23 @@ The third is what the file does. The enum was not wrong — a swapped `Added` an
 impossible, which is what it bought — but **tabulating is what the second consumer of any enum
 does**, and four packages have introduced one with no way to do it.
 
+### And a fifth package declined the enum for exactly this reason, in writing
+
+`packages/tor/src/pathsel.wac` has three circuit positions and does **not** make them an enum:
+
+> Not an enum because the weights are indexed by it and the arithmetic is clearer with a number; the
+> three constants exist so nothing has to remember which is which.
+
+So the cost is not only that tabulating by an enum is awkward. It is that **a package with a table
+declines the enum**, in advance and deliberately, and then carries the check the enum would have
+made for free — `if (position < 0 || position > 2) { trap; }`, on a value that has three legal states
+and is an `i32`.
+
+That is the same trade the other four made in the other direction, and it is the strongest form of
+the question: given a closed set that indexes something, the language offers a type that cannot index
+or an integer that cannot be checked, and four packages took the first while the one whose wrong
+answer costs anonymity took the second.
+
 ### What would answer it, and the smallest version is not a language feature
 
 - **`Map<K, V>` with a compiler-supplied hash for payload-free enums.** They are a small integer at

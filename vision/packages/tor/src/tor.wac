@@ -9,3 +9,4 @@ export {
   onionAddress, onionPubkey, AddressFault, WrongKeyLength, WrongAddressLength, WrongVersion,
   NotBase32, ChecksumMismatch, ADDRESS_LEN, PUBKEY_LEN,
 } from "./onionaddr.wac";
+export { Position, Role, Weights, weighted } from "./pathsel.wac";
