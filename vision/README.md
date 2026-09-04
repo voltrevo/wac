@@ -77,6 +77,26 @@ that stays true afterwards. **A decisions entry is deleted once it reaches `spec
 spec is the test, since an implementation can have a bug, and a rule written twice is a rule that
 drifts. **A question is deleted once it is answered**, and the answer has to land somewhere first.
 
+## Every shipped package now has a counterpart here
+
+Measured 2026-09-04, after `@/packages/webrtc`: `ls packages` against `ls vision/packages` leaves one
+name on each side. `packages/platform` is here as `vision/std`, because a capability surface is not a
+package; `vision/packages/page` is here and not there, because it is a consumer written to find out
+what `Page` could not express.
+
+That is coverage rather than completeness, and the difference matters. **Three of the forty are
+deliberately almost empty** — `zstd` is a note and no code, `tls` is one file of eleven functions,
+`webrtc` is two files of eight — because their difficulty is a compression format, a key schedule and
+a transport protocol, and a protocol says the same thing in wac that it says anywhere. Reaching that
+conclusion three times is itself a result: **the language questions are not evenly distributed over
+the code, and they are densest where a package describes its own data.**
+
+Where they are densest, measured by what the rewrites promoted: a descriptor written as a flat table
+(`abi`, `ssz`, `ts` — three), a closed set spelled as an integer (`wac`, `abi`, `codec`, `regex`,
+`tty`, `webrtc`), a failure spelled as `null` or `bool` — **fourteen packages here declare a fault
+union that replaces one**, which is the single most repeated change the exercise made — and two or
+more scalars that must agree with no type to pair them (`raster`, `ssz`, `ts`, `webrtc`).
+
 ## What twenty-two subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is a hundred and seventeen entries and getting longer, which is the exercise working and is not a
