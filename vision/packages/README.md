@@ -47,6 +47,20 @@ root and are imported as `core/vec.wac` and `std/platform.wac` rather than by pa
 `../wac.json5` is what makes `@/` resolve to `vision/`. It is empty, which is a valid manifest —
 its presence is the whole question `@/` asks.
 
+**And an import naming a file this directory did not write out means the real one, unchanged.** That
+is most of them: a rewrite writes the two or three files its argument is about and imports the rest,
+so `@/packages/crypto/src/sha256.wac` in `tls` resolves to nothing here and means
+`packages/crypto/src/sha256.wac`. Ten imports were in that state on 2026-09-04.
+
+The rule is worth stating because **the same syntax means two different things** depending on whether
+the target was rewritten, and nothing said so. It is also checkable, which is the point: a dangling
+import is fine when the real file exists one level up and is a typo when it does not. Checking that
+found one — `gzip`'s `./bitreader.wac`, a filename invented for a `BitReader` that is a struct inside
+the original `inflate.wac` rather than a module beside it.
+
+`vision/` is excluded from the repository's link guard, so this is the check that replaces it, and it
+is a script somebody runs rather than a test — nothing walks this directory.
+
 ## These are redesigns, not translations
 
 A rewrite is free to change the decomposition, the public surface and the shape of the answers. The

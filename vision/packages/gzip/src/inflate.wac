@@ -69,7 +69,6 @@ import { Result, Bytes } from "core";
 import { Fault, SourceFailed, Corrupt, BadMagic, BadMethod, Truncated,
          ChecksumMismatch, LengthMismatch } from "./fault.wac";
 import { Window } from "./window.wac";
-import { BitReader } from "./bitreader.wac";
 import { Decoder } from "./huffman.wac";
 import { crc32Finish } from "./crc32.wac";
 
@@ -95,6 +94,11 @@ import { crc32Finish } from "./crc32.wac";
  * callback pair cannot.
  */
 export async gen<Bytes> Result<void, Fault> gunzip(AsyncGen<u8[]> source) {
+  // `BitReader` is unchanged and is declared in the original `inflate.wac`, which this file is the
+  // rewrite of — so there is no import for it. There *was* one, from `./bitreader.wac`, a filename
+  // I invented: the real BitReader is a struct inside the file, not a module beside it. Caught by
+  // checking that every vision import naming a file this directory did not write out names a real
+  // one a level up. Ten of the eleven did; this was the eleventh.
   BitReader br = BitReader.over(source);
 
   // Eleven read sites, all of which could fail with a `SourceFailed` the caller wants told apart
