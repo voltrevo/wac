@@ -66,15 +66,16 @@ language has no spelling for, a rule that turns out to be unusable at scale, a h
 in ten lines. Each package's README ends with that list, and the real ones become entries in
 `../QUESTIONS.md`.
 
-## What thirteen of them found, which no one of them could
+## What fifteen of them found, which no one of them could
 
-Four things recur, and none is in any single package's list.
+Six things recur, and none is in any single package's list.
 
 **The constructs ran out at nine.** Packages one to nine each wanted something the language has no
-spelling for. Packages ten to thirteen wanted nothing new — every construct `regex`, `crypto`, `sh`
-and `box` reached for was already filed or already invented. That is a result, not an exhaustion:
-the missing-construct question has been answered as fully as writing more packages will answer it,
-and what kept turning up afterwards was measurements.
+spelling for. Packages ten to fifteen wanted nothing new — every construct `regex`, `crypto`, `sh`,
+`box`, `wacpkg` and `gzip` reached for was already filed or already invented. That is a result, not
+an exhaustion: the missing-construct question has been answered as fully as writing more packages
+will answer it, and what kept turning up afterwards was measurements. The two findings below that
+came after it are both measurements, and one of them is a construct being turned *down*.
 
 **The pull toward `Result` is wrong when the outcomes are peers.** Twice a redesign wanted to
 collapse three named cases into `Result<T?, E>`, and twice it was wrong for the same reason.
@@ -91,12 +92,30 @@ has no generics-free way to hold a list of structs"* and which turns out to be a
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
 
+**A proposed type can be declined, and the fifteenth package is the first to do it.** `gzip`'s
+window meets `Slice<T>` in the one loop where it loses: a DEFLATE match is 3 to 258 bytes and mostly
+short, `../bench/slicecost.wac` prices a fresh view at 2.6 ns, and the shipped `Window` had already
+measured the same thing from the other side — wrapping that loop in a `Buf` cost 14-23%. The rule
+that falls out is general: **a view for what leaves, indices for what stays.** And taking the copy
+out of the one call where a view *does* pay produced a bug — a view of a buffer that is then
+compacted in the same call — which is the mirror image of the failure `slice.wac` names. That file's
+rule is retention, holding something too long; this is overwriting it too soon, and a view type has
+both.
+
 **Authority is per-instance, and per-function authority stops at the module edge.** `sh` found that a
 capability cannot cross *into* a spawned child, because a child is a separate instance and a
 reference does not cross one. `box` found that it cannot be subdivided *within* a module: 63 applets
 all take `(Core, Cli, Fs, Args)` and ten never mention `fs`, because one module has one grant set.
 Same fact, opposite directions. Both `SHOWCASE.md` entries about authority describe the inside, and
 nothing tells a reader where the inside ends.
+
+**And once, the issue tracker had already priced the construct.** `gzip`'s `issues/system/closed/0102`
+withdrew a promise it could not keep and wrote down what a real fix would take: *"every read site
+propagates it … threading a status back through every symbol read"*. That is a description of `try`,
+written by somebody who was not proposing one. It is the only finding here where the argument for a
+vision construct was made in the repository before vision existed — and the honest form of it is
+narrow: the issue was decided on whether the work was worth doing, which nothing here touches. The
+language changes the price, and the price is what was written down as the obstacle.
 
 ## What they propose adding, and where each one lives
 
@@ -249,3 +268,4 @@ not against it.
 | [sh](sh/) | 2026-09-04 | handing authority on, and what cannot cross |
 | [box](box/) | 2026-09-04 | 63 signatures measured; where per-function authority stops |
 | [wacpkg](wacpkg/) | 2026-09-04 | the two import proposals, against the resolver |
+| [gzip](gzip/) | 2026-09-04 | `try` against a closed issue that priced it; a view type declined on a number |

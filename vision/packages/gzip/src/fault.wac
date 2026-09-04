@@ -1,0 +1,54 @@
+// Why a decode stopped, and the one distinction the shipped decoder cannot draw.
+//
+// `issues/system/closed/0102` is about exactly this and closed on the smallest honest move: the
+// promise was withdrawn, and `gunzipStream` now says in a comment that *"a source failure and a
+// corrupt archive are indistinguishable from here"*. Its resolution then wrote down the shape a real
+// fix would have:
+//
+//   > **`inflateInto` returns a result rather than trapping on a source failure only** — corruption
+//   > keeps trapping — and every read site propagates it. That is a refactor of the decode loop, not
+//   > a line.
+//
+// That is a description of `try`. What made it a refactor is threading a status back through every
+// symbol read by hand; the whole content of `try` is not doing that. So this package's headline is
+// not that the vision design is nicer — it is that a filed issue's stated cost is the thing the
+// language removes, and the decision it was declined on ("it should be done for a reason better
+// than closing an argument about an unreachable branch") is untouched. **The price changes, not the
+// answer.**
+
+import { union } from "core";
+
+/** The source stopped producing bytes and said why. Nothing is wrong with the archive. */
+export struct SourceFailed { string why; }
+
+/** The member is not gzip, or is gzip and is wrong. */
+export struct BadMagic { i32 saw; }
+export struct BadMethod { i32 cm; }
+export struct BadBlockType { i32 btype; }
+export struct BadHuffmanCode { i32 at; }
+export struct BadDistance { i32 distance; i32 available; }
+export struct Truncated { string field; }
+
+/** The bytes decoded and are not the bytes that were compressed. */
+export struct ChecksumMismatch { u32 want; u32 got; }
+export struct LengthMismatch { i32 want; i32 got; }
+
+/**
+ * Everything a decode can answer other than bytes.
+ *
+ * **Two groups, and keeping them one union is the decision.** `SourceFailed` is somebody else's
+ * disk; every other member is a statement about the archive. `0102` wants them told apart and the
+ * shipped decoder cannot, which is the whole issue — so a fault set that merges them again would be
+ * reproducing the bug with better syntax.
+ *
+ * They are one union because they are one *return*: a caller writing to disk asks the same question
+ * of both — did this finish — and only then asks which. What separates them is not the type, it is
+ * that `SourceFailed` carries no claim about the data, so a caller may retry it and may not retry
+ * the others. `Corrupt` below is the name for that half, and it is the arm most callers want.
+ */
+export union<SourceFailed, Corrupt> Fault;
+
+export union<
+  BadMagic, BadMethod, BadBlockType, BadHuffmanCode, BadDistance, Truncated,
+  ChecksumMismatch, LengthMismatch
+> Corrupt;

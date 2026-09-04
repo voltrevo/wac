@@ -1,0 +1,179 @@
+// Output written so far, minus whatever has already been handed away.
+//
+// **This is the file where a vision type was offered and declined**, which has not happened before
+// in this directory on the strength of a number.
+//
+// ## Why `Bytes` does not go here
+//
+// `../../../core/slice.wac` proposes `Slice<T>` and `Bytes`, and every instinct says a sliding
+// window is what a view type is for: `window.from(src).take(len)` reads better than absolute
+// positions and a `base` that two coordinate systems meet at. It would also be slower, and the
+// shipped file already knew that from the other direction.
+//
+// The shipped `Window`'s own header:
+//
+//   > The storage is inline rather than a `Buf`, and `flushLimit` is a number rather than a test of
+//   > whether there is a sink, both for the same reason: `push` runs once per byte of output, so
+//   > anything it does per call is the cost of the decoder. Wrapping a `Buf` put a second call in
+//   > that path and measured **14-23% slower** on a whole-buffer decode.
+//
+// That is a measurement of a *call* per byte. `../../../bench/slicecost.wac` measures an
+// *allocation* per call, on the other side of the same question, and the two agree:
+//
+//      win     calls   triple     view    fresh    again
+//        8   8388608       48       53       71       50
+//       32   2097152       41       43       47       41
+//      128    524288       40       40       42       40
+//     1024     65536       41       41       41       41
+//
+// 2.6 ns for a fresh view, which is 45% at an eight-byte call and nothing at a kilobyte. **A DEFLATE
+// match is 3 to 258 bytes and is mostly short**, so the match copy is squarely in the losing column
+// — and it is the inner loop of every compressible stream.
+//
+// So the rule this file lands on, which is the general one rather than a fact about gzip:
+//
+//   - **A view for what leaves.** `emit` hands over 96 KiB at a time. One allocation per 96 KiB is
+//     free, and a `Bytes` there is strictly better than the copy the shipped one makes.
+//   - **Indices for what stays.** `push`, `pushMatch` and the run loop take `i32`s into `data` and
+//     always will. Not a workaround and not something to revisit when the compiler improves: the
+//     allocation is per call and the benefit is per byte, and this loop's calls are short.
+//
+// **A proposed type that a package declines is a result about the type**, which is why this is
+// written out rather than quietly not used. It also answers something `slice.wac` left open: it
+// says a slice's case is correctness rather than cost, and correctness is exactly what indices into
+// one private array, never handed out, do not need.
+//
+// ## What did change
+//
+// The sink. `fn[bool(u8[])]? sink` — a callback, nullable so that one struct serves both a buffering
+// decode and a streaming one — becomes the generator's `yield`. The null is gone with it, and so is
+// `flushLimit`'s trick of being `0x7FFFFFFF` so that `push` needs no test for whether a sink exists.
+// A generator always has somewhere to put a chunk; the buffering caller is the one that collects
+// them.
+
+import { Bytes } from "core";
+import { Fault } from "./fault.wac";
+
+/** How far a DEFLATE back-reference can reach. Nothing older than this is ever needed. */
+i32 windowSize() { return 32768; }
+
+/** The longest match the format can express, and so the most one token can write. */
+i32 maxMatch() { return 258; }
+
+/**
+ * Retained output at which a decode hands the front away.
+ *
+ * Emitting costs a copy of everything kept, so a bigger figure means fewer, larger copies: at
+ * 128 KiB the decoder hands over 96 KiB and copies 32 KiB back, one byte copied per three produced.
+ * Dropping it to the window size would copy a byte for every byte.
+ */
+i32 flushAt() { return 1 << 17; }
+
+/**
+ * Positions are **absolute** — bytes ever written — so they do not move when the front is dropped.
+ * `base` is the absolute position of `data[0]`, and the single point where the two coordinate
+ * systems meet. Unchanged from the shipped design, deliberately: it is what makes `emit` cheap and
+ * it is not what any of this is about.
+ */
+export struct Window {
+  u8[] data;
+  i32 len;
+  i32 base;
+  u32[] crcTable;
+  u32 crc;
+  /** Bytes handed out by `take` and not yet released. Nonzero means `data`'s front is aliased. */
+  i32 pending;
+
+  Window create() { return Window(u8[flushAt()](), 0, 0, crcTable8(), crc32Start(), 0); }
+
+  i32 total(const this) { return this.base + this.len; }
+
+  /**
+   * One byte. `i32`, not a view, not a `Bytes` — see the header.
+   *
+   * The flush test is gone from here. A generator yields, and a `yield` inside `push` would make
+   * every literal a suspension point; the block decoder calls `ready` between tokens instead, which
+   * is where a suspension belongs and where the shipped code's `emit` already effectively was.
+   */
+  void push(this, i32 v) {
+    if (this.len == this.data.len()) { this.grow(); }
+    this.data[this.len] = v;
+    this.len++;
+  }
+
+  /**
+   * Copy `len` bytes from absolute position `src`, which may overlap what is being written.
+   *
+   * Byte at a time inside when it overlaps, deliberately: when the distance is less than the length
+   * the copy reads bytes this same loop is writing, which is how DEFLATE encodes runs. A bulk copy
+   * would read stale bytes. Unchanged, and the reason it is unchanged is the header.
+   */
+  void pushMatch(this, i32 src, i32 len) {
+    while (this.len + len > this.data.len()) { this.grow(); }
+    i32 at = src - this.base;
+    i32 to = this.len;
+
+    if (at + len <= to) {
+      this.data.copyFrom(this.data, at, to, len);
+    } else {
+      u8[] d = this.data;
+      for (i32 k = 0; k < len; k++) { d[to + k] = d[at + k]; }
+    }
+    this.len = to + len;
+  }
+
+  void grow(this) { … }
+
+  /** Whether there is enough held to be worth handing over. Asked between tokens, never inside one. */
+  bool full(const this) { return this.len >= flushAt(); }
+
+  /**
+   * Everything except what a back-reference can still need, as a view.
+   *
+   * `windowSize() + maxMatch()` rather than `windowSize()`: a match copy reads bytes the same loop
+   * is writing, so what is kept must cover the furthest read plus the longest write.
+   *
+   * **A `Bytes`, and this is the one call in the file where that is free** — 96 KiB per allocation.
+   * The shipped `emit` allocates a fresh `u8[n]` and copies into it before handing it over; a view
+   * of `data[0..n]` does neither.
+   *
+   * ## And writing it that way introduced a bug, which is the finding
+   *
+   * The first version of this method returned the view and then compacted — `copyFrom(data, n, 0,
+   * keep)` — in the same call. That overwrites the front of `data`, which is the array the view
+   * points into, so the caller received 96 KiB of the *next* window's bytes. Silently: the length is
+   * right, the type is right, and the first 32 KiB even look plausible.
+   *
+   * The shipped code cannot have this bug, and not because it is more careful. It copies, so there
+   * is nothing aliasing `data` to invalidate — the safety is a side effect of the cost. **Take the
+   * copy away and the aliasing rule appears, with nothing in the type system holding it.** That is
+   * the real price of a view type in a buffer that is reused, and it is not in `slice.wac`'s list:
+   * that file's rule is about *retention*, holding a megabyte to remember six bytes, and this is the
+   * opposite failure — not keeping something too long but overwriting it too soon.
+   *
+   * So the compaction moves out, into `released`, and the decode loop calls it after the `yield`
+   * returns. **A coroutine is what makes that a rule rather than a hope**: the caller has the chunk
+   * for exactly as long as this machine is suspended, and a resumed generator is a place where the
+   * chunk is provably finished with. A callback pair has no such point — `sink(out)` returns before
+   * the callback's own caller is done, which is why the shipped design could not have taken this
+   * route even if allocation had been the thing it cared about.
+   */
+  Bytes take(this) {
+    i32 keep = windowSize() + maxMatch();
+    i32 n = this.len - keep;
+    Bytes out = Bytes(this.data, 0, n);
+    this.crc = crc32Update(this.crcTable, this.crc, out);
+    this.pending = n;
+    return out;
+  }
+
+  /** The view handed out by `take` is finished with. Only now may its bytes be overwritten. */
+  void released(this) {
+    if (this.pending == 0) { return; }
+    i32 n = this.pending;
+    this.data.copyFrom(this.data, n, 0, this.len - n);
+    this.base = this.base + n;
+    this.len = this.len - n;
+    this.pending = 0;
+  }
+}

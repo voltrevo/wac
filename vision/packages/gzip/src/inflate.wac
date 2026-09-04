@@ -1,0 +1,170 @@
+// DEFLATE decompressor (RFC 1951) and gzip reader (RFC 1952).
+//
+// Decoding is the mirror of encoding, with one asymmetry that matters: the decoder is fed bytes it
+// did not produce, so every field is untrusted. Bad input must not read out of bounds or loop
+// forever. **What it must do instead is the whole of this rewrite**, and it is the subject of a
+// closed issue rather than a preference of mine.
+//
+// ## One entry point, and the trailer is why there were two
+//
+// Shipped, there are two: `gunzipBytes(u8[] gz)` and
+// `gunzipStream(fn[Read()] read, fn[bool(u8[])] write)`. Its README says why, and the reason is not
+// laziness:
+//
+//   > A buffer decode reads the CRC and length from the *last* eight bytes before it starts, which
+//   > is how it can pre-size the output — a stream has no last eight bytes until it gets there, so
+//   > it checksums as it goes and checks at the end. Same guarantees, opposite order.
+//
+// A generator collapses them, because a buffer is a one-chunk source, and **the collapse costs the
+// pre-sizing**. `gunzipBytes` today allocates the output once at the size the trailer promises; a
+// caller of this collects chunks and grows. That is a real regression on the buffer path and it is
+// written here rather than in the README's list of wins, because a rewrite that only reports what
+// got better is not measuring anything.
+//
+// It is also recoverable without a second entry point: a caller holding the whole member can read
+// its own trailer and size its own `Buf`. The knowledge was never the decoder's; it was the
+// decoder's *because* the decoder owned the allocation.
+//
+// ## `try`, and what `0102` said it would cost
+//
+// `issues/system/closed/0102` closed on withdrawing a promise — `gunzipStream` cannot tell a caller
+// whether the source broke or the archive is corrupt, and now says so. Its resolution wrote the
+// shape of a real fix and priced it:
+//
+//   > **`inflateInto` returns a result rather than trapping on a source failure only** — corruption
+//   > keeps trapping — and every read site propagates it. That is a refactor of the decode loop, not
+//   > a line.
+//   >
+//   > Not trapping means threading a status back through every symbol read. A decoder that keeps
+//   > going after a failed read with a status nobody checked is how silent corruption gets written,
+//   > and this file decodes other people's bytes.
+//
+// Both halves are answered by one construct and neither is answered by good intentions. `try` is the
+// threading, written once per site as one keyword; and *"a status nobody checked"* is not
+// expressible, because `Result` is not `void` and a discarded one is a type error. The refactor
+// `0102` called a refactor is `try` in front of eleven calls.
+//
+// **This does not reopen the issue.** `0102` was decided on a reason that has nothing to do with
+// cost — *"it should be done for a reason better than closing an argument about an unreachable
+// branch"* — and that reason is untouched. What changed is the price, and a price is what was
+// written down as the obstacle.
+//
+// ## And the trap for corruption is argued two different ways
+//
+// Worth separating, because only one of the two survives.
+//
+// The **file** justifies it as safety: *"returning data that failed its own checksum would defeat
+// the point of carrying one."* That does not distinguish a trap from a `Result` — a caller cannot
+// reach the bytes inside an `Err` either, so `Result<Bytes, ChecksumMismatch>` withholds exactly
+// what the trap withholds.
+//
+// The **issue** justifies it as cost, and that one was real: threading a status by hand through
+// every symbol read is where the silent-corruption risk lives, not in the return type.
+//
+// So with `try` the surviving argument is gone, and this decoder returns a `Fault` for corruption
+// too. `Corrupt` is a separate arm of the union precisely so a caller can still choose the shipped
+// behaviour in one line — `r.orTrap("corrupt gzip member")` — rather than having it chosen for it.
+
+import { Result, Bytes, union } from "core";
+import { Fault, SourceFailed, Corrupt, BadMagic, BadMethod, Truncated,
+         ChecksumMismatch, LengthMismatch } from "./fault.wac";
+import { Window } from "./window.wac";
+import { BitReader } from "./bitreader.wac";
+import { Decoder } from "./huffman.wac";
+import { crc32Finish } from "./crc32.wac";
+
+/**
+ * A gzip member, as chunks.
+ *
+ * `async gen<Bytes> Result<void, Fault>` is the coroutine shape: it yields chunks and *answers*
+ * whether it finished. A caller writes one loop and the failure is not a second channel —
+ *
+ * ```wac
+ * try await for (Bytes chunk in gunzip(source)) {
+ *   out.pushAll(chunk);
+ * }
+ * ```
+ *
+ * — where `try` propagates a `Fault` that the loop's own function must be able to carry. The
+ * shipped pair is `fn[Read()] read` and `fn[bool(u8[])] write`, two callbacks and an `i32` status,
+ * and the README calls the write callback's `false` *"stopped caring"*. A generator has that for
+ * free and does not need a convention for it: a caller that stops iterating stops the machine.
+ *
+ * **The chunks are views into the decoder's window and are valid until the loop's next step.** See
+ * `window.wac` — that rule is the price of not copying, and it is a rule a coroutine can state and a
+ * callback pair cannot.
+ */
+export async gen<Bytes> Result<void, Fault> gunzip(AsyncGen<u8[]> source) {
+  BitReader br = BitReader.over(source);
+
+  // Eleven read sites, all of which could fail with a `SourceFailed` the caller wants told apart
+  // from a corrupt header, and `0102`'s "every read site propagates it" is what each `try` is.
+  i32 m0 = try await br.byte();
+  i32 m1 = try await br.byte();
+  if (m0 != 0x1F || m1 != 0x8B) { return Err(BadMagic((m1 << 8) | m0)); }
+
+  i32 cm = try await br.byte();
+  if (cm != 8) { return Err(BadMethod(cm)); }
+
+  i32 flg = try await br.byte();
+  try await br.bits(32);                          // MTIME
+  try await br.byte();                            // XFL
+  try await br.byte();                            // OS
+
+  if ((flg & 4) != 0) {                           // FEXTRA
+    i32 xlen = try await br.bits(16);
+    for (i32 i = 0; i < xlen; i++) { try await br.byte(); }
+  }
+  if ((flg & 8) != 0) { try await br.untilNul(); }    // FNAME
+  if ((flg & 16) != 0) { try await br.untilNul(); }   // FCOMMENT
+  if ((flg & 2) != 0) { try await br.bits(16); }      // FHCRC
+
+  Window out = Window.create();
+
+  // The block loop. `yield` is the only place this suspends on the output side, and it is between
+  // tokens rather than inside one, which is what lets `window.wac` hand out a view of its own
+  // storage: nothing writes to that storage until `released` below.
+  bool last = false;
+  while (!last) {
+    last = (try await br.bits(1)) == 1;
+    i32 btype = try await br.bits(2);
+    try await inflateBlock(br, out, btype);
+
+    while (out.full()) {
+      yield out.take();
+      out.released();
+    }
+  }
+
+  try await br.alignByte();
+  u32 wantCrc = (try await br.bits(32)) as@ u32;
+  i32 wantSize = try await br.bits(32);
+
+  // Everything still held goes out before the check, so a caller that traps on the fault has still
+  // seen every byte the member contained. Which is deliberate and is the arguable half: the shipped
+  // decoder traps with the tail unemitted. Handing over bytes that then turn out to be wrong is only
+  // safe because the fault is the *return*, and a caller cannot finish the loop without seeing it.
+  while (out.len > 0) {
+    yield out.take();
+    out.released();
+  }
+
+  u32 got = crc32Finish(out.crc);
+  if (got != wantCrc) { return Err(ChecksumMismatch(wantCrc, got)); }
+  if (out.total() != wantSize) { return Err(LengthMismatch(wantSize, out.total())); }
+  return Ok;
+}
+
+/**
+ * The whole member, for a caller that has the whole member.
+ *
+ * Not a second decoder — the two entry points collapsed and this is a four-line caller of the one
+ * that is left, which is what "a buffer is a one-chunk source" means in practice.
+ */
+export async Result<u8[], Fault> gunzipBytes(u8[] gz) {
+  Buf b = Buf.create();
+  try await for (Bytes chunk in gunzip(AsyncGen.of(gz))) { b.pushAll(chunk); }
+  return Ok(b.bytes());
+}
+
+async Result<void, Fault> inflateBlock(BitReader br, Window out, i32 btype) { … }
