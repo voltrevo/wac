@@ -80,9 +80,13 @@ export Vec<Bytes> sortWith(Vec<Bytes> xs, fn<i32(Bytes, Bytes)> cmp) { … }
 // when it wanted the key. What the *language* would have to add is nothing; what it cannot do is
 // check the refinement, which is a property of two functions and is not expressible.
 //
-// This is the first thing this directory has found that is a **library** gap rather than a language
-// one, and it is worth the entry for that reason: 125 entries in and the answer has always been *the
-// type could say it*. Here the type can say it and nobody wrote the type.
+// The answer being a **library** gap rather than a language one is what makes it worth the entry —
+// this directory mostly reaches *the type could say it if the language allowed*, and here the type
+// can say it and nobody wrote the type.
+//
+// (A first draft called this the *first* such finding in 125 entries. It is not, and the nearest
+// counterexample is two entries away in `../../../QUESTIONS.md`, written the same day. Fourth bare
+// ordinal over an unnamed set I have written today.)
 //
 // ## 2. What could not be written
 //

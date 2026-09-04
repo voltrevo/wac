@@ -5504,7 +5504,7 @@ where the information exists or not at all.
 That is the argument for errors being *values* rather than *codes*, made by a case where the
 information is a position the parser is about to lose. rlp did not need it and did not state it.
 
-## A key and an order are different things, and this is the first gap that is not the language's
+## A key and an order are different things, and the answer is a library type
 
 `sort -n` needs two comparisons over the same lines, and `packages/box/src/lib/lines.wac` has both:
 
@@ -5534,9 +5534,22 @@ with `order()` composing them and `sameKey()` exposed for `-u`, so a caller cann
 when it wanted the key. **The language has to add nothing.** What it cannot do is check the
 refinement, which is a property of two functions.
 
-That makes this the first finding in 125 entries where the answer is *somebody should write the type*
-rather than *the type could say it if the language allowed*. Worth separating, because a list that
-only ever concludes the second reads as a list of language requests, and one of them was not.
+**This entry said *the first finding in 125 entries* and that was wrong.** It is not even the first
+this week: *An order that is derivable from the data, imposed on the caller instead*, two entries
+earlier and by the same hand, concludes that the ask is *"not `Sorted<T, K>` and not a private
+constructor"* but a question a reviewer can put to a signature. A crude scan of all 127 finds at
+least eight entries reaching a convention or a review rule rather than a language change, and two
+reaching a library type.
+
+Which is the fourth bare ordinal over an unnamed set I have written today, after three corrections
+and one entry — *a claim that names its subject is self-checking; a claim that only counts is not* —
+recording the rule. **The rule is not self-enforcing**, and the reason is visible in the sentence it
+was written into: *the first in 125 entries* is doing rhetorical work, and the check would have cost
+one grep.
+
+What stands without a count: the answer here is a library type, the language has to add nothing, and
+a list that mostly reaches *the type could say it if the language allowed* is worth reading with that
+distinction in mind.
 
 ### The saturating key, which fixes a bug by moving it
 
@@ -5556,3 +5569,49 @@ arbitrary precision"*.
 allocates is a key you cannot compare in a loop.** That is the real constraint and it is a
 performance fact shaping a correctness one, which is the pairing this directory has otherwise only
 met in `@/packages/zstd`.
+
+## This file does not say what it concludes, and 109 of 127 entries cannot be read by a grep
+
+`../README.md` already says it: *"`QUESTIONS.md` is a hundred and twenty-seven entries and getting
+longer, which is the exercise working and is not a document anybody can read to find out what it
+concluded."* That is a statement about length. The measurable version is worse and is about shape.
+
+An entry can reach one of three conclusions, and they want different things from a reader:
+
+- **change the language** — a feature, a rule, a syntax;
+- **write a library type** — the language allows it and nobody has written it;
+- **adopt a convention** — no code changes at all, and the answer is a habit or a review question.
+
+Classified by the stock phrases each tends to use — `scratchpad/verdicts.py`, and it is deliberately
+crude:
+
+    127 entries          (this one not yet written)
+      library          2
+      convention       8
+      language         8
+      unclassified   109
+
+**109 is the finding.** Not that those entries have no conclusion; most do, in a sentence somewhere
+in the middle. It is that the conclusion is prose, in a different place each time, so nothing can
+collect it — which is exactly the problem the attribution half of the quotation entry has, arriving
+at the level of the whole document rather than a citation.
+
+The consequence is concrete. Somebody deciding what to *do* with this directory has to read 127
+entries to find the eight that ask for nothing and the two that ask for a library. And a writer
+cannot tell either: this entry exists because the one before it claimed to be *the first* library
+conclusion in 125 entries, and the counterexample was two entries away and by the same hand.
+
+### The fix is a line, and it is not a schema
+
+Each entry ends with one line naming its verdict and what would settle it:
+
+    > **Verdict:** language — a length in a slice's type. Settled by: `spec/spec/types.md`.
+    > **Verdict:** library — `SortSpec<T>`. Settled by: writing it in `core`.
+    > **Verdict:** convention — parse at the edge. Settled by: a page in `spec/` and nothing else.
+
+Not a schema, not a front-matter block, not a tool: one line in the shape the file already uses for
+everything else. What it buys is that the *next* count of anything in this file is a grep instead of
+a memory, which is the failure this directory has now recorded four times in one day.
+
+Not done here for 127 entries. Doing it retroactively would mean deciding 109 verdicts in one pass,
+which is the kind of bulk judgement that produces the numbers this entry is about.

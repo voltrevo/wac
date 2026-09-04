@@ -129,10 +129,14 @@ nothing takes the pair. And the answer is a **library** type:
 struct SortSpec<T> { fn<i32(T, T)> key; fn<i32(T, T)> tieBreak; }
 ```
 
-The language has to add nothing. Which makes it the first finding in 127 entries where the
-conclusion is *somebody should write the type* rather than *the type could say it if the language
-allowed* — worth separating, because a list that only ever reaches the second reads as a list of
-language requests, and one of them was not.
+The language has to add nothing, which is worth separating from the usual conclusion — a list that
+mostly reaches *the type could say it if the language allowed* reads as a list of language requests,
+and this one is not.
+
+*(An earlier version of this paragraph called it the first such finding in 127 entries. It is not:
+`../../QUESTIONS.md`'s entry on an order derivable from the data, written two units earlier, reaches
+a review rule rather than a feature, and a scan finds at least eight more. The count was doing
+rhetorical work and cost one grep to check.)*
 
 ### A saturating key, which fixes a bug by moving it
 
