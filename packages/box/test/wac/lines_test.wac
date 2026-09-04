@@ -37,8 +37,10 @@ u8[] manyLines() {
     b.pushAll(("line " + itoa(i) + " ").toBytes());
     b.pushCodepoint(0x2014);                                   // em dash
     b.pushAll(" ".toBytes());
-    // "ünïcode", by code point: wac has no `\u{…}` escape yet, and a raw ü in a fixture is a byte
-    // sequence nobody reviewing this file can count.
+    // "ünïcode", by code point. This said wac has no `\u{…}` escape *yet* and it has one —
+    // `spec/spec/strings.md` `[§wac-str-uesc-j4kq8mv]`, bounded by `string.fromCodepoint`'s own
+    // rules. Left as calls because changing a fixture needs the suite, and a raw ü in a fixture is
+    // still a byte sequence nobody reviewing this file can count.
     b.pushCodepoint(0x00FC); b.pushAll("n".toBytes()); b.pushCodepoint(0x00EF);
     b.pushAll("code\n".toBytes());
     if (i % 7 == 0) { b.push(0x0a); }

@@ -94,10 +94,19 @@ export i32 relayIntroduceAck() { return 40; }
  * tor-spec §5.1.4 has always specified. The hop between a client and a *hidden service* — the one
  * that exists only after a rendezvous — uses SHA3-256 and AES-256 instead (rend-spec-v3 §3.3.2).
  *
- * Both digest pairs are held and one is unused, which is not elegant. wac has no sum types and no
- * closures, so the alternatives are two `Hop` types that `Circuit` would have to hold a mixture of,
- * or a facade of function pointers. A boolean and two spare hash states is the smallest of the three,
- * and the branch is in the two places that take a digest rather than spread through the file.
+ * Both digest pairs are held and one is unused, which is not elegant.
+ *
+ * **The reason given here has expired and the conclusion may have gone with it.** This said "wac has
+ * no sum types and no closures, so the alternatives are two `Hop` types that `Circuit` would have to
+ * hold a mixture of, or a facade of function pointers" — and both premises are false now: enums carry
+ * payloads and lambdas capture. The third alternative the language now allows is an
+ * `enum Digests { Sha1Aes128(…), Sha3Aes256(…) }`, which is exactly *a mixture `Circuit` can hold*
+ * and costs neither the spare states nor the boolean.
+ *
+ * Not changed here, because a boolean and two hash states is small and this file is on the hot path
+ * of every cell. Recorded so the next reader weighs it rather than inheriting the old reason: the
+ * branch is in the two places that take a digest rather than spread through the file, which is the
+ * argument that still stands on its own.
  */
 /**
  * How many bytes to expand from an ntor handshake: the hop's own seventy-two, then KH.

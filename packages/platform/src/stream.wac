@@ -79,8 +79,12 @@ export struct Sink {
    * Into memory, for a caller that wants the bytes rather than a stream.
    *
    * `taken()` is how they come out. Nothing is ever written through the capability, so the `Cli` here
-   * is unused — it is a field rather than an option because wac has no nullable struct fields worth
-   * the branch, and an unused capability reference costs nothing.
+   * is unused — it is a field rather than an option because the branch is not worth it, and an unused
+   * capability reference costs nothing.
+   *
+   * (This said wac "has no nullable struct fields", which it does —
+   * `[§wacc-struct-nullable-optional]`. The judgement is unchanged; the reason given for it was not
+   * a judgement.)
    */
   Sink toBuffer(Cli cli) { return Sink(cli, TO_BUFFER(), Buf.create(), false); }
 

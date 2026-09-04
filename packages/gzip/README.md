@@ -94,11 +94,17 @@ array and copies nothing. Cutting the work down a piece at a time, on 1.056 MB o
 | + LZ77 and Huffman coding | 6.97 | 4.01 |
 
 The whole-input compressor does the same job in 5.40 ms, so the gap is 1.57 ms and the gather
-is 1.34 of it. It is slow because wac has no bulk array copy, so `Buf.pushBytes` moves a
-megabyte one element at a time at about 790 MB/s — filed as `wac` issue 0056, where the
-finding is that `array.copy` is already emitted by the compiler for its own helpers and simply
-is not reachable from the language. That one change would close most of this gap, and would
-speed up every buffer in the repo rather than only this one.
+is 1.34 of it.
+
+**Both numbers predate the fix and nothing has re-measured them.** The gather was slow because
+`Buf.pushBytes` moved a megabyte one element at a time at about 790 MB/s, `wac` issue 0056 asked for
+`array.copy` to be reachable from the language, and it **closed**: `spec/spec/arrays.md` has
+`copyFrom` and `fill` as `[§wac-arr-bulk-7kmq4wn]`, and `packages/bytes/src/buf.wac`'s `pushBytes` is
+one `this.data.copyFrom(src, start, this.len, count)`. So the 1.34 ms is a measurement of a build
+that no longer exists, and the recommendation under it — *"that one change would close most of this
+gap"* — points at a change already made. There is no task that reproduces this table; whoever
+re-measures it should leave one behind, since a number with no command attached is how it went
+stale unnoticed.
 
 Adding the streaming path made the whole-buffer decoder **faster**, which was not the plan:
 routing output through a window forced the match copy into one call per match instead of two

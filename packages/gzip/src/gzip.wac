@@ -15,7 +15,11 @@ import { Tables } from "./tables.wac";
 
 // A stored block's LEN field is 16 bits, so a block tops out at 65535 bytes.
 // Longer input becomes several blocks, only the last of which is marked final.
-// (wac has no top-level constants, so this is a function.)
+//
+// This said "(wac has no top-level constants, so this is a function.)" and `tables.wac` in this
+// same directory corrects the identical sentence: it has them, arrays included, and they are
+// hoisted rather than rebuilt. Left as a function because a call and a `const` read cost the same
+// here, and changed to say so rather than to say something untrue.
 i32 maxStored() { return 65535; }
 
 void header(Buf out) {

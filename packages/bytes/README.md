@@ -14,8 +14,12 @@ string s = b.toStr();     // "hi"
 ## Why it is a package
 
 `gzip` and `json` had each written this type, independently and almost
-identically. wac has no generics, so a container cannot be written once over its
-element type — but it can be written once over `u8`, and that is what this is.
+identically. wac had no generics when that happened, so a container could not be
+written once over its element type — but it could be written once over `u8`, and
+that is what this is. (It has them now: `core/vec.wac` is `Vec<T>`, which
+`src/buf.wac`'s own header records. A `Buf` is still not a `Vec<u8>`, because half
+its surface is about *bytes* — `pushU32`, `pushDecimal`, `pushCodepoint` — rather
+than about holding a sequence.)
 
 The merge was not free of consequence, in a good way: `gzip`'s `pushBytes` had
 appended through `push` one byte at a time, paying a capacity check and a

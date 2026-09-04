@@ -141,3 +141,54 @@ of the fourteen are in the same package as a fix this issue already made. Whatev
 audit uses, it has to cover prose as a first-class location, not as an afterthought — the same point
 `packages/tty/README.md` made the same day from the other end, where a sentence about what the
 language cannot do had a five-day shelf life.
+
+### The other half of the genre, verified against the spec — ten more
+
+The section above is `no closures` only. The same day, the rest of the *"wac has no …"* / *"wac
+cannot …"* corpus was extracted with locations — about ninety sites, some sixty distinct sentences —
+and each of the plausible ones checked against `spec/`. **Most are true and should be left alone**:
+no tuples (`issues/lang/0074`, open), no overloading (`functions.md`: *"No overloading — each
+function name must be unique within its"*), no reflection, no traits, no type aliases, no `u16`, no
+`\x` / `\b` / `\f` escape (`strings.md` lists exactly `\n \t \r \\ \" \0 \u{H…H}`), no
+from-the-end indexing, no declaration type inference, no exceptions, no empty statement, no
+module-level mutable state, and the capability ones — no randomness, no clock, no sockets — which
+are the design rather than a gap.
+
+Ten were stale. All corrected, all prose:
+
+| where | said | verdict |
+|---|---|---|
+| `packages/json/src/parse.wac` | no exceptions **and no sum types** | `value.wac`, which this file imports, is `export enum JsonValue` — and `enums.md` names this package as one of the three that exercised the feature hardest |
+| `packages/tor/src/relay.wac` | no sum types and no closures | both false; and here the **conclusion** may go too — an `enum Digests` is exactly the *mixture `Circuit` can hold* the comment says is unavailable |
+| `packages/gzip/README.md` | no bulk array copy | `arrays.md` `[§wac-arr-bulk-7kmq4wn]` has `copyFrom`, `issues/lang/0056` is closed, and `Buf.pushBytes` is one `copyFrom` call — see below |
+| `packages/gzip/src/gzip.wac` | no top-level constants | `tables.wac`, in the same directory, already corrects the identical sentence |
+| `packages/box/test/wac/lines_test.wac` | no `\u{…}` escape **yet** | there is one, bounded by `string.fromCodepoint`'s own rules |
+| `packages/bytes/README.md` | no generics | `src/buf.wac` in the same package already says this expired |
+| `packages/fmt/README.md` | no generics | same |
+| `packages/tor/src/hsintro.wac` | no growable array here | `tools/wac/covledger.wac` already corrects the identical sentence |
+| `packages/http/src/client.wac` | no nullable struct field | `structs.md` `[§wacc-struct-nullable-optional]`, and one may be left out of a named construction |
+| `packages/platform/src/stream.wac` | no nullable struct fields worth the branch | same — the judgement stands, the reason given for it was not a judgement |
+
+**Four of the ten are corrected already, in the same package, by a different file.** `bytes`,
+`gzip`, `tor` and `fmt` each hold both the stale sentence and its correction. That is the strongest
+version of the point above: the fix reaches the file being edited and the sentence spreads by being
+read.
+
+### And one of them is a stale *measurement*, which is worse than a stale reason
+
+`packages/gzip/README.md` does not only give the wrong reason. It gives a benchmark:
+
+> the gap is 1.57 ms and the gather is 1.34 of it. It is slow because wac has no bulk array copy, so
+> `Buf.pushBytes` moves a megabyte one element at a time at about 790 MB/s … That one change would
+> close most of this gap, and would speed up every buffer in the repo rather than only this one.
+
+`issues/lang/0056` is that change and it is **closed**. `pushBytes` is
+`this.data.copyFrom(src, start, this.len, count)` today. So the 1.34 ms measures a build that no
+longer exists, and the paragraph recommends work already done — a reader either repeats it or
+believes streaming compression is slower than it is.
+
+There is **no task that reproduces the table**, which is the mechanism: a number with a command
+attached goes red, and a number in prose goes quietly wrong. Whoever re-measures should leave the
+command behind. Worth generalising past this one: the audit above looked for stale *claims about the
+language*, and stale *measurements of our own code* are the same genre with a shorter half-life,
+since a language gap closes once and a performance number moves every week.

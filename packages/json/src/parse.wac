@@ -3,9 +3,13 @@
 // Input is UTF-8 bytes rather than `string` — see value.wac for why. That turns
 // the scanner into comparisons on i32, which is what wac is good at.
 //
-// wac has no exceptions and no sum types, so errors travel as a code on the
-// Parser plus a null return. Every parse entry point returns `T?`; null always
-// means "check p.err".
+// wac has no exceptions, so errors travel as a code on the Parser plus a null return. Every parse
+// entry point returns `T?`; null always means "check p.err".
+//
+// **This said "and no sum types", and the file it imports from is an enum.** `value.wac`'s
+// `JsonValue` is `export enum`, and `spec/spec/enums.md` names this package as one of the three that
+// exercised the feature hardest. So the error path could be a `Result<T, ParseFault>` and is not;
+// what is written here is what the language had when it was written.
 
 import { JsonValue, JsonArray, JsonObject } from "./value.wac";
 import { Buf } from "../../bytes/src/buf.wac";

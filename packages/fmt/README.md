@@ -160,7 +160,8 @@ which cuts those iterations to about three.
 Both directions, sharing the machinery. Digit generation takes the significand,
 exponent and boundary rules as parameters, so `f32` is a decomposition and not a
 second copy of Burger & Dybvig. Parsing needs its own bisection — the two return
-different types and wac has no generics — but the exact comparison underneath is
+different types, and the generics that would unify them arrived after this was
+written and have not been tried here — but the exact comparison underneath is
 shared, since it works on a significand and a binary exponent and does not care
 where they came from.
 

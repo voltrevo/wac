@@ -96,8 +96,14 @@ export Fetched post(Cli cli, string host, i32 port, string path, u8[] body, stri
 }
 
 Fetched failed(string why) {
-  // A `Fetched` that is not `ok` still has to carry *an* `Incoming`, since wac has no nullable struct
-  // field worth using here — an empty one, which a caller that checks `ok` never looks at.
+  // A `Fetched` that is not `ok` still has to carry *an* `Incoming` — an empty one, which a caller
+  // that checks `ok` never looks at.
+  //
+  // This said "wac has no nullable struct field worth using here", and the first half is wrong:
+  // `spec/spec/structs.md` `[§wacc-struct-nullable-optional]` has them, and a nullable field may
+  // even be left out of a named construction. `Incoming? body` would say what this comment says.
+  // The shape that says it properly is `Fetched` being an enum of two arms rather than a struct with
+  // an `ok` flag, which is a change to the type every caller matches on.
   return Fetched.of(false, Incoming(0, 1, u8[0](), Headers.create(), u8[0](), 0, false), why);
 }
 

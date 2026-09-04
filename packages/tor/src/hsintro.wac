@@ -120,8 +120,10 @@ u8[] decodeValue(u8[] value) {
  * nothing to introduce through.
  */
 export IntroPoint[] parseIntroPoints(u8[] plaintext) {
-  // Count first, so the array can be exact; wac has no growable array here and the alternative is
-  // an over-allocated one with a length the caller has to be told about separately.
+  // Count first, so the array can be exact. (This said "wac has no growable array here"; `core`'s
+  // `Vec<T>` is one, and `tools/wac/covledger.wac` corrected the same sentence. Counting is still
+  // the better shape for an exact answer the caller indexes — the alternative it was contrasted
+  // with, an over-allocated array plus a separate length, is the one that is bad.)
   i32 count = 0;
   i32 scan = 0;
   while (true) {
