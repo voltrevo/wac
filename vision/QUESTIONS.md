@@ -138,19 +138,27 @@ is whether it reaches `for`, and whether it binds an enum variant as well as a n
 
 ## How should a `Vec` drop its reference to a popped element?
 
-`pop` decrements a length and leaves the reference in the slot, so the element stays reachable until
-a later `push` overwrites it. Nothing the body can write clears it: a `T[]` at a non-nullable `T`
-has no null to store, and `Point[10]()` builds ten distinct `Point()`s rather than ten absences. The
-queue `Sys.drain` pops from has the same hole, which is where it turned up.
+**Not a vision question — `core/vec.wac` ships with it and says so at the line:**
 
-Holding `T?[]` instead is free for a reference `T`, since a `ref null` array is the same array, and
-boxes every element of a `Vec<i32>` — the one case that cannot wear it. An array operation meaning
-*put this slot back to nothing*, and doing nothing where the element type has no null to write,
-would cost nothing anywhere; it needs the generic body to be able to say it without knowing which
-case it is in.
+> The slot keeps its reference: there is no value to overwrite it with, so a popped element stays
+> reachable from the backing array until something else is pushed over it. It matters only if T is
+> large and the Vec is long-lived.
 
-The retention is bounded by the vec's high-water mark rather than growing, which sizes the problem
-without excusing it: one popped root can hold a whole graph.
+So the language has no answer and the standard container documents the absence. Nothing the body can
+write clears it: a `T[]` at a non-defaultable `T` has no null to store, and `Point[10]()` builds ten
+distinct `Point()`s rather than ten absences. `Sys.drain`'s queue has the same hole.
+
+**The shipped comment understates it, which is the one thing worth adding.** *"Only if T is large"*
+measures the element; retention follows **reachability**. A `T` that is a single pointer holds
+everything it points at — one popped root can retain a whole graph, and `http`'s `Request` is
+exactly that shape now that its fields are views into a connection buffer.
+
+Three ways out, none free. Hold `T?[]`, which costs nothing for a reference `T` — a `ref null` array
+is the same array — and boxes every element of a `Vec<i32>`, since `spec/spec/types.md` makes a
+nullable primitive a reference to a synthesised one-field struct. Add an array operation meaning
+*put this slot back to nothing*, doing nothing where the element type has no null: free everywhere,
+and it needs the generic body to say it without knowing which case it is in. Or leave it, which is
+what shipped.
 
 ## Whether there is optional chaining
 

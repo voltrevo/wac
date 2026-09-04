@@ -40,6 +40,10 @@ which an enum or a struct has not got; the array *literal* with no elements need
 what makes an empty `Vec<Option<i32>>` possible at all. Six files here allocated with `T[0]()`
 before that comment was read. Not a language finding — a reading one.
 
+**The popped-slot retention is `core`'s, not this rewrite's.** `core/vec.wac`'s `pop` carries the
+same comment — *"the slot keeps its reference: there is no value to overwrite it with"* — so the
+question in `../QUESTIONS.md` is about shipped code and the rewrite only inherited it.
+
 **A standalone `grow()` cannot be written**, which is a language fact rather than a taste. An array
 needs a value to fill new room with, a `T` at a non-defaultable type has none, and the only `T`
 guaranteed to be to hand is the one being pushed — so growth lives inside `push`. The real `core`
