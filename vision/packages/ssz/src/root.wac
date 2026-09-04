@@ -1,0 +1,86 @@
+// `hash_tree_root`, driven by an `SszType` instead of by two flat tables and an index.
+//
+// The shipped signatures are the finding in miniature:
+//
+//     u8[] sszHashTreeRoot(Int32Array types, Int32Array fields, i32 root, u8[] data)
+//     bool sszIsFixed(Int32Array types, Int32Array fields, i32 i)
+//     i32  sszFixedSize(Int32Array types, Int32Array fields, i32 i)
+//
+// Three functions, each taking the same two tables and a cursor into them, and every recursive call
+// passing all three along. With a type as a value they are a method, a method and a method, and the
+// tables stop existing.
+
+import { Result, Bytes, Vec } from "core";
+import { Chunk, CHUNK, zeroHash } from "./chunk.wac";
+import { SszType } from "./type.wac";
+import { DecodeFault, NotABitlist, BadFirstOffset, BadOffset } from "./fault.wac";
+
+/**
+ * Hash a list of chunks into a tree padded to `limit` leaves.
+ *
+ * `limit` is the **type's** chunk limit, never the data's length — the first of the four things the
+ * shipped README says loudest. Here it comes from `SszType.chunkLimit()` and there is no length in
+ * scope at this call.
+ */
+export Chunk merkleize(Vec<Chunk> chunks, i32 limit) { … }
+
+/** `merkleize(root, length)` — the list-and-bitlist mixin, one level above the tree. */
+export Chunk mixInLength(Chunk root, i32 length) { … }
+
+/**
+ * The root of `data` read as `t`.
+ *
+ * Answers a `Result` because a serialisation can be malformed, which the shipped one signals by
+ * `u8[]?` from `rootBitlist` alone and by trapping elsewhere.
+ */
+export Result<Chunk, DecodeFault> root(SszType t, Bytes data) {
+  match (t) {
+    Uint(_):       { return Ok(merkleize(pad(data), t.chunkLimit())); }
+    Bool:          { return Ok(merkleize(pad(data), 1)); }
+    Bitvector(n):  { return Ok(merkleize(pad(data), t.chunkLimit())); }
+
+    /**
+     * A bitlist's delimiter bit is **measured, not merkleized** — the second of the four. The bit
+     * says where the data ends and is then removed before the chunks are hashed, so a bitlist of
+     * `n` bits and a bitvector of `n` bits have the same leaves and different roots, because only
+     * the first mixes in a length.
+     */
+    Bitlist(limit): { … }
+
+    Vector(of, n):  { … }
+    List(of, limit): { … }
+
+    /**
+     * A container: the field roots, in order, merkleized to the field count.
+     *
+     * The walk that needs the offsets — the third and fourth of the four things: a variable field's
+     * extent comes from the *next* offset and the last runs to the container's end, and the first
+     * offset must equal the size of the fixed part or the serialisation is malformed.
+     */
+    Container(fields): { … }
+  }
+}
+
+/** Split into chunks, zero-padding the last. */
+Vec<Chunk> pad(Bytes data) { … }
+
+// ## What could not be written
+//
+// **`match (t)` has seven arms and three of them are one line.** Reading the arms against
+// `type.wac`'s declaration is the whole check that this function is total, and the compiler does it —
+// which is the ordinary benefit and is worth stating once for the whole directory, because the flat
+// table's equivalent is `switch (types[i * 4])` with a `default: trap;` that nothing can prove is
+// unreachable.
+//
+// **The offsets walk is elided and it is the part with the bugs in it.** Not for space: writing it
+// here would be transcription, because the shipped `container.wac` is correct and its correctness is
+// four stated invariants rather than a shape a type could hold. The one thing a type *could* hold is
+// the pairing of a field with its extent, and that is `Vec<Chunk>` above — after the offsets have
+// been resolved, which is where the difficulty already ended.
+//
+// **A root has no type in it.** `Chunk` is 32 bytes whatever produced them, so a program can compare
+// the root of a `BeaconState` with the root of a `SyncCommittee` and get `false` rather than a type
+// error. A phantom parameter — `Root<T>` — is the standard answer and vision has generics, so this is
+// only unwritten because a `Chunk` from `sha256` would have to be given a `T` from nowhere. That is
+// the same *value type stops at the boundary* as everything else here, arriving for the third time in
+// one package.

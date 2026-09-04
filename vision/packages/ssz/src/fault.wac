@@ -1,0 +1,38 @@
+// Why a proof or a decode was refused.
+//
+// `packages/ssz` answers `bool` from both branch checks and `u8[]?` from `rootBitlist`. Between them
+// that is **seven distinct refusals spelled two ways**, and the two spellings agree on nothing except
+// that the caller learns which function said no.
+
+/** A chunk-shaped argument that is not 32 bytes. `which` is the parameter's name. */
+export struct NotAChunk { string which; i32 got; }
+
+/** The branch's length is not a whole number of chunks. */
+export struct RaggedBranch { i32 bytes; }
+
+/** The branch is shorter than the index needs — it cannot reach the root. */
+export struct BranchTooShort { i32 have; i32 need; }
+
+/**
+ * A normalized branch's surplus leading nodes are not all zero.
+ *
+ * **Not padding to trim.** `sync-protocol.md` refuses rather than slicing, because a non-zero surplus
+ * lets a prover attach an unrelated subtree below the field being proved. The shipped file says this
+ * in a comment and then returns the same `false` as a wrong-sized leaf.
+ */
+export struct SurplusNotZero { i32 at; }
+
+/** The fold reached a root that is not the one claimed. The honest failure. */
+export struct RootMismatch { }
+
+/** A bitlist with no delimiter bit, or with data above it. */
+export struct NotABitlist { }
+
+/** A serialisation whose first offset is not the size of the fixed part. */
+export struct BadFirstOffset { i32 got; i32 want; }
+
+/** Offsets that go backwards, or past the end. */
+export struct BadOffset { i32 at; i32 got; i32 limit; }
+
+export union<NotAChunk, RaggedBranch, BranchTooShort, SurplusNotZero, RootMismatch> ProofFault;
+export union<NotABitlist, BadFirstOffset, BadOffset> DecodeFault;

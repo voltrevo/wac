@@ -4410,3 +4410,91 @@ Three ways out, and this is small enough that the cost of arguing exceeds the co
 - **Refuse a typedef whose right-hand side names an existing type.** Narrow, catches this exact case,
   and is a rule about what a name may be rather than about syntax — which is the sort of rule that
   turns out to have an exception.
+
+## A shape adopted for a boundary outlives the boundary, because nothing links the two
+
+`packages/ssz/src/container.wac` represents an SSZ type as four `i32`s in a flat table, and — unlike
+every other flat descriptor this exercise has met — **it says why in its header**:
+
+> A type is four `i32`s in a flat table, `stride 4`, so the whole thing crosses the JS boundary as an
+> `i32[]` and needs no struct marshalling
+
+Nothing crosses that boundary. The tests were TypeScript until commit `71f8299c`, *"ssz: the whole
+package to wac, on a shared fixture loader"*, **2026-08-17** — six `*_wac.test.ts` files calling
+`sszHashTreeRoot(types: Int32Array, fields: Int32Array, root: number, data: Uint8Array)`. They are
+deleted. The only `.ts` left in the package is a SHA-256 oracle that speaks hex lines and has never
+seen a descriptor, and no `.ts` anywhere in the repository mentions `KIND_`.
+
+The file is not wrong; it was right when written. **It is findable only because it stated its
+reason**, which is the argument for stating reasons made by the one file that did — the other flat
+descriptors here (`abi`'s nine `T_*`, `regex`'s thirteen `OP_*`) give none, so nobody can tell whether
+theirs has expired too.
+
+What is unwritten is the general shape, and it is the other half of *a capability signature is the
+last place a value type reaches*. That entry is about a value type stopping **at** a boundary. This is
+the boundary reaching **back**: choosing the in-memory representation of a type three files behind it,
+for a program that no longer has the boundary. Both are consequences of marshalling being per scalar,
+and neither has anything that notices when the pressure goes away.
+
+The nearest existing check is the entry on *"this exists because the language cannot"* being a claim
+about causation — right eleven times in seventeen. A claim about a boundary is the same kind of claim
+and nothing tests it either. **A reason written into a comment has no expiry and no owner**, and this
+is the case where knowing the date it expired took one `git log`.
+
+## `isValidMerkleBranch` takes its own argument twice, and its newer sibling puts it back together
+
+```
+bool isValidMerkleBranch(u8[] leaf, u8[] branch, i32 depth, u64 index, u8[] root)
+bool isValidNormalizedMerkleBranch(u8[] leaf, u8[] branch, u64 gindex, u8[] root)
+```
+
+A generalized index is one number holding two facts: the depth is the position of its leading bit and
+the path is every bit below. The first function takes them apart, needs them to agree, and its first
+statement after the size checks is `if (branch.len() != depth * CHUNK) { return false; }` — a guard
+that exists only because a caller can pass a depth the branch does not have. The second takes the one
+number, splits it with `floorLog2` and `subtreeIndex`, and calls the first.
+
+**Both forms are in the package and the newer one is the older one reunited.** That is not an
+argument that has to be made; it is a change that already happened and stopped one function short. A
+`Gindex` with `depth()` and `onRight(d)` as methods makes it one function, and the
+surplus-leading-zeros rule that justified the second becomes a comparison of the branch's length with
+the index's depth, checkable inside.
+
+### And the `bool` is answering six questions, one of which is a security property
+
+`false` means: a leaf that is not 32 bytes, a root that is not 32 bytes, a branch that is not `depth`
+chunks, a fold that lands somewhere else — and, in the normalized one, a branch too short for the
+index, or **a surplus that is not zero**. The last is described in its own comment as the rule that
+stops a prover attaching an unrelated subtree below the field being proved, and it returns the
+identical `false` as a caller who passed a 31-byte leaf.
+
+One of the six answers the question the function is for. The other five are the caller having made a
+mistake, and a light client that cannot tell them apart logs *"invalid proof"* when its own slicing is
+off by a chunk. Two of the six stop existing if a chunk is a type; the rest are a `Result`.
+
+This is the same shape as `Page` answering `Ticket<bool>` — a `bool` carrying a failure it cannot
+name — arriving in our own code, in the one place in the repository where the distinction is a
+security boundary rather than a diagnostic.
+
+## A fixed-length byte view, asked for by three packages independently
+
+`Bytes` is `Slice<u8>` and its length is a runtime field. Three rewrites reached the same wall from
+three directions:
+
+- `@/packages/ens/src/answer.wac`: *"`Bytes` carries no length in its type — so `Address`, `Bytes32`
+  and a `contenthash` are one type as far as anything can check"*, and `got.get(0).asWord()!.from(12)`
+  is a slice with a magic 12 in it.
+- `@/packages/ssz/src/chunk.wac`: SSZ is defined over 32-byte chunks, so `Chunk` is a struct wrapping
+  a `Bytes` whose length was checked once — and the wrapper is the whole of it. `sha256` answers
+  `Bytes`, so the one place the fact is known is a comment above an unchecked constructor.
+- `@/packages/bls/src/fp.wac`: `Fp` holds `u32[] limbs` for a field element of fixed width — the same
+  absence at a different element type.
+
+**The ask is smaller than dependent types and bigger than anything on the pages**: `Slice<T>` already
+has `len` as a field, and the request is for it to be in the type when it is known — `Slice<u8, 32>`.
+Then `Chunk` is a typedef, `Chunk.of` is a cast the compiler checks, and the check survives in the one
+place bytes arrive from outside instead of being re-derived in every function that receives them.
+
+What has to be decided is whether that is one feature or two, because a *sized* slice and a slice
+whose size is a type parameter are different amounts of work — and every one of the three cases above
+wants only the first.

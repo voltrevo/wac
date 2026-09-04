@@ -1,0 +1,103 @@
+// Verifying a Merkle branch — one function where there are two, and a `Result` where there is a
+// `bool`.
+//
+// This is the file the rewrite exists for. Everything else here is a type where there was a table;
+// this is a signature that was already carrying its own argument twice.
+
+import { Result, Vec, Bytes } from "core";
+import { Chunk, Gindex, CHUNK } from "./chunk.wac";
+import { ProofFault, NotAChunk, RaggedBranch, BranchTooShort, SurplusNotZero, RootMismatch }
+  from "./fault.wac";
+
+/**
+ * Fold `leaf` up through `branch` and check it reaches `root`.
+ *
+ * ## One function, where the shipped package has two
+ *
+ * ```
+ * bool isValidMerkleBranch(u8[] leaf, u8[] branch, i32 depth, u64 index, u8[] root)
+ * bool isValidNormalizedMerkleBranch(u8[] leaf, u8[] branch, u64 gindex, u8[] root)
+ * ```
+ *
+ * The first takes the depth and the path as two arguments **that have to agree**, and its first
+ * statement after the size checks is `if (branch.len() != depth * CHUNK) { return false; }` — a guard
+ * that exists only because a caller can pass a depth the branch does not have. The second takes one
+ * `gindex`, calls `floorLog2` and `subtreeIndex` on it to get the pair back, and calls the first.
+ *
+ * So the package already holds both forms of the same fact, and the *newer* of the two is the one
+ * with the pair reunited. A `Gindex` is that number with the two projections as methods, and then
+ * there is one function: the surplus-leading-zeros rule that made the second function a second
+ * function is a property of the branch's length against the index's depth, which is now checkable
+ * inside.
+ *
+ * ## And a `Result`, because `false` was answering six questions
+ *
+ * `isValidMerkleBranch` returns `false` for a leaf that is not 32 bytes, a root that is not 32 bytes,
+ * a branch that is not `depth` chunks, and a fold that lands somewhere else. The normalized one adds
+ * a branch too short for the index, and a surplus that is not zero — and that last is a *security
+ * property*, described in its own comment as the thing that stops a prover attaching an unrelated
+ * subtree, returning the identical `false` as a caller who passed a 31-byte leaf.
+ *
+ * One of those six is the answer to the question the function is for. The other five are the caller
+ * having made a mistake, and a light client that cannot tell them apart logs *"invalid proof"* when
+ * its own slicing is off by a chunk.
+ */
+export Result<void, ProofFault> verify(Chunk leaf, Vec<Chunk> branch, Gindex at, Chunk root) {
+  // No length checks on `leaf` and `root`: a `Chunk` is 32 bytes because `Chunk.of` said so, and
+  // `NotAChunk` exists for the one caller that builds them from bytes. Two of the six are gone
+  // before the body starts.
+  i32 need = at.depth();
+  i32 have = branch.len();
+  if (have < need) { return Err(BranchTooShort(have, need)); }
+
+  // The surplus rule, which was the whole of the second function.
+  i32 extra = have - need;
+  for (i32 i = 0; i < extra; i++) {
+    if (!branch.get(i).eq(Chunk.zero())) { return Err(SurplusNotZero(i)); }
+  }
+
+  Chunk node = leaf;
+  for (i32 d = 0; d < need; d++) {
+    Chunk sib = branch.get(extra + d);
+    node = at.onRight(d) ? sib.hashWith(node) : node.hashWith(sib);
+  }
+  if (!node.eq(root)) { return Err(RootMismatch()); }
+  return Ok;
+}
+
+/**
+ * The same check from bytes, for a caller holding a wire proof.
+ *
+ * Here the four length checks come back, because bytes are where they belong — and `which` names the
+ * argument, so a caller learns *which* of them was wrong rather than that one of them was.
+ */
+export Result<void, ProofFault> verifyBytes(Bytes leaf, Bytes branch, Gindex at, Bytes root) { … }
+
+// ## 1. The branch is a `Vec<Chunk>` and the wire has a `u8[]`
+//
+// `verify` takes chunks and `verifyBytes` takes bytes, which is the split this package should have
+// had and did not: the shipped `isValidMerkleBranch` takes `u8[] branch` and indexes it as
+// `branch[d * CHUNK + i]`, so every caller passes a concatenation and every level does the
+// arithmetic again. Twice, in fact — `isValidNormalizedMerkleBranch` builds a whole second `u8[]` to
+// drop the surplus before delegating, which is a copy of the branch on every verification.
+//
+// With a `Vec<Chunk>` the surplus is an index rather than a copy, and there is no arithmetic to get
+// wrong. That is not a language finding; it is what a type is for, and it is here because it is the
+// second-biggest thing the rewrite changed and the smallest thing to say about it.
+//
+// ## 2. What could not be written
+//
+// **Nothing says this branch belongs to this root.** `verify(leaf, branch, at, root)` type-checks
+// with a branch from one proof and a root from another, and answers `RootMismatch` — correctly, and
+// after doing the work. The shape is the one `@/packages/raster/src/frame.wac` found with a `Tile`:
+// a value type pairs the fields *inside* one argument and cannot say anything about two arguments
+// that must come from the same place. Everything in this file is one type short of expressing what
+// the function needs, and the missing type is *a proof*, which is exactly the four arguments together
+// — so the remedy is a struct that is nothing but the parameter list, which is where the argument
+// stops being persuasive.
+//
+// **`Gindex.depth()` is `floorLog2` and there is no zero case.** `Gindex(0)` is not a node; the tree
+// is one-based. `Gindex.of` would refuse it and there is no `Gindex.of` here, because the only
+// constructors are `root()` and `left`/`right`, which cannot produce one — a closed set of
+// constructors doing what a validity check would do, and the only place in this directory where that
+// worked out.

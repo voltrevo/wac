@@ -1,0 +1,122 @@
+// An SSZ type, as a type — and the reason the flat table was written, which has expired.
+//
+// `packages/ssz/src/container.wac` describes a type as four `i32`s in a flat table and gives its
+// reason in the header:
+//
+// > A type is four `i32`s in a flat table, `stride 4`, so the whole thing crosses the JS boundary as
+// > an `i32[]` and needs no struct marshalling
+//
+// **Nothing crosses that boundary any more.** The package's tests were TypeScript until commit
+// `71f8299c`, *"ssz: the whole package to wac, on a shared fixture loader"*, 2026-08-17 — six
+// `*_wac.test.ts` files whose interface was
+// `sszHashTreeRoot(types: Int32Array, fields: Int32Array, root: number, data: Uint8Array)`. They are
+// deleted. The only TypeScript left in the package is `test/oracle.ts`, which speaks hex lines and
+// has never seen a descriptor, and no `.ts` anywhere in the repository mentions `KIND_` or builds
+// one.
+//
+// So the representation is a boundary's shape and the boundary is gone. That is not a criticism of
+// the file — it was right when it was written, and the header says exactly why, which is why this is
+// findable at all. It is the sharper half of a question this directory already has:
+// `@/packages/raster/src/frame.wac` found that **a capability signature is the last place a value
+// type reaches**, and here the boundary reached back and chose the in-memory representation of the
+// type *behind* it. A shape adopted for a boundary outlives the boundary, because nothing links them.
+
+import { Vec } from "core";
+
+/**
+ * What SSZ can describe.
+ *
+ * Ninth enum in this directory to replace a table of `KIND_*` integers, and by now that is a rate
+ * rather than an observation — `@/packages/abi` did it to nine `T_*`, `@/packages/regex` to thirteen
+ * `OP_*`, `@/packages/tty` to eight control characters. What is different here is the reason above:
+ * abi's flat descriptor has no stated justification and this one has one, so this is the case where
+ * the change has to argue against something rather than against nothing.
+ */
+export enum SszType {
+  /** `uintN` — `bytes` is 1, 2, 4, 8, 16 or 32. */
+  Uint(i32 bytes),
+
+  /**
+   * `boolean`.
+   *
+   * A variant rather than `Uint(1)`, which is the distinction `container.wac` already makes and
+   * describes as being *"solely because of that value constraint"* — 84 of Ethereum's invalid vectors
+   * are a boolean byte holding 2, 0x10, 0x80 or 0xff, and the package accepted all of them until the
+   * kinds were split. *Solely* is doing a lot of work in that sentence: a type whose legal values are
+   * a subset of another's is a different type, and SSZ agrees, since `0x02` and `0x01` merkleize to
+   * different roots.
+   */
+  Bool,
+
+  /** `Bitvector[N]`. */
+  Bitvector(i32 n),
+  /** `Bitlist[N]` — `n` is the limit, and the limit is what merkleization pads to. */
+  Bitlist(i32 limit),
+
+  /** `Vector[T, N]`. */
+  Vector(SszType of, i32 n),
+  /** `List[T, N]` — again a limit and not a length. */
+  List(SszType of, i32 limit),
+
+  /** `Container` — the fields in order, which is the only order there is. */
+  Container(Vec<SszType> fields),
+
+  /**
+   * Whether a value of this type has the same size every time.
+   *
+   * The recursion the flat table needed `typeLen`-style index arithmetic for. `container.wac` has
+   * `sszIsFixed(types, fields, i)` taking two tables and an index; this takes nothing, because a type
+   * is a value.
+   */
+  bool isFixed(const this) {
+    match (this) {
+      Uint(_):      { return true; }
+      Bool:         { return true; }
+      Bitvector(_): { return true; }
+      Bitlist(_):   { return false; }
+      List(_, _):   { return false; }
+      Vector(of, _): { return of.isFixed(); }
+      Container(fs): {
+        for (SszType f in fs.items()) { if (!f.isFixed()) { return false; } }
+        return true;
+      }
+    }
+  }
+
+  /**
+   * How many bytes a fixed value occupies, or how many an *offset* occupies if it is variable.
+   *
+   * One function where the shipped package has `sszFixedSize` plus the caller's knowledge that a
+   * variable field contributes four. Folding the offset in is what makes the serialisation walk a
+   * sum rather than a branch.
+   */
+  i32 fixedSize(const this) { … }
+
+  /**
+   * The merkleization limit: how many chunks the tree is padded to before hashing.
+   *
+   * **The pad target is the type's limit and not the data's length**, which the shipped README lists
+   * first among the four things it says loudest, *"because they are where implementations go
+   * wrong"*. Here it is a method on the type, so there is no length in scope to reach for by mistake.
+   */
+  i32 chunkLimit(const this) { … }
+}
+
+// ## What could not be written
+//
+// **`Uint(i32 bytes)` admits `Uint(3)`.** SSZ has six unsigned widths and the payload is an
+// unconstrained `i32`, so a descriptor can name a type the format does not have — which is the flat
+// table's `param` field with a name on it, and no better. Six variants would fix it and read badly;
+// a refinement of an integer would fix it and does not exist, which is
+// `../../../QUESTIONS.md`'s open entry rather than this file's finding.
+//
+// **A `Container` with no fields.** `merkleize([])` is the zero chunk and SSZ says so, so this is
+// legal and means something. Worth writing down only because every other empty case in this
+// directory has been an error, and a reader who assumes the pattern is wrong here.
+//
+// **The descriptor is still written by hand.** Nine light-client containers are nine `SszType`
+// values, built once, and nothing checks that a container's fields match the struct a program keeps
+// them in — that is what a derived layout would do, and the language has no way to ask a struct for
+// its fields. `@/packages/abi/src/type.wac` hit the same wall — *"wac has no reflection and no
+// macro"* — and `@/packages/wactest` asks the neighbouring question about an *export* table. Two
+// packages want a field list, one wants an export list, and nothing collects the three.

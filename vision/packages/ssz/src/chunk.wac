@@ -1,0 +1,121 @@
+// Thirty-two bytes, and the number that says where in a tree they are.
+//
+// SSZ is defined over chunks. Every rule in the specification is *"pad to a multiple of 32"*,
+// *"merkleize these chunks"*, *"mix in the length as a chunk"* — and `packages/ssz` writes every one
+// of them as `u8[]`, with `if (leaf.len() != CHUNK || root.len() != CHUNK) { return false; }` at the
+// top of the function that cannot proceed without it.
+//
+// Two types, and neither is an invention: they are the two nouns the specification already uses.
+
+import { Result, Bytes } from "core";
+// Spelled as the file rather than through the barrel, because `@/packages/crypto`'s rewrite covers
+// `secret.wac` and nothing else — `@/packages/tls/src/keyschedule.wac` names the same three
+// unwritten files, and `../../../wac.json5` lists this exact path as one that *"exists in"* the
+// shipped tree. Second package to want a digest from a package that has not got one.
+import { sha256 } from "@/packages/crypto/src/sha256.wac";
+
+/** How many bytes a chunk is. Not configurable, and never was. */
+export const i32 CHUNK = 32;
+
+/**
+ * A chunk.
+ *
+ * The constructor is the only place a length is checked, so nothing below checks one — which is
+ * eleven guards removed from `packages/ssz/src/merkle.wac` and, more to the point, eleven guards that
+ * could have been forgotten in a twelfth function.
+ */
+export const struct Chunk {
+  Bytes bytes;
+
+  /** From exactly 32 bytes, or not at all. */
+  Result<Chunk, WrongLength> of(Bytes b) {
+    if (b.len() != CHUNK) { return Err(WrongLength(b.len())); }
+    return Ok(Chunk(b));
+  }
+
+  /** The all-zero chunk, which SSZ needs more often than any other constant. */
+  Chunk zero() { … }
+
+  Chunk hashWith(const this, Chunk right) { return unchecked(sha256(this.bytes.concat(right.bytes))); }
+
+  bool eq(const this, Chunk other) { … }
+}
+
+/** Only from `Chunk.of`, and the length that was offered. */
+export struct WrongLength { i32 got; }
+
+/**
+ * `sha256` answers `Bytes` and this is where the value type stops.
+ *
+ * **The same shape as the capability boundary, one layer in.** `@/packages/raster/src/frame.wac`
+ * found that a `Tile` is destructured into scalars at the one call that crosses to a host, because
+ * marshalling is per scalar. Here nothing crosses to a host — `sha256` is wac calling wac — and the
+ * value type stops anyway, because `@/packages/crypto`'s digest answers the type *it* is defined
+ * over. Neither package is wrong. The width of a `Bytes` is not in its type, so any function
+ * answering one is a place a chunk becomes a maybe-chunk, and the only remedy is to re-check at the
+ * boundary or to declare the check away.
+ *
+ * This declares it away, once, in the one place where the fact is known: sha256 answers 32 bytes.
+ * That is a comment where `Slice<u8, 32>` would be a type, which is
+ * `../../../QUESTIONS.md`'s entry on a length that lives in the value rather than the type.
+ */
+Chunk unchecked(Bytes b) { … }
+
+/**
+ * A generalized index: the position of a node in a binary Merkle tree, as one number.
+ *
+ * The root is 1, a left child is `2g` and a right child is `2g + 1`, so the number holds **the depth
+ * and the path at once** — the depth is the position of its leading bit and the path is every bit
+ * below.
+ *
+ * **`packages/ssz` takes those two facts as two parameters and it shows.**
+ * `isValidMerkleBranch(leaf, branch, i32 depth, u64 index, root)` needs them to agree, and the first
+ * thing it does is `if (branch.len() != depth * CHUNK) { return false; }` — a check that exists
+ * because the caller can pass a depth the branch does not have. Then
+ * `isValidNormalizedMerkleBranch(leaf, branch, u64 gindex, root)` takes the *one* number, splits it
+ * with `floorLog2` and `subtreeIndex`, and calls the first. So the package already has both forms and
+ * the second is the first with the pair put back together. `../../../QUESTIONS.md`.
+ */
+export const struct Gindex {
+  u64 g;
+
+  /** The root of the tree. */
+  Gindex root() { return Gindex(1); }
+
+  /** How many siblings a branch to this index has. */
+  i32 depth(const this) { … }
+
+  /** Whether the node at level `d` sits on the right. Bit `d` of the path. */
+  bool onRight(const this, i32 d) { … }
+
+  Gindex left(const this) { return Gindex(this.g * 2); }
+  Gindex right(const this) { return Gindex(this.g * 2 + 1); }
+}
+
+/**
+ * The root of a subtree of `2^d` zero leaves, memoised.
+ *
+ * A `Chunk` rather than a `u8[]`, and indexed by depth rather than by a caller's arithmetic.
+ */
+export Chunk zeroHash(i32 d) { … }
+
+// ## What could not be written
+//
+// **`Chunk` is a struct wrapping a `Bytes` and the wrapper is the whole of it.** A `Bytes` is a
+// `Slice<u8>` with a runtime length; a chunk is 32 bytes always. If a slice could carry its length in
+// its type — `Slice<u8, 32>` — then `Chunk` would be a typedef and `Chunk.of` would be a cast the
+// compiler checks, rather than a constructor everyone has to remember to call. The check would still
+// exist at the one place bytes arrive from outside, which is where it belongs, and would stop being
+// re-derivable everywhere else.
+//
+// **`@/packages/ens/src/answer.wac` asked for this first, in the same words.** *"`Bytes` carries no
+// length in its type — so `Address`, `Bytes32` and a `contenthash` are one type as far as anything
+// can check"*, and it names the shape: a **fixed-length byte view**, which `Slice<T>` is one field
+// away from because `len` is already there and is not in the type. `@/packages/bls`'s `Fp` holds
+// `u32[] limbs` for a field element of fixed width, which is the same absence at another element
+// type. Third package; filed once.
+//
+// **`Gindex` holds a `u64` and the tree it indexes is at most 40 deep.** The type says 64 bits
+// because generalized indices are defined on unbounded trees; every one this package sees fits in
+// `i32`. Not worth changing — but the reason it is not worth changing is that nothing checks either
+// bound, which is the same absence as the length above.

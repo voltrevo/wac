@@ -1,0 +1,15 @@
+// The package, as one name.
+//
+// The fault members are exported individually as well as through their unions, for the reason
+// `@/packages/rlp`'s barrel gives: `Err(is SurplusNotZero):` needs the name in scope at the call
+// site, and a caller wanting *"the proof was bad, not my arguments"* has to name four of the five.
+// Third barrel to write that paragraph.
+
+export { Chunk, Gindex, WrongLength, zeroHash, CHUNK } from "./chunk.wac";
+export { SszType } from "./type.wac";
+export { verify, verifyBytes } from "./proof.wac";
+export { root, merkleize, mixInLength } from "./root.wac";
+export {
+  ProofFault, NotAChunk, RaggedBranch, BranchTooShort, SurplusNotZero, RootMismatch,
+  DecodeFault, NotABitlist, BadFirstOffset, BadOffset,
+} from "./fault.wac";
