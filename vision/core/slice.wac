@@ -36,9 +36,25 @@
 // adds an allocation where there was none. Every parser in this rewrite that took a triple and now
 // takes a slice pays for that.
 //
-// Which leaves the argument for this type standing on **correctness rather than cost**: two
-// arguments that must travel together cannot be given the bounds of one buffer and the bytes of
-// another. That was always the better half of the case, and it was not the half being made.
+// **And now it is measured rather than argued.** `../bench/slicecost.wac` compiles a `View` struct
+// in today's wac, which is what `Slice<u8>` would compile to, and sweeps the window:
+//
+//      win     calls   triple     view    fresh    again
+//        8   8388608       48       53       71       50
+//       32   2097152       41       43       47       41
+//      128    524288       40       40       42       40
+//     1024     65536       41       41       41       41
+//
+// A fresh view is **2.6 ns**, one `struct.new` of three fields. Reusing one is 0.5 ns. So the loss
+// is 45% at an eight-byte call, 15% at 32, 5% at 128, and nothing at a kilobyte — which sorts the
+// consumers rather than settling the type: a DEFLATE match is 3–258 bytes and mostly short, a JSON
+// token and an HTTP header value are tens of bytes, a read buffer is thousands. The bench header has
+// the rest.
+//
+// The number bounds the cost; it does not rescue it. Which leaves the argument for this type
+// standing where it already stood, on **correctness rather than cost**: two arguments that must
+// travel together cannot be given the bounds of one buffer and the bytes of another. That was always
+// the better half of the case, and it was not the half being made.
 //
 // ## When to hold one, which is not always
 //

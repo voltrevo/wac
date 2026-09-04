@@ -1,0 +1,183 @@
+// What a view costs against the three scalars it replaces.
+//
+// **This file compiles and runs, which nothing else under `vision/` does.** It is not a sketch of
+// the proposed language — it is a measurement of today's, standing in for it, because
+// `../core/slice.wac` proposes `Slice<T>` and `Bytes` with a cost nobody had put a number on. A
+// plain `struct View { u8[] b; i32 lo; i32 hi; }` is what `Slice<u8>` compiles to, so today's
+// compiler can answer the question the proposal raises.
+//
+//     wac run vision/bench/slicecost.wac
+//
+// Run by hand. Nothing schedules it, because `vision/` is documentation as far as the tooling is
+// concerned and a bench in a lane would make this directory code.
+//
+//   triple      sum(u8[] b, i32 lo, i32 hi)   three arguments, nothing allocated
+//   view        sum(View v)                   one argument, the view made once outside the loop
+//   fresh       sum(View(b, lo, hi))          one argument, a view made per call
+//   again       the control, measured last, because this machine is shared
+//
+// Swept over the window, because that is the shape of the answer: the allocation is per **call**
+// and the saved copy is per **byte**, so which wins is decided by how many bytes one call reads.
+// Total bytes are held constant across the sweep so the window changes nothing but the call count.
+//
+// ## What it answered, on the v8 host, 2026-09-04
+//
+//      win     calls   triple     view    fresh    again
+//        8   8388608       48       53       71       50
+//       32   2097152       41       43       47       41
+//      128    524288       40       40       42       40
+//     1024     65536       41       41       41       41
+//
+// Milliseconds, best of three. The control drifted by 2 ms across the whole run, so the differences
+// at `win = 8` are real and everything at 128 and above is noise.
+//
+// **A fresh view costs about 2.6 ns.** `(71 - 49) / 8.39M`. That is one `struct.new` of three fields
+// on a bump allocator, and it is the number the proposal needed.
+//
+// **Reusing a view is nearly free** — 0.5 ns a call, which is one indirection on the two bounds.
+//
+// So the crossover is around **128 bytes a call**, and it is not close on either side of it: at 8
+// bytes a fresh view is 45% slower than the triple, at 32 bytes 15%, at 128 bytes 5%, and at 1024
+// nothing at all.
+//
+// Which sorts the consumers, and they do not all land the same way:
+//
+//   - **An LZ match** is 3–258 bytes in DEFLATE and mostly short. `Bytes` in `zstd` or `gzip`'s
+//     inner loop is the losing case, squarely.
+//   - **A JSON token, an HTTP header value, a URL component** are short too — tens of bytes. These
+//     are the ones seven rewritten packages hand a triple, and a `Bytes` there costs a few percent.
+//   - **A read buffer, a frame, a document** are kilobytes. Free.
+//
+// **The cost is real and small, and the case was never cost.** `../core/slice.wac` already gave up
+// the *nothing allocated* claim on reading `spec/spec/structs.md`; this puts a number on what
+// replaced it, and the number does not rescue the cost argument — it bounds it. Two bounds that
+// cannot be given the wrong buffer is worth 2.6 ns a call for everything above a token, and is a
+// judgement call below it.
+//
+// **One host.** `native/wasmtime` is not built in this checkout — `packages/wactest`'s
+// `nativeHostWhyNot()` is the convention for saying so rather than building a Rust crate to answer
+// one question. A different collector could move the allocation number and would not move the
+// shape, since the shape is per-call against per-byte.
+
+import { Core, Cli } from "std/platform.wac";
+
+struct View {
+  u8[] b;
+  i32 lo;
+  i32 hi;
+}
+
+i32 sumTriple(u8[] b, i32 lo, i32 hi) {
+  i32 s = 0;
+  for (i32 i = lo; i < hi; i++) { s = s + b[i]; }
+  return s;
+}
+
+i32 sumView(View v) {
+  i32 s = 0;
+  for (i32 i = v.lo; i < v.hi; i++) { s = s + v.b[i]; }
+  return s;
+}
+
+i32 sumViewFresh(u8[] b, i32 lo, i32 hi) {
+  return sumView(View(b, lo, hi));
+}
+
+i64 best(i64 a, i64 b) { return a < b ? a : b; }
+
+string pad(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 n = 1 << 16;
+  u8[] data = u8[n]();
+  for (i32 i = 0; i < n; i++) { data[i] = (i * 31) & 0xFF; }
+
+  i32 rounds = 3;
+  i32[] windows = i32[](8, 32, 128, 1024);
+  i64 sink = 0;
+
+  core.log("  win     calls   triple     view    fresh    again");
+
+  for (i32 w = 0; w < windows.len(); w++) {
+    i32 win = windows[w];
+
+    // Constant total bytes, so the per-call cost is the only thing the window changes.
+    i32 calls = (1 << 26) / win;
+    i32 mask = n - 2048;
+
+    i64 tTriple = 0x7FFFFFFFFFFFFFFF;
+    i64 tView = 0x7FFFFFFFFFFFFFFF;
+    i64 tFresh = 0x7FFFFFFFFFFFFFFF;
+    i64 tAgain = 0x7FFFFFFFFFFFFFFF;
+
+    for (i32 r = 0; r < rounds; r++) {
+      i64 t0 = core.monotonicNanos().wait();
+      i32 acc = 0;
+      for (i32 k = 0; k < calls; k++) {
+        i32 lo = (k * 8) % mask;
+        acc = acc + sumTriple(data, lo, lo + win);
+      }
+      tTriple = best(tTriple, core.monotonicNanos().wait() - t0);
+      sink = sink + (acc as i64);
+
+      t0 = core.monotonicNanos().wait();
+      acc = 0;
+      View v = View(data, 0, 0);
+      for (i32 k = 0; k < calls; k++) {
+        i32 lo = (k * 8) % mask;
+        v.lo = lo;
+        v.hi = lo + win;
+        acc = acc + sumView(v);
+      }
+      tView = best(tView, core.monotonicNanos().wait() - t0);
+      sink = sink + (acc as i64);
+
+      t0 = core.monotonicNanos().wait();
+      acc = 0;
+      for (i32 k = 0; k < calls; k++) {
+        i32 lo = (k * 8) % mask;
+        acc = acc + sumViewFresh(data, lo, lo + win);
+      }
+      tFresh = best(tFresh, core.monotonicNanos().wait() - t0);
+      sink = sink + (acc as i64);
+
+      t0 = core.monotonicNanos().wait();
+      acc = 0;
+      for (i32 k = 0; k < calls; k++) {
+        i32 lo = (k * 8) % mask;
+        acc = acc + sumTriple(data, lo, lo + win);
+      }
+      tAgain = best(tAgain, core.monotonicNanos().wait() - t0);
+      sink = sink + (acc as i64);
+    }
+
+    core.log(pad(itoa(win), 5) + pad(itoa(calls), 10) + pad(i64toa(tTriple / 1000000), 9)
+      + pad(i64toa(tView / 1000000), 9) + pad(i64toa(tFresh / 1000000), 9)
+      + pad(i64toa(tAgain / 1000000), 9));
+  }
+
+  core.log("sink " + i64toa(sink));
+  return 0;
+}
+
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  bool neg = v < 0;
+  i32 n = neg ? 0 - v : v;
+  string out = "";
+  while (n > 0) { out = string.fromCodepoint(48 + (n % 10)) + out; n = n / 10; }
+  return neg ? "-" + out : out;
+}
+
+string i64toa(i64 v) {
+  if (v == 0) { return "0"; }
+  bool neg = v < 0;
+  i64 n = neg ? 0 - v : v;
+  string out = "";
+  while (n > 0) { out = string.fromCodepoint(48 + ((n % 10) as! i32)) + out; n = n / 10; }
+  return neg ? "-" + out : out;
+}

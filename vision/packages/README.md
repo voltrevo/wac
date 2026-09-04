@@ -18,7 +18,7 @@ this sentence is the thing standing in the way of that.
 
 Read it as a sketch by one person, not as a decision.
 
-## Nothing compiles
+## Nothing compiles, with one exception that is the point of the exception
 
 These are `.wac` files and no compiler accepts them. They use features that do not exist —
 coroutines, unions, nested nullables, `schedule` — and they will keep using them as more are
@@ -28,6 +28,11 @@ Nothing in the repository walks this directory. `laneRoots` is `packages` and `c
 walks root at `packages`, `harness` and `tools`; and `tools/docsOnly.wac` treats everything under
 `vision/` as documentation whatever the extension is, so a change here does not make a push look
 like a code change.
+
+**`../bench/slicecost.wac` does compile, and runs.** It is not a rewrite; it is a measurement of
+today's language standing in for the proposed one, because a `Slice<u8>` compiles to a struct that
+can be written today. A proposal whose cost can be measured in the shipped language should be, and
+that file is where that goes — by hand, since scheduling it would make this directory code.
 
 ## Imports pretend this directory is the root
 
@@ -101,7 +106,7 @@ each is; this is the index.
 
 | proposal | where | the argument, in one line | the cost |
 |---|---|---|---|
-| `Slice<T>` / `Bytes` | [`../core/slice.wac`](../core/slice.wac) | two arguments that must travel together and must not be swapped is a struct — a correctness argument, not a cost one | a view retains the array it was cut from, and a struct is heap-allocated: O(1) allocation for an O(n) copy against `bytes`'s `slice`, but a **loss** against a triple, which allocates nothing |
+| `Slice<T>` / `Bytes` | [`../core/slice.wac`](../core/slice.wac) | two arguments that must travel together and must not be swapped is a struct — a correctness argument, not a cost one | a view retains the array it was cut from, and a struct is heap-allocated: O(1) allocation for an O(n) copy against `bytes`'s `slice`, but a **loss** against a triple, which allocates nothing — **measured at 2.6 ns a view** in [`../bench/slicecost.wac`](../bench/slicecost.wac), so 45% at an eight-byte call and nothing at a kilobyte |
 | an explicit barrel | [`../core/core.wac`](../core/core.wac) | `export` marks what leaves a file; a package needs a second level | lands in `check.wac`'s export table, not the resolver — and wants its own diagnostic, as code 210 did |
 | a named type | `export union<A, B> Fault;`, `export Slice<u8> Bytes;` | one form whether the type is a union or an instantiation | distinct type or alias is undecided |
 | `try await for` | [`stream`](stream/), [`server`](server/) | a loop over a failing async generator has to say both things | three keywords on one head — but no new lowering: `asyncplan.wac` already states a suspension in a loop, and the desugaring must put the step in the body since a condition may not suspend |
@@ -120,10 +125,12 @@ changes were, because they did not point one way:
   dependencies.
 - **Split.** Re-export turned out to share nothing with the entry point: it lands in `check.wac`'s
   export table, not in path resolution at all.
-- **Weakened.** A slice is a WasmGC struct and therefore an allocation. *No copy* is true, *nothing
-  allocated* was not, and against a `(bytes, lo, hi)` triple — which allocates nothing — it is a
-  loss. The case stands on not being able to mix one buffer's bounds with another's, which is
-  correctness rather than cost.
+- **Weakened, then measured.** A slice is a WasmGC struct and therefore an allocation. *No copy* is
+  true, *nothing allocated* was not, and against a `(bytes, lo, hi)` triple — which allocates
+  nothing — it is a loss. [`../bench/slicecost.wac`](../bench/slicecost.wac) puts **2.6 ns** on it,
+  which is 45% of an eight-byte call and invisible at a kilobyte. The number bounds the cost rather
+  than rescuing it: the case stands on not being able to mix one buffer's bounds with another's,
+  which is correctness.
 - **Weakened.** `Grant` as an enum does not change the wire format: the host decodes `Val::I32`.
   Legibility, not representation.
 - **Made structural.** `secret` really is the same machinery as `const` — a flag per name, and
@@ -166,7 +173,7 @@ need it, so the whole coroutine and ticket design does not parse without it.
 
 **Re-export before the duplicate it is for can go.** `itoa64` and `utoa64` exist twice in library
 code because unifying them touches forty import lines, which is why `fmt`'s barrel cannot be
-written. `wac-mono 0072` is *closed* and is about `wc`'s counts being `i32`; it names the `itoa64` duplication only as an obstacle to its own fix. Nothing is open for re-export.
+written. `wac-mono 0072` is *closed* and is about `wc`'s counts being `i32`; it names the `itoa64` duplication only as an obstacle to its own fix. Nothing is open for re-export — but `issues/system/open/0325a` is now open for what the duplication has already done: `itoa64` has **five** definitions, and the three outside library code are re-derivations that all get `i64` minimum wrong, returning the sign alone. The ordering argument no longer rests on a count.
 
 The shape worth noticing: **four of the six are orderings where doing the appealing thing first
 costs more**, and none of them is visible from the change it constrains. A list of proposals sorted
