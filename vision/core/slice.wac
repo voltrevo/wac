@@ -59,8 +59,10 @@
 // ## When to hold one, which is not always
 //
 // A slice cannot dangle: the collector keeps the array alive for as long as any view of it. So the
-// question is never safety, it is **retention** — a `Slice<u8>` of six bytes holds the megabyte it
-// was cut from, and holds it until the slice goes too.
+// first question is **retention** — a `Slice<u8>` of six bytes holds the megabyte it was cut from,
+// and holds it until the slice goes too. (This paragraph said *"the question is never safety"* and
+// that is wrong; the section after this one is the safety question, and it was found by writing a
+// package rather than by reading this file.)
 //
 // That makes the rule a lifetime judgement rather than a preference:
 //
@@ -73,6 +75,30 @@
 //
 // Getting that backwards is not a crash. It is a program that holds ten megabytes to remember a
 // hostname, which is the failure mode worth naming because nothing will report it.
+//
+// ## And there is a second one, which is the mirror of it
+//
+// Retention is holding a view too long. The other way to be wrong is **overwriting what a view
+// points at, too soon** — and it is the more dangerous of the two, because retention wastes memory
+// and this returns wrong bytes.
+//
+// `vision/packages/gzip/src/window.wac` found it by being written. A sliding window hands its front
+// away and then compacts, and the shipped decoder allocates a fresh array for the hand-off. Replace
+// that with a view of the window's own storage and the compaction in the next line overwrites it:
+// the caller receives the right length, the right type, and the following window's bytes.
+//
+// **The shipped code cannot have that bug, and not because it is careful.** It copies, so nothing
+// aliases the buffer and there is nothing to invalidate. Take the copy away — which is the whole
+// point of this type — and an aliasing rule appears with nothing in the language holding it.
+//
+// So a view into a buffer that is *reused* needs a stated point at which the holder is finished
+// with it. A coroutine has one: the holder has the chunk for exactly as long as the machine is
+// suspended, and a resumed generator is that point. A callback does not — `sink(out)` returns before
+// its caller is necessarily done with the bytes.
+//
+// This is not an argument against the type. It is the rule the type needs and the one this file
+// did not have: **a view of a private buffer is safe when the buffer is append-only, and needs a
+// release point when it is not.**
 
 export struct Slice<T> {
   T[] of;

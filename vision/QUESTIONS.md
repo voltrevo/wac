@@ -264,6 +264,25 @@ checkable at all"*, which for a union is still true by a different route, since 
 listed at the declaration — but it is true for a different reason, and that reason is what a
 `union` as a match arm would have to rest on.
 
+## What `try` inside a generator does, and what the loop consuming it sees
+
+`vision/packages/gzip/src/inflate.wac` is `async gen<Bytes> Result<void, Fault>` and its body writes
+`try await br.byte()` eleven times. So the failure has two levels to cross: `try` inside the machine
+has to end the machine and become its **return**, and the consuming `try await for` then propagates
+that in turn. Two `try`s at two levels for one failure.
+
+That has to be roughly what happens and nothing says it. The coroutine entries are about `yield` and
+the ticket; `try`'s rule is about a function's error set. **A generator is the one thing with a yield
+type and a return type at once**, and the interaction between them is where every consumer of this
+design ends up.
+
+Three parts of it are separately open. Whether a `try` that fires mid-body leaves the generator
+*done* or merely stopped. Whether `try await for` binds the return at all, or whether a caller has to
+ask the generator for it after the loop — `gzip` depends on the first, because it emits its tail
+before checking the checksum and that is only defensible if the loop cannot finish without meeting
+the fault. And whether a generator's declared error set has to be a subset of its consumer's, which
+is `try`'s membership rule one level out.
+
 ## Whether `drain` can terminate while the accept loop is one of the things it is draining
 
 `vision/packages/server`'s `main` accepts in a loop and calls `handle(sys, conn)` without awaiting,
