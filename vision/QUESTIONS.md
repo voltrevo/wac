@@ -1273,8 +1273,8 @@ delta drops from 564 BNF productions to 562. `auto` is an `IDENT`, `type` begins
 added to and did not need to be.
 
 **And there is a rule for which productions the cost eats, found by removing all 47 in turn.** Every
-entry in `GRAMMAR.ebnf` was deleted one at a time and `vision/` re-parsed with the rest. Twenty-three
-of the thirty-eight distinct rules change what parses. Two do not, for this reason:
+entry in `GRAMMAR.ebnf` was deleted one at a time and `vision/` re-parsed with the rest. Most change
+what parses; two do not, for this reason:
 
     var_decl's `auto`     `IDENT IDENT = expr` is already `type IDENT = expr`
     union_type            `IDENT type_args` is already a type name
