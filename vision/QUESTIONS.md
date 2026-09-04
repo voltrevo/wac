@@ -91,6 +91,40 @@ Nothing on the page mentions it. Candidates: driving a coroutine to completion f
 `Err` when this host cannot be waited on, that it drains the dependency set rather than descending
 depth-first, and the circular case. Four is probably too many for one feature.
 
+## `secret` has no return position, no field position and no release
+
+`vision/packages/tls` is the first consumer the proposal has ever had — its two uses are both inside
+the file that proposes it — and the TLS 1.3 key schedule is ten arrows of *secret in, secret out*.
+It does not survive them, and the parser found the first one before I did: every signature was
+written `export secret u8[] deriveSecret(…)` and `specparse` answered
+`no rule reaches '['`, because `GRAMMAR.ebnf` has `param = [ "const" ] , [ "secret" ] , type , IDENT`
+and a return type is not a parameter. The grammar came from the proposal, so that refusal is the
+proposal answering.
+
+**Propagation needs a return position, and a return position makes it a type.** `secret` is cheap
+precisely because it is a flag on a name in the scope table, like `const` — which is why
+`issues/lang/open/0315a`'s five leaks are one fact. A value that carries its own taint is a property
+of the *type*, and then the argument that the machinery already exists is gone. The proposal cannot
+have both its cost and its purpose.
+
+**It has no field position either.** `trafficKeyIv` returns a key and an IV; a key is secret and an
+IV goes in a record header. Splitting them into a struct is the obvious fix and the struct cannot say
+which field is which. A qualifier that cannot describe part of a value pushes back on the data
+layout — the shipped code concatenates them because wac has no tuples, and would now have to split
+them because of taint.
+
+**And there is no declassification.** `finishedVerify` takes a secret and produces bytes that go on
+the wire, which is what a Finished message *is*. `crypto/src/secret.wac` calls laundering the failure
+mode — *"a laundered `secret` is a key in a log line"* — and here it is the feature. With no release
+form the choice is between not tainting the most security-critical function in the handshake and
+putting an escape hatch on it.
+
+The reason all three are missing is visible in the two examples the proposal was written from:
+`chachaBlock` and `aesEncrypt` take a key and write bytes, and are the two functions in cryptography
+that never return a secret, never mix one with a public value, and never declassify. **A proposal
+tested only on its motivating example is untested**, and this is the cleanest instance of that in the
+directory.
+
 ## Three constructs the grammar has and no vetted page mentions
 
 `GRAMMAR.ebnf` is a closed list of what vision adds — that is what made it worth writing — so it can

@@ -1,0 +1,110 @@
+// The TLS 1.3 key schedule, RFC 8446 §7.1 — and the first consumer `secret` has ever had.
+//
+// `vision/packages/crypto/src/secret.wac` proposes a qualifier that propagates like `const`, and its
+// two uses are both inside that file. Nothing outside `crypto` has ever received a propagated one,
+// so nothing has tested whether it composes. This file is eleven functions that pass a secret to
+// each other, which is what the proposal is for, and it does not survive them.
+//
+// The chain, from the real file's own diagram:
+//
+//                       0
+//     PSK ------> HKDF-Extract  = Early Secret
+//                 Derive-Secret("derived", "")
+//     (EC)DHE --> HKDF-Extract  = Handshake Secret  --> "c hs traffic", "s hs traffic"
+//                 Derive-Secret("derived", "")
+//     0 --------> HKDF-Extract  = Master Secret     --> "c ap traffic", "s ap traffic", "res master"
+//
+// Every arrow is *secret in, secret out*. That is the sentence the proposal cannot write.
+
+import { Bytes } from "core";
+import { sha256 } from "@/packages/crypto/src/sha256.wac";
+import { hkdfExtract, hkdfExpand } from "@/packages/crypto/src/hkdf.wac";
+import { hmacSha256 } from "@/packages/crypto/src/hmac.wac";
+
+export i32 hashLen() { return 32; }
+
+/**
+ * ## 1. A qualifier on a parameter cannot say what a function returns
+ *
+ * **Written the other way first, and the parser refused it.** Every signature below was
+ * `export secret u8[] deriveSecret(…)` until `tools/specparse.ts` answered
+ * `keyschedule.wac:49: no rule reaches '['` — because `GRAMMAR.ebnf` says
+ * `param = [ "const" ] , [ "secret" ] , type , IDENT` and a return type is not a parameter. The
+ * grammar was written from the proposal and the proposal has no return position, so the refusal is
+ * the proposal's own answer rather than an oversight in the notation. It is also the first time the
+ * parser has settled a *design* question instead of a spelling.
+ *
+ * `secret` is modelled on `const`, and `const` is a **parameter and receiver** qualifier: a flag on
+ * a name in the checker's scope table, which is why `vision/QUESTIONS.md` records that constness is
+ * not part of the type and why `issues/lang/open/0315a`'s five leaks are one fact. Inheriting that
+ * machinery inherits its shape, and the shape has no return position.
+ *
+ * So this is writable:
+ *
+ *     u8[] deriveSecret(secret u8[] from, Bytes label, Bytes transcript)
+ *
+ * and it is wrong. The value coming out is the next secret in the chain, and it is untainted the
+ * moment it is returned — `handshakeSecret(earlySecret(psk), dhe)` launders at the first arrow. The
+ * qualifier survives exactly one call and the chain is ten.
+ *
+ * **This is not a gap that a return-position annotation obviously fixes**, which is why it is the
+ * first thing here rather than a footnote. `secret u8[] deriveSecret(...)` reads fine and means
+ * something the checker cannot represent: `const` is a fact about *what this function may do to a
+ * name it was lent*, and a return value is not lent to anyone. Making `secret` work in return
+ * position makes it a property of the value, which is a property of the *type* — and the whole
+ * argument for `secret` was that it costs nothing because the machinery is already there.
+ */
+export u8[] deriveSecret(secret u8[] from, Bytes label, Bytes transcript) { … }
+
+export u8[] earlySecret(secret u8[] psk) { … }
+export u8[] handshakeSecret(secret u8[] early, secret u8[] dhe) { … }
+export u8[] masterSecret(secret u8[] handshake) { … }
+export u8[] nextTrafficSecret(secret u8[] from) { … }
+
+/**
+ * ## 2. Half an array is secret and the other half is public
+ *
+ * The shipped version returns key ++ iv in one `u8[]`, and says why: *"wac has no tuples and a
+ * struct here would be a type crossing the bindgen boundary for no benefit."*
+ *
+ * A key is secret. **An IV is not** — it is derived, it is not sensitive, and in TLS it is XORed
+ * with a visible sequence number. One array cannot be half-tainted, so the concatenation forces a
+ * choice: mark the whole thing secret and the IV can never reach a record header, or mark none of it
+ * and the key is loose.
+ *
+ * Returning them separately is the answer here and it is worth noticing *why the shipped code did
+ * not*: the reason it gives is tuples, and the reason it would need now is taint. A qualifier that
+ * cannot describe part of a value pushes back on the data layout, which is a cost the proposal never
+ * mentions because it never had a consumer whose values were mixed.
+ */
+export struct TrafficKeys { u8[] key; u8[] iv; }   // `secret` is not a field qualifier either
+export TrafficKeys trafficKeyIv(secret u8[] from, i32 keyLen) { … }
+
+/**
+ * ## 3. The Finished message is a declassification, and it is correct
+ *
+ * `finishedVerify` takes a secret and produces sixteen bytes that go **on the wire**. That is the
+ * point of it — it proves the sender holds the handshake secret and saw the same transcript.
+ *
+ * `crypto/src/secret.wac` says *"a laundered `secret` is a key in a log line"*, and treats laundering
+ * as the failure mode. Here laundering is the feature. So the proposal needs a way to say *this
+ * derivation is a deliberate declassification*, and there is no such thing in it — which leaves
+ * exactly two outcomes, both bad: `finishedVerify` is written without the qualifier and the taint
+ * never enters the function, or it is written with one and every TLS handshake needs an escape
+ * hatch on its most security-critical line.
+ *
+ * **A taint system without a declassification form is a taint system nobody can finish using.** That
+ * is not a subtle point and it is not in the proposal, and the reason is that its two examples —
+ * `chachaBlock` and `aesEncrypt` — are the two functions in cryptography that genuinely never
+ * declassify.
+ */
+export u8[] finishedVerify(secret u8[] baseKey, Bytes transcriptHash) { … }
+
+/**
+ * The label expansion everything above goes through, and the one function whose signature the
+ * proposal gets exactly right: a secret in, a length, a label that is public, a secret out.
+ *
+ * Which is the honest note to end on. `secret` is right about `expandLabel`, and `expandLabel` is
+ * the shape its two crypto examples have. Eleven functions later it is right about one of them.
+ */
+export u8[] expandLabel(secret u8[] from, Bytes label, Bytes context, i32 length) { … }

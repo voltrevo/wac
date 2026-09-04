@@ -66,9 +66,9 @@ language has no spelling for, a rule that turns out to be unusable at scale, a h
 in ten lines. Each package's README ends with that list, and the real ones become entries in
 `../QUESTIONS.md`.
 
-## What seventeen of them found, which no one of them could
+## What eighteen of them found, which no one of them could
 
-Eight things recur, and none is in any single package's list.
+Nine things recur, and none is in any single package's list.
 
 **The constructs ran out at nine.** Packages one to nine each wanted something the language has no
 spelling for. Packages ten to fifteen wanted nothing new — every construct `regex`, `crypto`, `sh`,
@@ -91,6 +91,15 @@ public `len` field and one-byte `reserve`, and `regex`'s flat class arrays — w
 has no generics-free way to hold a list of structs"* and which turns out to be a layout choice, since
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
+
+**A proposal tested only on its motivating example is untested, and the parser said so first.**
+`secret` had two uses and both were inside the file proposing it. The TLS key schedule is ten arrows
+of *secret in, secret out*, and the qualifier has no return position, no field position and no way to
+declassify — which `finishedVerify` needs, because a Finished message is a secret turned into bytes
+that go on the wire on purpose. The first of the three was found by `specparse` refusing
+`export secret u8[] deriveSecret(…)`: the grammar came from the proposal, so the refusal *is* the
+proposal answering, and it is the first time the parser has settled a design question rather than a
+spelling.
 
 **A package's stated language limitation had half-lifted three weeks earlier.** `packages/fs` is one
 concrete type with a mount table because — its own header — dispatch is static *and* "a funcref
@@ -322,3 +331,4 @@ while correcting something.
 | [gzip](gzip/) | 2026-09-04 | `try` against a closed issue that priced it; a view type declined on a number |
 | [tor](tor/) | 2026-09-04 | 16,291 lines counted, not rewritten; 64 failure paths into 13 bits |
 | [fs](fs/) | 2026-09-04 | closures instead of a mount table; the first consumer of the `Files` projection |
+| [tls](tls/) | 2026-09-04 | the key schedule, as the first consumer `secret` ever had |
