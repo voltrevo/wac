@@ -79,7 +79,7 @@ drifts. **A question is deleted once it is answered**, and the answer has to lan
 
 ## What twenty-two subjects found, as patterns rather than as a list
 
-`QUESTIONS.md` is sixty-one entries and getting longer, which is the exercise working and is not a
+`QUESTIONS.md` is sixty-three entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately
 **not an index**: these are findings about how the design behaves under use, and each stays true
 after the question it produced is answered and deleted.
@@ -94,6 +94,13 @@ parameter list already does, and the queue it was really holding is where `std/p
 already put it: on a capability, because *"the scheduler is a value the host builds at start-up and
 hands over with the rest"*. It is gone, and the agreed pages still write `sys.readFile(…)` 22 times —
 which is the exercise's sharpest single result and the one thing in it nobody here should fix.
+
+**0b. And it was derived from a source that does not exist.** The count the grouping rests on —
+50 capabilities, then 62 — is a **union across hosts**. `native/src` and `native/v8/src` mention
+`Page` zero times; only a browser provides its twelve. The shipped design has a word for that,
+*profile*, and says *"only a browser provides it"* at the capability it applies to; nine projections
+have no profile, so a signature now says exactly what a program reaches and nothing about where it
+can run. `main(Net, Out, Clock, Tasks)` and `page(Out, Page)` look like the same kind of thing.
 
 **1. Something derived from a source is narrower than the source, and always in the direction of
 whoever consumed it first.** The seven capability projections were argued from a count of the host,
