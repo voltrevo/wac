@@ -1607,6 +1607,20 @@ reading past the view into the array is precisely the bug a triple makes easy.
 `url/query.wac` uses it and now allocates nothing to parse a query — a request with forty parameters
 of which a handler reads two pays for two.
 
+**Measured 2026-09-04, and this is the one that does not paper over.** Passing an `i32[]` where a
+`Sl<i32>` is expected is one type error *and* an invalid module — the engine refuses it with
+`call[0] expected type (ref null 3), found local.get of type (ref null 0)`. The other two vision
+assumptions measured the same day — an unqualified variant construction and `u8` as a scalar — both
+emit modules that run correctly. So of the three, this is the only one where the code generator
+also has nothing to fall back on, which is what a widening between two different heap types should
+look like: there is a struct to allocate and no instruction that invents one.
+
+That makes it a *bigger* ask than the other two and a clearer one. `T` to `T?` is free because a
+nullable reference is the same reference; `T[]` to `Slice<T>` allocates a three-field struct, so an
+implicit widening here is an implicit allocation, at every call site, invisibly. Worth deciding on
+that basis rather than on the analogy the file offers — and the answer may well be that it should be
+explicit, which costs `Slice.all(a)` at the call sites and says where the allocation happens.
+
 ## A `secret` qualifier, and the hole it would inherit
 
 `const` is a taint that propagates through a value's whole reachable graph and forbids **writing**.

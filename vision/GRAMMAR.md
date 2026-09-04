@@ -706,6 +706,30 @@ way today's language spells something else will never appear in the table above,
 the rest is to run the *semantics* — which is what `ask_wacc.ts` does and what the table was built
 without.
 
+Three were found that way on 2026-09-04, and they do not behave alike:
+
+| assumption | today | emits? |
+|---|---|---|
+| an unqualified variant construction, `return Ok(3);` | `a call to Ok` | no — declined |
+| `u8` as a local, parameter, field or cast target | 3 type errors | **yes, and runs correctly** |
+| `T[]` widening implicitly to a `Slice<T>` | 1 type error | yes, and the **engine refuses** the module |
+
+The middle row is the one to keep in mind when reading anything else in this directory: the checker
+refuses it and the code generator does not care, because a packed element is an `i32` in a register.
+A rule whose violation produces a working program is the kind that gets written around 61 times
+before anyone notices — `issues/lang/0336a`.
+
+The last row is the opposite and is the honest shape of a *type-system* addition: there is a struct
+to allocate and no instruction that invents one, so nothing papers over it. Which is also why it is
+a bigger ask than it reads as — `T` to `T?` is free and `T[]` to `Slice<T>` is an allocation per call
+site, implicitly.
+
+**And "N/N files parse" is not "N/N files mean what they say."** Both numbers are worth having; only
+the first was being quoted at the top of this page.
+
+None of the three is a syntax question, so none can be answered by `GRAMMAR.ebnf` and none belongs
+in the table above. They are in `QUESTIONS.md`.
+
 **And its first hits were all false**, which is worth recording because a clean run had never been
 tested. `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])]
 write)` three times, and the pass asked for all three to be rewritten as `fn<…>` — which would
