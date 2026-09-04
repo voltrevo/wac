@@ -1,0 +1,80 @@
+// A growable byte buffer.
+//
+// The shape is performance work and it stays: `len` is a public field rather than a method because
+// it is read once per pushed byte in gzip's inner loops, and `reserve()` takes no argument and
+// checks for exactly one byte so the common `push` path is a single comparison. Bulk appends use
+// `reserveFor(n)`. None of that is language and none of it moved.
+//
+// **What moved is `bytes()`.** It answered `u8[]`, and `data` is over-allocated, so it had to copy
+// the filled prefix out — every call, whatever the caller then did with it. `server`'s connection
+// loop calls it once per pipelined request:
+//
+//     match (serve(pending.bytes(), sys.now())) { … }
+//
+// so a client sending three requests in one packet paid for three copies of the whole buffer, to
+// read a prefix of it three times. Answering a `Bytes` is the same information with no copy, and it
+// is exactly what `core/slice.wac` was written for.
+
+import { Bytes, Slice } from "core";
+
+export struct Buf {
+  u8[] data;
+  i32 len;
+
+  Buf create() { return Buf(u8[16](), 0); }
+
+  /**
+   * Pre-sized, for when the final length is known up front — inflate reads it from the gzip
+   * trailer. Skips the doubling reallocations, and lets `take` hand back the array without a copy.
+   */
+  Buf withCapacity(i32 capacity) {
+    if (capacity < 16) { capacity = 16; }
+    return Buf(u8[capacity](), 0);
+  }
+
+  u8 get(const this, i32 i) {
+    // `trap;` in the original, which carries nothing. A bare trap in a buffer read is the least
+    // helpful place in the stack to arrive with no message.
+    if (i < 0 || i >= this.len) { trap("Buf.get out of range"); }
+    return this.data[i];
+  }
+
+  /** Make room for at least one more byte. */
+  void reserve(this) {
+    if (this.len < this.data.len()) { return; }
+    // Doubling zero is zero, so the floor is load-bearing rather than defensive: without it an
+    // empty buffer grows to nothing and the store goes out of bounds. Unreachable while every
+    // constructor started at 16, and reachable as soon as `take` began leaving the buffer empty.
+    i32 cap = this.data.len() * 2;
+    if (cap < 16) { cap = 16; }
+    u8[] next = u8[cap](fill: 0);
+    next.copyFrom(this.data, 0, 0, this.len);
+    this.data = next;
+  }
+
+  /** `v` is a `u8` now. It was an `i32` that every call site truncated. */
+  void push(this, u8 v) {
+    this.reserve();
+    this.data[this.len] = v;
+    this.len += 1;
+  }
+
+  /**
+   * What is in it, as a view. No copy.
+   *
+   * The view is invalidated by the next `push` that grows — `reserve` replaces `data`, and the
+   * slice keeps pointing at the old array, which is stale rather than unsafe. That is a real hazard
+   * and it is the one the type does not carry: nothing in the signature says *read this before you
+   * write again*. It is why `take` still exists and still hands over an array.
+   */
+  Bytes bytes(const this) { return Slice<u8>(this.data, 0, this.len); }
+
+  /** The array, with the buffer left empty. The caller owns it and may keep it. */
+  u8[] take(this) { … }
+
+  /** Forget the first `n` bytes, which is what a connection loop does after answering. */
+  void dropFront(this, i32 n) { … }
+
+  void pushAll(this, Bytes more) { … }
+  void reserveFor(this, i32 n) { … }
+}

@@ -74,3 +74,5 @@ in ten lines. Each package's README ends with that list, and the real ones becom
 | [url](url/) | 2026-09-04 | nested `T?`, `Result` |
 | [wactest](wactest/) | 2026-09-04 | a test's signature, fakes as values |
 | [fmt](fmt/) | 2026-09-04 | interpolation as `+`, re-export |
+| [unicode](unicode/) | 2026-09-04 | a union instead of two negative markers |
+| [bytes](bytes/) | 2026-09-04 | `Bytes` views instead of a copy per call |

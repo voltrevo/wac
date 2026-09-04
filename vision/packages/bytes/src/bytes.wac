@@ -1,0 +1,6 @@
+// The package, as one name.
+//
+// `slice.wac` is gone: it held a `slice(u8[] s, i32 lo, i32 hi)` that **copied**, which is the
+// function `core/slice.wac` replaces with a view. Nothing here needs to offer it.
+
+export { Buf } from "./buf.wac";

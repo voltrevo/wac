@@ -31,11 +31,13 @@ file where a `for … in` comes before any other divergence, and the tool found 
 ## What the tool reports
 
     vision/core/core.wac                           ^ found '{'
+    vision/core/core.wac                           ^ found '{'
     vision/core/coroutine.wac                      ^ expected '{', found ';'
     vision/core/result.wac                         ^ expected '>', found '='
     vision/core/slice.wac                          ^^^^^ found 'items'
     vision/core/ticket.wac                         ^ expected '{', found ';'
     vision/core/vec.wac                            ^^^^^ found 'items'
+    vision/packages/bytes/src/bytes.wac            ^ found '{'
     vision/packages/fmt/src/fmt.wac                ^ found '{'
     vision/packages/http/src/fault.wac             ^ expected '(', found ';'
     vision/packages/http/src/http.wac              ^ found '{'
@@ -49,6 +51,8 @@ file where a `for … in` comes before any other divergence, and the tool found 
     vision/packages/stream/src/scalars.wac         ^^^^ expected '>', found 'void'
     vision/packages/stream/src/stream.wac          ^ found '{'
     vision/packages/stream/src/transform.wac       ^^^^ expected '>', found 'void'
+    vision/packages/unicode/src/unicode.wac        ^ found '{'
+    vision/packages/unicode/src/utf8.wac           ^ expected '(', found ';'
     vision/packages/url/src/query.wac              ^^ expected '=', found 'in'
     vision/packages/wactest/src/assert.wac         ^^ found 'Ok'
     vision/packages/wactest/src/test.wac           ^^^^^ found 'async'

@@ -1,0 +1,57 @@
+// UTF-8, one scalar at a time.
+//
+// The original answers a `Scalar { i32 code; i32 size; }` where `code` is a code point *or* one of
+// two negative markers:
+//
+//     export i32 INVALID()   { return -1; }
+//     export i32 TRUNCATED() { return -2; }
+//
+// A sentinel drawn from the field's own type. Nothing stops `s.code` being used as a code point, and
+// `packages/stream` shows what that costs — every caller writes `if (s.code == -2) break;` and
+// `if (s.code < 0) return -1;` before it may look at the value, in that order, and getting the order
+// wrong silently treats a truncated sequence as a malformed one.
+//
+// A union says it instead, and a `match` over it is checked. There is no `size` on the failures
+// because they do not have one to give: a caller that stopped is not going to advance.
+
+import { Bytes } from "core";
+
+/** A code point and the number of bytes it took. */
+export struct Scalar {
+  i32 code;
+  i32 size;
+}
+
+/** Well-formed so far, but it runs past the end of the input. Hold the tail and read more. */
+export struct Truncated { }
+
+/**
+ * Not UTF-8. `skip` is how far to move to make progress — one byte on a bad lead, so a caller
+ * replacing bad input with U+FFFD advances rather than looping.
+ */
+export struct Malformed { i32 skip; }
+
+/**
+ * The scalar starting at `at`.
+ *
+ * Three outcomes and no order to get wrong. `Truncated` and `Malformed` are different because a
+ * caller streaming a file must hold the tail on one and must not on the other — which is the
+ * distinction the two negative numbers were carrying, in a field that also carries `'A'`.
+ */
+export union<Scalar, Truncated, Malformed> Decoded;
+
+export Decoded decode(Bytes s, i32 at) {
+  if (at >= s.len()) { return Truncated(); }
+
+  u8 b0 = s.get(at);
+  if (b0 < 0x80)  { return Scalar(b0, 1); }
+  // A continuation byte, or an over-long C0/C1.
+  if (b0 < 0xC2)  { return Malformed(1); }
+  …
+}
+
+/** How many bytes `cp` encodes to. */
+export i32 encodedLength(i32 cp) { … }
+
+/** Write `cp` at `at`, and answer how many bytes it took. */
+export i32 encode(Bytes into, i32 at, i32 cp) { … }
