@@ -205,3 +205,35 @@ rather than its name, which replaces `test` as a string convention that nothing 
 doing it to a module it loaded. *The compiler is a library* is the neighbouring claim and it is
 about compiling rather than reflecting.
 
+## Re-export
+
+`vision/packages/fmt/src/fmt.wac` is a barrel and cannot be written. The real package's header says
+why and what it costs: *"wac has no re-export — importing a symbol from a file that merely imports
+it is a compile error — so unifying them means editing the import line of all forty-odd wac test
+files that use them […] wac-mono 0072."* So `itoa64` and `utoa64` exist twice, in `packages/fmt` and
+`packages/wactest`, and everyone agrees the second is a duplicate.
+
+This is the only gap in seven packages the repository had **already filed an issue about**, which
+makes it a different kind of finding: not something the exercise noticed, but something it can say
+belongs in the language rather than in a mechanical edit waiting for a quiet moment.
+
+## Whether interpolation reverses a decision somebody made on purpose
+
+`IDIOMS.md` says interpolation is sugar for `+` and `+` takes the scalars. `packages/fmt`'s header
+says *"wac has no number-to-string conversion and `string + i32` is **deliberately** a compile
+error."* Both cannot hold, the word is in the original, and the reason behind it is not recorded
+anywhere I could find.
+
+It also settles something the entry does not mention: `"\{0.1 + 0.2}"` becomes
+`"0.30000000000000004"`, since that is the shortest decimal that reads back. Right for a log line
+and not what someone writing `"total: \{amount}"` expects — and *no formatting language* means
+there is no other spelling for them. That may be the intent; it has not been said.
+
+## A slice type
+
+`atofSpan(u8[] src, i32 start, i32 end)`, and `packages/bytes` has a `slice` that copies. Every
+parser in this rewrite — `json`, `http`, `url`, `fmt` — passes `(bytes, lo, hi)` triples instead,
+which is four packages and so a pattern rather than a habit. Nothing on the pages proposes a slice
+type, and the three-argument form is what a caller gets wrong: `json`'s and `http`'s helpers take
+them in different orders.
+

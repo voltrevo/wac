@@ -1,0 +1,57 @@
+// Integers to and from decimal.
+//
+// The original's header opens: *"wac has no number-to-string conversion and `string + i32` is
+// deliberately a compile error."* Vision reverses that — `\{n}` is sugar for `+`, and `+` takes the
+// scalars — which makes this file the implementation of an operator rather than a library a caller
+// reaches for. See the README: reversing a decision somebody made on purpose is worth more
+// discussion than the interpolation entry has had.
+
+/**
+ * Decimal, with a leading `-` when negative.
+ *
+ * i32 minimum is special-cased: negating it overflows back to itself, so the loop would never
+ * terminate on it. `0x80000000` rather than `-2147483648` because the decimal literal exceeds i32,
+ * so it types as i64 and negating it stays i64 — hex is a bit pattern.
+ */
+export string itoa(i32 n) { … }
+
+export string itoa64(i64 n) { … }
+export string utoa64(u64 n) { … }
+
+/**
+ * The number a string spells, or nothing.
+ *
+ * The original answers `i32` and returns `0` for a string that is not a number — for `""`, for
+ * `"hello"`, and for `"0"`, which are three different facts sharing one answer. A caller cannot ask
+ * which it got.
+ *
+ * That is not hypothetical here. The original's own comment records `box`'s `seq` failing as
+ * `seq 10 -3 1`, *"refusing a step of zero it had invented itself"* — the sign was not being read,
+ * so `-3` scanned as garbage, and garbage is `0`. Reading the sign fixed that instance; the shape
+ * that let a parse failure arrive as a plausible number is what `i32?` removes.
+ *
+ * A caller for which `-5` is a flag rather than a number still has to strip the sign itself.
+ */
+export i32? atoi(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return null; }
+
+  i32 at = 0;
+  bool negative = false;
+  if (b[0] == '-' || b[0] == '+') {
+    negative = b[0] == '-';
+    at = 1;
+  }
+  // A sign with no digits after it is not a number. The original could not say so.
+  if (at >= b.len()) { return null; }
+
+  i32 v = 0;
+  for (i32 i = at; i < b.len(); i++) {
+    u8 c = b[i];
+    // Trailing rubbish is not a number either. The original stopped and kept what it had, so
+    // `atoi("12kg")` was 12 — which is right for a tokeniser and wrong for a caller checking input.
+    if (c < '0' || c > '9') { return null; }
+    v = v * 10 + (c - '0');
+  }
+  return negative ? -v : v;
+}

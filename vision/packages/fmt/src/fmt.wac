@@ -1,0 +1,19 @@
+// The package, as one name.
+//
+// **This file cannot be written today**, and the real package's header says so where the cost lands:
+//
+//   > wac has no re-export — importing a symbol from a file that merely imports it is a compile
+//   > error — so unifying them means editing the import line of all forty-odd wac test files that
+//   > use them […] wac-mono 0072.
+//
+// That is `itoa64` and `utoa64` living in two places, `packages/fmt/src/itoa.wac` and
+// `packages/wactest/src/itoa64.wac`, with the second kept because the move is mechanical and touches
+// forty files somebody else is editing. A duplicate that everyone agrees is a duplicate, surviving
+// because the language has no way to say *this name is also available here*.
+//
+// A barrel is not the only thing re-export buys, but it is the one every package wants: a caller
+// should import from `fmt`, not from `fmt/src/itoa.wac`, and today the second is the only option.
+
+export { itoa, itoa64, utoa64, atoi } from "./itoa.wac";
+export { ftoa, ftoa32, writeF64, writeF32, Decimal, decompose } from "./ftoa.wac";
+export { atof, atof32 } from "./atof.wac";

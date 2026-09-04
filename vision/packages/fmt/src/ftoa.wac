@@ -1,0 +1,46 @@
+// Doubles to decimal, exactly.
+//
+// The generation is Ryū-shaped and unchanged — it is exact for every finite double, including
+// subnormals and the boundary cases where a power of two's lower neighbour is half as far away as
+// its upper one, and none of that moved because the language did.
+
+import { Vec } from "core/vec.wac";
+import { Buf } from "@/packages/bytes/src/buf.wac";
+
+/**
+ * What a double is, once the bits are read.
+ *
+ * `Zero` carries no sign: `"\{-0.0}"` is `"0"`, so the sign has nowhere to go.
+ *
+ * `Digits` was `(u8[] digits, i32 count, i32 exp10, bool neg)` — an over-allocated array beside the
+ * number of it that means anything, which is a slice written as two fields. A caller reading
+ * `digits` without `count` gets trailing zeroes that are not part of the number, and nothing stops
+ * one doing it.
+ */
+export enum Decimal {
+  NaN,
+  Inf(bool neg),
+  Zero,
+  /** The value is `0.digits × 10^exp10`, each digit ASCII `'0'`–`'9'`. */
+  Digits(Vec<u8> digits, i32 exp10, bool neg)
+}
+
+export Decimal decompose(f64 x) { … }
+export Decimal decompose32(f32 x) { … }
+
+/**
+ * The shortest decimal that reads back as `x`.
+ *
+ * **This is what `\{x}` produces**, once interpolation is sugar for `+`, and it is worth being sure
+ * that is wanted: `"\{0.1 + 0.2}"` is `"0.30000000000000004"`. That is the honest answer and the one
+ * a log line should carry — a shorter one would be a different number — but it is not what someone
+ * writing `"total: \{amount}"` in a receipt expects, and there is no second spelling for them to
+ * reach for, by design.
+ */
+export string ftoa(f64 x) { … }
+export string ftoa32(f32 x) { … }
+
+export void writeF64(Buf out, f64 x) { writeDecimal(out, decompose(x)); }
+export void writeF32(Buf out, f32 x) { writeDecimal(out, decompose32(x)); }
+
+void writeDecimal(Buf out, Decimal d) { … }
