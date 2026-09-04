@@ -1726,9 +1726,7 @@ mentions `Files` would be handed one whether `main` asked or not, and a `main(Ou
 would receive them in whatever order `worldFor` happens to build.
 
 So the projections have a host cost and it lands unevenly — nothing on the two hosts that read
-signatures, and a rewrite of the mechanism on the one that infers. **Nothing in `vision/` has asked
-what any of this costs a host**, which is the more general finding: the proposal is written entirely
-in wac, and two of the three things it most depends on are implemented three times, differently.
+signatures, and a rewrite of the mechanism on the one that infers. That is the entry below.
 
 ## A machine you can step, and the bounded wait the rewrite dropped
 
@@ -2308,3 +2306,43 @@ fourth place it decides something concrete.
 Which makes the interim position worth stating rather than leaving implied: a leaked file handle is
 not a thing to defer to an open question, and if that question stays open the `Source` is the answer
 by default rather than on merit.
+
+
+## Nothing here has been costed against an implementation, and there are three of them
+
+Measured 2026-09-04. `vision/` mentions a host **280 times across 38 files** — and every one of them
+cites what a host *does*, as a fact about the world being designed against. The lines asking what a
+host would have to *do differently* if this were built number **two**, and both were written today
+while reading `native/v8/src/main.rs` for something else. Nothing reasons about the three hosts
+differing.
+
+That matters more here than it would elsewhere, because the three are the point.
+`design/system/0001` D9 keeps the wasmtime host on the grounds that it is *the only host that tests
+the claim that a wac program does not depend on one* — and a capability surface is exactly the part
+of the language where that claim is cashed.
+
+Two things already found by looking, neither of them large and both invisible from inside wac:
+
+**The JavaScript host infers a signature it cannot read.** `worldFor` returns `[Core]` or
+`[Core, Cli]` and `entryNode.ts` spreads it positionally into `main`, choosing by which classes the
+module contains — its own comment says the two Rust hosts read the parameter list and *"here the
+absent class is the same signal"*. With two capabilities the signal and the signature coincide. With
+nine projections they come apart in both directions: a program whose *helper* names `Files` is handed
+one `main` never asked for, and `main(Out out, Files files)` is handed them in `worldFor`'s order
+rather than its own.
+
+**And the reflection `@/packages/wactest` wants is two shipped mechanisms that have never met** —
+`call_named` reading an export's parameter *types*, and `worldFor` building a world from `main`'s.
+The entry above has it.
+
+**What this does not say is that the proposal is unimplementable.** Neither finding is fatal and one
+is a JavaScript-side rewrite of about twenty lines. What it says is that a proposal this size, nine
+projections deep, has been argued for nine days against wac and against the shipped *design*, and
+never once against the three programs that would have to run it — and the two things that fell out of
+half an hour of reading suggest that is where the next ones are.
+
+The concrete version, which is answerable: **what does each host have to do to hand a program nine
+projections instead of two?** For the Rust pair, read a longer parameter list and construct more
+types — nothing structural. For the JavaScript one, stop inferring. And for all three, the question
+`@/packages/sh/src/exec.wac` raises from the other side: none of this crosses a spawn, where a
+capability is a bitfield and not a value.
