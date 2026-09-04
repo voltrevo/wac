@@ -343,21 +343,96 @@ void example() {
 
 ---
 
-## `drain()` returns `Err` if it cannot finish draining
+## `Sys.drain` runs the work nobody awaited
 
 ```wac
-void example(Sys sys) {
-  scheduler q;
+struct Sys {
+  Vec<Continuation> pending;
 
-  fileSize(sys, "a.txt");     // q holds the read but cannot wait for it
-  q.drain();                  // Err(..)
-}
+  async void drain(this) {
+    schedule this.pending.push;
 
-async i32 fileSize(Sys sys, string f) {
-  u8[] content = await sys.readFile(f);
-  return content.len();
+    while (this.pending.len() > 0) {
+      Vec<Continuation> round = this.pending.take();
+      for (Continuation c : round) {
+        match (c) {
+          Ready { call }:      { await;   call(); }
+          Waiting { t, call }: { await t; call(); }
+        }
+      }
+    }
+  }
 }
 ```
+
+`schedule` is the first statement, so a machine that suspends again inside `call()` lands back in
+`pending` rather than in whatever target was in force where it was first called: drain captures what
+it starts. Its own `await` hands drain's continuation to the target above it, and the target is back
+in force when drain is resumed.
+
+`await` in both arms is what makes drain yield rather than monopolise, between each continuation and
+the next, exactly as the work it is draining does. The round keeps the loop off the collection it is
+feeding, since `call()` pushes into `pending` while it is running.
+
+`t` is a `TicketBase`, so one `await` serves every kind of ticket, a fake `Sys`'s included, and
+answers nothing — which is all drain wants.
+
+**Not yet.**
+
+---
+
+## `wait` answers `Err` when nothing can advance the ticket
+
+```wac
+i32 example() {
+  Ticket<i32> t;              // nothing will ever resolve it
+  return match (t.wait()) {
+    Ok  { v }:  v,
+    Err { .. }: -1,
+  };
+}
+```
+
+`wait` advances the ticket, advances it again blocking, and if neither moved it there is nobody left
+to try: the sync caller is the driver. The same ticket under `await` is the caller's driver's
+problem instead, which is why `await` answers a value and `wait` answers a `Result`.
+
+**Not yet.**
+
+---
+
+## `drain().wait()` and `await drain()` are the same program
+
+```wac
+i32 main(Sys sys) {
+  tick(sys, "a");
+  tick(sys, "b");
+  return match (sys.drain().wait()) {
+    Ok  { .. }: 0,
+    Err { .. }: 1,
+  };
+}
+```
+
+```wac
+async i32 main(Sys sys) {
+  tick(sys, "a");
+  tick(sys, "b");
+  await sys.drain();
+  return 0;
+}
+```
+
+```
+a
+b
+a
+b
+```
+
+`tick` is the one from *Giving other work a turn*. Same machine, two drivers: `wait` advances it
+from sync code, `await` suspends the caller and lets the caller's driver advance it. Only the
+failure reporting differs, and that difference is forced rather than chosen.
 
 **Not yet.**
 
