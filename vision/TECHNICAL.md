@@ -472,6 +472,94 @@ failure reporting differs, and that difference is forced rather than chosen.
 
 ---
 
+## `await` needs a ticket
+
+```wac
+async i32 example() {
+  return await 5;
+}
+```
+
+```
+error: `await` needs a ticket, and `5` is an `i32`
+  --> e.wac:2:16
+   |
+ 2 |   return await 5;
+   |                ^
+```
+
+JavaScript accepts any value here, which is what lets a forgotten `async` on the callee compile:
+`await maybePromise` is fine either way and the bug surfaces somewhere else.
+
+**Not yet.**
+
+---
+
+## `await;` has no rival
+
+```wac
+async void example(Continuation c) {
+  await c.t;        // a TicketBase? — one step boundary, and no waiting if it is null
+  await;            // the same thing, spelled directly
+  await null;       // error: `null` has no type here
+}
+```
+
+`null` is a literal with no type of its own and `await`'s operand position expects no particular
+nullable type, so there is nothing to infer it from. The bare form stays the only way to write a
+step boundary without a ticket.
+
+**Not yet.**
+
+---
+
+## Returning a ticket from an `async T` function is an error
+
+```wac
+async i32 total(Sys sys) {
+  return size(sys, "a.txt");
+}
+
+async i32 size(Sys sys, string f) { … }
+```
+
+```
+error: `total` returns `i32`, and `size(sys, "a.txt")` is a `Ticket<i32>`
+  --> e.wac:2:10
+   |
+ 2 |   return size(sys, "a.txt");
+   |          ^^^^^^^^^^^^^^^^^^
+   = help: `return await size(sys, "a.txt");`
+```
+
+`async` wraps the declared return type. It does not adopt a ticket the body happened to produce, so
+the two spellings are not interchangeable and dropping the `await` is not a shortcut. JavaScript
+adopts, which is why `Promise<Promise<T>>` cannot be built there.
+
+**Not yet.**
+
+---
+
+## `Ticket<Ticket<T>>` is an ordinary type
+
+```wac
+async Ticket<Response> send(Sys sys, Request r) { … }
+
+async Response roundTrip(Sys sys, Request r) {
+  Ticket<Response> sent = await send(sys, r);     // it went out
+  return await sent;                              // it came back
+}
+```
+
+`send` answers a `Ticket<Ticket<Response>>`: one ticket for the request leaving, one for the reply
+arriving. A caller that only wants to know it was sent awaits once and keeps the second ticket, or
+drops it. Adoption would merge the two events into one and there would be no way to ask about the
+first.
+
+**Not yet.**
+
+---
+
 ## `coroutine` answers the machine and runs nothing
 
 ```wac
