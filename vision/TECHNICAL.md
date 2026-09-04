@@ -8,6 +8,19 @@ Read together these are meant to be enough to implement the language from.
 Each is marked **done** or **not yet**, and that marker is the only thing here that refers to an
 implementation.
 
+**The marker is about the example, not about the heading**, and the two come apart often enough to
+say so. *"`pop` answers an absence rather than trapping"* is marked **not yet** and `core/vec.wac`'s
+`pop` has answered `Option<T>` — *"None if empty"* — all along; what does not compile is the entry's
+`v.pop() is null`, because the change is `Option<T>` to `T?`. Same for *"an enum with a default"*,
+where a catch-all arm compiles today as `else:`, and *"matching an enum"*, which is only *not yet*
+because its example writes arms without `case` and matches a payload by type. Checked four of the
+thirty; three were this.
+
+So a reader scanning headings and markers is being told that wac cannot do things it does. That is
+this directory's most expensive habit — `packages/README.md` counts seven times a rewrite claimed a
+shipped feature was missing — and the markers are a machine for producing it. **Read the heading as
+the design point and the marker as *"this spelling does not compile yet"*.**
+
 See [README.md](README.md) for the three tiers and why nothing checks them.
 
 ---
@@ -164,7 +177,7 @@ diagnostic it should have, and it was marked *Not yet* as though the rule were u
 
 ---
 
-## Matching an enum
+## Matching an enum, with no `case` and a payload matched by type
 
 ```wac
 async void show(Sys sys) {
@@ -215,7 +228,7 @@ An arm that leaves gives no value, and is not asked to agree with the others.
 
 ---
 
-## An enum with a default
+## An enum with a `default` arm, spelled `default` rather than `else`
 
 ```wac
 string advice(Fault f) {
@@ -861,7 +874,7 @@ reaches the middle state is the one that cannot be built.
 
 ---
 
-## `pop` answers an absence rather than trapping
+## `pop` answers an absence rather than trapping — spelled `T?`
 
 ```wac
 void example() {
