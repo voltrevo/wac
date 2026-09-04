@@ -718,7 +718,7 @@ overrides ran; the projections, tickets, coroutines, `Socket`, `Listener` and `C
 funcrefs now. The argument for it was real — an abstract method catches a subclass that never
 overrides, where a trapping body only traps if the path is taken — and it is an argument about a
 design vision no longer uses. Removing it from `GRAMMAR.ebnf` took the delta from 628 BNF
-productions to 564, and all fifty-five vision files still parse.
+productions to 564, and all fifty-six vision files still parse.
 
 **`trap` as an expression.** `core/result.wac`'s `orTrap` writes `Err(_): trap why,` — a match arm is
 an expression and that arm produces nothing, which is what a bottom type is for. Small, and the
@@ -1196,7 +1196,7 @@ fallible function that answers nothing — which is most of them.
 `try`, `gen`, `defer`, `schedule`, `yield`, `in`, `union` and `secret` are written all over these
 pages and no entry says what they *are*. `vision/GRAMMAR.ebnf` had to decide in order to exist, and
 it decided **contextual** — none of them is a keyword, each is an `IDENT` that a rule matches by
-spelling. All fifty-five vision files parse that way, so the question is not *can they be*.
+spelling. All fifty-six vision files parse that way, so the question is not *can they be*.
 
 **A third cost, measured 2026-09-04, and it is the one that bites a tool rather than a reader: the
 grammar cannot state the feature, so nothing can check it.** `var_decl` is written
