@@ -2517,3 +2517,40 @@ obvious one, with the funcrefs still available for the rest. That is not a trait
 `generics.md`'s twice-checking with a defaulted argument, and `Result<T, E = union>` already shows a
 default type argument in the delta. Whether a *value* argument can default the same way is the part
 that is missing, and it is a smaller question than traits.
+
+## The lifecycle rules are per-entry and landing is per-clause
+
+`README.md` gives each of these documents a rule for when an entry goes:
+
+    an example      kept and marked `done` when it lands
+    a decision      deleted once it reaches `spec/`
+    a question      deleted once it is answered
+
+All three are stated per **entry**, and the first attempt to apply one showed that landing happens
+per **clause**. `DECISIONS.md`'s *`_` is a binding that cannot be read* is four claims:
+
+    a pattern      in `spec/spec/enums.md`, 68 uses across 16 shipped files
+    a parameter    not in the spec, zero uses anywhere
+    a local        not in the spec, zero uses — `i32 _ = f();`, the entry's own example
+    reading fails  not in the spec, and the entry says it is the half that matters
+
+A quarter landed. The rule says *deleted once it reaches `spec/`*, so it can never fire, and the
+entry can never be current either: nothing in it distinguishes the clause with 68 uses from the one
+nobody has written.
+
+**The failure is quiet, which is why it is worth an entry rather than a tidy-up.** A document whose
+removal rule cannot fire does not accumulate obviously-stale entries — it accumulates entries that
+are three-quarters true, which read exactly like settled ones. `DECISIONS.md` is three entries long
+and one of them is in that state; the ratio is what to worry about rather than the count.
+
+Two ways to fix it and they are not equivalent. **Split entries until each is one clause** — which
+makes the rules work as written, and turns a readable paragraph into four lines that each need their
+own reason, losing the *"enough of the reason that it can be revisited"* the file opens with. Or
+**mark clauses rather than entries**, which keeps the prose and needs a notation the pages do not
+have and a reader has to learn.
+
+The same question is live for `QUESTIONS.md` and worse, because a question is *supposed* to bundle:
+*"`secret` has no return position, no field position and no release"* is three findings held together
+because they share a cause, and splitting them would lose the thing that makes them one entry. So the
+answer is probably not the same for the three documents — and today all three carry the same
+sentence.
