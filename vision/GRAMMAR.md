@@ -112,14 +112,45 @@ are here because they are written in the tree, not because anything found them:
 - `fn<void()>` as a type — `core/ticket`, replacing today's `fn[void()]`
 - `\{…}` interpolation inside a string — `server/main`
 
+## There is a machine-readable version of this now, and it parses every file here
+
+`vision/GRAMMAR.ebnf` is the same additions as productions, patched over `spec/spec/grammar.md`, and
+`tools/specparse.ts` runs the result:
+
+    deno run --allow-read tools/specparse.ts vision      # 44/44 files parse
+
+**That is a different kind of claim from anything else on this page.** Everything above was derived
+by *subtraction* — what today's parser refuses, minus what a desugarer accounts for — so it is a list
+of absences and cannot say whether the list is complete. A grammar that **accepts** all forty-four
+files says the additions are sufficient, which no amount of refusal-reporting can.
+
+It is not a compiler and does not pretend to be: a recogniser answers *does this parse* and nothing
+else, so a file it accepts may be meaningless. What it removes is the possibility of a construct
+being used here that nobody has written down.
+
+Three things came out of writing it that this page had wrong or missing:
+
+- **`trap` as an expression** was listed above as unaccounted-for and is now accounted for, as a
+  `primary_expr` alternative. It was the last file to refuse.
+- **`Found(Match match)`** in `regex` was a payload named with a keyword — vision code wrong under
+  *today's* rules, the sixth class this page names, and the only instrument that could see it is one
+  that parses.
+- **No vision word needs to become a keyword.** `try`, `gen`, `defer`, `schedule`, `yield`, `in`,
+  `union` and `secret` all work as contextual words, because the spec already needs that machinery
+  for `from` and `fill`. The pages had never said whether they were keywords; the answer is that they
+  do not have to be, and making them so is a decision with a sweep behind it.
+
 ## The grammar file is itself incomplete
 
-`func_decl` has no `type_params`, so by `grammar.md` a generic *function* does not exist. It does:
-`T first<T>(T[] xs)` compiles today and `spec/spec/generics.md` documents the feature at length.
-So the EBNF is behind the language, and a parser written from it alone would reject working code.
+`func_decl` had no `type_params`, so by `grammar.md` a generic *function* did not exist — fixed in
+`issues/lang/closed/0320a`. Six more were behind the parser and are fixed in `0326a`, found by
+running the grammar rather than by reading it: `this` as an expression and as an assignment target,
+calling a funcref value, a bare block as a statement, a generic `enum` — which meant the file could
+not describe `core/option.wac` — and type arguments on an array element.
 
 Worth knowing before treating this document as a specification for one: `grammar.md` is the
-authority for what it covers and is not complete.
+authority for what it covers, it has been behind the parser four times, and the thing that now
+finds that is `tools/specparse.ts` rather than a person.
 
 ## Three claimed additions were already in the language
 

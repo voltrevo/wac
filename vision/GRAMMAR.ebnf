@@ -1,0 +1,158 @@
+(* The vision syntax, as a patch on `spec/spec/grammar.md`.
+
+   Every rule here *replaces* the spec's rule of the same name, and `tools/specparse.ts` runs the
+   result over `vision/`:
+
+       deno run --allow-read tools/specparse.ts vision
+
+   This is the machine-readable half of `GRAMMAR.md`, which lists the same constructs in prose and
+   in tables. The prose is the argument; this is the claim. They can disagree and this one is
+   checkable, which is the point of writing it: `GRAMMAR.md` was derived by subtraction — what
+   today's parser refuses, minus what a desugarer accounts for — and a grammar that *accepts* every
+   vision file is a much stronger statement than a list of things that do not parse.
+
+   A rule that is not here is the spec's, unchanged. That is what makes this readable as a diff.
+
+   ## No lexer changes, which was not planned
+
+   `try`, `gen`, `defer`, `schedule`, `yield`, `in`, `union` and `secret` are not in the spec's
+   keyword fence, so `specparse` lexes them as `IDENT` — and a literal in a rule matches an `IDENT`
+   spelled that way, because the spec already needs that for `from` and `fill`. So every word vision
+   adds is contextual for free.
+
+   Contextual is also the right answer, not a convenience: `union` is a word programs use, and
+   taking it away is a cost the vision pages never priced. Making them real keywords is a decision
+   with a sweep behind it, and this file does not take it. *)
+
+(* ── Declarations ────────────────────────────────────────────────────────────────────────────── *)
+
+(* A re-export, and a named type. `export union<A, B> Fault;` and `export Slice<u8> Bytes;` are one
+   form: a type, given a name. `GRAMMAR.md` argues they should be, and this is what that costs — a
+   rule that is ambiguous with `const_decl` minus its `= expr`, resolved by there being no `=`. *)
+program        = { import | reexport | typedef | struct_decl | enum_decl | func_decl | const_decl } ;
+reexport       = "export" , "{" , import_list , "}" , "from" , source , ";" ;
+typedef        = [ "export" ] , type , IDENT , ";" ;
+
+(* A default type argument — `enum Result<T, E = union>`. The default is a type, and `union` with no
+   arguments is the "whatever the body passes on" form `core/result.wac` relies on. *)
+type_params    = "<" , type_param , { "," , type_param } , [ "," ] , ">" ;
+type_param     = IDENT , [ "=" , type ] ;
+
+(* A generic parent: `struct AllOf<T> : Ticket<T[]>`. Five files need it and the whole ticket design
+   rests on it. The spec has `[ ":" , IDENT ]`. *)
+struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ type_params ] ,
+                 [ ":" , type ] , "{" , { struct_member } , "}" ;
+
+(* A method with no body, and the `gen` return form. `;` in place of a block is the declaration of
+   an abstract method; `gen<T>` before the return type says the function is a coroutine that yields
+   `T` and answers the type after it. *)
+method_decl    = [ "override" ] , [ "async" ] , [ gen_yield ] , type , IDENT , [ type_params ] ,
+                 "(" , [ method_params ] , ")" , ( block | ";" ) ;
+func_decl      = [ "export" ] , [ "async" ] , [ gen_yield ] , type , IDENT , [ type_params ] ,
+                 "(" , [ param_list ] , ")" , ( block | ";" ) ;
+gen_yield      = "gen" , "<" , type , ">" ;
+
+(* `secret`, from `crypto/src/secret.wac`. A qualifier beside `const`, because that is what it is
+   modelled on — a flag per name in the checker's scope table. *)
+param          = [ "const" ] , [ "secret" ] , type , IDENT ;
+
+(* ── Statements ──────────────────────────────────────────────────────────────────────────────── *)
+
+statement      = block
+               | var_decl
+               | assign_stmt
+               | compound_stmt
+               | if_stmt
+               | while_stmt
+               | for_stmt
+               | do_while_stmt
+               | switch_stmt
+               | match_stmt
+               | return_stmt
+               | break_stmt
+               | continue_stmt
+               | trap_stmt
+               | defer_stmt
+               | schedule_stmt
+               | yield_stmt
+               | expr_stmt ;
+
+(* `defer { conn.close(); }` — `server/main` and `core/ticket`. A block rather than an expression,
+   because what is deferred is cleanup and cleanup is statements. *)
+defer_stmt     = "defer" , block ;
+
+(* `schedule this.pending.push;` — the target is a funcref *value*, not a call, which is why this is
+   not an `expr_stmt` with a keyword on the front. `Sys.drain` is the only writer today. *)
+schedule_stmt  = "schedule" , expr , ";" ;
+
+(* `yield x;` and a bare `yield;` for a `gen<void>`. *)
+yield_stmt     = "yield" , [ expr ] , ";" ;
+
+(* `for (Param p in q.params.items())`, and `try await for (Bytes chunk in gunzip(src))`.
+
+   The `try` and the `await` belong to the *loop*, not to the subject: `try` propagates the
+   generator's return and `await` says each step suspends. Written as two optional words on the
+   head rather than as an expression prefix, because `await for` is not `await` applied to
+   anything. `vision/QUESTIONS.md` has what neither of them settles — whether the loop binds the
+   generator's return value at all. *)
+for_stmt       = [ "try" ] , [ "await" ] , "for" , "(" , for_head , ")" , block ;
+for_head       = type , IDENT , "in" , expr
+               | [ for_init ] , ";" , [ expr ] , ";" , [ for_update ] ;
+
+(* An arm without `case`. The spec's `match_arm` and `match_value_arm` require it; vision drops it
+   and `DECISIONS.md` renames `else:` to `default:`. Both spellings are here on purpose — the tree
+   still writes `else:` and this file is meant to parse the tree as it is, not as it should be. *)
+match_arm      = [ "case" ] , IDENT , [ "(" , [ binding_list ] , ")" ] , ":" , { statement }
+               | ( "else" | "default" ) , ":" , { statement } ;
+match_value_arm = ( [ "case" ] , IDENT , [ "(" , [ binding_list ] , ")" ] | "else" | "default" ) ,
+                 ":" , expr ;
+
+(* ── Expressions and types ───────────────────────────────────────────────────────────────────── *)
+
+(* `try` and `await` at the same level, so `try await br.byte()` is one chain and both bind tighter
+   than any binary operator and looser than postfix. `await`'s rule is the spec's, established by
+   `design/lang/0014`; `try` takes the same one because a `try` that bound looser would make
+   `try a + b` mean `try (a + b)`, which reads as though the addition could fail. *)
+unary_expr     = ( "-" | "!" | "~" ) , unary_expr
+               | ( "++" | "--" ) , unary_expr
+               | "await" , unary_expr
+               | "try" , unary_expr
+               | postfix_expr ;
+
+(* `union<A, B>` in type position, and `T??` — the second needs nothing, since the spec already
+   writes `type = … | type , "?"` and that nests. *)
+type           = primitive_type
+               | "string"
+               | union_type
+               | IDENT , [ type_args ]
+               | array_type
+               | funcref_type
+               | type , "?"
+               | "anyref"
+               | "i31ref" ;
+union_type     = "union" , [ "<" , type , { "," , type } , [ "," ] , ">" ] ;
+
+(* `fn<void()>` — the same rule as the spec's with the brackets swapped, which is the whole of that
+   change. It is a rename rather than an addition, and it is here because a delta that only carried
+   additions could not parse a vision file that uses it. *)
+funcref_type   = "fn" , "<" , type , "(" , [ type_list ] , ")" , ">" ;
+
+(* `trap` where a value is wanted. `core/result.wac` writes `Err(_): trap why,` — a match arm is an
+   expression and this arm produces nothing, which is what a bottom type is for. `GRAMMAR.md` lists
+   it as one of the two constructs nobody had accounted for; this is the accounting.
+
+   Ambiguous with `trap_stmt` inside an `expr_stmt`, and deliberately left so: they mean the same
+   thing and a recogniser has no reason to prefer one. A compiler picks the statement. *)
+primary_expr   = INT_LITERAL
+               | FLOAT_LITERAL
+               | STRING
+               | CHAR_LITERAL
+               | "true" | "false"
+               | "null"
+               | IDENT , [ "." , IDENT ] , [ type_args ] , "(" , [ arg_list ] , ")"
+               | IDENT
+               | "this"
+               | "(" , expr , ")"
+               | match_expr
+               | construction_expr
+               | "trap" , [ expr ] ;

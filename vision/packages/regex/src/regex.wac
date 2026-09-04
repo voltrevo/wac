@@ -59,7 +59,7 @@ export struct Match {
  * original's comment exists to prevent.
  */
 export enum Searched {
-  Found(Match match),
+  Found(Match at),
   None,
   /** The step limit ran out. Nothing is known about whether a match exists. */
   Budget

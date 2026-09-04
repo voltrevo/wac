@@ -85,7 +85,7 @@ method_decl    = [ "override" ] , [ "async" ] , type , IDENT , [ type_params ] ,
                  "(" , [ method_params ] , ")" , block ;
                  (* A method may declare letters the owner has not got [§wacc-method-type-args] *)
 
-enum_decl      = [ "export" ] , "enum" , IDENT , "{" , [ variant_list ] ,
+enum_decl      = [ "export" ] , "enum" , IDENT , [ type_params ] , "{" , [ variant_list ] ,
                  { method_decl } , "}" ;   (* a method must take `this` [see enums.md] *)
 variant_list   = variant , { "," , variant } , [ "," ] ;
 variant        = IDENT , [ "(" , [ param_list ] , ")" ] ;
@@ -99,7 +99,9 @@ this_param     = [ "const" ] , "this" ;
 ```ebnf
 block          = "{" , { statement } , "}" ;
 
-statement      = var_decl
+statement      = block                                (* a bare block, which scopes its declarations
+                                                         and is what a braced `match` arm is made of *)
+               | var_decl
                | assign_stmt
                | compound_stmt
                | if_stmt
@@ -189,6 +191,11 @@ unary_expr     = ( "-" | "!" | "~" ) , unary_expr
 
 postfix_expr   = primary_expr , { postfix_op } ;
 postfix_op     = "." , IDENT , [ "(" , [ arg_list ] , ")" ]   (* method call or field access *)
+               | "(" , [ arg_list ] , ")"                        (* call a funcref value: `f()` where
+                                                                    `f` is any postfix expression,
+                                                                    which is how every `fn[…]` field
+                                                                    in `std/platform.wac` is invoked
+                                                                    — `this.source!()` *)
                | "[" , expr , "]"                                (* index *)
                | "!"                                             (* unwrap *)
                | "++" | "--" ;                                   (* postfix incr/decr: lvalue operand, evaluates to the old value *)
@@ -205,6 +212,9 @@ primary_expr   = INT_LITERAL
                                                           them — one of the four places, listed
                                                           at `type_args` *)
                | IDENT                                                  (* variable *)
+               | "this"                                                  (* the receiver, which is
+                                                                            an identifier expression
+                                                                            like any other *)
                | "(" , expr , ")"                                       (* grouping *)
                | match_expr                                              (* see above *)
                | construction_expr ;
@@ -228,7 +238,7 @@ field_init      = IDENT , ":" , expr ;
 
 arg_list       = expr , { "," , expr } , [ "," ] ;
 
-lvalue         = IDENT , { "!" | "." , IDENT | "[" , expr , "]" } ;
+lvalue         = ( IDENT | "this" ) , { "!" | "." , IDENT | "[" , expr , "]" } ;
 ```
 
 ### Types
@@ -246,7 +256,7 @@ type           = primitive_type
 primitive_type = "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "bool" | "void" ;
 
 array_type     = element_type , "[" , "]" ;
-element_type   = primitive_type | packed_type | "string" | IDENT | funcref_type
+element_type   = primitive_type | packed_type | "string" | type_name | funcref_type
                | array_type                    (* nested: i32[][3]() *)
                | element_type , "?" ;          (* nullable: Point?[5]() *)
 packed_type    = "i8" | "i16" | "u8" | "u16" ;   (* array elements only *)
