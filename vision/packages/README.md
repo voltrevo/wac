@@ -105,7 +105,7 @@ each is; this is the index.
 | an explicit barrel | [`../core/core.wac`](../core/core.wac) | `export` marks what leaves a file; a package needs a second level | lands in `check.wac`'s export table, not the resolver — and wants its own diagnostic, as code 210 did |
 | a named type | `export union<A, B> Fault;`, `export Slice<u8> Bytes;` | one form whether the type is a union or an instantiation | distinct type or alias is undecided |
 | `try await for` | [`stream`](stream/), [`server`](server/) | a loop over a failing async generator has to say both things | three keywords on one head — but no new lowering: `asyncplan.wac` already states a suspension in a loop, and the desugaring must put the step in the body since a condition may not suspend |
-| `secret` | [`crypto/src/secret.wac`](crypto/src/secret.wac) | `const` is already a taint that propagates; point the machinery at a second property | it would refuse AES, and it inherits `issues/lang/0315a` |
+| `secret` | [`crypto/src/secret.wac`](crypto/src/secret.wac) | `const` is already a taint that propagates; point the machinery at a second property — and it is literally the same machinery, a fourth parallel flag array beside `nameConsts` and `nameAliasOnly` | it would refuse AES; and constness is a flag on a *name*, not part of the type, so `0315a`'s five leaks are one fact and `secret` would inherit them by construction |
 | `Grant` as an enum | [`sh/src/exec.wac`](sh/src/exec.wac) | a caller writes what it means and no `GRANT_ALL` is kept in step by hand | intersecting two lists is a loop where `a & b` is an instruction |
 
 Every one of them has a cost written beside it in its own file, and two of them —`secret` and the

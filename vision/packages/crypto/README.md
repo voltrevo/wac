@@ -56,15 +56,27 @@ leaks("S-box lookup: AES is a table, and this is that table") {
 — which is the published table's row written where the code is. A build can then count declared
 leaks, and a routine that acquires one shows in a diff rather than the next time the tool is run.
 
-**It inherits a hole that is open right now.** `issues/lang/open/0315a` — *a const reference is
-laundered through any non-const slot, and the write lands*. Const taint is lost through an argument
-position, an array element, a struct field, a type argument, and a return that declared itself
-`const`. A `secret` qualifier on the same machinery loses secrecy the same five ways, and the two
-failures are not comparable: a laundered `const` is a wrong answer, and a laundered `secret` is a
-key in a log line with nothing reporting it.
+**It inherits a hole that is open right now, and reading the machinery says the hole is
+structural.** `issues/lang/open/0315a` — *a const reference is laundered through any non-const slot,
+and the write lands* — lists five: an argument position, an array element, a struct field, a type
+argument, and a return that declared itself `const`.
 
-**So the ordering matters.** `secret` is worth having and is not worth having before `0315a` is
-fixed — a taint that leaks is worse than no taint, because it is believed.
+Those five are not five bugs. `packages/wacc/src/check.wac` carries constness as a **`bool` per
+name** — `nameConsts`, beside `fieldConsts` and `methodConsts`, with `setConstFlags` moving it and
+`nameAliasOnly` together for the length of a `match` arm. It is a flag in the checker's scope table
+and **not part of the type**. So the moment a value crosses into a slot, what travels is the slot's
+type and the flag stays behind. Every one of `0315a`'s five rows is that one fact.
+
+The good news for *"the same machinery"* is that the claim is literal: a second property is a
+fourth parallel array, and `nameAliasOnly` is the precedent for adding one. The bad news is what
+comes with it. **`secret` built this way leaks the same five ways by construction rather than by
+oversight**, and the two failures are not comparable: a laundered `const` is a wrong answer, and a
+laundered `secret` is a key in a log line with nothing reporting it.
+
+**So the ordering is structural, not circumstantial.** `secret` is worth having and is not worth
+having before `0315a` is fixed — and fixing `0315a` properly means the qualifier becoming part of
+the type rather than a flag beside it, which is the same change both need and is much larger than
+either.
 
 **And it does not replace the tracer.** `docs/constant-time.md` is careful about two limits that a
 type cannot touch: it observes the module *this* compiler emits and says nothing about what a JIT

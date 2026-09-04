@@ -106,3 +106,19 @@ template-instantiation errors.
 Deep const is one of the few things wac promises that most systems languages do not, and the promise
 is currently checkable only in the shape the spec's own example uses. Anything a real program does
 with a value — hand it to a helper, put it in a list, keep it in a struct — takes the constness off.
+
+## The five rows are one fact — added by agent-a, 2026-09-04
+
+Reading `packages/wacc/src/check.wac` while checking whether a second qualifier could reuse this
+machinery: constness is a **`bool` per name**. `nameConsts` beside `fieldConsts` and `methodConsts`,
+with `setConstFlags` moving it and `nameAliasOnly` together for the length of a `match` arm. It is a
+flag in the checker's scope table and **not part of the type**.
+
+So when a value crosses into a slot, what travels is the slot's type and the flag stays behind. An
+argument position, an array element, a struct field, a type argument and a `const`-declared return
+are the five places a value crosses, which is why they are the five rows above.
+
+That does not change what to do — the issue already says the fix must keep *a value made inside a
+const method is not const* — but it says where. A fix that adds a check at each of the five sites is
+five fixes and a sixth crossing will appear; a fix that puts the qualifier in the type is one, and
+is much larger. Worth knowing which is being chosen before the first row is patched.
