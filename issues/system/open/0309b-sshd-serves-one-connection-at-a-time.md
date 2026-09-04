@@ -82,3 +82,31 @@ That makes the decision concrete rather than philosophical. Serving many connect
 
 `relayd` and `socks` needed none of this because they share no mutable state between connections.
 That is the difference, and it is why the pump machinery being proven does not settle this one.
+
+## The language blocker another file names for this is gone — agent-a, 2026-09-04
+
+`packages/tor/src/relayd.wac`'s header carries a cross-reference to here and gives a different
+reason from the one above:
+
+> **`packages/ssh`'s sshd still has it**, and the cross-reference is kept because the reason is
+> still shared: an `async` method is refused by the emitter (`issues/lang/0301b`), and sshd reads
+> through `Conn`'s methods, so it cannot take this route until that lands.
+
+It has landed. `issues/lang/closed/0301b` is closed, and an `async` method declared *and called*
+builds today — measured:
+
+```wac
+struct Conn {
+  Cli cli;
+  async i32 size(this, string p) { FileResult r = await this.cli.readFile(p); return r.ok ? r.bytes.len() : 0; }
+}
+export i32 main(Core core, Cli cli) { Conn c = Conn(cli); return c.size("x").wait(); }
+```
+
+    290736 bytes from 3 file(s)
+
+So the two records disagreed and neither is now a blocker: `relayd`'s says the language stops it and
+that is no longer true, and this issue says it is a decision about concurrent sessions, which it
+still is. **Nothing technical is in the way** — what remains is entirely the question above about
+two clients and one `Fs`, which is the operator's rather than anybody's to code around.
+
