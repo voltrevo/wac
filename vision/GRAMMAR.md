@@ -773,9 +773,28 @@ Two things the measurement changed about the plan, both worth having:
   nothing else"*, so `try` and `for … in` — which need expression and block bounds — want either an
   Earley forest extracted from it or a small recursive-descent pass over the tokens.
 
-**The honest recommendation is that a desugarer is worth writing after re-export, not before.** Half
-of what it cannot reach is one missing feature that is already an open issue, and clearing that
-raises the reachable count more than any transform on the list.
+### The re-export blocker is cheaper to route around than that table makes it look
+
+Checked immediately after writing the row above, because "the single biggest blocker" is the kind of
+claim worth a second look. **All twenty files blocked by re-export are barrels** — nineteen contain
+nothing but `export … from` lines, and the twentieth is one with a wrapped line. Not one of them has
+any code in it.
+
+So re-export does not block any *program*. It blocks the twenty files whose entire content is the
+package's name, and the way round it is to delete them and import by path — which costs **24 import
+statements in 22 files**, against 55 that already name a file and 71 that name `core` or `std`
+(directories, not barrels, and unaffected).
+
+That moves the ceiling: **42 of 102 with the barrels in place, 62 without them**, and the difference
+is a mechanical edit to two dozen import lines rather than a language feature.
+
+**So the recommendation is the other way round from where this section started.** A desugarer does
+not need `issues/lang/0073`; it needs the barrels dropped for the experiment, which is reversible and
+touches nothing but imports. What it genuinely cannot reach is the forty files with real code that
+use a generator, a union, or a method with no body — and those are the three features this whole
+directory exists to argue for, so a desugarer would compile the half of the corpus that is *least*
+about the proposal. Worth knowing before starting, and it is the argument for spending the next
+effort on `union` rather than on a rewriter.
 
 **And its first hits were all false**, which is worth recording because a clean run had never been
 tested. `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])]
