@@ -66,9 +66,9 @@ language has no spelling for, a rule that turns out to be unusable at scale, a h
 in ten lines. Each package's README ends with that list, and the real ones become entries in
 `../QUESTIONS.md`.
 
-## What sixteen of them found, which no one of them could
+## What seventeen of them found, which no one of them could
 
-Seven things recur, and none is in any single package's list.
+Eight things recur, and none is in any single package's list.
 
 **The constructs ran out at nine.** Packages one to nine each wanted something the language has no
 spelling for. Packages ten to fifteen wanted nothing new — every construct `regex`, `crypto`, `sh`,
@@ -91,6 +91,20 @@ public `len` field and one-byte `reserve`, and `regex`'s flat class arrays — w
 has no generics-free way to hold a list of structs"* and which turns out to be a layout choice, since
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
+
+**A package's stated language limitation had half-lifted three weeks earlier.** `packages/fs` is one
+concrete type with a mount table because — its own header — dispatch is static *and* "a funcref
+cannot capture a filesystem because there are no closures". Measured: the first is true, the second
+has been false since lambdas landed on 2026-08-16. The file was created eleven days before that and
+last edited a fortnight after it, and `packages/fs/src` contains no lambda anywhere. The design its
+header says it wanted is writable today and needs nothing from vision.
+
+That is the seventeenth package and the first whose finding is entirely about the *shipped* language.
+It is also the first rewrite written **after** `../GRAMMAR.ebnf` existed, so it is a prediction
+rather than a summary — the grammar was not touched, and the one thing it refused was mine:
+`fn<async …>`, where `[§wac-async-lambda-slot-9wq4nkz]` says the slot names the ticket. Inventing a
+spelling for something that already has one is this directory's oldest habit, seven times before,
+and the first time anything caught it.
 
 **Sixty-four failure paths in the largest package answer one bit each, and one of them carries a
 reason.** `tor` is 16,291 lines and was counted rather than rewritten. Thirteen result types are
@@ -307,3 +321,4 @@ while correcting something.
 | [wacpkg](wacpkg/) | 2026-09-04 | the two import proposals, against the resolver |
 | [gzip](gzip/) | 2026-09-04 | `try` against a closed issue that priced it; a view type declined on a number |
 | [tor](tor/) | 2026-09-04 | 16,291 lines counted, not rewritten; 64 failure paths into 13 bits |
+| [fs](fs/) | 2026-09-04 | closures instead of a mount table; the first consumer of the `Files` projection |

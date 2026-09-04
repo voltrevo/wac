@@ -1,0 +1,158 @@
+// Where a subtree's bytes actually live, as a value rather than as a tag.
+//
+// **This file is the whole of this rewrite, and it needs nothing from vision.** The shipped
+// `packages/fs/src/fs.wac` opens by explaining why it is one concrete type with a mount table and a
+// hand-written branch, and the explanation is two claims:
+//
+//   > wac will not do it: `override` is a source-level check and **dispatch is static** — a `Circle`
+//   > in a `Shape` variable answers `Shape.name()` — so a base-typed `Fs` would always run the
+//   > base's bodies. The language's own idiom for varying behaviour is a funcref plus explicit state
+//   > (`Shell.external` is one), and **a funcref cannot capture a filesystem because there are no
+//   > closures**.
+//
+// Measured, both, on 2026-09-04:
+//
+//     dispatch: static      a Circle in a Shape variable answers 1, not 2
+//     capture:  works       a lambda reading an enclosing struct, stored in a funcref field, called
+//                           through it, returns what the captured field says
+//
+// **The first claim holds and the second does not.** Lambdas landed on 2026-08-16 —
+// `spec/cases/0188` and the eleven cases after it, and `0191 a lambda captures by reference` is the
+// one that settles this. `fs.wac` was written on 2026-08-05, when the sentence was true, and was
+// last edited on 2026-08-30, fourteen days after it stopped being. `packages/fs/src` contains no
+// lambda anywhere.
+//
+// So the mount table is a workaround for a constraint that half-lifted three weeks ago, and the
+// design the header says it wanted — *"a funcref plus explicit state"* — is writable today with the
+// state captured rather than explicit. That is a finding about the shipped language, not about
+// vision, and it is the most useful thing this rewrite produced.
+//
+// ## What the closure changes
+//
+// The shipped `Fs` branches on a `Backing` enum at every operation, so every operation knows about
+// every backing: adding a third means editing `readFile`, `writeFile`, `stat`, `readDir`, `mkdir`,
+// `remove`, `rename` and the rest. A `Mount` of funcrefs inverts it — a backing is built once, in
+// one place, and the operations do not know how many there are.
+//
+// The cost is real and is the usual one: a funcref field per operation is a word per operation per
+// mount, against one tag for all of them, and a call through a funcref is not inlined where a
+// branch on a tag might be. A filesystem is not an inner loop — `vision/bench/slicecost.wac` puts a
+// per-call cost at nanoseconds and a `readFile` is microseconds at best — so this is the case where
+// that trade is obviously right, and saying so is the point: it is not right everywhere and
+// `gzip`'s window is where it is wrong.
+//
+// ## The slot type is the ticket, not `async`, and I got that wrong first
+//
+// These fields were written `fn<async Result<Bytes, Fault>(string)>` and the parser refused them
+// within a second of the file being saved. The refusal was right and there is a tagged claim for it:
+// `[§wac-async-lambda-slot-9wq4nkz]` — *"a lambda writes no return type, so `fn[Pending<R>(…)]` is
+// what permits `async` and names `R`"*. `async` is a property of a *definition*; a funcref type says
+// what it answers, and what an async function answers is a ticket.
+//
+// Worth recording as another instance of this directory's worst habit — inventing a spelling for
+// something that already has one — and the first one an instrument caught. The seven before it
+// survived into a README and were found by reading the spec afterwards.
+//
+// **And it leaves a real complaint rather than an error.** `fn<Ticket<Result<Bytes, Fault>>(string)>`
+// is three type constructors deep to say *reads a path, may fail*, and there are six of them below.
+// That is a legibility cost with no cure in this file, and it is in `../../../QUESTIONS.md`.
+
+import { Result, Ticket, Bytes } from "core";
+import { Files } from "std";
+import { Fault, NotFound, ReadOnly, Unsupported } from "./fault.wac";
+
+export struct Entry { string name; bool isDir; i64 size; i64 modified; }
+
+/**
+ * One subtree's operations, closed over whatever backs them.
+ *
+ * Every field is a funcref rather than a method, which is the difference: a method would dispatch on
+ * `Mount`'s own type and there is only one of those. What varies is the lambda in the field.
+ */
+export struct Mount {
+  fn<Ticket<Result<Bytes, Fault>>(string)> read;
+  fn<Ticket<Result<void, Fault>>(string, Bytes)> write;
+  fn<Ticket<Result<Entry, Fault>>(string)> stat;
+  fn<Ticket<Result<Entry[], Fault>>(string)> readDir;
+  fn<Ticket<Result<void, Fault>>(string, bool)> mkdir;
+  fn<Ticket<Result<void, Fault>>(string, bool)> remove;
+
+  /**
+   * A mount backed by this program's own memory: the default, and what a test wants.
+   *
+   * `tree` is captured, not stored on the `Mount`, which is the whole trick. The shipped design has
+   * nowhere to put it except on `Fs` itself, so `Fs` holds the memory of every memory mount and
+   * hands the right one to each branch by index.
+   */
+  Mount inMemory() {
+    Map<string, Node> tree = Map.create();
+    return Mount(
+      (string p) => memRead(tree, p),
+      (string p, Bytes b) => memWrite(tree, p, b),
+      (string p) => memStat(tree, p),
+      (string p) => memReadDir(tree, p),
+      (string p, bool parents) => memMkdir(tree, p, parents),
+      (string p, bool recursive) => memRemove(tree, p, recursive),
+    );
+  }
+
+  /**
+   * A mount backed by the host, through the capability the caller was given.
+   *
+   * **`Files`, not `Sys`.** This is the projection's first real consumer and the one place it has to
+   * pay for itself: a filesystem needs paths and nothing else, and the type now says so. The shipped
+   * equivalent takes a whole `Cli`, so `Fs.onHost` holds a capability that can open a socket.
+   */
+  Mount onHost(Files files) {
+    return Mount(
+      (string p) => files.read(p),
+      (string p, Bytes b) => files.write(p, b),
+      (string p) => hostStat(files, p),
+      (string p) => hostReadDir(files, p),
+      (string p, bool parents) => files.mkdir(p, parents),
+      (string p, bool recursive) => files.remove(p, recursive),
+    );
+  }
+
+  /**
+   * A mount that answers every read and refuses every write.
+   *
+   * Three lines, and the shipped design has no way to express it: read-only is a `bool` on the mount
+   * that eight operations each have to remember to check. Here it is a wrapper, and an operation
+   * that forgot would have to be written to forget.
+   */
+  Mount readOnly(Mount inner) {
+    return Mount(
+      inner.read,
+      (string p, Bytes b) => Err(ReadOnly(p)),
+      inner.stat,
+      inner.readDir,
+      (string p, bool parents) => Err(ReadOnly(p)),
+      (string p, bool recursive) => Err(ReadOnly(p)),
+    );
+  }
+
+  /** Nothing is here and nothing can be put here. The mount a sealed session gets. */
+  Mount empty() {
+    return Mount(
+      (string p) => Err(NotFound(p)),
+      (string p, Bytes b) => Err(ReadOnly(p)),
+      (string p) => Err(NotFound(p)),
+      (string p) => Err(NotFound(p)),
+      (string p, bool parents) => Err(ReadOnly(p)),
+      (string p, bool recursive) => Err(NotFound(p)),
+    );
+  }
+}
+
+struct Node { bool isDir; Bytes bytes; i64 modified; }
+
+async Result<Bytes, Fault> memRead(Map<string, Node> tree, string path) { … }
+async Result<void, Fault> memWrite(Map<string, Node> tree, string path, Bytes b) { … }
+async Result<Entry, Fault> memStat(Map<string, Node> tree, string path) { … }
+async Result<Entry[], Fault> memReadDir(Map<string, Node> tree, string path) { … }
+async Result<void, Fault> memMkdir(Map<string, Node> tree, string path, bool parents) { … }
+async Result<void, Fault> memRemove(Map<string, Node> tree, string path, bool recursive) { … }
+
+async Result<Entry, Fault> hostStat(Files files, string path) { … }
+async Result<Entry[], Fault> hostReadDir(Files files, string path) { … }

@@ -1,0 +1,72 @@
+// Why a filesystem operation did not happen.
+//
+// The shipped shape is ten integers and a string, carried in two structs:
+//
+//     export struct Change { i32 fault; string message; bool ok(const this) { … } }
+//     export struct FileResult { bool ok; u8[] bytes; string error; i32 fault; }
+//
+// with `FAULT_NONE`, `FAULT_DENIED`, `FAULT_EXISTS`, `FAULT_NOT_EMPTY`, `FAULT_NOT_FOUND`,
+// `FAULT_IS_DIR`, `FAULT_NOT_A_DIR`, `FAULT_READ_ONLY`, `FAULT_UNSUPPORTED` and `FAULT_OTHER` as
+// functions returning small integers.
+//
+// **Worth putting beside `vision/packages/tor`, because the two are opposite failures of the same
+// gap.** `tor` has 64 refusals collapsing into 13 booleans and one reason in 16,291 lines: nobody
+// could afford to say *why*. `fs` says why ten different ways and cannot make the compiler check any
+// of it — `FAULT_NONE` is a valid value of the same type as `FAULT_DENIED`, so a caller may compare
+// against the wrong one, forget to compare at all, or read `bytes` from a result whose `ok` is
+// false. One package gave up on reasons and the other has reasons a type cannot hold.
+//
+// A union costs neither. The members below are the ten codes with the payload each of them actually
+// wants, which is the thing an integer cannot carry: `NotFound` wants the path, `Denied` wants the
+// path and what was attempted, `Other` wants the host's own words — which is what the separate
+// `string message` field beside the integer has always been for.
+
+/** The path does not exist. */
+export struct NotFound { string path; }
+
+/** It exists and this program was not allowed to do that to it. */
+export struct Denied { string path; string attempted; }
+
+/** It exists and the caller asked for it not to. */
+export struct Exists { string path; }
+
+/** A directory where a file was wanted, or the reverse. */
+export struct IsDir { string path; }
+export struct NotADir { string path; }
+
+/** A directory with something still in it. */
+export struct NotEmpty { string path; i32 entries; }
+
+/** The mount is read-only. */
+export struct ReadOnly { string path; }
+
+/** The backing cannot do this at all — a memory mount asked for a device node. */
+export struct Unsupported { string what; }
+
+/**
+ * The host said something that fits no category above.
+ *
+ * `std/platform.wac` says of the shipped equivalent that `faultWords` gives `""` for this one,
+ * *"the first means the host had something to say that no category covers"*. Keeping it is not a
+ * failure of the enumeration: a filesystem is a boundary to somebody else's code, and a category
+ * for *the thing we did not anticipate* is the honest member rather than the missing one.
+ */
+export struct Other { string message; }
+
+export union<
+  NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, Other
+> Fault;
+
+/**
+ * There is no `None`.
+ *
+ * `FAULT_NONE` is the tenth constant and it is the one that does not belong: it names the *absence*
+ * of a fault and shares a type with every fault, which is what makes `if (c.fault == FAULT_NONE())`
+ * the shape of every caller and `if (c.fault == FAULT_DENIED())` — with the sense inverted by
+ * accident — a bug nothing catches. In a `Result` the absence is `Ok` and is a different arm of a
+ * different type, so the comparison cannot be written at all.
+ *
+ * That is the whole of what the union buys over the integers, and it is worth writing down plainly
+ * because it is not "unions are nicer": it is one specific value that exists only to be compared
+ * against, and it stops existing.
+ */

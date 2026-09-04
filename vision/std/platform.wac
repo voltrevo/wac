@@ -91,7 +91,14 @@ export struct Sys {
   void atEnd(this, fn<void()> f);
 }
 
-/** Paths. Fourteen of the fifty. */
+/**
+ * Paths. Fourteen of the fifty, and **six of the fourteen are here**.
+ *
+ * The six were chosen from what the packages written before `fs` happened to need, which is the
+ * failure mode a first real consumer exists to find: `rename` and `linkStat` are in the host's set
+ * and in the shipped `packages/fs`, and are missing below. A projection assembled from its early
+ * callers is a projection sized by who came first.
+ */
 export struct Files {
   async Result<u8[], NotGranted> read(this, string path);
   async Result<void, NotGranted> write(this, string path, u8[] bytes);

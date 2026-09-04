@@ -264,6 +264,37 @@ checkable at all"*, which for a union is still true by a different route, since 
 listed at the declaration — but it is true for a different reason, and that reason is what a
 `union` as a match arm would have to rest on.
 
+## A funcref slot for an async function is three constructors deep
+
+`vision/packages/fs/src/mount.wac` holds six operations as funcref fields, and the type of one is
+
+    fn<Ticket<Result<Bytes, Fault>>(string)> read;
+
+to say *reads a path, may fail*. Correct, checkable, and unreadable — and six of them in one struct.
+
+The spelling that reads correctly is `fn<async Result<Bytes, Fault>(string)>`, which is what I wrote
+first and which means something else: `async` is a property of a **definition**, and
+`[§wac-async-lambda-slot-9wq4nkz]` says the slot names the ticket — *"a lambda writes no return type,
+so `fn[Pending<R>(…)]` is what permits `async` and names `R`"*. The claim is right and the ergonomics
+are the complaint.
+
+Three things it could be, and the middle one is doing the most work with the least argument behind
+it:
+
+- **Leave it.** The nesting is honest: three constructors because three things are true. A reader who
+  knows the language reads it fine, and every abbreviation below hides one of the three.
+- **`async` in a funcref type, as sugar.** `fn<async R(…)>` desugars to `fn<Ticket<R>(…)>` and reads
+  the way the definition does. It puts a keyword in a type where it is not one, which is exactly the
+  confusion that produced the wrong version — but sugar for a confusion people already have is not
+  obviously the wrong move.
+- **A shorter name for the pair.** Most of the depth is `Ticket<Result<T, E>>`, which is *"eventually,
+  and it may fail"* — the ordinary shape of every capability call in the tree. If that pair is
+  common enough to deserve a name, it should have one, and if it is not then the nesting is rare
+  enough not to matter. Nobody has counted.
+
+The third bullet is the one to settle first, because it is a measurement rather than a preference and
+it decides whether the other two are worth arguing.
+
 ## The one breaking change, and no page says why it is worth 444 sites
 
 `fn[T(…)]` → `fn<T(…)>` is the **only** thing in the whole proposal that takes something away.
