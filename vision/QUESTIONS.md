@@ -3625,7 +3625,7 @@ and broke the fixpoint. A bug whose entire cause is an undocumented ceiling bein
 hand, in the file that generates the compiler's own driver — which is the strongest argument for the
 middle option and the reason it is not simply a documentation gap.
 
-## `try` is documented as an expression and is almost always a statement
+## `try` is documented as an expression and a third of its uses are statements
 
 `GRAMMAR.md` lists *`try` in expression position* with two examples, both `x = try f()`, where the
 unwrapped value is the point. Two packages have now used it in shapes no page covers, and they are
@@ -3762,3 +3762,41 @@ The reason this is worth deciding rather than papering over: the restriction is 
 narrows a `u8` — the value is right, the program runs, and only the checker says anything. A rule
 whose violation costs nothing at run time is a rule that gets written round rather than learned, and
 sixty-one uses in a directory whose author had read the spec is the evidence.
+
+## The best-argued paragraph in a file is a rule the type could have held
+
+Six times now, the place a shipped package argues *hardest* has been the place a type would have
+said the same thing and needed no argument. It is consistent enough to be worth stating as a way of
+reading rather than as six findings.
+
+| package | what it argues, at length | what says it instead |
+|---|---|---|
+| `mpt` | `ok` and `present` are separate *on purpose* — conflating them "would make a broken proof look like an empty slot, which is the more dangerous of the two" | `enum Proved { Present(Bytes), Absent }` in a `Result` |
+| `rlp` | why `bytesOf` **traps** rather than answering empty, with seven `mpt` call sites and the bug each would have had | `Bytes? asBytes()` — the guard is the unwrap |
+| `datetime` | three ways to handle a leap second, why each is wrong, and "rejecting says so at the point of use" | a `LeapSecond` member, so the caller with the context decides |
+| `abi` | a measured table of `cast` and `ethers` disagreeing about two rules, and why this package stays strict | a fault union, so "refuse this, accept that" is a caller's line |
+| `tty` | "four things can happen at once … so this is a record rather than an enum" | one field plus a four-arm `Effect`; three of the four never co-occur |
+| `raster` | why `damagedPixels` exists — so the off-by-one does not live in the caller | one `Rect` convention, so there is no conversion to hide |
+
+**The correlation is not a coincidence and it is not carelessness.** A paragraph gets written when
+the author can see a way to get it wrong and cannot stop the reader taking it. That is the same
+condition under which a type is doing too little: the distinction is real, it is known, it is
+load-bearing, and it is being carried in prose because the value could not carry it. So the best
+comment in a file is a reliable pointer at its weakest type, and *the better the argument, the more
+certain the finding* — which inverts the usual reading, where a well-argued decision is one to leave
+alone.
+
+Two consequences worth keeping separate.
+
+**For this exercise:** the fastest way into an unfamiliar package has turned out to be finding the
+longest justification in it. Not the `TODO`, not the `Not here yet` section, not the workaround
+comment — the paragraph that argues *for* something. Five of the six above were found that way and
+the sixth (`abi`) was found by a grep for callers.
+
+**And for the language, which is the part that belongs here:** every row's answer is a sum, a
+nullable, or a single canonical representation, and all three exist. So this is not a list of
+missing features — it is evidence about what a language costs when the *reachable* shape is a struct
+of flags. wac has enums with payloads and `T?` and has had them for months; six packages wrote the
+paragraph anyway. Whether that is a documentation problem, an idiom problem, or a sign that the
+shipped ergonomics of a sum are worse than a bool is the question, and it is not one this directory
+can answer by inventing more syntax.
