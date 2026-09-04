@@ -77,7 +77,7 @@ that stays true afterwards. **A decisions entry is deleted once it reaches `spec
 spec is the test, since an implementation can have a bug, and a rule written twice is a rule that
 drifts. **A question is deleted once it is answered**, and the answer has to land somewhere first.
 
-## What twenty-one subjects found, as patterns rather than as a list
+## What twenty-two subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is sixty-one entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately
@@ -85,6 +85,15 @@ document anybody can read to find out what it concluded. This section is that, a
 after the question it produced is answered and deleted.
 
 Ordered by how often each one turned up.
+
+**0. And the thing they were derived *into* did not survive contact with them.** `Sys` — one value
+holding every projection, so that `sys.files` could be a narrowing of something — was measured on
+2026-09-04 and had **one user in fifty-nine files**, which took it for `drain`. Sixteen functions
+take a projection directly. The narrowing the bundle existed to provide turned out to be what a
+parameter list already does, and the queue it was really holding is where `std/platform.wac` had
+already put it: on a capability, because *"the scheduler is a value the host builds at start-up and
+hands over with the rest"*. It is gone, and the agreed pages still write `sys.readFile(…)` 22 times —
+which is the exercise's sharpest single result and the one thing in it nobody here should fix.
 
 **1. Something derived from a source is narrower than the source, and always in the direction of
 whoever consumed it first.** The seven capability projections were argued from a count of the host,
