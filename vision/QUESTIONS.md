@@ -426,16 +426,36 @@ invented during the packages exercise, argued from a count of the host's fifty c
 `box`'s applets, and written into `vision/std/platform.wac`. That struct has **seven fields and no
 flat methods**: no `readFile`, no `log`, no `listen`.
 
-Every vetted page still writes the flat form. Counted over the ```wac fences:
+Every vetted page still writes the flat form. Re-counted 2026-09-04 over the ```wac fences, as
+`sys.<name>(` against `sys.<group>.<name>(`:
 
-    SHOWCASE.md    7   sys.listen(8080), sys.readFile("a.txt"), sys.log(…), sys.spawn(…)
-    TECHNICAL.md   6   sys.readFile, sys.log, sys.warn
-    IDIOMS.md      3   sys.readFile, sys.log
-    QUESTIONS.md   1   sys.spawn
+    SHOWCASE.md    8   flat, 0 projected
+    TECHNICAL.md   9   flat, 0 projected
+    IDIOMS.md      4   flat, 0 projected
+    QUESTIONS.md   1   flat, 0 projected
     ─────────────────
-                  17   flat call sites on the agreed pages
+                  22   flat call sites on the agreed pages, and not one projected
 
-    vision/packages/server/src/main.wac   3   sys.net.listen, sys.out.log
+(This entry said seventeen when written and I cannot reproduce it; the pages have not been edited
+since, so the two counts are measuring different things and only this one has its method attached —
+the regexes are above.)
+
+**The other side moved much further, and in a direction the entry did not anticipate.** Across the 59
+rewritten files there are **four** projected call sites and **one** flat, in **two** files — because
+almost nothing takes a `Sys` at all:
+
+    functions taking a `Sys`:       2      `page` and `main`, the two entry points
+    functions taking a projection: 16      Out ×10, Files ×7, In ×4, Clock ×2, and one each of
+                                           Net, Proc, Page, Socket, Endpoint
+
+So the divergence is not *the pages use the old spelling and the code uses the new one*. It is that
+the code mostly does not use **either**: a function takes `Out` and `Files` directly, and `Sys` shows
+up only where the launcher hands one over. The projections did not become a *way to reach* a
+capability, they became the parameter — which is the thing they were argued for, arrived at by
+writing rather than by deciding, and it makes the flat form on the pages wrong twice over.
+
+It also bears on *whether the whole grant is a thing that exists*, below: a bundle that two functions
+in fifty-nine files take is doing less work than the entry defending it assumes.
 
 **So `sys.readFile("a.txt")` on the front page does not typecheck against the `Sys` in
 `vision/std`.** Seventeen examples against one file, and the one file is the one that claims to
