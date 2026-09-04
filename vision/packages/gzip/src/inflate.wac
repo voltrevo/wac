@@ -65,7 +65,7 @@
 // too. `Corrupt` is a separate arm of the union precisely so a caller can still choose the shipped
 // behaviour in one line — `r.orTrap("corrupt gzip member")` — rather than having it chosen for it.
 
-import { Result, Bytes, union } from "core";
+import { Result, Bytes } from "core";
 import { Fault, SourceFailed, Corrupt, BadMagic, BadMethod, Truncated,
          ChecksumMismatch, LengthMismatch } from "./fault.wac";
 import { Window } from "./window.wac";

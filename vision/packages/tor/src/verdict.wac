@@ -25,7 +25,7 @@
 // A third reason would be a third field and a longer ternary, and a caller that forgot the new
 // branch would print a signature count for a document that was never about signatures.
 
-import { Result, union } from "core";
+import { Result } from "core";
 
 /** The document is correctly signed and too old to act on. `until` is when it stopped being current. */
 export struct Stale { string what; i64 until; }

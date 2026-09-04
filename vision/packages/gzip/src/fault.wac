@@ -16,7 +16,10 @@
 // than closing an argument about an unreachable branch") is untouched. **The price changes, not the
 // answer.**
 
-import { union } from "core";
+// Nothing is imported. `union<A, B>` is a **type form**, like `T[]` and `T?`, not a name that
+// lives in a module — and three files in this directory imported it from `"core"` before a check
+// over every vision import against every vision export said so. It is the sort of thing that is
+// invisible while nothing resolves imports, and obvious the moment something does.
 
 /** The source stopped producing bytes and said why. Nothing is wrong with the archive. */
 export struct SourceFailed { string why; }
