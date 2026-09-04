@@ -4944,9 +4944,15 @@ because an import list is a statement of intent and a signature is a statement o
 
 `gunzipBytes` is *the whole member, for a caller that has the whole member*, and it needs a stream
 over a value this program already holds. `core` has no way to make one — `Vec.items` is the same idea
-over a container and there is no `once(x)`. Three files want it: this, `@/packages/box/src/cat.wac`
-(which writes the loop twice instead, and cannot write `cat -` as one loop at all), and
-`@/packages/wactest`, which fakes a source by hand.
+over a container and there is no `once(x)`.
+
+**One caller wants it, and the first draft of this entry said three.** The other two were named from
+memory and neither survived a minute's checking: `@/packages/box/src/cat.wac` fixed its doubled loop
+two versions ago and says so — *"there is one `copy`, one call site per source"* — and what it still
+wants is a one-element **collection**, `Vec.of("-")`, which is a different ask; `@/packages/wactest`
+does not mention `AsyncGenerator` at all. Recorded rather than quietly corrected, because this entry
+is about an instrument finding what reading does not, and an unchecked claim inside it is the exact
+failure it describes.
 
 Four lines, and the failure type is the interesting part: `AsyncGenerator<Y, R>`'s `R` is not
 optional, so a source that cannot fail must still name a failure. `Result<void, never>` is the

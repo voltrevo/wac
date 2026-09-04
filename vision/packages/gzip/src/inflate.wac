@@ -185,10 +185,16 @@ export async Result<u8[], union<never, Fault>> gunzipBytes(Bytes gz) {
 /**
  * One chunk, then done — a stream over a value this program already holds.
  *
- * **Not in `core`, and it should be.** This is the third thing in the directory to want it:
- * `@/packages/box/src/cat.wac` needs it for `cat -` and writes the loop twice instead, and
- * `@/packages/wactest` fakes a source the same way. It is four lines and it belongs beside
- * `Vec.items`, which is the same idea over a container.
+ * **Not in `core`, and it has exactly one caller: this one.**
+ *
+ * A first draft of this note claimed three, naming `@/packages/box/src/cat.wac` and
+ * `@/packages/wactest`. Both were wrong and checking took a minute: `cat.wac` fixed its doubled loop
+ * two versions ago — *"there is one `copy`, one call site per source"* — and what it still wants is a
+ * one-element **collection**, `Vec.of("-")`, which is the variadic-static ask `@/packages/ens` makes
+ * and a different thing entirely. `@/packages/wactest` does not mention `AsyncGenerator` anywhere.
+ *
+ * So: one caller, and the entry is worth keeping anyway, because the *shape* is the finding rather
+ * than the count. It belongs beside `Vec.items`, which is the same idea over a container.
  *
  * The failure type is the interesting part. A source that cannot fail has to name a failure anyway,
  * because `AsyncGenerator<Y, R>`'s `R` is not optional — so `once` answers
