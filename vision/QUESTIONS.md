@@ -2625,3 +2625,41 @@ entry saying whether that is a proposal or an omission. For `Vec` the answer is 
 `core/map.wac`'s rewrite says *"only the surface a rewritten package reached for"* and `vec.wac`
 did not. For `cancel` it is genuinely unclear, and it is the one to look at: a ticket that cannot be
 cancelled is a design position, and nothing here has taken it deliberately.
+
+## `Ticket` has no `cancel`, on the grounds that cancelling does not exist, and it does
+
+`core/ticket.wac` said it twice, in `any` and in the file's closing note: *"The losers are not
+cancelled, because there is no such thing."* `std/platform.wac`:
+
+> `void cancel(const this)` — Stop caring. **Detach, not abort**: the host may already be inside the
+> work and generally cannot be interrupted. What this guarantees is that the answer is discarded.
+
+It is `this.drop(this.id)`, a host capability, with **19 call sites in 10 files** — and the
+distinction it draws, *detach not abort*, is precisely the one the vision comment was denying is
+available.
+
+**Not cancelling costs a slot, and the shipped design says so where it matters most.** From the
+argument for giving `waitAny` a timeout parameter rather than passing a timer ticket in the list:
+
+> An earlier design passed a timer ticket in the list instead; it worked, and **every caller had to
+> remember to cancel the loser or lose a slot for good**.
+
+That is the reason a design was *rejected*. And `Ticket.any` is the same shape — several tickets, one
+winner, the rest abandoned — with cancellation removed on the strength of a claim that cancellation
+is not a thing.
+
+So this is one wrong sentence and one real gap behind it, and the gap is the interesting half:
+`Ticket` has no `cancel` and no `drop` to call, because `TicketBase` is `settled` and `advance` and
+nothing else. Adding one is not obviously right either — three questions, none of them settled here.
+
+**What does a cancelled ticket answer?** `wait` on it is neither a value nor a failure the program
+caused. `Result<T, union<Circular, Stuck>>` has no arm for *you dropped this*, and adding one makes
+every caller handle a case only the caller could have created.
+
+**What cancels the losers of an `any`?** The shipped answer is *the caller remembers*, which the same
+paragraph calls out as the flaw in the rejected design. `any` could cancel them itself — it is the
+only thing that knows they lost — and then `any` decides for a caller that may still want one.
+
+**And it is the fourth thing that turns on a scope ending.** A trap, a return, an abandoned
+generator, and now a deliberate drop: all four ask what happens to work nobody is waiting for, and
+the last is the only one with a shipped mechanism. That is an argument for looking at it first.

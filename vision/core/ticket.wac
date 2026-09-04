@@ -88,9 +88,25 @@ export struct Ticket<T> : TicketBase {
   /**
    * Answers with the first to settle.
    *
-   * The losers are not cancelled, because there is no such thing — they carry on as ordinary
-   * unawaited work and whoever holds their tickets can still drive them. `TECHNICAL.md` has the
-   * entry, and it calls this `Ticket.any`.
+   * The losers are not cancelled, and this said *"because there is no such thing"* until 2026-09-04.
+   * **There is such a thing.** `std/platform.wac`:
+   *
+   * > `void cancel(const this)` — Stop caring. **Detach, not abort**: the host may already be inside
+   * > the work and generally cannot be interrupted. What this guarantees is that the answer is
+   * > discarded.
+   *
+   * It is `this.drop(this.id)`, a host capability, with 19 call sites in 10 files — and the careful
+   * distinction between *detach* and *abort* is exactly the one this comment was denying existed.
+   *
+   * **And dropping is not bookkeeping.** The same file, arguing for `waitAny`'s timeout parameter
+   * over the design it replaced: *"An earlier design passed a timer ticket in the list instead; it
+   * worked, and every caller had to remember to cancel the loser or lose a slot for good."* Losing a
+   * slot for good is what not cancelling costs, in the shipped design's own words, in the paragraph
+   * where it is the reason a design was rejected.
+   *
+   * So `any` here leaves every loser holding a slot, on the strength of a claim about the language
+   * that is false — which makes this the sentence to fix rather than the code, and then the code,
+   * because `Ticket` has no `cancel` and no `drop` to call. `../QUESTIONS.md`.
    */
   Ticket<T> any(Ticket<T>[] parts) {
     return Ticket<T>(
@@ -193,7 +209,8 @@ T firstValue<T>(Ticket<T>[] parts) {
 /**
  * Answers when every one of them has.
  *
- * The losers of an `any` are not cancelled, because there is no such thing — they carry on as
+ * The losers of an `any` are not cancelled — see `any` above, where *"there is no such thing"* is
+ * corrected: there is, it is `Pending.cancel`, and not calling it loses a slot. They carry on as
  * ordinary unawaited work and whoever holds their tickets can still drive them.
  */
 // **These were free functions — `all<T>(parts)` — and three pages call them `Ticket.all(parts)`.**
