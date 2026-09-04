@@ -306,6 +306,28 @@ Worth keeping separate when any of this is prioritised: *the language is missing
 needs this* are different claims, and the constructs list mixes them. The first two would be worth
 doing if `vision/` were deleted tomorrow.
 
+## The `Not yet` audit, and where it stops
+
+Every entry on the three pages marked **Not yet** — 46 of them — had its code run through today's
+compiler. Nine use no syntax the parser refuses, and those nine were checked properly. The result:
+
+- **`await` needs a ticket** — the refusal it wants exists for a *name* and not for a literal, so
+  `await 7` checks clean and fails to emit. `issues/lang/open/0323a`.
+- **Every state of a `T??` has a spelling** — the nesting already works, and the one construct that
+  reaches the middle state, `null as T?`, checks and cannot be emitted.
+  `issues/lang/open/0324a`.
+- **Markup is a value** — not unbuilt but a *different design*. `[§jsx-element-is-an-expression]`
+  says the tag is a string and nothing is looked up; the entry says every tag is a name in scope.
+- The remaining six are correctly marked: they need `Sys` or `never`, which do not exist.
+
+**And the audit stops here, which is worth saying rather than leaving implied.** An entry that uses
+a vision *type* cannot be checked at all — there is no `Sys` to resolve. Renaming to the shipped
+names was tried and gains nothing, because an entry with `Sys` in it also has `gen<…>` or `try` in
+it; the run found exactly the one file it had already found. So 37 of the 46 are unreachable by any
+instrument short of implementing the language, and their markers rest on judgement.
+
+Four wrong out of nine checked is the rate to carry into reading the other 37.
+
 ## What it cannot see
 
 It finds where vision is **ahead** of today's parser. It is blind to where vision code is **behind a
