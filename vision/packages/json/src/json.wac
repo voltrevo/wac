@@ -1,4 +1,9 @@
 // The public surface.
+//
+// **The types were missing until `@/packages/ethrpc` needed to name one.** Every signature below
+// answers a `Result<JsonValue, ParseError>` and neither name was exported, so a caller could call
+// `parse` and could not write down what it got. A barrel assembled from *what this package does*
+// rather than from *what a caller says* omits exactly the types its own signatures mention.
 
 import { Result, Bytes } from "core";
 import { JsonValue } from "./value.wac";
@@ -43,3 +48,6 @@ u8[] writeOut(JsonValue v) {
   writeValue(out, v);
   return out.take();
 }
+
+export { JsonValue, JsonObject, JsonMember, numberOf } from "./value.wac";
+export { ParseError, Reason } from "./parse.wac";

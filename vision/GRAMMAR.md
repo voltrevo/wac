@@ -174,7 +174,7 @@ cannot tell you which**, and that is what running them is for.
 `vision/GRAMMAR.ebnf` is the same additions as productions, patched over `spec/spec/grammar.md`, and
 `tools/specparse.ts` runs the result:
 
-    deno run --allow-read tools/specparse.ts vision      # 106/106 files parse
+    deno run --allow-read tools/specparse.ts vision      # 110/110 files parse
 
 **That is a different kind of claim from anything else on this page.** Everything above was derived
 by *subtraction* — what today's parser refuses, minus what a desugarer accounts for — so it is a list
@@ -192,9 +192,15 @@ as the tooling is concerned. They are described rather than shipped so the next 
 them, and both are **currently zero** — a real zero, proved each time by injecting a name that is
 wrong and watching it come back.
 
-**Every imported name, against what the target exports.** For each `import { A, B } from "…"`,
-resolve the specifier (`core`, `std`, `@/packages/x`, a relative path) and check the target declares
-each name. This started as *does the target file exist* and was widened on 2026-09-04; the widening
+**Every imported *and re-exported* name, against what the target exports.** For each
+`import { A, B } from "…"` — and, since 2026-09-04, each `export { A, B } from "…"` — resolve the
+specifier (`core`, `std`, `@/packages/x`, a relative path) and check the target declares each name.
+
+**Adding `export` took it from 15 findings to 24**, and the nine are a kind the import check could
+not see: a **barrel publishing a surface its package does not have**. `packages/unicode`'s names two
+files that were never written; `packages/wactest`'s exports `FakeFiles` and `FakeClock` from a file
+that exists and has neither. An import that dangles is a file reaching for something; an export that
+dangles is a package *advertising* something, which is worse and was invisible for a week. This started as *does the target file exist* and was widened on 2026-09-04; the widening
 found three calls to a `Buf.empty()` that `@/packages/bytes` does not have, and one import of `Node`
 from `@/packages/page` for a type `core/jsx.wac` declares. Fourteen findings remain and are all the
 same one: the overlay imports `wac.json5` records.

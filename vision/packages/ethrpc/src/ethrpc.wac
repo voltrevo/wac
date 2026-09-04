@@ -1,0 +1,4 @@
+// The package, as one name. Two files of 496 — see `../README.md`.
+
+export { call } from "./rpc.wac";
+export { RpcFault, Transport, NotJson, NotRpc, Refused } from "./fault.wac";

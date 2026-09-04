@@ -1,0 +1,30 @@
+// Why a JSON-RPC call did not produce a result — and which of three layers said so.
+//
+// **This is the first place in this directory where a fault union has to contain two others.**
+// `@/packages/box`'s gunzip *matched* a nested union; nothing has had to *build* one. A call goes
+// through HTTP, then JSON, then JSON-RPC, and each layer already has its own fault type here.
+
+import { HttpFault } from "@/packages/http";
+import { ParseError } from "@/packages/json";
+
+/** The socket, the TLS, the status — `@/packages/http`'s fault, unchanged. */
+export struct Transport { HttpFault why; }
+
+/** A 200 whose body is not JSON — `@/packages/json`'s error, with its position. */
+export struct NotJson { ParseError why; }
+
+/** JSON, and not a JSON-RPC envelope: no `result` and no `error`, or a `jsonrpc` that is not "2.0". */
+export struct NotRpc { string saw; }
+
+/**
+ * The node understood the call and declined it.
+ *
+ * **This is the member that is not a fault**, and the reason the union is worth building. A
+ * JSON-RPC `error` member is the protocol working: `eth_getProof` on a pruned block answers −32000
+ * *"missing trie node"*, which is the node telling the truth about what it has. A caller that wants
+ * to try another provider needs to tell it from a socket that closed, and in the shipped `Answer`
+ * both arrive as `ok: false` and a sentence.
+ */
+export struct Refused { i32 code; string message; }
+
+export union<Transport, NotJson, NotRpc, Refused> RpcFault;

@@ -13,3 +13,8 @@ export { Response, statusHasBody, write } from "./response.wac";
 // recognising a tchar is not.
 export { Headers, eqFold } from "./headers.wac";
 export { RequestFault, ResponseFault, TooLarge, BadStatus } from "./fault.wac";
+// **The client half, added when `@/packages/ethrpc` asked for it and not before.** A package with a
+// server and no client is a shape a barrel written without a consumer does not notice, because
+// nothing in the package refers to the missing half.
+export { post, get, HttpFault, NoConnection, SendFailed, ReadFailed, Incomplete, Unparseable }
+  from "./client.wac";

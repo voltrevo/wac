@@ -1,0 +1,78 @@
+// JSON-RPC to an Ethereum node — the first file here that composes three rewritten packages.
+//
+// The trust boundary is the shipped file's and is not in question:
+//
+// > **A JSON-RPC endpoint is not trusted for anything it says** … What it is trusted for is
+// > *availability*: it can refuse to answer, answer slowly, or answer about an old block, and nothing
+// > here can tell. What it cannot do is lie about state, because a proof is checked against a root —
+// > **provided the root came from somewhere else.**
+//
+// What changes is what a failed call says, and the reason it changes is composition rather than
+// taste — see the README.
+
+import { Result, Bytes } from "core";
+import { Net } from "std";
+import { post } from "@/packages/http";
+import { parse, JsonValue } from "@/packages/json";
+import { RpcFault, Transport, NotJson, NotRpc, Refused } from "./fault.wac";
+
+/**
+ * `method` with `params`, and the `result` member of the answer.
+ *
+ * `params` is JSON text, brackets included, because building it is the caller's business and every
+ * method's shape is different — the shipped file's decision and a good one: a typed params builder
+ * would be `@/packages/abi`'s schema problem again, one protocol up.
+ *
+ * **Three layers, three `try`s, and the fault says which one.** The shipped `Answer` is
+ * `(bool ok, JsonValue result, string error)`, and `error` is a sentence assembled by whichever
+ * layer lost.
+ */
+export async Result<JsonValue, RpcFault> call(Net net, string url, string method, Bytes params) {
+  Bytes body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\{method}\",\"params\":\{params}}".toBytes();
+
+  // The HTTP layer's fault, kept whole rather than flattened to a sentence.
+  match (await post(net, url, body)) {
+    Err(e):  { return Err(Transport(e)); }
+    Ok(res): {
+      match (parse(res.body)) {
+        Err(e):    { return Err(NotJson(e)); }
+        Ok(envelope): {
+          // The node understood and declined: the protocol working, not a failure of it.
+          JsonValue? err = envelope.member("error");
+          if (err !is null) {
+            return Err(Refused(codeOf(err!), messageOf(err!)));
+          }
+          JsonValue? result = envelope.member("result");
+          if (result is null) { return Err(NotRpc("no `result` and no `error`")); }
+          return Ok(result!);
+        }
+      }
+    }
+  }
+}
+
+i32 codeOf(const JsonValue err) { … }
+string messageOf(const JsonValue err) { … }
+
+// ## What could not be written
+//
+// **`post` is `@/packages/http`'s and its fault type is what `Transport` wraps** — which is the
+// composition working, and it is also the first time this directory has had to *name* another
+// package's error type in its own union. `union<Transport, NotJson, NotRpc, Refused>` where two
+// members carry unions from elsewhere is the nesting `../../../TECHNICAL.md` shows lowering to an
+// enum whose variant holds an enum, so a caller writing `Err(is Transport):` gets every HTTP fault
+// in one arm and `Err(is Refused):` gets the one that is not a fault. Nothing else here needed that.
+//
+// **A `Refused` is not a failure and this signature says it is.** `eth_getProof` on a pruned block
+// answers −32000 *"missing trie node"*, which is a true statement about that node. Putting it in the
+// `Err` arm means every caller writes `match` to find out that nothing went wrong, and the honest
+// shape is a third case — `Ok(JsonValue) | Declined(code, message) | Err(RpcFault)` — which is a
+// three-armed `Result` and not a thing. `Result<Result<JsonValue, Refused>, RpcFault>` is writable
+// and reads as badly as it sounds. Recorded rather than solved.
+//
+// **And the trust boundary is not in any type.** The shipped header's *"provided the root came from
+// somewhere else"* is the whole safety argument of the packages above, and nothing in this signature
+// carries it: `call` answers a `JsonValue` and a caller may pass it to `@/packages/mpt` as a root as
+// readily as anything else. A `Verified<T>` that only `@/packages/lightclient` can construct is the
+// shape, and it is `../../../QUESTIONS.md`'s refinement-of-a-value entry with a security argument
+// rather than an ergonomic one — the first of those.

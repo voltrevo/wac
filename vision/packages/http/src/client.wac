@@ -1,0 +1,46 @@
+// Making a request — **written because a consumer needed it**, and that is the finding.
+//
+// The rewrite of `packages/http` covered `request.wac`, `response.wac`, `headers.wac` and the server
+// faults. It has no client, and nothing noticed until `@/packages/ethrpc` tried to make a call:
+// `post` and a fault type for it are the two names a caller of this package most obviously wants,
+// and the barrel had neither. Half a package, and the half nobody had asked for.
+//
+// The shipped `packages/http/src/client.wac` answers `Fetched`, which is `(bool ok, Incoming
+// response, string why)` — and its `failed` builds an empty `Incoming` to fill the slot, with a
+// comment saying so: *"A `Fetched` that is not `ok` still has to carry *an* `Incoming`."* Five ways
+// to fail, one sentence, and an invented response.
+
+import { Result, Bytes } from "core";
+import { Net } from "std";
+import { Incoming } from "./response.wac";
+
+/** The host would not resolve, or the socket would not open. */
+export struct NoConnection { string host; string why; }
+
+/** The request went out short, or not at all. */
+export struct SendFailed { string host; }
+
+/** The connection failed part way through the response — *not* a short body. */
+export struct ReadFailed { string host; string why; }
+
+/** The response ended mid-message. */
+export struct Incomplete {}
+
+/** Bytes arrived and are not an HTTP response. */
+export struct Unparseable { i32 at; }
+
+/**
+ * Anything a request can do instead of answering.
+ *
+ * The five the shipped client distinguishes internally and then flattens into one `string why`. Two
+ * of them are worth a caller's attention separately and the sentence does not admit it:
+ * `NoConnection` is *try another endpoint*, and `Unparseable` is *this endpoint is not speaking
+ * HTTP*, which is a configuration mistake rather than an outage.
+ */
+export union<NoConnection, SendFailed, ReadFailed, Incomplete, Unparseable> HttpFault;
+
+/** A POST, and the response — or which of the five happened. */
+export async Result<Incoming, HttpFault> post(Net net, string url, Bytes body) { … }
+
+/** A GET, the same way. */
+export async Result<Incoming, HttpFault> get(Net net, string url) { … }
