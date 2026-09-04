@@ -2009,3 +2009,51 @@ That is evidence rather than a decision: one consumer wanting nesting does not s
 *means* — whether `is SourceFailed` and `is Corrupt` are exhaustive over `Fault`, whether a value can
 be matched at either depth, and what a member appearing in two nested unions does. What it settles is
 that flattening is not free, which is the answer the entry above was leaning toward.
+
+## Giving a paired protocol a value fixed the pairing and kept the buffering
+
+The entry above found three capability groups that are paired calls over hidden state and gave each
+a value: `Files.open` a generator, `Files.create` a `Sink`, `Proc.run` a `Captured`. Writing the
+first consumer of the third showed the third one was half a fix.
+
+**A `Captured` is the whole output in memory.** `Captured { Bytes out; Bytes err; i32 status; }` is
+exactly what `packages/sh/src/exec.wac`'s sequential pipeline already carries as `u8[] carried`, and
+the shipped `Captured` has a `truncated` field and an 8 MiB cap because somebody hit it. What that
+cost is in the tree, in the shell's own words:
+
+> Here a stage that overflowed what this shell will hold produces no bytes, so the stage after it
+> counts an empty input and reports success: `seq 1 1500000 | wc -c` printed `0` with status 0, and
+> `n=$(…)` captured a plausible number with the reason on a stream no script reads.
+
+A wrong answer with status zero, and a whole `refusedStage` mechanism exists to notice the overflow.
+
+**And it was inconsistent with the same audit's other two answers**, which is the tell I missed: two
+of the three gave a stream because a stream is what a caller wants, and the third gave a buffer three
+fields wide. One audit, two shapes, in one file.
+
+So `run` takes a stream and answers one, `@/packages/sh/src/pipeline.wac` is a fold over the stages,
+and nothing between two stages is held whole. **Laziness comes with it and is the half buffering
+cannot do at all**: `cat big | head -1` pulls one chunk and stops, where the shipped sequential path
+runs `cat` to the end and the streaming path only avoids that by having a kernel hold the pipe.
+
+Three things it opened.
+
+**A pipeline's status is every stage's, and a generator returns one value.** Each stage's `Exit` is
+the return of a generator that the next stage has already consumed, so by the end only the last is
+reachable. Bash's rule *is* the last stage's status, so it reads like a match — and
+`packages/sh/src/refusal.wac` is a whole file on why that rule hides a failure. Awaiting an earlier
+stage's return deadlocks: it does not finish until the later one has drained it. `$PIPESTATUS` is the
+shell's name for this and it is not a shell question — it is *what a caller can learn from a
+generator it has handed to another generator*, which is the entry on whether `try await for` binds
+the return, with more than one producer.
+
+**Abandoning a generator is unspecified, and laziness is what causes it.** `head -1` stops pulling
+and `cat`'s generator is suspended forever holding a file. Nothing says whether its `defer` runs,
+whether it is distinguishable from one that finished, or whether the file closes. The last is the
+sharp one: `Files.open` answers a generator and `Files.create` answers a `Sink` **with a `close`
+method** — a sink can be closed and a source cannot.
+
+**And `Captured.err` is gone with the buffer, which is a loss rather than a tidy-up.** A captured
+child's standard error was separable from its output; a stage sharing `Out` writes where the shell
+does. Getting it back means `run` answering two generators, or one generator of a two-armed sum —
+and the second is `Read`'s shape, which this document is already unsure about.

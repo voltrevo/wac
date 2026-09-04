@@ -301,12 +301,36 @@ export struct Proc {
    * with its own grants"*. So the `Vec<Grant>` that `spawn` takes has no counterpart here, which is
    * the honest shape and reads as a hole in it. `../QUESTIONS.md` has why that is worth stating
    * rather than papering over.
+   *
+   * **And it answered a `Captured` until the first consumer was written, which was the same defect
+   * one layer along.** Giving the paired protocol a value fixed the *pairing* and kept the
+   * *buffering*: a `Captured` is the whole output in memory, which is exactly what the shipped
+   * sequential pipeline's `u8[] carried` is, and the shipped `Captured` already carries a
+   * `truncated` flag and an 8 MiB cap because somebody hit it. `packages/sh/src/exec.wac` records
+   * what it cost — *"`seq 1 1500000 | wc -c` printed `0` with status 0"* — and a whole
+   * `refusedStage` mechanism exists to notice the overflow.
+   *
+   * It was also inconsistent with this file's own other answer: `Files.open` gives a generator and
+   * `Files.create` gives a `Sink`, both because a stream is what a caller wants. One audit, two
+   * shapes. `@/packages/sh/src/pipeline.wac` is the case where the difference is a wrong answer
+   * rather than a preference, so `run` takes a stream and answers one, and a pipeline is a fold.
    */
-  fn<Ticket<Captured>(Vec<Bytes>, Bytes, string)>  run;
+  fn<Result<AsyncGenerator<Bytes, Exit>, NotGranted>(Vec<Bytes>, AsyncGenerator<Bytes, Exit>, string)>  run;
 }
 
-/** What something run in this instance said. */
-export struct Captured { Bytes out; Bytes err; i32 status; }
+/**
+ * How something ended.
+ *
+ * The generator's *return* rather than a field beside its output, which is what makes the status
+ * arrive after the last byte instead of before the first. `Captured`'s `out` and `err` are gone with
+ * the buffer; standard error is `Out.writeErr` in the instance the stage shares.
+ *
+ * **`err` going is a real loss and not a tidy-up.** A captured child's standard error was separable
+ * from its output, and a stage that shares `Out` writes into the same place the shell does. Getting
+ * it back means `run` answering two generators, or one generator of a two-armed sum — and the second
+ * is `Read`'s shape, which `../QUESTIONS.md` is already unsure about.
+ */
+export struct Exit { i32 status; }
 
 /** Read-only, and the reason `arg` is not on `Sys`: argv is known before the program starts. */
 export struct Env {

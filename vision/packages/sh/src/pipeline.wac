@@ -1,0 +1,120 @@
+// `a | b | c` in one instance — and the first consumer `Proc.run` has had.
+//
+// `exec.wac` beside this is the *other* half of running something: across a spawn, where a
+// capability is not a value and what crosses is a description of one. This is the half that stays
+// inside the instance, which is what a browser tab has and what `packages/sh` calls its sequential
+// path.
+//
+// ## The shipped sequential pipeline buffers, and its own comment is the bug report
+//
+// `packages/sh/src/exec.wac`'s `runStages` carries `u8[] carried` from each stage to the next — one
+// stage runs to completion, its whole output is held, the next one starts. The comment underneath
+// says what that costs:
+//
+// > Here a stage that overflowed what this shell will hold produces no bytes, so the stage after it
+// > counts an empty input and reports success: `seq 1 1500000 | wc -c` printed `0` with status 0,
+// > and `n=$(…)` captured a plausible number with the reason on a stream no script reads. Carrying
+// > on would be computing an answer from nothing.
+//
+// A wrong answer with status 0, and the fix in the tree is a `refusedStage` flag that ends the
+// pipeline early — a mechanism whose entire job is to notice that the buffer overflowed.
+//
+// ## And `Proc.run` reproduces it, which is this file's finding
+//
+// The projections audit found `pushChild`/`popChild` was a paired protocol over hidden state and
+// gave it a value: `Proc.run(args, stdin, cwd)` answering a `Captured`. That fixes the *pairing* and
+// keeps the *buffering* — `Captured { Bytes out; Bytes err; i32 status; }` is the whole output in
+// memory, exactly what `carried` is, and the shipped `Captured` already has a `truncated` field and
+// an 8 MiB cap because somebody hit this.
+//
+// **It is also inconsistent with the same audit's other answer.** `Files.open` answers an
+// `AsyncGenerator<Bytes, …>` and `Files.create` answers a `Sink`, both because a stream is what a
+// caller wants; `Proc.run` answers a buffer three fields wide. One audit, two shapes, and the
+// pipeline is the case where the difference is a wrong answer rather than a preference.
+//
+// So the signature below is what `Proc.run` should have been, and `vision/std` has been changed to
+// match rather than this file working around it.
+
+import { Result, Bytes, Vec, AsyncGenerator } from "core";
+import { Out, Proc, Exit, NotGranted } from "std";
+
+/** One stage: a program and its arguments. */
+export struct Stage { Vec<Bytes> argv; }
+
+/**
+ * A pipeline, as a fold.
+ *
+ * Each stage takes the previous stage's output *as a stream* and answers its own, so the whole
+ * pipeline is one expression and nothing between two stages is ever held whole. `seq 1 1500000 |
+ * wc -c` counts fifteen hundred thousand lines with a buffer the size of one chunk.
+ *
+ * **Lazy, which is the half buffering cannot do at all.** `cat big | head -1` pulls one chunk
+ * through `cat` and stops, because `head` stops asking. The shipped sequential path runs `cat` to
+ * the end first, and the streaming path only avoids that by having a kernel hold the pipe.
+ */
+export async Result<Exit, NotGranted> pipeline(
+  Proc proc, Out out, Vec<Stage> stages, AsyncGenerator<Bytes, Exit> stdin, string cwd
+) {
+  AsyncGenerator<Bytes, Exit> flowing = stdin;
+  Vec<Exit> ends = Vec.create();
+
+  for (Stage s in stages.items()) {
+    match (proc.run(s.argv, flowing, cwd)) {
+      Ok(next): { flowing = next; }
+      Err(e):   { return Err(e); }
+    }
+  }
+
+  // The last stage's output is the pipeline's, and draining it is what makes every earlier stage
+  // run at all — nothing above has executed yet.
+  try await for (Bytes chunk in flowing) { out.write(chunk); }
+  return Ok(lastOf(ends));
+}
+
+Exit lastOf(Vec<Exit> ends) { … }
+
+// ## 1. A pipeline's status is every stage's, and a generator returns one value
+//
+// `flowing` is rebuilt each time round the loop, so by the end only the **last** stage's return is
+// reachable — and bash's rule is the last stage's status, so that reads like a match. It is not.
+//
+// `packages/sh/src/refusal.wac` is a whole file about why:
+//
+// > bash's rule for a pipeline's status — the last stage's — quietly … `wc` then counts an empty
+// > input, and the pipeline reports **0 with status 0**.
+//
+// A stage that failed in the middle has to reach the shell, and here its `Exit` is inside a
+// generator nobody holds any more. `ends` above is written and never filled, because there is no
+// form for *keep a handle on the return of a generator I have already piped into something else*.
+// Awaiting it would deadlock: the earlier stage does not finish until the later one has drained it.
+//
+// **`$PIPESTATUS` is the shell feature this is**, and it is not a shell question — it is *what a
+// caller can learn from a generator it has handed to another generator*. `../../QUESTIONS.md` has
+// *whether `try await for` binds the return at all*; this is the same seam with more than one
+// producer, which that entry does not consider.
+//
+// ## 2. Abandoning a generator is unspecified, and laziness is what makes it happen
+//
+// `cat big | head -1` stops pulling after one chunk, so `cat`'s generator is suspended forever with
+// a file open. The shipped pipeline never has this, because a buffered stage always runs to
+// completion — laziness is what introduces it, and laziness is the reason to want streams.
+//
+// Three things nobody has said: whether an abandoned generator's `defer` runs, whether it is
+// distinguishable from one that finished, and whether the *file* it holds is closed. The first is
+// `../../QUESTIONS.md`'s trap-and-scope entry arriving a third way; the third is worse, because
+// `Files.open` answers a generator and closing is what its `Sink` counterpart has an explicit method
+// for. A source has no `close` and a sink does.
+//
+// ## 3. What could not be written
+//
+// **A stage that is a builtin.** `echo a | cat` has no program to run for `echo` — a shell's
+// builtins are functions in the shell. `proc.run` takes an argv, so a builtin needs a second path,
+// which is what the shipped `runCommand` is. Making a builtin an `AsyncGenerator<Bytes, Exit>` too
+// would unify them and is a change to what a builtin *is*, not to this file.
+//
+// **The subshell rule.** bash runs every stage of a real pipeline in a subshell, so `v=b | cat`
+// must not assign in the parent — `issues/system/0114` is that bug in this tree. `Proc.run` has no
+// grants argument and shares the instance's authority by design, so there is nothing here that
+// isolates a stage's *variables*; the shipped code forks a `Shell` value to get it. That is a shell
+// concern rather than a capability one, and it is the one place where *the child is the same
+// instance* stops being merely honest and starts being a missing feature.
