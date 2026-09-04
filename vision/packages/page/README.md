@@ -66,22 +66,28 @@ not.
 
 ## The renderer, and the two consumers that never existed
 
-`core/jsx.wac`'s header anticipates the split — *"a tree built in one repository and a renderer in
-another must name one type or nothing composes"* — and then ships no renderer. There are two
-consumers and they want opposite things:
+`core/jsx.wac`'s header anticipates a split — *"a tree built in one repository and a renderer in
+another must name one type or nothing composes"* — and ships no renderer. I wrote
+[`src/render.wac`](src/render.wac) expecting two consumers wanting opposite things: a page, which
+hands markup to a host that parses it and so needs no renderer once `render` takes a `Node`; and a
+server, which puts HTML on a socket where a tree has nowhere to go.
 
-- A **page** hands markup to a host that parses it. With `render(Node)` it needs no renderer at all.
-- A **server** puts HTML on a socket, where a tree has nowhere to go. That one needs it, and
-  [`../server`](../server/) assembles byte responses by hand today.
+**Then I read `packages/server/src/routes.wac`.** Its six routes answer plain text, RFC 3339, JSON,
+base64 and regex captures. There is no HTML in the server, and there is none anywhere else either.
 
-So the missing piece was never that the renderer was in the wrong place. It was that neither consumer
-had been written, and the one file that needed something wrote the smallest thing that worked in an
-`example/` directory. [`src/render.wac`](src/render.wac) is the real one, and the difference is two
-rules the example has no reason to know about: **the five characters that are not text**, and the
-fourteen **void elements**. The first is an injection the moment anything renders a request
-parameter, and `std/platform.wac` already has the rule written on the host side — *"`render` is the
-one that parses, and the difference is where every injection bug in a page like this would come
-from"*.
+So the finding is sharper than the one I set out to write. **Nothing in this repository needs a
+wac-side HTML renderer**, and the thirteen lines that exist inside
+`packages/platform/example/page.wac` exist *only* because `Page.render` takes a `string`. Give the
+capability a `Node` and the renderer's last consumer goes with it. `core/jsx.wac`'s header is
+reasoning about a second repository that does not exist yet — which makes the type right and the
+renderer premature.
+
+`src/render.wac` is kept anyway, because writing it is what found that out, and because the two rules
+it has and the example does not are the argument that a renderer is *not* thirteen lines whenever
+somebody does need one: **the five characters that are not text**, and the fourteen **void
+elements**. The first is an injection the moment anything renders a request parameter, and
+`std/platform.wac` already has that rule written on the host side — *"`render` is the one that
+parses, and the difference is where every injection bug in a page like this would come from"*.
 
 ## Two of the six unwritten constructs got users, and one of them is load-bearing
 

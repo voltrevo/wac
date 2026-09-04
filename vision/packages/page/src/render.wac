@@ -12,19 +12,23 @@
 //
 // It escapes nothing, closes every element even the void ones, and is in an `example/` directory.
 //
-// **There are two consumers and they want different things**, which is the argument for writing it
-// down rather than for leaving it in the example.
+// **This file was written believing there were two consumers, and there is one, and it is
+// hypothetical.** The first draft said: a page hands markup to a host that parses it, so with
+// `render(Node)` it needs no renderer; a server puts HTML on a socket and does. Then I read
+// `packages/server/src/routes.wac`. Its six routes answer plain text, RFC 3339, JSON, base64 and
+// regex captures. **There is no HTML in the server.**
 //
-//   - A **page** hands markup to a host that is going to parse it into a tree. `std`'s `Page.render`
-//     takes a `Node` for exactly that reason, and a browser page therefore needs *no* renderer at
-//     all — the string round trip in the middle is pure loss.
-//   - A **server** produces HTML as bytes on a socket, and there is nowhere for a tree to go. This
-//     is the consumer that needs a renderer, and `@/packages/server` today answers byte responses
-//     assembled by hand.
+// So the honest statement is stronger than the one I meant to make. Nothing in this repository needs
+// a wac-side HTML renderer — and the one that exists, thirteen lines inside
+// `packages/platform/example/page.wac`, exists *only* because `Page.render` takes a `string`. Give
+// that capability a `Node` and the renderer's last consumer disappears with it.
 //
-// So the type in `core` was right and the missing piece was never the renderer being in the wrong
-// place — it was that neither consumer had been written. This file is one of them; wiring
-// `@/packages/server` to it is the other and is not done here.
+// Which is what `core/jsx.wac`'s header was really about. It reasons about *"a tree built in one
+// repository and a renderer in another"*, and there is no second repository yet — so the type in
+// `core` is right for a future that has not arrived, and the renderer belongs wherever that future
+// is rather than here. This file is kept because writing it is what found that out, and because the
+// two rules it has and the example does not — escaping, and void elements — are the argument that a
+// renderer is not thirteen lines whenever somebody does need one.
 
 // `Element`, `Text` and `Fragment` are **not** imported. They are variants of `Node`, and a match
 // arm names them bare — `[§enum-is-qualified-8jkq4wp]` says `s is Shape.Circle` and `s is Circle`
