@@ -3306,43 +3306,59 @@ there is no other way to write it, and a citation to your own does not because t
 whole mechanism, and it predicts that this will happen again to the next number this directory
 measures itself.
 
-## The quotations are accurate and cannot be checked, because `*"…"*` has four jobs
+## The quotations are checkable after all — 462 of them, 0 unaccounted
 
-Last entry predicted the citation problem would recur for the next number this directory measures
-itself. Testing the other half of it — **are the quotations accurate?** — took three attempts at a
-checker and the answer is that the checker is the thing that cannot be written.
+**This entry said the checker *"is the thing that cannot be written"*. It was written on 2026-09-04
+and the whole directory passes.**
 
-Seventy-three inline quotations resolvable to a file. The first pass reported 39 misses, the second
-40, the third 15. **Eight of the fifteen were hand-checked and every one was the instrument**, for
-four different reasons, and the reasons are the finding:
+    462 quotations: 189 shipped, 273 vision's own, 0 unaccounted
 
-- **A quotation of a shipped file, resolved to its vision twin.** `core/jsx.wac` and
-  `vision/core/jsx.wac` both exist and a reference names neither — the directory's own convention is
-  that *"the corresponding real thing is at the same path with `vision/` taken off the front"*, which
-  makes every such path ambiguous to a reader as well.
-- **A quotation of an entry title on the same page.** `TECHNICAL.md` quotes
-  *"`Vec<T>.pop` is written once and is honest at every `T`"* — its own heading, not a file.
-- **A quotation of this file's own earlier text.** `core/slice.wac`: *"This file said «there is no
-  copy anywhere in this file, which is the whole point»"* — recording a claim it has since withdrawn,
-  which is good practice and looks exactly like a citation.
-- **A phrase being named rather than quoted.** *"which of nine projections does this export take, in
-  what order"* is nobody's sentence; two entries later the same phrase appears in plain italics with
-  no quotes, for the same purpose.
+Every `*"…"*` of thirty characters or more in `vision/` is a sentence that exists — in
+`packages/`, `design/`, `spec/`, `tools/`, `bootstrap/` or `harness/`, or in `vision/` itself.
+Nothing is paraphrased and nothing is invented.
 
-So `*"…"*` means *quoted from a file*, *quoted from this page*, *quoted from this file's past* and
-*a phrase I am naming*, and plain `*…*` means the fourth as well. Nothing distinguishes them.
+### Why three attempts failed and the fourth did not
 
-**The accuracy is the good news and the unverifiability is the finding.** After a week of quoting the
-shipped tree as the main evidence in this directory — five reversals in `std` found by reading its
-prose, and every one of them argued here by quoting it back — a reader who wants to confirm one has
-to work out which of four things the marks mean, then find the source themselves, because the
-attribution is a sentence rather than a form.
+The first three reported 39, 40 and 15 misses; eight were hand-checked and **every one was the
+instrument**. This entry read that as four reasons, all of them about *attribution* — `*"…"*` means
+quoted-from-a-file, quoted-from-this-page, quoted-from-this-file's-past, and a-phrase-being-named,
+and nothing distinguishes them.
 
-**What a form would cost is small and the shape is already here.** Half the long quotations use a
-blockquote under a named path, which is unambiguous and greppable; the inline ones are the ones that
-are not. Making the inline form carry its source is a convention rather than a tool, and this
-document is the wrong place to declare one — but the count is worth having: **73 inline quotations,
-and the only mechanical thing that can be said about them is that nothing can be said mechanically.**
+That diagnosis was right and it was not the obstacle. Two things fixed it:
+
+**Give up attribution.** Do not ask *which file did this come from*. Ask *does this sentence exist*,
+against two blobs — the shipped tree and `vision/` — and report shipped, own, or neither. The four
+cases collapse into the first two, both legitimate, and the reader's actual question is the third
+column.
+
+**Normalise both sides, not just the quote.** This is what the earlier attempts missed and it
+accounts for every one of the 41 apparent misses in the fourth attempt's first pass:
+
+| | example |
+|---|---|
+| emphasis **inside the source** | `lex.wac` writes *"needs to know `*what shape*` a token is"* |
+| comment continuation on wrapped lines | a quote spanning three `//` lines, or three ` * ` lines |
+| case, because a quote may start mid-sentence | `Never a guess` against `never a guess` |
+| typographic punctuation | `’` and `…` |
+
+Strip comment markers, backticks and asterisks; fold the punctuation; collapse whitespace;
+lowercase. Then it is a substring test.
+
+### What is still open, which is smaller than this entry claimed
+
+**A reader cannot tell which of the four a mark means**, and that has not changed. The checker
+sidesteps it; a person reading a page does not get to. Half the long quotations already use a
+blockquote under a named path, which is unambiguous and greppable, and the inline ones are the ones
+that are not.
+
+So the ask is a *form* for inline attribution, and its cost is now known to be small — because the
+matching problem, which looked like the hard part, is a normaliser. What it would buy is a reader
+being able to follow a citation without working out first what kind of citation it is.
+
+**And the general lesson is worth more than the form.** *The instrument cannot be written* was
+concluded from three attempts that all failed for the same reason, and the reason was neither of the
+two things this entry named. Three failures in one direction reads as a wall; it was one bug, on the
+side nobody was looking at, because the quote was being cleaned and the source was not.
 
 ## A generator cannot be started early, and one program in the tree needs exactly that
 
