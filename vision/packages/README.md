@@ -269,9 +269,14 @@ tests, 1,730 unwraps. `issues/lang/closed/0029` hit exactly this shape and got a
 table, not part of the type, which is why its five leaks are one fact. A `secret` built the same way
 inherits them by construction, and a laundered `secret` is a key in a log line.
 
-**A generic parent before anything ticket-shaped.** `struct AllOf<T> : Ticket<T[]>` is
-`expected '{', found '<'` today. `AllOf`, `AnyOf`, `Generator`, `AsyncGenerator` and `SysTicket` all
-need it, so the whole coroutine and ticket design does not parse without it.
+**A generic parent before anything ticket-shaped** — *and this ordering is now mostly gone.*
+`struct AllOf<T> : Ticket<T[]>` is `expected '{', found '<'` today, and the entry used to list five
+users. `AllOf` and `AnyOf` were deleted when `Ticket` became a struct of funcrefs; `SysTicket` never
+existed. What is left is `Generator<Y, R> : Coroutine<never, Y, R>` and `AsyncGenerator`, which are
+not inheritance at all — they are names for a partial instantiation, written this way because
+`typedef` takes no type parameters. So the ordering constraint is real and its subject changed:
+**a parameterised type alias before anything coroutine-shaped**, with the generic parent needed only
+if that is refused.
 
 **Re-export before the duplicate it is for can go.** `itoa64` and `utoa64` exist twice in library
 code because unifying them touches forty import lines, which is why `fmt`'s barrel cannot be

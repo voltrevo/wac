@@ -52,9 +52,9 @@ export struct Endpoint {
   /** The port the kernel bound, so `bind(0)` is usable. */
   i32 port;
 
-  async gen<Received> Result<void, NotGranted> incoming(this);
-  async Result<void, NotGranted> sendTo(this, Peer to, Bytes bytes);
-  void close(this);
+  fn<AsyncGenerator<Received, Result<void, NotGranted>>()>  incoming;
+  fn<Ticket<Result<void, NotGranted>>(Peer, Bytes)>         sendTo;
+  fn<void()>                                                close;
 }
 
 /**
@@ -64,8 +64,8 @@ export struct Endpoint {
  * no second socket, and calling it `listen` would suggest an `accept` that cannot exist.
  */
 export struct NetWithDatagrams {
-  async Result<Endpoint, NotGranted> bind(this, string addr, i32 port);
-  async Result<Endpoint, NotGranted> bindAny(this);
+  fn<Ticket<Result<Endpoint, NotGranted>>(string, i32)>  bind;
+  fn<Ticket<Result<Endpoint, NotGranted>>()>             bindAny;
 }
 
 /**

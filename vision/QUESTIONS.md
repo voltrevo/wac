@@ -459,7 +459,7 @@ five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothin
 it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
 ask.
 
-## Three constructs the grammar has and no vetted page mentions
+## Two constructs the grammar has and no vetted page mentions (it was three)
 
 `GRAMMAR.ebnf` is a list of what vision adds — see the entry above for how incomplete it was in the
 other direction — so it can be checked against the pages that are *agreed* rather than generated. Every addition was looked for
@@ -472,12 +472,13 @@ of them:
 does not parse without it. It is the largest thing in the proposal that has never been written down
 anywhere a reader would look — found by desugaring, banked, and never argued.
 
-**A method with no body.** `bool settled(const this);` in `core/ticket.wac`, `core/coroutine.wac` and
-`std/platform.wac`. `GRAMMAR.md`'s own necessity test says it is *avoidable* — a body that traps does
-the same thing, measured — and it was not withdrawn, because what a trapping body gives up is not
-*when* the check happens but *whether* it happens at all: `struct K : B { }` that never overrides
-compiles clean and traps only if the path is taken. That is a real argument for the construct and it
-is sitting in a generated file.
+**A method with no body — withdrawn 2026-09-04.** It had seventeen uses and now has none. Every one
+was an abstract method with subclasses overriding it, and dispatch in wac is static, so none of the
+overrides ran; the projections, tickets, coroutines, `Socket`, `Listener` and `Child` are structs of
+funcrefs now. The argument for it was real — an abstract method catches a subclass that never
+overrides, where a trapping body only traps if the path is taken — and it is an argument about a
+design vision no longer uses. Removing it from `GRAMMAR.ebnf` took the delta from 628 BNF
+productions to 564, and all fifty vision files still parse.
 
 **`trap` as an expression.** `core/result.wac`'s `orTrap` writes `Err(_): trap why,` — a match arm is
 an expression and that arm produces nothing, which is what a bottom type is for. Small, and the

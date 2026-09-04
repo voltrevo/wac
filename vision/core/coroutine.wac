@@ -26,8 +26,16 @@ export enum Step<W, Y, R> {
  * representation and there is nothing for a second one to do.
  */
 export struct Coroutine<W, Y, R> {
-  /** Run to the next boundary. Stepping a finished machine is a no-op that answers `Done` again. */
-  Step<W, Y, R> step(this);
+  /**
+   * Run to the next boundary. Stepping a finished machine is a no-op that answers `Done` again.
+   *
+   * **A funcref, for the reason `ticket.wac` gives at length.** This was a bodyless method with
+   * `Generator` and `AsyncGenerator` inheriting it, and dispatch in wac is static — so a `Generator`
+   * held as a `Coroutine`, which is exactly what `TECHNICAL.md`'s example does, would have run this
+   * empty body. The `coroutine` operator builds one of these with the right lambda in the slot, and
+   * what kind of machine it is is what the lambda does.
+   */
+  fn<Step<W, Y, R>()> step;
 }
 
 /** `gen<Y> R f(…)`. Blocks on nothing, so it has no `Waiting`. */
@@ -41,7 +49,7 @@ export struct Generator<Y, R> : Coroutine<never, Y, R> { }
  * ticket* and this is no exception.
  */
 export struct AsyncGenerator<Y, R> : Coroutine<TicketBase, Y, R> {
-  Ticket<Step<never, Y, R>> nextStep(this);
+  fn<Ticket<Step<never, Y, R>>()> nextStep;
 }
 
 /**

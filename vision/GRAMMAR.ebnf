@@ -46,13 +46,23 @@ type_param     = IDENT , [ "=" , type ] ;
 struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ type_params ] ,
                  [ ":" , type ] , "{" , { struct_member } , "}" ;
 
-(* A method with no body, and the `gen` return form. `;` in place of a block is the declaration of
-   an abstract method; `gen<T>` before the return type says the function is a coroutine that yields
-   `T` and answers the type after it. *)
+(* **A method with no body is withdrawn**, and `( block | ";" )` is `block` again below. It had
+   seventeen uses on 2026-09-04 and has none: every one was an abstract method with subclasses
+   overriding it, and dispatch in wac is static, so none of the overrides ran. The projections, the
+   tickets, the coroutines, `Socket`, `Listener` and `Child` are all structs of funcrefs now — see
+   `../core/ticket.wac` for the argument — and a funcref field needs no declaration-without-a-body.
+
+   Withdrawn rather than kept for the reason `GRAMMAR.md` gives about desugaring rules: a construct
+   in this file with no use in the tree is a proposal nobody is making. The argument *for* it — that
+   an abstract method catches a subclass which never overrides, where a trapping body only traps if
+   the path is taken — was real and is now an argument about a design vision does not use.
+
+   `gen<T>` before the return type stays: it says the function is a coroutine that yields `T` and
+   answers the type after it. *)
 method_decl    = [ "override" ] , [ "async" ] , [ gen_yield ] , type , IDENT , [ type_params ] ,
-                 "(" , [ method_params ] , ")" , ( block | ";" ) ;
+                 "(" , [ method_params ] , ")" , block ;
 func_decl      = [ "export" ] , [ "async" ] , [ gen_yield ] , type , IDENT , [ type_params ] ,
-                 "(" , [ param_list ] , ")" , ( block | ";" ) ;
+                 "(" , [ param_list ] , ")" , block ;
 gen_yield      = "gen" , "<" , type , ">" ;
 
 (* `secret`, from `crypto/src/secret.wac`. A qualifier beside `const`, because that is what it is
@@ -168,9 +178,9 @@ name           = IDENT | verbatim_name ;
 
 param          = [ "const" ] , [ "secret" ] , type , name ;
 func_decl      = [ "export" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
-                 "(" , [ param_list ] , ")" , ( block | ";" ) ;
+                 "(" , [ param_list ] , ")" , block ;
 method_decl    = [ "override" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
-                 "(" , [ method_params ] , ")" , ( block | ";" ) ;
+                 "(" , [ method_params ] , ")" , block ;
 
 (* A quoted tag, and a hyphenated attribute. `<"my-widget" data-size="8" />` is why both exist: a
    custom element's name is not an identifier and neither is a data attribute's. *)

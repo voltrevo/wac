@@ -46,7 +46,7 @@
 // parent hands a child `GRANT_READ` believing it passed on its own narrowed view, and the child gets
 // the process's. `../../../QUESTIONS.md` has the three ways out.
 
-import { Result, Bytes, Vec } from "core";
+import { Result, Ticket, Bytes, Vec } from "core";
 import { Proc, NotGranted } from "std";
 
 /**
@@ -94,7 +94,8 @@ export enum Grant {
 // that only proves you may spawn is a `Proc` any holder can spawn *with*, through any function that
 // asks for one, which is what a capability is supposed to stop.
 
+/** Funcrefs, for `vision/core/ticket.wac`'s reason — and a spawned child is a thing a test fakes. */
 export struct Child {
-  async Result<i32, NotGranted> exit(this);
-  async Result<void, NotGranted> send(this, Bytes bytes);
+  fn<Ticket<Result<i32,  NotGranted>>()>       exit;
+  fn<Ticket<Result<void, NotGranted>>(Bytes)>  send;
 }

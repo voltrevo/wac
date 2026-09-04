@@ -94,7 +94,7 @@ export struct Sys {
   }
 
   /** Run `f` when this domain ends, however it ends. Cleanup that must happen is a system's. */
-  void atEnd(this, fn<void()> f);
+  fn<void(fn<void()>)> atEnd;
 }
 
 /*
@@ -241,14 +241,23 @@ export struct Stat { i64 size; bool isDir; i64 modified; }
  * connection at a time and ends when the listener closes.
  */
 export struct Listener {
-  async gen<Socket> Result<void, NotGranted> accepted(this);
+  fn<AsyncGenerator<Socket, Result<void, NotGranted>>()> accepted;
 }
 
+/**
+ * Funcrefs for the same reason the projections are: a test that fakes a connection is the most
+ * ordinary thing a server test does, and a subclass of this would not have run.
+ *
+ * `accepted` above changes shape rather than just spelling — a bodyless `async gen` method declared
+ * the *signature* of a generator, and a field has to name the generator type it answers. That is
+ * `AsyncGenerator<Socket, …>`, which is `coroutine.wac`'s, and it is the first place outside that
+ * file where the type is written rather than the `gen` sugar.
+ */
 export struct Socket {
   /** Bytes, end, or a failure, and the caller has to say which it is handling. */
-  async Read recv(this);
-  async Result<void, NotGranted> send(this, u8[] bytes);
-  void close(this);
+  fn<Ticket<Read>()>                            recv;
+  fn<Ticket<Result<void, NotGranted>>(u8[])>    send;
+  fn<void()>                                    close;
 }
 
 export enum Read {
