@@ -851,6 +851,12 @@ void example() {
 `as` is what types the literal. Widening a typed value wraps it, so a `Node?` reaching a `Node??`
 arrives present whatever it holds, and only a bare `null` means the outermost absence.
 
+**Mostly done, and the exception is the interesting line.** `Node?? a = null`, widening a `Node` two
+levels, and `c!!` all check *and emit* today — measured, so nesting is not the new part. `null as
+Node?` checks and then fails to emit with *cast to an unsupported type*, at one level of nullability
+as readily as two. That is `issues/lang/open/0324a`, found from this entry: the one construct that
+reaches the middle state is the one that cannot be built.
+
 **Not yet.**
 
 ---
