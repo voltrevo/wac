@@ -264,6 +264,30 @@ checkable at all"*, which for a union is still true by a different route, since 
 listed at the declaration — but it is true for a different reason, and that reason is what a
 `union` as a match arm would have to rest on.
 
+## The one breaking change, and no page says why it is worth 444 sites
+
+`fn[T(…)]` → `fn<T(…)>` is the **only** thing in the whole proposal that takes something away.
+Measured: 444 sites in 80 files, and 47 of `spec/cases`'s 323 programs stop parsing — every one of
+them for that reason and no other. `GRAMMAR.md` has the method.
+
+**And no page argues for it.** It appears once, in a list of constructs, as *"`fn<void()>` as a
+type — replacing today's `fn[void()]`"*. Nothing states the benefit. The plausible one is
+consistency: every other type that takes parameters writes them in angles — `Vec<T>`, `Ticket<T>`,
+`Result<T, E>` — and a funcref in brackets is the odd one out, with `[` otherwise meaning an array
+or an index.
+
+Against it, one thing that is not a matter of taste and was found by building a reader rather than
+by arguing. **`fn<` is the one place an angle bracket follows a keyword**, and a scanner deciding
+whether `<` opens a type argument list or something else has an identifier before it everywhere
+else. `tools/specparse.ts` read `fn<void()> call;` as a JSX element opening `<void…` and every
+vision file using the shape stopped parsing; the fix is one entry in a list, and it is a list that
+would not have needed the entry. `fn[` has no such problem — a bracket after `fn` is unambiguous.
+
+So the trade is: a consistency nobody has written down, against 444 sites, 47 cases, and one more
+special case in the lexer. **It is the only decision here where the cost is exact and the benefit is
+unstated**, which is a reason to state the benefit rather than to withdraw the change — but it
+should be stated before it is taken.
+
 ## Naming a type takes the only shape a top-level variable could have
 
 Writing the vision additions as productions forced a spelling for
