@@ -830,6 +830,16 @@ None is a token substitution, and **a tree is the whole of the remaining work.**
 was when it was a suggestion: the thing to build is a parser, and the passes that hang off it are
 each a page of `TECHNICAL.md` that has already been run.
 
+**And one thing more, found by checking the `try` lowering at a type with no default.** The general
+form nests the remainder of the block inside the `Ok` arm — there is no uninitialised declaration to
+fall back on, `Foo x;` being two parse errors — so a function with eight declaration-form `try`s
+lowers eight `match`es deep. `@/packages/datetime`'s `parse` has exactly eight.
+
+That rules out one of the two shapes the work could take. **A source-to-source desugarer is the
+wrong target**: its output for that function is unreadable, and every diagnostic, line number and
+stack frame a user of the proposal would see points into it. The parser should feed a *compiler
+pass* — `wacc`'s own AST — where the nesting is a tree nobody reads.
+
 ### And `union` turned out to be a desugaring too
 
 That recommendation was taken the same day and the answer is in `TECHNICAL.md`: **`union<A, B>`

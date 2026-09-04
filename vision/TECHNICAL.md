@@ -1128,9 +1128,47 @@ match (step(a)) {
 `probe() = 10` on the happy path and `probeBad() = -9` on the failing one — the `Err` propagated
 through two chained steps. Zero parse and zero type errors.
 
-The declaration has to be split from the binding, because a `match` arm is a block and cannot
-introduce a name into its enclosing scope. That is the whole cost of the transform, and it is why
-`try` is not a token rewrite: it needs to know the statement it sits in.
+**That program is correct and the lowering it shows is not general**, which is worth putting here
+rather than quietly fixing, because the reason is the antipattern this whole directory is about.
+
+`i32 x = 0;` invents a value. It is available at `i32` and not at a `T` with no cheap construction —
+and wac has no uninitialised declaration to fall back on: `Foo x;` is **two parse errors**, measured.
+So *declare, then assign in the arm* only works where the desugarer can make up an `x`, which is the
+same *invent a value you do not have* that `@/packages/rlp`'s four `Item.Bytes(u8[0]())` and
+`@/packages/abi`'s `Value[0](fill: …)` are findings about.
+
+**The general lowering puts the rest of the block inside the `Ok` arm:**
+
+```wac
+Res<i32, Fault> use(i32 a) {
+  match (step(a)) {
+    case Err(e): { return Res.Err(e); }
+    case Ok(x): {
+      // everything that followed `Big x = try step(a);` is now here
+      return Res.Ok(x.limbs.len());
+    }
+  }
+}
+```
+
+`probe() = 3` and `probeBad() = -9` at a `Big` that has no default. Nothing is invented.
+
+### And that is the cost, which is not the one the first version suggested
+
+Each declaration-form `try` nests the remainder of its block one level deeper.
+`@/packages/datetime`'s `parse` has **eight** of them — `i32 year = try c.digits(4);` and its
+siblings, one per field of the grammar — so its lowered form is eight `match`es deep before the
+first arithmetic.
+
+Which decides something about the *shape of the implementation* rather than about the language:
+**a source-to-source desugarer is the wrong target.** Its output for that function is unreadable, and
+unreadable output is not a minor cost for a tool whose purpose is to let people run the proposal —
+every diagnostic, every line number and every stack frame would point into it. The transform belongs
+in a compiler pass over an AST, where the nesting is a tree shape nobody reads.
+
+The declaration also has to be split from the binding, because a `match` arm is a block and cannot
+introduce a name into its enclosing scope — which is why `try` is not a token rewrite at all: it
+needs the statement it sits in **and everything after it**.
 
 **`try for (T x in src) { … }`** over a generator answering `Result<void, E>`:
 
