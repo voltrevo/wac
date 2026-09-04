@@ -93,6 +93,25 @@ all take `(Core, Cli, Fs, Args)` and ten never mention `fs`, because one module 
 Same fact, opposite directions. Both `SHOWCASE.md` entries about authority describe the inside, and
 nothing tells a reader where the inside ends.
 
+## What they propose adding, and where each one lives
+
+Six things were invented rather than found, on the operator's licence to invent according to the
+principles. They are scattered across the files that needed them, which is where the argument for
+each is; this is the index.
+
+| proposal | where | the argument, in one line | the cost |
+|---|---|---|---|
+| `Slice<T>` / `Bytes` | [`../core/slice.wac`](../core/slice.wac) | two arguments that must travel together and must not be swapped is a struct | a view retains the array it was cut from |
+| an explicit barrel | [`../core/core.wac`](../core/core.wac) | `export` marks what leaves a file; a package needs a second level | nothing resolves a directory today |
+| a named type | `export union<A, B> Fault;`, `export Slice<u8> Bytes;` | one form whether the type is a union or an instantiation | distinct type or alias is undecided |
+| `try await for` | [`stream`](stream/), [`server`](server/) | a loop over a failing async generator has to say both things | three keywords on one head |
+| `secret` | [`crypto/src/secret.wac`](crypto/src/secret.wac) | `const` is already a taint that propagates; point the machinery at a second property | it would refuse AES, and it inherits `issues/lang/0315a` |
+| `Grant` as an enum | [`sh/src/exec.wac`](sh/src/exec.wac) | a caller writes what it means and no `GRANT_ALL` is kept in step by hand | intersecting two lists is a loop where `a & b` is an instruction |
+
+Every one of them has a cost written beside it in its own file, and two of them —`secret` and the
+barrel — have a reason **not** to take them yet. That is deliberate: a proposal with no cost stated
+has not been thought about, and this exercise is in no position to be believed on enthusiasm.
+
 ## And the failure mode of the exercise itself
 
 Seven claims that something was missing were wrong, and one claimed a mechanism that does not exist.
