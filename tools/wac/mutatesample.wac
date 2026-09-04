@@ -15,7 +15,13 @@
 
 import { Mutant } from "./mutateoperators.wac";
 
-/** mulberry32's state: it is a generator in the reference, and wac has no closures over a mutable. */
+/**
+ * mulberry32's state: it is a generator in the reference, and a struct here.
+ *
+ * Not because closures cannot hold it — `spec/cases/0191` captures by reference and `0194` writes
+ * through a captured array — but because a named state is what the two call sites want to pass
+ * around, and a generator that is a value can be copied, stored and seeded twice.
+ */
 export struct Rand {
   i32 a;
 }

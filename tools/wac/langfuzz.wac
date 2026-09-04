@@ -501,7 +501,8 @@ export struct Gen {
   /**
    * Whether a helper's body is being generated, in which case `arr` is not in scope.
    *
-   * A helper sees its parameters and nothing else — wac has no closures at function scope — so a
+   * A helper sees its parameters and nothing else — a named function captures nothing, whatever
+    * lambdas do — so a
    * construct that reads a local of `main` is valid in one context and a compile error in the other.
    * `no arr in scope`, at seed 1, before this existed.
    */

@@ -72,12 +72,35 @@ premise changed. Whatever is decided here, the general form is worth naming — 
 `packages/fs` and `packages/sh` either use closures or say, in a comment that is true on the day it
 is read, why they do not.
 
-## Where the corrections already landed
+## And the claim is not two sites, it is a genre
 
-- `spec/tour.wac` said `THERE ARE NO CLOSURES` in capitals in section 15 while section 17, 113 lines
-  below, said wacc has them. It also listed `async` as absent. Fixed.
-- `spec/spec/imports.md`, `packages/fs/src/fs.wac` and three sites in `std/platform.wac`. Fixed —
-  the last three needed `wac task gen:core` and a reseed, since that file is embedded in the
-  compiler as `coretext.wac`.
-- `core/README.md` and `packages/wacc/README.md` had already been corrected by whoever was editing
-  them, which is how the remaining ones stood out.
+Grepping the tree for *"wac has no …"* and *"wac cannot …"* gives about forty distinct sentences.
+Most are true — no tuples, no reflection, no traits, no `var`, no fallthrough, no `\x` escape. Nine
+were not, and they had already been corrected in three places by whoever happened to be editing
+those files (`core/README.md`, `packages/wacc/README.md`, `packages/bytes/src/buf.wac` — the last
+says outright *"This said 'wac has no generics' and that has expired"*).
+
+The nine stragglers, all fixed:
+
+| where | said | why it is wrong |
+|---|---|---|
+| `spec/tour.wac` §15 | `THERE ARE NO CLOSURES`, in capitals | §17 of the same file already said otherwise |
+| `spec/tour.wac` §17 | `async` is absent | it ships — `design/lang/0014` |
+| `spec/tour.wac` §16, `spec/spec/imports.md` | no closures means two enums cannot convert | true conclusion, gone premise: it is nominal typing |
+| `std/platform.wac` ×3 | no closures | one of them was itself a correction that went stale |
+| `packages/fs/src/fs.wac` | a funcref cannot capture a filesystem | lambdas capture by reference |
+| `packages/wacc/src/lex.wac` ×2 | no generics; no closures | `wvec.wac` is `WVec<T>`, in that directory |
+| `packages/wacc/src/check.wac` ×2 | no map and no growable array of structs | `Map<K, V>`, `Vec<T>`, `WVec<T>` |
+| `packages/wacc/src/parse.wac` | no closures | the *rung* has none; the language does |
+| `packages/git/src/repo.wac` | no hash map | three files in that package import `core` |
+| `tools/wac/mutatesample.wac`, `covledger.wac`, `langfuzz.wac` | no closures over a mutable; no growable array | `spec/cases/0194` writes through a captured array |
+
+**Two of them were right about the constraint and wrong about whose it is.** `packages/wacc` really
+cannot use `core/vec.wac`, and the reason is in `wvec.wac`'s own header — the top rung of the ladder
+must read wacc's whole graph and the rung below has no lambdas. That is a fact about the bootstrap,
+and both comments stated it as a fact about wac. A reader who believes the second one carries it
+into a package where it is not true, which is how a wrong reason spreads: it is the *reason* that
+gets remembered, not the file it was in.
+
+The three in `std/platform.wac` needed `wac task gen:core` and a reseed, since that file is embedded
+in the compiler as `coretext.wac`; the four in `packages/wacc/src` needed a reseed of their own.

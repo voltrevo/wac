@@ -1,8 +1,10 @@
 // The wac parser, in wac. Port of compiler/wacParse.ts.
 //
 // Recursive descent over the token array the lexer produces, building the sum-type
-// AST in ast.wac. Structured as a `P` struct threaded through every function, since
-// wac has no closures to capture the position the way the reference does.
+// AST in ast.wac. Structured as a `P` struct threaded through every function, since this package
+// cannot use closures to capture the position the way the reference does — the ladder's top rung
+// builds it and the rung below has no lambdas. The *language* has had them since 2026-08-16; see
+// `lex.wac`'s `Lexer` for the same note and `wvec.wac` for the rule it follows from.
 //
 // The reference takes positions at very specific points — a binary node's position is
 // its *operator*, a ternary's is the `?`, not the start of the condition — and this

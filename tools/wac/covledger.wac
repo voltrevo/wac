@@ -563,8 +563,9 @@ export struct Merged {
 /**
  * The points under `prefix` that are not in tests, merged by source position.
  *
- * `out` is filled and the count returned, since wac has no growable array here and the caller wants
- * both.
+ * `out` is filled and the count returned, because the caller wants both and sizing once beats
+ * growing. (This said "wac has no growable array here"; `core/vec.wac` is `Vec<T>` and this file
+ * already imports from three packages, so the array is a choice.)
  *
  * **Bucketed by line, which is not a premature optimisation.** The first version scanned the whole
  * merged list per point, and `wac task coverage:all` went from 44s to 75s on 21 packages — a cost paid

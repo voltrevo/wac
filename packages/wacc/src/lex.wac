@@ -36,11 +36,18 @@ import {
 // ── Output ────────────────────────────────────────────────────────────────────
 //
 // Tokens come back as a flat i32 array of (kind, start, len, line, col) and errors
-// as (code, line, col). Not because that is nicer — a `Token[]` would be — but
-// because wac has no generics, so a growable array of structs means writing a third
-// container by hand after gzip's `Buf` and json's. Flat also means no growth at
-// all: a source of n bytes cannot produce more than n tokens, so the arrays are
-// sized once from the input.
+// as (code, line, col). Not because that is nicer — a `Token[]` would be.
+//
+// **The reason here said "wac has no generics" and that is wrong twice.** wac has them, and the
+// container this paragraph says would have to be written by hand is `wvec.wac`, in this directory,
+// generic, written since. What is true is narrower and is a *package* rule rather than a language
+// one: `packages/wacc` has no dependencies, because the top rung of the ladder has to read its whole
+// graph, so `core/vec.wac` is out — `wvec.wac`'s header has the exact reason, which is a lambda in
+// `Vec.fold` rather than anything about generics.
+//
+// The other reason stands on its own and is the one that decides it: **flat means no growth at
+// all.** A source of n bytes cannot produce more than n tokens, so the arrays are sized once from
+// the input and a growable container would buy nothing.
 
 export i32 tokenStride() { return 5; }   // kind, start, len, line, col
 export i32 errorStride() { return 3; }   // code, line, col
@@ -192,8 +199,11 @@ i32 keywordKind(u8[] src, i32 start, i32 len) {
  * Lexer state.
  *
  * Held in a struct rather than as locals because the reference's closures over
- * `pos`/`line`/`col` have no equivalent: wac has no closures, so every helper takes
- * the state explicitly.
+ * `pos`/`line`/`col` have no equivalent **here**: `packages/wacc` is built by the top rung of the
+ * ladder and cannot use what the rung below cannot read, which is why `wvec.wac` exists beside
+ * `core/vec.wac`. The language itself has had lambdas since 2026-08-16 and they capture by
+ * reference — `spec/cases/0191` — so this is a constraint on this package rather than on wac, and
+ * the sentence here said the latter.
  */
 struct Lexer {
   u8[] src;

@@ -1072,9 +1072,14 @@ export struct C {
    *
    * The first table here that outlives one function: locals are cleared per declaration, and this is
    * not — a call names something declared elsewhere in the file, and often further down it. Flat
-   * storage because wac has no map and no growable array of structs: `funcParamAt` and
-   * `funcParamCount` index into one shared `funcParamPrims`, which is the same shape `lex.wac` uses
-   * for tokens and for the same reason.
+   * storage: `funcParamAt` and `funcParamCount` index into one shared `funcParamPrims`, which is the
+   * same shape `lex.wac` uses for tokens and for the same reason.
+   *
+   * That reason used to be written here as *"wac has no map and no growable array of structs"*, and
+   * both halves are false — `core/map.wac` is `Map<K, V>`, `core/vec.wac` is `Vec<T>`, and
+   * `wvec.wac` is a generic growable list **in this package**. `packages/wacc` cannot *import* one,
+   * which is a rule about the bootstrap rather than about the language; whether these tables should
+   * use `WVec` is a real question and not one this comment was ever asking.
    */
   /** The structs declared in this file, so a name can be known to be a reference type. */
   string[] structNames;
@@ -1104,8 +1109,9 @@ export struct C {
   /**
    * Every field of every struct, as three parallel arrays.
    *
-   * Flat rather than nested because wac has no map and no growable array of structs, and a field
-   * lookup is rare enough that a scan costs nothing at this size. `structNames` could have held an
+   * Flat rather than nested, and a field lookup is rare enough that a scan costs nothing at this
+   * size. (This also said "wac has no map and no growable array of structs"; see `funcParamPrims`
+   * above for why that is not the reason.) `structNames` could have held an
    * offset and a count, as the function table does — it does not, because a field is looked up by
    * (struct, name) rather than by position, so the offset would buy nothing.
    */

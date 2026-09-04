@@ -597,8 +597,10 @@ bool pathAfter(string a, string b) {
  * bit is invisible in the second column, though a *staged* mode change is visible in the first, because
  * both sides of that comparison are recorded.
  *
- * Linear searches over the index rather than a map: wac has no hash map, the fixtures are small, and a
- * repository where this matters wants a different data structure than a status is the place to introduce.
+ * Linear searches over the index rather than a map: the fixtures are small, and a repository where
+ * this matters wants a different data structure than a status is the place to introduce. (This also
+ * said "wac has no hash map". `core/map.wac` is `Map<K, V>` and three files in this package already
+ * import from `core`, so that was never the reason and is not one now.)
  */
 export Vec<string> statusOf(Repo r, u8[] excludes) {
   Vec<string> out = Vec.create();
