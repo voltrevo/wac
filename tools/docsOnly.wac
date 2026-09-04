@@ -31,6 +31,12 @@
 // `tools/wac/docsonly_test.wac` pins that list by finding every consumer of the fence idiom, so a
 // fourth one cannot appear without failing and pointing here.
 //
+// **`vision/` is documentary whatever the extension is.** It holds `.wac` files describing a
+// language this compiler does not implement — nothing builds them, no walker reaches them
+// (`laneRoots` is `packages` and `core`; the Deno walks root at `packages`, `harness` and `tools`),
+// and `vision/README.md` says outright that nothing here is checked by anything. Judging them by
+// extension would make every vision push non-documentary for code that cannot compile.
+//
 // Non-wac fences are ignored on purpose. Issues and design notes are full of ```text and bare fences
 // holding measurements and terminal output; treating those as code would make almost every prose edit
 // non-documentary and the predicate worthless. Nothing compiles them.
@@ -155,7 +161,8 @@ export Verdict verdict(Core core, Cli cli, string base, string tip) {
 
   Vec<string> notMd = Vec<string>.create();
   for (i32 i = 0; i < changed.len(); i++) {
-    if (!endsWith(changed[i], ".md")) { notMd.push(changed[i]); }
+    if (endsWith(changed[i], ".md") || startsWith(changed[i], "vision/")) { continue; }
+    notMd.push(changed[i]);
   }
   if (notMd.len() > 0) {
     i32 show = notMd.len() < 3 ? notMd.len() : 3;
