@@ -288,12 +288,31 @@ it:
   confusion that produced the wrong version — but sugar for a confusion people already have is not
   obviously the wrong move.
 - **A shorter name for the pair.** Most of the depth is `Ticket<Result<T, E>>`, which is *"eventually,
-  and it may fail"* — the ordinary shape of every capability call in the tree. If that pair is
-  common enough to deserve a name, it should have one, and if it is not then the nesting is rare
-  enough not to matter. Nobody has counted.
+  and it may fail"* — the ordinary shape of a capability call. If that pair is common enough to
+  deserve a name it should have one, and if it is not then the nesting is rare enough not to matter.
 
-The third bullet is the one to settle first, because it is a measurement rather than a preference and
-it decides whether the other two are worth arguing.
+**Counted, and it is common.** There are **427** `Pending<X>` in the tree's code — 738 by grep, so
+42% of the hits are prose, which is the usual gap. Of the 427, **125 wrap something that is already a
+failure**:
+
+    Change        36    i32 fault, string message, bool ok()
+    Read          45    an enum with a Failed arm
+    Exec          33    error non-empty means it never ran
+    FileResult    11    bool ok, u8[] bytes, string error, i32 fault
+    ─────────────────
+                 125    29% of every ticket in the tree
+
+Plus 33 `Pending<bool>`, most of which are *did it work* and would become `Result<void, E>` rather
+than staying a bool.
+
+So the pair is not a corner: **three in ten of the tree's tickets are it**, and that is before the
+`bool ok` structs in `packages/tor` and the ten `FAULT_` integers in `packages/fs` become `Result`s
+too. A shape that appears in a third of a construct's uses has earned a name, and the argument moves
+from *should this be shorter* to *what should the short thing be called*.
+
+That does not by itself settle the other two bullets — sugar in a funcref type is still a separate
+question from a name for the pair — but it removes the option of leaving it alone on the grounds
+that it is rare.
 
 ## The one breaking change, and no page says why it is worth 444 sites
 
