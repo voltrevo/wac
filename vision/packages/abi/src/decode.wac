@@ -1,0 +1,162 @@
+// Calldata into values, against a schema.
+//
+// Every static type is a 32-byte word. Every dynamic one puts an **offset** in the head and its
+// contents in the tail, and the offsets are relative to the start of the *enclosing tuple's head*
+// rather than to the message. That relativity is the whole difficulty, and the shipped file is right
+// about it: *"an implementation that measures from the start of the calldata passes every flat case
+// and fails the moment a dynamic type is nested."* Nothing here changes that rule; `base` is still
+// threaded through every call and is still what every offset is measured from.
+//
+// What changes: the schema is a tree, so no walk steps over anything, and the error is a value, so
+// no walk carries a sticky field.
+
+import { Result, Bytes, Vec } from "core";
+import { AbiType } from "./type.wac";
+import { Value } from "./value.wac";
+import {
+  AbiFault, NotWholeWords, OffsetOutOfRange, OffsetIntoHead, LengthOverruns, NotAnI32, NotABool,
+  DirtyAddress,
+} from "./fault.wac";
+
+/**
+ * `data` as the tuple `schema` describes, where `schema` is the *members* of the top-level tuple.
+ *
+ * A call's arguments and a call's return are both a tuple's contents rather than a tuple, which is
+ * why the parameter is a `Vec<AbiType>` and not an `AbiType`.
+ */
+export Result<Vec<Value>, AbiFault> decode(Bytes data, const Vec<AbiType> schema) {
+  if (data.len() % 32 != 0) { return Err(NotWholeWords(data.len())); }
+  return tupleAt(data, schema, 0, data.len());
+}
+
+/**
+ * The members of a tuple whose head begins at `base` and whose region ends at `end`.
+ *
+ * `base` is what every offset inside this tuple is measured from.
+ */
+Result<Vec<Value>, AbiFault> tupleAt(Bytes data, const Vec<AbiType> schema, i32 base, i32 end) {
+  // The head's width, before the walk: an offset must point *past* it. Without that, an offset of
+  // zero aims a dynamic field at the head itself, which is how one field is made to alias another —
+  // and it is the one malformation that reads as an ordinary empty value.
+  i32 headBytes = 0;
+  for (AbiType m in schema.items()) { headBytes = headBytes + m.headWords() * 32; }
+
+  Vec<Value> out = Vec.create();
+  i32 at = base;
+  for (AbiType m in schema.items()) {
+    if (m.isDynamic()) {
+      i32 off = try wordAsI32(data, at);
+      if (off < headBytes) { return Err(OffsetIntoHead(at, off, headBytes)); }
+      if (base + off >= end) { return Err(OffsetOutOfRange(at, off as u64, end)); }
+      out.push(try valueAt(data, m, base + off, end));
+      at = at + 32;
+    } else {
+      out.push(try valueAt(data, m, at, end));
+      at = at + m.headWords() * 32;
+    }
+  }
+  return Ok(out);
+}
+
+/** One value of type `t`, whose encoding begins at `at` and may not run past `end`. */
+Result<Value, AbiFault> valueAt(Bytes data, const AbiType t, i32 at, i32 end) {
+  match (t) {
+    Uint:    { return Ok(Word(try word(data, at, end))); }
+    Bytes32: { return Ok(Word(try word(data, at, end))); }
+    Bool: {
+      Bytes w = try word(data, at, end);
+      if (!isZeroThrough(w, 0, 31) || w.get(31) > 1) { return Err(NotABool(at, w)); }
+      return Ok(Word(w));
+    }
+    Address: {
+      Bytes w = try word(data, at, end);
+      if (!isZeroThrough(w, 0, 12)) { return Err(DirtyAddress(at, w)); }
+      return Ok(Word(w));
+    }
+    DynBytes: { return Ok(Blob(try blobAt(data, at, end))); }
+    DynText:  { return Ok(Blob(try blobAt(data, at, end))); }
+    Array(of): {
+      i32 n = try wordAsI32(data, at);
+      // **Bounded before anything is built.** Every element occupies at least one head word, so an
+      // `n` larger than the words that follow the length is a lie, and materialising the schema
+      // below would allocate against a number a stranger chose. In `i64`, because `n * 32` at the
+      // top of `wordAsI32`'s range is not an `i32`.
+      if ((at as i64) + 32 + (n as i64) * 32 > (end as i64)) {
+        return Err(LengthOverruns(at, n as u64, (end - at - 32) / 32));
+      }
+      // An array's elements are a tuple of `n` copies of one type, whose head starts after the
+      // length word — the rule that makes `T[][]` work, and one worth writing as a construction
+      // rather than as an argument to a special case.
+      Vec<AbiType> members = Vec.create();
+      for (i32 i = 0; i < n; i++) { members.push(of); }
+      return Ok(List(try tupleAt(data, members, at + 32, end)));
+    }
+    FixedArray(n, of): {
+      Vec<AbiType> members = Vec.create();
+      for (i32 i = 0; i < n; i++) { members.push(of); }
+      return Ok(List(try tupleAt(data, members, at, end)));
+    }
+    Tuple(ms): { return Ok(List(try tupleAt(data, ms, at, end))); }
+  }
+}
+
+/** A `bytes` or a `string`: a length word, then that many bytes, then padding to a word. */
+Result<Bytes, AbiFault> blobAt(Bytes data, i32 at, i32 end) {
+  i32 n = try wordAsI32(data, at);
+  if (at + 32 + n > end) { return Err(LengthOverruns(at, n as u64, end - at - 32)); }
+  return Ok(data.slice(at + 32, at + 32 + n));
+}
+
+/** The 32 bytes at `at`. */
+Result<Bytes, AbiFault> word(Bytes data, i32 at, i32 end) {
+  if (at + 32 > end) { return Err(LengthOverruns(at, 32, end - at)); }
+  return Ok(data.slice(at, at + 32));
+}
+
+/**
+ * A word read as a count or an offset.
+ *
+ * The high 28 bytes must be zero and the low four must fit a positive `i32`. **A 256-bit length is
+ * not a length** — the same refusal `@/packages/rlp` makes about a four-byte prefix, and for the
+ * same reason: the alternative is a wrapped negative read as a small number.
+ */
+Result<i32, AbiFault> wordAsI32(Bytes data, i32 at) {
+  Bytes w = try word(data, at, data.len());
+  if (!isZeroThrough(w, 0, 28) || w.get(28) > 0x7F) { return Err(NotAnI32(at, w)); }
+  i32 v = 0;
+  for (i32 i = 28; i < 32; i++) { v = (v << 8) | (w.get(i) as i32); }
+  return Ok(v);
+}
+
+bool isZeroThrough(Bytes w, i32 from, i32 to) {
+  for (i32 i = from; i < to; i++) { if (w.get(i) != 0) { return false; } }
+  return true;
+}
+
+// ## What could not be written
+//
+// **An array builds a `Vec<AbiType>` of `n` copies of one type to reuse `tupleAt`.** That is right —
+// an array's elements really are a tuple of identical members, and writing the two walks separately
+// is how the offset rule gets stated twice and diverges once. It is also an allocation proportional
+// to the *element count* of something being decoded, driven by a length word an attacker chose. The
+// shipped code has the same structure without the allocation, because its schema is an index and it
+// passes the same index `n` times.
+//
+// So the tree costs something the flat array did not, in exactly the place this package is careful:
+// `n` comes from the data, and the first draft of this file built the `Vec` before checking it. That
+// is a decode of a 32-byte message allocating two billion entries, in the package whose README says
+// *"a malformed offset is not an unusual input, it is an attack"*. The guard above is four lines and
+// had to be **added**, which is the honest version of the finding: converting a walk-by-index into a
+// walk-over-a-structure moved an allocation to a place where the attacker's number reaches it, and
+// nothing about the conversion pointed that out.
+//
+// With the bound, `n` is at most `(end - at - 32) / 32` and the allocation is proportional to the
+// message. It is still a copy of a type per element where the shipped version has none.
+//
+// The shape that would fix it is a **`Repeat(AbiType of, i32 n)` view** rather than a materialised
+// `Vec`: something `tupleAt` can iterate that answers the same type `n` times. That is a
+// `gen<AbiType>`, and `tupleAt` iterates its schema **twice** — once for `headBytes` and once for
+// the walk — which a generator cannot do. `@/packages/server`'s `halfclose.wac` found the other half
+// of the same thing: a generator has no *start now, collect later*, and this one has no *iterate
+// again*. Two properties an array has for free and the lazy form does not, in two packages, a day
+// apart.

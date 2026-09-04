@@ -5,12 +5,19 @@
 // answers `Node??`, where the outer absence is *the vec was empty* and the inner is *the element
 // was null*. Nothing flattens them and there is no `Option` — see `vision/TECHNICAL.md`.
 //
-// **Six of the shipped nineteen members, and one that is not shipped at all.** `core/map.wac`'s
+// **Seven of the shipped nineteen members, and one that is not shipped at all.** `core/map.wac`'s
 // rewrite says *"only the surface a rewritten package reached for"* and this file did not, so a
-// reader could not tell a dropped member from one that never existed. Thirteen are absent —
-// `withCapacity`, `fromArray`, `get`, `at`, `set`, `insert`, `remove`, `swapRemove`, `clear`,
-// `first`, `isEmpty`, `capacity`, `extend`, `toArray` — none of them for a reason, all of them
-// because nothing here needed one.
+// reader could not tell a dropped member from one that never existed. Twelve are absent —
+// `withCapacity`, `fromArray`, `at`, `set`, `insert`, `remove`, `swapRemove`, `clear`, `first`,
+// `isEmpty`, `capacity`, `extend`, `toArray` — none of them for a reason, all of them because
+// nothing here needed one.
+//
+// **`get` was on that list until `@/packages/abi` wanted it, 2026-09-04**, and which caller wanted
+// it is the interesting part. Nine loops here iterate a `Vec` and none of them index one, which is
+// what `issues/lang/0322a` is about: a counter that exists only to dereference. The ABI decoder is
+// the opposite case — its answer is *positional*, a caller asks for member 1 because the schema said
+// member 1, and there is no traversal to write. So the first demand for `get` came from the one
+// shape 0322a explicitly is not about, which is the argument for having both.
 //
 // ## `items()` is an addition, it carries `for … in` over every `Vec`, and it answers an open issue
 //
@@ -46,6 +53,16 @@ export struct Vec<T> {
   Vec<T> create() { return Vec(T[](), 0); }
 
   i32 len(const this) { return this.len; }
+
+  /**
+   * The element at `i`, trapping outside the range — `a[i]`'s contract, since a caller indexing a
+   * position usually knows there is one. That is the argument `pop` and `last` make in the other
+   * direction at the top of this file.
+   */
+  T get(const this, i32 i) {
+    if (i < 0 || i >= this.len) { trap "Vec.get out of range"; }
+    return this.data[i];
+  }
 
   /**
    * Grow if needed, then append.

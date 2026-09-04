@@ -3383,37 +3383,56 @@ this file needs `for (Typed t in line.feedAll(bytes))`, a plain loop over a plai
 `Slice.items()` in `core` also already is. **Two of the three uses in this directory are synchronous
 and every page describes the third.**
 
-## A package cannot name a variant after a type `core` exports
+## Bare variant names share one namespace per file, and five arms have been renamed around it
 
-`@/packages/rlp`'s data model is two things: a byte string and a list. The shipped enum is
+Every file in this directory writes a variant without its enum — `Ok(x)`, `Err(e)`, `Nothing`,
+`Delivered(b)` — because the slot implies which enum is meant. That convenience has a consequence
+nobody wrote down: **the arms of every enum in scope, plus every type and every declaration in the
+file, are one namespace.** An enum's variant names are private only until a second enum arrives.
 
-    export enum Item { Bytes(u8[] value), List(Item[] items) }
+Five arms have been renamed away from the word that fitted, in four packages, in two days:
 
-and it reads exactly right, because *byte string* is what RLP calls it. Here the payload is `core`'s
-`Bytes`, so `Bytes(Bytes value)` would make `Bytes(x)` mean the variant in one position and the type
-in another, inside one file. The arm is called `Str` instead, which is worse in every way except
-that it compiles.
+| where | wanted | got | collided with |
+|---|---|---|---|
+| `@/packages/tty` | `Effect.Line` | `Delivered` | `struct Line`, the same package's own |
+| `@/packages/rlp` | `Item.Bytes` | `Str` | `core`'s `Bytes`, the payload's own type |
+| `@/packages/abi` | `AbiType.Blob` | `DynBytes` | `Value.Blob`, another enum in the same package |
+| `@/packages/abi` | `Value.Bytes` | `Blob` | `core`'s `Bytes`, again |
+| `@/packages/ens` | `struct Address` | `EthAddress` | `AbiType.Address`, an arm of an import |
 
-This is the second collision of the kind in two packages. `@/packages/tty`'s `Effect` wanted an arm
-called `Line` and could not have it, because the struct beside it is `Line`. **The two are not the
-same problem and the second one is the harder half.**
+The last one happened while writing the file that demonstrates the other four, which is how long it
+takes to hit.
 
-- `tty`'s is local. Both names belong to that package, either could move, and a reader who hits it
-  can see both declarations at once.
-- `rlp`'s is between a package's own vocabulary and a name `core` exports to **everybody**. `core`
-  wins by being unmoveable, and every package that holds bytes and wants to say so has the same
-  collision waiting. `Bytes`, `Vec`, `Map`, `Queue`, `Slice`, `Result`, `Ticket`, `Step`, `Node`,
-  `Attr` — ten names that no package may use for a variant, a struct or a function, listed nowhere.
+**Three kinds, and they are not equally bad.**
 
-What makes it a language question rather than a naming convention is that **a variant is not
-referred to the way a type is.** `Item.Str(x)` is unambiguous and nobody writes it: the whole point
-of the bare-variant form, which every file in this directory uses, is that the enum is implied by the
-slot. So the collision is a consequence of a convenience, and the fix — requiring the enum name when
-a variant collides — is the sort of rule that is invisible until it fires and confusing when it does.
+- *Local*: `tty`'s. Both names belong to that package, a reader sees both declarations, either could
+  move.
+- *Against `core`*: `rlp`'s and `abi`'s `Value`. `core` exports `Bytes`, `Vec`, `Map`, `Queue`,
+  `Slice`, `Result`, `Ticket`, `Step`, `Node`, `Attr` — ten words no package may use for an arm, a
+  struct or a function, listed nowhere. Both instances were a variant named after **the type of its
+  own payload**, which is the most ordinary thing a variant name does.
+- *Against an import's arms*: `ens`'s. The colliding name is not even mentioned in the importing
+  file — `AbiType` is imported, `Address` comes with it — so a declaration collides with something
+  the author never wrote and cannot see without opening another package.
 
-The narrower question, which may be the whole of it: **is a variant name in the same namespace as a
-type name, and should it be?** `spec/spec/enums.md` does not say, and `issues/lang/closed/0095` — *a
-struct named like a variant resolves to the enum* — is the same question answered for one direction
+The third is the one that scales badly: a package's namespace is now every arm of every enum
+anybody exports to it, and adding a variant to a widely-imported enum is a breaking change to files
+that never named it.
+
+**What makes it a language question rather than a naming convention** is that the qualified form
+exists and is never used. `Item.Str(x)` and `AbiType.Address` are unambiguous, and nothing in this
+directory writes them, because the whole point of the bare form is that the slot implies the enum.
+So the collision is the price of a convenience, and the candidate rules all have costs:
+
+- **Require the enum name when a variant is ambiguous.** Invisible until it fires, and what fires it
+  is an unrelated import.
+- **Resolve by expected type first, then by name.** Works for `schema.push(Address)`, where the slot
+  is `AbiType`; does not work for a `match` arm, which is where `tty`'s and `abi`'s were.
+- **Nothing, and rename.** What five files did. It costs the reader the good name every time.
+
+The narrowest form, which may be the whole of it: **is a variant name in the same namespace as a
+type name, and should it be?** `spec/spec/enums.md` does not say. `issues/lang/closed/0095` — *a
+struct named like a variant resolves to the enum* — is the same question, answered for one direction
 by fixing a resolver rather than by stating a rule.
 
 ## A length-prefixed nested format cannot be encoded in one pass
@@ -3443,3 +3462,39 @@ variants) takes the clean version and RLP is the case that does not, which makes
 designing against. The fallbacks are reserve-the-maximum-and-shuffle, and reserve-one-and-shuffle-if
 -it-grows, and both put back exactly the copy being avoided — for the *outermost* list only, which
 may be the answer: one copy of the whole payload instead of d.
+
+## Converting an index walk into a structure walk moves an allocation under the attacker's number
+
+`@/packages/abi` decodes an ABI array by building a `Vec<AbiType>` of `n` copies of the element type
+and handing it to the tuple walker — which is correct, because an array's elements really are a tuple
+of identical members, and writing the two walks separately is how the offset rule gets stated twice
+and diverges once.
+
+`n` is a length word from the calldata. **The first draft built the `Vec` before checking it**: a
+32-byte message allocating two billion entries, in the package whose README opens *"a malformed
+offset is not an unusual input, it is an attack"*. The guard is four lines and had to be added by
+re-reading; nothing failed, and no test would have.
+
+The shipped package cannot have the bug, and not because it is more careful. Its schema is an `i32[]`
+and an index into it, so decoding `n` elements passes the same index `n` times and allocates nothing.
+**The tree is better in every way this exercise has argued for and it has a cost the flat form does
+not, in exactly the place this package is careful.**
+
+That generalises past the ABI, which is why it is here rather than only in the package README. Every
+rewrite in this directory has replaced an index with a structure — `Vec` for a doubling loop, a
+recursive enum for a prefix-order array, a `Slice` for three scalars — and the argument each time is
+that the structure says what the index left implicit. It also *materialises* what the index left
+virtual, and when the count comes from input, that is a resource decision the conversion does not
+announce.
+
+The lazy answer is a `Repeat(AbiType of, i32 n)` — a `gen<AbiType>` yielding one type `n` times —
+and **it does not work, for the reason the entry above about generators gives from the other side.**
+`tupleAt` iterates its schema twice: once to sum the head's width, once to walk it. A generator
+cannot be restarted. So:
+
+- a generator has no *start now, collect later* (`@/packages/server/src/halfclose.wac`);
+- a generator has no *iterate again* (here);
+
+two properties an array has for free, found in two packages a day apart, both while replacing an
+array with something lazier. Whether `Generator<T, R>` should have either is the question; the honest
+framing is that this directory has been treating laziness as strictly better and it is a trade.

@@ -1,0 +1,106 @@
+// Values into calldata, against the same schema.
+//
+// The head-and-tail rule from the other direction: every dynamic member writes an offset into the
+// head and its contents into the tail, and the offset is measured from the start of *this* head.
+
+import { Result, Bytes, Vec } from "core";
+import { Buf } from "@/packages/bytes";
+import { AbiType } from "./type.wac";
+import { Value } from "./value.wac";
+
+/** The argument tuple. A call is `keccak256(signature)[0..4]` and then this. */
+export Bytes encode(const Vec<AbiType> schema, const Vec<Value> values) {
+  Buf out = Buf.create();
+  writeTuple(out, schema, values);
+  return out.bytes();
+}
+
+/**
+ * A tuple's head and then its tail.
+ *
+ * **Two passes over the members, and unlike `@/packages/rlp` this one is not a cost.** The head's
+ * width is `headWords` summed over the schema — a walk over *types*, not over data — so the offsets
+ * are known before anything is written and the tail follows the head into the same `Buf`. RLP's
+ * problem is that its prefix width depends on the payload length; the ABI's head width depends only
+ * on the schema, which is the difference between the two formats and the reason one of them can be
+ * written in one pass and the other cannot.
+ */
+void writeTuple(Buf out, const Vec<AbiType> schema, const Vec<Value> values) {
+  i32 headBytes = 0;
+  for (AbiType m in schema.items()) { headBytes = headBytes + m.headWords() * 32; }
+
+  // The tail is built beside the head because a head word needs the offset of a thing that has not
+  // been written. One `Buf` per tuple rather than one per member, and the depth cost is the same
+  // O(n·d) `@/packages/rlp`'s note describes — the ABI does not escape it either, it only pays it in
+  // the encoder rather than in both directions.
+  Buf tail = Buf.create();
+  i32 i = 0;
+  for (AbiType m in schema.items()) {
+    Value v = values.get(i);
+    if (m.isDynamic()) {
+      writeWordU64(out, (headBytes + tail.len) as u64);
+      writeValue(tail, m, v);
+    } else {
+      writeValue(out, m, v);
+    }
+    i++;
+  }
+  out.pushAll(tail.bytes());
+}
+
+void writeValue(Buf out, const AbiType t, const Value v) {
+  match (t) {
+    DynBytes: { writeBlob(out, v.asBlob()!); }
+    DynText:  { writeBlob(out, v.asBlob()!); }
+    Array(of): {
+      Vec<Value> xs = v.asList()!;
+      writeWordU64(out, xs.len() as u64);
+      Vec<AbiType> members = Vec.create();
+      for (i32 k = 0; k < xs.len(); k++) { members.push(of); }
+      writeTuple(out, members, xs);
+    }
+    FixedArray(n, of): {
+      Vec<AbiType> members = Vec.create();
+      for (i32 k = 0; k < n; k++) { members.push(of); }
+      writeTuple(out, members, v.asList()!);
+    }
+    Tuple(ms): { writeTuple(out, ms, v.asList()!); }
+    else:      { out.pushAll(v.asWord()!); }
+  }
+}
+
+/** A length word, the bytes, and zero padding up to a word. */
+void writeBlob(Buf out, Bytes b) {
+  writeWordU64(out, b.len() as u64);
+  out.pushAll(b);
+  i32 pad = (32 - (b.len() % 32)) % 32;
+  for (i32 i = 0; i < pad; i++) { out.push(0); }
+}
+
+/** A 32-byte big-endian word. */
+void writeWordU64(Buf out, u64 v) {
+  for (i32 i = 0; i < 24; i++) { out.push(0); }
+  for (i32 i = 7; i >= 0; i--) { out.push(((v >> ((i * 8) as@ u64)) & 255) as@ u8); }
+}
+
+// ## What could not be written
+//
+// **`v.asWord()!` is the encoder trusting its caller, five times.** A `Value` handed here may not
+// match the `AbiType` beside it — `Word` where the schema says `Tuple` — and every arm asserts
+// rather than checks, so the failure is a trap with `encode` on the stack rather than a `Result`.
+//
+// That is a deliberate asymmetry and it is worth stating, because the two directions of this package
+// face different worlds. `decode` reads bytes a stranger produced and refuses seven ways; `encode`
+// reads a tree the caller just built, so a mismatch is a bug in the caller's own source rather than
+// an attack, and a `Result<Bytes, Mismatch>` would make every call site handle a case its own code
+// makes impossible. Trapping is the right answer and `!` is the right spelling of it — the assertion
+// is at the point the assumption is made, which is the argument `@/packages/rlp`'s `asBytes` makes
+// against the shipped `bytesOf`.
+//
+// **What is missing is the check the type could have made instead.** A `Value` does not know its
+// `AbiType`, and the pair is the thing every function here takes. A `Typed` holding both, built once
+// by a constructor that checks, would move all five assertions to one place — and it would mean the
+// decoder answering `Vec<Typed>` rather than `Vec<Value>`, which puts the schema in the answer where
+// a caller can read it. That is the shape the *positional result* entry in `type.wac` is circling,
+// arrived at from the encoder's side, and it is the first thing in this exercise that both halves of
+// a package wanted independently.

@@ -1,0 +1,122 @@
+// An ABI type, as a type.
+//
+// **The shipped descriptor is an `i32[]` in prefix order**, and its header calls that a design:
+//
+// > ## Schema-driven, because a type is data
+// >
+// > A descriptor is an `i32[]` in prefix order — `T_ARRAY, T_STRING` is `string[]`, and
+// > `T_TUPLE, 2, T_UINT, T_BYTES` is `(uint256, bytes)`.
+//
+// *Schema-driven* is right and is not what the flat array buys. A tree is data too, and this file is
+// the same design with the descriptor written as what it describes. Three things fall out.
+//
+// **`typeLen` disappears.** `packages/abi/src/abi.wac` exports
+// `i32 typeLen(i32[] schema, i32 at)` — *"How many `i32`s the descriptor at `at` occupies, so a walk
+// can step over a member"* — a recursive function whose entire job is recovering the tree from the
+// flat form. It is called from `isDynamic`, `headWords`, `tupleAt` and `decode`, once per member of
+// every tuple in each, and it re-walks the whole subtree each time. Nothing here steps over
+// anything: a member is a member.
+//
+// **A malformed descriptor stops being possible.** `T_TUPLE, 5` followed by two members reads
+// `schema[at + 1]` and then indexes past the end; `T_ARRAY` at the end of the array reads
+// `schema[at + 1]` of nothing. Both are traps on a caller's typo, in a package whose whole subject
+// is refusing malformed input carefully. A `Vec<AbiType>` cannot say five and hold two.
+//
+// **And nine `i32 T_X() { return n; }` become nine variants**, which is the same finding
+// `@/packages/regex` made about thirteen `OP_*` and `@/packages/tty` about eight control characters.
+// Third time; noted rather than argued.
+
+import { Vec } from "core";
+
+/**
+ * What the ABI can describe.
+ *
+ * `Uint` covers `int256` as well: the shipped package does not distinguish them and says why —
+ * *"sign extension is a decision about a type this package does not have"* — and neither does this.
+ */
+export enum AbiType {
+  /** `uint256`, `int256` — one word, untouched. */
+  Uint,
+  /** A word that is 0 or 1, checked. */
+  Bool,
+  /** A word whose first twelve bytes are zero, checked. */
+  Address,
+  /** `bytes32` — one word, untouched. */
+  Bytes32,
+  /**
+   * Dynamic: a length word and then the bytes, padded up to a word.
+   *
+   * **Named `DynBytes`, not `Blob`, because `Value.Blob` is.** Both enums are in scope in
+   * `decode.wac`, `Blob(x)` is written without its enum there as everything is, and one file cannot
+   * have two of them. Fourth collision of this kind and the first between two enums of one package —
+   * see `value.wac`, and `../../../QUESTIONS.md` for the rule underneath: bare variant names share
+   * one namespace per file, so an enum's arms are only private until a second enum is imported.
+   */
+  DynBytes,
+  /** The same encoding as `DynBytes`; the difference is what a caller does with it. */
+  DynText,
+  /** `T[]` — dynamic. */
+  Array(AbiType of),
+  /** `T[k]` — dynamic only if `T` is. */
+  FixedArray(i32 count, AbiType of),
+  /** `(a, b, …)`. */
+  Tuple(Vec<AbiType> members),
+
+  /**
+   * Whether this type is encoded as an offset and a tail rather than in place.
+   *
+   * A method rather than a free function taking a cursor, which is the whole of what the tree
+   * changes: the shipped `isDynamic(i32[] schema, i32 at)` has to advance `at` by `typeLen` between
+   * members, and this iterates.
+   */
+  bool isDynamic(const this) {
+    match (this) {
+      DynBytes:          { return true; }
+      DynText:           { return true; }
+      Array(_):          { return true; }
+      FixedArray(_, of): { return of.isDynamic(); }
+      Tuple(ms):         {
+        for (AbiType m in ms.items()) { if (m.isDynamic()) { return true; } }
+        return false;
+      }
+      else:              { return false; }
+    }
+  }
+
+  /** How many words this type occupies in a head: one, unless it is a static fixed array or tuple. */
+  i32 headWords(const this) {
+    if (this.isDynamic()) { return 1; }
+    match (this) {
+      FixedArray(n, of): { return n * of.headWords(); }
+      Tuple(ms): {
+        i32 words = 0;
+        for (AbiType m in ms.items()) { words = words + m.headWords(); }
+        return words;
+      }
+      else: { return 1; }
+    }
+  }
+}
+
+// ## What could not be written
+//
+// **Nothing parses a signature**, and that is where a descriptor comes from in practice. A caller
+// holds `"addr(bytes32)"` — it is what the selector is hashed from, so it is already in the source —
+// and then writes the type out a second time as a descriptor. `AbiType.parse("(uint256,bytes)")` is
+// ordinary code and neither package has it, in either shape. Not a language question; the reason it
+// is here is that the flat descriptor made it look like one, because *"a type is data"* reads as an
+// answer to *"where does the type come from"* and is not one.
+//
+// **The result is positional and the schema is not.** `decode` answers a `Vec<Value>` and a caller
+// reads `items.get(1).asBlob()!` — where `1` and `asBlob` both restate what the schema already said,
+// and neither is checked against it. Every statically-typed ABI binding in every other ecosystem is
+// generated code for exactly this reason. wac has no reflection and no macro, so the choice is a
+// positional dynamic answer or a hand-written accessor per signature, which is what the shipped
+// package's header says the descriptor exists to avoid.
+//
+// The narrow version, which is answerable: **a `Tuple` whose member types are known at the call site
+// could answer a typed value if the language could turn a value into a type.** That is a large
+// feature. The narrower one still: nothing stops `decode` checking, at run time, that the tree it
+// produced matches the schema it was given — and it does not, because it built the tree *from* the
+// schema, so the check is vacuous. Which is the honest statement of why this is unsatisfying and not
+// unsound.

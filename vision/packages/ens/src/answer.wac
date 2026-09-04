@@ -1,0 +1,102 @@
+// Reading what a resolver answered — the half `packages/ens` says it needs `packages/abi` for and
+// never wrote.
+//
+// `packages/ens/src/ens.wac`, above its calldata section:
+//
+// > A selector is the first four bytes of `keccak256` of the signature, and the arguments follow it
+// > in ABI encoding. Both of these take one `bytes32`, which is a static type, so the calldata is
+// > the selector and one word — **no `packages/abi` needed for the encoding, though the *answer*
+// > needs it.**
+//
+// It builds three calls — `resolver(bytes32)`, `addr(bytes32)`, `contenthash(bytes32)` — and stops
+// there. Nothing in that package decodes a reply, and **`packages/abi` has no callers at all**:
+// `grep` over `packages/` finds its own coverage ledger and one `wacc` probe. So a package that is
+// tested exhaustively against `npm:ethers` — thirty cases, both directions, a strictness table
+// measured against two real decoders — has never been *used*, and the shape of its API has never met
+// a caller.
+//
+// This file is that caller. It is here rather than in `@/packages/abi` for the reason
+// `@/packages/server/src/halfclose.wac` is where it is: a seam is demonstrated by the package on the
+// other side of it.
+
+import { Result, Bytes, Vec } from "core";
+import { AbiType, Value, AbiFault, decode } from "@/packages/abi";
+
+/**
+ * An address, as the twenty bytes it is rather than the word it arrives in.
+ *
+ * **Called `EthAddress` because `AbiType.Address` is in scope**, and `schema.push(Address)` two
+ * functions down would be the struct or the arm. Fifth collision of this kind, and the one that
+ * settles what the rule is: it happened *while writing the demonstration of the other four*, between
+ * a name this file declares and an arm of an enum it imports. `../../../QUESTIONS.md`.
+ */
+export struct EthAddress { Bytes bytes; }
+
+/**
+ * `addr(bytes32)`'s answer.
+ *
+ * Two lines of schema and one of reading, which is what the shipped package's *"the answer needs
+ * it"* was pointing at.
+ */
+export Result<EthAddress, AbiFault> readAddr(Bytes returned) {
+  Vec<AbiType> schema = Vec.create();
+  schema.push(Address);
+  Vec<Value> got = try decode(returned, schema);
+  return Ok(EthAddress(got.get(0).asWord()!.from(12)));
+}
+
+/**
+ * `contenthash(bytes32)`'s answer — the dynamic case, and the reason this file is worth writing.
+ *
+ * One word of offset, one of length, then the bytes. Everything the head-and-tail rule is about, in
+ * the smallest program that has it.
+ */
+export Result<Bytes, AbiFault> readContenthash(Bytes returned) {
+  Vec<AbiType> schema = Vec.create();
+  schema.push(DynBytes);   // `bytes`, in the enum's spelling
+  Vec<Value> got = try decode(returned, schema);
+  return Ok(got.get(0).asBlob()!);
+}
+
+// ## 1. What the first caller found
+//
+// **Three lines of ceremony to say one type.** `Vec<AbiType> schema = Vec.create(); schema.push(…);`
+// is how a caller spells `(address)`, because a `Vec` is built by pushing and a schema is a `Vec`.
+// The shipped package's `i32[](T_UINT(), T_BYTES())` is one expression, and that is the one thing
+// the flat descriptor was better at — an array has a literal form and a `Vec` has not.
+//
+// `Vec.of(Address)` is the missing piece. It is a variadic static, and wac has no way to declare
+// one: `Vec<T> of(T... xs)` is not in `spec/spec/grammar.md` and nothing in `../../../GRAMMAR.md`
+// proposes it. The shape `core` *could* offer is `Vec<T> fromArray(T[] a)` — on the list of twelve
+// members `core/vec.wac` says it left out because nothing needed one — which makes this
+// `Vec.fromArray(AbiType[](Address))`: one expression, two allocations, and still longer than the
+// flat descriptor it replaced.
+//
+// So the tree wins everywhere except at the literal, and the reason is that **an array has a
+// literal form and a `Vec` has not.** Whether that is worth a `Vec` literal, a variadic static, or
+// nothing at all is a question the first caller can only raise.
+//
+// ## 2. And the answer is positional, which the caller feels rather than reads about
+//
+// `got.get(0).asWord()!` — the `0` and the `asWord` are both restatements of the schema two lines
+// above, and neither is checked against it. In a two-member answer they are three restatements: the
+// index, the accessor, and the order the `push`es went in.
+//
+// `type.wac` argues this from the library's side and `encode.wac` arrives at the same place from the
+// encoder's. What the caller adds is that **the mistake is not exotic**: pushing two members and
+// reading them out of order is one transposed digit, it type-checks, and for `(address, uint256)` it
+// answers a plausible address and a plausible number. The decoder cannot catch it because it built
+// the tree from the schema, so there is nothing left to disagree with.
+//
+// ## 3. What could not be written
+//
+// **`EthAddress` here is a `Bytes` of twenty and nothing says so.** `got.get(0).asWord()!.from(12)` is
+// a slice with a magic 12, and `Bytes` carries no length in its type — so `Address`, `Bytes32` and a
+// `contenthash` are one type as far as anything can check. Every ABI implementation in a language
+// with sized arrays says `[u8; 20]`; the request here is smaller than dependent types and larger
+// than anything on the pages: a **fixed-length byte view**, which `Slice<T>` is one field away from
+// (`len` is already there, it is just not in the type).
+//
+// Worth one line rather than a proposal, because the cost lands somewhere unusual: it is not that a
+// wrong-length address gets encoded — `writeBlob` pads — it is that `readAddr` and `readContenthash`
+// return the same type and a caller can pass one where the other is meant.

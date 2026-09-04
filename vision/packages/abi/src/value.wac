@@ -1,0 +1,45 @@
+// What comes out of a decode.
+//
+// The shipped `Value` is already an enum with payloads — which is worth saying, because it sits
+// eight lines above nine `i32 T_X() { return n; }` functions in the same file. **The values were a
+// sum type and the types were integers in an array**, and nothing in the file remarks on it.
+
+import { Bytes, Vec } from "core";
+
+/**
+ * A decoded value.
+ *
+ * `Word` is every static type: the ABI does not distinguish them once they are bytes, and a caller
+ * that asked for an `Address` knows it asked.
+ */
+export enum Value {
+  /** Exactly 32 bytes, as they appear in the calldata. */
+  Word(Bytes bytes),
+  /**
+   * The contents of a `bytes` or a `string`, without the length word or the padding.
+   *
+   * **Called `Blob` because `Bytes` is taken**, which is the third instance of this collision in
+   * three packages — after `@/packages/tty`'s `Effect.Line` and `@/packages/rlp`'s `Item.Str`. The
+   * shipped enum is `Bytes(u8[] value)` and reads correctly; here the payload is `core`'s `Bytes`.
+   *
+   * Three is enough to stop calling it a coincidence. Two of the three collide with `core` rather
+   * than with a local name, and both times the package was naming an arm after the thing it holds,
+   * which is the most ordinary thing a variant name does. `../../../QUESTIONS.md`.
+   */
+  Blob(Bytes value),
+  /** An array's elements or a tuple's members, in order. */
+  List(Vec<Value> items),
+
+  /** The word, or nothing. `!` at the call site, for the reason `@/packages/rlp`'s `asBytes` gives. */
+  Bytes? asWord(const this) {
+    match (this) { Word(b): { return b; } else: { return null; } }
+  }
+
+  Bytes? asBlob(const this) {
+    match (this) { Blob(v): { return v; } else: { return null; } }
+  }
+
+  Vec<Value>? asList(const this) {
+    match (this) { List(xs): { return xs; } else: { return null; } }
+  }
+}

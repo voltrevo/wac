@@ -1,0 +1,58 @@
+// Why calldata is not what the schema says, with the byte offset it broke at.
+//
+// The shipped decoder answers `struct Decoded { bool ok; Value[] items; string error; }` and builds
+// the sentence with `itoa`. Seven rules, one type — the same finding as `@/packages/rlp`'s, and here
+// it matters more, because the README's own table says these are **security** distinctions:
+//
+// > | an offset past the end of the payload | reading past a field's bounds is how this becomes a
+// >   security bug |
+// > | an offset pointing back into the head | aims one field at another's bytes, and reads as an
+// >   ordinary empty value |
+//
+// A client that wants to log *this peer sent an offset into the head* separately from *this response
+// was truncated* cannot, because both arrive as prose. And the two are not the same event: one is a
+// node that cut a message short and the other is a deliberately malformed word.
+
+import { Bytes } from "core";
+
+/** Calldata is a whole number of 32-byte words, and this is not. */
+export struct NotWholeWords { i32 len; }
+
+/** An offset that points outside the region it is measured in. */
+export struct OffsetOutOfRange { i32 at; u64 offset; i32 end; }
+
+/**
+ * An offset pointing back into the head it was read from.
+ *
+ * The one malformation that reads as a perfectly ordinary empty value, which is why the shipped
+ * decoder computes the head's width before walking it.
+ */
+export struct OffsetIntoHead { i32 at; i32 offset; i32 headBytes; }
+
+/** A declared length longer than the bytes that follow it. */
+export struct LengthOverruns { i32 at; u64 len; i32 have; }
+
+/** A 256-bit length is not a length. Carries what the word said, which a `string` could not. */
+export struct NotAnI32 { i32 at; Bytes word; }
+
+/** A word that is neither 0 nor 1 where the schema says `bool`. */
+export struct NotABool { i32 at; Bytes word; }
+
+/** An address with its high twelve bytes set: those bytes are not part of an address. */
+export struct DirtyAddress { i32 at; Bytes word; }
+
+/**
+ * Anything `decode` refuses.
+ *
+ * **`cast` and `ethers` disagree about two of these and the shipped package measured it** —
+ * `test/strictness.test.ts` records that `cast` truncates a dirty address where `ethers` refuses,
+ * and that both accept a `bool` of 2 where Solidity's own decoder reverts. Being able to *name* the
+ * arm is what would let a caller pick a policy without the package picking one for it: a union is
+ * the shape in which "refuse `DirtyAddress`, accept `NotABool`" is a caller's line of code rather
+ * than a fork of the decoder.
+ *
+ * Not offered as a knob here. It is the strongest argument this package has for typed errors, and it
+ * is stronger than the one about printing.
+ */
+export union<NotWholeWords, OffsetOutOfRange, OffsetIntoHead, LengthOverruns, NotAnI32, NotABool,
+             DirtyAddress> AbiFault;

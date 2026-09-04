@@ -1,0 +1,10 @@
+// The package, as one name.
+
+export { AbiType } from "./type.wac";
+export { Value } from "./value.wac";
+export { decode } from "./decode.wac";
+export { encode } from "./encode.wac";
+export {
+  AbiFault, NotWholeWords, OffsetOutOfRange, OffsetIntoHead, LengthOverruns, NotAnI32, NotABool,
+  DirtyAddress,
+} from "./fault.wac";
