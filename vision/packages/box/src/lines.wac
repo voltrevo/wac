@@ -1,0 +1,106 @@
+// Sorting lines — and the distinction between a **key** and an **order**, which nothing can say.
+//
+// Third file from the 264 shipped sources nobody predicted anything about, picked because sorting is
+// the one thing in `packages/box` that is not I/O. `packages/box/src/lib/lines.wac` is 149 lines and
+// two of them are a design nobody has a word for.
+
+import { Result, Bytes, Vec } from "core";
+
+/** Byte order. Negative, zero or positive, as every comparator in every language. */
+export i32 cmpBytes(Bytes a, Bytes b) { … }
+
+/**
+ * The integer a line starts with, after blanks, or zero — **saturating**, and the reason is a fixed
+ * bug that the fix reintroduces further out.
+ *
+ * The shipped doc:
+ *
+ * > **i64, and saturating.** In i32 it wrapped: `sort -n` over `4294967296 1 2147483648 -1` answered
+ * > `2147483648 -1 4294967296 1`, and `-nu` merged `4294967296` with `0` because both keys came out
+ * > the same — a distinct line silently dropped. Saturation rather than wrapping keeps the order
+ * > monotonic for input wider than i64 as well; GNU compares those exactly, which needs arbitrary
+ * > precision and is a bigger change than this bug.
+ *
+ * Read that twice. The bug was **two distinct lines getting the same key**, and the fix is a rule
+ * that gives two distinct lines the same key — every integer past `i64` max is one key now. What
+ * changed is the *threshold* and the *ordering*: wrapping made the order non-monotonic, which is
+ * wrong for `sort`; saturation keeps it monotonic, which is right for `sort` and still wrong for
+ * `-u`.
+ *
+ * So the fix is correct and the class of bug survives it, and the file knows — *"GNU compares those
+ * exactly, which needs arbitrary precision"*. `@/packages/bignum` is in this tree and is not reachable
+ * from an applet's sort key, because a key that allocates is a key you cannot compare in a loop.
+ */
+i64 leadingNumber(Bytes b) { … }
+
+/**
+ * The numeric key.
+ *
+ * **Not the sort order**, and the difference is the finding. The shipped doc:
+ *
+ * > `cmpNumericThenBytes` is the comparison a sort wants; this one is the *key*, and `-u` is where
+ * > the difference shows.
+ * >
+ * > Separate from `cmpNumeric` because `-u` must not use it: uniqueness is the key's, so `1` and
+ * > `01` are one line, and the survivor is the first in input order rather than the first in byte
+ * > order.
+ */
+export i32 cmpNumeric(Bytes a, Bytes b) { … }
+
+/** The key, then the whole line — GNU's *last-resort comparison*, which makes `sort -n` deterministic. */
+export i32 cmpNumericThenBytes(Bytes a, Bytes b) { … }
+
+/** Merge sort by whatever comparison you hand it. Stable, which `-u` relies on. */
+export Vec<Bytes> sortWith(Vec<Bytes> xs, fn<i32(Bytes, Bytes)> cmp) { … }
+
+// ## 1. A key and an order are different things and no library here has both
+//
+// `sort -n` needs two comparisons over the same lines:
+//
+//   * **the key**, `cmpNumeric`, which decides *are these the same line for `-u`* — `1` and `01` are;
+//   * **the order**, `cmpNumericThenBytes`, which decides *which comes first* and must be total, so
+//     equal keys fall back to the whole line.
+//
+// The second **refines** the first: `cmpNumeric(a, b) != 0` implies `cmpNumericThenBytes(a, b)` has
+// the same sign. That relation is the whole contract between them, it is what makes `sort -nu`
+// correct, and it is stated nowhere except in the two function names and a paragraph.
+//
+// Every language's sorting library has this hole. `sortBy` takes one comparator; `distinctBy` takes
+// a key; nothing takes the pair and nothing checks that the order refines the key. Where it bites is
+// exactly `-u`: hand `sortWith` the *order* and then drop adjacent equals, and `1` and `01` survive
+// as two lines, because they are unequal under the order and equal under the key. The shipped
+// applet gets this right by calling two different functions in two places, and a reader has to know
+// which is which.
+//
+// **What a type would look like** — and it is a library type, not a language feature:
+//
+//     struct SortSpec<T> { fn<i32(T, T)> key; fn<i32(T, T)> tieBreak; }
+//
+// with `order()` composing them and `sameKey()` exposed for `-u`, so a caller cannot reach the order
+// when it wanted the key. What the *language* would have to add is nothing; what it cannot do is
+// check the refinement, which is a property of two functions and is not expressible.
+//
+// This is the first thing this directory has found that is a **library** gap rather than a language
+// one, and it is worth the entry for that reason: 125 entries in and the answer has always been *the
+// type could say it*. Here the type can say it and nobody wrote the type.
+//
+// ## 2. What could not be written
+//
+// **A comparator is a funcref because there are no traits**, which `../../../QUESTIONS.md` has from
+// `Map.create()`'s side. `sortWith` is the second site and it is the one where the shipped code
+// deleted the convenience wrapper and said why: *"a wrapper saving one argument, for one caller that
+// does not want it, is a name that documents nothing"*. So the funcref is not felt as a cost here —
+// one caller, two comparators, and the parameter is the point. Recorded as the counterweight to the
+// `Map` entry, which reads as though funcrefs were uniformly a burden.
+//
+// **`cmpBytes(a, b) == 0` is how equality is spelled**, and `@/packages/box/src/applets/diff.wac`
+// uses it that way twice per inner loop. `Slice` has no `eq` — `@/packages/tor/src/onionaddr.wac`
+// found the same absence and wrote two `get`s instead. Second witness, and this one is in a hot
+// loop, where a three-way comparison to answer a yes/no question is the whole cost of the byte scan
+// twice over for the common case of unequal lengths.
+//
+// **Stability is load-bearing and is a property of the algorithm, not the signature.** *"Stable,
+// which `sort -u` then relies on to drop only adjacent equals"* — so replacing `sortWith` with a
+// faster unstable sort silently changes which duplicate survives, and nothing in the type says so.
+// The same shape as `@/packages/zstd`'s `Buf` invariant: a caller's correctness resting on a callee's
+// choice, with the sentence in the callee.

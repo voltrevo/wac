@@ -5503,3 +5503,56 @@ where the information exists or not at all.
 
 That is the argument for errors being *values* rather than *codes*, made by a case where the
 information is a position the parser is about to lose. rlp did not need it and did not state it.
+
+## A key and an order are different things, and this is the first gap that is not the language's
+
+`sort -n` needs two comparisons over the same lines, and `packages/box/src/lib/lines.wac` has both:
+
+- **the key**, `cmpNumeric` — *are these the same line for `-u`*, where `1` and `01` are;
+- **the order**, `cmpNumericThenBytes` — *which comes first*, total, so equal keys fall back to the
+  whole line.
+
+The shipped doc says which is which and why:
+
+> `cmpNumericThenBytes` is the comparison a sort wants; this one is the *key*, and `-u` is where the
+> difference shows. … uniqueness is the key's, so `1` and `01` are one line, and the survivor is the
+> first in input order rather than the first in byte order.
+
+The order **refines** the key: `cmpNumeric(a, b) != 0` implies `cmpNumericThenBytes(a, b)` has the
+same sign. That relation is the whole contract between them, it is what makes `sort -nu` correct, and
+it is written nowhere but two function names and a paragraph. Hand the sort the *order* and then drop
+adjacent equals and `1` and `01` both survive — unequal under the order, equal under the key.
+
+**Every sorting library has this hole.** `sortBy` takes one comparator, `distinctBy` takes a key,
+nothing takes the pair and nothing checks the refinement.
+
+### And the answer is a library type, which is why the entry is here
+
+    struct SortSpec<T> { fn<i32(T, T)> key; fn<i32(T, T)> tieBreak; }
+
+with `order()` composing them and `sameKey()` exposed for `-u`, so a caller cannot reach the order
+when it wanted the key. **The language has to add nothing.** What it cannot do is check the
+refinement, which is a property of two functions.
+
+That makes this the first finding in 125 entries where the answer is *somebody should write the type*
+rather than *the type could say it if the language allowed*. Worth separating, because a list that
+only ever concludes the second reads as a list of language requests, and one of them was not.
+
+### The saturating key, which fixes a bug by moving it
+
+`leadingNumber` is `i64` and saturates, and the shipped reason is a measured bug:
+
+> In i32 it wrapped: `sort -n` over `4294967296 1 2147483648 -1` answered `2147483648 -1 4294967296
+> 1`, and `-nu` merged `4294967296` with `0` because both keys came out the same — a distinct line
+> silently dropped.
+
+The bug was *two distinct lines getting the same key*, and the fix gives two distinct lines the same
+key — every integer past `i64` max is now one key. What changed is the threshold and the
+monotonicity: wrapping breaks the order, saturation does not. So the fix is right for `sort` and the
+class of bug survives it for `-u`, which the file says: *"GNU compares those exactly, which needs
+arbitrary precision"*.
+
+`@/packages/bignum` is in this tree and is unreachable from a sort key, because **a key that
+allocates is a key you cannot compare in a loop.** That is the real constraint and it is a
+performance fact shaping a correctness one, which is the pairing this directory has otherwise only
+met in `@/packages/zstd`.

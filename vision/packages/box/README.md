@@ -110,6 +110,42 @@ can no longer reach it by accident or by edit.
 `bin/` already makes correctly. Saying so is the point: *no ambient capabilities* is enforced inside
 a module and negotiated outside one, and this package is where the two meet.
 
+## Sorting, and the first gap that is not the language's
+
+[`src/lines.wac`](src/lines.wac) is the third file taken from the 264 shipped sources nobody
+predicted anything about, picked because sorting is the one thing in this package that is not I/O.
+
+`sort -n` needs **two** comparisons over the same lines, and `packages/box/src/lib/lines.wac` has
+both: `cmpNumeric` is the *key* — *are these the same line for `-u`*, where `1` and `01` are — and
+`cmpNumericThenBytes` is the *order*, total, falling back to the whole line. The second **refines**
+the first, that relation is what makes `sort -nu` correct, and it is written nowhere but two function
+names and a paragraph. Hand the sort the order and drop adjacent equals, and `1` and `01` both
+survive.
+
+Every sorting library has this hole — `sortBy` takes one comparator, `distinctBy` takes a key,
+nothing takes the pair. And the answer is a **library** type:
+
+```wac
+struct SortSpec<T> { fn<i32(T, T)> key; fn<i32(T, T)> tieBreak; }
+```
+
+The language has to add nothing. Which makes it the first finding in 127 entries where the
+conclusion is *somebody should write the type* rather than *the type could say it if the language
+allowed* — worth separating, because a list that only ever reaches the second reads as a list of
+language requests, and one of them was not.
+
+### A saturating key, which fixes a bug by moving it
+
+`leadingNumber` saturates at `i64`, and the reason is measured: in `i32` it wrapped, and *"`-nu`
+merged `4294967296` with `0` because both keys came out the same — a distinct line silently
+dropped."* The bug was two distinct lines getting one key; the fix gives two distinct lines one key,
+for every integer past `i64` max. What changed is the threshold and the monotonicity — wrapping
+breaks the order, saturation does not — so it is right for `sort` and the class survives for `-u`,
+which the file says.
+
+[`@/packages/bignum`](../bignum/) is in this tree and unreachable from a sort key, because **a key
+that allocates is a key you cannot compare in a loop.**
+
 ## What could not be written
 
 **Nothing new** from the measurement. Lambdas, `Map`, `fn<…>` are all already proposed. The finding
