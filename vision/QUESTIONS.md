@@ -751,10 +751,25 @@ attribute that makes a label clickable, so the escape is the only way to write t
 `data-role="echo"`, which is ordinary HTML.
 
 **That leaves three, and the reason they are still empty is the same reason all six were.** A
-**quoted tag** wants a custom element, `auto` wants a declaration whose type is worth eliding, and a
-**list literal** wants a collection built in one expression — and no subject was chosen to want any
-of them. `auto` is the one to worry about: it is on three agreed pages, it is the most ordinary thing
-in the list, and nineteen packages plus a page did not reach for it once.
+**quoted tag** wants a custom element and a **list literal** wants a collection built in one
+expression, and no subject was chosen to want either.
+
+**`auto` was the one to worry about and it turns out to have no case here.** Every local declaration
+with an initialiser in the 56 files was measured: **78 of them, and the longest type is nineteen
+characters** — `Queue<Continuation> mine`. Fifty-six of the seventy-eight are four characters or
+fewer, because they are `i32`, `bool` and `u8[]`. There is nothing for it to elide.
+
+And the types that *would* be worth eliding are not in declarations at all. The worst type written
+anywhere in this tree is `Result<Result<Socket, NotGranted>, TimedOut>`, forty-four characters, and
+it is a **return type** — `auto` is a `var_decl` form and cannot go there. That is the same shape as
+`secret`, whose whole entry is that a parameter qualifier cannot say what a function returns: two
+proposals, both landing in the position where the problem is not.
+
+The pages' own four uses split the same way. `auto got = await Ticket.all(…)` and
+`auto listener = await sys.listen(8080)` elide `Ticket`-derived types the rewrites never wrote down;
+`for (auto line in lines)` twice is a **loop binder**, which is not `var_decl` and which the delta
+never added `auto` to — it parses because `auto` is contextual, as the keyword entry below now
+records.
 
 Every one of them is on an agreed page, and that is why they are in the grammar: they were added
 *from* `TECHNICAL.md`, `SHOWCASE.md` and `IDIOMS.md` after a pass that asked what the pages have and
@@ -1182,6 +1197,20 @@ fallible function that answers nothing — which is most of them.
 pages and no entry says what they *are*. `vision/GRAMMAR.ebnf` had to decide in order to exist, and
 it decided **contextual** — none of them is a keyword, each is an `IDENT` that a rule matches by
 spelling. All fifty-five vision files parse that way, so the question is not *can they be*.
+
+**A third cost, measured 2026-09-04, and it is the one that bites a tool rather than a reader: the
+grammar cannot state the feature, so nothing can check it.** `var_decl` is written
+`[ "const" ] , ( type | "auto" ) , IDENT , "=" , expr , ";"`. Delete the `| "auto"` and **nothing
+changes** — the whole tree still parses, both halves of `IDIOMS.md`'s examples still parse, and the
+delta drops from 564 BNF productions to 562. `auto` is an `IDENT`, `type` begins with an `IDENT`, so
+`auto got = g();` matches as a declaration of type *auto*, and `for (auto line in lines)` matches
+`for_head = type , IDENT , "in" , expr` for the same reason — a position the alternative was never
+added to and did not need to be.
+
+So two of the delta's productions are decoration. A grammar that admits a construct by accident
+cannot be asked whether the construct is in the language, and a recogniser that accepts a file proves
+nothing about the words in it. That is not an argument against contextual keywords — it is the
+statement of what the grammar stops being able to say, and it applies to every one of the eight.
 
 The question is what it costs either way, and it is not symmetrical.
 
