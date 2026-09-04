@@ -26,6 +26,38 @@ goes straight back to accepting. One slow client does not hold the door. Nothing
 pool or an executor, and `await sys.drain()` before returning is what makes *dangling work is an
 error* have something to point at.
 
+## Measured against a shipped async pump, not against the blocking loop
+
+`serve.wac`'s header — *"wac has no sockets, so the host owns the accept loop"* — is the comparison
+this file was written against, and it is the wrong one. `packages/tor/src/relayd.wac` already runs
+an async accept pump in production, landed 2026-08-30 under `design/lang/0014` A6:
+
+```wac
+async void armAccept(Core core, Cli cli, Relay x, Socket listener) {
+  while (x.accepting) {
+    Socket fresh = await cli.accept(listener.handle);
+    if (fresh.handle < 0) { core.warn("relayd: accept: " + fresh.error); x.accepting = false; return; }
+    …
+    armConn(core, cli, x, x.conns[x.live - 1]!);
+  }
+}
+```
+
+So `async`, `await`, a loop with a suspension in it, and fire-and-forget concurrency are **not** what
+this package proposes — they ship, and `main.wac`'s `handle(…)` with no `await` is the same move
+`armConn` already makes. Four differences remain, and they are the actual proposal:
+
+| shipped | vision | what it buys |
+|---|---|---|
+| `while (x.accepting)` + a bool the body clears | `for (Socket conn in l.accepted())` | the loop ends because the listener did; no flag to forget to clear |
+| `Socket fresh = await …; if (fresh.handle < 0)` and `fresh.error` | `Result<Socket, NotGranted>` | the failure is not a field on the success |
+| `Core core, Cli cli` | `sys.out`, `sys.clock` | `handle` cannot open a second port |
+| `x.conns[x.live]`, `x.live`, `MAX_CONNS` | `Vec<Conn>` | the counter and the array stop being two things |
+
+**The middle two are the ones with weight.** A negative handle and an `error` string on the returned
+struct is the sentinel pattern this whole exercise keeps finding, in the newest async code in the
+repository — so it is not a legacy shape that async cleaned up on its way past.
+
 ## What changed in `serve.wac`
 
 **`Served` became two cases.** It was `(bool ready, u8[] response, i32 consumed, bool keepAlive)`
