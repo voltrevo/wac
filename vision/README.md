@@ -79,7 +79,7 @@ drifts. **A question is deleted once it is answered**, and the answer has to lan
 
 ## What twenty-two subjects found, as patterns rather than as a list
 
-`QUESTIONS.md` is sixty-nine entries and getting longer, which is the exercise working and is not a
+`QUESTIONS.md` is seventy entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately
 **not an index**: these are findings about how the design behaves under use, and each stays true
 after the question it produced is answered and deleted.
@@ -110,6 +110,14 @@ than vision's — but the projections make it harder, since a projection cannot 
 *profile*, and says *"only a browser provides it"* at the capability it applies to; nine projections
 have no profile, so a signature now says exactly what a program reaches and nothing about where it
 can run. `main(Net, Out, Clock, Tasks)` and `page(Out, Page)` look like the same kind of thing.
+
+**0d. And comparing names is not comparing signatures.** The capability audit that produced patterns
+0b and 1 matched member *names* against the host's. Matching **signatures**, done later and member by
+member, is a different check with its own yield: seven capabilities silently became synchronous,
+`Out.write` lost the `bool` that `box`'s `yes` loops on and that is *"the shape every streaming
+transform in this repo takes for its sink"*, and `Result`, `Vec` and `Ticket` turned out to rename or
+drop 108 member call sites the migration table has no row for. **A diff is only as good as the thing
+it compares**, and the first one compared the cheap half.
 
 **1. Something derived from a source is narrower than the source, and always in the direction of
 whoever consumed it first.** The seven capability projections were argued from a count of the host,
