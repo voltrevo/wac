@@ -449,12 +449,38 @@ eleven of the twenty-one and the other ten are spread over seven packages.
 
     box 2   fs 1   gzip 2   platform 11   sh 1   stream 2   wactest 1   zstd 1
 
-**The first line is worth as much as the second and is not about vision at all.** `spec/spec/grammar.md`
-accepts every wac file in the repository. The grammar in the spec is a document that nothing was
-checking against the code it describes — it gained ten productions this week from files that use
-constructs it did not have — and *"1134/1134"* is the first statement that it is now complete with
-respect to the tree. A recogniser cannot say the grammar is *right*; it can say there is nothing
-written here that it cannot read, and until this week nobody could say even that.
+### The rest of the tree, and the two files that make it interesting
+
+`packages/` is 1,134 of the repository's 1,578 `.wac` files. The other 444 — `spec/` 324, `tools/`
+96, `core/` 14, `native/` 5, `bootstrap/` 4, `std/` 1 — run the same way:
+
+    spec grammar     1568/1578 parse       (10 refused)
+    vision grammar   1494/1578 parse       (84 refused)
+
+**The spec's own grammar refuses ten files in the repository, and seven of them are meant to be
+refused** — `spec/cases` programs that exist to be rejected. The other three are
+`bootstrap/drivers/emit_and_run.wac`, `selfhost.wac` and `spec_cases.wac`, all at the same column, all
+on a module-level mutable variable: `u8[] built;`. `packages/wacc/src/parse.wac` has no top-level
+case for one either, so wacc and the spec agree and wac-L5 — which compiles the drivers as part of
+the ladder — does not. That is `issues/lang/0329a` and it is not a vision question.
+
+**And it is the one place the vision grammar accepts more than the spec's, which is not the good news
+it sounds like.** Vision takes 2 of the 4 drivers where the spec grammar takes 1, and the extra one
+is `emit_and_run.wac`: its `u8[] built;` matches `typedef = [ "export" ] , type , IDENT , ";"` and is
+read as declaring a type named `built`. Over 1,578 files that is the **only** thing the delta accepts
+and the spec refuses, and it is a misreading. All 84 differences in the other direction are `fn[`.
+
+`QUESTIONS.md`'s *naming a type takes the only shape a top-level variable could have* said this would
+happen, and said it worked *"only because wac has no top-level variables"*. There are top-level
+variables; they are in the ladder.
+
+**The 1,568 is worth as much as anything about vision and is not about vision at all.**
+`spec/spec/grammar.md` was a document nothing checked against the code it describes — it gained ten
+productions this week from files using constructs it did not have. That it now reads every wac file
+in the repository except seven written to be refused and three the compiler cannot read either is the
+first statement anybody has been able to make about it. A recogniser cannot say a grammar is *right*;
+it can say there is nothing written here it cannot read, and until this week nobody could say even
+that.
 
 **A note on how it was run, because it changes what to do next time.** One `deno` per package: the
 whole tree in a single process runs out of memory at about 125 files of 1,134. Nothing about the

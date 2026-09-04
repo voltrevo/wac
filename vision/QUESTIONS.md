@@ -1075,6 +1075,24 @@ which is *a type, a name, a semicolon* — indistinguishable from a field declar
 variable declaration with no initialiser. It works only because wac has no top-level variables, so
 nothing else at that position has that shape.
 
+**That premise was checked on 2026-09-04 and it is false**, which turns the rest of this entry from a
+prediction into a demonstration. `bootstrap/drivers/` has three files with module-level mutable
+variables — `u8[] built;`, `string[] paths;`, seven of them in one file — compiled by wac-L5 as part
+of the ladder. `wacc` cannot parse one and neither can `spec/spec/grammar.md`; that disagreement is
+`issues/lang/0329a`. What matters here is what the two grammars then do with the files:
+
+    spec grammar     accepts 1 of the 4 bootstrap drivers
+    vision grammar   accepts 2
+
+**The extra one is `emit_and_run.wac`, and vision accepts it by misreading it.** Its `u8[] built;` is
+a variable — the file's own comment says *"held in a global between the two calls"* — and `typedef`
+takes it as a declaration of a type named `built`. Over 1,578 files this is the **only** place the
+delta accepts something the spec grammar refuses, and it is a file it has understood wrongly. Every
+other difference between the two grammars, all 84 of them, runs the other way and is `fn[`.
+
+So *a typo is a declaration* is not the hypothetical below. It is one already-written line, in the
+ladder, silently given a meaning by a grammar that is nine days old.
+
 Two consequences nobody had written down.
 
 **A typo is a declaration.** `i32 x;` at the top of a file is not an error under this rule; it
