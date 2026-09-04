@@ -103,13 +103,14 @@ argument — `this.fail<JsonValue>(Reason.Eof)`, as `Vec<T> empty<T>()` is calle
 half that was never syntax.** `core` used a bodyless method to mean *must be overridden*; this file
 needs *written out in the original, not repeated here*, and uses `{ … }` because the SHOWCASE entries
 do. The bodyless form is gone with the abstract-method design it existed for, so only `{ … }` is
-left, in 23 of the 56 files.
+left, in 23 of the 55 rewritten files (the tool's 57 includes `bench/`'s two, which are written in
+today's language and have real bodies).
 
 It is not a construct and never was. `tools/specparse.ts` strips the `…` so `{ … }` lexes as an empty
 block — the comment at the line calls it *"a convention of that directory rather than syntax"* — and
 `= …` still fails, because an elided *initialiser* has nowhere to hide. So a fifth of this tree
 depends on a placeholder that the reader has to know about and the grammar does not have, and the
-statement *all fifty-six files parse* is true partly because a tool agrees to ignore something.
+statement *every file parses* is true partly because a tool agrees to ignore something.
 
 Worth saying rather than fixing: the alternative is writing bodies for two dozen methods whose bodies
 are not the point, which is the cost the convention exists to avoid. But it should be a stated

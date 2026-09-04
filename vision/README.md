@@ -57,7 +57,7 @@ derived from the code. Delete it and re-run the tool rather than editing it.
 
 **`GRAMMAR.ebnf`** — the same additions as *productions*, patched over `spec/spec/grammar.md`, and
 the only thing here that a machine can act on. `tools/specparse.ts` applies it and parses every file
-under `vision/` with the result; all fifty-six do. That is the opposite claim from `GRAMMAR.md`'s,
+under `vision/` with the result; every one of them does. That is the opposite claim from `GRAMMAR.md`'s,
 which is a list of what today's parser refuses: **a list of absences cannot say it is complete, and a
 grammar that accepts everything can.** Where the two disagree, this one is checkable and the prose is
 the argument for it.
