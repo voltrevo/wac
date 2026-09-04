@@ -504,7 +504,11 @@ error: `await` needs a ticket, and `5` is an `i32`
 JavaScript accepts any value here, which is what lets a forgotten `async` on the callee compile:
 `await maybePromise` is fine either way and the bug surfaces somewhere else.
 
-**Not yet.**
+**Half done, and the half that is missing is this entry's example.** `await n` for an `i32 n` is
+already refused — `[§wac-await-pending-9km2xtr]`, code 212, *this cannot be awaited*. `await 5` is
+not: it checks clean and fails in the emitter with *a null in a `Pending<i32>` slot*. The refusal
+fires on a name and on nothing else, which is `issues/lang/open/0323a`, found by checking this
+entry.
 
 ---
 
