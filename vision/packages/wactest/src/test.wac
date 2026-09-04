@@ -15,7 +15,7 @@
 // None of that is about testing. It is about a module boundary that could only carry a string.
 
 import { Report } from "./assert.wac";
-import { Ticket } from "core";
+import { Ticket, Result, Map } from "core";
 import { Files, Clock, NotGranted } from "std";
 
 /**

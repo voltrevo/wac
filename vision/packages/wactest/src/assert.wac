@@ -16,7 +16,7 @@
 //
 // See `test.wac` for what a test is now.
 
-import { Vec } from "core";
+import { Vec, Result } from "core";
 import { itoa, itoa64, ftoa } from "@/packages/fmt";
 
 /** One thing that was wrong, kept apart so a reporter can lay it out rather than parse it back. */

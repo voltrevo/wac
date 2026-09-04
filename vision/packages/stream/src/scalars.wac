@@ -9,7 +9,7 @@
 // scalar is not divisible.
 
 import { Result, AsyncGenerator } from "core";
-import { Scalar, decode } from "@/packages/unicode";
+import { Scalar, Decoded, Truncated, Malformed, decode } from "@/packages/unicode";
 
 /** A byte that is not part of any well-formed scalar, and where the stream had got to. */
 export struct NotText { i64 at; }

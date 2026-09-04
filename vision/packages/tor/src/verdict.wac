@@ -25,7 +25,7 @@
 // A third reason would be a third field and a longer ternary, and a caller that forgot the new
 // branch would print a signature count for a document that was never about signatures.
 
-import { Result } from "core";
+import { Result, Bytes } from "core";
 
 /** The document is correctly signed and too old to act on. `until` is when it stopped being current. */
 export struct Stale { string what; i64 until; }
@@ -45,7 +45,20 @@ export union<Stale, NotEnough, Unsigned> Invalid;
  * count on the shipped struct is only ever read on the failing path. That is worth noticing on its
  * own — a field that is meaningless in the success case is a payload in the wrong place.
  */
-export Result<void, Invalid> verify(u8[] consensus, AuthorityCert[] certs, i64 now) { … }
+/*
+ * **`AuthorityCert` is a name this file used and nobody declares**, found 2026-09-04 by the
+ * unresolved-name check. It is a real type in the shipped `packages/tor/src/directory.wac`; this
+ * rewrite copied the signature and not the type, and the two import checks were both satisfied —
+ * one saw `"core"` exists, the other saw `Result` is exported from it, and neither looks at what a
+ * signature *names*.
+ *
+ * Elided rather than declared, because a certificate is a parsed document and this file is about the
+ * verdict. `Bytes` in its place would be worse: the point of the parameter is that these are already
+ * verified authority certificates, which is exactly what a type says and a byte array does not.
+ */
+export struct AuthorityCert { … }
+
+export Result<void, Invalid> verify(Bytes consensus, AuthorityCert[] certs, i64 now) { … }
 
 /**
  * The caller's ternary, as a match.

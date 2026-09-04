@@ -4902,3 +4902,55 @@ both views onto, so `in.setMode(cbreak)` still silently makes every `out.write` 
 wrong. That is the ambient-mode entry, still open, and the reason to keep the two apart is that the
 first was invisible — a symptom that reads as *nobody wrote it* — while the second was written down
 in three files before anybody moved anything.
+
+## A name used in a signature and imported by nobody is caught by nothing
+
+Two checks read this directory's imports. One asks whether the file an import names exists; the other
+asks whether it exports the names asked for. **Neither looks at what a file uses.**
+
+`Vec` appeared in two of `std/platform.wac`'s capability signatures and was never imported. `Child`
+and `Grant` appeared in a third and were declared in a package that `std` cannot import from. Both
+were invisible: the file-level check saw `"core"` and was satisfied, the name-level one read the
+import list and found nothing wrong with it.
+
+A third check — resolve every capitalised name a file *uses* against what it declares, imports, or
+can reach as a bare enum variant — found **eight more files** in a directory the other two had
+passed:
+
+| | |
+|---|---|
+| `fs/src/mount.wac` | `Map`, eight uses, never imported |
+| `http/src/request.wac` | `Result`, and `BadTarget`/`BadVersion`, which exist in its own `./fault.wac` |
+| `quic/src/endpoint.wac` | `Ticket` three times, `AsyncGenerator` |
+| `wactest/src/assert.wac`, `test.wac` | `Result` eight times between them, `Map` three |
+| `stream/src/scalars.wac` | `Decoded`, `Truncated`, `Malformed` — all exported by `@/packages/unicode` |
+| `tor/src/verdict.wac` | `AuthorityCert`, declared nowhere at all |
+| `gzip/src/inflate.wac` | `AsyncGen`, a name for nothing, and `Buf` |
+
+### An invented name stands in for a decision
+
+`AsyncGen<u8[]>` is the one worth the entry. Renaming it to the type that exists turned one
+unresolved name into **two errors it had been hiding**: `AsyncGenerator<Y, R>` takes a yield type
+*and a return type*, and the return type is where a source's failure lives — which that signature had
+no `E` for. So `gunzip` had quietly been declared over a stream that cannot fail, in a package whose
+entire subject is malformed input.
+
+That is the general shape and it is not about spelling. A name that resolves to nothing is usually
+standing in for a question nobody answered, and it type-checks against **whatever the reader
+imagines**, which is always the easy case. The two existing checks are the wrong instrument for it
+because an import list is a statement of intent and a signature is a statement of fact.
+
+### And it surfaced a hole in `core`
+
+`gunzipBytes` is *the whole member, for a caller that has the whole member*, and it needs a stream
+over a value this program already holds. `core` has no way to make one — `Vec.items` is the same idea
+over a container and there is no `once(x)`. Three files want it: this, `@/packages/box/src/cat.wac`
+(which writes the loop twice instead, and cannot write `cat -` as one loop at all), and
+`@/packages/wactest`, which fakes a source by hand.
+
+Four lines, and the failure type is the interesting part: `AsyncGenerator<Y, R>`'s `R` is not
+optional, so a source that cannot fail must still name a failure. `Result<void, never>` is the
+honest answer, and then every consumer's `union<E, …>` acquires an uninhabited arm — so
+**`union<never, Fault>` has to reduce to `Fault`**, or every buffer-in caller in the tree answers a
+union with a member nobody can construct. `never` is *"a type with non-trivial semantics, asserted in
+one doc comment"*; this is the case that makes the assertion load-bearing rather than decorative.

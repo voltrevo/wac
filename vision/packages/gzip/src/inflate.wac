@@ -65,7 +65,8 @@
 // too. `Corrupt` is a separate arm of the union precisely so a caller can still choose the shipped
 // behaviour in one line — `r.orTrap("corrupt gzip member")` — rather than having it chosen for it.
 
-import { Result, Bytes } from "core";
+import { Result, Bytes, AsyncGenerator } from "core";
+import { Buf } from "@/packages/bytes";
 import { Fault, SourceFailed, Corrupt, BadMagic, BadMethod, Truncated,
          ChecksumMismatch, LengthMismatch } from "./fault.wac";
 import { Window } from "./window.wac";
@@ -93,7 +94,17 @@ import { crc32Finish } from "./crc32.wac";
  * `window.wac` — that rule is the price of not copying, and it is a rule a coroutine can state and a
  * callback pair cannot.
  */
-export async gen<Bytes> Result<void, Fault> gunzip(AsyncGen<u8[]> source) {
+export async gen<Bytes> Result<void, union<E, Fault>> gunzip<E>(
+  AsyncGenerator<Bytes, Result<void, E>> source,
+) {
+  // **`AsyncGen<u8[]>` was this parameter's type until 2026-09-04, and it was a name for nothing.**
+  // Renaming it to the real one turned one unresolved name into two errors it had been hiding: the
+  // arity is wrong — `AsyncGenerator<Y, R>` takes a yield type *and a return type* — and the return
+  // type is where a source's failure lives, which this signature had no `E` for. An invented name
+  // does not merely fail to resolve; it stands in for a decision, and here the decision was the
+  // error set. Found by the unresolved-name check, which is the third one this directory has and the
+  // first that reads *uses* rather than import lists.
+  //
   // `BitReader` is unchanged and is declared in the original `inflate.wac`, which this file is the
   // rewrite of — so there is no import for it. There *was* one, from `./bitreader.wac`, a filename
   // I invented: the real BitReader is a struct inside the file, not a module beside it. Caught by
@@ -165,10 +176,28 @@ export async gen<Bytes> Result<void, Fault> gunzip(AsyncGen<u8[]> source) {
  * Not a second decoder — the two entry points collapsed and this is a four-line caller of the one
  * that is left, which is what "a buffer is a one-chunk source" means in practice.
  */
-export async Result<u8[], Fault> gunzipBytes(u8[] gz) {
+export async Result<u8[], union<never, Fault>> gunzipBytes(Bytes gz) {
   Buf b = Buf.create();
-  try await for (Bytes chunk in gunzip(AsyncGen.of(gz))) { b.pushAll(chunk); }
+  try await for (Bytes chunk in gunzip(once(gz))) { b.pushAll(chunk); }
   return Ok(b.bytes());
 }
+
+/**
+ * One chunk, then done — a stream over a value this program already holds.
+ *
+ * **Not in `core`, and it should be.** This is the third thing in the directory to want it:
+ * `@/packages/box/src/cat.wac` needs it for `cat -` and writes the loop twice instead, and
+ * `@/packages/wactest` fakes a source the same way. It is four lines and it belongs beside
+ * `Vec.items`, which is the same idea over a container.
+ *
+ * The failure type is the interesting part. A source that cannot fail has to name a failure anyway,
+ * because `AsyncGenerator<Y, R>`'s `R` is not optional — so `once` answers
+ * `Result<void, never>` and every consumer's `union<E, …>` acquires an uninhabited arm. `never` is
+ * declared for exactly this and `../../../QUESTIONS.md` notes it is *"a type with non-trivial
+ * semantics, asserted in one doc comment"*; this is the case that makes the assertion load-bearing,
+ * since `union<never, Fault>` must reduce to `Fault` or every buffer-in caller answers a union with
+ * a member nobody can construct.
+ */
+async gen<Bytes> Result<void, never> once(Bytes b) { … }
 
 async Result<void, Fault> inflateBlock(BitReader br, Window out, i32 btype) { … }

@@ -31,7 +31,7 @@
 // went missing — which is the same failure `fs` found and a worse instance of it, because a missing
 // method is an omission and a missing shape is a design that cannot be extended into.
 
-import { Result, Bytes } from "core";
+import { Result, Bytes, Ticket, AsyncGenerator } from "core";
 import { NotGranted } from "std";
 
 /** Who a datagram came from. Not a connection: the next one may say something else. */
