@@ -206,10 +206,44 @@ that never return a secret, never mix one with a public value, and never declass
 tested only on its motivating example is untested**, and this is the cleanest instance of that in the
 directory.
 
+## Ten constructs the vetted pages have and the grammar did not
+
+The entry below found three additions in `GRAMMAR.ebnf` that no agreed page mentions, and said the
+grammar was *"a closed list of what vision adds — that is what made it worth writing"*. **That was
+wrong in the other direction and I did not check it.** The grammar was derived from
+`vision/packages/**`, the disposable rewrites, so it was a closed list of what *those* use.
+
+Extracting the 64 ```wac fences from `SHOWCASE.md`, `IDIOMS.md`, `TECHNICAL.md` and `QUESTIONS.md`
+and parsing them found ten constructs on the agreed pages that no rewrite had ever written —
+`vision/GRAMMAR.md` has the table. Two are worth naming here:
+
+**`auto`** is on three of the vetted tiers, and this file already had an entry about *"`auto`
+refusing to widen"*. Its semantics were under discussion while its syntax was in no list of the
+syntax.
+
+**A bare `await`** appears five times, and the operator asked for it directly while `Sys.drain` was
+being worked out — *"I think the ready case needs a bare await."*
+
+Both directions are the same failure and it is not about either list being careless. **A construct
+travels with whoever needed it**: one that arrived by being wanted while writing an example stays on
+the page, one that arrived by a tool refusing something stays in the generated file, and nothing
+carries either across. The grammar and the pages had been describing two different languages for a
+week and everything looked consistent, because nothing had ever compared them.
+
+## A declaration with no initialiser — five uses, refused today, and not obviously proposed
+
+`Ticket<i32> t;`, `Slot s;`, `Vec<Continuation> outer;` in `TECHNICAL.md`, and `i32 n;` is
+`found ';'` in today's compiler. wac has default values and not defaulted declarations.
+
+Left out of `GRAMMAR.ebnf` on purpose, because it is either an eleventh addition nobody wrote down or
+five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothing will ever resolve
+it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
+ask.
+
 ## Three constructs the grammar has and no vetted page mentions
 
-`GRAMMAR.ebnf` is a closed list of what vision adds — that is what made it worth writing — so it can
-be checked against the pages that are *agreed* rather than generated. Every addition was looked for
+`GRAMMAR.ebnf` is a list of what vision adds — see the entry above for how incomplete it was in the
+other direction — so it can be checked against the pages that are *agreed* rather than generated. Every addition was looked for
 in `README.md`, `SHOWCASE.md`, `IDIOMS.md`, `TECHNICAL.md` and `DECISIONS.md`. Three appear in none
 of them:
 

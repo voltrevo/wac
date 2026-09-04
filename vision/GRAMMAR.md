@@ -112,6 +112,52 @@ are here because they are written in the tree, not because anything found them:
 - `fn<void()>` as a type — `core/ticket`, replacing today's `fn[void()]`
 - `\{…}` interpolation inside a string — `server/main`
 
+## And it was a closed list of the wrong thing, for a week
+
+`GRAMMAR.ebnf` was derived from `vision/packages/**` — the disposable rewrites — so it was a closed
+list of what *those* use, not of what vision proposes. Nothing had ever parsed the **vetted pages**.
+
+The 64 ```wac fences in `SHOWCASE.md`, `IDIOMS.md`, `TECHNICAL.md` and `QUESTIONS.md` extracted and
+run through `tools/specparse.ts` found **ten constructs on the agreed pages that no rewrite had ever
+written**, in two rounds — the second round only became visible once the first was fixed, which is
+the ordinary behaviour of a parser and the reason one pass is a lower bound.
+
+| construct | example | pages |
+|---|---|---|
+| a verbatim name | `i32 double(i32 @"n")`, `export void @"test: …"()` | TECHNICAL |
+| a quoted tag | `<"my-widget" />`, `</"label">` | TECHNICAL |
+| a hyphenated attribute | `data-size="8"` | TECHNICAL |
+| a keyword as an attribute | `for={@"for"}` | TECHNICAL |
+| a verbatim name as a tag | `<@"caption">` | TECHNICAL |
+| **`auto`** | `auto got = await …` | SHOWCASE, IDIOMS, QUESTIONS |
+| a bracket literal | `[1, 2, 3]`, `sys.spawn(wasm, [], [Grant.Read])` | SHOWCASE, IDIOMS, TECHNICAL |
+| a `coroutine` expression | `coroutine tick()` | TECHNICAL |
+| **a bare `await`** | `await;` | TECHNICAL ×5 |
+| a brace pattern | `Ok { v }:`, `Err { .. }:` | TECHNICAL |
+| a control-flow arm | `Err(_): continue,` | TECHNICAL |
+| a payload matched by type | `Err(is NotFound):` | TECHNICAL |
+
+**`auto` is the one to notice.** It is on three of the vetted tiers, `QUESTIONS.md` already has an
+entry about *"`auto` refusing to widen"*, so its **semantics** were being discussed while its syntax
+was in no list of the syntax. And the bare `await` was asked for by the operator directly while
+`Sys.drain` was being worked out — *"I think the ready case needs a bare await"* — and appears five
+times.
+
+So the earlier claim on this page, that the grammar is the closed list and the prose is the argument,
+was true of the rewrites and false of the proposal. It is closer to true now, and the way to keep it
+true is that **the pages are a corpus** and something has to read them. 52 of the 64 fences parse;
+six of the rest are fragments — a bare `if`, a bare `this` — and the last five are one thing, below.
+
+## A declaration with no initialiser, used five times and refused today
+
+`Ticket<i32> t;`, `Slot s;`, `Vec<Continuation> outer;` — five fences in `TECHNICAL.md`, and
+`i32 n;` is `found ';'` in today's compiler. wac has default values but not defaulted declarations.
+
+It is **not** in `GRAMMAR.ebnf` and deliberately so, because it could be either an eleventh addition
+nobody wrote down or five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothing
+will ever resolve it` reads as literal, which argues for the first. The point is that **the pages
+cannot tell you which**, and that is what running them is for.
+
 ## There is a machine-readable version of this now, and it parses every file here
 
 `vision/GRAMMAR.ebnf` is the same additions as productions, patched over `spec/spec/grammar.md`, and

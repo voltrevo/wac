@@ -152,3 +152,92 @@ funcref_type   = "fn" , "<" , type , "(" , [ type_list ] , ")" , ">" ;
    gained `string_literal` and `jsx_expr` — so the vision grammar stopped parsing two of its own
    files for a reason that had nothing to do with vision. A patch states what it changes. *)
 primary_expr  += "trap" , [ expr ] ;
+
+(* ── Six more, from the vetted pages rather than from the rewrites ──────────────────────────────
+
+   Everything above was derived from `vision/packages/**`, which made this file a closed list of what
+   the *rewrites* use and not of what vision proposes. Extracting the 64 ```wac fences from
+   `SHOWCASE.md`, `IDIOMS.md`, `TECHNICAL.md` and `QUESTIONS.md` and parsing them found six
+   constructs on the agreed pages that no rewrite had ever written. `auto` is on three of them. *)
+
+(* A verbatim name — `TECHNICAL.md`'s first two entries, and the reason is `for`: an HTML attribute
+   whose name is a wac keyword has to be spellable. `@"n"` and `n` are the same name and the compiler
+   warns about the pointless quoting, so this is a spelling rather than a namespace. *)
+verbatim_name  = "@" , STRING ;
+name           = IDENT | verbatim_name ;
+
+param          = [ "const" ] , [ "secret" ] , type , name ;
+func_decl      = [ "export" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
+                 "(" , [ param_list ] , ")" , ( block | ";" ) ;
+method_decl    = [ "override" ] , [ "async" ] , [ gen_yield ] , type , name , [ type_params ] ,
+                 "(" , [ method_params ] , ")" , ( block | ";" ) ;
+
+(* A quoted tag, and a hyphenated attribute. `<"my-widget" data-size="8" />` is why both exist: a
+   custom element's name is not an identifier and neither is a data attribute's. *)
+jsx_element    = "<" , jsx_tag , { jsx_attr } ,
+                 ( "/" , ">" | ">" , { jsx_child } , "<" , "/" , jsx_tag , ">" ) ;
+jsx_tag        = IDENT | STRING ;
+jsx_attr       = jsx_attr_name , "=" , ( STRING | "{" , expr , "}" ) ;
+jsx_attr_name  = IDENT , { "-" , IDENT } | verbatim_name ;
+
+(* `auto`, on `SHOWCASE.md`, `IDIOMS.md` and `QUESTIONS.md` — the construct with the widest presence
+   on the vetted pages and no presence at all in the grammar until now. `QUESTIONS.md` already has an
+   entry about it refusing to widen, so its *semantics* were being discussed while its syntax was
+   missing. *)
+var_decl       = [ "const" ] , ( type | "auto" ) , IDENT , "=" , expr , ";" ;
+
+(* A bracket literal, on three pages: `const i32[] xs = [1, 2, 3];` and
+   `sys.spawn(wasm, [], [Grant.Read])`. Today that is `i32[](1, 2, 3)`, so this is a rename in the
+   same class as `fn<…>` — and unlike that one it *adds* rather than replaces, since the
+   construction form still parses. *)
+list_literal   = "[" , [ arg_list ] , "]" ;
+
+(* `coroutine tick()` — the expression that makes a `Coroutine` out of a call. `gen<T>` above says a
+   function *is* one; this is how a caller gets a machine rather than running it. *)
+coroutine_expr = "coroutine" , postfix_expr ;
+
+primary_expr  += verbatim_name | list_literal | coroutine_expr ;
+
+(* `Err(is NotFound):` — a payload matched by type rather than bound by name. Two uses, both in
+   `TECHNICAL.md`, and it is the only one of the six that is a new kind of *pattern* rather than a
+   new spelling for something. *)
+binding_list   = binding , { "," , binding } , [ "," ] ;
+binding        = IDENT | "is" , type ;
+
+(* ── Four more, found by the same pass on its second round ──────────────────────────────────────
+
+   Adding the six above let the fences get further and stop somewhere new, which is the ordinary
+   behaviour of a parser and the reason a single pass is a lower bound. Ten in total, from pages that
+   nothing had ever read. *)
+
+(* A **bare `await`** — five fences in `TECHNICAL.md`, and the operator asked for it directly while
+   `Sys.drain` was being worked out: *"I think the ready case needs a bare await."* A suspension
+   point with no operand, where `await c.t` with a null ticket is the same thing written long. *)
+unary_expr     = ( "-" | "!" | "~" ) , unary_expr
+               | ( "++" | "--" ) , unary_expr
+               | "await" , [ unary_expr ]
+               | "try" , unary_expr
+               | postfix_expr ;
+
+(* A **brace pattern**: `Ok { v }:` binds by field name and `Err { .. }:` ignores the rest. The
+   parenthesised form binds by position, so these are two pattern languages and only one of them was
+   written down. *)
+match_arm      = [ "case" ] , IDENT , [ arm_payload ] , ":" , { statement }
+               | ( "else" | "default" ) , ":" , { statement } ;
+match_value_arm = ( [ "case" ] , IDENT , [ arm_payload ] | "else" | "default" ) , ":" , arm_value ;
+arm_payload    = "(" , [ binding_list ] , ")" | "{" , field_pattern , "}" ;
+field_pattern  = ".." | IDENT , { "," , IDENT } , [ "," , ".." ] , [ "," ] ;
+
+(* **A control-flow arm.** `Err(_): continue,` in a `match` used as an expression — the arm produces
+   no value and leaves the loop instead, which is the same shape as `trap` in an arm and needs the
+   same permission. `break` and `return` are here because refusing them would be a rule with no
+   reason rather than a smaller change. *)
+arm_value      = expr | "continue" | "break" | "return" , [ expr ] ;
+
+(* A verbatim name as a tag, and a keyword as an attribute name. `<@"caption">` is the third spelling
+   in `TECHNICAL.md`'s own three-way comparison, and `for={…}` is the attribute the `@"for"` entry
+   exists for — the parameter needs quoting and the attribute does not, which is the whole point and
+   is why `jsx_attr_name` has to admit a keyword. *)
+jsx_tag        = IDENT | STRING | verbatim_name ;
+jsx_attr_name  = IDENT , { "-" , IDENT } | verbatim_name | keyword_as_name ;
+keyword_as_name = "for" | "if" | "is" | "as" | "in" | "match" | "return" | "const" | "this" ;

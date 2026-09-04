@@ -143,7 +143,11 @@ function scanString(src: string, at: number, fromBrace = false): { end: number; 
  */
 function startsTag(src: string, at: number): boolean {
   const n = src[at + 1];
-  return n !== undefined && (/[A-Za-z_]/.test(n) || n === "/" || n === ">");
+  // `"` because a tag name may be quoted — `<"my-widget" …>`, `vision/TECHNICAL.md`'s first entry.
+  // A custom element's name is not an identifier, so the spec's rule *"a `<` followed by neither a
+  // name nor `/` is text"* needs a third case in the vision dialect. Harmless for the spec grammar:
+  // `a < "b"` is a comparison against a string, which is a type error rather than a parse.
+  return n !== undefined && (/[A-Za-z_]/.test(n) || n === "/" || n === ">" || n === '"');
 }
 
 /**
