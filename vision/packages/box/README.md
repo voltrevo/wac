@@ -3,9 +3,23 @@
 Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does not compile,
 disposable.
 
-The real package is `packages/box`: 7,502 lines, 63 applets, a dispatcher. **Nothing is rewritten.**
-`head` is `head`. What is here is what 63 programs measure about *no ambient capabilities*, which no
-single package could.
+The real package is `packages/box`: 7,502 lines, 63 applets, a dispatcher. It began as *nothing
+rewritten* — `head` is `head`, and what is here is what 63 programs measure about *no ambient
+capabilities*, which no single package could.
+
+**Three applets have since been written, and none of them for their own sake.** Each turned out to be
+the first code anywhere to use a capability that had been designed and never consumed, which is why
+they are here rather than in the fifty-eight that would have said nothing new:
+
+| | first consumer of | and it found |
+|---|---|---|
+| [`src/echo.wac`](src/echo.wac) | `Out` | the narrowest signature in the box: `echo(Out, Args)` against `(Core, Cli, Fs, Args)` |
+| [`src/cat.wac`](src/cat.wac) | `In`, then `Files.open`, then `In.stream` | three versions of one complaint; only reframing `In` as a stream fixed it |
+| [`src/tee.wac`](src/tee.wac) | `Files.create` | the applet whose shipped header says it cannot be written |
+
+`tee` is the one to read. Its shipped header — *"the one applet that still buffers by nature rather
+than for want of an API"* — is the projections audit arriving from the other end, six weeks earlier,
+written up as a property of `tee` rather than of the capability it comes from.
 
 ---
 
@@ -92,6 +106,19 @@ a module and negotiated outside one, and this package is where the two meet.
 
 ## What could not be written
 
-**Nothing new.** Lambdas, `Map`, `fn<…>` are all already proposed. The finding here is a
-measurement, not a missing construct — and after twelve packages the measurements are turning up
-more than the constructs are.
+**Nothing new** from the measurement. Lambdas, `Map`, `fn<…>` are all already proposed. The finding
+there is a measurement, not a missing construct — and after twelve packages the measurements were
+turning up more than the constructs were.
+
+The three applets added later each found something and each is written up where it happened rather
+than repeated here: `cat` on why *sum versus sentinel* was a question about the wrong thing, and
+`tee` on `defer` being two unanswered questions, on a write failure that can only be reported as
+`NotGranted` when the real cause is a full disk, and on `tee -a` — **the first gap this exercise has
+found where projecting the host faithfully reproduces a real hole** rather than narrowing one. There
+is no append anywhere: `openOut` truncates deliberately and the host has none.
+
+And a fourth thing, which is about this directory rather than about the language. `["-"]` — a
+one-element list literal — is what `cat` wants and cannot have, so it keeps a four-line branch. That
+is the first line in nine days to want a construct the grammar has carried on the strength of
+appearing on a page, and it took writing a third applet to produce it. **The measurements stopped
+being the productive half once the capabilities started being consumed.**
