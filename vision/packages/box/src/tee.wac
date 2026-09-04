@@ -55,7 +55,7 @@ export async i32 tee(Out out, In in, Files files, Args a) {
     match (files.create(name)) {
       Ok(sink): { sinks.push(sink); }
       Err(_): {
-        out.writeErr("tee: \{name}: cannot write\n".toBytes());
+        _ = out.writeErr("tee: \{name}: cannot write\n".toBytes());
         await closeAll(sinks);
         return 1;
       }
@@ -63,7 +63,7 @@ export async i32 tee(Out out, In in, Files files, Args a) {
   }
 
   try await for (Bytes chunk in in.stream()) {
-    out.write(chunk);
+    _ = out.write(chunk);
     for (Sink s in sinks.items()) { await s.write(chunk); }
   }
 

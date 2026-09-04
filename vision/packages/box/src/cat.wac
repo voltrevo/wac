@@ -60,7 +60,7 @@ export async i32 cat(Out out, In in, Files files, Args a) {
     match (files.open(name)) {
       Ok(source): { await copy(out, source); }
       Err(_): {
-        out.writeErr("cat: \{name}: cannot read\n".toBytes());
+        _ = out.writeErr("cat: \{name}: cannot read\n".toBytes());
         status = 1;
       }
     }
@@ -70,7 +70,7 @@ export async i32 cat(Out out, In in, Files files, Args a) {
 
 /** One source to standard output. */
 async void copy(Out out, AsyncGenerator<Bytes, Result<void, NotGranted>> source) {
-  try await for (Bytes chunk in source) { out.write(chunk); }
+  try await for (Bytes chunk in source) { _ = out.write(chunk); }
 }
 
 // ## What could not be written

@@ -36,7 +36,7 @@ async bool one(Out out, In in, Files files, string name) {
   match (files.open(name)) {
     Ok(source): { return await pump(out, source, name); }
     Err(_): {
-      out.writeErr("gunzip: \{name}: cannot read\n".toBytes());
+      _ = out.writeErr("gunzip: \{name}: cannot read\n".toBytes());
       return false;
     }
   }
@@ -55,19 +55,19 @@ async bool pump(Out out, AsyncGenerator<Bytes, Result<void, Fault>> source, stri
     Ok(_): { return true; }
     // Somebody else's disk. A caller may retry this and the message says so.
     Err(is SourceFailed): {
-      out.writeErr("gunzip: \{name}: read failed\n".toBytes());
+      _ = out.writeErr("gunzip: \{name}: read failed\n".toBytes());
       return false;
     }
     // A statement about the archive. Retrying reads the same bad bytes.
     Err(is Corrupt): {
-      out.writeErr("gunzip: \{name}: not in gzip format\n".toBytes());
+      _ = out.writeErr("gunzip: \{name}: not in gzip format\n".toBytes());
       return false;
     }
   }
 }
 
 async Result<void, Fault> drain(Out out, AsyncGenerator<Bytes, Result<void, Fault>> source) {
-  try await for (Bytes chunk in gunzip(source)) { out.write(chunk); }
+  try await for (Bytes chunk in gunzip(source)) { _ = out.write(chunk); }
   return Ok;
 }
 

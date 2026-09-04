@@ -67,7 +67,7 @@ export async Result<Exit, NotGranted> pipeline(
 
   // The last stage's output is the pipeline's, and draining it is what makes every earlier stage
   // run at all — nothing above has executed yet.
-  try await for (Bytes chunk in flowing) { out.write(chunk); }
+  try await for (Bytes chunk in flowing) { _ = out.write(chunk); }
   return Ok(lastOf(ends));
 }
 

@@ -25,6 +25,6 @@ export i32 echo(Out out, Args a) {
     line = line + sep + a.operands[i];
     sep = " ";
   }
-  out.write((noNewline ? line : line + "\n").toBytes());
+  _ = out.write((noNewline ? line : line + "\n").toBytes());
   return 0;
 }

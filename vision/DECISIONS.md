@@ -33,8 +33,19 @@ reads as one settled rule and is four claims with four different statuses:
                    within a pattern" — landed, and 68 uses across 16 shipped files
     a parameter    not in the spec, and **zero** uses in the tree or in `vision/`
     a local        not in the spec, and zero uses — `i32 _ = f();`, the example this entry
-                   leads with, has never been written anywhere
+                   leads with, had never been written anywhere
     reading fails  not in the spec at all, and it is the half this entry says matters
+
+**The local form got its first ten users the same week, and the case is exactly the one above.**
+`Out.write` now answers `Result<void, WriteStopped>` — a closed pipe is not a failure and a full disk
+is, so the distinction had to be in the return — and ten call sites in `@/packages/box` and
+`@/packages/sh` do not act on it, because a filter writing to a closed pipe is `yes | head -1` and
+should exit 0. They are written `_ = out.write(chunk);`.
+
+That is *"call this and throw the answer away, in the place where the answer would otherwise have
+gone"* — this entry's own sentence, arriving from a capability that had to grow a `Result` for an
+unrelated reason. A discarded `bool` needed no mark; a discarded `Result` does, and the construct was
+waiting.
 
 So the lifecycle rule at the top of this file — *deleted once it reaches `spec/`* — has no way to
 fire on an entry like this, because a quarter of it landed. That is worth more than the audit: **the
