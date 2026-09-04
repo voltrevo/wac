@@ -15,6 +15,11 @@ rebuilt — so where a program runs stops being something the program knows.
 Enough language to write the stack in rather than a program on top of one: the compiler that
 compiles it, the shell that runs it, the cryptography that carries it.
 
+Reject cute code that hides bad edge cases. A convenience that does the right thing in the common
+case does the wrong thing silently in the rest: `async` does not adopt a ticket the body returned,
+`await` does not take a non-ticket, `T?` does not flatten. Each of those is another language being
+helpful, and each one turns a mistake into a program that runs.
+
 ---
 
 ---
