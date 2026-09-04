@@ -9,8 +9,8 @@
 // scheduling, and the loop goes straight back to accepting. One slow client does not hold the door,
 // and nothing here mentions a task, a pool or an executor.
 
-import { Sys, Socket, Listener, Read, NotGranted } from "std/platform.wac";
-import { Buf } from "@/packages/bytes/src/buf.wac";
+import { Sys, Socket, Listener, Read, NotGranted } from "std";
+import { Buf } from "@/packages/bytes";
 import { Served, serve } from "./serve.wac";
 
 export async i32 main(Sys sys) {

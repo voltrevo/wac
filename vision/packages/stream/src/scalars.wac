@@ -8,7 +8,8 @@
 // That is the whole redesign. `await for (i32 c in scalars(src))` cannot straddle anything, because a
 // scalar is not divisible.
 
-import { Scalar, decode } from "@/packages/unicode/src/utf8.wac";
+import { Result, AsyncGenerator } from "core";
+import { Scalar, decode } from "@/packages/unicode";
 
 /** A byte that is not part of any well-formed scalar, and where the stream had got to. */
 export struct NotText { i64 at; }

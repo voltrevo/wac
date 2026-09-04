@@ -3,7 +3,7 @@
 // The byte-level work is the original's and is not repeated here — the RFC does not change because
 // the language did. What changed is the shape of the answer and where the shared helpers live.
 
-import { Bytes } from "core/slice.wac";
+import { Bytes } from "core";
 import { Headers } from "./headers.wac";
 import { RequestFault, BadRequestLine, BadMethod, TooLarge } from "./fault.wac";
 import { findCrlf, isDigit, isToken } from "./bytes.wac";

@@ -4,8 +4,8 @@
 // subnormals and the boundary cases where a power of two's lower neighbour is half as far away as
 // its upper one, and none of that moved because the language did.
 
-import { Vec } from "core/vec.wac";
-import { Buf } from "@/packages/bytes/src/buf.wac";
+import { Vec } from "core";
+import { Buf } from "@/packages/bytes";
 
 /**
  * What a double is, once the bits are read.

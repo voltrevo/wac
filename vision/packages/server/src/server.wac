@@ -1,0 +1,6 @@
+// The package, as one name.
+//
+// `serve` is the whole public surface: a protocol as a pure function, testable by calling it.
+// `main` is an entry point rather than an export — nothing imports a program.
+
+export { Served, serve } from "./serve.wac";

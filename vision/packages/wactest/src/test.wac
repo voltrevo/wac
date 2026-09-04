@@ -15,8 +15,8 @@
 // None of that is about testing. It is about a module boundary that could only carry a string.
 
 import { Report } from "./assert.wac";
-import { Ticket } from "core/ticket.wac";
-import { Sys } from "std/platform.wac";
+import { Ticket } from "core";
+import { Sys } from "std";
 
 /**
  * A test is a function that takes what it needs and answers a `Report`.

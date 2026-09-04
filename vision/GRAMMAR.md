@@ -30,25 +30,32 @@ file where a `for … in` comes before any other divergence, and the tool found 
 
 ## What the tool reports
 
+    vision/core/core.wac                           ^ found '{'
     vision/core/coroutine.wac                      ^ expected '{', found ';'
     vision/core/result.wac                         ^ expected '>', found '='
+    vision/core/slice.wac                          ^^^^^ found 'items'
     vision/core/ticket.wac                         ^ expected '{', found ';'
     vision/core/vec.wac                            ^^^^^ found 'items'
+    vision/packages/fmt/src/fmt.wac                ^ found '{'
     vision/packages/http/src/fault.wac             ^ expected '(', found ';'
+    vision/packages/http/src/http.wac              ^ found '{'
     vision/packages/http/src/request.wac           ^^ found 'Ok'
     vision/packages/json/src/json.wac              ^^^^^ expected ')', found 'parse'
     vision/packages/json/src/parse.wac             ^^^^ expected ';', found 'this'
     vision/packages/json/src/value.wac             ^^^ found 'Str'
     vision/packages/server/src/main.wac            ^^^ found 'Err'
-    vision/packages/server/src/serve.wac           ^^^^^^^^^^ found 'Incomplete'
+    vision/packages/server/src/serve.wac           ^ found ','
+    vision/packages/server/src/server.wac          ^ found '{'
     vision/packages/stream/src/scalars.wac         ^^^^ expected '>', found 'void'
+    vision/packages/stream/src/stream.wac          ^ found '{'
     vision/packages/stream/src/transform.wac       ^^^^ expected '>', found 'void'
     vision/packages/url/src/query.wac              ^^ expected '=', found 'in'
     vision/packages/wactest/src/assert.wac         ^^ found 'Ok'
     vision/packages/wactest/src/test.wac           ^^^^^ found 'async'
+    vision/packages/wactest/src/wactest.wac        ^ found '{'
     vision/std/platform.wac                        ^^^^^ found 'async'
 
-Eight distinct constructs:
+Nine distinct constructs:
 
 | construct | example | where it bit |
 |---|---|---|
@@ -60,6 +67,7 @@ Eight distinct constructs:
 | `try` in expression position | `try this.value()` | `json/json`, `json/parse` |
 | `for … in` | `for (Param p in q.params.items())` | `url/query` |
 | `async` as a member modifier | `async Read recv(this);` | `wactest/test`, `std/platform` |
+| re-export | `export { Vec } from "./vec.wac";` | every barrel |
 
 **`static` is not one of them, and was listed here in error.** A method with no `this` parameter *is*
 static in wac today — `spec/spec/structs.md` says so and `Vec.create()` is how the real `core` writes
@@ -78,7 +86,7 @@ are here because they are written in the tree, not because anything found them:
 - `const i64 MAX_BODY = 1 << 20;` at module scope — four packages
 - `export union<A, B> Fault;` and `export Slice<u8> Bytes;` — one form for naming a type, whether it
   is a union or an instantiation
-- `export { itoa } from "./itoa.wac";` — re-export, which `wac-mono 0072` is already open about
+- `@/packages/http` naming a directory rather than a file in it
 - `T??` and `null as T?` — `url/query.wac`, where a parameter is absent, present with no value, or
   present with a value, and the standard keeps the last two apart. Its `get` returns
   `p.value is null ? (null as u8[]?) : formDecode(p.value!)`, which is the middle state written in

@@ -1,11 +1,10 @@
 // The public surface.
 
-import { Result } from "core/result.wac";
-import { Bytes } from "core/slice.wac";
+import { Result, Bytes } from "core";
 import { JsonValue } from "./value.wac";
 import { Parser, ParseError } from "./parse.wac";
 import { writeValue } from "./stringify.wac";
-import { Buf } from "@/packages/bytes/src/buf.wac";
+import { Buf } from "@/packages/bytes";
 
 /** The tree, or where and why it is not JSON. */
 export Result<JsonValue, ParseError> parse(Bytes src) {

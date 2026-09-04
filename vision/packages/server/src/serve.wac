@@ -10,11 +10,10 @@
 // server that answers correctly but is wrong about where the request ended will read the next
 // request's first bytes as the tail of this one.
 
-import { Bytes } from "core/slice.wac";
-import { Parsed, Request, parseRequest } from "@/packages/http/src/request.wac";
-import { RequestFault, TooLarge } from "@/packages/http/src/fault.wac";
-import { Response, write } from "@/packages/http/src/response.wac";
-import { eqFold } from "@/packages/http/src/headers.wac";
+import { Bytes } from "core";
+import {
+  Parsed, Request, parseRequest, RequestFault, TooLarge, Response, write, eqFold,
+} from "@/packages/http";
 import { route } from "./routes.wac";
 
 /** The largest body this accepts. A larger one is refused with 413 rather than buffered. */

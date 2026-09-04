@@ -1,0 +1,14 @@
+// A hash map.
+//
+// Only the surface a rewritten package reached for — `json` wants one for an object's lazy index.
+// The real `core/map.wac` is unchanged apart from the two signatures below, and is not copied here.
+
+export struct Map<K, V> {
+  Map<K, V> create() { … }
+
+  /** The value, or nothing. Absence is the type — the same rule as `Vec.pop`. */
+  V? get(const this, K key) { … }
+
+  void put(this, K key, V value) { … }
+  i32 len(const this) { … }
+}

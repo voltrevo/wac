@@ -7,9 +7,10 @@
 //
 // The chunk-boundary problem lives in `scalars.wac` and nowhere else.
 
+import { Result, AsyncGenerator } from "core";
 import { scalars, NotText } from "./scalars.wac";
-import { toUpper } from "@/packages/unicode/src/case.wac";
-import { Buf } from "@/packages/bytes/src/buf.wac";
+import { toUpper } from "@/packages/unicode";
+import { Buf } from "@/packages/bytes";
 
 /** Bytes accumulated before a chunk is handed on. Small enough to stay interactive. */
 const i32 CHUNK = 4096;

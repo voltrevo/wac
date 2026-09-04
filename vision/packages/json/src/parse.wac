@@ -5,9 +5,7 @@
 // remember to look somewhere else, and one that forgets gets "not JSON" for a document that was
 // three bytes too short. Here the reason *is* the answer.
 
-import { Result } from "core/result.wac";
-import { Vec } from "core/vec.wac";
-import { Bytes } from "core/slice.wac";
+import { Result, Vec, Bytes } from "core";
 import { JsonValue, JsonObject, JsonMember } from "./value.wac";
 
 /** Where in the input, and what was wrong with it. */

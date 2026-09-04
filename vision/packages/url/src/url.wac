@@ -4,8 +4,7 @@
 // standard did not move because the language did. What changes is the three places this file says
 // *none* and has to spell it as something else.
 
-import { Result } from "core/result.wac";
-import { Vec } from "core/vec.wac";
+import { Result, Vec } from "core";
 import { Host } from "./host.wac";
 
 /**

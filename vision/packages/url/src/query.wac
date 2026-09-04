@@ -19,8 +19,7 @@
 // `packages/server`'s `queryToJson` is what that costs today: it emits `"a": ""` for both spellings,
 // so a round trip through it loses the distinction the parser was careful to keep.
 
-import { Vec } from "core/vec.wac";
-import { Bytes } from "core/slice.wac";
+import { Vec, Bytes } from "core";
 import { decode as pctDecode } from "./percent.wac";
 
 /**

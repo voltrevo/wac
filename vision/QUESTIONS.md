@@ -205,17 +205,30 @@ rather than its name, which replaces `test` as a string convention that nothing 
 doing it to a module it loaded. *The compiler is a library* is the neighbouring claim and it is
 about compiling rather than reflecting.
 
-## Re-export
+## Re-export and package entry points — taken, in the barrels
 
-`vision/packages/fmt/src/fmt.wac` is a barrel and cannot be written. The real package's header says
-why and what it costs: *"wac has no re-export — importing a symbol from a file that merely imports
-it is a compile error — so unifying them means editing the import line of all forty-odd wac test
-files that use them […] wac-mono 0072."* So `itoa64` and `utoa64` exist twice, in `packages/fmt` and
-`packages/wactest`, and everyone agrees the second is a duplicate.
+`wac-mono 0072` is already open about the cost: `itoa64` and `utoa64` exist twice because unifying
+them touches forty import lines, and *"wac has no re-export — importing a symbol from a file that
+merely imports it is a compile error."*
 
-This is the only gap in seven packages the repository had **already filed an issue about**, which
-makes it a different kind of finding: not something the exercise noticed, but something it can say
-belongs in the language rather than in a mechanical edit waiting for a quiet moment.
+**The mechanism half-exists and the existing half is the wrong one to generalise.**
+`import { Read } from "core";` works today because `core` is a built-in whose root aggregates every
+file's exports. Aggregation gives a package no internal level: `export` marks what leaves a *file*,
+so a helper two files both need has to be exported, and exporting it makes it public. `http`'s
+`findCrlf` is that exact trade — duplicated between two files in the original rather than shared,
+because *"neither wanted to export a helper the other would then depend on."* A duplicate chosen
+over a leak.
+
+So every package here has an explicit barrel instead, and imports name the package
+(`@/packages/http`) rather than a file inside it. Two things follow that want review:
+
+- **A directory resolves to an entry point.** `@/packages/http` finds `src/http.wac` by convention.
+  Nothing says whether that is a convention or a manifest field.
+- **The barrel is a judgement and records one.** `http`'s exports `eqFold` and does not export
+  `isToken`: comparing a field value case-insensitively is something a caller does, recognising a
+  tchar is not. Writing the list is what forces that decision to be made once rather than by
+  whoever happens to import first — and it caught a real leak, since `server` was importing
+  `eqFold` through a path that had never offered it.
 
 ## Whether interpolation reverses a decision somebody made on purpose
 

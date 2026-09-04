@@ -13,8 +13,7 @@
 // A union would also need primitives as members — open in `vision/QUESTIONS.md` — and would box the
 // two hottest cases in the language's most-parsed format.
 
-import { Vec } from "core/vec.wac";
-import { Map } from "core/map.wac";
+import { Vec, Map } from "core";
 
 export enum JsonValue {
   Null,

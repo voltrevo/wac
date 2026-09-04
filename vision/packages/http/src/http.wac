@@ -1,0 +1,15 @@
+// The package, as one name.
+//
+// `findCrlf` and `isToken` are **not** here, and that is the point of the barrel being a list. Both
+// live in `bytes.wac` and are exported so that `request.wac` and `incoming.wac` can share them;
+// neither belongs to anyone outside this directory. The original had no way to say that, so it
+// duplicated them instead — its header says *"neither wanted to export a helper the other would
+// then depend on"*, which is a duplicate chosen over a leak.
+
+export { Request, Parsed, parseRequest } from "./request.wac";
+export { Response, statusHasBody, write } from "./response.wac";
+// `eqFold` is here and `isToken` is not, which is the judgement a barrel exists to record:
+// comparing a field value case-insensitively is something a caller of this package does, and
+// recognising a tchar is not.
+export { Headers, eqFold } from "./headers.wac";
+export { RequestFault, ResponseFault, TooLarge, BadStatus } from "./fault.wac";

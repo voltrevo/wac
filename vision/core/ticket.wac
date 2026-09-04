@@ -117,7 +117,12 @@ struct AnyOf<T> : Ticket<T> {
   }
 }
 
-/** Answers when every one of them has. The losers of an `any` are not cancelled; there is no such thing. */
+/**
+ * Answers when every one of them has.
+ *
+ * The losers of an `any` are not cancelled, because there is no such thing — they carry on as
+ * ordinary unawaited work and whoever holds their tickets can still drive them.
+ */
 export Ticket<T[]> all<T>(Ticket<T>[] parts) { return AllOf<T>(parts); }
 
 /** Answers with the first to settle. The others keep going as ordinary unawaited work. */

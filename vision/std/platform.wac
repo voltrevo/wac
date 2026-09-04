@@ -6,9 +6,7 @@
 // a test hands a fake one, and any code that assumed there was only one would be wrong in a way
 // that reads correct.
 
-import { Ticket, TicketBase, Continuation } from "core/ticket.wac";
-import { Result } from "core/result.wac";
-import { Queue } from "core/queue.wac";
+import { Ticket, TicketBase, Continuation, Result, Queue } from "core";
 
 /** A capability the grant did not include. */
 export struct NotGranted { string what; }

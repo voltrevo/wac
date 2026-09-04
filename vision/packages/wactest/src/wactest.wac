@@ -1,0 +1,4 @@
+// The package, as one name.
+
+export { T, Report, Failure } from "./assert.wac";
+export { FakeSys, checkRefused } from "./test.wac";

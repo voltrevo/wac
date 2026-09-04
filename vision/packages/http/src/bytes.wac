@@ -8,7 +8,7 @@
 // That is worth saying because it is *not* a language finding. It is the one thing in this package
 // a rewrite fixes for free, and the redesign gets no credit for it.
 
-import { Bytes } from "core/slice.wac";
+import { Bytes } from "core";
 
 /** The index of the next CRLF at or after `at`, or null if the buffer does not have one yet. */
 export i32? findCrlf(Bytes s, i32 at) {

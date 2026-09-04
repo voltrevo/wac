@@ -1,0 +1,24 @@
+// The package, as one name.
+//
+// `import { Vec } from "core";` today already works, and the spec says how: *"The root is what
+// `core` names"* — the tree's surface is the union of every file's exports, assembled by the
+// compiler because `core` is a built-in it carries.
+//
+// **That mechanism exists and is the wrong one to generalise.** Aggregation gives a package no way
+// to have an internal name: `export` marks what leaves a *file*, so a helper two files in a package
+// both need must be exported, and exporting it puts it in the package's public surface whether
+// anybody wanted that or not. `packages/http`'s `findCrlf` is exactly this — duplicated between two
+// files in the original rather than shared, and the header says why: *"neither wanted to export a
+// helper the other would then depend on."* A duplicate chosen over a leak.
+//
+// An explicit barrel is the fix and it is one line longer. The file lists what the package offers;
+// anything a file exports and the barrel does not name is visible to its neighbours and to nobody
+// else. Two levels of visibility, which is what a package is.
+
+export { Result } from "./result.wac";
+export { Vec } from "./vec.wac";
+export { Map } from "./map.wac";
+export { Queue } from "./queue.wac";
+export { Slice, Bytes } from "./slice.wac";
+export { Ticket, TicketBase, Continuation, Circular, Stuck, all, any } from "./ticket.wac";
+export { Coroutine, Generator, AsyncGenerator, Step } from "./coroutine.wac";
