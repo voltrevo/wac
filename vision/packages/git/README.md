@@ -124,8 +124,29 @@ root one is silently wrong on exactly the paths the nested file exists for.
 
 That is different from every other ordering finding here. `@/packages/http`'s header order *is* the
 data and cannot be derived. This one is derived, its inputs are in the elements, and the caller is
-asked to do the derivation by hand — a **constructor that should exist and does not**, because
-`Vec<T>` is right there and takes anything.
+asked to do the derivation by hand.
+
+### And this package answers the same question correctly one file away
+
+Swept `packages/` for functions taking a list whose doc mentions order: 101, mostly `u8[]` where
+*order* means endianness. Three take a list of structs whose required order is a function of a field,
+and they answer three different ways — one of them in this package:
+
+- `wacpkg/src/lock.wac`'s `writeLock` **sorts internally**: `LockEntry[] sorted = sortedByName(entries);`
+  and a caller cannot get it wrong.
+- `git/src/tree.wac`'s `writeTree` **deliberately does not**, and says why: *"sorting is a decision
+  about what the caller meant … a caller that has entries from a parsed tree already has them in that
+  order. Re-sorting here would silently rewrite a tree that round-tripped."*
+- `ignored` asks the caller and checks nothing.
+
+`writeTree` is right, and it makes the rule: **derivable does not mean should be derived.** A
+*canonical* order — one right answer, fixed by the format — belongs to the callee, which is
+`writeLock`. A *preserved* order — where the input's order is itself data — must stay the caller's,
+which is `writeTree`, and re-deriving it would mean re-implementing git's exact comparison where
+being slightly wrong rewrites a tree silently.
+
+Git's ignore precedence is canonical. `base` is already a field. So `ignored` is the first kind
+behaving like the second — one of three, and the only one whose doc does not say which kind it is.
 
 ### And `bool` for three outcomes
 

@@ -5433,11 +5433,38 @@ deriving it are in the elements, and the caller is asked to do the derivation by
 list-ordering problem at all. It is a **constructor that should exist and does not**, and the reason
 it does not is that `Vec<T>` is right there and takes anything.
 
-Two questions follow and only the first is about the language:
+### Counted, and the answer is a rule rather than a feature
 
-- **Is there a cheap way to say *this list is sorted by this key*?** A `Sorted<T, K>` is a library
-  type and needs the same thing `@/packages/crypto`'s `Digest32` needs — a constructor nobody else
-  can call — which is the private-constructor entry for the fourth time.
-- **How often is a required order derivable?** Nobody has counted, and the answer decides whether
-  this is one package's bug or a shape. The greppable version: a function taking a `Vec<T>` whose doc
-  says *order matters* and whose `T` has a field the order is a function of.
+Swept `packages/` for functions taking a list whose doc mentions order — 101, most of them `u8[]`
+where *order* means endianness. Three take a list of **structs whose required order is a function of
+a field**, and they answer the question three different ways:
+
+| | who puts them in order | and |
+|---|---|---|
+| `git/src/ignore.wac`'s `ignored` | the caller, by contract | nothing checks it |
+| `wacpkg/src/lock.wac`'s `writeLock` | the callee — `LockEntry[] sorted = sortedByName(entries);` | a caller cannot get it wrong |
+| `git/src/tree.wac`'s `writeTree` | the caller, **deliberately** | with a reason, and the reason is right |
+
+`writeTree`'s reason is what settles it:
+
+> The entries are written in the order given. This does **not** sort them, because sorting is a
+> decision about what the caller meant: git's order is by raw name with a subtree treated as though
+> its name ended in `/`, and a caller that has entries from a parsed tree already has them in that
+> order. Re-sorting here would silently rewrite a tree that round-tripped.
+
+So **derivable does not mean should be derived**, and the deciding fact is not the type system:
+
+- **A canonical order** — one right answer, fixed by the format — should be derived by the callee.
+  `writeLock` does. A caller that hands over an unsorted list is not saying anything.
+- **A preserved order** — the input's order is itself data — must not be. `writeTree` keeps it, and
+  re-deriving would mean re-implementing git's exact comparison, where being slightly wrong silently
+  rewrites a tree that had round-tripped.
+
+`ignored` is the first kind and behaves like the second. Git's precedence — *deeper file wins, then
+later line wins* — is canonical, `base` is already a field, and the caller is asked to do it anyway.
+**One of three, and it is the one where the order is canonical and the callee declines it.**
+
+Which means the ask is not `Sorted<T, K>` and not a private constructor. It is a question a reviewer
+can put to any function taking a list: **is this order canonical or preserved, and does the code
+agree with the answer?** Two of the three say which in their doc. The one that does not is the one
+that is wrong.
