@@ -1,7 +1,33 @@
 // A hash map.
 //
 // Only the surface a rewritten package reached for — `json` wants one for an object's lazy index.
-// The real `core/map.wac` is unchanged apart from the two signatures below, and is not copied here.
+// The real `core/map.wac` is unchanged apart from the signatures below, and is not copied here.
+//
+// ## `create()` takes nothing here and takes two funcrefs there, and that contradicts `DECISIONS.md`
+//
+// Found 2026-09-04 by auditing the decisions. The shipped signature is
+// `Map<K, V> create(fn[i32(K)] hash, fn[bool(K, K)] eq)` — the caller supplies both, and
+// `core/map.wac`'s header says why: *"`Map<K, V>` takes its hash and equality as funcrefs rather than
+// requiring anything of K, because wac has no traits and no constraints on type parameters."*
+//
+// This file wrote `create()` and said it had changed only the nullability of `get` and `pop`. A
+// `create` with no hash argument can only mean **the language hashes `K` for you** — which is
+// precisely what `../DECISIONS.md` settles that it does not:
+//
+// > `is` on two references is `ref.eq` and costs nothing. Identity hashing is not free … A type that
+// > wants to be a hash key carries the field itself.
+//
+// So the decision and this file disagree, and `@/packages/quic` obeyed the decision while this
+// abolished it: its `Router` hashes a connection id to a `u64` and keys on that, calling it *"the
+// first place in nineteen subjects where that decision has cost anything"*. It cost `quic` something
+// because `quic` read the decision; it cost the four callers of this `Map` nothing because this
+// silently granted what the decision refuses.
+//
+// **Not fixed here, because which of the two is right is a real question.** Restoring the funcrefs
+// makes every call site carry two arguments that are the same two functions almost every time —
+// `hashBytes` and `bytesEq` — which is the noise `core/hash.wac` exists to reduce and does not
+// remove. Keeping `create()` needs a story for where the hash comes from, and *no traits* is the
+// reason there is none. `../QUESTIONS.md` has it.
 
 export struct Map<K, V> {
   Map<K, V> create() { … }

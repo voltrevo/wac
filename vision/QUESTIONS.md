@@ -2476,3 +2476,44 @@ So the honest form of *which host supplies what* is not a table of sets. It is:
 
 The third is the one to settle, and it is not a vision question — it is `design/system/0001` D6's,
 which the second comment cites and the first one contradicts.
+
+## `Map.create()` takes nothing here and two funcrefs in the tree, which contradicts a decision
+
+Found by auditing `DECISIONS.md` against the spec and the code — the first time its three entries had
+been checked against the thing they are meant to reach.
+
+The shipped signature is `Map<K, V> create(fn[i32(K)] hash, fn[bool(K, K)] eq)`, and `core/map.wac`'s
+header gives the reason: *"`Map<K, V>` takes its hash and equality as funcrefs rather than requiring
+anything of K, because wac has no traits and no constraints on type parameters."*
+
+`vision/core/map.wac` writes `Map<K, V> create()` and says it changed only the nullability of `get`
+and `pop`. A `create` with no hash argument can only mean the language hashes `K` for you — which is
+what `DECISIONS.md` settles that it does not:
+
+> `is` on two references is `ref.eq` and costs nothing. Identity hashing is not free … A type that
+> wants to be a hash key carries the field itself.
+
+**So a decision and a core file in the same directory disagree, and the sharp part is who obeyed.**
+`@/packages/quic`'s `Router` needs to key connections by a byte-string id, read the decision, hashed
+the id to a `u64` and keyed on that — calling it *"the first place in nineteen subjects where that
+decision has cost anything, which is worth recording either way: a decision whose consequences nobody
+has met is a decision nobody has tested."* It cost `quic` something because `quic` read the decision.
+It cost the four other callers of this `Map` nothing, because the file silently granted what the
+decision refuses.
+
+That is the thing worth having: **the decision was tested once, by the subject that went looking for
+it, and violated four times by subjects that did not.** A page nothing checks is checked by whoever
+happens to read it.
+
+**Which of the two is right is a real question and this does not answer it.** Restoring the funcrefs
+puts two arguments on every construction that are the same two functions almost every time —
+`hashBytes` and `bytesEq` — which is the noise `core/hash.wac` exists to reduce and does not remove;
+`Map<string, V>` is the common case and it is the one that pays. Keeping `create()` needs a story for
+where the hash comes from, and *no traits, no constraints on type parameters* is the reason there is
+none.
+
+The third option nobody has written down: a **default** hash and equality for the types that have an
+obvious one, with the funcrefs still available for the rest. That is not a trait — it is
+`generics.md`'s twice-checking with a defaulted argument, and `Result<T, E = union>` already shows a
+default type argument in the delta. Whether a *value* argument can default the same way is the part
+that is missing, and it is a smaller question than traits.
