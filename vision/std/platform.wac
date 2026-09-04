@@ -29,7 +29,7 @@
 // **Within one instance.** Across a spawn a capability is not a value at all — see
 // `@/packages/sh/src/exec.wac`, where what crosses is a *description* of one.
 
-import { Ticket, TicketBase, Continuation, Result, Queue } from "core";
+import { Ticket, TicketBase, Continuation, Result, Queue, Bytes } from "core";
 
 /** A capability the grant did not include. */
 export struct NotGranted { string what; }
@@ -141,9 +141,25 @@ export struct Sys {
  * from its early callers is a projection sized by who came first** — and the eight here are still
  * that, one consumer later. Fourteen is what the host has.
  */
+/*
+ * ── `Bytes` here, `u8[]` elsewhere, and the seam is where that matters ──────────────────────────
+ *
+ * `read` and `write` speak `Bytes` because `@/packages/fs`'s `Mount` does, and `Mount.onHost` assigns
+ * `files.write` straight into a slot typed `fn<…(string, Bytes)>`. That assignment could not have
+ * typechecked while this said `u8[]`: `slice.wac`'s rule is that *"a `T[]` widens to a `Slice<T>`
+ * implicitly … safe, unchecked, and one direction only"*, so `u8[]` → `Bytes` is free and the
+ * direction this needed is the other one. Passing a `Bytes` where `u8[]` is wanted costs
+ * `toArray()`, which is the copy the type exists to avoid.
+ *
+ * **The rest of this file still says `u8[]`** — `Out.write`, `In.read`, `Random.fill`,
+ * `Socket.send`, `Read.Data` — and that is left alone on purpose, because *which byte type a
+ * capability speaks* is a decision rather than a sweep. `../QUESTIONS.md` has it. What the seam
+ * showed is that the decision is load-bearing: with a one-directional widening, the two types are
+ * not interchangeable at an interface and every boundary picks a side.
+ */
 export struct Files {
-  fn<Ticket<Result<u8[],     NotGranted>>(string)>          read;
-  fn<Ticket<Result<void,     NotGranted>>(string, u8[])>    write;
+  fn<Ticket<Result<Bytes,    NotGranted>>(string)>          read;
+  fn<Ticket<Result<void,     NotGranted>>(string, Bytes)>   write;
   fn<Ticket<Result<Stat,     NotGranted>>(string)>          stat;
   fn<Ticket<Result<string[], NotGranted>>(string)>          readDir;
   fn<Ticket<Result<void,     NotGranted>>(string, bool)>    mkdir;

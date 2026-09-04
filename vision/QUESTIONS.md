@@ -459,6 +459,34 @@ five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothin
 it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
 ask.
 
+## Which byte type a capability speaks, now that the widening is one-directional
+
+The funcref rewrite made every capability's signature explicit, and the first thing that showed is
+that `vision/std` and `vision/packages/fs` disagreed at their seam. `Files.read` answered
+`Ticket<Result<u8[], NotGranted>>`; `Mount.read` is `Ticket<Result<Bytes, Fault>>`; and
+`Mount.onHost` assigns one into the other. Under methods nobody compared the declared types.
+
+**`u8[]` → `Bytes` is free and the other direction is not.** `core/slice.wac`: *"A `T[]` widens to a
+`Slice<T>` implicitly … safe, unchecked, and one direction only."* So `Mount.write(Bytes)` could not
+take `Files.write(u8[])` without `toArray()`, which is the copy the slice type exists to avoid. Two
+byte types and a one-way conversion means **every interface picks a side, and two that pick
+differently cannot be composed without paying.**
+
+`Files` speaks `Bytes` now. The rest of `vision/std` still says `u8[]` — `Out.write`, `In.read`,
+`Random.fill`, `Socket.send`, `Read.Data` — and that is a decision rather than a sweep:
+
+- **`Bytes` everywhere** is consistent and costs a view per call at a boundary that is often
+  per-line. `../bench/slicecost.wac` puts that at 2.6 ns, which is nothing against I/O and not
+  nothing against `Out.write` in a loop.
+- **`u8[]` everywhere** makes the capability surface the *owning* type and pushes the view to the
+  parsers, which is where `slice.wac`'s argument for it actually lives.
+- **Mixed, deliberately**, with a stated rule — for instance, *a capability that hands bytes over
+  answers `Bytes`, one that is handed bytes takes `u8[]`* — which is the direction the widening
+  already permits and would have made this seam typecheck by construction.
+
+The third is the only one that treats the one-directional rule as information rather than as an
+obstacle, which is a point in its favour.
+
 ## Two constructs the grammar has and no vetted page mentions (it was three)
 
 `GRAMMAR.ebnf` is a list of what vision adds — see the entry above for how incomplete it was in the

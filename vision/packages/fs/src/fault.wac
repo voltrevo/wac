@@ -21,6 +21,8 @@
 // path and what was attempted, `Other` wants the host's own words — which is what the separate
 // `string message` field beside the integer has always been for.
 
+import { NotGranted } from "std";
+
 /** The path does not exist. */
 export struct NotFound { string path; }
 
@@ -53,8 +55,27 @@ export struct Unsupported { string what; }
  */
 export struct Other { string message; }
 
+/**
+ * The capability's own failure, which the ten codes had no member for.
+ *
+ * `Files` fails with `NotGranted` and nothing else — that is what a capability's failure *is*, and
+ * `Mount.onHost` assigns `files.read` into a slot whose error set is `Fault`, so `try`'s membership
+ * rule needs `NotGranted` to be in it. It was not, because `Fault` was derived from the shipped ten
+ * `FAULT_` codes and those come from the *host's* taxonomy.
+ *
+ * **It is not `Denied`, and the difference is the point.** `Denied` is the operating system refusing
+ * a program that asked; `NotGranted` is a program that never held the authority to ask. Conflating
+ * them loses exactly the distinction the capability model exists to make — and the shipped design
+ * has no choice, because there a denied capability *is* `FAULT_DENIED`.
+ *
+ * **`std`'s own type, imported, not a copy of it.** A second `NotGranted` declared here would be a
+ * different type under nominal typing — `spec/spec/imports.md`'s whole subject — so `Mount.onHost`
+ * would still not compose. Putting the capability layer's type into this package's union is what a
+ * union is *for*, and it is the same move `@/packages/http`'s `ResponseFault` makes over
+ * `RequestFault`: an error set composed across a module boundary with no wrapper.
+ */
 export union<
-  NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, Other
+  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, Other
 > Fault;
 
 /**
