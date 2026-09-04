@@ -1,0 +1,48 @@
+// The statement tree, and the three nodes vision adds to it.
+//
+// `ast.wac` is the *expression* tree and is about payload naming. This file exists because
+// `desugar.wac` needed statements and putting them there would have diluted a file with one
+// argument in it. The subset is what the `try` lowering touches; the real
+// `packages/wacc/src/ast.wac` has sixteen `StmtKind` variants and the shape below is those minus
+// `IncrStmt`, `DoWhile`, `Switch` and `Trap`, which the pass walks through unchanged.
+//
+// **The three additions are the whole of what a parser for vision has to produce.** `Try` is an
+// expression because `try` is a prefix operator — `../../GRAMMAR.ebnf` puts it in `unary_expr` — and
+// `TryFor` is a statement because a loop is. `Defer` is here for the same reason `../../QUESTIONS.md`
+// has an entry about it: four uses already depend on an answer nobody has written, and a node with no
+// lowering is the honest way to say so.
+
+import { Vec } from "core";
+import { Expr, Ty, Tok, Span, Arm } from "./ast.wac";
+
+export struct Stmt { StmtKind kind; Span at; }
+
+/** An assignment target. Elided; the pass rewrites the right-hand side and never the left. */
+export struct Lvalue { … }
+
+export enum StmtKind {
+  /** `T x = e;` — and the one shape the `try` lowering cannot handle locally. See `desugar.wac`. */
+  Var(Ty type, Tok nameTok, Expr init, bool isConst),
+  Assign(Lvalue target, Tok op, Expr rhs),
+  If(Expr cond, Vec<Stmt> then, Vec<Stmt> els),
+  While(Expr cond, Vec<Stmt> body),
+  For(Stmt? init, Expr? cond, Stmt? update, Vec<Stmt> body),
+  Return(Expr? value),
+  Break,
+  Continue,
+  Match(Expr subject, Vec<Arm> arms),
+  Block(Vec<Stmt> body),
+  ExprStmt(Expr expr),
+
+  /**
+   * `try for (T x in src) { … }` and `try await for (…)`.
+   *
+   * One node with a flag rather than two, because `../../TECHNICAL.md` measured the difference and it
+   * is one arm of the `Step` match: `try await for` is a generator, an await and a propagation, and
+   * the await is the only part `isAwait` decides.
+   */
+  TryFor(Ty elemType, Tok nameTok, Expr src, Vec<Stmt> body, bool isAwait),
+
+  /** `defer { … }`. No lowering here, on purpose — see the header. */
+  Defer(Vec<Stmt> body)
+}

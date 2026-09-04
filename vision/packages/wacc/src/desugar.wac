@@ -1,0 +1,215 @@
+// The `try` lowering, written as the pass rather than as an example — and the case the example did
+// not have.
+//
+// `../../TECHNICAL.md` establishes the target and shows it running: a declaration-form `try` becomes
+// a two-arm `match` whose `Ok` arm holds **the remainder of the block**, because a `match` arm cannot
+// introduce a name into its enclosing scope. Its own conclusion from that is that *"a source-to-source
+// desugarer is the wrong target … the transform belongs in a compiler pass over an AST"*.
+//
+// This is that pass, and writing it is how the missing case turned up.
+//
+// ## What the 84 `try`s in this directory actually look like
+//
+// Counted 2026-09-04 over every `.wac` under `vision/`, with block comments and string literals
+// blanked so a `try` in prose does not count:
+//
+//     34  `T x = try e;`      the declaration — the case the entry lowers
+//     21  inside a larger expression — **not lowered anywhere**
+//     16  `try e;`            the bare statement — the easy one
+//     13  `try for` / `try await for`
+//      0  `x = try e;`        assignment to a name already in scope
+//
+// The zero is worth as much as the twenty-one: **the easy version of the declaration case never
+// occurs.** Every `try` that produces a value in this directory either introduces the name it binds,
+// or is buried in an expression, and both of those need the enclosing statement.
+//
+// ## The twenty-one, which need a temporary and therefore need an order
+//
+// Six files. The shapes, all verbatim:
+//
+//     Ok(Str(try this.take(tag - 0x80, true)))                     rlp/src/decode.wac:69
+//     Ok(Str(try this.take(try this.longLength(tag - 0xB7), false)))       …:70
+//     Proved answer = try w.step(try w.node(root));                mpt/src/proof.wac:61
+//     members.push(key, try this.value());                         json/src/parse.wac:108
+//     (try await br.bits(32)) as@ u32                              gzip/src/inflate.wac:144
+//     return Ok(List(try tupleAt(data, members, at + 32, end)));   abi/src/decode.wac:92
+//
+// A `try` there cannot become a `match` in place: a `match` is a statement and the position wants a
+// value. So it is hoisted — a fresh local before the statement, and the name in its place. That is
+// ordinary, it is what every compiler does, and **it is not order-preserving unless you also hoist
+// everything to its left.**
+//
+// `members.push(key, try this.value())` evaluates `key` and then the call. Hoisting only the second
+// argument runs the call first. Here `key` is a local and nothing changes; in
+// `Ok(Str(try take(try longLength(t), false)))` the inner `try` is inside the outer's argument list,
+// so the two hoists have to come out innermost-first and stay in that order, and `f(a(), try b())`
+// with an `a()` that writes anything is the case where getting it wrong is silent.
+//
+// So `hoist` below does not lift the `try`. It lifts **the whole prefix of the expression up to and
+// including it**, which is the only rule that cannot reorder anything — and the cost is a temporary
+// for subexpressions that did not need one.
+
+import { Vec } from "core";
+import { Expr, ExprKind, Ty, Tok, Span, Arm } from "./ast.wac";
+import { Stmt, StmtKind, Lvalue } from "./stmt.wac";
+
+/**
+ * Names the source does not contain.
+ *
+ * **The shipped compiler already answers this and the answer is a table.**
+ * `packages/wacc/src/asyncsynth.wac` appends its spellings to the source text and points synthetic
+ * tokens into them — *"the spans are honest about what they are"* — with **23 zero-argument
+ * functions** written as `export i32 synthPending() { return 0; }`, and an arithmetic scheme,
+ * `synthSlot(k) = synthFixedCount() + 3 * k`, for the ones there is no fixed number of. A `try` pass
+ * needs one name per hoist and no fixed names at all, so it is the arithmetic half and nothing else.
+ *
+ * Those 23 are also 23 more of the *828 constants written as functions* in `../../QUESTIONS.md`, in
+ * the file with the best reason for it: a `const` at module scope is refused by wac-L5, which is the
+ * rung that compiles the compiler.
+ */
+export struct Fresh {
+  i32 next;
+  Tok take(this) { … }
+}
+
+/**
+ * One function body, lowered.
+ *
+ * `errKind` is the `Err` variant of the *enclosing function's* return type, because that is what the
+ * early return constructs. It is a parameter rather than a lookup for the reason the whole pass is
+ * one: `try` is only meaningful relative to the signature it sits in, and the signature is not in the
+ * statement.
+ */
+export struct Lower {
+  Fresh names;
+  Ty errKind;
+
+  /**
+   * A statement list.
+   *
+   * Answers a **new list**, which is the shape the transform forces and is worth saying: a pass that
+   * rewrote statements in place could be `Stmt lower(Stmt)`, and this one cannot, because one input
+   * statement can consume every statement after it.
+   */
+  Vec<Stmt> block(this, Vec<Stmt> body) {
+    Vec<Stmt> out = Vec.create();
+    for (i32 i = 0; i < body.len(); i++) {
+      Stmt s = body.get(i);
+
+      // The declaration case: the rest of the block moves inside the `Ok` arm, and this returns.
+      match (s.kind) {
+        Var { type, nameTok, init, isConst }: {
+          match (init.kind) {
+            Try { operand }: {
+              Vec<Stmt> rest = this.block(this.after(body, i + 1));
+              out.push(this.propagate(operand, type, nameTok, rest, s.at));
+              return out;
+            }
+            default: { }
+          }
+        }
+        default: { }
+      }
+
+      // Everything else: hoist any `try` out of the statement, then lower what the hoist produced.
+      Vec<Stmt> before = Vec.create();
+      Stmt rewritten = this.hoisted(s, before);
+      if (before.len() == 0) { out.push(this.descend(rewritten)); continue; }
+
+      // A hoist emits `T t = try e;` declarations, so it lands back on the case above — with the
+      // statement it was hoisted out of, and everything after it, as the remainder. One recursion,
+      // and it terminates because each pass strictly reduces the nesting depth of `Try`.
+      before.push(rewritten);
+      for (i32 j = i + 1; j < body.len(); j++) { before.push(body.get(j)); }
+      out.push(this.blockStmt(this.block(before), s.at));
+      return out;
+    }
+    return out;
+  }
+
+  /**
+   * `match (e) { Err(x): { return Err(x); } Ok(name): { rest } }`.
+   *
+   * The one place the pass builds the shape `TECHNICAL.md` measured. `type` is dropped on the floor:
+   * the arm binds `name` and its type is the `Ok` payload's, so a declaration-form `try` is the only
+   * statement in the language whose **written type annotation disappears in lowering**. Nothing
+   * checks it afterwards, which is a small thing and is the kind of small thing a pass finds.
+   */
+  Stmt propagate(this, Expr operand, Ty type, Tok name, Vec<Stmt> rest, Span at) { … }
+
+  /** The statements from `from` on. A copy, for the reason `block` answers a new list. */
+  Vec<Stmt> after(this, Vec<Stmt> body, i32 from) { … }
+
+  Stmt blockStmt(this, Vec<Stmt> body, Span at) { … }
+
+  /**
+   * Lower the statement lists a statement contains — an `if`'s two arms, a loop's body, a `match`'s
+   * arms. Reached only when the statement itself had no `try` in it.
+   */
+  Stmt descend(this, Stmt s) { … }
+
+  /**
+   * Replace the `try`s in a statement's expressions with names, appending the declarations to
+   * `before`.
+   *
+   * **Left to right, and it lifts the prefix rather than the `try`.** Once anything in an argument
+   * list has been lifted, every argument before it is lifted too — otherwise the hoisted call runs
+   * ahead of them. That is the rule, it is not free, and it is why this is a pass and not a rewrite:
+   * deciding it needs the whole expression, and it changes how many temporaries a program has.
+   */
+  Stmt hoisted(this, Stmt s, Vec<Stmt> before) { … }
+
+  /**
+   * The expression half of the same walk.
+   *
+   * Answers the rewritten expression; `lifted` says whether anything came out, which is what makes
+   * the caller lift its own left-hand siblings. A `bool` out-parameter is written as a return here
+   * because vision has no out-parameters and a pair is a struct nobody would name.
+   */
+  Expr hoist(this, Expr e, Vec<Stmt> before) { … }
+}
+
+// ## 1. `try` in a condition is not hoistable, and one of the two loops it would need is missing
+//
+// The rule above — lift the prefix, put the temporaries before the statement — works for every
+// position except the ones evaluated more than once, or not at all:
+//
+//   * **`while (try more())`.** The temporary would be computed once, before the loop, and the loop
+//     would spin on it. The lowering is `while (true) { T t = try more(); if (!t) { break; } … }`,
+//     which is a different transform: it changes the loop, not the expression.
+//     `../../TECHNICAL.md` names this case for `await` — *"an `await` … in a loop's condition,
+//     initialiser or update"* declines in `asyncplan.wac` — and `try` inherits the same limit for the
+//     same reason.
+//   * **`a && try b()`** and `c ? try d() : e`. Hoisting evaluates `b()` when `a` is false. The
+//     lowering has to become an `if`, which again is a statement transform.
+//
+// Neither occurs in this directory, which is why neither was noticed. `while (try more())` is
+// mentioned once in `TECHNICAL.md` as a thing that would not work; the short-circuit case is
+// mentioned nowhere at all, and it is the one a person writes without thinking.
+//
+// ## 2. What could not be written
+//
+// **The `Err` arm's construction.** `return Err(x);` needs the enclosing function's error type, and
+// `propagate` takes it as a parameter because there is nowhere else to get it. That is fine for a
+// pass and it is a statement about the language: **`try` is the only expression in vision whose
+// meaning depends on the signature it is written in**, and `../../TECHNICAL.md`'s entry on the error
+// set being a superset rather than an equal is the type rule for exactly that dependency. A pass
+// running before types are known cannot lower `try` at all, so this pass has an ordering constraint
+// no other desugaring has.
+//
+// **A synthetic node has no token.** `Tok` is an index into the source's token array — `ast.wac` says
+// so and calls the tree *"a tree of indices"* — and everything this pass builds is a node that was
+// never written. The shipped compiler's answer is to append the spellings to the source and index
+// into them, which works and means **the source text is an output of the compiler as well as an
+// input**. Nothing anywhere argues for that; it is what `asyncsynth.wac` does, and a second pass
+// wanting fresh names inherits it by finding out.
+//
+// **`Defer` has a node here and no lowering**, because what it means is open. `@/packages/box`'s
+// pager depends on the answer for three of its four exits, and the failure mode of guessing is a
+// terminal left in cbreak.
+//
+// **And the 21 nested `try`s are a language question and not only an implementation one.** Every one
+// of them becomes a named temporary and a `match`, so a reader who writes
+// `Ok(Str(try take(try longLength(t), false)))` has written two hidden locals and two nested
+// two-arm matches on one line. That may be exactly right — it is what the expression means — but
+// nothing in this directory says the compact form has that cost, and `../../QUESTIONS.md` should.

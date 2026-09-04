@@ -9,6 +9,10 @@ one language asymmetry costs the most. [`src/ast.wac`](src/ast.wac) is the expre
 [`src/walk.wac`](src/walk.wac) is a walk over it, and the first consumer the **brace pattern** has
 ever had.
 
+[`src/stmt.wac`](src/stmt.wac) and [`src/desugar.wac`](src/desugar.wac) are the second subject: the
+`try` lowering written as the pass `../../TECHNICAL.md` concluded it had to be, and the 21 uses in
+this directory that no page had lowered.
+
 ---
 
 ## The asymmetry, which vision did not invent
@@ -87,7 +91,81 @@ So the promotion is not *add a brace pattern*. It is **an enum's payload is a st
 treated as one**, of which the pattern is one direction — worth having, fixing 291 arms, and leaving
 every construction site as it was.
 
-## What could not be written
+## The `try` lowering as a pass, and the case the worked example did not have
+
+[`src/desugar.wac`](src/desugar.wac) is the second thing in this package, and it is here because
+`../../TECHNICAL.md` finished the `try` entry by concluding *"the transform belongs in a compiler
+pass over an AST"* and nobody had written one. [`src/stmt.wac`](src/stmt.wac) is the statement tree
+it needed, plus the three nodes a parser for vision has to produce: `Try`, `TryFor` and `Defer`.
+
+**Counted over every `.wac` in `vision/`, with comments and string literals blanked — 84 `try`s:**
+
+| shape | count | lowered by |
+|---|---|---|
+| `T x = try e;` | 34 | the entry: a two-arm `match`, the rest of the block inside `Ok` |
+| inside a larger expression | **21** | nothing, anywhere |
+| `try e;` | 16 | the easy case |
+| `try for` / `try await for` | 13 | the entry |
+| `x = try e;` — a name already in scope | **0** | — |
+
+The zero is worth as much as the twenty-one. **The easy version of the declaration case never
+occurs**: every value-producing `try` here either introduces the name it binds or is buried in an
+expression, and both need the enclosing statement.
+
+### The twenty-one need a temporary, and a temporary needs an order
+
+Six files, and these are verbatim:
+
+```wac
+Ok(Str(try this.take(try this.longLength(tag - 0xB7), false)))   // rlp/src/decode.wac:70
+Proved answer = try w.step(try w.node(root));                    // mpt/src/proof.wac:61
+members.push(key, try this.value());                             // json/src/parse.wac:108
+(try await br.bits(32)) as@ u32                                  // gzip/src/inflate.wac:144
+```
+
+A `match` is a statement and those positions want a value, so the `try` is hoisted into a fresh local
+before the statement. Ordinary — and **not order-preserving unless everything to its left is hoisted
+too**. `f(a(), try b())` with an `a()` that writes anything is where getting it wrong is silent. So
+the rule is *lift the prefix, not the `try`*, which costs temporaries for subexpressions that did not
+need one, and which cannot be decided without the whole expression.
+
+And the hoist emits `T t = try e;`, so it lands back on the declaration case — with the statement it
+came out of, and everything after it, as the remainder. One recursion, terminating because each pass
+strictly reduces `Try` depth.
+
+### Two positions that cannot be hoisted at all
+
+`while (try more())` computes the temporary once and spins on it; the lowering has to change the loop
+rather than the expression. `a && try b()` and `c ? try d() : e` evaluate `b()` when they should not;
+the lowering has to become an `if`. Neither occurs here, which is why neither was noticed. The first
+is named once in `TECHNICAL.md` — as the thing `asyncplan.wac` declines for `await`, and `try`
+inherits the limit for the same reason. **The short-circuit case is named nowhere**, and it is the one
+a person writes without thinking.
+
+## What could not be written — the pass
+
+**`try` is the only expression in vision whose meaning depends on the signature it is written in.**
+`return Err(x);` needs the enclosing function's error type, so `propagate` takes it as a parameter
+because there is nowhere else to get it. A pass running before types are known cannot lower `try`,
+which is an ordering constraint no other desugaring has — and `TECHNICAL.md`'s rule that the error
+must be *in* the set rather than equal to it is the type rule for exactly that dependency.
+
+**A synthetic node has no token.** `Tok` is an index into the source's token array — `src/ast.wac`
+calls the tree *"a tree of indices"* — and everything a pass builds was never written. The shipped
+compiler's answer is in `packages/wacc/src/asyncsynth.wac`: append the spellings to the source and
+point synthetic tokens into them, *"honest about what they are"*, with 23 zero-argument functions
+holding the fixed indices and `synthSlot(k) = synthFixedCount() + 3 * k` for the unbounded ones. It
+works, and it means **the source text is an output of the compiler as well as an input.** Nothing
+argues for that anywhere; a second pass wanting fresh names inherits it by finding out.
+
+**A declaration-form `try` loses its written type.** The `Ok` arm binds the name and the type comes
+from the payload, so `Big x = try step(a);` has an annotation that no lowered code and no later check
+ever reads. Small, and the kind of small thing only writing the pass finds.
+
+**`Defer` has a node and no lowering**, because what it means is open — four uses already depend on
+the answer and `@/packages/box`'s pager depends on it for three of its four exits.
+
+## What could not be written — the payload
 
 **A binding that renames.** `Binary { left: lhs }` is not in the grammar: `field_pattern` takes bare
 names, so a payload field's name becomes a local's name whether the local wants it or not, and two

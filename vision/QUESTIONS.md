@@ -4305,3 +4305,108 @@ type is exactly as far as a host boundary lets it travel. Three positions:
 
 `Page.render` having done it once is what makes this answerable rather than theoretical. Nobody has
 written down why that one and not the rest.
+
+## A `try` inside a larger expression is 21 of 84, and it is lowered nowhere
+
+`TECHNICAL.md` lowers `T x = try e;` and `try for`, shows both running, and concludes from the
+nesting cost that *"the transform belongs in a compiler pass over an AST"*. Writing that pass —
+`@/packages/wacc/src/desugar.wac` — found the position the worked example did not have.
+
+Counted 2026-09-04 over every `.wac` in `vision/`, with block comments and string literals blanked:
+
+| shape | count |
+|---|---|
+| `T x = try e;` | 34 |
+| **inside a larger expression** | **21**, in six files |
+| `try e;` | 16 |
+| `try for` / `try await for` | 13 |
+| `x = try e;` — a name already in scope | **0** |
+
+The zero carries as much as the twenty-one: **the easy version of the declaration case never occurs.**
+Every value-producing `try` here either introduces the name it binds or is buried in an expression,
+and both need the enclosing statement rather than the token.
+
+### A temporary needs an order, and the rule is not the obvious one
+
+```wac
+Ok(Str(try this.take(try this.longLength(tag - 0xB7), false)))   // rlp/src/decode.wac:70
+Proved answer = try w.step(try w.node(root));                    // mpt/src/proof.wac:61
+members.push(key, try this.value());                             // json/src/parse.wac:108
+(try await br.bits(32)) as@ u32                                  // gzip/src/inflate.wac:144
+```
+
+A `match` is a statement and those positions want a value, so the `try` hoists to a fresh local before
+the statement. That is ordinary and it is **not order-preserving unless everything to its left hoists
+too** — `f(a(), try b())` with an `a()` that writes anything is where getting it wrong is silent. So
+the rule is *lift the prefix, not the `try`*: correct, undecidable without the whole expression, and
+it pays for temporaries that nothing needed.
+
+### And two positions cannot be hoisted at all
+
+- **`while (try more())`** computes the temporary once and spins on it. The lowering is
+  `while (true) { T t = try more(); if (!t) { break; } … }` — a change to the loop, not to the
+  expression.
+- **`a && try b()`**, and `c ? try d() : e`. Hoisting evaluates `b()` when the language says it must
+  not. The lowering has to become an `if`.
+
+Neither occurs in this directory, which is why neither was noticed. The first is named once, as the
+case `asyncplan.wac` declines for `await` and `try` inherits for the same reason. **The short-circuit
+case is named nowhere, and it is the one a person writes without thinking.**
+
+### What has to be decided
+
+Not whether to allow it — 21 uses, and forbidding it would rewrite six files into temporaries by hand.
+What is unwritten is that **the compact form has a cost the page does not mention**: a reader who
+writes the `rlp` line above has written two hidden locals and two nested two-arm matches on one line,
+and the two positions above are a hole in the construct rather than in the implementation.
+
+## The source text is an output of the compiler as well as an input
+
+`Tok` is an index into the token array, and `@/packages/wacc/src/ast.wac` calls the tree *"a tree of
+indices"*. So **every node a pass builds has no token**, and a lowering that synthesises anything —
+`try`, `gen`, `union`, all three of the ones vision needs — hits that on its first line.
+
+The shipped compiler already answers it, and the answer is worth writing down because nothing argues
+for it anywhere: `packages/wacc/src/asyncsynth.wac` **appends its spellings to the source** and points
+synthetic tokens into them. *"The spans are honest about what they are"* — a synthetic token takes the
+line and column of the construct it came from. There are 23 zero-argument functions holding the fixed
+indices and `synthSlot(k) = synthFixedCount() + 3 * k` for the unbounded ones.
+
+It works. What it means is that the source buffer is mutated by a compiler phase, so *the text* is a
+compiler data structure and not merely its input — and a second pass that wants fresh names finds this
+out rather than being told. A `try` pass needs no fixed names at all, only the arithmetic half, so it
+is the cheapest possible client of a facility nobody has named.
+
+(Those 23 are also 23 more of the *828 constants written as functions*, in the file with the best
+reason for it: a `const` at module scope is refused by wac-L5, the rung that compiles the compiler.)
+
+## A typedef written backwards parses, and ten of the eleven cannot show it
+
+`GRAMMAR.ebnf` has `typedef = [ "export" ] , type , IDENT , ";"` — the type first, the new name
+second, which is C's declaration order and the opposite of `type X = Y`. So
+
+    export i32 Tok;      // a name `Tok` for `i32`  — right
+    export Tok i32;      // a name `i32` for `Tok`  — also parses
+
+and the second one is what `@/packages/wacc/src/ast.wac` said for a week. It declares an alias named
+`i32` for an undefined type, in a file whose whole tree is built out of `Tok`.
+
+**Nothing could catch it.** The grammar cannot: both readings are one production. The parse is clean,
+the file is self-consistent because nothing else in it names `i32`, and the import checker only spoke
+up when a *second* file asked for `Tok` and this one did not export it.
+
+**Eleven typedefs in this directory, and the distribution is the finding.** Ten have a left side that
+can only be a type — `union<…>` nine times, `Slice<u8>` once — so a reader cannot get their direction
+wrong and neither can a checker. The eleventh is the only one with a bare name on each side, and it
+is the one that was reversed. A form is only ambiguous in the cases where it is ambiguous, and here
+that is 1 in 11, which is exactly the rate at which nobody develops a habit.
+
+Three ways out, and this is small enough that the cost of arguing exceeds the cost of choosing:
+
+- **Leave it.** The type-first order matches every declaration in the language, and a reversed alias
+  will usually be caught by the type checker naming an undefined type.
+- **`export Tok = i32;`.** Unambiguous, and a fourth spelling of *bind a name* in a language that
+  already has three.
+- **Refuse a typedef whose right-hand side names an existing type.** Narrow, catches this exact case,
+  and is a rule about what a name may be rather than about syntax — which is the sort of rule that
+  turns out to have an exception.
