@@ -1287,15 +1287,22 @@ The third is the second one's consequence, and it is worth naming separately: `t
 wholesale so that one alternative can be added, that alternative can never match, and so the whole
 replacement is a copy of the spec's rule.
 
-**Four are unexercised rather than redundant** — each is a real widening no file has used:
-`list_literal`, `keyword_as_name` (a keyword as an attribute name), `jsx_element` (which widens a tag
-to `jsx_tag`, needing a quoted tag) and `binding_list` (which widens a binder past `IDENT`). Removing
-any of them changes nothing *here*, and each would refuse a file somebody has not written.
+**Three are unexercised rather than redundant** — each is a real widening no file has used:
+`list_literal`, `keyword_as_name` (a keyword as an attribute name) and `jsx_element` (which widens a
+tag to `jsx_tag`, needing a quoted tag). Removing any of them changes nothing *here*, and each would
+refuse a file somebody has not written.
 
-`field_pattern` was the fifth and is not any more: `@/packages/wacc/src/walk.wac` uses the brace
-pattern and removing the rule now refuses that file at `23:14`. Which is the useful way to read this
-list — it is not *rules that are wrong*, it is *rules waiting for the subject that wants them*, and
-one of the five moved off it the day somebody wrote that subject.
+**Two of the five left this list the same day, both because somebody wrote the subject that wanted
+them.** `field_pattern` — the brace pattern — is used by `@/packages/wacc/src/walk.wac`, and removing
+the rule refuses it at `23:14`. `binding`'s `is` form is used by `@/packages/box/src/gunzip.wac`, and
+removing it refuses at `57:9`. Which is the useful way to read the list: it is not *rules that are
+wrong*, it is *rules waiting for a consumer*, and the difference from the three **decoration** rules
+is that no subject can ever move those — their slot already accepts an identifier.
+
+The two remaining JSX ones are the honest hard case. A quoted tag and a keyword-as-attribute both
+want a **custom element**, and nothing in this repository has one; writing a page with a web
+component in it to justify two productions would be manufacturing the evidence rather than finding
+it. So they stay unexercised, and that is a fact about the corpus rather than about the constructs.
 
 Both are positions where an `IDENT` is *already* admitted in that slot, so the production adds
 nothing a parser could act on. The other six new words are in positions where it is not — `defer`
@@ -1949,3 +1956,49 @@ literal it borrows from has the colon and the pattern declines it. And a nested 
 already exists"* says the same thing, which is true for **reading** a field and not for **matching**
 one: the nested form is what makes an arm apply only when the inner variant does. Withdrawn on the
 reading argument; the matching argument was never made.
+
+## Matching a payload by type does not bind it, so the arm knows the shape and cannot read it
+
+`GRAMMAR.ebnf` has `binding = IDENT | "is" , type`, and the `is` form got its first user on
+2026-09-04 — `@/packages/box/src/gunzip.wac`, which tells a decoder's two kinds of failure apart:
+
+    Err(is SourceFailed):  { … }    // somebody else's disk — a caller may retry
+    Err(is Corrupt):       { … }    // a statement about the archive — retrying reads the same bytes
+
+That distinction is `@/packages/gzip/src/fault.wac`'s central argument and `issues/system/0102`'s
+subject, so it is a real consumer rather than a demonstration. The rule is load-bearing now: remove
+the `is` alternative and that file refuses at `57:9`.
+
+**And the arm cannot read what it matched.** A payload is bound by name *or* matched by type, never
+both. `SourceFailed` carries one field, `string why`, and the arm above knows it has a `SourceFailed`
+and has no way to reach it — so the message is *read failed* where the shipped equivalent prints the
+host's own sentence. `Err(is SourceFailed f):` is the obvious spelling and is not in the grammar.
+
+Nothing argues against it, and the reason it is missing is visible: `TECHNICAL.md`'s two examples are
+both `Err(is NotFound):` on a **payload-free** member, which is the one case where binding has
+nothing to bind. The construct was written from the example that does not need the other half.
+
+**The workaround loses the thing that made it a match.** `Err(f): { if (f is SourceFailed) { … } }`
+is writable today — and then the `match` has one `Err` arm, so nothing checks the inner `if` chain
+for coverage. Matching by type is what makes the two-way split exhaustive; binding is what makes it
+useful; and they are exclusive.
+
+## A union may contain a union, and flattening it would be wrong
+
+Asked and left open in the entry on naming unions. Answered here by use rather than by argument.
+
+`@/packages/gzip`'s `Fault` is `union<SourceFailed, Corrupt>` and `Corrupt` is itself
+`union<BadMagic, BadMethod, BadBlockType, BadHuffmanCode, BadDistance, Truncated, ChecksumMismatch,
+LengthMismatch>`. `@/packages/box/src/gunzip.wac` writes `Err(is Corrupt):` and matches all eight
+without naming them, because it has one sentence for the whole group and **the group is the design**
+— the fault file's own words are that what separates the two halves is *"not the type"* but whether a
+caller may retry.
+
+So the flattening answer — where `union<A, union<B, C>>` means `union<A, B, C>` — is wrong for this
+case, and this is the first case there has been. Flattened, `is Corrupt` has nothing to name and the
+applet needs eight arms saying the same thing.
+
+That is evidence rather than a decision: one consumer wanting nesting does not settle what nesting
+*means* — whether `is SourceFailed` and `is Corrupt` are exhaustive over `Fault`, whether a value can
+be matched at either depth, and what a member appearing in two nested unions does. What it settles is
+that flattening is not free, which is the answer the entry above was leaning toward.

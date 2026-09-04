@@ -1,0 +1,115 @@
+// Decompress a file or standard input — and say which of nine things went wrong, which the shipped
+// applet cannot.
+//
+// `packages/box/src/applets/gunzip.wac` is four statements and ends `return gunzipStream(cli.readChunk,
+// cli.write);` — an `i32` and nothing printed. Every failure a decoder can have arrives as the same
+// number. `@/packages/gzip/src/fault.wac` is that as a union and argues for one distinction in
+// particular:
+//
+// > `SourceFailed` is somebody else's disk; every other member is a statement about the archive.
+// > `0102` wants them told apart and the shipped decoder cannot … What separates them is not the
+// > type, it is that `SourceFailed` carries no claim about the data, so a caller may retry it and
+// > may not retry the others.
+//
+// This applet is the caller that wants that, and writing it gives **`Err(is Corrupt):`** — a payload
+// matched by *type* — its first user anywhere.
+
+import { Result, Bytes, AsyncGenerator } from "core";
+import { Out, In, Files, NotGranted } from "std";
+import { Fault, SourceFailed, Corrupt } from "@/packages/gzip";
+import { gunzip } from "@/packages/gzip";
+import { Args } from "@/packages/box/src/lib/args.wac";
+
+export async i32 gunzipMain(Out out, In in, Files files, Args a) {
+  i32 status = 0;
+  for (string name in a.operands) {
+    if (!await one(out, in, files, name)) { status = 1; }
+  }
+  if (a.operands.len() == 0) {
+    if (!await pump(out, in.stream(), "-")) { status = 1; }
+  }
+  return status;
+}
+
+async bool one(Out out, In in, Files files, string name) {
+  if (name == "-") { return await pump(out, in.stream(), name); }
+  match (files.open(name)) {
+    Ok(source): { return await pump(out, source, name); }
+    Err(_): {
+      out.writeErr("gunzip: \{name}: cannot read\n".toBytes());
+      return false;
+    }
+  }
+}
+
+/**
+ * One archive out, and the fault told apart from the other kind.
+ *
+ * `is Corrupt` matches the arm by type. `Corrupt` is itself a `union` of eight — `BadMagic`,
+ * `Truncated`, `ChecksumMismatch` and the rest — so this is also the first place anything has
+ * matched **a union member that is a union**, which `../../../QUESTIONS.md` asks about and nothing
+ * had answered by using.
+ */
+async bool pump(Out out, AsyncGenerator<Bytes, Result<void, Fault>> source, string name) {
+  match (await drain(out, source)) {
+    Ok(_): { return true; }
+    // Somebody else's disk. A caller may retry this and the message says so.
+    Err(is SourceFailed): {
+      out.writeErr("gunzip: \{name}: read failed\n".toBytes());
+      return false;
+    }
+    // A statement about the archive. Retrying reads the same bad bytes.
+    Err(is Corrupt): {
+      out.writeErr("gunzip: \{name}: not in gzip format\n".toBytes());
+      return false;
+    }
+  }
+}
+
+async Result<void, Fault> drain(Out out, AsyncGenerator<Bytes, Result<void, Fault>> source) {
+  try await for (Bytes chunk in gunzip(source)) { out.write(chunk); }
+  return Ok;
+}
+
+// ## 1. Matching by type does not bind, so the arm knows the shape and cannot read it
+//
+// `binding = IDENT | "is" , type` — a payload is bound by **name** or matched by **type**, and there
+// is no form that does both. `Err(is SourceFailed):` above knows it has a `SourceFailed`, whose one
+// field is `string why`, and has no way to reach it. So the message is *read failed* where the
+// shipped code's equivalent would print the host's own sentence.
+//
+// `Err(is Corrupt c):` is the obvious spelling and is not in the grammar. Nothing argues against it;
+// `TECHNICAL.md`'s two examples are both `Err(is NotFound):` on a payload-free member, which is the
+// case where binding has nothing to bind — so the construct was written from the one example that
+// does not need the other half.
+//
+// **The workaround is worse than it looks.** Binding by name and testing inside gives
+// `Err(f): { if (f is SourceFailed) { … } }`, which the language does support — and then the arm is
+// no longer exhaustive over the union, because a `match` sees one `Err` arm and the compiler has
+// nothing to check the inner `if` chain against. Matching by type is what makes the two-way split a
+// *match*; binding is what makes it useful; and they are exclusive.
+//
+// ## 2. And the union nests, which is the part that worked
+//
+// `Fault` is `union<SourceFailed, Corrupt>` and `Corrupt` is a union of eight. `Err(is Corrupt)`
+// matches all eight without naming them, which is exactly what this applet wants — it has one
+// sentence for the whole group and the group is the design. `../../../QUESTIONS.md` asks *whether a
+// union may contain one* and treats it as open; here it is the thing that makes the arm short, and
+// the alternative is eight arms saying the same thing.
+//
+// Worth stating as evidence rather than as a decision: one consumer wanting it is not the same as
+// the semantics being settled. What this file shows is that the *flattening* answer — where
+// `union<A, union<B, C>>` is `union<A, B, C>` — would be wrong for this case, because then
+// `is Corrupt` has nothing to name and the applet is back to eight arms.
+//
+// ## 3. What could not be written
+//
+// **The retry the distinction exists for.** `SourceFailed` means *try again* and this applet returns
+// false either way, because retrying needs a second `Files.open` on the same path and there is no
+// statement of how many times or how long to wait — which is `../../../QUESTIONS.md`'s bounded-wait
+// entry arriving from a third direction, after `within.wac` and `waitForPortWithin`.
+//
+// **A message per corruption.** Nine members, one sentence. GNU `gunzip` says *invalid compressed
+// data--format violated* and *unexpected end of file* differently, and both are `Corrupt` here.
+// Saying them apart needs finding 1 — the arm can match `is Truncated` but then cannot read the
+// `string field` it carries, so the specific message has the same hole as the general one.
