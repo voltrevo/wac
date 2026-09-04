@@ -357,3 +357,23 @@ The in-language half that *is* available: a dispatch table of closures rather th
 pointers, so `echo`'s entry captures no `Fs` and the applet cannot reach one. It does not narrow the
 grant — `bin/` is the build-time answer to that, and already exists — but it stops 10 of 63 reaching
 what they were handed.
+
+## Whether a `wait` that cannot advance traps or answers
+
+**Settled once already, the other way.** `design/lang/0014` D7 landed in `std/platform.wac`: a wait
+on a ticket only a continuation can answer traps, with
+
+    trap "this ticket is answered by a continuation, so waiting cannot advance it — call core.drain()"
+
+and the comment beside it says why — *"waiting is a mistake rather than a delay"*. It replaced
+returning whatever the resolver had, which for that shape is a default: *"a program that asks for a
+file size and is told zero, with nothing said."*
+
+`vision/core/ticket.wac` answers `Err(Stuck)` instead. That is a change to a shipped decision, not a
+new feature, and the argument is the one `http`'s `Parsed` and `regex`'s `Searched` both turned on:
+a `Result` earns its place when the arm is something a caller acts on. Here it might be — the trap's
+own message tells the caller what to do, which is `drain()` — and a trap cannot be acted on at all.
+
+Against that: a caller who could have called `drain` and did not has a bug, and the trap says so at
+the moment it happens rather than handing back a value that has to be checked.
+

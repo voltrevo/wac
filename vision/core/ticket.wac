@@ -47,6 +47,21 @@ export struct Ticket<T> : TicketBase {
    * `await` answers a `T` where this answers a `Result` — the difference is that here there is
    * nobody else left to ask.
    */
+  /**
+   * **Shipped, and as a trap rather than a `Result`.** `design/lang/0014` D7 landed in
+   * `std/platform.wac`, and what a `wait` that cannot advance does today is
+   *
+   *     trap "this ticket is answered by a continuation, so waiting cannot advance it — call core.drain()";
+   *
+   * with the reason at the line: *"waiting is a mistake rather than a delay"*. So the `Err(Stuck)`
+   * below is not a new capability, it is a **different answer to a settled question** — and the
+   * shipped one has the better of the argument where the caller cannot act, because a program that
+   * waits on a ticket only `drain` can answer has a bug rather than a condition.
+   *
+   * Where it is weaker is that a caller *can* act: the message says to call `drain`. That is the
+   * `http`/`regex` distinction from the other direction — a `Result` earns its place when an arm is
+   * something the caller does something about, and here it might be.
+   */
   Result<T, union<Circular, Stuck>> wait(this) {
     if (this.inWait) { return Result.Err(Circular()); }
     this.inWait = true;
