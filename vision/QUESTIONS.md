@@ -319,3 +319,25 @@ pointers, so `echo`'s entry captures no `Fs` and the applet cannot reach one. It
 grant — `bin/` is the build-time answer to that, and already exists — but it stops 10 of 63 reaching
 what they were handed.
 
+## Two match arms that look alike and are not
+
+`vision/packages/stream/src/scalars.wac` writes both, four lines apart:
+
+```wac
+match (decode(input, at)) {
+  Scalar s:  { yield s.code; at += s.size; }   // a type test, binding the value
+  Truncated: { break; }                        // a type test, binding nothing
+}
+match (r) {
+  Ok(v):     …                                 // a variant, destructuring its payload
+}
+```
+
+`Scalar s` and `Ok(v)` are different operations — the first names the matched value, the second
+names a field inside it — and they are one space and a bracket apart. Both are new: `case A x:` is
+`expected ':', found 'x'` today and a binding must be parenthesised, so nothing here is inherited.
+
+The question is whether a reader can tell them apart, and whether they should look this similar. It
+matters more once a union may contain an enum, since then `Ok(v)` could plausibly be read either
+way — as *the `Ok` variant, payload `v`* or as *the `Ok` type, called `v`*.
+

@@ -64,8 +64,10 @@ const RULES: [RegExp, string][] = [
   // Not anchored to the line: `{ yield out.take(); }` is a one-line body, and anchoring missed it.
   [/\byield\s+([^;\n]*);/g, "$1;"],
   [/\byield;/g, ""],
-  // An enum variant whose payload is a bare type: today every payload is a named parameter.
-  [/^(\s*)([A-Z]\w*)\(([\w<>\[\]?]+)\)(,?)$/gm, "$1$2($3 _p)$4"],
+  // No rule for an unnamed variant payload. `Ok(T)` was written in one file out of eight and is
+  // not a proposal: a payload's name is its *field accessor* — `case Circle: return s.radius;` —
+  // so an unnamed one is unreadable. Desugaring it would make this pass accept the mistake again,
+  // which is worse than not having the rule.
 ];
 
 /** `fn<…>` to `fn[…]`, counting brackets — the payload nests, as in `fn<Ticket<Result<V, E>>()>`. */

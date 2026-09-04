@@ -10,8 +10,8 @@
 // modules that have never heard of each other compose their error types with no wrapper.
 
 export enum Result<T, E = union> {
-  Ok(T),
-  Err(E)
+  Ok(T value),
+  Err(E error)
 
   bool isOk(const this)  { return this is Ok; }
   bool isErr(const this) { return this is Err; }
