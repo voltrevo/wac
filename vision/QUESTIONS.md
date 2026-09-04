@@ -784,6 +784,22 @@ files, **six constructs had no user in any of them**:
     verbatim name  `@"for"`          quoted tag  `<"my-widget">`     hyphenated attribute
     `auto`                           a list literal                  `coroutine f()`
 
+**And *having a user* is not the same question as *the rule doing work*, which is the thing to check
+and which one of the three fails.** Each rule was deleted from `GRAMMAR.ebnf` in turn and the tree
+re-parsed:
+
+    verbatim name `@"for"`   removed → refused at counter.wac:31:21
+    hyphenated attribute     removed → refused at counter.wac:32:35
+    `coroutine f()`          removed → refused at within.wac:113:65
+    `auto`                   removed → **nothing changes**, 564 productions become 562
+
+The first three are load-bearing: delete the production and a real file stops parsing at exactly the
+token it is about. `auto` is not, because it is an `IDENT` and `type` begins with an `IDENT`, so the
+alternative in `var_decl` is decoration — the entry on contextual keywords below has why.
+
+That is a cheap check that nothing was doing and it separates two things the delta had been treating
+as one. A construct can be *used* and still not be a construct.
+
 Three of the six have users now, all written the same day to be them, and all three found something.
 `coroutine f()` has `wactest`'s `within.wac`: the operator works and nothing can be *bounded* with
 it. A **verbatim name** and a **hyphenated attribute** have `@/packages/page`'s `counter.wac`, the
