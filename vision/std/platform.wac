@@ -43,7 +43,20 @@ import { Ticket, TicketBase, Continuation, Result, Queue, Bytes, Node, AsyncGene
 export struct NotGranted { string what; }
 
 /**
- * Everything this program was granted, and the only thing that can produce a narrower one.
+ * Everything a *command-line* program was granted, and the only thing that can produce a narrower
+ * one.
+ *
+ * **It said "everything this program was granted" until `Page` existed, and that was never quite
+ * true.** There is no `page` field here and there should not be: the launcher hands `Page` to an
+ * exported `page` and `Cli` to `main` — `export i32 page(Core core, Cli cli, Page page)` is the
+ * shipped signature, three parameters — so an interactive program's authority arrives as two values
+ * and a `Sys` is one of them. A CLI program's `Sys` cannot render, which is the right answer and is
+ * not what a struct claiming to be the whole grant says.
+ *
+ * The alternative is `Page? page;`, and it is worse for a reason worth keeping: every consumer would
+ * unwrap, the unwrap would be a runtime question where the entry point already answers it
+ * statically, and a `Sys` with a null field is a grant that has to be tested rather than one that
+ * cannot be held. `../QUESTIONS.md` has why *the whole grant* may not be a thing that exists.
  *
  * The fields are the projections. Reading one is free and hands over exactly that group; there is
  * no method here that answers a capability the caller could not already reach.

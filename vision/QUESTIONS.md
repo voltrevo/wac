@@ -1586,3 +1586,38 @@ authority; it can still open any file the parent could. A real boundary is `spaw
 projection has `spawn(cmd, args, grants)` beside `run(args, stdin, cwd)`, and the second is the one
 whose name suggests it takes grants and cannot. Written out rather than smoothed, because *this runs
 something with your authority* is the honest signature and there is no way to say it in a type.
+
+## Whether *the whole grant* is a thing that exists, which `Page` made unavoidable
+
+`Sys` is the exercise's own invention and its comment called it *"everything this program was
+granted, and the only thing that can produce a narrower one."* Adding the ninth projection broke the
+first half, and it turns out the first half was never right.
+
+The shipped entry points are `export i32 main(Core core, Cli cli)` and
+`export i32 page(Core core, Cli cli, Page page)`. Authority arrives as **two or three parameters**,
+and there has never been a value holding all of it. `Sys` bundles what `main` gets; there is nothing
+it could be for `page` short of a different `Sys`, a nullable field, or a second bundle.
+
+Three answers, and the middle one is the one that looks reasonable and is not.
+
+**`Page? page;` on `Sys`.** Every consumer unwraps, and the unwrap is a *runtime* question the entry
+point already answered statically: a program exporting `page` has one and a program exporting `main`
+does not. A grant that has to be tested is weaker than a grant that cannot be held, and the whole
+argument for projections is that narrowing is structural.
+
+**A second bundle** — `Sys` and something like `Ui` — which is what the parameters already are, and
+then *the whole grant* is simply not a thing and the doc comment stops claiming it is.
+
+**No bundle at all**, which is the shipped design: capabilities are parameters, and `Sys` exists here
+only so that `sys.files` can be a narrowing. That is a real option and its cost is the one this
+exercise was arguing against — a program that wants files and a clock takes two parameters, then
+three, then six, and a dispatcher that calls many such programs is back to passing everything.
+
+**The reason it is a question rather than a preference** is that `Sys` is load-bearing for something
+else: `drain` and `pending` live on it, and `issues/lang/closed/0298c` is a whole compiler that could
+not rebuild itself because *two* capabilities each made a scheduler. Whatever replaces the bundle has
+to keep one queue reachable from everything, and *"the parameters are the grant"* has no obvious
+place to put it.
+
+So this is not really about `Page`. It is that `Sys` was introduced to hold projections and quietly
+took on a second job, and the first program that could not be handed one is where that shows.
