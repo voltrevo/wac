@@ -498,6 +498,19 @@ five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothin
 it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
 ask.
 
+**And it is not hypothetical: the construct is in the tree, one rung down.** `issues/lang/0329a`,
+filed 2026-09-04 — `bootstrap/drivers/` has three files with module-level mutable variables,
+`u8[] built;` and six more in one of them, compiled by wac-L5 as part of the ladder. `wacc`'s
+top-level parser has no case for one and neither does `spec/spec/grammar.md`, so the product refuses
+what the rung below it accepts, and those three files are the only ones in 1,578 the spec grammar
+refuses other than seven written to be refused.
+
+Which changes what this entry is asking. Not *is this an addition nobody wrote down* — somebody
+already writes it, in the most load-bearing directory there is, and the question is whether the
+language has it. The *local* case (`i32 n;` inside a function) is still refused everywhere and is
+still five examples that may have elided an initialiser for brevity; the two are not the same
+construct and the entry had been treating them as one.
+
 ## `coroutine f()` and `f()` disagree about when the body starts
 
 `vision/core/coroutine.wac` says the operator *"lowers any of the three spellings to one of these"* —
@@ -690,7 +703,8 @@ nowhere to live on a generator.
 
 ## Three type names are declared twice, and `union` is the reason it matters
 
-107 type names across `vision/`, three declared in more than one file:
+**128 type names across `vision/`, five declared in more than one file.** It was 107 and three when
+this was written; re-counted 2026-09-04:
 
     BadMethod    gzip/src/fault.wac  (i32 cm — a DEFLATE compression method)
                  http/src/fault.wac  (empty — an HTTP verb)
@@ -698,6 +712,24 @@ nowhere to live on a generator.
                  unicode/src/utf8.wac  (empty)
     Fault        fs/src/fault.wac    union<NotGranted, NotFound, Denied, …>
                  gzip/src/fault.wac  union<SourceFailed, Corrupt>
+    Span         regex/src/regex.wac (where a match was)
+                 wacc/src/ast.wac    (where a node came from)
+    Node         core/jsx.wac        (a markup element, text or fragment)
+                 fs/src/mount.wac    (a file or a directory)
+
+The rate went from three in 107 to five in 128 with nobody watching, and **both new ones arrived in
+two days, from files written without noticing.** That is the finding rather than the five: a corpus
+that grows collides at a roughly constant rate, and nothing counts.
+
+**`Node` is the one that is different in kind, because one of them is in `core`.** `core/jsx.wac`'s
+header is explicit about why it is there — *"a tree built in one repository and a renderer in another
+must name one type or nothing composes, and no author chose the name to be able to fix it"* — and
+then a package declares a different `Node` for a directory entry. Nominal typing keeps them apart and
+imports are per-file, so nothing breaks; what breaks is the argument. A name the compiler emits
+constructor calls for, chosen so that *nobody has to agree on it*, is a name a package cannot safely
+reuse, and there is no rule saying so.
+
+`Span` is the ordinary kind: two packages, two meanings of *a range*, neither wrong.
 
 Nominal typing makes these distinct types, and imports are per-file, so nothing is *broken*. What is
 awkward is that the whole point of `union` here is composition — `http`'s `ResponseFault` is
