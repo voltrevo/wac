@@ -214,6 +214,14 @@ so inventing syntax is instrumented and believing in an absence is not. What cat
 caught which. **The exercise is reliable at finding where a design is awkward and unreliable at
 finding whether the thing it wants already exists.** Weigh the two lists differently.
 
+**And there is a one-line root cause.** `spec/` carries **438** tagged claims — the ones checked by
+the fence tests, the ones that are true. Before this audit the vision pages cited **none of them**;
+the five `[§…]` references now in the tree were all added while correcting something. Every category
+of error here follows from that: four entries marked *Not yet* over shipped behaviour, two
+contradicting a tagged claim without saying so, seven constructs claimed missing that exist, and one
+citation copied from a comment rather than read. A design written beside a tested specification, and
+not against it.
+
 ---
 
 | what | written | against |
