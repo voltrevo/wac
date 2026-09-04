@@ -35,6 +35,7 @@ file where a `for … in` comes before any other divergence, and the tool found 
     vision/core/core.wac                           ^ found '{'
     vision/core/core.wac                           ^ found '{'
     vision/core/core.wac                           ^ found '{'
+    vision/core/core.wac                           ^ found '{'
     vision/core/coroutine.wac                      ^ expected '{', found ';'
     vision/core/result.wac                         ^ expected '>', found '='
     vision/core/slice.wac                          ^^^^^ found 'items'
@@ -54,7 +55,7 @@ file where a `for … in` comes before any other divergence, and the tool found 
     vision/packages/server/src/main.wac            ^^^ found 'Err'
     vision/packages/server/src/serve.wac           ^ found ','
     vision/packages/server/src/server.wac          ^ found '{'
-    vision/packages/sh/src/exec.wac                ^^^^^ found 'async'
+    vision/packages/sh/src/exec.wac                ^ expected '{', found ';'
     vision/packages/stream/src/scalars.wac         ^^^^ expected '>', found 'void'
     vision/packages/stream/src/stream.wac          ^ found '{'
     vision/packages/stream/src/transform.wac       ^^^^ expected '>', found 'void'
@@ -62,11 +63,11 @@ file where a `for … in` comes before any other divergence, and the tool found 
     vision/packages/unicode/src/utf8.wac           ^ expected '(', found ';'
     vision/packages/url/src/query.wac              ^^ expected '=', found 'in'
     vision/packages/wactest/src/assert.wac         ^^ found 'Ok'
-    vision/packages/wactest/src/test.wac           ^^^^^ found 'async'
+    vision/packages/wactest/src/test.wac           ^ expected '[', found '<'
     vision/packages/wactest/src/wactest.wac        ^ found '{'
-    vision/std/platform.wac                        ^^^^^ found 'async'
+    vision/std/platform.wac                        ^^^^ expected ';', found 'this'
 
-Nine distinct constructs:
+Eight distinct constructs:
 
 | construct | example | where it bit |
 |---|---|---|
@@ -77,8 +78,15 @@ Nine distinct constructs:
 | a match arm without `case` | `Ok(request): { … }` | `request`, `value`, `main`, `serve`, `assert` |
 | `try` in expression position | `try this.value()` | `json/json`, `json/parse` |
 | `for … in` | `for (Param p in q.params.items())` | `url/query` |
-| `async` as a member modifier | `async Read recv(this);` | `wactest/test`, `std/platform` |
 | re-export | `export { Vec } from "./vec.wac";` | every barrel |
+
+**`async` on a method was here and is not a construct any more**, which is the sharper lesson.
+It was measured as `expected a type` and it parses today: the difference is that every measurement
+in this document was taken through `native/v8/seed/wacc.wasm`, and that seed was several
+`packages/wacc/src` commits behind. `./bootstrap.sh --no-install` and it moved. **A stale seed does
+not fail — it answers, a few commits ago, and an answer is what this document is made of.** Two
+files' first divergence changed with the rebuild, and the whole table is now re-measured against a
+fresh one.
 
 **`static` is not one of them, and was listed here in error.** A method with no `this` parameter *is*
 static in wac today — `spec/spec/structs.md` says so and `Vec.create()` is how the real `core` writes
@@ -92,7 +100,7 @@ Every file stops at its first divergence, so none of these has ever been reached
 are here because they are written in the tree, not because anything found them:
 
 - `try await for (u8[] chunk in src) { … }` — three packages, and no part of it exists
-- `schedule this.pending.push;` — `std/platform`, past the `async` refusal
+- `schedule this.pending.push;` — `std/platform`, past its bodyless methods
 - `defer { conn.close(); }` — `server/main` and `core/ticket`
 - `export union<A, B> Fault;` and `export Slice<u8> Bytes;` — one form for naming a type, whether it
   is a union or an instantiation
@@ -171,7 +179,8 @@ Five were reported. **Two survive**, and the other three are the more useful res
 
 The generic parent is load-bearing: `AllOf`, `AnyOf`, `Generator`, `AsyncGenerator` and `SysTicket`
 all need it, and the whole ticket and coroutine design rests on it. Nothing had reported it because
-every file that uses it stops at an `async`, a `gen<…>` or a default type argument first.
+every file that uses it stops at a `gen<…>`, a bodyless method or a default type
+argument first.
 
 ## The same test, applied to the nine
 
@@ -187,18 +196,27 @@ against them:
 | a method with no body | **yes** — a body that traps, measured | the check moves from compile time to run time, on a base whose only purpose is *you must override this* |
 | a named union | **yes** — write the members out at every signature | `http` repeats eleven of them; the alternative is what `ResponseFault` exists to stop |
 | re-export | **yes** — import from the declaring file | exactly the cost `wac-mono 0072` is open about: `itoa64` exists twice because unifying it touches forty files |
-| `async` on a method | **no** | — |
 
-The last row is worth its own line because I nearly withdrew it. `async` on a *free* function
-**parses today** — `export async i32 f() { return 1; }` reaches the emitter and fails there with
-*a call to Pending* — so my first reading was that `async` is not new at all and the row overstated
-things. It does not: `struct S { async i32 f(this) { … } }` is `expected a type`. The row was right,
-the generalisation was wrong, and the test that had just been useful three times was about to remove
-a correct entry.
+The fourth was `async` on a method, and the story it carried is worth keeping because every step of
+it was wrong in a different way.
 
-**`grammar.md` is behind a second time.** `func_decl` lists no `async` and the parser accepts one,
-just as it lists no `type_params` and generic functions compile. Two independent gaps in the file
-this document treats as the authority.
+It went into the table as a construct. Then the necessity test said `async` on a *free* function
+parses today, so the row looked like it overstated things — and I checked, got `expected a type` for
+the method form, and wrote a note congratulating the check for saving a correct entry from a test
+that had been useful three times running.
+
+The measurement was against a stale seed. `async` on a method parses. **The entry was not correct,
+the test that wanted to remove it was right, and the note about nearly deleting something true was
+itself the false step.** The row is gone from the table above.
+
+What survives is the shape of the mistake rather than any of its content: three plausible
+corrections in a row, each supported by a measurement, and the measurements were all reading a
+compiler a few commits old. Being careful in the wrong units is indistinguishable from being right
+until something else moves.
+
+**`grammar.md` was behind twice**, in `issues/lang/0020` and `0320a`, and
+`packages/wacc/test/wac/specproductions_test.wac` now guards it — a probe per construct, asserted in
+both directions. It caught this on its first run.
 
 ## Three were withdrawn, which is the better half
 

@@ -26,9 +26,10 @@ const RULES: [RegExp, string][] = [
   // A union in type position, and a default type argument.
   [/\bunion<[^>]*>/g, "i32"],
   [/\s*=\s*union>/g, ">"],
-  // The `gen` return form, and `async` as a modifier anywhere.
+  // The `gen` return form. No rule for `async`: it parses today, on a free function and on a
+  // method, so it is not an addition and a rule for it would be a rule for a construct nobody
+  // proposes — see the maintenance note above.
   [/\bgen<[^>]*>\s+/g, ""],
-  [/\basync\s+/g, ""],
   // `defer { … }` is a block with a keyword in front of it.
   [/\bdefer\s*\{/g, "if (true) {"],
   // A loop head over a generator, failing or not. Rewritten before `try` is stripped.
