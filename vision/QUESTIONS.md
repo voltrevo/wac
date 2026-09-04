@@ -167,14 +167,6 @@ operator answers `T?`. That is the one place flattening earns its keep, and wac 
 `??` today — so the question is whether adding one means giving it an explicit flatten, or not
 adding it.
 
-## How an elided body is spelled, and how an abstract one is
-
-`vision/core` writes a method with no body to mean *every subtype must override this, and there is
-no sensible default* — `TicketBase.advance`, `Coroutine.step`. `vision/packages/json` writes
-`{ … }` to mean *this is the same as the original and not repeated here*, following the SHOWCASE
-entries. Both are wanted and neither is described, and the two look similar enough that reading one
-as the other is easy.
-
 ## Naming a union, and whether a union may contain one
 
 `vision/packages/http` is unwritable without both. It declares

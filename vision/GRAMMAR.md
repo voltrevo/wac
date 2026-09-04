@@ -193,7 +193,7 @@ against them:
 
 | construct | avoidable? | at what cost |
 |---|---|---|
-| a method with no body | **yes** — a body that traps, measured | the check moves from compile time to run time, on a base whose only purpose is *you must override this* |
+| a method with no body | **yes** — a body that traps, measured | not *when* the check happens but *whether*: `struct K : B { }` that never overrides a trapping method compiles clean, measured, and traps only if the path is taken. There is no abstract notion in the checker and nothing reports the omission |
 | a named union | **yes** — write the members out at every signature | `http` repeats eleven of them; the alternative is what `ResponseFault` exists to stop |
 | re-export | **yes** — import from the declaring file | exactly the cost `wac-mono 0072` is open about: `itoa64` exists twice because unifying it touches forty files |
 

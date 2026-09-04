@@ -20,10 +20,16 @@ deleted when nothing does.
 
 ## What could not be written
 
-**An abstract method has no spelling.** `TicketBase.settled` and `advance` are declared with no
-body, and `Coroutine.step` and `Ticket.value` likewise. Every one of them must be overridden and
-none has a meaningful default — a base that answered `false` would be a lie that compiles. Nothing
-on the pages says a bodyless method is how you ask for that.
+**An abstract method has no spelling, and the substitute is weaker than it looks.**
+`TicketBase.settled` and `advance` are declared with no body, and `Coroutine.step` and
+`Ticket.value` likewise. Every one must be overridden and none has a meaningful default — a base
+answering `false` would be a lie that compiles.
+
+The available idiom is a body that traps, and it compiles. What it does not do is *check*: measured,
+`struct K : B { }` that never overrides `B`'s trapping method has no diagnostic at all, and traps
+only if something calls it. There is no abstract notion in the checker. So a bodyless method is not
+moving a check from compile time to run time — it is adding one where there is none, which is a
+better case for it than `../GRAMMAR.md` first made.
 
 **`trap` as an expression.** The *statement* exists and carries a message —
 `trap_stmt = "trap" , [ expr ] , ";"`, and `trap "out of range";` compiles today, which this file
