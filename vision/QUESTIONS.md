@@ -1584,8 +1584,21 @@ there is no formatting language — the expression is whatever `+` accepts on th
 with three tagged examples.
 
 What has not shipped is the other clause. `+` does not accept a scalar, so `"n=\{n}"` for an `i32`
-is `operands have mismatched types` today — and `packages/fmt`'s header says that is **deliberate**.
-The word is in the original and the reason is recorded nowhere I could find.
+is a type error today — and `packages/fmt`'s header says that is **deliberate**. The word is in the
+original and the reason is recorded nowhere I could find.
+
+**Measured 2026-09-04**, and the message this entry quoted was not the one:
+
+    "n=\{n}"   →  untyped binary whose operands disagree: string and i32
+
+Not `operands have mismatched types`. The wording matters a little, because *untyped binary* says
+the compiler is treating this as the ordinary `+` rule reaching an untyped literal — which confirms
+the entry's premise from the implementation's side: interpolation really is sugar for `+` today, so
+widening `+` is the whole of the change and there is no separate interpolation rule to write.
+
+Also measured: `"listen: \{e.what}"` — a **string** field — compiles and runs, so the shipped half is
+shipped and only the scalar case is the proposal. `@/packages/page/src/counter.wac` has the one use
+of the proposed form in real code here, `out.log("counted to \{n}")`.
 
 So two things: the entry needs its marker fixed and probably splitting, since one half is done and
 the other is a real proposal against a stated decision. And widening `+` settles something unsaid —
