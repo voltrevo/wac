@@ -5117,6 +5117,30 @@ So the rule, and it costs a clause:
   *wanting the length in the type* is six; every file answered whichever it had in mind and wrote it
   as though there were one.
 
+### A third family, checked and sound — and it says which claims are safe
+
+*The first consumer X ever had* appears 22 times. Six were checked by finding every file that uses
+the construct and ordering them by the commit that added them:
+
+| claim | other users | verdict |
+|---|---|---|
+| `@/packages/tls` is `secret`'s first consumer | `crypto`'s `hkdf`, `hmac` — both later | holds |
+| `@/packages/wactest/src/within.wac` is `coroutine`'s | none | holds |
+| `@/packages/wacc/src/walk.wac` is the brace pattern's | `desugar.wac`, later | holds |
+| `@/packages/server/src/halfclose.wac` is `Socket.closeSend`'s | the declaration only | holds |
+| `@/packages/sh/src/pipeline.wac` is `Proc.run`'s | the declaration only | holds |
+| `@/packages/tor/src/onionaddr.wac` is `@/packages/codec`'s | the barrel only | holds |
+| `@/packages/fs/src/mount.wac` is the `Files` projection's | four, all later | holds |
+
+**Seven for seven**, where the ordinals were five for zero. The difference is not care; it is shape.
+*First consumer of `secret`* names the thing to grep for, so writing the claim and checking it are
+the same action. *Fifth package to want a fixed-length array* names nothing — the set has to be
+reconstructed from memory, and memory is what produced the number in the first place.
+
+So the operative rule is narrower and more useful than *check your counts*:
+
+> **A claim that names its subject is self-checking. A claim that only counts is not.**
+
 `DECISIONS.md` already has the rule for prose — *"a rule written twice is a rule that drifts"* — and
 `@/packages/wac`'s README already applied it to a number. What is new is the measurement: the same
-directory, two families, and the one with the lists is the one that survived.
+directory, three families, and the two that name something are the two that survived.
