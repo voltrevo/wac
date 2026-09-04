@@ -1,10 +1,12 @@
-# zstd — nothing rewritten, and that is the finding
+# zstd — a `Buf` invariant held by a sentence in a third file
 
 Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does not compile,
 disposable.
 
-The real package is `packages/zstd`: 7,115 lines. **Nothing here is rewritten.** One file exists, and
-it exists to hold a note about a struct in `src/sequences.wac`.
+The real package is `packages/zstd`: 7,115 lines. Two files exist. `src/sequences.wac` holds a note
+about a struct; [`src/stream.wac`](src/stream.wac) was added on 2026-09-04 after
+[`@/packages/gzip`](../gzip/)'s README predicted it *"would find nothing new"* — the third such
+prediction tested that day and the third that was wrong.
 
 Reached by the same search as the last two — every mid-file doc comment of 150 words or more in the
 un-rewritten packages, sorted. `Fused` is 224 words defending a *struct*, which is a different shape
@@ -48,6 +50,43 @@ the two look alike. There the wrapper was one `struct.new` per *operation* — b
 numbers already in the tree. Here it would be one dereference per *read*: three per sequence,
 thousands of sequences a block, in over half of decode time. **Same proposal, opposite answer, and
 the discriminator is per-operation against per-access.**
+
+## The prediction, and the half of it that held
+
+`@/packages/gzip`'s README says:
+
+> **`zstd` has the same shape** … Everything here applies to it unchanged, and it is not rewritten
+> because it would find nothing new.
+
+The part it is about is right: `packages/zstd/src/stream.wac` traps on `Read.Failed` with no `broken`
+equivalent, exactly as gzip does, and gzip's argument carries over word for word. The file has two
+difficulties gzip has not got, and its own header names both — *the block is the unit*, and *the
+window is declared, not fixed*.
+
+## A `Buf` invariant held by a sentence in a third file
+
+The window one is the finding, and it is not about zstd.
+
+`packages/bytes`'s `Buf.pushRepeat(i32 at, i32 count)` takes an **absolute** position.
+`packages/zstd/src/sequences.wac` calls it as `out.pushRepeat(out.len - offset, …)`. The streaming
+decoder calls `dropFront` to release output more than `windowSize` behind, which shifts every byte
+down and reduces `len` by the same amount — so the expression still names the same byte. The header
+of `stream.wac` says so:
+
+> That works without touching the match code because `sequences.wac` copies with
+> `out.pushRepeat(out.len - offset, …)` — an index computed from the *current* length — so dropping
+> the front of the buffer moves the base under it and every offset still lands on the same byte.
+
+Correct, and **an invariant across two packages held by a sentence in a third file**. `Buf` offers an
+operation that invalidates absolute positions and an operation that takes one, and nothing in either
+signature relates them. A caller that computed `at` once and reused it across a `dropFront` reads the
+wrong bytes — silently, and only for inputs with a match older than the window, which is to say only
+for large ones.
+
+It is not a bug and it is not safe either: **safe because of what the one caller happens to do.**
+`FromEnd` — a distance rather than a position — cannot be stale, which is `@/packages/webrtc`'s `Tsn`
+move at a second setting. The honest note is that a comment on `dropFront` would probably have been
+enough here, because there is one caller and it is right; the type is what makes the *next* one safe.
 
 ## What could not be written
 

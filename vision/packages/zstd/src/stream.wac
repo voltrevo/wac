@@ -1,0 +1,131 @@
+// Streaming a zstd frame — the file `@/packages/gzip`'s README said would find nothing new.
+//
+// > **`zstd` has the same shape** … Everything here applies to it unchanged, and it is not rewritten
+// > because it would find nothing new.
+//
+// The part that claim is about is right: `packages/zstd/src/stream.wac` traps on `Read.Failed` with
+// no `broken` equivalent, exactly as gzip does, and gzip's argument carries over word for word.
+//
+// It is the third prediction of this kind tested today and the third that was wrong, because the
+// file has two difficulties gzip has not got and its own header names them both:
+//
+// > **The block is the unit.** A compressed block carries its own literals section and FSE tables and
+// > nothing in it can be decoded until all of it has arrived …
+// >
+// > **The window is declared, not fixed.** DEFLATE reaches back 32 KiB; zstd reaches back as far as
+// > the frame header says … Output is therefore retained until it is `windowSize` behind and only
+// > then written away.
+//
+// The second one is the finding, and it is not about zstd.
+
+import { Result, Bytes, AsyncGenerator } from "core";
+import { Buf } from "@/packages/bytes";
+
+/**
+ * Why a frame stopped, in `@/packages/gzip`'s shape because the shape is the point.
+ *
+ * That package splits `union<SourceFailed, Corrupt>` on *whether a caller may retry*, and its README
+ * is right that the split carries over unchanged here — which is the half of its prediction that
+ * held. Declared in this file rather than a `fault.wac` of its own, because two members and a
+ * borrowed argument do not need one.
+ */
+export struct SourceFailed { }
+/** The frame is not zstd, or not this zstd. Eight members in gzip; elided here. */
+export struct Corrupt { }
+export union<SourceFailed, Corrupt> Fault;
+
+/**
+ * How far back into the output a match reaches.
+ *
+ * **A distance, not an index — and that is the whole of what this file changes.**
+ *
+ * `packages/bytes`'s `Buf.pushRepeat(i32 at, i32 count)` takes an *absolute* position, and
+ * `packages/zstd/src/sequences.wac` calls it as `out.pushRepeat(out.len - offset, …)`. The streaming
+ * decoder then calls `dropFront` to release output that is more than `windowSize` behind, which
+ * shifts every byte down and reduces `len` by the same amount — so `out.len - offset` still names
+ * the same byte afterwards. `stream.wac`'s header states exactly that:
+ *
+ * > That works without touching the match code because `sequences.wac` copies with
+ * > `out.pushRepeat(out.len - offset, …)` — an index computed from the *current* length — so
+ * > dropping the front of the buffer moves the base under it and every offset still lands on the
+ * > same byte.
+ *
+ * It is correct and it is **an invariant across two packages held by a sentence**. `Buf` offers an
+ * operation that invalidates absolute indices and an operation that takes one, and nothing in either
+ * signature relates them. A caller that computed `at` once and reused it across a `dropFront` would
+ * read the wrong bytes, silently, and produce output that is wrong only for inputs with a match
+ * older than the window — which is to say, only for large ones.
+ *
+ * `FromEnd` cannot be invalidated by `dropFront`, because it does not name a position. That is the
+ * same move as `@/packages/webrtc`'s `Tsn`: a scalar whose meaning is relative, spelled as though it
+ * were absolute, where the type is the only place the distinction can live.
+ */
+export const struct FromEnd {
+  i32 back;
+}
+
+/**
+ * Input arriving in pieces, presented as a window the decoder can index into.
+ *
+ * **The amount to wait for is always known exactly** — a block's size is in its three-byte header —
+ * so this is not *read until you have enough*. It is *read this many*, and the type can say so.
+ * `packages/zstd`'s `Pull` accumulates against a target held in a local; making the target the
+ * parameter is the difference between a loop that might terminate and a loop that says how.
+ */
+export struct Pull {
+  Buf held;
+  /** Exactly `n` bytes, or the source ended first. */
+  async Result<Bytes, Fault> exactly(this, i32 n) { … }
+}
+
+/** A frame in, its bytes out, retaining only what the declared window still needs. */
+export async gen<Bytes> Result<void, union<E, Fault>> unzstd<E>(
+  AsyncGenerator<Bytes, Result<void, E>> source,
+) { … }
+
+// ## 1. The invariant is `Buf`'s, and zstd is where it happens to be load-bearing
+//
+// `Buf` has eleven ways to add and two ways to remove — `dropFront`, and `truncate` if
+// `issues/system/0333a` is taken. `dropFront` moves the contents and `pushRepeat` takes a position
+// into them. Every other caller in the tree computes its position and uses it immediately, so the
+// hazard has one witness and the witness is correct.
+//
+// That is the ordinary shape of an invariant nobody has written: **not a bug, and not safe either —
+// safe because of what the callers happen to do.** The count matters here. One caller holds it, in
+// another package, and the sentence that explains it is in a third file from the one that would
+// break.
+//
+// Two fixes, and the cheap one is not the type:
+//
+//   * **`FromEnd`**, above. `pushRepeat(FromEnd, i32)` cannot be handed a stale index because there
+//     are no indices. Costs a wrapper on the one caller and removes the hazard for every future one.
+//   * **A comment on `dropFront` saying it invalidates positions.** Free, and it is where a reader
+//     looking at `Buf` would find it — which is not where the current sentence is.
+//
+// The second is what a careful person does and the first is what makes the next caller safe. This
+// directory has argued for the first eight times; the honest note is that here the second would
+// probably have been enough, because there is one caller and it is right.
+//
+// ## 2. What could not be written
+//
+// **`Pull.exactly(n)` cannot say that `n` came from a header this decoder just read.** The block size
+// is three bytes off the wire, so it is attacker-controlled, and `exactly` will happily be asked for
+// two gigabytes. The shipped code bounds it with `blockMaxSize` from `frame.wac` — a check at the
+// call site, one call site, in a package whose whole subject is untrusted input. A `BlockSize` that
+// can only be built by validating against the frame header is the type, and it is
+// `@/packages/http`'s *checked* problem again: the value is fine when it is made and the check is
+// somewhere else.
+//
+// **The declared window may exceed memory and nothing says what happens.** `windowSize` comes from
+// the frame header and may be megabytes; the decoder retains that much output. A frame declaring a
+// gigabyte window is legal zstd and this is a program that will try. The shipped file does not
+// mention it, `Fault` has no member for it, and the honest answer is a limit the *caller* sets —
+// which is a parameter this signature does not have and `@/packages/gzip`'s does not either.
+//
+// **The retained output is both a buffer and a window, and it is one `Buf`.** Bytes ahead of the
+// window are output waiting to be yielded; bytes behind it are history the matcher still needs. One
+// length, two meanings, and `dropFront` is the operation that moves the boundary. Two types would
+// separate them and would need the history to be indexable from the buffer, which is the thing a
+// single `Buf` gets for free — so this is a case where the fused representation is doing real work
+// and splitting it would cost a copy. Recorded rather than proposed, and it is the second time in
+// two days that the flat thing was right: `@/packages/http`'s headers were the first.

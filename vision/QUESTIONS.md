@@ -5367,3 +5367,36 @@ a cast at the boundary between them. Worth asking whether the cheaper thing — 
 whose only constructor is the checking function — is a library type or needs anything from the
 language. It needs one thing: that nobody else can call the wrapper's constructor, which is the
 private-constructor entry again, arriving from a case that private constructors do not solve.
+
+## Three predictions that a file would say nothing, three wrong
+
+Not a language question. It is here because it is a fact about **how this directory decides what to
+write**, and the deliverable is the list of findings, so a rule that suppresses findings is worth
+one entry.
+
+Three package READMEs predicted that a file was not worth rewriting. All three were tested on
+2026-09-04 by writing it. All three were wrong, and each was wrong differently:
+
+| | the prediction | what writing it found |
+|---|---|---|
+| `http` | *"`headers.wac` … the same code with a different error type, and copying them here would say nothing"* | the one place a `Map` would be the **wrong** type, and a security property with it |
+| `json` | *"`stringify.wac` is not rewritten because nothing in it changes"* | a design justified by a limitation that lifted **before the same file adopted the replacement** |
+| `gzip` | *"`zstd` … it is not rewritten because it would find nothing new"* | a `Buf` invariant spanning three files and held by a sentence |
+
+**The half of gzip's that held is the useful control.** It predicted that gzip's `Read.Failed`
+argument carries over to zstd unchanged, and it does, word for word. So the failure is not *READMEs
+are unreliable*. It is narrower:
+
+**A prediction about a file is reliable about the thing the writer was looking at and unreliable
+about everything else.** gzip was looking at error handling and was right about error handling.
+`json` was looking at *what the rewrite changes* and its stringifier changes nothing about error
+handling — and carries a stale necessity claim, a sentinel, and a re-derived float classification,
+none of which was the subject.
+
+Which suggests the cheap rule, and it costs nothing to follow: **a claim that a file has nothing in
+it is only worth making about a file you opened.** All three of these were written from the package's
+shape rather than from the file, and each is one `sed -n 1,40p` from being right.
+
+The measurement that would say how much this cost: how many files this exercise skipped on a
+prediction. `packages/README.md`'s table says which packages were rewritten and not which files, so
+nobody can currently answer it.

@@ -1,3 +1,4 @@
 // The package, as one name. Nothing is rewritten — see `../README.md`.
 
 export { Fused } from "./sequences.wac";
+export { unzstd, Pull, FromEnd, Fault, SourceFailed, Corrupt } from "./stream.wac";
