@@ -2057,3 +2057,47 @@ method** — a sink can be closed and a source cannot.
 child's standard error was separable from its output; a stage sharing `Out` writes where the shell
 does. Getting it back means `run` answering two generators, or one generator of a two-armed sum —
 and the second is `Read`'s shape, which this document is already unsure about.
+
+## Four capabilities answer a generator nobody can close, and the one that answers a value can be
+
+Systematic rather than an oversight in one place. In `vision/std`:
+
+    Files.open(path)        AsyncGenerator<Bytes, Result<void, NotGranted>>     no close
+    In.stream()             AsyncGenerator<Bytes, Result<void, NotGranted>>     no close
+    Listener.accepted()     AsyncGenerator<Socket, Result<void, NotGranted>>    no close
+    Proc.run(argv, …)       AsyncGenerator<Bytes, Exit>                         no close
+
+    Files.create(path)      Sink { write, close }                               close
+
+**Every capability that produces has a bare generator and the one that consumes is a struct with a
+method.** The host has `closeFeed(i32)` for the read side, so this is a capability the rewrite
+dropped, in the same way `Clock` dropped `sleepMillis` — and it was not visible until laziness made
+abandonment ordinary.
+
+It stayed invisible because nothing had ever stopped reading early. `@/packages/box`'s `cat` and
+`gunzip` drain to the end; `tee` drains to the end. `@/packages/sh/src/pipeline.wac` is the first
+thing that does not: `cat big | head -1` pulls one chunk and `head` stops asking, leaving `cat`'s
+generator suspended forever with a file open.
+
+**Two answers, and the cost of each is countable rather than arguable.**
+
+**A `Source` beside the `Sink`** — `{ AsyncGenerator<Bytes, R> chunks; fn<Ticket<…>()> close; }`.
+Symmetric, needs no language decision, and the file closes when the caller says so. It costs the
+spelling at every consumer: `try await for (Bytes c in source)` becomes `… in source.chunks`, across
+four capabilities and the four files that use them today, and it makes a stream stop being *the*
+value a producer answers. It is also the shape that admits a producer with no close — `In.stream()`
+has nothing to release — so a third of them would carry a method that does nothing.
+
+**Or abandonment is defined once, in the language.** Whether a generator that nobody steps again
+runs its `defer`, and whether it is distinguishable from one that returned. That answer covers every
+generator rather than four capabilities, and `Files.open` needs no method because `defer { close(); }`
+inside the producer is the ordinary way to write it.
+
+The second is plainly the better answer and it is blocked on the same thing three other entries here
+are: **what a scope's end means when the scope is a suspended machine.** `defer`'s meaning, `schedule`
+restoring its target on a trap, and a ticket's `inWait` after one — the same question, and this is the
+fourth place it decides something concrete.
+
+Which makes the interim position worth stating rather than leaving implied: a leaked file handle is
+not a thing to defer to an open question, and if that question stays open the `Source` is the answer
+by default rather than on merit.
