@@ -24,8 +24,15 @@
 //
 // Anything else is declined **by name**, because a lowering that silently mis-flattens is worse than
 // one that refuses: an `await` nested inside a larger expression needs the expression's evaluation
-// order split around it, and an `await` inside a loop needs the loop's back edge as a state, which is
-// the next increment rather than this one.
+// order split around it.
+//
+// **A loop body is no longer in that list, and this paragraph said it was.** The increment landed:
+// the walk descends into `While`, `For` and `DoWhile`, `hoistTy`'s doc records that locals *"started
+// being hoisted out of loop bodies and `for` initialisers as well as the top level"*, `suspendAt`'s
+// records that an index into the top-level block stopped meaning anything *"with loops"*, and
+// `test/wac/asyncplan_test.wac` pins it — an `await` in a `for` body plans `ok suspends=1 hoist=3`,
+// *"total, i and a hoisted"*. What still declines is an `await` in a loop's **condition, initialiser
+// or update**, and one nested in a larger expression; `declineFor` names each.
 
 import {
   Arm, Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind, Ty,

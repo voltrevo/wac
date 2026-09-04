@@ -1034,3 +1034,78 @@ LeadingZero(at)))` against `Err(LeadingZero(at))`: three constructor calls and o
 against one call. Eleven files here declare a union and fifteen use one in a type, so the injection
 rule is the difference between the error types this exercise has been arguing for and a spelling
 nobody would write twice.
+
+## `gen<T>` and `yield` lower to a struct with a resume tag — **the target runs; the transform is wacc's own**
+
+Same treatment as `union` above, and the same caveat: the source form does not parse today, the
+**target** does. Both programs below were checked and run on 2026-09-04.
+
+**A `Vec`'s `items()`**, which is 18 of this directory's 42 `for … in` receivers:
+
+```wac
+enum Step<T> { Yielded(T value), Done }
+struct Items<T> { Vec2<T> of; i32 at; }
+
+Step<i32> next(Items<i32> it) {
+  if (it.at >= it.of.len) { return Step.Done; }
+  i32 v = it.of.data[it.at];
+  it.at = it.at + 1;
+  return Step.Yielded(v);
+}
+```
+
+and the loop that consumes it — which is what `for (i32 x in v.items()) { … }` becomes:
+
+```wac
+Items<i32> it = itemsOf(v);
+while (true) {
+  match (next(it)) { case Done: { break; } case Yielded(x): { sum = sum + x; } }
+}
+```
+
+`probe() = 15`. Zero parse errors, zero type errors.
+
+**A yield inside a nested loop**, which is the case that decides whether this is a real lowering or
+a special case for cursors. Both counters and a resume tag go into the state:
+
+```wac
+struct Pairs { i32 n; i32 i; i32 j; i32 resume; }
+```
+
+`probe() = 22` — `0 + 1 + 10 + 11` over a 2×2 sweep, resuming into the inner loop each time.
+
+### Why `Step<T>` and not `T?`
+
+`T? next()` cannot distinguish *done* from *a null element*, and `Vec<Node?>` is not hypothetical —
+`core/vec.wac`'s `pop` already documents the same problem and answers `T??`, where *"the outer
+absence is the vec was empty and the inner is the element was null"*. A generator is stepped in a
+loop, so the outer absence is the loop's exit condition and getting it wrong is an infinite loop
+rather than a wrong value. `Step<T>` is two arms and no nesting.
+
+### The transform is one wacc already performs
+
+**And the file that performs it said otherwise until today.** `packages/wacc/src/asyncplan.wac` is
+the plan for lowering `async` bodies, and its header said an `await` inside a loop *"needs the loop's
+back edge as a state, which is the next increment rather than this one"*. Three other places in the
+same file say the increment landed — the walk descends into `While`, `For` and `DoWhile`; `hoistTy`
+records that locals *"started being hoisted out of loop bodies"*; `suspendAt` records that a
+top-level index stopped meaning anything *"with loops"* — and `test/wac/asyncplan_test.wac` pins an
+`await` in a `for` body at `ok suspends=1 hoist=3`, *"total, i and a hoisted"*. The header is
+corrected.
+
+Which matters here rather than only there: **a generator needs exactly what that plan computes** —
+where the suspension points are, which locals outlive one, and their types. The differences are that
+a generator is driven by its caller rather than by a scheduler, and that it passes a value out at
+each suspension. Neither needs new analysis.
+
+What still declines in that plan declines here too: an `await` — or a `yield` — in a loop's
+**condition, initialiser or update**, or nested inside a larger expression. `@/packages/rlp`'s
+`while (this.at < end) { items.push(try this.item()); }` is a suspension in a *body* and is fine;
+`while (try more())` would not be.
+
+### What this does not lower
+
+**`try await for`** is three constructs at once — a generator, an await, and a failure propagated as
+the loop's own return — and the target for it is a `while` over `Step<T>` inside an `async` body
+whose `Err` arm returns. Each part is above; nothing has written the combination out, and it is the
+loop head in eleven files here.

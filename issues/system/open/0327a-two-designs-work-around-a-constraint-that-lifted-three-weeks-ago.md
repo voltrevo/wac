@@ -192,3 +192,30 @@ attached goes red, and a number in prose goes quietly wrong. Whoever re-measures
 command behind. Worth generalising past this one: the audit above looked for stale *claims about the
 language*, and stale *measurements of our own code* are the same genre with a shorter half-life,
 since a language gap closes once and a performance number moves every week.
+
+### A fourth shape: a file whose header contradicts its own body
+
+`packages/wacc/src/asyncplan.wac`, found 2026-09-04 while costing a generator lowering. Its header:
+
+> an `await` inside a loop needs the loop's back edge as a state, **which is the next increment
+> rather than this one**.
+
+Three places in the same file say the increment landed. The walk descends into `While`, `For` and
+`DoWhile`; `hoistTy`'s doc says locals *"started being hoisted out of loop bodies and `for`
+initialisers as well as the top level"*; `suspendAt`'s says an index into the top-level block stopped
+meaning anything *"with loops"*. And `test/wac/asyncplan_test.wac` pins it — an `await` in a `for`
+body plans `ok suspends=1 hoist=3`, commented *"one suspension in a loop; total, i and a hoisted"*.
+
+Corrected, and narrowed to what still declines: a loop's **condition, initialiser or update**, and
+nesting inside a larger expression, which `declineFor` names one by one.
+
+**This is the same genre and a different search.** Everything above was found by grepping for a
+*sentence* — "wac has no …" — across files. This one has no such sentence: it is a claim about the
+file's own current state, and the only way to catch it is to read the header against the body. The
+grep cannot help, and neither can a compiler, because both halves compile.
+
+The reason it is worth adding here rather than filing separately: it changes what the sweep is *for*.
+A stale claim about the **language** goes wrong when the language moves, which is rare and datable —
+`git log -S` finds it. A stale claim about **the file's own scope** goes wrong when the file moves,
+which is every commit. The second is the more common failure and nothing in this issue's method
+reaches it.
