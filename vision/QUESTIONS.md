@@ -168,3 +168,11 @@ members flattening into it, which set semantics imply and nothing states.
 is a distinct type or an alias decides the related question about a union as a match arm — which
 this package also wants, for the one place that turns a fault into a message.
 
+## Whether `drain` can terminate while the accept loop is one of the things it is draining
+
+`vision/packages/server`'s `main` accepts in a loop and calls `handle(sys, conn)` without awaiting,
+then `await sys.drain()` before returning. `drain` loops until its queue is empty, so it stops only
+once accepting has stopped — and the accept loop suspends on the listener, which puts *it* in the
+queue too. A connection arriving during the drain is scheduled onto a queue being emptied. Whether
+that is fine, or a program that never exits, is not decidable from anything written down.
+

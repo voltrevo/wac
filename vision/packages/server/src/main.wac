@@ -1,0 +1,67 @@
+// The accept loop, in wac.
+//
+// This file cannot exist today. `serve.wac`'s header opens "wac has no sockets, so the host owns
+// the accept loop and the buffers", and everything below is what stops being true once a socket is
+// a value the program was handed.
+//
+// The shape to notice is that there is no framework. Concurrency is `handle(conn);` without an
+// `await` — the call runs to its first suspension and hands its continuation to whoever is
+// scheduling, and the loop goes straight back to accepting. One slow client does not hold the door,
+// and nothing here mentions a task, a pool or an executor.
+
+import { Sys, Socket, Listener, Read, NotGranted } from "std/platform.wac";
+import { Buf } from "@/packages/bytes/src/buf.wac";
+import { Served, serve } from "./serve.wac";
+
+export async i32 main(Sys sys) {
+  match (await sys.listen(7000)) {
+    Err(NotGranted(what)): { sys.log("no port: \{what}"); return 1; }
+    Ok(l): {
+      sys.log("listening on 7000");
+      try for (Socket conn in l.accepted()) {
+        handle(sys, conn);
+      }
+    }
+  }
+
+  // Every connection still in flight gets to finish. Without this the program would exit with
+  // half-written responses, and *dangling work is an error* would have nothing to point at.
+  await sys.drain();
+  return 0;
+}
+
+/**
+ * One connection, until the client stops asking or the framing stops making sense.
+ *
+ * Nobody awaits this. It suspends at its first `recv` and its continuation goes to the scheduler in
+ * force where it was called — `main`'s, which is `sys`'s — so `drain` is what eventually finishes
+ * it.
+ */
+async void handle(Sys sys, Socket conn) {
+  // Four ways out of this function below — two `break`s and two `return`s — and the socket closes
+  // on all of them. That is the whole argument for `defer` in one function.
+  defer { conn.close(); }
+
+  Buf pending = Buf.create();
+
+  while (true) {
+    match (await conn.recv()) {
+      Data(bytes): { pending.pushAll(bytes); }
+      End:         { break; }
+      Failed(why): { sys.log("connection lost: \{why}"); break; }
+    }
+
+    // Pipelining: one arrival can carry more than one request, so keep answering while the buffer
+    // holds whole ones.
+    while (true) {
+      match (serve(pending.bytes(), sys.now())) {
+        Incomplete: { break; }
+        Done(response, consumed, keepAlive): {
+          if ((await conn.send(response)).isErr()) { return; }
+          pending.drop(consumed);
+          if (!keepAlive) { return; }
+        }
+      }
+    }
+  }
+}

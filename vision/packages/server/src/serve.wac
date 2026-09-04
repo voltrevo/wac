@@ -1,0 +1,90 @@
+// One connection's worth of bytes, as a pure function.
+//
+// This stays pure, and it stays here, because the SHOWCASE entry that says so is right: a server
+// written as a callback soup can only be tested by running it, and this can be tested by calling
+// it. What changed is that the *loop around it* is now writable in wac too — see `main.wac`. The
+// original's header opens "wac has no sockets, so the host owns the accept loop", and that sentence
+// is what the capability model deletes.
+//
+// `consumed` is what makes keep-alive and pipelining work, and it comes straight from the parser. A
+// server that answers correctly but is wrong about where the request ended will read the next
+// request's first bytes as the tail of this one.
+
+import { Parsed, Request, parseRequest } from "@/packages/http/src/request.wac";
+import { RequestFault, TooLarge } from "@/packages/http/src/fault.wac";
+import { Response, write } from "@/packages/http/src/response.wac";
+import { eqFold } from "@/packages/http/src/headers.wac";
+import { route } from "./routes.wac";
+
+/** The largest body this accepts. A larger one is refused with 413 rather than buffered. */
+const i64 MAX_BODY = 1 << 20;
+
+/**
+ * Not enough bytes yet, or a response and what to do next.
+ *
+ * The original is a struct of `(bool ready, u8[] response, i32 consumed, bool keepAlive)` where
+ * three of the four fields mean nothing when `ready` is false. Nothing stopped a host reading
+ * `consumed` off a `Served` that had none — the value it would get is `0`, which is a legal answer
+ * meaning something else entirely.
+ */
+export enum Served {
+  Incomplete,
+  Done(u8[] response, i32 consumed, bool keepAlive)
+}
+
+/**
+ * Handle whatever is in `input`.
+ *
+ * `nowMillis` is passed in rather than read. wasm has no clock, and a handler that takes the time
+ * as an argument is one that can be tested at a fixed instant.
+ */
+export Served serve(u8[] input, i64 nowMillis) {
+  match (parseRequest(input, MAX_BODY)) {
+    Incomplete: {
+      return Served.Incomplete;
+    }
+    Bad(why): {
+      // A malformed request means the byte stream can no longer be trusted to be a sequence of
+      // messages, so the connection closes whatever the client asked for. Continuing on a stream
+      // whose framing is in doubt is the smuggling condition itself.
+      return Served.Done(bare(statusFor(why), "GET".toBytes(), false), input.len(), false);
+    }
+    Ok(request): {
+      bool keep = wantsKeepAlive(request);
+      Response res = route(request, nowMillis);
+      return Served.Done(write(res, request.method, keep), request.consumed, keep);
+    }
+  }
+}
+
+/**
+ * Which status a fault deserves.
+ *
+ * `code == ERR_TOO_LARGE()` in the original — an integer compared against a function returning a
+ * literal, in a file that also has integers meaning statuses and integers meaning positions.
+ */
+i32 statusFor(RequestFault why) {
+  return match (why) {
+    TooLarge(wanted, limit): 413,
+    else:                    400,
+  };
+}
+
+/**
+ * Whether to keep the connection open, from the request's version and its `Connection` field.
+ *
+ * HTTP/1.1 keeps by default and closes on `Connection: close`; 1.0 is the other way round and needs
+ * an explicit `keep-alive`. Getting this backwards for 1.0 is how a client hangs waiting for a
+ * response it has already been given.
+ */
+bool wantsKeepAlive(Request req) {
+  u8[] conn = req.headers.first("Connection");
+  if (eqFold(conn, "close".toBytes())) { return false; }
+  if (req.minor == 0) { return eqFold(conn, "keep-alive".toBytes()); }
+  return true;
+}
+
+/** A bare status with no body, for the cases where there is nothing useful to say. */
+u8[] bare(i32 status, u8[] method, bool keepAlive) {
+  return write(Response.create(status), method, keepAlive);
+}

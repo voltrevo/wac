@@ -1,0 +1,71 @@
+// What a program was handed.
+//
+// Nothing here is ambient. A function that was not given a `Sys` cannot open a file, listen on a
+// port, or read the clock, and that is a fact about its type rather than a sandbox around it. The
+// consequence worth stating: **there is no singleton.** Two `Sys` values are two different grants,
+// a test hands a fake one, and any code that assumed there was only one would be wrong in a way
+// that reads correct.
+
+import { Ticket, TicketBase, Continuation } from "core/ticket.wac";
+import { Result } from "core/result.wac";
+import { Queue } from "core/queue.wac";
+
+/** A capability the grant did not include. */
+export struct NotGranted { string what; }
+
+export struct Sys {
+  /** Work nobody awaited, waiting for somebody to run it. */
+  Queue<Continuation> pending;
+
+  /**
+   * Run everything nobody awaited, until there is none left.
+   *
+   * `schedule` first, so a machine that suspends again inside a resumed continuation lands back
+   * here rather than in whatever target was in force where it was first called. Its own `await`
+   * hands this machine's continuation to the target above it, and the target is back in force when
+   * it is resumed — see `vision/TECHNICAL.md`.
+   */
+  async void drain(this) {
+    schedule this.pending.push;
+
+    while (this.pending.len() > 0) {
+      Continuation c = this.pending.pop()!;
+      await c.t;
+      c.call();
+    }
+  }
+
+  /** Run `f` when this domain ends, however it ends. Cleanup that must happen is a system's. */
+  void atEnd(this, fn<void()> f);
+
+  async Result<u8[], NotGranted> readFile(this, string path);
+  async Result<Listener, NotGranted> listen(this, i32 port);
+  void log(this, string line);
+
+  /** Milliseconds since the epoch. A read, not a fact about the machine — hence the capability. */
+  i64 now(const this);
+}
+
+/**
+ * A port this program was granted.
+ *
+ * Iterating it is the accept loop: `for (Socket conn in l)` yields one connection at a time and
+ * ends when the listener closes. A handle is a value, so it travels as one thing rather than as a
+ * number kept beside the capability that makes it mean something.
+ */
+export struct Listener {
+  async gen<Socket> Result<void, NotGranted> accepted(this);
+}
+
+export struct Socket {
+  /** Bytes, end, or a failure, and the caller has to say which it is handling. */
+  async Read recv(this);
+  async Result<void, NotGranted> send(this, u8[] bytes);
+  void close(this);
+}
+
+export enum Read {
+  Data(u8[] bytes),
+  End,
+  Failed(string why)
+}
