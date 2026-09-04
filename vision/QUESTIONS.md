@@ -91,6 +91,45 @@ Nothing on the page mentions it. Candidates: driving a coroutine to completion f
 `Err` when this host cannot be waited on, that it drains the dependency set rather than descending
 depth-first, and the circular case. Four is probably too many for one feature.
 
+## `drain` names a queue where it should name the current target
+
+`schedule` had one consumer — `Sys.drain` — until `vision/packages/wactest/src/isolate.wac` gave it a
+second, and the first one breaks the second.
+
+```wac
+async void drain(this) {
+  schedule this.pending.push;
+  while (this.pending.len() > 0) { … }
+}
+```
+
+Inside a scope that has already said `schedule mine.push`, a call to `sys.drain()` retargets to
+`sys.pending`, drains `sys.pending`, finds it empty, and answers zero — while the caller's work sits
+in `mine`, undrained and unreported. The same code works against the shipped design, where there is
+one queue.
+
+**`drain` should drain wherever `schedule` currently points**, which makes `Sys.pending` an
+implementation detail of the default target rather than something `drain` knows the name of. That is
+a change to a design worked out directly, so it is a question rather than an edit — but the current
+shape means the only two consumers of `schedule` cannot be used together, which is a strong hint.
+
+## What a trap does to a scope, which `schedule` and `defer` both need
+
+Two entries here ask a version of this and it is one question.
+
+`defer { this.inWait = false; }` in `core/ticket.wac` is permanently wrong after one trap if a trap
+skips the defer. `schedule mine.push` in `isolate.wac` sends every later test's work into a dead
+queue if a trap does not restore the target. Both are **scope-scoped side effects**, and what
+unwinding does to them is unstated for both.
+
+Answering it once answers both, and answering it differently for the two would need a reason — the
+only candidate being that `defer` is a thing the program wrote and `schedule` is a thing the runtime
+tracks, which is a distinction about implementation rather than about meaning.
+
+Related and also unstated: **whether the target nests.** The pages say *"the scope resumes"*, which
+reads like a stack and does not say so. An implementation with a single current target that restores
+to the default would satisfy that sentence and break every nested use.
+
 ## `secret` has no return position, no field position and no release
 
 `vision/packages/tls` is the first consumer the proposal has ever had — its two uses are both inside

@@ -92,6 +92,14 @@ has no generics-free way to hold a list of structs"* and which turns out to be a
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
 
+**A primitive with one consumer is a primitive nobody has composed.** `schedule` had exactly one —
+`Sys.drain` — and `wactest`'s `isolate.wac` is the second. The first breaks the second: `drain` says
+`schedule this.pending.push` and then drains `this.pending`, so inside a scope that has already
+retargeted, it drains the wrong queue, finds it empty and answers zero while the caller's work sits
+undrained. The two existing consumers of `schedule` cannot be used together. It also turned up that
+`schedule` and `defer` are asking one question — what unwinding does to a scope-scoped side effect —
+which two separate entries had been asking separately.
+
 **A proposal tested only on its motivating example is untested, and the parser said so first.**
 `secret` had two uses and both were inside the file proposing it. The TLS key schedule is ten arrows
 of *secret in, secret out*, and the qualifier has no return position, no field position and no way to
@@ -332,3 +340,4 @@ while correcting something.
 | [tor](tor/) | 2026-09-04 | 16,291 lines counted, not rewritten; 64 failure paths into 13 bits |
 | [fs](fs/) | 2026-09-04 | closures instead of a mount table; the first consumer of the `Files` projection |
 | [tls](tls/) | 2026-09-04 | the key schedule, as the first consumer `secret` ever had |
+| [wactest](wactest/) — [ISOLATION.md](wactest/ISOLATION.md) | 2026-09-04 | test isolation, as the second consumer `schedule` ever had |

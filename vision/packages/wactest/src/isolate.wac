@@ -1,0 +1,65 @@
+// One test's outstanding work is that test's, and `schedule` is the only thing that can say so.
+//
+// **The second consumer `schedule` has ever had.** `TECHNICAL.md` argues it at length and
+// `vision/std/platform.wac`'s `Sys.drain` is the only place that uses it — one use, so nothing has
+// tested whether the primitive generalises. This is a second, and it is a real problem rather than
+// an exercise.
+//
+// ## The problem, in the shipped tree
+//
+// `std/platform.wac` says of `drain`: *"A `main` that schedules and returns without draining leaves
+// work outstanding, which the host treats as an error; `dropAll` is how a program says it meant
+// to."* The host asks `outstanding()` **before deciding a clean exit** — once, at the end of the
+// program.
+//
+// A test runner runs many tests in one program against one `Core`, so there is one queue for all of
+// them. A test that schedules a continuation and returns without draining does three things, none
+// of which anything reports:
+//
+//   - its work runs during **some later test**, whichever one next dispatches;
+//   - that later test's failure is attributed to the later test;
+//   - and if nothing dispatches, the whole program is marked unclean at the end, naming nobody.
+//
+// The middle one is the expensive one. A flake that only appears when two particular tests run in
+// one process, and moves when the order changes, is the hardest failure this repository has.
+//
+// ## What `schedule` does about it
+//
+// `schedule <target>` redirects where continuations land for the rest of the enclosing scope, and
+// the operator's own wrinkle about it is the part that makes this work: **the target is restored
+// because the scope resumes**, not because anybody resets it. So a runner can give each test its own
+// queue by writing one statement inside the loop body, and the restoration is the block ending.
+
+import { Result, Ticket, Queue, Continuation } from "core";
+import { Sys } from "std";
+import { T, Report } from "./assert.wac";
+
+/** What a test left behind. */
+export struct Leaked { string test; i32 count; }
+
+/**
+ * Run `body`, and answer what it scheduled and did not drain.
+ *
+ * The whole of the isolation is the `schedule` on the third line. Everything a test schedules —
+ * directly, or inside anything it calls, including a nested `Sys.drain` — lands in `mine` instead of
+ * on the caller's queue, until this block ends.
+ */
+export async Result<Report, Leaked> isolated(Sys sys, string name, fn<Ticket<Report>()> body) {
+  Queue<Continuation> mine = Queue.create();
+  schedule mine.push;
+
+  Report r = await body();
+
+  // Everything the test meant to happen has to have happened by now. Draining here rather than
+  // refusing outright is the choice worth arguing: a test that schedules and expects the runner to
+  // dispatch is writing against the shipped behaviour, and refusing it would be a new rule rather
+  // than a new report. So it runs, and the count is reported.
+  i32 ran = 0;
+  while (mine.len() > 0) {
+    Continuation c = mine.pop()!;
+    await c.t;
+    c.call();
+    ran = ran + 1;
+  }
+  return ran > 0 ? Err(Leaked(name, ran)) : Ok(r);
+}
