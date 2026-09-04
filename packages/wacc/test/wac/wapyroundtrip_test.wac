@@ -41,7 +41,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
-import { tracked } from "../../../wactest/src/repo.wac";
+import { sourceFiles } from "../../../wactest/src/repo.wac";
 import { endsWith, has } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { dump, dumpWapy, wapyOf } from "../../src/api.wac";
@@ -153,12 +153,16 @@ string replaceAll(string s, string from, string to) {
 export string test_the_printers_output_is_what_wacc_reads_back(Core core, Cli cli) {
   T t = T.create();
 
-  string[] all = tracked(core, cli);
-  string[] wacFiles = string[all.len()](fill: "");
-  i32 nFiles = 0;
-  for (i32 i = 0; i < all.len(); i++) {
-    if (endsWith(all[i], ".wac")) { wacFiles[nFiles] = all[i]; nFiles = nFiles + 1; }
-  }
+  // `sourceFiles` rather than `tracked` plus a filter, which is what this was. The two differ in
+  // one way and it is the way that matters here: `sourceFiles` leaves out `vision/`, which holds
+  // `.wac` files written in a language that does not exist. Twenty-two of them were reported as
+  // trees that differ, which is true and is not about the printer.
+  //
+  // `tracked` is the raw list and stays raw — a conflict-marker check wants every tracked file,
+  // vision included. A guard reaching for `tracked` is opting out of the exclusions, and this one
+  // did not mean to.
+  string[] wacFiles = sourceFiles(core, cli, string[](".wac"), string[0](fill: ""));
+  i32 nFiles = wacFiles.len();
   // A floor, because git succeeding with a short list is a different way to get the same wrong
   // answer as git failing — `repo.wac`'s header asks every caller to put one here.
   t.isTrue(nFiles >= 300, "only " + itoa(nFiles) + " tracked .wac files — did git run?");
