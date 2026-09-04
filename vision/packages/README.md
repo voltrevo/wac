@@ -137,6 +137,42 @@ The pattern: **a proposal argued from how the code reads is about half right, an
 guessable from the outside.** Four of the six were being sold on a benefit that reading disproved,
 and the two that survive intact are the two whose argument was already about correctness.
 
+## What has to land before what
+
+Not a plan — an ordering, and every edge below came out of a measurement rather than a preference.
+It is the thing none of the individual findings showed, because each was about one change.
+
+**Null-narrowing before *absence is a type*.** `indexOf` answering `i32?` is 734 call sites, 355 of
+which test the `-1` explicitly. With narrowing each becomes a test and a name; without it, a test
+and an unwrap at every use. Taking the principle first pays for 355 sites twice.
+
+**Null-narrowing before removing `Option`.** `Option` narrows — `case Some(v)` binds the payload —
+and `T?` does not. The tree is already 811 nullables to 86 `Option` mentions, so the migration is
+nearly done, and the 21 `case Some(v)` arms left are the only sites that would regress. With
+narrowing first, removing `Option` is pure subtraction.
+
+**But narrowing itself needs a sweep.** Unwrapping a non-nullable is an error, so the day
+`is not null` narrows, every `if (c is not null) { … c! … }` is a redundant unwrap. 1,445 null
+tests, 1,730 unwraps. `issues/lang/closed/0029` hit exactly this shape and got away with it because
+`rg` found no users of the idiom it broke; this one has thousands.
+
+**`issues/lang/open/0315a` before `secret`.** Constness is a `bool` per name in the checker's scope
+table, not part of the type, which is why its five leaks are one fact. A `secret` built the same way
+inherits them by construction, and a laundered `secret` is a key in a log line.
+
+**A generic parent before anything ticket-shaped.** `struct AllOf<T> : Ticket<T[]>` is
+`expected '{', found '<'` today. `AllOf`, `AnyOf`, `Generator`, `AsyncGenerator` and `SysTicket` all
+need it, so the whole coroutine and ticket design does not parse without it.
+
+**Re-export before the duplicate it is for can go.** `itoa64` and `utoa64` exist twice because
+unifying them touches forty import lines — `wac-mono 0072`, open, and the reason `fmt`'s barrel
+cannot be written.
+
+The shape worth noticing: **four of the six are orderings where doing the appealing thing first
+costs more**, and none of them is visible from the change it constrains. A list of proposals sorted
+by how much they improve the language would put *absence is a type* near the top and null-narrowing
+nowhere.
+
 ## And the failure mode of the exercise itself
 
 Seven claims that something was missing were wrong, and one claimed a mechanism that does not exist.
