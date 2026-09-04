@@ -350,14 +350,44 @@ today's rules in a place vision is not changing.** Nothing else would have caugh
 it **renames or replaces**, which the parser cannot see because the old spelling is perfectly good.
 It is the class with a migration attached, and nothing had collected it.
 
+Re-measured 2026-09-04 with strings stripped as well as comments — see below for why that is not a
+detail. `grep` is the raw count, *in code* is what a migration actually has to edit:
+
 | vision | shipped | grep | in code | files |
 |---|---|---:|---:|---:|
-| `Sys` | `Core` and `Cli`, two parameters | 3,198 + 4,400 | 2,820 + 3,726 | 706 + 737 |
-| `Ticket<T>` | `Pending<T>` | 755 | **430** | 79 |
-| `fn<T(…)>` | `fn[T(…)]` | 1,091 | **444** | 80 |
-| a match arm with no `case` | `case X:` | 2,349 | 2,081 | 205 |
-| `default:` | `else:` | 624 | 572 | 101 |
-| `T?` everywhere | `Option<T>` alongside it | 102 | **50** | 18 |
+| `Sys` | `Core` and `Cli`, two parameters | 3,210 + 4,413 | 2,886 + 3,814 | 710 + 741 |
+| `Ticket<T>` | `Pending<T>` | 758 | **418** | 77 |
+| `fn<T(…)>` | `fn[T(…)]` | 1,091 | **378** | 75 |
+| a match arm with no `case` | `case X:` | 2,399 | 2,396 | 217 |
+| `default:` | `else:` | 624 | 623 | 102 |
+| `T?` everywhere | `Option<T>` alongside it | 102 | **48** | 17 |
+
+**The `fn[` row was 444 and is 378, and the 66 are not the tree changing.** The earlier count stripped
+comments and not strings, and this repository is the one place where that is a large error rather
+than a rounding one: `packages/wacc/src/coretext.wac` is the whole of `std/` and `core/` embedded in
+the compiler **as text**, 3,343 lines of it, and it alone holds 157 occurrences of `fn[` inside string
+literals. Across the tree, strings hide 455 of the 833 `fn[` that survive comment-stripping — more
+than half the count, and more than every other row put together.
+
+    row          after comments   after strings   hidden by strings
+    fn[                     833             378                 455
+    Pending<                581             418                 163
+    Cli                    3982            3814                 168
+    Core                   3010            2886                 124
+    Option<                  63              48                  15
+    case X:                2398            2396                   2
+    else:                   623             623                   0
+
+So it is specific rather than general: a count of a *syntactic* construct is wrong here in proportion
+to how much a compiler that carries its own source quotes it. `case X:` and `else:` are unaffected
+because nothing embeds a match arm as a string; `fn[` is affected most because a funcref slot is what
+`std/platform.wac` is mostly made of, and `coretext.wac` is `std/platform.wac`.
+
+**The parser agrees exactly.** Over `packages/`, 21 files refuse under the vision grammar and 21
+files contain `fn[` outside comments and strings — the same 21, with nothing on either side. That is
+the cross-check the grep could not do for itself, and it is the reason the 378 is trustworthy where
+the 444 was not: a number derived by pattern-matching, confirmed by a tool that has to actually
+parse.
 
 **The counts on this page were greps and three of them are roughly double the truth.** Comments and
 string literals are 59% of `fn[`'s occurrences, 50% of `Option<`'s and 43% of `Pending<`'s — a
@@ -390,12 +420,41 @@ in the file, and for no other reason.
 So the answer to *is this the same language with more in it* is: **it is, apart from one bracket.**
 Everything else the delta adds is additive — 45 rules replaced and two extended, and not one of them
 takes anything away. That is a much smaller claim than the rename table looks like and a much easier
-one to act on: the migration is a mechanical sweep of 444 sites, and the day after it, every one of
+one to act on: the migration is a mechanical sweep of 378 sites, and the day after it, every one of
 these 323 cases parses under both.
 
 Worth saying because nothing else could have said it. A grep tells you how many lines mention a
 spelling; running both grammars over the same corpus tells you which *programs* stop being programs,
 and it turned out to be one cause with no second.
+
+### And now over the whole tree, which is 1,134 files rather than 323
+
+`spec/cases` is a corpus of deliberately small programs. `packages/` is the production one — 40
+packages, 1,134 files, everything from a 16,000-line relay to a nine-file `abi`. Both grammars were
+run over all of it, 2026-09-04:
+
+    spec grammar     1134/1134 parse
+    vision grammar   1113/1134 parse
+
+**Twenty-one files, one reason.** Every refusal is `no rule reaches '['`, and every one of the
+twenty-one files contains `fn[`. Not a majority — the whole set, with nothing else in it, on a corpus
+three and a half times the size of the one the claim was first made on. `platform` accounts for
+eleven of the twenty-one and the other ten are spread over seven packages.
+
+    box 2   fs 1   gzip 2   platform 11   sh 1   stream 2   wactest 1   zstd 1
+
+**The first line is worth as much as the second and is not about vision at all.** `spec/spec/grammar.md`
+accepts every wac file in the repository. The grammar in the spec is a document that nothing was
+checking against the code it describes — it gained ten productions this week from files that use
+constructs it did not have — and *"1134/1134"* is the first statement that it is now complete with
+respect to the tree. A recogniser cannot say the grammar is *right*; it can say there is nothing
+written here that it cannot read, and until this week nobody could say even that.
+
+**A note on how it was run, because it changes what to do next time.** One `deno` per package: the
+whole tree in a single process runs out of memory at about 125 files of 1,134. Nothing about the
+corpus causes that — `packages/box` alone is 128 files and parses fine — so it is per-file state the
+recogniser never releases, and a process that exits between packages does not accumulate it. The
+sweep is `tools/specparse.ts` called forty times per arm.
 
 **Re-measured 2026-09-04, after the delta had roughly doubled, and every number above is unchanged.**
 When these three lines were first written the patch was 22 rules replaced and one extended; it is now
@@ -411,7 +470,7 @@ brackets.
 
 **And only one row is a grammar change at all.** `fn[T(…)]` → `fn<T(…)>` is the single rename the
 parser can see: `tools/specparse.ts` with `GRAMMAR.ebnf` refuses `fn[void()] cb;` and accepts the
-angle form, so those 444 sites in 80 files stop compiling on the day it lands. Everything else in
+angle form, so those 378 sites in 75 files stop compiling on the day it lands. Everything else in
 this table is a rename of an *identifier* — `Core`, `Pending`, `Option` — or of arm syntax the delta
 accepts both spellings of, so a sweep can do it and nothing breaks in between.
 | a tag is a function in scope | **`[§jsx-element-is-an-expression]`** — *"the tag as a string. Nothing is looked up"* | — |
