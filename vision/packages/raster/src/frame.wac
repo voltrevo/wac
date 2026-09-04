@@ -1,0 +1,61 @@
+// One frame — the consumer `@/packages/raster` was written without, and what it finds.
+//
+// That rewrite's argument for `Tile` is that the shipped `region` answers a bare `u8[]` after
+// clipping, so *"a caller rebuilding, from a second source, what this function has already
+// computed"*. `Tile` is the pair, `damaged()` answers one, and nothing had ever called it.
+
+import { Result, Bytes } from "core";
+import { Page, PageFault } from "std";
+import { Surface, Tile, Rect, Rgba } from "@/packages/raster";
+
+/** Draw a window frame and a label, then send only what changed. */
+export async Result<void, PageFault> frame(Page ui, Surface s) {
+  s.fill(Rect.of(0, 0, s.width, s.height), Rgba.hex(0x101416FF));
+  s.outline(Rect.of(4, 4, 88, 40), Rgba.hex(0x46D9C0FF));
+  _ = s.text(label(), 8, 6, Rgba.hex(0xDCE8E7FF));
+
+  Tile? t = s.damaged();
+  if (t is null) { return Ok; }
+  // **The pair, taken apart again.** See below.
+  try await ui.drawPixelsIn("screen", t!.at.x, t!.at.y, t!.at.w, t!.at.h, t!.pixels);
+  s.undamage();
+  return Ok;
+}
+
+i32[] label() { … }
+
+// ## 1. The value stops at the capability
+//
+// `Tile` exists so a caller cannot pair the wrong rectangle with the wrong bytes. The line that
+// sends it is
+//
+//     ui.drawPixelsIn("screen", t!.at.x, t!.at.y, t!.at.w, t!.at.h, t!.pixels)
+//
+// — five fields, unpacked in order, which is the mistake `Tile` was built to prevent, at the one
+// call in the program that crosses to a host. Everywhere else in this directory a value type earns
+// its keep by being *passed*; here it is destructured immediately because the capability takes
+// scalars.
+//
+// **And the capability has two arities for one operation.** `drawPixels(id, w, h, bytes)` and
+// `drawPixelsIn(id, x, y, w, h, bytes)` differ by whether an origin is present — which is a `Rect`
+// against a `Rect` at the origin, so with the value type there is one call and the pair collapses.
+// `vision/std` kept both because the shipped surface has both; that is the copy, not the design.
+//
+// The general shape, which `../../../QUESTIONS.md` gets: **a capability signature is the last place
+// a value type reaches**, because it is the boundary a host has to marshal, and marshalling is
+// defined per scalar. Every projection in `std` takes strings, integers and `Bytes`; not one takes a
+// struct this directory declared, and `Page.render(Node)` is the single exception — which
+// `std/platform.wac` itself flags as *"the first capability anywhere to take one"*.
+//
+// ## 2. What could not be written
+//
+// **`"screen"` is a string and nothing checks it.** The canvas is named in the markup and named
+// again here, and a typo is a draw that goes nowhere — which is `NoSuchElement` now and was a
+// `bool` until this file was written. `std/platform.wac`'s own note says the ids *"are still
+// strings and this does not fix that"*, and a frame loop is where it costs most: the whole program
+// is one `drawPixelsIn` and it either lands or does nothing.
+//
+// **A `Surface` is drawn into and a `Tile` is read out, and both are `Bytes` of the same layout.**
+// Nothing says the tile came from *this* surface. `ui.drawPixelsIn(…, otherTile.pixels)` with this
+// tile's rectangle type-checks and draws garbage at the right place, which is the pairing `Tile`
+// prevents holding one tile and does not prevent holding two.

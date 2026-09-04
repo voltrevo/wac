@@ -4250,3 +4250,58 @@ The reason it is a question rather than a want: **the third option may be right*
 that costs nothing. What decides it is whether *the program* or *its launcher* should know that its
 standard input is not a keyboard — and the answer this directory has given everywhere else is the
 launcher.
+
+## A capability signature is the last place a value type reaches
+
+Nine of `Page`'s twelve members answered `Ticket<bool>` in this directory until 2026-09-04, and the
+first consumer found out why that survived: **the audit that produced `vision/std` compared its
+members against the shipped ones and never asked whether the shipped answer was right.** A `bool` in
+`Page.render` became a `bool` in `Page.render`, faithfully.
+
+Reading the only host that implements `Page` at all — `packages/platform/host/browser.ts`, since
+`native/src` and `native/v8/src` mention it zero times — those operations are declared `void` and
+the dispatcher answers `EMPTY`:
+
+    [OP.SET_TEXT]: (p) => { const [a, b] = twoStrings(p); dom().setText(a, b); return EMPTY; },
+
+**Nothing on the other side produces the bool.** And the one failure the host does detect it does
+not report either: `drawPixelsIn` *throws* — `"${w}x${h} needs ${w*h*4} bytes, got ${rgba.length}"` —
+which reaches a wac caller as a trap. So a capability that cannot fail and one that can are the same
+signature, and it answers a third thing.
+
+Fixed here; the shipped surface still has it, and the *method* is the part worth keeping: **a
+conformance audit cannot find a flaw both sides share.** The five passes that produced this file were
+names, signatures, answered types, prose and history markers — and the third pass asked *did the type
+change*, not *is the type right*. Every finding it produced was a divergence. A design flaw copied
+faithfully is invisible to all five.
+
+### And the value types stop at the boundary
+
+`@/packages/raster/src/frame.wac` sends a `Tile` — a `Rect` and the pixels, bundled so a caller
+cannot pair the wrong rectangle with the wrong bytes — like this:
+
+    ui.drawPixelsIn("screen", t!.at.x, t!.at.y, t!.at.w, t!.at.h, t!.pixels)
+
+Five fields, unpacked in order, at the one call in the program that crosses to a host. The capability
+even has **two arities for one operation** — `drawPixels(id, w, h, bytes)` and
+`drawPixelsIn(id, x, y, w, h, bytes)`, differing by whether an origin is present, which a `Rect`
+makes one call.
+
+Every projection in `vision/std` takes strings, integers and `Bytes`. Not one takes a struct this
+directory declared, and `Page.render(Node)` is the single exception — which `std/platform.wac` flags
+itself as *"the first capability anywhere to take one"*.
+
+That is not an oversight, and it is the question: **marshalling is defined per scalar**, so a value
+type is exactly as far as a host boundary lets it travel. Three positions:
+
+- **It is correct.** A capability is a syscall; syscalls take words; bundling is the caller's and the
+  unpacking at the edge is honest about where the guarantee ends.
+- **It is the wrong place to stop**, because the boundary is where a mistake is least visible — a
+  transposed `w` and `h` crosses as two integers and draws a smear, and it is the one call the type
+  system was going to catch.
+- **The boundary should carry structs**, which `Page.render(Node)` already does, so the machinery
+  exists and the question is only how far to take it — and what it costs a host that must now know a
+  layout rather than an argument list.
+
+`Page.render` having done it once is what makes this answerable rather than theoretical. Nobody has
+written down why that one and not the rest.

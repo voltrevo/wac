@@ -3,3 +3,4 @@
 export { Surface, Tile, CELL_W, CELL_H, STRIDE } from "./surface.wac";
 export { Rect } from "./geom.wac";
 export { Rgba } from "./colour.wac";
+export { frame } from "./frame.wac";

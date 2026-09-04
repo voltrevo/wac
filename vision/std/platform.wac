@@ -631,19 +631,45 @@ export struct Random {
  * JSX writes thirteen lines of string concatenation underneath it to turn its `Node` back into a
  * string — for a host that parses it into a tree again. `@/packages/page` has the case written out.
  */
+/** The element named does not exist in the document. */
+export struct NoSuchElement { string id; }
+/** The bytes handed to a draw are not `w * h * 4`. The browser host throws on this today. */
+export struct WrongSize { i32 want; i32 got; }
+
+export union<NoSuchElement, WrongSize, NotGranted> PageFault;
+
+/**
+ * **Nine of these answered `Ticket<bool>` until 2026-09-04, and no host computed one.**
+ *
+ * The shipped `Page` has `fn[Pending<bool>(string, string)] setText` and eleven like it; this file
+ * copied the shape. Reading the only host that implements `Page` at all —
+ * `packages/platform/host/browser.ts`, since `native/src` and `native/v8/src` mention it zero times
+ * — the operations are declared `void` and the dispatcher answers `EMPTY`:
+ *
+ *     [OP.SET_TEXT]: (p) => { const [a, b] = twoStrings(p); dom().setText(a, b); return EMPTY; },
+ *
+ * So whatever the `bool` decodes to, **nothing on the other side produced it**. And the one failure
+ * the host does detect it does not report either — `drawPixelsIn` *throws*:
+ * `"${w}x${h} needs ${w*h*4} bytes, got ${rgba.length}"`, which reaches a wac caller as a trap.
+ *
+ * A capability that cannot fail should answer `void`; one that can should say how. These do both,
+ * in the same struct, and answered a third thing.
+ */
 export struct Page {
-  fn<Ticket<bool>(Node)>                                 render;
-  fn<Ticket<bool>(string, string)>                       setText;
-  fn<Ticket<bool>(string, string)>                       setValue;
-  fn<Ticket<bool>(string, string)>                       setStyle;
-  fn<Ticket<string>(string)>                             getValue;
-  fn<Ticket<bool>(string, string)>                       on;
-  fn<Ticket<Event>()>                                    nextEvent;
-  fn<Ticket<bool>(string)>                               title;
-  fn<Ticket<bool>(string, i32, i32, Bytes)>              drawPixels;
-  fn<Ticket<bool>(string, i32, i32, i32, i32, Bytes)>    drawPixelsIn;
-  fn<Ticket<Result<Picked, NotGranted>>()>               nextFile;
-  fn<Ticket<bool>(string, Bytes)>                        offerDownload;
+  fn<Ticket<Result<void, PageFault>>(Node)>                              render;
+  fn<Ticket<Result<void, PageFault>>(string, string)>                    setText;
+  fn<Ticket<Result<void, PageFault>>(string, string)>                    setValue;
+  fn<Ticket<Result<void, PageFault>>(string, string)>                    setStyle;
+  /** `null` for no such element, which is not the same as an element holding "". */
+  fn<Ticket<Result<string, PageFault>>(string)>                          getValue;
+  fn<Ticket<Result<void, PageFault>>(string, string)>                    on;
+  fn<Ticket<Event>()>                                                    nextEvent;
+  /** The document's title. Nothing can fail: there is always a document. */
+  fn<Ticket<void>(string)>                                               title;
+  fn<Ticket<Result<void, PageFault>>(string, i32, i32, Bytes)>           drawPixels;
+  fn<Ticket<Result<void, PageFault>>(string, i32, i32, i32, i32, Bytes)> drawPixelsIn;
+  fn<Ticket<Result<Picked, NotGranted>>()>                               nextFile;
+  fn<Ticket<Result<void, PageFault>>(string, Bytes)>                     offerDownload;
 }
 
 /** A file the user chose. `Picked` is what came back; not choosing one is `Err`. */
