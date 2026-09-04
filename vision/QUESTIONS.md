@@ -150,7 +150,7 @@ from `if (p < 0)` to a null test *and* an unwrap at every use. With narrowing it
 name. So the two decisions are one decision taken twice, and taking *absence is a type* first is the
 expensive order.
 
-## Narrowing a nullable — answered as to why, and expensive to change
+## Narrowing a nullable — filed as `issues/lang/0321a`
 
 Filed as *matching in a `while` or `for` condition*, on the strength of
 `while (Continuation c = q.pop())`. The loop was never the problem: `for_init` may declare, so
@@ -177,6 +177,11 @@ the idiom it broke; this one would not.
 That is the decision: a small special case in the checker, against a sweep of the same order as the
 tree's entire unwrap count. And it gates removing `Option` cleanly, since `Option` narrows and `T?`
 does not.
+
+**Filed as `issues/lang/open/0321a`**, because it is a language change with a measured cost rather
+than a vision question — it would be worth making whether or not any of the rest of this happens,
+and the tree feels its absence today at 1,730 unwraps. Kept here as well because two vision
+decisions sit downstream of it, which the issue records and this file is where they live.
 
 ## How should a `Vec` drop its reference to a popped element?
 
