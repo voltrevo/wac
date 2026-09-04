@@ -99,9 +99,22 @@ question and is not one. `generics.md` `[§wacc-written-type-args]` settles it: 
 argument-directed, a slot does not determine a call's type parameters, and the fix is to write the
 argument — `this.fail<JsonValue>(Reason.Eof)`, as `Vec<T> empty<T>()` is called as `empty<i32>()`.)
 
-**Two spellings of an elided body.** `core` uses a bodyless method to mean *must be overridden*;
-this file needs *written out in the original, not repeated here*, and uses `{ … }` because the
-SHOWCASE entries do. Both are needed and neither is described.
+**Two spellings of an elided body — and one of them was withdrawn on 2026-09-04, which leaves the
+half that was never syntax.** `core` used a bodyless method to mean *must be overridden*; this file
+needs *written out in the original, not repeated here*, and uses `{ … }` because the SHOWCASE entries
+do. The bodyless form is gone with the abstract-method design it existed for, so only `{ … }` is
+left, in 22 of the 52 files.
+
+It is not a construct and never was. `tools/specparse.ts` strips the `…` so `{ … }` lexes as an empty
+block — the comment at the line calls it *"a convention of that directory rather than syntax"* — and
+`= …` still fails, because an elided *initialiser* has nowhere to hide. So a fifth of this tree
+depends on a placeholder that the reader has to know about and the grammar does not have, and the
+statement *all fifty-two files parse* is true partly because a tool agrees to ignore something.
+
+Worth saying rather than fixing: the alternative is writing bodies for two dozen methods whose bodies
+are not the point, which is the cost the convention exists to avoid. But it should be a stated
+convention with one spelling and a tool that enforces it, rather than a lexer special case that only
+one reader knows about.
 
 (`const i32 MAX_DEPTH = 512;` at module scope was listed here as a gap and is not one — the
 grammar has `const_decl` in `program` and it compiles today.)
