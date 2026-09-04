@@ -232,6 +232,21 @@ flat parallel arrays this exercise already looked at — and cannot import a `Ve
 `Ticket` and a growable container are the four things its source would use first, and they are four
 of the things this proposal adds. Landing them does not give them to the compiler.
 
+**Measured, because the cost of being last is countable.** In `packages/wacc/src`, with comments and
+string literals stripped:
+
+    15   hand-rolled container declarations
+         ArmList CaseList DeclList ExprList FieldList I32List ImportItemList JsxAttrList
+         MethodList NamedArgList ParamList StmtList TyList VariantList — and WVec
+    57   `return -1` as an absence
+    31   uses of WVec<T>
+
+**Fourteen containers of one shape, and a generic one sitting beside them.** `wvec.wac` is
+`WVec<T>`, in that directory, written for the wapy frontend — so the compiler both has a generic
+growable list and has fourteen hand-specialised ones, because they predate it and because
+`core/vec.wac` is still unimportable. And 57 sentinel returns is the `indexOf` question from earlier
+in this file, at the one call site that cannot adopt the answer.
+
 The circularity is worth naming plainly: **the rung that must learn a feature first is defined as
 whatever the compiler needs, and the compiler is the last thing allowed to want it.** So the ladder
 cannot lead. Every construct here is either something `wacc` will never use, or something with a

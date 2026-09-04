@@ -23,6 +23,18 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { startsWith } from "./strings.wac";
 
 /** Every path git tracks, in git's order. Traps if git cannot say. */
+/**
+ * Every tracked path, raw.
+ *
+ * **`sourceFiles` below is what most guards want.** The difference is one exclusion — `vision/`,
+ * which holds `.wac` files for a language that does not exist and `.md` files describing it — and a
+ * guard that reaches for `tracked` is opting out of it, usually without meaning to. Four have now
+ * been found doing that one at a time: a fence check, an applet count, a specifier check and a
+ * printer round trip that reported twenty-two vision files as trees that differ.
+ *
+ * Raw is still right for some: a conflict-marker check wants every tracked file, vision included.
+ * The rule is whether the guard has an *opinion* about the file or is only looking at its bytes.
+ */
 export string[] tracked(Core core, Cli cli) {
   Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
   if (!r.ran() || r.status != 0) {
