@@ -2907,3 +2907,40 @@ deltas here are the first and two are the second, and nothing but reading tells 
 Not fixed, unlike `Net.listen`. That one restored a parameter whose absence had a stated history of
 harm; these three need a decision about what `spawn` is *for* in a design where a capability is a
 value and a spawn is the one place it cannot be — and `@/packages/sh` is where that decision belongs.
+
+## A type change at the same arity is the second cheap filter, and it finds argv back as text
+
+Arity found `Net.listen` and `Proc.spawn`. The next filter costs the same script: pairs whose
+parameter count matches and whose **types** do not. `Env.arg` and `Env.get` are the hit, and it is
+the same shape as the other two — a change the shipped design made deliberately, undone by a rewrite
+that did not read the sentence beside it.
+
+`Cli.arg` answers `u8[]`, and says why:
+
+> Not a `string`, and that is the whole of wac-mono 0065. An argument is bytes on every system this
+> targets, and a capability that called it text forced a conversion at the boundary — `TextDecoder`
+> one way, `TextEncoder` the other — so a name that is not valid UTF-8 came back as replacement
+> characters. **It was silent:** `cat $(printf '\xff\xfe')` named a file nobody had asked about, and
+> a program using the argument as a path would have opened the wrong one.
+
+`Cli.env` the same: *"an environment value is not text on any system here, and this is how a path in
+`$HOME` or `$WACPATH` survives being one."*
+
+`vision/std`'s `Env` had `arg` and `get` answering `string`. Restored to `Bytes`.
+
+**The distinction is specific, which is what makes flattening it a loss rather than a simplification.**
+Shipped, argv and environment values are bytes; **paths and `cwd` are strings** — `readFile(string)`,
+`cwd() -> Pending<string>`. Two of each, in the same four members, and the rewrite made all four
+text. A design that made everything bytes would at least be a position; making everything text is the
+position that was measured and abandoned.
+
+**Three deliberate fixes undone, by three different filters.** A bind address, three spawn
+parameters, and now a byte type — each one a change with an issue number or a paragraph of history,
+each one reversed by a rewrite whose author read the *signature* and not the sentence under it. That
+is not carelessness about any one of them; it is what happens when the input to a rewrite is a
+declaration.
+
+Which suggests the filter worth building next, and it is not a filter: **the shipped file's comments
+are the specification, and nothing carries them across.** `GRAMMAR.ebnf` is derived from the code and
+`GRAMMAR.md` from the parser; nothing is derived from the prose, and the prose is where every one of
+these three lived.

@@ -445,9 +445,37 @@ export struct Exit { i32 status; }
 
 /** Read-only, and the reason `arg` is a projection of its own: argv is known before the program starts. */
 export struct Env {
-  fn<string(i32)>   arg;
+  /**
+   * **`arg` and `get` answer bytes, and answered `string` until 2026-09-04.**
+   *
+   * Found by the type-change filter, the same way arity found `Proc.spawn` and `Net.listen`: a pair
+   * whose shape matches and whose types do not is where the prose is worth reading. The shipped
+   * `Cli.arg` says why it is not a `string`:
+   *
+   * > Not a `string`, and that is the whole of wac-mono 0065. An argument is bytes on every system
+   * > this targets, and a capability that called it text forced a conversion at the boundary —
+   * > `TextDecoder` one way, `TextEncoder` the other — so a name that is not valid UTF-8 came back as
+   * > replacement characters. **It was silent:** `cat $(printf '\xff\xfe')` named a file nobody had
+   * > asked about, and a program using the argument as a path would have opened the wrong one.
+   *
+   * And `Cli.env`: *"Bytes for the same reason as `arg`: an environment value is not text on any
+   * system here, and this is how a path in `$HOME` or `$WACPATH` survives being one."*
+   *
+   * So `string` here is the shape that was fixed, restored by a rewrite that did not look — the third
+   * time that has happened, after `Net.listen`'s bind address and `Proc.spawn`'s three parameters.
+   *
+   * **The distinction is specific and the rewrite flattened it.** Shipped, argv and environment
+   * values are bytes and *paths and `cwd` are strings* — `readFile(string)` and
+   * `cwd() -> Pending<string>`. Four members, two of each, and vision had made all four `string`. A
+   * caller that wants text still says so, one call longer: `string.fromBytes(env.arg(0))`.
+   *
+   * `Bytes` rather than `u8[]` because these hand bytes *over*, which is the direction
+   * `../QUESTIONS.md`'s *which byte type a capability speaks* favours and the one `Files.read`
+   * already takes. That question is still open; this member is not waiting on it.
+   */
+  fn<Bytes(i32)>    arg;
   fn<i32()>         argCount;
-  fn<string?(string)> get;
+  fn<Bytes?(string)> get;
   fn<string()>      cwd;
 }
 
