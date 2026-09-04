@@ -1,0 +1,141 @@
+// What each command is allowed to reach, narrowed on the way in.
+//
+// The argument is the shipped one and it is the system's own:
+//
+// > **One program means one manifest, and the manifest is the union.** … the seed is built with net
+// > because `wac update` clones, so a `wac check` that asks for nothing at all is running inside a
+// > program that could open a socket. Nothing exploits that — but **"a program reaches only what it
+// > was handed" is the whole argument of this system, and the binary handing itself more than the
+// > command needs is exactly the shape the system is against.**
+//
+// Right, and the table that implements it ends:
+//
+//     if (cmd == "self")   { return Asked(true, true, false, true, false); }
+//     return Asked(true, true, true, true, true);
+//
+// **The default is every grant.** A command added to the dispatcher without a line here gets read,
+// write, net, env and run, silently, in the function that exists to stop precisely that.
+//
+// Four of the commands do legitimately keep everything — `run`, `test`, `app-run` and `task`, each
+// with its reason written out, because a child cannot be handed what its parent does not hold. So
+// *the answer* "everything" is fine. What is not fine is that it is also the answer to a question
+// nobody asked.
+//
+// ## And the fix needs nothing this language has not got
+//
+// Measured 2026-09-04 through `bootstrap/ts/ask_wacc.ts`: a `match` over an enum **missing an arm,
+// with no `else`, is one type error** — and traps `unreachable` if you run the module anyway. With
+// an arm for every variant it is clean. So a command as an `enum` and a `match` with no default
+// makes a forgotten command a **compile error**, today, with no proposal attached.
+//
+// That is worth stating plainly because most of this directory is asking for something. This is not:
+// the guarantee exists, it is exactly the guarantee wanted, and it is unavailable here only because
+// the key is a `string`. `../../../QUESTIONS.md` has the general form, which has three instances.
+
+/** Every command the binary answers. A closed set, spelled as one. */
+export enum Command {
+  Check, Compile, Bindgen, Build, App, Validate, Update, Self,
+  /** The four that keep everything, because they start something and cannot hand on what they lack. */
+  Run, Test, AppRun, Task,
+}
+
+/**
+ * The five grants, as a value.
+ *
+ * The shipped `Asked` is five `bool` fields constructed positionally —
+ * `Asked(true, true, false, true, false)` — and eleven call sites differ from each other in one or
+ * two positions. Named construction is available today (`structs.md` requires every non-nullable
+ * field, in any order) and would read `Grants(read: true, write: true, net: false, …)`, which is
+ * correct and long.
+ *
+ * A set is what this is. `Grants.of(Read, Write, Env)` needs a variadic static, which
+ * `@/packages/ens/src/answer.wac` already found wac has no way to declare; so the honest shape here
+ * is the builder below, and the honest note is that **the same five facts are also a bitmask** —
+ * `grantsIn` answers *"the five bits that go into the manifest"* — so the program holds one value in
+ * two representations and converts between them.
+ */
+export const struct Grants {
+  bool read;
+  bool write;
+  bool net;
+  bool env;
+  bool run;
+
+  Grants none() { return Grants(false, false, false, false, false); }
+  Grants all()  { return Grants(true, true, true, true, true); }
+
+  /** Reading sources, and `$WAC_HOME` to find a mapped import in the cache. */
+  Grants sources() { return Grants(true, false, false, true, false); }
+  /** …and writing a module, a manifest or a `.gen.ts` beside it. */
+  Grants sourcesAndOutput() { return Grants(true, true, false, true, false); }
+
+  /** What the manifest carries. The second representation, named rather than implicit. */
+  i32 bits(const this) { … }
+}
+
+/**
+ * What `cmd` needs, which is less than the program holds.
+ *
+ * **No `else`.** Adding a variant to `Command` and not a case here does not compile, which is the
+ * whole of the change and is the reason this file exists. The shipped version's last line is
+ * `return Asked(true, true, true, true, true);`.
+ */
+export Grants forCommand(Command cmd) {
+  match (cmd) {
+    // `check` writes nothing — it is the one command whose whole output is a sentence.
+    case Check:    return Grants.sources();
+    // These write a module, a manifest or a `.gen.ts`. `app` writes an executable instead of a
+    // module, and the executable bit is part of writing a file rather than a capability of its own.
+    case Compile:  return Grants.sourcesAndOutput();
+    case Bindgen:  return Grants.sourcesAndOutput();
+    case Build:    return Grants.sourcesAndOutput();
+    case App:      return Grants.sourcesAndOutput();
+    // Reading the modules it is asked about and nothing else: the engine answers in this process,
+    // so there is no program to start and no file to write.
+    case Validate: return Grants(true, false, false, false, false);
+    // The one command that reaches the network, which `design/lang/0009` D10 makes deliberate. Not
+    // `run`: an ordinary build is offline by construction, and this is what keeps it that way.
+    case Update:   return Grants(true, true, true, true, false);
+    // Installing and removing both read a few files, write `$WAC_HOME` and the profiles, and ask
+    // where `$WAC_HOME` is. Neither reaches the network and neither starts a program.
+    case Self:     return Grants.sourcesAndOutput();
+    // The four that keep everything. Their `--allow-*` flags govern the *program they start*, not
+    // this one, and a child cannot be handed what its parent does not hold — so narrowing here would
+    // silently make `wac test --allow-net` unable to grant net.
+    case Run:      return Grants.all();
+    case Test:     return Grants.all();
+    case AppRun:   return Grants.all();
+    case Task:     return Grants.all();
+  }
+}
+
+/**
+ * The command a word names, or nothing.
+ *
+ * The one place a string becomes a `Command`, which is where a typo belongs: `wac buidl` is
+ * `null` here and an unknown-command diagnostic one line later, rather than an `Asked` of five
+ * `true`s eleven functions away.
+ */
+export Command? commandOf(string word) { … }
+
+// ## What could not be written
+//
+// **A grant is a `bool` five times and a bit five times, and nothing relates the two.**
+// `Grants.bits()` above is a method rather than the representation, so the manifest's encoding and
+// this struct are two statements of one closed set — the third, after the enum of commands. wac has
+// no set type and no way to declare a variadic `Grants.of(Read, Write)`, so a five-field struct is
+// the reachable shape; what is missing is a way to say *these five booleans are the same five bits*.
+//
+// **`Command` has twelve variants and four of them share an answer**, written four times. `case Run,
+// Test, AppRun, Task:` — several patterns on one arm — is not in `spec/spec/enums.md` and is the
+// obvious spelling. Its absence is why the four are four lines with one comment above them, which is
+// a small thing until somebody adds a fifth and puts it in the wrong group.
+//
+// **And nothing checks that this is narrower than the binary's own manifest.** The doc's argument is
+// that the command narrows *itself*, but `forCommand` cannot see what the process actually holds —
+// it answers what the command should have, and a caller intersects. The one place that intersection
+// is written down is `wac task`'s comment about not widening; everywhere else it is the caller's to
+// remember. A `Grants` that could only be *narrowed* — no constructor except from another `Grants`
+// — would make the direction structural, and it would need the process's own grants to be a value
+// this code can reach, which is `../../../QUESTIONS.md`'s entry on whether the whole grant is a
+// thing that exists.

@@ -1,5 +1,6 @@
 // The package, as one name.
 //
-// One function of 8,973 lines is rewritten — see `../README.md` for why that one.
+// Two functions of 8,973 lines are rewritten — see `../README.md` for how both were chosen.
 
 export { NotCached, buildCachePath, Build, Source } from "./buildcache.wac";
+export { Command, Grants, forCommand, commandOf } from "./grants.wac";

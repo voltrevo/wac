@@ -4010,3 +4010,48 @@ rest of this directory's proposals apply. `@/packages/bls`'s field element is a 
 `struct.new` per *operation* — bounded at 0.7%. This is a wrapper costing one dereference per
 *access*. Same proposal, opposite answer, and the question to ask of any of them is which of the two
 it is.
+
+## A closed set spelled as a string or an integer gives up a check the language already makes
+
+Measured 2026-09-04: a `match` over an enum **with an arm missing and no `else` is one type error**,
+and traps `unreachable` if the module is run anyway. With every arm it is clean. So wac already
+gives the guarantee *you have not handled this case*, for free, at every `match`.
+
+Two packages give it up, each by spelling a closed set as something open:
+
+| where | the set | spelled as | what a missing case does |
+|---|---|---|---|
+| `packages/wac`'s `forCommand` | the twelve commands | `string cmd`, an `if` chain | **returns every grant** |
+| `packages/abi`'s descriptor | the nine ABI types | `i32[]` in prefix order | reads past the end of the array |
+
+(`packages/rlp` looks like a third and is not: its four node forms *partition* the 256 tag values, so
+there is no missing case to have. Worth the parenthesis because the shape is identical from outside
+and the difference is whether the encoding is total.)
+
+The first is the one that matters, and it is not a language gap — this directory is mostly asking
+for something and this asks for nothing. `enum Command` plus a `match` with no default makes a
+forgotten command a compile error **today**, and the reason it is not written that way is that the
+command arrives as a word from `argv` and nobody converted it at the boundary.
+
+So the question is not *should wac check exhaustiveness* — it does. It is:
+
+**Where should a string become a value, and what makes anyone do it there?** A word from `argv`, a
+tag byte off a socket, a type name in a descriptor: each is text or a number at the edge and a closed
+set one line in, and the conversion is free. What is missing is any pressure to do it — nothing warns
+that `if (cmd == "check")` is a dispatch over a set the program knows, and the cost of not doing it
+is invisible until a thirteenth command is added.
+
+Two directions, and the first is not a feature:
+
+- **A convention with a name.** *Parse at the edge, match inside* is the rule; `spec/` has no page
+  that says it and no example that shows it. The `Command? commandOf(string)` in
+  `@/packages/wac/src/grants.wac` is four lines and is the whole technique.
+- **Something that notices.** A lint for an `if`/`else if` chain comparing one variable against three
+  or more string literals — which is a dispatch over a closed set written open, every time. Cheap to
+  detect and, unlike most lints, it points at a place where the language has a better answer already.
+
+The reason this belongs here rather than in an issue: **the cost is not uniform, and that is the
+design question.** `forCommand`'s default hands out ambient authority; `abi`'s reads past an array
+and traps, which is bad and is bounded. A rule that treats a dispatch over commands and a dispatch
+over type tags alike will be ignored where it matters, because it will mostly fire where it does
+not — and the thing that separates them is not the shape but what the wrong branch can reach.

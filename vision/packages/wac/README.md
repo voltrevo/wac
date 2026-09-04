@@ -3,8 +3,8 @@
 Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does not compile,
 disposable.
 
-The real package is `packages/wac`: 8,973 lines over 27 files — the `wac` command itself. **One
-function is rewritten**, and how it was chosen is half the point.
+The real package is `packages/wac`: 8,973 lines over 27 files — the `wac` command itself. **Two
+functions are rewritten**, both found the same way, and how they were chosen is half the point.
 
 ---
 
@@ -82,3 +82,65 @@ package in this exercise that touches the filesystem has built one with `+` — 
 same request as a refinement of an integer, one layer up, and this is the place where the shipped
 tree's own vocabulary — `stem`, `baseName`, `outStem` — is already a set of operations with no type
 under them.
+
+
+---
+
+# The second: a capability table whose default is every capability
+
+`grants.wac`'s `forCommand` was the next hit on the same list — 210 words, and the subject is the
+system's own first principle:
+
+> **One program means one manifest, and the manifest is the union.** … a `wac check` that asks for
+> nothing at all is running inside a program that could open a socket. Nothing exploits that — but
+> **"a program reaches only what it was handed" is the whole argument of this system, and the binary
+> handing itself more than the command needs is exactly the shape the system is against.**
+
+The table that implements it ends:
+
+```wac
+if (cmd == "self")   { return Asked(true, true, false, true, false); }
+return Asked(true, true, true, true, true);
+```
+
+**The default is every grant.** A command added to the dispatcher without a line here gets read,
+write, net, env and run — silently, in the function that exists to stop precisely that.
+
+Four commands do legitimately keep everything: `run`, `test`, `app-run` and `task`, each with its
+reason written out, because a child cannot be handed what its parent does not hold. So *the answer*
+"everything" is right four times. What is wrong is that it is also the answer to a question nobody
+asked.
+
+## The fix needs nothing the language has not got
+
+Measured through `bootstrap/ts/ask_wacc.ts`:
+
+| written | today |
+|---|---|
+| `match` over an enum with an arm missing, no `else` | **1 type error** — and traps `unreachable` if run anyway |
+| the same with every arm | clean |
+| an arm missing **with** `else:` | clean, and answers the default |
+
+So `Command` as an enum and a `match` with no default makes a forgotten command **a compile error**,
+today. Worth saying plainly because most of this directory is asking for something and this is not:
+the guarantee exists, it is exactly the guarantee wanted, and it is unavailable in `grants.wac` only
+because the key is a `string`.
+
+## Also in that file, and smaller
+
+**`Asked(true, true, false, true, false)`** — five positional bools, eleven call sites, differing
+from each other in one or two positions. Named construction is available today and would be correct
+and long; a *set* is what this is, and `Grants.of(Read, Write)` needs a variadic static wac cannot
+declare — which [`@/packages/ens/src/answer.wac`](../ens/src/answer.wac) already found from the other
+side.
+
+**The same five facts are also a bitmask.** `grantsIn` answers *"the five bits that go into the
+manifest"*, so one closed set has three spellings in this program: an enum of commands, a struct of
+five bools, and five bits. Nothing relates them.
+
+**Nothing checks that a command's grants are narrower than the process's.** `forCommand` answers what
+a command *should* have; the intersection is the caller's, and the only place it is written down is
+`wac task`'s comment about not widening. A `Grants` constructible only by narrowing another `Grants`
+would make the direction structural — and would need the process's own grants to be a value this
+code can reach, which is [../../QUESTIONS.md](../../QUESTIONS.md)'s entry on whether the whole grant
+is a thing that exists.
