@@ -52,21 +52,34 @@ import { Sys, Files, Clock, NotGranted } from "std";
  * `Net`. That is an argument for the grouping that only appears here, in the package whose entire
  * job is standing in for the real thing.
  */
-export struct FakeFiles : Files {
-  Map<string, u8[]> content;
-
-  override async Result<u8[], NotGranted> read(this, string path) {
-    u8[]? got = this.content.get(path);
-    return got is null ? Result.Err(NotGranted(path)) : Result.Ok(got!);
-  }
+// **A fake is the same struct, not a subclass.** These were `struct FakeFiles : Files` with an
+// `override`, which needs dynamic dispatch — and dispatch is static, so the override never ran. The
+// projections are structs of funcrefs now, so a fake is a `Files` holding different funcrefs, and
+// the thing that varies is a lambda rather than a type.
+export Files fakeFiles(Map<string, u8[]> content) {
+  return Files(
+    (string p) => memRead(content, p),
+    (string p, u8[] b) => memWrite(content, p, b),
+    (string p) => Err(NotGranted(p)),
+    (string p) => Err(NotGranted(p)),
+    (string p, bool parents) => Err(NotGranted(p)),
+    (string p, bool recursive) => Err(NotGranted(p)),
+    (string from, string to) => Err(NotGranted(from)),
+    (string p) => Err(NotGranted(p)),
+  );
 }
 
-/** Fixed, because a test that reads the clock twice should get the same answer unless it says not. */
-export struct FakeClock : Clock {
-  i64 at;
+async Result<u8[], NotGranted> memRead(Map<string, u8[]> content, string path) {
+  u8[]? got = content.get(path);
+  return got is null ? Result.Err(NotGranted(path)) : Result.Ok(got!);
+}
 
-  override i64 nowMillis(const this) { return this.at; }
-  override i64 monotonicNanos(const this) { return this.at * 1000000; }
+async Result<void, NotGranted> memWrite(Map<string, u8[]> content, string path, u8[] b) { … }
+
+/** Fixed, because a test that reads the clock twice should get the same answer unless it says not. */
+/** Fixed, because a test that reads the clock twice should get the same answer unless it says not. */
+export Clock fakeClock(i64 at) {
+  return Clock(() => at, () => at * 1000000);
 }
 
 /**

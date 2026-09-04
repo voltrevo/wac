@@ -97,6 +97,41 @@ export struct Sys {
   void atEnd(this, fn<void()> f);
 }
 
+/*
+ * ── The projections are structs of funcrefs, and were structs of bodyless methods ───────────────
+ *
+ * **The old shape did not work.** Fourteen bodyless methods across the seven, subclassed by
+ * `vision/packages/wactest` — `struct FakeFiles : Files` with `override … read(…)`. Dispatch in wac
+ * is static, measured: a `Circle` in a `Shape` variable answers `Shape.name()`. So a `FakeFiles`
+ * handed to a function taking `Files` ran `Files`'s empty `read`, and the fake never ran. That is
+ * `wactest`'s headline claim — *"the seam is the parameter"* — resting on a question two files away.
+ *
+ * A funcref field needs no dispatch and no subtyping: a fake is the **same struct type** holding
+ * different funcrefs. That is what the shipped capability world already is — fifty `fn[…]` fields —
+ * and what `vision/packages/fs`'s `Mount` arrived at from the other end, because a tag makes every
+ * operation know about every backing. Three independent routes to one shape.
+ *
+ * **Call sites do not change.** `sys.files.read(p)` reads the same either way, which is why this was
+ * invisible for as long as it was.
+ *
+ * Three things it costs, worth having written down:
+ *
+ *   - **A word per capability per instance**, against one method table for all of them, and a call
+ *     that is not inlined. `../bench/slicecost.wac` puts an indirection at nanoseconds and a
+ *     `readFile` is microseconds, so this is the case where that trade is right — and `gzip`'s
+ *     window is the case where it is not.
+ *   - **`const` goes.** `Env`'s `arg(const this, i32 i)` becomes `fn<string(i32)> arg`, and a funcref
+ *     type cannot say the call does not mutate. `issues/lang/open/0315a` is why that is not a small
+ *     loss: constness is a flag on a *name* rather than part of a type, so there was never anywhere
+ *     for it to go here.
+ *   - **`Ticket<Result<T, E>>` is now written out fourteen times.** The nesting complaint in
+ *     `../QUESTIONS.md` stops being about one struct in `fs` and becomes the shape of the whole
+ *     capability surface.
+ *
+ * And it removes the only thing that wanted *a method with no body*, one of the three constructs the
+ * grammar has and no vetted page mentions.
+ */
+
 /**
  * Paths. Fourteen of the fifty, and **six of the fourteen are here**.
  *
@@ -107,22 +142,14 @@ export struct Sys {
  * that, one consumer later. Fourteen is what the host has.
  */
 export struct Files {
-  async Result<u8[], NotGranted> read(this, string path);
-  async Result<void, NotGranted> write(this, string path, u8[] bytes);
-  async Result<Stat, NotGranted> stat(this, string path);
-  async Result<string[], NotGranted> readDir(this, string path);
-  async Result<void, NotGranted> mkdir(this, string path, bool parents);
-  async Result<void, NotGranted> remove(this, string path, bool recursive);
-
-  /**
-   * The two `vision/packages/fs` found missing, added on its report.
-   *
-   * `rename` is in the host's fourteen and in the shipped `Fs`; `linkStat` is how a filesystem tells
-   * a symlink from what it points at, and a `stat` that follows links cannot answer it. Neither was
-   * here because the six above were what the packages written *before* `fs` happened to need.
-   */
-  async Result<void, NotGranted> rename(this, string from, string to);
-  async Result<Stat, NotGranted> linkStat(this, string path);
+  fn<Ticket<Result<u8[],     NotGranted>>(string)>          read;
+  fn<Ticket<Result<void,     NotGranted>>(string, u8[])>    write;
+  fn<Ticket<Result<Stat,     NotGranted>>(string)>          stat;
+  fn<Ticket<Result<string[], NotGranted>>(string)>          readDir;
+  fn<Ticket<Result<void,     NotGranted>>(string, bool)>    mkdir;
+  fn<Ticket<Result<void,     NotGranted>>(string, bool)>    remove;
+  fn<Ticket<Result<void,     NotGranted>>(string, string)>  rename;
+  fn<Ticket<Result<Stat,     NotGranted>>(string)>          linkStat;
 }
 
 /**
@@ -135,53 +162,35 @@ export struct Files {
  * id rather than by an address."* `design/system/0007`.
  *
  * `Files` was short by two methods; this is short by a **shape** — a datagram endpoint is not a
- * `Socket`, since every read answers a peer and there is no accept. The grant does not split, so
- * this is not an argument for an eighth projection; it is an argument that an interface assembled
- * from one caller has that caller's shape.
+ * `Socket`, since every read answers a peer and there is no accept.
  */
 export struct Net {
-  async Result<Listener, NotGranted> listen(this, i32 port);
-  async Result<Socket, NotGranted> connect(this, string host, i32 port);
+  fn<Ticket<Result<Listener, NotGranted>>(i32)>          listen;
+  fn<Ticket<Result<Socket,   NotGranted>>(string, i32)>  connect;
 }
 
 /**
  * Starting things — which, until 2026-09-04, it could not do.
  *
- * **This had one method and it was `exitCode`.** The host has seven process capabilities — `spawn`,
- * `spawnSelf`, `execWithIn`, `load`, `call`, `unload`, `exitCode` — and the projection named for
- * processes carried the one that starts nothing. `@/packages/sh/src/exec.wac` had `spawn` as a *free
- * function* taking a `Proc`, so the value was a token proving authority rather than the interface
- * exercising it, which is a different design from the other six and was not a decision anybody took.
+ * **This had one method and it was `exitCode`.** The host has seven process capabilities and the
+ * projection named for processes carried the one that starts nothing;
+ * `@/packages/sh/src/exec.wac` had `spawn` as a *free function* taking a `Proc`, so the value proved
+ * authority rather than exercising it.
  *
- * `exitCode` is also not authority over processes. It is a fact about *this* one, in the same family
- * as `Env`'s `arg` and `cwd`, and it is here because the host groups it with the process capabilities
- * rather than because a caller thinks of it that way.
- *
- * Third projection examined and third wrong in a new way: `Files` short by two methods, `Net` short
- * by a shape, `Proc` short by its own purpose. All seven were derived from a count of the host's
- * fifty capabilities, and a count says how many groups there are and nothing about what belongs in
- * one. `../QUESTIONS.md`.
+ * `exitCode` is not authority over processes either. It is a fact about *this* one, in the same
+ * family as `Env`'s `arg` and `cwd`, and it is here because the host groups it there.
  */
 export struct Proc {
-  /**
-   * Start `wasm` with at most `want`, and the grant is a request the host intersects.
-   *
-   * A method rather than a free function, so the capability is the thing that does the work. The
-   * argument for `Grant` as an enum, and for why authority cannot cross a spawn as a value, is in
-   * `@/packages/sh/src/exec.wac` and is unchanged.
-   */
-  async Result<Child, NotGranted> spawn(this, Bytes wasm, Vec<Bytes> args, Vec<Grant> want);
-
-  /** This program's own exit code. Not authority over anything — see the header. */
-  i32 exitCode(const this);
+  fn<Ticket<Result<Child, NotGranted>>(Bytes, Vec<Bytes>, Vec<Grant>)>  spawn;
+  fn<i32()>                                                             exitCode;
 }
 
 /** Read-only, and the reason `arg` is not on `Sys`: argv is known before the program starts. */
 export struct Env {
-  string arg(const this, i32 i);
-  i32 argCount(const this);
-  string? get(const this, string name);
-  string cwd(const this);
+  fn<string(i32)>   arg;
+  fn<i32()>         argCount;
+  fn<string?(string)> get;
+  fn<string()>      cwd;
 }
 
 /**
@@ -191,41 +200,36 @@ export struct Env {
  * touch a filesystem still write, so `Out` is what they should be handed.
  */
 export struct Out {
-  void write(this, u8[] bytes);
-  void writeErr(this, u8[] bytes);
-  void log(this, string line);
+  fn<void(u8[])>   write;
+  fn<void(u8[])>   writeErr;
+  fn<void(string)> log;
 }
 
-/** Time is a capability because reading it is a fact about the machine, not about the program. */
 /**
  * Standard input, which had no projection at all.
  *
  * `readStdin` is a host capability — `packages/ssh/src/ssh.wac` and four `platform` files use it —
  * and none of the seven had it. `Out` is the one it would go on and `Out` is named for output, which
  * is the tell: **the seven do not group by the same thing.** `Files`, `Net` and `Proc` group by
- * *resource*; `Env` groups by *facts about how this program started*; `Out` groups by *direction*;
- * `Clock` and `Random` are single capabilities raised to types. Standard input falls exactly where
- * direction meets resource, and that is why it fell through.
+ * *resource*; `Env` by *facts about how this program started*; `Out` by *direction*; `Clock` and
+ * `Random` are single capabilities raised to types. Standard input falls exactly where direction
+ * meets resource, and that is why it fell through.
  *
- * **Adding `In` picks one of two answers and the other may be better.** The alternative is renaming
- * `Out` to `Io` and putting all three there, which keeps the count at seven and matches how the host
- * groups them — `std/platform.wac` counts `write`, `writeErr` and `readStdin` as one group of three.
- * Against it: `box`'s ten applets that only write are the whole argument for the narrowest useful
- * projection, and an `Io` hands them a read they do not need. `../QUESTIONS.md` has it as a question
- * rather than a preference, because it is the grouping principle that needs settling and not this
- * type.
+ * `In` beside `Out`, or rename `Out` to `Io` and put all three there? `../QUESTIONS.md` has it as a
+ * question, because it is the grouping principle that needs settling and not this type.
  */
 export struct In {
-  async u8[] read(this);
+  fn<Ticket<u8[]>()> read;
 }
 
+/** Time is a capability because reading it is a fact about the machine, not about the program. */
 export struct Clock {
-  i64 nowMillis(const this);
-  i64 monotonicNanos(const this);
+  fn<i64()> nowMillis;
+  fn<i64()> monotonicNanos;
 }
 
 export struct Random {
-  void fill(this, u8[] into);
+  fn<void(u8[])> fill;
 }
 
 export struct Stat { i64 size; bool isDir; i64 modified; }
