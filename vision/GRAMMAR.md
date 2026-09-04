@@ -173,6 +173,33 @@ The generic parent is load-bearing: `AllOf`, `AnyOf`, `Generator`, `AsyncGenerat
 all need it, and the whole ticket and coroutine design rests on it. Nothing had reported it because
 every file that uses it stops at an `async`, a `gen<…>` or a default type argument first.
 
+## The same test, applied to the nine
+
+Three of five falling to *is this avoidable?* is a reason to ask it of the nine, which were found by
+refusal and banked without ever being challenged. Five of them are on the vetted pages — `for … in`,
+the `gen` return form and an arm without `case` are all in `SHOWCASE.md`, and a default type
+argument has a `QUESTIONS.md` entry — so they are the operator's, not mine to withdraw. Four are
+mine, and none of the four is withdrawn, but three have an alternative that should be weighed
+against them:
+
+| construct | avoidable? | at what cost |
+|---|---|---|
+| a method with no body | **yes** — a body that traps, measured | the check moves from compile time to run time, on a base whose only purpose is *you must override this* |
+| a named union | **yes** — write the members out at every signature | `http` repeats eleven of them; the alternative is what `ResponseFault` exists to stop |
+| re-export | **yes** — import from the declaring file | exactly the cost `wac-mono 0072` is open about: `itoa64` exists twice because unifying it touches forty files |
+| `async` on a method | **no** | — |
+
+The last row is worth its own line because I nearly withdrew it. `async` on a *free* function
+**parses today** — `export async i32 f() { return 1; }` reaches the emitter and fails there with
+*a call to Pending* — so my first reading was that `async` is not new at all and the row overstated
+things. It does not: `struct S { async i32 f(this) { … } }` is `expected a type`. The row was right,
+the generalisation was wrong, and the test that had just been useful three times was about to remove
+a correct entry.
+
+**`grammar.md` is behind a second time.** `func_decl` lists no `async` and the parser accepts one,
+just as it lists no `type_params` and generic functions compile. Two independent gaps in the file
+this document treats as the authority.
+
 ## Three were withdrawn, which is the better half
 
 Each was reported as a construct and each turned out to be avoidable — a slip or a convenience, not
