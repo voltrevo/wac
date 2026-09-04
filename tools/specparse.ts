@@ -37,9 +37,9 @@
 //
 //     1541/1569 files parse, 21 not attempted
 //
-// The twenty-one are JSX. The rest of the difference is seven `spec/cases` that expect to be
-// refused. Nothing else in `packages`, `core`, `std`, `spec` or `tools` is outside the grammar,
-// which took ten productions the file had never had — `issues/lang/closed/0326a`.
+// The twenty-one were JSX and are attempted now. The rest of the difference is seven `spec/cases`
+// that expect to be refused. Nothing else in `packages`, `core`, `std`, `spec` or `tools` is outside
+// the grammar, which took ten productions the file had never had — `issues/lang/closed/0326a`.
 //
 // ## What it is not
 //
@@ -51,6 +51,18 @@
 // **It does not lex from the spec.** `string_char = (* any character except " and \ *) |
 // string_escape` is prose, so terminals come from the hand-written lexer below. That is the same
 // arrangement `ebnfaudit` describes and the honest one: the lexical block was never notation.
+//
+// ## Three lexer modes, because the language has three
+//
+// Ordinary wac, a possibly-interpolated string literal, and JSX text. The last is not a choice:
+// `[§jsx-text-is-not-wac-source]` says *"between an element's tags the lexer reads text, so nothing
+// there starts a string, a character literal or a comment"*, and `spec/cases/0130` is
+// `<p>see http://x /* not a comment */</p>` and `<p>a " b</p>`. A one-mode scanner meets that file
+// and its unterminated string eats the rest of it.
+//
+// The JSX productions were added on the strength of reading `parse.wac` and were unverifiable for a
+// day. They are checked now: all twenty JSX cases in `spec/cases`, plus the examples and
+// `jsxlex_test.wac`.
 
 import { GRAMMAR, parseRules, readGrammar, type Rule, type Term } from "./ebnf.ts";
 
@@ -123,12 +135,63 @@ function scanString(src: string, at: number, fromBrace = false): { end: number; 
 
 
 
+/**
+ * Whether the `<` at `at` opens a JSX tag rather than being a less-than.
+ *
+ * `[§jsx-text-is-not-wac-source]` gives the rule and it is purely local: a name, a `/`, or the `>`
+ * of a fragment. Anything else is text or an operator.
+ */
+function startsTag(src: string, at: number): boolean {
+  const n = src[at + 1];
+  return n !== undefined && (/[A-Za-z_]/.test(n) || n === "/" || n === ">");
+}
+
+/**
+ * Whether the last token cannot end an expression, so what follows is in operand position.
+ *
+ * This is how `<` is told from a comparison at the point JSX begins, and it is the same decision
+ * `parse.wac` makes by only reaching JSX from `parsePrimary`. Getting it wrong in the permissive
+ * direction turns `a < b` into an unterminated element and eats the file, so the list is of things
+ * that *can* end an expression and the answer is the negation.
+ */
+function prefixPosition(toks: Token[]): boolean {
+  const last = toks[toks.length - 1];
+  if (!last) return true;
+  const ends = new Set([
+    "IDENT", "INT_LITERAL", "FLOAT_LITERAL", "STRING", "BLOCK_STRING", "CHAR_LITERAL", "STR_TAIL",
+    ")", "]", "}", "!", "++", "--", "this", "true", "false", "null",
+  ]);
+  return !ends.has(last.kind);
+}
+
 function lex(src: string, keywords: Set<string>): { toks: Token[]; error?: string } {
   const toks: Token[] = [];
   let i = 0, line = 1, col = 1;
   // Brace depth, and the depth at which each open interpolation began.
   let braces = 0;
   const interp: number[] = [];
+
+  // ── JSX, which is a second lexer mode ──────────────────────────────────────────────────────────
+  //
+  // `[§jsx-text-is-not-wac-source]`: *"Between an element's tags the lexer reads text, so nothing
+  // there starts a string, a character literal or a comment"*. `spec/cases/0130` is the case that
+  // makes it unavoidable — `<p>a " b</p>`, `<p>see http://x /* not a comment */</p>` — and it says
+  // in its own comment why: an unterminated string *"consumes the rest of the file and takes the
+  // closing tag with it"*.
+  //
+  // Three pieces of state and no parser feedback, which is the whole question. `open` counts
+  // unclosed elements, `inTag` says the scanner is between `<` and the `>` that ends that tag, and
+  // `holes` remembers the brace depth each `{expr}` began at so the matching `}` returns to text.
+  //
+  // A `{…}` hole is a **fresh expression context**: `<div>{<b/>}</div>` has an element inside a
+  // hole inside an element, and the inner one's tags must close without the outer one's state
+  // interfering. So the hole saves the JSX state and resets it, and restores on the matching `}`.
+  // Two narrower rules were tried first and each broke the other case — a `>` guard strict enough
+  // for `<input a={x > 1}/>` stopped `<b/>` inside a hole from closing at all.
+  let jsxOpen = 0;
+  let inTag = false;
+  let tagClosing = false;
+  const holes: { braces: number; jsxOpen: number; inTag: boolean; tagClosing: boolean }[] = [];
   const adv = (n: number) => {
     for (let k = 0; k < n; k++) {
       if (src[i + k] === "\n") { line++; col = 1; } else col++;
@@ -138,6 +201,32 @@ function lex(src: string, keywords: Set<string>): { toks: Token[]; error?: strin
 
   while (i < src.length) {
     const c = src[i];
+
+    // Text mode: inside an element, not inside a tag, not inside a `{…}` hole.
+    if (jsxOpen > 0 && !inTag) {
+      let j = i;
+      while (j < src.length) {
+        if (src[j] === "{") break;
+        if (src[j] === "<" && startsTag(src, j)) break;
+        j++;
+      }
+      if (j > i) {
+        toks.push({ kind: "JSX_TEXT", text: src.slice(i, j), line, col });
+        adv(j - i);
+        continue;
+      }
+      if (src[i] === "{") {
+        toks.push({ kind: "{", text: "{", line, col });
+        holes.push({ braces, jsxOpen, inTag, tagClosing });
+        jsxOpen = 0;
+        inTag = false;
+        braces++;
+        adv(1);
+        continue;
+      }
+      // A `<` that begins a tag falls through to the ordinary path below, which opens tag mode.
+    }
+
     if (c === " " || c === "\t" || c === "\r" || c === "\n") { adv(1); continue; }
     // `…` is `vision/`'s marker for a body nobody wrote. It is a convention of that directory
     // rather than syntax, and `tools/visiongrammar.sh` strips it for the same reason — so `{ … }`
@@ -190,6 +279,35 @@ function lex(src: string, keywords: Set<string>): { toks: Token[]; error?: strin
       adv(piece.end - i);
       continue;
     }
+    // Leaving a `{…}` hole puts the scanner back in text mode, and the element is still open.
+    //
+    // **Before the counter below, not after it.** The first version of this sat further down, past
+    // `braces--`, so the depth it compared against had already been decremented and the test never
+    // matched — every element containing a spliced expression stayed out of text mode from that
+    // point on, and the failure surfaced nine lines later as an ordinary identifier the grammar had
+    // no rule for. Two orderings of the same two lines and only one of them is a lexer.
+    if (c === "}" && holes.length > 0 && holes[holes.length - 1].braces === braces - 1) {
+      const back = holes.pop()!;
+      jsxOpen = back.jsxOpen;
+      inTag = back.inTag;
+      tagClosing = back.tagClosing;
+      braces--;
+      toks.push({ kind: "}", text: "}", line, col });
+      adv(1);
+      continue;
+    }
+    // A `{` anywhere inside JSX opens a hole, including in an attribute — `<input size={n > 1}/>`.
+    // Attribute holes matter for the `>` rule below rather than for text mode: `inTag` survives the
+    // hole, so the matching `}` returns to whichever mode the `{` interrupted with no extra state.
+    if (c === "{" && (inTag || jsxOpen > 0)) {
+      holes.push({ braces, jsxOpen, inTag, tagClosing });
+      jsxOpen = 0;
+      inTag = false;
+      braces++;
+      toks.push({ kind: "{", text: "{", line, col });
+      adv(1);
+      continue;
+    }
     if (c === "{") braces++;
     if (c === "}") braces--;
     if (c === "'") {
@@ -238,6 +356,32 @@ function lex(src: string, keywords: Set<string>): { toks: Token[]; error?: strin
       adv(j - i);
       continue;
     }
+    // Entering a tag. Outside JSX this needs the `<` to be in prefix position, since `a < b` is a
+    // comparison; inside, text mode has already decided. `startsTag` is the rest of the rule —
+    // *"a `<` followed by neither a name nor `/` is text too, so `<p>1 < 2</p>` says what it looks
+    // like"*.
+    if (c === "<" && !inTag && startsTag(src, i) && (jsxOpen > 0 || prefixPosition(toks))) {
+      inTag = true;
+      tagClosing = src[i + 1] === "/";
+      toks.push({ kind: "<", text: "<", ...at });
+      adv(1);
+      continue;
+    }
+    // A plain `inTag`, and it is plain only because a hole resets the state. `<input size={cmp > 1 ?
+    // "y" : "n"}/>` has a greater-than inside an attribute, and inside that hole `inTag` is false,
+    // so nothing here has to know about it. The spec's rule for the other direction — *"a `<`
+    // followed by neither a name nor `/` is text too"* — has no counterpart for `>`, and this is
+    // where that asymmetry is paid for.
+    if (c === ">" && inTag) {
+      inTag = false;
+      const selfClosing = toks[toks.length - 1]?.kind === "/";
+      if (tagClosing) jsxOpen--;
+      else if (!selfClosing) jsxOpen++;
+      toks.push({ kind: ">", text: ">", ...at });
+      adv(1);
+      continue;
+    }
+
     const p = PUNCT.find((s) => src.startsWith(s, i));
     if (!p) return { toks, error: `stray '${c}' at ${line}:${col}` };
     toks.push({ kind: p, text: p, ...at });
@@ -488,22 +632,6 @@ function declarations(toks: Token[]): Token[][] {
  * override — which the grammar must still parse. So this does not mean "the grammar should refuse
  * it"; it means a refusal here is uninformative and belongs in its own column.
  */
-/**
- * Whether a file uses JSX, judged outside comments and strings.
- *
- * `</` is the only sequence JSX has that wac does not, so it is the test — but `std/platform.wac`
- * has `page.render("<button id=\'go\'>go</button>")` in a doc comment, and matching that put a file
- * with no markup in it into the not-attempted column. A wrong bucket is worse than a wrong count:
- * it removes a file from the numbers with a reason that is not true of it.
- */
-function looksLikeJsx(src: string): boolean {
-  const bare = src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/[^\n]*/g, "")
-    .replace(/"(\\.|[^"\\])*"/g, '""');
-  return /<\/[A-Za-z>]/.test(bare);
-}
-
 function expectsRefusal(src: string): boolean {
   const head = src.split("\n", 3).join("\n");
   return /^\/\/ expect:\s*(refused|declined)\b/m.test(head);
@@ -587,7 +715,6 @@ function main(argv: string[]): number {
   const slow: string[] = [];
   const gaveUp: string[] = [];
   const expected: string[] = [];
-  const jsx: string[] = [];
 
   /**
    * Progress, on stderr, written synchronously.
@@ -612,7 +739,6 @@ function main(argv: string[]): number {
     // comment. That is a second lexer mode driven by the parser's position, and this tool has one
     // mode. The productions were added the same day and read from `parse.wac`; verifying them needs
     // the mode switch, and saying so is better than a list of sixteen unexplained refusals.
-    if (looksLikeJsx(src)) { jsx.push(f); continue; }
     const { toks, error } = lex(src, keywords);
     // A lex failure obeys the same rule as a parse failure: `0081-a-block-comment-has-to-close` and
     // `0290-a-newline-ends-a-literal-where-it-occurs` are cases *about* the lexer refusing, so this
@@ -650,11 +776,7 @@ function main(argv: string[]): number {
     if (!failed) ok++;
   }
 
-  console.log(`\n${ok}/${files.length} files parse, ${jsx.length} not attempted`);
-  if (jsx.length > 0) {
-    console.log(`\n-- jsx, which needs a second lexer mode this tool has not got --`);
-    for (const j of jsx) console.log(`  ${j}`);
-  }
+  console.log(`\n${ok}/${files.length} files parse`);
   if (expected.length > 0) {
     console.log(
       `\n-- refused, and the case expects a refusal (uninformative: the grammar may be right for ` +
