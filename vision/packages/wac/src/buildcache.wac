@@ -1,0 +1,130 @@
+// Where a build's artefact is cached, or why it is not.
+//
+// `packages/wac/src/wac.wac`'s `buildCachePath` answers a `string` and `""` means *do not cache
+// this*. Nine `return "";` sites, **nine different reasons**, and the doc comment above it spends
+// 359 words on them — the longest justification of a decision anywhere in the un-rewritten half of
+// the tree, which is how this file was found: `../../../QUESTIONS.md`'s entry on the best-argued
+// paragraph being a rule the type could hold, used as a search rather than as an observation.
+//
+// The reasons are genuinely distinct, and the doc makes each one well:
+//
+// > **`""` for anything that is not a plain build.** A coverage or traced build writes a table beside
+// > the module that would have to be cached with it; `wac build` without `-o` writes elsewhere; and
+// > without `$WAC_HOME` there is nowhere to put it. Each of those is a miss forever rather than a
+// > wrong hit.
+//
+// > **The compiler's identity comes from the host** — a wac program cannot hash the seed it is
+// > running inside. Absent it, this answers `""` rather than keying on nothing.
+//
+// > **And an unvalidated command line gets no hit.** … a hit used to return 0 before `unknownFlag`
+// > ever ran, and `wac build --nonsense` succeeded silently on a warm cache while failing correctly
+// > on a cold one.
+//
+// Every one is a decision somebody made after being bitten. All nine arrive as the same empty
+// string.
+
+import { Result, Vec } from "core";
+
+/**
+ * Why this build is not cacheable.
+ *
+ * **A hit is reported and a miss is silent, which is the wrong way round for the person who cares.**
+ * `wac.wac:1463` logs `"<name>.wasm: N bytes from cache"` when it works. When it does not, nothing is
+ * said — so a person asking *why is my build recompiling every time* has nine candidates, no way to
+ * ask, and the only lever is `$WAC_BUILD_CACHE_KEEP`, which is one of the nine.
+ *
+ * That is the payoff of making the reason a value rather than an absence, and it is not a
+ * hypothetical: `tools/push.sh` sets `WAC_BUILD_CACHE_KEEP=0` around the fixpoint rounds, and the
+ * comment in `CLAUDE.md` explaining why the honest bootstrap figure is 27.2s rather than 12.2s is a
+ * paragraph somebody had to write because the tool could not.
+ */
+export enum NotCached {
+  /** `run` and `test` cache; `app` and `build` need a name to key on, and this one has none. */
+  NoOutputName(string cmd),
+  /** `--coverage` or `--trace`: the build writes a table beside the module that is not cached with it. */
+  Instrumented(string flag),
+  /** `--no-cache`, which is neither read nor write — see below for the two callers that need it. */
+  Disabled,
+  /** `$WAC_BUILD_CACHE_KEEP` is zero. Sweeping to nothing is not the same as being off. */
+  BoundIsZero,
+  /** No `$WAC_HOME`: there is nowhere to put it. */
+  NoHome,
+  /** The host did not say which compiler this is, and a key that cannot say is the stale hit to avoid. */
+  NoCompilerId,
+  /** A flag the command does not have. Keying an unvalidated command line is how `--nonsense` passed. */
+  UnknownFlag(string flag),
+
+  /** One line for a person, which is the whole reason this is a type. */
+  string why(const this) {
+    match (this) {
+      NoOutputName(cmd):  { return "`wac \{cmd}` has no output name to key on"; }
+      Instrumented(flag): { return "\{flag} writes a table this cache does not hold"; }
+      Disabled:           { return "--no-cache"; }
+      BoundIsZero:        { return "WAC_BUILD_CACHE_KEEP is 0"; }
+      NoHome:             { return "no WAC_HOME, so nowhere to put it"; }
+      NoCompilerId:       { return "the host did not say which compiler this is"; }
+      UnknownFlag(flag):  { return "the command line has \{flag}, which this command does not take"; }
+    }
+  }
+}
+
+/**
+ * Where this build's artefact would be cached.
+ *
+ * `issues/system/0204`. The key is everything that changes the bytes written: the compiler, the
+ * entry, every source's content, the grants — they go *into* the manifest — and the output's base
+ * name, which is in the manifest too, so two destinations are two artefacts.
+ *
+ * The body is the shipped body with each `return "";` replaced by the reason it stood for. Nothing
+ * about *when* to cache changes; every one of those nine decisions is right and this file's whole
+ * claim is that they deserve to be distinguishable.
+ */
+export Result<string, NotCached> buildCachePath(Build b) { … }
+
+/**
+ * Everything the key is computed from, as one value.
+ *
+ * The shipped signature is eight parameters — `(Cli cli, i32 argc, string cmd, string entry,
+ * string[] paths, string[] texts, string stem, string target)` — of which four are strings and two
+ * are parallel arrays. **`paths` and `texts` are the pair this exercise keeps finding**: two arrays
+ * that must be the same length, indexed together in one loop, with nothing saying so. It is the
+ * shape `@/packages/regex` decided to *keep* for its character classes, for a measured layout
+ * reason; there is no such reason here.
+ */
+export struct Build {
+  string cmd;
+  string entry;
+  /** The sources, path and text together, which is what the key eats a pair at a time. */
+  Vec<Source> sources;
+  /** `wac build -o`'s stem, or empty when the command has none. */
+  string stem;
+  /** What the caller typed, which `test` keys on because its entry carries a clock. */
+  string target;
+}
+
+export struct Source { string path; string text; }
+
+// ## What could not be written
+//
+// **`--no-cache` exists for two callers and the type cannot say which.** The doc names them:
+// `packages/wacc/test/wac/selfhost_test.wac` builds wacc twice and requires byte equality — *"served
+// from cache that is one file compared with itself"* — and `bootstrap.sh`'s fixpoint loop has the
+// same shape. Both are *a build that has to prove something about the compiler*, which is a
+// different thing from a person turning the cache off because they suspect it. `Disabled` covers
+// both, and a `Disabled(Reason)` would be inventing a distinction nobody has asked for; recorded
+// because the two have opposite answers to *should this warn* — the test wants silence and the
+// person wants a line.
+//
+// **The nine reasons are not disjoint and nothing orders them.** A `wac run --coverage` with no
+// `$WAC_HOME` and an unknown flag is three; the shipped code returns at the first, so which one a
+// caller sees is the order the checks happen to be written in. A `Vec<NotCached>` says all of them
+// and costs a walk that today short-circuits — and for a *diagnostic*, all of them is the useful
+// answer, because fixing one and recompiling to find the next is the loop this is meant to end.
+// Not written: `Result` has one `Err`, and a union of one-or-more is not a shape this language has.
+//
+// **And a cache path is a `string`.** `home + "/cache/build/" + h.hex() + ".wasm"` is assembled here
+// and taken apart by whoever reads it; `@/packages/fs` has no path type and neither does `std`. Every
+// package in this exercise that touches the filesystem has built one out of `+`, which is four now,
+// and none of them has been able to say *this is a path* in a signature. It is the same request as a
+// refinement of an integer, one layer up, and it is the one place where the shipped tree's own
+// convention — `stem`, `baseName`, `outStem` — is already a vocabulary with no type under it.

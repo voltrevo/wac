@@ -3800,3 +3800,41 @@ of flags. wac has enums with payloads and `T?` and has had them for months; six 
 paragraph anyway. Whether that is a documentation problem, an idiom problem, or a sign that the
 shipped ergonomics of a sum are worse than a bool is the question, and it is not one this directory
 can answer by inventing more syntax.
+
+## A path is a `string` in every package that has one
+
+`@/packages/wac`'s cache path is `home + "/cache/build/" + h.hex() + ".wasm"`, assembled at the point
+of use and taken apart by whoever reads it. Neither `vision/std` nor `@/packages/fs` has a type for
+one.
+
+**Measured in the shipped tree rather than here: 465 concatenations of a path literal, across 15
+packages** — 269 in `tools/`, 51 in `packages/wac`, 40 in `packages/git`, 33 in `packages/wactest`.
+This directory does it *zero* times, and that is not a virtue: the bodies of the filesystem code
+here are elided, so the count measures what has been written out rather than what the design
+avoids.
+
+What makes it worth an entry rather than a shrug is that **the vocabulary already exists and has no
+type under it.** `packages/wac` has `stem`, `baseName`, `outStem`; `packages/fs` has mount paths and
+a normalising walk; `Files.open` takes a `string`. So there is a set of operations that only make
+sense on paths, applied to a type that is *any text at all* — and the failure mode is the one this
+directory has been naming everywhere else: `Files.open(name)` and `Files.open(contents)` are the
+same call.
+
+Three shapes, and the reason this is a question is that the cheapest one is probably right and the
+argument against it is real:
+
+- **A newtype over `string`** — `struct Path { string s; }` — which is the refinement-of-an-integer
+  entry one layer up, and inherits its whole problem: nothing in `core` is a refinement of anything,
+  and a one-field struct costs an allocation and a `.s` at every use.
+- **A real path type with structure** — segments, absolute-or-relative, a normalising join. That is
+  what a filesystem package would want and it is a design, not a definition: `@/packages/fs`'s mount
+  table already answers *which backing* per path, so the join rules and the mount lookup are the same
+  walk done twice.
+- **Nothing, and a naming convention.** Which is what happens now, and which works until two strings
+  of different kinds meet in one signature — `buildCachePath(… string stem, string target)`, where
+  one is a file stem and the other is what the user typed, both `string`, adjacent.
+
+The last is the honest description of today, and it is why this is filed as a question rather than
+as a want: **no bug has been found from it.** The evidence is four packages independently building
+the same thing out of concatenation and a set of helpers with no shared type, which is a smell rather
+than a defect — and the entry exists so that whoever *does* hit the defect finds it already counted.
