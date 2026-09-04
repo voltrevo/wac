@@ -2944,3 +2944,45 @@ Which suggests the filter worth building next, and it is not a filter: **the shi
 are the specification, and nothing carries them across.** `GRAMMAR.ebnf` is derived from the code and
 `GRAMMAR.md` from the parser; nothing is derived from the prose, and the prose is where every one of
 these three lived.
+
+## Grepping the shipped file's prose for history is the filter nothing had, and it found two more
+
+The last entry ended by saying the shipped comments are the specification and nothing is derived from
+them. That was a thing to build, and it is one grep: **fourteen members of `std/platform.wac` carry a
+history marker in their doc** — *"it used to"*, *"was … until"*, *"without this"*, an issue number —
+and each one is a shape that is the way it is because somebody changed it.
+
+Checked against `vision/std`, and twelve were already known: `waitAny` and `load`/`validated` dropped,
+`arg` reversed, `openInput`/`openOutput`/`pushChild` restructured, `spawn` short of three parameters,
+`setExecutable` unreadable, `connect`/`listen` fixed this morning. Two were new.
+
+**`Socket.closeSend` was missing**, and it is the newest of the fourteen — added 2026-08-20:
+
+> **Say "that is all" without saying "goodbye"**: end the outbound direction and keep reading.
+> `closeSocket` stops the socket both ways, so a client that used it to signal end-of-input could
+> never receive the answer. That is the exchange every request/response protocol over a raw socket
+> needs — the server reads to the end and only then replies. `issues/system/0215`.
+
+With only `close`, a client that has finished speaking has one move and it is the wrong one, so an
+HTTP client against a server that reads to EOF cannot be written. Restored.
+
+**And `outputError` is the other half of a `bool` I restored yesterday.** `Out.write` answered `void`
+where the shipped one answers `bool`; that was found and fixed. But `bool` alone *is* the state the
+shipped design fixed next:
+
+> A closed pipe is an answer rather than an error — `yes | head -1` ends that way and should exit 0 —
+> so the two have to be distinguishable. Without this a full disk and a departed reader were the same
+> `false`, and every filter treated both as "my work here is done".
+
+`Cli.outputError` is that distinction, as a second call that reads back why the last one failed —
+**the fourth paired call over hidden state**, after the three the projections audit turned into
+values. So the vision answer is not to add the second call: `write` answers
+`Result<void, union<PeerGone, Failed>>`, the reason arrives in the call that failed, and `PeerGone`
+gets its own arm because a filter that reported it would be wrong about the commonest way a filter
+ends.
+
+**What the filter says about the exercise.** Fourteen members have a documented history and the
+rewrite reversed, dropped or hollowed out **five** of them. Not because five decisions were
+re-litigated — because none of them was read. A rewrite whose input is a set of declarations cannot
+see a paragraph, and every one of these five is a paragraph. The filter is a grep for `used to`; it
+should have been the first thing run and it was the seventh.

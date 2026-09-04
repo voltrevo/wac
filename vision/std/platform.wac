@@ -519,10 +519,46 @@ export struct Env {
  * and picking is not this file's to do alone.
  */
 export struct Out {
-  fn<bool(u8[])>   write;
-  fn<bool(u8[])>   writeErr;
-  fn<void(string)> log;
+  fn<Result<void, WriteStopped>(u8[])>  write;
+  fn<Result<void, WriteStopped>(u8[])>  writeErr;
+  fn<void(string)>                      log;
 }
+
+/**
+ * Why a write did not happen, which a `bool` cannot say and a second call should not have to.
+ *
+ * Restoring `write`'s `bool` was half the fix. The shipped design has a **second** capability for the
+ * other half, and its reason is the case the `bool` alone gets wrong:
+ *
+ * > Why the last `write` or `writeErr` answered false: the empty string when the other end simply
+ * > went away, and the host's message when the write itself failed … **A closed pipe is an answer
+ * > rather than an error — `yes | head -1` ends that way and should exit 0** — so the two have to be
+ * > distinguishable. Without this a full disk and a departed reader were the same `false`, and every
+ * > filter treated both as "my work here is done".
+ *
+ * So `fn<bool(u8[])>` *is* the state that was fixed, and `Cli.outputError` is the fix — a second call
+ * that reads back why the last one failed.
+ *
+ * **Which is the fourth paired call over hidden state, and this one has a value to become.** The
+ * audit removed three: `openInput`/`readChunk`/`closeFeed` became `Files.open`,
+ * `openOutput`/`outputError`/`closeFeed` became a `Sink`, `pushChild`/`popChild` became `Proc.run`.
+ * `write`/`outputError` is the same shape one member down — the answer to *what went wrong* arrives
+ * in a later call, so two writes and one read of the reason is a race the type permits — and a
+ * `Result` says it in the call that failed.
+ *
+ * `PeerGone` is not a failure and its own arm is why: `yes | head -1` exits 0 having been stopped,
+ * and a caller that matched `Err(_)` and reported would be wrong about the commonest ending a filter
+ * has.
+ *
+ * **`Failed` carries a `string` and that is the open question, not a choice made here.**
+ * `../QUESTIONS.md` asks where a fault's message lives and notes that a member with a `string`
+ * payload is a fault that has given up on being matched. The host's own words are what the shipped
+ * capability answers; whether they should cross as text is the same question `Read.Failed(string
+ * why)` has, and both are waiting on it.
+ */
+export struct PeerGone { }
+export struct Failed { string why; }
+export union<PeerGone, Failed> WriteStopped;
 
 /**
  * Standard input, which had no projection at all.
@@ -694,6 +730,28 @@ export struct Socket {
   /** Bytes, end, or a failure, and the caller has to say which it is handling. */
   fn<Ticket<Read>()>                            recv;
   fn<Ticket<Result<void, NotGranted>>(u8[])>    send;
+  /**
+   * **`closeSend` is back, and it was missing.** Found 2026-09-04 by grepping the shipped file's
+   * *prose* for history markers — *"it used to"*, *"was … until"*, an issue number — and checking
+   * each of the fourteen members that has one against its counterpart here. This was the newest of
+   * them, added 2026-08-20.
+   *
+   * > **Say "that is all" without saying "goodbye"**: end the outbound direction and keep reading.
+   * > `closeSocket` stops the socket both ways, so a client that used it to signal end-of-input could
+   * > never receive the answer. That is the exchange every request/response protocol over a raw
+   * > socket needs — the server reads to the end and only then replies. `issues/system/0215`.
+   *
+   * With only `close`, a client that has finished speaking has one move and it is the wrong one, so
+   * `@/packages/http` against a server that reads to EOF cannot be written at all. The shipped file
+   * also says why it is a call rather than a flag: *"A host that did not know about a new argument
+   * would read it as an ordinary close, so the program would hang waiting for a reply that the host
+   * had just made unreachable — where an unrecognised call fails and says so."*
+   *
+   * And it is the socket half of a pair: `closeFeed` is the same sentence for a child, *"a program
+   * that reads to the end before answering — `wc` is the obvious one — needs the end to arrive while
+   * it is still running."* `Sink.close` is that one, so the two halves are now both here.
+   */
+  fn<Ticket<Result<void, NotGranted>>()>        closeSend;
   fn<void()>                                    close;
 }
 
