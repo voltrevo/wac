@@ -202,7 +202,7 @@ postfix_op     = "." , IDENT , [ "(" , [ arg_list ] , ")" ]   (* method call or 
 
 primary_expr   = INT_LITERAL
                | FLOAT_LITERAL
-               | STRING
+               | string_literal
                | CHAR_LITERAL
                | "true" | "false"
                | "null"
@@ -228,7 +228,27 @@ primary_expr   = INT_LITERAL
                | "(" , expr , ")"                                       (* grouping *)
                | match_expr                                              (* see above *)
                | lambda_expr
+               | jsx_expr
                | construction_expr ;
+
+(* **JSX**, which `spec/spec/jsx.md` documents with eleven tagged claims and fifteen cases in
+   `spec/cases/`, and which had no production here at all until 2026-09-04.
+
+   Read from `parse.wac`'s `parseJsx`, and two details are its rather than the obvious ones. A
+   **fragment is a tag with no name** and has no self-closing form: `<​/>` closes an element that
+   was never opened, so `<>` always takes children and a close. And the **closing tag is carried,
+   not compared** — `<div></span>` is well formed as shape and wrong as a program, refused by the
+   checker with both names, which is why `IDENT` appears at each end here rather than one rule
+   naming both. *)
+jsx_expr       = jsx_element | jsx_fragment ;
+jsx_element    = "<" , IDENT , { jsx_attr } ,
+                 ( "/" , ">" | ">" , { jsx_child } , "<" , "/" , IDENT , ">" ) ;
+jsx_fragment   = "<" , ">" , { jsx_child } , "<" , "/" , ">" ;
+jsx_attr       = IDENT , "=" , ( STRING | "{" , expr , "}" ) ;
+                 (* `[§jsx-attribute-is-a-string]` — a literal or an expression, and nothing else.
+                    An interpolated literal is refused *here* with advice to write `{…}`, since the
+                    attribute already has a spelling for an expression *)
+jsx_child      = JSX_TEXT | "{" , expr , "}" | jsx_expr ;
 
 (* A function value, `design/lang/0002` tier two. `(i32 a, i32 x) => a + x`, and with a block when
    the body is more than an expression. `async` sits where it does on a function: after anything
@@ -256,6 +276,23 @@ field_init_list = field_init , { "," , field_init } , [ "," ] ;
 field_init      = IDENT , ":" , expr ;
 
 arg_list       = expr , { "," , expr } , [ "," ] ;
+
+(* **A literal is not a lexical element once it interpolates**, which is why this rule is here and
+   not in the block below with `STRING`. `strings.md`: *"`\{` inside a double-quoted literal begins
+   an embedded expression, ended by the matching `}`. It is exactly sugar for `+`"* — so the literal
+   contains an `expr`, and a terminal cannot.
+
+   The three pieces are what a lexer hands over: `STR_HEAD` runs from the opening quote to a `\{`,
+   `STR_MID` from a `}` to the next `\{`, and `STR_TAIL` from a `}` to the closing quote. The braces
+   are matched rather than counted, so an interpolation may hold a literal that interpolates in turn
+   — `[§wac-str-interp-nest-r4kw9np]`.
+
+   A block string is one token and never any of this: *"a block string does not interpolate — `\{`
+   opens an expression only in a one-line literal"*, which is the compiler's diagnostic and is not
+   in `strings.md`. *)
+string_literal = STRING
+               | BLOCK_STRING
+               | STR_HEAD , expr , { STR_MID , expr } , STR_TAIL ;
 
 lvalue         = ( IDENT | "this" ) , { "!" | "." , IDENT | "[" , expr , "]" } ;
 ```
@@ -296,7 +333,24 @@ hex_digit      = digit | "a".."f" | "A".."F" ;
 FLOAT_LITERAL  = digit , { digit | "_" } ,
                  ( "." , digit , { digit | "_" } , [ exponent ] | exponent ) ;
 exponent       = ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit | "_" } ;
-STRING         = '"' , { string_char } , '"' ;
+STRING         = '"' , { string_char } , '"' ;   (* with no `\{` in it — see `string_literal` *)
+BLOCK_STRING   = ' , { any_char } , ' ;  (* opens on a newline; the margin is the least
+                                                    indentation of the content lines *)
+STR_HEAD       = '"' , { string_char } , "\\" , "{" ;
+STR_MID        = "}" , { string_char } , "\\" , "{" ;
+STR_TAIL       = "}" , { string_char } , '"' ;
+
+(* **Lexed in a different mode from everything else in this file.**
+   `[§jsx-text-is-not-wac-source]`: *"Between an element's tags the lexer reads text, so nothing
+   there starts a string, a character literal or a comment"* — `it's here` and `a " b` are text. A
+   run ends at `{` or at a `<` that begins a tag, and a `<` followed by neither a name nor `/` is
+   text too, so `<p>1 < 2</p>` says what it looks like.
+
+   So this terminal cannot be produced by the same scanner as the rest, and a reader generated from
+   this file needs the mode switch as well as the productions. `design/lang/0004` step 2 and
+   `issues/lang/0108`: the first implementation took the span between the surrounding tokens
+   instead, which needed no lexer change and could not read `it's`. *)
+JSX_TEXT       = (* a run between tags, ending at `{` or at a `<` that begins a tag *) ;
 CHAR_LITERAL   = "'" , char_content , "'" ;
 string_char    = (* any character except " and \ *) | string_escape ;
 char_content   = (* any single character except ' and \ *) | char_escape ;

@@ -27,6 +27,17 @@ export interface Rule {
   name: string;
   body: Term;
   line: number;
+  /**
+   * Written `name += …` rather than `name = …`: an **extra alternative** for a rule that already
+   * exists, rather than a replacement of it.
+   *
+   * Only a patch file uses this, and it exists because a patch that copies a whole rule in order to
+   * add one branch goes stale the moment the original changes. `vision/GRAMMAR.ebnf` copied
+   * `primary_expr` to add `trap`, and two hours later the spec's `primary_expr` gained
+   * `string_literal` and `jsx_expr` — so the vision grammar stopped parsing two of its own files,
+   * for a reason that had nothing to do with vision.
+   */
+  add?: boolean;
 }
 
 /** Every ```ebnf block, with EBNF comments removed and the line each rule started on kept. */
@@ -165,17 +176,22 @@ export function parseRules(block: { text: string; firstLine: number }): Rule[] {
 
   // A rule starts at a line whose first token is a name followed by `=`. Everything up to the next
   // such line, or the end, is its body.
-  const heads: { name: string; from: number }[] = [];
+  const heads: { name: string; from: number; add: boolean }[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(lines[i]);
-    if (m) heads.push({ name: m[1], from: i });
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*(\+?)=/.exec(lines[i]);
+    if (m) heads.push({ name: m[1], from: i, add: m[2] === "+" });
   }
   for (let h = 0; h < heads.length; h++) {
     const to = h + 1 < heads.length ? heads[h + 1].from : lines.length;
     const text = lines.slice(heads[h].from, to).join("\n");
     const body = text.slice(text.indexOf("=") + 1);
     const p = new EbnfParser(lexEbnf(body));
-    rules.push({ name: heads[h].name, body: p.alt(), line: block.firstLine + heads[h].from });
+    rules.push({
+      name: heads[h].name,
+      body: p.alt(),
+      line: block.firstLine + heads[h].from,
+      add: heads[h].add,
+    });
   }
   return rules;
 }

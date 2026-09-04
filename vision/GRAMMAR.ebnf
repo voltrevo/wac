@@ -142,17 +142,10 @@ funcref_type   = "fn" , "<" , type , "(" , [ type_list ] , ")" , ">" ;
    it as one of the two constructs nobody had accounted for; this is the accounting.
 
    Ambiguous with `trap_stmt` inside an `expr_stmt`, and deliberately left so: they mean the same
-   thing and a recogniser has no reason to prefer one. A compiler picks the statement. *)
-primary_expr   = INT_LITERAL
-               | FLOAT_LITERAL
-               | STRING
-               | CHAR_LITERAL
-               | "true" | "false"
-               | "null"
-               | IDENT , [ "." , IDENT ] , [ type_args ] , "(" , [ arg_list ] , ")"
-               | IDENT
-               | "this"
-               | "(" , expr , ")"
-               | match_expr
-               | construction_expr
-               | "trap" , [ expr ] ;
+   thing and a recogniser has no reason to prefer one. A compiler picks the statement.
+
+   **`+=` rather than `=`**, which is the whole reason that form exists. This rule first copied the
+   spec's `primary_expr` whole in order to add one branch, and two hours later the spec's version
+   gained `string_literal` and `jsx_expr` — so the vision grammar stopped parsing two of its own
+   files for a reason that had nothing to do with vision. A patch states what it changes. *)
+primary_expr  += "trap" , [ expr ] ;

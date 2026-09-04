@@ -83,9 +83,42 @@ const PUNCT = [
 
 interface Token { kind: string; text: string; line: number; col: number }
 
+/**
+ * One piece of a possibly-interpolated literal, from `at`.
+ *
+ * `open` says the piece ended at a `\{` rather than at the closing quote, so an expression follows.
+ * `end` is one past the last character of the piece — the `{` when open, the `"` when not.
+ *
+ * **This is why `STRING` cannot be a lexical terminal.** `strings.md` says `\{` *"begins an embedded
+ * expression"* and that the whole thing is *"exactly sugar for `+`"*, so an interpolated literal
+ * contains an `expr` and a rule for it belongs with the expressions rather than in the lexical
+ * block, where `grammar.md` has always kept `STRING`. Splitting it into head, middle and tail is the
+ * usual answer and is what the production added beside `primary_expr` describes.
+ */
+function scanString(src: string, at: number, fromBrace = false): { end: number; open: boolean } | null {
+  let j = at + 1;   // past the opening `"` or the closing `}`
+  if (fromBrace) j = at + 1;
+  while (j < src.length) {
+    if (src[j] === "\\") {
+      if (src[j + 1] === "{") return { end: j + 2, open: true };
+      j += 2;
+      continue;
+    }
+    if (src[j] === '"') return { end: j + 1, open: false };
+    if (src[j] === "\n") return null;
+    j++;
+  }
+  return null;
+}
+
+
+
 function lex(src: string, keywords: Set<string>): { toks: Token[]; error?: string } {
   const toks: Token[] = [];
   let i = 0, line = 1, col = 1;
+  // Brace depth, and the depth at which each open interpolation began.
+  let braces = 0;
+  const interp: number[] = [];
   const adv = (n: number) => {
     for (let k = 0; k < n; k++) {
       if (src[i + k] === "\n") { line++; col = 1; } else col++;
@@ -115,13 +148,40 @@ function lex(src: string, keywords: Set<string>): { toks: Token[]; error?: strin
     }
     const at = { line, col };
     if (c === '"') {
-      let j = i + 1;
-      while (j < src.length && src[j] !== '"') { if (src[j] === "\\") j++; j++; }
-      if (j >= src.length) return { toks, error: `unterminated string at ${line}:${col}` };
-      toks.push({ kind: "STRING", text: src.slice(i, j + 1), ...at });
-      adv(j + 1 - i);
+      // A block string first: `"""` runs to the next `"""` and holds newlines. It does **not**
+      // interpolate, which is not in `strings.md` and is in the compiler's diagnostic —
+      // *"a block string does not interpolate — `\{` opens an expression only in a one-line
+      // literal"* — so it is one token whatever is inside it.
+      if (src.startsWith('"""', i)) {
+        const end = src.indexOf('"""', i + 3);
+        if (end < 0) return { toks, error: `unterminated block string at ${line}:${col}` };
+        toks.push({ kind: "BLOCK_STRING", text: src.slice(i, end + 3), ...at });
+        adv(end + 3 - i);
+        continue;
+      }
+      const piece = scanString(src, i);
+      if (piece === null) return { toks, error: `unterminated string at ${line}:${col}` };
+      toks.push({ kind: piece.open ? "STR_HEAD" : "STRING", text: src.slice(i, piece.end), ...at });
+      if (piece.open) interp.push(braces);
+      adv(piece.end - i);
       continue;
     }
+    // The other end of an interpolation. A `}` that closes the brace an interpolation opened puts
+    // the lexer back in string mode, and what follows is `STR_MID` if another `\{` follows or
+    // `STR_TAIL` if the literal ends. Everything about this is a stack rather than a counter,
+    // because `[§wac-str-interp-nest-r4kw9np]` nests a literal inside an interpolation inside a
+    // literal, and the braces there are *matched, not counted from the outside*.
+    if (c === "}" && interp.length > 0 && interp[interp.length - 1] === braces) {
+      interp.pop();
+      const piece = scanString(src, i, true);
+      if (piece === null) return { toks, error: `unterminated interpolation at ${line}:${col}` };
+      toks.push({ kind: piece.open ? "STR_MID" : "STR_TAIL", text: src.slice(i, piece.end), ...at });
+      if (piece.open) interp.push(braces);
+      adv(piece.end - i);
+      continue;
+    }
+    if (c === "{") braces++;
+    if (c === "}") braces--;
     if (c === "'") {
       let j = i + 1;
       while (j < src.length && src[j] !== "'") { if (src[j] === "\\") j++; j++; }
@@ -445,8 +505,21 @@ function main(argv: string[]): number {
       // A delta rule *replaces* the spec's, which is what makes it a patch rather than a second
       // grammar: `unary_expr` here is the whole of `unary_expr`, and the diff against the spec is
       // readable because both are in one notation.
-      for (const r of parseRules({ text, firstLine: 1 })) rules.set(r.name, r);
-      console.log(`${delta}: ${parseRules({ text, firstLine: 1 }).length} rules over the spec's`);
+      const patch = parseRules({ text, firstLine: 1 });
+      for (const r of patch) {
+        const base = rules.get(r.name);
+        if (r.add && base) {
+          // `name += …` adds an alternative to what the spec already has, so a patch only states
+          // what it changes and cannot go stale against the parts it does not care about.
+          rules.set(r.name, { ...base, body: { kind: "alt", of: [base.body, r.body] } });
+        } else {
+          rules.set(r.name, r);
+        }
+      }
+      const added = patch.filter((r) => r.add).length;
+      console.log(
+        `${delta}: ${patch.length - added} rules replaced, ${added} extended, over the spec's`,
+      );
     } else {
       console.log(`${delta}: not present — running the spec grammar unpatched`);
     }
@@ -488,6 +561,7 @@ function main(argv: string[]): number {
   const slow: string[] = [];
   const gaveUp: string[] = [];
   const expected: string[] = [];
+  const jsx: string[] = [];
 
   /**
    * Progress, on stderr, written synchronously.
@@ -506,6 +580,13 @@ function main(argv: string[]): number {
     seen++;
     if (seen % 25 === 0) note(`  … ${seen}/${files.length} — ${f}`);
     const src = Deno.readTextFileSync(f);
+    // JSX is in the grammar and is **not attempted here**, which is a limit of this reader rather
+    // than a gap in the spec. `[§jsx-text-is-not-wac-source]`: between an element's tags the lexer
+    // reads text, so `it's here` and `a " b` are text and nothing there starts a string or a
+    // comment. That is a second lexer mode driven by the parser's position, and this tool has one
+    // mode. The productions were added the same day and read from `parse.wac`; verifying them needs
+    // the mode switch, and saying so is better than a list of sixteen unexplained refusals.
+    if (/<\/[A-Za-z>]/.test(src)) { jsx.push(f); continue; }
     const { toks, error } = lex(src, keywords);
     if (error) { bad.push(`${f}: lex: ${error}`); continue; }
 
@@ -540,7 +621,11 @@ function main(argv: string[]): number {
     if (!failed) ok++;
   }
 
-  console.log(`\n${ok}/${files.length} files parse`);
+  console.log(`\n${ok}/${files.length} files parse, ${jsx.length} not attempted`);
+  if (jsx.length > 0) {
+    console.log(`\n-- jsx, which needs a second lexer mode this tool has not got --`);
+    for (const j of jsx) console.log(`  ${j}`);
+  }
   if (expected.length > 0) {
     console.log(
       `\n-- refused, and the case expects a refusal (uninformative: the grammar may be right for ` +
