@@ -1273,11 +1273,24 @@ delta drops from 564 BNF productions to 562. `auto` is an `IDENT`, `type` begins
 added to and did not need to be.
 
 **And there is a rule for which productions the cost eats, found by removing all 47 in turn.** Every
-entry in `GRAMMAR.ebnf` was deleted one at a time and `vision/` re-parsed with the rest. Most change
-what parses; two do not, for this reason:
+entry in `GRAMMAR.ebnf` was deleted one at a time and `vision/` re-parsed with the rest. **Thirty-one
+of the thirty-nine change what parses. Eight do not**, and they split two ways.
+
+**Three are decoration**, and all three are the contextual-keyword cost:
 
     var_decl's `auto`     `IDENT IDENT = expr` is already `type IDENT = expr`
     union_type            `IDENT type_args` is already a type name
+    type                  the delta's only change to it is to reference `union_type`
+
+The third is the second one's consequence, and it is worth naming separately: `type` is replaced
+wholesale so that one alternative can be added, that alternative can never match, and so the whole
+replacement is a copy of the spec's rule.
+
+**Five are unexercised rather than redundant** — each is a real widening that no file has used:
+`list_literal`, `keyword_as_name` (a keyword as an attribute name), `jsx_element` (which widens a tag
+to `jsx_tag`, needing a quoted tag), `binding_list` (which widens a binder past `IDENT`) and
+`field_pattern` (the brace pattern, `Ok { v }:`). Removing any of them changes nothing *here*, and
+each would refuse a file somebody has not written.
 
 Both are positions where an `IDENT` is *already* admitted in that slot, so the production adds
 nothing a parser could act on. The other six new words are in positions where it is not — `defer`
