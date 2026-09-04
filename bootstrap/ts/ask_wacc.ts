@@ -68,7 +68,12 @@ for (const path of Deno.args) {
       });
       console.log(`  ${answers.join(", ")}`);
     } catch (err) {
-      console.log(`  the engine refused it: ${(err as Error).message.slice(0, 90)}`);
+      // **Not 90.** Measuring the `array.new_fixed` ceiling for `issues/lang/0334a`, the engine's
+      // message is "Requested length 10001 for array.new_fixed too large, maximum is 10000" — and
+      // 90 characters cuts it at `maximum is 10`, losing the one number the whole exercise was
+      // about. A refusal from the engine is the thing this tool exists to show; there is no reason
+      // to ration it.
+      console.log(`  the engine refused it: ${(err as Error).message}`);
     }
   }
 }

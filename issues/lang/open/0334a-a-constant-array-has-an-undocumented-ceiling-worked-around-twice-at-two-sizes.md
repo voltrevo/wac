@@ -51,19 +51,42 @@ reproduction to find. The fix was to chunk on a character boundary.
 That is a defect whose whole cause is a workaround for an undocumented engine limit, in the file that
 generates the compiler's own self-host driver.
 
-## Reproduction
+## Reproduction, and the number measured rather than quoted
 
 ```wac
-// 13,932 elements in one constant array. Compiles as far as the engine.
-export const i32[] BIG = i32[](/* … 13932 literals … */);
-export i32 first() { return BIG[0]; }
+export const i32[] BIG = i32[](/* … n literals … */);
+export i32 probe() { return BIG.len(); }
 ```
 
-Expected: either it works, or a wac diagnostic naming the limit and the array.
-Actual: `Requested length 13932 for array.new_fixed too large`, from V8, at instantiation.
+Thirteen sizes through `deno run -A bootstrap/ts/ask_wacc.ts`, 2026-09-04:
 
-`packages/raster/src/font16.wac` before the split is the case; `tools/genfont.ts` will produce it if
-its chunking is removed.
+| n | wacc | engine |
+|---:|---|---|
+| 1000, 3000, 8192, 9000, 9999 | emits | runs |
+| **10000** | emits, 25,560 bytes | **runs** — `probe() = 10000` |
+| **10001** | emits, 25,562 bytes | **refused** |
+| 12000, 13932, 16000, 20000, 32000, 65536 | emits | refused |
+
+```
+the engine refused it: WebAssembly.compile(): Requested length 10001 for
+array.new_fixed too large, maximum is 10000 @+23865
+```
+
+**So the folklore figure is exactly right and both workarounds are conservative** — `font16.wac`'s
+8192 by a fifth, `source_probe.wac`'s 3000 by a factor of 3.3. And the boundary is sharp: 10,000
+elements is a working program.
+
+Note where the failure is. **wacc emits the module** — 25,562 bytes, no parse errors and no type
+errors — and `WebAssembly.compile` refuses it. Every stage of wac's own toolchain accepts a program
+no engine will load, which is why this reads as a runtime surprise rather than as a compile error.
+
+Expected: either it works, or a wac diagnostic naming the limit and the array.
+
+**Only V8 is measured.** Deno and Node are both V8, and there is no `wasmtime` on this machine and
+no built native host to ask, so the portability half of this — whether the engine with no JavaScript
+in it has the same ceiling — is still the open question it was. That measurement is one
+`cargo build` away for whoever picks this up, and it is the one that decides between the three
+answers below.
 
 ## Notes
 
