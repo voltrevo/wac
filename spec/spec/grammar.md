@@ -62,8 +62,19 @@ struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ type_params ]
 
 (* Type parameters make the declaration a template; see generics.md. *)
 type_params    = "<" , IDENT , { "," , IDENT } , [ "," ] , ">" ;
-(* Type *arguments*, only ever in type position — `IDENT <` is ambiguous with less-than in an
-   expression, so a generic construction takes its arguments from the expected type instead. *)
+(* Type *arguments*. `IDENT <` is ambiguous with less-than in an expression, so they are written
+   only where a construction bracket follows and settles it. There are four such places and this
+   is the list, because three comments here each used to claim a different one of them was the
+   only one:
+
+     a type              `B<i32> b`                    — `type`
+     a call              `zero<i32>()`                 — `primary_expr` [§wacc-written-type-args]
+     a construction      `B<i32>(3)`, `B<i32>{v: 3}`   — `type_name`
+     an array            `B<i32>[2](fill: …)`          — `array_construction`
+
+   All four measured. The third is not a convenience: `B(3).v` with no expected type is
+   *"only a function, a funcref or a method is callable"*, so written arguments are the only way to
+   construct a generic where inference has nothing to work from. *)
 type_args      = "<" , type , { "," , type } , [ "," ] , ">" ;
 
 struct_member  = field_decl | method_decl ;
@@ -189,10 +200,10 @@ primary_expr   = INT_LITERAL
                | "true" | "false"
                | "null"
                | IDENT , [ "." , IDENT ] , [ type_args ] , "(" , [ arg_list ] , ")"
-                                                       (* function/static call; the type
-                                                          arguments are the one place they
-                                                          appear in a call, and only where
-                                                          inference cannot reach them *)
+                                                       (* function/static call; written type
+                                                          arguments where inference cannot reach
+                                                          them — one of the four places, listed
+                                                          at `type_args` *)
                | IDENT                                                  (* variable *)
                | "(" , expr , ")"                                       (* grouping *)
                | match_expr                                              (* see above *)
@@ -201,10 +212,13 @@ primary_expr   = INT_LITERAL
 construction_expr = type_name , "(" , [ arg_list ] , ")"               (* positional or default *)
                   | type_name , "{" , field_init_list , "}"             (* named *)
                   | array_construction ;
+(* Referred to here and defined nowhere until 2026-09-04 — the one name in this file that no rule
+   gave. `B<i32>(3)` and `B<i32>{v: 3}` both parse, so the arguments belong in it. *)
+type_name         = IDENT , [ type_args ] ;
 
-(* An element type may be generic: `Box<i32>[2](fill: ...)`. This is the one place type arguments
-   appear in something that reads as an expression, and it is unambiguous because a construction
-   bracket follows rather than an operand. *)
+(* An element type may be generic: `Box<i32>[2](fill: ...)`. Unambiguous because a construction
+   bracket follows rather than an operand, which is the rule for all four places type arguments
+   may be written — listed at `type_args`. *)
 array_construction = element_type , "[" , expr , "]" , "(" , [ "fill" , ":" , expr ] , ")"
                                                                                (* sized: default, or every element the fill value *)
                    | element_type , "[" , "]" , "(" , [ arg_list ] , ")" ;      (* literal *)

@@ -85,6 +85,12 @@ const Probe[] PROBES = Probe[](
         "struct P { i32 v; }\nasync i32 g(P p) { return p.v; }\n"
           + "export async i32 f(P p) { return await g(p); }", true),
 
+  // `type_name` was referred to by `construction_expr` and defined by nothing — found by
+  // `tools/ebnfaudit.ts` reading the notation rather than by any probe here, since a rule cannot be
+  // missing a token it has no rule to be missing from.
+  Probe("a generic construction with written arguments", "type_name", "type_args",
+        "struct B<T> { T v; }\nexport i32 f() { return B<i32>(3).v; }", true),
+
   // The other direction. Each of these is refused today, so its production must stay silent about
   // it — and each is a construct somebody has a reason to reach for, which is what makes the row
   // worth having rather than a list of things nobody would write.
