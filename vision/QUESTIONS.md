@@ -419,7 +419,7 @@ Three shapes of answer, and the exercise has no view on which:
   what `design/lang/0003` did to the reference. Then the question is what replaces it, and *that* is
   a decision this proposal touches directly.
 
-## Every example on every page is written against a `Sys` that `vision/std` does not define
+## Every example on every page is written against a `Sys` that no longer exists at all
 
 The projections — `Sys` split into `Files`, `Net`, `Proc`, `Env`, `Out`, `Clock`, `Random` — were
 invented during the packages exercise, argued from a count of the host's fifty capabilities and from
@@ -456,6 +456,34 @@ writing rather than by deciding, and it makes the flat form on the pages wrong t
 
 It also bears on *whether the whole grant is a thing that exists*, below: a bundle that two functions
 in fifty-nine files take is doing less work than the entry defending it assumes.
+
+### And then the bundle was deleted, which makes this worse rather than settled
+
+`Sys` is gone from `vision/std` — the queue it was really holding is a `Tasks` projection, which is
+where `std/platform.wac` already puts it. So the divergence went from *the pages use a flat spelling
+of a type that exists* to **the pages name a type that does not**: 22 call sites on `SHOWCASE.md`,
+`IDIOMS.md`, `TECHNICAL.md` and here, every one of them `sys.something(…)`.
+
+**This is the one thing in this directory I should not fix**, and saying so is the point of the
+escalation. The three pages are *agreed*: `README.md` calls them what the operator has reviewed, and
+`vision/packages` is disposable precisely so that the pages do not have to be. A rewrite that
+silently reworded 22 examples on the reviewed pages to match a struct I deleted this afternoon would
+be the exercise editing its own brief.
+
+So the choice belongs to whoever owns the pages, and it is a real one rather than a formality:
+
+- **`Sys` comes back**, as the bundle the examples read best against, and the measurement — one user
+  in fifty-nine files — is the price of an examples-first design. That is a defensible answer; the
+  pages are the product and the packages are the test.
+- **The examples change**, and every one gets longer: `sys.readFile("a.txt")` becomes a function that
+  was handed a `Files`, which means the surrounding signature has to be shown. Several of the 22 are
+  one-liners whose whole point is brevity.
+- **Both**, with the flat form kept on the pages as sugar over a program that was handed everything —
+  which is a third design nobody has proposed and which the *no ambient capabilities* line would have
+  to be squared with.
+
+The exercise's job was to find this, and it has: the code and the pages have made opposite choices,
+both for good reasons, and no amount of writing more packages resolves it.
 
 **So `sys.readFile("a.txt")` on the front page does not typecheck against the `Sys` in
 `vision/std`.** Seventeen examples against one file, and the one file is the one that claims to

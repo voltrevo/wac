@@ -355,12 +355,19 @@ detail. `grep` is the raw count, *in code* is what a migration actually has to e
 
 | vision | shipped | grep | in code | files |
 |---|---|---:|---:|---:|
-| `Sys` | `Core` and `Cli`, two parameters | 3,210 + 4,413 | 2,886 + 3,814 | 710 + 741 |
+| nine projections | `Core` and `Cli`, two parameters | 3,210 + 4,413 | 2,886 + 3,814 | 710 + 741 |
 | `Ticket<T>` | `Pending<T>` | 758 | **418** | 77 |
 | `fn<T(…)>` | `fn[T(…)]` | 1,091 | **378** | 75 |
 | a match arm with no `case` | `case X:` | 2,399 | 2,396 | 217 |
 | `default:` | `else:` | 624 | 623 | 102 |
 | `T?` everywhere | `Option<T>` alongside it | 102 | **48** | 17 |
+
+**The first row stopped being a rename on 2026-09-04 and the numbers are now a floor.** It said
+`Sys`, because vision bundled the projections into one value and a sweep could have replaced two
+parameters with one. `Sys` is gone — measured, one function in fifty-nine files took it, and it took
+it for `drain` — so what replaces `(Core, Cli)` is *whichever projections that function uses*, which
+is a judgement per call site rather than a substitution. The 6,700 sites are still the sites; what
+changed is that a script cannot do them.
 
 **The `fn[` row was 444 and is 378, and I cannot say what the 66 were.** The earlier figure was taken
 the way this one is — comments and string literals stripped — and no variant tried here reproduces
