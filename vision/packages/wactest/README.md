@@ -56,13 +56,20 @@ or see the clock — the claim the language makes about every function, finally 
 that are supposed to be checking the others. Today every test has exactly as much authority as the
 runner, because that is what wasm hands the module.
 
-## A fake is an ordinary value
+## A fake is an ordinary value, and the projections make it a small one
 
-`Sys` is not a singleton and nothing recognises a ticket by its type, so a test's `Sys` is one it
-built, its tickets settle when it says so, and its clock is what it was constructed with. No seam,
-no injection point, no mode flag in the real one — the seam is the parameter. That is the payoff of
-a decision made for a different reason: we rejected `t is SysTicket` because two `Sys` values are
-two grants, and this is what having two grants is *for*.
+`Sys` is not a singleton and nothing recognises a ticket by its type, so a test's capability is one
+it built, its tickets settle when it says so, and its clock is what it was constructed with. No
+seam, no injection point, no mode flag in the real one — the seam is the parameter. That is the
+payoff of a decision made for a different reason: we rejected `t is SysTicket` because two `Sys`
+values are two grants, and this is what having two grants is *for*.
+
+**The grouping is what keeps it small, and this package is where that shows.** Against a flat `Sys`
+of fifty methods, faking two of them means subtyping the whole thing and inheriting forty-eight from
+something that traps. Against groups it is one small struct — `FakeFiles` overrides the methods
+`Files` has, and a test that never touches the network never mentions `Net`. `vision/std` grew
+projections for a different reason, from counting the host's capabilities and finding five groups;
+the test harness is the consumer that makes them pay.
 
 ## What could not be written
 

@@ -29,7 +29,7 @@
 // look alike and only one of them can be sent.
 
 import { Result, Bytes, Vec } from "core";
-import { Sys, NotGranted } from "std";
+import { Proc, NotGranted } from "std";
 
 /**
  * What a child may do — the serialisable form of authority.
@@ -56,8 +56,14 @@ export enum Grant {
  * program that has not got it is not an error and not a refusal — it is a child without `Run`. A
  * request rather than an instruction, which is what makes a chain of spawns monotonically narrowing
  * however careless the middle of it is.
+ *
+ * It takes a `Proc` rather than a `Sys` because starting something is all it does. Handing it the
+ * whole grant would let a shell's spawn path read a file, and the narrowing that this function is
+ * *about* would not apply to the function itself.
  */
-export async Result<Child, NotGranted> spawn(Sys sys, Bytes wasm, Vec<Bytes> args, Vec<Grant> want) { … }
+export async Result<Child, NotGranted> spawn(
+  Proc proc, Bytes wasm, Vec<Bytes> args, Vec<Grant> want,
+) { … }
 
 export struct Child {
   async Result<i32, NotGranted> exit(this);

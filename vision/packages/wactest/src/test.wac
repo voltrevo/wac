@@ -16,7 +16,7 @@
 
 import { Report } from "./assert.wac";
 import { Ticket } from "core";
-import { Sys } from "std";
+import { Sys, Files, Clock, NotGranted } from "std";
 
 /**
  * A test is a function that takes what it needs and answers a `Report`.
@@ -38,26 +38,35 @@ import { Sys } from "std";
  */
 
 /**
- * What a runner hands a test that asked for a `Sys`.
+ * What a runner hands a test that asked for a capability.
  *
  * **A fake is an ordinary value**, which is the whole of it. `Sys` is not a singleton and nothing
- * recognises a ticket by its type, so a test's `Sys` is one it built, its `Ticket`s settle when the
- * test says so, and its clock is whatever it was constructed with. None of that needs a seam,
+ * recognises a ticket by its type, so a test's capability is one it built, its tickets settle when
+ * the test says so, and its clock is whatever it was constructed with. None of that needs a seam,
  * an injection point, or a mode flag in the real one — the seam is the parameter.
+ *
+ * **And the projections are what make it small.** Against a flat `Sys` of fifty methods, faking two
+ * of them means declaring a subtype of the whole thing and leaving forty-eight inherited from
+ * something that traps. Against groups, a fake is one small struct: `FakeFiles` overrides the two
+ * methods `Files` has that the test uses, and a test that never touches the network never mentions
+ * `Net`. That is an argument for the grouping that only appears here, in the package whose entire
+ * job is standing in for the real thing.
  */
-export struct FakeSys : Sys {
-  Vec<Continuation> pending;
-  Map<string, u8[]> files;
-  i64 now;
+export struct FakeFiles : Files {
+  Map<string, u8[]> content;
 
-  FakeSys withFiles(Map<string, u8[]> files) { … }
-
-  override async Result<u8[], NotGranted> readFile(this, string path) {
-    u8[]? got = this.files.get(path);
+  override async Result<u8[], NotGranted> read(this, string path) {
+    u8[]? got = this.content.get(path);
     return got is null ? Result.Err(NotGranted(path)) : Result.Ok(got!);
   }
+}
 
-  override i64 now(const this) { return this.now; }
+/** Fixed, because a test that reads the clock twice should get the same answer unless it says not. */
+export struct FakeClock : Clock {
+  i64 at;
+
+  override i64 nowMillis(const this) { return this.at; }
+  override i64 monotonicNanos(const this) { return this.at * 1000000; }
 }
 
 /**
