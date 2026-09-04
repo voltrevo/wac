@@ -347,6 +347,15 @@ That pass cannot find a *new* kind of mistake, which is its honest limit: it is 
 parser. The general instrument is reading `spec/spec/grammar.md`, and the section above is what
 happens when nobody does.
 
+**And its first hits were all false**, which is worth recording because a clean run had never been
+tested. `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])]
+write)` three times, and the pass asked for all three to be rewritten as `fn<…>` — which would
+falsify the quotation. Quoting the code an argument is about is how every file in this directory is
+grounded, so the pass was systematically wrong about a whole class of line and had simply never met
+one. A hit inside backticks is now dropped: each line has its backtick spans removed and the pattern
+re-tested against what is left, which keeps a fenced example (those lines carry no backticks) and
+loses the quotation. Same judgement the `scheduler` check was removed on, one paragraph down.
+
 One check was written and removed rather than kept: `scheduler`, which was a keyword and is not one
 now. The *word* is ordinary English in these files — "the scheduler in force where it was called" is
 prose about a concept — so it fired on three comments every run, and a section that is never clean

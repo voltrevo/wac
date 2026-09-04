@@ -170,8 +170,34 @@ done
 echo
 echo "-- spellings that parse and are still wrong --"
 stale=0
+
+# A hit inside backticks is a **quotation**, not a spelling in use.
+#
+# `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])] write)`
+# three times, because quoting the code an argument is about is how every file in this directory is
+# grounded — and all three came back asking to be rewritten as `fn<…>`, which would falsify the
+# quotation. The three were the first hits this pass had ever produced, so its clean run had never
+# been tested against a file that quotes the thing it is replacing.
+#
+# Each hit line therefore has its backtick spans removed and the pattern is re-tested against what
+# is left. **A fenced example still counts** — lines inside a ```wac block carry no backticks of
+# their own — which is the half worth keeping, because that is where vision code actually gets
+# written inside a comment.
+#
+# Same judgement as the `scheduler` note at the end of this file: a check that fires on prose every
+# run trains the reader to skip the section, which costs more than what it catches.
+outsideTicks() {
+  python3 -c 'import re,sys
+pat = re.compile(sys.argv[1].replace("[[:space:]]", r"\s"))
+for line in sys.stdin.read().splitlines():
+    parts = line.split(":", 2)
+    if len(parts) < 3: continue
+    if pat.search(re.sub(r"`[^`]*`", "", parts[2])): print(line)
+' "$1"
+}
+
 check() {   # pattern, what to write instead
-  hits=$(grep -rn --include='*.wac' -E "$1" vision || true)
+  hits=$(grep -rn --include='*.wac' -E "$1" vision | outsideTicks "$1" || true)
   if [ -n "$hits" ]; then
     stale=1
     printf '%s\n' "$hits" | sed "s|^|  |; s|$| → $2|"
