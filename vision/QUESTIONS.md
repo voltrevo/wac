@@ -1654,6 +1654,37 @@ generator, `Files.create` answers a `Sink` with `write` and `close` on it, `Proc
 `Captured`. The state moves into a value the caller holds, the pairing becomes the lifetime of that
 value, and *the* input stops existing. Nesting comes free, because calls nest.
 
+**And for one of the three that has already been done, in this repository, and I wrote the entry
+above without knowing it.** `packages/platform/src/frame.wac` is `pushChild`/`popChild` as a value,
+and its header is the argument better put than I put it:
+
+> A child's world as a **value**, instead of a frame the host holds. … The child is not compiled
+> differently, does not know, and cannot tell — which was already true of the host frame. What
+> changes is where the state lives: a local the caller holds, rather than a stack inside the host
+> that an unmatched `popChild` corrupts for the rest of the session.
+
+It is the live path: `packages/wac/src/grants.wac` builds through it and `sh_test.wac` says *"every
+other `"sh"` in the suite is `Frame.of(…)`"*. And `packages/platform/example/inside.wac` and
+`insideValue.wac` are **the same program written both ways, kept side by side** — the paired
+capability and the value, in one directory.
+
+That does not weaken the finding; it is the finding with a witness. Three things follow.
+
+**What made it possible was closures**, `design/lang/0002`. The header says so: *"until closures
+landed a substitute capability had nowhere to put what it collected."* So `pushChild` is not a bad
+design, it is a design from before the language could express the good one — which is the same story
+as `packages/fs`'s mount table, whose header argues for *"a funcref plus explicit state"* and says a
+funcref cannot capture, three weeks after lambdas landed.
+
+**The capability did not change and cannot.** `frame.wac` is a *package* over a host boundary that
+still passes scalars and arrays. So the question this entry asks — host's mistake or boundary's
+constraint — has its answer demonstrated on both sides at once: the state can live in wac, and the
+capability stays paired because nothing has re-cut the boundary since closures arrived.
+
+**And nobody has written the other two.** There is no `frame.wac` for `openInput` or `openOutput`,
+which is exactly why `tee` still buffers a pipe. One of three groups got a value, six weeks ago, by
+somebody who needed it; the other two are still waiting for their consumer to be annoyed enough.
+
 **Why this is a question and not just a fix.** Three instances is enough to ask whether the pattern
 is the host's mistake or the boundary's constraint. The argument that it is a constraint: the host
 side is JavaScript or Rust, a capability is a funcref taking scalars and arrays, and *a handle is an

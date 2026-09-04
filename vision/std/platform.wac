@@ -286,6 +286,16 @@ export struct Proc {
    * Handing the child context back as a value makes the nesting the language's — a `run` inside a
    * `run` nests because calls nest — and there is no unpaired state for a caller to leave behind.
    *
+   * **This is not an invention and I wrote it as though it were.** `packages/platform/src/frame.wac`
+   * already does it — *"A child's world as a value, instead of a frame the host holds … a local the
+   * caller holds, rather than a stack inside the host that an unmatched `popChild` corrupts for the
+   * rest of the session"* — and it is the live path, with `inside.wac` and `insideValue.wac` sitting
+   * beside each other as the same program written both ways. What made it possible was closures,
+   * `design/lang/0002`: *"until closures landed a substitute capability had nowhere to put what it
+   * collected."* So the contribution here is only moving it from a package into the projection, and
+   * the reason `openInput` and `openOutput` have no equivalent is that nobody has been annoyed
+   * enough yet — which `@/packages/box/src/tee.wac` is.
+   *
    * **It is not isolation and the shipped comment is clear that it is not:** the child is the same
    * instance with the same authority, and *"a real boundary is `spawn`, which is a separate worker
    * with its own grants"*. So the `Vec<Grant>` that `spawn` takes has no counterpart here, which is
