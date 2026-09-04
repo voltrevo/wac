@@ -1,0 +1,7 @@
+// The package, as one name.
+
+export { Proved, verify, emptyTrieRoot } from "./proof.wac";
+export {
+  ProofFault, HashMismatch, NotRlp, NodeNotAList, BadArity, SlotIsAList, EmptyHexPrefix,
+  BadHexPrefix, BadPadding, OutOfNodes, UnusedNodes,
+} from "./fault.wac";

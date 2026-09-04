@@ -1,0 +1,57 @@
+// Why a proof does not hold, and which node it was.
+//
+// The shipped walk carries a `string error` on its cursor and eleven places set it. Third
+// sticky-error struct this exercise has replaced, after `@/packages/rlp`'s `Cursor` and
+// `@/packages/datetime`'s eighteen `return bad;` — and the first where the failures are about
+// *somebody else's* bytes in the strongest sense: a proof is what a provider sent, and the whole
+// package exists because it might be lying.
+
+import { Bytes } from "core";
+import { RlpFault } from "@/packages/rlp";
+
+/** A node hashes to something its parent did not name. The one that matters. */
+export struct HashMismatch { i32 node; Bytes got; Bytes want; }
+
+/**
+ * A node is not RLP.
+ *
+ * **Carries the other package's fault**, which is the first time a union member here has held a
+ * union. `@/packages/box`'s `gunzip` matched one by type — `Err(is Corrupt):` — and this is the
+ * other half of the same idea: a proof failing *because* the RLP under it failed is a different
+ * event from a proof failing on its own terms, and a caller that wants to say so has both halves.
+ */
+export struct NotRlp { i32 node; RlpFault why; }
+
+/** A node must be a list, and this one is a byte string. */
+export struct NodeNotAList { i32 node; }
+
+/** A node has two items or seventeen. */
+export struct BadArity { i32 node; i32 saw; }
+
+/**
+ * A byte-string slot holding a list.
+ *
+ * `which` is the index within the node — 16 for a branch's own value, 0 for a hex-prefix header.
+ * The shipped code has this twice as two messages, and the second one carries a comment recording
+ * the bug that produced it: *"Without this check `bytesOf` answered empty and the walk read that as
+ * absence — a malformed node proving a key is not there."*
+ */
+export struct SlotIsAList { i32 node; i32 which; }
+
+/** A leaf or extension with no hex-prefix header. */
+export struct EmptyHexPrefix { i32 node; }
+
+/** A hex-prefix flag is 0..3. */
+export struct BadHexPrefix { i32 node; i32 flag; }
+
+/** An even-length hex-prefix path must pad with a zero nibble. */
+export struct BadPadding { i32 node; }
+
+/** The walk wanted another node and the proof did not have one. */
+export struct OutOfNodes { i32 want; }
+
+/** The proof carried more nodes than the walk used: it says more than one thing. */
+export struct UnusedNodes { i32 unused; }
+
+export union<HashMismatch, NotRlp, NodeNotAList, BadArity, SlotIsAList, EmptyHexPrefix,
+             BadHexPrefix, BadPadding, OutOfNodes, UnusedNodes> ProofFault;

@@ -1,0 +1,211 @@
+// Merkle-Patricia proofs, verified.
+//
+// `packages/lightclient` follows the chain and produces a header, so the state root is known. It
+// says nothing about what is *in* that state; this is where that gap closes. Every step is checked
+// against what its parent committed to, because a proof is what a provider sent and the package
+// exists on the assumption that it might be lying.
+//
+// The walk is the shipped one. Two types change, and one of them is the package's own most-argued
+// decision.
+
+import { Result, Bytes, Vec } from "core";
+import { Item, decode } from "@/packages/rlp";
+import {
+  ProofFault, HashMismatch, NotRlp, NodeNotAList, BadArity, SlotIsAList, EmptyHexPrefix,
+  BadHexPrefix, BadPadding, OutOfNodes, UnusedNodes,
+} from "./fault.wac";
+
+/**
+ * What a proof established about a key.
+ *
+ * **The shipped `Proved` is `(bool ok, bool present, u8[] value, string error)`, and its README
+ * argues for the two flags being separate at length:**
+ *
+ * > `ok` and `present` are separate on purpose. A proof of absence … is a *valid* proof whose path
+ * > ends before the key does … Conflating "the proof failed" with "there is nothing there" would
+ * > make a broken proof look like an empty slot, which is the more dangerous of the two.
+ *
+ * Every word of that is right, and it is an argument for a **sum**. Two bools are four states; one
+ * of them — not `ok` and `present` — cannot happen, and `value` means something in exactly one of
+ * the three that can. The README is asking a reader to hold a rule the type could hold instead, and
+ * the rule it is asking them to hold is *"do not confuse these two"*, which is what a sum is for.
+ *
+ * So: a failure is the `Err` arm of the `Result` this is returned in, and what is left is two cases.
+ * A caller writes `match` and cannot reach the value without having said which case it is in.
+ */
+export enum Proved {
+  /** A sound proof that the key has this value. */
+  Present(Bytes value),
+  /** A sound proof that the key has none — a path that ends before the key does. */
+  Absent,
+}
+
+/**
+ * The root of a trie with nothing in it: `keccak256(rlp(""))`.
+ *
+ * Every empty trie has this root — a hash of the encoding of nothing, so there is only one — and
+ * `verify` treats it as a complete proof that any key is absent.
+ */
+export Bytes emptyTrieRoot() { … }
+
+/**
+ * What `root` commits to at `key`, according to `nodes`.
+ *
+ * `key` is the trie key as bytes; for Ethereum's state and storage tries that is a keccak256
+ * digest, which the caller hashes, because whether a trie is *secure* is the caller's business and
+ * not this walk's.
+ */
+export Result<Proved, ProofFault> verify(Bytes root, Bytes key, const Vec<Bytes> nodes) {
+  if (bytesEq(root, emptyTrieRoot())) { return Ok(Absent); }
+  Walk w = Walk(nodes, 0, nibbles(key), 0);
+  Proved answer = try w.step(try w.node(root));
+  // The proof says one thing. A node nobody walked is a second claim in the same message, and
+  // `@/packages/rlp`'s trailing-bytes rule is the same rule one layer down.
+  if (w.used != nodes.len()) { return Err(UnusedNodes(nodes.len() - w.used)); }
+  return Ok(answer);
+}
+
+/**
+ * Where the walk is — **and no error field.**
+ *
+ * The shipped `Walk` carries `string error`, eleven places set it, and four functions open with
+ * `if (w.error != "") { return; }`. That is the pattern `@/packages/rlp`'s header defends as the
+ * only way to stop a recursive descent without unwinding, and `try` is the other way.
+ */
+struct Walk {
+  const Vec<Bytes> nodes;
+  i32 used;
+  /** The key, one nibble per element — the trie's alphabet. */
+  u8[] path;
+  i32 at;
+
+  /** The next node, checked against the hash its parent named. */
+  Result<Item, ProofFault> node(this, Bytes want) {
+    if (this.used >= this.nodes.len()) { return Err(OutOfNodes(this.used)); }
+    Bytes raw = this.nodes.get(this.used);
+    i32 which = this.used;
+    this.used = this.used + 1;
+    Bytes got = keccak256(raw);
+    if (!bytesEq(got, want)) { return Err(HashMismatch(which, got, want)); }
+    match (decode(raw)) {
+      Ok(item): { return Ok(item); }
+      Err(why): { return Err(NotRlp(which, why)); }
+    }
+  }
+
+  /** One node: descend, or settle the answer. */
+  Result<Proved, ProofFault> step(this, const Item node) {
+    i32 which = this.used - 1;
+    Vec<Item>? maybe = node.asList();
+    if (maybe is null) { return Err(NodeNotAList(which)); }
+    Vec<Item> parts = maybe!;
+
+    if (parts.len() == 17) { return this.branch(which, parts); }
+    if (parts.len() != 2)  { return Err(BadArity(which, parts.len())); }
+    return this.shortNode(which, parts);
+  }
+
+  /** A branch: sixteen children and a value slot. */
+  Result<Proved, ProofFault> branch(this, i32 which, const Vec<Item> parts) {
+    if (this.at == this.path.len()) {
+      // The path ends exactly here, so the branch's own value slot is the answer. Empty means
+      // absent, which is as sound a result as a value.
+      Bytes v = try slot(which, 16, parts.get(16));
+      return Ok(v.len() > 0 ? Present(v) : Absent);
+    }
+    i32 nib = this.path[this.at];
+    this.at = this.at + 1;
+    return this.descend(parts.get(nib));
+  }
+
+  /** A leaf or an extension: a hex-prefix header and a payload. */
+  Result<Proved, ProofFault> shortNode(this, i32 which, const Vec<Item> parts) {
+    Bytes head = try slot(which, 0, parts.get(0));
+    if (head.len() == 0) { return Err(EmptyHexPrefix(which)); }
+    i32 flag = (head.get(0) >> 4) as i32;
+    if (flag > 3) { return Err(BadHexPrefix(which, flag)); }
+    bool leaf = flag >= 2;
+    bool odd = (flag & 1) == 1;
+    u8[] own = nibbles(head);
+    // The flag nibble, and the padding nibble an even-length path carries.
+    i32 skip = odd ? 1 : 2;
+    if (!odd && own.len() >= 2 && own[1] != 0) { return Err(BadPadding(which)); }
+
+    i32 shared = own.len() - skip;
+    if (this.at + shared > this.path.len()) {
+      // The node's path is longer than what is left of the key: the key is not under this node, and
+      // this node is the proof of that.
+      return Ok(Absent);
+    }
+    for (i32 i = 0; i < shared; i++) {
+      if (own[skip + i] != this.path[this.at + i]) { return Ok(Absent); }
+    }
+    this.at = this.at + shared;
+
+    if (leaf) {
+      if (this.at != this.path.len()) { return Ok(Absent); }
+      Bytes v = try slot(which, 1, parts.get(1));
+      return Ok(Present(v));
+    }
+    return this.descend(parts.get(1));
+  }
+
+  /** A child: either a hash to fetch, or a node inlined because it is under 32 bytes. */
+  Result<Proved, ProofFault> descend(this, const Item child) { … }
+}
+
+/**
+ * A slot that must be a byte string.
+ *
+ * **This is the whole of what `@/packages/rlp`'s `Bytes? asBytes()` buys, and the shipped code is
+ * what it costs.** `bytesOf` traps for a list, so every caller has to ask `isList` first — and
+ * `packages/mpt` does, at all nine of its calls: four inline checks in `proof.wac`, and in
+ * `account.wac` a **separate loop over the four fields** whose only job is to reject a list, with a
+ * comment recording the bug it was written for:
+ *
+ * > A list in any of them used to read as empty — which for the nonce and the balance means *zero*,
+ * > an account that has never sent a transaction and holds nothing, from bytes committed to the
+ * > state trie.
+ *
+ * Nine guards for nine calls, hand-written, one added after a bug. Here the guard **is** the unwrap:
+ * `asBytes()` answers `Bytes?` and there is no way to read the bytes without saying what happens if
+ * it is not bytes. The shipped code is correct; what it pays is the discipline to keep being.
+ */
+Result<Bytes, ProofFault> slot(i32 which, i32 index, const Item it) {
+  Bytes? b = it.asBytes();
+  if (b is null) { return Err(SlotIsAList(which, index)); }
+  return Ok(b!);
+}
+
+/** A byte string as nibbles, high half first — the trie's alphabet. */
+u8[] nibbles(Bytes b) { … }
+
+bool bytesEq(Bytes a, Bytes b) { … }
+Bytes keccak256(Bytes b) { … }
+
+// ## What could not be written
+//
+// **`Absent` is returned from four places and means two different things.** Three of them are *the
+// key diverges from this node's path*, which is a proof of absence; the fourth is *the branch's
+// value slot is empty*, which is also one. They are the same answer and they are not the same
+// evidence, and a caller auditing a provider might want to know which — a run of divergence proofs
+// from one peer and never a value is a different pattern from empty slots.
+//
+// Splitting it is one more arm and the type carries it. It is not written because nothing here
+// wants it yet, and it is recorded because it is the *opposite* of the finding above: the shipped
+// two-bool `Proved` collapsed three states into four flags, and this rewrite collapses two kinds of
+// absence into one arm. A sum is only as good as the cases somebody chose.
+//
+// **`descend` is elided and it is the interesting one.** A child is either a 32-byte hash to fetch
+// or a node **inlined** because its encoding is under 32 bytes, and telling them apart is
+// `asBytes()` on the child plus a length test — so the inline case recurses on an `Item` the walk
+// already holds and the hash case fetches the next node. Elided because it is the shipped logic
+// unchanged, and named because the two paths reach `step` with a different `which`, which is the
+// one place a fault's node index can be wrong and nothing checks it.
+//
+// **The trie key is `u8[]` of nibbles and every element is 0..15.** `nibbles` produces them, three
+// places index by them, and nothing says so — `parts.get(nib)` with a nibble above 15 reads past a
+// seventeen-element branch. It cannot happen because `nibbles` masks, which is the same argument
+// `@/packages/raster` makes about a colour and `@/packages/ens` about an address: the range lives in
+// the producer and the type is the widest thing that holds it. `../../../QUESTIONS.md`'s entry on a
+// refinement of an integer is where this goes, as the third package to want one.
