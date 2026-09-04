@@ -2591,3 +2591,37 @@ them apart, because both are `type , IDENT , "in" , expr`.
 The smaller shape has a cost the issue does not mention: a built-in that calls `v.items()` by name is
 a built-in that knows a library method's name, which is the objection it raises against the *other*
 option one clause earlier.
+
+## The rename table lists types and not members, and there are 108 member sites it misses
+
+`GRAMMAR.md`'s table is introduced as *"what it renames or replaces, which the parser cannot see
+because the old spelling is perfectly good. It is the class with a migration attached, and nothing
+had collected it."* Six rows: `Sys`, `Ticket<T>`, `fn<T(…)>`, a caseless match arm, `default:`, `T?`.
+
+Every one is a **type** or a piece of syntax. Diffing `vision/core` against `core/` and
+`vision/std` against `std/` — the first time that has been done member by member — turns up renames
+and signature changes *inside* those types, which the table does not have a row for:
+
+    orElse  -> or                34 sites in 11 files    a rename
+    unwrap  -> orTrap(why)       16 sites in  5 files    a rename *and* a new required argument
+    isDone  -> settled           30 sites in  7 files    a rename, method to funcref field
+    then    -> (gone)             9 sites in  5 files    replaced by `Continuation`
+    cancel  -> (gone)            19 sites in 10 files    no counterpart proposed
+    ─────────────────────────────────────────────────
+                                108 sites in 32 files
+
+Small beside `fn[`'s 378, and the point is not the number. **A migration sized from the table would
+be wrong in kind**, because a type rename is mechanical and two of these are not: `unwrap()` becomes
+`orTrap(why)`, which needs a *message written per call site*, and `cancel` has nowhere to go at all.
+
+`Result.ok()` and `.err()` are dropped too and are not countable this way: `.ok()` has 372 uses
+across 59 distinct receivers and almost all of them are `Change.ok()`, which is a different type that
+`@/packages/fs` replaces with a union. Worth stating rather than guessing — the receiver names are
+`made`, `wrote`, `gone`, `opened`, and no grep separates them from a `Result`.
+
+**And a third of the rows are not renames but deletions**, which the table has no column for. `then`,
+`cancel`, `ok`, `err`, and thirteen of `Vec`'s nineteen members are absent from `vision/core` with no
+entry saying whether that is a proposal or an omission. For `Vec` the answer is *omission* —
+`core/map.wac`'s rewrite says *"only the surface a rewritten package reached for"* and `vec.wac`
+did not. For `cancel` it is genuinely unclear, and it is the one to look at: a ticket that cannot be
+cancelled is a design position, and nothing here has taken it deliberately.
