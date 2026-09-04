@@ -1,0 +1,54 @@
+// Bytes through, unchanged — and the first code written against `In`.
+//
+// The shipped `cat` is `i32 cat(Core core, Cli cli, Fs fs, Args a)`. Here it is
+// `cat(Out out, In in, Files files, Args a)`: no clock, no randomness, no sockets, no spawning. That
+// is four capabilities becoming four *narrower* capabilities rather than four becoming two, which is
+// the honest version of the projection argument for an applet that genuinely reads files.
+//
+// ## And writing it found `In` and `Socket` disagreeing about how a read ends
+//
+// `Socket.recv` answers a `Read`:
+//
+//     export enum Read { Data(u8[] bytes), End, Failed(string why) }
+//
+// `In.read` answers `Ticket<u8[]>`, and the only way it can say *end* is an empty array — a sentinel
+// drawn from the value's own range, which is the thing `@/packages/stream`'s README already caught
+// once in `decode`. Two capabilities in one file, one with a sum and one with a sentinel, and the
+// difference is that `Socket` was written from a design and `In` was added to fill a hole.
+//
+// It matters here rather than in the abstract: a `read` that answers zero bytes is *end* for a file
+// and *not yet* for a pipe, and this loop cannot tell them apart. The shipped `readStdin` has the
+// same shape and the same problem, so this is not a regression — but `Read` exists, twelve lines
+// away, and is what a capability that can end should answer. `../../../QUESTIONS.md`.
+
+import { Result, Bytes } from "core";
+import { Out, In, Files, Read, NotGranted } from "std";
+import { Args } from "@/packages/box/src/lib/args.wac";
+
+export async i32 cat(Out out, In in, Files files, Args a) {
+  if (a.operands.len() == 0) { return await pump(out, in); }
+
+  i32 status = 0;
+  for (i32 i = 0; i < a.operands.len(); i++) {
+    match (await files.read(a.operands[i])) {
+      Ok(bytes):  { out.write(bytes); }
+      Err(_):     { out.writeErr("cat: \{a.operands[i]}: cannot read\n".toBytes()); status = 1; }
+    }
+  }
+  return status;
+}
+
+/**
+ * Standard input to standard output, a chunk at a time.
+ *
+ * **The empty read is the end**, which is `In`'s only way to say so and is the thing the header is
+ * about. Written as the loop it has to be rather than the loop it should be, so the shape of the
+ * complaint is visible: with `Read` this is a `match` with three arms and no sentinel.
+ */
+async i32 pump(Out out, In in) {
+  while (true) {
+    u8[] chunk = await in.read();
+    if (chunk.len() == 0) { return 0; }
+    out.write(chunk);
+  }
+}

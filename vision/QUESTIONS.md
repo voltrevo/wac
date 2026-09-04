@@ -459,6 +459,30 @@ five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothin
 it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
 ask.
 
+## One capability says *end* with a sum and another with a sentinel
+
+`vision/std` has both shapes, twelve lines apart:
+
+    Socket.recv   fn<Ticket<Read>()>       Read = Data(u8[]) | End | Failed(string)
+    In.read       fn<Ticket<u8[]>()>       end is an empty array
+
+`@/packages/box/src/cat.wac` is the first code written against `In` and is where it bites: a read of
+zero bytes is *end* for a file and *not yet* for a pipe, and its pump cannot tell them apart. The
+shipped `readStdin` is `fn[Pending<u8[]>()]` and has the same hole, so `In` copied a shape rather
+than inventing a bad one — but the better answer was already in the file, which is the part worth
+recording. `Socket` was written from a design and `In` was added to fill a gap the projections audit
+found.
+
+**What stops it being a one-line fix** is `Read.Failed(string why)`. Every other failure in
+`vision/std` is a `NotGranted`, and `Read` carries a string — so making `In.read` answer a `Read`
+imports a second convention for what a failure says. That is the same question as *where a fault's
+message lives*, which `http`'s README raised and nothing has settled: a member with a `string` payload
+is a fault that has given up on being matched.
+
+So: does `Read` become `Data(Bytes) | End | Failed(NotGranted)`, and does `Socket.recv` change with
+it? That is one decision covering both capabilities, and it is smaller than it looks because `Read`
+has exactly two users.
+
 ## Three type names are declared twice, and `union` is the reason it matters
 
 107 type names across `vision/`, three declared in more than one file:

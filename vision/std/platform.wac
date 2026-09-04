@@ -235,6 +235,23 @@ export struct Out {
  * question, because it is the grouping principle that needs settling and not this type.
  */
 export struct In {
+  /**
+   * **This answers `Ticket<u8[]>` and should answer `Ticket<Read>`.**
+   *
+   * `Socket.recv` twelve lines down answers a `Read` — `Data`, `End`, `Failed` — and this can only
+   * say *end* with an empty array, a sentinel drawn from the value's own range. Two capabilities in
+   * one file, one with a sum and one with a sentinel, and the difference is that `Socket` was
+   * written from a design and this was added to fill a hole.
+   *
+   * `@/packages/box/src/cat.wac` is where it bites: a read of zero bytes is *end* for a file and
+   * *not yet* for a pipe, and its pump cannot tell them apart. The shipped `readStdin` is
+   * `fn[Pending<u8[]>()]` and has the same problem, so this is not a regression — it is a hole
+   * copied without noticing there was a better answer already in the file.
+   *
+   * Left as it is for one more reading rather than changed, because `Read`'s `Failed(string why)`
+   * is a `string` where every other failure here is a `NotGranted`, and picking between them is the
+   * question in `../QUESTIONS.md` about where a fault's message lives.
+   */
   fn<Ticket<u8[]>()> read;
 }
 

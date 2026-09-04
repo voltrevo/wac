@@ -1,0 +1,30 @@
+// The narrowest applet, and the first code written against `Out`.
+//
+// `../README.md` measured `packages/box` and found the argument for the projections there: 63 applets
+// all take `(Core, Cli, Fs, Args)` and **ten never mention `fs`**, because one dispatcher calls them
+// all through one shape. `echo` is one of the ten. It was measured and never written, so `Out` had no
+// consumer in code until this file.
+//
+// The signature is the whole point:
+//
+//     shipped   i32 echo(Core core, Cli cli, Fs fs, Args a)
+//     here      i32 echo(Out out, Args a)
+//
+// and what that removes is not decoration. The shipped `echo` holds a capability that can open a
+// socket, spawn a process, read the clock and delete a file, because the dispatcher hands every
+// applet the same four. Here it holds one that can write.
+
+import { Out } from "std";
+import { Args, has } from "@/packages/box/src/lib/args.wac";
+
+export i32 echo(Out out, Args a) {
+  bool noNewline = has(a, 'n');
+  string sep = "";
+  string line = "";
+  for (i32 i = 0; i < a.operands.len(); i++) {
+    line = line + sep + a.operands[i];
+    sep = " ";
+  }
+  out.write((noNewline ? line : line + "\n").toBytes());
+  return 0;
+}

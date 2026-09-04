@@ -106,6 +106,15 @@ has no generics-free way to hold a list of structs"* and which turns out to be a
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
 
+**`box` was measured and never written, so `Out` had no consumer in code.** Two applets now do:
+`echo(Out out, Args a)` against the shipped `echo(Core, Cli, Fs, Args)`, which is the ten-that-never-
+touch-`fs` argument in a signature rather than in a count; and `cat(Out, In, Files, Args)`, which
+genuinely reads files and is four capabilities becoming four *narrower* ones. Writing `cat` found the
+thing a count could not: `Socket.recv` answers a `Read` — `Data | End | Failed` — and `In.read`
+answers bare bytes, so *end* is an empty array. A read of zero bytes is end for a file and not yet
+for a pipe, and `cat`'s pump cannot tell them apart. Two capabilities in one file, one with a sum and
+one with a sentinel, twelve lines apart.
+
 **A projection with one consumer has that consumer's shape, and the second one finds out how.**
 `Files` was short by two methods. `Net` is two of the host's nine and both are streams, because its
 only consumer was `server`, which listens — and `std/platform.wac`, the file `vision/std` is a
@@ -396,3 +405,4 @@ while correcting something.
 | [tls](tls/) | 2026-09-04 | the key schedule, as the first consumer `secret` ever had |
 | [wactest](wactest/) — [ISOLATION.md](wactest/ISOLATION.md) | 2026-09-04 | test isolation, as the second consumer `schedule` ever had |
 | [quic](quic/) | 2026-09-04 | the datagram endpoint, as the second consumer of the `Net` projection |
+| [box](box/) — `src/echo.wac`, `src/cat.wac` | 2026-09-04 | two applets, as the first code written against `Out` and `In` |
