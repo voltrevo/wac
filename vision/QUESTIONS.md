@@ -1666,6 +1666,35 @@ needed two at once*, that is the projections finding again in a third form: **th
 the first consumer and the first consumer only ever wanted one.** If the answer is that a `Feed`
 value costs something a `Socket` does not, nothing says what.
 
+**The ledger on *one at a time*, assembled 2026-09-04 after writing `@/packages/box/src/tee.wac`.**
+The single cursor is not an oversight — `packages/fs/src/fs.wac`'s `openOut` states it and gives the
+reason: *"One cursor per filesystem, not a handle table: a shell redirects one command at a time, and
+a table would be a second thing to leak."* Which is a **first-consumer argument**, the same shape
+this document keeps finding in the projections: a shell does redirect one command at a time, and a
+shell was the consumer that existed.
+
+What it has cost, all of it already written down somewhere in the tree and none of it filed against
+the capability:
+
+- **`tee` buffers a pipe.** Its header: *"The one applet that still buffers by nature rather than for
+  want of an API. The world has one current output … `tee` wants two at once and cannot express
+  that."* A program whose whole purpose is to sit in the middle of a pipe, holding the pipe in
+  memory. `@/packages/box/src/tee.wac` is it written against `Files.create`, and the fix is that a
+  `Sink` is a value, so holding two is holding two values.
+- **`>` had two implementations.** The same `openOut` paragraph: *"the only streaming write in the
+  world was `Cli.openOutput`, which redirects the process's standard output. So `packages/sh` had two
+  implementations of `>`: the sequential path wrote through this filesystem and the streaming path
+  wrote through the host, and they disagreed about which disk a sealed session's redirection landed
+  on. Latent, because a sealed session does not spawn (wac-mono 0116) — and a leak the day it does."*
+- **`tee -a` cannot be written at all**, and this one is *not* the projection's fault. `openOut`
+  truncates deliberately — *"Truncate now, through the ordinary write, so that every check
+  `writeFile` makes happens once and in one place"* — and the host has no append either. So the
+  system does not have the capability rather than the rewrite having dropped it. The first gap this
+  exercise has found where projecting faithfully reproduces a real hole.
+
+Three consequences, three places, one cause, and the cause is documented as a deliberate decision at
+each of the two layers that made it.
+
 **And one thing genuinely does not survive the move.** `Proc.run` here takes no grants, because the
 shipped `pushChild` is explicitly *not* isolation — *"the child is the same instance with the same
 authority; it can still open any file the parent could. A real boundary is `spawn`."* So the

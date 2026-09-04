@@ -1,0 +1,122 @@
+// Standard input to standard output *and* to files — the applet the shipped box says it cannot
+// write.
+//
+// `packages/box/src/applets/tee.wac`, in full, at the top:
+//
+// > **The one applet that still buffers by nature rather than for want of an API.** The world has
+// > one current output, so `write` goes to exactly one place at a time; `tee` wants two at once and
+// > cannot express that. Streaming it would need either a second sink or an append, and neither
+// > exists. `cp`, which has one destination, streams.
+//
+// It then reads all of standard input into a `u8[]` and writes that array once per destination. A
+// program whose entire purpose is to be in the middle of a pipe, holding the pipe in memory.
+//
+// **The audit predicted this file before finding it.** Comparing all 62 host capabilities against
+// the projections turned up three groups that are paired calls over hidden state —
+// `openInput`/`readChunk`/`closeFeed`, `openOutput`/`outputError`/`closeFeed`, and
+// `pushChild`/`popChild` — and the note said the giveaway is that *there is one at a time*. The
+// shipped header above is that observation written from the other end, by somebody who hit it and
+// filed it as a property of `tee` rather than of the capability.
+//
+// A `Sink` is a value. Holding two is holding two values. That is the whole fix and it is not a new
+// capability — `Files.create` is `openOutput` with the state handed back.
+//
+// ## And the single cursor is a decision, with its reason and its cost both already written down
+//
+// It would be tidier if this were an oversight and it is not. `packages/fs/src/fs.wac`'s `openOut`:
+//
+// > One cursor per filesystem, not a handle table: a shell redirects one command at a time, and a
+// > table would be a second thing to leak. `closeOut` ends it; opening another closes the first.
+//
+// **A first-consumer argument, exactly the shape the projections audit keeps finding.** A shell does
+// redirect one command at a time. `tee` is not a shell, and it is in the same repository, and its
+// header says it cannot be written.
+//
+// The same paragraph, twelve lines up, records what the design has already cost:
+//
+// > the only streaming write in the world was `Cli.openOutput`, which redirects *the process's*
+// > standard output. So `packages/sh` had two implementations of `>`: the sequential path wrote
+// > through this filesystem and the streaming path wrote through the host, and they disagreed about
+// > which disk a sealed session's redirection landed on. Latent, because a sealed session does not
+// > spawn (wac-mono 0116) — and a leak the day it does.
+//
+// So the ledger on *one at a time* is: one applet that buffers a pipe, one duplicated implementation
+// of `>`, and one latent cross-disk leak. All three are in the tree, all three are documented where
+// they happen, and none of the three is filed against the capability they come from.
+
+import { Result, Bytes, Vec, AsyncGenerator } from "core";
+import { Out, In, Files, Sink, NotGranted } from "std";
+import { Args } from "@/packages/box/src/lib/args.wac";
+
+export async i32 tee(Out out, In in, Files files, Args a) {
+  Vec<Sink> sinks = Vec.create();
+
+  for (string name in a.operands) {
+    match (files.create(name)) {
+      Ok(sink): { sinks.push(sink); }
+      Err(_): {
+        out.writeErr("tee: \{name}: cannot write\n".toBytes());
+        await closeAll(sinks);
+        return 1;
+      }
+    }
+  }
+
+  try await for (Bytes chunk in in.stream()) {
+    out.write(chunk);
+    for (Sink s in sinks.items()) { await s.write(chunk); }
+  }
+
+  await closeAll(sinks);
+  return 0;
+}
+
+async void closeAll(Vec<Sink> sinks) {
+  for (Sink s in sinks.items()) { await s.close(); }
+}
+
+// ## 1. Opening N things, where the third one fails and two are open
+//
+// The loop above opens every destination before writing any of them, because a `tee` that has
+// written half a stream to two files and then discovers it cannot open a third has done something
+// worse than refusing. So it opens, and on a failure it closes what it has and returns — three
+// lines, and they are the three lines every N-resource acquisition in every language writes by hand.
+//
+// **`defer` is the construct that should remove them and cannot.** `defer closeAll(sinks);` after
+// the `Vec.create()` covers every exit including the `Err` arm, and it is wrong twice:
+//
+//   - `defer` is documented nowhere. `../../../QUESTIONS.md` has *what `defer` means, which no page
+//     says and four uses already depend on*, and one of the four unsettled parts is exactly this —
+//     whether a `defer` registered before a loop runs when the function returns from inside it.
+//   - **`closeAll` is `async`**, and nothing says what `defer` does with a call that suspends. A
+//     close that has to be awaited at a point where the function is already returning is a
+//     continuation with no obvious owner, and the same question sank `../wactest`'s `isolated`.
+//
+// So the applet that most wants `defer` is the one that shows it is two unanswered questions rather
+// than one syntax.
+//
+// ## 2. The failure while writing is dropped, and there are now N of them
+//
+// `try await for` propagates the *source's* failure as this function's return. `s.write(chunk)`
+// answers `Ticket<Result<void, NotGranted>>` and the `await` above discards it, so a disk filling up
+// on the second of three destinations is invisible.
+//
+// Checking it is not hard and *reporting* it is the problem: real `tee` keeps going for the other
+// destinations and exits non-zero, so the loop needs a per-sink failed flag, and the honest shape is
+// `Vec<Sink>` becoming a `Vec<Dest>` with a name and a state. That is ordinary code and this file
+// does not write it, because the interesting part is upstream: **`Sink.write` answers
+// `Result<void, NotGranted>` and running out of disk is not a grant problem.** The one failure the
+// capability can name is the one that will not happen here. Same hole `In.stream` has, one layer
+// along, and the same reason: `std` is below `@/packages/fs`, where `Fault` lives.
+//
+// ## 3. `-a` cannot be written at all, and the shipped header said so
+//
+// *"Streaming it would need either a second sink or an append, and neither exists."* This file adds
+// the first. There is still no append: `Files.create` truncates, `Files.write` replaces, and the
+// host has `openOutput` with the same semantics. `tee -a` is in POSIX, is what every use of `tee` in
+// a shell script wants, and has nowhere to go.
+//
+// It is not an oversight in the projection — the *host* has no append, so this is a capability the
+// system does not have rather than one the rewrite dropped. Worth stating in those terms, because
+// every other gap this exercise has found was a projection narrower than its host, and this is the
+// first one where projecting faithfully reproduces a real hole.
