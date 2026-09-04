@@ -44,18 +44,34 @@ export enum JsonValue {
     };
   }
 
-  /** The member, or null — for `Object` with the key present, and null for everything else. */
-  JsonValue? get(const this, string key) {
+  /**
+   * The member. Two absences, and they are different questions.
+   *
+   * **This was `JsonValue?` and collapsed them**, with a doc comment that said so without noticing:
+   * *"for `Object` with the key present, and null for everything else."* The two things behind
+   * *everything else* are **no such key**, which is ordinary and what an optional field looks like,
+   * and **this is not an object**, which means the caller was wrong about the document's shape and
+   * every later `get` on the same value will be wrong too.
+   *
+   * That is the shape `T??` exists for — `url/query.wac` was the only consumer, and this package
+   * had the same shape and did not see it. The outer absence is *not an object*; the inner is *no
+   * such key*.
+   *
+   * Note what is **not** one of the two: a key present with JSON `null` is `Ok(Ok(JsonValue.Null))`,
+   * because `Null` is a variant of `JsonValue` and not an absence. That is the distinction every
+   * JSON binding in every language gets wrong, and it is free here.
+   */
+  JsonValue?? get(const this, string key) {
     return match (this) {
       Object(o): o.get(key.toBytes()),
       default:   null,
     };
   }
 
-  /** The element, or null — out of range, or not an array. */
-  JsonValue? at(const this, i32 i) {
+  /** The element. Same two absences: out of range within, not an array without. */
+  JsonValue?? at(const this, i32 i) {
     return match (this) {
-      Array(a): i >= 0 && i < a.len() ? a.data[i] : null,
+      Array(a): i >= 0 && i < a.len() ? a.data[i] : (null as JsonValue?),
       default:  null,
     };
   }

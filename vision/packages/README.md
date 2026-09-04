@@ -92,6 +92,14 @@ has no generics-free way to hold a list of structs"* and which turns out to be a
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
 
+**And an audit for second consumers found a rewrite that had missed its own construct.** `T??` had
+one — `url/query.wac`, whose header says *"the first place in the tree that needs `T??`"*. Looking
+for a second found `json`, which had already been written: `JsonValue? get(key)` collapsed *no such
+key* with *this is not an object*, and its doc comment said so without noticing — *"and null for
+everything else"*. One is an ordinary optional field; the other means the caller is wrong about the
+document's shape. The package where missing-versus-null is most famous had a two-level answer and
+wrote one level.
+
 **A primitive with one consumer is a primitive nobody has composed.** `schedule` had exactly one —
 `Sys.drain` — and `wactest`'s `isolate.wac` is the second. The first breaks the second: `drain` says
 `schedule this.pending.push` and then drains `this.pending`, so inside a scope that has already

@@ -67,6 +67,31 @@ owed.
 check-a-flag-and-return-null-and-hope-the-caller-looks pattern at every recursive call. That is most
 of what shrank.
 
+## What this rewrite got wrong, found by auditing `T??`'s consumers
+
+`T??` had exactly one consumer — `url/query.wac`, whose header opens *"this is the first place in the
+tree that needs `T??`"* — and one consumer is how a construct goes untested. Looking for a second
+found it here, in the file that had already been written and had not noticed.
+
+`JsonValue? get(const this, string key)` collapsed two absences, and its own doc comment said so
+without seeing it: *"for `Object` with the key present, and null for everything else."* The two
+things behind *everything else* are **no such key**, which is ordinary and is what an optional field
+looks like, and **this is not an object**, which means the caller is wrong about the document's shape
+and every later `get` on that value is wrong too. `at` had the identical collapse — out of range
+against not an array.
+
+Both are `JsonValue??` now. The outer absence is *not an object*, the inner is *no such key*, and a
+key present with JSON `null` is neither: `Null` is a variant of `JsonValue`, so it arrives as a
+value. That last distinction is the one every JSON binding in every language gets wrong and it is
+free here.
+
+**The live alternative is `Result`, and it is not obviously worse.** `../README.md`'s own recurring
+finding is that the pull toward `Result` is wrong when the outcomes are peers — and these are not
+peers: *no such key* is an answer and *not an object* is a mistake. So `Result<JsonValue?,
+NotAnObject>` may be the better shape, and the point of this section is that the rewrite chose
+**neither**: it had a two-level answer and wrote one level, in the package where the distinction is
+most famous.
+
 ## What could not be written
 
 (A generic method whose type parameter comes only from the return type was listed here as an open
