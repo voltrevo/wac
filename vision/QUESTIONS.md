@@ -3609,9 +3609,15 @@ Three questions, in increasing order of how much they need deciding:
 - **Is `try f();` as a statement legal, and does it require `f`'s error type to be assignable to the
   enclosing function's?** The statement form has no slot to infer from, which is the one place the
   expression form's rule does not reach.
-- **What is `Result<void, E>`?** If `Ok` carries a `void`, `return Ok;` is the spelling this exercise
-  has been writing, and `spec/spec/enums.md` does not say a payload-free construction of a
-  payload-carrying variant is a thing.
+- **What is `Result<void, E>`?** Measured 2026-09-04: it **works today**, cleanly, and
+  `return Ok;` runs. And it works *by accident* — `Ok` carries a `T`, no argument is given, and the
+  payload defaults, which is `issues/lang/0335a`: a payload-carrying variant written bare is
+  accepted at every `T`, so `enum Sh { A, B(string s) }` with `return Sh.B;` emits and traps on a
+  null. At `T = void` there is nothing to default and nothing goes wrong; at `T = string` the same
+  construction is a bug. So this question and that bug are one thing, and fixing the bug is what
+  forces the answer: either `void` is carved out as a type argument whose variant may be written
+  bare, or the idiom needs another spelling. `Ok(Unit())` with a one-member struct works today and
+  is ugly in every file that has a fallible step returning nothing.
 - **Left to right, short-circuit, nothing constructed** — which is what every language with `?` does,
   and *"what every other language does"* is the argument this directory has refused elsewhere, so it
   should be written down rather than assumed.
