@@ -1887,6 +1887,13 @@ through if absent* is not something the resolver can currently express. `@/packa
 README already found that the entry-point proposal lands in the same place, on `Res`'s `mapFrom`/
 `mapSpec`/`mapTo` — which is the reader's answer to a question the resolver cannot ask.
 
+**The convention covers a missing file and not a missing name**, which is worth separating because
+the second is an ordinary mistake. Extending the import check from *does the file exist* to *does it
+export this name* found four, and three were real: `@/packages/wacc/src/walk.wac` imported `Ty`,
+`Arm` and `JsxAttr` from a sibling that referenced all three and declared none. `./stringify.wac`
+naming a file nobody wrote is the convention; `Ty` naming a type nobody wrote is a dangling
+reference, and nothing distinguished them until the check did.
+
 **The second unstated convention in this directory**, and it is the same shape as the first: `{ … }`
 for a body nobody wrote, which a lexer special case strips, and now an import for a file nobody
 wrote, which nothing checks at all. Both are load-bearing, both are invisible to every tool, and both

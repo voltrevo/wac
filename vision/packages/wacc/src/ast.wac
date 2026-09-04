@@ -48,6 +48,18 @@ export Tok i32;
 /** Where a node came from. Unchanged; it is already a struct, so it is already named. */
 export struct Span { i32 line; i32 col; }
 
+/**
+ * The three types the expressions below reach for, unchanged from the original.
+ *
+ * They are here rather than elided because `walk.wac` imports them from this file, and an import of
+ * a name a sibling does not export is a dangling reference the *file* convention does not cover —
+ * `./stringify.wac` naming a file nobody wrote is one thing, and naming a type nobody wrote is
+ * another. Found by extending the import check from files to names; four hits, three of them these.
+ */
+export struct Ty { … }
+export struct Arm { … }
+export struct JsxAttr { … }
+
 export struct Expr { ExprKind kind; Span at; }
 
 /**
