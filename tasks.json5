@@ -31,7 +31,12 @@
   // parses the tree with it, which takes minutes and is why neither is in the suite: the file has
   // been behind the parser four times and each was found by a person until this existed.
   "grammar": "deno run --allow-read tools/ebnfaudit.ts",
-  "grammar:parse": "deno run --allow-read tools/specparse.ts packages core std spec tools",
+  // `bootstrap` was not in this list and it is the only directory the spec grammar has ever had
+  // something to say about: of 1,578 `.wac` files it refuses ten, seven of them `spec/cases`
+  // written to be refused and three of them `bootstrap/drivers/`, on a module-level variable that
+  // `wacc` cannot parse either — `issues/lang/0329a`. A check whose one real finding is outside the
+  // paths it walks is a check that was going to stay clean.
+  "grammar:parse": "deno run --allow-read tools/specparse.ts packages core std spec tools bootstrap native",
   "grammar:vision": "deno run --allow-read tools/specparse.ts vision",
 
   // **Building `wac`, and there is one way to do it.** `./bootstrap.sh` starts from the ladder

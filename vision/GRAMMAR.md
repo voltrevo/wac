@@ -482,11 +482,17 @@ first statement anybody has been able to make about it. A recogniser cannot say 
 it can say there is nothing written here it cannot read, and until this week nobody could say even
 that.
 
-**A note on how it was run, because it changes what to do next time.** One `deno` per package: the
-whole tree in a single process runs out of memory at about 125 files of 1,134. Nothing about the
-corpus causes that — `packages/box` alone is 128 files and parses fine — so it is per-file state the
-recogniser never releases, and a process that exits between packages does not accumulate it. The
-sweep is `tools/specparse.ts` called forty times per arm.
+**A note on how it was run.** One `deno` per package — `tools/specparse.ts` called forty times per
+arm — because the whole tree in a single process died at about 125 files of 1,134. The machine had
+1.8 GB available at the time, against a suite that wants 4 GB, so **whether that is state the
+recogniser never releases or simply the peak cost of one large file under a low ceiling was not
+determined.** `packages/box` alone is 128 files and completes, which rules out the corpus and rules
+out nothing else. Said that way because the obvious explanation is a leak and the obvious explanation
+has been wrong twice on this page already.
+
+What it does mean either way: `wac task grammar:parse` — `specparse.ts packages core std spec tools`
+in one process — cannot finish on a machine in this state, and there is no sign that it is not
+finishing other than the absence of a last line.
 
 **Re-measured 2026-09-04, after the delta had roughly doubled, and every number above is unchanged.**
 When these three lines were first written the patch was 22 rules replaced and one extended; it is now
