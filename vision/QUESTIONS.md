@@ -3184,3 +3184,41 @@ a cap"*, *"the bench states"* — a citation to somebody else's measurement carr
 there is no other way to write it, and a citation to your own does not because there is. That is the
 whole mechanism, and it predicts that this will happen again to the next number this directory
 measures itself.
+
+## The quotations are accurate and cannot be checked, because `*"…"*` has four jobs
+
+Last entry predicted the citation problem would recur for the next number this directory measures
+itself. Testing the other half of it — **are the quotations accurate?** — took three attempts at a
+checker and the answer is that the checker is the thing that cannot be written.
+
+Seventy-three inline quotations resolvable to a file. The first pass reported 39 misses, the second
+40, the third 15. **Eight of the fifteen were hand-checked and every one was the instrument**, for
+four different reasons, and the reasons are the finding:
+
+- **A quotation of a shipped file, resolved to its vision twin.** `core/jsx.wac` and
+  `vision/core/jsx.wac` both exist and a reference names neither — the directory's own convention is
+  that *"the corresponding real thing is at the same path with `vision/` taken off the front"*, which
+  makes every such path ambiguous to a reader as well.
+- **A quotation of an entry title on the same page.** `TECHNICAL.md` quotes
+  *"`Vec<T>.pop` is written once and is honest at every `T`"* — its own heading, not a file.
+- **A quotation of this file's own earlier text.** `core/slice.wac`: *"This file said «there is no
+  copy anywhere in this file, which is the whole point»"* — recording a claim it has since withdrawn,
+  which is good practice and looks exactly like a citation.
+- **A phrase being named rather than quoted.** *"which of nine projections does this export take, in
+  what order"* is nobody's sentence; two entries later the same phrase appears in plain italics with
+  no quotes, for the same purpose.
+
+So `*"…"*` means *quoted from a file*, *quoted from this page*, *quoted from this file's past* and
+*a phrase I am naming*, and plain `*…*` means the fourth as well. Nothing distinguishes them.
+
+**The accuracy is the good news and the unverifiability is the finding.** After a week of quoting the
+shipped tree as the main evidence in this directory — five reversals in `std` found by reading its
+prose, and every one of them argued here by quoting it back — a reader who wants to confirm one has
+to work out which of four things the marks mean, then find the source themselves, because the
+attribution is a sentence rather than a form.
+
+**What a form would cost is small and the shape is already here.** Half the long quotations use a
+blockquote under a named path, which is unambiguous and greppable; the inline ones are the ones that
+are not. Making the inline form carry its source is a convention rather than a tool, and this
+document is the wrong place to declare one — but the count is worth having: **73 inline quotations,
+and the only mechanical thing that can be said about them is that nothing can be said mechanically.**
