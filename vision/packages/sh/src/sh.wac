@@ -1,0 +1,9 @@
+// The package, as one name — three files of a 12,000-line shell.
+//
+// `./exec.wac` is the spawn seam, `./pipeline.wac` is `a | b | c`, and `./arith.wac` is the inside
+// of `$((…))`, which shares nothing with either: no words, no quoting, no expansion.
+
+export { Stage, pipeline } from "./pipeline.wac";
+export {
+  eval, errorToken, At, ArithFault, OperandExpected, SyntaxError, DivisionByZero,
+} from "./arith.wac";

@@ -5468,3 +5468,38 @@ Which means the ask is not `Sorted<T, K>` and not a private constructor. It is a
 can put to any function taking a list: **is this order canonical or preserved, and does the code
 agree with the answer?** Two of the three say which in their doc. The one that does not is the one
 that is wrong.
+
+## Is a fault a value that describes what happened, or one that can be shown to a person?
+
+Three shapes are in this directory and nothing has stated them as a choice.
+
+- **Carry an offset.** `@/packages/rlp`'s faults and `@/packages/sh/src/arith.wac`'s do. Cheap, and
+  the fault is **not self-sufficient**: rendering bash's *error token* — *"the rest of the input from
+  where the offending thing began"* — needs the expression back, so a caller that kept the fault and
+  dropped the input has a fault it cannot print. Every caller keeps the fault, because that is what a
+  `Result` is for.
+- **Carry the text.** Self-sufficient, and it copies a slice of input into a value that may outlive
+  it — free on an error path and not on a hot one.
+- **Carry a rendered message.** `@/packages/wac/src/grants.wac`'s *nine reasons, one empty string* is
+  this from the other side: self-sufficient, and it has given up on being matched.
+
+The narrow question is the title, and it decides the other two. If a fault describes what happened,
+an offset is right and rendering is a function taking the input; if it is a thing to show a person,
+the text has to be in it.
+
+### And the arithmetic evaluator shows why `try` is more than a tidier channel
+
+`packages/sh/src/arith.wac` reports a division by zero at the position the **divisor** started, and
+says why that cannot be read off the cursor:
+
+> this is recorded at the failure rather than derived from `at` afterwards — by then the divisor has
+> been consumed.
+
+`@/packages/rlp` argued for replacing a sticky error field with `try` on the grounds that a dropped
+check becomes a type error rather than a discipline. True, and not the whole of it. **A sticky field
+plus a code has to be written in the right order; a payload cannot be written in the wrong one**,
+because there is nowhere to put it later — `Err(DivisionByZero(At(divisorStart)))` is constructed
+where the information exists or not at all.
+
+That is the argument for errors being *values* rather than *codes*, made by a case where the
+information is a position the parser is about to lose. rlp did not need it and did not state it.

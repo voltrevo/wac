@@ -77,6 +77,39 @@ That leaves the case where the `Slice` one ended up: on legibility rather than r
 caller writes what it means, a `match` is checked, and nobody hand-maintains a `GRANT_ALL` — which
 `std/platform.wac` names as a real cost. Worth having, and not for the reason it first looked like.
 
+## A fault that cannot render itself
+
+[`src/arith.wac`](src/arith.wac) was added later, from the 264 shipped sources nobody predicted
+anything about. `$((…))` is a small evaluator with the shell's own rules switched off inside it, and
+what changes is the error channel — but **not for the reason [`@/packages/rlp`](../rlp/) gave.**
+
+The shipped `Arith` is a cursor with a sticky error, the shape rlp removed. rlp's argument was that
+`try` turns a dropped check into a type error rather than a discipline. That holds here. What this
+file adds is a constraint rlp had not, and the shipped code states it:
+
+> this is recorded at the failure rather than derived from `at` afterwards — by then the divisor has
+> been consumed.
+
+Bash reports a division by zero at the position the **divisor** started, and by the time the division
+is attempted the parser is past it. **A sticky field plus a code has to be written in the right
+order; a payload cannot be written in the wrong one**, because there is nowhere to put it later.
+`Err(DivisionByZero(At(divisorStart)))` is built where the information exists or not at all — which
+is the argument for errors being *values* rather than *codes*, made by a case where the information
+is a position about to be lost.
+
+### And then the fault needs the input back
+
+Bash's error token is *"the rest of the input from where the offending thing began"*, so rendering
+one needs the expression. `ArithFault` carries an offset, so a caller that kept the fault and dropped
+the input has a fault it cannot print — and every caller keeps the fault, because that is what a
+`Result` is for.
+
+Three shapes, all three now in this directory: carry the offset (here, and `rlp`), carry the text
+(self-sufficient, copies input into a value that outlives it), carry a rendered message
+([`@/packages/wac`](../wac/)'s *nine reasons, one empty string*, which is self-sufficient and has
+given up on being matched). `../../QUESTIONS.md` has the question that decides them: **is a fault a
+value that describes what happened, or one that can be shown to a person?**
+
 ## What could not be written
 
 **Nothing about how a grant list crosses.** Whether the enum is serialised by the compiler, by

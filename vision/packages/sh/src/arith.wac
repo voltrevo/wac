@@ -1,0 +1,111 @@
+// Arithmetic expansion — the inside of `$((…))`, and a fault that cannot render itself.
+//
+// Second file taken from the 264 shipped sources nobody predicted anything about. The shipped
+// `packages/sh/src/arith.wac` is a small recursive-descent evaluator with the shell's own rules
+// switched off inside it, and its header is worth keeping:
+//
+// > **A bare name is a variable.** `$((x+1))` reads `x` without a dollar … **An unset or
+// > non-numeric variable is zero**, not an error … **Comparisons yield 1 and 0**, not a status …
+// > it is the *opposite* polarity to `test a -lt b`, whose success is 0.
+//
+// What changes is the error channel, and the reason it is not the same change `@/packages/rlp` made
+// is the finding.
+
+import { Result, Bytes } from "core";
+
+/** Where a fault happened, as an offset into the expression. Rendering needs the expression too. */
+export struct At { i32 offset; }
+
+/** `1+*2` — the parser wanted a number and found something else. */
+export struct OperandExpected { At at; }
+/** `a b c` — two expressions with nothing joining them. */
+export struct SyntaxError { At at; }
+/** `1/(2-2)`. `at` is where the **divisor** started, which is not where the parser is by then. */
+export struct DivisionByZero { At at; }
+
+export union<OperandExpected, SyntaxError, DivisionByZero> ArithFault;
+
+/**
+ * Evaluate, or say which rule was broken and where.
+ *
+ * `lookup` is total — an unset name is zero, which is the shell's rule and is why
+ * `$((count+1))` works on the first pass through a loop. A `fn<i64?(string)>` would be a different
+ * language.
+ */
+export Result<i64, ArithFault> eval(Bytes src, fn<i64(string)> lookup) { … }
+
+/**
+ * bash's *error token*, which is what makes these faults need the source back.
+ *
+ * The rule, measured on bash rather than guessed at by the shipped file: **the token is the rest of
+ * the input from where the offending thing began**, with leading spaces dropped.
+ *
+ *     $((1+*2))     1+*2: syntax error: operand expected (error token is "*2")
+ *     $((a b c))    a b c: syntax error in expression (error token is "b c")
+ *     $((1/(2-2)))  1/(2-2): division by 0 (error token is "(2-2)")
+ */
+export string errorToken(Bytes src, At at) { … }
+
+// ## 1. `try` works here and not for the reason `@/packages/rlp` gave
+//
+// The shipped `Arith` is a cursor with a sticky error — `bool bad`, `string error`, and an offset —
+// which is the shape `@/packages/rlp/src/decode.wac` removed, and its argument was that `try` makes
+// a dropped check a type error instead of a discipline. That argument holds here too.
+//
+// **But this file has a constraint rlp had not, and it is the one that decides the fault type.**
+// The shipped code says so:
+//
+// > this is recorded at the failure rather than derived from `at` afterwards — by then the divisor
+// > has been consumed.
+//
+// For a division by zero, the position bash reports is where the **divisor** began, and by the time
+// the division is attempted the parser has moved past it. So the offset cannot be read off the
+// cursor at the point the error is noticed; it has to be captured earlier and carried.
+//
+// A sticky field does that by being written at the moment the fact is known. So does a `Result`
+// whose `Err` is a **value built at the same moment** — `Err(DivisionByZero(At(divisorStart)))` —
+// and that is the part rlp's argument did not need and did not state: `try` is not merely a tidier
+// error channel, it is one where the error is *constructed* where the information exists. A code
+// plus a shared mutable slot has to be written in the right order; a payload cannot be written in
+// the wrong one, because there is nowhere to put it later.
+//
+// ## 2. A fault that cannot render itself
+//
+// `errorToken(src, at)` needs the expression back. `ArithFault` carries an offset and not the text,
+// so a caller that has kept the fault and dropped the input has a fault it cannot print — and every
+// caller does keep it, because that is what a `Result` is for.
+//
+// Three shapes, and this directory has now met all three:
+//
+//   * **Carry the offset**, as here and as `@/packages/rlp`'s faults do. Cheap, and the fault is not
+//     self-sufficient.
+//   * **Carry the text**, which `@/packages/http`'s faults do not and `@/packages/wac`'s `string`
+//     errors do. Self-sufficient, and it copies a slice of input into a value that may outlive it —
+//     which for an error path is free and for a hot path is not.
+//   * **Carry a rendered message**, which is `@/packages/wac/src/grants.wac`'s *"nine reasons, one
+//     empty string"* finding from the other side: it is self-sufficient and it has given up on being
+//     matched.
+//
+// The choice is not obvious and nothing in this directory has stated it as a choice. The narrow
+// version, which is answerable: **is a fault a value that describes what happened, or a value that
+// can be shown to a person?** `ArithFault` is the first, `errorToken` is the bridge, and the bridge
+// takes an argument the caller has to still be holding.
+//
+// ## 3. What could not be written
+//
+// **`lookup` being total is the shell's rule and it hides a typo forever.** The shipped header says
+// so — *"it is also why a typo in a name is silent"* — and there is no type to fix it, because the
+// behaviour is correct: `$((count+1))` on the first pass is the reason. A `fn<i64?(string)>` with the
+// evaluator defaulting would move the decision one call out and change nothing about the outcome.
+// Worth recording as the case where the *language* has nothing to offer and the *format* is what is
+// wrong, which this directory does not otherwise have an example of.
+//
+// **Comparisons yield `1` and `0` and `test` yields `0` for success.** Two polarities a few
+// characters apart in one program, both required by POSIX, and no type can hold them apart because
+// both are `i64` in one case and an exit status in the other. `@/packages/sh` is the only package
+// here that has to be wrong-looking on purpose, twice.
+//
+// **`At` is an offset into a `Bytes` nobody holds.** The same shape as
+// `@/packages/zstd/src/stream.wac`'s `FromEnd` — a scalar whose meaning depends on a buffer — except
+// that here the buffer is the *input* rather than an output being mutated, so it cannot go stale; it
+// can only go missing. Two failure modes for one shape, and only the first has a type that fixes it.
