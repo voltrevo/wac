@@ -67,11 +67,11 @@ file where a `for … in` comes before any other divergence, and the tool found 
     vision/packages/wactest/src/wactest.wac        ^ found '{'
     vision/std/platform.wac                        ^^^^ expected ';', found 'this'
 
-Eight distinct constructs:
+Eight distinct constructs, of which seven are still used:
 
 | construct | example | where it bit |
 |---|---|---|
-| a method with no body | `bool settled(const this);` | `ticket`, `coroutine` |
+| ~~a method with no body~~ | `bool settled(const this);` | `ticket`, `coroutine` — **and no longer either, see below** |
 | a default type argument | `enum Result<T, E = union>` | `result` |
 | the `gen` return form | `gen<T> void items(const this)` | `vec`, `stream` ×2 |
 | a named union declaration | `export union<A, B> Fault;` | `http/fault` |
@@ -79,6 +79,13 @@ Eight distinct constructs:
 | `try` in expression position | `try this.value()` | `json/json`, `json/parse` |
 | `for … in` | `for (Param p in q.params.items())` | `url/query` |
 | re-export | `export { Vec } from "./vec.wac";` | every barrel |
+
+**The first row is struck through and the count above still says eight.** Measured 2026-09-04: zero
+body-less method declarations anywhere in this directory. `core/ticket.wac` says why in the past
+tense — *"`settled` and `advance` **were** bodyless methods here"* — and they are `fn<bool()>` fields
+now, so the construct was designed out and the table kept it. Left visible rather than deleted,
+because a row that was true and stopped being true is the more useful record: it is the second on
+this page, and both were found by measuring rather than by reading.
 
 **`async` on a method was here and is not a construct any more**, which is the sharper lesson.
 It was measured as `expected a type` and it parses today: the difference is that every measurement
