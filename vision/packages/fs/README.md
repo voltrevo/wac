@@ -65,6 +65,37 @@ is not inlined. A `readFile` is microseconds and
 so this is squarely the case where that trade is right — which is worth saying because `gzip`'s
 window is squarely the case where it is not, and the two are in the same directory.
 
+## And the closure removes a predicate the tag forced into the public surface
+
+Added 2026-09-04, after `vision/std` grew `Files.open`. The shipped `Fs` has no streaming read and
+its own comment says why:
+
+> The one thing a caller needs to know to choose how to read: the host has a streaming capability —
+> `openInput` redirects standard input to a file and `readChunk` pulls it a piece at a time, so a
+> large file on disk never has to be held whole — and this filesystem does not. A memory image is
+> already in memory, so reading a node whole costs nothing it has not already paid, and there is
+> nothing to stream *from*.
+>
+> Exposed rather than a `read` method that decides, because the decision is about which capability
+> the caller may use afterwards, and only the caller knows what it is going to do with it.
+
+So `isHostPath` is public, and **every caller that wants to stream has to branch on the backing** —
+which is the tag problem this package's whole argument is about, surfacing in the API rather than
+inside an operation. A `Mount` of funcrefs cannot have it: `open` is a field, a host mount fills it
+with the streaming capability, and a memory mount fills it with a lambda that yields its bytes as one
+chunk. The caller gets an `AsyncGenerator` either way and never learns which it got.
+
+The second paragraph is the interesting half, because it is an honest defence of the predicate and it
+is answering the wrong question. *Only the caller knows what it is going to do with it* is true, and
+what the caller does with it is **choose an implementation** — which is the one thing a capability is
+supposed to have already chosen.
+
+(**Two doc comments are stacked above `isPlainHost` and the first one belongs to `isHostPath`**,
+fifty lines below, which has none. Somebody inserted a method between a comment and its function.
+Not fixed here for the same reason `../json`'s misnumbered issue reference is not: `packages/fs/src`
+is in the seed app's graph, so a comment move stales every agent's seed, which is out of proportion
+to a comment. It should ride along with the next real change to that file.)
+
 ## Ten integer codes, and the one that does not belong
 
 The other half is `Change` and `FileResult`: a `bool ok`, an `i32 fault`, a `string message`, and ten
