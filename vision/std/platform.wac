@@ -79,8 +79,10 @@ export struct NotGranted { string what; }
  * the grouping and it was not visible from the grouping.**
  */
 // **The pages do not use this shape.** All four vetted pages write `sys.readFile(…)`, `sys.log(…)`,
-// `sys.listen(…)` — seventeen call sites — and this struct has seven fields and no flat methods, so
-// none of those examples typechecks against it. The projections were invented here during the
+// `sys.listen(…)` — 22 call sites, none of them projected — and this struct has eight projection
+// fields and no flat methods, so none of those examples typechecks against it. The code does not use
+// it either: two functions in 59 files take a `Sys`, sixteen take a projection directly, and after
+// `counter.wac` was narrowed the one that remains needs it for `drain`. The projections were invented here during the
 // packages exercise and never propagated upward; `../QUESTIONS.md` has the three ways out and why
 // the middle one is not the compromise it looks like.
 export struct Sys {

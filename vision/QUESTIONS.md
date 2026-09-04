@@ -423,8 +423,8 @@ Three shapes of answer, and the exercise has no view on which:
 
 The projections — `Sys` split into `Files`, `Net`, `Proc`, `Env`, `Out`, `Clock`, `Random` — were
 invented during the packages exercise, argued from a count of the host's fifty capabilities and from
-`box`'s applets, and written into `vision/std/platform.wac`. That struct has **seven fields and no
-flat methods**: no `readFile`, no `log`, no `listen`.
+`box`'s applets, and written into `vision/std/platform.wac`. That struct has **eight projection
+fields and no flat methods**: no `readFile`, no `log`, no `listen`.
 
 Every vetted page still writes the flat form. Re-counted 2026-09-04 over the ```wac fences, as
 `sys.<name>(` against `sys.<group>.<name>(`:

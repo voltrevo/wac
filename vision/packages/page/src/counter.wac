@@ -132,6 +132,10 @@ export async i32 page(Out out, Page ui) {
 // ## 4. `page` is the entry point and `vision/std` has no story for it
 //
 // `spec/cli/wac.md`: the launcher hands `Page` to `page` and `Cli` to `main`, and a module may
-// export both. `vision/std`'s `Sys` has eight projections and none of them is a page, so a vision
-// program cannot be interactive. That is the finding this file was written to produce and it is in
-// the README rather than here.
+// export both. `vision/std`'s `Sys` had eight projections and none of them was a page, so a vision
+// program could not be interactive. That is the finding this file was written to produce; `Page` is
+// the ninth projection now and the README has the rest.
+//
+// It is deliberately *not* a field on `Sys`, and this function is why: it takes `Out` and `Page`,
+// two capabilities, and never wants a bundle. See `../../../QUESTIONS.md` on whether the whole grant
+// is a thing that exists.
