@@ -1,0 +1,211 @@
+// RFC 3339 timestamps: parse, and format back.
+//
+// The strict profile of ISO 8601 that everything on the wire uses. Strict is the point: ISO 8601
+// admits week dates, ordinal dates, two-digit years, comma decimal separators and omitted
+// separators, and a parser that accepts all of them accepts things nobody meant to write.
+//
+// The rules are the shipped file's, unchanged and not in question. What changes is what a rejection
+// says, and the shape of a cursor that has to say it.
+
+import { Result, Bytes } from "core";
+import { Buf } from "@/packages/bytes";
+import { Civil, civilFromDays, daysFromCivil, isValidDate } from "./civil.wac";
+import { Offset, Timestamp } from "./time.wac";
+import {
+  TimeFault, NotDigits, BadSeparator, NoSuchDate, OutOfRange, EmptyFraction, NoOffset, Trailing,
+  LeapSecond,
+} from "./fault.wac";
+
+/**
+ * Parse a full `date-time`.
+ *
+ *     YYYY-MM-DD ("T"|"t"|" ") HH:MM:SS [ "." 1*DIGIT ] ( "Z" | "z" | ("+"|"-") HH:MM )
+ *
+ * The separator is case-insensitive as §5.6 allows, and a space is the RFC's own NOTE alternative.
+ * A fractional part of any length is accepted and **truncated** to milliseconds — truncated, not
+ * rounded, because rounding can move a timestamp into the next second and the RFC gives no licence
+ * to do that.
+ */
+export Result<Timestamp, TimeFault> parse(Bytes s) {
+  Scan c = Scan(s, 0);
+  i32 year   = try c.digits(4);
+  try c.expect('-');
+  i32 month  = try c.digits(2);
+  try c.expect('-');
+  i32 day    = try c.digits(2);
+  try c.dateTimeBreak();
+  i32 hour   = try c.digits(2);
+  try c.expect(':');
+  i32 minute = try c.digits(2);
+  try c.expect(':');
+  i32 second = try c.digits(2);
+
+  if (!isValidDate(year, month, day)) { return Err(NoSuchDate(year, month, day)); }
+  if (hour > 23)   { return Err(OutOfRange(11, hour, 23)); }
+  if (minute > 59) { return Err(OutOfRange(14, minute, 59)); }
+  // `60` is a leap second and has a member of its own — see `fault.wac` for why that is the change
+  // with the most in it.
+  if (second == 60) { return Err(LeapSecond(17)); }
+  if (second > 59) { return Err(OutOfRange(17, second, 59)); }
+
+  i32 millis = try c.fraction();
+  Offset off = try c.offset();
+
+  if (!c.done()) { return Err(Trailing(c.at)); }
+
+  i64 days = daysFromCivil(year, month, day);
+  i64 secs = days * 86400 + (hour as i64) * 3600 + (minute as i64) * 60 + (second as i64)
+           - (off.minutes() as i64) * 60;
+  return Ok(Timestamp(secs * 1000 + (millis as i64), off));
+}
+
+/**
+ * A position in the input, and nothing else.
+ *
+ * The shipped parser is one 74-line function with eighteen `return bad;` in it and an `at` that is a
+ * mixture of constants (`s[4]`, `s[7]`, `digits(s, 11, 2)`) and a running cursor once the fraction
+ * starts. Half the offsets are literals because the prefix is fixed width, which is true and is why
+ * a reader cannot tell, at `s[16]`, whether 16 is a position or a length.
+ *
+ * A cursor makes them all the same kind of thing, and `try` is what lets each step answer a fault
+ * instead of setting a flag — the same pair `@/packages/rlp` needed, and this file is where they
+ * shorten a function rather than only correcting one.
+ */
+struct Scan {
+  Bytes src;
+  i32 at;
+
+  bool done(const this) { return this.at == this.src.len(); }
+
+  /** `n` digits as a number. */
+  Result<i32, TimeFault> digits(this, i32 n) {
+    if (this.at + n > this.src.len()) { return Err(NotDigits(this.at, n)); }
+    i32 v = 0;
+    for (i32 i = 0; i < n; i++) {
+      u8 ch = this.src.get(this.at + i);
+      if (ch < '0' || ch > '9') { return Err(NotDigits(this.at, n)); }
+      v = v * 10 + ((ch - '0') as i32);
+    }
+    this.at = this.at + n;
+    return Ok(v);
+  }
+
+  Result<void, TimeFault> expect(this, u8 want) {
+    if (this.at >= this.src.len()) { return Err(BadSeparator(this.at, 0, want)); }
+    u8 saw = this.src.get(this.at);
+    if (saw != want) { return Err(BadSeparator(this.at, saw, want)); }
+    this.at++;
+    return Ok;
+  }
+
+  /** `T`, `t`, or the space §5.6 permits for readability. */
+  Result<void, TimeFault> dateTimeBreak(this) {
+    if (this.at >= this.src.len()) { return Err(BadSeparator(this.at, 0, 'T')); }
+    u8 saw = this.src.get(this.at);
+    if (saw != 'T' && saw != 't' && saw != ' ') { return Err(BadSeparator(this.at, saw, 'T')); }
+    this.at++;
+    return Ok;
+  }
+
+  /** An optional fraction, truncated to milliseconds. Zero when there is none. */
+  Result<i32, TimeFault> fraction(this) {
+    if (this.done() || this.src.get(this.at) != '.') { return Ok(0); }
+    i32 dot = this.at;
+    this.at++;
+    i32 start = this.at;
+    i32 millis = 0;
+    i32 place = 100;
+    while (!this.done() && this.src.get(this.at) >= '0' && this.src.get(this.at) <= '9') {
+      if (place > 0) {
+        millis = millis + ((this.src.get(this.at) - '0') as i32) * place;
+        place = place / 10;
+      }
+      this.at++;
+    }
+    // A `.` with no digits after it is not a fraction.
+    if (this.at == start) { return Err(EmptyFraction(dot)); }
+    return Ok(millis);
+  }
+
+  /** `Z`, `z`, or a signed `HH:MM`. */
+  Result<Offset, TimeFault> offset(this) {
+    if (this.done()) { return Err(NoOffset(this.at)); }
+    u8 z = this.src.get(this.at);
+    if (z == 'Z' || z == 'z') { this.at++; return Ok(Utc); }
+    if (z != '+' && z != '-') { return Err(NoOffset(this.at)); }
+    i32 sign = this.at;
+    this.at++;
+    i32 oh = try this.digits(2);
+    try this.expect(':');
+    i32 om = try this.digits(2);
+    if (oh > 23) { return Err(OutOfRange(sign + 1, oh, 23)); }
+    if (om > 59) { return Err(OutOfRange(sign + 4, om, 59)); }
+    i32 mins = oh * 60 + om;
+    // `-00:00` is the unknown-offset spelling, and the only negative zero in the format.
+    if (z == '-' && mins == 0) { return Ok(Unknown); }
+    return Ok(At(z == '-' ? -mins : mins));
+  }
+}
+
+/**
+ * Format as `YYYY-MM-DDTHH:MM:SS.sssZ`, which is exactly what `Date.toISOString` produces.
+ *
+ * Milliseconds are always written, including `.000`, because that is what makes the output a fixed
+ * width and lexicographically sortable — the property most callers want from a timestamp in a log
+ * line or a key.
+ *
+ * **Takes an `i64` rather than a `Timestamp`, deliberately.** The output is UTC, so the offset a
+ * timestamp was written with is not an input to it, and a signature that took one would suggest
+ * otherwise. The shipped file has this right and it is worth saying, because everything else here
+ * has been about carrying information further: this is the one place where dropping it is the
+ * design.
+ */
+export Bytes format(i64 millis) {
+  // Floor division, so a negative instant lands on the right day rather than a day late.
+  i64 ms = millis % 1000;
+  i64 secs = millis / 1000;
+  if (ms < 0) { ms = ms + 1000; secs = secs - 1; }
+  i64 days = secs / 86400;
+  i64 rem = secs % 86400;
+  if (rem < 0) { rem = rem + 86400; days = days - 1; }
+
+  Civil c = civilFromDays(days);
+  Buf out = Buf.create();
+  padYear(out, c.year);
+  out.push('-'); pad(out, c.month, 2);
+  out.push('-'); pad(out, c.day, 2);
+  out.push('T'); pad(out, (rem / 3600) as! i32, 2);
+  out.push(':'); pad(out, ((rem / 60) % 60) as! i32, 2);
+  out.push(':'); pad(out, (rem % 60) as! i32, 2);
+  out.push('.'); pad(out, ms as! i32, 3);
+  out.push('Z');
+  return out.bytes();
+}
+
+void pad(Buf out, i32 value, i32 width) { … }
+void padYear(Buf out, i32 year) { … }
+
+// ## What could not be written
+//
+// **`try` on a `Result<void, E>` is used six times and is the shape nothing has stated.**
+// `try c.expect('-');` is a statement whose value is nothing and whose purpose is entirely the early
+// return. `GRAMMAR.md`'s two examples are both `x = try f()`, where the unwrapped value is the
+// point; here there is no value, and `try` is being used as *check or propagate*.
+//
+// That reads as obviously fine and it is the second unstated thing about `try` this exercise has
+// hit, after `@/packages/rlp`'s two in one expression. Both are the same gap from different sides:
+// **the pages describe `try` as an expression and every real use is a statement.**
+//
+// **The offsets in the faults are literals, and the cursor knows them.** `OutOfRange(11, hour, 23)`
+// says *hour, at byte 11*, and 11 is a constant because the prefix is fixed width — exactly the
+// thing the `Scan` above was meant to stop. The honest version is for `digits` to answer where it
+// read from, which means every step answering a pair, which is a tuple this language has not got
+// (`../../../QUESTIONS.md`, and `issues/lang/0074`). So the faults carry a position that is right
+// and is written twice: once by the grammar, once by hand.
+//
+// **A `Timestamp` cannot cross to a host, and `Result` cannot either.** `time.wac`'s foot has the
+// chain this produced in the shipped package — four exports, three invented failure values and one
+// probe nothing called. Nothing in this rewrite touches it: `parse` answers a `Result<Timestamp,
+// TimeFault>` and a host still gets an `i64` at a time. The rewrite makes the *library* say what
+// happened and leaves the boundary exactly where it was, which is worth admitting rather than
+// leaving the reader to notice.

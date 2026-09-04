@@ -1,0 +1,57 @@
+// Why a timestamp is not RFC 3339, and where.
+//
+// **Eighteen `return bad;` in one function**, where `bad` is `Parsed(false, 0, 0, true)` and the
+// doc says *"the fields are then meaningless"*. Every rejection in the format arrives as the same
+// `false`, and the tests distinguish them the only way left: forty malformed fixtures, named.
+//
+// Same shape as `@/packages/rlp`'s seven rules and `@/packages/abi`'s seven, and here one member
+// carries more than a message.
+
+/** A field that should have been digits was not, or ran off the end. `at` is the byte offset. */
+export struct NotDigits { i32 at; i32 want; }
+
+/** A separator that is not what the grammar has there — the `-`, the `:`, or the date/time break. */
+export struct BadSeparator { i32 at; u8 saw; u8 want; }
+
+/** `2021-02-30`: the fields are digits and the date is not one. */
+export struct NoSuchDate { i32 year; i32 month; i32 day; }
+
+/** An hour above 23 or a minute above 59, in the time or in the offset. */
+export struct OutOfRange { i32 at; i32 saw; i32 max; }
+
+/** A `.` with no digits after it. */
+export struct EmptyFraction { i32 at; }
+
+/** No `Z` and no `+`/`-` offset where one is required. */
+export struct NoOffset { i32 at; }
+
+/** A complete timestamp and then more bytes. */
+export struct Trailing { i32 at; }
+
+/**
+ * `:60` — a leap second, which RFC 3339 §5.7 permits and this rejects.
+ *
+ * **A member of its own, and that is the change with the most in it.** The shipped package rejects
+ * leap seconds too, and its README argues the decision at length:
+ *
+ * > Representing one faithfully needs a leap-second table, which is maintained by hand, goes stale,
+ * > and would have to ship with the package. The alternatives are worse: mapping `:60` onto `:59`
+ * > makes two distinct instants equal, and mapping it onto the next second makes a timestamp that is
+ * > not what was written. **Rejecting says so at the point of use.**
+ *
+ * Every word of that is right about what the *package* should do, and the reasoning ends one step
+ * early. Rejecting says so at the point of use only if the point of use can hear it — and `ok:
+ * false` is the same answer as a stray comma. A caller reading a log file written by something that
+ * emits leap seconds has to choose between the three bad options the README lists, and cannot even
+ * tell that it is facing the choice.
+ *
+ * As a named member the package still refuses, and a caller that has decided writes one arm. The
+ * decision moves to whoever has the context, which is the same argument `@/packages/abi`'s fault
+ * union makes about `cast` and `ethers` disagreeing over a dirty address — and this one is stronger,
+ * because the disagreement is not between two other implementations, it is written into this
+ * package's own README as three options and a regret.
+ */
+export struct LeapSecond { i32 at; }
+
+export union<NotDigits, BadSeparator, NoSuchDate, OutOfRange, EmptyFraction, NoOffset, Trailing,
+             LeapSecond> TimeFault;

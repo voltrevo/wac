@@ -1,0 +1,26 @@
+// The proleptic Gregorian calendar — **not rewritten, and elided rather than omitted.**
+//
+// `packages/datetime/src/civil.wac` is 74 lines of Hinnant's algorithms: shift the year so March is
+// month 0, which puts the leap day at the end and makes the month-length pattern one linear formula
+// — `(153*m + 2) / 5` — instead of a twelve-entry table with a special case. No tables, no loops,
+// exact for any year an `i32` holds including negative ones.
+//
+// There is nothing here for this exercise. It is arithmetic on three `i32`s, it has no failure mode
+// that is not `isValidDate`, and every shape this directory has been replacing — a sentinel, a
+// hand-rolled sum, a sticky error, a grow loop — is absent because the problem has none of them.
+// **Sixth time the answer was to leave something alone**, after `json`'s lazy object index, `Buf`'s
+// field layout, `regex`'s flat class arrays, `bignum`'s `u32[]` limbs and `raster`'s pixel layout.
+//
+// Worth one observation rather than none: the reason it is clean is that it is the only file in
+// this exercise whose input is **already validated by its own caller** and whose output is total.
+// Every other package's difficulty has been at a boundary.
+
+export struct Civil { i32 year; i32 month; i32 day; }
+
+export bool isLeap(i32 y) { … }
+export i32 daysInMonth(i32 y, i32 m) { … }
+export bool isValidDate(i32 y, i32 m, i32 d) { … }
+export i64 daysFromCivil(i32 year, i32 month, i32 day) { … }
+export Civil civilFromDays(i64 days) { … }
+export i32 weekday(i64 days) { … }
+export i32 dayOfYear(i32 y, i32 m, i32 d) { … }

@@ -3578,3 +3578,45 @@ landing inside a multi-byte UTF-8 sequence, which made the generated self-host d
 and broke the fixpoint. A bug whose entire cause is an undocumented ceiling being worked around by
 hand, in the file that generates the compiler's own driver — which is the strongest argument for the
 middle option and the reason it is not simply a documentation gap.
+
+## `try` is documented as an expression and is almost always a statement
+
+`GRAMMAR.md` lists *`try` in expression position* with two examples, both `x = try f()`, where the
+unwrapped value is the point. Two packages have now used it in shapes no page covers, and they are
+the same gap from opposite sides.
+
+**`@/packages/datetime` uses `try` on a `Result<void, E>` six times.**
+
+    try c.expect('-');
+    try c.dateTimeBreak();
+
+A statement whose value is nothing and whose entire purpose is the early return. This is *check or
+propagate*, and it is what a parser's separator handling looks like in every language that has the
+construct. Nothing says whether `Result<void, E>` is even a type — `core/result.wac` is
+`enum Result<T, E>` and `Ok(T value)`, so `Ok` at `T = void` is a variant with a payload of nothing,
+which `spec/spec/async.md` has an opinion about for `Pending<void>` and no page has for this one.
+
+**`@/packages/rlp` uses two in one expression.**
+
+    Ok(Str(try this.take(try this.longLength(tag - 0xB7), false)))
+
+One line, two early returns, and the second only runs if the first succeeded. Evaluation order,
+short-circuiting, and whether the outer construction is started at all are all unstated.
+
+Together they say the same thing: **the description is of the narrow case and the uses are not it.**
+Three questions, in increasing order of how much they need deciding:
+
+- **Is `try f();` as a statement legal, and does it require `f`'s error type to be assignable to the
+  enclosing function's?** The statement form has no slot to infer from, which is the one place the
+  expression form's rule does not reach.
+- **What is `Result<void, E>`?** If `Ok` carries a `void`, `return Ok;` is the spelling this exercise
+  has been writing, and `spec/spec/enums.md` does not say a payload-free construction of a
+  payload-carrying variant is a thing.
+- **Left to right, short-circuit, nothing constructed** — which is what every language with `?` does,
+  and *"what every other language does"* is the argument this directory has refused elsewhere, so it
+  should be written down rather than assumed.
+
+The first is the one a parser hits immediately. `@/packages/datetime/src/rfc3339.wac` has sixteen
+`try`s and **six are statements** — every separator in the grammar. If only the expression form is
+legal, each becomes `_ = try c.expect('-');`, which reads as discarding something and discards
+nothing.
