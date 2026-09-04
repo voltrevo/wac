@@ -91,6 +91,41 @@ Nothing on the page mentions it. Candidates: driving a coroutine to completion f
 `Err` when this host cannot be waited on, that it drains the dependency set rather than descending
 depth-first, and the circular case. Four is probably too many for one feature.
 
+## Three constructs the grammar has and no vetted page mentions
+
+`GRAMMAR.ebnf` is a closed list of what vision adds — that is what made it worth writing — so it can
+be checked against the pages that are *agreed* rather than generated. Every addition was looked for
+in `README.md`, `SHOWCASE.md`, `IDIOMS.md`, `TECHNICAL.md` and `DECISIONS.md`. Three appear in none
+of them:
+
+**A generic parent.** `struct AllOf<T> : Ticket<T[]>`, which today's parser refuses with
+`expected '{', found '<'`. `GRAMMAR.md` calls it load-bearing and means it: `AllOf`, `AnyOf`,
+`Generator`, `AsyncGenerator` and `SysTicket` all need it, so the whole ticket and coroutine design
+does not parse without it. It is the largest thing in the proposal that has never been written down
+anywhere a reader would look — found by desugaring, banked, and never argued.
+
+**A method with no body.** `bool settled(const this);` in `core/ticket.wac`, `core/coroutine.wac` and
+`std/platform.wac`. `GRAMMAR.md`'s own necessity test says it is *avoidable* — a body that traps does
+the same thing, measured — and it was not withdrawn, because what a trapping body gives up is not
+*when* the check happens but *whether* it happens at all: `struct K : B { }` that never overrides
+compiles clean and traps only if the path is taken. That is a real argument for the construct and it
+is sitting in a generated file.
+
+**`trap` as an expression.** `core/result.wac`'s `orTrap` writes `Err(_): trap why,` — a match arm is
+an expression and that arm produces nothing, which is what a bottom type is for. Small, and the
+smallest of the three is still a change to what an expression is.
+
+**The pattern is the finding, not the three.** All three were discovered by *tooling* —
+`visiongrammar.sh` reporting a refusal, or the desugarer, or writing the grammar down — and a
+construct that arrives that way lands in `GRAMMAR.md`, which is generated and which `README.md`
+describes as the odd one out. Nothing carries it from there to a page the operator reviews. Every
+construct that arrived by being *wanted* while writing an example is on a page; every construct that
+arrived by being *refused* is not.
+
+That is a gap in the process rather than in the language, and it is why this list is here rather than
+three separate entries: the question to answer first is whether a generated file is allowed to hold
+an argument nobody has agreed to.
+
 ## What `defer` means, which no page says and four uses already depend on
 
 This entry asked which *example* should capture `defer`. Reading the four places the rewrites use it,
