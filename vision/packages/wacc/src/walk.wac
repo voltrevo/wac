@@ -1,0 +1,100 @@
+// One walk over the expression tree — the first consumer a brace pattern has ever had.
+//
+// `sideEffectFree` is a real question a compiler asks: may this expression be evaluated twice, or
+// dropped, or hoisted? It is chosen here because it has to look at **every** variant, so every arm
+// is written and the pattern is exercised rather than demonstrated.
+//
+// Read `ast.wac` first. The short version: an enum payload has field names and no way to use them,
+// where a struct's are named, order-independent and omittable when nullable.
+
+import { Vec } from "core";
+import { Expr, ExprKind, Ty, Arm, JsxAttr } from "./ast.wac";
+
+/**
+ * Whether evaluating this twice is the same as evaluating it once.
+ *
+ * Every arm below binds by name. Four of them bind a *subset* — which is the thing the positional
+ * form cannot do at all, and which is why `{ .. }` earns its place separately from the pattern:
+ * `Cast { operand, .. }` says *the target type does not matter here*, and `Cast(_, operand, _)`
+ * says the same thing in a spelling where the reader counts underscores.
+ */
+export bool sideEffectFree(Expr e) {
+  match (e.kind) {
+    IntLit { .. }:   { return true; }
+    FloatLit { .. }: { return true; }
+    StrLit { .. }:   { return true; }
+    Ident { .. }:    { return true; }
+
+    // `left` and `right` are both `Expr` and the order does not matter to this answer — which is
+    // exactly why the positional form is safe *here* and unsafe two functions away. A pattern that
+    // is only wrong sometimes is the kind nothing catches.
+    Binary { left, right }: { return sideEffectFree(left) && sideEffectFree(right); }
+    Unary { operand }:      { return sideEffectFree(operand); }
+    Cast { operand, .. }:   { return sideEffectFree(operand); }
+    Index { arr, index }:   { return sideEffectFree(arr) && sideEffectFree(index); }
+
+    // The seventeen-arm case. `cond`, `then` and `els` are three `Expr` in a row; written this way
+    // a reader does not have to know which of the three came second.
+    Ternary { cond, then, els }: {
+      return sideEffectFree(cond) && sideEffectFree(then) && sideEffectFree(els);
+    }
+
+    // A call is the whole reason this function exists.
+    Call { .. }: { return false; }
+
+    // Markup builds a tree and evaluates its holes; the tags cannot do anything.
+    Jsx { kids, attrs }: {
+      for (Expr k in kids.items())    { if (!sideEffectFree(k)) { return false; } }
+      for (JsxAttr a in attrs.items()) { if (!attrValueFree(a)) { return false; } }
+      return true;
+    }
+    JsxText { .. }: { return true; }
+
+    MatchExpr { subject, arms }: {
+      if (!sideEffectFree(subject)) { return false; }
+      for (Arm a in arms.items()) { if (!armFree(a)) { return false; } }
+      return true;
+    }
+  }
+}
+
+bool attrValueFree(JsxAttr a) { … }
+bool armFree(Arm a) { … }
+
+// ## What writing it found
+//
+// **The subset form is the whole value, and the proposal leads with the wrong half.**
+// `../../GRAMMAR.ebnf` writes the pattern as `Ok { v }` — every field, by name — with `{ .. }` as an
+// afterthought meaning *ignore the rest*. Of the thirteen arms above, **six** bind a subset and
+// could not be written positionally without counting underscores: `Cast { operand, .. }` against
+// `Cast(_, operand, _)`, and every `{ .. }`-only arm against `IntLit(_)`.
+//
+// Positional wildcards do exist — `[§wac-arm-partial]` allows ignoring one field at a time — so
+// naming a subset is not *new capability*, it is the same capability without an index. That is a
+// weaker claim than the proposal makes and it is the one the arms support.
+//
+// **And the strong claim is elsewhere.** `StructDecl` has seven fields and fifty-four arms in the
+// real compiler; almost none of them want all seven. `StructDecl { nameTok, fields, methods, .. }`
+// is three names against `StructDecl(nameTok, _, fields, methods, _, _, _)` — four underscores whose
+// count is load-bearing, in a variant that has gained a field twice.
+//
+// ## What could not be written
+//
+// **A binding that renames.** `Binary { left: lhs, right: rhs }` is not in the grammar —
+// `field_pattern = ".." | IDENT , { "," , IDENT } , …` takes bare names only, so a payload field's
+// name becomes a local's name whether the local wants it or not. Two nested arms binding `left` from
+// different subjects cannot both be written. The struct-literal form it borrows from has `x: 3`, so
+// the colon is free notation on the pattern side and the grammar declines it. Not obviously wrong —
+// a renaming pattern is a second thing to learn — but it is the difference between *destructuring*
+// and *naming*, and the file that proposes it says nothing either way.
+//
+// **A nested pattern.** `Binary { left: Ident { tok } }` would let one arm reach two levels.
+// `GRAMMAR.md` records this as considered and withdrawn: *"a field access that already exists"* says
+// the same thing. Fair for reading a field; it is not the same for *matching* one, since the nested
+// form is what makes an arm apply only when the inner variant matches. Withdrawn on the reading
+// argument, and the matching argument was not made.
+//
+// **`match` on `e.kind` where the variants are `ExprKind`'s** reads as though the arms were `Expr`'s.
+// The subject is a field and the arms name its type's variants, so nothing in the arm says which of
+// the two types it belongs to. That is true of the shipped code as well and is not a vision
+// question — but a brace pattern makes it worse by looking like a struct pattern on `Expr`.

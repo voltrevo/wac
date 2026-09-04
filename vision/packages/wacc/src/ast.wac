@@ -1,0 +1,139 @@
+// The compiler's own expression tree, and the one place in the language where a field has no name.
+//
+// `packages/wacc/src/ast.wac` is 468 lines and is the most matched-on type in the repository. It is
+// also where a language asymmetry costs the most, and the asymmetry is not one vision invented:
+//
+//     Point q = Point { x: 3, y: 4 };     // a struct: by name, order-independent, nullables omitted
+//     Shape b = Shape.Circle(2.0);        // a variant: by position, and only by position
+//     case Circle(r): …                   // and read back by position too
+//
+// `spec/spec/structs.md` `[§wac-struct-named-4y8pg2j]` gives a struct's fields names on the way in
+// and lets a nullable one be left out. An enum's payload fields **have** names — they are written
+// `Binary(i32 op, Expr left, Expr right)` — and no code can use them, in either direction.
+//
+// ## What that costs here, counted
+//
+// Over `packages/` and the rest of the tree, excluding `spec/cases`:
+//
+//     812  match arms binding two or more payload fields
+//     291  of those on a variant where two fields share a type
+//      23  such variants, of which 13 are this file's
+//
+// A shared type is what makes the swap silent. `Ternary(Expr cond, Expr then, Expr els)` is bound by
+// seventeen arms and `case Ternary(cond, els, then)` compiles, type-checks, and inverts every
+// conditional in the program. `Binary(i32 op, Expr left, Expr right)` is twenty-six arms and turns
+// `a - b` into `b - a`. `Index(Expr arr, Expr index)` is seventeen and makes `a[i]` into `i[a]`.
+// `StructDecl` has seven fields and fifty-four arms; `Func` has seven and forty-three, including
+// `bool exported` and `bool isAsync`, which are adjacent, identical and mean opposite things.
+//
+// None of that is hypothetical arithmetic: those are the arms in the tree today, and every one of
+// them is a position a reader has to count.
+
+import { Vec } from "core";
+
+/**
+ * A token index — `i32` in the original, at every one of the tree's leaves.
+ *
+ * `Ident(i32 tok)`, `Binary(i32 op, …)`, `Jsx(i32 tagTok, i32 closeTok, …)`: three different
+ * meanings of `i32` in one enum, and `Jsx`'s two are the same meaning twice. A distinct type costs
+ * nothing at runtime — `../../DECISIONS.md` has `export Slice<u8> Bytes;` as the form — and it makes
+ * `Binary(op, left, right)` un-swappable with `Jsx(tagTok, closeTok, …)` even before anything below
+ * happens.
+ *
+ * It does **not** fix the case this file is about: `Jsx`'s two `Tok`s are still two `Tok`s. A name
+ * is the only thing that separates two fields of one type, which is the whole argument.
+ */
+export Tok i32;
+
+/** Where a node came from. Unchanged; it is already a struct, so it is already named. */
+export struct Span { i32 line; i32 col; }
+
+export struct Expr { ExprKind kind; Span at; }
+
+/**
+ * The expressions.
+ *
+ * Written with the same field names the original has, because the names are not the problem — they
+ * exist and are good. What is missing is any way to *use* them.
+ */
+export enum ExprKind {
+  IntLit(Tok tok),
+  FloatLit(Tok tok),
+  StrLit(Tok tok),
+  Ident(Tok tok),
+
+  Unary(Tok op, Expr operand),
+  Binary(Tok op, Expr left, Expr right),
+  Ternary(Expr cond, Expr then, Expr els),
+  Index(Expr arr, Expr index),
+  Cast(Tok op, Expr operand, Ty target),
+  Call(Expr callee, Vec<Expr> args, Vec<Ty> typeArgs),
+
+  Jsx(Tok tagTok, Tok closeTok, Vec<JsxAttr> attrs, Vec<Expr> kids),
+  JsxText(i32 startOff, i32 endOff),
+
+  MatchExpr(Expr subject, Vec<Arm> arms)
+}
+
+// ## 1. The brace pattern is half a fix, and it is the half that exists
+//
+// `../../GRAMMAR.ebnf` proposes `Ok { v }:` and `Err { .. }:` — a payload bound by field name. It is
+// one of the constructs with no user anywhere, and its production is one of the eight whose removal
+// changes nothing in the tree.
+//
+// `src/walk.wac` is its first consumer, and the case is the 291 arms above. Two things fall out that
+// the proposal does not say.
+//
+// **It borrows the struct-literal syntax and nobody wrote down that it is the same idea.** `Point {
+// x: 3, y: 4 }` is construction by name and `Ternary { cond, then }` is destructuring by name; the
+// braces are the same braces and the field names are the same field names. Presenting the second as
+// a new pattern form, rather than as *the enum payload finally reaching the struct rule*, is what
+// makes it look like a convenience.
+//
+// **`..` is doing a second job and should be argued separately.** `Err { .. }` means *ignore the
+// rest*, which the positional form spells `Err(_)` — one wildcard for the whole payload. But
+// `[§wac-arm-partial]` already lets an arm ignore one field at a time positionally, so `{ .. }`
+// duplicates something rather than adding it. What is genuinely new is *naming a subset*:
+// `Func { nameTok, body, .. }` binds two of seven, and that is the thing fifty-four `StructDecl`
+// arms want.
+//
+// ## 2. And the other half is construction, which nothing proposes
+//
+// A brace pattern fixes *reading* a payload. Writing one is still positional, and the write side is
+// where the worst case lives:
+//
+//     Decl(DeclKind.Func(t, ty, ps, body, true, tps, false), at)
+//
+// Two bare booleans, four fields apart, meaning `exported` and `isAsync`. Swap them and the compiler
+// is silent, every diagnostic still points at the right line, and an unexported function becomes an
+// exported synchronous one. The brace pattern does nothing about this line, and it is the same
+// fields the pattern is for.
+//
+// **The syntax for it already exists twice over.** `Point { x: 3, y: 4 }` is a struct literal, and
+// `i32[n](fill: -1)` is a named argument in a call position — with the spec's own reason:
+// *"Named argument syntax cannot collide, since a call rejects it outright."* So the language has
+// `name: value` in a construction, has it order-independent, has it optional for a nullable field,
+// and an enum variant gets none of it. `Func { nameTok: t, exported: true, isAsync: false, … }`
+// needs no new notation at all — it needs the rule that already applies to `Point` to apply to a
+// payload.
+//
+// That is the promotion this file exists to make: **not *add a brace pattern*, but *an enum's
+// payload is a struct and is not treated as one*.** The pattern is one direction of that and is
+// worth having; on its own it fixes 291 arms and leaves every construction site as it was.
+//
+// ## 3. What could not be written
+//
+// **A nullable payload field cannot be omitted.** `[§wacc-struct-nullable-optional]` lets a struct
+// literal leave one out. `ArrNew(Ty elem, Expr? size, Expr? fill, Vec<Expr> elements)` has two
+// nullables and every construction passes `null` for at least one of them, positionally. If a
+// payload were a struct this would follow from the rule that already exists, and it is the clearest
+// evidence that the two things really are one thing.
+//
+// **A payload field cannot be `const`.** A struct field can. This is `issues/lang/open/0315a`'s
+// territory rather than this file's, and it is another row in the same table of *what a struct has
+// and a payload does not*.
+//
+// **The tree is still a tree of indices and this rewrite does not change that.** `Tok` is a name for
+// an `i32`; `Expr` holds an `ExprKind` which holds `Expr`s. Whether that should be an arena, a
+// handle type, or references is a question about wasm GC and about `../../DECISIONS.md`'s rule that
+// references are comparable but not hashable — not about payloads, and much larger than this.

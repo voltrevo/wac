@@ -1880,3 +1880,67 @@ for a body nobody wrote, which a lexer special case strips, and now an import fo
 wrote, which nothing checks at all. Both are load-bearing, both are invisible to every tool, and both
 were followed perfectly by hand — the seventeen contain no typos, which is luck rather than a
 property.
+
+## An enum's payload is a struct and is not treated as one
+
+Three spellings of the same fields, and only one of them can use their names:
+
+    Point q = Point { x: 3, y: 4 };     // a struct: by name, order-independent, a nullable omitted
+    Shape b = Shape.Circle(2.0);        // a variant: by position, and only by position
+    case Circle(r): …                   // and read back by position too
+
+`spec/spec/structs.md` `[§wac-struct-named-4y8pg2j]` makes a struct's field order irrelevant and
+`[§wacc-struct-nullable-optional]` lets a nullable one be left out. An enum's payload fields have
+names — they are written `Binary(i32 op, Expr left, Expr right)` — and nothing can use them.
+
+**Counted over the tree, excluding `spec/cases`:** 812 match arms bind two or more payload fields;
+**291 of those are on a variant where two fields share a type**, which is what makes a swap silent.
+Twenty-three such variants, thirteen of them in `packages/wacc/src/ast.wac` — the compiler's own AST,
+and the most matched-on type in the repository.
+
+    Ternary(Expr cond, Expr then, Expr els)     17 arms   a swap inverts every conditional
+    Binary(i32 op, Expr left, Expr right)       26 arms   turns `a - b` into `b - a`
+    Index(Expr arr, Expr index)                 17 arms   turns `a[i]` into `i[a]`
+    StructDecl(…7 fields…)                      54 arms   four are wildcards at most sites
+    Func(…, bool exported, …, bool isAsync)     43 arms   two adjacent booleans, opposite meanings
+
+**The brace pattern is one direction of this and has its first user.** `Ok { v }:` was one of the
+constructs nothing used and one of the eight rules whose removal changed nothing;
+`@/packages/wacc/src/walk.wac` uses it and the rule is load-bearing now — delete `field_pattern` and
+that file refuses at the exact token. Writing it moved two things.
+
+**It is the struct-literal rule, not a new pattern form.** Same braces, same field names, applied to
+destructuring instead of construction. Presented as a pattern it reads as a convenience; presented as
+*the payload finally reaching the struct rule* it is one rule in one more place — and then the other
+two rows below follow without needing arguments of their own.
+
+**The subset is the value and the proposal leads with the other half.** It writes `Ok { v }`, every
+field named, with `{ .. }` as an afterthought. Six of `walk.wac`'s thirteen arms bind a subset, and
+the real comparison is `StructDecl { nameTok, fields, methods, .. }` against
+`StructDecl(nameTok, _, fields, methods, _, _, _)` — four underscores whose count is load-bearing, in
+a variant that has gained a field twice. Weaker than it sounds in one way: `[§wac-arm-partial]`
+already ignores fields positionally, so naming a subset is the same capability without an index.
+
+**And construction is the half nothing proposes, where the worst case lives.**
+
+    Decl(DeclKind.Func(t, ty, ps, body, true, tps, false), at)
+
+Swap the two booleans and the compiler is silent, every diagnostic still points at the right line,
+and an unexported function becomes an exported synchronous one. The notation exists twice over:
+`Point { x: 3, y: 4 }`, and `i32[n](fill: -1)` in call position with the spec's reason — *"Named
+argument syntax cannot collide, since a call rejects it outright."* So `Func { nameTok: t, exported:
+true, … }` needs no new syntax, only the existing rule in one more place.
+
+Two smaller rows in the same table, both of which the promotion would settle: a payload field cannot
+be `const` where a struct field can, and a nullable payload field cannot be omitted where a struct's
+can — `ArrNew(Ty elem, Expr? size, Expr? fill, Expr[] elements)` has two nullables and every
+construction passes `null` for at least one, positionally.
+
+**What is genuinely open** is the pattern's own notation rather than whether to have it. A binding
+that renames — `Binary { left: lhs }` — is not in the grammar, so a payload field's name becomes a
+local's name and two nested arms binding `left` from different subjects cannot both exist; the struct
+literal it borrows from has the colon and the pattern declines it. And a nested pattern —
+`Binary { left: Ident { tok } }` — was withdrawn in `GRAMMAR.md` because *"a field access that
+already exists"* says the same thing, which is true for **reading** a field and not for **matching**
+one: the nested form is what makes an arm apply only when the inner variant does. Withdrawn on the
+reading argument; the matching argument was never made.
