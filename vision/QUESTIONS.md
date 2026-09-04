@@ -705,18 +705,40 @@ That is a gap in the process rather than in the language, and it is why this lis
 three separate entries: the question to answer first is whether a generated file is allowed to hold
 an argument nobody has agreed to.
 
-**The same check the other way round comes back clean, which is worth saying.** Every construct in
-`GRAMMAR.ebnf` is used by at least one vision file — nothing has been proposed and then not written
-with. Three are used exactly once: `schedule`, in `Sys.drain`; `trap` as an expression, in
-`Result.orTrap`; and `secret`, whose two uses are both inside the file that proposes it. A single
-consumer is not an argument against a primitive — `schedule` is one, and `TECHNICAL.md` argues it at
-length — but it does mean the generality is unevidenced, and `secret` is the one where that matters,
-since its whole case is that the taint *propagates* and nothing outside `crypto` has ever received a
-propagated one.
+**The same check the other way round used to come back clean, and no longer does — which turns out
+to be the more interesting half.** It said: every construct in `GRAMMAR.ebnf` is used by at least one
+vision file, nothing has been proposed and then not written with. Re-counted 2026-09-04 over the 52
+files, **six constructs have no user in any of them**:
+
+    verbatim name  `@"for"`          quoted tag  `<"my-widget">`     hyphenated attribute
+    `auto`                           a list literal                  `coroutine f()`
+
+Every one of them is on an agreed page, and that is why they are in the grammar: they were added
+*from* `TECHNICAL.md`, `SHOWCASE.md` and `IDIOMS.md` after a pass that asked what the pages have and
+the delta did not. `auto` is on three pages and in no rewrite.
+
+**So there is a third category, and it is the one the paragraph above did not have.** That paragraph
+splits constructs by how they were found — *wanted while writing an example*, which lands on a page,
+against *refused by a tool*, which lands in a generated file. These six are neither. They are on a
+page, agreed, reviewed, and **nothing has ever been written with them.** A construct nobody has
+refused and nobody has used is the one no process here notices at all: the refusal-driven ones at
+least have a tool shouting about them.
+
+Which of the two lists is worse is a real question. Three constructs argued nowhere but load-bearing
+in the code, against six constructs agreed everywhere and load-bearing in nothing.
+
+**And the single-consumer count has moved, which is what the later subjects were for.** It was
+`schedule` (once, in `Sys.drain`), `trap` as an expression (once), and `secret` (twice, both inside
+the file proposing it). Today `schedule` has two — `Sys.drain` and `wactest`'s `isolated`, written to
+be the second — and `secret` has its first external consumer in `tls`'s key schedule. Both second
+consumers found something: `drain` does not compose with `schedule`, and `secret` has no return
+position. `trap` as an expression still has exactly one use and is the last of the three unevidenced.
 
 (The first pass of that count said `secret` had **none**, because the pattern it matched wanted
-`secret <word> <word>` and the real spelling is `secret u8[] key`. Checked before it was believed,
-which is the only reason it is not in the paragraph above as a fourth finding.)
+`secret <word> <word>` and the real spelling is `secret u8[] key`. The re-count above had the same
+kind of miss in the other direction: it scored the list literal as having one user, and the hit was
+an EBNF fragment inside a comment. Both were caught by looking at the lines before believing the
+total, which is the only reason neither is stated above as a finding.)
 
 ## What `defer` means, which no page says and four uses already depend on
 
