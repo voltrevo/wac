@@ -18,6 +18,16 @@ deleted when nothing does.
 **`option.wac` is not here and will not be.** The real `core` has one; `T?` nests, so
 `Option<Option<T>>` has nothing left to do that `T??` does not.
 
+**The tree has already voted, and by a lot.** Counted across `packages/` and `core/`: **811 nullable
+declarations against 86 mentions of `Option<…>`**, in 19 files. Removing `Option` is finishing a
+migration rather than starting one.
+
+What it costs is narrower than the ratio suggests and is worth naming, because it runs the other
+way. `Option` **narrows** — `case Some(v)` binds the payload, so the arm has a `T` — and `T?` does
+not: `is not null` leaves the value nullable, measured, so every use needs a `!`. There are **21**
+`case Some(v)` arms in the tree, and those are the sites that would go from a bound name to an
+unwrap. The other 790 nullables already pay it.
+
 ## What could not be written
 
 **An abstract method has no spelling, and the substitute is weaker than it looks.**

@@ -145,8 +145,13 @@ And it is inconsistent with the neighbouring feature: `if (s is Circle) { return
 narrow, measured, and `structs.md` documents it. A type test narrows and a null test does not.
 
 That is the question. Not a loop form — whether `is not null` should narrow the way `is T` does,
-and if not, why the two tests differ. `Sys.drain`'s `pop()!` under a `len()` check is what the
-absence costs in the one place this tree writes it.
+and if not, why the two tests differ.
+
+**It matters more once `Option` goes.** `Option` narrows, because `case Some(v)` binds the payload;
+`T?` does not. The tree has 811 nullable declarations against 86 `Option` mentions, so the migration
+is nearly done — but the 21 `case Some(v)` arms in it are places that would trade a bound name for
+an unwrap. If `is not null` narrowed, that trade would cost nothing, and removing `Option` would be
+pure subtraction.
 
 ## How should a `Vec` drop its reference to a popped element?
 
