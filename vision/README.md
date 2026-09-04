@@ -79,7 +79,7 @@ drifts. **A question is deleted once it is answered**, and the answer has to lan
 
 ## What twenty-two subjects found, as patterns rather than as a list
 
-`QUESTIONS.md` is seventy-seven entries and getting longer, which is the exercise working and is not a
+`QUESTIONS.md` is seventy-eight entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately
 **not an index**: these are findings about how the design behaves under use, and each stays true
 after the question it produced is answered and deleted.
@@ -122,6 +122,15 @@ and `Files.setExecutable` — both added *by the earlier audits* — unable to e
 
 **A diff is only as good as the thing it compares**, and each pass compared what was easy to compare.
 The order they were run in is also the order of increasing cost, which is why it happened this way.
+
+**A fifth pass greps the prose for history** — *"it used to"*, *"was … until"*, an issue number —
+and each hit is a shape that is the way it is because somebody changed it. Fourteen such members in
+`std/platform.wac`, and the rewrite reversed, dropped or hollowed out **five**: a bind address, three
+`spawn` parameters, argv's byte type, `Socket.closeSend`, and the distinction between a closed pipe
+and a full disk. Not five decisions re-litigated — none was read. Over the twenty rewritten packages
+it is 767 markers, and the two looked at so far found `Mount` having no mount table and
+**`--allow-run` conferring `--allow-env`**, which is a filed issue against the directory's own first
+line.
 
 **A fourth pass reads the prose on both sides**, and it is the one that cannot be mechanised: three
 hits from the first three capabilities looked at, all of them signatures the earlier passes had
