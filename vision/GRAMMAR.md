@@ -196,8 +196,11 @@ nine packages is not a run of bad luck.
 ## Two more, found by desugaring rather than by refusal
 
 The table above is a **lower bound**, and this is what fixed that.
-`tools/visiondesugar.ts` rewrites each of the nine into the nearest thing today's parser accepts and
-parses again, so whatever is *still* refused is a construct nobody has written down. That is the
+A desugarer rewrote each of the nine into the nearest thing today's parser accepts and parsed again,
+so whatever was *still* refused was a construct nobody had written down. (That tool is gone —
+`GRAMMAR.ebnf` answers the same question directly, since a construct nobody has accounted for is
+exactly one that grammar has no rule for, and it needs no rewrite rule maintained by hand per
+construct.) That is the
 class both other passes are structurally blind to: one reports rejections and cannot see past the
 first, the other checks a fixed list and cannot see a new entry.
 

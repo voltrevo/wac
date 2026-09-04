@@ -82,52 +82,30 @@ for f in $(find vision -name '*.wac' -not -path 'vision/bench/*' | sort); do
   fi
 done
 
-# ── Spellings that parse and are still wrong ─────────────────────────────────────────────────────
+# ── Constructs nobody has accounted for: gone, and where it went ─────────────────────────────────
 #
-# The pass above finds where vision is *ahead* of today's parser. It is structurally blind to where
-# vision code is *behind* a vision decision: `else:` is a valid arm today and `DECISIONS.md`
-# replaced it with `default:`, so nothing rejects it and nothing reported it until a human read the
-# file. Same for a `trap("…")` that should be `trap "…";` and a `static` that is not a keyword.
+# This pass desugared every construct `vision/GRAMMAR.md` lists into the nearest thing today's
+# parser accepts and parsed again, so whatever was *still* refused was something nobody had written
+# down. It found three that way, all invisible before: `yield`, an enum variant with an unnamed
+# payload, and inheriting from a generic instantiation — the last used five times and load-bearing
+# for the whole ticket design.
 #
-# This is a list of spellings already known to be wrong, not a parser. It cannot find a *new* kind
-# of mistake, which is the honest limit of it — the general instrument for that is reading
-# `spec/spec/grammar.md`, and `vision/GRAMMAR.md` says so.
-# ── Constructs nobody has accounted for ──────────────────────────────────────────────────────────
+# **`vision/GRAMMAR.ebnf` answers the same question directly**, and better. That file is the vision
+# additions as productions, and `tools/specparse.ts` parses every file under `vision/` with it:
 #
-# The pass above is a lower bound: a parser stops at the first thing it cannot read, so one file
-# reports one construct and says nothing about what is behind it. `tools/visiondesugar.ts` rewrites
-# every construct `vision/GRAMMAR.md` lists into the nearest thing today's parser accepts, so what
-# is *still* refused is something nobody has written down — the class both other passes are blind
-# to, since one reports rejections and the other checks a fixed list.
+#     deno run --allow-read tools/specparse.ts vision
 #
-# It found three that way, all invisible before: `yield`, an enum variant with an unnamed payload,
-# and inheriting from a generic instantiation — the last used five times and load-bearing for the
-# whole ticket design.
-echo
-echo "-- constructs not in GRAMMAR.md --"
-# Captured rather than piped: `set -o pipefail` makes a pipeline carry the *build's* non-zero exit
-# even when the `grep` after it matched, so `wac build … | grep -q` reads as "no error found" for
-# exactly the input that has one.
-deno run --allow-read tools/visiondesugar.ts --canary > "$work/canary.wac" 2>/dev/null || true
-canary=$("$WAC" build "$work/canary.wac" -o "$work/canary.wasm" --allow-read 2>&1 || true)
-if printf '%s' "$canary" | grep -q '^error'; then
-  left=0
-  for f in $(find vision -name '*.wac' -not -path 'vision/bench/*' | sort); do
-    deno run --allow-read tools/visiondesugar.ts "$f" > "$work/d.wac" 2>/dev/null || continue
-    msg=$("$WAC" build "$work/d.wac" -o "$work/d.wasm" --allow-read 2>&1 \
-      | grep -E "^error: (unexpected|expected)" -A 4 | grep -E "expected '|found '" | head -1 || true)
-    if [ -n "$msg" ]; then
-      left=$((left + 1))
-      printf '  %-40s %s\n' "$f" "$(echo "$msg" | sed 's/^ *| *//')"
-    fi
-  done
-  [ "$left" = 0 ] && echo "  none"
-else
-  # The desugaring must be able to fail. A `sed` version of it once reported every file as
-  # accounted for while not running at all, because a failed rewrite produces an empty file and an
-  # empty `.wac` compiles clean.
-  echo "  SKIPPED — the canary parsed, so this pass cannot be trusted"
-fi
+# A construct nobody has accounted for is exactly a construct that grammar has no rule for, so it
+# comes back as a refusal naming a line and a token rather than as a diagnostic about whatever the
+# desugaring turned it into. It also needs no rule maintained by hand per construct, and no canary:
+# the desugarer needed one because a `sed` version of it once reported every file as accounted for
+# while not running at all, and a grammar that stopped working would report forty-five refusals
+# rather than none.
+#
+# So the pass and the desugarer are deleted rather than kept beside it — a backticked path to a
+# deleted file is what the link guard refuses, which is why neither is named here. Two producers of
+# one artefact is one producer too many, and the one that goes is the one whose answer has to be
+# maintained.
 
 # ── Whichever subject has moved since the rewrite was written ────────────────────────────────────
 #
@@ -168,6 +146,16 @@ done
 [ "$moved" = 0 ] && echo "  none (every vision file is newer than its subject)"
 
 echo
+# ── Spellings that parse and are still wrong ─────────────────────────────────────────────────────
+#
+# The first pass finds where vision is *ahead* of today's parser. It is structurally blind to where
+# vision code is *behind* a vision decision: `else:` is a valid arm today and `DECISIONS.md`
+# replaced it with `default:`, so nothing rejects it and nothing reported it until a human read the
+# file. Same for a `trap("…")` that should be `trap "…";` and a `static` that is not a keyword.
+#
+# This is a list of spellings already known to be wrong, not a parser. It cannot find a *new* kind
+# of mistake, which is the honest limit of it — the general instrument for that is reading
+# `spec/spec/grammar.md`, and `vision/GRAMMAR.md` says so.
 echo "-- spellings that parse and are still wrong --"
 stale=0
 
