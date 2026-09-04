@@ -129,12 +129,24 @@ nowhere to put it, so it matches on it to pick an exit code or discards it. `Res
 answer that and is ugly. `vision/packages/server` writes the match, which works and means every
 program that can fail to acquire a capability writes the same four lines.
 
-## Matching in a `while` or `for` condition
+## Narrowing a nullable, which is what the loop question was really about
 
-`Sys.drain` writes `this.pending.pop()!` under a `len()` test, which is two operations and an unwrap
-where `while (Continuation c = this.pending.pop())` would be one of each. Whether that is a
-nullable-specific form, a `match` in a condition, or something in the `if let` family is open — as
-is whether it reaches `for`, and whether it binds an enum variant as well as a non-null.
+Filed as *matching in a `while` or `for` condition*, on the strength of
+`while (Continuation c = q.pop())`. Read against the compiler, the loop is not the problem.
+
+**The loop shape already exists.** `for_init` may declare, so
+`for (N? c = next(0); c is not null; c = next(c!.v + 1)) { … }` compiles today, measured.
+
+**What does not exist is narrowing a nullable.** After `c is not null`, `c` is still `N?` — in a
+loop condition *and in an `if`*. `if (c is not null) { return c.v; }` is refused with *"unwrap it
+with `!`, or test it with `is null` first"*, measured. So every use inside the test needs a `!`.
+
+And it is inconsistent with the neighbouring feature: `if (s is Circle) { return s.r; }` **does**
+narrow, measured, and `structs.md` documents it. A type test narrows and a null test does not.
+
+That is the question. Not a loop form — whether `is not null` should narrow the way `is T` does,
+and if not, why the two tests differ. `Sys.drain`'s `pop()!` under a `len()` check is what the
+absence costs in the one place this tree writes it.
 
 ## How should a `Vec` drop its reference to a popped element?
 
