@@ -254,3 +254,20 @@ reading past the view into the array is precisely the bug a triple makes easy.
 
 `url/query.wac` uses it and now allocates nothing to parse a query — a request with forty parameters
 of which a handler reads two pays for two.
+
+## A `secret` qualifier, and the hole it would inherit
+
+`const` is a taint that propagates through a value's whole reachable graph and forbids **writing**.
+`secret` would be the same machinery forbidding **branching and indexing** — which are exactly the
+two events `docs/constant-time.md`'s tracer records, so the rule is that instrument's finding
+written as a type, checked on every build rather than on the runs somebody remembered to trace.
+
+Two things make it a question rather than a proposal to take.
+
+It would refuse AES: the S-box lookups the published table flags at `aes.wac:129`–`132` are what AES
+*is*, so the rule needs a declared exemption at the site or it gets turned off. And it inherits
+`issues/lang/open/0315a`, where const taint is laundered through an argument, an array element, a
+field, a type argument and a `const`-declared return. A laundered `const` is a wrong answer; a
+laundered `secret` is a key in a log line. **So it is worth having and not worth having before
+0315a is fixed** — a taint that leaks is worse than no taint, because it is believed.
+

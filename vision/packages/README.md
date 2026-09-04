@@ -77,3 +77,4 @@ in ten lines. Each package's README ends with that list, and the real ones becom
 | [unicode](unicode/) | 2026-09-04 | a union instead of two negative markers |
 | [bytes](bytes/) | 2026-09-04 | `Bytes` views instead of a copy per call |
 | [regex](regex/) | 2026-09-04 | ops as an enum; what to leave alone |
+| [crypto](crypto/) | 2026-09-04 | a `secret` qualifier — one proposal, not a rewrite |
