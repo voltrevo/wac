@@ -53,7 +53,8 @@ construct.
 Every async suspension is on a ticket now, so an async machine only ever hands over `Waiting`, and
 `Ready` is left describing a generator that has yielded. It could collapse into `Waiting` on a
 settled ticket — one fewer variant, one code path in every scheduler — at the cost of saying
-plainly what a settled `Waiting` only implies.
+plainly what a settled `Waiting` only implies. `Sys.drain`'s two arms are already the same code
+differing only in what is awaited, which is the collapse written out by hand.
 
 ## Whether `wait` caches what it is waiting on
 
@@ -122,3 +123,11 @@ case it is in.
 
 The retention is bounded by the vec's high-water mark rather than growing, which sizes the problem
 without excusing it: one popped root can hold a whole graph.
+
+## Whether there is optional chaining
+
+`?` nests, so `x?.field` on a nullable field would answer `T??` where every language that has the
+operator answers `T?`. That is the one place flattening earns its keep, and wac has neither `?.` nor
+`??` today — so the question is whether adding one means giving it an explicit flatten, or not
+adding it.
+
