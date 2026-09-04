@@ -759,9 +759,20 @@ void example() {
 
 ---
 
-## `pop` says the same thing at a nullable element type
+## `Vec<T>.pop` is written once and is honest at every `T`
 
 ```wac
+struct Vec<T> {
+  T[] data;
+  i32 len;
+
+  T? pop(this) {
+    if (this.len == 0) { return null; }
+    this.len -= 1;
+    return this.data[this.len];
+  }
+}
+
 i32 example(Vec<Node?> v) {
   Node?? got = v.pop();
 
@@ -770,6 +781,11 @@ i32 example(Vec<Node?> v) {
   return 2;
 }
 ```
+
+Neither `return` mentions nullability and neither needs a second case. At `T = Node?` the bare
+`null` is the outer absence, and `this.data[i]` widens into a present outer whatever it holds. Under
+flattening the two would arrive as one value, and there is nothing the body could write to tell them
+apart again.
 
 **Not yet.**
 

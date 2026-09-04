@@ -107,3 +107,12 @@ where `while (Continuation c = this.pending.pop())` would be one of each. Whethe
 nullable-specific form, a `match` in a condition, or something in the `if let` family is open — as
 is whether it reaches `for`, and whether it binds an enum variant as well as a non-null.
 
+## How a generic container releases a popped `T`
+
+`Vec<T>.pop` decrements a length and leaves the reference in the slot, so a popped element is
+retained until something overwrites it. Nothing the body can write clears it: a `T[]` at a
+non-nullable `T` has no null to store, and `Point[10]()` constructs ten distinct `Point()`s rather
+than ten absences. Holding `T?[]` instead would fix it and is free for a reference `T`, since a
+`ref null` array is the same array — but it boxes every element of a `Vec<i32>`, which is the one
+case that cannot afford it.
+
