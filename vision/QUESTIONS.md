@@ -1682,6 +1682,54 @@ a program's own shape. Nothing else in the proposal wants one, and one consumer 
 a whole new kind of capability — but the consumer is the test runner, which is the program that most
 has to know what it is calling.
 
+### The host side is not *cost*, it is two halves that already exist and have never met
+
+Written above as though the runner's work moved somewhere expensive. Read on 2026-09-04, and the
+host has both pieces already — for two different callers.
+
+**It reads full signatures, for named exports.** `native/v8/src/main.rs`'s `call_named` filters the
+manifest's `exports` to a `Vec<ExportSig>` of `{ name, params: Vec<String>, ret: String }`, checks
+the arity, coerces each argument **to its declared type**, and prints the return according to `ret`.
+So *"which of nine projections does this export take, in what order"* is a question the host answers
+today, for every named export, and it prints the answer when you get it wrong.
+
+**And it builds capabilities from a signature, for `main`.** `spec/cli/wac.md`
+`[§wac-cli-nocaps-5hq2xn9]`: *"all three hosts read `main`'s parameter list rather than building a
+world and hoping the program wants it."* That is the mechanism, spec-tagged, and it exists because
+`export i32 main() { return 3; }` — a program granted nothing — is *"the language's central claim"*.
+
+**Neither half is new. They have never been joined.** `call_named` coerces from **argv text**, so it
+can build an `i32` from `"3"` and has no way to build a `Files`; `worldFor` builds a world and only
+for `main`. What `wactest` needs is those two lines of the host meeting: read the export's parameters
+as `worldFor` reads `main`'s, and construct rather than coerce.
+
+That changes the entry's conclusion rather than its finding. A wac program still cannot do it — that
+part stands. But the cost is not *a whole reflection API*, and it is not *the runner's job moving to
+the far side*: it is the host doing for `test_reads` what it already does for `main`, using a table it
+already parses for `wac run somefunction 3`.
+
+### And the JavaScript host cannot do it at all, for a reason the projections make worse
+
+The Rust hosts read the parameter list. The JavaScript one does not, and says so:
+
+> **A `main` that declared nothing gets nothing** … the classes are in the module because the program
+> named the *types*, so a program that named none has no `Core` to build from and `Core.of` is
+> `undefined.of`. The two Rust hosts read `main`'s parameter list for this; **here the absent class
+> is the same signal**, and it is the one this side has.
+
+`worldFor` returns `[Core]` or `[Core, Cli]` and `entryNode.ts` spreads it — `app.main(...worldFor(…))`.
+Positional, fixed order, chosen by which classes the module happens to contain.
+
+With two capabilities that works, because *does the module mention `Cli`* and *does `main` take a
+`Cli`* coincide. **With nine projections it stops working twice over**: a program whose helper
+mentions `Files` would be handed one whether `main` asked or not, and a `main(Out out, Files files)`
+would receive them in whatever order `worldFor` happens to build.
+
+So the projections have a host cost and it lands unevenly — nothing on the two hosts that read
+signatures, and a rewrite of the mechanism on the one that infers. **Nothing in `vision/` has asked
+what any of this costs a host**, which is the more general finding: the proposal is written entirely
+in wac, and two of the three things it most depends on are implemented three times, differently.
+
 ## A machine you can step, and the bounded wait the rewrite dropped
 
 `vision/packages/wactest/src/within.wac` is the first code in this tree to drive a coroutine by hand,
