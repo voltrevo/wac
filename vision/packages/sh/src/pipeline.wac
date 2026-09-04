@@ -96,8 +96,27 @@ Exit lastOf(Vec<Exit> ends) { … }
 // ## 2. Abandoning a generator is unspecified, and laziness is what makes it happen
 //
 // `cat big | head -1` stops pulling after one chunk, so `cat`'s generator is suspended forever with
-// a file open. The shipped pipeline never has this, because a buffered stage always runs to
-// completion — laziness is what introduces it, and laziness is the reason to want streams.
+// a file open. The shipped *sequential* pipeline never has this, because a buffered stage always runs
+// to completion — laziness is what introduces it, and laziness is the reason to want streams.
+//
+// **The shipped streaming pipeline does have it, and solves it the opposite way.** `runPipeline`:
+//
+// > `seq 1 200000 | head -1` used to take twelve seconds, because each stage ran to completion and
+// > handed its whole output to the next. A real shell returns at once: **`head` closing its input is
+// > what stops `seq`.** The difference is invisible for small inputs and total for endless ones —
+// > `yes | head` only ended at all because a queue nobody reads is capped at 8 MiB. Issue 0038.
+//
+// So the mechanism that stops the producer is an **explicit close travelling upstream**, and this
+// file replaced it with the *absence* of a pull. That is the same trade `Socket.closeSend` is about
+// one layer down — *"say that is all without saying goodbye"* — and the shipped design chose a
+// positive signal in both places.
+//
+// Which reframes finding 2 rather than answering it. It is not only *what happens to an abandoned
+// generator*; it is **whether a consumer should have to say it is done**, when saying so is a thing
+// the tree already has a call for and a bug report behind. An absence cannot carry a reason, cannot
+// be distinguished from a slow consumer, and — the part that matters here — cannot reach past one
+// link: `head` closing its input stops `seq` through however many stages are between them, and a
+// consumer that merely stops pulling stops the stage next to it and nothing further.
 //
 // Three things nobody has said: whether an abandoned generator's `defer` runs, whether it is
 // distinguishable from one that finished, and whether the *file* it holds is closed. The first is

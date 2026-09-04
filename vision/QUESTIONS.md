@@ -2281,6 +2281,18 @@ whether it is distinguishable from one that finished, or whether the file closes
 sharp one: `Files.open` answers a generator and `Files.create` answers a `Sink` **with a `close`
 method** — a sink can be closed and a source cannot.
 
+**And the shipped streaming pipeline solves the same problem the opposite way**, which was found
+later and changes the question. `runPipeline`: *"`seq 1 200000 | head -1` used to take twelve seconds,
+because each stage ran to completion and handed its whole output to the next. A real shell returns at
+once: **`head` closing its input is what stops `seq`.**"* Issue 0038.
+
+So the mechanism is an explicit close travelling upstream, and this design replaced it with the
+absence of a pull — the same trade `Socket.closeSend` is about one layer down, and the shipped answer
+is a positive signal in both places. Three things an absence cannot do that a close can: carry a
+reason, be told apart from a slow consumer, and **reach past one link**. `head` closing its input
+stops `seq` through however many stages lie between; a consumer that merely stops pulling stops the
+stage next to it and nothing further.
+
 **And `Captured.err` is gone with the buffer, which is a loss rather than a tidy-up.** A captured
 child's standard error was separable from its output; a stage sharing `Out` writes where the shell
 does. Getting it back means `run` answering two generators, or one generator of a two-armed sum —
