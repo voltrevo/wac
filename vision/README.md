@@ -50,6 +50,11 @@ can be revisited; a rule without its reason is one nobody can argue with.
 **`QUESTIONS.md`** — what is still open. Deliberately loose: no numbering, no fixed shape, nothing
 for a guard to walk.
 
+**`GRAMMAR.md`** — where this syntax stops being parseable by the syntax that exists. The odd one
+out: it is **generated** rather than agreed. `tools/visiongrammar.sh` runs today's compiler over
+every `.wac` under `vision/` and reports where the parser refuses, so it is a diff of two grammars
+derived from the code. Delete it and re-run the tool rather than editing it.
+
 An example belongs to one tier at a time and moves between them freely. The line between the first
 two is worth showing rather than defining: a server, and an import written from the project root, are
 both the best spelling of what they do.
