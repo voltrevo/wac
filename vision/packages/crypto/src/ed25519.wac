@@ -1,0 +1,102 @@
+// Verifying an Ed25519 signature — six refusals, one `bool`, and the one place in cryptography where
+// that is not merely lossy.
+//
+// Found by sweeping the tree for `bool` functions with three or more `return false` sites. **78 of
+// them, collapsing 405 refusals**; of those, **17 are verifications collapsing 106**, across `tls`,
+// `crypto`, `bls`, `tor`, `ssh`, `webrtc`, `ssz` and `lightclient`. Two were already rewritten here —
+// `@/packages/lightclient`'s `validateUpdate` and `@/packages/ssz`'s branch check — and this is the
+// smallest of the seventeen, which is why it is the clearest.
+
+import { Result, Bytes } from "core";
+import { Digest32 } from "./digest.wac";
+
+/** The key was not 32 bytes. A caller's bug, not an input's. */
+export struct BadKeyLength { i32 got; }
+/** The signature was not 64 bytes. */
+export struct BadSignatureLength { i32 got; }
+/**
+ * `S` is at or above the group order `L`.
+ *
+ * RFC 8032 §5.1.7 requires refusing this, and the shipped comment says exactly why: *"what stops a
+ * signature being malleable: without it, S and S+L both verify and a signature is no longer a unique
+ * token."*
+ *
+ * **This is the refusal that is a policy**, and see below.
+ */
+export struct NonCanonicalScalar { }
+/** The public key does not decode to a point on the curve. */
+export struct BadPublicKey { }
+/** `R` does not decode to a point on the curve. */
+export struct BadR { }
+/** `[S]B != R + [k]A` — the honest answer, and the only one of the six that is about the signature. */
+export struct DoesNotVerify { }
+
+export union<BadKeyLength, BadSignatureLength, NonCanonicalScalar, BadPublicKey, BadR, DoesNotVerify>
+  VerifyFault;
+
+/**
+ * `[S]B == R + [k]A`, or which of the six rules refused.
+ *
+ * The shipped `ed25519Verify` has all six as `return false` and the arithmetic is identical; the
+ * only change is that a caller can tell them apart.
+ */
+export Result<void, VerifyFault> verify(Bytes pub, Bytes msg, Bytes sig) { … }
+
+// ## 1. Three kinds of refusal wearing one answer
+//
+// The six are not one thing:
+//
+//   * **A caller's bug** — `BadKeyLength`. A 31-byte public key came from this program, not from a
+//     peer. `@/packages/lightclient/src/branch.wac` found the same split and called it *the same
+//     fault set is a caller's bug in one consumer and untrusted input in another*; here the two are
+//     in **one function**, which is a stronger version of it.
+//   * **Malformed input** — `BadSignatureLength`, `BadPublicKey`, `BadR`. A peer sent something that
+//     is not a signature. A system scoring peers wants these.
+//   * **The answer** — `DoesNotVerify`. The signature is well-formed and wrong.
+//
+// A caller logging *"signature invalid"* on `BadKeyLength` is debugging the wrong program, and one
+// that drops a peer on `DoesNotVerify` and on `BadR` alike cannot tell a corrupt link from a hostile
+// one.
+//
+// ## 2. And `NonCanonicalScalar` is a **policy**, which is why this matters more here than elsewhere
+//
+// The other five are facts. That one is a rule the verifier chose to apply, and Ed25519 is the
+// well-known case where implementations differ about exactly this class of check — canonicality of
+// `S`, canonical point encodings, small-order points, and whether the equation is checked with the
+// cofactor. Two libraries can both answer `false` for the same signature and disagree about *which
+// rule* refused it, and a third can answer `true`.
+//
+// **A `bool` makes that disagreement invisible.** Where it costs is a system with more than one
+// implementation deciding the same question — a consensus, a federation, a client and a server that
+// must agree on which messages exist. A signature one side accepts and the other refuses is a
+// partition, and the shape that produces it is exactly *the strict check is optional and the answer
+// does not say whether it ran*.
+//
+// Naming the refusal does not make two implementations agree. It makes the disagreement **findable**:
+// a differential over a corpus can report *A said `NonCanonicalScalar` and B said `Ok`* rather than
+// *A said no and B said yes*, and the first is a bug report while the second is a mystery.
+//
+// This directory's entry on a fault union ending *"where the next thing down cannot fail in more
+// than one way"* has its counterexample here: below `verify` is field arithmetic, which cannot
+// refuse — so by that rule six members is the end of the chain, and it is also the beginning of the
+// only chain that matters.
+//
+// ## 3. What could not be written
+//
+// **Nothing says which of the six are optional.** `NonCanonicalScalar` is required by RFC 8032 and
+// omitted by real implementations; a `union` lists members and cannot mark one *this verifier's
+// strictness rather than the format's*. Two unions would say it —
+// `union<Malformed, Strictness, DoesNotVerify>` — and that is the nesting the flattening entry is
+// about, used to encode **provenance of a rule** rather than a family of faults. Third use of nesting
+// found in this directory and the first where the grouping is about who decided the rule.
+//
+// **The lengths are checked and the types could have.** `pub` is a `Bytes` and must be 32; `sig` must
+// be 64. `../../../QUESTIONS.md` has the six packages that want a length in a type, and this is a
+// seventh — and the first where the missing bound produces a *fault member* rather than a guard, so
+// the cost is visible in the public surface rather than in a body.
+//
+// **`msg` is unbounded and that is correct and unstated.** Ed25519 hashes the whole message, so
+// there is no length limit and no streaming variant here; `sha512` over `64 + msg.len()` bytes is
+// built as one array. A caller verifying a large message allocates it twice. `@/packages/ssz` wanted
+// a streaming digest for the same reason and got one; this file's `kInput` is the shape that made it
+// worth wanting.

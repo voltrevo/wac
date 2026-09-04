@@ -127,6 +127,42 @@ the other, and the conversion cannot fail. Three positions —
 3. **`Digest32` in `core` and the rest on top**, which is wrong on its face: a digest is not more
    fundamental than a chunk, it is the one that happens to come out of a function everybody calls.
 
+## 78 `bool`s collapse 405 refusals, and this package holds five of the seventeen verifications
+
+[`src/ed25519.wac`](src/ed25519.wac) was added after counting, over `packages/` excluding tests,
+every `bool`-returning function with three or more `return false` sites: **78 of them, 405 refusals
+collapsed**, of which **17 are verifications collapsing 106**. `crypto` has `rsaVerifyPss` (8),
+`ecdsaVerify` (5), `ed25519Verify` (5) and `rsaVerifyPkcs1` (4); `bls` has four more.
+
+`ed25519Verify` is the smallest and the clearest — six refusals in six lines, and they are **three
+different kinds**:
+
+    pub.len() != 32          a caller's bug — this program built a bad key
+    sig.len() != 64          malformed input — a peer sent something that is not a signature
+    scLessThanL(s) == 0      a strictness policy
+    ptDecode(pub) is null    malformed input
+    ptDecode(rBytes) is null malformed input
+    ptEquals(left, right)    the answer
+
+A caller logging *"signature invalid"* on the first is debugging the wrong program.
+[`@/packages/lightclient`](../lightclient/) found this split across two packages; here it is inside
+one function.
+
+### And one of them is a policy, which is what makes this more than lossy
+
+`S ≥ L` is RFC 8032 §5.1.7, and the shipped comment says why: *"without it, S and S+L both verify and
+a signature is no longer a unique token."* Ed25519 is the well-known case where implementations
+differ about exactly this class of rule.
+
+**A `bool` makes that disagreement invisible.** Two libraries can both answer `false` for one
+signature and disagree about which rule refused; a third can answer `true`. In a system with more
+than one implementation deciding the same question, a signature one side accepts and the other
+refuses is a partition.
+
+Naming the refusal does not make them agree — it makes the disagreement **findable**. A differential
+can report *A said `NonCanonicalScalar`, B said `Ok`* rather than *A said no, B said yes*: a bug
+report instead of a mystery.
+
 ## What could not be written
 
 **A type only its own file may build.** `Digest32`'s guarantee is that every one came out of a hash,

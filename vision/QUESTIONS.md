@@ -5676,3 +5676,59 @@ one.
 So the reviewer's question is the same one the list-order entry reduced to, at control flow instead
 of data: **is this order a rule about the data, or a rule about the search?** The first is removable
 and the second is not. Two of the four here are the first kind, and only one of those two says so.
+
+## 78 `bool` functions collapse 405 refusals, and 17 of them are verifications
+
+This directory has made the *a `bool` answers more than one question* argument five times — `Page`,
+`lightclient`'s `validateUpdate`, `ssz`'s branch check, `git`'s `ignored`, `codec`'s `null`. Counted
+2026-09-04, over `packages/` excluding tests: a `bool`-returning function with three or more
+`return false` sites.
+
+    78 functions,  405 refusals collapsed
+    17 of them are verifications,  106 refusals
+
+The seventeen span `tls`, `crypto`, `bls`, `tor`, `ssh`, `webrtc`, `ssz` and `lightclient`. The two
+already rewritten here are the largest and the smallest but two — `validateUpdate` at 23 and
+`isValidMerkleBranch` at 3 — so the finding is not two witnesses, it is seventeen.
+
+**Most of the other 61 are fine.** `isConstExpr`, `inBraces`, `looksNormal`, `canStream` are
+predicates: *no* is the answer, and the reasons are internal. What separates a verification is that
+its `false` is reached by three different kinds of thing.
+
+### Three kinds wearing one answer, and `ed25519Verify` has all three in six lines
+
+    pub.len() != 32          a caller's bug — this program built a bad key
+    sig.len() != 64          malformed input — a peer sent something that is not a signature
+    scLessThanL(s) == 0      a strictness policy — see below
+    ptDecode(pub) is null    malformed input
+    ptDecode(rBytes) is null malformed input
+    ptEquals(left, right)    the answer
+
+A caller logging *"signature invalid"* on the first is debugging the wrong program. One that drops a
+peer on the last and on `BadR` alike cannot tell a corrupt link from a hostile one.
+`@/packages/lightclient/src/branch.wac` found this split across two packages; here it is inside one
+function.
+
+### And one of the six is a policy, which is the part that is not merely lossy
+
+`S ≥ L` is required by RFC 8032 §5.1.7 and the shipped comment says why — *"without it, S and S+L
+both verify and a signature is no longer a unique token"*. Ed25519 is the well-known case where
+implementations differ about exactly this class of rule: canonicality of `S`, canonical point
+encodings, small-order points, cofactored versus cofactorless.
+
+**A `bool` makes that disagreement invisible.** Two libraries can both answer `false` for one
+signature and disagree about which rule refused, and a third can answer `true`. Where that costs is a
+system with more than one implementation deciding the same question — a consensus, a federation, a
+client and a server that must agree which messages exist. A signature one side accepts and the other
+refuses is a partition.
+
+Naming the refusal does not make implementations agree. It makes the disagreement **findable**: a
+differential can report *A said `NonCanonicalScalar`, B said `Ok`* rather than *A said no, B said
+yes*. The first is a bug report; the second is a mystery.
+
+### What would say *this rule is ours, not the format's*
+
+`union<Malformed, Strictness, DoesNotVerify>`, nested — the flattening entry's mechanism used to
+encode **the provenance of a rule** rather than a family of faults. Third use of nesting found here
+and the first where the grouping answers *who decided this*, which is the question a second
+implementation actually has.
