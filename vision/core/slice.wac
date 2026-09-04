@@ -54,18 +54,18 @@ export struct Slice<T> {
     // Not `this.of[this.from + i]` alone: an `i` past `len` would read the array beyond the view
     // and answer a byte that is not in this slice. That is the bug a triple makes easy and a type
     // is supposed to remove, so the bound is checked here rather than inherited.
-    if (i < 0 || i >= this.len) { trap("Slice.get out of range"); }
+    if (i < 0 || i >= this.len) { trap "Slice.get out of range"; }
     return this.of[this.from + i];
   }
 
   void set(this, i32 i, T v) {
-    if (i < 0 || i >= this.len) { trap("Slice.set out of range"); }
+    if (i < 0 || i >= this.len) { trap "Slice.set out of range"; }
     this.of[this.from + i] = v;
   }
 
   /** A narrower view of the same array. No copy. */
   Slice<T> slice(const this, i32 lo, i32 hi) {
-    if (lo < 0 || hi > this.len || lo > hi) { trap("Slice.slice out of range"); }
+    if (lo < 0 || hi > this.len || lo > hi) { trap "Slice.slice out of range"; }
     return Slice<T>(this.of, this.from + lo, hi - lo);
   }
 

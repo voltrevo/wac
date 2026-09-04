@@ -64,6 +64,8 @@ answer and it is written down nowhere.
 against a `union<Scalar, Truncated, Malformed>` instead. That is a change to `packages/unicode`,
 so the rewrite of one package immediately wanted a second.
 
-**Three spellings used here are not on the pages.** `held + chunk` for array concatenation,
-`const i32 CHUNK = 4096;` for a module-level constant, and `Buf.pushScalar` — the first two are
-language, the third is only a method somebody has to write.
+**Two spellings used here are not on the pages.** `held + chunk` for array concatenation, and
+`Buf.pushScalar`, which is only a method somebody has to write.
+
+(`const i32 CHUNK = 4096;` was listed here too, and it was wrong: `spec/spec/grammar.md` has
+`const_decl` in `program`, and it compiles today.)

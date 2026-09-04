@@ -52,12 +52,12 @@ export struct FakeSys : Sys {
 
   FakeSys withFiles(Map<string, u8[]> files) { … }
 
-  async Result<u8[], NotGranted> readFile(this, string path) {
+  override async Result<u8[], NotGranted> readFile(this, string path) {
     u8[]? got = this.files.get(path);
     return got is null ? Result.Err(NotGranted(path)) : Result.Ok(got!);
   }
 
-  i64 now(const this) { return this.now; }
+  override i64 now(const this) { return this.now; }
 }
 
 /**

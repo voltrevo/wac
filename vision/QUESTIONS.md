@@ -153,13 +153,6 @@ no sensible default* — `TicketBase.advance`, `Coroutine.step`. `vision/package
 entries. Both are wanted and neither is described, and the two look similar enough that reading one
 as the other is easy.
 
-## Module-level constants
-
-`const i32 MAX_DEPTH = 512;` outside any function. Both rewritten packages needed one on the first
-file, and no entry mentions the form. The real `packages/json` writes `i32 ERR_DEPTH() { return 7; }`
-— a function returning a literal — which suggests there is no spelling today rather than that nobody
-wanted one.
-
 ## Naming a union, and whether a union may contain one
 
 `vision/packages/http` is unwritable without both. It declares

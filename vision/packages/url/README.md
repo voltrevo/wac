@@ -54,8 +54,9 @@ where the standard says *the host is not a valid IPv6 address*.
 
 ## What could not be written
 
-**Nothing new.** Every gap this package hit — `static`, module constants, elided bodies, a match arm
-without `case` — is already filed from the earlier four. That is worth saying: the fifth package
+**Nothing new.** Every gap this package hit — elided bodies, a match arm without `case` — is
+already filed from the earlier four. Two others it hit, `static` and module constants, turned out
+not to be gaps at all. That is worth saying: the fifth package
 produced one large positive finding and no new holes, which is the first sign of the language
 settling rather than of the exercise running out.
 

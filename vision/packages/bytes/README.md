@@ -44,7 +44,9 @@ buffer read is the least helpful place in a stack to arrive with no message.
 
 ## What could not be written
 
-**Nothing new**, except that `trap` taking a string is still undescribed on any page. It is used
-here, in `core/result.wac`, in `core/slice.wac` and in `core/ticket.wac`, and
-[`../../core/README.md`](../../core/README.md) already asks for it — as an expression typed `never`,
-so that a `match` arm can be one.
+**Nothing new.** `trap "message";` is not a gap — `spec/spec/grammar.md` has
+`trap_stmt = "trap" , [ expr ] , ";"` with *the expr is a string message*, and it compiles today.
+This file had it as `trap("…")`, which is neither the spelling nor a missing feature.
+
+What is genuinely missing is `trap` as an **expression** — `core/result.wac` wants one as a match
+arm's value, which needs it typed `never` so the arms unify.

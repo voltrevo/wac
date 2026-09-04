@@ -71,7 +71,8 @@ works, and the whole point of `fail` is that every failure goes through one plac
 this file needs *written out in the original, not repeated here*, and uses `{ … }` because the
 SHOWCASE entries do. Both are needed and neither is described.
 
-**`const i32 MAX_DEPTH = 512;` at module scope**, again — the same gap `stream` found.
+(`const i32 MAX_DEPTH = 512;` at module scope was listed here as a gap and is not one — the
+grammar has `const_decl` in `program` and it compiles today.)
 
 **Nothing here needed a coroutine.** A token generator was the obvious thing to try and recursive
 descent wants one token of lookahead, which a `Generator<Token, R>` does not offer. A `Peekable<T>`

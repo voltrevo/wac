@@ -87,7 +87,6 @@ are here because they are written in the tree, not because anything found them:
 - `try await for (u8[] chunk in src) { … }` — three packages, and no part of it exists
 - `schedule this.pending.push;` — `std/platform`, past the `async` refusal
 - `defer { conn.close(); }` — `server/main` and `core/ticket`
-- `const i64 MAX_BODY = 1 << 20;` at module scope — four packages
 - `export union<A, B> Fault;` and `export Slice<u8> Bytes;` — one form for naming a type, whether it
   is a union or an instantiation
 - `@/packages/http` naming a directory rather than a file in it
@@ -97,6 +96,24 @@ are here because they are written in the tree, not because anything found them:
   the position it is actually wanted: an arm of a ternary
 - `fn<void()>` as a type — `core/ticket`, replacing today's `fn[void()]`
 - `\{…}` interpolation inside a string — `server/main`
+
+## Three claimed additions were already in the language
+
+`static` was listed in the table above and removed. Module-level `const` was called a gap in three
+package READMEs. `trap` with a message was called undescribed in two. All three are in
+`spec/spec/grammar.md` — `method_params` makes a `this`-less method static, `const_decl` is in
+`program`, and `trap_stmt = "trap" , [ expr ] , ";"` says outright *the expr is a string message*.
+All three compile today.
+
+**None of them was findable by the tool**, and that is the point rather than an excuse. It reports
+what today's parser refuses; a construct that already exists is accepted, so writing `static` in
+front of a method produced a diagnostic while *believing module constants were missing* produced
+nothing at all. One half of the exercise is instrumented and the other half is not.
+
+What catches this class is reading `spec/spec/grammar.md`, which is 274 lines and is the authority.
+It should be read before a README says a thing is missing — the three above cost more to unwind than
+reading it would have cost, and two of them had been repeated across several files by the time they
+were caught.
 
 ## What it cannot see
 

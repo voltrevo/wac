@@ -25,9 +25,10 @@ body, and `Coroutine.step` and `Ticket.value` likewise. Every one of them must b
 none has a meaningful default — a base that answered `false` would be a lie that compiles. Nothing
 on the pages says a bodyless method is how you ask for that.
 
-**`trap(…)` is used and undescribed.** `Result.orTrap` and `AnyOf.value` both call it. It has to be
-an expression rather than a statement, since it appears as a match arm's value, and it has to be
-typed `never` so the arms unify — which is a job for `never` that is not yet written down.
+**`trap` as an expression.** The *statement* exists and carries a message —
+`trap_stmt = "trap" , [ expr ] , ";"`, and `trap "out of range";` compiles today, which this file
+had wrong as `trap("…")`. What is missing is the expression form: `Result.orTrap` wants one as a
+match arm's value, which needs it typed `never` so the arms unify.
 
 **Two match-arm spellings are both in use on the pages.** *Writing an iterator is writing a loop*
 matches `Leaf(v):` and `Node(l, r):`; the `Continuation` entries matched `Ready { call }:` and

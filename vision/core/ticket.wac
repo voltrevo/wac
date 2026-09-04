@@ -80,17 +80,17 @@ export struct Continuation {
 struct AllOf<T> : Ticket<T[]> {
   Ticket<T>[] parts;
 
-  bool settled(const this) {
+  override bool settled(const this) {
     for (Ticket<T> p in this.parts) { if (!p.settled()) { return false; } }
     return true;
   }
 
-  bool advance(this, bool block) {
+  override bool advance(this, bool block) {
     for (Ticket<T> p in this.parts) { if (p.advance(block)) { return true; } }
     return false;
   }
 
-  T[] value(const this) {
+  override T[] value(const this) {
     T[] out = T[this.parts.len()](fill: this.parts[0].value());
     for (i32 i = 0; i < this.parts.len(); i++) { out[i] = this.parts[i].value(); }
     return out;
@@ -101,19 +101,19 @@ struct AllOf<T> : Ticket<T[]> {
 struct AnyOf<T> : Ticket<T> {
   Ticket<T>[] parts;
 
-  bool settled(const this) {
+  override bool settled(const this) {
     for (Ticket<T> p in this.parts) { if (p.settled()) { return true; } }
     return false;
   }
 
-  bool advance(this, bool block) {
+  override bool advance(this, bool block) {
     for (Ticket<T> p in this.parts) { if (p.advance(block)) { return true; } }
     return false;
   }
 
-  T value(const this) {
+  override T value(const this) {
     for (Ticket<T> p in this.parts) { if (p.settled()) { return p.value(); } }
-    trap("AnyOf.value before settled");
+    trap "AnyOf.value before settled";
   }
 }
 

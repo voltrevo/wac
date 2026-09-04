@@ -48,7 +48,8 @@ over-allocated array beside the number of it that means anything, which is a sli
 fields. A caller reading `digits` without `count` gets trailing zeroes that are not part of the
 number, and nothing stops one.
 
-**`LIMBS()` is a module constant** rather than a function returning `40`. Fourth package.
+**`LIMBS()` is a module constant** rather than a function returning `40` — which the language has
+always allowed. Three READMEs called that a gap before anyone read `spec/spec/grammar.md`.
 
 ## What could not be written
 

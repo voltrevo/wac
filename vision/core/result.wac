@@ -34,7 +34,7 @@ export enum Result<T, E = union> {
   T orTrap(const this, string why) {
     return match (this) {
       Ok(v):   v,
-      Err(_):  trap(why),
+      Err(_):  trap why,
     };
   }
 }
