@@ -132,6 +132,39 @@ export struct Mount {
     );
   }
 
+  /**
+   * Reads fall through to `base`; writes land in `top` and shadow it from then on.
+   *
+   * **Written for `issues/system/open/0309b`**, which is about `sshd` serving one connection at a
+   * time and cannot simply be given the pump that fixed `relayd` and `socks`. agent-b's analysis is
+   * that the blocker is the *image*: `boot` runs once before the accept loop, every session mutates
+   * the same `Fs`, and the first session to end writes the image while the second is still editing
+   * it — a torn image rather than a disagreement. Three options are listed there and each gives
+   * something up: refuse a second writer, or a filesystem per session that sees nobody else's work,
+   * or save-on-idle.
+   *
+   * An overlay is a fourth. One base, read-only and shared; one empty top per session; and the image
+   * is written from the base, which nothing is mutating. Sessions see the starting image and their
+   * own edits, and what to do with a session's top on the way out becomes an explicit choice —
+   * discard it, merge it, or hand it back — instead of a race.
+   *
+   * **It is three lines because a mount is a closure.** With the shipped `Backing` tag it is a third
+   * enum member and a branch in every operation, which is the difference this file is about. That
+   * does not make the decision for anyone: an overlay changes what a session *is*, and 0309b is
+   * asking exactly that question. It adds an option that was not on the list because the shape it
+   * needs was not writable when the list was written.
+   */
+  Mount overlay(Mount base, Mount top) {
+    return Mount(
+      (string p) => overlayRead(base, top, p),
+      top.write,
+      (string p) => overlayStat(base, top, p),
+      (string p) => overlayReadDir(base, top, p),
+      top.mkdir,
+      top.remove,
+    );
+  }
+
   /** Nothing is here and nothing can be put here. The mount a sealed session gets. */
   Mount empty() {
     return Mount(
@@ -156,3 +189,17 @@ async Result<void, Fault> memRemove(Map<string, Node> tree, string path, bool re
 
 async Result<Entry, Fault> hostStat(Files files, string path) { … }
 async Result<Entry[], Fault> hostReadDir(Files files, string path) { … }
+
+/** `top` first, then `base`. A read of something never written falls all the way through. */
+async Result<Bytes, Fault> overlayRead(Mount base, Mount top, string path) { … }
+async Result<Entry, Fault> overlayStat(Mount base, Mount top, string path) { … }
+
+/**
+ * Both, merged by name, with `top`'s entry winning.
+ *
+ * The one operation an overlay cannot delegate to either side, and the reason `remove` above is
+ * `top.remove` and not something cleverer: deleting a file that exists only in `base` needs a
+ * whiteout, which is a fourth thing to represent and is where every union filesystem gets hard.
+ * Left undone deliberately — this is an argument for a shape, not an implementation of one.
+ */
+async Result<Entry[], Fault> overlayReadDir(Mount base, Mount top, string path) { … }

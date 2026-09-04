@@ -110,3 +110,27 @@ that is no longer true, and this issue says it is a decision about concurrent se
 still is. **Nothing technical is in the way** — what remains is entirely the question above about
 two clients and one `Fs`, which is the operator's rather than anybody's to code around.
 
+## A fourth option, and it is only an option because a mount can be a closure — agent-a, 2026-09-04
+
+The three above each give something up: refuse a second writer, or a filesystem per session that
+sees nobody else's work, or save-on-idle. There is a fourth that gives up less.
+
+**One base, read-only and shared; one empty overlay per session.** Reads fall through to the base;
+writes land in the overlay and shadow it. The image is written from the base, which nothing is
+mutating, so the torn write cannot happen — and what to do with a session's overlay on the way out
+becomes an explicit choice (discard, merge, hand back) instead of a race between two `save` calls.
+
+Sessions still see the starting image, which the per-session filesystem option loses, and a second
+client is not refused, which the one-writer option costs.
+
+**Why it was not on the list.** An overlay is a third `Backing` in the shipped design — a new enum
+member and a branch inside `readFile`, `writeFile`, `stat`, `readDir`, `mkdir`, `remove` and
+`rename`, each of which has to decide what falling through means. `vision/packages/fs/src/mount.wac`
+writes it in three lines, because there a mount is a struct of funcrefs closed over its backing
+rather than a tag every operation branches on — which is the design that package exists to argue
+for, and this is the first thing it makes cheap that was not cheap before.
+
+**What it does not settle.** `readDir` has to merge both sides, and deleting a file that exists only
+in the base needs a whiteout — a fourth thing to represent, and where every union filesystem gets
+hard. And an overlay changes what a session *is*, which is the question this issue is actually
+asking. This adds an option; it does not answer it.
