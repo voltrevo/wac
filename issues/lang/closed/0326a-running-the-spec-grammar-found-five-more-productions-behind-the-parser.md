@@ -65,10 +65,30 @@ generate something from this file will meet it in the first hour.
 `spec/spec/grammar.md`, this commit. Every one is a production added or widened; none changes the
 language. `packages/wacc/test/wac/specproductions_test.wac` gains rows for `type_name` and `await`;
 the rest are guarded by `specparse` itself, which is a command rather than a test because Earley
-over the whole tree is a minute of work rather than a millisecond.
+over the whole tree is twenty-five minutes of work rather than a millisecond.
+
+## Where it ended up, 2026-09-04
+
+    1541/1569 files parse, 21 not attempted
+
+Ten productions later — the six above, plus lambdas, JSX, `string_literal` and a method's own type
+arguments at a call — **every `.wac` in `packages`, `core`, `std`, `spec` and `tools` parses with the
+grammar in the spec, except for two named groups.**
+
+Twenty-one are JSX and are not attempted: `[§jsx-text-is-not-wac-source]` puts the lexer in a second
+mode between an element's tags, and the reader has one mode. The productions were added and read
+from `parse.wac`; nothing has run them.
+
+Seven are refused and are `spec/cases` that expect to be refused — an unterminated comment, a
+newline in a literal, a `case` after a `default`, three interpolations in places that do not
+interpolate. A refusal there proves nothing, since most of the 143 cases expecting one expect it for
+a *semantic* reason the grammar must still parse, so they are set aside rather than counted.
+
+**Nothing else.** That is the first time the claim in `CONTRIBUTING` — that the spec is the source
+of truth — has been checked against the whole tree rather than against a list of samples.
 
 ## Done when
 
 Not "when the grammar stops drifting" — it will drift again. **When drift is found by something
-other than a person reading.** `deno run --allow-read tools/specparse.ts packages core std` is that
-something, and this issue is the record of its first run.
+other than a person reading.** `wac task grammar:parse` is that something, and this issue is the
+record of its first run.

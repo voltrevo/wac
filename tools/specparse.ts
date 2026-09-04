@@ -27,9 +27,19 @@
 // needs neither.** It handles left recursion and ambiguity as written, so the grammar this runs is
 // the grammar in the file, character for character.
 //
-// The cost is speed — O(n³) worst case, near-linear in practice on grammars like this one. A parse
-// of every file in `packages/` is a minute of work, not a millisecond, which is why this is a
-// command rather than a test.
+// The cost is speed. Earley is O(n³) in the *ambiguity*, and this grammar is ambiguous on purpose,
+// so files are parsed one top-level declaration at a time and a declaration gets twenty seconds
+// before the reader gives up and says so. The whole tree — 1,569 files — takes about twenty-five
+// minutes, which is why this is a command rather than a test, and why it writes a progress line
+// per twenty-five files to stderr: three runs were killed as stuck before it did.
+//
+// ## Where it stands, 2026-09-04
+//
+//     1541/1569 files parse, 21 not attempted
+//
+// The twenty-one are JSX. The rest of the difference is seven `spec/cases` that expect to be
+// refused. Nothing else in `packages`, `core`, `std`, `spec` or `tools` is outside the grammar,
+// which took ten productions the file had never had — `issues/lang/closed/0326a`.
 //
 // ## What it is not
 //
