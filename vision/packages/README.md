@@ -192,7 +192,7 @@ finding whether the thing it wants already exists.** Weigh the two lists differe
 | what | written | against |
 |---|---|---|
 | [core](../core/) | 2026-09-04 | tickets, coroutines, `union`, nested `T?` |
-| [std](../std/) | 2026-09-04 | `Sys` as a value, no singleton |
+| [std](../std/) | 2026-09-04 | `Sys` as a value, no singleton, grouped into projections |
 | [stream](stream/) | 2026-09-04 | coroutines, `union`, nested `T?`, `try` |
 | [json](json/) | 2026-09-04 | `Result`, `try`, enum-vs-union, nested `T?` |
 | [http](http/) | 2026-09-04 | named unions, error-set composition |

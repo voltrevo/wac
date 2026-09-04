@@ -1,17 +1,54 @@
 // What a program was handed.
 //
-// Nothing here is ambient. A function that was not given a `Sys` cannot open a file, listen on a
-// port, or read the clock, and that is a fact about its type rather than a sandbox around it. The
-// consequence worth stating: **there is no singleton.** Two `Sys` values are two different grants,
-// a test hands a fake one, and any code that assumed there was only one would be wrong in a way
-// that reads correct.
+// Nothing here is ambient. A function that was not given a capability cannot use it, and that is a
+// fact about its type rather than a sandbox around it. **There is no singleton**: two `Sys` values
+// are two different grants, a test hands a fake one, and code assuming there is only one would be
+// wrong in a way that reads correct.
+//
+// ## Why this is grouped, which is measured rather than chosen
+//
+// The host exposes **50** capabilities. Counting them by what they reach:
+//
+//     file    14   readFile writeFile stat linkStat readDir mkdir remove rename …
+//     net      9   connect listen accept send recv bindDatagram sendTo …
+//     process  8   spawn spawnSelf execWithIn load call unload validated exitCode
+//     env      4   arg argCount env cwd
+//     io       3   write writeErr readStdin
+//     other   12   the clock, randomBytes, log, child bookkeeping, askInterrupt
+//
+// 38 of 50 in five groups. A flat `Sys` with fifty methods satisfies *authority arrives as one
+// thing* and gives a caller no way to hand over less, which is the half of *no ambient
+// capabilities* that `packages/box` shows going unused: 63 applets all take `(Core, Cli, Fs, Args)`
+// and **ten never mention `fs`**, because a dispatcher calls them all through one shape.
+//
+// So the groups are values. `Sys` is the whole grant; `sys.files` is a narrower one that reaches
+// files and nothing else. A projection has no way back — there is no field on `Files` that answers
+// a `Sys` — so narrowing is structural rather than promised, and `echo(sys.out, args)` cannot open
+// a socket however it is written.
+//
+// **Within one instance.** Across a spawn a capability is not a value at all — see
+// `@/packages/sh/src/exec.wac`, where what crosses is a *description* of one.
 
 import { Ticket, TicketBase, Continuation, Result, Queue } from "core";
 
 /** A capability the grant did not include. */
 export struct NotGranted { string what; }
 
+/**
+ * Everything this program was granted, and the only thing that can produce a narrower one.
+ *
+ * The fields are the projections. Reading one is free and hands over exactly that group; there is
+ * no method here that answers a capability the caller could not already reach.
+ */
 export struct Sys {
+  Files files;
+  Net net;
+  Proc proc;
+  Env env;
+  Out out;
+  Clock clock;
+  Random random;
+
   /** Work nobody awaited, waiting for somebody to run it. */
   Queue<Continuation> pending;
 
@@ -35,21 +72,66 @@ export struct Sys {
 
   /** Run `f` when this domain ends, however it ends. Cleanup that must happen is a system's. */
   void atEnd(this, fn<void()> f);
-
-  async Result<u8[], NotGranted> readFile(this, string path);
-  async Result<Listener, NotGranted> listen(this, i32 port);
-  void log(this, string line);
-
-  /** Milliseconds since the epoch. A read, not a fact about the machine — hence the capability. */
-  i64 now(const this);
 }
+
+/** Paths. Fourteen of the fifty. */
+export struct Files {
+  async Result<u8[], NotGranted> read(this, string path);
+  async Result<void, NotGranted> write(this, string path, u8[] bytes);
+  async Result<Stat, NotGranted> stat(this, string path);
+  async Result<string[], NotGranted> readDir(this, string path);
+  async Result<void, NotGranted> mkdir(this, string path, bool parents);
+  async Result<void, NotGranted> remove(this, string path, bool recursive);
+}
+
+/** Sockets. The child's own, never the parent's. */
+export struct Net {
+  async Result<Listener, NotGranted> listen(this, i32 port);
+  async Result<Socket, NotGranted> connect(this, string host, i32 port);
+}
+
+/** Starting things. `@/packages/sh/src/exec.wac` is where the grant crosses. */
+export struct Proc {
+  i32 exitCode(const this);
+}
+
+/** Read-only, and the reason `arg` is not on `Sys`: argv is known before the program starts. */
+export struct Env {
+  string arg(const this, i32 i);
+  i32 argCount(const this);
+  string? get(const this, string name);
+  string cwd(const this);
+}
+
+/**
+ * Standard output and error.
+ *
+ * The narrowest useful projection and the one `box` wants: of its 63 applets, the ten that never
+ * touch a filesystem still write, so `Out` is what they should be handed.
+ */
+export struct Out {
+  void write(this, u8[] bytes);
+  void writeErr(this, u8[] bytes);
+  void log(this, string line);
+}
+
+/** Time is a capability because reading it is a fact about the machine, not about the program. */
+export struct Clock {
+  i64 nowMillis(const this);
+  i64 monotonicNanos(const this);
+}
+
+export struct Random {
+  void fill(this, u8[] into);
+}
+
+export struct Stat { i64 size; bool isDir; i64 modified; }
 
 /**
  * A port this program was granted.
  *
- * Iterating it is the accept loop: `for (Socket conn in l)` yields one connection at a time and
- * ends when the listener closes. A handle is a value, so it travels as one thing rather than as a
- * number kept beside the capability that makes it mean something.
+ * Iterating it is the accept loop: `try await for (Socket conn in l.accepted())` yields one
+ * connection at a time and ends when the listener closes.
  */
 export struct Listener {
   async gen<Socket> Result<void, NotGranted> accepted(this);

@@ -45,8 +45,14 @@ This is the same fact `sh` met from the other side — there, a capability could
 spawned child; here, authority cannot be subdivided *within* a module. One underlying thing:
 **authority is per-instance, and the language's per-function authority stops at the module edge.**
 
-**It can stop the code reaching it.** The dispatch table is uniform because it holds function
-pointers, and a closure would not have to be:
+**It can stop the code reaching it, and `std` now says how.** The host's 50 capabilities fall into
+five groups — file 14, net 9, process 8, env 4, io 3 — so `vision/std/platform.wac` makes the groups
+values: `Sys` is the whole grant and `sys.out` is a narrower one that reaches standard output and
+nothing else. A projection has no way back, so `echo(sys.out, args)` **cannot** open a file however
+it is written, and the ten applets that never mention `fs` stop being handed one.
+
+That is the language half. The dispatch table is the other, and it is uniform only because it holds
+function pointers; a closure would not have to be:
 
 ```wac
 // each entry captures what that applet needs, and nothing else

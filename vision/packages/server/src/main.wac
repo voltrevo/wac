@@ -9,17 +9,17 @@
 // scheduling, and the loop goes straight back to accepting. One slow client does not hold the door,
 // and nothing here mentions a task, a pool or an executor.
 
-import { Sys, Socket, Listener, Read, NotGranted } from "std";
+import { Sys, Out, Clock, Socket, Listener, Read, NotGranted } from "std";
 import { Buf } from "@/packages/bytes";
 import { Served, serve } from "./serve.wac";
 
 export async i32 main(Sys sys) {
-  match (await sys.listen(7000)) {
-    Err(e): { sys.log("no port: \{e.what}"); return 1; }
+  match (await sys.net.listen(7000)) {
+    Err(e): { sys.out.log("no port: \{e.what}"); return 1; }
     Ok(l): {
-      sys.log("listening on 7000");
+      sys.out.log("listening on 7000");
       try await for (Socket conn in l.accepted()) {
-        handle(sys, conn);
+        handle(sys.out, sys.clock, conn);
       }
     }
   }
@@ -36,8 +36,12 @@ export async i32 main(Sys sys) {
  * Nobody awaits this. It suspends at its first `recv` and its continuation goes to the scheduler in
  * force where it was called — `main`'s, which is `sys`'s — so `drain` is what eventually finishes
  * it.
+ *
+ * **It takes two projections rather than a `Sys`.** It writes and it reads the clock; it has no
+ * business opening a file or a second port, and handing it `sys` would let it. That is the whole
+ * point of the grouping and it costs one extra parameter here.
  */
-async void handle(Sys sys, Socket conn) {
+async void handle(Out out, Clock clock, Socket conn) {
   // Four ways out of this function below — two `break`s and two `return`s — and the socket closes
   // on all of them. That is the whole argument for `defer` in one function.
   defer { conn.close(); }
@@ -48,13 +52,13 @@ async void handle(Sys sys, Socket conn) {
     match (await conn.recv()) {
       Data(bytes): { pending.pushAll(bytes); }
       End:         { break; }
-      Failed(why): { sys.log("connection lost: \{why}"); break; }
+      Failed(why): { out.log("connection lost: \{why}"); break; }
     }
 
     // Pipelining: one arrival can carry more than one request, so keep answering while the buffer
     // holds whole ones.
     while (true) {
-      match (serve(pending.bytes(), sys.now())) {
+      match (serve(pending.bytes(), clock.nowMillis())) {
         Incomplete: { break; }
         Done(response, consumed, keepAlive): {
           if ((await conn.send(response)).isErr()) { return; }
