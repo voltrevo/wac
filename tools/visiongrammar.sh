@@ -124,6 +124,44 @@ else
   echo "  SKIPPED — the canary parsed, so this pass cannot be trusted"
 fi
 
+# ── Whichever subject has moved since the rewrite was written ────────────────────────────────────
+#
+# A rewrite is only as honest as the thing it compares itself against, and four of them here were
+# written against the *oldest* file in their area: `server` against a header saying "wac has no
+# sockets", `stream` against a callback pair, `vision/core/ticket.wac` against a `wait` that has since
+# grown D7's trap, and `std` against a capability layer that had learned to carry the scheduler.
+# Each claimed something that had already landed.
+#
+# The check that caught all four is one `git log`, so it belongs here rather than in somebody's
+# memory: if the real package has commits newer than the vision file, the comparison may be stale.
+echo
+echo "-- subjects that moved after the rewrite --"
+moved=0
+for vdir in vision/core vision/std vision/packages/*/; do
+  name=$(basename "$vdir")
+  case "$name" in
+    core) real="core" ;;
+    std)  real="std packages/platform" ;;
+    *)    real="packages/$name" ;;
+  esac
+  # Skip a subject with no counterpart in the tree.
+  have=""
+  for r in $real; do [ -e "$r" ] && have="$have $r"; done
+  [ -z "$have" ] && continue
+
+  vwhen=$(git log -1 --format=%ct -- "$vdir" 2>/dev/null || echo 0)
+  rwhen=$(git log -1 --format=%ct -- $have 2>/dev/null || echo 0)
+  if [ -n "$vwhen" ] && [ -n "$rwhen" ] && [ "$rwhen" -gt "$vwhen" ] 2>/dev/null; then
+    moved=$((moved + 1))
+    printf '  %-22s %s moved %s after it\n' "$name" "$(echo $have | tr ' ' ',')" \
+      "$(python3 -c "import sys;d=(int(sys.argv[1])-int(sys.argv[2]))//86400;print(f'{d}d')" "$rwhen" "$vwhen")"
+  fi
+done
+# `none` today is the expected answer and is not evidence the check works: every vision file was
+# edited more recently than its subject while this was being written. Verified against an older
+# revision instead — `vision/packages/json`'s first commit against `packages/wacc`'s latest fires.
+[ "$moved" = 0 ] && echo "  none (every vision file is newer than its subject)"
+
 echo
 echo "-- spellings that parse and are still wrong --"
 stale=0
