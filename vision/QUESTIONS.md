@@ -3838,3 +3838,71 @@ The last is the honest description of today, and it is why this is filed as a qu
 as a want: **no bug has been found from it.** The evidence is four packages independently building
 the same thing out of concatenation and a set of helpers with no shared type, which is a smell rather
 than a defect — and the entry exists so that whoever *does* hit the defect finds it already counted.
+
+## Nineteen functions answer `T?` with four or more ways of meaning nothing — 139 sites
+
+The entry above says the best-argued paragraph in a file is a rule the type could hold, from six
+instances. Six instances is an anecdote. Here is the population.
+
+Mechanically, over `packages/*/src`: every function whose return type ends in `?`, counting
+`return null;` in its body. **Nineteen have four or more; 139 null sites between them**, across
+`ssz`, `url`, `git`, `codec`, `bls`, `tls`, `lightclient` and `wacc`. No predicate is in this list —
+a predicate answers `bool`, so `T?` is unambiguously *produce a value or refuse*.
+
+    19x  ssz/container.wac       u8[]?  rootAt
+    13x  url/host.wac            Host?  parseIpv6
+    12x  git/pack.wac            u8[]?  applyDelta
+    10x  url/url.wac             Url?   parseUrl
+     8x  ssz/container.wac       i32[]? containerSpans
+     8x  codec/base64.wac        u8[]?  decode
+     …fourteen more at 4 to 7
+
+**Six read, five of them the finding.** `rootAt`'s doc enumerates four malformations — *"a span that
+does not match a fixed size, an offset outside the container, offsets that go backwards, a bitlist
+without its delimiter"* — and says why they are refusals: *"this reads attacker-supplied bytes: a
+light client is handed a `LightClientUpdate` by whoever it is talking to."* `base64.decode`'s
+enumerates four canonicality rules and singles out the one *"every lenient decoder drops"*, without
+which *"a signature over the text means nothing"*. `applyDelta`'s distinguishes malformed from
+truncated and then answers both the same way. `parseIpv6` does not enumerate at all — *"Null on any
+syntax error"* — and still has thirteen sites.
+
+The sixth is not the finding and is why the sample matters: `bls`'s `fp2Sqrt` answers `null` for one
+mathematical fact — the element has no square root — reached from five places. A count of returns is
+not a count of reasons, and roughly one in six here is a single reason with several exits.
+
+## And 139 is the answer to why it has not been fixed
+
+The open question under the entry above was whether this is a documentation problem, an idiom
+problem, or a sign that the shipped ergonomics of a sum are worse than a bool. The number decides it:
+**nobody retrofits 139 unions.** Any answer that requires going back is not an answer.
+
+So the question worth asking is about the cost at the point of *writing*, and it is measurable. In
+this directory, giving `@/packages/rlp` seven named refusals cost:
+
+- seven `struct` declarations, one per reason, most of them one field;
+- one `union<…>` declaration naming all seven;
+- an import line in the file that raises them;
+- eight names in the barrel, because `Err(is LeadingZero):` needs the name in scope at the call site.
+
+Four places and roughly twenty lines, against `return null;` — eleven characters. That ratio is the
+whole of it, and it is not about whether the language *has* sums.
+
+Three directions, and they are not exclusive:
+
+- **A union whose members are declared inline.** `union { LeadingZero(i32 at), NotMinimal(i32 at) }`
+  as a declaration form collapses eight declarations into one and removes the barrel problem, since
+  the members arrive with the union. This is the smallest change that moves the ratio.
+- **A default: a `T?` *is* a union of one anonymous reason**, and widening it later should not be a
+  rewrite of every call site. Today going from `null` to a fault changes every caller;
+  if `T?` were sugar for `Result<T, Nothing>` the callers that only ask *did it work* would not
+  change at all.
+- **Nothing, and accept it.** Which is defensible for `fp2Sqrt` and indefensible for `rootAt`, and
+  the difference between those two is exactly what the count cannot see — so the honest version of
+  *nothing* is a convention about which functions owe reasons, and that convention does not exist.
+
+What makes this a language question rather than a style guide: the second direction is a claim that
+**`T?` and `Result<T, E>` should be the same construct at different arities**, and the two are
+currently unrelated types with unrelated syntax — `x!` and `is null` on one, `match` and `try` on the
+other. Every one of the 139 sites is a place where somebody chose the cheap one; under that reading
+the choice would not have been between two constructs, and a caller that only asks *did it work*
+would not change when the reasons arrive.
