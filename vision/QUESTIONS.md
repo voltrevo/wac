@@ -2679,3 +2679,40 @@ only thing that knows they lost — and then `any` decides for a caller that may
 **And it is the fourth thing that turns on a scope ending.** A trap, a return, an abandoned
 generator, and now a deliberate drop: all four ask what happens to work nobody is waiting for, and
 the last is the only one with a shipped mechanism. That is an argument for looking at it first.
+
+## Eight capabilities lost their ticket, and nothing anywhere says why
+
+The capability audit compared **names**. Comparing **signatures**, member by member against
+`std/platform.wac`, is a different check and had not been run. It turns up one change made eight
+times and argued nowhere:
+
+    vision                              shipped                        
+    Env.arg        fn<string(i32)>      fn[Pending<u8[]>(i32)]        ticket gone, u8[] → string
+    Env.argCount   fn<i32()>            fn[Pending<i32>()]            ticket gone
+    Env.get        fn<string?(string)>  fn[Pending<u8[]?>(string)]    ticket gone, u8[] → string
+    Env.cwd        fn<string()>         fn[Pending<string>()]         ticket gone
+    Clock.nowMillis      fn<i64()>      fn[Pending<i64>()]            ticket gone
+    Clock.monotonicNanos fn<i64()>      fn[Pending<i64>()]            ticket gone
+    Random.fill    fn<void(u8[])>       fn[Pending<u8[]>(i32)]        ticket gone, allocate → fill
+    Out.write      fn<bool(u8[])>       fn[bool(u8[])]                same, once restored
+
+Seven of the eight are synchronous here and a ticket in the tree. Searching `vision/` for the word
+*synchronous* finds three hits and none of them is about this.
+
+**It is probably right, and that is why it needs saying.** Every one of the seven is a fact the host
+already holds: `argCount` cannot block, a clock read is a load, filling bytes from an entropy pool
+does not wait on the world. `std/platform.wac`'s reason for making them tickets anyway is
+uniformity — everything crossing the boundary is a `Pending` — and dropping it for the ones that
+cannot block is a real simplification that removes an `await` from every use.
+
+What is missing is the rule. **Which capabilities may be synchronous?** *Those that cannot block* is
+the obvious answer and it is not checkable from this side: whether `cwd` blocks is a property of a
+host, and `native/v8/src`'s table has an arm for it either way. A host that had to *fetch* the
+working directory — a page asking its opener, a remote shell — could not supply
+`fn<string()>` at all, and would have to fail at construction rather than at the call.
+
+**And `Random.fill` changed shape twice over**, which is the one to look at separately: not just
+synchronous but *fill-in-place* against the shipped *allocate-and-return*. That is the slice argument
+arriving in a capability — a caller who owns the buffer avoids the allocation — and it is exactly the
+change `core/slice.wac` exists to enable. It is also the only member here whose new signature cannot
+express what the old one did: `randomBytes(n)` with no buffer to hand is now two lines.
