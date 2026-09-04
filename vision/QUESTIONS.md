@@ -135,12 +135,6 @@ is a separate and much larger question — two levels of failure crossing for on
 again. Both are no-ops, so it is correct and wasteful. Caching the awaited ticket fixes it and adds
 state that something has to invalidate when the machine moves on.
 
-## What examples should capture `wait`
-
-Nothing on the page mentions it. Candidates: driving a coroutine to completion from sync code, the
-`Err` when this host cannot be waited on, that it drains the dependency set rather than descending
-depth-first, and the circular case. Four is probably too many for one feature.
-
 ## The wire format has two dimensions and the value has arbitrarily many
 
 `vision/packages/sh/src/exec.wac` says the important half already: within one instance authority is a
@@ -1038,6 +1032,10 @@ total, which is the only reason neither is stated above as a finding.)
 
 ## What `defer` means, which no page says and four uses already depend on
 
+*(Distinct from* What a trap does to a scope *above, which asks what **unwinding** does to a
+`defer` and to `schedule` together. This asks what the construct **is**. They were easy to read as
+one and answering either leaves the other open.)*
+
 This entry asked which *example* should capture `defer`. Reading the four places the rewrites use it,
 the prior question is what it does: the only statement anywhere is the clause below — *"`defer` runs
 when the block exits"* — and every one of the four turns on something that clause does not settle.
@@ -1076,25 +1074,28 @@ happen belongs to a system rather than to a block. That pairing is only meaningf
 four are answered: an `atEnd` that runs on a trap and a `defer` that does not is a distinction; two
 that behave the same way is one mechanism with two names.
 
-## What example should capture the keyword rule
+## Five examples the vetted pages need, and not one is a language question
 
-`await` is illegal in a generator, `yield` is illegal in an async function, and an async generator
-has both. Probably a refusal, since the legal cases already appear on the page.
+Collected 2026-09-04 from five separate entries. They were five because each was noticed while
+writing about something else, and keeping them apart made this file look like it had five more open
+language questions than it has. **None of them is a question**: each is a known answer with no page
+showing it, which is `SHOWCASE.md`'s work rather than a decision anybody has to take.
 
-## What example should capture stepping a finished machine
+Worth one entry because the *pattern* is a finding about this document: it holds two genres — what
+the language should do, and what the pages should say — and the second is much cheaper to add, so it
+accumulates.
 
-It has to be a no-op. A scheduler can be holding a continuation for a machine somebody else waited
-to completion, and there is no way to withdraw the registration.
-
-## What example should capture `auto` refusing to widen
-
-`auto` takes the type an expression already has, and `union` is the widening marker. An array whose
-elements disagree is the case that separates them.
-
-## What example should capture a default type argument
-
-`enum Result<T, E = union>` is what makes `Result<T>` an ordinary generic rather than a special
-form, and it is the thing that lets `Result`'s current blessing expire.
+- **`wait`.** Nothing on the page mentions it. Candidates: driving a coroutine to completion from
+  sync code, the `Err` when this host cannot be waited on, that it drains the dependency set rather
+  than descending depth-first, and the circular case. Four is probably too many for one feature.
+- **The keyword rule.** `await` is illegal in a generator, `yield` is illegal in an async function,
+  and an async generator has both. Probably a refusal, since the legal cases already appear.
+- **Stepping a finished machine.** It has to be a no-op: a scheduler can hold a continuation for a
+  machine somebody else waited to completion, and there is no way to withdraw the registration.
+- **`auto` refusing to widen.** `auto` takes the type an expression already has and `union` is the
+  widening marker; an array whose elements disagree is the case that separates them.
+- **A default type argument.** `enum Result<T, E = union>` is what makes `Result<T>` an ordinary
+  generic rather than a special form, and it is what lets `Result`'s current blessing expire.
 
 ## What a sync `main` does with a `Result`
 
