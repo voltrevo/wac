@@ -69,23 +69,32 @@ over the whole tree is twenty-five minutes of work rather than a millisecond.
 
 ## Where it ended up, 2026-09-04
 
-    1541/1569 files parse, 21 not attempted
+    1562/1569 files parse
 
 Ten productions later — the six above, plus lambdas, JSX, `string_literal` and a method's own type
 arguments at a call — **every `.wac` in `packages`, `core`, `std`, `spec` and `tools` parses with the
-grammar in the spec, except for two named groups.**
+grammar in the spec except seven, and all seven are written to be refused.**
 
-Twenty-one are JSX and are not attempted: `[§jsx-text-is-not-wac-source]` puts the lexer in a second
-mode between an element's tags, and the reader has one mode. The productions were added and read
-from `parse.wac`; nothing has run them.
+| case | why the grammar refuses it |
+|---|---|
+| `0026` a match on an integer is not a match | `match_arm` takes an `IDENT` after `case`, not a literal |
+| `0081` a block comment has to close | lexical |
+| `0091` a case cannot follow the default | `switch_stmt = … { case_clause } , [ default_clause ]` |
+| `0290` a newline ends a literal where it occurs | lexical |
+| `0301` a module path cannot interpolate | `source = STRING`, not `string_literal` |
+| `0302` a jsx attribute cannot interpolate | `jsx_attr` takes `STRING` or `{ expr }` |
+| `0303` an interpolation must contain an expression | `string_literal` requires an `expr` between the pieces |
 
-Seven are refused and are `spec/cases` that expect to be refused — an unterminated comment, a
-newline in a literal, a `case` after a `default`, three interpolations in places that do not
-interpolate. A refusal there proves nothing, since most of the 143 cases expecting one expect it for
-a *semantic* reason the grammar must still parse, so they are set aside rather than counted.
+The report sets those aside rather than counting them, because most of the 143 cases expecting a
+refusal expect it for a *semantic* reason the grammar must still parse, and being refused for the
+wrong reason looks identical. **These seven are not that**: each is refused by the rule the case is
+about, which is a stronger result than the report is willing to claim on its own.
 
 **Nothing else.** That is the first time the claim in `CONTRIBUTING` — that the spec is the source
 of truth — has been checked against the whole tree rather than against a list of samples.
+
+JSX was the last group to go. Its productions were read from `parse.wac` and unrunnable for a day;
+`[§jsx-text-is-not-wac-source]` needs a second lexer mode, which `tools/specparse.ts` now has.
 
 ## Done when
 

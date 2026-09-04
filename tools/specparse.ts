@@ -35,11 +35,11 @@
 //
 // ## Where it stands, 2026-09-04
 //
-//     1541/1569 files parse, 21 not attempted
+//     1562/1569 files parse
 //
-// The twenty-one were JSX and are attempted now. The rest of the difference is seven `spec/cases`
-// that expect to be refused. Nothing else in `packages`, `core`, `std`, `spec` or `tools` is outside
-// the grammar, which took ten productions the file had never had — `issues/lang/closed/0326a`.
+// The seven are `spec/cases` written to be refused, and each is refused by the rule its own header
+// is about. Nothing else in `packages`, `core`, `std`, `spec` or `tools` is outside the grammar,
+// which took ten productions the file had never had — `issues/lang/closed/0326a`.
 //
 // ## What it is not
 //
