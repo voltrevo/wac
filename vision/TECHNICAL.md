@@ -1053,6 +1053,20 @@ against one call. Eleven files here declare a union and fifteen use one in a typ
 rule is the difference between the error types this exercise has been arguing for and a spelling
 nobody would write twice.
 
+### `union<never, E>` has to reduce to `E`, and that is the same operation as a dead arm
+
+Found 2026-09-04, from `@/packages/gzip`. A stream over a value the program already holds cannot
+fail, and `AsyncGenerator<Y, R>`'s `R` is not optional — so it answers `Result<void, never>`, and a
+consumer declared over `union<E, Fault>` sees `union<never, Fault>` at that call site. If that does
+not reduce, every buffer-in caller in the tree answers a union with a member nobody can construct,
+and every `match` over one carries an arm that cannot run.
+
+Under the lowering above — a union is an enum whose variants each hold one member — reducing the
+union **is** deleting the variant, which is the operation `core/coroutine.wac` already asserts for
+`Step<never, Y, R>`. So this is not a second feature. It is the same one, needed by the part of the
+design that has the most callers, and the entry that describes it says it is *"asserted in one doc
+comment"*. `QUESTIONS.md`.
+
 ## `gen<T>` and `yield` lower to a struct with a resume tag — **the target runs; the transform is wacc's own**
 
 Same treatment as `union` above, and the same caveat: the source form does not parse today, the

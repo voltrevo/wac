@@ -652,6 +652,29 @@ at `Step<never, …>` two suffice. That is coherent only if a dead arm stays *le
 sentence above implies and does not say. If three arms are refused at the instantiation, a generic
 body cannot be written at all.
 
+**And a second site, which is what turns it from a coroutine detail into the rule error sets rest
+on.** Added 2026-09-04 from `@/packages/gzip`. A source that cannot fail still has to name a failure,
+because `AsyncGenerator<Y, R>`'s `R` is not optional — so `once(b)`, a stream over one value the
+program already holds, answers `Result<void, never>`. Every consumer's signature is
+`union<E, Fault>`, so at that call site it is **`union<never, Fault>`**, and unless that reduces to
+`Fault` every buffer-in caller in the tree answers a union with a member nobody can construct.
+
+`union<A, B>` lowers to an enum of one-field variants — `TECHNICAL.md` measures it — so *reduce the
+union* and *delete the arm* are **the same operation** as `Step<never, Y, R>` losing its `Waiting`.
+One rule, two sites, and only the first was written down:
+
+| | |
+|---|---|
+| `Step<never, Y, R>` | a match is exhaustive in two arms rather than three-with-a-dead-one |
+| `union<never, E>` | is `E`, and a caller does not handle an arm that cannot exist |
+
+That matters for the *argument* rather than the implementation. A feature justified by one design's
+convenience is easy to decline; a feature that error-set composition does not work without is not,
+and error sets are the thing this directory has changed most. It also sharpens the open part above:
+if a dead arm must stay legal for a generic body to be writable, then `union<E, Fault>` with `E`
+opaque needs the arm and `union<never, Fault>` must not — which is exactly the two-pass shape
+`generics.md` already has, arriving from a second direction.
+
 **A ninth contextual word.** `never` was missing from the keyword-cost table in this file. Measured:
 **1,882 grep hits and 12 in code**, in 8 files, two of them genuine variable names —
 `Pending<i64> never = core.sleepMillis(10000);` in `platform`'s wacland example and `i32 never` in a
