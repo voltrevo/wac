@@ -1,0 +1,101 @@
+// A query string, as parameters.
+//
+// **This is the first place in the tree that needs `T??`, and it needs it for a real reason rather
+// than to demonstrate that it exists.**
+//
+// A query has three states per name, not two:
+//
+//     ?a=1        the name is there, with a value
+//     ?a=         the name is there, with an empty value
+//     ?a          the name is there, with no value at all
+//     (absent)    the name is not there
+//
+// `a=` and `a` are different — the first says the value is empty and the second says there is no
+// value — and the standard keeps them apart because a server may treat them differently. So a
+// parameter's value is `u8[]?`, and looking one up answers `u8[]??`: **the outer absence is *no
+// such parameter*, the inner is *no value*.**
+//
+// Under a flattening `?` those two would arrive as one null and the API could not tell them apart.
+// `packages/server`'s `queryToJson` is what that costs today: it emits `"a": ""` for both spellings,
+// so a round trip through it loses the distinction the parser was careful to keep.
+
+import { Vec } from "core/vec.wac";
+import { decode as pctDecode } from "./percent.wac";
+
+export struct Param {
+  u8[] name;
+  /** Null when the name appeared with no `=` at all. */
+  u8[]? value;
+}
+
+export struct Query {
+  Vec<Param> params;
+
+  /**
+   * The first parameter with this name.
+   *
+   * `null` — not there. `Ok` holding `null` — there, with no value. `Ok` holding bytes — there,
+   * with that value, which may be empty.
+   */
+  u8[]?? get(const this, u8[] name) {
+    for (Param p in this.params.items()) {
+      if (bytesEq(p.name, name)) { return p.value; }
+    }
+    return null;
+  }
+
+  /** Whether the name appears at all, however it appears. */
+  bool has(const this, u8[] name) { return this.get(name) is not null; }
+
+  /**
+   * Every value for a repeated name, in order.
+   *
+   * `?a=1&a&a=` answers three elements: `1`, null, and empty. A caller that only wants the ones
+   * carrying a value filters, and the type makes it say so.
+   */
+  gen<u8[]?> void all(const this, u8[] name) {
+    for (Param p in this.params.items()) {
+      if (bytesEq(p.name, name)) { yield p.value; }
+    }
+  }
+}
+
+/**
+ * Parse `a=1&b&c=` — percent-decoding, and `+` meaning space.
+ *
+ * Those are the form-encoding rules rather than the URL ones, which is why this is here and not in
+ * the parser: `url.wac` parses a query, it does not interpret one. In the original this lived in
+ * `packages/server`, three packages away from the thing it is about, because the type it wanted to
+ * answer could not be written.
+ */
+export Query parseQuery(u8[] raw) {
+  Vec<Param> out = Vec<Param>.create();
+  i32 at = 0;
+
+  while (at <= raw.len()) {
+    i32 end = at;
+    while (end < raw.len() && raw[end] != '&') { end += 1; }
+
+    if (end > at) {
+      i32 eq = at;
+      while (eq < end && raw[eq] != '=') { eq += 1; }
+      // No `=` in the pair means no value — which is the whole reason `value` is nullable.
+      u8[]? value = eq < end ? formDecode(slice(raw, eq + 1, end)) : null;
+      out.push(Param(formDecode(slice(raw, at, eq)), value));
+    }
+
+    if (end >= raw.len()) { break; }
+    at = end + 1;
+  }
+  return Query(out);
+}
+
+/** Percent-decoding plus `+` meaning space, which is what a query string uses. */
+u8[] formDecode(u8[] s) {
+  u8[] plussed = u8[s.len()](fill: 0);
+  for (i32 i = 0; i < s.len(); i++) { plussed[i] = s[i] == '+' ? ' ' : s[i]; }
+  return pctDecode(plussed);
+}
+
+u8[] slice(u8[] s, i32 lo, i32 hi) { … }
+bool bytesEq(u8[] a, u8[] b) { … }

@@ -24,6 +24,10 @@ line after it comes back as cascade.
 So the table is what the tool found. The section after it is what is known to be behind those and
 has never been reported by anything, which is a different kind of claim and marked as one.
 
+**Writing more of the language moves things between the two.** `for … in` sat unreported through
+fifteen files because every one of them had something else wrong first; `url/query.wac` is the first
+file where a `for … in` comes before any other divergence, and the tool found it immediately.
+
 ## What the tool reports
 
     vision/core/coroutine.wac                      ^ expected '{', found ';'
@@ -40,9 +44,11 @@ has never been reported by anything, which is a different kind of claim and mark
     vision/packages/server/src/serve.wac           ^^^^^^^^^^ found 'Incomplete'
     vision/packages/stream/src/scalars.wac         ^^^^ expected '>', found 'void'
     vision/packages/stream/src/transform.wac       ^^^^ expected '>', found 'void'
+    vision/packages/url/src/query.wac              ^^ expected '=', found 'in'
+    vision/packages/url/src/url.wac                ^^^^^^ found 'create'
     vision/std/platform.wac                        ^^^^^ found 'async'
 
-Eight distinct constructs, in the order a parser would meet them:
+Nine distinct constructs, in the order a parser would meet them:
 
 | construct | example | where it bit |
 |---|---|---|
@@ -54,6 +60,7 @@ Eight distinct constructs, in the order a parser would meet them:
 | the `gen` return form | `gen<i32> void scalars(…)` | `stream` ×2 |
 | `async` as a member modifier | `async Read recv(this);` | `std/platform` |
 | `try` in expression position | `writeOut(try parse(src))` | `json/json` |
+| `for … in` | `for (Param p in q.params.items())` | `url/query` |
 
 ## What is behind them, which nothing has reported
 
@@ -64,7 +71,8 @@ are here because they are written in the tree, not because anything found them:
 - `schedule this.pending.push;` — `std/platform`, past the `async` refusal
 - `defer { conn.close(); }` — `server/main` and `core/ticket`
 - `const i64 MAX_BODY = 1 << 20;` at module scope — three packages
-- `T??` and `null as Node?` — `TECHNICAL.md` only, no package has needed one yet
+- `T??` and `null as Node?` — `url/query.wac`, where a parameter is absent, present with no
+  value, or present with a value, and the standard keeps the last two apart
 - `fn<void()>` as a type — `core/ticket`, replacing today's `fn[void()]`
 - `\{…}` interpolation inside a string — `server/main`
 

@@ -1,0 +1,90 @@
+// A URL, per the WHATWG standard.
+//
+// The parsing is a state machine transcribed from the standard and none of it changes — the
+// standard did not move because the language did. What changes is the three places this file says
+// *none* and has to spell it as something else.
+
+import { Result } from "core/result.wac";
+import { Vec } from "core/vec.wac";
+import { Host } from "./host.wac";
+
+/**
+ * `query` and `fragment` are null for *none*, which is not the same as empty: `http://h/?` has an
+ * empty query and `http://h/` has none, and they serialize differently. That distinction was
+ * already right and is why `?` was already in this struct.
+ *
+ * `port` now says the same thing the same way. It was `i32` with `-1` meaning none — a value
+ * outside the range of ports, chosen because there was nothing else to write, and one that a
+ * caller comparing `a.port < b.port` sorts before every real port.
+ *
+ * A path is either a list of segments or one opaque string. `a:b` has the opaque path `b` and
+ * cannot be resolved against — the standard's "cannot-be-a-base-URL" — and the flag is what stops
+ * `..` doing anything to it.
+ */
+export struct Url {
+  u8[] scheme;
+  u8[] username;
+  u8[] password;
+  Host? host;
+  i32? port;
+  Vec<u8[]> path;
+  u8[] opaquePath;
+  bool hasOpaquePath;
+  u8[]? query;
+  u8[]? fragment;
+
+  static Url create() {
+    return Url(u8[0](), u8[0](), u8[0](), null, null, Vec<u8[]>.create(),
+               u8[0](), false, null, null);
+  }
+
+  /**
+   * The port that is actually used: the one written, or the scheme's, or none.
+   *
+   * Two absences of different meaning, resolved in one line. The original could not write this at
+   * all — both halves were `-1`, so the answer was `-1` and the caller could not tell *no port for
+   * this scheme* from *this scheme has no default*, which is the difference between `mailto:` and a
+   * bug.
+   */
+  i32? effectivePort(const this) {
+    return this.port is not null ? this.port : defaultPort(this.scheme);
+  }
+}
+
+/** Whether `s` is one of the six special schemes, which get slash and host handling. */
+export bool isSpecial(u8[] s) { … }
+
+/** The port omitted when serializing, or none if the scheme has not got one. */
+export i32? defaultPort(u8[] s) {
+  if (eqStr(s, "http")  || eqStr(s, "ws"))  { return 80; }
+  if (eqStr(s, "https") || eqStr(s, "wss")) { return 443; }
+  if (eqStr(s, "ftp"))                      { return 21; }
+  return null;
+}
+
+/** What a URL can fail to be. */
+export enum UrlFault {
+  NoScheme,
+  BadScheme,
+  BadHost,
+  BadPort,
+  BadIpv4,
+  BadIpv6,
+  /** A relative reference with no base to resolve it against. */
+  NoBase
+}
+
+/**
+ * Parse `input`, resolving against `base` if it is relative.
+ *
+ * The original answers `Url?`: one null for eight different failures, in a parser transcribed from
+ * a standard that names every one of them. A caller could not report which, and the test suite had
+ * to assert *not a URL* where the standard says *the host is not a valid IPv6 address*.
+ */
+export Result<Url, UrlFault> parseUrl(u8[] input, Url? base) { … }
+
+export u8[] serialize(Url url) { … }
+export u8[] pathname(Url url) { … }
+export u8[] hostname(Url url) { … }
+
+bool eqStr(u8[] a, string b) { … }
