@@ -278,7 +278,7 @@ same check found for `Sys`: `vision/core` was written alongside the pages and tr
 was invented in the packages exercise and contradicts them in seventeen places. The difference is not
 care, it is whether the two halves were ever in the same conversation.
 
-## Three projections examined, three wrong in a different way, and the count is why
+## Four projections examined, four wrong in a different way, and the count is why
 
 The seven were derived from counting the host's fifty capabilities and finding five groups. That
 argument is about *how many* groups there are. It says nothing about what belongs in one, and each
@@ -301,11 +301,23 @@ that asks for one.
 family as `Env`'s `arg` and `cwd`, and it is on `Proc` because the host groups it there.
 
 The other four, checked against the host rather than waiting for a consumer: `Env` is complete, four
-of four. `Clock` and `Random` are single capabilities raised to types. And **standard input has no
-projection at all** — `readStdin` is a host capability that `packages/ssh` and four `platform` files
-use, and none of the seven had it.
+of four. `Random` is a single capability raised to a type — `randomBytes`, and there is no second
+one. And **standard input has no projection at all** — `readStdin` is a host capability that
+`packages/ssh` and four `platform` files use, and none of the seven had it.
 
-**That last one names the root cause, which is why all four defects are different.** The seven do not
+**`Clock` was in that sentence too, as another single capability raised to a type, and it is wrong.**
+The host has three time capabilities — `nowMillis`, `monotonicNanos` and `sleepMillis` — and the
+projection has the first two. Corrected 2026-09-04 by `wactest`'s `within.wac`, which needed the
+third; the bounded-wait entry below has what that cost and the second, larger thing missing from the
+same surface.
+
+So this check found four defects on its first pass and a fifth on its second, in a projection it had
+already cleared. **A capability the host groups with two others is exactly the kind a two-of-three
+count reads as complete**, and *single capability raised to a type* is a shape that stops you
+counting — which is worth more than the fix, because `Random` really is one and the sentence looks
+the same for both.
+
+**Standard input names the root cause, which is why the defects are all different.** The seven do not
 group by the same thing:
 
     Files, Net, Proc    by resource
@@ -1374,7 +1386,7 @@ a program's own shape. Nothing else in the proposal wants one, and one consumer 
 a whole new kind of capability — but the consumer is the test runner, which is the program that most
 has to know what it is calling.
 
-## A machine you can step, and no way to wait for a bounded time
+## A machine you can step, and the bounded wait the rewrite dropped
 
 `vision/packages/wactest/src/within.wac` is the first code in this tree to drive a coroutine by hand,
 which is what `core/coroutine.wac` describes the operator as being for: *"the machine underneath is
@@ -1396,23 +1408,52 @@ than the doc comment asserting it.
     advance(true)    wait on the world — unbounded, so it blows through the deadline
     advance(false)   poll — so the driver spins the CPU for the whole bound
 
-A deadline can use neither, so the file written to replace a busy retry is a busy retry. The bound
-has to be enforced at the point where the program stops running, and that point takes a `bool` where
-it needs a duration — or needs the host told *wake me when this moves or when this many nanoseconds
-have passed*, which is `poll` with a timeout and is what every event loop under us already has.
+A deadline can use neither, so the file written to replace a busy retry is a busy retry.
 
-So the question is what shape it takes. `advance(i64 waitNanos)` with `0` for the poll is the
-smallest change and makes the common call read as a number rather than as `false`. A separate
-`advanceUntil` keeps `advance` as it is and doubles the driver interface. Or the deadline is not a
-ticket concern at all and belongs to whatever *owns* the drain loop — which is the reading that fits
-`schedule` and `drain`, and would mean `within` is written against the scheduler rather than against
-the machine.
+**This was first written up as a missing language feature. It is not — it is a capability the
+rewrite dropped**, and the correction is the whole value of the entry. `std/platform.wac` has
+`fn[i32(i32[], i32)] waitAny`, whose second argument is precisely the setting `advance` lacks:
 
-**Worth noting what this does not need.** No new capability: `Clock` already exists, the driver
-already has one, and the deadline arithmetic is ordinary code. The missing thing is a single argument
-on one funcref, which is a small enough hole that it is worth asking why nineteen packages did not
-find it — and the answer is that they all `await`, and `await` is the construct that gives the
-question away.
+    waitAny(ids, -1)     as long as it takes
+    waitAny(ids, 0)      which is ready right now
+    waitAny(ids, 500)    bounded — answers -1 when the time ran out
+
+One integer, three settings. `advance` is a `bool`, so it has the two ends and not the middle. The
+word `waitAny` appears exactly once under `vision/`, inside a `TECHNICAL.md` quotation: the primitive
+is not narrowed, it is gone.
+
+**And the shipped file carries the argument vision would need**, with a rejected alternative attached:
+
+> **Returns -1 when the time ran out** … it is why there is no `recvWithin`. A deadline belongs to
+> the wait rather than to each capability, so this one parameter bounds `connect`, `accept`,
+> `readFile` or a child's `exitCode` without any of them knowing about it.
+
+> The deadline **costs nothing**: no opcode, no slot, no ticket to dispose of, because
+> `Atomics.wait` takes a timeout and the wait is already in this worker's own memory. An earlier
+> design passed a timer ticket in the list instead; it worked, and every caller had to remember to
+> cancel the loser or lose a slot for good.
+
+So `advance(i64 waitNanos)` is not a proposal, it is a restoration, and the only genuinely open parts
+are the unit and whether `-1` or a separate call means *unbounded*.
+
+**It is the second thing missing from the same surface**, which is what makes it a pattern rather
+than an oversight. `Clock` here is `nowMillis` and `monotonicNanos`; the host's third time capability
+is `sleepMillis`, and the projection does not have it. The shipped `waitForPortWithin` sleeps 5ms
+between attempts and gets a deadline loop that does not spin. `within` has neither the sleep nor the
+bounded wait, so spinning is not a choice it made.
+
+**Which is a fifth instance of the projections finding, arriving by a different route.** The entry
+above has `Files` short by two methods, `Net` short by a shape, `Proc` short by its purpose, and
+standard input with no projection at all — all four found by giving a projection a consumer. This one
+was not: no consumer asked for `sleepMillis` or for a bounded `advance`, because nineteen packages
+all `await`, and `await` is the construct that hides the question. It was found by asking what the
+*host* has that the projection does not — the same check `Files` needed and the only one that does
+not wait for somebody to want the missing thing.
+
+The narrowing also reads as an improvement at the point it is made. `advance(bool)` is more readable
+than `advance(i32)`, and a `bool` is exactly the right type for a two-state question. Nothing at the
+call site says the shipped version had three states; the argument for the third is four screens away
+in the file being replaced.
 
 **And `advance`'s own comment overstates it.** *"Answers whether anything moved, which is what lets a
 driver tell not yet from never."* One `false` is *not yet*. *Never* is an unbounded run of them, and

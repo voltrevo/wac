@@ -11,9 +11,13 @@
 // > failed syscall.
 //
 // `waitForPort(cli, host, port, tries)` bounds itself by dialling a fixed number of times, and the
-// header is honest that a count is the wrong unit. The reason it is a count is that a wac program
-// has no way to say *do this, and stop if it takes longer than half a second*: an `await` runs to
-// completion or traps, and there is nothing between.
+// header is honest that a count is the wrong unit. (`waitForPortWithin` beside it *does* take a
+// deadline, sleeping 5ms between attempts — so the shipped package has both, and the heading
+// describes only the first of them.)
+//
+// What neither of them does is bound a *single* operation. Both bound a retry loop, which works
+// only because `connect` to a refused port fails immediately; an operation that blocks would block
+// through the deadline. Under `await`, which runs to completion or traps, there is nothing between.
 //
 // `coroutine` is meant to be the thing between. `core/coroutine.wac`: *"the machine underneath is
 // reachable with the `coroutine` operator for the rare code that drives one by hand."* Nothing has
@@ -109,24 +113,53 @@ export Result<Result<Socket, NotGranted>, TimedOut> dialWithin(
   return within(clock, millis, coroutine net.connect(host, port));
 }
 
-// ## 1. `advance` has no bounded form, so a deadline has to busy-poll
+// ## 1. `advance` kept two of the shipped primitive's three settings, and the bound was the third
 //
 // `TicketBase.advance(bool block)` — `block` *"says whether to wait on the world rather than only
-// poll it"*. Those are the only two settings there are. A driver with a deadline can use neither:
+// poll it"*. Those are the only two settings there are, and a driver with a deadline can use
+// neither: `advance(true)` waits unbounded and blows through the deadline it was given,
+// `advance(false)` polls and spins the CPU for the whole bound. So the file written to replace a
+// busy retry is a busy retry.
 //
-//   - `advance(true)` waits on the world with no bound, so a `within(clock, 500, …)` whose ticket
-//     is a socket read on a peer that never answers blocks past 500ms and past everything else.
-//   - `advance(false)` polls, so the loop above spins the CPU for the whole bound.
+// **The first draft of this note called that a missing language feature, and it is not.** It is a
+// capability vision dropped. `std/platform.wac` has `fn[i32(i32[], i32)] waitAny`, and the second
+// argument is the setting `advance` does not have:
 //
-// **So the file that exists to replace a busy retry is a busy retry**, and the reason is one
-// argument short: `advance` takes a `bool` where a deadline needs a duration, or needs the host to
-// be told *wake me when this moves or when this many nanoseconds have passed*, which is `poll` with
-// a timeout and is what every event loop underneath us already has.
+//     waitAny(ids, -1)     as long as it takes
+//     waitAny(ids, 0)      which is ready right now
+//     waitAny(ids, 500)    bounded — answers -1 when the time ran out
 //
-// This is not an argument against `coroutine`. The operator did exactly what it is described as
+// One integer, three settings; `advance` is a `bool`, so it has the ends and not the middle. And
+// the word `waitAny` appears exactly once anywhere under `vision/`, in a `TECHNICAL.md` quotation.
+// The whole primitive is gone.
+//
+// **The shipped file also has the argument vision would need for it**, which is the part worth
+// keeping:
+//
+// > **Returns -1 when the time ran out** … it is why there is no `recvWithin`. A deadline belongs
+// > to the wait rather than to each capability, so this one parameter bounds `connect`, `accept`,
+// > `readFile` or a child's `exitCode` without any of them knowing about it.
+//
+// > The deadline **costs nothing**: no opcode, no slot, no ticket to dispose of, because
+// > `Atomics.wait` takes a timeout and the wait is already in this worker's own memory. An earlier
+// > design passed a timer ticket in the list instead; it worked, and every caller had to remember
+// > to cancel the loser or lose a slot for good.
+//
+// That is a settled design with a rejected alternative attached, and the rewrite replaced it with a
+// `bool` without noticing there was a decision in it. **`advance(i64 waitNanos)` is not a proposal,
+// it is a restoration** — the only open part is the unit and whether `-1` or a separate call says
+// *unbounded*.
+//
+// It is also the second thing dropped from the same surface. `Clock` here is `nowMillis` and
+// `monotonicNanos`; the host's third time capability is `sleepMillis`, and it is not in the
+// projection. `waitForPortWithin` in the shipped `daemon.wac` sleeps 5ms between attempts and gets
+// a deadline loop that does not spin — `within` has neither the sleep nor the bounded wait, which
+// is why it has no choice but to spin.
+//
+// None of this is an argument against `coroutine`. The operator did exactly what it is described as
 // doing — the machine came back unstarted, `step` drove it, `never` removed the arm. What it cannot
-// do is the thing anyone would reach for it *for*, because the bound has to be enforced somewhere
-// and the only place it can go is the blocking call.
+// do is the thing anyone would reach for it *for*, because the bound has to be enforced where the
+// program stops running, and that is the argument that was thrown away.
 //
 // ## 2. `advance`'s own comment claims something it cannot deliver
 //

@@ -106,12 +106,25 @@ makes it.
 **And the file is still a busy retry, which is what it exists to replace.**
 `TicketBase.advance(bool block)` has two settings and a deadline can use neither: `advance(true)`
 waits on the world unbounded, so it blows through the deadline it was given, and `advance(false)`
-polls, so the loop spins for the whole bound. The bound has to be enforced somewhere and the only
-place it can go is the blocking call, which takes a `bool` where it needs a duration.
+polls, so the loop spins for the whole bound.
 
-So the finding is not about `coroutine`. It is that **the proposal has a machine you can step and no
-way to wait for a bounded time**, and every event loop underneath us has had `poll` with a timeout
-since before any of this. Promoted to [../../QUESTIONS.md](../../QUESTIONS.md).
+**That was written up as a missing language feature and it is a capability the rewrite dropped**,
+which is the actual finding. `std/platform.wac` has `fn[i32(i32[], i32)] waitAny`, and its second
+argument is the setting `advance` is short of — `-1` for as long as it takes, `0` for a poll, and a
+positive value for a bounded wait that answers `-1` when the time ran out. One integer, three
+settings, against a `bool` with two. The word `waitAny` occurs once anywhere under `vision/`, in a
+quotation: the primitive is not narrowed, it is gone, and with it the paragraph explaining why the
+deadline belongs to the wait rather than to each capability — *"this one parameter bounds `connect`,
+`accept`, `readFile` or a child's `exitCode` without any of them knowing about it"*, at no cost in
+opcodes, slots or tickets, with an earlier timer-ticket design recorded as rejected.
+
+So `advance(i64 waitNanos)` is a restoration and not a proposal, and `Clock` is missing
+`sleepMillis` for the same reason — the shipped `waitForPortWithin` sleeps 5ms between attempts and
+gets a deadline loop that does not spin, while `within` has neither the sleep nor the bounded wait.
+Two capabilities gone from one surface. Promoted to [../../QUESTIONS.md](../../QUESTIONS.md), where
+it lands as a fifth instance of the projections finding — and the first found by asking what the host
+has that the projection does not, rather than by giving a projection a consumer. No consumer would
+have found it: nineteen packages `await`, and `await` is the construct that hides the question.
 
 `advance`'s comment also claims more than it can deliver — *"answers whether anything moved, which is
 what lets a driver tell not yet from never"* — and one `false` is *not yet*. Telling it from *never*
