@@ -378,7 +378,7 @@ struct Slot {
 
 void example() {
   Slot s;
-  Coroutine<Stub, never, void> c = coroutine s.tick();
+  Coroutine<TicketBase, never, void> c = coroutine s.tick();
 
   s.n;               // 0
   c.step();          // Waiting
@@ -396,7 +396,7 @@ void example() {
 
 ```wac
 void example() {
-  Coroutine<Stub, never, void> c = coroutine tick();
+  Coroutine<TicketBase, never, void> c = coroutine tick();
 
   match (c.step()) {
     Waiting(t): { t.settled(); }     // true
@@ -418,7 +418,7 @@ async void tick() {
 
 ```wac
 void example() {
-  Coroutine<Stub, never, void> c = coroutine outer();
+  Coroutine<TicketBase, never, void> c = coroutine outer();
 
   c.step();          // Waiting
   c.step();          // Done
@@ -448,7 +448,7 @@ void example() {
   Ticket<i32> t;
   t.resolve(2);
 
-  Coroutine<Stub, i32, void> c = coroutine counter(t);
+  Coroutine<TicketBase, i32, void> c = coroutine counter(t);
 
   c.step();          // Yielded(1)
   c.step();          // Waiting
@@ -473,7 +473,7 @@ void example() {
   Ticket<i32> t;
   t.resolve(21);
 
-  Coroutine<Stub, never, i32> c = coroutine doubled(t);
+  Coroutine<TicketBase, never, i32> c = coroutine doubled(t);
 
   c.step();          // Waiting
   c.step();          // Done(42)

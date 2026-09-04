@@ -29,9 +29,11 @@ what lets a fake `Sys` add a kind without editing `core`; a closed enum of kinds
 
 ## The name for the erased ticket
 
-`Ticket<T>` inherits something carrying identity and settledness but no value. `Stub` is the best
-candidate so far — a ticket stub is the counterfoil, which is exactly identity without the
-goods — but it collides with test stubs and RPC stubs in most readers' heads.
+`Ticket<T>` inherits an empty base: the value type is rubbed out and what remains is `advance` and
+`settled`. `TicketBase` is accurate and dull. `Stub` points the wrong way — a stub is the half you
+keep, not the whole thing with a field removed. `Waitable` is worse than it looks, since `wait`
+answers `T` and the erased type is the one thing you cannot wait on. What the erasure preserves is
+*driving*, and no candidate naming that is a word worth adding.
 
 ## Whether a ticket can become undeliverable
 

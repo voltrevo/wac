@@ -40,3 +40,15 @@ default: { … }        // there is no shape here at all
 
 Reusing `_` for both would be a pun on the payload wildcard rather than a generalisation of it, and
 the two mean different things in the same arm.
+
+## References are comparable but not hashable
+
+`is` on two references is `ref.eq` and costs nothing. Identity hashing is not free, and the language
+does not give it to every reference.
+
+A moving collector invalidates anything derived from an address, and wasm GC exposes no object header
+to stash a lazy hash in — so the only portable implementation is a field assigned at allocation.
+Universal would put a word on every object, which is half again the size of a `Point { i32 x, i32 y }`.
+
+A type that wants to be a hash key carries the field itself.
+
