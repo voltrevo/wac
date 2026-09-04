@@ -1,0 +1,65 @@
+// Running something, with less authority than you have.
+//
+// This is the one place in the tree where authority is **handed on** rather than held, and it is
+// where "authority is a value" meets the thing it cannot cross.
+//
+// ## What the real platform does, which is already right
+//
+// `std/platform.wac` takes grants as bit flags and says why they are a request:
+//
+//   > The host intersects them with its own grants, so these are a request rather than an
+//   > instruction and a parent can never widen what it was given.
+//
+// That property is the whole of capability attenuation and it is already enforced. Nothing in this
+// file improves on it.
+//
+// ## The part vision changes, and the part it cannot
+//
+// Within one instance, authority is a value: a function that was handed a narrower `Sys` cannot
+// reach past it, and that is checked by the type rather than intersected by a host.
+//
+// **Across a spawn it is not, and cannot be.** `std/platform.wac`: *"A spawned child is a separate
+// instance with its own memory."* A reference does not cross an instance boundary, so a `Sys` value
+// cannot be handed to a child — what crosses is a description of one. The bitfield is not a design
+// compromise, it is the serialised form of a capability, and any model in which authority is a
+// value needs a second thing that is the wire format of that value.
+//
+// `SHOWCASE.md` already writes the second thing — `sys.spawn(wasm, [], [Grant.Read])` — and nowhere
+// says it is a different kind of thing from the `Sys` two lines above it. That is the gap: the two
+// look alike and only one of them can be sent.
+
+import { Result, Bytes, Vec } from "core";
+import { Sys, NotGranted } from "std";
+
+/**
+ * What a child may do — the serialisable form of authority.
+ *
+ * An enum rather than bit flags because a caller writes what it means and a `match` over it is
+ * checked, and because adding a member does not need a `GRANT_ALL` kept in step by hand — which
+ * `std/platform.wac` names as the cost of the fourth spelling.
+ *
+ * There is deliberately nothing for standard input and output. A child always has those; they are
+ * how a parent talks to it at all, and they reach nothing the parent did not hand over.
+ */
+export enum Grant {
+  Read,       // readFile, stat, readDir, openInput on a path
+  Write,      // writeFile, mkdir, remove, rename, openOutput to a path
+  Net,        // the child's own sockets, not the parent's
+  Env,        // env, which reports every variable unset without it
+  Run         // exec — the one authority the narrowing exists for
+}
+
+/**
+ * Start `wasm` with at most `want`.
+ *
+ * **At most.** The host intersects `want` with what this program holds, so asking for `Run` from a
+ * program that has not got it is not an error and not a refusal — it is a child without `Run`. A
+ * request rather than an instruction, which is what makes a chain of spawns monotonically narrowing
+ * however careless the middle of it is.
+ */
+export async Result<Child, NotGranted> spawn(Sys sys, Bytes wasm, Vec<Bytes> args, Vec<Grant> want) { … }
+
+export struct Child {
+  async Result<i32, NotGranted> exit(this);
+  async Result<void, NotGranted> send(this, Bytes bytes);
+}

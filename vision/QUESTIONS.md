@@ -271,3 +271,29 @@ field, a type argument and a `const`-declared return. A laundered `const` is a w
 laundered `secret` is a key in a log line. **So it is worth having and not worth having before
 0315a is fixed** — a taint that leaks is worse than no taint, because it is believed.
 
+## What a capability looks like when it has to be sent
+
+Within one instance, authority being a value does real work: a function handed a narrower `Sys`
+cannot reach past it, and the type says so. **Across a spawn it cannot be a value at all** —
+`std/platform.wac` is explicit that *"a spawned child is a separate instance with its own memory"*,
+and a reference does not cross an instance boundary.
+
+So `std`'s grant bitfield is not a compromise. It is the serialised form of a capability, and a model
+where authority is a value needs a second thing that is the wire format of that value.
+`SHOWCASE.md` already writes both and does not distinguish them:
+
+```wac
+auto child = try await sys.spawn(wasm, [], [Grant.Read]);
+```
+
+`sys` is a capability, `[Grant.Read]` is a description of one, they sit two words apart, and only the
+second can be sent.
+
+Open: whether the grant list is serialised by the compiler, by `bindgen`, or by hand; whether a host
+that meets an unknown member refuses or drops it; and what happens when parent and child were built
+against different versions of it. A bitfield answers all three by being a number. **Dropping an
+unknown member** is the tempting answer and is the one that silently narrows without reporting it.
+
+Same boundary as `design/lang/0015` from the other side — that asks what a *type* may cross into a
+module loaded at runtime, this asks what an *authority* may. Both answers are "not a reference".
+
