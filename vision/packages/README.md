@@ -195,7 +195,7 @@ the *harm*. Every other finding here is one or the other and this is the first t
 
 **A proposed type can be declined, and the fifteenth package is the first to do it.** `gzip`'s
 window meets `Slice<T>` in the one loop where it loses: a DEFLATE match is 3 to 258 bytes and mostly
-short, `../bench/slicecost.wac` prices a fresh view at 2.6 ns, and the shipped `Window` had already
+short, `../bench/slicecost.wac` prices a fresh view at 2.6 ns on the v8 host, and the shipped `Window` had already
 measured the same thing from the other side — wrapping that loop in a `Buf` cost 14-23%. The rule
 that falls out is general: **a view for what leaves, indices for what stays.** And taking the copy
 out of the one call where a view *does* pay produced a bug — a view of a buffer that is then

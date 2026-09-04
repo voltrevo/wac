@@ -26,6 +26,11 @@
 //
 // ## What it answered, on the v8 host, 2026-09-04
 //
+// **One host, and the same caveat `slicecost.wac` states.** `native/wasmtime` is not built in this
+// checkout, so every figure below is one engine's allocator. A different collector moves the cost of
+// a box and does not move the shape — the shape being that a `null` costs nothing and a value costs
+// one allocation, which is a property of the representation rather than of the engine.
+//
 //     calls 4194304, best of 3, milliseconds
 //                  hit     miss
 //     sentinel      77      145

@@ -840,7 +840,7 @@ differently cannot be composed without paying.**
 `Random.fill`, `Socket.send`, `Read.Data` — and that is a decision rather than a sweep:
 
 - **`Bytes` everywhere** is consistent and costs a view per call at a boundary that is often
-  per-line. `../bench/slicecost.wac` puts that at 2.6 ns, which is nothing against I/O and not
+  per-line. `../bench/slicecost.wac` puts that at 2.6 ns on the v8 host, which is nothing against I/O and not
   nothing against `Out.write` in a loop.
 - **`u8[]` everywhere** makes the capability surface the *owning* type and pushes the view to the
   parsers, which is where `slice.wac`'s argument for it actually lives.
@@ -1090,7 +1090,7 @@ an allocation per non-null value."* Measured in [`bench/nullablecost.wac`](bench
     nullable      83      146
     again         78
 
-**1.4 ns a box, and 0 ns when the answer is `null`.** The asymmetry is the part worth having,
+**1.4 ns a box on the v8 host, and 0 ns when the answer is `null`.** The asymmetry is the part worth having,
 because it is the opposite way round from the intuition: a search that *finds* something pays, a
 search that misses does not. So the change puts one allocation on the common path of the most-called
 function in the string API. Eight percent of a short hit is small — but it is a per-call allocation
@@ -1191,7 +1191,7 @@ is the whole reason `union<RequestFault, BadStatus>` can compose and an enum can
 already priced the mechanism a union needs, and priced it as the more expensive one.
 
 Two things follow that the naming question does not reach. **The cost is real and small** — the same
-file measures a 20-variant tag chain at 2.5 ns and a payload-less construction at 0.9 ns over an
+file measures a 20-variant tag chain at 2.5 ns and a payload-less construction at 0.9 ns, v8 again over an
 integer, issues 0030 and 0031 — so this is a few nanoseconds an arm, not a reason to choose. **And
 the tag is load-bearing for something else**: the spec says it *"is also why exhaustiveness is
 checkable at all"*, which for a union is still true by a different route, since the members are
@@ -3165,8 +3165,22 @@ read. Here the paragraph is *in the same repository, written by the same exercis
 — and the number travelled while the sentence stayed home. A qualification survives exactly one hop
 unless somebody carries it, and nothing carries it.
 
-**The general form is worth more than the fix**, because it says where to look next: any number in
-these pages that came from a measurement has a method, and the method is at the measurement. There
-are two benches and a dozen counts taken by grep; the counts have their method attached because this
-document kept being wrong about them, and the benches' method is attached at the bench. Nothing
-checks that a citation carries what it needs — and the citation is where a reader meets the number.
+**Then swept, since the general form said where to look.** Every measured quantity cited outside
+`bench/` — 17 of them across the pages and the code:
+
+    2.6 ns, 0.5 ns          from `slicecost.wac`     4 citations, none carried the host
+    1.4 ns, 0 ns, 2.5 ns,   from `nullablecost.wac`  2 citations, none carried the host, and the
+    0.9 ns                                           bench did not state the caveat at all
+    5 ms, 8 MiB, 2 ms       quoted from the shipped tree, and all three name their source
+
+So the ns-figures were the whole of it, six of six unqualified, and the second bench had not even
+written its own caveat down — `slicecost.wac` says *"a different collector could move the allocation
+number and would not move the shape"* and `nullablecost.wac` says only *"on the v8 host"* in a
+heading. Both now say it and all six citations carry it.
+
+**And the three that were already right are the ones quoted from elsewhere.** `5 ms`, `8 MiB` and the
+`2 ms` drift each arrive with *"the shipped `waitForPortWithin` sleeps"*, *"the shipped `Captured` has
+a cap"*, *"the bench states"* — a citation to somebody else's measurement carries its source because
+there is no other way to write it, and a citation to your own does not because there is. That is the
+whole mechanism, and it predicts that this will happen again to the next number this directory
+measures itself.
