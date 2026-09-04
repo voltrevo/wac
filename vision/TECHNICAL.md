@@ -947,3 +947,90 @@ apart again.
 
 **Not yet.**
 
+
+## `union<A, B>` lowers to an enum of one-field variants — **done**, in the sense that the target runs
+
+The marker needs its usual care: the *source* form does not parse today, and the **target** below is
+today's wac, checked and run on 2026-09-04 through `bootstrap/ts/ask_wacc.ts`. That is what makes
+this entry worth having — `union` has looked like a type-system feature all week and the measurement
+says it is a declaration form and one coercion.
+
+**What is written:**
+
+```wac
+export struct Truncated { i32 at; }
+export struct LeadingZero { i32 at; }
+export union<Truncated, LeadingZero> RlpFault;
+
+Result<Item, RlpFault> decode(Bytes b) {
+  …
+  return Err(LeadingZero(at));          // an `Err` of a *member*, not of the union
+}
+```
+
+**What it becomes:**
+
+```wac
+enum RlpFault { AsTruncated(Truncated v), AsLeadingZero(LeadingZero v) }
+
+Res<Item, RlpFault> decode(Bytes b) {
+  …
+  return Res.Err(RlpFault.AsLeadingZero(LeadingZero(at)));
+}
+```
+
+`probe() = 207` for the two-member case, `1004` for the same inside a generic `Result<T, E>`; zero
+parse errors and zero type errors on both.
+
+### Three rules, and only the second is new
+
+1. **The declaration** generates an enum with one unary variant per member. The variant names are
+   compiler-internal and never written — `AsLeadingZero` above is a name invented for the example,
+   and the fact that no natural one exists is the reason the source form does not name them either.
+2. **Injection is implicit.** A value of a member type, in a slot whose type is the union, is wrapped.
+   `Err(LeadingZero(at))` against `E = RlpFault` becomes `Err(RlpFault.AsLeadingZero(…))`. **This is
+   the whole of what the language adds** — everything else here compiles today — and it is the same
+   coercion `T` to `T?` already has, at a slot rather than at a nullable.
+3. **`Err(is Corrupt):` is `case AsCorrupt(c):`.** Matching a member by type is matching its variant,
+   and the binding that `../QUESTIONS.md` records as impossible — *"a payload matched by type does
+   not bind"* — is not impossible in the target: `case AsCorrupt(c)` binds. So the missing binding is
+   a property of the **source syntax** rather than of the lowering, which narrows that question to a
+   spelling.
+
+### Nesting works, and it settles the flattening question
+
+`union<SourceFailed, Corrupt>` where `Corrupt` is itself a union becomes an enum whose variant
+carries an enum. Measured:
+
+```wac
+enum Corrupt { AsBadMagic(BadMagic v), AsChecksum(ChecksumMismatch v) }
+enum Fault   { AsSourceFailed(SourceFailed v), AsCorrupt(Corrupt v) }
+
+match (f) {
+  case AsSourceFailed(s): …
+  case AsCorrupt(c):      …      // all of Corrupt's members, in one arm
+}
+```
+
+`probe() = 20`, constructed as `Fault.AsCorrupt(Corrupt.AsBadMagic(BadMagic(3)))`.
+
+That is exactly what `@/packages/box/src/gunzip.wac` wants — one sentence for the whole `Corrupt`
+group — and it is the argument against flattening made concrete: under a flattening lowering
+`union<A, union<B, C>>` is `union<A, B, C>`, `AsCorrupt` does not exist, and the applet is back to
+eight arms. The nesting lowering is the one that preserves the grouping, and it is also the simpler
+one to implement.
+
+### What the lowering does not answer
+
+**Two unions sharing a member** are two enums with two wrappers, so an `A` injects into either by
+slot and a `union<A,B>` is not assignable to a `union<A,B,C>`. Whether it should be is a subtyping
+question the lowering does not force; nothing in this directory needs it.
+
+**A member appearing twice** — `union<A, A>` — is two variants of one payload type, which the
+lowering builds and no rule refuses. Worth refusing at the declaration.
+
+**And the cost of not having it, from the same programs.** `Res.Err(RlpFault.AsLeadingZero(
+LeadingZero(at)))` against `Err(LeadingZero(at))`: three constructor calls and one invented name,
+against one call. Eleven files here declare a union and fifteen use one in a type, so the injection
+rule is the difference between the error types this exercise has been arguing for and a spelling
+nobody would write twice.

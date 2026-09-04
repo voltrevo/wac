@@ -796,6 +796,26 @@ directory exists to argue for, so a desugarer would compile the half of the corp
 about the proposal. Worth knowing before starting, and it is the argument for spending the next
 effort on `union` rather than on a rewriter.
 
+### And `union` turned out to be a desugaring too
+
+That recommendation was taken the same day and the answer is in `TECHNICAL.md`: **`union<A, B>`
+lowers to an enum of one-field variants, and the target compiles and runs today** — measured, zero
+type errors, including nested inside a generic `Result<T, E>` and including a union whose member is
+a union.
+
+Which moves it onto this table. Of the three rules the lowering needs, two exist:
+
+| rule | today |
+|---|---|
+| the declaration generates one unary variant per member | a source form, mechanical |
+| **injection: a member value in a union slot is wrapped** | the only thing the language adds |
+| `Err(is Corrupt):` is `case AsCorrupt(c):` | matching a variant, which works |
+
+So `union` is a declaration form and one coercion — the same coercion `T` to `T?` already has,
+applied at a slot. That is much smaller than it has read all week, and it makes the ordering
+`union`, then generators, then a rewriter: the first is 15 files of type uses and 11 declarations,
+and it is the one whose implementation is bounded.
+
 **And its first hits were all false**, which is worth recording because a clean run had never been
 tested. `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])]
 write)` three times, and the pass asked for all three to be rewritten as `fn<…>` — which would
