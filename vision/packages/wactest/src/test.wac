@@ -16,7 +16,7 @@
 
 import { Report } from "./assert.wac";
 import { Ticket } from "core";
-import { Sys, Files, Clock, NotGranted } from "std";
+import { Files, Clock, NotGranted } from "std";
 
 /**
  * A test is a function that takes what it needs and answers a `Report`.
@@ -26,27 +26,38 @@ import { Sys, Files, Clock, NotGranted } from "std";
  * TypeScript surface, so the information is there and is checked by the engine rather than agreed
  * by convention.
  *
- *     export Report test_adds()                    // pure — no authority, cannot touch anything
- *     export Report test_parses(Fixtures f)        // wants data, still cannot touch the world
- *     export async Report test_reads(Sys sys)      // wants authority, and is awaited
- *     export async Report test_serves(Sys sys)     // ...including one that spawns and drains
+ *     export Report test_adds()                          // pure — no authority, cannot touch anything
+ *     export Report test_parses(Fixtures f)              // wants data, still cannot touch the world
+ *     export async Report test_reads(Files files)        // wants one capability, and is awaited
+ *     export async Report test_serves(Net net, Tasks t)  // wants two, one of them a scheduler
  *
  * The first shape is the interesting one. A test that takes nothing **provably** cannot read a
  * file, open a port or see the clock — the same claim the language makes about any function,
  * applied to the thing that is supposed to be checking the others. Today every test has exactly as
  * much authority as the runner, because the runner is what wasm gives the module.
+ *
+ * **The last two said `Sys sys` until the bundle was deleted, and the change is not cosmetic.** With
+ * a bundle a test asking for authority asks for *all* of it, so the signature says only *this one
+ * touches the world* — three of the four shapes above collapse to two. Without one, the signature is
+ * the grant: `test_reads(Files)` cannot open a port, and a reader learns that from the line rather
+ * than from the body.
+ *
+ * It also makes the enumeration harder in a way worth stating. Matching *does this export take a
+ * `Sys`* is one type test; matching *which of nine projections does it take, in what order* is a
+ * signature to read. That is the same work `bindgen` already does and it is more of it, so the
+ * runner's job grows as the grant narrows — which is the trade rather than a snag.
  */
 
 /**
  * What a runner hands a test that asked for a capability.
  *
- * **A fake is an ordinary value**, which is the whole of it. `Sys` is not a singleton and nothing
- * recognises a ticket by its type, so a test's capability is one it built, its tickets settle when
- * the test says so, and its clock is whatever it was constructed with. None of that needs a seam,
+ * **A fake is an ordinary value**, which is the whole of it. A capability is not a singleton and
+ * nothing recognises a ticket by its type, so a test's capability is one it built, its tickets settle
+ * when the test says so, and its clock is whatever it was constructed with. None of that needs a seam,
  * an injection point, or a mode flag in the real one — the seam is the parameter.
  *
- * **And the projections are what make it small.** Against a flat `Sys` of fifty methods, faking two
- * of them means declaring a subtype of the whole thing and leaving forty-eight inherited from
+ * **And the projections are what make it small.** Against one flat capability of sixty-two methods,
+ * faking two of them means declaring a subtype of the whole thing and leaving sixty inherited from
  * something that traps. Against groups, a fake is one small struct: `FakeFiles` overrides the two
  * methods `Files` has that the test uses, and a test that never touches the network never mentions
  * `Net`. That is an argument for the grouping that only appears here, in the package whose entire
@@ -85,8 +96,8 @@ export Clock fakeClock(i64 at) {
 /**
  * A test that asserts something is *refused* needs a canary, and the canary is a second grant.
  *
- * Proving a refusal means proving the capability could have worked. A test that hands over a `Sys`
- * with no files and checks for `NotGranted` passes whether the guard exists or not. So the shape is
+ * Proving a refusal means proving the capability could have worked. A test that hands over a `Files`
+ * with nothing in it and checks for `NotGranted` passes whether the guard exists or not. So the shape is
  * two calls against two grants: one that must succeed, one that must not.
  */
 export async Report checkRefused<V, E>(

@@ -31,7 +31,6 @@
 // queue by writing one statement inside the loop body, and the restoration is the block ending.
 
 import { Result, Ticket, Queue, Continuation } from "core";
-import { Sys } from "std";
 import { T, Report } from "./assert.wac";
 
 /** What a test left behind. */
@@ -41,10 +40,20 @@ export struct Leaked { string test; i32 count; }
  * Run `body`, and answer what it scheduled and did not drain.
  *
  * The whole of the isolation is the `schedule` on the third line. Everything a test schedules —
- * directly, or inside anything it calls, including a nested `Sys.drain` — lands in `mine` instead of
- * on the caller's queue, until this block ends.
+ * directly, or inside anything it calls, including a nested `Tasks.drain` — lands in `mine` instead
+ * of on the caller's queue, until this block ends.
+ *
+ * **It took a `Sys` and never used it**, found while deleting the bundle. Nothing in the body ever
+ * mentioned the parameter: the isolation is `schedule`, which needs no capability, and the queue it
+ * redirects to is a local. So this function held authority over a filesystem, a network and a
+ * process table in order to run a lambda.
+ *
+ * That is `packages/box`'s measurement — *ten applets of sixty-three never mention `fs`* — happening
+ * in `vision/` itself, one file away from the paragraph arguing against it, and it took until the
+ * bundle was removed for anyone to look. A bundle makes an unused capability free to accept and
+ * invisible afterwards; a parameter list makes it a word somebody has to type and a reader can see.
  */
-export async Result<Report, Leaked> isolated(Sys sys, string name, fn<Ticket<Report>()> body) {
+export async Result<Report, Leaked> isolated(string name, fn<Ticket<Report>()> body) {
   Queue<Continuation> mine = Queue.create();
   schedule mine.push;
 

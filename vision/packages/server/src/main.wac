@@ -9,24 +9,39 @@
 // scheduling, and the loop goes straight back to accepting. One slow client does not hold the door,
 // and nothing here mentions a task, a pool or an executor.
 
-import { Sys, Out, Clock, Socket, Listener, Read, NotGranted } from "std";
+import { Net, Out, Clock, Tasks, Socket, Listener, Read, NotGranted } from "std";
 import { Buf } from "@/packages/bytes";
 import { Served, serve } from "./serve.wac";
 
-export async i32 main(Sys sys) {
-  match (await sys.net.listen(7000)) {
-    Err(e): { sys.out.log("no port: \{e.what}"); return 1; }
+/**
+ * Four projections rather than a `Sys`, which is what deleting the bundle looks like at the one
+ * function that took one.
+ *
+ * It was `main(Sys sys)`, and measured on 2026-09-04 it was the **only** function in fifty-nine
+ * files that needed the bundle — for `await sys.drain()`. So the signature says what this program
+ * is: it listens, it writes, it reads a clock, and it has outstanding work. There is no filesystem
+ * in scope and no way to reach one.
+ *
+ * **`Tasks` is the honest awkward one.** The other three are things this program *does*; a scheduler
+ * is something it *has*, and it appears here because the queue has to be reachable from the one
+ * place that drains it. `std/platform.wac` puts it on `Core` for the same reason and calls it *"a
+ * value the host builds at start-up and hands over with the rest of the capabilities"*, so the
+ * awkwardness is the design's rather than this line's.
+ */
+export async i32 main(Net net, Out out, Clock clock, Tasks tasks) {
+  match (await net.listen(7000)) {
+    Err(e): { out.log("no port: \{e.what}"); return 1; }
     Ok(l): {
-      sys.out.log("listening on 7000");
+      out.log("listening on 7000");
       try await for (Socket conn in l.accepted()) {
-        handle(sys.out, sys.clock, conn);
+        handle(out, clock, conn);
       }
     }
   }
 
   // Every connection still in flight gets to finish. Without this the program would exit with
   // half-written responses, and *dangling work is an error* would have nothing to point at.
-  await sys.drain();
+  await tasks.drain();
   return 0;
 }
 

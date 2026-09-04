@@ -1,7 +1,7 @@
 // What a program was handed.
 //
 // Nothing here is ambient. A function that was not given a capability cannot use it, and that is a
-// fact about its type rather than a sandbox around it. **There is no singleton**: two `Sys` values
+// fact about its type rather than a sandbox around it. **There is no singleton**: two `Files` values
 // are two different grants, a test hands a fake one, and code assuming there is only one would be
 // wrong in a way that reads correct.
 //
@@ -21,15 +21,21 @@
 //     other   12   the clock, randomBytes, log, child bookkeeping, askInterrupt
 //
 // 50 of 62 in six groups, and the sixth was found by re-running this count rather than by anybody
-// wanting it. A flat `Sys` with sixty-two methods satisfies *authority arrives as one
-// thing* and gives a caller no way to hand over less, which is the half of *no ambient
-// capabilities* that `packages/box` shows going unused: 63 applets all take `(Core, Cli, Fs, Args)`
-// and **ten never mention `fs`**, because a dispatcher calls them all through one shape.
+// wanting it. One capability with sixty-two methods satisfies *authority arrives as one thing* and
+// gives a caller no way to hand over less, which is the half of *no ambient capabilities* that
+// `packages/box` shows going unused: 63 applets all take `(Core, Cli, Fs, Args)` and **ten never
+// mention `fs`**, because a dispatcher calls them all through one shape.
 //
-// So the groups are values. `Sys` is the whole grant; `sys.files` is a narrower one that reaches
-// files and nothing else. A projection has no way back — there is no field on `Files` that answers
-// a `Sys` — so narrowing is structural rather than promised, and `echo(sys.out, args)` cannot open
-// a socket however it is written.
+// So the groups are values, and a function takes the ones it needs. `echo(Out out, Args a)` cannot
+// open a socket however it is written — not because something checked, but because there is no
+// socket in scope and a projection has no way back: no field on `Files` answers anything wider.
+//
+// **There is no value holding all of them, and there was until 2026-09-04.** `Sys` bundled the nine
+// so that `sys.files` could be a narrowing of something. Measured, one function in fifty-nine files
+// took it and took it for `drain`; sixteen take a projection directly. The bundle is gone and the
+// queue it was really holding is `Tasks`, below — which is what the shipped design already does,
+// since `Core.sched` is *"a value the host builds at start-up and hands over with the rest of the
+// capabilities"*.
 //
 // **Within one instance.** Across a spawn a capability is not a value at all — see
 // `@/packages/sh/src/exec.wac`, where what crosses is a *description* of one.
@@ -43,58 +49,59 @@ import { Ticket, TicketBase, Continuation, Result, Queue, Bytes, Node, AsyncGene
 export struct NotGranted { string what; }
 
 /**
- * Everything a *command-line* program was granted, and the only thing that can produce a narrower
- * one.
+ * The scheduler, as a projection — which is where the shipped design already puts it.
  *
- * **It said "everything this program was granted" until `Page` existed, and that was never quite
- * true.** There is no `page` field here and there should not be: the launcher hands `Page` to an
- * exported `page` and `Cli` to `main` — `export i32 page(Core core, Cli cli, Page page)` is the
- * shipped signature, three parameters — so an interactive program's authority arrives as two values
- * and a `Sys` is one of them. A CLI program's `Sys` cannot render, which is the right answer and is
- * not what a struct claiming to be the whole grant says.
+ * **This was `Sys`, a bundle of every projection, and it is gone.** The bundle was invented here so
+ * that `sys.files` could be a narrowing of something, and measured on 2026-09-04 it had **one user
+ * in fifty-nine files** — `server`'s `main`, which took it for `await sys.drain()`. Sixteen
+ * functions take a projection directly. The narrowing the bundle existed to provide is what the code
+ * does by passing fewer parameters, and it arrived that way by being written rather than decided.
  *
- * The alternative is `Page? page;`, and it is worse for a reason worth keeping: every consumer would
- * unwrap, the unwrap would be a runtime question where the entry point already answers it
- * statically, and a `Sys` with a null field is a grant that has to be tested rather than one that
- * cannot be held. `../QUESTIONS.md` has why *the whole grant* may not be a thing that exists.
+ * What the bundle was really holding was the queue, and `std/platform.wac` already has the answer:
  *
- * The fields are the projections. Reading one is free and hands over exactly that group; there is
- * no method here that answers a capability the caller could not already reach.
+ * > The scheduler is a value the host builds at start-up and hands over with the rest of the
+ * > capabilities, which is what keeps "no ambient anything" true — a program given no world cannot
+ * > schedule.
  *
- * ## One scheduler, and this is the hazard the split creates
+ * It is `Core.sched`, with `drain` and `drainFor` as methods on `Core`. So the scheduler is a
+ * capability handed over like the others, and this is that with the name it should have.
  *
- * `pending` and `drain` stay on `Sys` and every projection must reference **that** queue rather
- * than owning one. Not a tidiness rule — `issues/lang/closed/0298c` is what happens otherwise:
+ * ## One scheduler, and it is a reference every projection holds
+ *
+ * The shipped design does **not** keep the queue in one place: `Core` has a `Sched sched` field and
+ * so does `Cli`, both pointing at one value the host constructs. That is `issues/lang/closed/0298c`,
+ * and it is worth quoting because getting it wrong is expensive:
  *
  *   > the native host builds a non-callback field by calling `<Type>.create` **per capability**, so
  *   > `Core.sched` and `Cli.sched` were different schedulers and every `Cli` continuation sat on the
  *   > one nobody drained
  *
- * That was **two** capabilities and it cost a compiler that could not rebuild itself. The commit
- * that fixed it says the host makes *one* scheduler and hands it to both, *"because two would put a
- * `Cli` ticket's continuation where `core.drain()` never looks."*
+ * Two capabilities, and it cost a compiler that could not rebuild itself. The fix is that the host
+ * makes *one* and hands it to both, *"because two would put a `Cli` ticket's continuation where
+ * `core.drain()` never looks."*
  *
- * Seven projections are seven chances at the same bug, and the failure is silent: work is
- * registered, nothing runs it, and `drain` returns having found nothing to do. **This is the cost of
- * the grouping and it was not visible from the grouping.**
+ * **So the rule survives the bundle going and gets harder.** Every projection here that can produce
+ * a ticket must reference *this* `Tasks`, and there are nine of them rather than the shipped two.
+ * Nine chances at a silent failure — work registered, nothing running it, `drain` answering that it
+ * found nothing to do — where the design that had two already shipped the bug once.
+ *
+ * That is the cost of the grouping, it was not visible from the grouping, and it is **not** reduced
+ * by deleting `Sys`: a bundle never enforced it either. What a bundle did was make the queue easy to
+ * find, and what this does is give it a name.
+ *
+ * ## What went with `Sys` that nothing replaces
+ *
+ * A **dispatcher**. `packages/box` calls 63 applets through one shape, which is why every applet's
+ * signature is the widest applet's; a bundle is the value such a dispatcher holds. Without one it
+ * holds nine parameters, or — as `@/packages/box`'s README already argues — a closure per applet
+ * capturing exactly what that applet needs, which is better and is a change to the dispatcher rather
+ * than to this file.
+ *
+ * And the sentence *"`Sys` is the whole grant"* went with it, which was the thing that was never
+ * true: the launcher hands `page(Core, Cli, Page)` three parameters, so authority has always arrived
+ * as several values and no single one of them was ever all of it.
  */
-// **The pages do not use this shape.** All four vetted pages write `sys.readFile(…)`, `sys.log(…)`,
-// `sys.listen(…)` — 22 call sites, none of them projected — and this struct has eight projection
-// fields and no flat methods, so none of those examples typechecks against it. The code does not use
-// it either: two functions in 59 files take a `Sys`, sixteen take a projection directly, and after
-// `counter.wac` was narrowed the one that remains needs it for `drain`. The projections were invented here during the
-// packages exercise and never propagated upward; `../QUESTIONS.md` has the three ways out and why
-// the middle one is not the compromise it looks like.
-export struct Sys {
-  Files files;
-  Net net;
-  Proc proc;
-  Env env;
-  Out out;
-  In in;
-  Clock clock;
-  Random random;
-
+export struct Tasks {
   /** Work nobody awaited, waiting for somebody to run it. */
   Queue<Continuation> pending;
 
@@ -334,7 +341,7 @@ export struct Proc {
  */
 export struct Exit { i32 status; }
 
-/** Read-only, and the reason `arg` is not on `Sys`: argv is known before the program starts. */
+/** Read-only, and the reason `arg` is a projection of its own: argv is known before the program starts. */
 export struct Env {
   fn<string(i32)>   arg;
   fn<i32()>         argCount;

@@ -1935,6 +1935,46 @@ deciding. The question left is narrow and answerable: **where does the queue liv
 So this is not really about `Page`. It is that `Sys` was introduced to hold projections and quietly
 took on a second job, and the first program that could not be handed one is where that shows.
 
+### Answered by the shipped design, and `Sys` is gone
+
+`std/platform.wac` already has the queue on a capability, with the reason written at the field:
+
+> The scheduler is a value the host builds at start-up and hands over with the rest of the
+> capabilities, which is what keeps "no ambient anything" true — a program given no world cannot
+> schedule.
+
+That is `Core.sched`, with `drain` and `drainFor` as methods on `Core`. So the answer to *where does
+the queue live* is **on a projection, like everything else**, and the bundle was never holding the
+projections — it was holding the queue, and giving it a name is the whole change. `vision/std` has a
+`Tasks` now and no `Sys`.
+
+**And the shipped design does not put the queue in one place, which is the part that matters.**
+`Core` has a `Sched sched` field and so does `Cli`, both pointing at one value the host constructs —
+`issues/lang/closed/0298c` is what happens when they point at two. So the rule survives the bundle
+going and gets harder: nine projections must reference *this* `Tasks`, where the design that had two
+already shipped the bug once. A bundle never enforced that either; what it did was make the queue
+easy to find.
+
+Three things the change turned up, none of which a bundle would have shown.
+
+**`wactest`'s `isolated` took a `Sys` and never used it.** The isolation is `schedule`, which needs
+no capability, and the queue it redirects to is a local — so the function held authority over a
+filesystem, a network and a process table in order to run a lambda. That is `packages/box`'s
+measurement, *ten applets of sixty-three never mention `fs`*, happening inside `vision/` one file
+away from the paragraph arguing against it. **A bundle makes an unused capability free to accept and
+invisible afterwards; a parameter list makes it a word somebody has to type.**
+
+**`server`'s `main` now says what the program is** — `main(Net net, Out out, Clock clock, Tasks
+tasks)` — and `Tasks` is the awkward member of the four. The other three are things the program
+*does*; a scheduler is something it *has*, and it is in the signature because the queue must be
+reachable from the one place that drains it.
+
+**And it makes the runner's job bigger as the grant narrows.** `wactest` proposes telling a pure test
+from an authority-taking one by reading the export's type. *Does it take a `Sys`* is one type test;
+*which of nine projections does it take, in what order* is a signature to read. Same work `bindgen`
+already does and more of it — the trade rather than a snag, and worth stating because narrowing a
+grant is usually described as costing nothing.
+
 ## `wac.json5` says `vision/` is self-contained and seventeen imports say it is not
 
 `vision/wac.json5` is empty and its comment is the whole design:
