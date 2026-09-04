@@ -474,11 +474,23 @@ Nominal typing makes these distinct types, and imports are per-file, so nothing 
 awkward is that the whole point of `union` here is composition — `http`'s `ResponseFault` is
 `union<RequestFault, BadStatus>`, an error set built over another module's.
 
-**A program that reads a gzipped file over HTTP has three `Fault`s and two `BadMethod`s in scope.**
-`import { Fault as FsFault }` handles the naming; it does not handle the membership. `try`'s rule is
-that a callee failing with `E1` may be `try`d in a function returning `E` when `E1 ⊆ E`, and subset
-is over *types*. Two same-named members from two modules are two members, so the composed set has
-both and a `match` over it has arms whose names collide at the point of writing them.
+**A program that reads a gzipped file over HTTP has three `Fault`s and two `BadMethod`s in scope**,
+and measured rather than reasoned, there is no spelling for it today:
+
+    import { Truncated as ATrunc }  then  case ATrunc:      "no variant of that name"
+    case A.Truncated:                                        expected ':', found '.'
+    building a file with two same-named variants in scope    "cannot emit — the name Truncated,
+                                                              which more than one file declares"
+
+So an alias does not reach a match arm — an arm resolves by the variant's *own* name — and `case`
+does not take the qualified form that `is` does. The program is refused at emit rather than
+mis-compiled, which is the right outcome and leaves the composition unwritable.
+
+That measurement also turned up a diagnostic bug worth more than this entry:
+`issues/lang/open/0328a`. Adding an unrelated import makes `x is A.Truncated` warn *"these types
+share no ancestor, so the test is always false"* — the qualification is dropped, the checker resolves
+`Truncated` from file scope, and the message tells you to delete a correct test. `emit` names the
+ambiguity properly one stage later.
 
 So the convention this exercise fell into — **each package names its union `Fault`** — is exactly
 wrong for the feature the unions exist for, and it took nineteen packages to notice because no two of
@@ -488,8 +500,9 @@ Three ways out, and the middle one is what most languages do without saying so:
 
 - **Name unions after their subject**: `FsFault`, `InflateFault`, `RequestFault`. `http` already does
   this and is the only one that does, which is suggestive.
-- **Let a match arm be qualified** — `case gzip.Truncated:` — which is a language change and the one
-  that scales, and which nothing in `vision/` has asked for.
+- **Let a match arm be qualified** — `case A.Truncated:` — which is the one that scales, which
+  nothing in `vision/` has asked for, and which `is` already accepts. The asymmetry between the two
+  constructs is measured in `0328a` and is nobody's stated decision.
 - **Say error member types are global by convention** and make packages pick distinct names, which is
   a rule nobody can enforce and which fails the first time two packages both have a `NotFound`.
 
