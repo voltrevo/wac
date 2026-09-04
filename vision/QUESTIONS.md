@@ -1227,6 +1227,11 @@ members flattening into it, which set semantics imply and nothing states.
 is a distinct type or an alias decides the related question about a union as a match arm — which
 this package also wants, for the one place that turns a fault into a message.
 
+*(Whether a union may **contain** one is settled by use and lives in* Flattening a union: three
+behaviours *below — three consumers, three answers, and the members being disjoint or not is what
+separates the first two. This entry is the naming and dispatch half, which is a different question
+and was tangled with it.)*
+
 **And there is a third part nobody has written down: how one dispatches.** An enum has a tag, and
 `spec/spec/enums.md`'s *How it compiles* says what that buys — *"`match` compiles to a comparison
 chain on the tag, then one downcast in the selected arm"*, and, of the alternative, *"the
@@ -2352,26 +2357,6 @@ nothing to bind. The construct was written from the example that does not need t
 is writable today — and then the `match` has one `Err` arm, so nothing checks the inner `if` chain
 for coverage. Matching by type is what makes the two-way split exhaustive; binding is what makes it
 useful; and they are exclusive.
-
-## A union may contain a union, and flattening it would be wrong
-
-Asked and left open in the entry on naming unions. Answered here by use rather than by argument.
-
-`@/packages/gzip`'s `Fault` is `union<SourceFailed, Corrupt>` and `Corrupt` is itself
-`union<BadMagic, BadMethod, BadBlockType, BadHuffmanCode, BadDistance, Truncated, ChecksumMismatch,
-LengthMismatch>`. `@/packages/box/src/gunzip.wac` writes `Err(is Corrupt):` and matches all eight
-without naming them, because it has one sentence for the whole group and **the group is the design**
-— the fault file's own words are that what separates the two halves is *"not the type"* but whether a
-caller may retry.
-
-So the flattening answer — where `union<A, union<B, C>>` means `union<A, B, C>` — is wrong for this
-case, and this is the first case there has been. Flattened, `is Corrupt` has nothing to name and the
-applet needs eight arms saying the same thing.
-
-That is evidence rather than a decision: one consumer wanting nesting does not settle what nesting
-*means* — whether `is SourceFailed` and `is Corrupt` are exhaustive over `Fault`, whether a value can
-be matched at either depth, and what a member appearing in two nested unions does. What it settles is
-that flattening is not free, which is the answer the entry above was leaning toward.
 
 ## Giving a paired protocol a value fixed the pairing and kept the buffering
 
@@ -4254,11 +4239,12 @@ expensive.
 **What is actually being asked**: whether the function form is the idiom or the residue. The pages do
 not say, both are used, and one open issue is about to make them differ.
 
-## Flattening a union has two consumers and they want opposite things
+## Flattening a union: three behaviours, three consumers, and they want different ones
 
 `../TECHNICAL.md` measures `union<A, B>` lowering to an enum of one-field variants, nesting and all,
-and argued for nesting from one consumer. A second consumer wants the other, and the two are not
-corner cases.
+and argued for nesting from one consumer. Two more consumers want two other things, and none of the
+three is a corner case: grouping a family of faults, stacking a pipeline, and reaching one error type
+from two call sites are the three things error unions are for.
 
 **Nesting, from `@/packages/box/src/gunzip.wac`.** `union<SourceFailed, Corrupt>` where `Corrupt` is
 itself a union of eight, and `Err(is Corrupt):` is one arm for the whole group — *"it has one
@@ -4277,9 +4263,32 @@ one and misses the inner. A caller asking *was the input not text* is right when
 found it and wrong when the first did. Flattening makes the question answerable and the depth
 disappear.
 
-The two differ in whether the members are **disjoint**. gunzip's are — a source failure and a
+**Wrapping, from `@/packages/lightclient/src/validate.wac`.** A third behaviour, added 2026-09-04,
+which neither of the two positions has room for. That function calls `@/packages/ssz`'s `verify`
+twice — once for the finality branch and once for the committee branch — and a `ProofFault` promoted
+into the outer union, nested *or* flattened, **cannot say which of the two produced it**. So the
+member carries it: `BadFinalityBranch { ProofFault why; }`. That keeps both facts and gives up the
+one-arm match, and it is the only one of the three the language supports today — at four lines per
+use, because `try` propagates and cannot map.
+
+    nesting     preserves the grouping        gunzip
+    flattening  removes the duplicate         upper.wac
+    wrapping    preserves the call site       lightclient
+
+The first two differ in whether the members are **disjoint**. gunzip's are — a source failure and a
 corruption are different events, and grouping them is the point. A stacked transform's are not: the
-same fault can arise at any stage, and the stage is not what the caller is asking about.
+same fault can arise at any stage, and the stage is not what the caller is asking about. Wrapping is
+orthogonal to both: it is about the *call site* rather than the members, and it is what you need when
+one error type is reached from two places in one function.
+
+(This entry absorbed *A union may contain a union, and flattening it would be wrong*, which said the
+gunzip half and nothing this does not. Two entries for one question is the drift `DECISIONS.md`
+warns about, in the file that is supposed to be the record.)
+
+**And a fourth case that constrains any rule: the two unions may be declared in two packages.**
+`UpdateFault` is `@/packages/lightclient`'s and `ProofFault` is `@/packages/ssz`'s, so flattening
+would reach across an import and change a type one package declares because of how another composed
+it. Neither position has considered that.
 
 Three ways out, and the middle one is what most languages do:
 
