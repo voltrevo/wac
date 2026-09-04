@@ -106,11 +106,36 @@ each is; this is the index.
 | a named type | `export union<A, B> Fault;`, `export Slice<u8> Bytes;` | one form whether the type is a union or an instantiation | distinct type or alias is undecided |
 | `try await for` | [`stream`](stream/), [`server`](server/) | a loop over a failing async generator has to say both things | three keywords on one head — but no new lowering: `asyncplan.wac` already states a suspension in a loop, and the desugaring must put the step in the body since a condition may not suspend |
 | `secret` | [`crypto/src/secret.wac`](crypto/src/secret.wac) | `const` is already a taint that propagates; point the machinery at a second property — and it is literally the same machinery, a fourth parallel flag array beside `nameConsts` and `nameAliasOnly` | it would refuse AES; and constness is a flag on a *name*, not part of the type, so `0315a`'s five leaks are one fact and `secret` would inherit them by construction |
-| `Grant` as an enum | [`sh/src/exec.wac`](sh/src/exec.wac) | a caller writes what it means and no `GRANT_ALL` is kept in step by hand | intersecting two lists is a loop where `a & b` is an instruction |
+| `Grant` as an enum | [`sh/src/exec.wac`](sh/src/exec.wac) | a caller writes what it means and no `GRANT_ALL` is kept in step by hand — legibility, not representation | the host decodes grants as `Val::I32`, so a `Vec<Grant>` cannot cross; the wire format stays an integer and the enum puts a conversion in front of it |
 
-Every one of them has a cost written beside it in its own file, and two of them —`secret` and the
-barrel — have a reason **not** to take them yet. That is deliberate: a proposal with no cost stated
-has not been thought about, and this exercise is in no position to be believed on enthusiasm.
+Every one has a cost written beside it in its own file, and two — `secret` and the barrel — have a
+reason **not** to take them yet.
+
+**All six have now been read against the code that would implement them, and the reading changed
+five.** That is the highest-yield thing this exercise has done, and it is worth saying what the
+changes were, because they did not point one way:
+
+- **Re-aimed.** A package entry point cannot be a manifest field the resolver reads — `path.wac` has
+  no filesystem — so it is a mapping the *reader* supplies, which `Res` already does for git
+  dependencies.
+- **Split.** Re-export turned out to share nothing with the entry point: it lands in `check.wac`'s
+  export table, not in path resolution at all.
+- **Weakened.** A slice is a WasmGC struct and therefore an allocation. *No copy* is true, *nothing
+  allocated* was not, and against a `(bytes, lo, hi)` triple — which allocates nothing — it is a
+  loss. The case stands on not being able to mix one buffer's bounds with another's, which is
+  correctness rather than cost.
+- **Weakened.** `Grant` as an enum does not change the wire format: the host decodes `Val::I32`.
+  Legibility, not representation.
+- **Made structural.** `secret` really is the same machinery as `const` — a flag per name, and
+  `nameAliasOnly` is the precedent for a second. But a flag in the scope table is not part of the
+  type, which is why `0315a`'s five leaks are one fact, and why `secret` would inherit them by
+  construction.
+- **Strengthened.** `try await for` needs no new lowering. `asyncplan.wac` is built for a suspension
+  inside a loop and says so; what is new is the generator, not the loop.
+
+The pattern: **a proposal argued from how the code reads is about half right, and which half is not
+guessable from the outside.** Four of the six were being sold on a benefit that reading disproved,
+and the two that survive intact are the two whose argument was already about correctness.
 
 ## And the failure mode of the exercise itself
 

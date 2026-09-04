@@ -60,9 +60,22 @@ and adding a member does not need a `GRANT_ALL` kept in step by hand — which `
 names as the cost of the fourth spelling: *"a hand-written `GRANT_READ | GRANT_WRITE | GRANT_NET |
 GRANT_ENV` is a fourth thing to keep in step every time a bit is added."*
 
-What the bits buy and an enum list does not is the intersection itself: `a & b` is one instruction,
-and intersecting two lists is a loop. For a per-spawn operation that is not a cost worth the
-argument, and it is the reason to check rather than assume.
+What the bits buy and an enum list does not is more than the intersection, and reading the host
+says how much.
+
+`native/src/main.rs` decodes the grants argument as **`Val::I32`** — `match arg(2) { Val::I32(n) =>
+n, _ => 0 }` — one word across the boundary. A `Vec<Grant>` is a WasmGC reference and cannot cross
+that way. The host *can* read a GC array, `read_bytes_array` does it for argv two lines up, so the
+enum could be lowered to bytes — at the cost of an allocation and a decode where an integer is a
+register.
+
+So **the enum is a source spelling and the wire format stays an integer**, which is the same
+distinction this file draws about capabilities themselves one section up, now applying to the
+*description* of one. The proposal does not remove the bitmask; it puts a conversion in front of it.
+
+That leaves the case where the `Slice` one ended up: on legibility rather than representation. A
+caller writes what it means, a `match` is checked, and nobody hand-maintains a `GRANT_ALL` — which
+`std/platform.wac` names as a real cost. Worth having, and not for the reason it first looked like.
 
 ## What could not be written
 
