@@ -3324,3 +3324,61 @@ three workarounds: a factory with nothing to receive is a static because it is o
 the escape hatch is also the ordinary spelling, which is why nobody has had to notice it is an
 escape hatch — and why the rule can stay this narrow without anyone filing it. `bignum` filed it
 only because the rule reached its **public surface** rather than one method.
+
+## A terminal mode is ambient, and it is the one place the principle has to bend
+
+`vision/README.md`'s first principle is that a program gets what it is handed and nothing else. Every
+capability in `std` obeys it: state reachable through `Files` is not reachable through `Net`, two
+`Sink`s over one path are two values, and a child gets what its parent chose to pass.
+
+**A terminal mode is not like that, and cannot be.** `@/packages/tty`'s README names the gap from the
+other end — *"an editor still cannot have a keystroke at a time … because nothing can say so"* — and
+the member that closes it is one line on `In`:
+
+    Result<Mode, NotATerminal> setMode(Mode m);   // answering the mode it was in
+
+The trouble is not the grant. It is that a shell and the editor it spawned hold **two `In` values
+over one line discipline**, and a mode set through either is what the other sees. That is what a
+terminal is: `stty -echo` in one shell changes what the next program reads. Making it private would
+not be safer, it would be wrong — the editor's whole purpose is to change what the *terminal* does.
+
+So this is the exception, and it is worth having written down as one rather than discovered by
+someone who assumes the principle holds everywhere. The shape of the exception: **the capability
+names a piece of shared hardware, and the state belongs to the hardware.** A clock is the same kind
+of thing and does not notice because nothing sets it; a terminal is the same kind of thing and is set
+constantly.
+
+Two consequences that are properly questions:
+
+- **It is the first capability that has to answer *what it was*.** Restoring is the caller's job, and
+  a program that assumes *canonical with echo* is wrong for anyone who was in a password prompt. So
+  `setMode` returns the previous `Mode`, and that value is a small piece of the world the caller now
+  owns and must give back.
+- **Which is a use of `defer` nothing else here has.** Every other one — `conn.close()`,
+  `closeAll(sinks)`, `Ticket.wait` — releases something acquired. This one *puts something back*, and
+  the difference matters for the unanswered part of what `defer` means: a release that is skipped
+  leaks, and a restore that is skipped leaves the next program reading a terminal that eats its
+  keystrokes.
+
+## A generator that suspends against nothing
+
+`@/packages/tty`'s `Line.feedAll` is the first **synchronous** generator in this directory. Every
+other one — `In.stream`, `Files.open`, `Proc.run`, `gunzip`, `scalars`, `Listener.accepted` — is an
+`async gen` over a capability, and the loop that drives it is `try await for`. This one has all its
+bytes in hand and yields a `Typed` per byte:
+
+    gen<Typed> void feedAll(this, Bytes bytes) {
+      for (i32 i = 0; i < bytes.len(); i++) { yield this.feed(bytes.get(i)); }
+    }
+
+It wants the stepping and not the awaiting. The original answers a `Typed[]` as long as its input, so
+a 4 KB ssh payload allocates 4,096 records of which all but a handful are empty; a generator makes
+the ones the caller has finished with go away, and that is the whole of the reason.
+
+The question this raises is about the pages rather than the language. `core/coroutine.wac` has
+`Generator<T, R>` and `AsyncGenerator<T, R>` as separate types, so the distinction exists; what is
+written down everywhere is the async one. `../packages/stream`'s whole argument, `try await for`'s
+justification, and the entry above on starting a generator early all reason about suspension — and
+this file needs `for (Typed t in line.feedAll(bytes))`, a plain loop over a plain generator, which
+`Slice.items()` in `core` also already is. **Two of the three uses in this directory are synchronous
+and every page describes the third.**

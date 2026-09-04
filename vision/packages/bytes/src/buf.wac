@@ -75,6 +75,20 @@ export struct Buf {
   /** Forget the first `n` bytes, which is what a connection loop does after answering. */
   void dropFront(this, i32 n) { … }
 
+  /**
+   * Keep the first `n` bytes and forget the rest.
+   *
+   * **`packages/bytes` has no such thing, and a line discipline pays for it.** `dropFront` is this
+   * operation from the other end and has been there all along; nothing shortens from the back, so
+   * `packages/tty/src/line.wac`'s `dropLast` takes the whole buffer, copies all but one byte into a
+   * new `Buf`, and replaces it. One full copy per backspace — and `^W` calls it once per byte of the
+   * word, so erasing ten characters at the end of a 4,000-byte line copies about 40,000 bytes.
+   *
+   * The array does not move: `len` does. `@/packages/tty/src/line.wac` is the consumer that wanted
+   * it, and the shipped gap is filed.
+   */
+  void truncate(this, i32 n) { … }
+
   void pushAll(this, Bytes more) { … }
   void reserveFor(this, i32 n) { … }
 }

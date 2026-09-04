@@ -105,13 +105,13 @@ gets remembered, not the file it was in.
 The three in `std/platform.wac` needed `wac task gen:core` and a reseed, since that file is embedded
 in the compiler as `coretext.wac`; the four in `packages/wacc/src` needed a reseed of their own.
 
-### The enumeration was short by thirteen, all of them prose
+### The enumeration was short by fourteen, all of them prose
 
 Re-run 2026-09-04 with a wider pattern — `no closures`, `cannot close over`, and
 `nominal types and no closures` across `packages/`, `spec/`, `design/`, `docs/`, `tools/`,
-`harness/` and `native/`. Twenty-six sites. The nine above were the ones a **source** sweep hits;
-thirteen more are in READMEs, an example's header, a test's header and a host's TypeScript, and
-every one of them is a sibling of something already corrected:
+`harness/` and `native/`. The nine above were the ones a **source** sweep hits; fourteen more are in
+READMEs, an example's header, a test's header and a host's TypeScript, and every one of them is a
+sibling of something already corrected:
 
 | where | what it said | verdict |
 |---|---|---|
@@ -125,19 +125,19 @@ every one of them is a sibling of something already corrected:
 | `packages/wacpkg/src/root.wac` | no closures, so a predicate cannot be passed in | it can, and passing one would put a capability in the resolver — a better reason, now written |
 | `packages/platform/host/deno.ts` | "the wac side has no closures — see the note in platform.wac" | that note is one of the three corrected above |
 
-All thirteen corrected, and none of the *conclusions* changed: in every case the design still holds
+All fourteen corrected, and none of the *conclusions* changed: in every case the design still holds
 on a reason that is true. That is the finding, not a bonus — **the wrong premise was load-bearing
 nowhere and survived everywhere**, because nothing that runs reads a reason.
 
-`packages/platform/example/inside.wac` is corrected by **addition** rather than replacement, because
-`insideValue.wac` quotes its sentence in order to answer it. Two design documents —
+The fourteenth, `packages/platform/example/inside.wac`, is corrected by **addition** rather than
+replacement, because `insideValue.wac` quotes its sentence in order to answer it. Two design documents —
 `design/lang/0001`, `0004`, `0005`, `0009` and `design/system/0001` — are left exactly as written:
 they are dated records of what was decided and when, and `design/lang/0002` is the document that
 *added* closures. A later sweeper should not reopen them.
 
 **The lesson for the sweep rather than for the code.** A grep over source finds the comment beside
-the code and misses the README that argues for it, and the README is what a person reads first. Two
-of the thirteen are in the same package as a fix this issue already made. Whatever pattern the next
+the code and misses the README that argues for it, and the README is what a person reads first. Three
+of the fourteen are in the same package as a fix this issue already made. Whatever pattern the next
 audit uses, it has to cover prose as a first-class location, not as an afterthought — the same point
 `packages/tty/README.md` made the same day from the other end, where a sentence about what the
 language cannot do had a five-day shelf life.

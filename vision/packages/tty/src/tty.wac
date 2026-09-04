@@ -1,0 +1,8 @@
+// The package, as one name.
+//
+// `render.wac` is not here. Its `glyph`, `columns`, `rubOut` and `crlf` are what a *terminal* draws,
+// which `line.wac` needs and nobody outside does — and the split is the point of the file: the two
+// halves of the pair that disagreed about DEL now live together, with `columns` derived from
+// `glyph`, and a barrel that exported them separately would invite the next caller to pick one.
+
+export { Line, Typed, Effect, Sig, Mode } from "./line.wac";

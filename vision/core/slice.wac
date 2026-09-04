@@ -111,6 +111,15 @@ export struct Slice<T> {
   /** The whole array, which is what the implicit widening produces. */
   Slice<T> all(T[] a) { return Slice(a, 0, a.len()); }
 
+  /**
+   * A view over nothing.
+   *
+   * `Slice(T[0](), 0, 0)` at every site otherwise, and `@/packages/tty` has five of them in one
+   * file — *nothing to draw* is the ordinary answer of a line discipline. Added when the fifth
+   * appeared rather than the second, which is the rule this directory has been using for `core`.
+   */
+  Slice<T> empty() { return Slice(T[0](), 0, 0); }
+
   i32 len(const this) { return this.len; }
 
   T get(const this, i32 i) {

@@ -1,0 +1,382 @@
+// A line discipline: what a terminal does to your keystrokes before a program sees them.
+//
+// `packages/tty/src/line.wac` is 430 lines and one of the best-evidenced files in the repository —
+// every rule read off a real pty, 44 sequences byte for byte, three modes each measured in that
+// setting. **None of the rules change here.** What changes is the type the rules answer with, and
+// one number the module keeps twice.
+//
+// Read the README beside this file first; it is where the two findings are argued.
+
+import { Bytes } from "core";
+import { Buf } from "@/packages/bytes";
+import { glyph, columns, rubOut, crlf } from "./render.wac";
+
+/** DEL, the erase character. Not `^H` — only DEL erases, which the pty comparison settled. */
+const u8 ERASE = 127;
+/** `^U`, kill the whole line. */
+const u8 KILL = 21;
+/** `^W`, erase the word behind the cursor, and the punctuation behind it. */
+const u8 WERASE = 23;
+/** `^C`, interrupt. */
+const u8 INTR = 3;
+/** `^D`, end of file — or end of *line*, when there is something on it. */
+const u8 EOFC = 4;
+/** `^V`, take the next character literally however it would otherwise be read. */
+const u8 LNEXT = 22;
+/** `^\`, quit — like `^C` but a different signal, and traditionally the one that dumps core. */
+const u8 QUIT = 28;
+/** `^R`, reprint: draw the line again, after something scribbled on it. */
+const u8 REPRINT = 18;
+
+/**
+ * The two signals a terminal can ask for.
+ *
+ * The original carries an `i32` where `0` means *no signal* and POSIX's numbers mean the other two,
+ * and its comment argues the widening it had already done:
+ *
+ * > **A number rather than the `bool interrupt` this was**, because there are two of them and they
+ * > are not the same signal … A flag could only say "one of them happened", so `^\` was delivered as
+ * > an ordinary control character.
+ *
+ * The argument is right and stops one step short. A `bool` holds one of two things and there are
+ * three; an `i32` holds four billion and there are three. Both are the wrong size, in opposite
+ * directions, and the second one leaves `0` meaning *nothing happened* — a value drawn from the
+ * range of the answer, which is the shape this exercise has now found in `Read.code`, `search`'s
+ * `NO_MATCH`, `decode`'s `-2` and `Socket`'s negative handle.
+ *
+ * The POSIX number is a *rendering* of a signal for whoever is delivering it, not the identity of
+ * one, so it is a method rather than the representation. `packages/fs/src/proc.wac` has the same
+ * two numbers, and the original explains that it deliberately does not import them — *"a line
+ * discipline knowing about a process table would be the wrong way round"* — which stays true.
+ */
+export enum Sig {
+  Interrupt,
+  Quit,
+
+  /** POSIX's numbering, for a caller that has to put the signal on a wire or in a wait status. */
+  i32 number(const this) { return this is Interrupt ? 2 : 3; }
+}
+
+/**
+ * What one keystroke did to the *program* — as opposed to what it drew, which is `Typed.echo`.
+ *
+ * **The original is a record of four fields and says why:**
+ *
+ * > Four things can happen at once — a byte can be echoed, complete a line, and end the input — so
+ * > this is a record rather than an enum.
+ *
+ * One of the four is orthogonal and the other three are not, and the sentence puts them in one
+ * group. Reading the ten `return Typed(…)` sites in that file: `line`+`hasLine` is set by four of
+ * them, `eof` by one, `signal` by four, `echo` by nine — and **no site sets more than one of the
+ * first three.** A newline delivers a line; `^D` on an empty line ends the input; `^C` signals and
+ * throws the line away. There is no keystroke that does two of those, because each of them is what
+ * happens *instead of* holding on to the line.
+ *
+ * So the record is right about the echo and wrong about the rest, and the cost is the usual one: a
+ * caller must read `hasLine` before `line`, know that `signal == 0` means no signal, and know that
+ * `eof` and `hasLine` cannot both be true — three facts the type could have stated and does not.
+ */
+export enum Effect {
+  /** Still typing. */
+  Nothing,
+  /**
+   * A line for the program, **with** its newline — except after `^D`, which delivers without one.
+   *
+   * Named `Delivered` rather than `Line`, which is what it wants to be called, because `Line` is the
+   * struct twelve lines down. `issues/lang/closed/0095` is *a struct named like a variant resolves
+   * to the enum* — closed, and the collision it was about is still a collision a reader has to
+   * avoid by hand. Worth one line here: the natural name for the arm and the natural name for the
+   * machine are the same word, and only one of them can have it.
+   */
+  Delivered(Bytes bytes),
+  /** `^D` on an empty line: the program's read should answer end of input. */
+  Eof,
+  /** Whatever was being typed is gone. */
+  Signal(Sig sig),
+}
+
+/**
+ * What one keystroke did.
+ *
+ * `echo` is what to write back to the terminal and it is *always* what to write: a caller that
+ * ignores it has a terminal that shows nothing. It is a separate field rather than an arm because it
+ * genuinely co-occurs with all four effects — which is the half of the original's argument that
+ * holds.
+ */
+export struct Typed {
+  Bytes echo;
+  Effect effect;
+
+  Typed nothing()          { return Typed(Bytes.empty(), Nothing); }
+  Typed echoed(Bytes echo) { return Typed(echo, Nothing); }
+}
+
+/**
+ * `termios` as this module uses it: two flags, and the three settings anyone has asked for.
+ *
+ * The original has three constructors and two `bool` fields on `Line` itself. Pulling them out is
+ * what lets a mode be **passed**, which is the gap its README names:
+ *
+ * > What is missing is anything that *selects* one. `sshd` constructs `Line.create()` and never
+ * > changes it, the browser terminal likewise, and there is no `stty` for a program to ask with. So
+ * > an editor still cannot have a keystroke at a time — not because the discipline cannot do it, but
+ * > because nothing can say so.
+ *
+ * A `Mode` is a value, so `sshd` can hold the one the session asked for and swap it; and the missing
+ * half is one capability call, which the README beside this file argues for.
+ *
+ * Two flags rather than the forty in `termios`, and named presets rather than a bit-field, because
+ * three settings is what has been measured. The original is right that `cbreak` is not `raw`:
+ * `stty raw` also clears `ISIG`, which would make `^C` an ordinary byte, and it is not one here.
+ */
+export const struct Mode {
+  /** `ICANON`: collect a line before delivering it, or deliver each byte as it arrives. */
+  bool canonical;
+  /** `ECHO`: draw what is typed. **Off does not stop the editing** — that is `canonical`. */
+  bool echo;
+
+  /** A terminal as it comes. */
+  Mode canonicalEcho() { return Mode(true, true); }
+  /** `ICANON` without `ECHO`: a password prompt, where editing still happens and is not drawn. */
+  Mode password()      { return Mode(true, false); }
+  /** Neither: a byte at a time, for a pager or an editor. Not `raw` — `ISIG` stays set. */
+  Mode cbreak()        { return Mode(false, false); }
+}
+
+/**
+ * The line being typed, and the rules for editing it.
+ *
+ * Feed it bytes as they arrive from wherever the keyboard is — an ssh `CHANNEL_DATA` payload, a
+ * browser's keydown — and it answers what to echo and what, if anything, the program should read.
+ */
+export struct Line {
+  Buf held;
+  /**
+   * Whether the next byte is taken literally, because the last one was `^V`.
+   *
+   * The kernel echoes `^` for the `^V`, then a backspace over it, then the literal character's own
+   * echo — so the caret appears and is rubbed out as the character arrives. Measured.
+   */
+  bool literal;
+  Mode mode;
+
+  Line create()        { return Line(Buf.create(), false, Mode.canonicalEcho()); }
+  Line inMode(Mode m)  { return Line(Buf.create(), false, m); }
+
+  /** Whether anything has been typed on the line so far. */
+  bool pending(const this) { return this.held.len > 0; }
+
+  /**
+   * The mode this line is in, and the one it was in — so a caller can put it back.
+   *
+   * Answering the old value is the whole of what `stty` does that a setter does not: an editor that
+   * takes a terminal into `cbreak` has to hand it back the way it found it, and a program that
+   * guesses *canonical with echo* gets it wrong for anyone who was in a password prompt.
+   */
+  Mode setMode(this, Mode m) {
+    Mode was = this.mode;
+    this.mode = m;
+    return was;
+  }
+
+  /**
+   * One byte from the keyboard, through whichever mode this line is in.
+   *
+   * `canonical` chooses *which* function runs, and `echo` only decides whether what it decided to
+   * draw is returned — editing and drawing are separate in `termios` and separate here.
+   *
+   * One rule is not merely undrawn when the echo goes: **`^R` stops reprinting and becomes a byte in
+   * the line**, because reprint *is* an echo and there is nothing to draw again. Measured, and the
+   * reason this is a branch rather than a blanked field.
+   */
+  Typed feed(this, u8 b) {
+    if (!this.mode.canonical) { return this.feedByte(b); }
+    if (!this.mode.echo && b == REPRINT) {
+      this.held.push(b);
+      return Typed.nothing();
+    }
+    Typed t = this.feedLine(b);
+    return this.mode.echo ? t : Typed(Bytes.empty(), t.effect);
+  }
+
+  /**
+   * A run of bytes, as one arrival — an ssh payload rather than a keystroke.
+   *
+   * **A generator, where the original answers a `Typed[]` of the same length as the input.** A 4 KB
+   * `CHANNEL_DATA` payload allocates 4,096 records there, of which all but a handful are
+   * `Typed.nothing()` — two empty arrays each. Here the caller steps it and the ones it has finished
+   * with are gone.
+   *
+   * Also the first **synchronous** generator in this directory. Every other one is an `async gen`
+   * over a capability, and this one suspends against nothing: the bytes are all in hand and the
+   * laziness is only about not building the list. Worth saying because it is the case that shows
+   * `gen` is not a coroutine-over-IO feature — `../../../QUESTIONS.md` frames stepping in terms of
+   * awaiting throughout, and this needs the stepping without the awaiting.
+   */
+  gen<Typed> void feedAll(this, Bytes bytes) {
+    for (i32 i = 0; i < bytes.len(); i++) { yield this.feed(bytes.get(i)); }
+  }
+
+  /**
+   * A byte at a time, nothing edited and nothing drawn — the non-canonical half.
+   *
+   * None of the editing characters mean anything: `^U`, `^W` and DEL are bytes, and so is `^D`, so a
+   * program in this mode has no end of input from the terminal — that is the mode rather than an
+   * omission. `^C` and `^\` still signal, because `ISIG` is a third flag and nothing here clears it.
+   */
+  Typed feedByte(this, u8 b) {
+    Bytes drawn = this.mode.echo ? glyph(b) : Bytes.empty();
+    if (b == INTR) { return Typed(drawn, Signal(Interrupt)); }
+    if (b == QUIT) { return Typed(drawn, Signal(Quit)); }
+    return Typed(drawn, Delivered(one(b)));
+  }
+
+  /** The canonical rules, unchanged from the original but for the shape of what they answer. */
+  Typed feedLine(this, u8 b) {
+    if (this.literal) {
+      this.literal = false;
+      this.held.push(b);
+      // The `^` from the `^V` is on the screen already; back over it and show what arrived.
+      Buf out = Buf.create();
+      out.push(8);
+      out.pushAll(glyph(b));
+      return Typed.echoed(out.bytes());
+    }
+    if (b == LNEXT) {
+      this.literal = true;
+      return Typed.echoed(glyph('^'));
+    }
+    if (b == 13 || b == 10) {
+      // ICRNL: a carriage return *is* a newline to the program, and the echo is a full CRLF because
+      // a terminal's cursor does not return on its own.
+      Buf line = Buf.create();
+      line.pushAll(this.held.bytes());
+      line.push(10);
+      this.held = Buf.create();
+      return Typed(crlf(), Delivered(line.bytes()));
+    }
+    if (b == ERASE) {
+      if (this.held.len == 0) { return Typed.nothing(); }
+      // **The columns the character occupied, not one.** A control character is shown as `^A`, so
+      // erasing it takes two backspaces — and `columns` is `glyph(…).len()`, so the two cannot
+      // disagree the way they did.
+      i32 wide = columns(this.held.get(this.held.len - 1));
+      this.held.truncate(this.held.len - 1);
+      return Typed.echoed(rubOut(wide));
+    }
+    if (b == KILL) {
+      i32 n = this.widthFrom(0);
+      this.held = Buf.create();
+      return Typed.echoed(rubOut(n));
+    }
+    if (b == WERASE) {
+      // **Bytes to drop and columns to rub out are two numbers**, and they differ the moment a word
+      // holds a control character: `^A` is one byte and two columns.
+      i32 from = this.wordStart();
+      i32 wide = this.widthFrom(from);
+      this.held.truncate(from);
+      return Typed.echoed(rubOut(wide));
+    }
+    if (b == INTR) {
+      this.held = Buf.create();
+      // `^C` and no newline: what follows it belongs to whoever is interrupted.
+      return Typed("^C".toBytes(), Signal(Interrupt));
+    }
+    if (b == QUIT) {
+      this.held = Buf.create();
+      // The line goes, exactly as `^C`'s does — measured through the pty, and the rule nothing had
+      // asked about until `^\` was tried.
+      return Typed("^\\".toBytes(), Signal(Quit));
+    }
+    if (b == REPRINT) {
+      // `^R` echoes itself, breaks the line, and draws what has been typed again.
+      Buf out = Buf.create();
+      out.pushAll("^R".toBytes());
+      out.pushAll(crlf());
+      for (i32 i = 0; i < this.held.len; i++) { out.pushAll(glyph(this.held.get(i))); }
+      return Typed.echoed(out.bytes());
+    }
+    if (b == EOFC) {
+      if (this.held.len == 0) { return Typed(Bytes.empty(), Eof); }
+      // A line without a newline on it. The program sees exactly what was typed, and the terminal
+      // shows nothing, because nothing was typed *at* the terminal.
+      Bytes got = this.held.bytes();
+      this.held = Buf.create();
+      return Typed(Bytes.empty(), Delivered(got));
+    }
+    this.held.push(b);
+    return Typed.echoed(glyph(b));
+  }
+
+  /**
+   * Where `^W` erases back to: past whatever is not a word character, and then past the word.
+   *
+   * Two passes, and the first is why `abc def^W^W` takes back `def` and then `abc ` rather than
+   * stopping at the space it just uncovered.
+   */
+  i32 wordStart(const this) {
+    Bytes all = this.held.bytes();
+    i32 at = all.len();
+    while (at > 0 && !isWordChar(all.get(at - 1))) { at = at - 1; }
+    while (at > 0 && isWordChar(all.get(at - 1))) { at = at - 1; }
+    return at;
+  }
+
+  /** The columns occupied from byte `from` to the end of the line. */
+  i32 widthFrom(const this, i32 from) {
+    Bytes all = this.held.bytes();
+    i32 w = 0;
+    for (i32 i = from; i < all.len(); i++) { w = w + columns(all.get(i)); }
+    return w;
+  }
+}
+
+/**
+ * Whether this byte is part of a word, for `^W`.
+ *
+ * Letters and digits and nothing else, which is what the kernel does: a dot, a slash, a tab and a
+ * control character all end a word, so `ls /usr/bin^W` takes back `bin`. A byte over 127 is not a
+ * word character either — a UTF-8 letter arrives as two or three of those, and treating them as one
+ * is a question about characters that a *byte* discipline does not get to answer.
+ */
+bool isWordChar(u8 b) {
+  return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z');
+}
+
+Bytes one(u8 b) {
+  Buf out = Buf.create();
+  out.push(b);
+  return out.bytes();
+}
+
+// ## What could not be written
+//
+// **`Buf` cannot drop a byte off the end, and that is an `O(n²)` word erase in the shipped file.**
+// `packages/bytes/src/buf.wac` has `push`, `pushAll`, `dropFront`, `take` and `bytes`, and nothing
+// that shortens from the back — so `line.wac`'s `dropLast` takes the whole buffer, copies all but
+// the last byte into a new one, and replaces it. One full copy per backspace, and `^W` calls it once
+// per byte of the word: erasing a ten-character word at the end of a 4,000-byte line copies about
+// 40,000 bytes to remove ten.
+//
+// `this.held.truncate(n)` is written above and does not exist. It is four lines — the array stays,
+// `len` moves — and `dropFront` is the same operation from the other end, already there. Filed
+// rather than added, because `packages/bytes` is under everything and the gate has had no memory to
+// run in all day. This file is the consumer that wants it.
+//
+// **Nothing can ask for a mode.** `Mode` is a value here and `setMode` swaps it, which is half the
+// answer: the other half is that a *program* running under a terminal has no way to say *give me a
+// keystroke at a time*. `sshd` holds the `Line`, the program holds an `In`, and there is nothing
+// between them. In `vision/std` that is one member —
+//
+//     Result<Mode, NotATerminal> setMode(Mode m);   // on `In`, answering the mode it was in
+//
+// — and it is the first capability in this exercise that has to answer *what it was*, because
+// restoring is the caller's job and guessing the previous mode is wrong for anyone who was in a
+// password prompt. Which makes it also the first that wants `defer` for a reason nothing else has:
+// not to release something acquired, but to put something back.
+//
+// **And the mode belongs to the terminal, not to the reader.** Two programs sharing one terminal —
+// a shell and the editor it spawned — hold two `In` values over one discipline, and a mode set
+// through either is visible to both. That is what a terminal *is*, and it is the one piece of
+// ambient state a capability system cannot make private without making it wrong. Worth naming as
+// the exception rather than fixing: `../../../QUESTIONS.md`.

@@ -1,0 +1,72 @@
+// What a byte looks like on a terminal, and how much room it takes.
+//
+// **These were two functions in `packages/tty/src/line.wac` and they disagreed about DEL**, which is
+// the reason this file exists. `render` answered a bare `0x7f` and `columns` answered 2, so a
+// `^V DEL` drew one column and the erase arithmetic rubbed out two. The header records it:
+//
+// > the two halves of the same module disagreed about the same character … Measured against the pty,
+// > which is what the whole module is for and what nothing had asked about DEL.
+//
+// The two are **the same function**. `columns(b)` is `glyph(b).len()` for every one of the 256 byte
+// values — tab is one byte and one column, DEL and the control characters are two and two, printable
+// bytes and everything above 127 are one and one. So there is nothing to keep in step: `columns`
+// below is a call, and a change to the rendering moves the arithmetic with it.
+//
+// That is worth more than it looks. The bug was found by a pty comparison, which is a good oracle and
+// an expensive one; a derived `columns` is a bug that cannot be written, which needs no oracle at all.
+
+import { Bytes } from "core";
+import { Buf } from "@/packages/bytes";
+
+/**
+ * What a terminal draws for one byte.
+ *
+ * Printable bytes are themselves, including bytes above 127 — a UTF-8 character arrives as two or
+ * three of those and is echoed as it came, which is why this is a byte function and not a character
+ * one. Everything below space becomes `^` and a letter, except tab, which the terminal expands.
+ */
+export Bytes glyph(u8 b) {
+  // `^?`, not `^` plus sixty-four along — DEL is the one caret pair that goes the other way, 127-64.
+  if (b == 127) { return pair('?'); }
+  if (b == 9 || b >= 32) { return one(b); }
+  // `^@` for NUL through `^_` for 0x1f: the character sixty-four along.
+  return pair((b + 64) as@ u8);
+}
+
+/**
+ * How many columns that byte occupies.
+ *
+ * Derived rather than tabulated — see the header. A caller erasing a character needs this and the
+ * caller drawing it needs `glyph`, and the module's one measured bug was the two answering
+ * differently.
+ */
+export i32 columns(u8 b) { return glyph(b).len(); }
+
+/** Back over `n` columns, erasing as it goes: the three bytes a terminal needs per column. */
+export Bytes rubOut(i32 n) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < n; i++) { out.push(8); out.push(32); out.push(8); }
+  return out.bytes();
+}
+
+/** A newline as a terminal needs it: return, then feed. */
+export Bytes crlf() {
+  Buf out = Buf.create();
+  out.push(13);
+  out.push(10);
+  return out.bytes();
+}
+
+Bytes one(u8 b) {
+  Buf out = Buf.create();
+  out.push(b);
+  return out.bytes();
+}
+
+/** A caret pair: `^` and the letter that stands for the control character. */
+Bytes pair(u8 letter) {
+  Buf out = Buf.create();
+  out.push('^');
+  out.push(letter);
+  return out.bytes();
+}
