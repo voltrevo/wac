@@ -190,7 +190,16 @@ unary_expr     = ( "-" | "!" | "~" ) , unary_expr
                | postfix_expr ;
 
 postfix_expr   = primary_expr , { postfix_op } ;
-postfix_op     = "." , IDENT , [ "(" , [ arg_list ] , ")" ]   (* method call or field access *)
+postfix_op     = "." , IDENT , [ [ type_args ] , "(" , [ arg_list ] , ")" ]
+                                                              (* method call or field access, and
+                                                                 `[§wacc-method-type-args]` — a
+                                                                 method's *own* letters are written
+                                                                 at the call: `b.map<i64>(f)`. Only
+                                                                 where a call follows, which is the
+                                                                 rule for every place type arguments
+                                                                 may be written; `Type.method` with
+                                                                 no call is a funcref and takes
+                                                                 none. `spec/cases/0245` *)
                | "(" , [ arg_list ] , ")"                        (* call a funcref value: `f()` where
                                                                     `f` is any postfix expression,
                                                                     which is how every `fn[…]` field
