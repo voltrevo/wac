@@ -1,0 +1,147 @@
+// A bound on an async operation, written by stepping its machine — the first consumer `coroutine`
+// has ever had.
+//
+// `packages/wactest/src/daemon.wac` opens by apologising for the shape this file is trying to
+// replace:
+//
+// > ## Waiting is a poll, and the bound is a count rather than a clock
+// >
+// > There is no sleep here. `connect` to a port nothing is listening on fails immediately — a
+// > refused connection is not a timeout — so the loop is a busy retry, and the cost of a spin is one
+// > failed syscall.
+//
+// `waitForPort(cli, host, port, tries)` bounds itself by dialling a fixed number of times, and the
+// header is honest that a count is the wrong unit. The reason it is a count is that a wac program
+// has no way to say *do this, and stop if it takes longer than half a second*: an `await` runs to
+// completion or traps, and there is nothing between.
+//
+// `coroutine` is meant to be the thing between. `core/coroutine.wac`: *"the machine underneath is
+// reachable with the `coroutine` operator for the rare code that drives one by hand."* Nothing has
+// ever driven one by hand — the operator is in `GRAMMAR.ebnf`, on `TECHNICAL.md`, and used by no
+// file in this tree. A deadline is the case it was described for, so this is that case written out.
+//
+// Two things came back, and the second is worse than the first.
+
+import { Clock, Net, Socket, NotGranted } from "std";
+import { Coroutine, Step } from "core/coroutine.wac";
+import { TicketBase } from "core/ticket.wac";
+import { Result, Ok, Err } from "core/result.wac";
+
+/** The work did not finish inside the bound. */
+export struct TimedOut { i64 afterMillis; }
+
+/**
+ * Run `work` until it is done or `millis` have passed.
+ *
+ * The caller writes the machine rather than the call:
+ *
+ *     Result<Socket, TimedOut> r = within(sys.clock, 500, coroutine dial(sys, host, port));
+ *
+ * which is the whole point of the operator. `dial(sys, host, port)` on its own answers a `Ticket`
+ * and there is nothing a caller can do with one except `await` it, which has no bound. The
+ * `coroutine` form hands back the machine instead, and a machine can be stepped a bit at a time.
+ *
+ * `Y` is `never` here, so `Step` has two arms and the match is exhaustive with two — which is the
+ * `never` claim in `core/coroutine.wac` exercised by something other than its own doc comment. It
+ * held: an async function yields nothing, and writing a `Yielded` arm for it would be writing a
+ * case that cannot occur.
+ */
+export Result<R, TimedOut> within<R>(Clock clock, i64 millis, Coroutine<TicketBase, never, R> work) {
+  i64 deadline = clock.nowMillis() + millis;
+
+  while (true) {
+    match (work.step()) {
+      Done(value): { return Ok(value); }
+      Waiting(blocked): {
+        if (clock.nowMillis() >= deadline) { return Err(TimedOut(millis)); }
+        // Poll rather than block, because blocking cannot be bounded. See below.
+        blocked.advance(false);
+      }
+    }
+  }
+}
+
+/**
+ * The same bound over several, answering when the first of them finishes.
+ *
+ * Kept because it is the shape `waitForLogWithin` and `waitForPortWithin` both want and neither can
+ * write: *the server is up when either the port answers or the log says so*. Today that is two
+ * sequential bounded waits, so the bound is spent twice and a fast second condition waits out a slow
+ * first one.
+ */
+export Result<R, TimedOut> firstWithin<R>(
+  Clock clock, i64 millis, Coroutine<TicketBase, never, R>[] work
+) {
+  i64 deadline = clock.nowMillis() + millis;
+
+  while (true) {
+    if (clock.nowMillis() >= deadline) { return Err(TimedOut(millis)); }
+    for (Coroutine<TicketBase, never, R> m in work) {
+      match (m.step()) {
+        Done(value):   { return Ok(value); }
+        Waiting(blocked): { blocked.advance(false); }
+      }
+    }
+  }
+}
+
+/**
+ * `waitForPort`, with the bound in the unit it wanted.
+ *
+ * This is the call site the operator exists for, and it is the whole of what a caller writes:
+ * `net.connect(…)` answers a ticket, which can only be awaited, and `coroutine net.connect(…)`
+ * answers the machine, which can be stepped against a clock.
+ *
+ * **The return type is the third finding and it is written out rather than hidden.** `connect` fails
+ * with `NotGranted` and `within` fails with `TimedOut`, so what comes back is a `Result` inside a
+ * `Result` — two failures at two levels for one call, and a caller has to unwrap twice to ask *did
+ * it work*. What is wanted is `Result<Socket, union<NotGranted, TimedOut>>`, and there is no way to
+ * get there: `try`'s membership rule composes error sets *inside* a function body, and this is a
+ * wrapper's return type, where the two sets meet without a form that joins them.
+ *
+ * It is the same shape as `../../fs`'s `Fault` needing `std`'s `NotGranted` as a member, and that
+ * one was solvable because the union was ours to declare. Here the outer type is generic over `R`
+ * and cannot know what error set is inside it.
+ */
+export Result<Result<Socket, NotGranted>, TimedOut> dialWithin(
+  Clock clock, Net net, string host, i32 port, i64 millis
+) {
+  return within(clock, millis, coroutine net.connect(host, port));
+}
+
+// ## 1. `advance` has no bounded form, so a deadline has to busy-poll
+//
+// `TicketBase.advance(bool block)` — `block` *"says whether to wait on the world rather than only
+// poll it"*. Those are the only two settings there are. A driver with a deadline can use neither:
+//
+//   - `advance(true)` waits on the world with no bound, so a `within(clock, 500, …)` whose ticket
+//     is a socket read on a peer that never answers blocks past 500ms and past everything else.
+//   - `advance(false)` polls, so the loop above spins the CPU for the whole bound.
+//
+// **So the file that exists to replace a busy retry is a busy retry**, and the reason is one
+// argument short: `advance` takes a `bool` where a deadline needs a duration, or needs the host to
+// be told *wake me when this moves or when this many nanoseconds have passed*, which is `poll` with
+// a timeout and is what every event loop underneath us already has.
+//
+// This is not an argument against `coroutine`. The operator did exactly what it is described as
+// doing — the machine came back unstarted, `step` drove it, `never` removed the arm. What it cannot
+// do is the thing anyone would reach for it *for*, because the bound has to be enforced somewhere
+// and the only place it can go is the blocking call.
+//
+// ## 2. `advance`'s own comment claims something it cannot deliver
+//
+// > Answers whether anything moved, which is what lets a driver tell *not yet* from *never*.
+//
+// It does not. One `false` is *not yet*: nothing moved on this poll, and the world may still answer.
+// *Never* is an unbounded run of `false`s, and a driver that can tell an unbounded run from a long
+// one is a driver with a deadline — which is finding 1, so the sentence is true only for a driver
+// that cannot be written yet.
+//
+// Written down because the comment is the only description `advance` has, and it is the sentence a
+// reader would build on. The honest version is that the return value distinguishes *moved* from
+// *did not move on this call*, and the second is not a verdict about the future.
+//
+// `core/ticket.wac` already has `Stuck` for the *never* case and answers it from `wait`, which can
+// see re-entry — a ticket only a continuation can answer, waited on with no continuation to run.
+// That detection is structural rather than temporal and it is the right one; it just is not this
+// one, and `advance`'s comment reads as though it were.

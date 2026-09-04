@@ -708,10 +708,13 @@ an argument nobody has agreed to.
 **The same check the other way round used to come back clean, and no longer does — which turns out
 to be the more interesting half.** It said: every construct in `GRAMMAR.ebnf` is used by at least one
 vision file, nothing has been proposed and then not written with. Re-counted 2026-09-04 over the 52
-files, **six constructs have no user in any of them**:
+files, **six constructs had no user in any of them**:
 
     verbatim name  `@"for"`          quoted tag  `<"my-widget">`     hyphenated attribute
     `auto`                           a list literal                  `coroutine f()`
+
+`coroutine f()` has one now — `wactest`'s `within.wac`, written the same day to be it, and it found
+that the operator works and that nothing can be *bounded* with it. Five remain.
 
 Every one of them is on an agreed page, and that is why they are in the grammar: they were added
 *from* `TECHNICAL.md`, `SHOWCASE.md` and `IDIOMS.md` after a pass that asked what the pages have and
@@ -1370,3 +1373,50 @@ API, and every other capability in `vision/std` answers a question about the wor
 a program's own shape. Nothing else in the proposal wants one, and one consumer is a weak case for
 a whole new kind of capability — but the consumer is the test runner, which is the program that most
 has to know what it is calling.
+
+## A machine you can step, and no way to wait for a bounded time
+
+`vision/packages/wactest/src/within.wac` is the first code in this tree to drive a coroutine by hand,
+which is what `core/coroutine.wac` describes the operator as being for: *"the machine underneath is
+reachable with the `coroutine` operator for the rare code that drives one by hand."* Until it was
+written the operator had no user at all.
+
+The subject is a real gap the shipped code apologises for. `packages/wactest/src/daemon.wac`'s
+heading is *"Waiting is a poll, and the bound is a count rather than a clock"*, and
+`waitForPort(cli, host, port, tries)` bounds itself by dialling a fixed number of times — because an
+`await` runs to completion or traps, and a program cannot say *stop if this takes longer than half a
+second*.
+
+**The operator held up.** The machine came back unstarted, `step` drove it, and `Step<TicketBase,
+never, R>` matched exhaustively in two arms, which is the `never` claim exercised by something other
+than the doc comment asserting it.
+
+**And the bound still cannot be written.** `TicketBase.advance(bool block)` has two settings:
+
+    advance(true)    wait on the world — unbounded, so it blows through the deadline
+    advance(false)   poll — so the driver spins the CPU for the whole bound
+
+A deadline can use neither, so the file written to replace a busy retry is a busy retry. The bound
+has to be enforced at the point where the program stops running, and that point takes a `bool` where
+it needs a duration — or needs the host told *wake me when this moves or when this many nanoseconds
+have passed*, which is `poll` with a timeout and is what every event loop under us already has.
+
+So the question is what shape it takes. `advance(i64 waitNanos)` with `0` for the poll is the
+smallest change and makes the common call read as a number rather than as `false`. A separate
+`advanceUntil` keeps `advance` as it is and doubles the driver interface. Or the deadline is not a
+ticket concern at all and belongs to whatever *owns* the drain loop — which is the reading that fits
+`schedule` and `drain`, and would mean `within` is written against the scheduler rather than against
+the machine.
+
+**Worth noting what this does not need.** No new capability: `Clock` already exists, the driver
+already has one, and the deadline arithmetic is ordinary code. The missing thing is a single argument
+on one funcref, which is a small enough hole that it is worth asking why nineteen packages did not
+find it — and the answer is that they all `await`, and `await` is the construct that gives the
+question away.
+
+**And `advance`'s own comment overstates it.** *"Answers whether anything moved, which is what lets a
+driver tell not yet from never."* One `false` is *not yet*. *Never* is an unbounded run of them, and
+a driver that can tell an unbounded run from a long one is a driver with a deadline — so the sentence
+describes a driver that cannot be written yet. `core/ticket.wac` does detect *never*, in `wait`, by
+seeing re-entry on a ticket only a continuation can answer; that detection is structural rather than
+temporal and is the right one. The comment on `advance` reads as though it were the same thing.

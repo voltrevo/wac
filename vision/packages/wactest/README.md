@@ -83,6 +83,42 @@ something that traps. Against groups it is one small struct — `FakeFiles` over
 projections for a different reason, from counting the host's capabilities and finding five groups;
 the test harness is the consumer that makes them pay.
 
+## A bound on a test, and the first thing to drive a coroutine by hand
+
+[`src/within.wac`](src/within.wac) is a third file in this package, written after the other two
+because it is the only place in nineteen subjects that wanted the `coroutine` operator — which until
+today had **no user anywhere**, in a tree that had otherwise written with every construct it
+proposes.
+
+The subject is `daemon.wac`'s own apology. Its heading is *"Waiting is a poll, and the bound is a
+count rather than a clock"*, and `waitForPort(cli, host, port, tries)` bounds itself by dialling a
+fixed number of times because there is no way for a wac program to say *stop if this takes longer
+than half a second*. An `await` runs to completion or traps and there is nothing between.
+`core/coroutine.wac` describes the operator as being exactly for that gap — *"the machine underneath
+is reachable with the `coroutine` operator for the rare code that drives one by hand"* — so a
+deadline is the case it was written for.
+
+**The operator did what it says.** `coroutine dial(sys, host, port)` hands back an unstarted machine
+where the call would hand back a ticket, `step` drives it, and with `Y` at `never` the match is
+exhaustive with two arms — the `never` claim exercised by something other than the doc comment that
+makes it.
+
+**And the file is still a busy retry, which is what it exists to replace.**
+`TicketBase.advance(bool block)` has two settings and a deadline can use neither: `advance(true)`
+waits on the world unbounded, so it blows through the deadline it was given, and `advance(false)`
+polls, so the loop spins for the whole bound. The bound has to be enforced somewhere and the only
+place it can go is the blocking call, which takes a `bool` where it needs a duration.
+
+So the finding is not about `coroutine`. It is that **the proposal has a machine you can step and no
+way to wait for a bounded time**, and every event loop underneath us has had `poll` with a timeout
+since before any of this. Promoted to [../../QUESTIONS.md](../../QUESTIONS.md).
+
+`advance`'s comment also claims more than it can deliver — *"answers whether anything moved, which is
+what lets a driver tell not yet from never"* — and one `false` is *not yet*. Telling it from *never*
+needs an unbounded run of them, which needs a deadline, which is the finding above. `core/ticket.wac`
+does detect *never*, from `wait`, structurally rather than temporally, and that one is right; the
+comment on `advance` reads as though it were the same thing.
+
 ## What could not be written
 
 **A `where` clause was wanted here and the language has already decided against one.**
