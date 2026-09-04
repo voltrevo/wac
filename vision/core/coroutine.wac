@@ -11,6 +11,12 @@ import { Ticket, TicketBase } from "core/ticket.wac";
  *
  * A slot typed `never` removes its arm: `Step<never, i32, void>` is `Yielded | Done`, and a match
  * over it is exhaustive with two arms rather than three-with-a-dead-one.
+ *
+ * **That sentence is the only thing anywhere that defines `never`**, and it is a feature rather than
+ * a name: an uninhabited type, plus exhaustiveness that consults the instantiation rather than the
+ * declaration. `../QUESTIONS.md` has what it leaves open — chiefly whether a *dead* arm stays legal,
+ * because with `W` opaque a generic body needs three and at `Step<never, …>` two suffice, and if
+ * three are refused there the body cannot be written.
  */
 export enum Step<W, Y, R> {
   Waiting(W wanted),

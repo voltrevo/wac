@@ -145,6 +145,12 @@ type           = primitive_type
                | "i31ref" ;
 union_type     = "union" , [ "<" , type , { "," , type } , [ "," ] , ">" ] ;
 
+(* `never` is **not** here, and parses anyway: an unknown word is an `IDENT` and `IDENT , [ type_args ]`
+   is a type, so `Coroutine<never, Y, R>` reads as a type argument named `never`. That is an accident
+   rather than a decision — a program may declare its own `never` and two do in `packages/` — and
+   whether it becomes a keyword is in `QUESTIONS.md` with the other eight. Cheap if so: 12 uses in
+   code against 1,882 in prose. *)
+
 (* `fn<void()>` — the same rule as the spec's with the brackets swapped, which is the whole of that
    change. It is a rename rather than an addition, and it is here because a delta that only carried
    additions could not parse a vision file that uses it. *)

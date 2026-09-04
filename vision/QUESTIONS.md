@@ -459,6 +459,42 @@ five examples that elided an initialiser for brevity. `Ticket<i32> t;  // nothin
 it` reads as literal. **The pages cannot tell you which**, and only a reader that runs them can even
 ask.
 
+## `never` is a type with non-trivial semantics, asserted in one doc comment
+
+`vision/core/coroutine.wac` line 12:
+
+> A slot typed `never` removes its arm: `Step<never, i32, void>` is `Yielded | Done`, and a match
+> over it is exhaustive with two arms rather than three-with-a-dead-one.
+
+That is the whole of what anything says about `never`. It is used four times in `TECHNICAL.md`'s
+examples and twice in `core`, it is **declared nowhere**, it is not in `GRAMMAR.ebnf`'s type rule —
+it parses only because an unknown word is an `IDENT` and `IDENT , [ type_args ]` is a type — and no
+page argues for it. The coroutine design rests on it: `Generator<Y, R>` *is* `Coroutine<never, Y, R>`.
+
+**It is not a name, it is a feature.** Three parts, none of them written down:
+
+**An uninhabited type.** wac has nothing like it. `void` is the near neighbour and `0014` D5 makes
+`void` usable as a type argument, which is a different thing: a `Ticket<void>` settles and carries
+nothing, where a `Waiting(never)` can never be constructed at all.
+
+**Exhaustiveness that consults the instantiation.** `spec/spec/enums.md` grounds exhaustiveness in
+the declaration — *"the compiler knows the complete variant set from the declaration, so a missing
+arm is a static fact"* — and this makes it depend on the type arguments. There is a natural home for
+it, and it is worth saying so rather than treating this as fatal: `generics.md` already checks a
+template **twice**, once with the parameters opaque and once per instantiation, so the
+per-instantiation pass is where an arm becomes dead.
+
+But the two passes then disagree about the same `match`. With `W` opaque the body needs three arms;
+at `Step<never, …>` two suffice. That is coherent only if a dead arm stays *legal* — which the
+sentence above implies and does not say. If three arms are refused at the instantiation, a generic
+body cannot be written at all.
+
+**A ninth contextual word.** `never` was missing from the keyword-cost table in this file. Measured:
+**1,882 grep hits and 12 in code**, in 8 files, two of them genuine variable names —
+`Pending<i64> never = core.sleepMillis(10000);` in `platform`'s wacland example and `i32 never` in a
+raster test. So it is cheap to take, and the 99.4% prose rate is the most extreme in the table by a
+distance, which is what happens when a reserved word is also an ordinary English one.
+
 ## One capability says *end* with a sum and another with a sentinel
 
 `vision/std` has both shapes, twelve lines apart:
@@ -1014,12 +1050,13 @@ with comments and string literals stripped:
 | `defer` | 0 | 0 | free |
 | `schedule` | 0 | 0 | free |
 | `yield` | 0 | 0 | free |
+| `never` | 12 | 8 | `Pending<i64> never = …` in an example, `i32 never` in a test — and **1,882 by grep**, the widest gap in the table |
 | `union` | 6 | 1 | four locals in `bindgen.wac`, all called `union` and all strings |
 | `gen` | 38 | 8 | `Exec gen = cli.exec(…)`, mostly in tls tests |
 | `in` | 188 | 55 | `export Line nextLine(Lines s, Feed in)` — a parameter name |
 | `secret` | 182 | 31 | `u8[] secret = handshakeTrafficSecret(…)` — quic, tls, crypto |
 
-**Four of the eight cost nothing at all**, which was not the expected answer and is the useful half:
+**Four of the nine cost nothing at all**, which was not the expected answer and is the useful half:
 `try`, `defer`, `schedule` and `yield` appear nowhere as names, so the choice for them is free and
 should be made on how they should read rather than on what they break.
 
