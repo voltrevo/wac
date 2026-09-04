@@ -160,6 +160,11 @@ function prefixPosition(toks: Token[]): boolean {
   const ends = new Set([
     "IDENT", "INT_LITERAL", "FLOAT_LITERAL", "STRING", "BLOCK_STRING", "CHAR_LITERAL", "STR_TAIL",
     ")", "]", "}", "!", "++", "--", "this", "true", "false", "null",
+    // Not because `fn` ends an expression — it cannot — but because it is the one keyword a type
+    // argument list follows. `fn<void()> call;` lexed as an element opening `<void…`, and every
+    // vision file using the angle funcref shape stopped parsing the moment JSX went in. Every other
+    // `<` that opens type arguments follows an `IDENT`, which is on this list already.
+    "fn",
   ]);
   return !ends.has(last.kind);
 }

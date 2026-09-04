@@ -300,14 +300,27 @@ today's rules in a place vision is not changing.** Nothing else would have caugh
 it **renames or replaces**, which the parser cannot see because the old spelling is perfectly good.
 It is the class with a migration attached, and nothing had collected it.
 
-| vision | shipped | sites |
-|---|---|---:|
-| `Sys` | `Core` and `Cli`, two parameters | 2,887 + 3,947 mentions |
-| `Ticket<T>` | `Pending<T>` | 838 |
-| `fn<T(…)>` | `fn[T(…)]` | 958 |
-| a match arm with no `case` | `case X:` | 2,237 |
-| `default:` | `else:` | — |
-| `T?` everywhere | `Option<T>` alongside it | 156 |
+| vision | shipped | grep | in code | files |
+|---|---|---:|---:|---:|
+| `Sys` | `Core` and `Cli`, two parameters | 3,198 + 4,400 | 2,820 + 3,726 | 706 + 737 |
+| `Ticket<T>` | `Pending<T>` | 755 | **430** | 79 |
+| `fn<T(…)>` | `fn[T(…)]` | 1,091 | **444** | 80 |
+| a match arm with no `case` | `case X:` | 2,349 | 2,081 | 205 |
+| `default:` | `else:` | 624 | 572 | 101 |
+| `T?` everywhere | `Option<T>` alongside it | 102 | **50** | 18 |
+
+**The counts on this page were greps and three of them are roughly double the truth.** Comments and
+string literals are 59% of `fn[`'s occurrences, 50% of `Option<`'s and 43% of `Pending<`'s — a
+package that discusses a type mentions it far more often than it uses it, and the three most
+discussed are the three most overstated. Stripping comments and strings first gives the column that
+matters for a migration. `Core` and `Cli` barely move, because a capability is passed far more often
+than it is written about.
+
+**And only one row is a grammar change at all.** `fn[T(…)]` → `fn<T(…)>` is the single rename the
+parser can see: `tools/specparse.ts` with `GRAMMAR.ebnf` refuses `fn[void()] cb;` and accepts the
+angle form, so those 444 sites in 80 files stop compiling on the day it lands. Everything else in
+this table is a rename of an *identifier* — `Core`, `Pending`, `Option` — or of arm syntax the delta
+accepts both spellings of, so a sweep can do it and nothing breaks in between.
 | a tag is a function in scope | **`[§jsx-element-is-an-expression]`** — *"the tag as a string. Nothing is looked up"* | — |
 | `+` accepts a scalar | `string + i32` is *"deliberately a compile error"* | — |
 
