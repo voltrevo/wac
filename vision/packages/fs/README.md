@@ -122,7 +122,12 @@ rather than repeating it"*. That is a cross-package invariant held by a comment,
 shipped design nor this one can state it in a type. A `Path` distinct from `string` would — and
 would touch every caller in the tree, which is why it is a note here rather than a proposal.
 
-**The `Files` projection is missing two of the fourteen.** `rename` and `linkStat` are in the host's
-capability set and in the shipped `Fs`, and not in `vision/std`'s `Files`. That is a gap in the
-projection rather than in the design — the six methods were chosen from what the earlier packages
-happened to need, which is exactly the failure mode a first real consumer exists to find.
+**The `Files` projection was missing two of the fourteen**, and now has eight. `rename` and
+`linkStat` are in the host's capability set and in the shipped `Fs` and were not in `vision/std`'s
+`Files`, because the six were chosen from what the earlier packages happened to need — exactly the
+failure mode a first real consumer exists to find. Added.
+
+Eight is still not fourteen, and that is the part worth keeping rather than the fix: **a projection
+assembled from its callers is sized by who came first**, and one consumer later it is still that. The
+honest version of the projection argument is not *these are the file capabilities* but *these are the
+ones somebody has needed so far*, and nothing in `vision/std` says which of the two it is claiming.

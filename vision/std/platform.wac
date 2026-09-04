@@ -94,10 +94,11 @@ export struct Sys {
 /**
  * Paths. Fourteen of the fifty, and **six of the fourteen are here**.
  *
- * The six were chosen from what the packages written before `fs` happened to need, which is the
- * failure mode a first real consumer exists to find: `rename` and `linkStat` are in the host's set
- * and in the shipped `packages/fs`, and are missing below. A projection assembled from its early
- * callers is a projection sized by who came first.
+ * The first six were chosen from what the packages written before `fs` happened to need, which is
+ * the failure mode a first real consumer exists to find: `rename` and `linkStat` are in the host's
+ * set and in the shipped `packages/fs`, and were missing until `fs` asked. **A projection assembled
+ * from its early callers is a projection sized by who came first** — and the eight here are still
+ * that, one consumer later. Fourteen is what the host has.
  */
 export struct Files {
   async Result<u8[], NotGranted> read(this, string path);
@@ -106,6 +107,16 @@ export struct Files {
   async Result<string[], NotGranted> readDir(this, string path);
   async Result<void, NotGranted> mkdir(this, string path, bool parents);
   async Result<void, NotGranted> remove(this, string path, bool recursive);
+
+  /**
+   * The two `vision/packages/fs` found missing, added on its report.
+   *
+   * `rename` is in the host's fourteen and in the shipped `Fs`; `linkStat` is how a filesystem tells
+   * a symlink from what it points at, and a `stat` that follows links cannot answer it. Neither was
+   * here because the six above were what the packages written *before* `fs` happened to need.
+   */
+  async Result<void, NotGranted> rename(this, string from, string to);
+  async Result<Stat, NotGranted> linkStat(this, string path);
 }
 
 /** Sockets. The child's own, never the parent's. */
