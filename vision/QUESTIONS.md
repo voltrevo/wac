@@ -5144,3 +5144,56 @@ So the operative rule is narrower and more useful than *check your counts*:
 `DECISIONS.md` already has the rule for prose — *"a rule written twice is a rule that drifts"* — and
 `@/packages/wac`'s README already applied it to a number. What is new is the measurement: the same
 directory, three families, and the two that name something are the two that survived.
+
+## "Three lowerings" is two lowerings and a code generator
+
+`TECHNICAL.md` costs `union`, `gen`/`yield` and `try` together and concludes *the desugarings are
+easy and the parser is the work*. Writing two of the three as passes says otherwise, and the
+difference is not size.
+
+| | rewrites | needs |
+|---|---|---|
+| `try` | a statement list into a nested one | statements |
+| `union` | a type into an enum of one-field variants | types |
+| `gen` | a function into a struct **and** a function | **declarations** |
+
+`@/packages/wacc/src/desugar.wac` is the first, written and complete. `@/packages/wacc/src/genlower.wac`
+is the third and **stops at a signature**, because a generator's lowering adds a *top-level
+declaration* to the module — a struct with a resume tag and one field per local that outlives a
+suspension. That changes the export table, the type table, and the order things are checked in.
+
+The shipped compiler does exactly this and has for a while: `packages/wacc/src/asyncsynth.wac` is
+where the 23 synthetic-name constants live, and it is called a **plan** rather than a rewrite. So the
+naming was right before the reason was written down: a pass that emits declarations cannot be
+expressed as a tree-to-tree rewrite, so it produces a description and something else emits from it.
+
+None of that argues against the feature. It argues that the three were costed as one kind of thing
+and are two kinds, and that the parser is not the only work.
+
+### And `yield` needs no inference where `await` does
+
+`packages/wacc/src/asyncplan.wac` declines a bare `await e;`, exactly:
+
+> **Both are the shapes that name the ticket's type** … the only way to know `X` from the AST alone
+> is to have it written. `T x = await e;` says `T`, and `return await e;` says the function's own
+> return type. A bare `await e;` says neither, so it is declined here rather than guessed at.
+
+**`yield e;` always names its type, because `gen<Y>` is in the signature.** So the case that forces
+`async` to refuse two of its three statement shapes does not arise for a generator at all: every
+`yield` in a body yields the `Y` written once at the top, and a bare `yield e;` is the ordinary form
+rather than the declined one.
+
+Which inverts the intuition the pair invites. `gen` looks like the harder feature — it suspends *and*
+produces a value — and it is the easier lowering, because the extra thing it does is the thing that
+is declared. `async` produces nothing and must infer where `gen` reads. If either is to land first,
+that is an argument for the one nobody would have picked.
+
+### A third site for `never`, and the one where it is not a convenience
+
+A synchronous `gen<Y> R f()` blocks on nothing, so its machine answers `Step<never, Y, R>` and its
+caller's `match` has two arms. Same operation as `union<never, E>` reducing to `E`.
+
+The difference here is that the code is **generated**. An unreachable `Waiting` arm that a person
+writes is a dead branch they can see; one the compiler emits has to *do* something, and the only
+honest thing is `trap` — so declining the rule puts an unreachable trap inside every generator in the
+program. Three sites now: `Step`, `union`, and this. Only the third has no acceptable fallback.

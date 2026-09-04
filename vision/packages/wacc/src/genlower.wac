@@ -1,0 +1,111 @@
+// The `gen` lowering — the third of the three, and the first that has to **create a type**.
+//
+// `./desugar.wac` is the `try` pass: it rewrites statements into other statements. The `union`
+// lowering rewrites types into other types. This one turns a function into a struct and a `step`
+// function, and the struct did not exist in the source.
+//
+// That is where it stops, and the stopping place is the finding rather than an excuse.
+
+import { Vec } from "core";
+import { Expr, Tok, Span } from "./ast.wac";
+import { Stmt } from "./stmt.wac";
+
+/**
+ * What the pass would have to emit for `gen<Y> R f(A a)`.
+ *
+ * Not a rewrite of anything: a **new declaration**, with a field per local that outlives a
+ * suspension, plus the resume tag. `../../../TECHNICAL.md` measures the target and it runs — a
+ * struct with a resume tag, matched on entry to `step`.
+ */
+export struct Machine {
+  /** The name the pass invents. One synthetic token; see `./desugar.wac` on where those come from. */
+  Tok name;
+  /** `at`, the resume tag: which suspension point the body stopped at. */
+  Tok tagField;
+  /** One field per local that outlives a suspension — the set `asyncplan.wac` already computes. */
+  Vec<Hoisted> hoisted;
+  /** The `step` body: the original statements, cut at each suspension, under a `match (this.at)`. */
+  Vec<Stmt> step;
+}
+
+export struct Hoisted { Tok name; Span at; }
+
+/**
+ * There is no `Decl` in this tree, so this signature is the end of the file.
+ *
+ * `./ast.wac` is the expression tree and `./stmt.wac` is the statements it needed; neither has a
+ * declaration node, because neither pass needed one. This one needs *two*: the machine's `struct`
+ * and the rewritten `func`. So the pass cannot be written here, and saying which node is missing is
+ * more useful than eliding a body.
+ */
+export Machine plan(Vec<Stmt> body, Tok fnName) { … }
+
+// ## 1. Three lowerings, three levels, and only the third leaves the file's own vocabulary
+//
+// | | rewrites | needs |
+// |---|---|---|
+// | `try` | a statement list into a nested one | statements — `./stmt.wac` |
+// | `union` | a type into an enum of one-field variants | types |
+// | `gen` | a function into a struct **and** a function | declarations, which nothing here has |
+//
+// The three were costed together in `../../../TECHNICAL.md` as *the desugarings are easy and the
+// parser is the work*, and on that measure they are the same size. On this one they are not: two are
+// tree-to-tree at a level the tree already has, and the third **adds a top-level declaration to the
+// module**, which changes the export table, the type table and the order things are checked in.
+//
+// That is not an argument against it — the shipped compiler does exactly this in `asyncsynth.wac`,
+// which is where the 23 synthetic-name constants live. It is an argument that *"three lowerings"* is
+// two lowerings and a code generator, and nothing had said so.
+//
+// ## 2. `yield` needs no inference and `await` does, which is a fact about the signature
+//
+// `packages/wacc/src/asyncplan.wac` declines a bare `await e;`, and its reason is exact:
+//
+// > **Both are the shapes that name the ticket's type**, which is not a coincidence: the machine
+// > keeps the ticket it suspended at in a slot of type `Pending<X>`, and the only way to know `X`
+// > from the AST alone is to have it written. `T x = await e;` says `T`, and `return await e;` says
+// > the function's own return type. A bare `await e;` says neither, so it is declined here rather
+// > than guessed at.
+//
+// **`yield e;` always names its type, because `gen<Y>` is in the signature.** So the case that
+// forces `async` to refuse two of its three statement shapes does not arise for a generator at all:
+// every `yield` in a body yields a `Y`, written once at the top, and a bare `yield e;` is the
+// ordinary form rather than the declined one.
+//
+// Which inverts the intuition the two constructs invite. `gen` looks like the harder feature — it
+// suspends *and* produces a value — and it is the easier lowering, because the extra thing it does
+// is the thing that is declared. `async` produces nothing and must infer where `gen` reads.
+//
+// ## 3. The `Waiting` arm has to be deleted, which is the `never` rule again
+//
+// A synchronous `gen<Y> R f()` blocks on nothing, so its machine answers `Step<never, Y, R>` and its
+// caller's `match` has two arms. That is `core/coroutine.wac`'s claim — *"a slot typed `never`
+// removes its arm"* — and the lowering is where it has to be true: the pass emits a `match` over a
+// three-variant enum with two arms, and either the checker accepts that at this instantiation or the
+// pass must emit a third arm that cannot be reached.
+//
+// Same operation as `union<never, E>` reducing to `E`, which `../../../QUESTIONS.md` records as the
+// second site. This is the third, and it is the one where the rule is not a convenience: an
+// unreachable `Waiting` arm in generated code has to *do* something, and the only honest thing is
+// `trap`, which puts an unreachable trap in every generator in the program.
+//
+// ## 4. What could not be written
+//
+// **The hoisted set is computed and this file only names it.** `asyncplan.wac` answers *which locals
+// outlive a suspension* already, with its own tests — `ok suspends=1 hoist=3`. A generator needs
+// exactly that and nothing more, which `../../../TECHNICAL.md` states and this file is the second
+// place to depend on. The difference between the two is that a generator is driven by its caller and
+// passes a value out at each suspension; neither needs new analysis.
+//
+// **A `Machine` is a struct describing a struct**, and there is no way to say that. `name`,
+// `tagField` and `hoisted` are tokens because the thing they describe does not exist yet, so this
+// type is a *plan* rather than a tree — which is what `asyncplan.wac` is called and is the shape the
+// shipped compiler already chose. Worth noticing that the naming was right before the reason was:
+// a pass that emits declarations cannot be expressed as a rewrite, so it produces a description and
+// something else does the emitting.
+//
+// **Nothing says the resume tag's range.** `at` is an `i32` and its legal values are *the number of
+// suspension points in this body*, known at the moment the machine is built and never afterwards.
+// A `match (this.at)` therefore needs a `default:` that cannot happen — the same shape as §3's
+// `Waiting`, arriving in the same function for a different reason, and the same answer would fix
+// both: a refinement of an integer, which `../../../QUESTIONS.md` has open.

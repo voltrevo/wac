@@ -11,7 +11,8 @@ ever had.
 
 [`src/stmt.wac`](src/stmt.wac) and [`src/desugar.wac`](src/desugar.wac) are the second subject: the
 `try` lowering written as the pass `../../TECHNICAL.md` concluded it had to be, and the 21 uses in
-this directory that no page had lowered.
+this directory that no page had lowered. [`src/genlower.wac`](src/genlower.wac) is the third
+lowering, and it stops at a signature — which is what it is for.
 
 ---
 
@@ -142,6 +143,47 @@ is named once in `TECHNICAL.md` — as the thing `asyncplan.wac` declines for `a
 inherits the limit for the same reason. **The short-circuit case is named nowhere**, and it is the one
 a person writes without thinking.
 
+## Three lowerings, three levels, and only the third leaves the tree's vocabulary
+
+[`src/genlower.wac`](src/genlower.wac) is the third of the lowerings
+`../../TECHNICAL.md` costed together as *the desugarings are easy and the parser is the work*. On
+that measure the three are the same size. On this one they are not:
+
+| | rewrites | needs |
+|---|---|---|
+| `try` | a statement list into a nested one | statements — [`src/stmt.wac`](src/stmt.wac) |
+| `union` | a type into an enum of one-field variants | types |
+| `gen` | a function into a struct **and** a function | declarations, which nothing here has |
+
+So the file stops at a signature, and where it stops is the finding: `gen` **adds a top-level
+declaration to the module**, changing the export table, the type table and the order things are
+checked in. The shipped compiler does exactly this — `asyncsynth.wac` is where the 23 synthetic-name
+constants live — so it is not an argument against the lowering. It is an argument that *"three
+lowerings"* is two lowerings and a code generator, and nothing had said so.
+
+### `yield` needs no inference and `await` does, which inverts the intuition
+
+`packages/wacc/src/asyncplan.wac` declines a bare `await e;`, exactly:
+
+> **Both are the shapes that name the ticket's type** … the only way to know `X` from the AST alone
+> is to have it written. `T x = await e;` says `T`, and `return await e;` says the function's own
+> return type. A bare `await e;` says neither, so it is declined here rather than guessed at.
+
+**`yield e;` always names its type, because `gen<Y>` is in the signature.** The case that forces
+`async` to refuse two of its three statement shapes does not arise for a generator at all.
+
+`gen` looks like the harder feature — it suspends *and* produces a value — and it is the easier
+lowering, because the extra thing it does is the thing that is declared. `async` produces nothing and
+must infer where `gen` reads.
+
+### And the `Waiting` arm has to be deleted, which is `never` for the third time
+
+A synchronous `gen<Y> R f()` blocks on nothing, so its machine answers `Step<never, Y, R>` and its
+caller's `match` has two arms. Same operation as `union<never, E>` reducing to `E`. This is the site
+where the rule stops being a convenience: an unreachable `Waiting` arm in *generated* code has to do
+something, and the only honest thing is `trap` — which puts an unreachable trap in every generator in
+the program.
+
 ## What could not be written — the pass
 
 **`try` is the only expression in vision whose meaning depends on the signature it is written in.**
@@ -164,6 +206,24 @@ ever reads. Small, and the kind of small thing only writing the pass finds.
 
 **`Defer` has a node and no lowering**, because what it means is open — four uses already depend on
 the answer and `@/packages/box`'s pager depends on it for three of its four exits.
+
+## What could not be written — the gen pass
+
+**The hoisted set is computed and this only names it.** `asyncplan.wac` answers *which locals outlive
+a suspension* with its own tests — `ok suspends=1 hoist=3`. A generator needs exactly that and
+nothing more; the differences are that it is driven by its caller and passes a value out, and neither
+needs new analysis.
+
+**A `Machine` is a struct describing a struct**, and there is no way to say that. Its fields are
+tokens, because the thing they describe does not exist yet — so the type is a *plan* rather than a
+tree, which is what `asyncplan.wac` is called and is the shape the shipped compiler already chose.
+The naming was right before the reason was: a pass that emits declarations cannot be a rewrite, so it
+produces a description and something else emits.
+
+**Nothing says the resume tag's range.** `at` is an `i32` whose legal values are *the number of
+suspension points in this body* — known when the machine is built and never afterwards. So
+`match (this.at)` needs a `default:` that cannot happen, the same shape as the deleted `Waiting` arm,
+in the same function for a different reason, and one answer fixes both.
 
 ## What could not be written — the payload
 
