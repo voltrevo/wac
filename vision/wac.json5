@@ -10,19 +10,32 @@
 // `@/` asks, and nothing reads its contents to answer. The repository root has no manifest, which
 // is why nothing outside `vision/` writes `@/` today.
 //
-// **And sixteen imported names in eleven files disagree with the paragraph above**, measured
-// 2026-09-04 — seventeen in twelve when this was written, and the one that went was never an
-// overlay import at all: `packages/page/src/counter.wac` named `@/packages/page` for `Node`, a type
-// `core/jsx.wac` declares, and the package it named does exist. It was found by widening the import
-// check from *does the target file exist* to *does the target export this name*, which also found
-// three calls to a `Buf.empty()` that `packages/bytes` does not have.
+// **And seventeen imports across the directory disagree with the paragraph above**, re-measured
+// 2026-09-04 after the crypto digests were written: seventeen references to **twelve distinct files
+// that do not exist here**, and every one of the twelve exists in `packages/` at the same path with
+// `vision/` taken off the front — checked, all twelve.
 //
-// The remaining sixteen are the real thing. They name files the rewrites chose not to write —
-// `./stringify.wac`, `@/packages/crypto/src/sha256.wac` — every one of which exists in
-// `packages/` at the same path with `vision/` taken off the front. So the code assumes an *overlay*: resolve here, fall through to the repository if
-// absent. That is not what this manifest says and it is not something the resolver can express.
-// `../QUESTIONS.md` has the two ways out and why the second is a language question rather than a
-// tidy-up.
+//     4  @/packages/box/src/lib/args.wac
+//     2  ./response.wac        2  ./headers.wac          (http)
+//     1  ./stringify.wac (json)    ./routes.wac (server)  ./atof.wac (fmt)
+//     1  ./huffman.wac  ./crc32.wac (gzip)                ./case.wac  ./printable.wac (unicode)
+//     1  ./percent.wac  ./host.wac (url)
+//
+// So the code assumes an **overlay**: resolve here, fall through to the repository if absent. That
+// is not what this manifest says and it is not something the resolver can express.
+//
+// **Eleven of the twelve are `./` siblings and one is an `@/` import**, which the earlier version of
+// this note missed by counting only the `@/` form. That matters: `@/` at least *names* a project
+// root a resolver could be told to chain, and `./stringify.wac` names the directory the importing
+// file is in. An overlay for relative imports is a different and larger thing — it means a file's
+// own directory is two directories — and no manifest key could express it, which is why the entry in
+// `../QUESTIONS.md` is a language question rather than a tidy-up.
+//
+// (An earlier count said sixteen names in eleven files and gave `@/packages/crypto/src/sha256.wac`
+// as an example. That file was written on 2026-09-04 and five references with it, so the example is
+// gone and the count moved for a reason unrelated to the question. A count in a comment ages against
+// work that has nothing to do with it — which is the argument for the numbers living beside the
+// method that produces them.)
 //
 // See `vision/packages/README.md`. Nothing in here compiles.
 {}

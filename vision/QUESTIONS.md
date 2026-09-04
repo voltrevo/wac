@@ -2149,19 +2149,37 @@ grant is usually described as costing nothing.
 > reaches out of `vision/`, and the code reads as though this directory were the repository. The
 > corresponding real thing is always at the same path with `vision/` taken off the front.
 
-Checked on 2026-09-04 by resolving every import specifier in the 53 rewritten files. **Seventeen, in
-twelve files, name something that is not in `vision/`:**
+Re-checked on 2026-09-04, after the crypto digests were written. **Seventeen references to twelve
+distinct files that are not in `vision/`:**
 
-    @/packages/crypto/src/{sha256,hkdf,hmac}.wac      tls/keyschedule
-    @/packages/box/src/lib/args.wac                   box/cat, box/echo
-    ./stringify.wac ./atof.wac ./huffman.wac ./crc32.wac ./routes.wac ./host.wac
-    ./percent.wac ./response.wac ./headers.wac ×2 ./case.wac ./printable.wac
+    4  @/packages/box/src/lib/args.wac                      box/{cat,echo,gunzip,tee}
+    2  ./response.wac        2  ./headers.wac               http
+    1  ./stringify.wac  ./atof.wac  ./routes.wac            json, fmt, server
+    1  ./huffman.wac  ./crc32.wac                           gzip
+    1  ./case.wac  ./printable.wac                          unicode
+    1  ./percent.wac  ./host.wac                            url
 
-Against eleven `@/` imports that do resolve inside `vision/`, so it is not that the mechanism is
-unused — it is used, and a third of the time it names nothing.
+Against eleven `@/` imports that do resolve inside `vision/`, so the mechanism is used and a third of
+the time it names nothing.
 
-**All fifteen distinct targets exist in `packages/`**, at exactly the path with `vision/` taken off
-the front. So this is a *convention* rather than seventeen mistakes: an import may name a file the
+**All twelve targets exist in `packages/`**, at exactly the path with `vision/` taken off the front —
+checked, all twelve.
+
+### Eleven of the twelve are `./` siblings, which the first count missed
+
+The earlier version of this entry counted the `@/` form and read the rest as the same thing. They are
+not. `@/` at least **names a project root**, which a resolver could be told to chain; `./stringify.wac`
+names the directory the importing file is already in. An overlay for relative imports means **a
+file's own directory is two directories**, which is a larger claim and one no manifest key could
+express — and it is what eleven of the twelve already assume.
+
+So the question is not *should `@/` fall through*. It is whether a *directory* can layer over another
+directory, and `@/` is the smaller half of it.
+
+(An earlier count said fifteen distinct targets and listed three crypto files among them. Those were
+written on 2026-09-04 and five references went with them. A count in a comment ages against work that
+has nothing to do with the question it is counting — the argument for numbers living beside the
+method that produces them.) So this is a *convention* rather than seventeen mistakes: an import may name a file the
 rewrite chose not to write, meaning *unchanged, take the original*. Every README says which files it
 wrote and why the rest are absent — `json`'s *"`stringify.wac` is not rewritten because nothing in it
 changes"* — and none of them says the imports still point at them.
