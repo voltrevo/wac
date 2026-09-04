@@ -2380,3 +2380,50 @@ grouping — one in an `if`, one in a class-presence check — do not.
 And the thing none of the three does: **nothing crosses a spawn.** `@/packages/sh/src/exec.wac` has
 that from the other side, where a capability is a bitfield rather than a value, and no amount of
 host work changes it.
+## The 62 capabilities are a union no host implements, and the shipped design has a word for that
+
+The grouping argument at the top of `vision/std/platform.wac` counts the host's capabilities and
+finds groups in them. That count was 50, then 62 once `Page` was noticed. Both treat *the host* as
+one thing. Checked against the four entry points on 2026-09-04:
+
+    native/src        (wasmtime)      Page: 0 mentions,  drawPixels: 0,  nextEvent: 0
+    native/v8/src     (V8 in Rust)    Page: 0 mentions,  drawPixels: 0,  nextEvent: 0
+    packages/platform/host           `pageOf` is imported by `entryBrowser.ts` and nothing else
+
+So **`Page`'s twelve exist on one of four entry points**, and the number every grouping argument
+here rests on is a union across hosts that none of them provides. A command-line host has 50.
+
+**The shipped design says this outright and has a name for it**, which vision does not:
+
+> A page to draw on and events to answer, for `--target browser`. **A third profile beside `Core` and
+> `Cli`, and only a browser provides it**: a page capability that pretended to work in a terminal
+> would be a lie, and the whole point of these structs is that reading one tells you what a program
+> can reach.
+
+Three *profiles*, each stated to be available or not on a given host. `vision/std` has nine
+projections and no notion of a profile at all — nothing in the file says which of the nine a given
+host supplies, and the count that produced them silently unioned two profiles that never coexist.
+
+**And splitting into nine makes this worse rather than better, which is the part worth arguing.**
+The whole claim for projections is that a signature says what a program reaches. It now does — and
+it says nothing about *where the program can run*. `main(Net net, Out out, Clock clock, Tasks tasks)`
+and `page(Out out, Page ui)` look like the same kind of thing; one runs on wasmtime and one cannot,
+and no reader of either line can tell. Under three profiles the answer was in the parameter list,
+because there were three possible parameter lists.
+
+Two ways out, and the second is the interesting one.
+
+**Keep profiles as a layer above projections** — a `Page` is browser-only and the other eight are
+everywhere — which is the shipped answer with more values under it, and needs a place to write the
+rule down that today does not exist.
+
+**Or let the projections *be* the profile**, and say a host provides a set: wasmtime provides eight,
+a browser provides nine, and *which host can run this program* is answerable by set inclusion over a
+signature. That is strictly more expressive than three named profiles, it is what the nine values
+already almost are, and it is the version where the type genuinely carries portability. What it needs
+is the one thing nothing in this directory has: a statement of **which host supplies what**, which is
+a table, and which has to live somewhere a program can be checked against.
+
+Neither is written. `design/system/0001` D9 keeps the wasmtime host because it is *the only host that
+tests the claim that a wac program does not depend on one* — and that claim already has an exception
+the size of a browser, stated once, in a doc comment on the capability it applies to.
