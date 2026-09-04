@@ -1,0 +1,15 @@
+// The package, as one name — and it is two files where the real one is eight.
+//
+// `packages/webrtc` is 3,556 lines and does something no other package here does: it holds a live
+// association against Chromium. Rewriting it would be transcription, because its difficulty is the
+// protocol rather than the shape — 1,276 lines of `sctp.wac` are congestion control, gap blocks,
+// Karn's rule and a three-chunk shutdown, all of which say the same thing in wac that they say
+// anywhere.
+//
+// What the rewrite is for is the two places where the *types* are the subject, and both are in the
+// same struct. `./tsn.wac` is a counter whose ordering is not the one `<` gives; `./flight.wac` is
+// five parallel arrays and a count. Everything else is left where it is, which is the honest
+// outcome and is the third package to reach it after `@/packages/zstd` and `@/packages/tls`.
+
+export { Tsn, Ssn } from "./tsn.wac";
+export { InFlight, Flight } from "./flight.wac";

@@ -1,0 +1,92 @@
+// A counter that wraps — and the one thing in this directory a value type takes *away*.
+//
+// SCTP numbers every DATA chunk with a 32-bit TSN that wraps. `packages/webrtc/src/sctp.wac` gets
+// this right, and says why:
+//
+// > TSNs are unsigned 32-bit and **wrap**, so `a < b` on the numbers is wrong twice over: held in an
+// > `i32` half of them are negative to begin with, and even unsigned the comparison inverts when a
+// > sequence crosses 2^32. Subtracting and testing the sign is right in both cases, because the
+// > subtraction wraps the same way the counter does.
+//
+//     export bool tsnBefore(i32 a, i32 b) { return (a - b) < 0; }
+//
+// Ten call sites on nine lines of one file, all correct — checked, and six of the ten are written
+// `!tsnBefore(…)`. At every one of them **`a < b` was available and
+// would have compiled**, on a value whose type says nothing about which comparison is the right one.
+// The comment above exists because the wrong one is one character shorter.
+//
+// ## Every other finding here adds a check; this one removes an operator
+//
+// A `Rect`, a `Chunk`, a `Gindex`, a `Tile` — each of those makes something *checkable* that was
+// not. This does the opposite: `Tsn` is a struct, and comparison operators are not defined on
+// structs, so `a < b` on two `Tsn`s **does not compile at all**. The only ordering in scope is the
+// one the RFC defines.
+//
+// That is worth naming because it generalises past this file. The reason `i32` is dangerous here is
+// not that it is imprecise; it is that it comes with an ordering, and the ordering is wrong. Any
+// wrapping counter has this shape: a sequence number, a version, a slot in a ring. Wrapping and the
+// operators are two facts and the language attaches them to one type.
+
+/**
+ * A transmission sequence number.
+ *
+ * `u32` rather than the shipped `i32`, and the two are the same 32 bits — the shipped file holds
+ * them in an `i32` and notes that *"half of them are negative to begin with"*, which is true and
+ * harmless, because the only operation that matters is a wrapping subtraction. `u32` is chosen so
+ * that a reader is not asked to hold *this number is negative and it does not matter*.
+ */
+export const struct Tsn {
+  u32 v;
+
+  /** Whether this comes before `b`, by RFC 1982. The only ordering there is. */
+  bool before(const this, Tsn b) { … }
+
+  /** `!before` at six of the ten shipped call sites; here it has a name. */
+  bool atOrAfter(const this, Tsn b) { return !this.before(b); }
+
+  /** The next one. Wrapping, which is the whole point and is the language's default. */
+  Tsn next(const this) { return Tsn(this.v + 1); }
+
+  bool eq(const this, Tsn b) { return this.v == b.v; }
+}
+
+/**
+ * A stream sequence number: 16 bits, per stream, and it wraps too.
+ *
+ * A separate type from `Tsn` for the reason the shipped comment gives about the values being easy to
+ * conflate — *"the TSN orders the association and the stream sequence orders one stream, so a peer
+ * with two channels advances one TSN and two sequences"*. With both as `i32` that conflation is a
+ * silent one; `takeSsn(stream)` answering a `Ssn` and `dataValue` taking one of each makes it a type
+ * error.
+ *
+ * **Nothing in the shipped package compares two SSNs**, because ordered delivery is decided by TSN —
+ * so there is no `before` here, and adding one speculatively would be inventing a rule for a case
+ * that does not arise. The 16-bit wrap is real and unexercised.
+ */
+export const struct Ssn {
+  u16 v;
+  Ssn next(const this) { … }
+}
+
+// ## What could not be written
+//
+// **`Tsn.before` is `(a - b) < 0` and the subtraction has to wrap.** In wac it does — wrapping is the
+// only arithmetic, which `../../../QUESTIONS.md` has an entry about as a *hazard*. This is the one
+// place in the directory where it is the feature: the counter wraps and the comparison wraps with
+// it, and a language that trapped on overflow would need a second spelling here.
+//
+// So the entry cuts both ways and neither half was written down. *Wrapping is the only arithmetic
+// and at 64 bits there is no way to notice* is about a bug that hides; this is a correct algorithm
+// that requires exactly that behaviour, in a package where the alternative would be wrong.
+//
+// **`u16` is a scalar here and the language has no row for it.** `../../../QUESTIONS.md` measured
+// `u8` as a scalar in sixty-one places against a primitive table that lists `i8` and `i16` as *array
+// element only* and has no `u8` row at all. `u16` is in the same position, and `Ssn` is the first
+// one written as code here — `@/packages/zstd/src/sequences.wac` has the only other mention, inside
+// a *proposed* `packed struct Entry { u8 extraBits; u8 nbBits; u16 newState; }`. One more row of the
+// same table rather than a new question.
+//
+// **Nothing stops `Tsn(0)`.** Any 32-bit value is a legal TSN, so there is no validity check to
+// write and no constructor to hide — which is the difference between this and `@/packages/ssz`'s
+// `Chunk`, and is why this file is short. A wrapper that buys only the operator removal is a wrapper
+// with one method, and it is still worth having.

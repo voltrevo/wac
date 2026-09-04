@@ -4601,3 +4601,49 @@ That is the small version of a question this directory keeps meeting from the ot
 decision written in a doc and held by discipline, where a type could hold it.** Every instance so far
 has been found by writing the consumer. This one was found by reading two files written the same day
 that contradicted each other.
+
+## A value type is the only way to take an operator away
+
+Every value type this directory has proposed *adds* something checkable: a `Rect` pairs four numbers
+that must agree, a `Chunk` holds a length that was verified once, a `Tile` pairs a rectangle with its
+pixels. `@/packages/webrtc/src/tsn.wac` is the first that removes.
+
+SCTP's transmission sequence numbers wrap at 2^32, so the ordering on them is not the one `<` gives.
+`packages/webrtc/src/sctp.wac` says so and provides the right one:
+
+    export bool tsnBefore(i32 a, i32 b) { return (a - b) < 0; }
+
+Ten call sites on nine lines of one file, all correct — checked, and six of the ten are written
+`!tsnBefore(…)`. **At every one of them `a < b` was available and would have compiled.** The comment
+above the helper exists because the wrong comparison is one character shorter than the right one.
+
+Make it `struct Tsn { u32 v; }` and `a < b` does not compile, because comparison operators are not
+defined on structs. The only ordering in scope is the RFC's.
+
+### Which makes the general claim sharper than *use a newtype*
+
+`i32` is not dangerous here because it is imprecise. It is dangerous because **it comes with an
+ordering, and the ordering is wrong** — and the language attaches wrapping arithmetic and the
+comparison operators to one type when they are two independent facts. Any wrapping counter has this
+shape: a sequence number, a version, a slot in a ring, a TCP or QUIC packet number.
+
+Three things follow, and only the first is settled:
+
+- **A struct wrapper is a complete answer today.** No feature is needed; `Tsn` is nine lines and
+  removes the hazard entirely. The cost is that every arithmetic use goes through a method.
+- **It is the only answer.** wac has no operator overloading and no way to declare *this type has no
+  `<`* on a primitive, so a program that wants `i32`'s arithmetic without `i32`'s ordering has to
+  leave `i32`. Whether that is right is not obvious — it is one of the few places where *the wrapper
+  is free* is measurably almost true (`@/packages/bls` measured a one-field struct at 2.6 ns against
+  a 395 ns operation) and where the wrapper is also load-bearing.
+- **Nothing points at the sites where it matters.** A wrapping counter held in a machine integer is
+  greppable — a helper named `…Before` or `…After` that subtracts and tests the sign — and no tool
+  looks. The eight files of `packages/webrtc` have exactly one such helper and it is correct; the
+  question is what would have said so if it were not.
+
+### And the wrapping entry cuts both ways
+
+`wrapping is the only arithmetic, and at 64 bits there is no way to notice` is about a bug that
+hides. `tsnBefore` **requires** wrapping: the subtraction wraps the same way the counter does, and a
+language that trapped on overflow would need a second spelling here. One entry, two directions, and
+only one of them was written down.

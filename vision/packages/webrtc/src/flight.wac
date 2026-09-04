@@ -1,0 +1,104 @@
+// What has been sent and not acknowledged — five parallel arrays and a count, as one list.
+//
+// `packages/webrtc/src/sctp.wac`'s `Association` holds:
+//
+//     i32[] flightTsn;      u8[][] flightPacket;   i64[] flightSentAt;
+//     i32[] flightTries;    i32[] flightMissing;   i32 flightCount;
+//
+// Five arrays whose entry `i` is one chunk, plus a length that is not any of their lengths. The
+// invariant — *the first `flightCount` entries of all five describe the same chunks, in the same
+// order* — is held by every site writing all five together, and it is held: the append writes five
+// consecutive lines and the compaction copies five. Checked, and correct.
+//
+// **What that costs is the compaction**, which is where the shape shows:
+//
+//     i32 kept = 0;
+//     for (i32 i = 0; i < this.flightCount; i++) {
+//       if (tsnBefore(acked, this.flightTsn[i])) {
+//         this.flightTsn[kept] = this.flightTsn[i];
+//         this.flightPacket[kept] = this.flightPacket[i];
+//         this.flightSentAt[kept] = this.flightSentAt[i];
+//         this.flightTries[kept] = this.flightTries[i];
+//         this.flightMissing[kept] = this.flightMissing[i];
+//         kept = kept + 1;
+//       }
+//     }
+//     this.flightCount = kept;
+//
+// Five lines that must all be there and must all say `kept` on the left and `i` on the right.
+// Omitting one leaves that array shifted against the other four from then on: the TSN of one chunk
+// beside the retransmission count of another, with no crash and no wrong length — the association
+// simply resends the wrong thing, or gives an RTT sample for a chunk that was retransmitted.
+//
+// A sixth field would be six lines. The rule that says *do not do this* is not about parallel arrays
+// being ugly; it is that **the cost of the invariant grows with the number of fields and the code
+// that pays it is somewhere else.**
+
+import { Vec, Bytes } from "core";
+import { Tsn } from "./tsn.wac";
+
+/** One DATA chunk that has gone out and not been acknowledged. */
+export struct InFlight {
+  /**
+   * **A retransmitted chunk keeps its TSN**, which the shipped file explains and which is the
+   * opposite of `@/packages/quic` — where a packet number is used once, because reusing one repeats
+   * an AEAD nonce. So this identity is stable and is what a SACK names.
+   */
+  Tsn tsn;
+  /** The whole packet, sent again unchanged. */
+  Bytes packet;
+  /** When it last went out. `i64`, from the clock the caller supplies. */
+  i64 sentAt;
+  /**
+   * How many times it has been sent.
+   *
+   * **Karn's rule lives in this field.** A retransmitted chunk gives no round-trip sample, because
+   * the acknowledgement could be answering either transmission — so `tries == 1` is the condition
+   * for `sample()`, and the count is kept rather than just a timestamp for exactly that reason.
+   */
+  i32 tries;
+  /** How many SACKs have reported it missing. Three is a fast retransmit. */
+  i32 missing;
+}
+
+/**
+ * The in-flight set.
+ *
+ * A `Vec<InFlight>` and nothing else: the count is `len()`, the compaction is a filter, and there is
+ * no arrangement of the fields that can disagree because there is one arrangement.
+ */
+export struct Flight {
+  Vec<InFlight> chunks;
+
+  /** Bytes outstanding — what the congestion window is compared against. */
+  i32 bytes(const this) { … }
+
+  /** Drop everything acknowledged at or below `acked`, answering the bytes that were. */
+  i32 acknowledge(this, Tsn acked) { … }
+
+  /** Everything whose retransmission timer has expired at `now`. */
+  Vec<InFlight> due(const this, i64 now, i64 rto) { … }
+}
+
+// ## What could not be written
+//
+// **`acknowledge` walks the list twice in the shipped code and once here, and the difference is not
+// the finding.** The shipped version sums acknowledged bytes in one loop and compacts in a second,
+// because the sum is needed before `grow` and the compaction cannot start until it has been used. A
+// filter that also accumulates is one walk, and whether that is clearer is a matter of taste. What
+// *is* worth saying: with parallel arrays the two-walk version is the safer one, since one loop that
+// both reads and shifts five arrays is where an off-by-one lives. The type change is what makes the
+// single walk safe, which is the argument, and the walk count is a consequence rather than a reason.
+//
+// **A bounded `Vec`.** The shipped `noteSent` begins `if (this.flightCount >= this.flightTsn.len())
+// { return; }` — the arrays are fixed-size and a full flight silently drops the record of a chunk
+// that was sent. That is a real behaviour and a `Vec` removes it by growing, which is *not
+// obviously* the improvement: an unbounded in-flight list is a memory ceiling removed rather than a
+// bug fixed, and the congestion window is what is supposed to bound it. Nothing in either version
+// says which of the two is the limit that matters, and the shipped one at least has a number.
+//
+// **`i32 haveCumulative` and `i32 shutDown` are booleans.** `Association` has `bool established`
+// four lines from `i32 haveCumulative`, and `bool closed()` is `return this.shutDown != 0;`. Not a
+// language gap — `bool` is right there, in the same struct — and worth one line because it is the
+// same *closed set spelled as an integer* as everything else, at the two-element case, in a file
+// that spells it correctly elsewhere.
