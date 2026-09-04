@@ -1383,6 +1383,25 @@ returning nothing rather than a variant carrying nothing, and `Ok(void)`, which 
 a value goes. All three are ugly and one of them has to be chosen the first time somebody writes a
 fallible function that answers nothing — which is most of them.
 
+**Measured 2026-09-04, and two of the three do not compile.**
+
+| written | today |
+|---|---|
+| `Res.Ok` — qualified, no parentheses | **compiles and runs**, at `T = void` and at every other `T` |
+| `Res.Ok()` — empty parentheses | `a variant with the wrong count` |
+| `Ok` — unqualified, no parentheses | `unresolved name Ok` |
+| `Ok(Unit())` — a one-member struct standing in for `void` | compiles and runs |
+
+So the choice is narrower than the entry assumed and worse. The one spelling that works is the
+qualified bare form, and **it works through `issues/lang/0335a`** — a payload-carrying variant
+written bare is accepted at *every* `T`, so `enum Sh { A, B(string s) }` with `return Sh.B;` also
+compiles and traps on a null. Fixing that bug removes the only spelling that works unless `void` is
+carved out, which is what makes this entry the decision the fix is waiting on rather than a
+preference between three uglinesses.
+
+And it is not the whole of the problem: see below, because the *unqualified* form this directory
+writes everywhere does not work at any `T`.
+
 ## Whether vision's new words are keywords, which nobody had asked
 
 `try`, `gen`, `defer`, `schedule`, `yield`, `in`, `union` and `secret` are written all over these
@@ -3626,3 +3645,46 @@ The first is the one a parser hits immediately. `@/packages/datetime/src/rfc3339
 `try`s and **six are statements** — every separator in the grammar. If only the expression form is
 legal, each becomes `_ = try c.expect('-');`, which reads as discarding something and discards
 nothing.
+
+## An unqualified variant construction is used ninety times and is not a thing today
+
+`return Ok(3);` — a variant constructed without naming its enum — is what every file in this
+directory writes. Measured 2026-09-04:
+
+    Res<i32, F> f() { return Ok(3); }         // 1 type error: `a call to Ok`
+    Res2<i32, F2> r = Ok(4);                  // 1 type error: `a call to Ok`
+
+`spec/spec/enums.md` gives the bare form for a **type test** — *"`is` accepts a variant name, bare or
+qualified by the enum"* — and for a `case` pattern. Construction is `Enum.Variant(args)`, everywhere
+in `packages/`. Unqualified, `Ok(3)` is a call to a function called `Ok`, and the diagnostic says so.
+
+**Ninety uses in a `return` position alone**, across ten files, 42 `Ok` and 48 `Err`; the other 53
+capitalised names in that position are struct constructions and are fine. Counting the other
+positions — a variable initialiser, an argument, an arm of a ternary — would only raise it.
+
+So this is one of the largest additions vision makes and **no page names it.** `GRAMMAR.md`'s table
+of eight constructs has *a match arm without `case`* — the pattern side of the same idea — and stops
+there, for a mechanical reason worth keeping: the table was built by feeding files to the compiler
+and recording the first divergence, and the pattern side is what the *parser* refused while the
+construction side parsed cleanly as something else. A construct is invisible to that instrument
+exactly when it collides with an existing one.
+
+**What has to be decided is not whether, but how it resolves.** Three shapes, and they are not
+equivalent:
+
+- **From the expected type.** `return Ok(3);` in a function answering `Res<i32, F>` has a slot, and
+  so does `Res2<i32, F2> r = Ok(4);`. This is what every language with inferred variant construction
+  does and it is the one that makes the ninety uses legal. It also does nothing for a call argument
+  whose parameter is generic, which `issues/lang/0273a` is already about from the other side —
+  *"a slot does not determine a call's type parameters"* is open, and this would need the opposite
+  answer.
+- **From an import.** `import { Ok, Err } from "core";` brings the arms into scope as names, which
+  is how the barrels already export types and makes the collision problem worse — see the entry on
+  bare variant names sharing one namespace per file, which already has five renames in four
+  packages.
+- **Not at all**, and this directory qualifies ninety call sites. Cheap, and it loses the reason
+  `match` arms were allowed to drop `case`: that a variant in a position where only one enum can
+  appear does not need saying twice.
+
+The first is what the code assumes. It should be written down before it is assumed for a
+ninety-first time.

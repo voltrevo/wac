@@ -671,6 +671,41 @@ That pass cannot find a *new* kind of mistake, which is its honest limit: it is 
 parser. The general instrument is reading `spec/spec/grammar.md`, and the section above is what
 happens when nobody does.
 
+### And there is a third blind spot, which found the largest omission in this document
+
+A spelling that **parses today and means something else** is invisible to both halves. The parser
+does not object, because there is nothing wrong with the syntax; the known-wrong list does not
+object, because nobody knew.
+
+The instance, measured 2026-09-04 through `bootstrap/ts/ask_wacc.ts`:
+
+    Res<i32, F> f() { return Ok(3); }     // 1 type error: `a call to Ok`
+
+**An unqualified variant construction is not a thing today.** `spec/spec/enums.md` gives the bare
+form for a type test — *"`is` accepts a variant name, bare or qualified by the enum"* — and for a
+`case` pattern, and construction is `Enum.Variant(args)` everywhere in `packages/`. Unqualified,
+`Ok(3)` is read as a call to a function named `Ok`, which is why the diagnostic says so.
+
+This directory writes it **90 times in a `return` position alone**, across ten files, split 42
+`Ok` and 48 `Err` — and the other 53 capitalised names in that position (`Typed`, `Mount`, `Slice`,
+`Buf`, `Big`) are struct constructions, which are fine. It is therefore one of the largest
+additions vision makes, it is used more than most of the eight in the table above, and **no page
+names it.** The table has *a match arm without `case`* — the pattern side of the same idea — and
+stops there, because the pattern side is what the parser refused and the construction side is what
+it silently accepted as something else.
+
+Two further spellings measured while establishing that, both refused: `Res.Ok()` with empty
+parentheses at `T = void` is *a variant with the wrong count*, and unqualified `Ok` with no
+parentheses is *unresolved name Ok*. So of the three alternatives `QUESTIONS.md`'s
+*Spelling `Ok` when the value is `void`* weighs, exactly one compiles — `Res.Ok`, qualified and
+bare — and it compiles through `issues/lang/0335a`, which is a bug.
+
+The lesson for the instrument rather than for the entry: **a construct is invisible to a
+first-divergence run precisely when it collides with an existing one.** Anything vision spells the
+way today's language spells something else will never appear in the table above, and the way to find
+the rest is to run the *semantics* — which is what `ask_wacc.ts` does and what the table was built
+without.
+
 **And its first hits were all false**, which is worth recording because a clean run had never been
 tested. `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])]
 write)` three times, and the pass asked for all three to be rewritten as `fn<…>` — which would
