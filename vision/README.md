@@ -79,7 +79,7 @@ drifts. **A question is deleted once it is answered**, and the answer has to lan
 
 ## What twenty-two subjects found, as patterns rather than as a list
 
-`QUESTIONS.md` is seventy-two entries and getting longer, which is the exercise working and is not a
+`QUESTIONS.md` is seventy-three entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately
 **not an index**: these are findings about how the design behaves under use, and each stays true
 after the question it produced is answered and deleted.
@@ -121,8 +121,16 @@ member call sites the migration table has no row for. Comparing the **types they
 and `Files.setExecutable` — both added *by the earlier audits* — unable to express what they are for.
 
 **A diff is only as good as the thing it compares**, and each pass compared what was easy to compare.
-The order they were run in is also the order of increasing cost, which is why it happened this way and
-why the next one is worth guessing at rather than waiting for.
+The order they were run in is also the order of increasing cost, which is why it happened this way.
+
+**A fourth pass reads the prose on both sides**, and it is the one that cannot be mechanised: three
+hits from the first three capabilities looked at, all of them signatures the earlier passes had
+approved. `Ticket.any`'s description contradicted its own code about a tie-break that
+`design/system/0001` D12 makes a determinism rule; `Sink` inherited *truncates* and *closing is when
+the bytes are on disk* by silence; and **`Net.listen` had dropped the bind address**, which the
+shipped design added deliberately after a port-only `listen` made *"the safe configuration not only
+unavailable but the one people would assume they already had"*. One parameter fewer is not a missing
+member, not a changed return and not an unrepresentable outcome, so nothing before this could see it.
 
 **1. Something derived from a source is narrower than the source, and always in the direction of
 whoever consumed it first.** The seven capability projections were argued from a count of the host,
