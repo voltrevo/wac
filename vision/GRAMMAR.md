@@ -259,6 +259,32 @@ unparenthesised form, and vision proposes no change to precedence, so they were 
 sixth class, after the seven claimed-missing and the one claimed-present: **code that is wrong under
 today's rules in a place vision is not changing.** Nothing else would have caught those.
 
+## What it replaces, which is a third thing entirely
+
+`GRAMMAR.md` lists what the syntax **adds** — what today's parser refuses. A separate class is what
+it **renames or replaces**, which the parser cannot see because the old spelling is perfectly good.
+It is the class with a migration attached, and nothing had collected it.
+
+| vision | shipped | sites |
+|---|---|---:|
+| `Sys` | `Core` and `Cli`, two parameters | 2,887 + 3,947 mentions |
+| `Ticket<T>` | `Pending<T>` | 838 |
+| `fn<T(…)>` | `fn[T(…)]` | 958 |
+| a match arm with no `case` | `case X:` | 2,237 |
+| `default:` | `else:` | — |
+| `T?` everywhere | `Option<T>` alongside it | 156 |
+| a tag is a function in scope | **`[§jsx-element-is-an-expression]`** — *"the tag as a string. Nothing is looked up"* | — |
+| `+` accepts a scalar | `string + i32` is *"deliberately a compile error"* | — |
+
+**The last two are not renames and are the ones to look at.** They contradict a *tagged* claim and a
+deliberate decision respectively — the JSX row is the opposite design from the one the spec
+documents and tests, and the `+` row reverses a choice `packages/fmt`'s header calls deliberate. An
+entry that replaces a shipped design is legitimate; an entry that does it without saying so reads as
+though the thing were merely unbuilt.
+
+The renames above are cheap individually and total a five-figure sweep. Worth knowing before any of
+it is called *the same language with more in it*.
+
 ## Which of these does the existing tree already want?
 
 A different question from *is it in the language*, and the answers are not close together. Measured
