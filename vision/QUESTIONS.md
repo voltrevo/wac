@@ -3141,3 +3141,32 @@ a typo: adding *not yet* understates a shipped refusal and adding *done* hides a
 the two other places where the code and the reviewed examples have diverged — `sys.listen(8080)` and
 the `Sys` bundle — and is the smallest of the three and the only one that is the page's own
 convention rather than the code's drift.
+
+## The only measurement in this directory is single-host, says so, and none of its three users repeats it
+
+`bench/slicecost.wac` is the one thing under `vision/` that compiles and runs, and it is careful:
+a control measured last *"because this machine is shared"*, the drift stated (2 ms), the derivation
+shown — `(71 - 49) / 8.39M` for **2.6 ns** a fresh view — and the limit named:
+
+> **One host.** `native/wasmtime` is not built in this checkout … A different collector could move
+> the allocation number and would not move the shape, since the shape is per-call against per-byte.
+
+That is the right caveat and the right reason: the *shape* is engine-independent, the *number* is not.
+
+**Three places quote the number and none of them quoted the caveat**, until 2026-09-04:
+`core/slice.wac`, `@/packages/gzip`'s README, and `gzip/src/window.wac` — and the last two go
+further, deriving *45% at an eight-byte call* from it. `gzip`'s argument for **not** using `Bytes` in
+the DEFLATE window is that 45%, so a package-level design decision rests on one engine's allocator
+through two hops, neither of which mentions an engine. Fixed by carrying the words.
+
+**Which is this directory doing to itself what it spent a week finding the rewrite doing to the
+shipped tree.** Five reversals in `std` happened because a paragraph beside a declaration was not
+read. Here the paragraph is *in the same repository, written by the same exercise, three files away*
+— and the number travelled while the sentence stayed home. A qualification survives exactly one hop
+unless somebody carries it, and nothing carries it.
+
+**The general form is worth more than the fix**, because it says where to look next: any number in
+these pages that came from a measurement has a method, and the method is at the measurement. There
+are two benches and a dozen counts taken by grep; the counts have their method attached because this
+document kept being wrong about them, and the benches' method is attached at the bench. Nothing
+checks that a citation carries what it needs — and the citation is where a reader meets the number.

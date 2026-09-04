@@ -45,7 +45,10 @@
 //      128    524288       40       40       42       40
 //     1024     65536       41       41       41       41
 //
-// A fresh view is **2.6 ns**, one `struct.new` of three fields. Reusing one is 0.5 ns. So the loss
+// A fresh view is **2.6 ns on the v8 host** — the bench measures one engine and says why that
+// matters: *"A different collector could move the allocation number and would not move the shape,
+// since the shape is per-call against per-byte."* One `struct.new` of three fields. Reusing one is
+// 0.5 ns. So the loss
 // is 45% at an eight-byte call, 15% at 32, 5% at 128, and nothing at a kilobyte — which sorts the
 // consumers rather than settling the type: a DEFLATE match is 3–258 bytes and mostly short, a JSON
 // token and an HTTP header value are tens of bytes, a read buffer is thousands. The bench header has

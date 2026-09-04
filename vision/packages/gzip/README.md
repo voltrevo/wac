@@ -83,7 +83,7 @@ type is for. The shipped file already knew otherwise from the other side:
 > decode.
 
 That measures a *call* per byte. [`../../bench/slicecost.wac`](../../bench/slicecost.wac) measures an
-*allocation* per call, and the two agree: 2.6 ns for a fresh view, 45% of an eight-byte call and
+*allocation* per call, and the two agree: 2.6 ns for a fresh view on the v8 host, 45% of an eight-byte call and
 nothing at a kilobyte. **A DEFLATE match is 3 to 258 bytes and mostly short.**
 
 So the rule, which is general rather than about gzip: **a view for what leaves, indices for what

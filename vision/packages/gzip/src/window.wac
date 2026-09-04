@@ -26,7 +26,8 @@
 //      128    524288       40       40       42       40
 //     1024     65536       41       41       41       41
 //
-// 2.6 ns for a fresh view, which is 45% at an eight-byte call and nothing at a kilobyte. **A DEFLATE
+// 2.6 ns for a fresh view — v8 only, and the bench is explicit that a different collector moves the
+// number and not the shape — which is 45% at an eight-byte call and nothing at a kilobyte. **A DEFLATE
 // match is 3 to 258 bytes and is mostly short**, so the match copy is squarely in the losing column
 // — and it is the inner loop of every compressible stream.
 //
