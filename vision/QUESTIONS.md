@@ -5210,3 +5210,50 @@ The difference here is that the code is **generated**. An unreachable `Waiting` 
 writes is a dead branch they can see; one the compiler emits has to *do* something, and the only
 honest thing is `trap` — so declining the rule puts an unreachable trap inside every generator in the
 program. Three sites now: `Step`, `union`, and this. Only the third has no acceptable fallback.
+
+## Two answers to *invent a name that cannot collide*, in one repository, neither aware of the other
+
+`@/packages/wacc/src/desugar.wac` needed fresh names for hoisted temporaries and found the compiler's
+answer: `packages/wacc/src/asyncsynth.wac` **appends the spellings to the source** and points
+synthetic tokens into them, with 23 zero-argument functions holding the fixed indices. The entry
+above records the consequence — *the source text is an output of the compiler as well as an input* —
+and that nothing anywhere argues for it.
+
+The other answer was in the tree the whole time. `packages/ts/src/bundle.wac` invents exactly one
+name, the module prefix, and **searches the input to prove it absent**: `hygienicPrefix` starts at
+`$m` and adds a `$` until no module has an identifier beginning with it. `design/system/0009` calls
+this the whole of its hygiene — *"the hygiene is in the one name the bundler invents … and every
+other identifier in the output is the one its author wrote."*
+
+They are not variants of one technique:
+
+| | append to the source | search and prove absent |
+|---|---|---|
+| cost | O(1) per name | O(input) per prefix, re-lexing every module |
+| can it fail | no | in principle — a real arm, and unreachable by hand-written code |
+| what it touches | mutates the source buffer | nothing |
+| what a reader sees | a span pointing into text nobody wrote | a name with a `$` in it |
+
+**Neither file mentions the other**, and the one with the surprising consequence is the compiler's.
+
+### Which does not mean the compiler should switch
+
+Appending is O(1) and a compiler invents a name per hoisted local per function; searching is
+O(input) and a bundler invents **one**. So the technique is a function of how many names you need,
+and that is the rule neither file states because neither had a reason to compare.
+
+What is open is narrower and is about the *language* rather than either implementation: **there is no
+way to ask for a name that cannot collide**, so every pass that needs one picks a strategy and lives
+with its consequence. Three positions:
+
+- **Nothing** — each pass chooses, which is today, and the cost is that the choice is invisible until
+  somebody reads both files.
+- **A hygiene primitive**, as a macro system would have: a `fresh` that is guaranteed distinct from
+  every source identifier by construction rather than by search or by append. That is a compiler
+  facility, not a language one, until a program can generate code.
+- **Say the two are the same problem and pick one per arity** — the honest reading of the table
+  above, and it would live in `docs/` rather than in a spec.
+
+The measurement that would settle whether it matters: how many passes in `packages/wacc` invent a
+name. It is 23 fixed plus one arithmetic scheme in `asyncsynth.wac`, and nobody has checked whether
+any other pass wants one.

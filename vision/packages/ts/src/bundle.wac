@@ -1,0 +1,154 @@
+// Flattening a module graph into one file — and the second answer this repository has to *invent a
+// name that cannot collide*.
+//
+// Written after the rest of this package, because `packages/ts/README.md` said the bundler was
+// *"still to do … step 4"* and `design/system/0009`'s status table said **done**. It is 544 lines and
+// I recorded it as unwritten in four places. See the README.
+//
+// The design is `design/system/0009` D-hygiene and it is a good one:
+//
+// > Two modules may both declare `EMPTY`; they are in different scopes. **The hygiene is in the one
+// > name the bundler invents** — `$mN`, chosen to appear nowhere in the program — and every other
+// > identifier in the output is the one its author wrote.
+//
+// A module becomes `const $m3 = (() => { …body… return { …exports… }; })();`, an imported name is
+// read through the module that exports it, and nothing is renamed. This rewrite changes what the
+// pieces *are* and not that.
+
+import { Result, Bytes, Vec } from "core";
+import { Token } from "./token.wac";
+import { Blanked } from "./blank.wac";
+
+/**
+ * The prefix nothing in the input uses.
+ *
+ * **The interesting type in this file**, because it is a *proof* rather than a string: a `Prefix`
+ * exists only if `Prefix.over(texts)` walked every token of every module and found no identifier
+ * starting with it. Holding the proof as a value is the difference between the rule being checked
+ * and the rule being remembered — the shipped `hygienicPrefix` answers a `string`, and a caller two
+ * functions later cannot tell it apart from any other string.
+ */
+export const struct Prefix {
+  string text;
+
+  /**
+   * `$m`, with another `$` added until no module has an identifier starting with it.
+   *
+   * A search over the whole input, and it can fail only in principle. Answering a `Result` anyway,
+   * because *in principle* is where a bundler that is handed generated code lives.
+   */
+  Result<Prefix, NoPrefix> over(Vec<Bytes> texts) { … }
+
+  /** `$m3`. The only name this file invents. */
+  string module(const this, i32 n) { … }
+}
+
+/** Every candidate prefix appeared in the input. Not reachable by hand-written code. */
+export struct NoPrefix { i32 tried; }
+
+/** One `import { … } from "…"` — where it is, what it binds, what it names. */
+export struct ImportDecl {
+  Span at;
+  string spec;
+  /**
+   * The bindings, as **pairs**, where the shipped `Import` has `string[] names` with
+   * *"`names[2k]` is the exported name, `names[2k+1]` the local one"*.
+   *
+   * A flattened pair array is the parallel-array shape at stride two, and it is the one place it is
+   * genuinely tempting: two strings, always together, never anything else. It is still an array
+   * whose odd and even entries mean different things, and `names.len()` is twice what a reader
+   * wants.
+   */
+  Vec<Binding> names;
+  /**
+   * `import * as ns from "…"`, or nothing.
+   *
+   * `string?` rather than `""`, which is the sentinel this directory keeps finding — and here the
+   * shipped comment says outright that this is *"the easiest form under this design"*, so the
+   * absent case is the common one and is worth a type.
+   */
+  string? namespace;
+}
+
+export struct Binding { string exported; string local; }
+
+export struct Span { i32 from; i32 to; }
+
+/**
+ * One module in the order it must be emitted.
+ *
+ * A `Vec<Module>` where the shipped `bundle` walks `paths`/`texts` as two parallel arrays with an
+ * index — *"`paths[i]` holds `texts[i]`"*, which is the third pair of parallel arrays in this
+ * package after `Lexed`'s quintuples and `Import`'s flattened names.
+ */
+export struct Module {
+  string path;
+  Bytes text;
+  Vec<ImportDecl> imports;
+}
+
+/** The bundle, or the first thing that could not be flattened. */
+export Result<Bytes, BundleFault> bundle(Vec<Module> modules, string entry) { … }
+
+/** A module imports something no module in the set provides. */
+export struct NoSuchModule { string spec; string from; }
+/** Two modules import each other, and an IIFE per module cannot express that. */
+export struct Cycle { Vec<string> path; }
+/** A top-level `await`: making the IIFE async turns `$mN` into a promise. */
+export struct TopLevelAwait { string path; Span at; }
+
+export union<NoSuchModule, Cycle, TopLevelAwait, NoPrefix> BundleFault;
+
+// ## 1. Two answers to *invent a name that cannot collide*, in one repository
+//
+// `@/packages/wacc/src/desugar.wac` needed fresh names for hoisted temporaries and found the
+// compiler's answer: `packages/wacc/src/asyncsynth.wac` **appends the spellings to the source** and
+// points synthetic tokens into them, with 23 zero-argument functions holding the fixed indices.
+// `../../../QUESTIONS.md` records the consequence — *the source text is an output of the compiler as
+// well as an input* — and notes that nothing anywhere argues for it.
+//
+// This file is the other answer, and it was in the tree the whole time: **search the input and prove
+// the name absent.** `hygienicPrefix` starts at `$m` and adds a `$` until no module has an
+// identifier starting with it.
+//
+// They are not variants of one technique. They differ in what they cost and in what they can fail
+// at:
+//
+// | | append to the source | search and prove absent |
+// |---|---|---|
+// | cost | O(1) per name | O(input) per prefix, and it re-lexes every module |
+// | can it fail | no | in principle, and `NoPrefix` above is that arm |
+// | what it touches | mutates the source buffer | nothing |
+// | what a reader sees | a span pointing into text nobody wrote | a name with a `$` in it |
+//
+// **Neither file mentions the other**, and the compiler's choice is the one with the surprising
+// consequence. That is the finding: a repository can hold two solutions to one problem where the
+// second is strictly less invasive, and nothing brings them into contact, because they are in
+// different packages and neither author was looking for a second answer.
+//
+// Which does *not* mean the compiler should switch. Appending is O(1) and a compiler invents a name
+// per hoisted local per function; searching is O(input) and a bundler invents **one**. The right
+// reading is that the technique is a function of how many names you need, and neither file says so
+// because neither had a reason to compare.
+//
+// ## 2. What could not be written
+//
+// **`Prefix` is a proof and the proof is not checked at use.** `Prefix.over` walks every token and
+// answers a value that means *nothing in this input starts with these characters*. Nothing stops a
+// caller building a `Prefix` directly, which is the same visibility gap
+// `@/packages/crypto/src/digest.wac` has and the same answer would fix: a type only its own file may
+// construct. Here it is worse than there, because a wrong `Digest32` is a wrong hash and a wrong
+// `Prefix` is a bundle that silently shadows a user's identifier.
+//
+// **A cycle is a `Vec<string>` and the type does not say it is a cycle.** `Cycle { Vec<string> path }`
+// carries the modules in order and the reader has to know the last one imports the first. A list
+// whose first and last elements are the same value is a shape the language cannot state, and the
+// alternative — a pair, plus the path between — is three fields where the fact is one.
+//
+// **The refusal list is a design decision spelled as a fault.** `TopLevelAwait` is refused rather
+// than wrapped, and the shipped file gives the reason exactly: *"making it async turns `$mN` into a
+// promise and every `$mN.name` a reader wrote would silently answer `undefined` — the wrong-answer
+// shape again."* That is right, and it means `BundleFault` mixes *your input is malformed*
+// (`NoSuchModule`) with *this bundler declines a legal program* (`TopLevelAwait`). The same
+// distinction `@/packages/lightclient` found between a caller's bug and an attack, at a third
+// setting — and again nothing in the type says which kind a member is.

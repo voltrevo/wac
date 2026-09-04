@@ -1,12 +1,14 @@
 // The package, as one name.
 //
-// `strip` and the two types it is defined over. The lexer is not re-exported: a caller wanting
-// tokens wants `@/packages/ts`'s job done, and the one consumer that genuinely wants tokens is the
-// bundler, `packages/ts/src/bundle.wac`, which is 544 lines and is not rewritten here.
+// `strip`, `bundle`, and the types they are defined over. The lexer is not re-exported: a caller
+// wanting tokens wants this package's job done, and the one consumer that genuinely wants them is
+// `./bundle.wac`, which is in the package.
 
 export { Kind, Token } from "./token.wac";
 export { Blanked } from "./blank.wac";
 export { strip } from "./strip.wac";
+export { bundle, Prefix, Module, ImportDecl, Binding, Span } from "./bundle.wac";
 export {
   StripFault, LexFault, At, EmitsRuntimeValue, NothingToLeave, ParameterProperty, Unterminated,
 } from "./fault.wac";
+export { BundleFault, NoSuchModule, Cycle, TopLevelAwait, NoPrefix } from "./bundle.wac";
