@@ -54,6 +54,17 @@ wants to log the refusal had nothing to log.
 **`maxBody` is an `i64`.** `Content-Length: 999999999999` is the case the parameter exists for and
 it does not fit in the type that was measuring it.
 
+**A parsed request allocates nothing.** Every field of `Request` is a `Bytes` view into the
+connection buffer rather than a copy — the request is read while that buffer is in hand and gone
+before the next one, so the lifetime is a call. `requestLine` went from `(input, lo, hi)` to one
+argument, and a caller can no longer pass the bounds of one buffer with another, which is the reason
+the type exists rather than a tidiness argument for it.
+
+`json` makes the opposite call for the opposite reason: a tree is what a caller keeps, so
+`JsonValue.Str` owns. A slice cannot dangle — the collector holds the array for as long as any view
+— so both are retention decisions rather than safety ones, and getting one backwards is a program
+that holds ten megabytes to remember a hostname.
+
 ## What could not be written
 
 **A named union declaration has no form on the pages.** `export union<A, B, C> RequestFault;` is

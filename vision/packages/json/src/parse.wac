@@ -7,6 +7,7 @@
 
 import { Result } from "core/result.wac";
 import { Vec } from "core/vec.wac";
+import { Bytes } from "core/slice.wac";
 import { JsonValue, JsonObject, JsonMember } from "./value.wac";
 
 /** Where in the input, and what was wrong with it. */
@@ -39,13 +40,13 @@ export enum Reason {
 const i32 MAX_DEPTH = 512;
 
 export struct Parser {
-  const u8[] src;
+  const Bytes src;
   const bool json5;
   i32 at;
   i32 depth;
 
-  Parser json(u8[] src)  { return Parser(src, false, 0, 0); }
-  Parser json5(u8[] src) { return Parser(src, true, 0, 0); }
+  Parser json(Bytes src)  { return Parser(src, false, 0, 0); }
+  Parser json5(Bytes src) { return Parser(src, true, 0, 0); }
 
   /** A whole document: one value, then nothing but space. */
   Result<JsonValue, ParseError> document(this) {
@@ -102,7 +103,7 @@ export struct Parser {
     if (this.eat('}')) { return Result.Ok(JsonValue.Object(members)); }
 
     while (true) {
-      u8[] key = try this.key();
+      Bytes key = try this.key();
       this.space();
       if (!this.eat(':')) { return this.fail(Reason.Unexpected); }
       this.space();
@@ -121,12 +122,12 @@ export struct Parser {
   /** Whitespace, and in JSON5 comments too. */
   void space(this) { … }
 
-  Result<u8[], ParseError> key(this) { … }
+  Result<Bytes, ParseError> key(this) { … }
   Result<JsonValue, ParseError> str(this) { … }
   Result<JsonValue, ParseError> number(this) { … }
   bool wordAhead(this, string word) { … }
 
-  u8? peek(const this) { return this.at < this.src.len() ? this.src[this.at] : null; }
+  u8? peek(const this) { return this.at < this.src.len() ? this.src.get(this.at) : null; }
 
   bool eat(this, u8 b) {
     if (this.peek() is null || this.peek()! != b) { return false; }

@@ -3,16 +3,26 @@
 // The byte-level work is the original's and is not repeated here — the RFC does not change because
 // the language did. What changed is the shape of the answer and where the shared helpers live.
 
+import { Bytes } from "core/slice.wac";
 import { Headers } from "./headers.wac";
 import { RequestFault, BadRequestLine, BadMethod, TooLarge } from "./fault.wac";
 import { findCrlf, isDigit, isToken } from "./bytes.wac";
 
+/**
+ * Views into the buffer it was parsed from, not copies.
+ *
+ * A request is read while the connection buffer is in hand and is gone before the next one, so
+ * every field can be a view and **parsing an HTTP request allocates nothing at all**. That is only
+ * safe because a slice cannot dangle — the collector keeps the buffer alive for as long as any view
+ * of it — and only sensible because the lifetime is a call. A `JsonValue` does the opposite for the
+ * opposite reason; `core/slice.wac` has the rule.
+ */
 export struct Request {
-  u8[] method;
-  u8[] target;
+  Bytes method;
+  Bytes target;
   i32 minor;                        // the `x` of HTTP/1.x
   Headers headers;
-  u8[] body;
+  Bytes body;
   i32 consumed;                     // bytes of the input this message used
 }
 
@@ -37,16 +47,16 @@ export enum Parsed {
  * `maxBody` caps the body this will assemble; a longer one is refused rather than buffered, so a
  * `Content-Length: 999999999999` costs nothing.
  */
-export Parsed parseRequest(u8[] input, i64 maxBody) {
+export Parsed parseRequest(Bytes input, i64 maxBody) {
   // RFC 9112 §2.2: a server should ignore at least one empty line before the request line. Old
   // clients emit a stray CRLF after a body, and a parser that treats it as a malformed request line
   // drops the connection on the message that follows it.
-  i32 begin = skipOneBlankLine(input);
+  Bytes rest = skipOneBlankLine(input);
 
-  i32? eol = findCrlf(input, begin);
+  i32? eol = findCrlf(rest, 0);
   if (eol is null) { return Parsed.Incomplete; }
 
-  match (requestLine(input, begin, eol!)) {
+  match (requestLine(rest.slice(0, eol!))) {
     Ok(line):  { … }
     Err(why):  { return Parsed.Bad(why); }
   }
@@ -58,14 +68,19 @@ export Parsed parseRequest(u8[] input, i64 maxBody) {
  *
  * A helper answering a `Result` is what lets `parseRequest` keep one `Bad` arm instead of the
  * original's eleven `return Parsed.Bad(ERR_…())` sites, each of which had to pick the right number.
+ *
+ * It took `(input, lo, hi)` a revision ago. Handed a `Bytes` it takes **one** argument, and the
+ * caller cannot pass the bounds of one buffer with another — which is the whole reason the type
+ * exists rather than a tidiness argument for it.
  */
 Result<RequestLine, union<BadRequestLine, BadMethod, BadTarget, BadVersion>>
-requestLine(u8[] input, i32 lo, i32 hi) { … }
+requestLine(Bytes line) { … }
 
 struct RequestLine {
-  u8[] method;
-  u8[] target;
+  Bytes method;
+  Bytes target;
   i32 minor;
 }
 
-i32 skipOneBlankLine(u8[] input) { … }
+/** Everything after at most one leading empty line. */
+Bytes skipOneBlankLine(Bytes input) { … }

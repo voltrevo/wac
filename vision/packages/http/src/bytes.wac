@@ -8,10 +8,12 @@
 // That is worth saying because it is *not* a language finding. It is the one thing in this package
 // a rewrite fixes for free, and the redesign gets no credit for it.
 
+import { Bytes } from "core/slice.wac";
+
 /** The index of the next CRLF at or after `at`, or null if the buffer does not have one yet. */
-export i32? findCrlf(u8[] s, i32 at) {
+export i32? findCrlf(Bytes s, i32 at) {
   for (i32 i = at; i + 1 < s.len(); i++) {
-    if (s[i] == 13 && s[i + 1] == 10) { return i; }
+    if (s.get(i) == 13 && s.get(i + 1) == 10) { return i; }
   }
   return null;
 }

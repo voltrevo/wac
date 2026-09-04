@@ -26,6 +26,13 @@ export enum JsonValue {
    * keeps its sign, neither of which survives a trip through the shortest decimal.
    */
   Number(f64 value, u8[] raw),
+  /**
+   * Owned, not a view of the document.
+   *
+   * The opposite call from `http`'s `Request`, for the opposite reason: a tree is what a caller
+   * keeps, and one string field held as a `Bytes` would pin the whole document behind it. A slice
+   * cannot dangle, so this is a retention decision rather than a safety one — see `core/slice.wac`.
+   */
   Str(u8[] bytes),
   Array(Vec<JsonValue> items),
   Object(JsonObject members)

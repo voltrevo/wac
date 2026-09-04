@@ -1,13 +1,14 @@
 // The public surface.
 
 import { Result } from "core/result.wac";
+import { Bytes } from "core/slice.wac";
 import { JsonValue } from "./value.wac";
 import { Parser, ParseError } from "./parse.wac";
 import { writeValue } from "./stringify.wac";
 import { Buf } from "@/packages/bytes/src/buf.wac";
 
 /** The tree, or where and why it is not JSON. */
-export Result<JsonValue, ParseError> parse(u8[] src) {
+export Result<JsonValue, ParseError> parse(Bytes src) {
   return Parser.json(src).document();
 }
 
@@ -19,7 +20,7 @@ export Result<JsonValue, ParseError> parse(u8[] src) {
  * point rather than a replacement: a parser that quietly accepted a comment would let one into a
  * file the other end reads with `parse`.
  */
-export Result<JsonValue, ParseError> parseJson5(u8[] src) {
+export Result<JsonValue, ParseError> parseJson5(Bytes src) {
   return Parser.json5(src).document();
 }
 
@@ -30,11 +31,11 @@ export Result<JsonValue, ParseError> parseJson5(u8[] src) {
  * `Result` assembled by hand, with three fields that mean nothing when `ok` and one that means
  * nothing when it is not. There is nothing left to declare.
  */
-export Result<u8[], ParseError> canonicalize(u8[] src) {
+export Result<u8[], ParseError> canonicalize(Bytes src) {
   return Result.Ok(writeOut(try parse(src)));
 }
 
-export Result<u8[], ParseError> canonicalizeJson5(u8[] src) {
+export Result<u8[], ParseError> canonicalizeJson5(Bytes src) {
   return Result.Ok(writeOut(try parseJson5(src)));
 }
 

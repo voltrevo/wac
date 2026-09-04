@@ -21,6 +21,24 @@
 // **A slice does not own.** It keeps its array alive and nothing more; there is no copy anywhere in
 // this file, which is the whole point. Writing through a non-const slice writes through to the
 // array, and a `const` one cannot write — deep const already says so and needs no help here.
+//
+// ## When to hold one, which is not always
+//
+// A slice cannot dangle: the collector keeps the array alive for as long as any view of it. So the
+// question is never safety, it is **retention** — a `Slice<u8>` of six bytes holds the megabyte it
+// was cut from, and holds it until the slice goes too.
+//
+// That makes the rule a lifetime judgement rather than a preference:
+//
+//   - **A view where the value lives for a call.** `Request.method` and `Request.target` are read
+//     while the connection buffer is in hand and are gone before the next request, so parsing an
+//     HTTP request can allocate nothing at all.
+//   - **An owned array where the value outlives the buffer.** `JsonValue.Str` is part of a tree that
+//     a caller keeps, and one string field held as a view would pin the whole document. A parser
+//     that returns a tree copies; a parser that answers a question does not.
+//
+// Getting that backwards is not a crash. It is a program that holds ten megabytes to remember a
+// hostname, which is the failure mode worth naming because nothing will report it.
 
 export struct Slice<T> {
   T[] of;

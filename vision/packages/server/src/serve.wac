@@ -10,6 +10,7 @@
 // server that answers correctly but is wrong about where the request ended will read the next
 // request's first bytes as the tail of this one.
 
+import { Bytes } from "core/slice.wac";
 import { Parsed, Request, parseRequest } from "@/packages/http/src/request.wac";
 import { RequestFault, TooLarge } from "@/packages/http/src/fault.wac";
 import { Response, write } from "@/packages/http/src/response.wac";
@@ -38,7 +39,7 @@ export enum Served {
  * `nowMillis` is passed in rather than read. wasm has no clock, and a handler that takes the time
  * as an argument is one that can be tested at a fixed instant.
  */
-export Served serve(u8[] input, i64 nowMillis) {
+export Served serve(Bytes input, i64 nowMillis) {
   match (parseRequest(input, MAX_BODY)) {
     Incomplete: {
       return Served.Incomplete;
@@ -78,13 +79,13 @@ i32 statusFor(RequestFault why) {
  * response it has already been given.
  */
 bool wantsKeepAlive(Request req) {
-  u8[] conn = req.headers.first("Connection");
+  Bytes conn = req.headers.first("Connection");
   if (eqFold(conn, "close".toBytes())) { return false; }
   if (req.minor == 0) { return eqFold(conn, "keep-alive".toBytes()); }
   return true;
 }
 
 /** A bare status with no body, for the cases where there is nothing useful to say. */
-u8[] bare(i32 status, u8[] method, bool keepAlive) {
+u8[] bare(i32 status, Bytes method, bool keepAlive) {
   return write(Response.create(status), method, keepAlive);
 }
