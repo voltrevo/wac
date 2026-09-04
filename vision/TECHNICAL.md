@@ -719,23 +719,24 @@ async i32 add(Slot s, Ticket<i32> t) {
 
 ---
 
-## `T?` adds one level of absence
+## Every state of a `T??` has a spelling
 
 ```wac
 void example() {
   Node   n = Node();
-  Node?  a = null;
-  Node?? b = null;
-  Node?? c = a;
-  Node?? d = n;
+  Node?? a = null;                // absent
+  Node?? b = null as Node?;       // present, holding a null
+  Node?? c = n;                   // present, holding it
 
   a is null;        // true
-  b is null;        // true
-  c is null;        // false
-  c! is null;       // true
-  d!! is n;         // true
+  b is null;        // false
+  b! is null;       // true
+  c!! is n;         // true
 }
 ```
+
+`as` is what types the literal. Widening a typed value wraps it, so a `Node?` reaching a `Node??`
+arrives present whatever it holds, and only a bare `null` means the outermost absence.
 
 **Not yet.**
 
