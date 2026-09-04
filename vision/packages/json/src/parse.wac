@@ -1,0 +1,141 @@
+// JSON and JSON5, into a `JsonValue`.
+//
+// The original returns `JsonValue?` and leaves the reason on the parser — `p.err` is one of eleven
+// exported `i32` functions and `p.errPos` is where. Every caller that wants to know why has to
+// remember to look somewhere else, and one that forgets gets "not JSON" for a document that was
+// three bytes too short. Here the reason *is* the answer.
+
+import { Result } from "core/result.wac";
+import { Vec } from "core/vec.wac";
+import { JsonValue, JsonObject, JsonMember } from "./value.wac";
+
+/** Where in the input, and what was wrong with it. */
+export struct ParseError {
+  i32 at;
+  Reason why;
+}
+
+/**
+ * Eleven `i32` constants became eleven cases.
+ *
+ * They were functions returning literals — `ERR_DEPTH()` is `7` — because that was the only way to
+ * name a constant, and nothing stopped a caller comparing one against a position. As cases they
+ * cannot be confused with anything, they cannot be added up, and a `match` over them is checked.
+ */
+export enum Reason {
+  Unexpected,     // wrong byte for the position
+  Eof,            // ran out of input mid-value
+  BadNumber,
+  BadEscape,
+  RawControl,     // a raw control byte inside a string
+  Trailing,       // non-whitespace after the value
+  TooDeep,
+  BadUtf8,        // malformed UTF-8 inside a string
+  Unterminated,   // JSON5: `/*` with no `*/`
+  Unsupported     // JSON5: valid, but this parser does not accept it
+}
+
+/** How deep nesting may go before the answer is `TooDeep` rather than a stack overflow. */
+const i32 MAX_DEPTH = 512;
+
+export struct Parser {
+  const u8[] src;
+  const bool json5;
+  i32 at;
+  i32 depth;
+
+  static Parser json(u8[] src)  { return Parser(src, false, 0, 0); }
+  static Parser json5(u8[] src) { return Parser(src, true, 0, 0); }
+
+  /** A whole document: one value, then nothing but space. */
+  Result<JsonValue, ParseError> document(this) {
+    this.space();
+    JsonValue v = try this.value();
+    this.space();
+    if (this.at < this.src.len()) { return this.fail(Reason.Trailing); }
+    return Result.Ok(v);
+  }
+
+  Result<JsonValue, ParseError> value(this) {
+    if (this.depth >= MAX_DEPTH) { return this.fail(Reason.TooDeep); }
+    u8? b = this.peek();
+    if (b is null) { return this.fail(Reason.Eof); }
+
+    // Each of these consumes what it recognised, or fails saying where.
+    if (b! == '{')                    { return this.object(); }
+    if (b! == '[')                    { return this.array(); }
+    if (b! == '"')                    { return this.str(); }
+    if (b! == '\'' && this.json5)     { return this.str(); }
+    if (this.wordAhead("true"))       { return Result.Ok(JsonValue.Bool(true)); }
+    if (this.wordAhead("false"))      { return Result.Ok(JsonValue.Bool(false)); }
+    if (this.wordAhead("null"))       { return Result.Ok(JsonValue.Null); }
+    return this.number();
+  }
+
+  Result<JsonValue, ParseError> array(this) {
+    this.at += 1;                            // '['
+    this.depth += 1;
+    defer { this.depth -= 1; }
+
+    Vec<JsonValue> items = Vec<JsonValue>.create();
+    this.space();
+    if (this.eat(']')) { return Result.Ok(JsonValue.Array(items)); }
+
+    while (true) {
+      items.push(try this.value());
+      this.space();
+      if (this.eat(']')) { return Result.Ok(JsonValue.Array(items)); }
+      if (!this.eat(',')) { return this.fail(Reason.Unexpected); }
+      this.space();
+      // JSON5 allows the comma before the bracket; JSON does not, and `eat` already moved past it.
+      if (this.json5 && this.eat(']')) { return Result.Ok(JsonValue.Array(items)); }
+    }
+  }
+
+  Result<JsonValue, ParseError> object(this) {
+    this.at += 1;                            // '{'
+    this.depth += 1;
+    defer { this.depth -= 1; }
+
+    JsonObject members = JsonObject.create();
+    this.space();
+    if (this.eat('}')) { return Result.Ok(JsonValue.Object(members)); }
+
+    while (true) {
+      u8[] key = try this.key();
+      this.space();
+      if (!this.eat(':')) { return this.fail(Reason.Unexpected); }
+      this.space();
+      members.push(key, try this.value());
+      this.space();
+      if (this.eat('}')) { return Result.Ok(JsonValue.Object(members)); }
+      if (!this.eat(',')) { return this.fail(Reason.Unexpected); }
+      this.space();
+      if (this.json5 && this.eat('}')) { return Result.Ok(JsonValue.Object(members)); }
+    }
+  }
+
+  // Elided: the same byte-level work as the original, answering a `Result` instead of setting a
+  // field. `{ … }` rather than no body, because a bodyless method is how `core` asks for an
+  // override and these are not that.
+  /** Whitespace, and in JSON5 comments too. */
+  void space(this) { … }
+
+  Result<u8[], ParseError> key(this) { … }
+  Result<JsonValue, ParseError> str(this) { … }
+  Result<JsonValue, ParseError> number(this) { … }
+  bool wordAhead(this, string word) { … }
+
+  u8? peek(const this) { return this.at < this.src.len() ? this.src[this.at] : null; }
+
+  bool eat(this, u8 b) {
+    if (this.peek() is null || this.peek()! != b) { return false; }
+    this.at += 1;
+    return true;
+  }
+
+  /** Every failure goes through here, so a position can never be forgotten. */
+  Result<T, ParseError> fail<T>(const this, Reason why) {
+    return Result.Err(ParseError(this.at, why));
+  }
+}

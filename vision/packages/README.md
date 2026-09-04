@@ -67,3 +67,4 @@ in ten lines. Each package's README ends with that list, and the real ones becom
 |---|---|---|
 | [core](../core/) | 2026-09-04 | tickets, coroutines, `union`, nested `T?` |
 | [stream](stream/) | 2026-09-04 | coroutines, `union`, nested `T?`, `try` |
+| [json](json/) | 2026-09-04 | `Result`, `try`, enum-vs-union, nested `T?` |

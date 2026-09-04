@@ -1,0 +1,45 @@
+// The public surface.
+
+import { Result } from "core/result.wac";
+import { JsonValue } from "./value.wac";
+import { Parser, ParseError } from "./parse.wac";
+import { writeValue } from "./stringify.wac";
+import { Buf } from "@/packages/bytes/src/buf.wac";
+
+/** The tree, or where and why it is not JSON. */
+export Result<JsonValue, ParseError> parse(u8[] src) {
+  return Parser.json(src).document();
+}
+
+/**
+ * The same for JSON5 — JSON with comments, unquoted keys, single quotes, trailing commas and
+ * ECMAScript's numbers.
+ *
+ * Every JSON document is one, so this accepts strictly more. That is why it is a second entry
+ * point rather than a replacement: a parser that quietly accepted a comment would let one into a
+ * file the other end reads with `parse`.
+ */
+export Result<JsonValue, ParseError> parseJson5(u8[] src) {
+  return Parser.json5(src).document();
+}
+
+/**
+ * A document reduced to one spelling of itself: parse, then write back out as JSON.
+ *
+ * The original answers a `Canonical` struct of `(bool ok, i32 err, i32 errPos, u8[] text)` — a
+ * `Result` assembled by hand, with three fields that mean nothing when `ok` and one that means
+ * nothing when it is not. There is nothing left to declare.
+ */
+export Result<u8[], ParseError> canonicalize(u8[] src) {
+  return Result.Ok(writeOut(try parse(src)));
+}
+
+export Result<u8[], ParseError> canonicalizeJson5(u8[] src) {
+  return Result.Ok(writeOut(try parseJson5(src)));
+}
+
+u8[] writeOut(JsonValue v) {
+  Buf out = Buf.create();
+  writeValue(out, v);
+  return out.take();
+}

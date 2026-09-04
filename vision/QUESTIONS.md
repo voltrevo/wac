@@ -133,3 +133,26 @@ here. What
 `try` means when the loop is inside a generator also needs saying: it propagates the source's `Err`
 as *this* generator's return rather than as a yield.
 
+## A generic method whose type parameter is only in the return type
+
+`vision/packages/json`'s parser funnels every failure through
+`Result<T, ParseError> fail<T>(const this, Reason why)`, so a position can never be forgotten. `T`
+appears in no argument, and `return this.fail(Reason.Eof);` has to take it from the enclosing
+function's return type. Whether inference reaches there is unsaid, and the alternative — writing
+`Result.Err(ParseError(this.at, …))` at every site — is the thing `fail` exists to prevent.
+
+## How an elided body is spelled, and how an abstract one is
+
+`vision/core` writes a method with no body to mean *every subtype must override this, and there is
+no sensible default* — `TicketBase.advance`, `Coroutine.step`. `vision/packages/json` writes
+`{ … }` to mean *this is the same as the original and not repeated here*, following the SHOWCASE
+entries. Both are wanted and neither is described, and the two look similar enough that reading one
+as the other is easy.
+
+## Module-level constants
+
+`const i32 MAX_DEPTH = 512;` outside any function. Both rewritten packages needed one on the first
+file, and no entry mentions the form. The real `packages/json` writes `i32 ERR_DEPTH() { return 7; }`
+— a function returning a literal — which suggests there is no spelling today rather than that nobody
+wanted one.
+

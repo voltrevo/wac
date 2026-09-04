@@ -1,0 +1,128 @@
+// A JSON document as a value.
+//
+// **This is an enum and not a union, and JSON is the case that decides it.** A JSON value is the
+// canonical *any of several types*, so it is where `union<f64, string, bool, …>` should win if it
+// ever does — and it does not. Two reasons, both from `vision/IDIOMS.md`'s own test:
+//
+//   - `JsonValue` wants methods. `asStr`, `get`, `at` are true of the whole family and an enum is
+//     the only thing that can host them. A bare union has nowhere to put them.
+//   - The members do not stand alone. A JSON number is not an `f64` — it is an `f64` *and the bytes
+//     it was written as*, because `1e2` has to come back as `1e2`. Once a member carries something
+//     of its own it exists only as an alternative of the whole, which is the definition of an enum.
+//
+// A union would also need primitives as members — open in `vision/QUESTIONS.md` — and would box the
+// two hottest cases in the language's most-parsed format.
+
+import { Vec } from "core/vec.wac";
+import { Map } from "core/map.wac";
+
+export enum JsonValue {
+  Null,
+  Bool(bool value),
+  /**
+   * `raw` is the number exactly as written, and empty for a tree built by hand.
+   *
+   * Keeping the span is what makes a round-trip byte-exact: `1e2` comes back as `1e2` and `-0`
+   * keeps its sign, neither of which survives a trip through the shortest decimal.
+   */
+  Number(f64 value, u8[] raw),
+  Str(u8[] bytes),
+  Array(Vec<JsonValue> items),
+  Object(JsonObject members)
+
+  /** The string, or null if it is not one. Absence is the type; there is no `asStrOr`. */
+  string? asStr(const this) {
+    return match (this) {
+      Str(b): string.fromBytes(b),
+      else:   null,
+    };
+  }
+
+  /** The member, or null — for `Object` with the key present, and null for everything else. */
+  JsonValue? get(const this, string key) {
+    return match (this) {
+      Object(o): o.get(key.toBytes()),
+      else:      null,
+    };
+  }
+
+  /** The element, or null — out of range, or not an array. */
+  JsonValue? at(const this, i32 i) {
+    return match (this) {
+      Array(a): i >= 0 && i < a.len() ? a.data[i] : null,
+      else:     null,
+    };
+  }
+}
+
+export struct JsonMember {
+  const u8[] key;
+  const JsonValue value;
+
+  string keyStr(const this) { return string.fromBytes(this.key); }
+}
+
+/**
+ * An ordered list of members, plus an index built only if it pays.
+ *
+ * The list is what JSON actually is: member order is observable and duplicate keys are legal and
+ * must both survive, so `{"a":1,"a":2}` has two members and a `Map` alone would collapse it.
+ *
+ * The index maps a key to the position of its *first* member. It is null until someone looks
+ * something up, and is not built at all for an object small enough that scanning is cheaper. Both
+ * conditions are measured, not assumed: building it eagerly in `push` cost 50% of parse throughput
+ * on objects with long keys and 68% on nested empty objects, because `Map.create` allocates an
+ * eight-slot table and every `{}` paid for one it would never use. An index is also O(n) hashes
+ * before it answers anything, so on a 256-member object it takes 15 lookups to repay itself.
+ *
+ * None of that is language. It is the one part of this package the rewrite left alone.
+ */
+export struct JsonObject {
+  Vec<JsonMember> members;
+  /** Null until this object has been looked up often enough to repay building it. */
+  Map<u8[], i32>? index;
+  /** Lookups served by a scan so far. Only counted while `index` is null. */
+  i32 scans;
+
+  static JsonObject create() { return JsonObject(Vec<JsonMember>.create(), null, 0); }
+
+  i32 len(const this) { return this.members.len(); }
+
+  void push(this, u8[] key, JsonValue v) {
+    this.members.push(JsonMember(key, v));
+    // Kept current if it exists, so it cannot go stale. Never created here.
+    if (this.index is not null && this.index!.get(key) is null) {
+      this.index!.put(key, this.members.len() - 1);
+    }
+  }
+
+  /** The first member with this key, or null. */
+  JsonValue? get(this, u8[] key) {
+    if (this.index is not null) {
+      i32? at = this.index!.get(key);
+      return at is null ? null : this.members.data[at!].value;
+    }
+
+    this.scans += 1;
+    if (this.worthIndexing()) { this.buildIndex(); return this.get(key); }
+
+    for (JsonMember m in this.members.items()) {
+      if (bytesEq(m.key, key)) { return m.value; }
+    }
+    return null;
+  }
+
+  bool worthIndexing(const this) { return this.members.len() >= 32 && this.scans >= 15; }
+
+  void buildIndex(this) {
+    Map<u8[], i32> ix = Map<u8[], i32>.create();
+    for (i32 i = 0; i < this.members.len(); i++) {
+      u8[] k = this.members.data[i].key;
+      if (ix.get(k) is null) { ix.put(k, i); }
+    }
+    this.index = ix;
+  }
+}
+
+/** A number with no source text behind it. */
+export JsonValue numberOf(f64 v) { return JsonValue.Number(v, u8[0]()); }
