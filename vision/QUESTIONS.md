@@ -44,6 +44,36 @@ The ticket design assumes it. `advance` and `settled` are overridden per kind of
 what lets a fake `Sys` add a kind without editing `core`; a closed enum of kinds would not.
 `issues/lang/0144` suggests the intent already exists and today's behaviour is the accident.
 
+**The capability design assumes it too, and that was not written down.** `vision/std/platform.wac`
+has **fourteen** bodyless methods — every method of every projection — and
+`vision/packages/wactest/src/test.wac` subclasses them: `struct FakeFiles : Files` with
+`override async … read(…)`, `struct FakeClock : Clock` with `override i64 nowMillis(…)`. Dispatch is
+static, measured on 2026-09-04: a `Circle` in a `Shape` variable answers `Shape.name()`. So a
+`FakeFiles` handed to a function taking `Files` runs **`Files`'s** `read`, which has no body. The
+fake never runs.
+
+That is not a footnote on `wactest`; it is `wactest`'s headline. Its README argues *"a fake is an
+ordinary value … no seam, no injection point, no mode flag in the real one — the seam is the
+parameter"*, and the whole of that rests on an open question two files away.
+
+**And unlike the ticket design, this half has an alternative that needs nothing.** The shipped
+capability world is structs of **funcref fields** — `fn[Pending<u8[]>()] readStdin` and forty-nine
+more — so a fake is the same struct type holding different funcrefs, with no subtyping and no
+dispatch. `packages/fs`'s header calls that *"the language's own idiom for varying behaviour"*, and
+`spec/cases/0193` is named *a capability can be faked with lambdas*.
+
+`vision/packages/fs` arrived at the same shape from the other end: `Mount` is a struct of closures
+because a tag makes every operation know about every backing. **That is not a filesystem idea. It is
+what every capability in this proposal has to be if the fakes are to work without a language
+change** — and it would leave the dynamic-dispatch dependency where it was already known to be, in
+the tickets alone.
+
+The cost is the one `fs` already priced: a funcref field per operation per instance against one
+method table for all of them, and a call that is not inlined. Microseconds of I/O against nanoseconds
+of indirection. It also removes a reason for *a method with no body*, which is one of the three
+constructs the grammar has and no vetted page mentions — the abstract-class shape is the only thing
+that wants it.
+
 ## The name for the erased ticket
 
 `Ticket<T>` inherits an empty base: the value type is rubbed out and what remains is `advance` and

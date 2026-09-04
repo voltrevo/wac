@@ -58,6 +58,15 @@ runner, because that is what wasm hands the module.
 
 ## A fake is an ordinary value, and the projections make it a small one
 
+> **This section's argument depends on an open question, found 2026-09-04.** `Files`' methods are
+> bodyless and `FakeFiles` subclasses them, and dispatch in wac is static — measured — so a
+> `FakeFiles` handed to a function taking `Files` runs `Files`'s empty `read`. The fake never runs.
+> `../../QUESTIONS.md`'s dynamic-dispatch entry had recorded the ticket design's dependency on it and
+> not this one. The alternative needs no language change and is what the shipped capability world
+> already does: funcref fields, so a fake is the same struct holding different funcrefs. Everything
+> below is right about *why* a small fake is worth having and wrong about the mechanism it uses.
+
+
 `Sys` is not a singleton and nothing recognises a ticket by its type, so a test's capability is one
 it built, its tickets settle when it says so, and its clock is what it was constructed with. No
 seam, no injection point, no mode flag in the real one — the seam is the parameter. That is the
