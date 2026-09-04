@@ -34,6 +34,23 @@ export struct TicketBase {
 
 /** A ticket for a `T`. */
 export struct Ticket<T> : TicketBase {
+  /**
+   * A ticket over several, answering when every one of them has.
+   *
+   * A static — no `this` — so `Ticket.all(parts)` is the call, which is what `IDIOMS.md` writes and
+   * what this was not until 2026-09-04. `T` is inferred from `parts`.
+   */
+  Ticket<T[]> all(Ticket<T>[] parts) { return AllOf(parts); }
+
+  /**
+   * Answers with the first to settle.
+   *
+   * The losers are not cancelled, because there is no such thing — they carry on as ordinary
+   * unawaited work and whoever holds their tickets can still drive them. `TECHNICAL.md` has the
+   * entry, and it calls this `Ticket.any`.
+   */
+  Ticket<T> any(Ticket<T>[] parts) { return AnyOf(parts); }
+
   /** Set while this ticket's own `wait` is on the stack, so re-entering it is detectable. */
   bool inWait;
 
@@ -138,7 +155,15 @@ struct AnyOf<T> : Ticket<T> {
  * The losers of an `any` are not cancelled, because there is no such thing — they carry on as
  * ordinary unawaited work and whoever holds their tickets can still drive them.
  */
-export Ticket<T[]> all<T>(Ticket<T>[] parts) { return AllOf(parts); }
+// **These were free functions — `all<T>(parts)` — and three pages call them `Ticket.all(parts)`.**
+// A `this`-less method is a static in wac, so the page's spelling needs them inside `Ticket<T>`, and
+// the reason they were not there was an assumption rather than a constraint: a static on a *generic*
+// struct, called without naming the instantiation, looked uncertain. Measured on 2026-09-04 and it
+// is not — `B.of(3)`, `B<i32>.of(3)` and a free `mk(3)` all compile today, and inference is
+// argument-directed exactly as `generics.md` says.
+//
+// Second time the pages wrote a method and the code wrote a free function taking the type; the other
+// was `Proc.spawn`. Both were found by comparing the two halves rather than by reading either.
+//
+// Moved into `Ticket<T>` above as `all` and `any`, matching the pages.
 
-/** Answers with the first to settle. The others keep going as ordinary unawaited work. */
-export Ticket<T> any<T>(Ticket<T>[] parts) { return AnyOf(parts); }

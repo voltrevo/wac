@@ -206,6 +206,28 @@ that never return a secret, never mix one with a public value, and never declass
 tested only on its motivating example is untested**, and this is the cleanest instance of that in the
 directory.
 
+## Twice now, a page wrote a method and the code wrote a free function
+
+Checking every `Type.method(…)` call in the vetted fences against what `vision/core` and `vision/std`
+declare — 22 types, 70 members — turned up exactly two mismatches, and both are the same shape:
+
+    Ticket.all   IDIOMS.md      declared as a free function `all<T>(parts)`
+    Ticket.any   TECHNICAL.md   declared as a free function `any<T>(parts)`
+
+The other was `Proc.spawn`, found the same way. In wac a `this`-less method *is* a static, so the
+page's spelling needs the function inside the type — and in both cases the code put it outside,
+which turns the receiver into a token the function happens to take.
+
+**And in `Ticket`'s case the reason was an assumption, not a constraint.** A static on a *generic*
+struct called without naming the instantiation looked uncertain, so the file wrote free functions.
+Measured: `B.of(3)`, `B<i32>.of(3)` and a free `mk(3)` all compile today, and inference is
+argument-directed exactly as `generics.md` says. Both are statics now.
+
+**Two out of seventy is a good result and worth saying so**, because it is the opposite of what the
+same check found for `Sys`: `vision/core` was written alongside the pages and tracks them; `vision/std`
+was invented in the packages exercise and contradicts them in seventeen places. The difference is not
+care, it is whether the two halves were ever in the same conversation.
+
 ## Three projections examined, three wrong in a different way, and the count is why
 
 The seven were derived from counting the host's fifty capabilities and finding five groups. That
