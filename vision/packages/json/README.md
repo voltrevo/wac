@@ -41,8 +41,15 @@ compared against a position, cannot be added up, and a `match` over them is chec
 hand, three of whose fields mean nothing when `ok` and one of which means nothing when it is not.
 
 **`JsonArray` is gone** — forty lines of hand-rolled `Vec` that existed because two instantiations
-of a generic with an enum type argument compiled to invalid wasm (`issues/lang/closed/0046`). The
-bug is closed; the workaround outlived it. `Vec<JsonValue>` now.
+of a generic collapse when a type argument is an enum, emitting invalid wasm
+(`issues/lang/closed/0047`). The bug is closed; the workaround outlived it. `Vec<JsonValue>` now.
+
+(`packages/json/src/value.wac:43` cites `0046`, which is *an unknown type name in a declaration or a
+cast is not reported as unknown* — a diagnostic issue. `0047` is the one it means: same claim, kind
+*bug*, symptom *invalid wasm*. This README repeated the wrong number until the issue was read rather
+than the comment. **Left unfixed in the source**: `json` is in the seed graph, so a one-character
+comment change stales every agent's seed, which is out of proportion. It should ride along with the
+next real change to that file, as `core/vec.wac`'s understated retention comment should.)
 
 **`JsonObject`'s `JsonMember?[] slots` plus `i32 count` became a `Vec<JsonMember>`.** The `?` was
 there so the array could be allocated at all — a non-defaultable element type has no value to fill
