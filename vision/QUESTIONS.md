@@ -2342,44 +2342,46 @@ projections deep, has been argued for nine days against wac and against the ship
 never once against the three programs that would have to run it — and the two things that fell out of
 half an hour of reading suggest that is where the next ones are.
 
-### Costed, and the answer is different for each of the three
+### Costed, and it is the same three-arm match in all three hosts
 
 Asked the concrete version — *what does each host have to do to hand a program nine projections
-instead of two?* — and read them. The paragraph this replaces guessed *"nothing structural for the
-Rust pair"* and was wrong about one of them.
+instead of two?* — and answered it wrong twice before reading the right function. Both wrong answers
+are left named here, because the shape of the mistake is the useful part.
 
-**`native/src` (wasmtime) reads the parameter list to check it against two literal strings.**
+**First guess:** *nothing structural for the two Rust hosts, since they read the parameter list.*
+**Second:** *wasmtime matches two literal strings and needs a redesign; the V8-in-Rust host has a
+fifty-arm capability table and generalises for free.* The second was written after reading a
+capability table that has nothing to do with the question.
 
-    let world_arity = if !sig.params.is_empty()
-        && sig.params.len() <= 2
-        && sig.params[0] == "Core"
-        && (sig.params.len() == 1 || sig.params[1] == "Cli")
+Here is what each host actually does with `main`'s signature.
 
-Anything else is `cannot call {name}({params})`. So *reading the parameter list* is true and
-describes a two-name special case rather than a mechanism: `main(Net, Out, Clock, Tasks)` is refused
-by name, and `lm.world` is a `Vec<Val>` consumed with `.take(world_arity)` — positional. Nine
-projections need a name→constructor table where there is an `if`, a keyed world where there is a
-vector, and the arity cap gone.
+    native/src      build [Core, Cli] in that fixed order, then `args.truncate(params)`
+    native/v8/src   match main_sig.params.as_slice() { [] | ["Core"] | ["Core","Cli"] }
+    host/*.ts       worldFor returns [Core] or [Core, Cli] by class presence, spread positionally
 
-**`packages/platform/host` (JavaScript) does not read it at all.** `worldFor` returns `[Core]` or
-`[Core, Cli]` by which classes the module contains, spread positionally into `main`. Its own comment
-says the Rust hosts read the list and *"here the absent class is the same signal"* — true at two
-capabilities, false at nine in both directions: a helper naming `Files` earns one `main` never asked
-for, and `main(Out out, Files files)` gets `worldFor`'s order rather than its own.
+**A three-case enumeration, written three times, three different ways.** `()`, `(Core)`,
+`(Core, Cli)` — and nothing else is expressible in any of them. wasmtime's truncation works only
+because the two capabilities are *nested*: a prefix of a fixed list. Nine projections are a **set**,
+not a prefix, so truncation, a three-arm match and a class-presence check all fail the same way.
 
-**`native/v8/src` already generalises, and it is the one nobody would have guessed.** Its binding is
-a `(owner, field) → Cap` table — **fifty arms, forty-two under `Cli` and eight under `Core`** — so a
-capability is *already* looked up by type name and field name. Nine projections are fifty arms whose
-owner string changes and some whose field name does. Mechanical, tedious, and structurally free.
+**What misled me is worth more than the correction.** The `(owner, field) → Cap` tables are real and
+are fifty arms each — and they dispatch a *method call*, which is already general over any grouping,
+because a call arrives with its owner's name attached. World construction is the other question and
+nothing in any host generalises it. Two tables in one file, one general and one a three-arm match,
+and I read the general one and answered about the other.
 
-So the cost is **one rewrite, one table edit, and one design that already fits**, which is not what
-any of the three looked like from inside wac. The general shape is worth more than the numbers: the
-host that reasons about capabilities *by name* absorbs a regrouping, and the two that hardcode the
-grouping — one in an `if`, one in a class-presence check — do not.
+So the cost is **uniform and small and free nowhere**: each host replaces its three cases with a
+name→builder lookup, which each already has the parts for. That is a better answer than *different
+for each* — it means the projections need one change made three times rather than three changes, and
+the version made three times is the one most likely to drift.
 
-And the thing none of the three does: **nothing crosses a spawn.** `@/packages/sh/src/exec.wac` has
-that from the other side, where a capability is a bitfield rather than a value, and no amount of
-host work changes it.
+**And one thing measured that is worth keeping.** The two Rust hosts' capability tables were diffed
+by `(owner, field)`: **fifty pairs each, `Cli` 42 and `Core` 8, and the two sets are identical** —
+nothing in one that is not in the other. So the hosts agree exactly on what a capability *is*; where
+they differ is only in how a world gets handed over, which is the three-arm match above. That makes
+the `Page` gap below sharper rather than softer: it is not a host lagging, it is a capability neither
+of them has at all.
+
 ## The 62 capabilities are a union no host implements, and the shipped design has a word for that
 
 The grouping argument at the top of `vision/std/platform.wac` counts the host's capabilities and
