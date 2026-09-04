@@ -7,10 +7,19 @@
 //
 // ## Why this is grouped, which is measured rather than chosen
 //
-// The host exposes **62** capabilities. This count said 50 until 2026-09-04 and the twelve it was
-// short are `Page`'s: it was taken over `Core` and `Cli`, which is where the command-line ones are,
-// so the whole browser host was outside the derivation that produced the groups. `Page` is the ninth
-// projection and it is below. Counting them by what they reach:
+// **62 capabilities, and no host implements all of them.** The count said 50 until 2026-09-04 and
+// the twelve it was short are `Page`'s — taken over `Core` and `Cli`, which is where the
+// command-line ones are, so the browser was outside the derivation that produced the groups. `Page`
+// is the ninth projection and it is below.
+//
+// Both numbers are a **union**. `native/src` and `native/v8/src` mention `Page` zero times and
+// `pageOf` is imported by `entryBrowser.ts` alone, so a command-line host has 50 and only a browser
+// has the rest. The shipped design has a word for that — three *profiles*, `Core`, `Cli` and `Page`,
+// with *"only a browser provides it"* written at the third — and this file has nine projections and
+// no profile, so nothing here says which of the nine a given host supplies. `../QUESTIONS.md` has why
+// splitting into nine makes that worse rather than better.
+//
+// Counting them by what they reach:
 //
 //     file    14   readFile writeFile stat linkStat readDir mkdir remove rename …
 //     net      9   connect listen accept send recv bindDatagram sendTo …
