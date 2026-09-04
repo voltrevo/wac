@@ -3562,6 +3562,19 @@ Three places the answer could go, and they are genuinely different:
 - **`docs/` records it as an engine fact**, which is where `docs/` already keeps *the engine features
   a module needs*, and the program keeps the workaround.
 
-The reason it belongs here rather than as an issue is the middle option: whether the language is
-allowed to know about an engine's limit is a design question, and it is the same question
-`packages/wacc`'s lambda cap and the ladder's own rung limits keep raising in other forms.
+The reason it belongs here rather than only as an issue is the middle option: whether the language is
+allowed to know about an engine's limit is a design question, and it is the same one `packages/wacc`'s
+lambda cap and the ladder's rung limits keep raising in other forms. `issues/lang/0334a` has the
+concrete half.
+
+**And the tree has already answered it twice, differently.** `packages/wacc/test/wac/source_probe.wac`
+chunks a string literal at **3000**; `packages/raster/src/font16.wac` splits its table at **8192**;
+the limit in the error message is **10,000**. Neither site cites the other and neither cites a
+documented figure, because there is not one. So the number to stay under is folklore, and the third
+person to need it will pick a fourth.
+
+Worse, one of the two workarounds caused a defect of its own: `issues/lang/0253a` is a chunk boundary
+landing inside a multi-byte UTF-8 sequence, which made the generated self-host driver invalid UTF-8
+and broke the fixpoint. A bug whose entire cause is an undocumented ceiling being worked around by
+hand, in the file that generates the compiler's own driver — which is the strongest argument for the
+middle option and the reason it is not simply a documentation gap.
