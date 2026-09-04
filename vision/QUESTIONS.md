@@ -264,6 +264,59 @@ checkable at all"*, which for a union is still true by a different route, since 
 listed at the declaration — but it is true for a different reason, and that reason is what a
 `union` as a match arm would have to rest on.
 
+## Whether vision's new words are keywords, which nobody had asked
+
+`try`, `gen`, `defer`, `schedule`, `yield`, `in`, `union` and `secret` are written all over these
+pages and no entry says what they *are*. `vision/GRAMMAR.ebnf` had to decide in order to exist, and
+it decided **contextual** — none of them is a keyword, each is an `IDENT` that a rule matches by
+spelling. All forty-four vision files parse that way, so the question is not *can they be*.
+
+The question is what it costs either way, and it is not symmetrical.
+
+**Contextual is free at the parser and not free at the reader.** `spec/spec/grammar.md` already has
+two contextual words — `from` and `fill` — and its comment on `from` is the whole argument in one
+line: *"contextual: an ordinary identifier elsewhere"*. So the machinery exists and vision adds
+nothing to it. But eight of them is a different thing from two: a program can declare a variable
+called `union`, and then a rule that expects the word and a reader who expects the name are looking
+at the same token.
+
+**A keyword is a sweep.** `packages/gzip` has a method named `fill`; `match` is already a keyword and
+that is why `vision/packages/regex` had a payload named `match` that does not compile. Every word
+promoted takes a name away from every program in the tree, and `speckeywords_test.wac` exists
+because the fence *"has drifted from the implementation three times"* — a keyword is a thing with a
+guard around it, which is the honest measure of its cost.
+
+So the measurement is a count per word of how many names in the tree already use it, over `.wac`
+with comments and string literals stripped:
+
+| word | uses | files | |
+|---|---:|---:|---|
+| `try` | 0 | 0 | free |
+| `defer` | 0 | 0 | free |
+| `schedule` | 0 | 0 | free |
+| `yield` | 0 | 0 | free |
+| `union` | 6 | 1 | four locals in `bindgen.wac`, all called `union` and all strings |
+| `gen` | 38 | 8 | `Exec gen = cli.exec(…)`, mostly in tls tests |
+| `in` | 188 | 55 | `export Line nextLine(Lines s, Feed in)` — a parameter name |
+| `secret` | 182 | 31 | `u8[] secret = handshakeTrafficSecret(…)` — quic, tls, crypto |
+
+**Four of the eight cost nothing at all**, which was not the expected answer and is the useful half:
+`try`, `defer`, `schedule` and `yield` appear nowhere as names, so the choice for them is free and
+should be made on how they should read rather than on what they break.
+
+**And the guess about which two were expensive was wrong.** `union` looked costly and is four locals
+in one file. `secret` did not come up at all and is the worst of the eight after `in` — 182 names,
+in `quic`, `tls` and `crypto`, which are exactly the packages the `secret` qualifier is *for*. A
+keyword that breaks its own consumer is a different kind of finding from a keyword that is merely
+expensive, and it is an argument for that one staying contextual whatever the others do.
+
+`in` is 188 names in 55 files and there is no way to make it cheap. `for … in` is on `SHOWCASE.md`,
+so it is not mine to withdraw — but the cost of the *word* belongs beside it.
+
+(Counted by stripping comments and string literals and matching whole words, so a little noise
+survives in files that build source text as strings. The shape is not close enough to the margin for
+that to matter.)
+
 ## What `try` inside a generator does, and what the loop consuming it sees
 
 `vision/packages/gzip/src/inflate.wac` is `async gen<Bytes> Result<void, Fault>` and its body writes
