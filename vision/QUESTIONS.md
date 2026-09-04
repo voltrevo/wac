@@ -4722,3 +4722,56 @@ reported to whatever scores peers; the other wants four of them to be traps.
 call site logs, traps, or drops a peer. The narrow question: is that a *type* distinction at all, or
 is it what a capability boundary already means — everything arriving through one is untrusted, and
 everything a program computed itself is its own?
+
+## A conversion at a package seam is an adoption cost, not a conversion cost
+
+`packages/codec` is RFC 4648, checked against the normative §10 vectors, and `encode` answers `u8[]`.
+Base64 output is ASCII by construction — there is no byte sequence it can produce that is not text.
+
+`packages/tor/src/directory.wac` **hand-writes a second base64 encoder**, twenty lines with its own
+alphabet literal, in the file that imports `packages/codec`'s *decoder* at line 28. Filed as
+`issues/system/0339a`. The dating is what makes it evidence rather than an anecdote:
+
+| | |
+|---|---|
+| `packages/codec/src/base64.wac` created | `38e8f343`, 2026-07-31 |
+| `string.fromBytes` added | `4eb39a6e`, 2026-07-31 |
+| `directory.wac` written — the import **and** the hand-rolled encoder, one commit | `aa250c02`, 2026-08-03 |
+
+Three days apart, and `string.fromBytes` is used inside the hand-rolled version's own last line. The
+whole function is `string.fromBytes(encode(bytes, ALPHABET_STANDARD(), false))`, and all six call
+sites want a `string` — a map key and a URL path segment.
+
+**Nobody writes twenty lines to avoid one conversion.** They write them because a signature that
+answers the wrong type reads as a function for somebody else, and the cost of a seam is paid in
+whether the package gets used at all rather than in the call. That is a different quantity from the
+one anybody estimates when choosing a return type, and it is invisible afterwards: the tree contains
+a correct codec, a correct duplicate, and no record that one was written because of the other.
+
+### Which the callers can settle, and it is not symmetry
+
+Two of `packages/tor`'s decode callers hold **bytes** — `hsdesc.wac` and `hsintro.wac` slice a block
+out of a document — and only `onionaddr.wac` starts from a string. Every encode caller wants a
+string. So the pair the callers ask for is asymmetric:
+
+    string encode(Bytes data, Alphabet a, Padding pad)
+    Result<Bytes, CodecFault> decode(Bytes text, Alphabet a)
+
+and imposing symmetry on it, in either direction, would be a preference rather than a finding.
+
+### The open part
+
+`../QUESTIONS.md` already has *which byte type a capability speaks, now that the widening is
+one-directional*. This is the same question one layer up, and the layer matters: a capability has one
+implementation and a decision can be made once, and a **package** has as many callers as it acquires,
+each of which can quietly decline it.
+
+Three ways to notice, and none exists:
+
+- **Nothing detects a re-derivation of an imported package's other half.** `0314b` finds
+  byte-identical duplicates by hashing and `0325a` found five `itoa64`s by name; neither would find
+  this, because the copy is not identical and is not called `encode`.
+- **Nothing records why a signature was chosen.** `u8[]` out is defensible — it composes with a
+  `Buf` — and the file does not say whether that was weighed.
+- **Nothing asks a package who declined it.** A caller that imports one export of a five-export file
+  is the cheapest possible signal, and it is greppable.

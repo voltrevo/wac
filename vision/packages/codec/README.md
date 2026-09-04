@@ -50,6 +50,36 @@ arities — `digitValue(i32 c)` in `hex.wac` and `base64.wac`, `digitValue(i32 c
 `bits`-wide digits and pad the last group. The three copies differ in the alphabet, the group size,
 and nothing else.
 
+## `encode` answers a `string`, and the shipped one answering `u8[]` cost a whole second encoder
+
+Base64 output is ASCII by construction — there is no byte sequence `encode` can produce that is not
+text — and the shipped signature is `u8[] encode(u8[] data, i32 alphabet, bool pad)`.
+
+`packages/tor/src/directory.wac` **hand-writes a second base64 encoder**, twenty lines with its own
+alphabet literal, in the file that imports `packages/codec`'s *decoder* at line 28. Filed as
+`issues/system/0339a`, and the dating is what makes it evidence rather than an anecdote:
+
+| | |
+|---|---|
+| `packages/codec/src/base64.wac` created | `38e8f343`, 2026-07-31 |
+| `string.fromBytes` added | `4eb39a6e`, 2026-07-31 |
+| `directory.wac` written — the import **and** the hand-rolled encoder, one commit | `aa250c02`, 2026-08-03 |
+
+Three days, and `string.fromBytes` is used inside the hand-rolled version's own last line. The whole
+function is `string.fromBytes(encode(bytes, ALPHABET_STANDARD(), false))`. All six call sites want a
+`string`: a map key, and a URL path segment.
+
+**And the input side goes the other way, by the same evidence.** `hsdesc.wac` and `hsintro.wac`
+decode a block sliced out of a document, which is bytes; only `onionaddr.wac` starts from a string.
+So two callers hold bytes going in and every caller wants a string coming out, and the asymmetric
+pair — `string encode(Bytes)`, `Result<Bytes, …> decode(Bytes)` — is the one the callers asked for.
+Symmetry would be a preference imposed on both.
+
+The general shape, which `../../QUESTIONS.md` already has half of as *which byte type a capability
+speaks*: **a conversion at a package seam is not a conversion cost, it is an adoption cost.** Nobody
+wrote twenty lines to avoid one `string.fromBytes`. They wrote them because a signature that answers
+the wrong type reads as a function for somebody else.
+
 ## What the `null` was hiding
 
 The shipped README lists **four** counts on which decoding refuses, and argues hardest for the

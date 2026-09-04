@@ -13,14 +13,35 @@ import { CodecFault, NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZer
   from "./fault.wac";
 
 /**
- * Bytes to text.
+ * Bytes to text — and it answers a **`string`**, which the shipped one does not.
  *
  * No `Result`: every byte sequence has an encoding, which is the difference between this and
- * `decode` and is the reason the shipped `encode` answers `u8[]` and the shipped `decode` answers
- * `u8[]?`. Keeping the asymmetry is the point — a codec where one direction can fail and the other
- * cannot should say so in the two signatures.
+ * `decode` and is why the shipped `encode` answers `u8[]` and the shipped `decode` answers `u8[]?`.
+ * Keeping *that* asymmetry is the point — a codec where one direction can fail and the other cannot
+ * should say so in the two signatures.
+ *
+ * ## Why `string` out and `Bytes` in, which is not symmetry and is what the callers want
+ *
+ * Base64 output is ASCII by construction; there is no byte sequence `encode` can produce that is not
+ * text. The shipped `encode` answers `u8[]` anyway, and the cost of that is measured rather than
+ * argued — `issues/system/0339a`:
+ *
+ * `packages/tor/src/directory.wac` **hand-writes a whole second base64 encoder**, twenty lines with
+ * its own alphabet literal, in a file that imports `packages/codec`'s *decoder* at line 28. Not
+ * legacy: the codec and `string.fromBytes` both landed 2026-07-31 and that file was written
+ * 2026-08-03, in one commit, with `string.fromBytes` used inside the hand-rolled version's own last
+ * line. The whole function is `string.fromBytes(encode(bytes, ALPHABET_STANDARD(), false))`.
+ *
+ * The plausible cause is this signature. All six call sites want a `string` — a map key,
+ * `byDigest.getOr(base64NoPad(sha256(body)), -1)`, and a URL path segment, `hsdir.wac:279`.
+ *
+ * The input side goes the other way and by the same evidence: `packages/tor/src/hsdesc.wac` and
+ * `hsintro.wac` decode a block sliced out of a document, which is bytes, and only
+ * `onionaddr.wac` starts from a string. **Two callers hold bytes going in and every caller wants a
+ * string coming out**, so the asymmetric pair is the one the callers ask for, and symmetry here
+ * would be a preference imposed on both.
  */
-export Bytes encode(Bytes data, Alphabet a, Padding pad) { … }
+export string encode(Bytes data, Alphabet a, Padding pad) { … }
 
 /**
  * Text to bytes, or the first reason it is not text this alphabet produced.
