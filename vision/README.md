@@ -91,9 +91,14 @@ whoever consumed it first.** The seven capability projections were argued from a
 and every one that has been examined was wrong differently — `Files` short by two methods, `Net`
 short by a *shape*, `Proc` short by its purpose, standard input with no projection at all, `Clock`
 with two of the host's three time capabilities, `Page` with none of twelve. Diffing all 62 host
-capabilities against all 38 projection members took an afternoon and found four more than nine days
-of consumers had. **The check is mechanical and nobody had run it**, because each gap arrived looking
-like a surprise rather than like an instance.
+capabilities against the projections took an afternoon and found four more than nine days of
+consumers had — a whole missing group of twelve, the entire streaming half of the filesystem, nine
+process capabilities, and two file-permission ones filed under `Cli`. **The check is mechanical and
+nobody had run it**, because each gap arrived looking like a surprise rather than like an instance.
+
+The projections went from 38 members to 44 answering it, and 28 host names still have no counterpart
+— about ten of those are deliberate renames and the rest is the process half, which nothing has been
+written against.
 
 **2. A first consumer finds something, every time, and a construct with no consumer has no
 evidence.** `fs` was the first consumer of `Files`; `quic` the second of `Net`; `wactest` the second
