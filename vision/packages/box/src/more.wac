@@ -1,0 +1,101 @@
+// A pager — the applet `packages/box` has not got, because nothing could ask for a keystroke.
+//
+// Sixty-four applets and no `more`. `@/packages/tty`'s README says why:
+//
+// > **What is missing is anything that *selects* one.** `sshd` constructs `Line.create()` and never
+// > changes it, the browser terminal likewise, and there is no `stty` for a program to ask with. So
+// > an editor still cannot have a keystroke at a time — not because the discipline cannot do it, but
+// > **because nothing can say so.**
+//
+// Measured 2026-09-04: `Line.cbreak()` and `Line.noEcho()` appear **nowhere** outside
+// `packages/tty` itself. Two of the three modes were read off a real pty in their own setting, with
+// a second oracle written for the purpose — `tools/discipline.py`, because `script -qec cat` cannot
+// hold an `stty` — and neither has a caller. **The missing capability shows up as a missing
+// program**, which is the clearest evidence for a gap this exercise has found: not an awkward call
+// site, an absent one.
+//
+// This is that program.
+
+import { Result, Bytes } from "core";
+import { In, Out, Mode, NotATerminal } from "std";
+import { Line, Typed, Effect, Sig } from "@/packages/tty";
+
+/**
+ * Page a stream to a terminal, a screenful at a time.
+ *
+ * `rows` is what a caller read from the environment; asking for it here would make a pager need a
+ * `Env`, which is the layering argument `packages/git`'s `statusOf` makes about ignore rules.
+ */
+export async Result<i32, NotATerminal> more(In in, Out out, i32 rows) {
+  // **The whole proposal, in one line.** `setMode` answers the mode it replaced, because restoring
+  // is the caller's job and guessing *canonical with echo* is wrong for anyone who was in a
+  // password prompt.
+  Mode was = try in.setMode(Mode.cbreak());
+  defer { _ = in.setMode(was); }
+
+  Line tty = Line.inMode(Mode.cbreak());
+  i32 shown = 0;
+
+  try await for (Bytes chunk in in.stream()) {
+    // A chunk may hold three keystrokes somebody typed ahead. The discipline is per byte and the
+    // generator makes that the loop rather than a carried tail — which is `@/packages/tty`'s own
+    // change and the one place here where two rewrites compose without argument.
+    for (Typed t in tty.feedAll(chunk)) {
+      match (t.effect) {
+        Signal(s):    { if (s is Interrupt) { return Ok(130); } }
+        Delivered(b): {
+          if (b.get(0) == 'q') { return Ok(0); }
+          shown = 0;
+        }
+        else: { }
+      }
+    }
+    if (shown >= rows) { _ = out.write(prompt()); }
+  }
+  return Ok(0);
+}
+
+Bytes prompt() { … }
+
+// ## 1. A mode set on the input changes what correct output looks like
+//
+// This is the finding, and it is not in `@/packages/tty`'s list.
+//
+// `Mode.cbreak()` is `ICANON` and `ECHO` off — a property of *reading*. It is also, on every real
+// terminal, the moment a program's **writing** has to change: `packages/ssh/src/sshd.wac` says so
+// from the other side —
+//
+// > **The shell's output needs `\r\n`.** A terminal in raw mode does not return the cursor on a bare
+// > newline, so output written with `\n` stair-steps down the screen. That translation is `ONLCR`,
+// > and it belongs here rather than in the shell, which is writing bytes rather than talking to a
+// > terminal.
+//
+// `sshd` owns both ends of one session, so it can put the translation in the middle. A pager holds
+// an `In` and an `Out` that know nothing about each other: `in.setMode(cbreak)` silently makes every
+// `out.write` containing a `\n` wrong, and nothing in either signature says a word about it.
+//
+// So the mode is not a property of the input capability. It is a property of **the terminal**, which
+// both capabilities are views onto — the entry `../../../QUESTIONS.md` already has about a mode
+// being ambient, arriving from the side that has to *write*. What that entry did not say is that the
+// sharing is not merely between two programs: it is between two *capabilities held by one program*,
+// which is the case a per-capability grant cannot express at all.
+//
+// ## 2. What could not be written
+//
+// **`defer { _ = in.setMode(was); }` returns from inside a loop**, which is one of the four
+// unsettled parts of what `defer` means. Three of the four exits here are `return`s from inside
+// `try await for`, so this file depends on the answer rather than illustrating it — and the failure
+// mode if the answer is *no* is a terminal left in cbreak after the pager exits, which is the state
+// a person notices by their shell no longer echoing.
+//
+// **A pager reads and the stream it pages is the same `In`.** `more file` reads the file and the
+// keystrokes from different places; `cmd | more` reads the text from standard input and the
+// keystrokes from the *terminal*, which is a second input this signature has no room for. The
+// shipped `Cli` has one standard input and so does `vision/std`'s `In`, so the pipe case — which is
+// the only way anybody uses a pager — needs a capability neither has: **the controlling terminal, as
+// distinct from standard input.** That is why this file takes one `In` and pages it, and why that is
+// not really a pager.
+//
+// Worth stating plainly because it is the second time the same shape has appeared: `@/packages/tty`
+// wanted a mode on `In` and the mode belongs to the terminal; this wants a *read* from the terminal
+// and gets standard input. Both are the same missing distinction, and one program needs both halves.

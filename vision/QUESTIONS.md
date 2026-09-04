@@ -3394,6 +3394,23 @@ names a piece of shared hardware, and the state belongs to the hardware.** A clo
 of thing and does not notice because nothing sets it; a terminal is the same kind of thing and is set
 constantly.
 
+**And the sharing is not only between programs.** Found 2026-09-04 by writing the first consumer,
+`@/packages/box/src/more.wac`, the pager `packages/box` has not got. `Mode.cbreak()` is a property of
+*reading* — `ICANON` and `ECHO` off — and it is also the moment a program's **writing** has to
+change. `packages/ssh/src/sshd.wac` says so from the other side:
+
+> **The shell's output needs `\r\n`.** A terminal in raw mode does not return the cursor on a bare
+> newline, so output written with `\n` stair-steps down the screen. That translation is `ONLCR`, and
+> it belongs here rather than in the shell, which is writing bytes rather than talking to a terminal.
+
+`sshd` owns both ends of one session and can put the translation in the middle. A pager holds an `In`
+and an `Out` that know nothing about each other, so `in.setMode(cbreak)` silently makes every
+`out.write` containing a `\n` wrong, and neither signature says a word about it.
+
+So this is not two programs sharing a terminal — it is **two capabilities held by one program**,
+which is the case a per-capability grant cannot express at all. A grant says what a program may
+reach; it has nothing to say about two things it holds being views of one device.
+
 Two consequences that are properly questions:
 
 - **It is the first capability that has to answer *what it was*.** Restoring is the caller's job, and
@@ -4200,3 +4217,36 @@ Worth stating as one question because three packages reached it independently in
 because the cheap answer — a newtype per case — is three newtypes and does not compose. What they
 share is that the *value* is fine and the **reachability** is the invariant, which is the one thing
 this language, like most, has no way to write down.
+
+## Standard input and the controlling terminal are one capability and are two things
+
+`cmd | more` reads the text from standard input and the **keystrokes** from the terminal. Every
+pager, every `less`, every `git log` in a pipe does this, and it is why `/dev/tty` exists.
+
+`vision/std`'s `In` is standard input, and the shipped `Cli` has one too. So the pager written for
+this exercise — `@/packages/box/src/more.wac` — takes one `In`, pages it, and cannot be used the only
+way anybody uses a pager. That is not a rewrite decision: there is no second capability to ask for.
+
+**It is the same missing distinction as the mode question above, from the other end.** That entry is
+about `In.setMode` changing something that belongs to the terminal rather than to the reader; this is
+about *reading* from the terminal rather than from the reader. One program needs both halves and
+neither exists, and the shape of the gap is identical: **`In` is named for a stream and is being used
+as a device.**
+
+Three ways to draw the line, and the cheapest is not obviously wrong:
+
+- **A second capability.** `Terminal` beside `In` and `Out`, carrying `setMode`, `read` and the size
+  — which is what `/dev/tty` is, and what `Page` already is for a browser. It is honest, it is a
+  seventh projection, and it makes *is there a terminal* a `Terminal?` rather than a guess.
+- **`In` answers whether it is one.** `In.terminal()` giving a `Terminal?`, so the pipe case is
+  `null` and the interactive case is the device — which keeps the projection count and puts a
+  downcast in the middle of a capability, which is the thing projections were meant to remove.
+- **Nothing, and a pager takes two `In`s.** Which is writable today and pushes the question to
+  whoever constructs the program — the shell, which does know. It is also how a Unix program that
+  opens `/dev/tty` itself behaves, and the reason that is unsatisfying is that *opening* it is an
+  ambient reach by name, which is what this system does not have.
+
+The reason it is a question rather than a want: **the third option may be right**, and it is the one
+that costs nothing. What decides it is whether *the program* or *its launcher* should know that its
+standard input is not a keyboard — and the answer this directory has given everywhere else is the
+launcher.
