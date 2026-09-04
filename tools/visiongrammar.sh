@@ -34,6 +34,17 @@ cd "$(dirname "$0")/.."
 WAC=${WAC:-./native/v8/target/release/wac}
 [ -x "$WAC" ] || { echo "no wac binary at $WAC — run ./bootstrap.sh" >&2; exit 2; }
 
+# **The seed is the instrument.** Every answer below comes from the compiler carried inside the
+# binary as `native/v8/seed/wacc.wasm`, not from `packages/wacc/src`. A stale one does not fail — it
+# answers as of whenever it was built — so this whole report can be confidently a few commits out of
+# date with nothing looking wrong. That happened: `async` on a method was reported as a construct
+# this syntax adds, for as long as the seed predated the commit that added it.
+if ! "$WAC" test tools/wac/seedfresh_test.wac --allow-read --allow-run >/dev/null 2>&1; then
+  echo "the seed is older than the sources it is built from — run ./bootstrap.sh --no-install" >&2
+  echo "every measurement below would be as of whenever it was last built" >&2
+  exit 3
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

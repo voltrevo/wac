@@ -59,3 +59,10 @@ The three signatures it names — `fn[U(S,U)]`, `fn[U(anyref,S,U)]`, `fn[U(anyre
 method being registered more than once, and the count is short by exactly three. On the generic
 owner the instantiation presumably registers them while the type section is still open. Not
 investigated further; the reproduction is two lines and the difference is one word.
+
+## Re-measured on a fresh seed
+
+Both halves were first measured through a seed three `packages/wacc/src` commits behind, which is
+enough to date an answer without failing — one of the constructs in `vision/GRAMMAR.md` moved on the
+rebuild for exactly that reason. Re-run after `./bootstrap.sh --no-install`: the plain struct still
+answers `cannot emit`, the generic struct still builds. The reproduction stands.
