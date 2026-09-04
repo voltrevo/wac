@@ -1,0 +1,89 @@
+// A filesystem per session, over one shared image — `issues/system/0309b`'s fourth option, written.
+//
+// That issue is about `sshd` serving one connection at a time. agent-b's analysis is that the
+// blocker is the **image**: `boot` runs once before the accept loop, every session mutates the same
+// `Fs`, and the first session to end writes the image while the second is still editing it — a torn
+// image rather than a disagreement. Three options are listed there and each gives something up:
+// refuse a second writer, a filesystem per session that sees nobody else's work, or save-on-idle.
+//
+// `@/packages/fs`'s rewrite proposes a fourth — *"one base, read-only and shared; one empty top per
+// session"* — and says it is three lines because a mount is a closure. It is. **Writing the caller
+// finds two things the three lines do not carry**, and both are about who holds what rather than
+// about the filesystem.
+
+import { Result, Bytes } from "core";
+import { Mount, Fault } from "@/packages/fs";
+
+/**
+ * What one session gets: the image it started from, plus its own edits.
+ *
+ * Two sessions share the base and see none of each other's writes, which is the point and is the
+ * thing the shipped `Fs` cannot do without a second `Fs`.
+ */
+export Mount sessionFs(const Mount image) {
+  return Mount.overlay(Mount.readOnly(image), Mount.inMemory());
+}
+
+/**
+ * The server's own handle on the image — **the one a session must not be able to reach.**
+ *
+ * ## 1. A wrapper that cannot be inverted needs somebody to hold the original
+ *
+ * `Mount.readOnly(m)` is *"three lines, and the shipped design has no way to express it: read-only
+ * is a `bool` on the mount that eight operations each have to remember to check. Here it is a
+ * wrapper, and an operation that forgot would have to be written to forget."* All true — and the
+ * server still has to **write the image out** when it shuts down, which the wrapper refuses.
+ *
+ * So the unwrapped `Mount` has to exist somewhere for the whole life of the server, and the type
+ * says nothing about where. `readOnly` enforces its direction only if the strong reference is
+ * unreachable from a session, and *unreachable* is a property of the program's shape rather than of
+ * the value: `sessionFs` above takes a `const Mount image` and could as easily return it.
+ *
+ * The shipped `bool` design has the same hole and admits it differently — the flag is on the mount,
+ * so there is exactly one object and clearing the flag is the whole attack surface. Here there are
+ * two objects and the attack surface is *scope*. Neither is checked; the closure version moved the
+ * problem from a field to a reference, which is better only if something can say a reference does
+ * not escape. `../../../QUESTIONS.md` has that as the `Verified<T>` shape, from `@/packages/ethrpc`.
+ *
+ * ## 2. A session's top has nowhere to go
+ *
+ * The `fs` rewrite says what happens at the end becomes *"an explicit choice — discard it, merge it,
+ * or hand it back — instead of a race."* Making the choice is this file's job and it can only make
+ * one of the three: **discard**, by dropping the reference.
+ *
+ * *Merge* needs to read every path a session wrote and write it into the base, and a `Mount` is six
+ * funcrefs with no way to enumerate what it holds — `readDir` walks a path, so merging means walking
+ * the tree, which needs a starting path and a recursion the surface does not offer, and which cannot
+ * distinguish *written by this session* from *inherited from the base*. *Hand it back* needs the
+ * `Mount` to be a value the caller can keep past the session, which it is — but a `Mount` whose
+ * closures captured a `Map` is a filesystem with no name, and nothing can say which session's it
+ * was.
+ *
+ * So the fourth option is real and it is **discard-only** until a mount can be asked what is in it.
+ * That is not a criticism of the closure design; it is the same gap the tag design has, made
+ * visible because the closure design invited the question by making the per-session filesystem
+ * cheap.
+ */
+export struct Server {
+  /** The writable image. Held here and handed to no session. */
+  Mount image;
+
+  /** Write the image out — the operation `readOnly` exists to keep sessions away from. */
+  async Result<void, Fault> save(const this, string path) { … }
+}
+
+// ## What could not be written
+//
+// **Two sessions and a `readDir` of `/`.** `overlay`'s own note says a listing is *"the one answer
+// that comes from both sides"* and that the mount table is what knows about mounts. A session's `/`
+// has to merge the base and the top; that is `overlayReadDir`, elided there. What this file adds is
+// that it must also be *stable within a session* — a listing taken before and after another
+// session's writes must not change, which the overlay gives for free because the base is read-only
+// and the top is private. Worth stating because it is the one property the torn-image problem was
+// actually about, and it falls out of the shape rather than being enforced anywhere.
+//
+// **Nothing here is `sshd`.** The session loop, the channel, the pty and the line discipline are
+// `packages/ssh`'s and are not rewritten; this is the filesystem a session would be handed and the
+// two questions handing it raises. Calling it `session.wac` rather than `sshd.wac` is the honest
+// scope: `0309b`'s actual blocker is the accept loop, and the image is the part that has to be
+// answered before the loop can be changed.

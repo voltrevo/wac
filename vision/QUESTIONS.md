@@ -4165,3 +4165,38 @@ Three ways out, and the middle one is what most languages do:
 What makes this decidable rather than a matter of taste: the two consumers are already written, they
 are eleven files apart, and neither is contrived. Whichever is chosen, one of them has to say so in
 its own file.
+
+## A capability wrapper enforces its direction only if nobody kept the original
+
+`@/packages/fs`'s `Mount.readOnly(m)` is three lines and is a real improvement over the shipped
+design, where read-only is a `bool` that eight operations each have to remember to check: here an
+operation that forgot *would have to be written to forget*.
+
+Writing the first caller — `@/packages/ssh/src/session.wac`, the per-session filesystem
+`issues/system/0309b` needs — finds what the three lines do not carry. **The server still has to
+write the image out**, and the wrapper refuses. So the unwrapped `Mount` exists for the life of the
+server, and whether a session can reach it is a property of the program's shape rather than of any
+value. `sessionFs(const Mount image)` takes the strong one and could as easily return it.
+
+The shipped `bool` design has the same hole in a different shape: one object, and clearing the flag
+is the whole attack surface. The closure design moves it from a **field** to a **reference** — which
+is better only if something can say a reference does not escape.
+
+**This is the third arrival of one question from three directions**, which is why it is here rather
+than in the package:
+
+- `@/packages/wac`'s `forCommand` answers what a command *should* hold and cannot check it is
+  narrower than what the process holds — `issues/system/0337a`;
+- `@/packages/ethrpc`'s `call` answers a `JsonValue` a caller may hand to `@/packages/mpt` as a
+  verified state root, and *"provided the root came from somewhere else"* is in no type;
+- and this: a read-only view whose strong original must exist somewhere unnamed.
+
+All three want the same thing and none of them wants a *type*, exactly. They want **a claim about
+where a value can go**: only narrower, only from the light client, only not into a session. A
+`Verified<T>` that one module can construct covers the second; the first and third are about
+non-escape, which is a different property and the harder one.
+
+Worth stating as one question because three packages reached it independently in three days, and
+because the cheap answer — a newtype per case — is three newtypes and does not compose. What they
+share is that the *value* is fine and the **reachability** is the invariant, which is the one thing
+this language, like most, has no way to write down.
