@@ -44,7 +44,9 @@
 // right answer for a threshold: extract and test directly. It is not available for a *rejection*,
 // because a rejection's whole observable effect is the verdict — which is the thing a `bool` flattens.
 
-import { Result, Bytes } from "core";
+import { Result, Bytes, Vec } from "core";
+import { Chunk } from "@/packages/ssz";
+import { provesFinality, provesCommittee } from "./branch.wac";
 import {
   UpdateFault, NoBits, TooFewParticipants, MalformedHeader, SlotOrder, WrongPeriod, NotRelevant,
   BadFinalityBranch, BadCommitteeBranch, BadSignature,
@@ -100,9 +102,20 @@ export Result<void, UpdateFault> validateUpdate(const Store store, Bytes update,
     return Err(NotRelevant(attestedSlot, storeSlot));
   }
 
-  if (!provesFinality(update, attested!)) { return Err(BadFinalityBranch()); }
-  if (isCommitteeUpdate(update) && !provesCommittee(update, attested!)) {
-    return Err(BadCommitteeBranch());
+  // **Four lines each, because `try` cannot map.** `provesFinality` answers
+  // `Result<void, ProofFault>` and this function answers `Result<void, UpdateFault>`; `try` requires
+  // the callee's error to be *in* the caller's set and `ProofFault` is not — it is wrapped, for the
+  // reason `./branch.wac` gives about not losing which branch failed. So the propagation that is one
+  // token everywhere else in this directory is a `match` here, twice. See the note at the foot.
+  match (provesFinality(finalizedLeaf(update), finalityBranch(update), attested!)) {
+    Err(why): { return Err(BadFinalityBranch(why)); }
+    Ok(_):    { }
+  }
+  if (isCommitteeUpdate(update)) {
+    match (provesCommittee(committeeLeaf(update), committeeBranch(update), attested!)) {
+      Err(why): { return Err(BadCommitteeBranch(why)); }
+      Ok(_):    { }
+    }
   }
   if (!verifies(store, update, genesisValidatorsRoot)) { return Err(BadSignature()); }
   return Ok;
@@ -117,8 +130,10 @@ i64 signatureSlotOf(Bytes update) { … }
 i64 periodAtSlot(i64 slot) { … }
 i32 countBits(Bytes bits) { … }
 bool isCommitteeUpdate(Bytes update) { … }
-bool provesFinality(Bytes update, const Header attested) { … }
-bool provesCommittee(Bytes update, const Header attested) { … }
+Chunk finalizedLeaf(Bytes update) { … }
+Chunk committeeLeaf(Bytes update) { … }
+Vec<Chunk> finalityBranch(Bytes update) { … }
+Vec<Chunk> committeeBranch(Bytes update) { … }
 bool verifies(const Store store, Bytes update, Bytes genesisValidatorsRoot) { … }
 
 // ## What could not be written
@@ -131,14 +146,24 @@ bool verifies(const Store store, Bytes update, Bytes genesisValidatorsRoot) { �
 // records that they used to be, except this note. A rewrite that improves a property silently makes
 // the next reader unable to tell the property was ever in doubt.
 //
-// **A `bool` for each of the four cryptographic checks.** `provesFinality`, `provesCommittee` and
-// `verifies` all answer `bool` and this file turns each into one `Err` member, so the same collapse
-// happens one call down: a finality branch that is the wrong *length* and one that hashes to the
-// wrong root are both `BadFinalityBranch`. Stopping here is a choice about where the boundary of
-// this rewrite is, and it is the choice the shipped code made at the level above — which is worth
-// noticing, because the argument for going further is the same argument, and it does not obviously
-// terminate. `@/packages/mpt` is the package that took it one level down and found its own version
-// of the question.
+// **Answered, and not as expected.** This note used to say that `provesFinality`, `provesCommittee`
+// and `verifies` all answer `bool`, that the collapse therefore happens one call down, and that the
+// argument for going further *"does not obviously terminate"*. `@/packages/ssz` was written after
+// that and the first two now answer `Result<void, ProofFault>` — see `./branch.wac`, which is the
+// composition. It terminates: `ProofFault`'s members are the leaves, because below `verify` there is
+// a loop of `sha256` and a comparison and a hash does not refuse. **A fault union ends where the
+// next thing down cannot fail in more than one way**, which is a rule and not a judgement call, and
+// which could not be found from this file alone.
+//
+// `verifies` still answers `bool`, and by that rule it should not stop there either: `packages/bls`
+// distinguishes an empty key list, a point not on the curve and a pairing that disagreed. That is
+// the next level and it is a different package again.
+//
+// **`try` cannot map, so wrapping a callee's fault costs four lines.** The two calls above are a
+// `match` each, because `try` requires the callee's error to be *in* the caller's set and
+// `ProofFault` is deliberately not — it is wrapped so that *which branch* survives. Everywhere else
+// in this directory propagation is one token; the moment an error has to change shape it is a
+// statement. `../../../QUESTIONS.md`.
 //
 // **Nothing says the slot relations are a chain.** `SlotOrder` carries all four numbers because a
 // caller wants them, and the *type* still cannot say `current >= signature > attested >= finalized`

@@ -1,0 +1,107 @@
+// The two Merkle branches, and the question `./validate.wac` parked.
+//
+// That file stopped naming failures at one level and said so:
+//
+// > **A `bool` for each of the four cryptographic checks.** … a finality branch that is the wrong
+// > *length* and one that hashes to the wrong root are both `BadFinalityBranch`. Stopping here is a
+// > choice about where the boundary of this rewrite is … the argument for going further is the same
+// > argument, and **it does not obviously terminate.**
+//
+// `@/packages/ssz` was written after that, and it terminates. This file is the composition, and the
+// answer is not the one the note expected.
+
+import { Result, Vec, Bytes } from "core";
+import { Chunk, Gindex, verify, ProofFault } from "@/packages/ssz";
+import { Header } from "./validate.wac";
+
+/**
+ * The finalized header is in the attested header's state.
+ *
+ * `Result<void, ProofFault>` rather than `bool`, and the whole body is one call — which is what the
+ * rewrite of the layer below bought and is not the finding.
+ */
+export Result<void, ProofFault> provesFinality(Chunk leaf, Vec<Chunk> branch, Header attested) {
+  return verify(leaf, branch, finalizedRootGindex(), try rootOf(attested));
+}
+
+/** The next sync committee is in the attested header's state. */
+export Result<void, ProofFault> provesCommittee(Chunk leaf, Vec<Chunk> branch, Header attested) {
+  return verify(leaf, branch, nextCommitteeGindex(), try rootOf(attested));
+}
+
+/**
+ * `finalized_checkpoint.root`'s generalized index in a `BeaconState`.
+ *
+ * A `Gindex` and not a pair, which is the change `@/packages/ssz` argues for — and here it lands on
+ * the caller who benefits most, because a light client is where the *normalized* branch check lives:
+ * a fork can move a field deeper without changing the proof's wire format, so the branch is sized
+ * for the deepest fork and the shallower one leaves the surplus empty.
+ */
+Gindex finalizedRootGindex() { … }
+Gindex nextCommitteeGindex() { … }
+
+Result<Chunk, ProofFault> rootOf(Header h) { … }
+
+// ## 1. It terminates, and the reason is that the next level is another package
+//
+// `validate.wac` was right that the argument repeats and wrong that it does not stop. It stops here,
+// and not because anybody drew a line: **`ProofFault`'s five members are the leaves.** Below
+// `verify` there is a loop of `sha256` and a comparison, and neither has a way to fail that a caller
+// could act on differently — a hash does not refuse.
+//
+// So the rule is not *stop when the naming gets tedious*. It is: **a fault union ends where the next
+// thing down cannot fail in more than one way**, and finding that out requires writing the thing
+// down there. That is why the question could not be answered from `validate.wac` alone, and it is a
+// good argument for rewriting a whole stack rather than one package of it.
+//
+// ## 2. The same fault set is a caller's bug in one consumer and untrusted input in another
+//
+// This is the finding, and it is the reverse of the shape this directory keeps meeting.
+//
+// `@/packages/ssz`'s `verify` answers five faults, and its own README sorts them: *"One of the six
+// answers the question the function is for. The other five are the caller having made a mistake."*
+// That is right for the caller `ssz` had in mind — a program that builds a proof out of a structure
+// it holds, where a branch that is not a whole number of chunks means the program sliced wrongly.
+//
+// **A light client is handed the branch by a stranger.** Every one of the five is then a fact about
+// the peer rather than about this program:
+//
+//   * `NotAChunk` — the peer sent a 31-byte node;
+//   * `RaggedBranch` — the peer's branch is not a whole number of chunks;
+//   * `BranchTooShort` — it cannot reach the root;
+//   * `SurplusNotZero` — **and this one is an attack**, not a mistake: a non-zero surplus is a prover
+//     attaching an unrelated subtree below the field it is proving, which is why `sync-protocol.md`
+//     refuses rather than slicing;
+//   * `RootMismatch` — the honest disagreement.
+//
+// So the classification *caller error* versus *the answer* is not a property of the fault; it is a
+// property of **where the argument came from**, which no signature in either package records. A
+// light client wants all five reported to whatever scores peers. A proof builder wants four of them
+// to be traps.
+//
+// The language question underneath: `Result<T, E>` says what can go wrong and nothing says *whose
+// fault it is*, and that distinction decides whether a call site logs, traps, or drops a peer. Three
+// packages have now written the same list twice under two headings — `@/packages/rlp`, `@/packages/abi`
+// and this — and `../../../QUESTIONS.md`.
+//
+// ## 3. What could not be written
+//
+// **Nesting the union across the package boundary loses which branch failed, so it is not nested.**
+// The obvious composition is `union<…, ProofFault> UpdateFault`, disjoint members and
+// `Err(is ProofFault):` as one arm — the good case, and third data point after `@/packages/ts`'s
+// `LexFault` (good) and `@/packages/box/src/upper.wac`'s stacked transform (bad). It is also wrong
+// here: there are **two** branch checks, and a `ProofFault` promoted into the outer union cannot say
+// whether it came from the finality branch or the committee one. So the members carry it —
+// `BadFinalityBranch { ProofFault why; }` — which keeps both facts and gives up the one-arm match.
+//
+// That is a third answer the flattening question does not have a position for. Nesting preserves the
+// grouping, flattening removes the duplicate, and **wrapping preserves the call site**, which is what
+// matters when one error type is reached from two places in one function. It is also the first case
+// where the two unions are declared in two packages, so any rule would have to reach across an
+// import.
+//
+// **Nothing says this branch is a *finality* branch.** `provesFinality` and `provesCommittee` differ
+// only in which `Gindex` they pass, so swapping the two calls type-checks and each verifies the other's
+// proof against the wrong index — answering `RootMismatch`, correctly and uselessly. The `Gindex`
+// makes the *depth and path* one value and does not make *which field* a type, which is
+// `@/packages/ssz`'s own `Root<T>` note arriving from the caller's side and is the same want.

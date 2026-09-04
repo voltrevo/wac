@@ -4,6 +4,8 @@
 // fourteen `return false;` in it. That alone is the shape this exercise has met in five packages.
 // What makes this one different is in the function's own doc, and it is not about printing.
 
+import { ProofFault } from "@/packages/ssz";
+
 /** The aggregate carries no participation bits at all. */
 export struct NoBits {}
 
@@ -22,11 +24,19 @@ export struct WrongPeriod { i64 signature; i64 store; bool nextKnown; }
 /** The update neither advances the finalized header nor supplies the committee the store lacks. */
 export struct NotRelevant { i64 attested; i64 store; }
 
-/** The finality branch does not prove the finalized header against the attested state. */
-export struct BadFinalityBranch {}
+/**
+ * The finality branch does not prove the finalized header against the attested state — and now
+ * *how*, because `@/packages/ssz` answers a `ProofFault` rather than a `bool`.
+ *
+ * `./validate.wac` parked this: *"a finality branch that is the wrong length and one that hashes to
+ * the wrong root are both `BadFinalityBranch`"*, and said the argument for going further *"does not
+ * obviously terminate"*. It terminates — see `./branch.wac`, which is the composition and the
+ * reason.
+ */
+export struct BadFinalityBranch { ProofFault why; }
 
 /** The committee branch does not prove the next committee against the attested state. */
-export struct BadCommitteeBranch {}
+export struct BadCommitteeBranch { ProofFault why; }
 
 /** `FastAggregateVerify` said no. */
 export struct BadSignature {}

@@ -56,13 +56,30 @@ does not survive is the *third* sentence, that they are unobservable, because th
 rewrite that improves a property quietly leaves the next reader unable to tell it was ever in doubt,
 which is the same failure mode as the stale *"wac has no closures"* comments — one tense out.
 
-**The collapse just moves down a level.** `provesFinality`, `provesCommittee` and `verifies` each
-answer `bool`, and this file turns each into one `Err` member — so a finality branch of the wrong
-*length* and one that hashes wrong are both `BadFinalityBranch`. Stopping here is a choice about
-where this rewrite's boundary is, and it is the same choice the shipped code made one level up. The
-argument for going further is the same argument and does not obviously terminate;
-[`@/packages/mpt`](../mpt/) is the package that took one more step and found its own version of the
-question.
+**The collapse moved down a level, and then it stopped — which this entry said it might not.** It
+used to read *"the argument for going further is the same argument and does not obviously
+terminate"*. [`@/packages/ssz`](../ssz/) was written afterwards, and
+[`src/branch.wac`](src/branch.wac) is the composition: `provesFinality` and `provesCommittee` now
+answer `Result<void, ProofFault>` and it terminates there, because below `verify` is a loop of
+`sha256` and a comparison and **a hash does not refuse**.
+
+So the rule is checkable rather than aesthetic: **a fault union ends where the next thing down cannot
+fail in more than one way** — and it could not be found from this package alone, which is an argument
+for rewriting a stack rather than one package of it. `verifies` still answers `bool` and by that rule
+should not: `packages/bls` distinguishes an empty key list, a point off the curve, and a pairing that
+disagreed.
+
+**And the five faults it now carries change meaning by who supplied the argument.** `ssz`'s README
+calls four of its five *"the caller having made a mistake"* — true for a program building a proof out
+of a structure it holds, and false here, where the branch arrives from a stranger. `SurplusNotZero`
+is then not a mistake but an attack, a prover attaching an unrelated subtree below the field it is
+proving. `Result<T, E>` says what can go wrong and nothing says whose fault it is.
+
+**`try` cannot map, so the two call sites are four lines each.** `ProofFault` is not in
+`UpdateFault`'s set — deliberately, because promoting it would lose *which* branch failed, so
+`BadFinalityBranch` carries it instead. Wrapping is a third behaviour the flattening question has no
+position on: nesting preserves the grouping, flattening removes the duplicate, and wrapping preserves
+the call site. It is the only one the language supports and the only one that costs a `match`.
 
 **Nothing says the slot relations are a chain.** `SlotOrder` carries all four numbers because a
 caller wants them, and the type still cannot say `current >= signature > attested >= finalized`. The

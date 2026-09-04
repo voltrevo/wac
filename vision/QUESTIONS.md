@@ -4647,3 +4647,78 @@ Three things follow, and only the first is settled:
 hides. `tsnBefore` **requires** wrapping: the subtraction wraps the same way the counter does, and a
 language that trapped on overflow would need a second spelling here. One entry, two directions, and
 only one of them was written down.
+
+## `try` cannot map, so wrapping a callee's fault costs a `match` — and wrapping is a third answer
+
+`try` propagates when the callee's error set is *contained in* the caller's — `TECHNICAL.md`'s entry
+on it requiring the error to be in the set rather than equal to it. Eighty-four uses in this
+directory and it is one token every time.
+
+`@/packages/lightclient/src/validate.wac` is the first place an error has to **change shape**:
+
+```wac
+match (provesFinality(finalizedLeaf(update), finalityBranch(update), attested!)) {
+  Err(why): { return Err(BadFinalityBranch(why)); }
+  Ok(_):    { }
+}
+```
+
+Four lines, twice in one function, for the propagation that is one token everywhere else. There is
+no `try f() else Wrap`, no `?` with a map, and no combinator — `Result` in this directory has `try`
+and nothing else.
+
+### Why it is wrapped rather than nested, which the flattening question has no position on
+
+The obvious composition is `union<…, ProofFault> UpdateFault`: disjoint members, and
+`Err(is ProofFault):` as one arm for *the peer's proof was bad*. That is the **good** case of the
+nesting argument — and it is wrong here, because there are **two** branch checks in the function and
+a `ProofFault` promoted into the outer union cannot say which one produced it.
+
+So the members carry it: `BadFinalityBranch { ProofFault why; }`. Three behaviours, not two:
+
+- **nesting** preserves the grouping — `@/packages/gzip`'s eight-member `Corrupt`;
+- **flattening** removes the duplicate — `@/packages/box/src/upper.wac`'s stacked transform;
+- **wrapping** preserves the *call site*, which is what matters when one error type is reached from
+  two places in one function.
+
+Wrapping is the only one of the three the language already supports, and it is the one that costs
+four lines per use. It is also the first case where the two unions are declared in **two packages**,
+so a flattening rule would have to reach across an import — which neither position has considered.
+
+## Where a fault union ends, and whose fault its members are
+
+Two answers from one composition, `@/packages/lightclient/src/branch.wac` over `@/packages/ssz`.
+
+### It terminates, and the rule is not a judgement call
+
+`validate.wac` stopped naming failures at one level and said the argument for going further *"does
+not obviously terminate"*. It does. Below `verify` there is a loop of `sha256` and a comparison, and
+neither has a way to fail that a caller could act on differently — **a hash does not refuse**.
+
+So: **a fault union ends where the next thing down cannot fail in more than one way.** That is
+checkable rather than aesthetic, and it could not be found from `validate.wac` alone — it needed the
+package below to exist. Which is an argument for rewriting a *stack* rather than a package: the
+question *have I named enough failures* is answered one level down, every time.
+
+By that rule `verifies` should not stop either — `packages/bls` distinguishes an empty key list, a
+point off the curve and a pairing that disagreed — and that is a different package again.
+
+### And the same five faults are a bug in one caller and an attack in another
+
+`@/packages/ssz`'s README sorts its own: *"One of the six answers the question the function is for.
+The other five are the caller having made a mistake."* True for the caller `ssz` imagined — a program
+building a proof out of a structure it holds, where a ragged branch means it sliced wrongly.
+
+**A light client is handed the branch by a stranger.** Then every one is a fact about the peer:
+`NotAChunk` is a 31-byte node on the wire, `BranchTooShort` cannot reach the root, and
+`SurplusNotZero` is **an attack** — a prover attaching an unrelated subtree below the field it is
+proving, which is why `sync-protocol.md` refuses rather than slicing.
+
+So *caller error* versus *the answer* is not a property of the fault. It is a property of **where the
+argument came from**, and no signature in either package records that. One caller wants all five
+reported to whatever scores peers; the other wants four of them to be traps.
+
+`Result<T, E>` says what can go wrong and nothing says whose fault it is — and that decides whether a
+call site logs, traps, or drops a peer. The narrow question: is that a *type* distinction at all, or
+is it what a capability boundary already means — everything arriving through one is untrusted, and
+everything a program computed itself is its own?
