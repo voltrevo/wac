@@ -8,28 +8,39 @@ arithmetic and are not rewritten — the algorithms did not move because the lan
 
 ---
 
-## This package was chosen because vision contradicts it on purpose
+## What is actually new here, which is narrower than I first wrote
 
 `itoa.wac`'s header opens:
 
 > wac has no number-to-string conversion and `string + i32` is **deliberately** a compile error.
 
-And `vision/IDIOMS.md`'s *A number in a string* says:
+And `vision/IDIOMS.md`'s *A number in a string* says interpolation is sugar for `+` and `+` takes the
+scalars. I read that as vision reversing the header's decision, and half of it is not a proposal at
+all.
 
-> Interpolation is sugar for `+`, and `+` takes the scalars. No formatting language: what may appear
-> in the braces is whatever `+` accepts.
+**Interpolation already exists.** `spec/spec/strings.md` describes it in almost the entry's words —
+*"It is exactly sugar for `+` … there is no formatting language — the expression is whatever `+`
+accepts on the right of a string"* — with three tagged examples. The IDIOMS entry is a description of
+a shipped feature, and it is marked **Not yet**.
 
-**Those cannot both hold.** Whoever wrote the header made a decision and wrote *deliberately* into
-it; the interpolation entry reverses it, and the entry has never been discussed against the reason.
-That is not an argument that the entry is wrong — this file assumes it and is better for it — but
-a reversal should know what it is reversing, and I could not find the reason recorded anywhere. It
-is worth asking before the entry moves any further.
+**What does not exist is `+` accepting a scalar.** Measured:
 
-**And it decides something the entry does not mention.** If `\{x}` is `+`, then `"\{0.1 + 0.2}"` is
-`"0.30000000000000004"`, because that is the shortest decimal that reads back as the value. It is the
-honest answer and the right one for a log line — a shorter one would be a different number. It is
-not what somebody writing `"total: \{amount}"` expects, and *no formatting language* means there is
-no second spelling for them to reach for. That may well be correct; it has not been said out loud.
+```
+error: operands have mismatched types
+ 1 | export i32 f(i32 n) { string s = "n=\{n}"; return s.len(); }
+   |                                  ^
+```
+
+So the contradiction is real and it is one clause wide: vision proposes widening `+`, and the `fmt`
+header says that narrowness is deliberate. The word is in the original and the reason behind it is
+recorded nowhere I could find, which is still worth asking before the entry moves — but it is a
+smaller question than *does interpolation reverse a decision*, and the entry's marker is wrong
+either way.
+
+**And it settles something the entry does not mention.** If `\{x}` is `+`, then `"\{0.1 + 0.2}"` is
+`"0.30000000000000004"`, because that is the shortest decimal that reads back. Right for a log line,
+not what somebody writing `"total: \{amount}"` expects, and *no formatting language* — which is the
+spec's phrase, not the entry's — means there is no other spelling for them.
 
 ## What changed
 

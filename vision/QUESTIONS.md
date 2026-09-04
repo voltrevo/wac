@@ -219,17 +219,21 @@ So every package here has an explicit barrel instead, and imports name the packa
   whoever happens to import first — and it caught a real leak, since `server` was importing
   `eqFold` through a path that had never offered it.
 
-## Whether interpolation reverses a decision somebody made on purpose
+## Widening `+`, and one wrong marker
 
-`IDIOMS.md` says interpolation is sugar for `+` and `+` takes the scalars. `packages/fmt`'s header
-says *"wac has no number-to-string conversion and `string + i32` is **deliberately** a compile
-error."* Both cannot hold, the word is in the original, and the reason behind it is not recorded
-anywhere I could find.
+`IDIOMS.md`'s *A number in a string* is marked **Not yet** and describes something that shipped.
+`spec/spec/strings.md` has interpolation, in almost the entry's words: *"exactly sugar for `+` …
+there is no formatting language — the expression is whatever `+` accepts on the right of a string"*,
+with three tagged examples.
 
-It also settles something the entry does not mention: `"\{0.1 + 0.2}"` becomes
-`"0.30000000000000004"`, since that is the shortest decimal that reads back. Right for a log line
-and not what someone writing `"total: \{amount}"` expects — and *no formatting language* means
-there is no other spelling for them. That may be the intent; it has not been said.
+What has not shipped is the other clause. `+` does not accept a scalar, so `"n=\{n}"` for an `i32`
+is `operands have mismatched types` today — and `packages/fmt`'s header says that is **deliberate**.
+The word is in the original and the reason is recorded nowhere I could find.
+
+So two things: the entry needs its marker fixed and probably splitting, since one half is done and
+the other is a real proposal against a stated decision. And widening `+` settles something unsaid —
+`"\{0.1 + 0.2}"` becomes `"0.30000000000000004"`, right for a log line and not what
+`"total: \{amount}"` expects, with no other spelling available by design.
 
 ## A slice type — invented, in `core/slice.wac`
 

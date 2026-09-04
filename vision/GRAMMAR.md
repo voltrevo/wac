@@ -122,15 +122,26 @@ root *aggregates* its files' exports and argued against generalising it. It does
 each refused with *importing does not re-export*. An invented presence rather than an invented
 absence, and the same failure to check.
 
+A sixth is the largest. **String interpolation already exists**, and `IDIOMS.md`'s entry for it is
+marked *Not yet* while describing a shipped feature almost in the spec's own words —
+`spec/spec/strings.md`: *"exactly sugar for `+` … there is no formatting language — the expression is
+whatever `+` accepts on the right of a string"*, with three tagged examples. What has not shipped is
+`+` accepting a scalar, so `"n=\{n}"` is `operands have mismatched types` today. The proposal is one
+clause wide and I had written it as the whole entry.
+
 **None of them was findable by the tool**, and that is the point rather than an excuse. It reports
 what today's parser refuses; a construct that already exists is accepted, so writing `static` in
 front of a method produced a diagnostic while *believing module constants were missing* produced
 nothing at all. One half of the exercise is instrumented and the other half is not.
 
-What catches this class is reading `spec/spec/grammar.md`, which is 274 lines and is the authority.
-It should be read before a README says a thing is missing — the three above cost more to unwind than
-reading it would have cost, and two of them had been repeated across several files by the time they
-were caught.
+What catches this class is reading the spec, and the six above say which parts: `grammar.md` for
+syntax, `generics.md` for what inference reaches, `strings.md` for what a literal already does. It
+should be read before a README says a thing is missing or present — every one of the six was three
+lines of test away, and most had been repeated across several files by the time they were caught.
+
+The pattern in all six is one habit: asserting what the language does from memory of writing it,
+rather than compiling three lines. The rate matters more than any single correction — six in a tree
+of nine packages is not a run of bad luck.
 
 ## What it cannot see
 
