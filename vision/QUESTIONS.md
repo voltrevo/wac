@@ -126,6 +126,19 @@ That is a gap in the process rather than in the language, and it is why this lis
 three separate entries: the question to answer first is whether a generated file is allowed to hold
 an argument nobody has agreed to.
 
+**The same check the other way round comes back clean, which is worth saying.** Every construct in
+`GRAMMAR.ebnf` is used by at least one vision file — nothing has been proposed and then not written
+with. Three are used exactly once: `schedule`, in `Sys.drain`; `trap` as an expression, in
+`Result.orTrap`; and `secret`, whose two uses are both inside the file that proposes it. A single
+consumer is not an argument against a primitive — `schedule` is one, and `TECHNICAL.md` argues it at
+length — but it does mean the generality is unevidenced, and `secret` is the one where that matters,
+since its whole case is that the taint *propagates* and nothing outside `crypto` has ever received a
+propagated one.
+
+(The first pass of that count said `secret` had **none**, because the pattern it matched wanted
+`secret <word> <word>` and the real spelling is `secret u8[] key`. Checked before it was believed,
+which is the only reason it is not in the paragraph above as a fourth finding.)
+
 ## What `defer` means, which no page says and four uses already depend on
 
 This entry asked which *example* should capture `defer`. Reading the four places the rewrites use it,
