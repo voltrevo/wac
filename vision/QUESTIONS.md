@@ -1725,9 +1725,9 @@ With two capabilities that works, because *does the module mention `Cli`* and *d
 mentions `Files` would be handed one whether `main` asked or not, and a `main(Out out, Files files)`
 would receive them in whatever order `worldFor` happens to build.
 
-So the projections have a host cost and it lands unevenly. The entry below costs all three; the short
-version is that the host reading a parameter list reads it against two literal type names, so it is
-not the easy case it looks like from here.
+So the projections have a host cost. The entry below costs all three, and the short version is that
+it lands *evenly*: every host enumerates the three possible shapes of `main` — `()`, `(Core)`,
+`(Core, Cli)` — and none of them has a mechanism. One change, made three times.
 
 ## A machine you can step, and the bounded wait the rewrite dropped
 
