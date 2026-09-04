@@ -252,6 +252,28 @@ export struct Files {
  */
 export struct Sink {
   fn<Ticket<Result<void, NotGranted>>(Bytes)>  write;
+  /**
+   * **What `close` settling means is unstated, and in the shipped design it is the durability
+   * point.** `Cli.openOutput`, which this replaces:
+   *
+   * > Opening another output closes the previous one … which is **how a program that has finished
+   * > writing a file knows the bytes are there**, since `rename` over a file still open would move it
+   * > half-written. `cp` does exactly that.
+   *
+   * So closing is not bookkeeping — it is the moment a caller may rename over the file, and `cp`
+   * depends on it. Here `close` answers `Ticket<Result<void, NotGranted>>` and nothing says whether a
+   * settled ticket means the bytes are on disk or merely that the handle is gone.
+   *
+   * **And `create` does not say it truncates.** The shipped sentence is *"a path truncates that file
+   * and makes it the destination of every subsequent `write`"*; this signature is silent, so a caller
+   * cannot tell `create` from an append — which matters twice over, because `@/packages/box`'s `tee`
+   * records that `tee -a` cannot be written *because there is no append anywhere*. If `create`
+   * truncates, that stands; if nobody has decided, the applet's finding rests on an unstated default.
+   *
+   * Found by the audit's fourth pass — after names, signatures and answered types, the one that reads
+   * what a capability *means* on both sides. Two behaviours the shipped doc states in one paragraph
+   * and this struct inherits by silence.
+   */
   fn<Ticket<Result<void, NotGranted>>()>       close;
 }
 

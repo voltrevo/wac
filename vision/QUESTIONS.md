@@ -2796,3 +2796,43 @@ document opens with — arriving in the layering rather than in a projection.
 programs whose output nobody wants. `@/packages/sh/src/pipeline.wac` does not notice because it runs
 its stages with `Proc.run`, in this instance, and never spawns one — the only consumer of `spawn` in
 the tree is the file that declares the type it answers.
+
+## The fourth audit reads what a capability means, and finds behaviour inherited by silence
+
+Names, then signatures, then the types they answer. Each pass found what the one before could not
+see, and each was cheaper than the next. The fourth is reading the **prose on both sides** — what a
+shipped capability is documented to *do*, against what its vision counterpart says it does. Two
+findings on the first look, and they are different kinds.
+
+**A description that contradicted its own code.** `Ticket.any` said *"answers with the first to
+settle"*. Its `firstValue` walks the list in order and takes the first settled one, so the behaviour
+was the caller's order all along — and the caller's order is the rule, with a decision behind it:
+
+> **When several are ready, the answer is the first of them in the list you passed** — not the one
+> that finished first … *"first in the caller's list rather than first to finish, so the answer does
+> not depend on how the threads were scheduled"*, which is `design/system/0001` D12.
+
+D12 is determinism. *First to settle* is a race and *first in the list* is reproducible, so a reader
+implementing from the sentence would have written the race — and nothing in a signature, a name or a
+return type could have caught it. Corrected.
+
+**And behaviour inherited by silence.** `Files.create` answers a `Sink`, replacing `Cli.openOutput`,
+whose doc states in one paragraph two things this does not:
+
+- *"A path **truncates** that file"* — `create`'s signature is silent, so a caller cannot tell it from
+  an append. Which bears on a finding already filed: `@/packages/box`'s `tee` records that `tee -a`
+  cannot be written **because there is no append anywhere**. If `create` truncates, that holds; if
+  nobody decided, the applet's finding rests on an unstated default.
+- *"how a program that has finished writing a file knows the bytes are there, since `rename` over a
+  file still open would move it half-written. `cp` does exactly that."* — **closing is the durability
+  point**, and `Sink.close` answering `Ticket<Result<void, NotGranted>>` says nothing about whether a
+  settled ticket means the bytes are on disk or the handle is gone.
+
+**Which is the shape of this pass, and it is not the shape of the other three.** The first three found
+things *missing* — a member, an argument, a field. This one finds things **present and unspecified**:
+a signature that is complete, a name that matches, a type that fits, and a meaning that was never
+carried across. Nothing mechanical detects it, because there is nothing to diff — the shipped
+knowledge is in a paragraph and the rewrite's absence of it is an absence of a paragraph.
+
+That makes it the expensive pass and the one most likely to keep yielding: two hits from two
+capabilities read, against a surface of forty-four.

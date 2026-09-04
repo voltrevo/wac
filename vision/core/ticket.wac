@@ -86,7 +86,22 @@ export struct Ticket<T> : TicketBase {
   }
 
   /**
-   * Answers with the first to settle.
+   * Answers with the first **in the list**, of those that have settled — which is not what this said
+   * until 2026-09-04, and the code was right while the sentence was wrong.
+   *
+   * It read *"answers with the first to settle"*. `firstValue` below walks `parts` in order and takes
+   * the first settled one, so the behaviour was always the caller's order; only the description was
+   * completion order. `std/platform.wac` states the rule and gives it a decision to stand on:
+   *
+   * > **When several are ready, the answer is the first of them in the list you passed** — not the
+   * > one that finished first. Both hosts scan the caller's order and return the first settled
+   * > ticket … *"first in the caller's list rather than first to finish, so the answer does not
+   * > depend on how the threads were scheduled"*, which is `design/system/0001` D12.
+   *
+   * D12 is determinism, so this is not a detail: *first to settle* is a race and *first in the list*
+   * is reproducible, and a reader implementing from the old sentence would have written the race.
+   * Found by the fourth pass of the same audit — after names, signatures and answered types, the one
+   * that reads what a capability *means* on both sides.
    *
    * The losers are not cancelled, and this said *"because there is no such thing"* until 2026-09-04.
    * **There is such a thing.** `std/platform.wac`:
