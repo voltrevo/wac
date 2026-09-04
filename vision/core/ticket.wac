@@ -21,15 +21,51 @@ export struct Stuck { }
  * knowing or caring what it will answer. Both methods are overridden per kind of ticket — a host
  * read, a coroutine, a fake — and neither has a body here.
  */
+/*
+ * ── Funcrefs, not subclasses, and that removes the dispatch question ───────────────────────────
+ *
+ * `settled` and `advance` were **bodyless methods** here, overridden by `AllOf`, `AnyOf` and every
+ * kind of ticket a capability hands out. `../QUESTIONS.md`'s dynamic-dispatch entry called that a
+ * dependency of the ticket design and offered one alternative — *"a closed enum of kinds would
+ * not"* let a fake add a kind — and dispatch in wac is static, measured, so the overrides never ran.
+ *
+ * **The dichotomy was false.** A third option is funcref fields, which is open to any kind, needs no
+ * dispatch, and is what `std/platform.wac`'s `Pending<T>` already is:
+ *
+ *     export struct Pending<T> {
+ *       i32 id;  fn[T(i32)] resolve;  fn[bool(i32)] settled;  fn[void(i32)] drop;  Sched? sched;
+ *     }
+ *
+ * So the design this file is a rewrite of had already answered the question this file asks. Three
+ * places in `vision/` reached for subclassing — the capabilities, the mounts in
+ * `@/packages/fs/src/mount.wac`, and here — and the shipped tree uses funcrefs in all three.
+ *
+ * **What it takes with it**, which is the part worth reading twice:
+ *
+ *   - the **dynamic dispatch** entry, which was vision's largest open language question and is now
+ *     a dependency of nothing here;
+ *   - **a method with no body**, which had nothing else wanting it.
+ *
+ * And it takes **two of the five uses of a generic parent** — `AllOf` and `AnyOf` — which is less
+ * than it first looked. `GRAMMAR.md` lists five and calls the construct load-bearing for *"the whole
+ * ticket and coroutine design"*; the other three are `Generator<Y, R> : Coroutine<never, Y, R>` and
+ * `AsyncGenerator`, and those are not inheritance at all. They are **names for a partial
+ * instantiation**, written as inheritance because vision's `typedef` — `export Slice<u8> Bytes;` —
+ * takes no type parameters. So one construct is doing two jobs, and the half that is really a
+ * parameterised type alias should be asked for as one. `../QUESTIONS.md`.
+ *
+ * What remains true either way: **two constructs vision proposes, and its biggest open question,
+ * existed to support one design choice the shipped tree does not make.**
+ */
 export struct TicketBase {
   /** Whether the value is in. */
-  bool settled(const this);
+  fn<bool()> settled;
 
   /**
    * Do some work towards settling. `block` says whether to wait on the world rather than only poll
    * it. Answers whether anything moved, which is what lets a driver tell *not yet* from *never*.
    */
-  bool advance(this, bool block);
+  fn<bool(bool)> advance;
 }
 
 /** A ticket for a `T`. */
@@ -40,7 +76,14 @@ export struct Ticket<T> : TicketBase {
    * A static — no `this` — so `Ticket.all(parts)` is the call, which is what `IDIOMS.md` writes and
    * what this was not until 2026-09-04. `T` is inferred from `parts`.
    */
-  Ticket<T[]> all(Ticket<T>[] parts) { return AllOf(parts); }
+  Ticket<T[]> all(Ticket<T>[] parts) {
+    return Ticket<T[]>(
+      () => allSettled(parts),
+      (bool block) => anyAdvanced(parts, block),
+      false,
+      () => allValues(parts),
+    );
+  }
 
   /**
    * Answers with the first to settle.
@@ -49,13 +92,20 @@ export struct Ticket<T> : TicketBase {
    * unawaited work and whoever holds their tickets can still drive them. `TECHNICAL.md` has the
    * entry, and it calls this `Ticket.any`.
    */
-  Ticket<T> any(Ticket<T>[] parts) { return AnyOf(parts); }
+  Ticket<T> any(Ticket<T>[] parts) {
+    return Ticket<T>(
+      () => anySettled(parts),
+      (bool block) => anyAdvanced(parts, block),
+      false,
+      () => firstValue(parts),
+    );
+  }
 
   /** Set while this ticket's own `wait` is on the stack, so re-entering it is detectable. */
   bool inWait;
 
   /** The value. Calling this before `settled()` traps. */
-  T value(const this);
+  fn<T()> value;
 
   /**
    * Drive it to completion here, on this stack, and answer the value.
@@ -108,45 +158,36 @@ export struct Continuation {
   fn<void()> call;
 }
 
-/** A ticket over several, settling when they all have. */
-struct AllOf<T> : Ticket<T[]> {
-  Ticket<T>[] parts;
+// **`AllOf` and `AnyOf` are gone** — two structs inheriting from a generic instantiation, which was
+// the only thing in the tree wanting that construct. What replaced them is four helpers over a
+// `Ticket<T>[]`, and `all`/`any` above build an ordinary `Ticket` from lambdas over them. The kind of
+// a ticket is what its funcrefs do, which is how `std/platform.wac`'s `Pending<T>` has always worked.
 
-  override bool settled(const this) {
-    for (Ticket<T> p in this.parts) { if (!p.settled()) { return false; } }
-    return true;
-  }
-
-  override bool advance(this, bool block) {
-    for (Ticket<T> p in this.parts) { if (p.advance(block)) { return true; } }
-    return false;
-  }
-
-  override T[] value(const this) {
-    T[] out = T[this.parts.len()](fill: this.parts[0].value());
-    for (i32 i = 0; i < this.parts.len(); i++) { out[i] = this.parts[i].value(); }
-    return out;
-  }
+bool allSettled<T>(Ticket<T>[] parts) {
+  for (Ticket<T> p in parts) { if (!p.settled()) { return false; } }
+  return true;
 }
 
-/** The same, settling when any one has. Only `settled` differs. */
-struct AnyOf<T> : Ticket<T> {
-  Ticket<T>[] parts;
+bool anySettled<T>(Ticket<T>[] parts) {
+  for (Ticket<T> p in parts) { if (p.settled()) { return true; } }
+  return false;
+}
 
-  override bool settled(const this) {
-    for (Ticket<T> p in this.parts) { if (p.settled()) { return true; } }
-    return false;
-  }
+/** Shared by both: a step on any part is a step on the whole. */
+bool anyAdvanced<T>(Ticket<T>[] parts, bool block) {
+  for (Ticket<T> p in parts) { if (p.advance(block)) { return true; } }
+  return false;
+}
 
-  override bool advance(this, bool block) {
-    for (Ticket<T> p in this.parts) { if (p.advance(block)) { return true; } }
-    return false;
-  }
+T[] allValues<T>(Ticket<T>[] parts) {
+  T[] out = T[parts.len()](fill: parts[0].value());
+  for (i32 i = 0; i < parts.len(); i++) { out[i] = parts[i].value(); }
+  return out;
+}
 
-  override T value(const this) {
-    for (Ticket<T> p in this.parts) { if (p.settled()) { return p.value(); } }
-    trap "AnyOf.value before settled";
-  }
+T firstValue<T>(Ticket<T>[] parts) {
+  for (Ticket<T> p in parts) { if (p.settled()) { return p.value(); } }
+  trap "any: value before settled";
 }
 
 /**

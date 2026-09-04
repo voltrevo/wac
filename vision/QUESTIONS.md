@@ -44,6 +44,24 @@ The ticket design assumes it. `advance` and `settled` are overridden per kind of
 what lets a fake `Sys` add a kind without editing `core`; a closed enum of kinds would not.
 `issues/lang/0144` suggests the intent already exists and today's behaviour is the accident.
 
+**And the third option was never on the list, so the ticket half does not need it either.** This
+entry offers subclassing against *"a closed enum of kinds"*, and there is a third: **funcref fields**,
+open to any kind, needing no dispatch, and already what `std/platform.wac`'s `Pending<T>` is —
+`fn[T(i32)] resolve`, `fn[bool(i32)] settled`, `fn[void(i32)] drop`. The design `vision/core/ticket.wac`
+is a rewrite of had answered the question the rewrite asks.
+
+`Ticket<T>` is funcrefs now and `AllOf`/`AnyOf` are gone, replaced by four helpers over a
+`Ticket<T>[]` with `all`/`any` building an ordinary `Ticket` from lambdas. **So nothing in `vision/`
+depends on dynamic dispatch any more**, and this entry is a question about the language rather than a
+blocker for the proposal.
+
+It also removes two of the five uses of *a generic parent* — and that is less than it looks, which is
+worth saying because I nearly claimed more. The other three are
+`Generator<Y, R> : Coroutine<never, Y, R>` and `AsyncGenerator`, and those are not inheritance: they
+are **names for a partial instantiation**, written as inheritance because `typedef` takes no type
+parameters. One construct doing two jobs, and the half that is really a parameterised type alias
+should be asked for as one — see below.
+
 **The capability design assumes it too, and that was not written down.** `vision/std/platform.wac`
 has **fourteen** bodyless methods — every method of every projection — and
 `vision/packages/wactest/src/test.wac` subclasses them: `struct FakeFiles : Files` with
@@ -769,6 +787,34 @@ So the trade is: a consistency nobody has written down, against 444 sites, 47 ca
 special case in the lexer. **It is the only decision here where the cost is exact and the benefit is
 unstated**, which is a reason to state the benefit rather than to withdraw the change — but it
 should be stated before it is taken.
+
+## A type alias cannot take parameters, so three types are written as inheritance
+
+`typedef` is `[ "export" ] , type , IDENT , ";"` — `export Slice<u8> Bytes;` — and takes no type
+parameters. So a name for a *partially applied* type has nowhere to go, and
+`vision/core/coroutine.wac` writes three of them as inheritance instead:
+
+```wac
+export struct Generator<Y, R> : Coroutine<never, Y, R> { }
+export struct AsyncGenerator<Y, R> : Coroutine<TicketBase, Y, R> { … }
+```
+
+`Generator` is an empty struct whose whole content is its parent. That is an alias spelled as a
+subtype, and it costs the thing aliases are for: `Generator<i32, void>` and
+`Coroutine<never, i32, void>` are two *types* under nominal typing, so a function taking one does not
+take the other.
+
+It also props up **a generic parent**, one of the three constructs the grammar has and no vetted page
+mentions. Removing `AllOf` and `AnyOf` from `ticket.wac` took two of its five uses; these three are
+the rest, and they are not asking for inheritance.
+
+So the question is whether `typedef` should read
+
+    export Coroutine<never, Y, R> Generator<Y, R>;
+
+which is one more form of the same declaration and makes the generic parent a construct with two
+real uses left rather than five — or whether a parameterised alias is a different feature with its
+own rules about where the parameters may appear.
 
 ## Naming a type takes the only shape a top-level variable could have
 
