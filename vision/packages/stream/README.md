@@ -15,6 +15,36 @@ answers whether to keep going, and returns an `i32`: the byte count, `-1` for in
 text, `-2` for input that broke. Each carries its own `held` tail across chunk boundaries, and the
 header says why that is the hard part.
 
+## Half of this ships, and the half that does not is `yield`
+
+Written against the original's callback pair, which was the wrong comparison for the same reason
+`server`'s was: `async` and `await` are in production — `packages/tor/src/relayd.wac` runs async
+pumps, landed 2026-08-30 — so *the transform is written as a straight loop and the language does the
+suspending* is not a proposal.
+
+Measured: a transform that awaits its source builds today.
+
+```wac
+async i32 total(fn[Pending<i32>()] next) {
+  i32 n = 0;
+  while (true) { i32 v = await next(); if (v < 0) { break; } n = n + v; }
+  return n;
+}
+```
+
+**So the line is exactly `yield`.** `async` lets a transform *consume* a stream. Only a generator
+lets it *be* one — and that is what every claim below rests on:
+
+- **`upperCase(scalars(src))`** needs `scalars` to be a source, not just a consumer.
+- **Backpressure being the consumer's** needs the consumer to drive the producer, which is what
+  stepping a generator is. With callbacks the producer drives and the boolean return is how it is
+  told to stop.
+- **The chunk boundary solved once** needs `scalars` to hand out one scalar at a time, which is a
+  `yield` per scalar.
+
+`gen` and `yield` are both in `../../GRAMMAR.md`'s list of what the syntax adds, and `yield` is there
+because this package wanted it. What is *not* new is the awaiting, and this file claimed it.
+
 ## What changed, and what did the changing
 
 **A transform takes a stream and is a stream.** No `read` to pull with, no `write` to push to.
