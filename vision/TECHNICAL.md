@@ -292,6 +292,45 @@ void example() {
 
 ---
 
+## A resumed coroutine restores its own `schedule`
+
+```wac
+void example() {
+  Vec<Continuation> outer;
+  Vec<Continuation> inner;
+  schedule outer.push;
+
+  Slot s;
+  Generator<void, void> g = capture(inner, s);
+
+  g.step();          // runs to the yield, installing `inner`
+  s.tick();          // outer
+  g.step();          // resumes inside capture's scope
+
+  outer.len();       // 1
+  inner.len();       // 1
+}
+
+gen<void> void capture(Vec<Continuation> inner, Slot s) {
+  schedule inner.push;
+  yield;
+  s.tick();
+}
+```
+
+The second `step()` is made where `outer` is the target, and the tick inside `capture` still goes to
+`inner`. The target belongs to the suspended scope rather than to whoever resumed it: `schedule`
+comes back because the scope comes back, and a coroutine's saved state carries it.
+
+Nothing here is specific to async — a sync generator suspends inside a scope the same way. It is
+what lets `Sys.drain` write `schedule` once and keep it across its own suspensions, and why the
+resumer needs no cooperation: `step()` and `call()` are ordinary calls that know nothing about
+scheduling.
+
+**Not yet.**
+
+---
+
 ## A `Waiting` names the ticket its continuation is waiting on
 
 ```wac
@@ -347,18 +386,15 @@ void example() {
 
 ```wac
 struct Sys {
-  Vec<Continuation> pending;
+  Queue<Continuation> pending;
 
   async void drain(this) {
     schedule this.pending.push;
 
     while (this.pending.len() > 0) {
-      Vec<Continuation> round = this.pending.take();
-      for (Continuation c : round) {
-        match (c) {
-          Ready { call }:      { await;   call(); }
-          Waiting { t, call }: { await t; call(); }
-        }
+      match (this.pending.pop()) {
+        Ready { call }:      { await;   call(); }
+        Waiting { t, call }: { await t; call(); }
       }
     }
   }
@@ -367,12 +403,13 @@ struct Sys {
 
 `schedule` is the first statement, so a machine that suspends again inside `call()` lands back in
 `pending` rather than in whatever target was in force where it was first called: drain captures what
-it starts. Its own `await` hands drain's continuation to the target above it, and the target is back
-in force when drain is resumed.
+it starts, and what it starts is simply further along the same queue. Its own `await` hands drain's
+continuation to the target above it, and the target is back in force when drain is resumed.
 
 `await` in both arms is what makes drain yield rather than monopolise, between each continuation and
-the next, exactly as the work it is draining does. The round keeps the loop off the collection it is
-feeding, since `call()` pushes into `pending` while it is running.
+the next, exactly as the work it is draining does. A queue rather than a `Vec` because the loop both
+consumes from the front and grows at the back, and because a continuation is dropped as soon as it
+has run.
 
 `t` is a `TicketBase`, so one `await` serves every kind of ticket, a fake `Sys`'s included, and
 answers nothing — which is all drain wants.
