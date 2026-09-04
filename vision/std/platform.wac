@@ -29,7 +29,10 @@
 // **Within one instance.** Across a spawn a capability is not a value at all — see
 // `@/packages/sh/src/exec.wac`, where what crosses is a *description* of one.
 
-import { Ticket, TicketBase, Continuation, Result, Queue, Bytes } from "core";
+// `Node` comes from `core` for the reason `core/jsx.wac` gives: the compiler emits the constructor
+// calls, so *"a tree built in one repository and a renderer in another must name one type or nothing
+// composes"*. `Page.render` is the first capability anywhere to take one.
+import { Ticket, TicketBase, Continuation, Result, Queue, Bytes, Node } from "core";
 
 /** A capability the grant did not include. */
 export struct NotGranted { string what; }
@@ -264,6 +267,64 @@ export struct Clock {
 export struct Random {
   fn<void(u8[])> fill;
 }
+
+/**
+ * The document, for a program whose entry point is `page` rather than `main`.
+ *
+ * **The ninth projection, added 2026-09-04, and the reason it was missing is the argument for it.**
+ * The seven were derived by counting the host's capabilities and finding five groups; that count was
+ * taken over `Core` and `Cli`, and `Page`'s twelve were not in it. So a vision program could not be
+ * interactive at all, in a system whose own `design/system/0001` treats the browser as a host rather
+ * than a demo, and nothing noticed for nine days because nineteen subjects were command-line
+ * packages.
+ *
+ * Compared against the host rather than assembled from a consumer, which is the check
+ * `../QUESTIONS.md` says the first four projections should have had: all twelve members are here.
+ *
+ * **`render` takes a `Node`, and that is the one deliberate difference.** The shipped
+ * `fn[Pending<bool>(string)]` takes markup as text, so the single file in the repository that uses
+ * JSX writes thirteen lines of string concatenation underneath it to turn its `Node` back into a
+ * string — for a host that parses it into a tree again. `@/packages/page` has the case written out.
+ */
+export struct Page {
+  fn<Ticket<bool>(Node)>                                 render;
+  fn<Ticket<bool>(string, string)>                       setText;
+  fn<Ticket<bool>(string, string)>                       setValue;
+  fn<Ticket<bool>(string, string)>                       setStyle;
+  fn<Ticket<string>(string)>                             getValue;
+  fn<Ticket<bool>(string, string)>                       on;
+  fn<Ticket<Event>()>                                    nextEvent;
+  fn<Ticket<bool>(string)>                               title;
+  fn<Ticket<bool>(string, i32, i32, Bytes)>              drawPixels;
+  fn<Ticket<bool>(string, i32, i32, i32, i32, Bytes)>    drawPixelsIn;
+  fn<Ticket<Result<Picked, NotGranted>>()>               nextFile;
+  fn<Ticket<bool>(string, Bytes)>                        offerDownload;
+}
+
+/** A file the user chose. `Picked` is what came back; not choosing one is `Err`. */
+export struct Picked { string name; Bytes bytes; }
+
+/**
+ * What the user did — a union where the shipped `Event` is a struct with a `kind` string.
+ *
+ * `Event.kind` is one of eight literals documented in a comment, and every consumer compares against
+ * them: `e.kind == "input"`, then `e.id == "up"`. A misspelling in either place is a page that
+ * compiles and does nothing. Arms cannot be misspelled, and a ninth kind makes every match
+ * inexhaustive rather than silently unhandled.
+ *
+ * **The `id`s are still strings and this does not fix that.** They are written in the markup and
+ * compared in the loop, and the only thing that could relate the two is a type derived from the
+ * document. Out of scope, and named in `@/packages/page`'s README so it is not mistaken for solved.
+ */
+export struct Click   { string id; }
+export struct Typed   { string id; string value; }
+export struct Changed { string id; string value; }
+export struct Key     { string id; Bytes bytes; }
+export struct Pointer { string id; i32 x; i32 y; }
+export struct Dropped { string id; string name; Bytes bytes; }
+export struct Quit    { }
+
+export union<Click, Typed, Changed, Key, Pointer, Dropped, Quit> Event;
 
 export struct Stat { i64 size; bool isDir; i64 modified; }
 

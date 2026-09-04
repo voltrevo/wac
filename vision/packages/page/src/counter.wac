@@ -1,0 +1,133 @@
+// `packages/platform/example/counter.wac`, rewritten — the first vision file with a page in it.
+//
+// The original is 69 lines and builds its document by concatenating eight string literals. wac has
+// JSX; the example does not use it, and neither does any other page in the tree.
+
+import { Sys, Page, Event, Click, Typed, Quit } from "std";
+import { Node } from "@/packages/page";
+import { itoa } from "@/packages/fmt";
+
+/**
+ * The whole page, as a tree rather than as eight quoted fragments.
+ *
+ * The original:
+ *
+ *     page.render(
+ *       "<p>Clicks: <b id=\"n\">0</b></p>" +
+ *       "<button id=\"up\">+1</button> " +
+ *       …
+ *     ).wait();
+ *
+ * Escaped quotes on every attribute, no structure the compiler can see, and the closing tags are
+ * the author's problem. `spec/spec/jsx.md` exists and says a tag is *"a function in scope"*, with
+ * `render` producing the markup — so the language already has the form this wants.
+ */
+Node document(i32 n) {
+  return <div>
+    <p>Clicks: <b id="n">{itoa(n)}</b></p>
+    <button id="up">+1</button>
+    <button id="down">-1</button>
+    <button id="reset">reset</button>
+    <p><label @"for"="echo">Type here: </label><input id="echo" size="24" /></p>
+    <p id="said" class="meta" data-role="echo"></p>
+    <p><button id="quit">quit</button></p>
+  </div>;
+}
+
+/**
+ * The event loop, with the `if`/`else if` chain on a string replaced by a match on a union.
+ *
+ * The original compares `e.kind == "input"` and then `e.id == "up"`, `"down"`, `"reset"`, `"quit"`
+ * — five string comparisons against literals that also appear as `id` attributes above, with
+ * nothing relating the two. A typo in either place is a button that stops working.
+ */
+export async i32 page(Sys sys, Page ui) {
+  await ui.title("counter");
+  await ui.render(document(0));
+  await ui.on("button", "click");
+  await ui.on("#echo", "input");
+
+  i32 n = 0;
+  while (true) {
+    match (await ui.nextEvent()) {
+      Typed(id, value): {
+        await ui.setText("said", value == "" ? "" : "you typed: \{value}");
+      }
+      Click(id): {
+        if (id == "quit") {
+          sys.out.log("counted to \{n}");
+          return 0;
+        }
+        if (id == "up")    { n = n + 1; }
+        if (id == "down")  { n = n - 1; }
+        if (id == "reset") {
+          n = 0;
+          await ui.setValue("echo", "");
+          await ui.setText("said", "");
+        }
+        await ui.setText("n", itoa(n));
+      }
+      Quit: { return 0; }
+    }
+  }
+}
+
+// ## 1. `render` takes a string, so JSX stops at the capability boundary
+//
+// The shipped `Page.render` is `fn[Pending<bool>(string)]`. JSX produces a `Node`. So the one file
+// in the repository that uses JSX — `packages/platform/example/page.wac`, 68 lines whose purpose is
+// to demonstrate the feature — **writes its own renderer**:
+//
+//     string out = "<" + tag;
+//     for (i32 i = 0; i < attrs.len(); i++) { … }
+//     for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
+//     return out + "</" + tag + ">";
+//
+// Thirteen lines of string concatenation, in the example, below the JSX it exists to show off. A
+// second page would write it again or import it from an example.
+//
+// `ui.render` here takes a `Node`, which is the whole change, and it is a change to the *capability*
+// rather than to the language. The alternative is a `render(Node)` in a library, which is what
+// `page.wac` has by accident — and then every page pays a string round trip to hand markup to a host
+// that is going to parse it back into a tree.
+//
+// **The interesting part is that this is the same shape as `In.read` and `Clock`:** a capability
+// whose type is narrower than the thing the language can express, so the program does the
+// conversion. It is the third instance and the first where the loss is a whole feature rather than
+// a distinction.
+//
+// ## 2. `Event` is a struct with a `kind` string, and the ids are unrelated to the markup
+//
+// The original's loop is `e.kind == "input"` then `e.id == "up"`, `"down"`, `"reset"`, `"quit"` —
+// five comparisons against string literals that also appear as `id` attributes twenty lines above,
+// with nothing connecting the two. Rename a button and the page compiles and stops working.
+//
+// The union above fixes half of it: `Typed` and `Click` are arms rather than a `kind` field, so the
+// *kind* comparison cannot be misspelled and a new kind of event makes the match inexhaustive. The
+// **ids are still strings** and still unrelated to the tree, and nothing here can fix that: the id
+// is in the document, the comparison is in the loop, and the only thing that could relate them is a
+// type generated from the markup. That is a bigger idea than this file and is not proposed.
+//
+// ## 3. The three page-only constructs got their first users, and one of them earned it
+//
+// `@"for"`, a quoted tag and a hyphenated attribute were three of the six constructs in
+// `GRAMMAR.ebnf` with no code user anywhere — added from `TECHNICAL.md` because the pages have
+// them, never written with. Two are here:
+//
+//   - `data-role="echo"` — a hyphenated attribute. Ordinary HTML, needed the moment anything renders
+//     a real document, and it is a fair question why the first page written in nine days is the
+//     first to want one.
+//   - `<label @"for"="echo">` — the verbatim name, and it is the entry `TECHNICAL.md` leads with.
+//     `for` is a keyword and `for` is also the attribute that makes a label clickable, so an escape
+//     is not decoration here: without it this line cannot be written at all.
+//
+// The third, a **quoted tag** — `<"my-widget" />` — still has no user, and a custom element is a
+// real thing a page wants. It stays unexercised because this page has no custom elements, which is
+// honest rather than an argument.
+//
+// ## 4. `page` is the entry point and `vision/std` has no story for it
+//
+// `spec/cli/wac.md`: the launcher hands `Page` to `page` and `Cli` to `main`, and a module may
+// export both. `vision/std`'s `Sys` has eight projections and none of them is a page, so a vision
+// program cannot be interactive. That is the finding this file was written to produce and it is in
+// the README rather than here.

@@ -1,0 +1,117 @@
+// A `Node` as HTML text — thirteen lines that exist in an example and nowhere a program can reach.
+//
+// `core/jsx.wac` is 26 lines: `Attr`, `Node`, and no renderer. Its header says why the *type* is in
+// `core` — *"a tree built in one repository and a renderer in another must name one type or nothing
+// composes"* — and then ships neither renderer. The one that exists is inside
+// `packages/platform/example/page.wac`, below the JSX it demonstrates:
+//
+//     string out = "<" + tag;
+//     for (i32 i = 0; i < attrs.len(); i++) { out = out + " " + attrs[i].name + "=\"" + … }
+//     for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
+//     return out + "</" + tag + ">";
+//
+// It escapes nothing, closes every element even the void ones, and is in an `example/` directory.
+//
+// **There are two consumers and they want different things**, which is the argument for writing it
+// down rather than for leaving it in the example.
+//
+//   - A **page** hands markup to a host that is going to parse it into a tree. `std`'s `Page.render`
+//     takes a `Node` for exactly that reason, and a browser page therefore needs *no* renderer at
+//     all — the string round trip in the middle is pure loss.
+//   - A **server** produces HTML as bytes on a socket, and there is nowhere for a tree to go. This
+//     is the consumer that needs a renderer, and `@/packages/server` today answers byte responses
+//     assembled by hand.
+//
+// So the type in `core` was right and the missing piece was never the renderer being in the wrong
+// place — it was that neither consumer had been written. This file is one of them; wiring
+// `@/packages/server` to it is the other and is not done here.
+
+import { Node, Attr, Element, Text, Fragment } from "core";
+import { Buf } from "@/packages/bytes";
+
+/**
+ * Void elements, which have no closing tag and whose children are a mistake.
+ *
+ * The example renderer writes `<input …></input>`, which browsers silently repair and which is
+ * wrong in any other consumer — a diff, a feed reader, a test asserting on markup. There are
+ * fourteen of them in HTML and the list is closed.
+ */
+bool isVoid(string tag) {
+  return tag == "area" || tag == "base" || tag == "br" || tag == "col"
+      || tag == "embed" || tag == "hr" || tag == "img" || tag == "input"
+      || tag == "link" || tag == "meta" || tag == "source" || tag == "track"
+      || tag == "wbr";
+}
+
+/**
+ * Text, with the five characters that are not text.
+ *
+ * **This is the whole reason a renderer belongs somewhere a program can import.** The example does
+ * not escape, so `Node.Text("<script>")` in it produces a `<script>`. That is fine in an example
+ * whose input is `cli.arg(i)` on a developer's machine and is an injection in the first server that
+ * renders a request parameter.
+ *
+ * `std/platform.wac` makes the same distinction and states it: `setText` is `textContent` so a
+ * value containing `<script>` *"lands as those characters"*, and *"`render` is the one that parses,
+ * and the difference is where every injection bug in a page like this would come from"*. The host
+ * side has the rule written down. The wac side has thirteen unescaped lines in an example.
+ */
+void escapeInto(Buf out, string s, bool inAttribute) {
+  for (u8 c in s.toBytes()) {
+    if      (c == '&')                 { out.pushAll("&amp;".toBytes()); }
+    else if (c == '<')                 { out.pushAll("&lt;".toBytes()); }
+    else if (c == '>')                 { out.pushAll("&gt;".toBytes()); }
+    else if (c == '"'  && inAttribute) { out.pushAll("&quot;".toBytes()); }
+    else if (c == '\'' && inAttribute) { out.pushAll("&#39;".toBytes()); }
+    else                               { out.push(c); }
+  }
+}
+
+void renderInto(Buf out, Node n) {
+  match (n) {
+    Text(text): { escapeInto(out, text, false); }
+    Fragment(kids): { for (Node k in kids) { renderInto(out, k); } }
+    Element(tag, attrs, kids): {
+      out.push('<');
+      out.pushAll(tag.toBytes());
+      for (Attr a in attrs) {
+        out.push(' ');
+        out.pushAll(a.name.toBytes());
+        out.pushAll("=\"".toBytes());
+        escapeInto(out, a.value, true);
+        out.push('"');
+      }
+      if (isVoid(tag)) {
+        out.pushAll(" />".toBytes());
+        return;
+      }
+      out.push('>');
+      for (Node k in kids) { renderInto(out, k); }
+      out.pushAll("</".toBytes());
+      out.pushAll(tag.toBytes());
+      out.push('>');
+    }
+  }
+}
+
+/** A tree as HTML. */
+export string render(Node n) {
+  Buf out = Buf.empty();
+  renderInto(out, n);
+  return string.fromBytes(out.bytes());
+}
+
+// ## What could not be written here
+//
+// **A void element with children is not refusable.** `<input>{x}</input>` builds a
+// `Node.Element("input", …, [x])` and this drops the children silently, because there is nothing to
+// report to: `render` answers a `string`. Answering `Result<string, …>` makes every caller handle a
+// failure that is a *program* bug rather than a runtime one, and the honest fix is for the compiler
+// to refuse it at the JSX — which it can, since the tag is a literal in the source. Not proposed
+// here because it is a rule about JSX rather than about rendering, and `spec/spec/jsx.md` has no
+// notion of a void element at all.
+//
+// **Attribute names are not checked.** `Attr` is two strings, so `<p @"class name"="x">` renders
+// markup no parser will read back. The verbatim-name form exists precisely so a keyword can be an
+// attribute, and it accepts any string at all. A page's own tags are literals the compiler sees, so
+// this is checkable and nothing checks it.

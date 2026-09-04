@@ -700,7 +700,7 @@ overrides ran; the projections, tickets, coroutines, `Socket`, `Listener` and `C
 funcrefs now. The argument for it was real — an abstract method catches a subclass that never
 overrides, where a trapping body only traps if the path is taken — and it is an argument about a
 design vision no longer uses. Removing it from `GRAMMAR.ebnf` took the delta from 628 BNF
-productions to 564, and all fifty-two vision files still parse.
+productions to 564, and all fifty-five vision files still parse.
 
 **`trap` as an expression.** `core/result.wac`'s `orTrap` writes `Err(_): trap why,` — a match arm is
 an expression and that arm produces nothing, which is what a bottom type is for. Small, and the
@@ -719,14 +719,24 @@ an argument nobody has agreed to.
 
 **The same check the other way round used to come back clean, and no longer does — which turns out
 to be the more interesting half.** It said: every construct in `GRAMMAR.ebnf` is used by at least one
-vision file, nothing has been proposed and then not written with. Re-counted 2026-09-04 over the 52
+vision file, nothing has been proposed and then not written with. Re-counted 2026-09-04 over the then-52
 files, **six constructs had no user in any of them**:
 
     verbatim name  `@"for"`          quoted tag  `<"my-widget">`     hyphenated attribute
     `auto`                           a list literal                  `coroutine f()`
 
-`coroutine f()` has one now — `wactest`'s `within.wac`, written the same day to be it, and it found
-that the operator works and that nothing can be *bounded* with it. Five remain.
+Three of the six have users now, all written the same day to be them, and all three found something.
+`coroutine f()` has `wactest`'s `within.wac`: the operator works and nothing can be *bounded* with
+it. A **verbatim name** and a **hyphenated attribute** have `@/packages/page`'s `counter.wac`, the
+first page anywhere in `vision/` — `<label @"for"="echo">`, where `for` is a keyword *and* the
+attribute that makes a label clickable, so the escape is the only way to write the line at all, and
+`data-role="echo"`, which is ordinary HTML.
+
+**That leaves three, and the reason they are still empty is the same reason all six were.** A
+**quoted tag** wants a custom element, `auto` wants a declaration whose type is worth eliding, and a
+**list literal** wants a collection built in one expression — and no subject was chosen to want any
+of them. `auto` is the one to worry about: it is on three agreed pages, it is the most ordinary thing
+in the list, and nineteen packages plus a page did not reach for it once.
 
 Every one of them is on an agreed page, and that is why they are in the grammar: they were added
 *from* `TECHNICAL.md`, `SHOWCASE.md` and `IDIOMS.md` after a pass that asked what the pages have and
@@ -740,7 +750,8 @@ refused and nobody has used is the one no process here notices at all: the refus
 least have a tool shouting about them.
 
 Which of the two lists is worse is a real question. Three constructs argued nowhere but load-bearing
-in the code, against six constructs agreed everywhere and load-bearing in nothing.
+in the code, against six constructs agreed everywhere and load-bearing in nothing — three of them
+still, once subjects were written to want the other three.
 
 **And the single-consumer count has moved, which is what the later subjects were for.** It was
 `schedule` (once, in `Sys.drain`), `trap` as an expression (once), and `secret` (twice, both inside
@@ -1152,7 +1163,7 @@ fallible function that answers nothing — which is most of them.
 `try`, `gen`, `defer`, `schedule`, `yield`, `in`, `union` and `secret` are written all over these
 pages and no entry says what they *are*. `vision/GRAMMAR.ebnf` had to decide in order to exist, and
 it decided **contextual** — none of them is a keyword, each is an `IDENT` that a rule matches by
-spelling. All fifty-two vision files parse that way, so the question is not *can they be*.
+spelling. All fifty-five vision files parse that way, so the question is not *can they be*.
 
 The question is what it costs either way, and it is not symmetrical.
 
