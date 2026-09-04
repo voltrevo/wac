@@ -2554,3 +2554,40 @@ The same question is live for `QUESTIONS.md` and worse, because a question is *s
 because they share a cause, and splitting them would lose the thing that makes them one entry. So the
 answer is probably not the same for the three documents — and today all three carry the same
 sentence.
+
+## `for … in` means two things by receiver, and the `Vec` one is a method nobody proposed
+
+Counted over the 59 rewritten files, by what the loop head iterates:
+
+    15  `for (T x in name)`          an array, or a variable holding a generator — native
+     6  `for (T x in call())`        a call answering a generator — native
+     9  `for (T x in v.items())`     a `Vec`, and only through a method `vision/core/vec.wac` added
+
+**A `Vec` is the one container that cannot be iterated directly**, and it is the container this tree
+uses everywhere. `gen<T> void items(const this)` has no counterpart in the shipped code: `.items()`
+appears **zero** times across `packages/` and `core/`, and `core/vec.wac` has no iterator at all.
+
+So nine of the thirty loops depend on a library addition that no page proposes and no entry here
+records, and a reader of `for … in` on the pages cannot tell which of the two they are looking at.
+
+**And it answers an open issue by writing rather than by deciding.** `issues/lang/open/0322a`:
+
+> **What it does on a `Vec`.** `Vec` has `get(i)` rather than `[]`, so either the desugaring knows
+> about `Vec` — which is a built-in knowing about a library type — or `Vec` grows whatever the
+> desugaring calls. The second is cleaner and is a decision rather than work.
+
+`vision/core/vec.wac` took the second. The issue's own next line scoped out the way it took it:
+*"Nothing about generators, which the general form needs and this does not."* So the answer in the
+tree is the **larger** of the two shapes the issue offered — a generator per container rather than a
+name the desugaring calls — and it arrived without either being argued.
+
+**Which of the two is a real question and the difference is not cosmetic.** A desugaring that calls
+a named method needs `Vec` to have that method and nothing else; a `gen`-returning `items()` makes
+every iteration a coroutine step, which is what `../bench/` would have to price and has not. It also
+makes `for … in` over a `Vec` a *different construct* from `for … in` over an array — one is a loop
+the compiler writes, the other is a machine it drives — and the delta's `for_head` rule cannot tell
+them apart, because both are `type , IDENT , "in" , expr`.
+
+The smaller shape has a cost the issue does not mention: a built-in that calls `v.items()` by name is
+a built-in that knows a library method's name, which is the objection it raises against the *other*
+option one clause earlier.

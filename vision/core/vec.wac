@@ -4,6 +4,40 @@
 // not already know there is one. `?` nests, so both are honest at a nullable `T`: `Vec<Node?>.pop()`
 // answers `Node??`, where the outer absence is *the vec was empty* and the inner is *the element
 // was null*. Nothing flattens them and there is no `Option` — see `vision/TECHNICAL.md`.
+//
+// **Six of the shipped nineteen members, and one that is not shipped at all.** `core/map.wac`'s
+// rewrite says *"only the surface a rewritten package reached for"* and this file did not, so a
+// reader could not tell a dropped member from one that never existed. Thirteen are absent —
+// `withCapacity`, `fromArray`, `get`, `at`, `set`, `insert`, `remove`, `swapRemove`, `clear`,
+// `first`, `isEmpty`, `capacity`, `extend`, `toArray` — none of them for a reason, all of them
+// because nothing here needed one.
+//
+// ## `items()` is an addition, it carries `for … in` over every `Vec`, and it answers an open issue
+//
+// `gen<T> void items(const this)` has **no counterpart anywhere in the shipped tree**: `.items()`
+// appears zero times in `packages/` and `core/`, and `core/vec.wac` has no iterator at all. Nine
+// loops in seven vision files go through it.
+//
+// Which matters because `for … in` then means two different things by receiver. Counted over the 59
+// rewritten files:
+//
+//     15  `for (T x in name)`          an array, or a variable holding a generator — native
+//      6  `for (T x in call())`        a call answering a generator — native
+//      9  `for (T x in v.items())`     a `Vec`, and only through the method below
+//
+// **A `Vec` is the one container that cannot be iterated directly**, and it is the container this
+// tree uses everywhere. Nothing on any page says so.
+//
+// `issues/lang/open/0322a` asks exactly this and left it open:
+//
+// > **What it does on a `Vec`.** `Vec` has `get(i)` rather than `[]`, so either the desugaring knows
+// > about `Vec` — which is a built-in knowing about a library type — or `Vec` grows whatever the
+// > desugaring calls. The second is cleaner and is a decision rather than work.
+//
+// This file took the second and did not record it. It also took it with a **generator**, which the
+// same issue scoped out — *"Nothing about generators, which the general form needs and this does
+// not"* — so the answer here is the larger of the two shapes on offer, chosen by writing rather than
+// by deciding.
 
 export struct Vec<T> {
   T[] data;
