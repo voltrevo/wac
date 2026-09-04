@@ -106,6 +106,15 @@ has no generics-free way to hold a list of structs"* and which turns out to be a
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
 
+**Nothing in the proposal has a build story, and eighteen packages did not notice.** No vision page
+mentions the ladder, a rung or the bootstrap. `bootstrap/README.md` says the constraint in one
+sentence — *"every feature beyond what those 37,873 lines use is a feature the rung below has to pay
+for too"* — and five rungs stand between a construct landing and `packages/wacc` being allowed to
+use it. `wvec.wac` is what one lambda in `core/vec.wac` cost: a second growable list inside the
+compiler, still there. The four things wacc's source would reach for first — `Result`, `try`, a
+container, a ticket — are four of the things this proposal adds, and landing them does not give them
+to the compiler.
+
 **And an audit for second consumers found a rewrite that had missed its own construct.** `T??` had
 one — `url/query.wac`, whose header says *"the first place in the tree that needs `T??`"*. Looking
 for a second found `json`, which had already been written: `JsonValue? get(key)` collapsed *no such

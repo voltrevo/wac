@@ -206,6 +206,47 @@ that never return a secret, never mix one with a public value, and never declass
 tested only on its motivating example is untested**, and this is the cleanest instance of that in the
 directory.
 
+## Nothing here has a build story, and the ladder is the reason it needs one
+
+No page in `vision/` mentions the ladder, a rung, or the bootstrap. `GRAMMAR.md` says *seed* three
+times and all three are about a stale one. So the proposal has never asked how any of it gets built.
+
+`bootstrap/README.md` states the constraint in one sentence: **"the ladder exists to reach
+`packages/wacc/src`, and every feature beyond what those 37,873 lines use is a feature the rung below
+has to pay for too."** Five rungs, the lowest hand-written wasm assembly text, each compiled by the
+one under it.
+
+Two things follow that no entry here has weighed.
+
+**Every construct arrives at the compiler last.** wac-L5 is described as *"the minimum that compiles
+wacc, and not a wac compiler"* — pointed at the wider corpus, 81 of 296 entry points compile. So a
+construct is usable by every package before it is usable by `packages/wacc`, and the gap is a
+bootstrap generation wide. `packages/wacc/src/wvec.wac` is what that costs today, for a single
+feature in a single library: it is `WVec<T>`, a second growable list, because `core/vec.wac`'s `fold`
+takes a lambda *"and the rung below has no lambdas"*. One lambda, one duplicated container, and its
+header says it goes *"when the reference stops being the bootstrap"* — which happened on 2026-08-28,
+and it is still there.
+
+**And vision's core is exactly what a compiler wants.** `wacc` hand-rolls its error handling — the
+flat parallel arrays this exercise already looked at — and cannot import a `Vec`. `Result`, `try`,
+`Ticket` and a growable container are the four things its source would use first, and they are four
+of the things this proposal adds. Landing them does not give them to the compiler.
+
+The circularity is worth naming plainly: **the rung that must learn a feature first is defined as
+whatever the compiler needs, and the compiler is the last thing allowed to want it.** So the ladder
+cannot lead. Every construct here is either something `wacc` will never use, or something with a
+bootstrap-shaped cost nobody has priced.
+
+Three shapes of answer, and the exercise has no view on which:
+
+- **The compiler is exempt.** `packages/wacc` stays in a subset forever, `wvec.wac` is permanent
+  rather than temporary, and the language grows for everything except the thing that implements it.
+- **The ladder grows with the language**, which means every construct here has a cost measured in
+  rungs — and the lowest rung is hand-written wasm assembly text.
+- **The ladder stops being the bootstrap**, which is what `wvec.wac`'s header is waiting for and
+  what `design/lang/0003` did to the reference. Then the question is what replaces it, and *that* is
+  a decision this proposal touches directly.
+
 ## Every example on every page is written against a `Sys` that `vision/std` does not define
 
 The projections — `Sys` split into `Files`, `Net`, `Proc`, `Env`, `Out`, `Clock`, `Random` — were
