@@ -32,6 +32,7 @@ file where a `for … in` comes before any other divergence, and the tool found 
 
     vision/core/core.wac                           ^ found '{'
     vision/core/core.wac                           ^ found '{'
+    vision/core/core.wac                           ^ found '{'
     vision/core/coroutine.wac                      ^ expected '{', found ';'
     vision/core/result.wac                         ^ expected '>', found '='
     vision/core/slice.wac                          ^^^^^ found 'items'
@@ -45,6 +46,8 @@ file where a `for … in` comes before any other divergence, and the tool found 
     vision/packages/json/src/json.wac              ^^^^^ expected ')', found 'parse'
     vision/packages/json/src/parse.wac             ^^^^ expected ';', found 'this'
     vision/packages/json/src/value.wac             ^^^ found 'Str'
+    vision/packages/regex/src/regex.wac            ^^^^^ found 'Found'
+    vision/packages/regex/src/regexpkg.wac         ^ found '{'
     vision/packages/server/src/main.wac            ^^^ found 'Err'
     vision/packages/server/src/serve.wac           ^ found ','
     vision/packages/server/src/server.wac          ^ found '{'

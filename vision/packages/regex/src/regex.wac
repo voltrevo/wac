@@ -1,0 +1,87 @@
+// Compile a pattern, run it against input.
+
+import { Result, Vec, Bytes } from "core";
+import { Program, Op } from "./program.wac";
+
+/** What a pattern can fail to be. */
+export enum PatternFault {
+  UnbalancedParen,
+  UnbalancedBracket,
+  TrailingBackslash,
+  BadRepeat,          // `*` with nothing to repeat, `{2,1}`
+  BadClass,           // `[z-a]`
+  TooManyGroups
+}
+
+/**
+ * A compiled pattern, or why it is not one.
+ *
+ * `Program? compile(u8[] pattern)` in the original: one null for six distinct ways a pattern can be
+ * malformed, in a compiler that knows which one it hit. A caller reporting *bad regex* to a user who
+ * typed `[z-a]` is the whole cost.
+ */
+export Result<Program, PatternFault> compile(Bytes pattern) { … }
+
+/** As `compile`, with the `i` flag. ASCII only — see the README. */
+export Result<Program, PatternFault> compileIgnoreCase(Bytes pattern) { … }
+
+/** Where a group matched, or nothing if it did not participate. */
+export struct Span {
+  i32 from;
+  i32 to;
+
+  Bytes of(const this, Bytes input) { return input.slice(this.from, this.to); }
+}
+
+/**
+ * The whole match, then one per group in order.
+ *
+ * A group that did not participate is null — `(a)|(b)` leaves one of them out on any input, and it
+ * is not the same as a group that matched empty. `?` says that; the original's `-1` in an `i32[]`
+ * said it too, and said it in the same range as a position.
+ */
+export struct Match {
+  Span whole;
+  Vec<Span?> groups;
+}
+
+/**
+ * Found, not there, or gave up — three outcomes and all three named.
+ *
+ * The original returns an `i32`: the start, `NO_MATCH` at `-1`, or `BUDGET` at `-2`. Its comment
+ * says the third *"is deliberately not the same answer as 'no match', so a caller can tell a refusal
+ * from a result"* — the distinction is exactly right and the encoding is what puts it one careless
+ * `>= 0` away from being lost.
+ *
+ * Collapsing it to `Result<Match?, Budget>` is available and is the wrong shape for the same reason
+ * `http`'s `Parsed` keeps three: *no match* and *gave up* are both "no result", so sharing a
+ * constructor lets a caller handle one and treat the other as the same thing. Which is the bug the
+ * original's comment exists to prevent.
+ */
+export enum Searched {
+  Found(Match match),
+  None,
+  /** The step limit ran out. Nothing is known about whether a match exists. */
+  Budget
+}
+
+/**
+ * The leftmost match at or after `at`.
+ *
+ * The captures come back rather than going in. The original takes `i32[] caps` for the callee to
+ * fill and a `budget`, and the caller has to size the array itself with `slotCount(p)` — pass one
+ * too short and the fill runs off the end of what it was given.
+ */
+export Searched search(Program p, Bytes input, i32 at, i32 budget) {
+  for (i32 start = at; start <= input.len(); start++) {
+    match (runAt(p, input, start, budget)) {
+      Found(m): { return Searched.Found(m); }
+      Budget:   { return Searched.Budget; }
+      None:     { }
+    }
+  }
+  return Searched.None;
+}
+
+/** One attempt, anchored at `start`. */
+Searched runAt(Program p, Bytes input, i32 start, i32 budget) { … }

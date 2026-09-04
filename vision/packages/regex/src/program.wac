@@ -1,0 +1,62 @@
+// The compiled program a match runs.
+//
+// **The flat arrays stay, and that is the interesting decision.** `classLo`/`classHi` hold every
+// character class's ranges end to end, with `classStart`/`classCount` indexing in — and the original
+// explains itself as *"wac has no generics-free way to hold a list of structs without writing the
+// container again"*, which reads like a language gap and is not one. `Vec<Range>` compiles today;
+// measured, not assumed. What it would cost is a boxed struct per range in a matcher's inner loop,
+// so the flat pair is a representation choice and a rewrite that tidied it would be slower.
+//
+// Third time in this exercise the right answer was to leave something alone, after `json`'s lazy
+// object index and `Buf`'s field layout. A comment that reads as a workaround is worth checking
+// before it is treated as one.
+
+import { Bytes } from "core";
+
+/**
+ * One instruction.
+ *
+ * Thirteen `export i32 OP_CHAR() { return 0; }` in the original — functions returning literals,
+ * numbered by hand, in a file whose other integers are program counters and capture slots. A
+ * `match` over an enum is checked and a `switch` over an `i32` is not.
+ */
+export enum Op {
+  Char(u8 byte),
+  Any,                          // any byte except newline
+  Class(i32 index),             // into the class table
+  Match,
+  Jmp(i32 target),
+  Split(i32 first, i32 second), // try `first`, and on failure `second`
+  Save(i32 slot),               // capture slot
+  Bol,
+  Eol,
+  WordBoundary(Boundary kind),
+  Mark(i32 loop),               // remember where this iteration began
+  Progress(i32 loop),           // fail if the iteration consumed nothing
+  Clear(i32 slot)
+}
+
+/**
+ * `\b`, `\B`, `\<`, `\>`.
+ *
+ * These were `a: 1 \b, 0 \B, 2 \< (word start), 3 \> (word end)` — four meanings in one operand
+ * field, documented in a trailing comment, with `0` for the negated case so a zeroed operand reads
+ * as `\B` rather than as nothing.
+ */
+export enum Boundary { At, NotAt, WordStart, WordEnd }
+
+export struct Program {
+  Op[] code;
+  i32 groups;           // capturing groups, so slots = (groups + 1) * 2
+  i32 loops;            // loop slots needed by Mark/Progress
+
+  /** Every class's ranges, end to end. See the header for why this is not a `Vec<Range>`. */
+  i32[] classLo;
+  i32[] classHi;
+  i32[] classStart;
+  i32[] classCount;
+  bool[] classNeg;
+
+  /** Capture slots: two per group, plus two for the whole match. */
+  i32 slotCount(const this) { return (this.groups + 1) * 2; }
+}

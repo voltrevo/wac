@@ -1,0 +1,4 @@
+// The package, as one name. Named for the directory, so `@/packages/regex` finds it.
+
+export { compile, compileIgnoreCase, search, Searched, Match, Span, PatternFault } from "./regex.wac";
+export { Program, Op, Boundary } from "./program.wac";

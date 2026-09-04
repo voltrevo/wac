@@ -76,3 +76,4 @@ in ten lines. Each package's README ends with that list, and the real ones becom
 | [fmt](fmt/) | 2026-09-04 | interpolation as `+`, re-export |
 | [unicode](unicode/) | 2026-09-04 | a union instead of two negative markers |
 | [bytes](bytes/) | 2026-09-04 | `Bytes` views instead of a copy per call |
+| [regex](regex/) | 2026-09-04 | ops as an enum; what to leave alone |
