@@ -236,9 +236,9 @@ that is fine, or a program that never exits, is not decidable from anything writ
 
 ## Re-export and package entry points — taken, in the barrels
 
-`wac-mono 0072` is already open about the cost: `itoa64` and `utoa64` exist twice because unifying
-them touches forty import lines, and *"wac has no re-export — importing a symbol from a file that
-merely imports it is a compile error."*
+The cost is measured: `itoa64` and `utoa64` exist twice in library code — `packages/fmt` and
+`packages/wactest` — because unifying them touches forty import lines, and *"wac has no re-export —
+importing a symbol from a file that merely imports it is a compile error."* `wac-mono 0072` is *closed* and is about `wc`'s counts being `i32`; it names the `itoa64` duplication only as an obstacle to its own fix. Nothing is open for re-export.
 
 **The mechanism does not half-exist, which I claimed once and had wrong.** `import { Read } from
 "core";` works and the spec calls `core` *"the root of the tree"*, which reads as an aggregate. It is

@@ -164,9 +164,9 @@ inherits them by construction, and a laundered `secret` is a key in a log line.
 `expected '{', found '<'` today. `AllOf`, `AnyOf`, `Generator`, `AsyncGenerator` and `SysTicket` all
 need it, so the whole coroutine and ticket design does not parse without it.
 
-**Re-export before the duplicate it is for can go.** `itoa64` and `utoa64` exist twice because
-unifying them touches forty import lines — `wac-mono 0072`, open, and the reason `fmt`'s barrel
-cannot be written.
+**Re-export before the duplicate it is for can go.** `itoa64` and `utoa64` exist twice in library
+code because unifying them touches forty import lines, which is why `fmt`'s barrel cannot be
+written. `wac-mono 0072` is *closed* and is about `wc`'s counts being `i32`; it names the `itoa64` duplication only as an obstacle to its own fix. Nothing is open for re-export.
 
 The shape worth noticing: **four of the six are orderings where doing the appealing thing first
 costs more**, and none of them is visible from the change it constrains. A list of proposals sorted
