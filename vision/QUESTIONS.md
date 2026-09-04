@@ -206,6 +206,33 @@ that never return a secret, never mix one with a public value, and never declass
 tested only on its motivating example is untested**, and this is the cleanest instance of that in the
 directory.
 
+## Three projections examined, three wrong in a different way, and the count is why
+
+The seven were derived from counting the host's fifty capabilities and finding five groups. That
+argument is about *how many* groups there are. It says nothing about what belongs in one, and each
+projection that has since been given a consumer has been wrong differently:
+
+| | | |
+|---|---|---|
+| `Files` | short by two methods | `rename` and `linkStat`, in the shipped `Fs` and not here — six of fourteen, chosen by what the packages written before `fs` happened to need |
+| `Net` | short by a **shape** | two of nine and both streams, so a datagram endpoint — one socket, many peers, peers that move — has nowhere to go |
+| `Proc` | short by its **purpose** | one method of seven, and the one is `exitCode`. The projection named for starting things could not start anything |
+
+**`Proc` is the one to read twice.** `spawn` was a *free function* taking a `Proc`, so the value was a
+token proving authority rather than the interface exercising it — the only one of the seven used that
+way. And `exec.wac`'s own paragraph, *"it takes a `Proc` rather than a `Sys` because starting
+something is all it does"*, was arguing for the narrowing while writing the shape that gives it up: a
+`Proc` that only *proves* you may spawn is a `Proc` any holder can spawn with, through any function
+that asks for one.
+
+`exitCode` is not authority over processes either. It is a fact about *this* process, in the same
+family as `Env`'s `arg` and `cwd`, and it is on `Proc` because the host groups it there.
+
+So the question is not whether to have projections — `fs` showed one paying for itself in a line, and
+the grant boundaries are real. It is that **a group derived from a count describes the count**, and
+the four still unexamined — `Env`, `Out`, `Clock`, `Random` — have had exactly as much design
+attention as these three had before somebody wrote against them.
+
 ## Nothing here has a build story, and the ladder is the reason it needs one
 
 No page in `vision/` mentions the ladder, a rung, or the bootstrap. `GRAMMAR.md` says *seed* three

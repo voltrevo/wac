@@ -143,8 +143,35 @@ export struct Net {
   async Result<Socket, NotGranted> connect(this, string host, i32 port);
 }
 
-/** Starting things. `@/packages/sh/src/exec.wac` is where the grant crosses. */
+/**
+ * Starting things — which, until 2026-09-04, it could not do.
+ *
+ * **This had one method and it was `exitCode`.** The host has seven process capabilities — `spawn`,
+ * `spawnSelf`, `execWithIn`, `load`, `call`, `unload`, `exitCode` — and the projection named for
+ * processes carried the one that starts nothing. `@/packages/sh/src/exec.wac` had `spawn` as a *free
+ * function* taking a `Proc`, so the value was a token proving authority rather than the interface
+ * exercising it, which is a different design from the other six and was not a decision anybody took.
+ *
+ * `exitCode` is also not authority over processes. It is a fact about *this* one, in the same family
+ * as `Env`'s `arg` and `cwd`, and it is here because the host groups it with the process capabilities
+ * rather than because a caller thinks of it that way.
+ *
+ * Third projection examined and third wrong in a new way: `Files` short by two methods, `Net` short
+ * by a shape, `Proc` short by its own purpose. All seven were derived from a count of the host's
+ * fifty capabilities, and a count says how many groups there are and nothing about what belongs in
+ * one. `../QUESTIONS.md`.
+ */
 export struct Proc {
+  /**
+   * Start `wasm` with at most `want`, and the grant is a request the host intersects.
+   *
+   * A method rather than a free function, so the capability is the thing that does the work. The
+   * argument for `Grant` as an enum, and for why authority cannot cross a spawn as a value, is in
+   * `@/packages/sh/src/exec.wac` and is unchanged.
+   */
+  async Result<Child, NotGranted> spawn(this, Bytes wasm, Vec<Bytes> args, Vec<Grant> want);
+
+  /** This program's own exit code. Not authority over anything — see the header. */
   i32 exitCode(const this);
 }
 

@@ -79,9 +79,20 @@ export enum Grant {
  * whole grant would let a shell's spawn path read a file, and the narrowing that this function is
  * *about* would not apply to the function itself.
  */
-export async Result<Child, NotGranted> spawn(
-  Proc proc, Bytes wasm, Vec<Bytes> args, Vec<Grant> want,
-) { … }
+// **This was a free function taking a `Proc`**, which made the projection a token proving authority
+// rather than the interface exercising it — the only one of the seven used that way, and not a
+// decision anybody took. `Proc.spawn` is a method now; what is left here is the `Grant` enum and the
+// argument about what can cross, which is this file's actual subject.
+//
+// The signature it had:
+//
+//     export async Result<Child, NotGranted> spawn(Proc proc, Bytes wasm, Vec<Bytes> args,
+//                                                  Vec<Grant> want)
+//
+// and the paragraph above it — *"It takes a `Proc` rather than a `Sys` because starting something is
+// all it does"* — was arguing for the narrowing while writing the shape that gives it up. A `Proc`
+// that only proves you may spawn is a `Proc` any holder can spawn *with*, through any function that
+// asks for one, which is what a capability is supposed to stop.
 
 export struct Child {
   async Result<i32, NotGranted> exit(this);
