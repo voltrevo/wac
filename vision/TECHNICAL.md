@@ -13,8 +13,21 @@ say so. *"`pop` answers an absence rather than trapping"* is marked **not yet** 
 `pop` has answered `Option<T>` — *"None if empty"* — all along; what does not compile is the entry's
 `v.pop() is null`, because the change is `Option<T>` to `T?`. Same for *"an enum with a default"*,
 where a catch-all arm compiles today as `else:`, and *"matching an enum"*, which is only *not yet*
-because its example writes arms without `case` and matches a payload by type. Checked four of the
-thirty; three were this.
+because its example writes arms without `case` and matches a payload by type.
+
+**Ten of the thirty checked, five were this.** The other two: *"an `await` is a boundary because it
+is written"* is a property of the language today — there is no preemption and
+`std/platform.wac` says *"a park in `waitAny` runs nothing at all"* — and only its coroutine example
+is *not yet*. *"`Vec<T>.pop` is written once and is honest at every `T`"* is written once today,
+`Option<T> pop(this)` in `core/vec.wac`; what is *not yet* is the second half, since `T?` at
+`T = i32` boxes and at `T = Node?` gives `Node??`, which is the thing the entry is really about.
+
+Five were correctly marked and it is worth saying which, because they are the pattern to copy: *"an
+arm can leave"* (`continue` in a match **expression** is `expected an expression` today), *"a
+hyphenated attribute"* (`data-size="8"` is `unexpected token`), and *"`Sys.drain`"*, *"a continuation
+is a ticket and a call"*, *"calling a `Waiting` continuation … traps"* — all three of which name a
+**vision type** in the heading, so no reader takes them for a claim about wac. Naming the vision type
+is the whole difference.
 
 So a reader scanning headings and markers is being told that wac cannot do things it does. That is
 this directory's most expensive habit — `packages/README.md` counts seven times a rewrite claimed a
@@ -704,7 +717,7 @@ async gen<i32> void counter(Ticket<i32> t) {
 
 ---
 
-## An `await` is a boundary because it is written
+## An `await` is a boundary because it is written — shown with a coroutine
 
 ```wac
 void example() {
@@ -891,7 +904,7 @@ void example() {
 
 ---
 
-## `Vec<T>.pop` is written once and is honest at every `T`
+## `Vec<T>.pop` is written once — and with `T?` must be honest at every `T`
 
 ```wac
 struct Vec<T> {
