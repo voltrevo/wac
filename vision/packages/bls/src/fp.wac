@@ -1,0 +1,151 @@
+// Arithmetic modulo the BLS12-381 base field prime, with the Montgomery form in the type.
+//
+// The arithmetic is the shipped arithmetic: 381 bits in twelve 32-bit limbs, CIOS, `i64`
+// accumulators because that is the widest multiply wasm has. None of it changes and none of it
+// should. **One thing changes: a field element stops being a `u32[]`.**
+//
+// ## The sentence this file exists for
+//
+// `packages/bls/src/fp.wac`'s header, on Montgomery form:
+//
+// > **The form is not visible in the API and must not leak.** `fromBytes` multiplies by R² to enter
+// > it and `toBytes` multiplies by 1 to leave, so a caller never sees a Montgomery value. **The cost
+// > of getting this wrong is an implementation that passes every internal consistency check and
+// > disagrees with every test vector**, which is the failure this whole package is arranged to
+// > avoid.
+//
+// A whole package arranged around a failure, and the thing that would prevent it is a type. Every
+// value in that file is a `u32[]`: `fpOne()`, `fpZero()`, `fpMul(u32[] a, u32[] b)`, and —
+//
+//   * `fromMont(a)` at three sites, each producing a **non-Montgomery** `u32[12]` that lives beside
+//     the Montgomery ones;
+//   * `fpHalf()`, documented *"1/2, in Montgomery form"*, twelve limbs;
+//   * the local `half` inside `fpIsLexicographicallyLarger`, which is `(p−1)/2` in **normal** form,
+//     twelve limbs, four lines away.
+//
+// Two constants called half, both `u32[12]`, one in the form and one not, in one file. Either is
+// assignable wherever the other is, and `fpMul` accepts both.
+//
+// ## And the cost is bounded by two numbers this repository already has
+//
+// The objection is allocation: a field element is on the hot path of a pairing, and wrapping it is
+// an object per value. Neither number needed measuring again.
+//
+//   * `packages/bls/README.md`: **7.9 ms per verification**, *"order 20,000 field
+//     multiplications"* — so a field multiply is about **395 ns**.
+//   * `vision/bench/slicecost.wac`: a fresh **three**-field struct is **2.6 ns**, measured on the v8
+//     host, *"one `struct.new` of three fields on a bump allocator"*.
+//
+// A `struct Fp` is one field, so 2.6 ns is an **upper bound** on the wrapper. Against 395 ns that is
+// **0.7% of a field multiply**, and every one of those multiplies already allocates a `u32[12]` —
+// 48 bytes and a header — so the wrapper roughly doubles the object *count* and adds a fraction of
+// the bytes.
+//
+// Under one percent, to make the difference between *the value is in Montgomery form* and *it is
+// not* a thing the compiler knows. That is the trade, stated with numbers rather than argued.
+
+import { Bytes } from "core";
+
+/**
+ * A field element, **in Montgomery form**.
+ *
+ * `const struct` because the limbs are established once by whoever built them: the CIOS kernel
+ * writes into a fresh `u32[12]` and hands it over, exactly as `@/packages/bignum`'s `Big` does, and
+ * nothing after that may reach in. A `u32[]` that has been through `fromMont` is a `Canonical`
+ * below and cannot be passed here.
+ */
+export const struct Fp {
+  u32[] limbs;
+
+  Fp zero() { … }
+  /** R mod p. */
+  Fp one() { … }
+  /** 1/2, in Montgomery form — a constant because three places were computing it with a
+   *  570-multiplication Fermat exponentiation, one of them inside a Miller loop, costing 28 ms of
+   *  a 36 ms loop. */
+  Fp half() { … }
+
+  bool isZero(const this) { … }
+  bool eq(const this, const Fp b) { … }
+
+  Fp add(const this, const Fp b) { … }
+  Fp sub(const this, const Fp b) { … }
+  Fp neg(const this) { … }
+  Fp mul(const this, const Fp b) { … }
+  Fp square(const this) { return this.mul(this); }
+
+  /** Out of the form. The only way to get a `Canonical`, which is the point. */
+  Canonical canonical(const this) { … }
+
+  /** The 48-byte big-endian encoding. Leaves the form on the way out, as the shipped one does. */
+  Bytes toBytes(const this) { … }
+}
+
+/**
+ * The same element with the form taken off — what a comparison, a sign test and an encoding need.
+ *
+ * A separate type rather than a flag, for the reason the shipped file gives about `fpFromBytes` and
+ * `fpFromWideBytes`: *"Two functions rather than a flag, so no caller can reach for the lenient one
+ * by accident."* The same argument, applied to the thing the file says must not leak.
+ *
+ * It has almost no surface, and that is right: there is nothing to *do* with a canonical value
+ * except read it, compare it and encode it. Arithmetic is `Fp`'s.
+ */
+export const struct Canonical {
+  u32[] limbs;
+
+  /** Whether this is above (p−1)/2 — the lexicographic test a compressed point encoding needs. */
+  bool isLarger(const this) { … }
+  /** RFC 9380's `sgn0`. */
+  bool sgn0(const this) { … }
+  /** Back into the form, by multiplying by R². */
+  Fp montgomery(const this) { … }
+}
+
+/**
+ * A 48-byte big-endian encoding, refused unless it is below p.
+ *
+ * *"`fpFromBytes` refuses anything at or above p because a point encoding must be canonical."*
+ * `Fp?` rather than the shipped `u32[]?` — the shape is the same and the type now says which form
+ * the answer is in.
+ */
+export Fp? fromBytes(Bytes s) { … }
+
+/**
+ * Any-length big-endian bytes reduced mod p, for `hash_to_field`.
+ *
+ * The lenient counterpart, and the shipped file's note on why it is a second function rather than a
+ * flag is the model this whole file follows: RFC 9380 hands 64 bytes of hash output and asks for it
+ * modulo p, *"where reducing is the specified behaviour and refusing would be wrong"*.
+ */
+export Fp fromWideBytes(Bytes s) { … }
+
+// ## What could not be written
+//
+// **`Fp2`, `G1`, `G2` and the pairing all take `u32[]` too, and this file cannot fix that alone.**
+// `fp2.wac` holds two `u32[]`, `g1.wac` three, and the tower is built by passing limb arrays down.
+// So the wrapper stops at the bottom layer and everything above still traffics in arrays — which
+// means the *inter*-layer confusion this prevents is the smaller one. The larger one is `Fp2`'s two
+// components, which are two `Fp`s and are held as two bare arrays: `fp2Mul(a0, a1, b0, b1)` takes
+// four and nothing says which pairs with which.
+//
+// Not written because it is the whole package rather than one file, and because the cost estimate
+// above does not carry: a `G2` point in a Miller loop is three `Fp2`s, which is six `Fp`s, so the
+// object count per point goes from 6 to 16 and the 0.7% figure would have to be re-derived rather
+// than reused. **That re-derivation is the honest next step and it needs a measurement, not an
+// argument.**
+//
+// **`const struct` and the kernel are in tension, and the shipped code resolves it by not having a
+// type.** `fpkernel.wac`'s `montMul` writes into a `u32[]` it allocated; wrapping that at the
+// boundary is one `struct.new`, which is the cost above. But an in-place kernel — `montMulInto(out,
+// a, b)`, which is what a serious implementation eventually wants — cannot write into a
+// `const struct`'s array without a way to say *this is mine until I hand it over*. The exercise has
+// met that from the other side in `issues/lang/0331a`, where a `const this` method cannot hand back
+// something it named; this is the same boundary approached from allocation rather than from
+// aliasing, and neither has an answer.
+//
+// **Nothing in the type says twelve.** `Fp.limbs` is a `u32[]` and every operation assumes
+// `LIMBS == 12`; a nine-limb array type-checks into `Fp` and reads past its end in the first
+// multiply. The fourth package to want a fixed-length array, after `@/packages/ens`'s address,
+// `@/packages/raster`'s tile and `@/packages/mpt`'s nibbles — and the first where the missing bound
+// is on the *inside* of the type rather than on a parameter.

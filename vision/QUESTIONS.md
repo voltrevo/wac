@@ -3765,7 +3765,7 @@ sixty-one uses in a directory whose author had read the spec is the evidence.
 
 ## The best-argued paragraph in a file is a rule the type could have held
 
-Six times now, the place a shipped package argues *hardest* has been the place a type would have
+Seven times now, the place a shipped package argues *hardest* has been the place a type would have
 said the same thing and needed no argument. It is consistent enough to be worth stating as a way of
 reading rather than as six findings.
 
@@ -3777,6 +3777,7 @@ reading rather than as six findings.
 | `abi` | a measured table of `cast` and `ethers` disagreeing about two rules, and why this package stays strict | a fault union, so "refuse this, accept that" is a caller's line |
 | `tty` | "four things can happen at once … so this is a record rather than an enum" | one field plus a four-arm `Effect`; three of the four never co-occur |
 | `raster` | why `damagedPixels` exists — so the off-by-one does not live in the caller | one `Rect` convention, so there is no conversion to hide |
+| `bls` | that Montgomery form "must not leak", and that leaking it gives "an implementation that passes every internal consistency check and disagrees with every test vector" | `Fp` and `Canonical` as two types, at a measured 0.7% of a field multiply |
 
 **The correlation is not a coincidence and it is not carelessness.** A paragraph gets written when
 the author can see a way to get it wrong and cannot stop the reader taking it. That is the same
@@ -3787,6 +3788,14 @@ certain the finding* — which inverts the usual reading, where a well-argued de
 alone.
 
 Two consequences worth keeping separate.
+
+**A cost measured once bounds every proposal of the same shape.** The objection to typing these is
+always allocation, and it was settled for `@/packages/bls`'s field element without a new benchmark:
+`packages/bls/README.md` gives 7.9 ms per verification over *"order 20,000 field multiplications"* —
+395 ns each — and `vision/bench/slicecost.wac` measured a fresh three-field struct at 2.6 ns. A
+one-field wrapper is bounded by the second, so the answer is **0.7% of a field multiply**, in the
+package where the objection should have been strongest. Worth naming because the bench was written
+for a slice and answered a question about a prime field: both reduce to one `struct.new`.
 
 **For this exercise:** the fastest way into an unfamiliar package has turned out to be finding the
 longest justification in it. Not the `TODO`, not the `Not here yet` section, not the workaround
