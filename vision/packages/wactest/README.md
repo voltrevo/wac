@@ -77,8 +77,21 @@ answer `null`, which needs a block that ends in a value — `{ this.fail(…); n
 pages has a block expression, and the alternative is two statements and an early return at every
 call site, which is the thing being removed.
 
-**How a runner enumerates typed exports** is assumed rather than shown. Reading a signature to
-decide what to pass is what `bindgen` does, so it is not a new capability — but *this* consumer is
-inside the module system rather than beside it, and nothing says a wac program can ask another
-module what its exports look like. `SHOWCASE.md`'s *the compiler is a library* is the neighbouring
-claim and it is about compiling, not reflecting.
+**How a runner enumerates typed exports** — checked against the host, and the answer splits.
+
+**A wac program cannot.** `Cli.load` hands back a handle and `Cli.call` is
+`fn[CallResult(i32, string, i32)]`: a handle, a name, and **one `i32`**, answering a status, a
+message and an `i32`. An export is reachable by name with a single fixed calling convention, and
+nothing in that boundary carries a signature. So a program can discover *whether* a name exists by
+calling it and reading the status, and can learn nothing about its shape.
+
+**The host can, and already does.** `spec/cli/wac.md`: *"Named exports are called after `main`, each
+with its trap caught"* — and `wac test` calls `export string test_x()`, which is not `Cli.call`'s
+shape at all. The runner is the host, it has the module's export section, and reading a signature
+there is what `bindgen` already does at build time.
+
+So the proposal stands and its cost moves. Telling a pure test from one wanting a `Sys` by reading
+the export's type is **host work**, not something the test harness can do in wac — which is a real
+constraint on a package whose whole rewrite was about pushing host-side workarounds back into the
+language. `host.wac`, `built.wac` and `daemon.wac` would lose most of their reason to exist and this
+one thing would stay on the far side.

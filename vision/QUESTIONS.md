@@ -186,15 +186,6 @@ null }`. Nothing on the pages has a block in expression position. Without it eve
 fallible call writes a check, a `fail`, and an early return — and the early return is the part that
 gets forgotten, leaving the test running against a value that was never produced.
 
-## Whether a wac program can ask a module what its exports look like
-
-`wactest`'s runner tells a pure test from one wanting a `Sys` by **reading the export's type**
-rather than its name, which replaces `test` as a string convention that nothing checks — and
-`harness/testRegistrars.ts`, which exists to keep two lists of spellings in step and failed to once.
-`bindgen` already reads signatures, so it is not a new capability; what is new is a wac program
-doing it to a module it loaded. *The compiler is a library* is the neighbouring claim and it is
-about compiling rather than reflecting.
-
 ## Re-export and package entry points — taken, in the barrels
 
 `wac-mono 0072` is already open about the cost: `itoa64` and `utoa64` exist twice because unifying
