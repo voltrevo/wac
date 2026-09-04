@@ -147,7 +147,10 @@ function startsTag(src: string, at: number): boolean {
   // A custom element's name is not an identifier, so the spec's rule *"a `<` followed by neither a
   // name nor `/` is text"* needs a third case in the vision dialect. Harmless for the spec grammar:
   // `a < "b"` is a comparison against a string, which is a type error rather than a parse.
-  return n !== undefined && (/[A-Za-z_]/.test(n) || n === "/" || n === ">" || n === '"');
+  // `@` as well as `"`: `<@"caption">` is the third spelling in `TECHNICAL.md`'s own three-way
+  // comparison of a tag name, after `<caption>` and `<"caption">`.
+  return n !== undefined &&
+    (/[A-Za-z_]/.test(n) || n === "/" || n === ">" || n === '"' || n === "@");
 }
 
 /**

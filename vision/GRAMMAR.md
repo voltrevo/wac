@@ -145,8 +145,12 @@ times.
 
 So the earlier claim on this page, that the grammar is the closed list and the prose is the argument,
 was true of the rewrites and false of the proposal. It is closer to true now, and the way to keep it
-true is that **the pages are a corpus** and something has to read them. 52 of the 64 fences parse;
-six of the rest are fragments — a bare `if`, a bare `this` — and the last five are one thing, below.
+true is that **the pages are a corpus** and something has to read them.
+
+**53 of the 64 fences parse, and the other eleven are fully accounted for**: six are fragments — a
+bare `if`, a bare `this`, two statements with no function around them — and five are one construct,
+below. Nothing is unexplained, which is the standard the tree-wide run set and the reason to say the
+number rather than the ratio.
 
 ## A declaration with no initialiser, used five times and refused today
 
