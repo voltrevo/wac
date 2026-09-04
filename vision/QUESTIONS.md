@@ -3688,3 +3688,50 @@ equivalent:
 
 The first is what the code assumes. It should be written down before it is assumed for a
 ninety-first time.
+
+## `u8` is a scalar in sixty-one places here and is an array element type in the language
+
+Measured 2026-09-04 through `bootstrap/ts/ask_wacc.ts`:
+
+| written | today |
+|---|---|
+| `u8 x = 65;` — a local | **3 type errors**; emits and runs, answering 65 |
+| `i32 take(u8 v)` — a parameter | **3 type errors**; emits and runs |
+| `struct P { u8 v; }` — a field | **3 type errors**; emits and runs |
+| `n as@ u8` — a cast | **3 type errors**; declined, *cast to an unsupported type* |
+| `Sl<u8>` with a `T get()` — the `Slice<u8>` shape | **1 type error**; emits and runs |
+| `u8[] a; a[0] = 65; return a[0];` — an element | **0**, and the element reads as an `i32` |
+
+`spec/spec/types.md`'s primitive table lists `i8` and `i16` as *"Array element only — no locals,
+params, or struct fields"*, and **has no `u8` row at all**; `spec/spec/arrays.md` documents `u8[]` as
+a packed array type whose elements zero-extend on read. So the rule that governs `u8` is written for
+its two neighbours and not for it, which is `issues/lang/0336a`.
+
+**This directory writes `u8` as a scalar 43 times as a declaration, 16 as a cast target and twice as
+a type argument, across 19 files. `packages/`, `tools/`, `spec/` and `bootstrap/` do it zero times.**
+`Rgba { u8 r; u8 g; u8 b; u8 a; }`, `void push(this, u8 v)`, `const u8 ERASE = 127`, `Bytes.get(i)`
+answering a `u8` — and `Bytes` is `Slice<u8>`, so the most-used type in this directory rests on it.
+
+**The ask is smaller than it looks, and that is the finding.** Every one of the rows above *emits and
+runs correctly* for the values probed. A packed element is an `i32` in a register — `array.get_u`
+zero-extends — so there is nothing for the code generator to invent; a `u8` local is an `i32` local
+that a store narrows. What refuses is the checker, and what it is enforcing is a rule about where
+packed types may appear, stated for `i8` and `i16` in a table `u8` is not in.
+
+So the question is not *can the machine do this*. It is:
+
+- **What is `u8` for?** If it is *the element type of a byte array*, the restriction is right and this
+  directory should use `i32` for a byte in hand, as `packages/` does everywhere — `Buf.push(this, i32
+  v)`, `render(i32 b)`, `glyphIndex(i32 cp)`. That is the shipped answer and it costs the type: a
+  parameter that takes a byte and accepts 300.
+- **If it is a one-byte integer**, then locals, parameters and fields follow, plus the casts, plus a
+  decision about arithmetic — `a + 1` at `u8` either wraps at 8 bits or widens to `i32`, and wac's
+  rule is that arithmetic wraps at the operand's width, which would make `u8` the first type where
+  that bites in a range a person holds in their head.
+- **And `Slice<u8>` needs an answer either way**, because a generic instantiated at a packed type is
+  a third case: one type error, not three, and the accessor's `T` return is what draws it.
+
+The reason this is worth deciding rather than papering over: the restriction is *invisible*. Nothing
+narrows a `u8` — the value is right, the program runs, and only the checker says anything. A rule
+whose violation costs nothing at run time is a rule that gets written round rather than learned, and
+sixty-one uses in a directory whose author had read the spec is the evidence.
