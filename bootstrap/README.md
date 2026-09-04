@@ -55,10 +55,45 @@ The shortcuts, so nobody has to discover them:
   **none in wacc or `core`**, which is exactly why it went unnoticed. Doing it properly needs a
   `start` section and a function per initialiser, because wac's initialiser is an expression and
   wasm's global takes a constant.
-- **`const` everywhere else is read and dropped** — `const this`, const locals, const parameters.
-  Harmless: `const` is a permission, and violating one is an error this rung does not diagnose.
+- **`const this` and const locals are read and dropped.** Harmless: `const` is a permission, and
+  violating one is an error this rung does not diagnose.
+- **A const *parameter* is refused**, and this bullet said it was dropped with the other two until
+  2026-09-04. `issues/lang/0298c` hit it in a real build — *"What L5 cannot take is `const` on a
+  struct parameter … the message was a parser that had lost sync eating the table"* — and it is any
+  parameter, not only a struct one. Measured, both give the same misleading message:
+
+      i32 f(const P p) { … }      !! wac-L5: ran out of room for parameters
+      i32 f(const i32 n) { … }    !! wac-L5: ran out of room for parameters
+
 - **`?` is dropped** except where it decides a sized array's default element.
 - **There is no type checker**, which is the one omission that is not a shortcut — see below.
+
+### The rest of the subset, measured rather than discovered
+
+Everything above was found by a build failing. Driving wac-L5 directly — `l5ToL0` from
+`bootstrap/ts/l5.ts`, one construct per program — gives the list without waiting for one:
+
+| refused | accepted, and a reader might not expect it |
+|---|---|
+| a lambda, with or without a capture | an enum with a payload, and `match` on it |
+| a **bound method reference** — `p.get` as a value | a **generic struct** — `Box<T>` and `Box<i32>` |
+| a **generic function** — `T pick<T>(T a)` | `async` on a function |
+| a `switch` statement | string interpolation, `"a=\{x}"` |
+| a method with no body | a **module-level variable** — `i32 counter = 0;` |
+| a module-level `const`, scalar or array | a nullable local, a ternary, `for(;;)`, `as!` |
+
+Three of those are worth a sentence each.
+
+**A generic struct works and a generic function does not**, which is not a distinction anything
+records — `struct Box<T>` compiles and `T pick<T>(T a)` is *"unexpected token `<`"*.
+
+**`switch` is refused**, so `packages/wacc` cannot contain one. That is worth knowing before
+`issues/lang/0269a` — which proposes requiring a `switch` case to be constant — is weighed, because
+the compiler is not among the ~30 sites it would touch.
+
+**A module-level variable is accepted here and refused by `wacc`**, which is `issues/lang/0329a`
+from the other side: the two disagree, `spec/spec/grammar.md` agrees with `wacc`, and this rung is
+the one that is wrong.
 
 ## The answer to the question
 
