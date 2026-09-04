@@ -44,14 +44,21 @@ its only callers are the text conversions and they divide magnitudes.
 
 ## Shape
 
-**Free functions, not methods.** `add(a, b)`, not `a.add(b)`. This is forced, not
-preferred: wac's deep-const rule makes the method form impossible to write. A `const this`
-method cannot use a value returned by another `const this` method — even one that was
-freshly allocated — because the result of a call through a const receiver is itself const.
-So `Big negate(const this) { Big r = this.copy(); r.neg = ...; }` is rejected, and there is
-no spelling of it that is both const-correct and able to build a new value. Dropping
-`const` would work and would be a lie. Recorded in the friction log rather than as an
-issue, since it is a language design question and not a defect.
+**Free functions, not methods.** `add(a, b)`, not `a.add(b)`. Written because wac's
+deep-const rule made the method form impossible: the result of a call through a const
+receiver was itself const, freshly allocated or not, so
+`Big negate(const this) { Big r = this.copy(); r.neg = ...; }` was rejected and dropping
+`const` would have been a lie.
+
+**That stopped being true on 2026-08-11 and this surface has not been revisited.**
+`issues/lang/0060` is that rule; its fix replaced the blanket taint with a freshness test,
+and a static taking `const Big` and returning a value built from a fresh `u32[]` checks
+clean today — measured 2026-09-04 through `bootstrap/ts/ask_wacc.ts`. What is still refused
+is the shape every constructor here needs: freshness is read off the **return expression**,
+so `return Big(...)` is fresh and `Big r = ...; return r;` is not, and nothing here can
+build a limb array without naming it. `issues/lang/0331a` is that gap. So the free-function
+surface is a live workaround for a narrower rule than the one it was written for, rather
+than the only thing that can be written.
 
 **Named `Big`, and `fmt`'s is `FixedBig`.** They used to both be `Big`, which compiles to
 invalid wasm rather than to an error — `issues/lang/closed/0036`. `fmt`'s is a fixed-size,

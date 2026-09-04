@@ -11,10 +11,11 @@
 // which is worth saying given the absence of generics has forced one into four other
 // packages.
 //
-// The API is free functions rather than methods — `add(a, b)`, not `a.add(b)` — because
-// deep const makes the method form impossible to write. A `const this` method cannot use
-// a value returned by another `const this` method, even one freshly allocated, since the
-// result of a call through a const receiver is itself const. See the package README.
+// The API is free functions rather than methods — `add(a, b)`, not `a.add(b)` — because deep
+// const made the method form impossible to write when this was written. `issues/lang/0060`
+// narrowed that rule on 2026-08-11 and this surface has not been revisited; what is still
+// refused is the shape every constructor here needs, which is `issues/lang/0331a`. See the
+// package README.
 //
 // Semantics follow JavaScript's BigInt exactly, which is what makes BigInt an exact
 // oracle rather than an approximate one. Division truncates toward zero and a remainder

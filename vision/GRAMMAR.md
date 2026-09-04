@@ -167,7 +167,7 @@ cannot tell you which**, and that is what running them is for.
 `vision/GRAMMAR.ebnf` is the same additions as productions, patched over `spec/spec/grammar.md`, and
 `tools/specparse.ts` runs the result:
 
-    deno run --allow-read tools/specparse.ts vision      # 62/62 files parse
+    deno run --allow-read tools/specparse.ts vision      # 65/65 files parse
 
 **That is a different kind of claim from anything else on this page.** Everything above was derived
 by *subtraction* — what today's parser refuses, minus what a desugarer accounts for — so it is a list

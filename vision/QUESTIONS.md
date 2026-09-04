@@ -3262,3 +3262,65 @@ shape, and it is `Ticket<Step<…>>` — which is what `AsyncGenerator.nextStep`
 pieces are present and the ergonomics are not: the file that wants this writes
 `try await for (Socket a in l.accepted())` and would have to abandon the loop form entirely to hold a
 step.
+
+## A numeric type cannot be spelled like a number
+
+`@/packages/bignum` is the first package in this directory whose subject is arithmetic, and the best
+it can write for `a * b + c` is `a.mul(b).add(c)`, and for `q < r` is `q.cmp(r) < 0`. wac has no
+operator overloading, `GRAMMAR.md` does not propose it, and no issue asks for it.
+
+Recorded as a want with one witness rather than proposed, because one package is a bad reason to add
+a feature this large. What makes it more than ergonomics is that there are **two** bignums in the
+repository: `packages/bignum` and `fmt`'s `FixedBig`, a fixed-size division-free specialisation that
+is deliberately not built on the first because it must not allocate on its hot path. Two types that
+both mean *number*, in different code, neither able to be spelled like one — and a third, `Big` in
+`@/packages/bignum`, that is immutable and so is the one where `a + b` would read exactly as it does
+for an `i32`.
+
+The narrow version of the question, which is answerable without deciding the wide one: **is `==` on
+a user type wanted?** `Big.eq` exists here because `==` is reference identity, and every value type
+in this directory that is not a primitive has had to write one — `Slice`, `Bytes`, `Big`. That is a
+smaller surface than the arithmetic operators and it is where the repetition already is.
+
+## Wrapping is the only arithmetic, and at 64 bits there is no way to notice
+
+`spec/spec/types.md` documents two idioms for detecting overflow and is explicit that the first
+covers only what has a wider type: *"for 64-bit types there is no wider one"*. Its fallback compares
+the result against an operand, which is written for `+`.
+
+`packages/bignum`'s one real defect is a `u64` shift landing on exactly 2^64 — not an addition going
+backwards, a value that was never representable — and the README says four hundred random operand
+pairs never reached it. `issues/lang/0033` weighed a checked operator, the idiom, and a build mode,
+chose the idiom, and closed **documented, not built** saying it lacked a real case to decide with.
+The case is filed as `issues/lang/0332a`.
+
+For this directory the question is narrower than 0033's: **`@/packages/bignum`'s `Big` wants no
+wrapping anywhere in the package, and there is no way for a package to say so.** `wacc` has
+`emitFilesChecked`, but it covers `+`, `-` and `*` rather than `<<`, and it is a property of the
+*build* — so a library cannot state *my arithmetic never wraps* to whoever links it, and a program
+that links both `bignum` and `crypto` has to choose one answer for two packages with opposite
+requirements. Poly1305's borrow trick and ChaCha20's adds are wrapping **by design**; bignum's
+carries are not. A whole-build switch cannot serve both, which is the part 0033's third option did
+not have to face.
+
+## A `const this` method still cannot hand back what it just built, if it named it
+
+`issues/lang/0060` narrowed the const taint to a freshness test on 2026-08-11, and the test reads
+the **return expression**: `return C(this.n)` is fresh, `C r = C(this.n); return r;` is not. Filed
+as `issues/lang/0331a`, and here because this directory leans on `const this` harder than the
+shipped tree does — nearly every method written under `vision/` is one.
+
+The shape that keeps hitting it is a constructor that has to allocate before it knows what it holds.
+`@/packages/bignum`'s `Big.of` takes a filled `u32[]`, which its callers must build and name; a
+`Buf` fills bytes and then hands them over; `@/packages/page`'s renderer builds a string. None of
+these can be an instance `const this` method whose result the caller may then mutate, and the escape
+in every case is to make it a **static** — a method with no receiver, which is a free function with
+a namespace. So the language's answer to *how do I write a const method that returns something
+fresh* is *don't write a method*.
+
+Twenty-three statics under `vision/` return their own type, in twelve files. That is **not** twenty-
+three workarounds: a factory with nothing to receive is a static because it is one, and only
+`packages/bignum` documents having chosen the shape for this reason. What the number says is that
+the escape hatch is also the ordinary spelling, which is why nobody has had to notice it is an
+escape hatch — and why the rule can stay this narrow without anyone filing it. `bignum` filed it
+only because the rule reached its **public surface** rather than one method.
