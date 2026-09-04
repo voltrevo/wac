@@ -1272,10 +1272,35 @@ delta drops from 564 BNF productions to 562. `auto` is an `IDENT`, `type` begins
 `for_head = type , IDENT , "in" , expr` for the same reason — a position the alternative was never
 added to and did not need to be.
 
-So two of the delta's productions are decoration. A grammar that admits a construct by accident
-cannot be asked whether the construct is in the language, and a recogniser that accepts a file proves
-nothing about the words in it. That is not an argument against contextual keywords — it is the
-statement of what the grammar stops being able to say, and it applies to every one of the eight.
+**And there is a rule for which productions the cost eats, found by removing all 47 in turn.** Every
+entry in `GRAMMAR.ebnf` was deleted one at a time and `vision/` re-parsed with the rest. Twenty-three
+of the thirty-eight distinct rules change what parses. Two do not, for this reason:
+
+    var_decl's `auto`     `IDENT IDENT = expr` is already `type IDENT = expr`
+    union_type            `IDENT type_args` is already a type name
+
+Both are positions where an `IDENT` is *already* admitted in that slot, so the production adds
+nothing a parser could act on. The other six new words are in positions where it is not — `defer`
+before a block, `coroutine` before a call, `gen` before a return type, `yield`, `try` and `schedule`
+as statement or expression prefixes — and removing any of those rules makes real files stop parsing.
+Confirmed for `defer` (54/57), `gen_yield` (51/57), `yield_stmt` (51/57), `schedule_stmt` (55/57) and
+`coroutine_expr` (a refusal at the exact token).
+
+So the rule is: **a contextual word's production is redundant exactly where the slot already accepts
+an identifier.** Type position and declaration position do; a statement prefix and an expression
+prefix do not. That predicts the answer without testing, and it says the cost is two productions
+rather than a vague unease.
+
+`union` is the one that matters, because it is the *headline* proposal and it is the one where the
+grammar is silent. Eleven files write `union`, five of them inline in type position, and
+`union<E, NotText>` is indistinguishable from `Vec<E, NotText>` to every parser that could be
+generated from this file. What the grammar can still say is the *declaration* — `export union<A, B>
+Fault;` is `typedef`, and that one is load-bearing — so of the two union forms the delta proposes,
+the grammar expresses one and cannot express the other.
+
+That is not an argument against contextual keywords. It is the statement of what the grammar stops
+being able to say, measured: a recogniser accepting a file proves nothing about the words in it, and
+for two of the eight the production is decoration.
 
 The question is what it costs either way, and it is not symmetrical.
 
