@@ -732,6 +732,32 @@ function main(argv: string[]): number {
   }
   files.sort();
 
+  // `--tokens` — the lexer's answer, one line per token, and no parsing at all.
+  //
+  // **Because grep gets construct counts wrong here, repeatedly and in both directions.** Four in
+  // one day: `fn[` counted 833 times when 378 are code, because `coretext.wac` carries the whole of
+  // `std` as string literals; a list literal scored one use and the hit was an EBNF fragment in a
+  // comment; `coroutine f()` scored one and the hit was a doc-comment example; and `secret` once
+  // scored *zero* because the pattern wanted `secret <word> <word>` and the spelling is
+  // `secret u8[] key`.
+  //
+  // A token stream cannot make three of those four mistakes — a comment and a string are not tokens
+  // — and makes the fourth one visible, since a construct is a token sequence rather than a regex.
+  // So `--tokens | grep` is the honest form of every question this file's callers keep asking.
+  //
+  // Not a parse: it says a word is *there*, not that it is used as the construct. `auto` is an
+  // ordinary `IDENT` and this cannot tell a variable named `auto` from the keyword, which is the
+  // contextual-keyword cost written down in `vision/QUESTIONS.md`. A tree would; a chart big enough
+  // to reconstruct one is not affordable on this machine.
+  if (flags.includes("--tokens")) {
+    for (const f of files) {
+      const { toks, error } = lex(Deno.readTextFileSync(f), keywords);
+      if (error) { console.log(`${f}\tlex\t${error}`); continue; }
+      for (const t of toks) console.log(`${f}\t${t.line}\t${t.col}\t${t.kind}\t${t.text}`);
+    }
+    return 0;
+  }
+
   let ok = 0;
   const bad: string[] = [];
   const slow: string[] = [];

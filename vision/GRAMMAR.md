@@ -395,6 +395,30 @@ the cross-check the grep could not do for itself, and it is the reason the 378 i
 the 444 was not: a number derived by pattern-matching, confirmed by a tool that has to actually
 parse.
 
+### `--tokens`, because four counts went wrong in one day
+
+Every construct question on this page and in `QUESTIONS.md` has been answered by grepping text, and
+in one day that produced four wrong answers in both directions:
+
+    fn[            833 by grep, 378 in code   — `coretext.wac` carries `std` as string literals
+    a list literal   1 by grep,   0 in code   — the hit was an EBNF fragment in a comment
+    coroutine f()    1 by grep,   0 in code   — the hit was a doc-comment example
+    never           19 by grep,   2 in code   — *never* is an ordinary English word
+    secret           0 by grep,   2 in code   — the pattern wanted `secret <word> <word>`
+                                                and the spelling is `secret u8[] key`
+
+`tools/specparse.ts --tokens` dumps the lexer's answer — `file`, `line`, `col`, `kind`, `text`, one
+token per line, no parsing — so `--tokens | grep` cannot see a comment or a string, because neither
+is a token. Every count in this document and in `QUESTIONS.md` that names a number of *files using a
+construct* was re-taken that way.
+
+**It does not solve the fifth kind of mistake and says so.** A token stream says a word is *there*,
+not that it is used as the construct: `auto` is an ordinary `IDENT`, so this cannot tell a variable
+named `auto` from the keyword — which is the contextual-keyword cost recorded above, arriving in a
+tool this time instead of in a reader. A parse tree would; an Earley chart big enough to reconstruct
+one is not affordable on this machine, and saying so is better than pretending the token stream is
+one.
+
 **The counts on this page were greps and three of them are roughly double the truth.** Comments and
 string literals are 59% of `fn[`'s occurrences, 50% of `Option<`'s and 43% of `Pending<`'s — a
 package that discusses a type mentions it far more often than it uses it, and the three most

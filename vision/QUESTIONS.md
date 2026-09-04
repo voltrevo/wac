@@ -527,10 +527,20 @@ parsing the fences turned them into.
 > A slot typed `never` removes its arm: `Step<never, i32, void>` is `Yielded | Done`, and a match
 > over it is exhaustive with two arms rather than three-with-a-dead-one.
 
-That is the whole of what anything says about `never`. It is used four times in `TECHNICAL.md`'s
-examples and twice in `core`, it is **declared nowhere**, it is not in `GRAMMAR.ebnf`'s type rule —
-it parses only because an unknown word is an `IDENT` and `IDENT , [ type_args ]` is a type — and no
-page argues for it. The coroutine design rests on it: `Generator<Y, R>` *is* `Coroutine<never, Y, R>`.
+That is the whole of what anything says about `never`. It is **declared nowhere**, it is not in
+`GRAMMAR.ebnf`'s type rule — it parses only because an unknown word is an `IDENT` and
+`IDENT , [ type_args ]` is a type — and no page argues for it. The coroutine design rests on it:
+`Generator<Y, R>` *is* `Coroutine<never, Y, R>`.
+
+**Counted on tokens rather than on text, 2026-09-04: two files.** Its own declaration site in
+`core/coroutine.wac`, and `@/packages/wactest/src/within.wac`, written the day before to drive a
+coroutine by hand — which makes that the **first consumer `never` has ever had**, and it did depend
+on the claim: `Step<TicketBase, never, R>` matched exhaustively in two arms, so the feature was
+exercised by something other than the doc comment asserting it. Until then the only file using the
+type was the file declaring the design that needs it.
+
+(A grep said nineteen files, because *never* is an ordinary English word and seventeen of the
+nineteen were prose. That is what `tools/specparse.ts --tokens` exists for.)
 
 **It is not a name, it is a feature.** Three parts, none of them written down:
 
