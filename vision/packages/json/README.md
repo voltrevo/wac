@@ -3,8 +3,10 @@
 Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does not compile,
 disposable.
 
-The real package is `packages/json`: 1,237 lines over four files. `stringify.wac` is not rewritten
-because nothing in it changes.
+The real package is `packages/json`: 1,237 lines over four files. This said *"`stringify.wac` is not
+rewritten because nothing in it changes"* until 2026-09-04, when it was written and three things
+changed — the first of them a design justified by a limitation that had lifted **before the same file
+adopted the replacement**. See below.
 
 ---
 
@@ -92,6 +94,43 @@ NotAnObject>` may be the better shape, and the point of this section is that the
 **neither**: it had a two-level answer and wrote one level, in the package where the distinction is
 most famous.
 
+## The file predicted to change nothing, and the sentence that outlived its reason
+
+[`src/stringify.wac`](src/stringify.wac) opens, in the shipped tree:
+
+> Numbers are written from the source span kept on JsonNumber rather than from its f64. That is not
+> laziness about canonical form so much as necessity: **wac has no float-to-string operation**, so
+> printing an f64 would mean implementing shortest-round-trip formatting (Ryu or Grisu) first.
+
+Eleven lines later the same file writes `import { writeF64 } from "../../fmt/src/ftoa.wac";`, and
+thirty lines after that it calls it. `packages/fmt` landed **2026-07-31** — *"f64 to its shortest
+decimal, matching JavaScript exactly"*. So the necessity had lifted, the file had adopted the
+replacement, and the sentence stayed.
+
+**And keeping the span is still right, for a reason nobody wrote.** Shortest-round-trip is not
+identity: `1.0`, `1e0` and `1` are one f64 and three spellings, and a formatter answers the same
+digits for all three. A document read and written back should come out as it went in. The stated
+reason was *we cannot format*; the real one is *formatting is lossy about the input* — opposite
+claims about the same function, and only the wrong one is in the file.
+
+### Two more, both about the same seam
+
+**`raw.len() > 0` is how a parsed number is told from a built one.** An empty span is not a real
+span, so it works, for the reason every sentinel in `../../QUESTIONS.md`'s list works. Seventh
+instance. Two variants is better than `Bytes?` here and not for style: a program that reads a
+document, edits one field and writes it back wants to know which of its numbers will come out
+changed, and that is a `match` rather than a null check.
+
+**NaN is tested by arithmetic — `value - value != 0.0` — with four lines of comment explaining the
+trick**, in a file that imports from `packages/fmt/src/ftoa.wac`, where
+`export enum Decimal { NaN, … }` and `export Decimal decompose(f64 x)` sit eleven lines from the
+function it did import. The classification exists, is exported, is in the file already named, and the
+caller re-derived it. Nothing points from `writeF64` to `decompose`.
+
+That re-derivation also conflates NaN with ±Infinity, which `Decimal` keeps apart — correct here,
+because JSON has a spelling for neither, but correct by coincidence of the output format rather than
+because they are alike.
+
 ## What could not be written
 
 (A generic method whose type parameter comes only from the return type was listed here as an open
@@ -103,7 +142,7 @@ argument — `this.fail<JsonValue>(Reason.Eof)`, as `Vec<T> empty<T>()` is calle
 half that was never syntax.** `core` used a bodyless method to mean *must be overridden*; this file
 needs *written out in the original, not repeated here*, and uses `{ … }` because the SHOWCASE entries
 do. The bodyless form is gone with the abstract-method design it existed for, so only `{ … }` is
-left, in 69 of the 145 rewritten files (the tool's 147 includes `bench/`'s two, which are written in
+left, in 70 of the 146 rewritten files (the tool's 148 includes `bench/`'s two, which are written in
 today's language and have real bodies).
 
 It is not a construct and never was. `tools/specparse.ts` strips the `…` so `{ … }` lexes as an empty

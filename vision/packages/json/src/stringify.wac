@@ -1,0 +1,109 @@
+// Writing a JSON tree back out — the file this package's README said would not change.
+//
+// > `stringify.wac` is not rewritten because nothing in it changes.
+//
+// That was written without opening it. Three things change, and the first is the kind of thing this
+// whole exercise is for.
+
+import { Bytes, Vec } from "core";
+import { Buf } from "@/packages/bytes";
+import { JsonValue, JsonMember } from "./value.wac";
+import { writeF64, decompose, Decimal } from "@/packages/fmt/src/ftoa.wac";
+
+/**
+ * The tree, as UTF-8.
+ *
+ * No `Result`: every `JsonValue` has a rendering. That asymmetry against `parse` is the same one
+ * `@/packages/codec` keeps — one direction can fail and the other cannot, and the two signatures
+ * should say so.
+ */
+export void writeValue(Buf out, const JsonValue v) {
+  match (v) {
+    Null:              { out.pushAll("null".toBytes()); }
+    Bool(b):           { out.pushAll(b ? "true".toBytes() : "false".toBytes()); }
+    Number(value, raw): { writeNumber(out, value, raw); }
+    Str(bytes):        { writeString(out, bytes); }
+    Array(xs):         { … }
+    Object(ms):        { … }
+  }
+}
+
+/**
+ * A number, from what it was read as if it was read.
+ *
+ * **The design is right and its stated reason is gone.** `packages/json/src/stringify.wac` opens:
+ *
+ * > Numbers are written from the source span kept on JsonNumber rather than from its f64. That is
+ * > not laziness about canonical form so much as necessity: **wac has no float-to-string
+ * > operation**, so printing an f64 would mean implementing shortest-round-trip formatting (Ryu or
+ * > Grisu) first.
+ *
+ * Eleven lines later that file writes `import { writeF64 } from "../../fmt/src/ftoa.wac";` and
+ * thirty lines after that it calls it. `packages/fmt` landed **2026-07-31** — *"f64 to its shortest
+ * decimal, matching JavaScript exactly"* — so the necessity had already lifted, the same file had
+ * already adopted the replacement, and the sentence stayed.
+ *
+ * **And keeping the span is still correct, for a reason nobody wrote down.** Shortest-round-trip is
+ * not identity: `1.0`, `1e0` and `1` are one f64 and three spellings, and a formatter answers the
+ * same digits for all three. A document read and written back should come out as it went in, which
+ * is what the span buys and what `writeF64` cannot. The stated reason was *we cannot format*; the
+ * real one is *formatting is lossy about the input*, and those are opposite claims about the same
+ * function.
+ */
+void writeNumber(Buf out, f64 value, Bytes raw) { … }
+
+/** A string, with the escapes JSON requires and no others. */
+void writeString(Buf out, Bytes s) { … }
+
+// ## 1. `raw.len() > 0` is how a parsed number is told from a built one
+//
+// The shipped `JsonValue.Number(f64 value, u8[] raw)` carries both, and the writer branches on
+// whether the span is empty:
+//
+//     if (raw.len() > 0) { out.pushAll(raw); } else { … writeF64(out, value); }
+//
+// An empty span is not a real span, so it works — and that is the reason every sentinel in
+// `../../../QUESTIONS.md`'s list of them works. Seventh instance, and the honest types are
+// `Number(f64 value, Bytes? raw)` or two variants, `Parsed` and `Made`.
+//
+// Two variants is the better one here and the difference is not style: **`numberOf(v)` and a parsed
+// number are not the same kind of thing to a caller either.** One round-trips and one does not, and
+// a program that reads a document, edits one field and writes it back wants to know which of its
+// numbers will come out changed. With a `Bytes?` that is a null check; with two variants it is a
+// `match` the compiler makes exhaustive.
+//
+// ## 2. NaN is tested by arithmetic, and the classification is exported from the file above it
+//
+//     } else if (value - value != 0.0) {
+//       // NaN and ±Infinity, which that subtraction is false for and every finite value is true
+//       // for. … `JSON.stringify` writes `null` for them …
+//
+// Four lines of comment explaining a trick, in a file that imports `writeF64` from
+// `packages/fmt/src/ftoa.wac` — where `export enum Decimal { NaN, … }` and
+// `export Decimal decompose(f64 x)` are eleven lines apart from the function it did import.
+//
+// So the classification exists, is exported, is in the file the caller already names, and the caller
+// re-derived it as arithmetic. That is not a language gap: it is what happens when a package's
+// *useful* type is discovered by whoever needed the *obvious* one, and nothing points from
+// `writeF64` to `decompose`.
+//
+// The re-derivation also conflates NaN with ±Infinity, which `Decimal` keeps apart. Correct here,
+// because JSON has a spelling for neither and `JSON.stringify` writes `null` for both — but correct
+// by coincidence of the output format rather than because they are alike, and a reader of
+// `value - value != 0.0` cannot see which.
+//
+// ## 3. What could not be written
+//
+// **A `JsonValue` that is a document and one that is data are the same type.** Everything above is
+// one distinction seen twice: a parsed number keeps its span, a parsed object keeps its member
+// order, and a built one has neither — and the type carries both worlds with a sentinel per field
+// rather than a variant per world. `Document` and `JsonValue` as two types is the shape, and it costs a
+// conversion at every boundary in a package whose whole job is that boundary. Not obviously worth
+// it; obviously not *nothing*, which is what the README said.
+//
+// **Escaping is a closed set spelled as a chain of comparisons.** `"`, `\`, and the C0 controls are
+// what JSON requires; everything else is written through. That is a `match` over a small set and it
+// is written as `if` chains in every JSON writer in every language, including this one — the same
+// *closed set spelled open* as `@/packages/wac`'s command dispatch, at a size where nobody minds.
+// Worth one line only because the entry claims the cost is invisible until the set grows, and here
+// it cannot grow: the set is fixed by RFC 8259 and has been since 2017.
