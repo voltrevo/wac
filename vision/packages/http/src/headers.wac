@@ -1,0 +1,121 @@
+// Header fields — and the one place in this directory where the flat shape is the design and the
+// richer type would be wrong.
+//
+// Every other rewrite here has turned a table into a type: nine `T_*` into an enum, a descriptor
+// `i32[]` into a tree, five parallel arrays into a `Vec` of structs. `packages/http/src/headers.wac`
+// is two parallel arrays and a count, and its header says why in three clauses, all of them
+// correct:
+//
+// > Names and values are kept as parallel arrays of byte slices, **in the order they arrived and
+// > with duplicates intact**. Both of those matter and neither is the convenient choice:
+// > `Set-Cookie` cannot be folded into one value, the order of `Via` and `Forwarded` is the record
+// > of the path a message took, and a duplicate `Content-Length` is the thing a framing check has
+// > to notice rather than the thing a map would silently drop.
+//
+// So the obvious rewrite — `Map<string, Bytes>` with case-insensitive keys — is not a better type.
+// It is a **wrong** one, and it is wrong in the direction that loses a security property.
+//
+// What is left to change is smaller than usual and worth doing anyway.
+
+import { Result, Bytes, Vec } from "core";
+
+/** One field, as it arrived. */
+export struct Field {
+  Bytes name;
+  Bytes value;
+}
+
+/**
+ * The fields, in order, with duplicates.
+ *
+ * `Vec<Field>` where the shipped type is `u8[][] names`, `u8[][] values`, `i32 count`. That is the
+ * fifth pair of parallel arrays this directory has met and the **first that is deliberate** — the
+ * others inherited theirs from a table or a wire format. Here the *list* is right and only the
+ * pairing is loose, so the change is one line of type and no argument.
+ */
+export struct Headers {
+  Vec<Field> fields;
+
+  Headers create() { … }
+  void push(this, Bytes name, Bytes value) { … }
+  i32 len(const this) { … }
+  Field at(const this, i32 i) { … }
+
+  /**
+   * How many fields carry this name — *"which is what the framing rules actually ask"*.
+   *
+   * A linear scan with `eqFold`, exactly as shipped. A map would make this `1` or `0` and that is
+   * the bug: `countOf("Content-Length") == 2` is a request that must be refused, and a map cannot
+   * hold the input that says so.
+   */
+  i32 countOf(const this, string name) { … }
+
+  /**
+   * The first value with this name, **or nothing**.
+   *
+   * The shipped one answers an empty slice and its doc says *"use with `countOf`, not instead of
+   * it"* — a sentinel from the value's own range, and a documented pairing of two calls, in a type
+   * that has one other method. `Bytes?` removes both.
+   */
+  Bytes? first(const this, string name) { … }
+}
+
+/** ASCII case-insensitive equality, which is exactly the comparison a field name wants. */
+export bool eqFold(Bytes a, Bytes b) { … }
+
+/** A `token` character, RFC 9110 §5.6.2. Spelled out, because the set is the point. */
+export bool isToken(u8 c) { … }
+/** Optional whitespace: space or horizontal tab, and nothing else. */
+export bool isOws(u8 c) { … }
+/** Visible ASCII plus space and tab. A bare CR or LF here is how a header injection is written. */
+export bool isFieldValueByte(u8 c) { … }
+
+// ## 1. The counterexample, which is worth more than another conversion
+//
+// This directory's method is to find a flat representation and ask what type it should have been.
+// It has been right often enough that the question stopped being asked, and here the answer is
+// **none**: order and duplicates are the semantics, a map loses both, and losing the second is how
+// a request smuggling bug is written.
+//
+// That is not an argument against the method; it is the shape of its failure mode. Two of the three
+// flat descriptors this exercise converted gave a *reason* — `@/packages/ssz`'s was a JS boundary
+// that has since gone, `@/packages/ts`'s gave none — and this one's reason is still live. **A stated
+// reason is the difference between a habit and a decision**, and the only way to tell is to read it
+// and check whether it still holds. Three files, three answers: expired, absent, current.
+//
+// ## 2. Some header names are single-valued and some are not, and the type says neither
+//
+// `first(name)` is right for `Content-Length` and wrong for `Set-Cookie`; a `values(name)` would be
+// right for `Set-Cookie` and misleading for `Content-Length`, where more than one is a fault rather
+// than a list. The shipped API answers this with `countOf` plus `first` and a doc telling the caller
+// to use them together — which is a protocol between two methods, held by a sentence.
+//
+// What would say it is a closed set of known field names with an arity each, and that is a large
+// thing to ask for: the set is open by design, every header a caller invents is legal, and the
+// arities live in a dozen RFCs. So the honest position is that **this is knowledge about HTTP, not
+// about headers**, and the place for it is the code that reads a particular field — which is where
+// `AmbiguousFraming` already lives in `./fault.wac`.
+//
+// Worth stating because the alternative is tempting and would be worse: an enum of the fifteen
+// header names this package happens to care about, with everything else in an `Other(Bytes)` arm,
+// puts the open set inside a closed one and makes `Other` the common case.
+//
+// ## 3. What could not be written
+//
+// **A validity condition over the whole collection.** *At most one `Content-Length`, and not
+// alongside `Transfer-Encoding`* is a property of a `Headers`, not of any field in it, and there is
+// nowhere to put it but a function a caller must remember to call. A constructor that could refuse —
+// `Headers.of(Vec<Field>) -> Result<Headers, AmbiguousFraming>` — would make the invariant
+// structural, and it cannot be the only constructor, because a parser builds a `Headers`
+// incrementally and must be able to hold an invalid one until the last field arrives.
+//
+// So the type wants two states, *building* and *checked*, and they are the same fields. That is a
+// third instance of the shape `@/packages/ts`'s `Prefix` and `@/packages/crypto`'s `Digest32` have:
+// **a value whose guarantee comes from how it was made**, with no way to say so.
+//
+// **`eqFold` is a free function and the comparison it implements is the type's identity.** Every
+// lookup in this file calls it, and a caller doing its own `==` on two names is wrong in a way
+// nothing catches. A `FieldName` type with `eq` as its only comparison is the fix and costs a
+// wrapper on every push — which is `@/packages/webrtc`'s *a value type is the only way to take an
+// operator away*, at a place where the operator to remove is `==` on `Bytes` and the language does
+// not define one anyway, so there is nothing to remove and no way to require the right one.

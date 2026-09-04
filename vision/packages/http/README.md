@@ -4,8 +4,13 @@ Written 2026-09-04. Read [../README.md](../README.md) first: not vetted, does no
 disposable.
 
 The real package is `packages/http`: 1,238 lines over seven files. Only the parts the redesign
-changes are written out — `headers.wac`, `outgoing.wac`, `response.wac` and `proxy.wac` are the same
-code with a different error type, and copying them here would say nothing.
+changes were written out at first — *"`headers.wac`, `outgoing.wac`, `response.wac` and `proxy.wac`
+are the same code with a different error type, and copying them here would say nothing."*
+
+**`headers.wac` was written on 2026-09-04 and that sentence was wrong about it.** It is the one file
+in this directory where the flat shape is the design and the richer type would be a *security* bug —
+see below. The prediction failed in the useful direction: the file expected to say nothing produced
+the counterexample to the method.
 
 ---
 
@@ -65,6 +70,48 @@ the type exists rather than a tidiness argument for it.
 `JsonValue.Str` owns. A slice cannot dangle — the collector holds the array for as long as any view
 — so both are retention decisions rather than safety ones, and getting one backwards is a program
 that holds ten megabytes to remember a hostname.
+
+## The counterexample: where a `Map` would be the wrong type
+
+Every other rewrite here turned a table into a type. [`src/headers.wac`](src/headers.wac) is two
+parallel arrays and a count in the shipped tree, and its header gives three reasons that are all
+still true:
+
+> Names and values are kept as parallel arrays of byte slices, **in the order they arrived and with
+> duplicates intact** … `Set-Cookie` cannot be folded into one value, the order of `Via` and
+> `Forwarded` is the record of the path a message took, and a duplicate `Content-Length` is the
+> thing a framing check has to notice rather than the thing a map would silently drop.
+
+So `Map<string, Bytes>` with case-insensitive keys is not a better type. It is a **wrong** one, and
+it loses a security property: `countOf("Content-Length") == 2` is a request that must be refused,
+and a map cannot hold the input that says so.
+
+What is left is small and worth doing: `Vec<Field>` instead of two arrays and a count — the fifth
+pair of parallel arrays here and the **first that is deliberate** — and `Bytes?` from `first`,
+where the shipped one answers an empty slice and its doc says *"use with `countOf`, not instead of
+it"*: a sentinel from the value's own range plus a documented pairing of two calls, in a type with
+two other methods.
+
+### Which says what the method's failure mode is
+
+Ask of a flat representation *what type should this have been*, and the answer here is **none**. Two
+of the three flat descriptors this exercise converted gave a reason — `@/packages/ssz`'s was a JS
+boundary that has since gone, `@/packages/ts`'s gave none — and this one's reason is live. **A stated
+reason is the difference between a habit and a decision**, and the only way to tell is to read it and
+check whether it still holds. Three files, three answers: expired, absent, current.
+
+### Some header names are single-valued and some are not, and the type says neither
+
+`first` is right for `Content-Length` and wrong for `Set-Cookie`; a `values` would be right for
+`Set-Cookie` and misleading for `Content-Length`, where a second one is a fault rather than a list.
+The shipped API answers with `countOf` plus `first` and a sentence telling the caller to use them
+together — a protocol between two methods.
+
+What would say it is a closed set of field names with an arity each, and that is a large ask: the set
+is open by design and the arities live in a dozen RFCs. So this is **knowledge about HTTP, not about
+headers**, and its place is the code that reads a particular field. The tempting alternative is worse
+— an enum of the fifteen names this package cares about with an `Other(Bytes)` arm puts an open set
+inside a closed one and makes `Other` the common case.
 
 ## What could not be written
 

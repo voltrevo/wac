@@ -5333,3 +5333,37 @@ does**, and four packages have introduced one with no way to do it.
 - **Nothing, and say so.** *Count by the code, or write a field per variant* is a real answer, and
   it is what four packages will do silently if it is not written down. That is the cheapest outcome
   and the one where the same discovery is made a fifth time.
+
+## A value whose guarantee comes from how it was made — three types, no way to say it
+
+Three types in this directory are trustworthy only because of the code that built them, and none can
+say so:
+
+| type | the guarantee | what makes it true |
+|---|---|---|
+| `@/packages/crypto`'s `Digest32` | it is 32 bytes | it came out of a hash and there is no other constructor |
+| `@/packages/ts`'s `Prefix` | nothing in the input starts with it | something walked every token and looked |
+| `@/packages/http`'s `Headers` | at most one `Content-Length` | a framing check ran over the whole collection |
+
+The first two are the same shape and the entry on *a type only its own file may build* has them: wac
+has no visibility inside a module, so a convention holds what a private constructor would.
+
+**`Headers` is different and is the harder one**, because the guarantee cannot hold for the whole
+life of the value. A parser builds a `Headers` one field at a time and **must** be able to hold an
+invalid one until the last field arrives — a second `Content-Length` is only a fault once there is no
+more input. So a constructor that refuses cannot be the only constructor, and the type wants two
+states, *building* and *checked*, over identical fields.
+
+That is the general version and it is not the same request as a private constructor:
+
+- **A private constructor** gives you *only this file may make one*, which is enough when the check
+  is at construction — `Digest32`, `Prefix`.
+- **What `Headers` wants** is *this value has passed a check that happened after it was built*, and
+  the only ways to say it today are a second type with the same fields, a boolean field nobody may
+  set, or a comment.
+
+Two types with identical fields is what a language without this ends up with, and it costs a copy or
+a cast at the boundary between them. Worth asking whether the cheaper thing — a `Checked<T>` wrapper
+whose only constructor is the checking function — is a library type or needs anything from the
+language. It needs one thing: that nobody else can call the wrapper's constructor, which is the
+private-constructor entry again, arriving from a case that private constructors do not solve.
