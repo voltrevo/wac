@@ -44,13 +44,25 @@ Three productions, all measured against the current `wac` before and after:
 - `method_decl` gains `[ type_params ]`
 - `primary_expr`'s call form gains `[ type_args ]`
 
-**And a fourth was written and removed unpushed**, which is the part worth recording: the first
-draft also gave `method_decl` an `[ "async" ]`, by symmetry with `func_decl`. It does not have one —
-`struct S { async i32 f(this) { … } }` is `expected a type`, measured half an hour earlier in the
-same session. Documenting a construct that does not exist is the same defect as omitting one that
-does, and symmetry is exactly the argument that produces it.
+**A fourth was written, removed, and put back**, which is the part worth recording — and the
+removal was the mistake, not the writing.
 
-The durable fix is not done and is the reason to leave a note here rather than call this finished.
+The first draft gave `method_decl` an `[ "async" ]` by symmetry with `func_decl`. I removed it
+because `struct S { async i32 f(this) { … } }` had answered `expected a type` when I measured it —
+and **that measurement was taken against a stale seed.** `wac` carries a prebuilt compiler in
+`native/v8/seed/wacc.wasm`, so the parser answering was the one from before three merged
+`packages/wacc/src` commits. After `./bootstrap.sh --no-install` the same program parses and fails
+at emit with *a call to Pending*, exactly as an `async` free function does. `method_decl` takes an
+`async` and the production now says so.
+
+Four of the five things measured in this issue were unaffected; the one that was not is the one I
+re-measured in order to *undo* a correct change. A stale seed is not a broken build — everything
+compiles and the answers are simply a few commits old, which reads as evidence.
+
+The durable fix is done, in `packages/wacc/test/wac/specproductions_test.wac`, and it caught this on
+its first run.
 `[§wac-grammar-keywords-h4mq7wn]` guards the keyword list *because it drifted three times*, and the
-productions have now drifted twice. Something that compares a production against what the parser
-accepts is what would stop a third; nothing in this commit does that.
+productions had drifted twice. The new guard is that idea one level up: a table of probes, each a
+program that settles whether the parser has a construct and the token that says whether the
+production does, asserted in **both** directions — because a production that documents something
+absent is the failure a reader meets as their own bug.

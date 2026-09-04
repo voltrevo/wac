@@ -70,7 +70,7 @@ struct_member  = field_decl | method_decl ;
 
 field_decl     = [ "const" ] , type , IDENT , ";" ;
 
-method_decl    = [ "override" ] , type , IDENT , [ type_params ] ,
+method_decl    = [ "override" ] , [ "async" ] , type , IDENT , [ type_params ] ,
                  "(" , [ method_params ] , ")" , block ;
                  (* A method may declare letters the owner has not got [§wacc-method-type-args] *)
 
