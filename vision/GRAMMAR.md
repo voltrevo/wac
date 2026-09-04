@@ -259,6 +259,27 @@ unparenthesised form, and vision proposes no change to precedence, so they were 
 sixth class, after the seven claimed-missing and the one claimed-present: **code that is wrong under
 today's rules in a place vision is not changing.** Nothing else would have caught those.
 
+## Which of these does the existing tree already want?
+
+A different question from *is it in the language*, and the answers are not close together. Measured
+across `packages/`, `core/`, `std/` and `tools/`:
+
+| construct | demand today |
+|---|---|
+| `for … in` | **4,414** of 8,925 `for` loops are `for (i32 i = 0; i < x.len(); i++)` — half of every loop in the repository |
+| re-export | `wac-mono 0072` is open about it, and `itoa64` exists twice because of it |
+| a generic parent | **zero**. Not one `struct X : Base<…>` anywhere, and `issues/lang/closed/0034` lists *"a generic with a parent struct"* — the working direction, `struct X<T> : Base` — as tested. The reverse was never considered |
+| `yield`, the `gen` form, `try`, named unions, a default type argument | no demand measurable, because the features they belong to do not exist to be wanted |
+
+**That is three different kinds of thing wearing one label.** `for … in` is a gap the repository
+feels 4,414 times and works around in every file. Re-export is a gap somebody filed an issue about.
+A generic parent is not a gap at all — it is load-bearing for the ticket design here and nothing
+outside this directory has ever reached for it.
+
+Worth keeping separate when any of this is prioritised: *the language is missing this* and *vision
+needs this* are different claims, and the constructs list mixes them. The first two would be worth
+doing if `vision/` were deleted tomorrow.
+
 ## What it cannot see
 
 It finds where vision is **ahead** of today's parser. It is blind to where vision code is **behind a
