@@ -266,7 +266,7 @@ across `packages/`, `core/`, `std/` and `tools/`:
 
 | construct | demand today |
 |---|---|
-| `for … in` | **4,414** of 8,925 `for` loops are `for (i32 i = 0; i < x.len(); i++)` — half of every loop in the repository |
+| `for … in` | **1,991** loops use a counter only to index its own collection — 47% of the 4,196 counted loops, and about a fifth of every loop in the repository. Filed as `issues/lang/0322a`. (An earlier count here said 4,414: that was the shape, not the subset that only walks) |
 | re-export | `wac-mono 0072` is open about it, and `itoa64` exists twice because of it |
 | a generic parent | **zero**. Not one `struct X : Base<…>` anywhere, and `issues/lang/closed/0034` lists *"a generic with a parent struct"* — the working direction, `struct X<T> : Base` — as tested. The reverse was never considered |
 | `yield`, the `gen` form, `try`, named unions, a default type argument | no demand measurable, because the features they belong to do not exist to be wanted |
