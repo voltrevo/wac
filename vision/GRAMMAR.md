@@ -362,6 +362,29 @@ detail. `grep` is the raw count, *in code* is what a migration actually has to e
 | `default:` | `else:` | 624 | 623 | 102 |
 | `T?` everywhere | `Option<T>` alongside it | 102 | **48** | 17 |
 
+**Every row is a type or a piece of syntax, and there is a second table underneath it.** Diffing
+`vision/core` against `core/` *member by member* — done 2026-09-04, and not before — turns up renames
+and signature changes inside those types:
+
+| vision | shipped | in code | files | |
+|---|---|---:|---:|---|
+| `or` | `orElse` | 34 | 11 | a rename |
+| `orTrap(why)` | `unwrap` | 16 | 5 | a rename **and** a new required argument |
+| `settled` | `isDone` | 30 | 7 | a rename, and method to funcref field |
+| — | `then` | 9 | 5 | replaced by `Continuation` |
+| — | `cancel` | 19 | 10 | no counterpart proposed |
+| | | **108** | **32** | |
+
+Small beside `fn[`'s 378 and the number is not the point: **a migration sized from the table above
+would be wrong in kind.** A type rename is mechanical and two of these are not — `unwrap()` becoming
+`orTrap(why)` needs a message written at each of sixteen sites, and `cancel` has nowhere to go.
+
+`Result.ok()` and `.err()` are dropped too and are deliberately not in the table: `.ok()` has 372 uses
+across 59 distinct receivers and nearly all are `Change.ok()`, a different type that `@/packages/fs`
+replaces with a union. No grep separates them, so the row would be a guess. `../QUESTIONS.md` has the
+rest, including that a third of these are *deletions* rather than renames and neither table has a
+column for one.
+
 **The first row stopped being a rename on 2026-09-04 and the numbers are now a floor.** It said
 `Sys`, because vision bundled the projections into one value and a sweep could have replaced two
 parameters with one. `Sys` is gone — measured, one function in fifty-nine files took it, and it took
