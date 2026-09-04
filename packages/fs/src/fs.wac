@@ -12,7 +12,16 @@
 // wac will not do it: `override` is a source-level check and **dispatch is static** — a `Circle` in a
 // `Shape` variable answers `Shape.name()` — so a base-typed `Fs` would always run the base's bodies.
 // The language's own idiom for varying behaviour is a funcref plus explicit state (`Shell.external` is
-// one), and a funcref cannot capture a filesystem because there are no closures.
+// one), and when this was written a funcref could not capture a filesystem because there were no
+// closures.
+//
+// **That second half stopped being true on 2026-08-16**, when lambdas landed — `spec/cases/0191 a
+// lambda captures by reference`. Dispatch is still static, so the first half stands and an abstract
+// `Fs` is still out; but *funcref plus explicit state* can now be funcref plus *captured* state, and
+// a mount could be a struct of closures built once per backing rather than a tag every operation
+// branches on. Nothing here has been rewritten for it and this note is not an argument that it
+// should be — it is here because the sentence above was a statement about the language and is no
+// longer one.
 //
 // So: one concrete `Fs`, holding a mount table, and the branch is written by hand. That is what the tour
 // says to do, and it turns out to be the shape the design wanted anyway — a host mount is how "translate

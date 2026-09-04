@@ -784,7 +784,12 @@ export i32 anyrefs() {
 
 // `fn[Ret(Params)]` — return type first, mirroring declarations. Maps to wasm's
 // typed function refs: `ref.func` to obtain, `call_ref` to invoke.
-// THERE ARE NO CLOSURES. A function reference cannot capture anything.
+// A bare name is the whole of the syntax — there is no `&f`.
+//
+// This said THERE ARE NO CLOSURES until 2026-09-04, in capitals, 113 lines above
+// section 17 saying wacc has them. Section 17 is right: `(i32 a) => a + 1`
+// captures by reference. The examples below use bare names because this file is
+// compiled by the seed as well, and the seed has no lambdas.
 i32 square(i32 x) { return x * x; }
 i32 negate(i32 x) { return -x; }
 bool ascending(i32 a, i32 b) { return a < b; }
@@ -866,8 +871,10 @@ export i32 methodRefs() {
 //   name: `core` and `std` are reserved, so your own `core/` or `std/` directory
 //   cannot shadow them. `core` holds `Read` and nothing
 //   else, because a type belongs there only if it must have ONE identity across
-//   a repo boundary: no closures means two copies of an enum can never be
-//   converted into each other. Containers and sum types go in a package.
+//   a repo boundary: nominal typing means two copies of an enum can never be
+//   converted into each other. (This said "no closures" and the conclusion is
+//   right for the other reason: two declarations of a shape are two types
+//   whatever a funcref can capture.) Containers and sum types go in a package.
 // - Names are mangled internally to `<filestem>$<name>` — `geometry$Point`,
 //   `geometry$Point$distanceSq`. Two files may each declare `Point` or `max`;
 //   they stay distinct types with distinct layouts.
@@ -907,8 +914,11 @@ export i32 shadowing() {
 //   host function imports   nothing is imported from JS; wasm imports are empty
 //   char type               string indexing yields a one-character string
 //   type aliases            write the type out
-//   operator overloading, exceptions, threads, async, varargs, default
-//   arguments, named arguments at call sites, multiple returns, tuples
+//   operator overloading, exceptions, threads, varargs, default arguments,
+//   named arguments at call sites, multiple returns, tuples
+//
+// `async` was on that list and ships: `async T f()` answers a `Ticket<T>` and
+// `await` unwraps one — design/lang/0014, spec/cases/0305 onward.
 //
 // `switch` takes i32 or u32 only — not strings, not enums. Use `match` for an
 // enum, and an if-chain for a string.

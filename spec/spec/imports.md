@@ -60,7 +60,7 @@ is the whole reason the tree is embedded rather than copied.
 > the old one — 54 of them — and removed it.
 
 What belongs in the tree is decided per file. The **root** holds only types that have to cross a
-*repository* boundary through a funcref signature: wac has nominal types and no closures, so two
+*repository* boundary through a funcref signature: wac has nominal types, so two
 declarations of the same shape are two types and nothing can convert between them — fine within a
 tree, where both sides can import one file, and impossible across repos. `Read` passes that bar, and
 `Node` and `Attr` pass it more strongly, since the compiler emits their constructors for JSX and no
