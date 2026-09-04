@@ -20,6 +20,28 @@
 // and *not yet* for a pipe, and this loop cannot tell them apart. The shipped `readStdin` has the
 // same shape and the same problem, so this is not a regression — but `Read` exists, twelve lines
 // away, and is what a capability that can end should answer. `../../../QUESTIONS.md`.
+//
+// ## And `Files.open` made it worse in the useful way, 2026-09-04
+//
+// This read whole files: `match (await files.read(path))`, the entire contents in memory, which is
+// wrong for the one command in the box whose whole job is arbitrarily large input. It read that way
+// because `Files` had no streaming member — the audit of all 62 host capabilities found the shipped
+// `openInput`/`readChunk`/`closeFeed` had no projection at all — and `Files.open` now answers an
+// `AsyncGenerator<Bytes, …>`. The file half is a `try await for` over it and buffers nothing.
+//
+// **Which leaves `cat` with two loops for one job, and that is the sharper complaint.** A file is a
+// stream and standard input is a `Ticket<u8[]>` with an empty array for *end*, so:
+//
+//     try await for (Bytes chunk in source) { out.write(chunk); }      // a file
+//     while (true) { u8[] c = await in.read(); if (c.len() == 0) …  }  // stdin
+//
+// Two shapes, one behaviour, in the program that exists to treat them alike — and `cat -`, which
+// interleaves them, cannot be written as one loop at all.
+//
+// So the question is not only *how* a capability says end. `In` is not a stream, in a system that
+// now has streams: if it answered `AsyncGenerator<Bytes, …>` the two halves above are one function
+// and the sentinel stops existing rather than being fixed. The sum-versus-sentinel entry is the
+// smaller version of that.
 
 import { Result, Bytes } from "core";
 import { Out, In, Files, Read, NotGranted } from "std";
@@ -29,10 +51,15 @@ export async i32 cat(Out out, In in, Files files, Args a) {
   if (a.operands.len() == 0) { return await pump(out, in); }
 
   i32 status = 0;
-  for (i32 i = 0; i < a.operands.len(); i++) {
-    match (await files.read(a.operands[i])) {
-      Ok(bytes):  { out.write(bytes); }
-      Err(_):     { out.writeErr("cat: \{a.operands[i]}: cannot read\n".toBytes()); status = 1; }
+  for (string path in a.operands) {
+    match (files.open(path)) {
+      Ok(source): {
+        try await for (Bytes chunk in source) { out.write(chunk); }
+      }
+      Err(_): {
+        out.writeErr("cat: \{path}: cannot read\n".toBytes());
+        status = 1;
+      }
     }
   }
   return status;

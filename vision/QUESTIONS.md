@@ -604,6 +604,24 @@ is merely very wrong rather than obviously absent.
 Three instances found in three different packages, none of them looking for it, is also the argument
 that there will be more.
 
+**And a fourth thing happened on 2026-09-04 that may dissolve the question rather than answer it.**
+`Files.open` was added — the streaming half of the filesystem, which had no projection — and it
+answers an `AsyncGenerator<Bytes, …>`. So `@/packages/box`'s `cat` now has **two loops for one job**:
+a `try await for` over a file, and a `while (true)` testing `in.read()` for an empty array. Same
+behaviour, two shapes, in the program whose whole purpose is to treat the two alike — and `cat -`,
+which interleaves them, cannot be written as one loop at all.
+
+If `In.read` became `In.stream()` answering a generator, the two halves are one function and **the
+sentinel stops existing rather than being given a better spelling.** That is a different move from
+*answer a `Read` sum*: it says the question was never about how end is *said* but about `In` not
+being a stream in a system that now has them. `Socket.recv` is the same argument one step behind —
+its `Read` sum is a hand-rolled generator step, and `Listener.accepted` next to it already answers a
+generator.
+
+Which leaves three answers rather than two, and the third is the largest: give `In` and `Socket` a
+sum, or give them a stream, or leave them and accept that a capability's *end* is spelled three ways
+depending on when it was written.
+
 ## Three type names are declared twice, and `union` is the reason it matters
 
 107 type names across `vision/`, three declared in more than one file:
