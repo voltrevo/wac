@@ -406,3 +406,31 @@ while correcting something.
 | [wactest](wactest/) — [ISOLATION.md](wactest/ISOLATION.md) | 2026-09-04 | test isolation, as the second consumer `schedule` ever had |
 | [quic](quic/) | 2026-09-04 | the datagram endpoint, as the second consumer of the `Net` projection |
 | [box](box/) — `src/echo.wac`, `src/cat.wac` | 2026-09-04 | two applets, as the first code written against `Out` and `In` |
+| [rlp](rlp/) | 2026-09-04 | `try` in place of a sticky error field, and four invented values that are never read |
+| [abi](abi/) | 2026-09-04 | a type described as data, where the data is an `i32[]`; `typeLen` disappears |
+| [ens](ens/) | 2026-09-04 | the first caller `abi` ever had, and the ceremony it takes to say one type |
+| [mpt](mpt/) | 2026-09-04 | `enum Proved { Present, Absent }`; a refinement of an integer, wanted again |
+| [bignum](bignum/) | 2026-09-04 | a `const struct`, `u32` shift counts, and a division that answers a `Result` |
+| [bls](bls/) | 2026-09-04 | `Fp` and `Canonical` as two types; a one-field wrapper measured at 2.6 ns against 395 |
+| [ssz](ssz/) | 2026-09-04 | a flat descriptor chosen for a JS boundary that was deleted on 2026-08-17 |
+| [lightclient](lightclient/) | 2026-09-04 | an unobservable check is unobservable *because* the answer is a `bool` |
+| [ethrpc](ethrpc/) | 2026-09-04 | the first composition of two rewritten packages, and a fault union across them |
+| [datetime](datetime/) | 2026-09-04 | `enum Offset { Utc, Unknown, At(i32) }`; the sixth thing left alone |
+| [codec](codec/) | 2026-09-04 | two closed sets spelled as `i32`, holding the same two values |
+| [raster](raster/) | 2026-09-04 | `Rect`, `Rgba`, `Tile` — and a value type destructured at the capability |
+| [page](page/) | 2026-09-04 | the JSX tree, written to find out what `Page` could not express |
+| [tty](tty/) | 2026-09-04 | a mode is a value, and it was one layer too high for the call to be declarable |
+| [ssh](ssh/) | 2026-09-04 | a per-session overlay filesystem, as a closure rather than a table |
+| [git](git/) | 2026-09-04 | `Change` and `Entry`; the eighth thing left alone, and the first about a capability |
+| [wac](wac/) | 2026-09-04 | nine reasons and one empty string; `forCommand` defaults to every grant |
+| [wacc](wacc/) | 2026-09-04 | an enum's payload is a struct; the `try` lowering written as the pass |
+| [ts](ts/) | 2026-09-04 | source-to-source is viable exactly when the transform only removes |
+| [webrtc](webrtc/) | 2026-09-04 | the one value type here that *removes* an operator |
+| [zstd](zstd/) | 2026-09-04 | nothing rewritten, and that is the finding |
+
+**This table was 23 rows against 40 packages until 2026-09-04**, and the twenty-one missing were the
+ones written after it was last touched — which is what an index maintained by hand does, and is worth
+one line here rather than an entry in `../QUESTIONS.md`, because nothing about it is a language
+question. Every rewrite from `rlp` onward was missing — half the exercise, in the file that is
+supposed to be its index. (`core` and `std` are in the table and are not under `packages/`, which is
+right: the column says *what*, not *which package*.)
