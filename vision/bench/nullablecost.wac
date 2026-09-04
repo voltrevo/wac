@@ -1,0 +1,167 @@
+// What `indexOf` answering `i32?` costs, per call, on the path that finds something.
+//
+// **This file compiles and runs**, like `slicecost.wac` beside it and unlike everything else under
+// `vision/`. It measures today's language, because today's language already has nullable primitives
+// and already boxes them.
+//
+//     wac run vision/bench/nullablecost.wac
+//
+// `../QUESTIONS.md` calls `indexOf` answering `i32?` *"the principle's largest concrete consequence
+// in this repository"* and sizes it at 734 call sites, 355 of which test the sentinel. What that
+// entry does not say is that `spec/spec/types.md` has already ruled on the representation:
+//
+//   > **It is boxed.** No wasm numeric type has a null, so a nullable primitive is stored as a
+//   > reference to a one-field struct the compiler synthesises … So `i32?` costs an allocation per
+//   > non-null value  —  `[§wac-nullable-primitive-4mzq7vp]`
+//
+// So the change puts an allocation on the **found** path of the most-called function in the string
+// API, and none on the missing path, where `null` is a null reference and free. The asymmetry is the
+// whole finding and it is the wrong way round: a search that finds something is the common case.
+//
+//   sentinel-hit    i32 find(…) answering an index          nothing allocated
+//   nullable-hit    i32? find(…) answering an index         one box per call
+//   sentinel-miss   i32 find(…) answering -1                nothing allocated
+//   nullable-miss   i32? find(…) answering null             nothing allocated
+//   again           the control, measured last
+//
+// ## What it answered, on the v8 host, 2026-09-04
+//
+//     calls 4194304, best of 3, milliseconds
+//                  hit     miss
+//     sentinel      77      145
+//     nullable      83      146
+//     again         78
+//
+// The control came back at 78 against 77, so 6 ms on the hit arm is real and 1 ms on the miss arm
+// is not.
+//
+// **The box is 1.4 ns** — `6 ms / 4.19M` — which is a one-field `struct.new`, about half the 2.6 ns
+// `slicecost.wac` measures for a three-field one. **And it is 0 ns when the answer is `null`**,
+// exactly as the representation says it should be: a missing answer is a null reference and there is
+// nothing to allocate.
+//
+// The miss arm is slower in both columns because it scans the whole buffer; the columns are not
+// comparable to each other, only within themselves.
+//
+// So the throughput cost is 8% of a short `indexOf` that finds something, and nothing when it does
+// not. That is small. What it is not is *nothing*, and the shape is backwards from the intuition
+// that an absent answer is the expensive one — it puts one allocation on the common path of the
+// most-called function in the string API, 734 call sites over.
+
+import { Core, Cli } from "std/platform.wac";
+
+/** A short scan that finds its byte, which is what `indexOf` mostly does. */
+i32 findSentinel(u8[] b, i32 from, i32 want) {
+  for (i32 i = from; i < b.len(); i++) {
+    if (b[i] == want) { return i; }
+  }
+  return -1;
+}
+
+i32? findNullable(u8[] b, i32 from, i32 want) {
+  for (i32 i = from; i < b.len(); i++) {
+    if (b[i] == want) { return i; }
+  }
+  return null;
+}
+
+i64 best(i64 a, i64 b) { return a < b ? a : b; }
+
+string pad(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  // A short haystack, scanned from a moving start, so the scan is a handful of comparisons and the
+  // per-call cost is visible. A long scan would drown it, which is the honest caveat: this measures
+  // the calls that dominate `indexOf`'s 734 sites, not a search through a megabyte.
+  i32 n = 64;
+  u8[] hit = u8[n]();
+  u8[] miss = u8[n]();
+  for (i32 i = 0; i < n; i++) { hit[i] = (i * 7) & 0x3F; miss[i] = 1; }
+
+  i32 rounds = 3;
+  i32 calls = 1 << 22;
+  i64 sink = 0;
+
+  i64 tSentHit = 0x7FFFFFFFFFFFFFFF;
+  i64 tNullHit = 0x7FFFFFFFFFFFFFFF;
+  i64 tSentMiss = 0x7FFFFFFFFFFFFFFF;
+  i64 tNullMiss = 0x7FFFFFFFFFFFFFFF;
+  i64 tAgain = 0x7FFFFFFFFFFFFFFF;
+
+  for (i32 r = 0; r < rounds; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    i32 acc = 0;
+    for (i32 k = 0; k < calls; k++) {
+      i32 p = findSentinel(hit, 0, (k * 7) & 0x3F);
+      if (p >= 0) { acc = acc + p; }
+    }
+    tSentHit = best(tSentHit, core.monotonicNanos().wait() - t0);
+    sink = sink + (acc as i64);
+
+    t0 = core.monotonicNanos().wait();
+    acc = 0;
+    for (i32 k = 0; k < calls; k++) {
+      i32? p = findNullable(hit, 0, (k * 7) & 0x3F);
+      if (p is not null) { acc = acc + p!; }
+    }
+    tNullHit = best(tNullHit, core.monotonicNanos().wait() - t0);
+    sink = sink + (acc as i64);
+
+    t0 = core.monotonicNanos().wait();
+    acc = 0;
+    for (i32 k = 0; k < calls; k++) {
+      i32 p = findSentinel(miss, 0, 0);
+      if (p >= 0) { acc = acc + p; }
+    }
+    tSentMiss = best(tSentMiss, core.monotonicNanos().wait() - t0);
+    sink = sink + (acc as i64);
+
+    t0 = core.monotonicNanos().wait();
+    acc = 0;
+    for (i32 k = 0; k < calls; k++) {
+      i32? p = findNullable(miss, 0, 0);
+      if (p is not null) { acc = acc + p!; }
+    }
+    tNullMiss = best(tNullMiss, core.monotonicNanos().wait() - t0);
+    sink = sink + (acc as i64);
+
+    t0 = core.monotonicNanos().wait();
+    acc = 0;
+    for (i32 k = 0; k < calls; k++) {
+      i32 p = findSentinel(hit, 0, (k * 7) & 0x3F);
+      if (p >= 0) { acc = acc + p; }
+    }
+    tAgain = best(tAgain, core.monotonicNanos().wait() - t0);
+    sink = sink + (acc as i64);
+  }
+
+  core.log("calls " + itoa(calls) + ", best of " + itoa(rounds) + ", milliseconds");
+  core.log("             hit     miss");
+  core.log("sentinel" + pad(i64toa(tSentHit / 1000000), 8) + pad(i64toa(tSentMiss / 1000000), 9));
+  core.log("nullable" + pad(i64toa(tNullHit / 1000000), 8) + pad(i64toa(tNullMiss / 1000000), 9));
+  core.log("again   " + pad(i64toa(tAgain / 1000000), 8));
+  core.log("sink " + i64toa(sink));
+  return 0;
+}
+
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  bool neg = v < 0;
+  i32 n = neg ? 0 - v : v;
+  string out = "";
+  while (n > 0) { out = string.fromCodepoint(48 + (n % 10)) + out; n = n / 10; }
+  return neg ? "-" + out : out;
+}
+
+string i64toa(i64 v) {
+  if (v == 0) { return "0"; }
+  bool neg = v < 0;
+  i64 n = neg ? 0 - v : v;
+  string out = "";
+  while (n > 0) { out = string.fromCodepoint(48 + ((n % 10) as! i32)) + out; n = n / 10; }
+  return neg ? "-" + out : out;
+}

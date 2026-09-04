@@ -8,6 +8,11 @@
 #
 # Two things it has to do to get a parse-stage answer:
 #
+#   - **Skip `vision/bench/`.** Those files are the one thing under `vision/` written in *today's*
+#     language on purpose — they measure a proposal's cost with a struct standing in for the type
+#     it proposes — so a tool asking where today's parser refuses vision syntax has nothing to say
+#     about them, and the stale-spelling pass would be asking them to use spellings that do not
+#     exist.
 #   - **Strip the imports.** `vision/` imports modules the compiler does not carry — its own
 #     `vision/core/queue.wac` and the rest — and that fails during resolution, before parsing, so
 #     the file's real syntax is never reached. Blanking the import lines gets past it.
@@ -50,7 +55,7 @@ trap 'rm -rf "$work"' EXIT
 
 raw=${1:-}
 
-for f in $(find vision -name '*.wac' | sort); do
+for f in $(find vision -name '*.wac' -not -path 'vision/bench/*' | sort); do
   # Blank the imports rather than delete them, so reported line numbers still match the real file,
   # and take out the `…` so `{ … }` becomes an empty body the lexer accepts. Both have to go before
   # the parser is reached at all: an unresolved import aborts during resolution, and a lexical error
@@ -107,7 +112,7 @@ deno run --allow-read tools/visiondesugar.ts --canary > "$work/canary.wac" 2>/de
 canary=$("$WAC" build "$work/canary.wac" -o "$work/canary.wasm" --allow-read 2>&1 || true)
 if printf '%s' "$canary" | grep -q '^error'; then
   left=0
-  for f in $(find vision -name '*.wac' | sort); do
+  for f in $(find vision -name '*.wac' -not -path 'vision/bench/*' | sort); do
     deno run --allow-read tools/visiondesugar.ts "$f" > "$work/d.wac" 2>/dev/null || continue
     msg=$("$WAC" build "$work/d.wac" -o "$work/d.wasm" --allow-read 2>&1 \
       | grep -E "^error: (unexpected|expected)" -A 4 | grep -E "expected '|found '" | head -1 || true)

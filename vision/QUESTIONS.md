@@ -145,6 +145,28 @@ It is also the dominant shape of the sentinel idiom generally: **515 negative-se
 files**, and eight of eight sampled were an index or a position with `-1` for *absent*, not one a
 comparator.
 
+**And it allocates, which this entry did not say and the spec already had.**
+`[§wac-nullable-primitive-4mzq7vp]`: *"It is boxed. No wasm numeric type has a null, so a nullable
+primitive is stored as a reference to a one-field struct the compiler synthesises … So `i32?` costs
+an allocation per non-null value."* Measured in [`bench/nullablecost.wac`](bench/nullablecost.wac):
+
+    calls 4194304, best of 3, milliseconds
+                 hit     miss
+    sentinel      77      145
+    nullable      83      146
+    again         78
+
+**1.4 ns a box, and 0 ns when the answer is `null`.** The asymmetry is the part worth having,
+because it is the opposite way round from the intuition: a search that *finds* something pays, a
+search that misses does not. So the change puts one allocation on the common path of the most-called
+function in the string API. Eight percent of a short hit is small — but it is a per-call allocation
+across 734 sites, and *absence is a type* is exactly the principle that would have argued the
+opposite, that a sentinel is the thing with a hidden cost.
+
+The entry was written from the call-site count alone and the representation was a tagged claim in
+`spec/spec/types.md` the whole time, which is the failure mode `packages/README.md` names: a design
+written beside a tested specification and not against it.
+
 **And it compounds with the narrowing gap above.** Without narrowing, each of those 355 sites goes
 from `if (p < 0)` to a null test *and* an unwrap at every use. With narrowing it is a test and a
 name. So the two decisions are one decision taken twice, and taking *absence is a type* first is the

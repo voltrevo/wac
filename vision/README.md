@@ -55,6 +55,13 @@ out: it is **generated** rather than agreed. `tools/visiongrammar.sh` runs today
 every `.wac` under `vision/` and reports where the parser refuses, so it is a diff of two grammars
 derived from the code. Delete it and re-run the tool rather than editing it.
 
+**`bench/`** — the other odd one out, and odd in the opposite direction: it is written in **today's**
+language and it runs. A proposal with a runtime cost should have a number rather than an argument,
+and where a proposed type compiles to something writable today — `Slice<u8>` to a three-field struct,
+`i32?` to a synthesised one-field box that already exists — today's compiler can supply it. Run by
+hand; `tools/visiongrammar.sh` skips the directory, since asking where the parser refuses vision
+syntax has nothing to say about a file that deliberately does not use any.
+
 An example belongs to one tier at a time and moves between them freely. The line between the first
 two is worth showing rather than defining: a server, and an import written from the project root, are
 both the best spelling of what they do.
