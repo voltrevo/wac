@@ -68,6 +68,7 @@ export struct Sys {
   Proc proc;
   Env env;
   Out out;
+  In in;
   Clock clock;
   Random random;
 
@@ -196,6 +197,28 @@ export struct Out {
 }
 
 /** Time is a capability because reading it is a fact about the machine, not about the program. */
+/**
+ * Standard input, which had no projection at all.
+ *
+ * `readStdin` is a host capability — `packages/ssh/src/ssh.wac` and four `platform` files use it —
+ * and none of the seven had it. `Out` is the one it would go on and `Out` is named for output, which
+ * is the tell: **the seven do not group by the same thing.** `Files`, `Net` and `Proc` group by
+ * *resource*; `Env` groups by *facts about how this program started*; `Out` groups by *direction*;
+ * `Clock` and `Random` are single capabilities raised to types. Standard input falls exactly where
+ * direction meets resource, and that is why it fell through.
+ *
+ * **Adding `In` picks one of two answers and the other may be better.** The alternative is renaming
+ * `Out` to `Io` and putting all three there, which keeps the count at seven and matches how the host
+ * groups them — `std/platform.wac` counts `write`, `writeErr` and `readStdin` as one group of three.
+ * Against it: `box`'s ten applets that only write are the whole argument for the narrowest useful
+ * projection, and an `Io` hands them a read they do not need. `../QUESTIONS.md` has it as a question
+ * rather than a preference, because it is the grouping principle that needs settling and not this
+ * type.
+ */
+export struct In {
+  async u8[] read(this);
+}
+
 export struct Clock {
   i64 nowMillis(const this);
   i64 monotonicNanos(const this);

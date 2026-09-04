@@ -228,10 +228,31 @@ that asks for one.
 `exitCode` is not authority over processes either. It is a fact about *this* process, in the same
 family as `Env`'s `arg` and `cwd`, and it is on `Proc` because the host groups it there.
 
+The other four, checked against the host rather than waiting for a consumer: `Env` is complete, four
+of four. `Clock` and `Random` are single capabilities raised to types. And **standard input has no
+projection at all** — `readStdin` is a host capability that `packages/ssh` and four `platform` files
+use, and none of the seven had it.
+
+**That last one names the root cause, which is why all four defects are different.** The seven do not
+group by the same thing:
+
+    Files, Net, Proc    by resource
+    Env                 by facts about how this program started
+    Out                 by direction
+    Clock, Random       single capabilities raised to types
+
+Standard input falls exactly where *direction* meets *resource*, and that is why it fell through
+rather than merely being forgotten. A grouping with more than one principle has a gap wherever the
+principles disagree, and each of the three consumer-found defects is one of those gaps seen from
+inside: `Net` short by a shape is *resource* failing to say which transport, `Proc` short by its
+purpose is *resource* naming a noun where the authority is a verb.
+
 So the question is not whether to have projections — `fs` showed one paying for itself in a line, and
-the grant boundaries are real. It is that **a group derived from a count describes the count**, and
-the four still unexamined — `Env`, `Out`, `Clock`, `Random` — have had exactly as much design
-attention as these three had before somebody wrote against them.
+the grant boundaries are real. It is **what the grouping principle is**, and the concrete form of
+that question is small enough to answer: `In` beside `Out`, or rename `Out` to `Io` and put all three
+there? The host counts `write`, `writeErr` and `readStdin` as one group of three, which argues for
+`Io`. `box`'s ten applets that only write are the argument for the narrowest useful projection, which
+argues against. `vision/std` has `In` for now, and that is a placeholder rather than an answer.
 
 ## Nothing here has a build story, and the ladder is the reason it needs one
 
