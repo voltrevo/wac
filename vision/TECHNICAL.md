@@ -392,7 +392,7 @@ struct Sys {
     schedule this.pending.push;
 
     while (this.pending.len() > 0) {
-      match (this.pending.pop()) {
+      match (this.pending.pop()!) {
         Ready { call }:      { await;   call(); }
         Waiting { t, call }: { await t; call(); }
       }
@@ -712,6 +712,61 @@ async void example(Sys sys) {
 async i32 add(Slot s, Ticket<i32> t) {
   s.n += await t;
   return s.n;
+}
+```
+
+**Not yet.**
+
+---
+
+## `T?` adds one level of absence
+
+```wac
+void example() {
+  Node   n = Node();
+  Node?  a = null;
+  Node?? b = null;
+  Node?? c = a;
+  Node?? d = n;
+
+  a is null;        // true
+  b is null;        // true
+  c is null;        // false
+  c! is null;       // true
+  d!! is n;         // true
+}
+```
+
+**Not yet.**
+
+---
+
+## `pop` answers an absence rather than trapping
+
+```wac
+void example() {
+  Vec<i32> v;
+
+  v.pop() is null;      // true
+  v.push(3);
+  v.pop()!;             // 3
+  v.pop() is null;      // true
+}
+```
+
+**Not yet.**
+
+---
+
+## `pop` says the same thing at a nullable element type
+
+```wac
+i32 example(Vec<Node?> v) {
+  Node?? got = v.pop();
+
+  if (got is null)  { return 0; }     // the vec was empty
+  if (got! is null) { return 1; }     // it held a null
+  return 2;
 }
 ```
 

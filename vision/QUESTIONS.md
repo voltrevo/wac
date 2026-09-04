@@ -100,3 +100,10 @@ code is assumed throughout. Whether `std` should assume it is open. A sync `main
 own work holds a `Result` and has nowhere to put it, so it either matches on it to pick an exit code
 or discards it. `Result<i32> main` would answer that and is ugly; nothing else has been proposed.
 
+## Matching in a `while` or `for` condition
+
+`Sys.drain` writes `this.pending.pop()!` under a `len()` test, which is two operations and an unwrap
+where `while (Continuation c = this.pending.pop())` would be one of each. Whether that is a
+nullable-specific form, a `match` in a condition, or something in the `if let` family is open — as
+is whether it reaches `for`, and whether it binds an enum variant as well as a non-null.
+
