@@ -102,7 +102,7 @@ each is; this is the index.
 | proposal | where | the argument, in one line | the cost |
 |---|---|---|---|
 | `Slice<T>` / `Bytes` | [`../core/slice.wac`](../core/slice.wac) | two arguments that must travel together and must not be swapped is a struct | a view retains the array it was cut from |
-| an explicit barrel | [`../core/core.wac`](../core/core.wac) | `export` marks what leaves a file; a package needs a second level | nothing resolves a directory today |
+| an explicit barrel | [`../core/core.wac`](../core/core.wac) | `export` marks what leaves a file; a package needs a second level | lands in `check.wac`'s export table, not the resolver — and wants its own diagnostic, as code 210 did |
 | a named type | `export union<A, B> Fault;`, `export Slice<u8> Bytes;` | one form whether the type is a union or an instantiation | distinct type or alias is undecided |
 | `try await for` | [`stream`](stream/), [`server`](server/) | a loop over a failing async generator has to say both things | three keywords on one head |
 | `secret` | [`crypto/src/secret.wac`](crypto/src/secret.wac) | `const` is already a taint that propagates; point the machinery at a second property | it would refuse AES, and it inherits `issues/lang/0315a` |
@@ -145,3 +145,4 @@ finding whether the thing it wants already exists.** Weigh the two lists differe
 | [crypto](crypto/) | 2026-09-04 | a `secret` qualifier — one proposal, not a rewrite |
 | [sh](sh/) | 2026-09-04 | handing authority on, and what cannot cross |
 | [box](box/) | 2026-09-04 | 63 signatures measured; where per-function authority stops |
+| [wacpkg](wacpkg/) | 2026-09-04 | the two import proposals, against the resolver |
