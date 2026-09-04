@@ -105,8 +105,9 @@ answers below.
 **The wasmtime host may not have the limit at all**, and this is what makes it more than a
 documentation gap. `--host wasmtime` exists so that *"a wac program does not depend on one"* engine.
 Here the split is in the **source**, so every host carries a shape chosen for V8, and a reader of
-`font16.wac` sees two arrays and no reason unless they open the doc comment. Worth measuring which
-engines have which ceiling before choosing between the three; that measurement does not exist.
+`font16.wac` sees two arrays and no reason unless they open the doc comment. V8's ceiling is measured
+above and is exactly 10,000; **wasmtime's is not**, and that is the number that decides between the
+three.
 
 **Not urgent.** Two sites, both working, both commented. It is filed because the third site will be
 written by somebody who has not read either, and because the number to stay under is currently
