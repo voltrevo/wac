@@ -61,6 +61,52 @@ language has no spelling for, a rule that turns out to be unusable at scale, a h
 in ten lines. Each package's README ends with that list, and the real ones become entries in
 `../QUESTIONS.md`.
 
+## What thirteen of them found, which no one of them could
+
+Four things recur, and none is in any single package's list.
+
+**The constructs ran out at nine.** Packages one to nine each wanted something the language has no
+spelling for. Packages ten to thirteen wanted nothing new — every construct `regex`, `crypto`, `sh`
+and `box` reached for was already filed or already invented. That is a result, not an exhaustion:
+the missing-construct question has been answered as fully as writing more packages will answer it,
+and what kept turning up afterwards was measurements.
+
+**The pull toward `Result` is wrong when the outcomes are peers.** Twice a redesign wanted to
+collapse three named cases into `Result<T?, E>`, and twice it was wrong for the same reason.
+`http`'s `Parsed` is *complete, refused, not yet* and `regex`'s `Searched` is *found, absent, gave
+up* — in both, two outcomes that share a constructor let a caller handle one and silently treat the
+other as it. `regex`'s original comment says so in as many words: the budget answer *"is deliberately
+not the same answer as 'no match'"*. A `Result` is right when one arm is a failure and wrong when
+both arms are answers.
+
+**Three times the right answer was to change nothing, and each was guarded by a comment that read
+like a limitation.** `json`'s lazy object index (measured: 32 members and 15 lookups), `Buf`'s
+public `len` field and one-byte `reserve`, and `regex`'s flat class arrays — whose comment says *"wac
+has no generics-free way to hold a list of structs"* and which turns out to be a layout choice, since
+`Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
+written in the language of a workaround is worth checking before it is treated as one.**
+
+**Authority is per-instance, and per-function authority stops at the module edge.** `sh` found that a
+capability cannot cross *into* a spawned child, because a child is a separate instance and a
+reference does not cross one. `box` found that it cannot be subdivided *within* a module: 63 applets
+all take `(Core, Cli, Fs, Args)` and ten never mention `fs`, because one module has one grant set.
+Same fact, opposite directions. Both `SHOWCASE.md` entries about authority describe the inside, and
+nothing tells a reader where the inside ends.
+
+## And the failure mode of the exercise itself
+
+Seven claims that something was missing were wrong, and one claimed a mechanism that does not exist.
+Module-level `const`, `trap` with a message, a `static` keyword, a return-type-only type parameter,
+string interpolation, `main`'s exit code, `Vec` of structs — all present, all three lines of test
+away. `core`'s root does *not* aggregate its files' exports, which I asserted and built an argument
+on.
+
+The tool in `tools/visiongrammar.sh` cannot catch this: it reports what today's parser **refuses**,
+so inventing syntax is instrumented and believing in an absence is not. What catches it is reading
+`spec/spec/grammar.md`, `generics.md` and `strings.md` — and `../GRAMMAR.md` lists which authority
+caught which. **The exercise is reliable at finding where a design is awkward and unreliable at
+finding whether the thing it wants already exists.** Weigh the two lists differently.
+
 ---
 
 | what | written | against |
