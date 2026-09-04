@@ -129,29 +129,33 @@ nowhere to put it, so it matches on it to pick an exit code or discards it. `Res
 answer that and is ugly. `vision/packages/server` writes the match, which works and means every
 program that can fail to acquire a capability writes the same four lines.
 
-## Narrowing a nullable, which is what the loop question was really about
+## Narrowing a nullable — answered as to why, and expensive to change
 
 Filed as *matching in a `while` or `for` condition*, on the strength of
-`while (Continuation c = q.pop())`. Read against the compiler, the loop is not the problem.
+`while (Continuation c = q.pop())`. The loop was never the problem: `for_init` may declare, so
+`for (N? c = next(0); c is not null; c = next(c!.v + 1)) { … }` compiles today.
 
-**The loop shape already exists.** `for_init` may declare, so
-`for (N? c = next(0); c is not null; c = next(c!.v + 1)) { … }` compiles today, measured.
+What does not exist is narrowing a nullable — after `c is not null`, `c` is still `N?`, in a loop and
+in an `if` alike. **And `issues/lang/closed/0029` already says why**, in its resolution: narrowing
+works by *"a `const` shadowing binding"* of the type that was named, and *"what does not narrow, all
+documented: `is not`, a field or index on the left, and any other condition shape."*
 
-**What does not exist is narrowing a nullable.** After `c is not null`, `c` is still `N?` — in a
-loop condition *and in an `if`*. `if (c is not null) { return c.v; }` is refused with *"unwrap it
-with `!`, or test it with `is null` first"*, measured. So every use inside the test needs a `!`.
+So it is not type-versus-null and not an oversight. `if (s is Circle)` narrows by **substituting**
+the type that was named; `if (c is not null)` names the type being **excluded**, and the mechanism
+has no subtraction. For nullables the subtraction is trivial — `T?` minus null is `T` — which makes
+this a small special case rather than the flow analysis a since-deleted paragraph in `enums.md`
+claimed it needed.
 
-And it is inconsistent with the neighbouring feature: `if (s is Circle) { return s.r; }` **does**
-narrow, measured, and `structs.md` documents it. A type test narrows and a null test does not.
+**The cost of adding it is a migration, and `0029` is the precedent for exactly that.** Its own
+resolution names the shape: *"a feature that removes the need for a workaround will break code using
+the workaround, and the docs are code too."* Unwrapping a non-nullable is an error — measured — so
+every `if (c is not null) { … c! … }` becomes a redundant unwrap the day narrowing lands. The tree
+has **1,445 null tests and 1,730 unwraps**. `0029` got away with it because `rg` found no uses of
+the idiom it broke; this one would not.
 
-That is the question. Not a loop form — whether `is not null` should narrow the way `is T` does,
-and if not, why the two tests differ.
-
-**It matters more once `Option` goes.** `Option` narrows, because `case Some(v)` binds the payload;
-`T?` does not. The tree has 811 nullable declarations against 86 `Option` mentions, so the migration
-is nearly done — but the 21 `case Some(v)` arms in it are places that would trade a bound name for
-an unwrap. If `is not null` narrowed, that trade would cost nothing, and removing `Option` would be
-pure subtraction.
+That is the decision: a small special case in the checker, against a sweep of the same order as the
+tree's entire unwrap count. And it gates removing `Option` cleanly, since `Option` narrows and `T?`
+does not.
 
 ## How should a `Vec` drop its reference to a popped element?
 
