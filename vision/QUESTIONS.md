@@ -4725,8 +4725,11 @@ every capability call — `packages/ts` produces the bridge — and it does not.
 D1 holds today because every write in a 924-line file is careful, and it is checked at the end by the
 differential. `@/packages/ts/src/blank.wac` makes it structural: a buffer whose only mutation is
 `blank(from, to)`, which cannot change the length and cannot touch a `\n`. A stripper that erased by
-deleting would not compile. The bundler — step 4 of `design/system/0009`, unwritten in both trees —
-would inherit the rule instead of re-deriving it.
+deleting would not compile. `packages/ts/src/bundle.wac` writes into the same buffers and re-derives
+the rule, and would inherit it instead.
+
+(An earlier version of this paragraph called the bundler *unwritten in both trees*. It is 544 lines
+in the shipped one — see the note below.)
 
 That is the small version of a question this directory keeps meeting from the other side: **a design
 decision written in a doc and held by discipline, where a type could hold it.** Every instance so far

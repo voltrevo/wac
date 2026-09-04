@@ -2,11 +2,15 @@
 
 TypeScript to JavaScript, in wac. `design/system/0009` is the argument for it.
 
-The job has two halves: **erase the types**, and **flatten a module graph into one file**. The first
-is here; the second is not written yet.
+The job has two halves: **erase the types**, and **flatten a module graph into one file**. Both are
+here.
 
-    src/lex.wac      tokens of TypeScript and JavaScript
-    src/strip.wac    type erasure, leaving JavaScript in the same bytes
+    src/lex.wac        tokens of TypeScript and JavaScript
+    src/strip.wac      type erasure, leaving JavaScript in the same bytes
+    src/bundle.wac     import resolution, module order, one file out, renaming what collides
+    src/transform.wac  the two, composed
+    src/archive.wac    the file set a bundle is built from
+    src/main.wac       the command
 
 ## Why this is not a TypeScript compiler
 
@@ -51,4 +55,13 @@ cast, `(a ? f(x) : c)` against a return type, `f(x as T)` against `(x as T)`. Th
 shape: after a type-level operator — `=>`, `|`, or a second `as` — what follows is more type, and
 reading it as code left an object type behind as a statement.
 
-Still to do: the bundler, which is step 4.
+**This said *"still to do: the bundler, which is step 4"* until 2026-09-04, and step 4 has been done
+for a while.** `design/system/0009`'s own status table reads *"4 — bundler | **done** — the bridge
+bundles to 214 KB and Deno parses it"*, `src/bundle.wac` is 544 lines, `main.wac` and
+`transform.wac` call `bundle()`, and `test/wac/bundle_test.wac` exercises it. Two sentences in this
+file — the opening summary and this line — described the package as half-written while the other half
+was in the directory.
+
+The design note carries the state and this README carried a copy of it. That is the ordinary way a
+status line goes stale: the copy has no reason to be visited when the work lands, because the work
+lands somewhere else.

@@ -43,8 +43,8 @@ it, and the two files that prove the two halves were written on the same day.
 D1 holds because every write in a 924-line file is careful, and it is checked at the end by the
 differential. `Blanked` starts as a copy of the source and its only mutation is `blank(from, to)`,
 which cannot change the length and cannot touch a `\n`. **A stripper that erased by deleting would
-not compile**, because there is no operation for it — and the bundler, which is step 4 and unwritten
-in both trees, would inherit the rule instead of re-deriving it.
+not compile**, because there is no operation for it — and `src/bundle.wac`, which writes into the
+same buffers and re-derives the rule, would inherit it instead.
 
 ## Third flat table, first with no reason at all
 
@@ -82,6 +82,33 @@ That nesting is the **good** case of the flattening question, and
 [`@/packages/box/src/upper.wac`](../box/src/upper.wac) is the bad one — a stacked transform with the
 same member at two depths. Both are now in this directory, which is what makes the question
 answerable rather than a preference.
+
+## The half of this package I recorded as unwritten is 544 lines
+
+`packages/ts/README.md` said, in its opening summary and again at the foot, that the bundler was
+*"still to do … step 4"*. `design/system/0009`'s status table says **done** — *"the bridge bundles to
+214 KB and Deno parses it"* — `src/bundle.wac` is 544 lines, `main.wac` and `transform.wac` call
+`bundle()`, and `test/wac/bundle_test.wac` exercises it.
+
+I read the README, because that is what one reads, and repeated the claim in four places here before
+checking the note that owns it. Both are now fixed.
+
+**The mechanism is worth more than the correction.** A status copied into a second file has no reason
+to be visited when the work lands, *because the work lands somewhere else* — the commit that finished
+the bundler touched `src/`, and nothing about it pointed at a sentence in the README. That is not the
+same as a comment going stale next to the code it describes, which at least sits where an editor is
+looking.
+
+Swept the rest: three design notes carry status tables and three READMEs say something is *not
+written*. `packages/git`'s ref-directory walk and `packages/tor`'s onion-service program are both
+genuinely unwritten and both agree with their notes. **`ts` was the only one out**, which bounds the
+problem rather than opening it — and the tor note records the mirror-image failure already, that the
+interop matrix's *"first act was to catch step 6 above being marked done against the wrong
+condition"*.
+
+So the pair exists in one repository: a status that said done and was not, and a status that said
+not-done and was. What both have in common is a second copy — and the rule the tree already applies
+to rules, *a rule written twice is a rule that drifts*, has never been applied to a **state**.
 
 ## What could not be written
 

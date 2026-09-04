@@ -2,7 +2,7 @@
 //
 // `strip` and the two types it is defined over. The lexer is not re-exported: a caller wanting
 // tokens wants `@/packages/ts`'s job done, and the one consumer that genuinely wants tokens is the
-// bundler, which is step 4 of `design/system/0009` and is not written in either tree.
+// bundler, `packages/ts/src/bundle.wac`, which is 544 lines and is not rewritten here.
 
 export { Kind, Token } from "./token.wac";
 export { Blanked } from "./blank.wac";

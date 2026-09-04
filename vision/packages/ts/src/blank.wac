@@ -33,8 +33,9 @@ export struct Blanked {
    *
    * The newline rule is here rather than at each caller, which is the whole of the change: in the
    * shipped file the loop that writes spaces is written once and the *decision* that it must skip
-   * newlines is a comment above it. A second stripper — the bundler, which
-   * `packages/ts/README.md` lists as step 4 and not yet written — would write the loop again.
+   * newlines is a comment above it. `packages/ts/src/bundle.wac` — 544 lines, and the half of the
+   * package this exercise briefly recorded as unwritten — writes into the same buffers and derives
+   * the rule again.
    */
   void blank(this, i32 from, i32 to) { … }
 
