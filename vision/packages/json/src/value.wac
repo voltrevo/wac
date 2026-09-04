@@ -33,8 +33,8 @@ export enum JsonValue {
   /** The string, or null if it is not one. Absence is the type; there is no `asStrOr`. */
   string? asStr(const this) {
     return match (this) {
-      Str(b): string.fromBytes(b),
-      else:   null,
+      Str(b):  string.fromBytes(b),
+      default: null,
     };
   }
 
@@ -42,7 +42,7 @@ export enum JsonValue {
   JsonValue? get(const this, string key) {
     return match (this) {
       Object(o): o.get(key.toBytes()),
-      else:      null,
+      default:   null,
     };
   }
 
@@ -50,7 +50,7 @@ export enum JsonValue {
   JsonValue? at(const this, i32 i) {
     return match (this) {
       Array(a): i >= 0 && i < a.len() ? a.data[i] : null,
-      else:     null,
+      default:  null,
     };
   }
 }

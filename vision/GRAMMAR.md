@@ -67,7 +67,7 @@ Nine distinct constructs, in the order a parser would meet them:
 Every file stops at its first divergence, so none of these has ever been reached by the tool. They
 are here because they are written in the tree, not because anything found them:
 
-- `try for (u8[] chunk in src) { … }` — three packages, and it does not exist at all
+- `try await for (u8[] chunk in src) { … }` — three packages, and no part of it exists
 - `schedule this.pending.push;` — `std/platform`, past the `async` refusal
 - `defer { conn.close(); }` — `server/main` and `core/ticket`
 - `const i64 MAX_BODY = 1 << 20;` at module scope — three packages
@@ -75,6 +75,20 @@ are here because they are written in the tree, not because anything found them:
   value, or present with a value, and the standard keeps the last two apart
 - `fn<void()>` as a type — `core/ticket`, replacing today's `fn[void()]`
 - `\{…}` interpolation inside a string — `server/main`
+
+## What it cannot see
+
+It finds where vision is **ahead** of today's parser. It is blind to where vision code is **behind a
+vision decision** — a spelling that is valid today and that `DECISIONS.md` has already replaced
+parses fine, so nothing reports it.
+
+That is not hypothetical. Four match arms in this tree were written `else:`, which is today's
+spelling and which `DECISIONS.md` replaced with `default:` — reserving `_` for the payload wildcard,
+since reusing it for both would be a pun rather than a generalisation. The tool ran over those files
+and said nothing, because there was nothing for it to say.
+
+So the two halves need different instruments: this one for what the grammar adds, and reading
+`DECISIONS.md` for what it changes.
 
 ## The `…` is not a construct
 

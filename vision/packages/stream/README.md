@@ -50,8 +50,10 @@ counting bytes and distinguishing a broken input from a short one, so it is `cou
 a `Generator<T, void>`, and a stream that can fail is a `Generator<T, Result<void, E>>`. There is
 no loop for it. Letting `for … in` take any `R` and drop it would be exactly the thing
 `vision/README.md` refuses — a convenience that is right in the common case and silently wrong in
-the rest. So this file writes `try for (u8[] chunk in src) { … }`, which does not exist. Every
-loop here needs it, which is as strong a signal as this exercise can produce.
+the rest. So this file writes `try await for (u8[] chunk in src) { … }`, which does not exist. Every loop
+here needs it, which is as strong a signal as this exercise can produce — and the `await` is not
+decoration: these sources are `async gen`, so a plain `for … in` over one reads as synchronous and
+is not.
 
 **And `try` inside a generator has no stated meaning.** `try for` in an `async gen` propagates the
 source's `Err` as *this generator's return value*, not as a yield. That reads as the only sensible

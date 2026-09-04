@@ -1,0 +1,79 @@
+// What a test is.
+//
+// Today: `export string test_adds()`. The runner enumerates exports whose names begin with `test`,
+// calls each with no arguments, and reads a string — empty for pass. Three consequences, all of
+// them from the signature being fixed:
+//
+//   - **A test cannot ask for anything.** It takes no parameters, so a test that needs to read a
+//     file cannot be written in wac at all and has to live host-side. `packages/wactest/src/host.wac`
+//     and `built.wac` exist to work around exactly this.
+//   - **A test cannot be async**, for the same reason: there is nowhere for a ticket to go.
+//   - **The name is the contract.** `test` as a prefix is a string convention that nothing checks,
+//     and `harness/testRegistrars.ts` exists to keep two lists of spellings in step — they went out
+//     of step once and 28 tests went missing from MAP.
+//
+// None of that is about testing. It is about a module boundary that could only carry a string.
+
+import { Report } from "./assert.wac";
+import { Ticket } from "core/ticket.wac";
+import { Sys } from "std/platform.wac";
+
+/**
+ * A test is a function that takes what it needs and answers a `Report`.
+ *
+ * These four are the shapes, and **the runner tells them apart by reading the export's type**, not
+ * by its name. A wasm export carries its signature; `bindgen` already reads them to generate a
+ * TypeScript surface, so the information is there and is checked by the engine rather than agreed
+ * by convention.
+ *
+ *     export Report test_adds()                    // pure — no authority, cannot touch anything
+ *     export Report test_parses(Fixtures f)        // wants data, still cannot touch the world
+ *     export async Report test_reads(Sys sys)      // wants authority, and is awaited
+ *     export async Report test_serves(Sys sys)     // ...including one that spawns and drains
+ *
+ * The first shape is the interesting one. A test that takes nothing **provably** cannot read a
+ * file, open a port or see the clock — the same claim the language makes about any function,
+ * applied to the thing that is supposed to be checking the others. Today every test has exactly as
+ * much authority as the runner, because the runner is what wasm gives the module.
+ */
+
+/**
+ * What a runner hands a test that asked for a `Sys`.
+ *
+ * **A fake is an ordinary value**, which is the whole of it. `Sys` is not a singleton and nothing
+ * recognises a ticket by its type, so a test's `Sys` is one it built, its `Ticket`s settle when the
+ * test says so, and its clock is whatever it was constructed with. None of that needs a seam,
+ * an injection point, or a mode flag in the real one — the seam is the parameter.
+ */
+export struct FakeSys : Sys {
+  Vec<Continuation> pending;
+  Map<string, u8[]> files;
+  i64 now;
+
+  static FakeSys withFiles(Map<string, u8[]> files) { … }
+
+  async Result<u8[], NotGranted> readFile(this, string path) {
+    u8[]? got = this.files.get(path);
+    return got is null ? Result.Err(NotGranted(path)) : Result.Ok(got!);
+  }
+
+  i64 now(const this) { return this.now; }
+}
+
+/**
+ * A test that asserts something is *refused* needs a canary, and the canary is a second grant.
+ *
+ * Proving a refusal means proving the capability could have worked. A test that hands over a `Sys`
+ * with no files and checks for `NotGranted` passes whether the guard exists or not. So the shape is
+ * two calls against two grants: one that must succeed, one that must not.
+ */
+export async Report checkRefused<V, E>(
+  T t,
+  fn<Ticket<Result<V, E>>()> allowed,
+  fn<Ticket<Result<V, E>>()> refused,
+  string what,
+) {
+  t.isTrue((await allowed()).isOk(), "\{what}: the canary grant should have worked");
+  t.isTrue((await refused()).isErr(), "\{what}: the narrowed grant should have been refused");
+  return t.report();
+}

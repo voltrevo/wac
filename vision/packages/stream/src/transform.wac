@@ -26,7 +26,7 @@ export async gen<u8[]> Result<void, union<E, NotText>> upperCase<E>(
 ) {
   Buf out = Buf.create();
 
-  try for (i32 c in scalars(src)) {
+  try await for (i32 c in scalars(src)) {
     out.pushScalar(toUpper(c));
     if (out.len() >= CHUNK) { yield out.take(); }
   }
@@ -44,6 +44,6 @@ export async gen<u8[]> Result<void, union<E, NotText>> upperCase<E>(
  */
 export async Result<i64, E> count<E>(AsyncGenerator<u8[], Result<void, E>> src) {
   i64 total = 0;
-  try for (u8[] chunk in src) { total += chunk.len(); }
+  try await for (u8[] chunk in src) { total += chunk.len(); }
   return Result.Ok(total);
 }

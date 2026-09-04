@@ -18,7 +18,7 @@ export async i32 main(Sys sys) {
     Err(NotGranted(what)): { sys.log("no port: \{what}"); return 1; }
     Ok(l): {
       sys.log("listening on 7000");
-      try for (Socket conn in l.accepted()) {
+      try await for (Socket conn in l.accepted()) {
         handle(sys, conn);
       }
     }

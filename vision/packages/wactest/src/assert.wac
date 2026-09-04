@@ -1,0 +1,95 @@
+// Assertions for tests written in wac.
+//
+// The original's header opens *"The shape is dictated by what wac provides"* and names three
+// things. Two of them are gone and one of them was never the reason.
+//
+//   - **"There is no top-level mutable state, so failures accumulate in a value the test owns and
+//     hands back."** Still true and still right. A test that owns its own result is a test that can
+//     run beside another one, and nothing about that was a workaround.
+//   - **"`trap` carries no message, so assertions record instead of trapping."** `trap` carries one
+//     now. Assertions still record, because recording was the better design for its own reason:
+//     one test reports every failure rather than only the first. The limitation and the decision
+//     happened to agree, and only one of them has gone away.
+//   - **"A test is an exported function returning `string`."** This is the one that changes. A
+//     `string` was the widest thing that could cross out of a module, so a structured failure had
+//     to be flattened into prose at the point it was noticed rather than at the point it is read.
+//
+// See `test.wac` for what a test is now.
+
+import { Vec } from "core/vec.wac";
+import { itoa, itoa64, ftoa } from "@/packages/fmt/src/fmt.wac";
+
+/** One thing that was wrong, kept apart so a reporter can lay it out rather than parse it back. */
+export struct Failure {
+  string what;
+  string expected;
+  string actual;
+}
+
+export struct Report {
+  Vec<Failure> kept;
+  /** Every failure, including the ones not kept. */
+  i32 total;
+
+  bool passed(const this) { return this.total == 0; }
+}
+
+export struct T {
+  Vec<Failure> kept;
+  i32 total;
+
+  static T create() { return T(Vec<Failure>.create(), 0); }
+
+  /**
+   * Record a failure. Assertions funnel through here.
+   *
+   * Only the first few are kept. Accumulating every one is right for a test that checks a dozen
+   * boundary lengths and useless for one that sweeps three hundred: a genuine break in a swept
+   * property fails on nearly every iteration, and printing all of them buries the count, the first
+   * case, and any other test's output under a wall of near-identical text. The count says how bad
+   * it is; the first few say what it is. Seen for real when a reversed GHASH identity produced 80.
+   */
+  void fail(this, string what, string expected, string actual) {
+    this.total += 1;
+    if (this.total <= 8) { this.kept.push(Failure(what, expected, actual)); }
+  }
+
+  Report report(const this) { return Report(this.kept, this.total); }
+
+  // ── Assertions ───────────────────────────────────────────────────────────────────────
+
+  void isTrue(this, bool cond, string what) {
+    if (!cond) { this.fail(what, "true", "false"); }
+  }
+
+  void eqI32(this, i32 got, i32 want, string what) {
+    if (got != want) { this.fail(what, itoa(want), itoa(got)); }
+  }
+
+  void eqStr(this, string got, string want, string what) {
+    if (got != want) { this.fail(what, want, got); }
+  }
+
+  /**
+   * A `Result` that was supposed to succeed, unwrapped.
+   *
+   * The original has no such thing because it has no `Result`. Every test of a fallible call
+   * writes the same four lines — check the sentinel, record a failure, return early — and the
+   * early return is the part that goes wrong, because a test that forgot it carries on against a
+   * value that was never produced.
+   */
+  T? okOr<V, E>(this, Result<V, E> r, string what) {
+    return match (r) {
+      Ok(v):  v,
+      Err(e): { this.fail(what, "Ok", "Err"); null },
+    };
+  }
+
+  /**
+   * A `Result` that was supposed to fail, and with what.
+   *
+   * `union` membership is what makes this checkable: `wantErr<NotFound>` on a call whose error set
+   * does not contain `NotFound` is a compile error rather than a test that can never pass.
+   */
+  void wantErr<V, E, W>(this, Result<V, E> r, string what) where W in E { … }
+}

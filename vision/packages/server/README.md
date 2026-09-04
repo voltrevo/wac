@@ -46,7 +46,9 @@ literal, in a file that also has integers meaning statuses and integers meaning 
 cleanup story next to `sys.atEnd`; `vision/QUESTIONS.md` already asks what example should capture
 it, and this is now the second package that needed it before the question was answered.
 
-**`try for` again**, over `l.accepted()`. Third package, same construct.
+**`try await for` again**, over `l.accepted()`. Third package, same construct — and the `await`
+matters here more than anywhere: a listener hands over connections as they arrive, so a loop head
+that did not say it suspends would be the most misleading line in the package.
 
 **Whether `main` may match on a `Result` to pick an exit code** is the shape of `main` question, met
 for real: `main` here matches `await sys.listen(7000)` and returns `1` from the `Err` arm, which

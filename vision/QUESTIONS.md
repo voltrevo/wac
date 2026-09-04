@@ -42,11 +42,25 @@ hang. Every case found so far dissolves: a ticket holds its own coroutine, so wh
 ticket can always drive it, and a capability that gives up should settle with an error rather than
 vanish. Left open because the better error is worth having if a case turns up.
 
-## `for … in` over an async generator
+## The loop head over an async generator that can fail
 
-Stepping one can answer `Waiting`, which a synchronous loop has no way to handle. So either that
-loop is legal only inside an async function, or iterating an async generator is a different
-construct.
+Two questions that turned out to be one loop. `for … in` steps a `Generator<T, void>`, and every
+stream in `vision/packages` is an `AsyncGenerator<T, Result<void, E>>` — so the head has to say two
+more things than it does.
+
+**That each step suspends has to be visible.** Four loops in this tree were written as plain
+`for … in` over an async source, which reads as synchronous and is not. Letting the head await
+implicitly is available and is the thing `README.md` refuses: `await` is a step boundary everywhere
+else in the language and is always written. So the loops now say `await`.
+
+**That the generator's failure propagates has to be visible too**, or it is dropped — the same
+refusal.
+
+Which leaves `try await for (Socket conn in l.accepted())`: three keywords on one head, each saying
+something real, and heavy enough that it is worth asking whether one of them can be implied without
+becoming the thing being refused. `try` on a loop also needs its meaning stated when the loop is
+inside a generator — it propagates the source's `Err` as *this* generator's return rather than as a
+yield.
 
 ## Whether `wait` caches what it is waiting on
 
@@ -123,16 +137,6 @@ operator answers `T?`. That is the one place flattening earns its keep, and wac 
 `??` today — so the question is whether adding one means giving it an explicit flatten, or not
 adding it.
 
-## `for … in` over a generator that can fail
-
-`for … in` steps a `Generator<T, void>`, so a generator whose return is a `Result` has no loop.
-Dropping the return would be the convenience `README.md` refuses — right in the common case,
-silently wrong in the rest. `vision/packages/stream` writes `try for (u8[] chunk in src) { … }` at
-every loop in the package, which is the strongest evidence available that something has to exist
-here. What
-`try` means when the loop is inside a generator also needs saying: it propagates the source's `Err`
-as *this* generator's return rather than as a yield.
-
 ## A generic method whose type parameter is only in the return type
 
 `vision/packages/json`'s parser funnels every failure through
@@ -175,4 +179,29 @@ then `await sys.drain()` before returning. `drain` loops until its queue is empt
 once accepting has stopped — and the accept loop suspends on the listener, which puts *it* in the
 queue too. A connection arriving during the drain is scheduled onto a queue being emptied. Whether
 that is fine, or a program that never exits, is not decidable from anything written down.
+
+## A bound on a type parameter
+
+`vision/packages/wactest` writes `wantErr<V, E, W>(this, Result<V, E> r, …) where W in E` — assert
+that a call failed with a particular error — and it is only worth having if asking for an error the
+callee cannot produce is a compile error rather than a test that can never pass. Membership in a
+union is already the rule `try` uses; nothing says how a signature *states* it. Six packages in,
+this is the first thing that wanted a constraint on a type parameter at all, which is either a sign
+the language does not need them or a sign that testing is where they start.
+
+## A block that ends in a value
+
+`wactest`'s `okOr` records a failure and answers `null` from one match arm: `Err(e): { this.fail(…);
+null }`. Nothing on the pages has a block in expression position. Without it every test of a
+fallible call writes a check, a `fail`, and an early return — and the early return is the part that
+gets forgotten, leaving the test running against a value that was never produced.
+
+## Whether a wac program can ask a module what its exports look like
+
+`wactest`'s runner tells a pure test from one wanting a `Sys` by **reading the export's type**
+rather than its name, which replaces `test` as a string convention that nothing checks — and
+`harness/testRegistrars.ts`, which exists to keep two lists of spellings in step and failed to once.
+`bindgen` already reads signatures, so it is not a new capability; what is new is a wac program
+doing it to a module it loaded. *The compiler is a library* is the neighbouring claim and it is
+about compiling rather than reflecting.
 

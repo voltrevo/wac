@@ -5,7 +5,7 @@
 // real package every transform carries its own `held` tail and re-solves that; here it is solved
 // exactly once, and a transform downstream of this never sees a chunk at all.
 //
-// That is the whole redesign. `for (i32 c in scalars(src))` cannot straddle anything, because a
+// That is the whole redesign. `await for (i32 c in scalars(src))` cannot straddle anything, because a
 // scalar is not divisible.
 
 import { Scalar, decode } from "@/packages/unicode/src/utf8.wac";
@@ -26,7 +26,7 @@ export async gen<i32> Result<void, union<E, NotText>> scalars<E>(
   u8[] held = u8[0]();
   i64 seen = 0;
 
-  try for (u8[] chunk in src) {
+  try await for (u8[] chunk in src) {
     u8[] input = held.len() == 0 ? chunk : held + chunk;
     i32 at = 0;
 

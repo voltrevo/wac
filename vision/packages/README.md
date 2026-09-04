@@ -72,3 +72,4 @@ in ten lines. Each package's README ends with that list, and the real ones becom
 | [http](http/) | 2026-09-04 | named unions, error-set composition |
 | [server](server/) | 2026-09-04 | `Sys`, `schedule`, `drain`, `defer` |
 | [url](url/) | 2026-09-04 | nested `T?`, `Result` |
+| [wactest](wactest/) | 2026-09-04 | a test's signature, fakes as values |
