@@ -15,7 +15,7 @@ say so. *"`pop` answers an absence rather than trapping"* is marked **not yet** 
 where a catch-all arm compiles today as `else:`, and *"matching an enum"*, which is only *not yet*
 because its example writes arms without `case` and matches a payload by type.
 
-**Ten of the thirty checked, five were this.** The other two: *"an `await` is a boundary because it
+**All thirty checked now, and seven were this.** The other two: *"an `await` is a boundary because it
 is written"* is a property of the language today — there is no preemption and
 `std/platform.wac` says *"a park in `waitAny` runs nothing at all"* — and only its coroutine example
 is *not yet*. *"`Vec<T>.pop` is written once and is honest at every `T`"* is written once today,
@@ -27,7 +27,20 @@ arm can leave"* (`continue` in a match **expression** is `expected an expression
 hyphenated attribute"* (`data-size="8"` is `unexpected token`), and *"`Sys.drain`"*, *"a continuation
 is a ticket and a call"*, *"calling a `Waiting` continuation … traps"* — all three of which name a
 **vision type** in the heading, so no reader takes them for a claim about wac. Naming the vision type
-is the whole difference.
+is the whole difference — and it is what let the remaining twenty be triaged rather than measured one
+at a time. Seventeen of them name `never`, `coroutine`, `schedule`, `try`, `T??`, `Ticket.any`, a
+verbatim name or a `Continuation` in the heading itself, so no reader can take them for a claim about
+wac. Two more were read and are fine: *"an unawaited call hands its continuation to the current
+target"* is half-shipped and says so, since *the current target* is `schedule`'s and today there is
+one scheduler; *"`wait` answers `Err`"* names the vision answer where the shipped one traps.
+
+The last two make seven. *"A nested pause does not change the caller's type"* is true today —
+measured, an `async` calling an `async` compiles and the caller still answers a ticket — and only the
+coroutine example is new. *"A test names itself"* is the subtlest: a test names itself today as
+`export string test_the_thing()`, and what is *not yet* is naming itself with a **sentence**,
+`@"test: an empty read returns End"`. Same shape as `pop` — the capability is there and the
+expressiveness is what changes — and a reader scanning would conclude wac's tests cannot name
+themselves.
 
 So a reader scanning headings and markers is being told that wac cannot do things it does. That is
 this directory's most expensive habit — `packages/README.md` counts seven times a rewrite claimed a
@@ -128,7 +141,7 @@ Node three() { return <"caption">Name</"caption">; }
 
 ---
 
-## A test names itself
+## A test names itself with a sentence, not an identifier
 
 ```wac
 export void @"test: an empty read returns End"() {
@@ -665,7 +678,7 @@ async void tick() {
 
 ---
 
-## A nested pause does not change the caller's type
+## A nested pause does not change the caller's type — shown with a coroutine
 
 ```wac
 void example() {
