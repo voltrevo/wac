@@ -260,6 +260,31 @@ contradicting a tagged claim without saying so, seven constructs claimed missing
 citation copied from a comment rather than read. A design written beside a tested specification, and
 not against it.
 
+## What the parser changed about that
+
+`vision/GRAMMAR.ebnf` and `tools/specparse.ts` landed on 2026-09-04 and moved two of the three
+weaknesses above.
+
+**Inventing syntax was already instrumented; now so is inventing a reference.** The parser found
+`Found(Match match)` in `regex` — a payload named with a keyword, which parses as nothing and which
+no amount of refusal-reporting could see because there was no construct to report. A separate check
+over every `import` in `vision/` against every `export` in it (147 names) found `union` being
+imported from `"core"` in three files. `union<A, B>` is a type form like `T[]` and `T?`; importing
+it is nonsense that reads perfectly well, and it survived because **this directory has never had a
+consumer of its own references.**
+
+**And the completeness claim reversed direction.** `GRAMMAR.md` is a list of what today's parser
+refuses, derived by subtraction, and a list of absences cannot say it is complete. A grammar that
+*accepts* all forty-five files can. That does not make the design right — a recogniser has no
+opinion about meaning — but it retires the specific worry that something is being used here that
+nobody has written down.
+
+**What is still uninstrumented is the third weakness, and it is the one that mattered most:**
+believing a feature is missing when it ships. Seven of those, and the parser is no help — a
+construct that already exists parses. The only instrument for it remains reading `spec/`, and the
+count of tagged claims cited from these pages has gone from zero to about a dozen, every one added
+while correcting something.
+
 ---
 
 | what | written | against |
