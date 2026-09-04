@@ -126,8 +126,18 @@ spelling and which `DECISIONS.md` replaced with `default:` — reserving `_` for
 since reusing it for both would be a pun rather than a generalisation. The tool ran over those files
 and said nothing, because there was nothing for it to say.
 
-So the two halves need different instruments: this one for what the grammar adds, and reading
-`DECISIONS.md` for what it changes.
+So the two halves need different instruments. The tool now runs a second pass over spellings
+**already known** to be wrong — `else:` for `default:`, `trap("…")` for `trap "…";`, a `static` that
+is not a keyword, `fn[` for `fn<`, `Option<` for `T?`. It reports none today.
+
+That pass cannot find a *new* kind of mistake, which is its honest limit: it is a list, not a
+parser. The general instrument is reading `spec/spec/grammar.md`, and the section above is what
+happens when nobody does.
+
+One check was written and removed rather than kept: `scheduler`, which was a keyword and is not one
+now. The *word* is ordinary English in these files — "the scheduler in force where it was called" is
+prose about a concept — so it fired on three comments every run, and a section that is never clean
+trains the reader to skip it.
 
 ## The `…` is not a construct
 

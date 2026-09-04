@@ -66,4 +66,37 @@ for f in $(find vision -name '*.wac' | sort); do
   fi
 done
 
+# ── Spellings that parse and are still wrong ─────────────────────────────────────────────────────
+#
+# The pass above finds where vision is *ahead* of today's parser. It is structurally blind to where
+# vision code is *behind* a vision decision: `else:` is a valid arm today and `DECISIONS.md`
+# replaced it with `default:`, so nothing rejects it and nothing reported it until a human read the
+# file. Same for a `trap("…")` that should be `trap "…";` and a `static` that is not a keyword.
+#
+# This is a list of spellings already known to be wrong, not a parser. It cannot find a *new* kind
+# of mistake, which is the honest limit of it — the general instrument for that is reading
+# `spec/spec/grammar.md`, and `vision/GRAMMAR.md` says so.
+echo
+echo "-- spellings that parse and are still wrong --"
+stale=0
+check() {   # pattern, what to write instead
+  hits=$(grep -rn --include='*.wac' -E "$1" vision || true)
+  if [ -n "$hits" ]; then
+    stale=1
+    printf '%s\n' "$hits" | sed "s|^|  |; s|$| → $2|"
+  fi
+}
+check '^[[:space:]]*else[[:space:]]*:'        'default: — DECISIONS.md, `_` is reserved for the payload wildcard'
+check '^[[:space:]]*case [A-Za-z_]'           'drop `case` — vision arms name the shape directly'
+check 'trap\('                                'trap "message"; — grammar.md has trap_stmt taking an expr'
+check '(^|[^A-Za-z_])static '                 'nothing — a method with no `this` is already static'
+check 'fn\['                                  'fn<…> — vision replaced the brackets'
+check '\bOption<'                             'T? — `?` nests, so there is no Option'
+check '\bPending<'                            'Ticket<'
+# No check for `scheduler`. It was a keyword and is not one now, but the *word* is ordinary English
+# in these files — "the scheduler in force where it was called" is prose about a concept, not a
+# stale spelling. A check that fires on three comments every run trains the reader to skip the
+# section, which costs more than the one spelling it would catch.
+[ "$stale" = 0 ] && echo "  none"
+
 exit 0
