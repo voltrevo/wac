@@ -2755,3 +2755,44 @@ standing in for a dearer one.
 is no such file*. Absence has nowhere to go — not an `Err` this can name, and no `exists` to say it
 with. Same hole as `Files.open` and `In.stream`, in a third place, which is why it belongs to the
 entry about a capability answering only its own failure rather than here.
+
+## The layering rule is broken in the one signature that has been used to justify a hole
+
+*`std` is below the packages* is the reason given, in `vision/std/platform.wac` and three entries
+here, for why a capability can only fail with `NotGranted`:
+
+- `Files.open` cannot answer `@/packages/fs`'s `Fault`, so a file that is a directory or was removed
+  underneath has no arm;
+- `Sink.write` cannot say *the disk is full*, only *the grant did not include this*;
+- `Files.stat` cannot say *there is no such file*, which is what a `stat` is for.
+
+Measured 2026-09-04: **`Proc.spawn` answers `Ticket<Result<Child, NotGranted>>` and takes
+`Vec<Grant>`, and both `Child` and `Grant` are declared in `@/packages/sh/src/exec.wac`.**
+`vision/std/platform.wac` imports one line, from `core`, and nothing from a package.
+
+So the rule is broken in one signature and load-bearing in three others, and the three where it holds
+are the three that produce holes this document has separately filed as problems. Two answers and they
+are not close:
+
+**The rule holds and these two move.** `Child` is a capability's answer, so it belongs beside
+`Socket` and `Listener` in `std`; `Grant` is a *request* crossing a spawn and belongs there too, and
+`@/packages/sh`'s whole subject is that a grant is the wire form of a capability rather than a
+package's idea. That is a small move and it makes the three holes real constraints rather than
+accidents — which is worth something on its own, because a constraint everyone works around is
+cheaper than one that is enforced unevenly.
+
+**Or it does not hold, and `Files` may answer a union the packages define.** That is what every
+complaint about `NotGranted` in this document actually wants, and it turns out to be the option
+already in use. What it costs is the thing the rule protects: `std` importing `@/packages/fs` makes
+the capability layer depend on a package, so a program that wants a file also links a filesystem
+library, and *which* library becomes part of the capability's type.
+
+Nothing chose between them. `Child` and `Grant` are where they are because `@/packages/sh` was
+written first and needed them, which is the same *derived from whoever consumed it first* this
+document opens with — arriving in the layering rather than in a projection.
+
+**And the `Child` itself has no read.** It is `exit` and `send`; the shipped one carries `handle`,
+`errHandle` and `fsHandle`. A shell spawns in order to *get* something, so this is a capability for
+programs whose output nobody wants. `@/packages/sh/src/pipeline.wac` does not notice because it runs
+its stages with `Proc.run`, in this instance, and never spawns one — the only consumer of `spawn` in
+the tree is the file that declares the type it answers.

@@ -284,6 +284,26 @@ export struct Net {
  * family as `Env`'s `arg` and `cwd`, and it is here because the host groups it there.
  */
 export struct Proc {
+  /**
+   * **`Child` and `Grant` are declared in `@/packages/sh/src/exec.wac` and this file imports
+   * nothing from a package.** Found 2026-09-04 by the signature diff.
+   *
+   * That is the layering rule broken in the one place it has been *used* to justify a hole.
+   * `Files.open` answers `Result<…, NotGranted>` and cannot answer `@/packages/fs`'s `Fault`, and the
+   * reason given — in this file, three entries of `../QUESTIONS.md`, and twice in `@/packages/box` —
+   * is that **`std` is below the packages**. It is, for `Fault`. It is not, here, for two types in
+   * one signature.
+   *
+   * So either the rule holds and these two belong in `std`, or it does not and `Files` may answer a
+   * union the packages define. The second is what every entry complaining about `NotGranted` wants
+   * and none of them noticed it was already being done.
+   *
+   * **And a `Child` you cannot read from.** It is `exit` and `send`; the shipped one carries
+   * `handle`, `errHandle` and `fsHandle` — a child's output, its standard error and its filesystem.
+   * A shell spawns to *get* something, so a `Child` with no read is a capability for programs whose
+   * output nobody wants. `@/packages/sh/src/pipeline.wac` avoids noticing because it runs its stages
+   * with `Proc.run`, in this instance, and never spawns one.
+   */
   fn<Ticket<Result<Child, NotGranted>>(Bytes, Vec<Bytes>, Vec<Grant>)>  spawn;
   fn<i32()>                                                             exitCode;
 
