@@ -669,7 +669,12 @@ function main(argv: string[]): number {
   if (roots.length === 0) roots.push("packages");
   const wantsVision = flags.includes("--vision") ||
     (!flags.includes("--no-vision") && roots.includes("vision"));
-  const delta = wantsVision ? "vision/GRAMMAR.ebnf" : "";
+  // `--delta=<path>` points the patch somewhere else, so a sweep that asks *which of these rules
+  // changes what parses* can write variants to a scratch directory instead of editing the real one.
+  // Editing it in place works and leaves the tree wrong if the run is killed, which on this machine
+  // it might be.
+  const given = flags.find((f) => f.startsWith("--delta="));
+  const delta = given ? given.slice("--delta=".length) : (wantsVision ? "vision/GRAMMAR.ebnf" : "");
 
   const grammarText = Deno.readTextFileSync(GRAMMAR);
   const keywords = keywordsFromFence(grammarText);
