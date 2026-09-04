@@ -87,6 +87,10 @@ i32 end)` in the original, `isValidTarget(s, lo, hi)` in `http`, `slice(query, a
 and `packages/bytes`'s `slice` copies, so the alternative to the triple is an allocation per token.
 
 `vision/core/slice.wac` is the answer and it is **invented rather than agreed**: two arguments that
-must travel together and must not be swapped is a struct. `url/query.wac` uses it, and the effect is
-larger than tidiness — parsing a query now allocates nothing at all, and a request with forty
-parameters of which a handler reads two pays for two.
+must travel together and must not be swapped is a struct. `url/query.wac` uses it.
+
+The effect is smaller than the first draft of this paragraph claimed. A struct is heap-allocated, so
+a slice is one `struct.new` — an O(1) allocation replacing an O(n) allocation and a copy, which is a
+win against `packages/bytes`'s copying `slice` and a **loss** against `atofSpan`'s triple, which
+allocates nothing. The case for the type is that a triple can be handed the bounds of one buffer and
+the bytes of another, and that is a correctness argument rather than a cost one.

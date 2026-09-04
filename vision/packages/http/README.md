@@ -54,8 +54,9 @@ wants to log the refusal had nothing to log.
 **`maxBody` is an `i64`.** `Content-Length: 999999999999` is the case the parameter exists for and
 it does not fit in the type that was measuring it.
 
-**A parsed request allocates nothing.** Every field of `Request` is a `Bytes` view into the
-connection buffer rather than a copy — the request is read while that buffer is in hand and gone
+**A parsed request copies nothing**, which is weaker than the *allocates nothing* an earlier draft
+claimed — a struct is heap-allocated, so each field is one `struct.new` rather than one copy. Every
+field of `Request` is a `Bytes` view into the connection buffer rather than a copy — the request is read while that buffer is in hand and gone
 before the next one, so the lifetime is a call. `requestLine` went from `(input, lo, hi)` to one
 argument, and a caller can no longer pass the bounds of one buffer with another, which is the reason
 the type exists rather than a tidiness argument for it.

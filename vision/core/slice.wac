@@ -18,9 +18,27 @@
 //
 // **`slice` traps too**, for the same reason: the bounds come from a scan the caller just did.
 //
-// **A slice does not own.** It keeps its array alive and nothing more; there is no copy anywhere in
-// this file, which is the whole point. Writing through a non-const slice writes through to the
-// array, and a `const` one cannot write — deep const already says so and needs no help here.
+// **A slice does not own.** It keeps its array alive and nothing more. Writing through a non-const
+// slice writes through to the array, and a `const` one cannot write — deep const already says so.
+//
+// ## What it costs, which is not nothing, and I claimed nothing
+//
+// `spec/spec/structs.md`: *"Structs are WasmGC struct types — heap-allocated, garbage-collected
+// references."* So every `s.slice(lo, hi)` is a `struct.new`. This file said *"there is no copy
+// anywhere in this file, which is the whole point"* and `url/query.wac` said parsing a query
+// *"allocates nothing at all"*. No copy is true. Nothing allocated is false.
+//
+// The honest trade is **an O(1) allocation in place of an O(n) allocation and a copy**. Against
+// `packages/bytes`'s `slice`, which copies, that is a straight win and a large one for long spans.
+//
+// **Against a `(bytes, lo, hi)` triple it is a loss.** A triple allocates nothing at all —
+// `atofSpan(u8[] src, i32 start, i32 end)` passes three machine words — and handing it a `Bytes`
+// adds an allocation where there was none. Every parser in this rewrite that took a triple and now
+// takes a slice pays for that.
+//
+// Which leaves the argument for this type standing on **correctness rather than cost**: two
+// arguments that must travel together cannot be given the bounds of one buffer and the bytes of
+// another. That was always the better half of the case, and it was not the half being made.
 //
 // ## When to hold one, which is not always
 //

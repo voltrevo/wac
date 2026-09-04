@@ -25,6 +25,10 @@ A query has three states per name:
 looking one up answers **`u8[]??`** — outer absence is *no such parameter*, inner is *no value*.
 Under a flattening `?` those arrive as one null and no API on top can separate them.
 
+(An earlier draft of this file said parsing a query *"allocates nothing at all"* with slices. It
+does not: a struct is heap-allocated in WasmGC, so each name and value is one `struct.new`. The
+trade is an O(1) allocation for an O(n) allocation and a copy — see `core/slice.wac`.)
+
 **The cost of not having it is measurable in this repository today.**
 `packages/server`'s `queryToJson` emits `"a": ""` for both spellings, so a round trip through it
 loses the distinction the URL parser was careful to keep. And that function lives in `packages/server`

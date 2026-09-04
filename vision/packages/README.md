@@ -101,7 +101,7 @@ each is; this is the index.
 
 | proposal | where | the argument, in one line | the cost |
 |---|---|---|---|
-| `Slice<T>` / `Bytes` | [`../core/slice.wac`](../core/slice.wac) | two arguments that must travel together and must not be swapped is a struct | a view retains the array it was cut from |
+| `Slice<T>` / `Bytes` | [`../core/slice.wac`](../core/slice.wac) | two arguments that must travel together and must not be swapped is a struct — a correctness argument, not a cost one | a view retains the array it was cut from, and a struct is heap-allocated: O(1) allocation for an O(n) copy against `bytes`'s `slice`, but a **loss** against a triple, which allocates nothing |
 | an explicit barrel | [`../core/core.wac`](../core/core.wac) | `export` marks what leaves a file; a package needs a second level | lands in `check.wac`'s export table, not the resolver — and wants its own diagnostic, as code 210 did |
 | a named type | `export union<A, B> Fault;`, `export Slice<u8> Bytes;` | one form whether the type is a union or an instantiation | distinct type or alias is undecided |
 | `try await for` | [`stream`](stream/), [`server`](server/) | a loop over a failing async generator has to say both things | three keywords on one head |

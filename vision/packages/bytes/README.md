@@ -19,8 +19,11 @@ match (serve(pending.bytes(), sys.now())) { … }
 ```
 
 so a client sending three requests in one packet paid for three copies of the whole buffer, to read
-a prefix of it three times. Answering a `Bytes` is the same information with no copy. This is the
-case `core/slice.wac` was written for, found after the fact rather than used to justify it.
+a prefix of it three times. Answering a `Bytes` is the same information with no copy — one small `struct.new` in place of a
+copy of the whole prefix, since a struct is heap-allocated and a slice is not free. This is the case
+`core/slice.wac` was written for, found after the fact rather than used to justify it, and it is the
+one where the trade is most clearly worth it: the thing avoided grows with the buffer and the thing
+paid for does not.
 
 **And the honest part: the view has a hazard the type does not carry.** `reserve` replaces `data`
 when the buffer grows, so a `Bytes` taken before a `push` points at the old array — stale rather
