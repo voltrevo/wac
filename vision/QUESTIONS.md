@@ -195,13 +195,6 @@ once accepting has stopped — and the accept loop suspends on the listener, whi
 queue too. A connection arriving during the drain is scheduled onto a queue being emptied. Whether
 that is fine, or a program that never exits, is not decidable from anything written down.
 
-## A block that ends in a value
-
-`wactest`'s `okOr` records a failure and answers `null` from one match arm: `Err(e): { this.fail(…);
-null }`. Nothing on the pages has a block in expression position. Without it every test of a
-fallible call writes a check, a `fail`, and an early return — and the early return is the part that
-gets forgotten, leaving the test running against a value that was never produced.
-
 ## Re-export and package entry points — taken, in the barrels
 
 `wac-mono 0072` is already open about the cost: `itoa64` and `utoa64` exist twice because unifying

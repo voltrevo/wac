@@ -82,10 +82,23 @@ end — the person who wrote `t.wantErr(r, NotFound(), …)` gets a diagnostic i
 a diagnostic-quality problem rather than a design one, and it is the usual complaint about
 template-instantiation errors.
 
-**A `Result` unwrapped into a nullable, in one expression.** `okOr` wants to record a failure *and*
-answer `null`, which needs a block that ends in a value — `{ this.fail(…); null }`. Nothing on the
-pages has a block expression, and the alternative is two statements and an early return at every
-call site, which is the thing being removed.
+**A block that ends in a value was wanted here and is not needed.** `okOr` has to record a failure
+*and* answer `null` from one match arm, which reads as `{ this.fail(…); null }`. A method does it
+with no new construct:
+
+```wac
+Err(_): this.missing<V>(what),
+```
+
+where `missing` records and returns `null`. `V` appears only in its return, so the call writes the
+argument — `generics.md`'s `[§wacc-written-type-args]`, the rule `empty<i32>()` exists for. One
+extra declaration per pattern, against a language feature.
+
+**And the signature above it was wrong**, which is worth recording because of *how*. It read
+`T? okOr<V, E>(…)` — and `T` is this struct's own name, not a type parameter, so it promised an
+optional assertion-recorder. The real package calls its assertion type `T`, and a language whose
+type parameters are conventionally single capitals makes any generic method inside it read
+ambiguously. It took writing `V?` to see it.
 
 **How a runner enumerates typed exports** — checked against the host, and the answer splits.
 

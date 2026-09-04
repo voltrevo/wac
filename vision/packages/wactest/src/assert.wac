@@ -78,11 +78,24 @@ export struct T {
    * early return is the part that goes wrong, because a test that forgot it carries on against a
    * value that was never produced.
    */
-  T? okOr<V, E>(this, Result<V, E> r, string what) {
+  V? okOr<V, E>(this, Result<V, E> r, string what) {
     return match (r) {
       Ok(v):  v,
-      Err(_): { this.fail(what, "Ok", "Err"); null },
+      Err(_): this.missing<V>(what),
     };
+  }
+
+  /**
+   * Record a failure and answer nothing — the arm value `okOr` needs.
+   *
+   * A separate method rather than a block in the arm: `{ this.fail(…); null }` would need a block
+   * that ends in a value, and nothing in the language has one. This needs no new construct, and
+   * `V` appears only in the return so the call writes it — `generics.md`'s
+   * `[§wacc-written-type-args]`, which is what `empty<i32>()` is for.
+   */
+  V? missing<V>(this, string what) {
+    this.fail(what, "Ok", "Err");
+    return null;
   }
 
   /**

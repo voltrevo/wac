@@ -240,12 +240,15 @@ maintenance rule this file has: **a rule may only exist for a construct that is 
 
 ## Where the pass converges
 
-Three files are still refused and all three are accounted for: `trap` as an **expression**
-(`core/result.wac`), a block that ends in a value (`wactest/assert.wac`), and the `secret` parameter
-qualifier (`crypto/src/secret.wac`), which is this exercise's own proposal rather than a gap. Both of
-the first two are already in [QUESTIONS.md](QUESTIONS.md).
+Two files are still refused and both are accounted for: `trap` as an **expression**
+(`core/result.wac`), and the `secret` parameter qualifier (`crypto/src/secret.wac`), which is this
+exercise's own proposal rather than a gap.
 
-So the tree contains **nine constructs, plus two, plus three known** — and nothing else. That is a
+It was three. `wactest/assert.wac` wanted a block that ends in a value and no longer does — a method
+that records a failure and returns `null` needs no new construct, and the pass reporting one file
+fewer is how that was confirmed rather than assumed.
+
+So the tree contains **eight constructs, plus two, plus two known** — and nothing else. That is a
 completeness claim the first pass could not make at all.
 
 ## It also found errors of mine that are not constructs
