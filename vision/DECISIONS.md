@@ -41,6 +41,12 @@ default: { … }        // there is no shape here at all
 Reusing `_` for both would be a pun on the payload wildcard rather than a generalisation of it, and
 the two mean different things in the same arm.
 
+**What it costs, which this entry did not say: 572 arms in 101 files.** Today's spelling is `else:`,
+and that is the count with comments and string literals stripped — `vision/GRAMMAR.md` has the
+method and the rest of the rename table. It is a mechanical sweep and nothing is ambiguous in
+between, since a grammar can accept both spellings while it happens. Worth having beside the rule
+anyway: a decision whose cost is unwritten is one nobody can weigh against the next.
+
 ## References are comparable but not hashable
 
 `is` on two references is `ref.eq` and costs nothing. Identity hashing is not free, and the language
