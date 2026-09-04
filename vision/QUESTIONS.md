@@ -5732,3 +5732,52 @@ yes*. The first is a bug report; the second is a mystery.
 encode **the provenance of a rule** rather than a family of faults. Third use of nesting found here
 and the first where the grouping answers *who decided this*, which is the question a second
 implementation actually has.
+
+## An unobservable check is unobservable because the answer is a `bool` — and one author proved it
+
+Two packages have a guard that no test can see, and the second one **measured** it rather than
+arguing.
+
+`packages/lightclient/src/store.wac`'s `validate_light_client_update` names its own weakest point:
+
+> ## Three of these checks cannot be observed from outside
+>
+> Deleting any one of them changes no verdict on any input … each is subsumed by a later
+> cryptographic check … But **an unobservable check is exactly the kind that rots unnoticed**, so it
+> is named here as one.
+
+`packages/bls/src/verify.wac` has five infinity guards and did the experiment:
+
+> Refused outright — but **not** because the Ethereum fixtures require it, which is what this said
+> before somebody deleted the line and watched them all still pass. … The **one** infinity guard in
+> this file that a test can see is `aggregatePubkeys`'s … Deleting this one, or `aggregateVerify`'s
+> per-key copy, changes no fixture … All three stay: defence in depth is the point, and now the
+> comments say which is load-bearing.
+
+The reason is arithmetic and it is worth reading: `pk = O` reduces the pairing identity to
+`e(−G₁, sig) == 1`, which holds only for `sig = O` — and the infinity-*signature* guard answers
+first. So the guard is correct and no input can distinguish a build with it from one without.
+
+### The claim, and it survives the second witness
+
+**Name the refusals and four of the five become observable.** Delete `verify`'s
+`g1IsInfinity(pk)` and an infinity key reaches the pairing, which fails, so the answer is
+`Err(DoesNotVerify)` where it was `Err(InfinityPublicKey)`. Two different answers, so a test can
+catch the mutation — a test that asserts *which* refusal, which is a test a `bool` gives no way to
+write.
+
+Five guards: **one observable today, five with a named refusal.** The cost is six union members in a
+package that already has six ways to fail.
+
+**What it does not buy**, and the shipped file is careful where this directory has not been: the
+guards are defence in depth, so making them observable does not make them *necessary*. Four of the
+five remain arithmetically redundant. What changes is that a later edit removing one has to remove a
+test with it, rather than passing quietly — which is the entire content of *rots unnoticed*.
+
+### And the thing neither a type nor a test provides
+
+`bls`'s author deleted a line, ran the fixtures, saw them pass, and **wrote down which guard was
+load-bearing**. Nothing in this tree does that automatically — `tools/mutate.ts` exists and this is
+what it is for — and no type would have produced the sentence. The finding is worth separating from
+the `Result` one: naming refusals makes the mutation *detectable*, and somebody still has to run it
+and write the answer where the next reader will be.

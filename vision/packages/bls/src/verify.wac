@@ -1,0 +1,113 @@
+// Verifying BLS signatures — four entry points, five infinity guards, and one of the five is
+// observable.
+//
+// `packages/bls/src/verify.wac` did the analysis this directory usually has to do, by hand, and
+// wrote the answer down:
+//
+// > An infinity public key means a zero secret key. Refused outright — but **not** because the
+// > Ethereum fixtures require it, which is what this said before somebody deleted the line and
+// > watched them all still pass. … The **one** infinity guard in this file that a test can see is
+// > `aggregatePubkeys`'s … Deleting this one, or `aggregateVerify`'s per-key copy, changes no
+// > fixture … All three stay: defence in depth is the point, and now the comments say which is
+// > load-bearing.
+//
+// That is `@/packages/lightclient`'s finding — *an unobservable check is unobservable because the
+// answer is a `bool`* — with a second witness, and one difference that matters: **this author ran
+// the mutation.** lightclient's file says deleting any of three checks changes no verdict and stops
+// there; this one deleted the line, watched the fixtures pass, and kept the guard with a note.
+//
+// So the claim can be tested rather than asserted, and it holds.
+
+import { Result, Bytes, Vec } from "core";
+
+/** The key does not decode to a G1 point. */
+export struct BadPublicKey { i32 which; }
+/** The signature does not decode to a G2 point. */
+export struct BadSignature { }
+/** A public key is the identity, which is a zero secret key. */
+export struct InfinityPublicKey { i32 which; }
+/** The signature is the identity. */
+export struct InfinitySignature { }
+/** No keys, or the lists are different lengths. */
+export struct WrongArity { i32 keys; i32 messages; i32 signatures; }
+/** The pairing equation does not hold. The answer. */
+export struct DoesNotVerify { }
+
+export union<BadPublicKey, BadSignature, InfinityPublicKey, InfinitySignature, WrongArity,
+             DoesNotVerify> BlsFault;
+
+/** One signer. `e(pk, H(m)) == e(G₁, sig)`. */
+export Result<void, BlsFault> verify(Bytes pubkey, Bytes message, Bytes signature) { … }
+
+/** Many signers, one message — the keys sum, so it is one verification plus n−1 G1 additions. */
+export Result<void, BlsFault> fastAggregateVerify(Vec<Bytes> pubkeys, Bytes message, Bytes sig) { … }
+
+/** Many signers, distinct messages — the keys cannot sum, so the pairings combine. */
+export Result<void, BlsFault> aggregateVerify(Vec<Bytes> pubkeys, Vec<Bytes> messages, Bytes sig) { … }
+
+/** Many signatures at once, randomised so an adversary cannot split the terms. */
+export Result<void, BlsFault> batchVerify(
+  Vec<Bytes> pubkeys, Vec<Bytes> messages, Vec<Bytes> signatures, Bytes entropy) { … }
+
+// ## 1. Four of the five guards become observable, and the fifth already was
+//
+// The shipped file establishes, by deletion, that only `aggregatePubkeys`'s infinity check changes a
+// fixture. The reason the others cannot is arithmetic: `pk = O` reduces the identity to
+// `e(−G1, sig) == 1`, which holds only for `sig = O`, and the infinity-*signature* guard answers
+// first. So the guard is right and no test can see it.
+//
+// With named refusals it can. Delete `verify`'s `g1IsInfinity(pk)` and an infinity key reaches the
+// pairing, which fails, so the answer is `Err(DoesNotVerify)` where it was `Err(InfinityPublicKey)`.
+// **Two different answers, so the mutation is caught** — by a test that asserts *which* refusal,
+// which is a test somebody has to write and which a `bool` gives no way to write at all.
+//
+// That is lightclient's claim, and here it is checkable against a case where the unobservability was
+// measured rather than argued. Five guards: one observable today, five observable with a named
+// refusal, and the cost is a union of six members in a package that already has six ways to fail.
+//
+// **What it does not buy**, and the shipped file is careful about this: the guards are *defence in
+// depth*, so making them observable does not make them necessary. Four of the five are still
+// arithmetically redundant. What changes is that a later edit that removes one has to remove a test
+// with it, rather than passing quietly.
+//
+// ## 2. Four entry points, four refusal sets, and no way to compare them
+//
+// `verify`, `fastAggregateVerify`, `aggregateVerify` and `batchVerify` refuse in 3, 3, 9 and 9
+// places, and whether they agree cannot be read off any one of them. The interesting case is
+// `fastAggregateVerify`, which does **not** check that the aggregate is infinity, where `verify`
+// checks its single key:
+//
+//   * `aggregatePubkeys` refuses any *input* key that is infinity, so the fixture case is covered;
+//   * two valid keys can still sum to infinity — `k` and `−k` — and that aggregate reaches the
+//     pairing;
+//   * and it cannot verify, because `e(O, H(m)) = 1` leaves `e(−G₁, sig) == 1`, which needs
+//     `sig = O`, which `g2IsInfinity(sig)` already refused.
+//
+// So it is safe, and the reasoning spans three functions and one algebraic identity. **Not a bug —
+// checked — and the shape is the one this directory keeps meeting**: safe because of what something
+// else happens to do, with nothing relating the two. `@/packages/zstd`'s `Buf` invariant is the same
+// sentence about a different subject.
+//
+// A `Result` does not fix that either. What would is the thing the file already does and nothing
+// else in the tree does: **write down which guard is load-bearing, having tested it by deletion.**
+//
+// ## 3. What could not be written
+//
+// **`WrongArity` carries three counts because four functions share one fault type**, and only
+// `batchVerify` has three lists. `verify` can never produce it. That is a union member that is
+// unreachable from three of its four producers, which is the cost of one error type per package
+// rather than per function — and the alternative, four unions, makes a caller that dispatches over
+// entry points hold four types for one question. `@/packages/http` chose the first and so does this;
+// nothing has written the trade-off down.
+//
+// **A signature and a public key are both `Bytes` and are 96 and 48 bytes.** Passing them in the
+// wrong order type-checks and answers `BadPublicKey`, which is correct and misleading. Seventh
+// package wanting a length in a type, and the first where the two lengths are *different* and the
+// error is still not a compile error.
+//
+// **Randomisation is a parameter and its quality is not.** `batchVerify` takes `entropy` as `Bytes`,
+// and the whole security of batching rests on an adversary not predicting it. A caller passing
+// `u8[32]()` gets a batch verifier that accepts invalid signatures. There is no type for *this came
+// from a `Random` capability*, which is `../../../QUESTIONS.md`'s capability question arriving as a
+// **value that must have a provenance** — the fourth *guarantee from how it was made*, and the first
+// where the guarantee is about an argument rather than a result.

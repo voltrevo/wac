@@ -54,6 +54,38 @@ with numbers rather than argued, and worth noting as a method: **the bench writt
 answered a question about a field element**, because both reduce to the cost of one `struct.new`.
 A cost measured once bounds every proposal of the same shape.
 
+## Five infinity guards, one observable, and the author proved it by deletion
+
+[`src/verify.wac`](src/verify.wac) was added after counting the tree's `bool` verifications — 17 of
+them collapsing 106 refusals, four of the seventeen in this package. What makes `bls` the one worth
+writing is that its author already did the experiment this directory usually only argues for:
+
+> Refused outright — but **not** because the Ethereum fixtures require it, which is what this said
+> before somebody deleted the line and watched them all still pass. … The **one** infinity guard in
+> this file that a test can see is `aggregatePubkeys`'s … All three stay: defence in depth is the
+> point, and now the comments say which is load-bearing.
+
+The reason no test can see the others is arithmetic: `pk = O` reduces the identity to
+`e(−G₁, sig) == 1`, which holds only for `sig = O`, and the infinity-*signature* guard answers first.
+
+**Name the refusals and four of the five become observable.** Delete `verify`'s `g1IsInfinity(pk)`
+and an infinity key reaches the pairing, which fails: `Err(DoesNotVerify)` where it was
+`Err(InfinityPublicKey)`. Two different answers, so a test can catch the mutation — a test that
+asserts *which* refusal, which a `bool` gives no way to write.
+
+It does not make the guards *necessary*. Four of the five stay arithmetically redundant; what changes
+is that removing one has to remove a test with it rather than passing quietly, which is the whole of
+what [`@/packages/lightclient`](../lightclient/) means by *rots unnoticed*.
+
+### Four entry points, four refusal sets, and no way to compare them
+
+`verify`, `fastAggregateVerify`, `aggregateVerify` and `batchVerify` refuse in 3, 3, 9 and 9 places.
+`fastAggregateVerify` does not check that the *aggregate* is infinity where `verify` checks its
+single key — and it is safe, because two valid keys summing to infinity still cannot verify:
+`e(O, H(m)) = 1` leaves `e(−G₁, sig) == 1`, needing `sig = O`, which is already refused. Checked, not
+a bug — and the reasoning spans three functions and an algebraic identity, which is the shape
+[`@/packages/zstd`](../zstd/) found in a `Buf`.
+
 ## What could not be written
 
 **The wrapper stops at the bottom layer.** `fp2.wac` holds two `u32[]`, `g1.wac` three, and the tower

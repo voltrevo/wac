@@ -1,3 +1,8 @@
 // The package, as one name. One file of 4,051 — see `../README.md`.
 
 export { Fp, Canonical, fromBytes, fromWideBytes } from "./fp.wac";
+export {
+  verify, fastAggregateVerify, aggregateVerify, batchVerify,
+  BlsFault, BadPublicKey, BadSignature, InfinityPublicKey, InfinitySignature, WrongArity,
+  DoesNotVerify,
+} from "./verify.wac";
