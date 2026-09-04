@@ -123,7 +123,8 @@ export Chunk zeroHash(i32 d) { … }
 // can check"*, and it names the shape: a **fixed-length byte view**, which `Slice<T>` is one field
 // away from because `len` is already there and is not in the type. `@/packages/bls`'s `Fp` holds
 // `u32[] limbs` for a field element of fixed width, which is the same absence at another element
-// type. Third package; filed once.
+// type. **Six packages want it and the list is in `../../../QUESTIONS.md`** — this file said *third*
+// and was counting two of the six.
 //
 // **`Gindex` holds a `u64` and the tree it indexes is at most 40 deep.** The type says 64 bits
 // because generalized indices are defined on unbounded trees; every one this package sees fits in

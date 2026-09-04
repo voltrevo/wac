@@ -122,8 +122,9 @@ string withoutSuffix(string address) { … }
 // version guards it — `if (ck.len() != 2) { return u8[0](); }`, and `addressChecksum` returns empty
 // on a bad key so that `onionAddress` can propagate it — which is a length check on a value the
 // function computed itself, defending against its own hash being the wrong size. With
-// `Slice<u8, 2>` and `Slice<u8, 32>` that guard and `WrongKeyLength` both disappear, and the fourth
-// package asks for it.
+// `Slice<u8, 2>` and `Slice<u8, 32>` that guard and `WrongKeyLength` both disappear. One of the six
+// packages that want it; the list is in `../../../QUESTIONS.md` and the ordinal this line used to
+// carry was wrong.
 //
 // **A `Slice` cannot concatenate and cannot compare.** `core/slice.wac` has nine members and none
 // of them joins two slices or asks whether two hold the same bytes, which is correct for a *view* —

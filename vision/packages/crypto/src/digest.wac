@@ -7,16 +7,26 @@
 //
 // Writing the digests found a second one, and it is about ownership rather than about a type.
 //
-// ## Four packages have each declared their own 32 bytes
+// ## Four packages declare their own fixed-width wrapper
 //
 //   * `@/packages/ssz/src/chunk.wac` — `Chunk`, because SSZ is defined over 32-byte chunks;
 //   * `@/packages/ens/src/answer.wac` — `EthAddress`, twenty rather than thirty-two, same shape;
 //   * `@/packages/bls/src/fp.wac` — `Fp`, a field element of fixed width held as `u32[] limbs`;
-//   * `@/packages/mpt` — a node hash, which is `keccak256` of the node and is a `Bytes`.
+//   * this file — `Digest32`.
 //
-// Each is a struct wrapping a `Bytes` whose length was checked once, and each has the same footnote
-// asking for `Slice<u8, 32>`. That is one language request, filed once, and it is **not** what this
-// file is about.
+// **Two counts, and confusing them is why five files had five different numbers.** *Declaring a
+// wrapper* is four packages; *wanting the length in the type* is six, and the extra two —
+// `@/packages/raster` and `@/packages/tor` — ask for it without declaring anything, because their
+// values are a tile's pixels and two checksum bytes and neither is worth a struct on its own.
+// `../../../QUESTIONS.md` owns both lists.
+//
+// (An earlier version of this list had `@/packages/mpt` in it. Its node hash is a plain `Bytes` and
+// it declares no wrapper and makes no request; the citation came from another file's list, which had
+// it wrong too.)
+//
+// Each of the four is a struct wrapping a `Bytes` whose length was checked once, and each has the
+// same footnote. That is one language request, filed once, and it is **not** what this file is
+// about.
 //
 // ## The question this file is about: is a digest a chunk?
 //
@@ -75,5 +85,6 @@ export const struct Digest32 {
 //
 // **A 512-bit digest would be a second type, and then a third.** `sha512` answers 64 bytes and
 // `Digest64` is the same file again with one number changed. `Digest<N>` is what a length in a type
-// gives, which is the request four packages have already made — so this is a fifth voice for it
-// rather than a new question, and the file says so once instead of restating the ask.
+// gives, and `../../../QUESTIONS.md` records the six packages asking for it — so this is one more
+// voice for one request rather than a new question. The count is there rather than here because five
+// files each carried their own and no two agreed.

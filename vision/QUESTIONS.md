@@ -4568,28 +4568,60 @@ This is the same shape as `Page` answering `Ticket<bool>` — a `bool` carrying 
 name — arriving in our own code, in the one place in the repository where the distinction is a
 security boundary rather than a diagnostic.
 
-## A fixed-length byte view, asked for by three packages independently
+## A fixed-length byte view — six packages, and this entry owns the count
 
-`Bytes` is `Slice<u8>` and its length is a runtime field. Three rewrites reached the same wall from
-three directions:
+`Bytes` is `Slice<u8>` and its length is a runtime field. Six rewrites reached the same wall from six
+directions. **The list lives here and nowhere else**, because five of them had written their own
+ordinal and no two agreed:
 
-- `@/packages/ens/src/answer.wac`: *"`Bytes` carries no length in its type — so `Address`, `Bytes32`
-  and a `contenthash` are one type as far as anything can check"*, and `got.get(0).asWord()!.from(12)`
-  is a slice with a magic 12 in it.
-- `@/packages/ssz/src/chunk.wac`: SSZ is defined over 32-byte chunks, so `Chunk` is a struct wrapping
-  a `Bytes` whose length was checked once — and the wrapper is the whole of it. `sha256` answers
-  `Bytes`, so the one place the fact is known is a comment above an unchecked constructor.
-- `@/packages/bls/src/fp.wac`: `Fp` holds `u32[] limbs` for a field element of fixed width — the same
-  absence at a different element type.
+| package | the value | how it is spelled |
+|---|---|---|
+| `@/packages/ens` | an Ethereum address | `Bytes` of twenty, `got.get(0).asWord()!.from(12)`, a magic 12 |
+| `@/packages/raster` | a tile's pixels | a field short, arrived at the same day from another direction |
+| `@/packages/bls` | a field element | `u32[] limbs`, where every operation assumes `LIMBS == 12` |
+| `@/packages/ssz` | a merkle chunk | a struct wrapping a `Bytes` whose length was checked once |
+| `@/packages/tor` | an onion address's checksum and key | two bytes and thirty-two, both `Bytes` |
+| `@/packages/crypto` | a digest | `Digest32`, whose entire value is *32 because of where it came from* |
 
-**The ask is smaller than dependent types and bigger than anything on the pages**: `Slice<T>` already
-has `len` as a field, and the request is for it to be in the type when it is known — `Slice<u8, 32>`.
-Then `Chunk` is a typedef, `Chunk.of` is a cast the compiler checks, and the check survives in the one
-place bytes arrive from outside instead of being re-derived in every function that receives them.
+`@/packages/mpt` is **not** one, though `@/packages/bls` names it. Its nibbles are a `u8[]` and it
+never asks for a bound; the citation was written without checking and is the reason this entry now
+holds the list.
+
+**The ask is smaller than dependent types and bigger than anything on the pages.** `Slice<T>` already
+has `len` as a field; the request is for it to be in the type when it is known — `Slice<u8, 32>`.
+Then `Chunk` is a typedef, `Chunk.of` is a cast the compiler checks, and the check survives in the
+one place bytes arrive from outside instead of being re-derived in every function that receives them.
+
+`@/packages/bls` adds the sharpest version: **the missing bound is on the *inside* of the type**
+rather than on a parameter. A nine-limb array type-checks into an `Fp` and reads past its end on the
+first multiply, and no caller did anything wrong.
 
 What has to be decided is whether that is one feature or two, because a *sized* slice and a slice
-whose size is a type parameter are different amounts of work — and every one of the three cases above
-wants only the first.
+whose size is a type parameter are different amounts of work — and every one of the six wants only
+the first.
+
+### Two counts, which is why the numbers drifted
+
+*Declaring a fixed-width wrapper* and *wanting the length in the type* are different questions and
+five files answered whichever they had in mind:
+
+- **four declare a wrapper** — `ens`'s `EthAddress`, `ssz`'s `Chunk`, `bls`'s `Fp`,
+  `crypto`'s `Digest32`;
+- **six want the feature** — those four plus `raster` and `tor`, which ask without declaring
+  anything, because a tile's pixels and two checksum bytes are not worth a struct each.
+
+### Why the count is here
+
+Five files each wrote *third*, *fourth* or *fifth package*, and they were computed at five different
+times from five different lists. `DECISIONS.md` has the rule — *"a rule written twice is a rule that
+drifts"* — and `@/packages/wac`'s README already applied it to a number, for the same reason:
+
+> The number was here and is not, for this file's own reason. … Two numbers for one measurement in
+> two files is exactly the *"a rule written twice is a rule that drifts"* this file opens with,
+> applied to a count rather than a rule. So the count lives in one place and this entry points at it.
+
+An ordinal is worse than a count, because it also encodes an *order* and reads as evidence of
+accumulation. Six packages arriving independently is the finding; which arrived fourth is not.
 
 ## A table rather than arithmetic is a bet on which document the code is checked against
 

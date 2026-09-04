@@ -137,8 +137,9 @@ matters more here than in most places, because the guarantee **is** the type.
 
 **`Digest64` would be this file with one number changed.** `sha512` answers 64 bytes. `Digest<N>` is
 what a length in a type gives, which four packages have already asked for from four directions — so
-this is a fifth voice for one request rather than a new one, and it is said once here instead of
-restated.
+this is one more voice for one request rather than a new one. The count and the list are in
+[../../QUESTIONS.md](../../QUESTIONS.md), which owns them because five files had written five
+different ordinals from five different lists.
 
 **`hkdfExtract` takes two `secret`s and answers a value that is one, and the language cannot say
 so.** `secret` has no return position — [`src/secret.wac`](src/secret.wac)'s own note — so the

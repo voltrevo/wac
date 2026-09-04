@@ -94,7 +94,8 @@ length in its type — so `Address`, `Bytes32` and a `contenthash` are one type 
 check"* — and names the shape: **a fixed-length byte view**, which `Slice<T>` is one field away from,
 since `len` is already there and is just not in the type. `@/packages/bls`'s `Fp` is `u32[] limbs`
 for a field element that is always the same width, which is the same absence at a different element
-type. Two packages arriving independently, and this is the third.
+type. **Six packages want this and the list is in [../../QUESTIONS.md](../../QUESTIONS.md)** —
+this line said *the third* and was counting two of the six.
 
 **A root has no type in it.** A `Chunk` from a `BeaconState` and one from a `SyncCommittee` compare
 `false` rather than failing to type-check. `Root<T>` is the standard answer and vision has generics;

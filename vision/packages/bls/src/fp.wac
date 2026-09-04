@@ -146,6 +146,11 @@ export Fp fromWideBytes(Bytes s) { … }
 //
 // **Nothing in the type says twelve.** `Fp.limbs` is a `u32[]` and every operation assumes
 // `LIMBS == 12`; a nine-limb array type-checks into `Fp` and reads past its end in the first
-// multiply. The fourth package to want a fixed-length array, after `@/packages/ens`'s address,
-// `@/packages/raster`'s tile and `@/packages/mpt`'s nibbles — and the first where the missing bound
-// is on the *inside* of the type rather than on a parameter.
+// multiply. One of the six packages that want a fixed-length array — the list is in
+// `../../../QUESTIONS.md` and is not repeated here, because five files each wrote an ordinal and no
+// two agreed. (This one said *fourth, after ens, raster and mpt*; `@/packages/mpt` never asks for
+// it, so the citation was wrong as well as the number.)
+//
+// What is this file's own is the sharp version: **the missing bound is on the *inside* of the type**
+// rather than on a parameter. A nine-limb array type-checks into an `Fp` and reads past its end on
+// the first multiply, and no caller did anything wrong.

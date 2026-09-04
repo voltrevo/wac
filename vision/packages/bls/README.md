@@ -71,6 +71,7 @@ say *this is mine until I hand it over*. `issues/lang/0331a` is the same boundar
 aliasing; this is it approached from allocation, and neither has an answer.
 
 **Nothing in the type says twelve.** `Fp.limbs` is a `u32[]`, every operation assumes `LIMBS == 12`,
-and a nine-limb array type-checks in and reads past its end on the first multiply. Fourth package to
+and a nine-limb array type-checks in and reads past its end on the first multiply. One of six
+packages to
 want a fixed-length array — after `ens`'s address, `raster`'s tile and `mpt`'s nibbles — and the
 first where the missing bound is *inside* the type rather than on a parameter.
