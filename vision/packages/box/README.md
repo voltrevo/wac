@@ -116,15 +116,20 @@ a module and negotiated outside one, and this package is where the two meet.
 there is a measurement, not a missing construct — and after twelve packages the measurements were
 turning up more than the constructs were.
 
-The three applets added later each found something and each is written up where it happened rather
-than repeated here: `cat` on why *sum versus sentinel* was a question about the wrong thing, and
-`tee` on `defer` being two unanswered questions, on a write failure that can only be reported as
-`NotGranted` when the real cause is a full disk, and on `tee -a` — **the first gap this exercise has
-found where projecting the host faithfully reproduces a real hole** rather than narrowing one. There
-is no append anywhere: `openOut` truncates deliberately and the host has none.
+The four applets added later each found something and each is written up where it happened rather
+than repeated here: `cat` on why *sum versus sentinel* was a question about the wrong thing; `tee` on
+`defer` being two unanswered questions, on a write failure that can only be reported as `NotGranted`
+when the real cause is a full disk, and on `tee -a` — **the first gap this exercise has found where
+projecting the host faithfully reproduces a real hole** rather than narrowing one, since `openOut`
+truncates deliberately and the host has no append; and `gunzip` on a payload matched by type being
+unable to *read* what it matched, and on a union inside a union being the thing that makes its two
+arms two rather than nine.
 
-And a fourth thing, which is about this directory rather than about the language. `["-"]` — a
-one-element list literal — is what `cat` wants and cannot have, so it keeps a four-line branch. That
-is the first line in nine days to want a construct the grammar has carried on the strength of
-appearing on a page, and it took writing a third applet to produce it. **The measurements stopped
-being the productive half once the capabilities started being consumed.**
+And one thing about this directory rather than about the language. `["-"]` — a one-element list
+literal — is what `cat` wants and cannot have, so it keeps a four-line branch. That is the first line
+in nine days to want a construct the grammar has carried on the strength of appearing on a page, and
+it took writing a third applet to produce it.
+
+**The measurements stopped being the productive half once the capabilities started being consumed**,
+and the four applets are the evidence: sixty-three signatures counted in one afternoon said one thing,
+and four programs written against the result have said six.
