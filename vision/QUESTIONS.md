@@ -3346,10 +3346,29 @@ lowercase. Then it is a substring test.
 
 ### What is still open, which is smaller than this entry claimed
 
-**A reader cannot tell which of the four a mark means**, and that has not changed. The checker
-sidesteps it; a person reading a page does not get to. Half the long quotations already use a
-blockquote under a named path, which is unambiguous and greppable, and the inline ones are the ones
-that are not.
+**A reader cannot tell which of the four a mark means**, and that has not changed — but it is now
+measured rather than asserted. A second pass asked, of the 190 quotations that resolve to the shipped
+tree, whether a path named within six lines is the file the sentence actually lives in:
+
+| | |
+|---|---|
+| names a path, and it is the right file | **37** |
+| names no path at all | **143** |
+| names a path, and it is a different file | **10** |
+
+All ten were hand-checked and **all ten are benign** — the named path is a *contrast* or a
+cross-reference in the same paragraph, and the real attribution is prose:
+
+- `@/packages/tty/src/line.wac` says *"the original explains that it deliberately does not import
+  them"* — no path anywhere, and the path six lines up is the file being contrasted with;
+- `@/packages/server/README.md` says *"`serve.wac`'s header"* — a bare basename;
+- `@/packages/wac/README.md` attributes to `grantsIn`, a function, and names `@/packages/ens` in the
+  next clause for an unrelated reason.
+
+So **three quarters of the shipped quotations name no path**, and of the quarter that do, a fifth
+name one the sentence is not in. The attribution is a noun phrase, a bare filename, a pronoun, or
+nothing — which is why a checker for it is not a matching problem and cannot be fixed by a
+normaliser.
 
 So the ask is a *form* for inline attribution, and its cost is now known to be small — because the
 matching problem, which looked like the hard part, is a normaliser. What it would buy is a reader
