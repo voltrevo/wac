@@ -3106,3 +3106,38 @@ forty-file sweep rather than one line. The claim holds.
 A limitation is real, some code sits next to it, and *because* is the cheapest connective in English.
 The check is always available and always the same: the file usually says why it exists in its first
 paragraph, and the paragraph is not what a rewrite reads.
+
+## One entry of fifty-one has no marker, and the reason is that the marker has two values
+
+Each of the three example pages opens with *"Each is marked **done** or **not yet**, and that marker
+is the only thing here that refers to an implementation."* Checked on 2026-09-04 against all
+fifty-one entries, reading only standalone marker lines with code fences blanked — because a first
+pass matched `Done` the enum variant inside a `c.step(); // Done` comment and reported the wrong
+answer for a third of `TECHNICAL.md`.
+
+Five **done**, forty-five **not yet**, and **one with no marker at all**: *`await` needs a ticket*.
+
+**It is not an oversight, and the entry's own body is why.** The rule is enforced for one spelling
+and not the other:
+
+> `await n` … is already refused — `[§wac-await-pending-9km2xtr]`, code 212, *this cannot be awaited*.
+> `await 5` is not: it checks clean and fails in the emitter with *a null in a `Pending<i32>` slot*.
+> The refusal fires on a name and on nothing else, which is `issues/lang/open/0323a`, **found by
+> checking this entry**.
+
+So the honest marker is *done for an identifier, not yet for a literal*, and the convention has two
+values. The entry lost its marker at the moment it became the most informative one on the page.
+
+**Which is the finding rather than the missing word.** A two-valued marker is a claim that an entry
+is one feature, and the entries most worth reading are the ones where checking split the feature in
+two. `Const through an accessor` is the counter-case and shows the same seam from the other side: it
+was moved from *not yet* to **done** when checking showed the rule *is* implemented and only its
+help text is wrong — *"the entry is a picture of the diagnostic it should have, and it was marked
+Not yet as though the rule were unimplemented"* — so one entry gained the right marker by splitting
+rule from diagnostic, and one lost its marker by splitting name from literal.
+
+**Not edited**, because these pages are agreed and the missing marker is a real question rather than
+a typo: adding *not yet* understates a shipped refusal and adding *done* hides an open issue. It joins
+the two other places where the code and the reviewed examples have diverged — `sys.listen(8080)` and
+the `Sys` bundle — and is the smallest of the three and the only one that is the page's own
+convention rather than the code's drift.
