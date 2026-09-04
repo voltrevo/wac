@@ -4122,3 +4122,46 @@ expensive.
 
 **What is actually being asked**: whether the function form is the idiom or the residue. The pages do
 not say, both are used, and one open issue is about to make them differ.
+
+## Flattening a union has two consumers and they want opposite things
+
+`../TECHNICAL.md` measures `union<A, B>` lowering to an enum of one-field variants, nesting and all,
+and argued for nesting from one consumer. A second consumer wants the other, and the two are not
+corner cases.
+
+**Nesting, from `@/packages/box/src/gunzip.wac`.** `union<SourceFailed, Corrupt>` where `Corrupt` is
+itself a union of eight, and `Err(is Corrupt):` is one arm for the whole group — *"it has one
+sentence for the whole group and the group is the design, and the alternative is eight arms saying
+the same thing."* Under flattening the members become siblings, `Corrupt` is not a name, and the
+applet writes eight arms.
+
+**Flattening, from `@/packages/box/src/upper.wac`.** `upperCase<E>` takes a stream failing with `E`
+and answers one failing with `union<E, NotText>` — *"the source's error set plus the one thing this
+code can be wrong about"*, which is right for one stage. Two stages give
+
+    union<union<NotGranted, NotText>, NotText>
+
+with **`NotText` at two depths**: two variants of two enums, so `Err(is NotText):` matches the outer
+one and misses the inner. A caller asking *was the input not text* is right when the second stage
+found it and wrong when the first did. Flattening makes the question answerable and the depth
+disappear.
+
+The two differ in whether the members are **disjoint**. gunzip's are — a source failure and a
+corruption are different events, and grouping them is the point. A stacked transform's are not: the
+same fault can arise at any stage, and the stage is not what the caller is asking about.
+
+Three ways out, and the middle one is what most languages do:
+
+- **Nest, and give the duplicate a name** — `Err(is NotText)` at depth is a search, and the caller
+  writes it. Keeps grouping and makes stacking verbose in exactly the case that stacks most.
+- **Flatten, with set semantics** — `union<A, union<B, C>>` is `union<A, B, C>` and a repeated
+  member appears once. This is what an error *set* means everywhere it exists, it makes
+  `Err(is NotText)` total, and it costs `is Corrupt`, which then has to be spelled as three arms or
+  as a named subset the language does not have.
+- **Both, distinguished at the declaration** — `union<A, Corrupt>` nests and `union<A, ...Corrupt>`
+  flattens, which is a spread and is the honest reading of what the two consumers want. It is also a
+  second piece of syntax for a construct that does not exist yet.
+
+What makes this decidable rather than a matter of taste: the two consumers are already written, they
+are eleven files apart, and neither is contrived. Whichever is chosen, one of them has to say so in
+its own file.

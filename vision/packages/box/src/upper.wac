@@ -1,0 +1,72 @@
+// Uppercase standard input — the first program to compose two stream transforms, and the reason
+// the flattening question is not settled.
+//
+// `@/packages/stream` was the first rewrite in this directory. Its whole argument is that a
+// transform *is* a stream, so transforms compose: *"Composition is `upperCase(scalars(src))` rather
+// than two closures wired to each other by whoever owns the loop."* Nothing in the directory has
+// ever written that composition — measured 2026-09-04, `stream` is one of 26 vision packages
+// imported by nothing.
+//
+// This is that program. The single stage works. The **second** stage is the finding.
+
+import { Result, Bytes, AsyncGenerator } from "core";
+import { In, Out, NotGranted } from "std";
+import { upperCase, NotText } from "@/packages/stream";
+
+/** One stage: bytes in, uppercase bytes out. */
+export async i32 upper(In in, Out out) {
+  try await for (Bytes chunk in upperCase(in.stream())) { _ = out.write(chunk); }
+  return 0;
+}
+
+// ## The second stage, and what its type is
+//
+// `upperCase` is
+//
+//     async gen<u8[]> Result<void, union<E, NotText>> upperCase<E>(
+//       AsyncGenerator<u8[], Result<void, E>> src)
+//
+// so it takes a stream failing with `E` and answers one failing with `union<E, NotText>` — *"the
+// source's error set plus the one thing this code can be wrong about"*, which reads exactly right
+// for one stage. Stack two:
+//
+//     upperCase(upperCase(in.stream()))
+//
+//   * the inner one has `E = NotGranted`, so it answers `union<NotGranted, NotText>`;
+//   * the outer one's `E` is *that*, so it answers `union<union<NotGranted, NotText>, NotText>`.
+//
+// **`NotText` is in there twice, at two depths.** Under the nesting lowering
+// `../../../TECHNICAL.md` measures — a union is an enum whose variant may hold an enum — those are
+// two different variants of two different enums, and `Err(is NotText):` matches the outer one only.
+// A caller asking *was the input not text* gets the right answer when the second stage found it and
+// the wrong answer when the first did.
+//
+// ## Which means the flattening question has two consumers wanting opposite things
+//
+// `TECHNICAL.md` says nesting *"is the one that preserves the grouping, and it is also the simpler
+// one to implement"*, and cites `@/packages/box/src/gunzip.wac`: `union<SourceFailed, Corrupt>`
+// where `Corrupt` is a union of eight, and `Err(is Corrupt):` is one arm for the group. That is
+// right and it depends on the members being **disjoint**.
+//
+// A stacked transform is the case where they are not. Flattening gives
+// `union<NotGranted, NotText>` — one `NotText`, `Err(is NotText)` meaning what it says, and the
+// depth gone. Nesting gives the group and the duplicate.
+//
+// So the two are not a preference. **gunzip needs nesting and this needs flattening**, and neither
+// is a corner case: grouping a family of faults and stacking a pipeline are the two things error
+// unions are for. `../../../QUESTIONS.md`.
+//
+// ## What could not be written
+//
+// **The two-stage program itself.** Not because the types are wrong — they compose and the
+// signature is honest — but because there is nothing to say about a `NotText` from the first stage
+// that is different from one from the second, so the program that shows the problem is also the
+// program nobody would write. Uppercasing twice is idempotent. The real shape is
+// `upperCase(gunzip(src))`, where the inner failure set is eight members and the outer adds one, and
+// **that** is worth writing the day `@/packages/gzip`'s generator and this one can be named in one
+// file — which needs the overlay question answered first.
+//
+// **`in.stream()`'s failure is `NotGranted` and nothing else.** So the single-stage program above
+// has `union<NotGranted, NotText>`, and a caller distinguishing them is distinguishing *the
+// capability was not granted* from *the bytes were not text* — which is right, and is the one place
+// this file can show the union earning its keep rather than duplicating.

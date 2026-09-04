@@ -1017,8 +1017,26 @@ match (f) {
 That is exactly what `@/packages/box/src/gunzip.wac` wants — one sentence for the whole `Corrupt`
 group — and it is the argument against flattening made concrete: under a flattening lowering
 `union<A, union<B, C>>` is `union<A, B, C>`, `AsCorrupt` does not exist, and the applet is back to
-eight arms. The nesting lowering is the one that preserves the grouping, and it is also the simpler
-one to implement.
+eight arms.
+
+**And it is not the whole argument, which is worth correcting here rather than elsewhere.** This
+entry said nesting *"is the one that preserves the grouping, and it is also the simpler one to
+implement"*, and grouping is only one of the two things an error union is for. The other is
+stacking, and `@/packages/box/src/upper.wac` — the first program in this directory to compose two
+stream transforms — is the case that wants the opposite.
+
+`upperCase<E>` takes a stream failing with `E` and answers one failing with `union<E, NotText>`. Two
+stages give `union<union<NotGranted, NotText>, NotText>`: **`NotText` at two depths**, two variants
+of two enums, and `Err(is NotText):` matching the outer one only. A caller asking *was the input not
+text* is right when the second stage found it and wrong when the first did.
+
+Flattening gives `union<NotGranted, NotText>` — one `NotText`, the question answerable, the depth
+gone — and loses `is Corrupt`.
+
+So the two lowerings each have a consumer and the consumers want opposite things. Neither is a
+corner case: grouping a family of faults and stacking a pipeline are what error unions are for. The
+lowering above is still what a `union` *compiles to*; which of the two the **declaration** means is
+open, and is `../QUESTIONS.md`'s.
 
 ### What the lowering does not answer
 

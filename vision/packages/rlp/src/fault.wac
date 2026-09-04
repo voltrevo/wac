@@ -64,6 +64,14 @@ export struct Trailing { i32 at; i32 extra; }
 export union<Truncated, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing>
   RlpFault;
 
+// **Flat, and that is now a choice rather than the only option.** Every member here is disjoint, so
+// nesting and flattening agree and this declaration says nothing about which the language means.
+// `../../../QUESTIONS.md` has the two consumers that disagree — `@/packages/box`'s gunzip needs
+// nesting for `Err(is Corrupt)` and its `upper.wac` needs flattening so a stacked transform's
+// `NotText` is one member rather than two depths. This union is evidence for neither, which is why
+// it is worth saying: most unions are like this one, and the decision is made by the two that
+// are not.
+
 // ## `TooLong` is a refusal the language forces and the format does not
 //
 // The original is explicit that this is a decision:
