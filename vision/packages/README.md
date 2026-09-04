@@ -80,9 +80,9 @@ language has no spelling for, a rule that turns out to be unusable at scale, a h
 in ten lines. Each package's README ends with that list, and the real ones become entries in
 `../QUESTIONS.md`.
 
-## What eighteen of them found, which no one of them could
+## What twenty of them found, which no one of them could
 
-Nine things recur, and none is in any single package's list.
+Ten things recur, and none is in any single package's list.
 
 **The constructs ran out at nine.** Packages one to nine each wanted something the language has no
 spelling for. Packages ten to fifteen wanted nothing new — every construct `regex`, `crypto`, `sh`,
@@ -105,6 +105,15 @@ public `len` field and one-byte `reserve`, and `regex`'s flat class arrays — w
 has no generics-free way to hold a list of structs"* and which turns out to be a layout choice, since
 `Vec<Range>` compiles today and would box a struct per range in a matcher's inner loop. **A comment
 written in the language of a workaround is worth checking before it is treated as one.**
+
+**A projection with one consumer has that consumer's shape, and the second one finds out how.**
+`Files` was short by two methods. `Net` is two of the host's nine and both are streams, because its
+only consumer was `server`, which listens — and `std/platform.wac`, the file `vision/std` is a
+rewrite of, has a paragraph saying exactly why those are the wrong two: *"QUIC needs none of them. A
+QUIC server answers many peers from one socket, and a connection is identified by its connection id
+rather than by an address."* Short by a **shape** rather than by a method, which is the worse of the
+two. The grant does not split, so this is not an argument for an eighth projection — it is an
+argument about how the seven were built.
 
 **Nothing in the proposal has a build story, and eighteen packages did not notice.** No vision page
 mentions the ladder, a rung or the bootstrap. `bootstrap/README.md` says the constraint in one
@@ -372,3 +381,4 @@ while correcting something.
 | [fs](fs/) | 2026-09-04 | closures instead of a mount table; the first consumer of the `Files` projection |
 | [tls](tls/) | 2026-09-04 | the key schedule, as the first consumer `secret` ever had |
 | [wactest](wactest/) — [ISOLATION.md](wactest/ISOLATION.md) | 2026-09-04 | test isolation, as the second consumer `schedule` ever had |
+| [quic](quic/) | 2026-09-04 | the datagram endpoint, as the second consumer of the `Net` projection |

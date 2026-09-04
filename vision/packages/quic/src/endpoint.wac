@@ -1,0 +1,83 @@
+// One socket, many peers, and peers that move — which `Net` cannot say.
+//
+// **`vision/std`'s `Net` is two methods and both are streams:**
+//
+//     export struct Net {
+//       async Result<Listener, NotGranted> listen(this, i32 port);
+//       async Result<Socket, NotGranted> connect(this, string host, i32 port);
+//     }
+//
+// The host has nine net capabilities. The shipped `std/platform.wac` says in one paragraph why the
+// two that are here are the wrong two for this package:
+//
+//   > Every field above this is *stream* — `connect`, `listen`, `accept`, `recv`, `send` — and QUIC
+//   > needs none of them. A QUIC server answers many peers from one socket, and a connection is
+//   > identified by its connection id rather than by an address, so a peer may legitimately move
+//   > mid-connection. A connected socket represents neither: not one socket for many peers, and not
+//   > one peer at changing addresses.
+//
+// That is `design/system/0007`, it is written in the file `vision/std/platform.wac` is a rewrite of,
+// and the rewrite dropped it. **`Files` was short by two methods and this is short by a shape.**
+//
+// ## The distinction worth keeping, because it defends the projections
+//
+// The *grant* is right. `std/platform.wac`: *"a program that may open a TCP connection may send a
+// UDP packet, and one that may not may do neither. A second grant would be a second question with
+// the same answer."* So `Net` as a **capability** is one thing, correctly — this is not an argument
+// for an eighth projection.
+//
+// What is wrong is the **interface**. A projection is a value with an API, and this one's API was
+// assembled from `server`, which listens. One consumer, one shape, and the shape it did not need
+// went missing — which is the same failure `fs` found and a worse instance of it, because a missing
+// method is an omission and a missing shape is a design that cannot be extended into.
+
+import { Result, Bytes } from "core";
+import { NotGranted } from "std";
+
+/** Who a datagram came from. Not a connection: the next one may say something else. */
+export struct Peer { string host; i32 port; }
+
+/** A datagram, and the peer is part of the value rather than part of the socket. */
+export struct Received { Bytes bytes; Peer from; }
+
+/**
+ * A bound UDP socket.
+ *
+ * **Not a `Socket`.** `vision/std`'s `Socket` has `recv`, `send` and `close` and represents one
+ * peer; every read here answers a peer as well as bytes, and every write names one. Reusing the
+ * name would make a QUIC server look like a connection, which is exactly the thing
+ * `design/system/0007` says it is not.
+ */
+export struct Endpoint {
+  /** The port the kernel bound, so `bind(0)` is usable. */
+  i32 port;
+
+  async gen<Received> Result<void, NotGranted> incoming(this);
+  async Result<void, NotGranted> sendTo(this, Peer to, Bytes bytes);
+  void close(this);
+}
+
+/**
+ * What `Net` would need. Two methods, and the first is the one that does not fit the existing shape.
+ *
+ * `bind` rather than `listen` because a datagram socket accepts nothing: there is no handshake and
+ * no second socket, and calling it `listen` would suggest an `accept` that cannot exist.
+ */
+export struct NetWithDatagrams {
+  async Result<Endpoint, NotGranted> bind(this, string addr, i32 port);
+  async Result<Endpoint, NotGranted> bindAny(this);
+}
+
+/**
+ * Routing by connection id, which is the part a stream socket makes impossible.
+ *
+ * One `Endpoint`, many connections, and the id in the packet header decides which — so a peer that
+ * changes address mid-connection keeps its connection, and two peers behind one NAT do not collide.
+ * A `Map<Bytes, Connection>` cannot key on `Bytes` today, `DECISIONS.md` having settled that
+ * references are comparable and not hashable, so the id would be hashed to a `u64` and the map keyed
+ * on that — which is a real consequence of that decision and the first place this exercise has met
+ * one.
+ */
+export struct Router {
+  async void run(this, Endpoint e) { … }
+}

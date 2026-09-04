@@ -124,7 +124,20 @@ export struct Files {
   async Result<Stat, NotGranted> linkStat(this, string path);
 }
 
-/** Sockets. The child's own, never the parent's. */
+/**
+ * Sockets. The child's own, never the parent's.
+ *
+ * **Two of the host's nine, and both are streams**, which `vision/packages/quic` found by being the
+ * second consumer. The file this is a rewrite of says why that is the wrong two: *"Every field above
+ * this is stream — `connect`, `listen`, `accept`, `recv`, `send` — and QUIC needs none of them. A
+ * QUIC server answers many peers from one socket, and a connection is identified by its connection
+ * id rather than by an address."* `design/system/0007`.
+ *
+ * `Files` was short by two methods; this is short by a **shape** — a datagram endpoint is not a
+ * `Socket`, since every read answers a peer and there is no accept. The grant does not split, so
+ * this is not an argument for an eighth projection; it is an argument that an interface assembled
+ * from one caller has that caller's shape.
+ */
 export struct Net {
   async Result<Listener, NotGranted> listen(this, i32 port);
   async Result<Socket, NotGranted> connect(this, string host, i32 port);
