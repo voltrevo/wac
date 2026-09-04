@@ -1,0 +1,9 @@
+// The package, as one name.
+//
+// **`divSmall` and `Small` are deliberately not here.** They divide a *magnitude* and answer an
+// unsigned remainder, which is the original's one documented departure from its own sign rule —
+// justified there by *"its only callers are the text conversions"*. `text.wac` reaches them by
+// path, and a barrel that leaves them out is how that sentence becomes true rather than intended.
+
+export { Big, DivMod, DivideByZero } from "./big.wac";
+export { NumberFault, parseDecimal, parseHex, toDecimal, toHex } from "./text.wac";

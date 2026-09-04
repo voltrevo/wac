@@ -1,0 +1,535 @@
+// Arbitrary-precision integers, as an immutable value with methods.
+//
+// `packages/bignum/src/big.wac` is free functions — `add(a, b)`, never `a.add(b)` — and its header
+// says why:
+//
+// > The API is free functions rather than methods — `add(a, b)`, not `a.add(b)` — because deep
+// > const makes the method form impossible to write. A `const this` method cannot use a value
+// > returned by another `const this` method, even one freshly allocated, since the result of a call
+// > through a const receiver is itself const.
+//
+// **That was true when it was written and has not been true since 2026-08-11.** `issues/lang/0060`
+// is that exact rule, filed by agent-c on 2026-08-02 and closed by agent-b nine days later; the fix
+// replaced the blanket taint with a freshness test, and its resolution ends *"`packages/crypto/src/
+// sha1.wac` can have its `clone` back, which is where this was found."* Nobody went back for the
+// other package that had written the rule into its public surface. Measured today, both spellings
+// below check clean — see section 1, which also has the one shape that is still refused and is the
+// reason the claim survived.
+//
+// So this file is what `bignum` looks like when the sentence is not true: `a.add(b)`, a `const
+// struct` rather than a canonical form maintained by hand, and the sign-magnitude invariant stated
+// in the type instead of in a doc comment.
+
+import { Result } from "core";
+
+/**
+ * Sign-magnitude, `u32` limbs, little-endian, **immutable**.
+ *
+ * `const struct` is the change with the most reach in this file. The original's `Big` is a mutable
+ * struct with a documented invariant:
+ *
+ * > Canonical form: `n` counts significant limbs with no leading zeros, and `neg` is false whenever
+ * > `n` is 0. Every constructor and operation restores it, and comparison depends on it.
+ *
+ * *Every constructor and operation restores it* is a promise thirteen functions have to keep, and
+ * `trim()` is the method they call to keep it. Here there is nothing to restore: a `Big` is built
+ * once, by `of` below, which is the only place the invariant is established and the only place it
+ * could be got wrong. `cmp` can depend on it because no one can reach in afterwards.
+ *
+ * The cost is that every operation allocates its result, which the original also does and says so —
+ * *"Every operation returns a fresh value and allocates its result exactly, because every result
+ * size is known in advance"*. So the const is free: the mutation the original permits is only ever
+ * used to fill a value on the way to handing it over.
+ */
+export const struct Big {
+  u32[] limbs;
+  i32 n;
+  bool neg;
+
+  /**
+   * The one constructor. Takes a filled array and the count of limbs that might be significant,
+   * drops the leading zeros, and normalises the sign of zero.
+   *
+   * `mag` is a plain local array at every call site — mutable while it is being filled, and
+   * unreachable as anything but a `const` field once it is here. That is the whole of what the
+   * original's `withCap` + fill + `trim()` sequence does, with the window where a `Big` exists in
+   * a non-canonical state closed.
+   */
+  Big of(u32[] mag, i32 upto, bool neg) {
+    i32 n = upto;
+    while (n > 0 && mag[n - 1] == 0) { n--; }
+    return Big(mag, n, n != 0 && neg);
+  }
+
+  Big zero() { return Big(u32[1](), 0, false); }
+
+  Big fromU64(u64 v) {
+    u32[] mag = u32[2]();
+    mag[0] = v as@ u32;
+    mag[1] = (v >> 32) as@ u32;
+    return Big.of(mag, 2, false);
+  }
+
+  Big fromI64(i64 v) {
+    // Two's complement negate rather than `-v`: the most negative i64 has no positive counterpart,
+    // and negating it would overflow back to itself.
+    u64 mag = v as@ u64;
+    if (v < 0) { mag = ~mag + 1; }
+    Big b = Big.fromU64(mag);
+    return Big.of(b.limbs, b.n, v < 0);
+  }
+
+  // ── Reading ──────────────────────────────────────────────────────────────────────────
+
+  bool isZero(const this) { return this.n == 0; }
+
+  /** -1, 0 or 1. `neg` is false for zero, so this needs no special case. */
+  i32 signum(const this) { return this.n == 0 ? 0 : (this.neg ? -1 : 1); }
+
+  /** Bit length of the magnitude: 0 for zero, else the position of the top set bit. */
+  i32 bitLen(const this) {
+    if (this.n == 0) { return 0; }
+    u32 top = this.limbs[this.n - 1];
+    i32 bits = 0;
+    while (top != 0) { top = top >> 1; bits++; }
+    return (this.n - 1) * 32 + bits;
+  }
+
+  // ── Sign ─────────────────────────────────────────────────────────────────────────────
+
+  // **Both share the limbs rather than copying them, which is safe only because of the
+  // `const struct`.** The original's `negate` calls `copy` first, because its `Big` is mutable and
+  // two values over one `u32[]` would be one value with two names. Nothing here can write a limb,
+  // so the sharing is invisible — `a.negated().negated()` allocates two headers and no arrays.
+  //
+  // Worth stating because it is the first place in this exercise where making something immutable
+  // *removed* work rather than adding a copy: the usual trade is the other way round.
+  Big negated(const this) { return Big.of(this.limbs, this.n, !this.neg); }
+  Big abs(const this)     { return Big.of(this.limbs, this.n, false); }
+
+  // ── Comparison ───────────────────────────────────────────────────────────────────────
+
+  /** -1, 0, 1 comparing magnitudes only. */
+  i32 cmpAbs(const this, const Big b) {
+    if (this.n != b.n) { return this.n > b.n ? 1 : -1; }
+    for (i32 i = this.n - 1; i >= 0; i--) {
+      if (this.limbs[i] != b.limbs[i]) { return this.limbs[i] > b.limbs[i] ? 1 : -1; }
+    }
+    return 0;
+  }
+
+  /** -1, 0, 1 comparing signed values. */
+  i32 cmp(const this, const Big b) {
+    if (this.neg != b.neg) { return this.neg ? -1 : 1; }
+    i32 c = this.cmpAbs(b);
+    return this.neg ? -c : c;
+  }
+
+  bool eq(const this, const Big b) { return this.cmp(b) == 0; }
+  bool lt(const this, const Big b) { return this.cmp(b) < 0; }
+
+  // ── Addition and subtraction ─────────────────────────────────────────────────────────
+
+  Big add(const this, const Big b) {
+    if (this.neg == b.neg) { return Big.of(addMag(this, b), maxN(this, b) + 1, this.neg); }
+    // Opposite signs: the larger magnitude decides both the result and its sign.
+    i32 c = this.cmpAbs(b);
+    if (c == 0) { return Big.zero(); }
+    if (c > 0)  { return Big.of(subMag(this, b), this.n, this.neg); }
+    return Big.of(subMag(b, this), b.n, b.neg);
+  }
+
+  Big sub(const this, const Big b) { return this.add(b.negated()); }
+
+  // ── Multiplication ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Schoolbook, O(n*m). Karatsuba wins above a few hundred limbs and is an isolated change; nothing
+   * here approaches that size.
+   */
+  Big mul(const this, const Big b) {
+    if (this.n == 0 || b.n == 0) { return Big.zero(); }
+    u32[] r = u32[this.n + b.n]();
+    for (i32 i = 0; i < this.n; i++) {
+      u64 carry = 0;
+      u64 x = this.limbs[i] as u64;
+      for (i32 j = 0; j < b.n; j++) {
+        u64 t = (r[i + j] as u64) + x * (b.limbs[j] as u64) + carry;
+        r[i + j] = t as@ u32;
+        carry = t >> 32;
+      }
+      r[i + b.n] = carry as@ u32;
+    }
+    return Big.of(r, this.n + b.n, this.neg != b.neg);
+  }
+
+  /** `this * m` for a single-limb `m`. */
+  Big mulSmall(const this, u32 m) {
+    if (this.n == 0 || m == 0) { return Big.zero(); }
+    u32[] r = u32[this.n + 1]();
+    u64 carry = 0;
+    for (i32 i = 0; i < this.n; i++) {
+      u64 t = (this.limbs[i] as u64) * (m as u64) + carry;
+      r[i] = t as@ u32;
+      carry = t >> 32;
+    }
+    r[this.n] = carry as@ u32;
+    return Big.of(r, this.n + 1, this.neg);
+  }
+
+  // ── Shifts ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * **`bits` is a `u32`, and that deletes two bug fixes.**
+   *
+   * The original takes an `i32` and each direction handles a negative count by calling the other
+   * one, which gives both of them a case for `i32::MIN` — whose negation is itself. Both cases are
+   * commented, and each comment records a measured failure:
+   *
+   * > `-i32::MIN` is still `i32::MIN`, so a shift by it used to bounce between here and `shr` until
+   * > the stack ran out.
+   *
+   * > that allocation *succeeds* and the zeroing loop then runs for minutes, so a stack overflow in
+   * > a second became a hang — measured, not guessed.
+   *
+   * A shift count is a count. Neither function has a negative case here, so neither has the
+   * pathological one, and the mutual recursion that produced both is gone. A caller that wants a
+   * signed shift writes the sign at the call site, where it knows which way it meant.
+   *
+   * This is the second time this exercise has found a whole class of defect living in the gap
+   * between a value's type and its domain, after `Read`'s `-2`-means-truncated. It is the first
+   * where the shipped code carries the *fixes* rather than the bug: two comments, two failure
+   * modes, one wrong type.
+   */
+  Big shl(const this, u32 bits) {
+    if (this.n == 0 || bits == 0) { return this; }
+    i32 words = (bits / 32) as@ i32;
+    u32 rem = bits % 32;
+    i32 cap = this.n + words + 1;
+    u32[] r = u32[cap]();
+    for (i32 i = 0; i < this.n; i++) {
+      u32 v = this.limbs[i];
+      if (rem == 0) {
+        r[i + words] = r[i + words] | v;
+      } else {
+        r[i + words] = r[i + words] | (v << rem);
+        r[i + words + 1] = r[i + words + 1] | (v >> (32 - rem));
+      }
+    }
+    return Big.of(r, cap, this.neg);
+  }
+
+  /**
+   * Arithmetic shift right, matching BigInt's `>>`: it floors rather than truncates, so `-5 >> 1`
+   * is `-3`. Shifting the magnitude discards low bits, which rounds toward zero, so one is
+   * subtracted back whenever anything was discarded.
+   */
+  Big shr(const this, u32 bits) {
+    if (this.n == 0 || bits == 0) { return this; }
+    i32 words = (bits / 32) as@ i32;
+    u32 rem = bits % 32;
+
+    // Everything shifted out: zero for a positive value, -1 for a negative one.
+    if (words >= this.n) { return this.neg ? Big.fromI64(-1) : Big.zero(); }
+
+    bool lost = false;
+    for (i32 i = 0; i < words; i++) { if (this.limbs[i] != 0) { lost = true; } }
+    if (rem != 0 && (this.limbs[words] & (((1 as@ u32) << rem) - 1)) != 0) { lost = true; }
+
+    i32 outN = this.n - words;
+    u32[] r = u32[outN]();
+    for (i32 i = 0; i < outN; i++) {
+      u32 v = this.limbs[i + words];
+      if (rem == 0) {
+        r[i] = v;
+      } else {
+        u32 hi = i + words + 1 < this.n ? this.limbs[i + words + 1] : 0;
+        r[i] = (v >> rem) | (hi << (32 - rem));
+      }
+    }
+    Big shifted = Big.of(r, outN, this.neg);
+    return this.neg && lost ? shifted.add(Big.fromI64(-1)) : shifted;
+  }
+
+  // ── Division ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Truncated division, matching BigInt: the quotient rounds toward zero and the remainder takes
+   * the sign of the *dividend*, so `-7 / 2` is `-3` remainder `-1`.
+   *
+   * **A `Result` rather than the original's `trap`.** A divisor arrives from `parseDecimal` as
+   * often as from a literal, and a trap in a library is the caller's process ending on the
+   * caller's input. The original writes `if (b.n == 0) { trap; }` — a *bare* trap, and the language
+   * has had `trap "message";` all along (`spec/spec/grammar.md`: `trap_stmt = "trap" , [ expr ] ,
+   * ";"`), so even keeping the trap the message was free and not taken. That is worth a line in
+   * `packages/bignum` on its own account and is not what this file changes.
+   */
+  Result<DivMod, DivideByZero> divmod(const this, const Big b) {
+    if (b.n == 0) { return Err(DivideByZero()); }
+    if (this.cmpAbs(b) < 0) { return Ok(DivMod(Big.zero(), this)); }
+    if (b.n == 1) {
+      Small d = divSmall(this.abs(), b.limbs[0]);
+      return Ok(DivMod(
+        Big.of(d.q.limbs, d.q.n, this.neg != b.neg),
+        Big.of(oneLimb(d.r), 1, this.neg),
+      ));
+    }
+    return Ok(divKnuth(this, b));
+  }
+
+  /** The quotient alone, for a caller that has already ruled out a zero divisor. */
+  Result<Big, DivideByZero> div(const this, const Big b) {
+    match (this.divmod(b)) {
+      Ok(d):  { return Ok(d.q); }
+      Err(e): { return Err(e); }
+    }
+  }
+}
+
+/** Quotient and remainder together. */
+export struct DivMod {
+  Big q;
+  Big r;
+}
+
+/**
+ * The one thing division can be asked that it cannot answer.
+ *
+ * A member with no payload, which the original spells as a `trap` and every other package in this
+ * directory spells as a union member — see `@/packages/gzip`'s `Fault`.
+ */
+export struct DivideByZero {}
+
+// ── Magnitude helpers ──────────────────────────────────────────────────────────────────
+//
+// These are file-private and take `const Big` rather than being methods, because what they answer
+// is a bare `u32[]` for `Big.of` to canonicalise. Making them methods would mean each one returning
+// a half-built `Big`, which is the state the `const struct` exists to make unrepresentable.
+
+i32 maxN(const Big a, const Big b) { return a.n > b.n ? a.n : b.n; }
+
+/** |a| + |b|, as limbs, with room for the carry. */
+u32[] addMag(const Big a, const Big b) {
+  i32 m = maxN(a, b);
+  u32[] r = u32[m + 1]();
+  u64 carry = 0;
+  for (i32 i = 0; i < m; i++) {
+    u64 t = carry;
+    if (i < a.n) { t = t + (a.limbs[i] as u64); }
+    if (i < b.n) { t = t + (b.limbs[i] as u64); }
+    r[i] = t as@ u32;
+    carry = t >> 32;
+  }
+  r[m] = carry as@ u32;
+  return r;
+}
+
+/** |a| - |b|, as limbs. The caller must know |a| >= |b|, which `add` establishes by comparing. */
+u32[] subMag(const Big a, const Big b) {
+  u32[] r = u32[a.n]();
+  u64 borrow = 0;
+  for (i32 i = 0; i < a.n; i++) {
+    u64 x = a.limbs[i] as u64;
+    u64 y = borrow + (i < b.n ? (b.limbs[i] as u64) : 0);
+    if (x >= y) {
+      r[i] = (x - y) as@ u32;
+      borrow = 0;
+    } else {
+      r[i] = ((x + 4294967296) - y) as@ u32;
+      borrow = 1;
+    }
+  }
+  return r;
+}
+
+u32[] oneLimb(u32 v) {
+  u32[] r = u32[1]();
+  r[0] = v;
+  return r;
+}
+
+/**
+ * A quotient and a single-limb remainder.
+ *
+ * **Private, which retires a documented departure.** The original exports `divSmall` and its README
+ * says *"`divSmall` is the one deliberate departure: its remainder is an unsigned magnitude,
+ * because its only callers are the text conversions and they divide magnitudes."* A departure from
+ * the package's own sign rule, justified by who calls it — so the fix is that nobody outside can.
+ * `@/packages/bignum/src/text.wac` reaches it through the barrel and no one else does.
+ */
+export struct Small {
+  Big q;
+  u32 r;
+}
+
+/** `a / m` and `a % m` for a single-limb divisor, on magnitudes. `m` must not be zero. */
+export Small divSmall(const Big a, u32 m) {
+  if (a.n == 0) { return Small(Big.zero(), 0); }
+  u32[] q = u32[a.n]();
+  u64 rem = 0;
+  for (i32 i = a.n - 1; i >= 0; i--) {
+    u64 cur = (rem << 32) | (a.limbs[i] as u64);
+    q[i] = (cur / (m as u64)) as@ u32;
+    rem = cur % (m as u64);
+  }
+  return Small(Big.of(q, a.n, a.neg), rem as@ u32);
+}
+
+/**
+ * Knuth's algorithm D, for a divisor of two limbs or more.
+ *
+ * The divisor is normalised so its top limb has its high bit set, which bounds the quotient-digit
+ * estimate to at most one too high after the refinement loop; the add-back handles that case.
+ *
+ * **The `while` condition below is a fixed bug and the package's whole justification.** See
+ * section 2 of the README: it is a `u64` wrapping at exactly 2^64, at the one width where
+ * `spec/spec/types.md`'s documented overflow-detection idiom does not reach.
+ */
+DivMod divKnuth(const Big a, const Big b) {
+  u32 shift = 0;
+  u32 top = b.limbs[b.n - 1];
+  while ((top & (2147483648 as@ u32)) == 0) { top = top << 1; shift++; }
+
+  Big u = a.abs().shl(shift);
+  Big v = b.abs().shl(shift);
+  i32 n = v.n;
+  i32 m = u.n - n;
+
+  // The running remainder needs one limb of headroom above u.
+  u32[] un = u32[u.n + 1]();
+  for (i32 i = 0; i < u.n; i++) { un[i] = u.limbs[i]; }
+
+  u32[] q = u32[m + 1]();
+
+  u64 base = 4294967296;
+  u64 vTop = v.limbs[n - 1] as u64;
+  u64 vNext = v.limbs[n - 2] as u64;
+
+  for (i32 j = m; j >= 0; j--) {
+    // Estimate one quotient digit from the top two limbs of the remainder.
+    u64 num = ((un[j + n] as u64) << 32) | (un[j + n - 1] as u64);
+    u64 qhat = num / vTop;
+    u64 rhat = num % vTop;
+    if (qhat >= base) { qhat = base - 1; rhat = num - qhat * vTop; }
+    // The refinement forms `rhat << 32`, which means nothing once rhat reaches base: the clamp
+    // above can leave it there exactly, and 2^64 wraps a u64 to zero, so the comparison rejects a
+    // digit that was already right. Hence `rhat < base` as a loop condition rather than a check
+    // after the increment.
+    while (qhat != 0 && rhat < base) {
+      u64 rhs = (rhat << 32) | (un[j + n - 2] as u64);
+      if (qhat * vNext <= rhs) { break; }
+      qhat = qhat - 1;
+      rhat = rhat + vTop;
+    }
+
+    // Subtract qhat * v from the window of un at offset j.
+    u64 borrow = 0;
+    u64 carry = 0;
+    for (i32 i = 0; i < n; i++) {
+      u64 p = qhat * (v.limbs[i] as u64) + carry;
+      carry = p >> 32;
+      u64 need = ((p as@ u32) as u64) + borrow;
+      u64 cur = un[i + j] as u64;
+      if (cur >= need) {
+        un[i + j] = (cur - need) as@ u32;
+        borrow = 0;
+      } else {
+        un[i + j] = ((cur + base) - need) as@ u32;
+        borrow = 1;
+      }
+    }
+    u64 curTop = un[j + n] as u64;
+    u64 needTop = carry + borrow;
+    if (curTop >= needTop) {
+      un[j + n] = (curTop - needTop) as@ u32;
+      borrow = 0;
+    } else {
+      un[j + n] = ((curTop + base) - needTop) as@ u32;
+      borrow = 1;
+    }
+
+    if (borrow != 0) {
+      // The estimate was one too high: add the divisor back and step the digit down.
+      qhat = qhat - 1;
+      u64 c2 = 0;
+      for (i32 i = 0; i < n; i++) {
+        u64 t = (un[i + j] as u64) + (v.limbs[i] as u64) + c2;
+        un[i + j] = t as@ u32;
+        c2 = t >> 32;
+      }
+      un[j + n] = ((un[j + n] as u64) + c2) as@ u32;
+    }
+    q[j] = qhat as@ u32;
+  }
+
+  // The remainder is the low n limbs of un, shifted back down.
+  u32[] rmag = u32[n]();
+  for (i32 i = 0; i < n; i++) { rmag[i] = un[i]; }
+
+  return DivMod(
+    Big.of(q, m + 1, a.neg != b.neg),
+    Big.of(Big.of(rmag, n, false).shr(shift).limbs, n, a.neg),
+  );
+}
+
+// ## 1. The claim this file was written to check, and the shape that keeps it alive
+//
+// Measured 2026-09-04 through `bootstrap/ts/ask_wacc.ts`, which is the instrument that answers
+// *type errors* — `harness/ladderRun.ts` was tried first and answers a different question, since
+// `bootstrap/drivers/spec_cases.wac` says in as many words that *"`emit` neither parses for errors
+// nor type-checks — a program wac would reject still comes out the other side as a module, which is
+// why asking `emit` whether something was refused answered 'no' sixty-one times."* Under it, a
+// direct field write through `const this` reports one type error, which is the known answer that
+// proves the boundary.
+//
+// Four spellings of *a const method handing back something the caller may mutate*:
+//
+// | spelling | type errors |
+// |---|---|
+// | a **static** taking `const Big`, returning a value built from a fresh `u32[]` | **0** |
+// | an instance `const this` method whose `return` is a **construction** | **0** |
+// | the same construction **named as a local** and then returned | **1** |
+// | an instance `const this` method returning a local built by a nested call | **1** |
+//
+// The last two are the same program as the middle one. `C mk(const this) { return C(this.n); }`
+// checks clean and `C mk(const this) { C r = C(this.n); return r; }` does not — one token apart,
+// both answering 6 when run.
+//
+// **That is why the claim survived a language change that was made to retire it.** `0060`'s rule is
+// *"A call through a const receiver is const unless every `return` in the method is fresh"*, and
+// freshness is decided by looking at the return expression: a construction is fresh, a name is not.
+// `sha1`'s `clone` returns a construction and got its method back. Every constructor in `bignum`
+// has to allocate an array and fill it before it knows what it holds, so it must name the value —
+// and the one shape this package needs is the one the fix did not reach.
+//
+// The escape is the first row: a **static** has no receiver, so there is nothing to taint. Which is
+// to say the way to write a method that hands back a fresh value is to not make it a method. That
+// is the shape of the finding, and `../../../QUESTIONS.md` has it.
+//
+// (What is *not* a finding here: `issues/lang/0052` and `0315a` already have deep const being
+// escapable by passing the reference to a mutating function, which the same session's probes
+// reproduce — `escape(this.inner)` from a `const this` mutates, 0 type errors. Filed twice, both
+// open, and nothing this file needs.)
+//
+// ## 2. What could not be written
+//
+// **A number that reads like a number.** `a.mul(b).add(c)` is this file's best spelling of
+// `a * b + c`, and `q.cmp(r) < 0` of `q < r`. wac has no operator overloading, nothing in
+// `../../../GRAMMAR.md` proposes it, and no issue asks for it — this is the first package here
+// whose subject is *arithmetic*, so it is the first to want it at all. Recorded
+// rather than proposed: a rewrite that reached for operators would be arguing from one package.
+//
+// **Checked arithmetic at 64 bits.** The one real defect this package has ever had is a `u64`
+// wrapping at 2^64 in `divKnuth` above. `spec/spec/types.md` documents two ways to detect overflow
+// and says of the first — widen and narrow with `as!` — that *"for 64-bit types there is no wider
+// one"*. `issues/lang/0033` asked for a checked operator and was closed *"documented, not built"*,
+// its own notes saying **"No reproduction from the original shipped bug … a real example would
+// settle which of the three shapes is wanted."** This is that example, and it is filed rather than
+// left here.
+//
+// **`u32[]` is the container and `Vec<u32>` is not wanted**, and this is the fourth package where
+// the answer was to leave something alone. The original's README claims the credit already —
+// *"this is the one non-trivial data structure in the repo that the absence of generics costs
+// nothing"* — because every result size is known before the work starts: an addition is at most
+// `max(n,m)+1` limbs, a product exactly `n+m`, a quotient `n-m+1` and a remainder `m`. A `Vec<u32>`
+// here would be a length field that is always right and a capacity check that is never taken.

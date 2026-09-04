@@ -1,0 +1,194 @@
+// Decimal and hexadecimal text for `Big`.
+//
+// Both directions work a chunk at a time rather than a digit at a time: 10^9 is the largest power
+// of ten in a `u32` and 16^7 the largest power of sixteen, so a chunk costs one `mulSmall` in and
+// one `divSmall` out instead of nine or seven of each. That is the original's design and it is
+// right; what changes here is what a failure says and where the two nearly-identical parsers went.
+
+import { Result, Bytes } from "core";
+import { Buf } from "@/packages/bytes";
+import { Big, Small, divSmall } from "./big.wac";
+
+/**
+ * Which byte was wrong, and where.
+ *
+ * The original answers `Big?` for both parsers — one `null` for an empty string, a lone sign, and
+ * any non-digit byte anywhere in a hundred-character numeral. That is the same shape
+ * `@/packages/regex` found in `Program? compile` and `@/packages/json` found in its error codes,
+ * and the argument is the same one: the parser knows which of these it hit and the type throws it
+ * away, so a caller reporting *bad number* to someone who typed a trailing newline is the cost.
+ *
+ * `BadDigit` carries the offset because a numeral is the kind of input a person retypes, and
+ * *column 31* is the difference between finding the typo and rereading the line.
+ */
+export enum NumberFault {
+  Empty,
+  LoneSign,
+  BadDigit(i32 at, u8 byte),
+}
+
+/** 10^9, the largest power of ten in a `u32`. */
+const u32 DEC_CHUNK = 1000000000;
+const i32 DEC_DIGITS = 9;
+/** 16^7, the largest power of sixteen in a `u32`. */
+const i32 HEX_DIGITS = 7;
+
+/**
+ * Parse an optionally-signed decimal integer.
+ *
+ * Leading zeros are accepted — `"007"` is 7 — because they are unambiguous. There is no exponent
+ * and no decimal point: this is an integer parser, and silently truncating `"1.5"` would be worse
+ * than rejecting it.
+ */
+export Result<Big, NumberFault> parseDecimal(Bytes s) {
+  return parse(s, 10, DEC_DIGITS, false);
+}
+
+/** Parse hex, with an optional sign and an optional `0x` prefix. */
+export Result<Big, NumberFault> parseHex(Bytes s) {
+  return parse(s, 16, HEX_DIGITS, true);
+}
+
+/**
+ * **One parser, where the original has two.**
+ *
+ * `parseDecimal` and `parseHex` are 28 and 38 lines and differ in three things: the radix, the
+ * chunk width, and whether a `0x` prefix is skipped. Everything else — the sign, the empty and
+ * lone-sign rejections, the chunk accumulator, the `mulSmall`/`add` fold, the final sign-of-zero
+ * normalisation — is written twice, character for character, including the comment on the fold.
+ *
+ * The original's README lists *"Parsing other bases. Decimal and hex only. Base 2 and 8 are the
+ * same loop with a different chunk size"* under **Not here yet**, which is the observation one step
+ * short of taking it: the loop is already the same loop, so the two that exist are the copies and
+ * the other two would be the third and fourth. Parameterising costs a `chunkOf` and buys base 2 and
+ * base 8 as arguments.
+ *
+ * Nothing about the language forced the duplication and nothing about the language removes it; it
+ * is listed because this exercise keeps finding that the interesting redesign is not always a
+ * language question, and a package with 164 lines of text handling and 66 of them copied is worth
+ * saying out loud.
+ */
+Result<Big, NumberFault> parse(Bytes s, u32 radix, i32 perChunk, bool allowPrefix) {
+  if (s.len() == 0) { return Err(Empty); }
+  i32 i = 0;
+  bool neg = false;
+  if (s.get(0) == '-' || s.get(0) == '+') {
+    neg = s.get(0) == '-';
+    i = 1;
+  }
+  if (allowPrefix && i + 1 < s.len() && s.get(i) == '0'
+      && (s.get(i + 1) == 'x' || s.get(i + 1) == 'X')) {
+    i = i + 2;
+  }
+  if (i >= s.len()) { return Err(LoneSign); }
+
+  Big acc = Big.zero();
+  while (i < s.len()) {
+    u32 chunk = 0;
+    u32 scale = 1;
+    i32 taken = 0;
+    while (i < s.len() && taken < perChunk) {
+      u32? d = digitOf(s.get(i), radix);
+      if (d is null) { return Err(BadDigit(i, s.get(i))); }
+      chunk = chunk * radix + d!;
+      scale = scale * radix;
+      taken++;
+      i++;
+    }
+    acc = acc.mulSmall(scale).add(Big.fromU64(chunk as u64));
+  }
+  // The sign is applied once, at the end, and `Big.of` drops it for zero — so `"-0"` and `"0"`
+  // are the same value, which is what `cmp` depends on. The original writes
+  // `acc.neg = neg && !isZero(acc)` at the same point and has to remember the second half.
+  return Ok(neg ? acc.negated() : acc);
+}
+
+/**
+ * A digit's value in `radix`, or nothing.
+ *
+ * `u32?` rather than a `NumberFault`, because the helper sees one byte and no position: it can say
+ * *not a digit* and only the caller can say *not a digit, at 31*. Building the fault here would
+ * mean an offset of zero standing in until the caller replaced it, which is a wrong value with a
+ * short life rather than no value at all.
+ */
+u32? digitOf(u8 c, u32 radix) {
+  u32 v = 255;
+  if (c >= '0' && c <= '9')      { v = (c - '0') as@ u32; }
+  else if (c >= 'a' && c <= 'f') { v = (c - 'a' + 10) as@ u32; }
+  else if (c >= 'A' && c <= 'F') { v = (c - 'A' + 10) as@ u32; }
+  return v >= radix ? null : v;
+}
+
+/** Decimal digits, with a leading `-` for a negative value and `"0"` for zero. */
+export string toDecimal(const Big a) {
+  if (a.isZero()) { return "0"; }
+
+  // Nine digits per limb-sized division, least significant first, then reversed.
+  Buf digits = Buf.create();
+  Big cur = a.abs();
+  while (!cur.isZero()) {
+    Small d = divSmall(cur, DEC_CHUNK);
+    cur = d.q;
+    u32 rem = d.r;
+    if (cur.isZero()) {
+      // The most significant chunk: significant digits only, so there are no leading zeros.
+      // `rem` is nonzero here, since a canonical value's top chunk is.
+      while (rem != 0) { digits.push(('0' as@ u32 + rem % 10) as@ u8); rem = rem / 10; }
+    } else {
+      // An interior chunk stands for exactly nine digits, zeros included.
+      for (i32 k = 0; k < DEC_DIGITS; k++) {
+        digits.push(('0' as@ u32 + rem % 10) as@ u8);
+        rem = rem / 10;
+      }
+    }
+  }
+  return assemble(digits, a.signum() < 0);
+}
+
+/** Lowercase hex digits, with a leading `-` for a negative value and `"0"` for zero. */
+export string toHex(const Big a) {
+  if (a.isZero()) { return "0"; }
+  Buf digits = Buf.create();
+  for (i32 i = 0; i < a.n; i++) {
+    u32 v = a.limbs[i];
+    if (i == a.n - 1) {
+      // The top limb, nonzero in canonical form: significant digits only.
+      while (v != 0) { digits.push(hexDigit(v & 15)); v = v >> 4; }
+    } else {
+      // Every other limb contributes exactly eight digits, zeros included.
+      for (i32 k = 0; k < 8; k++) { digits.push(hexDigit(v & 15)); v = v >> 4; }
+    }
+  }
+  return assemble(digits, a.signum() < 0);
+}
+
+u8 hexDigit(u32 nib) {
+  return nib < 10 ? ('0' as@ u32 + nib) as@ u8 : ('a' as@ u32 + nib - 10) as@ u8;
+}
+
+/** The collected digits, reversed, with a sign in front. Written once for both directions. */
+string assemble(Buf digits, bool neg) {
+  Bytes got = digits.bytes();
+  Buf out = Buf.create();
+  if (neg) { out.push('-'); }
+  for (i32 i = got.len() - 1; i >= 0; i--) { out.push(got.get(i)); }
+  return string.fromBytes(out.bytes());
+}
+
+// ## What could not be written
+//
+// **A `Big` still cannot cross to a host.** The original's header opens with it — *"These are also
+// how a `Big` reaches the host: it is a GC reference and cannot cross the bindgen boundary, so the
+// tests exchange decimal strings and compare against BigInt"* — and nothing in `../../../` changes
+// that. It is not a complaint: exchanging decimal strings is what makes `BigInt` an exact oracle,
+// so the constraint produced the test design. Worth recording because it is the only place in this
+// exercise where a boundary limitation has been load-bearing in a *good* direction, and any
+// proposal to let structs cross would have to keep the property that a value crosses as something
+// the other side can check independently.
+//
+// **A nullable primitive is what `digitOf` wants and there is one spelling of it that does not
+// build.** `u32? d = …; if (d is null) …; d!` is used above and is fine; `null as u32?` is
+// `issues/lang/0324a` — checks clean, then *"cannot emit … cast to an unsupported type"*. The cast
+// on a `null` literal is the only way to write *outer present, inner absent* for a `T??`, so the
+// gap is narrow and this file does not reach it. Noted because it is the second package to want a
+// nullable primitive in a week and the first to say which spellings are safe.

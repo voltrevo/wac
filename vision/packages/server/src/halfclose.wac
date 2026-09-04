@@ -31,7 +31,7 @@ export async i32 halfclose(Net net, Out out) {
         // The server side sees the bytes and then the end of them, while the client is still
         // connected. Two arms rather than three: `Read`'s `Failed` is the one this cannot report
         // well, which is the entry on where a fault's message lives.
-        Buf got = Buf.empty();
+        Buf got = Buf.create();
         while (true) {
           match (await a.recv()) {
             Data(b):    { got.pushAll(b); }
@@ -44,7 +44,7 @@ export async i32 halfclose(Net net, Out out) {
         // And the answer travels the direction that was left open.
         _ = await a.send("world".toBytes());
         a.close();
-        Buf back = Buf.empty();
+        Buf back = Buf.create();
         try await for (Bytes b in nothing()) { back.pushAll(b); }
         out.log("client read back \"\{string.fromBytes(back.bytes())}\"");
         return 0;

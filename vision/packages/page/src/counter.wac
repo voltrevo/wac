@@ -8,7 +8,7 @@
 // point signature the launcher fixes is `page(Core, Cli, Page)`, so what a `page` *receives* is not
 // this function's to choose — but what it passes on is.
 import { Out, Page, Event, Click, Typed, Quit } from "std";
-import { Node } from "@/packages/page";
+import { Node } from "core";
 import { itoa } from "@/packages/fmt";
 
 /**

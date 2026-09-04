@@ -106,7 +106,7 @@ void renderInto(Buf out, Node n) {
 
 /** A tree as HTML. */
 export string render(Node n) {
-  Buf out = Buf.empty();
+  Buf out = Buf.create();
   renderInto(out, n);
   return string.fromBytes(out.bytes());
 }
