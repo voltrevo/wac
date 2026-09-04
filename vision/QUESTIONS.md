@@ -15,12 +15,29 @@ See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ---
 
-## Tuples and variadic arguments
+## Tuples, and the fact that they would be the first structural type
 
-Heterogeneous `Ticket.all(a, b)` answers a tuple, and `Ticket.any(a, b)` answers
-`(i32, union<A, B>)`. Both need tuples, which have never been explored, and variadic arguments —
-an array literal has one element type, so `[a, b]` forces the branches to agree.
+Heterogeneous `Ticket.all(a, b)` answers a tuple and `Ticket.any(a, b)` answers `(i32, union<A, B>)`.
+Both need tuples and variadic arguments — an array literal has one element type, so `[a, b]` forces
+the branches to agree.
 
+Read against the implementation, and the obstacle is not the one it looks like.
+
+**Not multi-value.** wac has none anywhere: `funcref_type` is `"fn" "[" type "(" … ")" "]"` — one
+result — and `func_decl` declares one return type. The emitter's own signature strings are
+`fn[U(S,U)]`. So a tuple would be a struct, one heap allocation per return, which against the cost
+of the tickets it is grouping is nothing.
+
+**It is that a tuple is structural and wac is nominal.** `spec/spec/imports.md` says so twice —
+*"types are nominal, so two modules would be two `Read`s and nothing could convert between them"* —
+and that is load-bearing enough that `core` is embedded in the compiler rather than copied, to stop
+exactly that. A tuple cannot work that way: `(i32, string)` built in two files has to be one type or
+it is useless, so it would be **the first structural type in a nominal language**.
+
+That is not an argument against it. It is where the design work is, and `design/lang/0015` is the
+neighbouring problem — what may cross into a module loaded at runtime — whose answer also turns on
+nominal identity. Whatever rule gives two files the same `(i32, string)` is close to the rule that
+would give them the same `Config`.
 ## Dynamic dispatch
 
 The ticket design assumes it. `advance` and `settled` are overridden per kind of ticket, which is
