@@ -68,8 +68,9 @@ it.**
 *"A number rather than the `bool interrupt` this was, because there are two of them and they are not
 the same signal"* — and is right and one step short. A `bool` holds two things and there are three;
 an `i32` holds four billion and there are three, with `0` meaning *nothing happened*: a value drawn
-from the range of the answer, which is the fifth instance of that shape this exercise has found,
-after `Read.code`, `search`'s `NO_MATCH`, `decode`'s `-2` and `Socket`'s negative handle. POSIX's
+from the range of the answer, which is one of the six instances
+[../../QUESTIONS.md](../../QUESTIONS.md) lists. (This line said *fifth* and named four predecessors,
+two of which — *`Read.code`* and *`decode`'s `-2`* — are the same one under two names.) POSIX's
 number is a *rendering* for whoever delivers the signal, so it is `Sig.number()` rather than the
 representation.
 

@@ -681,7 +681,29 @@ opaque needs the arm and `union<never, Fault>` must not — which is exactly the
 raster test. So it is cheap to take, and the 99.4% prose rate is the most extreme in the table by a
 distance, which is what happens when a reserved word is also an ordinary English one.
 
-## A sentinel drawn from the value's own range, in three places
+## A sentinel drawn from the value's own range — six, and this entry owns the list
+
+Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counted one:
+
+| where | the sentinel | in the range of |
+|---|---|---|
+| `@/packages/unicode`'s `decode` | `s.code == -2` means truncated | a code point |
+| `@/packages/regex`'s `search` | `NO_MATCH` at `-1`, `BUDGET` at `-2` | a match offset |
+| `std`'s `Socket` | a negative handle | a handle |
+| `std`'s `In.read` | an empty array means *end* | a read's bytes — **fixed**: `In` is a stream |
+| `@/packages/tty`'s `Sig` | `0` means *nothing happened* | a signal number |
+| `@/packages/wacpkg`'s `mapped` | `""` means *no mapping* | a resolved key |
+
+`@/packages/tty` listed *"`Read.code`, `search`'s `NO_MATCH`, `decode`'s `-2` and `Socket`'s negative
+handle"* and called itself the fifth. `Read.code` and *`decode`'s `-2`* are the same instance under
+two names — `Read` is `std`'s socket sum and has no `code`; the field is `Scalar.code`, `unicode`'s.
+So four names for three facts, and the ordinal was one too high.
+
+One of the six is fixed and the fix is the useful part: `In.read` stopped being a ticket-and-a-
+sentinel by becoming a **stream**, and the sentinel did not get a better spelling — it stopped
+existing, because a generator ending is the loop ending. Two of the remaining five (`Socket`'s
+handle, `mapped`'s `""`) are the same shape and could go the same way; `search`'s `NO_MATCH` and
+`Sig`'s `0` want a sum type instead.
 
 `vision/std` has both shapes, twelve lines apart:
 
@@ -5059,3 +5081,42 @@ honest answer, and then every consumer's `union<E, …>` acquires an uninhabited
 **`union<never, Fault>` has to reduce to `Fault`**, or every buffer-in caller in the tree answers a
 union with a member nobody can construct. `never` is *"a type with non-trivial semantics, asserted in
 one doc comment"*; this is the case that makes the assertion load-bearing rather than decorative.
+
+## A chain that names its predecessors stays right; a bare ordinal drifts
+
+Not a language question, and it is here because this file is where the counting happens and the
+counting has been wrong.
+
+Audited 2026-09-04: 493 countable claims across `vision/`. Two families, opposite outcomes.
+
+**The one that drifted.** *A fixed-length byte view* had five files each writing a bare ordinal —
+third, fourth, fifth, fourth — computed at five different times from five different lists. No two
+agreed, one cited a package that never made the request, and that citation was then copied into a
+sixth file. *A sentinel drawn from the value's own range* had the same shape at smaller scale: one
+file's list named the same instance twice and its ordinal was one too high.
+
+**The one that held.** *The Nth thing left alone* runs to eight — `json`'s lazy object index, `Buf`'s
+field layout, `regex`'s flat class arrays, `bignum`'s limbs, `raster`'s pixel layout, `datetime`'s
+calendar, `zstd`'s fused table, `git`'s capability — across five files written days apart, and
+**every one is correct.** `regex` says third and names two; `bignum` says fourth and names three;
+`datetime` says sixth and names five; `zstd` says seventh and names six; `git` says eighth and names
+seven.
+
+The difference is the whole finding: **a file that writes the list cannot be wrong by more than one,
+because writing it is checking it.** A bare ordinal is a claim about work the reader cannot see,
+made by a writer who did not look either.
+
+So the rule, and it costs a clause:
+
+- **Write the list, or point at the file that has it.** Never the number alone.
+- **An ordinal is worse than a count**, because it also encodes an order and reads as evidence of
+  accumulation. *Fifth package* sounds like a trend; *six packages* is a list. Six arriving
+  independently is the finding — which arrived fourth is not, and is what five files were spending
+  their credibility on.
+- **Two questions will get one number.** *Declaring a fixed-width wrapper* is four packages and
+  *wanting the length in the type* is six; every file answered whichever it had in mind and wrote it
+  as though there were one.
+
+`DECISIONS.md` already has the rule for prose — *"a rule written twice is a rule that drifts"* — and
+`@/packages/wac`'s README already applied it to a number. What is new is the measurement: the same
+directory, two families, and the one with the lists is the one that survived.

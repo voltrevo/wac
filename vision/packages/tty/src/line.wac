@@ -42,8 +42,8 @@ const u8 REPRINT = 18;
  * The argument is right and stops one step short. A `bool` holds one of two things and there are
  * three; an `i32` holds four billion and there are three. Both are the wrong size, in opposite
  * directions, and the second one leaves `0` meaning *nothing happened* — a value drawn from the
- * range of the answer, which is the shape this exercise has now found in `Read.code`, `search`'s
- * `NO_MATCH`, `decode`'s `-2` and `Socket`'s negative handle.
+ * range of the answer — one of the six instances `../../../QUESTIONS.md` lists, which owns the
+ * count because this line's own list named one of them twice.
  *
  * The POSIX number is a *rendering* of a signal for whoever is delivering it, not the identity of
  * one, so it is a method rather than the representation. `packages/fs/src/proc.wac` has the same
