@@ -4085,11 +4085,18 @@ export i32 relayDataLen() { return PAYLOAD_LEN - RELAY_HEADER_LEN; }
 with `export const i32 NTOR_KEY_MATERIAL = 92;` seventy lines further down — so *exported* is not the
 distinction either.
 
-**One qualification, and it is the honest one.** `packages/wacc` holds 265 of the 828 and **zero**
-consts, and its source must compile on wac-L5. `issues/lang/0285b` establishes that the top rung
-cannot take a module-level const *array*; whether it takes a scalar is not recorded and I have not
-measured it. So a third of the population may be forced, and the other 563 are in packages that
-demonstrably manage both.
+**One qualification, now measured.** `packages/wacc` holds 265 of the 828 and **zero** consts, and
+its source must compile on wac-L5. Driving L5 directly: `const i32 LIMIT = 509;` at module scope is
+**refused** — `unexpected token = before 509` — and so is the exported form, and so is the array
+`issues/lang/0285b` is about, with the *same* message. A local `const` is accepted and a nullary
+function is accepted.
+
+So L5 has no top-level `const` production at all, and **a third of the population is forced rather
+than drifted**: in `wacc` the function form is the only one the top rung can read. That is now
+recorded in `0285b`, whose title says "array" and whose defect is wider.
+
+The other **563** are in packages outside wacc's graph, which demonstrably manage both — `tor` has
+67 functions and 146 consts.
 
 ### Two different questions live under the number
 

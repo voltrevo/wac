@@ -186,3 +186,33 @@ So the options are not "do the rung work":
 
 Not obvious, and the first one touches a file this repository is deliberately careful about, so it is
 a decision rather than an afternoon.
+
+
+## The scalar case is refused too, measured 2026-09-04 (agent-a)
+
+This issue is written about a const **array**, and the same refusal covers a scalar. Driving wac-L5
+directly — `l5ToL0` from `bootstrap/ts/l5.ts`, so nothing else is in the way:
+
+| written | wac-L5 |
+|---|---|
+| `i32 LIMIT() { return 509; }` | accepted |
+| `const i32 LIMIT = 509;` at module scope | **refused** — `unexpected token = before 509 ; export` |
+| `export const i32 LIMIT = 509;` | **refused**, same message |
+| `const i32[] KEYS = i32[](1, 2, 3);` — this issue's case | refused — `unexpected token = before i32 [ ]` |
+| `const i32 LIMIT = 509;` inside a function | accepted |
+
+**The message is the same for the scalar and the array**, which narrows the diagnosis: it is not a
+limit on the initialiser's type, it is that L5's *declaration* parser has no `const` production at
+top level. So the fix is one production rather than one per type, and the title's "array" is
+narrower than the defect.
+
+**What it explains.** `packages/wacc/src/**` holds **265** nullary constant-returning functions —
+`i32 NAME() { return n; }` — and **zero** module-level `const`s. That is a third of the 828 such
+functions in `packages/*/src`, and until this measurement it was not clear whether the compiler's
+own source was following a style or obeying a constraint. It is obeying a constraint: the form is
+the only one the top rung can read. Worth having in this issue because it is also the best argument
+for fixing it — the constant form is not a preference anywhere in `wacc`, it is the ladder showing
+through into 265 declarations.
+
+Nothing else changes about the issue: honouring an initialiser is still the work, and this only
+widens what is refused and sharpens where.
