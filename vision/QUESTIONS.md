@@ -2986,3 +2986,38 @@ rewrite reversed, dropped or hollowed out **five** of them. Not because five dec
 re-litigated — because none of them was read. A rewrite whose input is a set of declarations cannot
 see a paragraph, and every one of these five is a paragraph. The filter is a grep for `used to`; it
 should have been the first thing run and it was the seventh.
+
+## The closure design has no mount table, and a listing is what a table is for
+
+The history-marker grep found five reversals in `std/platform.wac`. Run over the shipped counterpart
+of every rewritten package — 767 markers across twenty — the first thing it finds outside `std` is a
+different kind of loss.
+
+`@/packages/fs` argues that a `Mount` of closures beats the shipped `Backing` tag, because a tag makes
+every operation know about every backing. It composes them four ways: `inMemory`, `onHost`,
+`readOnly(inner)`, `overlay(base, top)`. **All four compose backings at one path.** Nothing hangs
+`/dev` off a root that is something else — there is no mount table, and `packages/fs/src/fs.wac`
+says what a table is for:
+
+> Without this a mount is invisible from above: `ls /` on a session with `/dev` and `/proc` listed
+> neither, because the root's own tree has no entry for them — **the mount table is the only thing
+> that knows**. A listing that omits a directory you can `cd` into is worse than a wrong one, because
+> nothing about it looks wrong.
+
+*The mount table is the only thing that knows* is exactly what a per-backing closure deletes.
+
+**A `mountAt(Mount root, string at, Mount sub)` is writable and does not fix it.** One more closure,
+dispatching by longest prefix — and `readDir("/")` routes to the root, which has no entry for `dev`.
+The combinator would have to merge the names itself, which is `withMountsUnder` again. The tag got it
+for free because one value held every mount; the closure design pays for it once per composition.
+
+**And the rewrite had already found this one step earlier.** `overlayReadDir` is annotated *"The one
+operation an overlay cannot delegate to either side"* — a listing is the one answer that comes from
+both sides. The same sentence is true of a mount table and nobody wrote it, so the file states the
+general fact about one case and treats the other as absent rather than unsolved.
+
+**Which is the shape worth taking away.** Every other finding from this exercise about `Mount` is in
+its favour: `readOnly` is three lines, `empty` is a value, a third backing costs nothing. Those are
+all *per-path* operations. `readDir` is the one operation that is inherently *about the set of
+mounts*, and it is the one a design of independent closures has no place to put. A tag is a bad
+answer to "what backs this path" and the only available answer to "what is mounted below here".

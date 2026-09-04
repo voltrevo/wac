@@ -201,5 +201,27 @@ async Result<Entry, Fault> overlayStat(Mount base, Mount top, string path) { …
  * `top.remove` and not something cleverer: deleting a file that exists only in `base` needs a
  * whiteout, which is a fourth thing to represent and is where every union filesystem gets hard.
  * Left undone deliberately — this is an argument for a shape, not an implementation of one.
+ *
+ * **And the same discovery was available one step further and was not made.** `readDir` resists an
+ * overlay because a listing is the one answer that comes from *both* sides. It resists a **mount
+ * table** for the same reason, and this file has no mount table at all — `inMemory`, `onHost`,
+ * `readOnly` and `overlay` compose backings at one path, and nothing hangs `/dev` off a root that is
+ * something else. `packages/fs/src/fs.wac` has `withMountsUnder`, and says what it is for:
+ *
+ * > Without this a mount is invisible from above: `ls /` on a session with `/dev` and `/proc` listed
+ * > neither, because the root's own tree has no entry for them — **the mount table is the only thing
+ * > that knows**. A listing that omits a directory you can `cd` into is worse than a wrong one,
+ * > because nothing about it looks wrong.
+ *
+ * *The mount table is the only thing that knows* is the sentence the closure design deletes. A
+ * `mountAt(Mount root, string at, Mount sub)` is writable — one more closure, dispatching by longest
+ * prefix — and it would route `readDir("/")` to the root, which has no entry for `dev`. So the
+ * combinator has to do the merge itself, which is `withMountsUnder` again, and the tag design got it
+ * for free because one value held every mount.
+ *
+ * Found 2026-09-04 by grepping the shipped `packages/fs` for history markers — the filter that had
+ * already turned up five reversals in `std`. This is the first it found outside `std`, and it is a
+ * different kind: not a member dropped, but a **cross-cutting operation that no per-backing closure
+ * can see**, in the package whose whole argument is that per-backing closures beat a tag.
  */
 async Result<Entry[], Fault> overlayReadDir(Mount base, Mount top, string path) { … }
