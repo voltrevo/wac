@@ -91,6 +91,48 @@ Nothing on the page mentions it. Candidates: driving a coroutine to completion f
 `Err` when this host cannot be waited on, that it drains the dependency set rather than descending
 depth-first, and the circular case. Four is probably too many for one feature.
 
+## The wire format has two dimensions and the value has arbitrarily many
+
+`vision/packages/sh/src/exec.wac` says the important half already: within one instance authority is a
+value, across a spawn it is not and cannot be, and *"the bitfield is not a design compromise, it is
+the serialised form of a capability."* What it does not say is that **the two are diverging, and
+vision's own other proposals are what widens the gap.**
+
+The shipped wire format is a category and a root: `cli.spawn(src, args, GRANT_READ | GRANT_NET, dir,
+…)`, and `std/platform.wac` puts it well — *"A shell served over a socket can be given one directory
+and no network."* Two dimensions, and both of them are things a host can enforce.
+
+The in-language value now has more than two. `vision/packages/fs`'s `Mount` is a struct of closures,
+so a `Files` can be a memory tree, a host subtree, a read-only wrapper, an overlay of one over
+another, or a fake a test built. `Mount.overlay(base, top)` is three lines there — and there is no
+`GRANT_` for *reads fall through to this and writes land in that*. It is not that the flag set is
+short by one; it is that the value's expressiveness is open-ended and the wire's is closed.
+
+So the rule that comes out of it, which nothing states:
+
+> A capability narrowed **structurally** survives a call and dies at a spawn. A capability narrowed
+> **categorically** survives both.
+
+That is a real thing for a program to know and it is not written anywhere. It also cuts against how
+the projections are argued: `box`'s ten applets that never touch a filesystem are handed `Out` and
+the narrowing is real *because they are called*, not spawned — and `sh`'s whole subject is the case
+where they would be spawned.
+
+Three ways it could go, and none is free:
+
+- **Say it and stop.** Document that structural narrowing is intra-instance, and let a program that
+  needs a narrowed child pass a description rather than a value. Honest, and it means the two halves
+  of "authority is a value" are answering different questions.
+- **Make the wire format extensible** — a child receives a capability *description* it must ask a
+  parent to service, which is a proxy and a round trip per call, and turns the parent into the
+  child's kernel.
+- **Refuse to spawn from a narrowed capability**, so the loss cannot happen silently. Which needs
+  the value to know it has been narrowed, and a `Mount` built from closures does not.
+
+The third is the one worth thinking about hardest, because the failure this is all about is silent:
+a parent hands a child `GRANT_READ`, believes it handed over its own narrowed view, and the child
+gets the process's.
+
 ## `drain` names a queue where it should name the current target
 
 `schedule` had one consumer — `Sys.drain` — until `vision/packages/wactest/src/isolate.wac` gave it a

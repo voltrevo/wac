@@ -27,6 +27,24 @@
 // `SHOWCASE.md` already writes the second thing — `sys.spawn(wasm, [], [Grant.Read])` — and nowhere
 // says it is a different kind of thing from the `Sys` two lines above it. That is the gap: the two
 // look alike and only one of them can be sent.
+//
+// ## And the gap is widening, which this file did not notice
+//
+// The wire format has two dimensions — a category and a root, `GRANT_READ | GRANT_NET` plus a `dir`,
+// which `std/platform.wac` sums up as *"a shell served over a socket can be given one directory and
+// no network."* Both are things a host can enforce.
+//
+// The value has more than two, now. `vision/packages/fs` makes a `Files` a struct of closures, so it
+// can be a memory tree, a host subtree, a read-only wrapper, an overlay of one over another, or a
+// fake — and there is no `GRANT_` for *reads fall through to this and writes land in that*. The
+// flag set is not short by one; the value's expressiveness is open-ended and the wire's is closed,
+// and every proposal that makes a capability more expressive inside an instance makes more of it
+// unsendable.
+//
+// So: **a capability narrowed structurally survives a call and dies at a spawn; one narrowed
+// categorically survives both.** Nothing says that, and the failure it describes is silent — a
+// parent hands a child `GRANT_READ` believing it passed on its own narrowed view, and the child gets
+// the process's. `../../../QUESTIONS.md` has the three ways out.
 
 import { Result, Bytes, Vec } from "core";
 import { Proc, NotGranted } from "std";
