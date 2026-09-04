@@ -20,6 +20,7 @@
 // succeeding with a short list is a different way to get the same wrong answer.
 
 import { Core, Cli, Exec } from "std/platform.wac";
+import { startsWith } from "./strings.wac";
 
 /** Every path git tracks, in git's order. Traps if git cannot say. */
 export string[] tracked(Core core, Cli cli) {
@@ -70,23 +71,37 @@ export bool under(string path, string[] dirs) {
   return false;
 }
 
+/** Whether a path is under `vision/`, which no repo-wide guard walks. */
+bool isVision(string path) { return path == "vision" || startsWith(path, "vision/"); }
+
 /**
  * The tracked files with one of `exts`, excluding anything under `skip`.
  *
  * The two lists are the caller's because they differ: a link check reads markdown, a duplicated-line
  * check reads everything with prose in it, and `site/` is excluded from repo-wide walks because it is
  * the one npm subtree and its sources are vite-resolved.
+ *
+ * **`vision/` is excluded here rather than by each caller.** It holds `.wac` files for a language
+ * that does not exist and `.md` files describing it, and `vision/README.md` says outright that
+ * nothing there is checked by anything. `tools/docsOnly.wac` already had its own clause for the same
+ * reason; three guards built on this walk did not, and were red on a fence in a doc comment, an
+ * applet count in a rewrite that deliberately counts something else, and an import of
+ * `"core/ticket.wac"` naming a file in `vision/core`. One exclusion in the walk is what the operator
+ * asked for — the alternative is a clause per guard and a new one every time a guard is written.
  */
 export string[] sourceFiles(Core core, Cli cli, string[] exts, string[] skip) {
   string[] all = tracked(core, cli);
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
-    if (hasExtension(all[i], exts) && !under(all[i], skip)) { n = n + 1; }
+    if (hasExtension(all[i], exts) && !under(all[i], skip) && !isVision(all[i])) { n = n + 1; }
   }
   string[] out = string[n](fill: "");
   i32 at = 0;
   for (i32 i = 0; i < all.len(); i++) {
-    if (hasExtension(all[i], exts) && !under(all[i], skip)) { out[at] = all[i]; at = at + 1; }
+    if (hasExtension(all[i], exts) && !under(all[i], skip) && !isVision(all[i])) {
+      out[at] = all[i];
+      at = at + 1;
+    }
   }
   return out;
 }

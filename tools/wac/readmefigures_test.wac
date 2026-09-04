@@ -374,7 +374,16 @@ string[][] notTheTotal() {
              "the applets that take flags, which is the flag corpus rather than the program"));
 }
 
-/** Every tracked markdown file outside `issues/`, which records what was true on a day. */
+/**
+ * Every tracked markdown file outside `issues/`, which records what was true on a day, and outside
+ * `vision/`, which records what is not true yet.
+ *
+ * This walk is its own — `git ls-files *.md` rather than `sourceFiles` — so it needed the `vision/`
+ * clause separately from the one in `packages/wactest/src/repo.wac`. That is the shape of the
+ * problem rather than an oversight: a guard that builds its own enumeration inherits no exclusion,
+ * and this directory has grown two of them. `vision/packages/box/README.md` says "17 applets"
+ * because it is a rewrite that counts something else, and it was the file that found this.
+ */
 string[] liveDocs(Core core, Cli cli) {
   Exec r = cli.exec("git", string[]("ls-files", "*.md"), u8[0]()).wait();
   if (!r.ran() || r.status != 0) {
@@ -385,14 +394,19 @@ string[] liveDocs(Core core, Cli cli) {
   string[] all = lines(trimEnd(string.fromBytes(r.stdout)));
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
-    if (all[i].len() > 0 && all[i].indexOf("issues/") != 0) { n = n + 1; }
+    if (live(all[i])) { n = n + 1; }
   }
   string[] out = string[n](fill: "");
   i32 at = 0;
   for (i32 i = 0; i < all.len(); i++) {
-    if (all[i].len() > 0 && all[i].indexOf("issues/") != 0) { out[at] = all[i]; at = at + 1; }
+    if (live(all[i])) { out[at] = all[i]; at = at + 1; }
   }
   return out;
+}
+
+/** A markdown file this check has an opinion about: tracked, not an issue, not under `vision/`. */
+bool live(string path) {
+  return path.len() > 0 && path.indexOf("issues/") != 0 && path.indexOf("vision/") != 0;
 }
 
 bool isNumberWord(string token) {
