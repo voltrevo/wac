@@ -129,6 +129,27 @@ nowhere to put it, so it matches on it to pick an exit code or discards it. `Res
 answer that and is ugly. `vision/packages/server` writes the match, which works and means every
 program that can fail to acquire a capability writes the same four lines.
 
+## Whether `indexOf` answers `i32?`, which is where *absence is a type* actually lands
+
+The principle's largest concrete consequence in this repository, measured rather than argued.
+
+`vision/packages/http/src/bytes.wac` already made the choice for one function — `findCrlf` answers
+`i32?` instead of `-1` — and doing it for `string.indexOf` is the same change at a different scale:
+
+- **734** `indexOf` call sites across `packages/`, `core/`, `std/` and `tools/`
+- **355** of them compare the result against `-1` or `0`, so they are testing the sentinel explicitly
+- and the miss is a **tagged** spec claim: `[§wac-str-indexof-miss-k4mf8js]`,
+  *"`\"hello\".indexOf(\"xyz\")` returns `-1`"*
+
+It is also the dominant shape of the sentinel idiom generally: **515 negative-sentinel returns in 166
+files**, and eight of eight sampled were an index or a position with `-1` for *absent*, not one a
+comparator.
+
+**And it compounds with the narrowing gap above.** Without narrowing, each of those 355 sites goes
+from `if (p < 0)` to a null test *and* an unwrap at every use. With narrowing it is a test and a
+name. So the two decisions are one decision taken twice, and taking *absence is a type* first is the
+expensive order.
+
 ## Narrowing a nullable — answered as to why, and expensive to change
 
 Filed as *matching in a `while` or `for` condition*, on the strength of
