@@ -167,7 +167,7 @@ cannot tell you which**, and that is what running them is for.
 `vision/GRAMMAR.ebnf` is the same additions as productions, patched over `spec/spec/grammar.md`, and
 `tools/specparse.ts` runs the result:
 
-    deno run --allow-read tools/specparse.ts vision      # 57/57 files parse
+    deno run --allow-read tools/specparse.ts vision      # 59/59 files parse
 
 **That is a different kind of claim from anything else on this page.** Everything above was derived
 by *subtraction* — what today's parser refuses, minus what a desugarer accounts for — so it is a list
@@ -525,7 +525,7 @@ that it could change them again. The loader takes the last definition, so eight 
 the dead one was the copy carrying the comment that explained the construct: a reader looking up
 `match_arm` found the superseded form first. Merged, and `tools/ebnfaudit.ts` — which has had a
 *two rules with one name* check the whole time and had never been pointed at this file — now reports
-none. 47 entries became 39, under 38 names, with 564 productions and 57/57 unchanged.
+none. 47 entries became 39, under 38 names, with 564 productions and what parses both unchanged.
 
 **Re-measured 2026-09-04, after the delta had roughly doubled, and every number above is unchanged.**
 When these three lines were first written the patch was 22 rules replaced and one extended; it is now

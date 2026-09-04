@@ -77,7 +77,7 @@ that stays true afterwards. **A decisions entry is deleted once it reaches `spec
 spec is the test, since an implementation can have a bug, and a rule written twice is a rule that
 drifts. **A question is deleted once it is answered**, and the answer has to land somewhere first.
 
-## What twenty subjects found, as patterns rather than as a list
+## What twenty-one subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is fifty-six entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately

@@ -1274,7 +1274,8 @@ added to and did not need to be.
 
 **And there is a rule for which productions the cost eats, found by removing all 47 in turn.** Every
 entry in `GRAMMAR.ebnf` was deleted one at a time and `vision/` re-parsed with the rest. **Thirty-one
-of the thirty-nine change what parses. Eight do not**, and they split two ways.
+of the thirty-nine change what parses. Eight did, when this was measured — seven do now, because
+`field_pattern` gained a consumer the same day. They split two ways.
 
 **Three are decoration**, and all three are the contextual-keyword cost:
 
@@ -1286,11 +1287,15 @@ The third is the second one's consequence, and it is worth naming separately: `t
 wholesale so that one alternative can be added, that alternative can never match, and so the whole
 replacement is a copy of the spec's rule.
 
-**Five are unexercised rather than redundant** — each is a real widening that no file has used:
+**Four are unexercised rather than redundant** — each is a real widening no file has used:
 `list_literal`, `keyword_as_name` (a keyword as an attribute name), `jsx_element` (which widens a tag
-to `jsx_tag`, needing a quoted tag), `binding_list` (which widens a binder past `IDENT`) and
-`field_pattern` (the brace pattern, `Ok { v }:`). Removing any of them changes nothing *here*, and
-each would refuse a file somebody has not written.
+to `jsx_tag`, needing a quoted tag) and `binding_list` (which widens a binder past `IDENT`). Removing
+any of them changes nothing *here*, and each would refuse a file somebody has not written.
+
+`field_pattern` was the fifth and is not any more: `@/packages/wacc/src/walk.wac` uses the brace
+pattern and removing the rule now refuses that file at `23:14`. Which is the useful way to read this
+list — it is not *rules that are wrong*, it is *rules waiting for the subject that wants them*, and
+one of the five moved off it the day somebody wrote that subject.
 
 Both are positions where an `IDENT` is *already* admitted in that slot, so the production adds
 nothing a parser could act on. The other six new words are in positions where it is not — `defer`
