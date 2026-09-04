@@ -7,7 +7,7 @@ The real package is `packages/box`: 7,502 lines, 63 applets, a dispatcher. It be
 rewritten* — `head` is `head`, and what is here is what 63 programs measure about *no ambient
 capabilities*, which no single package could.
 
-**Three applets have since been written, and none of them for their own sake.** Each turned out to be
+**Four applets have since been written, and none of them for their own sake.** Each turned out to be
 the first code anywhere to use a capability that had been designed and never consumed, which is why
 they are here rather than in the fifty-eight that would have said nothing new:
 
@@ -16,10 +16,16 @@ they are here rather than in the fifty-eight that would have said nothing new:
 | [`src/echo.wac`](src/echo.wac) | `Out` | the narrowest signature in the box: `echo(Out, Args)` against `(Core, Cli, Fs, Args)` |
 | [`src/cat.wac`](src/cat.wac) | `In`, then `Files.open`, then `In.stream` | three versions of one complaint; only reframing `In` as a stream fixed it |
 | [`src/tee.wac`](src/tee.wac) | `Files.create` | the applet whose shipped header says it cannot be written |
+| [`src/gunzip.wac`](src/gunzip.wac) | `Err(is T):`, and a union inside a union | the shipped one returns an `i32` and prints nothing for nine distinct failures |
 
 `tee` is the one to read. Its shipped header — *"the one applet that still buffers by nature rather
 than for want of an API"* — is the projections audit arriving from the other end, six weeks earlier,
 written up as a property of `tee` rather than of the capability it comes from.
+
+`gunzip` is the one that moved a construct. `Err(is Corrupt):` had no user anywhere and its grammar
+rule was one of those whose removal changed nothing; the applet needed exactly it, because
+`@/packages/gzip`'s fault union splits *somebody else's disk* from *a statement about the archive*
+and the whole point is that a caller may retry one and not the other.
 
 ---
 
