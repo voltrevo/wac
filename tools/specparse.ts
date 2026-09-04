@@ -478,6 +478,22 @@ function declarations(toks: Token[]): Token[][] {
  * override — which the grammar must still parse. So this does not mean "the grammar should refuse
  * it"; it means a refusal here is uninformative and belongs in its own column.
  */
+/**
+ * Whether a file uses JSX, judged outside comments and strings.
+ *
+ * `</` is the only sequence JSX has that wac does not, so it is the test — but `std/platform.wac`
+ * has `page.render("<button id=\'go\'>go</button>")` in a doc comment, and matching that put a file
+ * with no markup in it into the not-attempted column. A wrong bucket is worse than a wrong count:
+ * it removes a file from the numbers with a reason that is not true of it.
+ */
+function looksLikeJsx(src: string): boolean {
+  const bare = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/"(\\.|[^"\\])*"/g, '""');
+  return /<\/[A-Za-z>]/.test(bare);
+}
+
 function expectsRefusal(src: string): boolean {
   const head = src.split("\n", 3).join("\n");
   return /^\/\/ expect:\s*(refused|declined)\b/m.test(head);
@@ -586,9 +602,12 @@ function main(argv: string[]): number {
     // comment. That is a second lexer mode driven by the parser's position, and this tool has one
     // mode. The productions were added the same day and read from `parse.wac`; verifying them needs
     // the mode switch, and saying so is better than a list of sixteen unexplained refusals.
-    if (/<\/[A-Za-z>]/.test(src)) { jsx.push(f); continue; }
+    if (looksLikeJsx(src)) { jsx.push(f); continue; }
     const { toks, error } = lex(src, keywords);
-    if (error) { bad.push(`${f}: lex: ${error}`); continue; }
+    // A lex failure obeys the same rule as a parse failure: `0081-a-block-comment-has-to-close` and
+    // `0290-a-newline-ends-a-literal-where-it-occurs` are cases *about* the lexer refusing, so this
+    // refusing them is the expected outcome and not a defect in the grammar.
+    if (error) { (expectsRefusal(src) ? expected : bad).push(`${f}: lex: ${error}`); continue; }
 
     let failed = false;
     for (const chunk of declarations(toks)) {
