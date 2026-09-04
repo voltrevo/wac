@@ -32,6 +32,9 @@
 program        = { import | reexport | typedef | struct_decl | enum_decl | func_decl | const_decl } ;
 reexport       = "export" , "{" , import_list , "}" , "from" , source , ";" ;
 typedef        = [ "export" ] , type , IDENT , ";" ;
+                 (* A type, a name, a semicolon — the same shape as a field declaration, and as a
+                    variable with no initialiser. It parses only because wac has no top-level
+                    variables. `QUESTIONS.md` has what that spends. *)
 
 (* A default type argument — `enum Result<T, E = union>`. The default is a type, and `union` with no
    arguments is the "whatever the body passes on" form `core/result.wac` relies on. *)

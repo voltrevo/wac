@@ -264,6 +264,34 @@ checkable at all"*, which for a union is still true by a different route, since 
 listed at the declaration — but it is true for a different reason, and that reason is what a
 `union` as a match arm would have to rest on.
 
+## Naming a type takes the only shape a top-level variable could have
+
+Writing the vision additions as productions forced a spelling for
+`export union<A, B> Fault;` and `export Slice<u8> Bytes;`, and the rule is
+
+    typedef = [ "export" ] , type , IDENT , ";" ;
+
+which is *a type, a name, a semicolon* — indistinguishable from a field declaration, and from a
+variable declaration with no initialiser. It works only because wac has no top-level variables, so
+nothing else at that position has that shape.
+
+Two consequences nobody had written down.
+
+**A typo is a declaration.** `i32 x;` at the top of a file is not an error under this rule; it
+declares a type named `x` that is another name for `i32`. Today it is *"expected `=`"* — a
+module-level `const` must be initialised — so the language currently catches a line that vision
+would accept and quietly give a meaning to.
+
+**And it spends the shape.** If wac ever wants an uninitialised module-level binding, or a `let`, the
+obvious spelling is taken. That is a real cost of choosing the terse form and it is not obviously
+worth paying: `type Bytes = Slice<u8>;` collides with nothing, costs one word, and says which of the
+two names is being introduced — which the terse form leaves to the reader knowing that `Slice<u8>`
+is a type and `Bytes` is not yet one.
+
+The argument for the terse form was that it is *one* form whether the type is a union or an
+instantiation. A `type` keyword is also one form for both. So the choice is between a word and a
+shape, and the shape is the scarcer resource.
+
 ## A fault that is safe to log and unsafe to return
 
 `vision/packages/tor` is the first package here where refusing with a reason is a *security*
