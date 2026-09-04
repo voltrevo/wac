@@ -34,8 +34,12 @@ export async gen<i32> Result<void, union<E, NotText>> scalars<E>(
     while (at < input.len()) {
       // `decode` answers the scalar, or says which of the two ways it could not — a union rather
       // than a code drawn from the same i32 range the answer lives in. See the README.
-      match (decode(input, at)) {
-        Scalar s:  { yield s.code; at += s.size; }
+      // Named, because naming the subject is what narrows it in an arm — `enums.md`'s
+      // `[§enum-narrow-nonvariable]`. Matching `decode(input, at)` directly would need a binding
+      // in the arm header, which is a construct this does not have to invent.
+      Decoded d = decode(input, at);
+      match (d) {
+        Scalar:    { yield d.code; at += d.size; }
         Truncated: { break; }                              // hold the tail for the next chunk
         Malformed: { return Result.Err(NotText(seen + at)); }
       }

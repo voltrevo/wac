@@ -154,7 +154,7 @@ The pattern in all seven is one habit: asserting what the language does from mem
 rather than compiling three lines. The rate matters more than any single correction — seven in a tree of
 nine packages is not a run of bad luck.
 
-## Four more, found by desugaring rather than by refusal
+## Two more, found by desugaring rather than by refusal
 
 The table above is a **lower bound**, and this is what fixed that.
 `tools/visiondesugar.ts` rewrites each of the nine into the nearest thing today's parser accepts and
@@ -162,23 +162,36 @@ parses again, so whatever is *still* refused is a construct nobody has written d
 class both other passes are structurally blind to: one reports rejections and cannot see past the
 first, the other checks a fixed list and cannot see a new entry.
 
+Five were reported. **Two survive**, and the other three are the more useful result.
+
 | construct | measured | why it was invisible |
 |---|---|---|
 | `yield` as a statement | — | every file hit `gen<…>` in the signature first |
 | **a generic parent** | `struct Kid : Base<i32>` → `expected '{', found '<'` | five files, each stopped by something above it |
-| a nested pattern | `case Ok(A(v)):` → `expected ')', found '('` | the arm rule could not span nested parentheses |
-| an arm binding without parentheses | `case A x:` → `expected ':', found 'x'` | it follows a `union`, which stops the file first |
 
-A fifth was reported and **withdrawn**: an unnamed variant payload, `Ok(T),`. One file out of eight
-wrote it and the other seven name theirs, which is the tell. A payload's name is its *field
-accessor* — `case Circle: return s.radius;` — so an unnamed one would be unreadable, and it was a
-slip rather than a proposal. The desugaring rule for it went with it: a rule that rewrites a mistake
-is a rule that stops the pass reporting the mistake next time.
+The generic parent is load-bearing: `AllOf`, `AnyOf`, `Generator`, `AsyncGenerator` and `SysTicket`
+all need it, and the whole ticket and coroutine design rests on it. Nothing had reported it because
+every file that uses it stops at an `async`, a `gen<…>` or a default type argument first.
 
-**The generic parent is the one that matters.** It is used five times — `AllOf`, `AnyOf`,
-`Generator`, `AsyncGenerator`, and `SysTicket` in the notes — and the whole ticket and coroutine
-design rests on it. Nothing had reported it because every file that uses it stops at an `async`, a
-`gen<…>` or a default type argument first.
+## Three were withdrawn, which is the better half
+
+Each was reported as a construct and each turned out to be avoidable — a slip or a convenience, not
+something the language has to grow.
+
+**An unnamed variant payload**, `Ok(T),`. One file out of eight wrote it. A payload's name is its
+*field accessor* — `case Circle: return s.radius;` — so an unnamed one is unreadable.
+
+**A nested pattern**, `Err(NotGranted(what)):`. Used once. `Err(e): { … e.what }` says the same thing
+with a field access that already exists.
+
+**A binding with no parentheses**, `Scalar s:`. `enums.md`'s `[§enum-narrow-nonvariable]` already
+covers it: *name* the subject and the arm narrows it, so `Decoded d = decode(…); match (d) { Scalar:
+{ d.code } }` needs nothing new.
+
+**And each withdrawal took its desugaring rule with it.** A rule that rewrites a mistake into
+something the parser accepts is a rule that stops this pass reporting the mistake next time — the
+instrument would have been trained to accept exactly the error it had just found. That is the one
+maintenance rule this file has: **a rule may only exist for a construct that is actually proposed.**
 
 ## Where the pass converges
 
@@ -187,7 +200,7 @@ Three files are still refused and all three are accounted for: `trap` as an **ex
 qualifier (`crypto/src/secret.wac`), which is this exercise's own proposal rather than a gap. Both of
 the first two are already in [QUESTIONS.md](QUESTIONS.md).
 
-So the tree contains **nine constructs, plus four, plus three known** — and nothing else. That is a
+So the tree contains **nine constructs, plus two, plus three known** — and nothing else. That is a
 completeness claim the first pass could not make at all.
 
 ## It also found errors of mine that are not constructs

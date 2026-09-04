@@ -45,8 +45,9 @@ const RULES: [RegExp, string][] = [
   // with no parentheses. The last two are separate constructs — measured: `case Ok(A(v)):` is
   // `expected ')', found '('` and `case A x:` is `expected ':', found 'x'`.
   [/^(\s*)default:/gm, "$1else:"],
-  [/^(\s*)([A-Z]\w*)\([A-Z]\w*\(([^)]*)\)\):/gm, "$1case $2($3):"],
-  [/^(\s*)([A-Z]\w*) (\w+):(\s)/gm, "$1case $2($3):$4"],
+  // No rules for a nested pattern or for a binding without parentheses. Both were reported and
+  // both were avoidable — `Err(e): { … e.what }` and, for a type test, naming the subject so the
+  // arm narrows it. Rewriting either would stop this pass reporting it if somebody wrote it again.
   [/^(\s*)([A-Z]\w*)(\([^)]*\))?:(\s)/gm, "$1case $2$3:$4"],
   // A method declared with no body. The parameter list may itself contain brackets — `fn[void()]`
   // — so this counts to the end of the line rather than to the first `)`.

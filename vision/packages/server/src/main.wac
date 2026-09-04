@@ -15,7 +15,7 @@ import { Served, serve } from "./serve.wac";
 
 export async i32 main(Sys sys) {
   match (await sys.listen(7000)) {
-    Err(NotGranted(what)): { sys.log("no port: \{what}"); return 1; }
+    Err(e): { sys.log("no port: \{e.what}"); return 1; }
     Ok(l): {
       sys.log("listening on 7000");
       try await for (Socket conn in l.accepted()) {
