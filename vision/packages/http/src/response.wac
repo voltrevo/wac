@@ -11,6 +11,7 @@
 
 import { Vec, Bytes } from "core";
 import { Headers } from "./headers.wac";
+import { Request } from "./request.wac";
 
 /**
  * What a handler answers.
@@ -74,10 +75,34 @@ export enum Status {
 
   /** Decoration — the code is what a client reads. Empty for `Other`, which is the point. */
   string reason(const this) { … }
+
+  /**
+   * Whether a response with this status may carry a body — RFC 9112 §6.3 rule 1.
+   *
+   * A free `statusHasBody(i32)` in the shipped package and the barrel here still named it, which is
+   * how it was found: a re-export of a function nobody wrote. It belongs on the arm for the same
+   * reason `reason()` does, and `Other(c)` has to answer by arithmetic because a code nobody
+   * enumerated is only known by its hundreds digit — **the one place the escape hatch has to guess.**
+   */
+  bool hasBody(const this) {
+    return match (this) {
+      NoContent: false,
+      NotModified: false,
+      Other(c): !(c >= 100 && c < 200) && c != 204 && c != 304,
+      default: true,
+    };
+  }
 }
 
-/** The response on the wire. Framing is decided here and not by the handler. */
-export Bytes write(const Response r, bool headOnly) { … }
+/**
+ * The response on the wire. Framing is decided here and not by the handler.
+ *
+ * **Takes the request, not a `bool headOnly`, since 2026-09-05.** The flag was *the request's
+ * method, remembered*, and `./incoming.wac` found the same fact being passed to `read` for the same
+ * reason — two functions in one package taking a request the package had no type for. It has one
+ * now; `sent.method.bodyless()` is the question this used to be handed the answer to.
+ */
+export Bytes write(const Response r, const Request sent) { … }
 
 // ## 1. `Status` is the third enum-over-a-closed-i32 in this directory and the first with an escape
 //

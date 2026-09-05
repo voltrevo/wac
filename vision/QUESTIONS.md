@@ -7622,6 +7622,27 @@ that meet only through `u8[]`**, which is a decomposition problem and wants no f
 > **Verdict:** convention — give the client half a `Request` value and let `read` answer an
 > `Exchange`. Settled by: writing it in `@/packages/http`; the language is not involved.
 
+*Done the same day, and the verdict held.* One `Request` now serves both halves, with a `Method`
+enum instead of `Bytes`; `read` takes the request that was sent and answers an `Exchange`; `write`
+takes it too. **`Asked` and `headOnly` are both deleted** — *which method* is a field, and a caller
+cannot pass the wrong one because it does not pass one. A type moved and two parameters removed, and
+nothing added to the language.
+
+**And placing `Exchange` found something the entry had not.** It cannot live beside `Request`:
+`request.wac` would import `incoming.wac` and `incoming.wac` import it back. A type that pairs two
+others must live with one of them or in a third file — and here the choice is made rather than taken,
+because **the two halves are not symmetric.** Reading a response needs the request; building a request
+needs nothing from a response. So it goes on the side that already depends.
+
+Worth writing down because the *symmetric* case has no answer: two types that genuinely need each
+other want mutual imports, and a language without them forces a third file whose only content is the
+pair. Nothing here has hit that yet.
+
+*Also found while wiring the barrel:* it re-exported `statusHasBody`, **a function nobody had
+written** — the shipped package has one and vision's `response.wac` never did. It is `Status.hasBody()`
+now, on the arm, for the same reason `reason()` is; and `Other(c)` has to answer by arithmetic on the
+hundreds digit, which is **the one place the open-set escape hatch has to guess.**
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

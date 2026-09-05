@@ -18,14 +18,64 @@ import { findCrlf, isDigit, isToken } from "./bytes.wac";
  * of it — and only sensible because the lifetime is a call. A `JsonValue` does the opposite for the
  * opposite reason; `core/slice.wac` has the rule.
  */
+/**
+ * A request — **one type for both halves of this package, since 2026-09-05.**
+ *
+ * It was the *server*'s parse of an inbound message, and a client's outbound request was built by
+ * `./client.wac` as bytes and never existed as a value. `./incoming.wac` found what that cost: its
+ * `read` takes an `Asked` enum because it must know whether a HEAD was sent, and
+ * `./response.wac`'s `write` takes a `bool headOnly` for the same fact — **two functions in one
+ * package taking a request they had no type for**, neither aware of the other.
+ */
 export struct Request {
-  Bytes method;
+  /** **A `Method`, not `Bytes`.** The shipped response parser compares `"HEAD"` and `"CONNECT"`
+   *  byte by byte on every response; the only thing anything wants is which category. */
+  Method method;
   Bytes target;
   i32 minor;                        // the `x` of HTTP/1.x
   Headers headers;
   Bytes body;
-  i32 consumed;                     // bytes of the input this message used
+  /** What is left of the input, not how much was taken — third site of that in this package. */
+  Bytes rest;
 }
+
+/**
+ * The methods, and **the second open registry in this package spelled as a closed enum.**
+ *
+ * `./response.wac`'s `Status` is the first, and it records the cost: *an open set spelled as a
+ * closed one with an escape hatch has two spellings for every member the hatch can reach*. Methods
+ * are worse in one way and better in another — the registry is smaller and moves less, so the
+ * escape is rarer; and `Other` carries the token so a proxy can forward a method it does not know,
+ * which `Status.Other(i32)` also has to do.
+ *
+ * Two of them in one package is what makes it a shape rather than a case. Both are *the wire has a
+ * token, the code has a decision, and the set of tokens is somebody else's to extend.*
+ */
+export enum Method {
+  Get,
+  Head,
+  Post,
+  Put,
+  Delete,
+  Connect,
+  Options,
+  Trace,
+  Patch,
+  Other(Bytes token)
+
+  /** Whether a response to this has no body whatever its headers say — RFC 9112 §6.3 rule 1. */
+  bool bodyless(const this) { return this is Head; }
+  /** Whether a 2xx to this opens a tunnel — rule 2. */
+  bool tunnels(const this) { return this is Connect; }
+}
+
+/*
+ * `Exchange { Request sent; Incoming got; }` wanted to be here and is in `./incoming.wac`, because
+ * **a type that pairs two others cannot live with either without a cycle.** Putting it here made
+ * `request.wac` import `incoming.wac` and `incoming.wac` import `request.wac`; putting it there
+ * costs nothing, because the response half already had to know about the request and the request
+ * half does not know about the response. The asymmetry is real and it decided the placement.
+ */
 
 /**
  * Complete, refused, or not yet — and it stays three named cases.

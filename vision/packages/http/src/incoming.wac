@@ -13,22 +13,26 @@
 
 import { Result, Bytes, Vec } from "core";
 import { Headers, Status } from "@/packages/http";
+import { Request, Method } from "./request.wac";
 import { ResponseFault, BadStatus, AmbiguousFraming, TooLarge } from "./fault.wac";
 
-/**
- * What was asked, which is what makes a response parseable.
+/*
+ * ## `Asked` was here for two hours and is a `Request` now
  *
- * The shipped parser takes the method as `u8[]` and compares it byte by byte in `isHead` and
- * `isConnect` — twice, on every response — when the only thing it needs is *which of three
- * categories*. And the caller **already knew**: it built the request, so it had a method before it
- * had bytes, and handing the bytes back is re-deriving what was thrown away.
+ * The first version of this file declared `enum Asked { Head, Connect, Other }`, because the shipped
+ * parser takes the method as `u8[]` and compares it byte by byte in `isHead` and `isConnect` — twice,
+ * on every response — when the only thing it needs is which category.
  *
- * Fifth site of *a caller handing back what it already told the callee* — `@/packages/http/src/response.wac`
- * enumerated four and this is the one where the value handed back is a **re-encoding** rather than a
- * repeat, which is worse: `parseResponse(…, "HEAD".toBytes(), …)` and a typo is a response with a
- * body that should not have one.
+ * §2 then found that `@/packages/http/src/response.wac`'s `write(r, headOnly)` takes the same fact
+ * for the same reason, called the missing type `Exchange`, and gave the verdict *convention — give
+ * the client half a `Request` value*. Doing it deletes `Asked`: `read` takes the `Request` that was
+ * sent, so *which method* is a field, and a caller cannot pass the wrong one because it does not
+ * pass one.
+ *
+ * Which is the difference between naming a workaround and removing it, and the naming came first by
+ * one commit. `../../../QUESTIONS.md`'s standing method is *write the consumer*; this is the second
+ * time in two days that writing it produced a **smaller** package rather than a longer list.
  */
-export enum Asked { Head, Connect, Other }
 
 /** How much a client will hold before refusing. Policy, not protocol; the shipped `i32 maxBody`. */
 export struct Limits { i64 body; i64 headerBytes; }
@@ -92,14 +96,23 @@ export struct Incoming {
 export struct Incomplete { }
 
 /**
- * Parse a response to a request that was `asked`.
+ * A request and the response to it.
+ *
+ * Here rather than in `./request.wac` because **a type that pairs two others cannot live with either
+ * without a cycle**, and the two halves are not symmetric: reading a response needs the request, and
+ * building a request needs nothing from a response. So it goes on the side that already depends.
+ */
+export struct Exchange { Request sent; Incoming got; }
+
+/**
+ * Parse the response to `sent`.
  *
  * `eof` stays a parameter and stays a `bool`, which is worth saying because everything else here
  * became a type: *the connection has closed* is a fact about the socket at the instant of the call,
  * it is not derivable from the bytes, and it changes the answer. §2.
  */
-export Result<Incoming, ResponseFault> read(Bytes input, Asked asked, bool eof, const Limits limits)
-  { … }
+export Result<Exchange, ResponseFault> read(Bytes input, const Request sent, bool eof,
+                                            const Limits limits) { … }
 
 // ## 1. `closeDelimited` is one bit of a five-way answer, and it kept the wrong one
 //
@@ -129,23 +142,33 @@ export Result<Incoming, ResponseFault> read(Bytes input, Asked asked, bool eof, 
 // **`eof` deliberately stays a bare `bool`** — it is a fact about the socket at the instant of the
 // call, not derivable from the bytes, and wrapping it would say it is data when it is a reading.
 //
-// The interesting one is `method`. It is the *request*, and an HTTP client holds a request and a
-// response together and has no type that says so. This directory has met that shape before at a
-// smaller size — `@/packages/http/src/response.wac`'s `write(r, headOnly)`, where `headOnly` is also
-// the request's method, remembered. **Two functions in one package take the same fact as an
-// argument because there is no exchange type**, and neither noticed the other.
+// The interesting one was `method`. It is the *request*, and `@/packages/http/src/response.wac`'s
+// `write(r, headOnly)` took the same fact for the same reason — **two functions in one package
+// taking a request the package had no type for**, neither aware of the other.
 //
-// ## 3. What could not be written
+// ## 3. Both are gone, and the fix was a decomposition rather than a feature
 //
-// **An exchange.** `struct Exchange { Request sent; Incoming got; }` is the type both of the above
-// want, and it cannot be the parser's argument because the response does not exist yet. It is the
-// type of the *result*, and then `read` answers an `Exchange` and takes a `Request` — which is
-// right, and makes `Asked` unnecessary, and requires this package to have a `Request` value at the
-// client end, which it does not: `./request.wac` is a **server**'s parse of an incoming request.
-// The client's outbound request is built by `./client.wac` as bytes and never exists as a value.
+// `./request.wac`'s `Request` was the **server**'s parse of an inbound message, and a client's
+// outbound request was built by `./client.wac` as bytes and never existed as a value. One `Request`
+// serves both now, `read` takes the one that was sent and answers an `Exchange`, and `write` takes
+// it too. `Asked` and `headOnly` are deleted: *which method* is a field, and a caller cannot pass
+// the wrong one because it does not pass one.
 //
-// So the missing type is not a language gap; it is a package with two halves that were written from
-// opposite ends and meet only through `u8[]`.
+// The whole change is a type moved and two parameters removed. **Nothing was added to the
+// language**, which is the point — the entry that named this gave the verdict *convention* and it
+// held.
+//
+// ## 4. What could not be written
+//
+// **`Exchange` cannot live beside `Request`.** Putting it in `./request.wac` makes that file import
+// `./incoming.wac` and `./incoming.wac` import it back. A type that pairs two others has to live
+// with one of them or in a third file, and here the choice is made for it: **the two halves are not
+// symmetric.** Reading a response needs the request; building a request needs nothing from a
+// response. So it goes on the side that already depends, and the asymmetry — not taste — decided it.
+//
+// That is worth writing down because the *symmetric* case has no answer. Two types that genuinely
+// need each other want mutual imports, and a language without them forces a third file whose only
+// content is the pair.
 //
 // **`Framing.Length(i64 bytes)` claims the header and the body agree, and only the parser knows.**
 // The arm exists to say *rule 4 applied and the body is this long*, and a caller reading `bytes`

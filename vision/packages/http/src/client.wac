@@ -12,7 +12,7 @@
 
 import { Result, Bytes } from "core";
 import { Net } from "std";
-import { Incoming } from "./response.wac";
+import { Incoming } from "./incoming.wac";
 
 /**
  * The connection did not open.
