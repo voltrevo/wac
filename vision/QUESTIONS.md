@@ -7874,6 +7874,57 @@ and not worth more than a sentence, which is what an enumeration is for.
 > **Verdict:** convention — one name per exported type per package, checked by a barrel walk.
 > Settled by: the check, which is written. The language is not involved.
 
+## The subject belongs at the level where it is not repeated
+
+*2026-09-05.* Three days of *a position is meaningless without the thing it indexes* — 55 values
+counted, `@/packages/regex`'s `Span` and `@/packages/ts`'s deleted in favour of `Bytes`, and
+`@/packages/json`'s `ParseError` given a slice. `@/packages/wacc/src/lex.wac` is where the arithmetic
+goes the other way.
+
+A 4,000-line source is roughly **40,000 tokens**. `Bytes` is `Slice<u8>` — a reference and two `i32`s
+— and under wasm GC a struct is a heap object, so a token carrying one is **one allocation per
+token**: forty thousand against zero for two lanes of a flat array.
+
+So the rule was right and silent about the thing that decides:
+
+> **The subject belongs at the level where it is not repeated.** A fault is rare, so the fault carries
+> it. A `Match` has ten groups and one subject, so either works. A token stream has forty thousand and
+> one, so it goes on the stream — `Lexed { Bytes src; Token[] tokens; }`, one field, and every token
+> is one `slice` away from being a `Bytes` without paying for a reference.
+
+That also settles a disagreement this directory had with itself. `@/packages/ts/src/token.wac` met the
+same flat quintuple, converted it, and called the flat form *a habit by the third occurrence* —
+comparing it to `ssz`'s, which had a reason that expired, and `abi`'s, which gave none. **The third
+occurrence had a reason and it is not the reason either of the other two had**, which is why counting
+occurrences did not find it.
+
+### And what remains is a habit, separately
+
+Two things were merged in the shipped shape and only one is a cost:
+
+  * *a token is five integers with no name* — `tokens[i * 5 + 2]` is a length because a comment says
+    so, and seven accessors exist to give five fields names. That **is** the habit, and `Token[]`
+    fixes it.
+  * *a token holds a span rather than a slice* — the allocation argument, and it stays.
+
+`Token[]` is right **if** `@/packages/…`'s open *a record stored inline in an array* is answered yes,
+and is 40,000 objects by another route if not. So the flat `i32[]` is the shape that does not depend
+on an open question, which is a real argument for it and one nobody had made.
+
+### The two unresolved names in that file are the measurement
+
+`packages/wacc` may not import `core` — `wvec.wac` states the rule: the top rung of the bootstrap
+cannot read `core/vec.wac`, because its `fold` takes a lambda and that rung has none. So `Bytes` and
+`Result` are unavailable to the package whose lexer is the argument above, and the file uses them
+anyway and says so. The name checker's floor is 15 rather than 13 for that reason.
+
+> **A package's dependency rule is set by the weakest rung of the thing that builds it**, and the cost
+> lands on types that have nothing to do with the constraint — one lambda, in a function this package
+> would never call, three files away.
+
+> **Verdict:** convention — put the subject on the collection when the elements outnumber it.
+> Settled by: `Lexed`, which is written. The language is not involved.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

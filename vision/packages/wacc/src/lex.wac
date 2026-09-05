@@ -1,0 +1,124 @@
+// The lexer — and the file where *carry the subject* stops being right.
+//
+// `packages/wacc/src/lex.wac` is 1,281 lines and hands back a flat `i32[]` of
+// `(kind, start, len, line, col)`. `@/packages/ts/src/token.wac` met the same shape in a smaller
+// package, converted it to a struct, and called the flat form **a habit by the third occurrence**:
+//
+// > `ssz` says it is for a JS boundary that has since gone, `abi` says nothing, and this says nothing
+// > either — but this one never crossed a boundary at all.
+//
+// That reading is right about `ts` and wrong here, and this file is why. The third occurrence had a
+// reason; it is a different reason from the two it was compared against, and nothing had asked.
+
+// **No import of `core`, and `Bytes` and `Result` are used below anyway.** That is not an oversight:
+// it is §2, made visible. The name checker reports two unresolved names in this file and they are the
+// measurement — a package forbidden from importing `core` still wants `core`'s two most basic types,
+// and the forbidding rule is about a lambda in `Vec.fold` that this package would never call.
+import { Tok, Span } from "./ast.wac";
+
+/**
+ * What a token is: a kind, and where it is.
+ *
+ * **`start` and `len`, not a `Bytes`** — which is a position without the thing it indexes, the shape
+ * `../../../QUESTIONS.md` counts 55 of and this directory has spent three days removing. Two of the
+ * removals were `@/packages/regex`'s `Span` and `@/packages/ts`'s, both deleted in favour of `Bytes`
+ * on the argument that *a slice is a span that brought its subject*.
+ *
+ * Here the arithmetic goes the other way. A 4,000-line source is roughly **40,000 tokens**. `Bytes`
+ * is `Slice<u8>` — a reference and two `i32`s — and under wasm GC a struct is a heap object, so a
+ * token carrying one is **one allocation per token**: forty thousand for a file, against zero for
+ * two lanes of a flat array. The span is not a failure to reach for a type. It is the only shape
+ * that does not allocate per token.
+ */
+export struct Token { i32 kind; i32 start; i32 len; i32 line; i32 col; }
+
+/**
+ * The tokens, **and the source they index** — which is where the subject belongs.
+ *
+ * This is the resolution rather than a concession. The rule this directory has been applying is
+ * *a position is meaningless without the thing it indexes*, and it is right; what it did not say is
+ * **at which level the thing should live.** A fault is rare, so the fault carries it. A `Match` has
+ * ten groups and one subject, so either works. A token stream has forty thousand and one, so the
+ * subject goes on the **stream**:
+ *
+ * > **The subject belongs at the level where it is not repeated.**
+ *
+ * `Lexed` costs one field. Every token in it is `src.slice(t.start, t.start + t.len)` away from
+ * being a `Bytes`, and no token pays for the reference.
+ */
+export struct Lexed {
+  Bytes src;
+  Token[] tokens;
+
+  /** The text of one token, made when a caller wants it and not before. */
+  Bytes text(const this, i32 i) {
+    Token t = this.tokens[i];
+    return this.src.slice(t.start, t.start + t.len);
+  }
+}
+
+/** Lex, or the first thing that is not a token. */
+export Result<Lexed, LexFault> lex(Bytes src) { … }
+
+export struct BadChar { i32 at; u8 saw; }
+export struct Unterminated { i32 at; string what; }
+export struct BadEscape { i32 at; }
+export union<BadChar, Unterminated, BadEscape> LexFault;
+
+// ## 1. The `Token[]` is the change and the flat `i32[]` is not
+//
+// Two things were merged in the shipped shape and only one of them is a habit:
+//
+//   * **a token is five integers with no name** — `tokens[i * 5 + 2]` is a length because a comment
+//     says so, and `@/packages/ts/src/token.wac`'s conversion is right about this;
+//   * **a token holds a span rather than a slice** — which is the allocation argument above.
+//
+// `Token[]` fixes the first and keeps the second. The shipped file needs seven accessors
+// (`kindAt`, `startAt`, `lenAt`, `lineAt`, `colAt`, `textAt`, `tokenCount`) to give five fields
+// names; a struct gives them names and the array stays one allocation.
+//
+// **What it costs, and it is not nothing:** `Token[]` of a five-field struct is an array of
+// references under wasm GC unless the compiler can flatten it, which is
+// `../../../QUESTIONS.md`'s *a record stored inline in an array* — open, and this is the case that
+// decides whether the conversion is free or 40,000 objects by another route. So the honest position
+// is that `Token[]` is right **if** inline records exist and is a regression if they do not, and the
+// flat `i32[]` is the shape that does not depend on the answer.
+//
+// ## 2. And this package cannot import the types the argument is about
+//
+// `Bytes` is `core`'s and `packages/wacc` **may not import `core`**. `packages/wacc/src/wvec.wac`
+// exists for that rule and states it exactly:
+//
+// > The top rung of the ladder builds wacc — that is the whole of `./bootstrap.sh`, the only command
+// > that works in a fresh clone — so every file wacc's graph reaches has to be inside the subset
+// > that rung can read. `core/vec.wac` is not: its `fold` takes an `fn[U(U, T)]`, the rung below has
+// > no lambdas, and it stops at the parse.
+//
+// So `Lexed.src` being a `Bytes` is a proposal that the bootstrap forbids today, and the reason is
+// not about slices at all — it is one lambda in `Vec.fold`, three files away, in a function this
+// package would never call. **A package's dependency rule is set by the weakest rung of the thing
+// that builds it**, and the cost lands on a type that has nothing to do with the constraint.
+//
+// ## 3. What could not be written
+//
+// **`Tok` is an index into `Lexed.tokens` and nothing pairs them.** `./ast.wac` declares
+// `export i32 Tok;` and every node holds one; the array it indexes is in the `Lexed` the parser had.
+// Same shape as `@/packages/git/example/ignorelint.wac`'s index-into-a-`Vec` and
+// `@/packages/wacc/src/decl.wac`'s *`Program` needs a path*, and here it is the **fourth** appearance
+// in one compiler: `Tok`, `Span`, `Decl.at` and this.
+//
+// The collection-level answer above fixes it the same way — a `Tok` is meaningful relative to a
+// `Lexed`, so the type that should carry the pair is the one that has one of each. Which is
+// `Program { Decl[] decls; Tok path; }` from `decl.wac`, arriving at the same conclusion from the
+// token end, and the two together say the compiler wants **one value that owns the source, the
+// tokens and the tree**, rather than three that reference each other by integer.
+//
+// **`line` and `col` are computed twice and stored forever.** Every token carries them, so a 40,000
+// token file stores 80,000 integers that are derivable from `start` and the source. The shipped
+// lexer computes them as it goes, which is the only cheap moment — and `@/packages/json/src/parse.wac`
+// computes them *later*, walking from the start of the document per fault, which it records as O(n)
+// per fault and right for one. Two files, opposite trades, and the thing that decides is how many
+// positions get rendered: a parser renders every token's on error and a JSON reader renders one.
+//
+// Nothing says which regime a program is in, and both files chose correctly by knowing their own
+// caller.
