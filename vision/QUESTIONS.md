@@ -9020,13 +9020,36 @@ is one wasm struct — a tag in slot 0, then a slot per payload field of every v
 comparators by hand for.
 
 Every language with sum types interns payload-free variants: three values, no state, allocate once.
-**Nothing in `spec/` says wac does**, and nothing here had asked. The nearest entry is *`Map<K, V>`
-with a compiler-supplied hash for payload-free enums*, which is about hashing them rather than about
-making them.
+**wac does not, and `spec/spec/enums.md` says so — in a sentence about a different bug.** The
+paragraph explaining why `is` requires a qualified variant:
+
+> `Shape.Empty` on the right of `is` parses as an expression rather than a type, so the test became
+> **reference identity against a freshly constructed variant** and was always false
+
+*Always false* is the answer. If `Shape.Empty` were one interned value, a reference comparison
+against it would have been true for exactly the cases the author wanted, and the bug would have been
+subtle rather than total. It was total, so **every mention of a payload-free variant allocates.**
+
+That sentence is in the spec to explain a fix to `is`. Nobody wrote it as a statement about cost, and
+it is one: a comparator answering `Ordering` allocates once per comparison, and the document that
+settles it is describing something else. This is the *the oracle may have the rule written down*
+shape at its sharpest — the answer was one grep away and reads as background to another question.
 
 > The question is not *should `Ordering` be an enum*. It is **what a payload-free variant costs**,
 > and it is the first time this directory's favourite refactor has met a cost at all. Fourteen of the
 > fifteen sites are not hot; the fifteenth is every comparison in every sort.
+
+So the ask is a **change** rather than a written guarantee, which is where this entry started and was
+wrong: interning three constants is a compiler change with an observable consequence, since it makes
+reference identity meaningful for payload-free variants where today it is always false. `spec/` would
+have to say which — and *"`is` does not narrow"* and the qualified-variant rule are both written
+around the current behaviour.
+
+*And what would break, asked properly:* nothing testable. `spec/spec/structs.md` documents `is` on a
+value as `ref.eq` and `spec/tour.wac` repeats it, and **no test in the repository asserts the
+identity of a payload-free variant** — a grep for one finds the tour's table row and nothing else.
+So the behaviour is specified twice in prose about structs and pinned nowhere, which is the state a
+change like this wants to be in and is not evidence that the change is right.
 
 ### And it generalises past comparison, which is why it is an entry rather than a note
 

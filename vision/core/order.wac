@@ -136,11 +136,19 @@ export Ordering bytesCmp(const Bytes a, const Bytes b) {
 // times — in the inner loop of the one operation whose cost is the reason anybody writes a
 // comparator by hand.
 //
-// The fix is obvious and is not written down anywhere: a payload-free variant has no state, so three
-// singletons could be allocated once and returned forever. Every language with sum types does this.
-// **Nothing in `spec/` or in this directory says wac does**, and the one nearby entry —
-// `../QUESTIONS.md` on *`Map<K, V>` with a compiler-supplied hash for payload-free enums* — is about
-// hashing them rather than about making them.
+// A payload-free variant has no state, so three singletons could be allocated once and returned
+// forever, which is what every language with sum types does. **wac does not, and
+// `spec/spec/enums.md` says so while explaining something else:**
+//
+// > `Shape.Empty` on the right of `is` parses as an expression rather than a type, so the test became
+// > **reference identity against a freshly constructed variant** and was always false
+//
+// *Always false* settles it. Against an interned value the comparison would have been right for
+// exactly the cases the author meant; it was wrong for all of them, so every mention allocates.
+//
+// And that makes the ask a **change** rather than a missing sentence: interning would make reference
+// identity meaningful for payload-free variants where today it never is, and both the
+// qualified-variant rule and *"`is` does not narrow"* are written around the current behaviour.
 //
 // So the honest position on §above: **replacing fifteen `i32`s with an enum is the right change and
 // it is not free**, and how unfree it is depends on a compiler decision nobody has stated. That is
@@ -176,6 +184,13 @@ export Ordering bytesCmp(const Bytes a, const Bytes b) {
 // Both halves of that sentence are also wrong about the *type*: `fn[bool(T, T)]` cannot express a
 // key, which is the whole of the entry this file is written from. A `bool` says *which comes first*
 // and `sort -u` needs *are these the same line*.
+//
+// **The entry above it in the same list is right, and the difference is that somebody checked.**
+// *"**`Set<T>`.** `Map<T, bool>` is the whole implementation, and a wrapper is worth writing when
+// something wants one."* Counted: `Map<T, bool>` appears **zero** times in the tree, and `Map` at all
+// in six files. Nothing wants a set, the deferral is correct, and the sentence describes an
+// implementation nobody has reached for — which is what a *not yet* entry should look like. Two
+// entries, one section, one checked and one not.
 //
 // Worth recording as a fact about lists rather than about sorting: **a *what is not here yet* section
 // is a claim about the rest of the tree, and nothing checks it.** This one has been wrong in three
