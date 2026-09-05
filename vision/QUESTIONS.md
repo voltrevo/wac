@@ -707,9 +707,10 @@ opaque needs the arm and `union<never, Fault>` must not — which is exactly the
 raster test. So it is cheap to take, and the 99.4% prose rate is the most extreme in the table by a
 distance, which is what happens when a reserved word is also an ordinary English one.
 
-## A sentinel drawn from the value's own range — six, and this entry owns the list
+## A sentinel drawn from the value's own range — ten, one of which is right, and this entry owns the list
 
-Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counted one:
+Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counted one; **four more added
+2026-09-05** from `gzip`, `url` and `fmt`, and with them the first one that survives scrutiny.
 
 | where | the sentinel | in the range of |
 |---|---|---|
@@ -719,6 +720,10 @@ Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counte
 | `std`'s `In.read` | an empty array means *end* | a read's bytes — **fixed**: `In` is a stream |
 | `@/packages/tty`'s `Sig` | `0` means *nothing happened* | a signal number |
 | `@/packages/wacpkg`'s `mapped` | `""` means *no mapping* | a resolved key |
+| `@/packages/gzip`'s `BitReader.broken` | `""` means *no read failed* | a host's error message |
+| `@/packages/gzip`'s `Huff.code[i]` | meaningless unless `len[i] > 0` | a canonical code — `0` is a legal one |
+| `@/packages/url`'s `Part(0, false, false)` | `0` payload on a parse failure | an IPv4 part — `0` is legal |
+| `@/packages/fmt`'s `fastPath` | **NaN** means *I decline* | **nothing** — no JSON number is NaN |
 
 `@/packages/tty` listed *"`Read.code`, `search`'s `NO_MATCH`, `decode`'s `-2` and `Socket`'s negative
 handle"* and called itself the fifth. `Read.code` and *`decode`'s `-2`* are the same instance under
@@ -752,6 +757,28 @@ is a fault that has given up on being matched.
 So: does `Read` become `Data(Bytes) | End | Failed(NotGranted)`, and does `Socket.recv` change with
 it? That is one decision covering both capabilities, and it is smaller than it looks because `Read`
 has exactly two users.
+
+### The tenth is correct, and it is what the other nine are missing
+
+`packages/fmt/src/atof.wac`'s fast path signals *I decline, use the exact fallback* by returning NaN,
+and the caller tests `mag != mag`. One sentence discharges the whole obligation:
+
+> NaN is the "not exactly representable this way" signal — no JSON number can produce it, so it
+> cannot be confused with a real answer.
+
+So the rule this entry had been applying was half a rule. **A sentinel is sound when (a) the value's
+range provably excludes it, and (b) something says so where a caller will read it.** `atof` clears
+both in that sentence. `string.indexOf`'s `-1` clears (a) — an index is never negative — and fails
+(b) at scale: 515 negative-sentinel returns across 166 files is a convention nothing enforces, so
+*absent* and *error* are indistinguishable at the call site. Every other row above fails (a) outright.
+
+**And `Result` here would be worse than the NaN**, which is the first time today the answer came out
+against this directory's habit. The fast path's decline is not a failure, it is a dispatch to a
+slower exact path, and the caller is the same function three lines down. Wrapping a dispatch in an
+error type spends a `try` on control flow with no error in it. The question that produced the right
+answer was *what does this value mean* rather than *what shape is it* — which is the question the
+nine other rows were also answered by, and it is worth noticing that the same method acquits one and
+convicts nine.
 
 **And there is a third instance, which is why the heading names the pattern rather than the pair.**
 `packages/unicode`'s `decode` answers a struct whose `code` field otherwise holds a code point, with
@@ -10049,3 +10076,72 @@ So *"spell your constants `const`"* is correct advice that does not reach the on
 would have mattered. A sweep driven by the 658 would touch 89 files and leave `crc32` exactly as it
 is — which is a good argument for measuring each case rather than sweeping a shape, and the second
 time today the measurement inverted the recommendation.
+
+## Two capacities, one type — where the fixed-length ask stops being enough
+
+`packages/fmt/src/bigint.wac`'s `FixedBig` has two constructors:
+
+    FixedBig zero()                { return FixedBig(u32[LIMBS()](), 0); }   // 40
+    FixedBig withLimbs(i32 limbs)  { return FixedBig(u32[limbs](), 0); }
+
+Each capacity is justified by a proof in a comment, and both proofs are right. `bigint.wac`: *"an
+f64's significand is under 2^53 and its exponent under 2^971 … 40 limbs is 1280 bits, comfortably
+clear of that."* `atof.wac`: *"the larger side reaches about 3900 bits; 160 limbs is 5120."*
+
+**They are the same type.** `atof.wac`'s `Cmp` holds five `FixedBig` fields that must all be
+160-limb, and says `FixedBig` five times. `FixedBig.zero()` — the constructor a reader reaches for
+first, used at five sites in `ftoa.wac` — compiles in any of those positions and fails at a bounds
+check inside `shiftLeft`, in a third file.
+
+This is **not** the 322-length-checks case. There the invariant is at least restated at each
+site; here it is restated nowhere, because there is no cheap place to put it and the trap is coming
+anyway.
+
+**And it is the case the narrow ask does not cover.** A literal length in an array type gives
+`u32[160]` — it does not give `FixedBig<160>` distinct from `FixedBig<40>`, which needs a type
+parameter over a literal, which is where const generics begins and where the narrow ask deliberately
+stopped. So: the 322 sites want the small feature, this wants a bigger one, and nothing here has
+priced the bigger one. Worth knowing before the small one is built and this is expected to follow.
+
+**The part that needs no language change at all** is the naming. `zero()` reads as *an empty bignum*
+and is *an empty bignum with `ftoa`'s capacity*, held in a constant called `LIMBS` in another file
+with no `FTOA_` in front of it. `withLimbs(40)` at the six call sites costs nothing and says it. This
+directory is structurally bad at noticing that class of fix, because it is looking for language gaps
+and that is what it finds.
+
+## The tree corrects its own stale language claims, and two are left
+
+`packages/wacc/src/kinds.wac` says *"wac has no module-level constants"* over 89 declarations, and
+`packages/fmt/src/atof.wac` says *"the two return different types and wac has no generics"*. Both are
+false: `const` landed 2026-07-31, and `spec/spec/generics.md` §Generic functions plus
+`packages/platform/src/frame.wac`'s `export Pending<T> ready<T>(…)` settle the second.
+
+**This is already a known failure mode here and is actively policed.** Seven files carry an in-place
+correction of exactly this shape —
+
+    packages/wacc/src/lex.wac:41       "The reason here said 'wac has no generics' and that is wrong twice."
+    packages/bytes/src/buf.wac:6       "This said 'wac has no generics' and that has expired"
+    packages/gzip/src/gzip.wac:19      "This said '(wac has no top-level constants, so this is a function.)'"
+    packages/gzip/src/tables.wac:9     "'wac has no top-level constants'; it has them, including arrays"
+    packages/git/src/pack.wac:645      "(This said **wac has no closures**…)"
+    packages/sh/src/exec.wac:4762      "a lambda has captured since 2026-08-16"
+    packages/wacc/src/coretext.wac:777 "This comment used to say 'wac has no closures…'"
+
+— and there are **38 corrections of that shape across 23 files**. So the practice exists, it is
+sustained, and these two are what it has not reached.
+
+### Two things this found that the count does not carry
+
+**A line-oriented grep cannot do this sweep.** The first pass found neither survivor: `atof.wac`'s
+claim wraps between *"wac has"* and *"no generics"*, and `kinds.wac`'s wraps in the middle of
+*"module-level | constants"*. Allowing one break after the verb still misses the second. Any
+instrument for this has to read a comment as a paragraph, which is also true of the doc-comment
+checks proposed twice here and not built. **So "two" is a floor.**
+
+**And correcting a stale claim is not the same as acting on it.** `bisect32`'s conclusion survives
+its false reason. Generics here monomorphise — `[§wac-generic-fn-5hvq3mt]`, *"each distinct set of
+type arguments produces a separate concrete function"* — so the machinery for `bisect<T>` exists;
+what stops it is `f64.fromBits(lo)` in the body, a primitive named on a *type*, with no way to write
+`T.fromBits` and have it resolve per instantiation. A reader who fixed the comment and merged the two
+functions would get a body that does not compile. **The named blocker was not the blocker, and the
+real one is a smaller ask than generics:** a type parameter usable where a primitive type name goes.

@@ -1,0 +1,228 @@
+// Decimal to `f64`, two capacities wearing one type, and the one sentinel in this tree that is right.
+//
+// `packages/fmt/src/atof.wac` is the best-argued file this directory has read. Correctly rounded for
+// every input, a fast path that is *provably* exact rather than usually right, and a fallback that
+// does not divide — *"bit patterns of positive doubles are monotonic in their value, so it bisects
+// them — 63 exact comparisons find the largest double not exceeding the decimal, and one more against
+// the midpoint picks between that and its successor."* None of that is rewritten. The algorithm did
+// not move because the language did.
+//
+// Three findings, and one of them is a *counterexample* to a rule this directory has applied a dozen
+// times today.
+
+import { Result, Bytes } from "core";
+import { FixedBig } from "./bigint.wac";
+
+/**
+ * Digits and an exponent, scanned without allocating.
+ *
+ * *"No arrays, so parsing a number that takes the fast path allocates nothing but this."* `mant`
+ * holds up to 19 significant digits and `sticky` records that more followed, which is the whole
+ * reason the fast path can be *proved* exact rather than tested.
+ */
+struct Quick { u64 mant; i32 digits; i32 exp10; bool sticky; bool neg; }
+
+/** The same for the slow path, where the digits do not fit in a `u64`. */
+export struct Parts { Bytes digits; i32 count; i32 exp10; bool sticky; bool neg; }
+
+/**
+ * The bisection's working set — **five bignums that must all be the same size, and the type cannot
+ * say which size.**
+ *
+ * Three of the five are named `scratch` in the shipped file, which is the other half of it: they are
+ * fields not because a comparison *has* five bignums, but because allocating them per comparison
+ * would allocate 63 times per parse. A struct standing in for a reusable arena, with the reuse
+ * discipline living in the field names.
+ */
+struct Cmp {
+  FixedBig dec;
+  FixedBig pow;
+  FixedBig lhs;
+  FixedBig rhs;
+  FixedBig scratch;
+  i32 exp10;
+  bool sticky;
+}
+
+/**
+ * The `f64` nearest the decimal in `s`, ties to even.
+ *
+ * **Named `atof`, not `atofSpan`** — `./fmt.wac` already re-exports it under that name, and the
+ * `Span` suffix existed because the shipped signature is `(u8[] src, i32 start, i32 end)` and there
+ * was no way to hand a function part of an array. `Bytes` is that way, so the suffix has nothing
+ * left to distinguish it from.
+ *
+ * `Result` rather than the shipped bare `f64` — see the precondition note below, which is the
+ * finding rather than the change.
+ */
+export Result<f64, NotANumber> atof(Bytes s) { … }
+
+/**
+ * The same to `f32`.
+ *
+ * Kept as a separate entry point, and the shipped reason is the interesting one: *"Not implemented
+ * by parsing to f64 and narrowing: that rounds twice, and the two roundings disagree for values
+ * sitting near an f32 boundary."* That is correct and has nothing to do with types.
+ */
+export Result<f32, NotANumber> atof32(Bytes s) { … }
+
+/** Scan into `Parts` without deciding a value. Exported because the probes and tests drive it. */
+export Parts scan(Bytes s) { … }
+
+/** The fast path's estimate, or NaN if it declines — see below, this is the good sentinel. */
+export u64 approxBits(Parts p) { … }
+
+/** A decimal that is not one. */
+export struct NotANumber { Bytes input; i32 at; }
+
+// ## What could not be written
+//
+// ### `FixedBig` has two capacities and one type
+//
+// `./bigint.wac` gives it two constructors:
+//
+//     FixedBig zero()                { return FixedBig(u32[LIMBS()](), 0); }   // LIMBS() == 40
+//     FixedBig withLimbs(i32 limbs)  { return FixedBig(u32[limbs](), 0); }
+//
+// and each capacity is justified by a proof in a comment. `./bigint.wac`: *"Enough limbs for any
+// f64 … 40 limbs is 1280 bits, comfortably clear of that."* This file: *"the larger side reaches
+// about 3900 bits; 160 limbs is 5120."* Both arguments are right and neither is checkable.
+//
+// **The two are assignable to each other.** `Cmp` above holds five `FixedBig` fields, all of which
+// must be 160-limb, and the type says `FixedBig` five times. `FixedBig.zero()` — the constructor
+// whose name a reader reaches for first, and the one `./ftoa.wac` uses at five sites — compiles
+// there, and fails at a bounds check inside `shiftLeft`, in another file, with nothing at the call
+// site indicating a size was chosen.
+//
+// This is *not* the *"322 sites restate a length at runtime"* case in `../../../QUESTIONS.md`, where
+// the invariant is at least written down somewhere. Here it is not restated anywhere: nothing in
+// this file checks that a `FixedBig` it was handed has 160 limbs, because there is no cheap place to
+// and the trap will happen regardless.
+//
+// **And a fixed-length array type would not fix it.** `FixedBig<40>` distinct from `FixedBig<160>`
+// is that feature *plus a type parameter over a literal*, which is where const generics begins and
+// where the narrow ask deliberately stopped. So the honest position is that the 322 sites want the
+// small feature, this file wants a larger one, and nothing here has established the larger one is
+// worth its cost. Worth knowing before anyone builds the small one and expects this to follow.
+//
+// **`zero()` is the accomplice, and that part is fixable today.** The mismatch would be much harder
+// to write if the 40-limb constructor were not called `zero()`. It reads as *an empty bignum* and it
+// is *an empty bignum with `ftoa`'s capacity*, which lives in a constant in another file called
+// `LIMBS` with no `FTOA_` in front of it. `withLimbs(40)` at the six sites that use `zero()` costs
+// nothing, needs no language change, and says the thing. This directory is worst at noticing fixes
+// like that, because it is looking for language gaps.
+//
+// ### A stale language claim that a whole-repo cleanup missed
+//
+// `bisect32`'s header, one line above the good reason quoted on `atof32` up there:
+//
+//   > Separate rather than shared because the two return different types and **wac has no generics**
+//   > — the comparison machinery below *is* shared, since it works on a significand and a binary
+//   > exponent and does not care which width they came from.
+//
+// **wac has generics**, including generic *functions*: `spec/spec/generics.md` §Generic functions,
+// and `packages/platform/src/frame.wac` declares `export Pending<T> ready<T>(…)`. A type parameter
+// may be a primitive — the spec says so outright, *"This is why a type parameter may be a
+// primitive"*, with `Vec<f64>` as the example.
+//
+// **But the conclusion probably survives**, for a reason the comment does not give — and the reason
+// is narrower and more interesting than *no generics*.
+//
+// Generics here **monomorphise**: `[§wac-generic-fn-5hvq3mt]`, *"each distinct set of type arguments
+// produces a separate concrete function."* So the machinery that would make `bisect<T>` work at both
+// widths is already there — two concrete functions, exactly what the file has by hand. What stops it
+// is one line in the body: `f64.fromBits(lo)`, five times, and its `f32` counterpart. That is a
+// primitive named on a *type*, and there is no way to write `T.fromBits` and have it resolve per
+// instantiation.
+//
+// So the two stay apart because the **bodies** differ in a primitive, not because the *signatures*
+// differ in a return type, and the ask is not generics but *a type parameter usable in the position
+// where a primitive type name goes*. **The named blocker is not the blocker**, and a reader who
+// corrected the comment to "wac has generics" and merged the two would get a body that does not
+// compile — which is the argument for checking a stale claim rather than deleting it.
+//
+// ### And the repository has been correcting exactly this, and did not reach here
+//
+// This is not a new observation to the tree. Seven sites carry an *in-place correction* of a stale
+// language claim:
+//
+//     packages/wacc/src/lex.wac:41       "The reason here said 'wac has no generics' and that is wrong twice."
+//     packages/bytes/src/buf.wac:6       "This said 'wac has no generics' and that has expired"
+//     packages/gzip/src/gzip.wac:19      "This said '(wac has no top-level constants, so this is a function.)'"
+//     packages/gzip/src/tables.wac:9     "'wac has no top-level constants'; it has them, including arrays"
+//     packages/git/src/pack.wac:645      "(This said **wac has no closures**…)"
+//     packages/sh/src/exec.wac:4762      "a lambda has captured since 2026-08-16"
+//     packages/wacc/src/coretext.wac:777 "This comment used to say 'wac has no closures…'"
+//
+// and there are **38 corrections of that shape across 23 files** under `packages/*/src`, counting
+// only the phrasings `used to say`, `this said`, `has expired` and `is wrong twice` — itself a floor,
+// since nothing standardises how a correction is written. So the practice exists and is sustained.
+//
+// **And `packages/gzip/src/tables.wac` shows what the practice is *for*, which I had wrong.** It
+// corrected the same *"wac has no top-level constants"*, then measured the conversion — *"200,000
+// reads of a 29-entry top-level const measured 0 ms against 6 ms for 200,000 constructions of the
+// equivalent struct"* — and **declined it**, at about thirty nanoseconds per gzip operation, as
+// churn. Its closing line is the whole argument:
+//
+//   > What was wrong was the *reason*, and a false constraint in a comment is worth more than the
+//   > thirty nanoseconds: the next person to need a table at file scope reads this and believes they
+//   > cannot.
+//
+// So the ask is not a sweep. `issues/lang/0354a` was filed proposing one and has been amended: the
+// scalar case measures at *zero*, the conversion is churn by exactly this argument, and what is
+// worth doing is that the false constraint stops being written down — two comments, not 89 files. **Two live claims are left that this sweep found** — `bisect32` above, and
+// `packages/wacc/src/kinds.wac`'s *"because wac has no module-level constants"* over 89
+// declarations, which `issues/lang/0354a` is about.
+//
+// **And the count is a floor, for a reason worth more than the count.** The first pass of this grep
+// found neither of the two: `atof.wac`'s claim wraps between *"wac has"* and *"no generics"*, and
+// `kinds.wac`'s wraps in the middle of *"module-level | constants"*. A line-oriented search cannot
+// see either, and allowing one break after the verb still misses the second. So the honest statement
+// is *at least two*, and the instrument that would settle it has to read comments as paragraphs
+// rather than as lines — which is also true of the doc-comment checks this directory has proposed
+// twice and not built.
+//
+// ### The precondition is documented, load-bearing, and has one caller
+//
+//     /**
+//      * The f64 nearest the JSON number in `src[start..end)`.
+//      *
+//      * The span must already be a well-formed JSON number — this is called by a parser
+//      * that has just validated it, so there is no error return.
+//      */
+//     export f64 atofSpan(u8[] src, i32 start, i32 end) {
+//
+// So the function is total by *assumption about its caller*, and the assumption is true: the caller
+// is `packages/json/src/parse.wac`, which validated the span a few lines earlier. Handing it
+// anything else is not a supported operation and there is no signature that says so.
+//
+// That is the *trusted means not checked* shape, and it is the mildest instance of it here — one
+// caller, in the same repository, whose validation is real. But `scan` and `approxBits` are also
+// exported, the test probes drive all four directly, and nothing distinguishes the entry point with
+// a precondition from the ones without. `Result<f64, NotANumber>` above costs the JSON parser a
+// `try` on a path it can prove cannot fail, which is a real cost and the reason the shipped file
+// chose otherwise; what it buys is that the precondition stops being prose.
+//
+// ### And the sentinel is *correct*, which is worth as much as the defects
+//
+// The fast path signals *I decline* by returning **NaN**, and the caller tests `mag != mag`:
+//
+//   > NaN is the "not exactly representable this way" signal — no JSON number can produce it, so it
+//   > cannot be confused with a real answer.
+//
+// Every other sentinel this directory has looked at today is drawn from the range of the value it
+// describes: `broken == ""` for *no error* where a host message may be empty; `code[i] == 0` for
+// *unused symbol* where 0 is a legal code; `-1` from `indexOf`; `Part(0, false, false)`'s payload.
+// **This one is provably disjoint**, and the file proves it in one sentence rather than asserting
+// it.
+//
+// So the rule is not *never use an in-band sentinel*. It is: **a sentinel is sound exactly when the
+// value's range excludes it and something says why**, and only one of the five sites today clears
+// that bar. Recording the counterexample matters more than another instance of the defect, because a
+// directory that only collects confirmations is not measuring anything — and this is the second such
+// entry today, after `../../unicode/src/printable.wac`'s `bool` and `../../url/src/host.wac`'s
+// merged `Named` arm.
+//
+// A `Result<f64, …>` here would be *worse* than the NaN, and it is the only place today that is
+// true: the fast path's decline is not a failure, it is a dispatch, and the value that means
+// *dispatch* costs nothing because the answer type already has one nobody can produce.

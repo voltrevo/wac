@@ -102,3 +102,37 @@ a slice is one `struct.new` — an O(1) allocation replacing an O(n) allocation 
 win against `packages/bytes`'s copying `slice` and a **loss** against `atofSpan`'s triple, which
 allocates nothing. The case for the type is that a triple can be handed the bounds of one buffer and
 the bytes of another, and that is a correctness argument rather than a cost one.
+
+**A sentinel that is right, which this directory had not found before.** Added with
+[`src/atof.wac`](src/atof.wac). The fast path signals *I decline, use the exact fallback* by
+returning NaN — *"no JSON number can produce it, so it cannot be confused with a real answer"* — and
+that one sentence discharges the whole obligation. It is the tenth row in
+[`../../QUESTIONS.md`](../../QUESTIONS.md)'s sentinel table and the only one that clears it, which
+turned a rule into a two-part rule: a sentinel is sound when the value's range provably excludes it
+**and** something says so where a caller reads it. A `Result` here would be *worse* — the decline is
+a dispatch, not a failure, and wrapping it spends a `try` on control flow with no error in it. First
+time today the answer came out against the habit.
+
+**`FixedBig` has two capacities and one type.** `zero()` is 40 limbs and `withLimbs(160)` is 160,
+each justified by a correct proof in a comment, and they are mutually assignable. `atof`'s `Cmp`
+holds five fields that must all be 160-limb and says `FixedBig` five times; `FixedBig.zero()`
+compiles in any of them and fails at a bounds check inside `shiftLeft`, in a third file. **This is
+the case the fixed-length-array ask does not cover** — `FixedBig<160>` needs a type parameter over a
+literal, which is where const generics begins and where that ask stopped. Worth knowing before the
+small feature is built and this is expected to follow. The part needing no language change is the
+naming: `zero()` reads as *an empty bignum* and is *an empty bignum with `ftoa`'s capacity*.
+
+**A stale language claim that the tree's own cleanup missed.** `bisect32` says *"the two return
+different types and wac has no generics"*; wac has generic functions, spec'd, with a shipped example.
+Seven files carry in-place corrections of exactly this shape and there are 38 such corrections across
+23 files — so the practice exists and this is a straggler, along with `wacc/src/kinds.wac`'s *"no
+module-level constants"*. `packages/gzip/src/tables.wac` shows what the practice is for: it corrected
+the same claim, **measured** the conversion at thirty nanoseconds per gzip operation, declined it as
+churn, and wrote the reason — *"a false constraint in a comment is worth more than the thirty
+nanoseconds: the next person to need a table at file scope reads this and believes they cannot."*
+`issues/lang/0354a` has been amended to ask for the two comments rather than the 658 conversions. **Two things the count does not carry:** a line-oriented grep finds neither
+survivor, because both claims wrap mid-phrase, so any real instrument has to read comments as
+paragraphs and "two" is a floor. And **the conclusion survives its false reason** — generics
+monomorphise, so `bisect<T>` would work, except that the body calls `f64.fromBits` and there is no
+way to write `T.fromBits`. Correcting the comment and merging the two functions would produce a body
+that does not compile.
