@@ -1,0 +1,148 @@
+// A fixed-size bignum — the last dangling import here, and the file two entries were written about
+// before it existed.
+//
+// `packages/fmt/src/bigint.wac` is 219 lines and deliberately incomplete, which is its best feature:
+// *"Burger & Dybvig's digit generation needs compare, subtract, multiply by a small constant, and
+// shift left. It never needs general division: each digit is found by trial subtraction, at most nine
+// times. So this is deliberately not a general bignum — no division, no multiplication of two
+// FixedBigs, no signs."* A type scoped to one algorithm, and it says so.
+//
+// `./atof.wac` and `../../../QUESTIONS.md` already claimed two things about it. Writing it confirms
+// one and sharpens the other, and turns up a third nobody was looking for.
+
+import { Result } from "core";
+import { Ordering } from "@/core/order.wac";
+
+/**
+ * A fixed-capacity unsigned integer, little-endian `u32` limbs.
+ *
+ * **The capacity is still not in the type**, and this file is where that was supposed to be fixed.
+ * `../../QUESTIONS.md` asks for a literal length in an array type; that gives `u32[40]` and does not
+ * give `FixedBig<40>` distinct from `FixedBig<160>`, which needs a type parameter over a literal.
+ * The claim stands, and writing the file did not find a way around it: every operation below is
+ * capacity-polymorphic in its body and capacity-critical in its precondition, which is exactly the
+ * signature of something that wants a value parameter and gets a field.
+ */
+export struct FixedBig {
+  u32[] limbs;
+
+  /**
+   * How many limbs are significant.
+   *
+   * **The invariant is `limbs above n are always zero`, and thirteen methods maintain it by hand.**
+   * The shipped header states it once — *"Limbs above `n` are always zero, so `n` alone decides
+   * magnitude"* — and then `copyFrom` has to restate it locally: *"Clear the old tail: limbs above n
+   * must stay zero for shiftLeft and mulSmall."* A class invariant with thirteen places to break it
+   * and one sentence guarding it.
+   */
+  i32 n;
+
+  /** `limbs` capacity, chosen by the caller — see the naming note below. */
+  FixedBig withLimbs(i32 limbs) { … }
+
+  FixedBig fromU64(u64 v) { … }
+
+  /** Drop leading zero limbs so `n` is exact — every comparison depends on it. */
+  void trim(this) { … }
+
+  void setU64(this, u64 v) { … }
+  void copyFrom(this, const FixedBig src) { … }
+  void shiftLeft(this, i32 bits) { … }
+  void mulSmall(this, u32 m) { … }
+  void mulAddSmall(this, u32 m, u32 add) { … }
+  Ordering cmp(const this, const FixedBig o) { … }
+  void sub(this, const FixedBig o) { … }
+  void add(this, const FixedBig o) { … }
+
+  /** `this *= v`, using `scratch` as working space — see the aliasing note below. */
+  void mulU64(this, u64 v, FixedBig scratch) { … }
+
+  /** `this = a + b`. */
+  void setSum(this, const FixedBig a, const FixedBig b) { … }
+}
+
+// ## What could not be written
+//
+// ### An aliasing precondition, which is the one this file added
+//
+// Two methods take another `FixedBig` they must not be:
+//
+//     void mulU64(this, u64 v, FixedBig scratch)
+//     void setSum(this, FixedBig a, FixedBig b)
+//
+// `x.mulU64(v, x)` compiles. So does `x.setSum(x, y)`. Both would corrupt `x` mid-operation and
+// neither is checked, mentioned, or reachable by any test that does not think to try it. The shipped
+// file does not warn — not an oversight so much as there being nowhere to put the warning that a
+// caller would have to read.
+//
+// `const` gets closer than it looks and then stops. Marking `sub`, `add`, `cmp`, `copyFrom` and
+// `setSum`'s inputs `const` is legal today and worth doing — it says *this one is not written* — and
+// it is exactly what the shipped file omits. But it does **not** say *this one is not the receiver*:
+// `void setSum(this, const FixedBig a, const FixedBig b)` still permits `x.setSum(x, y)`, because
+// `x` is const-as-`a` and mutable-as-`this` in the same call, and nothing relates the two. And
+// `scratch` genuinely is written, so `const` cannot apply to it at all.
+//
+// **So the ask is aliasing, not immutability**, and it is a bigger and less popular feature than
+// anything else in this directory's list. Recorded rather than proposed: what is actionable today is
+// the `const` markers, which cover four of the five parameters and are free.
+//
+// ### The invariant that thirteen methods maintain
+//
+// *"Limbs above `n` are always zero."* Not a precondition on one call — a property of the value that
+// every mutator must restore before returning, and that `shiftLeft` and `mulSmall` **read** rather
+// than merely preserve. `copyFrom` clears the tail explicitly for that reason.
+//
+// This is the fifth thing in this directory true of a value and unsayable about its type, after a
+// sorted `Vec`, a sorted `Table`, a UTF-8 `Bytes` and eight-element `Pieces` — and the first that is
+// an *invariant* rather than a *precondition*. The difference matters for what would fix it: a
+// smart constructor discharges a precondition once, and an invariant needs every method checked on
+// exit. Nothing here has proposed the second and it is a much larger language.
+//
+// A cheaper answer exists and this file declines it: make `limbs` and `n` private and expose only
+// methods, so the invariant has thirteen enforcers rather than an unbounded number. wac has no
+// visibility inside a struct — every field is reachable wherever the type is — so *even the small
+// version is unavailable*, which is worth recording as the more likely ask.
+//
+// ### `zero()` is gone, and that was a naming fix rather than a language one
+//
+// The shipped file has both `zero()` (40 limbs, from `LIMBS()`) and `withLimbs(i32)`. `./atof.wac`'s
+// entry called the first one an accomplice: it reads as *an empty bignum* and is *an empty bignum
+// with `ftoa`'s capacity*. Deleted here. Six call sites — five in `ftoa.wac`, one internal — write
+// `withLimbs(40)` instead, and the capacity stops being invisible at the call.
+//
+// That is the whole fix available today, it needs no language change, and it is the part this
+// directory nearly missed because it was looking for a feature.
+//
+// ### And a cross-reference that points at the wrong issue
+//
+// The shipped header explains its own name:
+//
+//   > Named `FixedBig` rather than `Big` to stay clear of `packages/bignum`, which is the general
+//   > one. That is not only taste: **two structs with the same name in one program compile to invalid
+//   > wasm rather than to an error** — see `issues/lang/closed/0006`.
+//
+// `issues/lang/closed/0006` is *"break inside a match arm was not seen by the return checker"*.
+// `issues/system/0006` is *"streaming gzip is now representable"*. The issue actually meant is
+// **`issues/lang/closed/0041`, "same struct name in two modules emits invalid wasm"** — which is
+// closed, fixed in `b090bc7`, and covered by `§wac-samename-struct-4jhq7wn`. So the caution is
+// **stale twice**: it cites a number about something else, and the hazard it warns of was fixed.
+//
+// The naming is still right, for the taste reason the sentence opens with. Only the *"not only
+// taste"* half has expired — which is the same shape as `atof.wac`'s `bisect32`, where a false
+// reason sat above a conclusion that survived it, and the second instance today of a comment that
+// would be actively misleading to act on.
+//
+// **A check for this exists now and finds four more, and its limits are the finding.** Every
+// `issues/<tree>/<state>/<number>` in `packages/*/src` and `tools/`, checked against the trees: 856
+// citations, **852 good** — the discipline here is strong — and four wrong:
+//
+//     packages/wacc/src/bindgen.wac:382   issues/system/0265c   — that number is in lang/open
+//     tools/docsOnly.wac:29               issues/lang/open/0235a — it is closed
+//     tools/wac/docsonly_test.wac:85      issues/lang/open/0235a — it is closed
+//     tools/wac/links_test.wac:603        issues/lang/open/0154  — it is closed
+//
+// **And it does not find the one above.** `issues/lang/closed/0006` exists, is in the tree it names,
+// and is in the state it names — it is simply about a different subject. A structural check cannot
+// see that, and checking the *subject* is not a grep. So four is a floor, the class the check catches
+// is the cheap one, and the class that misleads a reader is the one still needing a person.
+// `issues/system/0356a`.

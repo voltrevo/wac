@@ -136,3 +136,28 @@ paragraphs and "two" is a floor. And **the conclusion survives its false reason*
 monomorphise, so `bisect<T>` would work, except that the body calls `f64.fromBits` and there is no
 way to write `T.fromBits`. Correcting the comment and merging the two functions would produce a body
 that does not compile.
+
+**An aliasing precondition, which `const` gets close to and does not reach.** Added with
+[`src/bigint.wac`](src/bigint.wac). `mulU64(this, v, scratch)` and `setSum(this, a, b)` both take a
+`FixedBig` they must not be; `x.mulU64(v, x)` and `x.setSum(x, y)` compile and corrupt `x`
+mid-operation, unchecked and unmentioned. Marking four of the five parameters `const` is legal today,
+free, and worth doing — but it says *not written*, not *not the receiver*: `x` can be const-as-`a`
+and mutable-as-`this` in one call with nothing relating the two, and `scratch` genuinely is written
+so `const` cannot apply at all. The ask is aliasing, which is larger and less popular than anything
+else on this list; recorded, not proposed.
+
+**An invariant, not a precondition — and the cheap fix is also unavailable.** *"Limbs above `n` are
+always zero"* is maintained by hand across thirteen mutators, and `shiftLeft` and `mulSmall` **read**
+it rather than merely preserve it. Fifth thing here true of a value and unsayable about its type, and
+the first that is an invariant: a smart constructor discharges a precondition once, an invariant needs
+every method checked on exit. The smaller answer — make the fields private so there are thirteen
+enforcers rather than unboundedly many — is also missing, because wac has no visibility inside a
+struct. That is the likelier ask.
+
+**And a cross-reference pointing at the wrong issue.** The header warns that *"two structs with the
+same name in one program compile to invalid wasm"*, citing `issues/lang/closed/0006` — which is about
+`break` in a `match` arm. The issue meant is `lang/closed/0041`, **which is closed and fixed**. Stale
+twice. A mechanical check over every issue citation in `packages/*/src` and `tools/` says **856
+citations, 852 good** — and **does not find this one**, because the number exists, in the right tree,
+in the right state, and is about something else. Four it does find, all one-word fixes. Filed as
+`issues/system/0356a`; the interesting half is what a structural check cannot see.
