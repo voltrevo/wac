@@ -10419,9 +10419,30 @@ read forty package READMEs I had been treating as write-only**, and the failures
 a missed L5 qualification, two unpromoted findings older than the sweep that "discovered" them — were
 all findable by reading and were not found by anything else.
 
+### Calibrated by reading five of the fifty
+
+A count nobody has checked is a count nobody should quote, so five of the 50 were read in full:
+
+| README lead | verdict |
+|---|---|
+| `tor`'s four states of two booleans | **real, promoted** |
+| `json`'s `raw.len() > 0` | **real, promoted** |
+| `page`'s *"does not reach the capability"* | correctly not promoted — the note resolves it itself, as a change to a capability rather than to the language |
+| `crypto`'s `leaks(…)` | correctly not promoted — *"whether it is a statement form, an attribute on a function, or something else is **not proposed here**"* |
+| `ssh`'s *"the fix is not the same as `pathsel`'s"* | **already promoted**, and the instrument could not see it |
+
+The last is the one that matters. That finding *is* here, in *An ordering between `if`s*, absorbing
+fold and all — promoted under **different vocabulary**. The entry is about orderings between `if`s;
+the README lead is about a comparison with another package. No word-overlap check can match those,
+and no better one can either without understanding both.
+
+So the fourth limitation, and the one that caps the number: **a promotion that was reworded is
+invisible.** Two of five read were genuinely unpromoted, so the 50 is an upper bound and the real
+figure is plausibly fifteen to twenty. Quoting 50 as *findings not promoted* would be wrong.
+
 > **The READMEs are an index this directory does not use.** Three of the day's corrections came from
-> them, and the tool that produced the worklist has no threshold that works. Read them before
-> sweeping.
+> them, the tool that produced the worklist has no threshold that works, and its list is roughly a
+> third real. All three of those are arguments for the same thing: read them before sweeping.
 
 ## A union of one-or-more: `Result` has one `Err`, and the compiler built a container out of lanes
 

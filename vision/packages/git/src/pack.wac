@@ -1,0 +1,177 @@
+// Reading a `.pack` — and a workaround whose cause was removed by the same file that kept it.
+//
+// `packages/git/src/pack.wac` is 662 lines and unusually careful: it explains that a delta's header
+// size is *"the size of the data at this offset, which for a delta is the delta and not the object"*
+// and checks both numbers against two different `git` commands, because *"a reader that confused them
+// would agree with one oracle and not the other."* None of that is rewritten.
+//
+// What is rewritten is a field that should not exist any more, and the reason it survives is worth
+// more than the field.
+//
+// ## Two paths need one fact and answer it two ways
+//
+// Neither the pack format nor an object's header says how long its compressed bytes are. The file's
+// own header states the consequence:
+//
+//   > Nothing in the object header says how long the compressed bytes are, and `packages/gzip`'s
+//   > `inflate` does not report what it consumed. So an object's stream is bounded by **the next
+//   > object's offset**, taken from the index — which is why `openPack` sorts the offsets and keeps
+//   > them.
+//
+// Three hundred lines later, in the section that indexes a pack arriving without one:
+//
+//   > because nothing records where each object's compressed bytes end, ask the inflater.
+//   > `packages/gzip`'s `inflateAt` reports that, which is **the export this needed and the reason it
+//   > exists**.
+//
+// So `inflateAt` was added for the path that has no index to consult, and the path that *has* one was
+// never migrated. Both sentences are in one file and the first is no longer true.
+//
+// ## What the un-migrated path pays
+//
+// `Pack` carries `i64[] byOffset`, *"every object's offset, ascending — what bounds each compressed
+// stream"*, and a binary search over it to find the next offset above a given one. Then, to read one
+// object:
+//
+//     u8[] slice = u8[upto - from]();
+//     for (i32 i = 0; i < slice.len(); i++) { slice[i] = p.bytes[from + i]; }
+//     u8[] data = inflate(slice);
+//
+// **Every compressed object is copied into a fresh array before being inflated**, because `inflate`
+// takes a whole buffer and the bound has to be applied by slicing. `inflateAt(p.bytes, from)` needs
+// neither the copy, nor the array, nor the search, nor the field — and it is already imported at the
+// top of this file.
+//
+// That copy loop is also one of the 750 in `issues/system/0352a`, and this is the version of that
+// issue with the most to say: it is not a loop that should have been `copyFrom`, it is a loop that
+// should not exist.
+
+import { Result, Bytes } from "core";
+
+/**
+ * A pack and its index.
+ *
+ * **`byOffset` is gone**, along with the binary search over it. It existed to bound a compressed
+ * stream, `inflateAt` bounds it, and nothing else read the field. This is the only deletion in this
+ * directory that needs no language change and no design argument — just the migration the shipped
+ * file started and did not finish.
+ */
+export struct Pack {
+  Bytes bytes;
+  PackIndex idx;
+}
+
+/**
+ * What an object header says it is.
+ *
+ * Three bits on the wire — *"1 commit, 2 tree, 3 blob, 4 tag, 6 offset-delta, 7 reference-delta. 5 is
+ * unused and 0 is invalid."* A closed set with a **hole at 5** and an **invalid 0**, which is the
+ * sixth closed-set-spelled-openly here and the first with either feature. See below: it sharpens the
+ * `tls` ask rather than repeating it.
+ */
+export enum PackedKind {
+  Commit,
+  Tree,
+  Blob,
+  Tag,
+  OffsetDelta(i64 back),
+  ReferenceDelta(Bytes name),
+}
+
+/**
+ * A size read from an object header.
+ *
+ * **Not an `Offset`, and the shipped file keeps them apart by hand.** Its header:
+ *
+ * > **Two varints that are not the same varint.** The size above is little-endian groups:
+ * > `size |= (b & 0x7f) << shift`. An offset delta encodes its distance differently —
+ * > `ofs = ((ofs + 1) << 7) | (b & 0x7f)` — which is not the same function and has no zero-length
+ * > representation, so reusing one decoder for both silently misreads any chain longer than 127
+ * > bytes. They are two functions here for that reason.
+ *
+ * Two decoders, two return types now, and the confusion the comment guards against stops being
+ * expressible.
+ */
+export struct Size { i64 of; }
+
+/** A distance backwards from the current object, as an offset delta encodes it. */
+export struct Backref { i64 of; }
+
+export struct PackIndex { Bytes bytes; }
+
+/** Why a pack cannot be read. */
+export union<Damaged, Truncated, UnknownKind, ThinPack> PackFault;
+
+export struct Damaged { string why; i64 at; }
+export struct Truncated { i64 at; i64 wanted; }
+export struct UnknownKind { i32 saw; i64 at; }
+
+/**
+ * One or more reference deltas name a base the pack does not contain.
+ *
+ * Kept as a member with a payload because the shipped comment is right that this is not damage:
+ * *"A thin pack is not a damaged one, and telling them apart is the whole reason this variant
+ * exists."*
+ */
+export struct ThinPack { Bytes[] wanted; }
+
+export Result<Pack, PackFault> open(Bytes packBytes, Bytes idxBytes) { … }
+export Result<Bytes, PackFault> object(const Pack p, i64 at) { … }
+export Result<PackIndex, PackFault> index(Bytes packBytes) { … }
+
+// ## What could not be written
+//
+// ### A closed set with a hole and an invalid zero
+//
+// `PackedKind` above has six members and the wire has eight codes: `0` invalid, `5` unused, and six
+// real ones. `@/packages/tls`'s entry asked for **declared, stable discriminants** because a phase is
+// serialised; this needs that *and* two more things it did not:
+//
+//   - **a gap.** `OffsetDelta = 6` after `Tag = 4` is not a reordering hazard, it is a hole the format
+//     specifies and a future version may fill. An enum numbered by declaration order cannot express
+//     it; one with declared numbers can, and then `5` has no name, which is correct.
+//   - **an invalid value that is not a variant.** `0` is not *unknown type five*, it is *this is not
+//     an object header*. So the checked conversion `tls` asked for is doing two jobs here — rejecting
+//     a code with no meaning, and rejecting a code reserved for later — and a caller repairing a pack
+//     might want to tell them apart.
+//
+// So the ask is unchanged in kind and larger in detail, and this file is the reason to write
+// `enum K : u8 { A = 1, … }` rather than `enum K { A, … }` even when the numbers happen to be dense
+// today.
+//
+// ### Two varints with one signature, and the type that would separate them costs an allocation
+//
+// `Size` and `Backref` above are one-field wrappers over `i64` whose only job is to stop the two
+// decoders being confused — the confusion the shipped header spends a paragraph warning about. They
+// are the same device as `@/packages/tor`'s two identity fields and `@/packages/fmt`'s two `FixedBig`
+// capacities: **a distinct type per meaning, where the representation is identical.**
+//
+// And the cost is real and unpriced. A wrapper struct is a heap object, so a pack with 100,000 objects
+// allocates 100,000 `Size` values to read their headers, against zero for a bare `i64`. Every previous
+// entry that reached for this device reached for it on a value that is already a reference — a
+// `Bytes`, a `Vec` — where the wrapper is free. **This is the first place the newtype is over a
+// primitive in a hot loop**, and this directory has no measurement for it.
+//
+// `../../../bench/nullablecost.wac` measured the nearest thing — a boxed `i32?` at 1.4 ns per non-null
+// value — and a one-field struct should be the same allocation. At 100,000 objects that is about
+// 0.14 ms per pack walk, which is probably nothing against inflating them; *probably* is doing work
+// there and a bench would settle it. Recorded as unpriced rather than argued either way.
+//
+// ### And the deletion above is the finding, not the types
+//
+// The three entries above are language questions. The `byOffset` removal is not: it needs nothing,
+// breaks nothing, and removes a field, a binary search, an allocation and a copy per object read.
+//
+// It survived because **the sentence justifying it is in the file header and the sentence retiring it
+// is three hundred lines down**, and nothing reads a file looking for the second contradicting the
+// first. That is the same failure as `packages/wacc/src/kinds.wac`'s stale constraint and
+// `packages/fmt/src/bigint.wac`'s stale cross-reference, and the third instance today where the
+// correction was *already present in the tree* and had not reached the thing it corrected.
+//
+// Checked before claiming it: `endOf` has exactly one caller, at `:193`, and `byOffset` is read
+// nowhere else. `packages/git/src/receive.wac` also has an `endOf` — a different function with a
+// different signature over a pkt-line payload — which is two unrelated meanings under one name in one
+// package, the shape `issues/system/0348a` counted in `tools/`. Not the finding here, and worth the
+// sentence because it is what made the check necessary.
+//
+// Filed as `issues/system/0357a`.
