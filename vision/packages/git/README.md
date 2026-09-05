@@ -176,5 +176,10 @@ per-entry set of dimensions, and neither the format nor this rewrite has one.
 one file, and reporting it once per side would say three things about one path"* — and an `Unmerged`
 arm would have to carry *which* stages are present, so it is a payload rather than a name.
 
-**A path is a `string`**, and this is the fifth package to build one with `+`:
-`r.workTree + "/" + e.path`. Already promoted.
+**A path is a `string`**, and this said *the fifth package to build one with `+`*, quoting
+`r.workTree + "/" + e.path`. **Both halves of that were wrong** and the promoted entry already said
+so: this directory builds a path with `+` **zero** times, because the filesystem bodies are elided,
+and the quoted expression is from the *shipped* walk. Measured in the shipped tree, `+ "/" +` and its
+neighbours appear **265 times across 25 packages** — and the entry's own broader count is 465 across
+15. So the ordinal counted vision packages that had *mentioned* the shape and presented it as a count
+of occurrences. [`../../QUESTIONS.md`](../../QUESTIONS.md) has the real numbers.

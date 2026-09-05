@@ -116,5 +116,24 @@ export Bytes write(const Response r, bool headOnly) { … }
 // **`write` takes `headOnly` and the reason is `HEAD`.** A response to `HEAD` carries the headers of
 // the `GET` and no body, so the flag is *the request's method, remembered*. It is a parameter because
 // `Response` does not know what asked for it — the same missing pairing as
-// `@/packages/box/src/cp.wac`'s `Side`, and the fifth time a caller has had to hand back something it
-// already told the callee once.
+// `@/packages/box/src/cp.wac`'s `Side`.
+//
+// This said *the fifth time a caller has had to hand back something it already told the callee once*.
+// Enumerated 2026-09-05: **seven**, and they are three different problems that the count merged.
+//
+//   * **The callee could compute it.** `@/packages/ts/src/report.wac`'s `say(const Blame b,
+//     BundleFault f)` — `b` is `blameFor(f)`. Pure redundancy, and `say(User, NoPrefix(3))`
+//     type-checks. A code smell, not a language gap.
+//   * **The value already carries it, for most members.** `@/packages/box/src/cp.wac`'s
+//     `say(string path, FileFault f)` — and **seven of `FileFault`'s ten members have a `path`
+//     field.** The caller supplies it because the other three (`Unsupported`, `OtherFault`,
+//     `NotGranted`) do not, so a union whose members *almost* agree on a field makes every caller
+//     carry that field alongside. A fault-design smell, and a new one: the fix is to give the three
+//     the field or to split the union, not to change the language.
+//   * **Nothing has it.** `write(r, headOnly)`, `policy(Side, FileFault)`,
+//     `@/packages/git/example/ignorelint.wac`'s `say(const Rules, const Finding)`,
+//     `@/packages/tor/src/verdict.wac`'s `say(string what, Invalid why)`. Four, and only these are
+//     the missing-pairing question.
+//
+// So the ask is four sites rather than seven, and the two that dropped out are each a different
+// thing worth fixing. Fifth bare ordinal enumerated in two days and the fifth to be wrong.

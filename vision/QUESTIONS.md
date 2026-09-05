@@ -7312,6 +7312,33 @@ enough to state as a rule about this directory rather than about any one claim: 
 three has been wrong every time it has been checked here, and checking it has never failed to
 sharpen the entry.**
 
+**Two more the same afternoon; six for six.**
+
+*`@/packages/git`'s README said `A path is a string`, and this is the fifth package to build one with
+`+`, quoting `r.workTree + "/" + e.path`.* Both halves wrong, and the promoted entry above already
+said so: this directory does it **zero** times, because the filesystem bodies are elided, and the
+quoted expression is from the shipped walk. The shipped tree has `+ "/" +` and neighbours **265 times
+across 25 packages**. So the ordinal counted vision packages that had *mentioned* the shape and
+presented it as a count of occurrences.
+
+*`@/packages/http/src/response.wac` said `the fifth time a caller has had to hand back something it
+already told the callee once`.* Seven, and they are **three different problems the count merged**:
+
+  * *the callee could compute it* — `say(const Blame b, BundleFault f)`, where `b` is `blameFor(f)`.
+    A code smell.
+  * *the value already carries it, for most members* — `say(string path, FileFault f)`, and **seven
+    of `FileFault`'s ten members have a `path`**. The caller supplies it because three do not, so **a
+    union whose members almost agree on a field makes every caller carry that field alongside.** New,
+    and the fix is in the union rather than in the language.
+  * *nothing has it* — `write(r, headOnly)`, `policy(Side, FileFault)`, `say(const Rules, const
+    Finding)`, `say(string what, Invalid why)`. **Four**, and only these are the missing-pairing
+    question.
+
+So of the six enumerations, three shrank the ask (phantom parameter 11→8, hand-back 7→4, byte view),
+two grew it (lookup table 5→15, path 5→25 packages) and one changed its subject. **None left the
+claim as it was**, which is the strongest form the rule has: it is not that counting is unreliable,
+it is that the act of listing is where the distinction lives.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
