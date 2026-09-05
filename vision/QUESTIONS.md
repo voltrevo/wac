@@ -6430,3 +6430,38 @@ fields that encode failure and silently drops the ones that encode fact.** `exis
 failure and convert; `isSymlink`, `isExecutable` and a picker's `error` are facts and do not. Three
 of the four structs had at least one of each, and the mechanical part of the conversion is exactly
 the part that cannot tell them apart.
+
+## Fixing a capability moved a package's taxonomy down a layer
+
+Restoring the fault `std` had dropped had a consequence worth its own entry, because it is the
+layering rule doing work rather than being stated.
+
+`@/packages/fs/src/fault.wac` declared nine members — `NotFound`, `Denied`, `Exists`, `IsDir`,
+`NotADir`, `NotEmpty`, `ReadOnly`, `Unsupported`, `Other` — written from the shipped `FAULT_*` codes.
+That was right at the time: `std`'s `Files` answered `Result<…, NotGranted>`, one bit, so a
+filesystem taxonomy had nowhere else to live.
+
+Then `Files` regained the ten codes the rewrite had thrown away, and the nine were **declared twice
+in two files for one taxonomy** — the drift this directory has found four times elsewhere, created
+here by a fix.
+
+They live in `std` now, and the rule decides it rather than taste: *a value that appears in a
+capability's signature must be declared at or below the capability layer*, and they now appear in
+eight of them.
+
+### What stayed behind is the interesting half
+
+The **union** stays in `@/packages/fs`. `std` owns the vocabulary — the nine things a filesystem
+operation can be refused for — and `fs` owns *which of them a given mount can produce*: a memory
+mount implements the tree and can answer all nine, a host mount answers whatever the host reports.
+
+So a fault taxonomy splits cleanly in two, and this directory had not noticed the seam:
+
+- **the members** belong to whoever can report them, which is the lowest layer that observes the
+  fact;
+- **the union** belongs to whoever answers, and is a claim about *this* implementation's reach.
+
+That is why `Fault` and `FileFault` are different types over overlapping members and neither is
+redundant — and it is the answer to the earlier entry's *one interface, two implementations, two
+producible subsets, and nothing saying which*. The subsets are unions, and a package can declare one
+per implementation without touching the vocabulary.

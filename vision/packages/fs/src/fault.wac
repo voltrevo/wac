@@ -21,61 +21,31 @@
 // path and what was attempted, `Other` wants the host's own words — which is what the separate
 // `string message` field beside the integer has always been for.
 
-import { NotGranted } from "std";
+import {
+  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, OtherFault,
+} from "std";
 
-/** The path does not exist. */
-export struct NotFound { string path; }
-
-/** It exists and this program was not allowed to do that to it. */
-export struct Denied { string path; string attempted; }
-
-/** It exists and the caller asked for it not to. */
-export struct Exists { string path; }
-
-/** A directory where a file was wanted, or the reverse. */
-export struct IsDir { string path; }
-export struct NotADir { string path; }
-
-/** A directory with something still in it. */
-export struct NotEmpty { string path; i32 entries; }
-
-/** The mount is read-only. */
-export struct ReadOnly { string path; }
-
-/** The backing cannot do this at all — a memory mount asked for a device node. */
-export struct Unsupported { string what; }
-
-/**
- * The host said something that fits no category above.
+/*
+ * **These nine were declared here until 2026-09-05 and are `std`'s now.**
  *
- * `std/platform.wac` says of the shipped equivalent that `faultWords` gives `""` for this one,
- * *"the first means the host had something to say that no category covers"*. Keeping it is not a
- * failure of the enumeration: a filesystem is a boundary to somebody else's code, and a category
- * for *the thing we did not anticipate* is the honest member rather than the missing one.
+ * They were written from the shipped `FAULT_*` codes, and at the time `std`'s `Files` answered
+ * `Result<…, NotGranted>` — one bit — so a filesystem taxonomy had nowhere else to live. Then the
+ * audit found that `std` had *dropped* the shipped `i32 fault` when it turned `FileResult` into a
+ * `Result`, and putting it back means `Files.read` answers a `FileFault` with these nine members in
+ * it.
+ *
+ * At which point they were declared twice, in two files, for one taxonomy — the drift this directory
+ * has found four times elsewhere, created here by a fix. They live in `std` because the layering
+ * rule says so: **a value that appears in a capability's signature must be declared at or below the
+ * capability layer**, and they now appear in eight of them.
+ *
+ * What stays here is the `Fault` union, because *which* of them a mount can produce is this
+ * package's business and not `std`'s — a memory mount produces all nine and a host mount produces
+ * whatever the host reports.
  */
-export struct Other { string message; }
 
-/**
- * The capability's own failure, which the ten codes had no member for.
- *
- * `Files` fails with `NotGranted` and nothing else — that is what a capability's failure *is*, and
- * `Mount.onHost` assigns `files.read` into a slot whose error set is `Fault`, so `try`'s membership
- * rule needs `NotGranted` to be in it. It was not, because `Fault` was derived from the shipped ten
- * `FAULT_` codes and those come from the *host's* taxonomy.
- *
- * **It is not `Denied`, and the difference is the point.** `Denied` is the operating system refusing
- * a program that asked; `NotGranted` is a program that never held the authority to ask. Conflating
- * them loses exactly the distinction the capability model exists to make — and the shipped design
- * has no choice, because there a denied capability *is* `FAULT_DENIED`.
- *
- * **`std`'s own type, imported, not a copy of it.** A second `NotGranted` declared here would be a
- * different type under nominal typing — `spec/spec/imports.md`'s whole subject — so `Mount.onHost`
- * would still not compose. Putting the capability layer's type into this package's union is what a
- * union is *for*, and it is the same move `@/packages/http`'s `ResponseFault` makes over
- * `RequestFault`: an error set composed across a module boundary with no wrapper.
- */
 export union<
-  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, Other
+  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, OtherFault
 > Fault;
 
 /**

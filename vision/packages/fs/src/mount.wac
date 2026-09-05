@@ -59,7 +59,10 @@
 
 import { Result, Ticket, Bytes, Map } from "core";
 import { Files } from "std";
-import { Fault, NotFound, ReadOnly, Unsupported } from "./fault.wac";
+import { Fault } from "./fault.wac";
+// The members come from `std` now, not from `./fault.wac` — see that file's note on why a
+// filesystem taxonomy moved down a layer when `Files` regained the fault the rewrite had dropped.
+import { NotFound, ReadOnly, Unsupported } from "std";
 
 export struct Entry { string name; bool isDir; i64 size; i64 modified; }
 
