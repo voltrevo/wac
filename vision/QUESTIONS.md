@@ -4229,7 +4229,7 @@ equivalent:
 - **From the expected type.** `return Ok(3);` in a function answering `Res<i32, F>` has a slot, and
   so does `Res2<i32, F2> r = Ok(4);`. This is what every language with inferred variant construction
   does and it is the one that makes the ninety uses legal. It also does nothing for a call argument
-  whose parameter is generic, which `issues/lang/0273a` is already about from the other side —
+  whose parameter is generic, which `issues/lang/0273b` is already about from the other side —
   *"a slot does not determine a call's type parameters"* is open, and this would need the opposite
   answer.
 - **From an import.** `import { Ok, Err } from "core";` brings the arms into scope as names, which
@@ -4818,6 +4818,35 @@ recorded in `0285b`, whose title says "array" and whose defect is wider.
 
 The other **563** are in packages outside wacc's graph, which demonstrably manage both — `tor` has
 67 functions and 146 consts.
+
+### Measured 2026-09-05: the conversion buys nothing, so outside `wacc` it is style
+
+`../bench/constcall.wac` times the shape these are consumed in — a chain of eight equality tests,
+which is `packages/wacc/src/wapyrewrite.wac:105` — with the eight spelled three ways:
+
+        tests     konst     priv   export    again
+    536870912       178      178      178      178
+
+A dead tie, about one comparison per cycle. So *"the choice is style"* below is not a guess, and the
+828 are not costing anything today.
+
+**The compiler is not what removed the call**, which is the part with a scope. `emit.wac`'s only
+inlining is of constant scalars — *"Scalars are inlined at every use rather than given a global"* —
+and there is no function-inlining pass, so the module holds a real `call` and **v8 erases it at run
+time**. `--host wasmtime` is the engine with no JavaScript under it, and `design/system/0001` D9 says
+its purpose is testing the claim that a wac program does not depend on one. A cost only a JIT removes
+is a cost that host still pays, and this checkout has no wasmtime binary to ask
+(`issues/system/0208`).
+
+That generalises past this entry: **every measurement in this directory was taken on v8** — the
+packed-fields numbers, the array-of-records numbers, the 3.9 µs CRC table — and each could in
+principle be a property of the JIT rather than of the representation. Nothing had said so before.
+The cheapest fix is not a language feature; it is building the second host and running the three
+benches twice.
+
+*A second, smaller entry stating this count as 658 stood here for about an hour on 2026-09-05 and has
+been deleted. It measured the same corpus with a narrower body pattern, missed the L5 qualification
+above, and would have been the second answer to a question this file already owns.*
 
 ### Two different questions live under the number
 
@@ -9269,7 +9298,7 @@ signature** in the directory that would want one — which is weaker than having
 found it unnecessary, and is the same limit as every other count taken over a directory of
 signatures.
 
-**And nothing here hashes bodies as a matter of course.** All three of `issues/system/0347a`, `0348a`
+**And nothing here hashes bodies as a matter of course.** All three of `issues/lang/0347a`, `0348a`
 and `0349a` end with a version of *a check that would find this is fifty lines and nothing does it*.
 Writing it would make the shared suite red on the day it landed — 17 duplicates in `packages/` and 23
 under `tools/` — so it needs a ratchet like `cov_ledger`'s, which is why three issues name it and
@@ -9985,43 +10014,6 @@ paragraph. **Nothing checks a doc comment against a declaration and nothing gene
 package holding two prose accounts of one structure, one of them executable, is a narrower and more
 findable thing than that.
 
-## A constant spelled as a function call, 658 times — and the bench says it is free, on one host
-
-`packages/wacc/src/kinds.wac` gives the reason, above 89 declarations:
-
-> Every one of these is a zero-argument function because wac has no module-level constants.
-
-The gap closed **2026-07-31**. `spec/spec/variables.md` specifies module-level `const`, its worked
-example is `export const u32 POLY = 0xEDB88320;`, and `[§wac-modconst-import-p7fm2wj]` makes an
-exported one importable by name. Compiled and run to check it is not spec-only: it works.
-
-**658 zero-argument functions returning an integer literal across 89 files**, against 281 `const`
-declarations tree-wide. `check.wac` 99, `kinds.wac` 89, `quic/src/frame.wac` 26. Filed as
-`issues/lang/0354a`.
-
-The reason it is here rather than only in an issue is what happened when it was measured.
-[`bench/constcall.wac`](bench/constcall.wac) times a chain of eight equality tests — the shape
-`wapyrewrite.wac:105` actually has — with the eight spelled three ways:
-
-    tests     konst     priv   export    again
-536870912       178      178      178      178
-
-A dead tie. **So the language question is not "does this cost anything" and the answer is not the
-interesting part.** What is interesting is *why* it ties: the wac compiler has no function inliner —
-`emit.wac`'s only inlining is of constant scalars, *"inlined at every use rather than given a
-global"* — so the module contains a real `call`, and **v8 removes it at run time.**
-
-`--host wasmtime` is the engine with no JavaScript in it, and `design/system/0001` D9 says its point
-is to test the claim that a wac program does not depend on one. A cost that only a JIT erases is a
-cost that host still pays, and this checkout has no wasmtime binary to ask. So the bench answers half
-a question and names the other half, which is better than the tie it looked like.
-
-**The general form is the ask.** Every measurement in this directory has been taken on v8, including
-the packed-fields and array-of-records numbers two entries up, and each of them could in principle be
-a property of the JIT rather than of the representation. Nothing here has said so before now, and the
-cheapest fix is not a language feature: it is building the second host and running the three benches
-twice.
-
 ## A binding computed once before `main` — the case `const` cannot reach, priced at 3.9 µs
 
 Two entries above, `const` was the answer to 658 sites and the measured cost of not using it was
@@ -10237,6 +10229,7 @@ argument — each one's failure is worse than the last, and the fourth is not hy
 | `@/packages/unicode` `mapAll(s, which)` | 3 mappings as `0,1,2` | `mapAll(s, 3)` case-folds, silently |
 | `@/packages/url` `inEncodeSet(c, set)` | 7 encode sets as `0..6` | an unknown set answers as the *most aggressive*, corrupting a valid URL |
 | `@/packages/tor` `hasFlag(r, "BadExit")` | 10 consensus flags as strings | a typo answers **false** — *safe to exit through* |
+| `@/packages/tor` `positionWeight` | 4 roles as 2 booleans | the wrong *order* of tests leaks exit capacity into the guard position |
 | `@/packages/tls` `c.phase` | 5 handshake phases as `0..4` | **a peer reached a `trap`** |
 
 The first three are arguments from shape. The fourth is an incident with a fuzzer, a reproduction and
@@ -10261,6 +10254,30 @@ a five-variant `Phase` does not compile with `Closed` missing. The shipped fix i
 the top of the function — correct, and a guard rather than a structure: the `else { trap; }` is still
 there, and phase `0` still reaches it, unreachable only because `tlsClientInit` assigns `1` before
 returning. That is an argument made outside the function that traps.
+
+### The `tor` row was in a package README and never promoted, and it is the cleanest of the five
+
+`@/packages/tor`'s README, before this sweep existed:
+
+> **Four states of two booleans, decided by an ordered chain.** `positionWeight` tests
+> `isGuard && isExit`, then `isGuard`, then `isExit`, then neither — with a warning above it:
+>
+> > The order of those four tests matters. A relay with both flags must take the "both" weight —
+> > checking Guard first and returning would give a Guard+Exit relay the guard-only weight, which is
+> > how exit capacity leaks into the guard position.
+>
+> The hazard is real and the code is right. Four states of two booleans is a closed set the language
+> can hold, and a `match` over `Role { Both, GuardOnly, ExitOnly, Neither }` is exhaustive and
+> order-independent — **there is no first arm, so there is no wrong order to put the arms in.**
+
+*There is no first arm, so there is no wrong order to put the arms in* is the best one-line statement
+of what exhaustive matching buys that this directory has, and it was sitting unpromoted in a package
+note. It is also the only row of the five where the defect is **ordering** rather than a missing
+case: `tls` fell through a chain that lacked an arm, and this one would take a wrong arm that is
+present. A `match` fixes both, for different reasons — no fallthrough, and no first.
+
+Promoted here on 2026-09-05, found by an instrument built for exactly this
+(`vision/QUESTIONS.md`'s note below on what the READMEs still hold).
 
 ### And it is also where *give each phase a type* stops scaling
 
@@ -10355,3 +10372,53 @@ The phase accessor does not call `decodeConn` — it indexes the blob. So *phase
 first* is load-bearing across a package boundary, and changing the serialisation order breaks a
 caller that never mentions the format. Whoever wrote that found decoding too expensive for one byte,
 which is the encode/decode cost reporting itself.
+
+## What the package READMEs still hold: 368 findings, and the two thresholds that measured nothing
+
+The brief says each package README ends with a list of what could not be written, and the real ones
+get promoted here. Nothing checked that. So: pull every bolded lead out of all forty
+`vision/packages/*/README.md`, take its three rarest content words, and look for them in this file.
+
+**368 findings across 40 READMEs.** Not all should be promoted — most are rewrite notes, *"`JsonArray`
+is gone"*, not language questions — so the output is a worklist to read rather than a defect count.
+
+### Two thresholds that measured nothing, which is the part worth keeping
+
+**First attempt: is each probe word anywhere in this file?** Zero findings came back unmatched. Of
+course they did — this file is 10,000 lines and 176 entries, and a word like *span* or *number* or
+*parsed* appears in some entry by chance. The check confirmed only that English is finite.
+
+**Second attempt: does any single entry hold all three probes?** Better — it moved 22 findings from
+"matched" to "weak" — but still zero came back with nothing, because with 176 entries one word lands
+somewhere no matter what.
+
+**The signal was in neither absolute.** It is the *weak* bucket: **50 findings where no single entry
+holds more than one of the three probes.** That is the list to read, and reading it is the work; no
+threshold decides it.
+
+### What reading it found
+
+Two that were real, promoted the same hour:
+
+- **`@/packages/tor`'s four-states-of-two-booleans** — the ordered-chain hazard in `positionWeight`,
+  whose *"there is no first arm, so there is no wrong order to put the arms in"* is the best line
+  about exhaustive matching in the whole directory. Now a row in the closed-set entry above.
+- **`@/packages/json`'s `raw.len() > 0`** — parsed versus built, which had independently derived both
+  the two-part sentinel rule and the right fix, a day before the sweep that claimed to discover them.
+
+And one that mattered more than either: **`@/packages/raster`'s one-line note** that
+`i32 cellWidth() { return 8; }` should be `const i32 CELL_W`, *"noted here as a fourth sighting and
+counted later: 828 against 197"*. That pointer led to the *828 constants* entry above — which already
+owned a count I had just re-derived, worse, as `issues/lang/0354a`. The issue has been rewritten and
+its number retired from that claim.
+
+### So the honest summary of the instrument
+
+It found three things worth having and none of them by matching. What it actually did was **make me
+read forty package READMEs I had been treating as write-only**, and the failures — a duplicate count,
+a missed L5 qualification, two unpromoted findings older than the sweep that "discovered" them — were
+all findable by reading and were not found by anything else.
+
+> **The READMEs are an index this directory does not use.** Three of the day's corrections came from
+> them, and the tool that produced the worklist has no threshold that works. Read them before
+> sweeping.

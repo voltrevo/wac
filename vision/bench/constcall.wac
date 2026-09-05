@@ -13,21 +13,28 @@
 // > 85-variant enum therefore costs 85 declarations, which is the clearest measurement so far of
 // > that gap.
 //
-// The gap closed on **2026-07-31**. `spec/spec/variables.md` specifies module-level `const`,
-// `[§wac-modconst-import-p7fm2wj]` says an exported one can be imported by name, and its worked
-// example is `export const u32 POLY = 0xEDB88320;` — the CRC-32 polynomial, from the package next
-// door. Verified by compiling and running it: `export const i32`, `export const u32` and a constant
-// built on a constant all work today.
+// **wac** has had them since **2026-07-31** — `spec/spec/variables.md`,
+// `[§wac-modconst-import-p7fm2wj]` for the importable form, `export const u32 POLY = 0xEDB88320;` as
+// the worked example, verified here by compiling and running it. **wac-L5 has not**, and that is the
+// constraint on this particular file: `packages/wacc` must compile on the top bootstrap rung, which
+// refuses a top-level `const` outright. So the sentence quoted above is *imprecise* rather than
+// stale — it says *wac* where it means *the rung that reads me* — and `kinds.wac` is the one file in
+// the count that could not take the change even if someone wanted it to.
 //
-// **658 zero-argument functions returning an integer literal remain, across 89 files** — 99 in
-// `check.wac`, 89 in `kinds.wac`, 26 in `quic/src/frame.wac`, 24 in `tor/src/relay.wac`. Against 281
-// `const` declarations tree-wide. So the workaround outnumbers the feature by more than two to one,
-// and the compiler is 29% of it.
+// **828 of them remain, against 197 `const`s and 47 enums** — the count is `../QUESTIONS.md`'s, in
+// *828 constants are written as functions*, and it is the one to use: an earlier version of this
+// header said 658 from a narrower body pattern and has been corrected.
 //
-// Before proposing 658 edits: **does it cost anything?** A spec that says a `const` initialiser is
+// **And a third of them are forced rather than drifted.** That entry measured what this one assumed:
+// `packages/wacc` holds **265 of the 828 and zero consts**, because its source must compile on
+// **wac-L5**, and L5 refuses `const i32 LIMIT = 509;` at module scope outright —
+// *"unexpected token = before 509"*. So `kinds.wac` cannot take the change at all, and the 563
+// outside `wacc`'s graph are the real population.
+//
+// Before proposing 563 edits: **does it cost anything?** A spec that says a `const` initialiser is
 // *"substituted at each use"* and a call that a compiler may or may not inline are not the same
-// program, and nobody here has measured which. This file measures it, so the answer is a number
-// rather than an intuition.
+// program, and nobody had measured which. This file measures it, so the answer is a number rather
+// than an intuition.
 //
 // ## The shape measured
 //
@@ -67,8 +74,10 @@
 // (`issues/system/0208`). So the honest result is: *free on v8, unmeasured on the host that matters
 // for the claim, and emitted as a call in the module either way.*
 //
-// The recommendation that follows is therefore about **line count and readability**, not speed, and
-// `issues/lang/0354a` is written that way.
+// The recommendation that follows is therefore about **line count and readability**, not speed. It
+// is `../QUESTIONS.md`'s *828 constants are written as functions*, which owns the count and the L5
+// qualification; `issues/lang/0354a` has been narrowed to the two comments that name the wrong
+// limitation, this one included.
 
 import { Core, Cli } from "std/platform.wac";
 

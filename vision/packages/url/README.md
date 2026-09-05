@@ -116,7 +116,7 @@ first version of the test *"passes for the wrong reason"*. Someone found this, g
 wrote it in the file that executes; the comment it corrects was never touched. The vision file makes
 the relation a function so the claim can be wrong out loud.
 
-**Seven constants spelled as function calls, and 658 tree-wide.** `packages/wacc/src/kinds.wac` says
+**Seven constants spelled as function calls, and 828 tree-wide.** `packages/wacc/src/kinds.wac` says
 why — *"because wac has no module-level constants"* — and that stopped being true on 2026-07-31.
 [`../../bench/constcall.wac`](../../bench/constcall.wac) says the three spellings tie to the
 millisecond on v8, so the case is readability and not speed; it also says the compiler has no

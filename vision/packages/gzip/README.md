@@ -202,8 +202,9 @@ useful work for a 512-byte input. A `const` initialiser must be a compile-time c
 and this is two nested loops, so there is nowhere in the language to put the value. Filed as
 `issues/system/0355a`; the language ask is promoted.
 
-**Which makes the pair with `issues/lang/0354a` the finding.** That one says 658 constants spelled
-as function calls should be `const`, and measures the cost of not doing it at **zero**. This one is
+**Which makes the pair with the scalar case the finding.** `../../QUESTIONS.md`'s *828 constants
+are written as functions* covers that one, and the bench measures the cost of not converting at
+**zero**. This one is
 the same syntax gap costing 3.9 µs, because `const` inlines a scalar and cannot express a computed
 array. *"Spell your constants `const`"* is correct advice that does not reach the one site where it
 mattered — the second time today a measurement inverted the recommendation.

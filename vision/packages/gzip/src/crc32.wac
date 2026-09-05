@@ -153,12 +153,14 @@ export u32 crc32Bitwise(Bytes data) { … }
 //
 // ### And the two constant entries in this directory now disagree about direction
 //
-// `issues/lang/0354a`, filed an hour ago, says **658 constants are spelled as function calls and
-// should be `const`** — a readability change with a measured cost of zero. This file says a table
-// spelled as a function call costs 3.9 us and cannot be a `const` at all.
+// `../../../QUESTIONS.md`'s *828 constants are written as functions* covers the scalar case — a
+// readability change with a measured cost of zero, and a third of the population unable to take it
+// because `packages/wacc` must compile on wac-L5, which has no top-level `const`. This file is the
+// other kind: a table spelled as a function call, costing 3.9 us, and unable to be a `const`
+// anywhere, on any rung.
 //
-// They are not in tension, and the difference is exactly the line the language draws: 0354a's 658
-// are *scalars*, which `const` inlines at every use, and this is a *computed array*, which `const`
+// They are not in tension, and the difference is exactly the line the language draws: those 828 are
+// *scalars*, which `const` inlines at every use, and this is a *computed array*, which `const`
 // cannot express. **So the same syntax gap has a free case and an expensive one, and the expensive
 // one is the one `const` does not cover.** Worth stating together, because "use `const`" is the
 // answer to one and not the other, and a sweep that did not know the difference would leave the only

@@ -117,7 +117,7 @@ export u8[] decode(u8[] bytes) { … }
 
 // ## What could not be written
 //
-// ### A constant is spelled as a function 658 times, and the reason closed on 2026-07-31
+// ### A constant is spelled as a function 828 times, and only some of them could stop
 //
 //     export i32 SET_C0() { return 0; }
 //     export i32 SET_FRAGMENT() { return 1; }
@@ -135,17 +135,22 @@ export u8[] decode(u8[] bytes) { … }
 // 2026-07-31. Compiled and run to be sure: `export const i32`, `export const u32`, and a constant
 // built on a constant all work.
 //
-// Swept: **658 zero-argument functions returning an integer literal, across 89 files**, against 281
-// `const` declarations tree-wide. The workaround outnumbers the feature more than two to one, and
-// the compiler is 188 of the 658 — 99 in `check.wac`, 89 in `kinds.wac`. Then 26 in
-// `quic/src/frame.wac`, 24 in `tor/src/relay.wac`, 21 each in `tor/src/cell.wac` and
-// `tls/src/record.wac`.
+// **828 of them against 197 `const`s and 47 enums** — `../../../QUESTIONS.md` owns that count and had
+// it before this file did; a sweep here first said 658 from a narrower pattern and is superseded.
+//
+// **A third are forced rather than drifted, which this file had wrong.** `packages/wacc` holds 265
+// of the 828 and **zero** consts, because its source must compile on **wac-L5**, and L5 refuses a
+// top-level `const` outright — *"unexpected token = before 509"*, `issues/lang/0285b`. So
+// `kinds.wac`'s sentence is imprecise rather than stale: it says *wac* where it means *the rung that
+// compiles this file*, and the constraint is real. The 563 outside `wacc`'s graph are the population
+// that could change.
 //
 // This is `issues/system/0352a`'s shape exactly — *a design justified by a limitation outlives the
 // limitation* — with a difference that makes it sharper: `copyFrom` was merely unknown to 750 loops,
 // and here **the limitation is written down, in the compiler, as the reason.** A stale comment is
-// load-bearing for 658 declarations. Filed as `issues/lang/0354a`, with the measurement below,
-// because whether it is worth 658 edits depends on whether it costs anything and nobody had asked.
+// load-bearing wherever it is read. Filed as `issues/lang/0354a` — which has been rewritten down to
+// what survives: two comments naming the wrong limitation, and a bench saying the conversion buys
+// nothing.
 //
 // ### And whether it costs anything is now measured, not guessed
 //

@@ -130,7 +130,10 @@ module-level constants"*. `packages/gzip/src/tables.wac` shows what the practice
 the same claim, **measured** the conversion at thirty nanoseconds per gzip operation, declined it as
 churn, and wrote the reason — *"a false constraint in a comment is worth more than the thirty
 nanoseconds: the next person to need a table at file scope reads this and believes they cannot."*
-`issues/lang/0354a` has been amended to ask for the two comments rather than the 658 conversions. **Two things the count does not carry:** a line-oriented grep finds neither
+`issues/lang/0354a` has been rewritten down to the two comments — and to the fact that
+`kinds.wac`'s is **not stale**: `packages/wacc` must compile on wac-L5, which refuses a top-level
+`const`, so its 265 sites are forced rather than drifted and sweeping them would break the
+bootstrap. **Two things the count does not carry:** a line-oriented grep finds neither
 survivor, because both claims wrap mid-phrase, so any real instrument has to read comments as
 paragraphs and "two" is a floor. And **the conclusion survives its false reason** — generics
 monomorphise, so `bisect<T>` would work, except that the body calls `f64.fromBits` and there is no

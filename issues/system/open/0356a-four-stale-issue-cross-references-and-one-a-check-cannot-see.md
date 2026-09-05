@@ -1,4 +1,4 @@
-# 0356a — four stale issue cross-references, and a fifth no mechanical check can see
+# 0356a — six stale issue cross-references, and a defect class no mechanical check can see
 
 - **Status:** open
 - **Reported by:** agent-a
@@ -52,6 +52,41 @@ referential correctness are different properties, and only the first is a grep.
 So: **four is a floor**, the class the check catches is the cheap one, and the class that actively
 misleads a reader is the one that still needs a person. Worth stating because the natural reading of
 "852 of 856 good" is that this is a solved problem, and the one defect that mattered is in the 852.
+
+## Extended to `vision/`, which the first run did not scan
+
+The first pass walked `packages/*/src` and `tools/` and stopped there, so the ~170 citations this
+exercise has been adding to `vision/` were never checked. Run against them: **250 files, 172
+citations, 166 good**, and two real defects — both one character, both verifiable:
+
+    vision/QUESTIONS.md:4232   issues/lang/0273a    no such number in either tree
+    vision/QUESTIONS.md:9272   issues/system/0347a  that number is in lang/open
+
+The first is the better one. The entry **quotes the issue's title** — *"a slot does not determine a
+call's type parameters"* — which is exactly `issues/lang/open/0273b`. So the reference is correct and
+the **agent suffix** is wrong, `a` for `b`. That is a failure mode the numbering scheme creates:
+`0273a` and `0273b` are different issues in the same tree, one letter apart, and nothing about
+`0273a` looks wrong to a reader. Both are now fixed.
+
+### A third thing the check cannot do: tell a quotation from a citation
+
+The vision run also reported four defects in `vision/packages/fmt/src/bigint.wac:139–142`. All four
+are false: those lines are the **table of the four defects from this issue**, pasted into that file as
+evidence. The check sees `issues/lang/open/0235a` in a document and asks whether it is right; it has
+no way to know the document is *reporting* that it is wrong.
+
+So the limitations now number three, and only the first was obvious when the check was written:
+
+1. **Structural, not semantic.** A citation to a real issue about a different subject passes — which
+   is the `bigint.wac` case that started this issue and is still the only one that misleads a reader.
+2. **A quoted defect reads as a defect.** Any document discussing bad citations produces them. That
+   caps how noisy the check may be before it is ignored.
+3. **Corpus is a choice, and the first choice was wrong.** Two real defects sat in the directory the
+   first run did not walk, and the reason it did not walk it is that `vision/` is documentation and
+   nothing else checks it — which is exactly why nothing had.
+
+None of the three argues against the check. They argue that its output is a worklist, and that its
+corpus should be *every tracked file*, which is what `tools/wac/links_test.wac` already walks.
 
 ## The script
 
