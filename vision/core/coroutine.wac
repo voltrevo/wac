@@ -12,11 +12,30 @@ import { Ticket, TicketBase } from "core/ticket.wac";
  * A slot typed `never` removes its arm: `Step<never, i32, void>` is `Yielded | Done`, and a match
  * over it is exhaustive with two arms rather than three-with-a-dead-one.
  *
- * **That sentence is the only thing anywhere that defines `never`**, and it is a feature rather than
- * a name: an uninhabited type, plus exhaustiveness that consults the instantiation rather than the
- * declaration. `../QUESTIONS.md` has what it leaves open — chiefly whether a *dead* arm stays legal,
- * because with `W` opaque a generic body needs three and at `Step<never, …>` two suffice, and if
- * three are refused there the body cannot be written.
+ * **That sentence was the only thing anywhere that defines `never`**, and it is not a definition —
+ * it is a consequence. The definition is one line and it is here now:
+ *
+ * > **`never` is the empty union.** An enum with no variants, so no value of it exists.
+ *
+ * Everything the pages say about it follows, and three of them stop being separate questions:
+ *
+ *   * *a slot typed `never` removes its arm* — the arm's payload type has no values, so no `Step`
+ *     can be `Waiting`, and a `match` that omits it is exhaustive. The sentence above, derived.
+ *   * *`union<never, E>` reduces to `E`* — `{} ∪ S = S`. `../TECHNICAL.md` has this as a separate
+ *     transform the lowering needs; it is the same fact.
+ *   * *`never` satisfies any type* — vacuously, since there is nothing to assign. Note that this one
+ *     is **not** free under the lowering `../TECHNICAL.md` measured: `union<A, B>` becomes an enum
+ *     of one-field variants and assignability is nominal membership, so `never` needs its own
+ *     one-line clause in the checker rather than falling out of a subset rule.
+ *
+ * Written down 2026-09-05, from `@/packages/wacc/src/check.wac` — which reached it by asking what a
+ * checker would have to do and finding that the answer had never been stated. `never` appears in two
+ * files in code and nineteen times by grep, *never* being an ordinary English word, and none of the
+ * two said what it is.
+ *
+ * `../QUESTIONS.md` has what it still leaves open — chiefly whether a *dead* arm stays legal, because
+ * with `W` opaque a generic body needs three and at `Step<never, …>` two suffice, and if three are
+ * refused there the body cannot be written.
  */
 export enum Step<W, Y, R> {
   Waiting(W wanted),
