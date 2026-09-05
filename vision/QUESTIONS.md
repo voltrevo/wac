@@ -8634,21 +8634,47 @@ argument. Counted in `packages/*/src`, excluding comments and `coretext.wac`'s s
 
 | `core` export | files that use it | code lines |
 |---|---:|---:|
-| `Vec<T>` | 45 | 347 |
+| `Vec<T>` | 47 | 439 |
 | `Read` | 26 | 89 |
-| `Map<K, V>` | 6 | 12 |
-| `Option<T>` | 2 | 8 |
+| `Map<K, V>` | 6 | 22 |
+| `hashString`, `stringEq` | 5 | 14 |
+| `bytesEq` | 4 | 12 |
+| `Option<T>` | 2 | 10 |
+| `hashBytes` | 1 | 2 |
+| `hashI32`, `i32Eq`, `hashI64`, `i64Eq` | 0 | 0 |
 | **`Result<T, E>`** | **0** | **0** |
-| `hashBytes` | 0 | 0 |
+
+*The first version of this table said `hashBytes` was zero and it is not.* The count matched
+`hashBytes\s*\(` and `@/packages/json/src/value.wac` passes it as a **funcref** —
+`Map.withCapacity(this.count, hashBytes, bytesEq)` — so a call-shaped pattern cannot see the one use
+of a higher-order argument. Corrected within the hour, by grepping the name rather than the call, and
+worth keeping: **an instrument that counts calls under-counts exactly the values a language passes as
+functions**, which is every comparator in `core`.
 
 `core/result.wac` landed **2026-08-18**. It is one of the nine files carried *inside* the compiler as
 `packages/wacc/src/coretext.wac`, so every wac program compiled since has had it embedded — and every
 `Result<` in `packages/*/src` is a comment, a doc example, or a line of `coretext.wac`'s own string
 literal. Its only live callers are `spec/tour.wac` and two compiler tests.
 
+**And the one production file where the word appears declared its own.**
+`packages/ssh/src/sshd.wac:922` — `struct Result { u8[] out; u8[] err; i32 status; }`, file-private,
+thirteen lines of use. So the census's zero is not *the name is unused*: the name is in use, by an
+eleventh hand-written result type, in a file that could have imported the one in `core`.
+
+*Found beside it, and not about types at all:* the doc comment above that struct reads *"The client's
+channel number out of a CHANNEL_OPEN for a session, or -1."* — which describes an `i32`-returning
+function, not a three-field struct. A comment attached to the declaration after the one it was
+written for.
+
 **`Option`'s two is explained and `Result`'s zero is not.** `T?` is the language's own and does
 `Option`'s job, so a low number there is the language working. Nothing in the language does
 `Result`'s job.
+
+The four hash-and-equality pairs at zero are a third thing again: `hashI32`, `i32Eq`, `hashI64` and
+`i64Eq` are used **only by `core`'s own tests**, and they exist because `Map<K, V>` takes a
+comparator pair per key type. Six of `core/hash.wac`'s eight exports have at most one user outside
+its tests, which is what a library written for a `Map` that six files use looks like — and is a
+different finding from `Result`'s, since nobody wrote a replacement for them.
 
 ### What was written instead: ten types, three designs, and two pairs written twice
 
@@ -8667,7 +8693,7 @@ Sweeping `packages/*/src` for exported parse results:
 | `wacc/wapyparse.wac` `WParsed` | struct | seven fields, errors a flat `i32[]` and a count |
 | `json/parse.wac` `Parser` | struct | a code on the parser, every entry point answers `T?` |
 
-Ten types and **three designs**: a payload-carrying enum, a `bool ok` beside fields that are
+Eleven with `sshd.wac`'s, and **three designs**: a payload-carrying enum, a `bool ok` beside fields that are
 meaningless when it is false, and a sentinel. Two of the pairs are the same design written twice in
 one place — `Parsed` and `ParsedTag` are in one *file*, `Parsed` and `ParsedResponse` in one
 *package* — so even where the answer was in front of the author it was retyped rather than shared.
@@ -8710,6 +8736,78 @@ cost `try` removes; `fs`'s `wrong(string why)` and `wapyparse`'s two error count
 information a `Result<T, E>` carries only if `E` is right, and nothing here has tested that on a
 consumer that was not written for it. `@/core/cursor.wac` is one attempt and it serves three of the
 four it was written for.
+
+## The caller test cannot see an ask whose value is that nobody has been wrong yet
+
+*2026-09-05, after nine asks through it.* `../README.md`'s question is **name a caller, and say what
+it would do differently**, and it has retired three asks by answering *nothing*. Three more asks give
+the same answer and retiring them would be wrong, which locates the boundary.
+
+**`Tsn`.** `packages/webrtc/src/sctp.wac` provides the wrapping comparison SCTP needs —
+`bool tsnBefore(i32 a, i32 b) { return (a - b) < 0; }` — and ten call sites use it, six of them as
+`!tsnBefore(…)`. **All ten are correct.** At every one of them `a < b` was available, one character
+shorter, and wrong. Name a caller and say what it would do differently: *nothing*.
+
+**A type for paths.** Thirty-seven shipped signatures put a path beside another path —
+`rename(from, to)`, `resolvePath(cwd, path)` — where swapping the arguments compiles and loses a
+file. Every one of them is correct today. Same answer.
+
+**`codec`'s two alphabet sets.** `base64.ALPHABET_URL()` and `base32.ALPHABET_HEX()` are both `1`, so
+substituting one for the other produces identical bytes. Not only is no caller wrong, **no caller
+could observe being wrong.** Same answer, twice over.
+
+### Which is not a flaw in the test, it is the thing the test cannot distinguish
+
+The three retirements were retired for a specific reason each: *all three input-driven callers check
+first*, *two of six enums want to index at all*, *the mapping already exists*. In each, the caller
+does something the feature would make unnecessary — the test found existing work that the ask does
+not remove.
+
+In the three above the caller does something the feature would make **unmistakable**. Both come out
+of the test as *nothing changes at the call site*, and the two are opposite results:
+
+> **Does the ask claim the caller is currently wrong, or that the caller is currently right by
+> discipline?** A test that asks what a caller would *do* differently cannot see the second, because
+> the answer to *do* is the same in both cases and the difference is in what the next caller can no
+> longer get wrong.
+
+### And the discriminator is cheap, which is why this is worth writing down rather than shrugging at
+
+For each of the three, the file that would gain the type **already contains the argument in prose**:
+
+- `sctp.wac` has a comment above `tsnBefore` — *"TSNs are unsigned 32-bit and **wrap**, so `a < b` on
+  the numbers is wrong twice over"* — and it exists because the mistake is one character away.
+- `packages/wacc/src/path.wac` spends a paragraph on which of `relativeTo(base, abs)` is which, and
+  `packages/fs/src/path.wac` a line on `resolvePath(cwd, path)`.
+- `@/packages/codec/src/alphabet.wac` quotes the four constants side by side because reading them
+  side by side is the only way to see it.
+
+**And the counter-case is in the same sweep, which is what makes the second question worth asking.**
+`packages/fs/src/fs.wac:965`'s `rename(string from, string to)` — the one where swapping the
+arguments loses a file — has *"Move a name, replacing what is there — as the hosts do, and as `mv`
+expects"*, which says what the function does and **not which parameter is which**. So the comment is
+not a reliable marker of the hazard: it is present where an author noticed and absent where the
+convention felt too obvious to state, and *too obvious to state* is the condition under which a
+positional pair is dangerous.
+
+So the second question to ask beside *name a caller* is **is there a comment doing this type's job?**
+A comment that exists to stop a reader making a mistake is a caller — it is the author's own future
+self — and it is greppable in a way *what would change* is not. This directory has already counted
+the general shape twice: *the best-argued paragraph in a file is a rule the type could have held*,
+and *a design decision written in a doc and held by discipline, where a type could hold it*. What is
+new is that it is the **complement** of the caller test rather than another instance of it.
+
+### What could not be written
+
+**Nothing counts the comments, and the counter-case says a count would not settle it anyway.** *A
+comment doing a type's job* is a judgement about prose; the three above were found by reading files
+for other reasons, and `rename`'s absence of one shows the signal is not present wherever the hazard
+is. A grep for comments adjacent to a helper whose whole body is one comparison would find
+`tsnBefore` and would say nothing about how many hazards have no comment at all.
+
+**And this entry is a claim about a method with three examples.** Three asks, one shape, and the
+shape was named after the third — which is the count at which this directory has been calling things
+patterns all week, and is still three.
 
 ## The lesson about the instrument
 

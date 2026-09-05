@@ -213,10 +213,16 @@ only branches wants `Result<T, bool>`.
 
 ## Testing
 
-`test/wac/*_test.wac` are unit tests written in wac. `test/traps.test.ts` is host-side
-because a trap aborts the module, so no wac test can assert one — which is where the bounds
-checks are covered, including the case a wac test cannot reach: an index inside the
-allocation but past the length.
+`test/*_test.wac` are unit tests written in wac, and all of them are — there is no TypeScript
+under `core/` at all. `test/traps_test.wac` is where the bounds checks are covered, including
+the case that tells a length check from a capacity check: an index inside the allocation but
+past the length.
+
+This paragraph said `test/wac/*_test.wac` and `test/traps.test.ts`, the latter host-side
+*"because a trap aborts the whole module, so each case needs its own call from the host"*. Both
+halves stopped being true on 2026-08-16, and the file that moved says why: a trap unwinds this
+module and nothing else, both runners carry on to the next test, and what was missing was a way
+to *say* a trap is expected.
 
 `map_test.wac` ends with a **differential test**: the same pseudo-random operation sequence
 run against `Map` and against a naive association list of two parallel `Vec`s, compared after
