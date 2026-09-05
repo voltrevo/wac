@@ -9231,6 +9231,54 @@ Writing it would make the shared suite red on the day it landed — 17 duplicate
 under `tools/` — so it needs a ratchet like `cov_ledger`'s, which is why three issues name it and
 none of them is the one that adds it.
 
+## Two files here answer *does an array of records box its elements* opposite ways, and neither saw the other
+
+*2026-09-05.* The first place in this exercise where two of its own files disagree on a **measurable**
+question rather than on taste.
+
+`@/packages/regex/src/program.wac` keeps the shipped flat `classLo`/`classHi` arrays and argues for
+them — a `Vec<Range>` would cost *"a boxed struct per range in a matcher's inner loop"* — and then,
+two paragraphs later, declares `Op[] code`. Which is a boxed struct **per instruction**, and a matcher
+touches an instruction on every step and a range only inside a `Class`.
+
+The size is worse than the shape suggests. `../TECHNICAL.md` and `@/packages/wacc/src/emit.wac` agree
+that an enum is one wasm struct with a tag and a slot per payload field of **every** variant, so `Op`
+— `byte`, `index`, `target`, `first`, `second`, `slot`, `kind`, `loop`, `loop`, `slot` — is **eleven
+slots per instruction** against the original's three `i32` in a flat array, and
+`WordBoundary(Boundary)` makes one instruction two heap objects.
+
+`@/packages/wacc/src/lex.wac` had the identical question and answered it the other way, explicitly:
+
+> `Token[]` is therefore a **regression**, and the flat `i32[]` is correct. What the struct buys —
+> five named fields instead of `tokens[i * 5 + 2]` — has to be bought some other way.
+
+### The rule neither file had
+
+**An array of records costs an allocation per element at *build* and an indirection per element at
+*read*, and which dominates is a property of the caller.** A token stream is built once per compile
+and read once; a `Program` is built once and matched a million times.
+
+`lex.wac` reasoned from *build* and got the flat form. `program.wac` reasoned from *read* — in the
+paragraph about ranges — and then chose the boxed form for the thing that is read most. Each looked
+at one half of the trade and they happen to point the same way, because the flat form wins the build
+on allocation and the read on locality. **Neither file got there by reasoning; one got there by
+looking at the cheaper half.**
+
+### What could not be written
+
+**Nothing here can say which dominates, and that is not a hedge — it is the directory's rule.**
+`../README.md` says nothing in this tree compiles, so a matcher over a real pattern cannot be run, and
+the two numbers that would settle it — instructions dispatched per match, ranges tested per match —
+are properties of a workload. `bench/` could hold it, since it is written in today's language and
+runs, and it would be the first bench entry that arbitrates between two vision files rather than
+pricing one proposal.
+
+**And the contradiction was found by reading, not by any instrument.** The body-hash sweep, the
+dangling check, the unresolved check and the quotation check all pass over both files without a word:
+one declares `i32[]` and the other declares `Op[]`, which is not a duplicate, not a dangling
+reference, not an unresolved name and not a misquotation. **A directory whose value is its arguments
+has no check for two arguments that contradict each other**, and this is the first one found.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

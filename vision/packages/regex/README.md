@@ -94,3 +94,23 @@ someone who typed `[z-a]` is the cost.
 `Bytes`, a barrel — is already filed or already invented. The tenth package produced no new hole,
 which is the second time that has happened and is the clearer signal now than any individual
 finding.
+
+**And then, 2026-09-05, it produced one by contradicting itself.** `src/program.wac` keeps the flat
+`classLo`/`classHi` arrays and argues for them: `Vec<Range>` would cost *"a boxed struct per range in
+a matcher's inner loop"*. Two paragraphs later it declares `Op[] code`, which is a boxed struct **per
+instruction** — and the matcher touches an instruction every step and a range only inside a `Class`.
+
+Counting the lowering: an enum is one wasm struct with a tag and a slot per payload field of every
+variant, so `Op` is **eleven slots** against the original's three `i32`, and `WordBoundary(Boundary)`
+makes one instruction two heap objects.
+
+[`packages/wacc/src/lex.wac`](../wacc/src/lex.wac) answered the identical question the other way and
+wrote it down — *"`Token[]` is therefore a **regression**, and the flat `i32[]` is correct"*. Two
+files, one week, one question, opposite answers, and neither noticed the other.
+
+The thing neither had is the rule that decides it: **an array of records costs an allocation per
+element at build and an indirection per element at read, and which dominates is a property of the
+caller.** A lexer builds once and reads once; a regex builds once and reads a million times. Each
+file looked at one half. Nothing here can measure which wins, because nothing here compiles — and
+this is the first place in the exercise where two of its own files disagree on a measurable question
+rather than on a matter of taste.

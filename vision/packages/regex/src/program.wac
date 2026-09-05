@@ -10,6 +10,42 @@
 // Third time in this exercise the right answer was to leave something alone, after `json`'s lazy
 // object index and `Buf`'s field layout. A comment that reads as a workaround is worth checking
 // before it is treated as one.
+//
+// ## And then this file boxed the instructions, which is the same trade and the busier loop
+//
+// *2026-09-05.* The paragraph above refuses `Vec<Range>` because it would cost *"a boxed struct per
+// range in a matcher's inner loop"*. `Op[] code` below is a boxed struct **per instruction**, and the
+// matcher touches an instruction on every step and a range only inside a `Class`.
+//
+// The size is worse than it looks. `../../../TECHNICAL.md`'s lowering and
+// `@/packages/wacc/src/emit.wac` agree that an enum is **one wasm struct — a tag, then a slot per
+// payload field of every variant**. Counting `Op`'s: `byte`, `index`, `target`, `first`, `second`,
+// `slot`, `kind`, `loop`, `loop`, `slot` — **ten payload fields plus the tag, so eleven slots per
+// instruction**, against the original's three `i32` in a flat array. And `WordBoundary(Boundary)`
+// makes that slot a reference to a second struct, so one instruction is two heap objects.
+//
+// **`@/packages/wacc/src/lex.wac` reached the opposite conclusion about the identical trade**, and
+// argued it out:
+//
+// > `Token[]` is therefore a **regression**, and the flat `i32[]` is correct. What the struct buys —
+// > five named fields instead of `tokens[i * 5 + 2]` — has to be bought some other way.
+//
+// Two files, one directory, one week, one question — *does an array of records become an array of
+// references?* — and the answer is yes in both. `lex.wac` accepted it and this file did not notice
+// it had made the same choice while arguing against it two paragraphs up.
+//
+// **The difference that might rescue it, and it is not the one I would have guessed.** A token stream
+// is built per compile and thrown away; a `Program` is built once and matched many times, so its
+// eleven slots are amortised over every subsequent match while a token's five are not. That is an
+// argument about *how often the array is built*, and the paragraph above is an argument about *how
+// often it is read* — and those point opposite ways here. Neither file made the distinction, and
+// nothing in this directory can measure which dominates.
+//
+// > **The rule both files needed:** an array of records costs an allocation per element at *build*
+// > and an indirection per element at *read*, and which one matters is a property of the caller. A
+// > lexer builds once and reads once; a regex builds once and reads a million times. The flat form
+// > wins the first on allocation and the second on locality, which is why it wins both — and neither
+// > file got there by reasoning, because each looked at one half.
 
 import { Bytes } from "core";
 
@@ -46,6 +82,7 @@ export enum Op {
 export enum Boundary { At, NotAt, WordStart, WordEnd }
 
 export struct Program {
+  /** **Eleven slots and a heap object per instruction** — see the header. Kept, and now argued. */
   Op[] code;
   i32 groups;           // capturing groups, so slots = (groups + 1) * 2
   i32 loops;            // loop slots needed by Mark/Progress
