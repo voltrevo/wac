@@ -104,7 +104,7 @@ faster than anybody could weigh them. One question turned out to separate the go
 
 > **Name a caller, and say what it would do differently.**
 
-Nine have been through it. **Four survived — three of them changed under the test — one changed
+Ten have been through it. **Five survived — four of them changed under the test — one changed
 shape, one was answered outright, three were retired**, and every one of the retirements had been
 written into a package file the day before, each costing one grep to check.
 
@@ -118,6 +118,7 @@ written into a package file the day before, each costing one grep to check.
 | an `ordinal()` for enums | **retired** — two of six enums want to index at all, and both are answered by putting the index on the table's own type |
 | what `defer` means | **answered** — all five uses want it on every exit including `try`; the trap half is observable in one of five and is a question about `std`, not the language |
 | a brace pattern for enum payloads | **survives, narrowed** — six of thirteen arms in the one consumer are served by `(_)` today; the unarguable part is *subset* binding, which is one arm |
+| `==` on a user type |  **survives, and its evidence is self-generated** — six equality methods here against the shipped tree's three, because the shipped tree has almost no value types and compares `u8[]` with a free function; the surface grows with the value types the proposal adds |
 | a type for paths | **survives, inverted** — of 77 shipped signatures with a path beside another `string`, the 40 a `Path` separates are pairs nobody confuses and the **37 it cannot** — `rename(from, to)` — are where the mistake is free |
 
 **The pattern in the retirements is one sentence:** a feature that looks missing from inside one file

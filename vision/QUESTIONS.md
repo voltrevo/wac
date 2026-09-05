@@ -3749,6 +3749,35 @@ a user type wanted?** `Big.eq` exists here because `==` is reference identity, a
 in this directory that is not a primitive has had to write one — `Slice`, `Bytes`, `Big`. That is a
 smaller surface than the arithmetic operators and it is where the repetition already is.
 
+### Put to the caller test, and the repetition is this directory's own
+
+*2026-09-05.* Counted equality **methods** on user types — `bool eq`, `equals`, `equal`, `same`
+declared as a method:
+
+    vision      6   core/slice.wac, bignum/big.wac, bls/fp.wac, crypto/digest.wac,
+                    ssz/chunk.wac, webrtc/tsn.wac          — and 5 call sites
+    shipped     3   box/applets/httpd.wac, bytes/src/slice.wac, tor/src/dirserve.wac
+
+**The shipped tree has half as many, and not because it is tidier.** It does not have these types.
+Where this directory has a `Digest32`, a `Chunk`, a `Tsn`, an `Fp` and a `Bytes`, the shipped tree
+passes a `u8[]` and compares it with a **free function** — `core`'s `bytesEq`, `bytes`'s `equal`,
+`tls`'s `oidEquals`, `ssh`'s private `bytesEq`, which the body-hash sweep found are one function
+written four times.
+
+So the sentence above is exactly right and is describing a cost of the proposal rather than a gap in
+the language. `Slice`, `Big` and the other four are **vision's own value types**, each of which needs
+an `eq` because it is a struct and `==` is `ref.eq`. Every value type this directory adds adds one.
+
+> **The ask is real and its evidence is self-generated.** The number to watch is not *six `eq`s
+> today* — it is how many distinct value types a program ends up with, because that is the multiplier,
+> and this directory is the only place that has tried to find out.
+
+**Verdict: survives, and the caller test answers the narrow question rather than the wide one.** Five
+call sites would write `==` instead of `.eq(…)`, which is typing and is the thing a rewrite cannot
+judge — the `auto` finding again. What the count *does* settle is the direction: the surface grows
+with the number of value types, the shipped tree has three because it has almost no value types, and
+a language that wants them wants `==` on them.
+
 ## Wrapping is the only arithmetic, and at 64 bits there is no way to notice
 
 `spec/spec/types.md` documents two idioms for detecting overflow and is explicit that the first
