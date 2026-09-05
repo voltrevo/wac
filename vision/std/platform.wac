@@ -822,12 +822,27 @@ export struct Page {
   fn<Ticket<void>(string)>                                               title;
   fn<Ticket<Result<void, PageFault>>(string, i32, i32, Bytes)>           drawPixels;
   fn<Ticket<Result<void, PageFault>>(string, i32, i32, i32, i32, Bytes)> drawPixelsIn;
-  fn<Ticket<Result<Picked, NotGranted>>()>                               nextFile;
+  fn<Ticket<Result<Picked, PickFault>>()>                                nextFile;
   fn<Ticket<Result<void, PageFault>>(string, Bytes)>                     offerDownload;
 }
 
-/** A file the user chose. `Picked` is what came back; not choosing one is `Err`. */
+/** A file the user chose. */
 export struct Picked { string name; Bytes bytes; }
+
+/**
+ * The user closed the picker without choosing.
+ *
+ * **This line said *"not choosing one is `Err`"* and meant `Err(NotGranted)`**, which is the same
+ * mistake `@/packages/http`'s `NoConnection` made and worse: a person pressing Cancel is the
+ * *ordinary* outcome of a file picker, and reporting it as *this program was not granted the
+ * capability* is not vague but wrong. The grant was given; the user declined.
+ */
+export struct Cancelled { }
+
+/** The host could not read what was chosen — its own sentence, which nothing else can supply. */
+export struct PickFailed { string why; }
+
+export union<Cancelled, PickFailed, NotGranted> PickFault;
 
 /**
  * What the user did — a union where the shipped `Event` is a struct with a `kind` string.
@@ -885,7 +900,25 @@ export union<Click, Typed, Changed, Key, Pointer, Dropped, Quit> Event;
  * `isFile` is the smaller of the five: with only `isDir`, a device or a socket is *not a directory*
  * and nothing more. `fault` is deliberately gone — that is what the `Result` replaced.
  */
-export struct Stat { i64 size; bool isDir; i64 modified; }
+/**
+ * What a path is.
+ *
+ * **`isSymlink` and `isExecutable` were dropped by this rewrite and are back**, found 2026-09-05 by
+ * asking of every shipped struct with a flag *what was beside it*. The shipped `Stat` is
+ * `{ exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault }`; `exists`
+ * becomes `Err(NotFound)` and `fault` becomes the `Result`'s error, which is the conversion this
+ * rewrite is for — and the two booleans are **facts rather than flags**, so nothing replaced them.
+ *
+ * They are load-bearing in the shipped tree: `packages/fs/src/remote.wac` serialises both over its
+ * own wire protocol, and `packages/fs/src/fs.wac` reasons about `isSymlink` — *"no way to create a
+ * symbolic link in one, so a name is never a link and `isSymlink` is false."* Without it,
+ * `Files.linkStat` and `Files.stat` answer the same type with **no way to tell which you called**,
+ * which is the whole reason `linkStat` exists.
+ *
+ * `isFile` stays out: a path that is not a directory is not necessarily a file — a fifo or a socket
+ * is neither — so it is `!isDir` plus a lie, and the shipped field is the lie.
+ */
+export struct Stat { i64 size; bool isDir; bool isSymlink; bool isExecutable; i64 modified; }
 
 /**
  * A port this program was granted.

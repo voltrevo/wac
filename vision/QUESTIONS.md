@@ -6372,3 +6372,33 @@ the resulting signature reads better than the one it replaced.
 Which is the counterweight to every *replace the `bool` with a `Result`* argument in this file, and
 none of them mentions it: the audit that finds a `bool` answering six questions should also ask
 **what was beside the `bool`.**
+
+### Asked it of every shipped struct with a flag, and it paid three more times
+
+Four shipped structs have a flag and three or more fields. `FileResult` is above; the others:
+
+**`Captured { u8[] out; u8[] err; bool truncated; }` — fine, and argued.** `Proc.run` takes a stream
+and answers one here, so truncation cannot arise; the rewrite's own note cites the bug the flag
+existed for — *"`seq 1 1500000 | wc -c` printed `0` with status 0"*. A field removed because the
+design removed its cause.
+
+**`Picked { bool ok; string name; u8[] bytes; string error; }` — two losses.** `vision`'s is
+`{ name, bytes }` and `nextFile` answered `Result<Picked, NotGranted>`, with the doc saying plainly
+*"not choosing one is `Err`"*. So **a person pressing Cancel was reported as *this program was not
+granted the capability***: the ordinary outcome of a file picker, named as an authority failure. Not
+vague — wrong, and the line said so without noticing. `PickFault { Cancelled, PickFailed, NotGranted }`
+now, and `PickFailed` is where the host's `error` string goes.
+
+**`Stat { exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault }` — two facts
+dropped.** `exists` → `Err(NotFound)` and `fault` → the `Result`'s error are the conversion this
+rewrite is *for*. `isSymlink` and `isExecutable` are **facts rather than flags**, so nothing replaced
+them — and they are load-bearing in the shipped tree, where `packages/fs/src/remote.wac` serialises
+both over its own wire protocol. Worse, without `isSymlink` **`Files.linkStat` and `Files.stat`
+answer the same type with no way to tell which you called**, which is the entire reason `linkStat`
+exists.
+
+So the rule has a sharper form than *look beside the flag*: **a conversion to `Result` absorbs the
+fields that encode failure and silently drops the ones that encode fact.** `exists` and `fault` are
+failure and convert; `isSymlink`, `isExecutable` and a picker's `error` are facts and do not. Three
+of the four structs had at least one of each, and the mechanical part of the conversion is exactly
+the part that cannot tell them apart.
