@@ -4,10 +4,12 @@
 // the one thing in `packages/box` that is not I/O. `packages/box/src/lib/lines.wac` is 149 lines and
 // two of them are a design nobody has a word for.
 
-import { Result, Bytes, Vec } from "core";
+import { Result, Bytes, Vec, Ordering, SortSpec, sorted, uniqueByKey, bytesCmp } from "core";
 
-/** Byte order. Negative, zero or positive, as every comparator in every language. */
-export i32 cmpBytes(Bytes a, Bytes b) { … }
+// **`cmpBytes` is gone.** It was *"byte order — negative, zero or positive, as every comparator in
+// every language"*, and it is `../../../core/bytesCmp` now, answering `Ordering`. Fifth witness for
+// that function after `@/packages/tor/src/vote.wac`, `@/packages/tor/src/hsdir.wac` and
+// `@/packages/box/src/lib/lines.wac` in the shipped tree, which write it three times identically.
 
 /**
  * The integer a line starts with, after blanks, or zero — **saturating**, and the reason is a fixed
@@ -45,13 +47,20 @@ i64 leadingNumber(Bytes b) { … }
  * > `01` are one line, and the survivor is the first in input order rather than the first in byte
  * > order.
  */
-export i32 cmpNumeric(Bytes a, Bytes b) { … }
+export Ordering cmpNumeric(Bytes a, Bytes b) { … }
 
-/** The key, then the whole line — GNU's *last-resort comparison*, which makes `sort -n` deterministic. */
-export i32 cmpNumericThenBytes(Bytes a, Bytes b) { … }
+/**
+ * `sort -n`, as one value — **and `cmpNumericThenBytes` no longer exists.**
+ *
+ * The shipped file has a second function, *"the key, then the whole line — GNU's last-resort
+ * comparison, which makes `sort -n` deterministic"*, and a paragraph explaining how it relates to the
+ * first. `SortSpec.order()` **is** that function, composed from the two fields, so the pair that
+ * needed a paragraph is now one declaration and the derived one is derived. §3.
+ */
+export SortSpec<Bytes> numeric() { return SortSpec(cmpNumeric, bytesCmp); }
 
-/** Merge sort by whatever comparison you hand it. Stable, which `-u` relies on. */
-export Vec<Bytes> sortWith(Vec<Bytes> xs, fn<i32(Bytes, Bytes)> cmp) { … }
+/** `sort` with no `-n`: the whole line, and nothing to break ties with. */
+export SortSpec<Bytes> byBytes() { return SortSpec.total(bytesCmp); }
 
 // ## 1. A key and an order are different things and no library here has both
 //
@@ -80,6 +89,10 @@ export Vec<Bytes> sortWith(Vec<Bytes> xs, fn<i32(Bytes, Bytes)> cmp) { … }
 // when it wanted the key. What the *language* would have to add is nothing; what it cannot do is
 // check the refinement, which is a property of two functions and is not expressible.
 //
+// **Written, 2026-09-05, as `../../../core/order.wac`, and adopted here** — see §3 for what the
+// second consumer of that file found. The sketch above got one thing wrong and it is the thing this
+// directory says most often: `fn<i32(T, T)>` is a closed set spelled as an integer.
+//
 // The answer being a **library** gap rather than a language one is what makes it worth the entry —
 // this directory mostly reaches *the type could say it if the language allowed*, and here the type
 // can say it and nobody wrote the type.
@@ -87,6 +100,38 @@ export Vec<Bytes> sortWith(Vec<Bytes> xs, fn<i32(Bytes, Bytes)> cmp) { … }
 // (A first draft called this the *first* such finding in 125 entries. It is not, and the nearest
 // counterexample is two entries away in `../../../QUESTIONS.md`, written the same day. Fourth bare
 // ordinal over an unnamed set I have written today.)
+//
+// ## 3. What adopting `core/order.wac` did, and one of the two functions stopped existing
+//
+// **`cmpNumericThenBytes` is gone.** It was a whole exported function whose entire content was *the
+// key, and then the line*, sitting beside a paragraph explaining its relation to `cmpNumeric`. That
+// relation is `SortSpec.order()`, so the pair is one declaration —
+// `SortSpec(cmpNumeric, bytesCmp)` — and the second function is **derived rather than written**.
+//
+// That is more than the entry above claimed. It argued the type would stop a caller reaching the
+// order when it meant the key; what it actually does is remove the opportunity, because there is no
+// second name to reach for. The `-u` path is `uniqueByKey(sorted(xs, spec), spec)` and both halves
+// take the same value.
+//
+// **`cmpBytes` is gone too**, into `core` — and it is the *fifth* witness for that function, three of
+// them in the shipped tree writing the same eight lines (`tor/vote.wac`, `tor/hsdir.wac`,
+// `box/lib/lines.wac`). Filed as `issues/system/0345a`.
+//
+// **And the cost the new type predicted lands exactly here.** `../../../core/order.wac` argues that
+// `Ordering` is a payload-free enum, that an enum is one wasm struct, and that
+// `spec/spec/enums.md` records payload-free variants being **freshly constructed** at every mention
+// — so a comparator answering `Ordering` allocates per comparison. This file is the one place in the
+// directory that runs a comparator *n log n* times. The file that proposed the type named the cost
+// in the abstract; this is the consumer where it is a number, and neither file can measure it.
+//
+// > **Second consumer, second time the type moved.** `@/packages/rlp` made `core/cursor.wac` grow a
+// > `need(n)` and disproved its claim about `sub`. This one deletes an exported function and
+// > inherits an allocation. Neither was predicted by the sweep that produced either type.
+//
+// **What did not move:** stability. `sorted` promises it and this file relied on it before, so the
+// adoption changes nothing here — and that is only true because the promise was written into the
+// signature *because* of this file. Reversed, it would be the silent behaviour change
+// `issues/system/0345a` is filed about.
 //
 // ## 2. What could not be written
 //

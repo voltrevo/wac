@@ -133,6 +133,23 @@ The language has to add nothing, which is worth separating from the usual conclu
 mostly reaches *the type could say it if the language allowed* reads as a list of language requests,
 and this one is not.
 
+**Written and adopted, 2026-09-05** — [`../../core/order.wac`](../../core/order.wac), and this file
+is its second consumer. Two things the paragraph above did not predict:
+
+- **`cmpNumericThenBytes` stopped existing.** It was an exported function whose whole content is *the
+  key, and then the line*, and that is `SortSpec.order()`. So the pair is one declaration and the
+  second half is derived rather than written — which is more than *a caller cannot reach the wrong
+  one*, because there is no second name to reach for.
+- **The sketch's `fn<i32(T, T)>` is wrong** for the reason this directory gives most often. Fifteen
+  three-way comparators in the shipped tree all answer `i32`, and `Ordering` is the closed set they
+  are spelling. It is also the first such set with a reason to stay an integer: a payload-free
+  variant is freshly constructed at every mention, which `spec/spec/enums.md` records while
+  explaining a fix to `is`, so a comparator answering an enum allocates *n log n* times. That cost
+  lands in this file and nowhere else in the directory.
+
+`cmpBytes` went to `core` as `bytesCmp` at the same time — three shipped packages write those eight
+lines identically, filed as `issues/system/0345a`.
+
 *(An earlier version of this paragraph called it the first such finding in 127 entries. It is not:
 `../../QUESTIONS.md`'s entry on an order derivable from the data, written two units earlier, reaches
 a review rule rather than a feature, and a scan finds at least eight more. The count was doing
