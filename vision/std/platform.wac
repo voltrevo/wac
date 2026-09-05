@@ -236,6 +236,54 @@ export union<
   NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, OtherFault
 > FileFault;
 
+/*
+ * ## The other axis of the shared-error-set cost, measured 2026-09-05
+ *
+ * `@/packages/fs`'s `Mount` pays for one error set **across implementations**: two mounts fill the
+ * same funcref slots, so a caller writes arms its mount can never take. Yesterday's rule said the
+ * cost is proportional to how much of the set the *implementations* produce.
+ *
+ * `Files` shows the rule has a second axis and the rule missed it. There is one implementation — the
+ * host — and every one of the twelve slots answers the same ten-member `FileFault`. So the cost is
+ * **across operations**, and it is larger:
+ *
+ * |  | Gr | NF | De | Ex | IsD | NAD | NE | RO | Un | Ot | reach |
+ * |---|---|---|---|---|---|---|---|---|---|---|---|
+ * | `read`     | • | • | • |   | • | • |   |   |   | • | 6 |
+ * | `write`    | • | • | • |   | • | • |   | • |   | • | 7 |
+ * | `stat`     | • | • | • |   |   | • |   |   |   | • | 5 |
+ * | `readDir`  | • | • | • |   |   | • |   |   |   | • | 5 |
+ * | `mkdir`    | • | • | • | • |   | • |   | • |   | • | 7 |
+ * | `remove`   | • | • | • |   |   | • | • | • |   | • | 7 |
+ * | `rename`   | • | • | • | • |   | • | • | • |   | • | 8 |
+ * | `linkStat` | • | • | • |   |   | • |   |   | • | • | 6 |
+ *
+ * **51 reachable of 80, so 29 arms — 36% — are dead**, and the sharpest one is that `IsDir` is dead
+ * for `readDir`, where it is the *happy case*.
+ *
+ * The merge that produced this was deliberate and its reason still holds: `NotFound` should be one
+ * type, not eight, so a caller can write one handler and `@/packages/fs` can re-export the
+ * vocabulary. What does not follow is that the *unions* must also be one. `fs/src/fault.wac` already
+ * does the right thing at package granularity — it imports the nine members from here and declares
+ * its own union — so the mechanism exists and was simply not applied per operation:
+ *
+ * > **Share the members; vary the union.**
+ *
+ * The cost of doing it here is twelve hand-written subsets, because `union<…>` has no subtraction
+ * and no subset relation — you spell every member of every one, and the table above is what you are
+ * spelling. Whether twelve declarations beat twenty-nine dead arms depends on how many callers
+ * exhaustively match rather than `try`, so that was counted:
+ *
+ * > **Zero.** No `match` on a fault union exists anywhere in the 160 files. Every consumer either
+ * > `try`s, forwards, or discards. The only reader of these twelve slots is
+ * > `@/packages/fs/src/mount.wac`'s host adapter, which passes each one straight through.
+ *
+ * So the twenty-nine dead arms cost nothing **today**, and the reason is not that the union is right
+ * — it is that the consumer that would pay has not been written. Three units of this argument, and
+ * the thing they are about is a caller that does not exist in the directory. That is the test this
+ * needs and the one it has not had; it is on the list in `../QUESTIONS.md` rather than being
+ * answered here.
+ */
 export struct Files {
   fn<Ticket<Result<Bytes,    FileFault>>(string)>          read;
   fn<Ticket<Result<void,     FileFault>>(string, Bytes)>   write;

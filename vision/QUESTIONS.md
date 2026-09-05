@@ -6532,6 +6532,51 @@ An interface whose errors come from the shared wrapper pays nothing however many
 whose errors come from the lambdas pays for every member no implementation can reach. And that is
 checkable per interface by reading one function, which is how this one was settled.
 
+### There is a second axis, and the rule as stated missed it
+
+Ran the census properly (brace-matched this time): **14 pure funcref-field structs** with two or more
+slots and no method bodies. Ten answer only `NotGranted`, which every implementation can produce, so
+they are exact. `std/platform.wac`'s `Files` is not, and it fails in a way the rule above does not
+describe: it has **one implementation** — the host — and the dead arms are **across operations**.
+
+All twelve slots answer the same ten-member `FileFault`. Reachability per operation is in a table in
+`std/platform.wac`; the total is **51 reachable of 80, so 29 arms — 36% — are dead**, and the
+sharpest is that `IsDir` is dead for `readDir`, where it is the *happy case*.
+
+So the cost has two axes and yesterday's sentence covered one:
+
+> One error set costs a dead arm for every **(consumer, member)** pair the consumer cannot reach —
+> whether the consumer varies by *implementation* (`Mount`) or by *operation* (`Files`).
+
+The fix is the same one `packages/fs/src/fault.wac` already applies at package granularity: **share
+the members, vary the union.** The vocabulary reason for merging the nine members still holds; it
+never implied one union. The price is twelve hand-written subsets, since `union<…>` has no
+subtraction and no subset relation.
+
+### And then the consumer that pays turned out not to exist
+
+Before deciding whether twelve declarations beat twenty-nine dead arms, counted the callers that
+would notice:
+
+    match arms naming a FileFault member, across all 160 files:  0
+    `match` on any fault union, across all 160 files:            0
+
+Every consumer in the directory `try`s, forwards, or discards. The only reader of the twelve slots is
+`packages/fs/src/mount.wac`'s host adapter, which passes each through unexamined.
+
+**So three units of argument about the cost of a shared error set concern a caller this directory has
+not written.** The measurement is not wrong and the dead arms are really there, but *nothing pays for
+them yet*, and a cost nobody pays is not evidence about a design. The honest state of this question is
+that it needs the same test as the last eight — write the consumer — and that the consumer here is a
+specific one: something that handles file faults differently per member, which is a `cp` or an `rm`
+or an installer, and there is no such program in `packages/box`.
+
+It is the strongest instance so far of a shape this directory keeps finding in itself: `packages/abi`
+had no callers, `AsyncGenerator` had no producer, `Slice` existed before any package used it. **An
+argument about a surface, made without its consumer, reliably measures the wrong thing** — and here
+it took three units to notice, because each one refined the previous one's answer instead of
+questioning its subject.
+
 *(The census that would have found the others did not work: a regex over `export struct … { … }`
 mis-attributed names across declarations, so it reported `NotFound` with twelve funcrefs when it
 meant `Files`. Fourth instrument bug of the same family — a regex applied to structure — and the two
