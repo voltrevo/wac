@@ -1,0 +1,179 @@
+// Comparison, sorting, and the closed set this whole repository spells as an `i32`.
+//
+// `../QUESTIONS.md`'s *a key and an order are different things* proposes a library type and says the
+// language has to add nothing:
+//
+// > `struct SortSpec<T> { fn<i32(T, T)> key; fn<i32(T, T)> tieBreak; }` with `order()` composing
+// > them and `sameKey()` exposed for `-u`, so a caller cannot reach the order when it wanted the
+// > key. **The language has to add nothing.**
+//
+// This is that type written out. Writing it moved two things: the `i32` in that sketch is wrong for
+// the reason this directory has recorded more often than any other, and replacing it costs something
+// nobody has priced. §1 and §2.
+
+import { Vec, Bytes } from "core";
+
+/**
+ * Less, the same, or greater — **the fifteenth closed set in this repository spelled as an `i32`,
+ * and the first one that every sorting library in the world exports.**
+ *
+ * Counted over every package's `src`, plus `tools/` and `core/`: fifteen functions return a three-way
+ * comparison and **all fifteen answer `i32`**, in eight packages. `cmp`, `cmpAbs`, `cmpBE`,
+ * `cmpBytes`, `cmpNumeric`, `cmpNumericThenBytes`, `compareBytes`, `compareIndex`, `compareValue`,
+ * `compareMidpoint`, `compareScaled`, `bigCmp` and three more. Not one returns an enum, and
+ * `../QUESTIONS.md`'s *a closed set spelled as a string or an integer gives up a check the language
+ * already makes* is the most repeated finding in this directory.
+ *
+ * The sign convention is the check being given up: a caller writing `if (cmp(a, b) < 0)` is reading a
+ * documented sign, and `cmp(a, b) == -1` is the same intent written wrong against nine of the fifteen,
+ * which return `a[i] - b[i]` unbounded.
+ */
+export enum Ordering {
+  Less,
+  Same,
+  Greater,
+
+  /** The `i32` convention, for a boundary that still wants it. Not for a caller inside this tree. */
+  i32 sign(const this) {
+    match (this) { Less: { return -1; } Same: { return 0; } Greater: { return 1; } }
+  }
+
+  /** From the convention. `n < 0`, not `n == -1` — see the doc comment above. */
+  Ordering of(i32 n) { return n < 0 ? Less : (n > 0 ? Greater : Same); }
+}
+
+/**
+ * A key and a total order over it, as one value.
+ *
+ * `key` answers *are these the same line* and `tieBreak` breaks equal keys. Composed, they are the
+ * order a sort wants; separately, `sameKey` is what `sort -u` wants. A caller cannot reach one when
+ * it meant the other, which is the whole of the type.
+ */
+export struct SortSpec<T> {
+  fn<Ordering(T, T)> key;
+  fn<Ordering(T, T)> tieBreak;
+
+  /** The total order: the key, and the tie-break where the key is silent. */
+  Ordering order(const this, T a, T b) {
+    Ordering k = this.key(a, b);
+    return k is Same ? this.tieBreak(a, b) : k;
+  }
+
+  /** Whether these are one line for the purpose of uniqueness. */
+  bool sameKey(const this, T a, T b) { return this.key(a, b) is Same; }
+
+  /** A spec with nothing to break ties with: the key is already total. */
+  SortSpec<T> total(fn<Ordering(T, T)> cmp) { return SortSpec(cmp, cmp); }
+}
+
+/** Sorted by `spec.order`, stable. */
+export Vec<T> sorted<T>(const Vec<T> xs, const SortSpec<T> spec) { … }
+
+/**
+ * Adjacent equal **keys** collapsed, keeping the first — which is `sort -u` and is not
+ * *adjacent equal values*.
+ *
+ * Takes a `Vec` already in `spec.order`. That precondition is the fifth thing in this directory a
+ * type cannot say.
+ */
+export Vec<T> uniqueByKey<T>(const Vec<T> xs, const SortSpec<T> spec) { … }
+
+/**
+ * Lexicographic over bytes, shorter first on a prefix — **the same eight lines three packages
+ * wrote.**
+ *
+ * `packages/tor/src/vote.wac`'s `compareBytes`, `packages/tor/src/hsdir.wac`'s `compareIndex` and
+ * `packages/box/src/lib/lines.wac`'s `cmpBytes` are this function character for character apart from
+ * parentheses and one temporary, and **two of the three are in one package**. `core/hash.wac` has
+ * `bytesEq` and no `bytesCmp`, so equality is shared and ordering is not.
+ */
+export Ordering bytesCmp(const Bytes a, const Bytes b) {
+  i32 n = a.len() < b.len() ? a.len() : b.len();
+  for (i32 i = 0; i < n; i++) {
+    if (a.get(i) != b.get(i)) { return a.get(i) < b.get(i) ? Less : Greater; }
+  }
+  if (a.len() == b.len()) { return Same; }
+  return a.len() < b.len() ? Less : Greater;
+}
+
+// ## 1. The fourth byte comparator is not a duplicate, and that is the interesting one
+//
+// `packages/crypto/src/weierstrass.wac`'s `cmpBE` is the same *question* and a different function:
+// big-endian, equal lengths assumed, and **branch-free** — no `return` inside the loop, two
+// accumulators updated with masks, so it takes the same time whatever the bytes are.
+//
+// So `bytesCmp` above cannot replace all four, and **nothing in either signature says which one a
+// caller needs.** `docs/` has a page on constant time and a type has no way to name it: the two
+// functions differ in a property that is not in the return type, not in the parameters, and not
+// checkable by any test that does not measure a clock.
+//
+// > **Three copies are a missing `core` function and the fourth is a missing type.** The first is a
+// > chore; the second is the ask, and it is the *secret*-adjacent one this directory has five uses
+// > of — a value whose handling is constrained by something the type carries.
+//
+// ## 2. And `Ordering` costs an allocation per comparison unless nobody says it does
+//
+// `../TECHNICAL.md` and `@/packages/wacc/src/emit.wac` between them settle what an enum is:
+//
+// > **An enum is one wasm struct**, not a base type with a subtype per variant … a tag in slot 0,
+// > then a slot per payload field of every variant in declaration order.
+//
+// `Ordering` has three variants and no payload fields, so it is a struct of one `i32`. A comparator
+// answering it does `struct.new` **per comparison**, and a sort of *n* items does that *n log n*
+// times — in the inner loop of the one operation whose cost is the reason anybody writes a
+// comparator by hand.
+//
+// The fix is obvious and is not written down anywhere: a payload-free variant has no state, so three
+// singletons could be allocated once and returned forever. Every language with sum types does this.
+// **Nothing in `spec/` or in this directory says wac does**, and the one nearby entry —
+// `../QUESTIONS.md` on *`Map<K, V>` with a compiler-supplied hash for payload-free enums* — is about
+// hashing them rather than about making them.
+//
+// So the honest position on §above: **replacing fifteen `i32`s with an enum is the right change and
+// it is not free**, and how unfree it is depends on a compiler decision nobody has stated. That is
+// the first time in this directory that *a closed set spelled as an integer* has met a reason to
+// stay an integer.
+//
+// ## 2b. And a doc comment cannot contain a glob, which this file found by not parsing
+//
+// The first draft of the `Ordering` comment above said *"Counted over `packages/*/src`, `tools/` and
+// `core/`"* inside a `/** … */`, and `packages/*/src` contains `*/`, so the comment ended in the
+// middle of a path and the lexer refused at the next backtick: **`stray '`' at 20:32`**.
+//
+// Which is ordinary C-family behaviour and is worth a line because of the asymmetry it creates
+// **here specifically**: this directory writes `packages/*/src` constantly, it is legal in a `//`
+// comment and fatal in a `/** */` one, and the two are used for different jobs — line comments for
+// the argument, doc comments for the type. So the form that documents the *type* is the one that
+// cannot name the corpus the type was derived from.
+//
+// The diagnostic is also worth keeping. It names the backtick, which is three characters after the
+// real fault and on a line the author did not touch, because by then the lexer is reading prose as
+// code. *`An unterminated block comment`* is what the same lexer says when the comment never closes;
+// there is no message for one that closes **early**, and there cannot be, since a comment that ends
+// where a `*/` appears is exactly what the rule says.
+//
+// ## 3. What could not be written
+//
+// **`Vec<T>` has no `set`, so `sorted` cannot sort in place.** The surface is `create`, `len`, `get`,
+// `push`, `pop`, `last`, `items` — read and append, and one removal from the end. So the signature
+// above answers a **new** `Vec`, which allocates the whole thing again, in the function most likely
+// to be handed something large. First place a `core` type's own surface blocks a `core` function,
+// and it is a five-line addition rather than a language question — which is why it is here rather
+// than in `../QUESTIONS.md`.
+//
+// **The refinement law is uncheckable.** `spec.key(a, b) is not Same` must imply `spec.order(a, b)`
+// agrees with it, and that is what makes `sort -nu` correct. Fifth law in this directory after
+// `hash`/`eq`, `combine`'s associativity, `Key`'s, and `missingFrom` against `assignable`. Every one
+// of the five is a relation between two functions and the language has no way to state any of them.
+//
+// **A key that allocates is a key you cannot use, and the type cannot say so.**
+// `@/packages/box/src/lib/lines.wac`'s `leadingNumber` saturates at `i64` rather than reaching for
+// `@/packages/bignum`, and the shipped file's reason is a measured bug in `sort -n`. The constraint
+// is that a comparator runs *n log n* times, so it must not allocate — the same class of statement
+// as constant-time in §1, unsayable for the same reason, and this file's own `Ordering` breaks it.
+//
+// **`uniqueByKey` takes a `Vec` that must already be ordered and cannot say so.** The name says it
+// and the type does not, which is *a value whose guarantee comes from how it was made* at its eighth
+// witness — and here the guarantee comes from **another function having been called first**, which is
+// weaker than the seven before it: `Prefix` and `Digest32` are built by the thing that checks them,
+// and a sorted `Vec` is an ordinary `Vec` that has been somewhere.
