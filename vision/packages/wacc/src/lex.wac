@@ -105,6 +105,34 @@ export union<BadChar, Unterminated, BadEscape> LexFault;
 // token stream needs and what nothing here has argued for — because this directory has counted
 // parallel arrays five times and called them a habit every time.
 //
+// ## 1c. And the proposal that reaches both is one this repository already has, at another scale
+//
+// `issues/lang/0074` — *values with no identity: tuples, or value structs* — is filed for locals. Its
+// evidence is ChaCha20 at **4.7x** from moving sixteen state words out of a `u32[16]` into locals,
+// and `packages/bls` at −64%, and its crux is a lowering rule: *"the spec text has to say the
+// compiler is required to keep these in locals."* The inline-record entry says 0074's answer does not
+// reach an array of a hundred thousand entries, and it is right about the *lowering*.
+//
+// It is not right about the **declaration**. What both cases need is one thing said once:
+//
+//     value struct Token { i32 kind; i32 start; i32 len; i32 line; i32 col; }
+//
+// *This type has no identity.* From that, a local is sixteen registers (0074's case), a narrow array
+// element is a packed word (`@/packages/zstd`'s), and a wide array element is parallel lanes (this
+// file's) — three lowerings, one property, chosen by the compiler from the widths and the context
+// rather than by the author from a table.
+//
+// **Which is why the two entries were kept apart and should not have been.** They were compared by
+// *lowering* — locals versus arrays — and they agree on the only thing a declaration can say. A
+// language feature is a promise about meaning; *which registers* and *how many lanes* are what a
+// compiler is for.
+//
+// The honest limit: `tokens[i].kind = k` has to write a lane, and `Token t = tokens[i]` has to
+// materialise five values with no object behind them. Both follow from *no identity* and neither is
+// free to implement. What is free is stopping the author from choosing: today `@/packages/zstd`
+// writes shifts and masks and this file writes five lanes, and the two hand-written encodings of one
+// idea are the cost the declaration removes.
+//
 // ## 2. And this package cannot import the types the argument is about
 //
 // `Bytes` is `core`'s and `packages/wacc` **may not import `core`**. `packages/wacc/src/wvec.wac`

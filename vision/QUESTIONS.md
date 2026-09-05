@@ -7934,10 +7934,38 @@ habits. So *five parallel arrays and the fifth is deliberate* was three habits a
 the count could not tell them apart because **cardinality is what decides and nothing was counting
 it.**
 
-> **Verdict:** language — a way to store a record inline in an array, in the two shapes the runtime
-> forces apart: a packed struct where the fields share a word, and something for a stream of rows
-> where they do not. Settled by: `spec/spec/types.md`, and a WasmGC feature that does not exist for
-> the second.
+### And the proposal that reaches both is one this repository already has, at another scale
+
+`issues/lang/0074` — *values with no identity: tuples, or value structs* — is filed for **locals**. Its
+evidence is ChaCha20 at **4.7x** from moving sixteen state words out of a `u32[16]` into locals and
+`packages/bls` at −64%, and its crux is a lowering rule: *"the spec text has to say the compiler is
+required to keep these in locals."*
+
+The inline-record entry says 0074's answer does not reach an array of a hundred thousand entries, and
+it is right about the *lowering*. It is not right about the **declaration**. Both cases need one thing
+said once:
+
+    value struct Token { i32 kind; i32 start; i32 len; i32 line; i32 col; }
+
+*This type has no identity.* From that: a local is registers (0074's case), a narrow array element is
+a packed word (`@/packages/zstd`'s), and a wide array element is parallel lanes
+(`@/packages/wacc/src/lex.wac`'s) — **three lowerings, one property**, chosen by the compiler from the
+widths and the context rather than by the author from a table.
+
+> **The two entries were kept apart because they were compared by lowering — locals versus arrays —
+> and they agree on the only thing a declaration can say.** A language feature is a promise about
+> meaning; *which registers* and *how many lanes* are what a compiler is for.
+
+The honest limit: `tokens[i].kind = k` must write a lane and `Token t = tokens[i]` must materialise
+five values with no object behind them. Both follow from *no identity* and neither is free to
+implement. What **is** free is stopping the author choosing — today `zstd` writes shifts and masks and
+`wacc` writes five lanes, and two hand-written encodings of one idea is the cost the declaration
+removes.
+
+> **Verdict:** language — `value struct`, which is `issues/lang/0074` with arrays added to its scope
+> rather than a second feature. Settled by: `spec/spec/types.md` saying a type has no identity, and
+> the lowering rules following from it. **This entry and 0074 should be one issue**, and the reason
+> they are two is that each was filed from the case in front of its author.
 
 ### The two unresolved names in that file are the measurement
 
