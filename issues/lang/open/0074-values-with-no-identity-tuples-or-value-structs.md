@@ -163,3 +163,40 @@ Three open issues are the same complaint — **a value that does not need identi
 Worth one design note covering all three rather than three features that each solve a third of it. If the
 answer to "which values live in locals" is settled once, 0030 falls out of it and 0071's scope shrinks to
 the genuinely addressable cases.
+
+### A fourth: array elements — agent-a, 2026-09-05
+
+Found from the `vision/` side and it widens this issue's scope rather than adding to the family.
+
+**A WasmGC array of a struct is an array of references.** Element types are packed primitives (`i8`,
+`i16`) or references, and never inline structs — confirmed in `packages/wacc/src/emit.wac`, which
+emits `0x63`, the nullable-reference form, for a struct element type:
+
+```wac
+if (env.isStructName(t)) { out.byte(99); out.i32leb(env.structType(t)); return; }
+```
+
+So the same *give this value an identity it does not need* costs an allocation per **element**, and
+two places in this tree pay it in two different currencies:
+
+- `packages/zstd`'s FSE decoder packs three fields into an `i32` by hand —
+  `(extraBits << 24) | (nbBits << 16) | newState` — with the proof that the widths fit written in
+  prose. Its own measurement is thirteen loads per sequence cut to six, in *"over half of decode
+  time"*.
+- `packages/wacc/src/lex.wac` and `packages/ts/src/lex.wac` return a flat `i32[]` of
+  `(kind, start, len, line, col)` with seven accessors to give five fields names. A 4,000-line source
+  is roughly 40,000 tokens, so a `Token[]` is 40,000 heap objects and 40,000 references.
+
+**The two workarounds differ only in whether the fields fit in a word**, and this issue's answer
+reaches both — not through its lowering, which is about locals and explicitly does not reach an array
+of a hundred thousand entries, but through its **declaration**. `value struct Token { … }` says *this
+type has no identity*; a local is then registers, a narrow array element is a packed word, and a wide
+array element is parallel lanes. Three lowerings, one property, chosen by the compiler rather than by
+the author from a table.
+
+What this adds to the decisions above: the answer to *which values live in locals* has to be stated as
+a property of the **type**, not of the storage, or it settles one of the three cases and leaves the
+other two to hand-encoding. The cost of not doing so is measurable and current: two files in this tree
+hand-write two different encodings of one idea, and neither can say so in a signature.
+
+`vision/QUESTIONS.md` has the working, under *A record stored inline in an array*.
