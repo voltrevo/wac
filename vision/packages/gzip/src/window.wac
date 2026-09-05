@@ -54,6 +54,7 @@
 
 import { Bytes } from "core";
 import { Fault } from "./fault.wac";
+import { Crc } from "./crc32.wac";
 
 /** How far a DEFLATE back-reference can reach. Nothing older than this is ever needed. */
 i32 windowSize() { return 32768; }
@@ -80,12 +81,20 @@ export struct Window {
   u8[] data;
   i32 len;
   i32 base;
-  u32[] crcTable;
-  u32 crc;
+  /**
+   * The running checksum.
+   *
+   * **This struct carried the CRC *table* until `./crc32.wac` was written**, as a `u32[] crcTable`
+   * field beside the register, because `crc32Update` takes the table and the only way to build it
+   * once was to hold it somewhere that lives as long as the decode. With `TABLE8` a module constant
+   * the field has nothing to do and goes — one of the two concrete deletions the *computed binding*
+   * ask buys, and the only one anybody had written down before measuring it.
+   */
+  Crc crc;
   /** Bytes handed out by `take` and not yet released. Nonzero means `data`'s front is aliased. */
   i32 pending;
 
-  Window create() { return Window(u8[flushAt()](), 0, 0, crcTable8(), crc32Start(), 0); }
+  Window create() { return Window(u8[flushAt()](), 0, 0, Crc.start(), 0); }
 
   i32 total(const this) { return this.base + this.len; }
 
@@ -163,7 +172,7 @@ export struct Window {
     i32 keep = windowSize() + maxMatch();
     i32 n = this.len - keep;
     Bytes out = Bytes(this.data, 0, n);
-    this.crc = crc32Update(this.crcTable, this.crc, out);
+    this.crc = this.crc.update(out);
     this.pending = n;
     return out;
   }

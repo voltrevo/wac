@@ -71,7 +71,10 @@ import { Fault, SourceFailed, Corrupt, BadMagic, BadMethod, Truncated,
          ChecksumMismatch, LengthMismatch } from "./fault.wac";
 import { Window } from "./window.wac";
 import { Decoder } from "./huffman.wac";
-import { crc32Finish } from "./crc32.wac";
+// No import from `./crc32.wac`: the checksum is a method on the `Crc` the window already holds. That
+// file's rewrite removed `crc32Finish`, and the only thing that noticed was the import check —
+// which is the fourth design inconsistency it has found here rather than a typo.
+
 
 /**
  * A gzip member, as chunks.
@@ -164,7 +167,7 @@ export async gen<Bytes> Result<void, union<E, Fault>> gunzip<E>(
     out.released();
   }
 
-  u32 got = crc32Finish(out.crc);
+  u32 got = out.crc.finish();
   if (got != wantCrc) { return Err(ChecksumMismatch(wantCrc, got)); }
   if (out.total() != wantSize) { return Err(LengthMismatch(wantSize, out.total())); }
   return Ok;

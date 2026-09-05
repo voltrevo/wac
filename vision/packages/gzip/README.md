@@ -192,3 +192,29 @@ returning a `Result` would widen *"`BitReader`'s every method"*. It widens four 
 `alignByte` are total, and `peek` is total **deliberately**, because a legal final code is shorter
 than the lookahead window. The fault attaches to consuming, not to reading. Left in place and
 corrected rather than edited away.
+
+**A binding computed once, before `main` — the case `const` cannot reach.** Added with
+[`src/crc32.wac`](src/crc32.wac). `crc32(data)` rebuilds a 2048-entry slicing table on every call
+above a 512-byte threshold; [`../../bench/crcthresh.wac`](../../bench/crcthresh.wac) puts that at a
+constant **3.9 µs per call at every input size, with no residual**, and shows the table path is
+**1.7× slower than the bitwise path it just abandoned** at exactly the threshold. Eight times the
+useful work for a 512-byte input. A `const` initialiser must be a compile-time constant expression
+and this is two nested loops, so there is nowhere in the language to put the value. Filed as
+`issues/system/0355a`; the language ask is promoted.
+
+**Which makes the pair with `issues/lang/0354a` the finding.** That one says 658 constants spelled
+as function calls should be `const`, and measures the cost of not doing it at **zero**. This one is
+the same syntax gap costing 3.9 µs, because `const` inlines a scalar and cannot express a computed
+array. *"Spell your constants `const`"* is correct advice that does not reach the one site where it
+mattered — the second time today a measurement inverted the recommendation.
+
+**`crc32Finish` is an involution and nothing says so.** `crc ^ 0xFFFFFFFF` twice is the identity, so
+finishing a register twice returns the pre-inverted value: a `u32`, in range, wrong, silent. `Crc`
+gives each phase its own type, which is the fifth time in this directory a phase error is fixed that
+way — after the cursor, the bit reader, `Freqs` and `Table`.
+
+**And a second implementation that is not a duplicate.** *"The bitwise one is kept because it is the
+definition, and the tests check the table against it over random input rather than only against
+fixed vectors."* `CLAUDE.md`'s *when nothing needs a thing, delete it* does not reach it, and it puts
+this table in a better position than every other generated table in the tree: its contents can be
+checked against a definition rather than against themselves.

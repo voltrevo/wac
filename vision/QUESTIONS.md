@@ -9986,3 +9986,66 @@ the packed-fields and array-of-records numbers two entries up, and each of them 
 a property of the JIT rather than of the representation. Nothing here has said so before now, and the
 cheapest fix is not a language feature: it is building the second host and running the three benches
 twice.
+
+## A binding computed once before `main` — the case `const` cannot reach, priced at 3.9 µs
+
+Two entries above, `const` was the answer to 658 sites and the measured cost of not using it was
+zero. This is the other half, and it comes out the other way.
+
+`packages/gzip/src/crc32.wac` builds a 2048-entry slicing table. Its streaming API takes the table as
+a parameter so it is built once — *"The table is a parameter rather than rebuilt per call"* — and its
+one-shot `crc32(data)` calls `crcTable8()` itself, every time, above a 512-byte threshold.
+
+[`bench/crcthresh.wac`](bench/crcthresh.wac), total bytes held constant per row:
+
+     bytes    calls   crc32  bitwise  hoisted
+       256   131072     166      169       32
+       512    65536     290      169       32
+      1024    32768     162      169       32
+      4096     8192      65      438       33
+     65536      512      35      773       33
+
+**At the threshold the table path is 1.7× slower than the bitwise path it just abandoned.** And the
+excess over the hoisted arm is a constant **3.9 µs per call at every size** — `(290−32)/65536`,
+`(162−32)/32768`, `(65−33)/8192`, `(35−33)/512`, all 3.9, no residual. One table build per call and
+nothing else. For 512 bytes the useful work is 0.5 µs, so the build is eight times it.
+
+### Why it is written that way
+
+`spec/spec/variables.md` on a `const` initialiser: *"literals, the operators over them, casts, other
+constants, and construction of a struct, an enum variant or an array out of those. **Not a call — a
+call would have to run.**"* `crcTable8` is two nested loops. So there is nowhere in the language to
+put this value, and the author did the next best thing — priced the build, wrote the price into a
+comment, and hoisted it out of the API that visibly runs in a loop.
+
+### The ask
+
+**A `static` module-level binding: a value computed by arbitrary code, once, before `main`.** Not
+`const`, because it is not a constant expression. Not a mutable global, because nothing may assign
+it afterwards. wasm has a start function and the compiler already emits one — `[§wac-array-t8kn4wq]`
+says every constant array is built there — so the mechanism is present and only the surface is
+missing.
+
+What it would have to settle, and this directory cannot:
+
+- **Ordering between statics**, which `const` gets for free by having no storage. Two statics where
+  one reads the other need a dependency order, and a cycle needs a diagnostic. This is the whole of
+  the difficulty and it is why `const` was specified without it.
+- **Whether a static may fail.** A table cannot, but a static that reads a file or asks a capability
+  could, and *before `main`* is the worst place in a program to have an error. The narrow answer —
+  the initialiser is pure and the checker enforces it — is probably right and is a second feature.
+- **What it costs a program that never touches it.** A start function runs unconditionally, so a
+  module with ten statics pays for ten at load. `const` arrays already have this problem and nobody
+  has measured it.
+
+### The pair is the point
+
+`issues/lang/0354a` and `issues/system/0355a` are one syntax gap with opposite answers. 658 scalars
+spelled as function calls cost **nothing**, because `const` inlines a scalar at every use and v8
+erases the call anyway. One computed array spelled as a function call costs **3.9 µs per call**,
+because `const` cannot hold it at all.
+
+So *"spell your constants `const`"* is correct advice that does not reach the only site where it
+would have mattered. A sweep driven by the 658 would touch 89 files and leave `crc32` exactly as it
+is — which is a good argument for measuring each case rather than sweeping a shape, and the second
+time today the measurement inverted the recommendation.

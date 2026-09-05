@@ -1,0 +1,102 @@
+// What `crc32()` pays to build its table, per call, measured.
+//
+//     wac run vision/bench/crcthresh.wac
+//
+// Run by hand, like the other two benches here.
+//
+// ## The question
+//
+// `packages/gzip/src/crc32.wac` builds an eight-way slicing table of 2048 entries in `crcTable8()`,
+// and the streaming API takes it as a parameter so it is built once — *"The table is a parameter
+// rather than rebuilt per call: `crcTable8` computes 2048 entries."* The one-shot `crc32(data)` does
+// not get that treatment: it calls `crcTable8()` itself, on every call, above a threshold the file
+// sets at 512 bytes and explains as *"Below this, building 2048 table entries costs more than it
+// saves, so the bitwise form wins outright."*
+//
+// So the trade is known and priced. This measures whether it is priced right.
+//
+// Three arms at five sizes, with the **total bytes held constant** at 33.5 MB per row so the columns
+// compare directly: `crc32(data)`, `crc32Bitwise(data)`, and the streaming API with the table hoisted
+// out of the loop the way the pipeline uses it.
+//
+// ## The answer
+//
+//     bytes    calls   crc32  bitwise  hoisted
+//       256   131072     166      169       32
+//       512    65536     290      169       32
+//      1024    32768     162      169       32
+//      4096     8192      65      438       33
+//     65536      512      35      773       33
+//
+// **At the threshold, the table path is 1.7x slower than the bitwise path it just stopped using.**
+// 512 bytes is exactly where `crc32` switches on the table, and 290 against 169 says the switch is
+// premature. The real crossover is about 1024, where the two are within 4%.
+//
+// **And the excess is a constant 3.9 microseconds per call, at every size.** Subtracting the hoisted
+// arm from `crc32` and dividing by the call count:
+//
+//     512   (290-32)/65536 = 3.9 us      4096   (65-33)/8192 = 3.9 us
+//    1024   (162-32)/32768 = 3.9 us     65536   (35-33)/512  = 3.9 us
+//
+// Four rows, one number, no residual — so the model is exactly *one table build per call* and nothing
+// else. For a 512-byte input the useful work is 0.5 us, so **the table build is eight times the CRC**.
+//
+// **The hoisted arm is flat at 32-33 ms across a 256x range of input sizes**, which is what the
+// library's throughput actually is: five times `crc32` at 4096 and nine times it at 1024.
+//
+// The file's own header says CRC-32 was *"the dominant cost of the whole library"* before the table
+// existed. It is again, for anything under a few kilobytes, and for the same reason the other way
+// round.
+//
+// ## What the fix needs
+//
+// A table that is computed once. `const` cannot hold it — an initialiser must be a compile-time
+// constant expression and this one is two nested loops — and wac has no run-once-at-module-start
+// binding for a computed value. What works **today** is generating 2048 literals into a
+// `const u32[]`, which `[§wac-array-t8kn4wq]` says is built in the module's start, and which is the
+// pattern `packages/unicode/src/tables.wac` already uses for 65 KB of them. See
+// `issues/system/0355a` and `../QUESTIONS.md`.
+
+import { Core, Cli } from "std/platform.wac";
+import { crc32, crc32Bitwise, crcTable8, crc32Start, crc32Finish, crc32Update } from "../../packages/gzip/src/crc32.wac";
+
+i64 best(i64 a, i64 b) { return a < b ? a : b; }
+string pad(string s, i32 w) { string o = s; while (o.len() < w) { o = " " + o; } return o; }
+string itoa(i64 v) {
+  if (v == 0) { return "0"; }
+  string o = ""; i64 n = v;
+  while (n > 0) { i32 d = (n % 10) as! i32; o = "0123456789".slice(d, d + 1) + o; n = n / 10; }
+  return o;
+}
+
+export i32 main(Core core, Cli cli) {
+  i32[] sizes = i32[](256, 512, 1024, 4096, 65536);
+  i64 sink = 0;
+  core.log("  bytes    calls   crc32  bitwise  hoisted");
+  for (i32 si = 0; si < sizes.len(); si++) {
+    i32 n = sizes[si];
+    i32 calls = 33554432 / n;
+    if (calls < 4) { calls = 4; }
+    u8[] data = u8[n]();
+    for (i32 i = 0; i < n; i++) { data[i] = (i * 37 + 11) & 255; }
+
+    i64 tA = 0x7FFFFFFFFFFFFFFF; i64 tB = 0x7FFFFFFFFFFFFFFF; i64 tC = 0x7FFFFFFFFFFFFFFF;
+    u32[] t = crcTable8();
+    for (i32 r = 0; r < 3; r++) {
+      i64 a0 = core.monotonicNanos().wait();
+      for (i32 c = 0; c < calls; c++) { sink = sink + (crc32(data) as i64); }
+      i64 a1 = core.monotonicNanos().wait();
+      for (i32 c = 0; c < calls; c++) { sink = sink + (crc32Bitwise(data) as i64); }
+      i64 a2 = core.monotonicNanos().wait();
+      for (i32 c = 0; c < calls; c++) { sink = sink + (crc32Finish(crc32Update(t, crc32Start(), data)) as i64); }
+      i64 a3 = core.monotonicNanos().wait();
+      tA = best(tA, (a1 - a0) / 1000000);
+      tB = best(tB, (a2 - a1) / 1000000);
+      tC = best(tC, (a3 - a2) / 1000000);
+    }
+    core.log(pad(itoa(n as i64), 7) + pad(itoa(calls as i64), 9)
+             + pad(itoa(tA), 8) + pad(itoa(tB), 9) + pad(itoa(tC), 9));
+  }
+  if (sink == 0) { core.log("sink 0"); }
+  return 0;
+}

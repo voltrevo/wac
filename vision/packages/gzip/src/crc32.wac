@@ -1,0 +1,173 @@
+// CRC-32, and the table this language has no way to build once.
+//
+// The last of `./inflate.wac`'s imports, and the one whose finding is a measurement rather than a
+// type. `packages/gzip/src/crc32.wac` is 153 lines, well argued throughout, and contains a defect
+// worth 3.9 microseconds on every call — which its own header predicts, one paragraph before
+// causing it.
+//
+// ## What the header says, and what the code does
+//
+// > Every compress and every decompress checksums the whole payload, so with only the bitwise form
+// > CRC-32 was ~26 ms of the ~30 ms needed to process 1 MiB — the dominant cost of the whole
+// > library, ahead of both LZ77 and Huffman coding.
+//
+// So the eight-way slicing table exists, 2048 entries, built by `crcTable8()`. The **streaming** API
+// takes it as an argument, deliberately: *"The table is a parameter rather than rebuilt per call:
+// `crcTable8` computes 2048 entries."*
+//
+// The **one-shot** API does not. `crc32(data)` calls `crcTable8()` itself, every time, above a
+// threshold set at 512 bytes and justified as *"Below this, building 2048 table entries costs more
+// than it saves, so the bitwise form wins outright."*
+//
+// `../../../bench/crcthresh.wac` measures it, three arms at five sizes with total bytes held
+// constant:
+//
+//     bytes    calls   crc32  bitwise  hoisted
+//       256   131072     166      169       32
+//       512    65536     290      169       32
+//      1024    32768     162      169       32
+//      4096     8192      65      438       33
+//     65536      512      35      773       33
+//
+// **At the threshold, the table path is 1.7x slower than the bitwise path it just abandoned**, and
+// the excess over the hoisted arm is a constant **3.9 us per call at all four sizes** with no
+// residual — so the model is exactly one table build per call. At 512 bytes the useful work is
+// 0.5 us and the table is eight times it. The hoisted arm is flat at 32-33 ms across a 256x range,
+// which is what this library's throughput could be everywhere.
+//
+// The threshold is also just wrong: the real crossover is about 1024.
+//
+// This is *not* a subtle bug and it is not carelessness. The author priced the table build, wrote the
+// price down, hoisted it out of the API that runs in a loop, and left it in the API that does not
+// look like it runs in a loop. What made that possible is that **nothing in the language could hold
+// a computed table anywhere else.**
+
+import { Bytes } from "core";
+
+/**
+ * The eight stacked tables, flat at `k * 256 + n`.
+ *
+ * **A `const` array in the rewrite, not a function** — and this file cannot show you the declaration,
+ * because the honest form of it is 2048 generated literals. See below for why the loop that computes
+ * them cannot be a `const` initialiser and what the three alternatives are.
+ *
+ * The layout is unchanged and the reasoning with it: *"each subsequent one is table 0 advanced
+ * another byte, so eight bytes can be folded in with eight independent lookups … the byte-at-a-time
+ * loop carries a dependency from each iteration to the next, so it runs at the latency of a table
+ * lookup rather than the throughput. Flat rather than nested to keep it one bounds-checked array."*
+ */
+export const u32[] TABLE8 = u32[]( … );
+
+/**
+ * A running CRC register.
+ *
+ * `Crc` rather than a bare `u32` threaded through `crc32Start`, `crc32Update` and `crc32Finish`,
+ * because those three take and return the same primitive and nothing stops a caller finishing a
+ * register twice — `crc32Finish` is `crc ^ 0xFFFFFFFF`, an involution, so doing it twice silently
+ * returns the pre-inverted value. There is no diagnostic and the result is a plausible `u32`.
+ *
+ * The shipped signatures also make the table the caller's problem, which is the whole finding above;
+ * with `TABLE8` a constant, `update` needs no table parameter and cannot be passed the wrong one.
+ */
+export struct Crc {
+  u32 register;
+
+  /** A fresh register. */
+  Crc start() { … }
+
+  /** Fold `data` in. */
+  Crc update(const this, Bytes data) { … }
+
+  /** The checksum. */
+  u32 finish(const this) { … }
+}
+
+/** CRC-32 of `data`, in one call. */
+export u32 crc32(Bytes data) { … }
+
+/**
+ * The definition, bit at a time.
+ *
+ * Kept, and the reason is the best sentence in the shipped file: *"the bitwise one is kept because
+ * it is the definition, and the tests check the table against it over random input rather than only
+ * against fixed vectors."* A second implementation that exists to be an oracle is not a duplicate,
+ * and `CLAUDE.md`'s *when nothing needs a thing, delete it* does not reach it — the test needs it.
+ *
+ * It stops being the fallback for short input, though. With the table a constant there is no build
+ * to amortise, so `crc32` uses it at every length and `sliceThreshold` goes.
+ */
+export u32 crc32Bitwise(Bytes data) { … }
+
+// ## What could not be written
+//
+// ### A binding computed once, at module start
+//
+// `TABLE8` above is written as a `const` and the initialiser is elided, which is dishonest in the
+// specific way this directory tries not to be — so here is what is actually available.
+//
+// `spec/spec/variables.md` is exact: an initialiser must be a **compile-time constant expression**
+// — *"literals, the operators over them, casts, other constants, and construction of a struct, an
+// enum variant or an array out of those. Not a call — a call would have to run."* `crcTable8` is two
+// nested loops. So `const u32[] TABLE8 = <the loop>` is not a program.
+//
+// Three ways out, and the language only blocks the one that reads best:
+//
+// **1. Generate 2048 literals.** Works today. `[§wac-array-t8kn4wq]` says every constant array is
+// built in the module's start, so the cost is paid once per program rather than once per call, and
+// `packages/unicode/src/tables.wac` already does exactly this for 65 KB. It also inherits every
+// problem that file has — a generator to keep in step, a *"Generated by … Do not edit"* header, and
+// a value nothing checks against the definition. Against that: this table has a bitwise oracle
+// sitting beside it, so it is the one generated table in the tree whose contents *can* be checked by
+// a test. That is a better position than `unicode`'s and worth saying.
+//
+// **2. A lazily-initialised module global.** `u32[]? cached` at module scope, filled on first use.
+// Works today, costs a null check per call, and is the shape everyone writes in other languages. It
+// is also a mutable module-level binding, which is a thing this codebase has been careful not to
+// accumulate, and it makes the first caller pay for everyone.
+//
+// **3. What is missing: a `static` initialiser — a module-level binding whose value is computed by
+// arbitrary code, once, before `main`.** Not `const`, because it is not a constant expression; not a
+// global variable, because nothing may assign it after. wasm has a start function and the compiler
+// already emits one for constant arrays, so the mechanism is present and only the surface is
+// absent. That is the ask.
+//
+// **The ask is narrow and the evidence is one number**, which is the argument for filing it rather
+// than proposing it: 3.9 us per call, on the checksum every compress and every decompress runs over
+// the whole payload. `issues/system/0355a`.
+//
+// **And adopting it deleted things, which is the part a proposal cannot claim for itself.** Writing
+// this file broke `./window.wac` and `./inflate.wac`, both written earlier in this directory, and
+// the import check found it rather than a reader:
+//
+//   - `Window` carried a `u32[] crcTable` field **beside** its register, because `crc32Update` takes
+//     the table and the only way to build it once was to hold it somewhere living as long as the
+//     decode. With `TABLE8` a constant the field has nothing to do. Gone.
+//   - `sliceThreshold()` and the bitwise branch inside `crc32` go with it: there is no build to
+//     amortise, so there is no size below which the table loses.
+//   - `./inflate.wac` imported `crc32Finish` and now calls `out.crc.finish()`, so the file's only
+//     dependency on this one is a method on a value it already had.
+//
+// A struct field, a threshold, a branch and an import, removed by a language feature that does not
+// exist — which is a better argument for it than the microseconds, and is the fourth time the
+// import check has found a design inconsistency here rather than a typo.
+//
+// ### And the two constant entries in this directory now disagree about direction
+//
+// `issues/lang/0354a`, filed an hour ago, says **658 constants are spelled as function calls and
+// should be `const`** — a readability change with a measured cost of zero. This file says a table
+// spelled as a function call costs 3.9 us and cannot be a `const` at all.
+//
+// They are not in tension, and the difference is exactly the line the language draws: 0354a's 658
+// are *scalars*, which `const` inlines at every use, and this is a *computed array*, which `const`
+// cannot express. **So the same syntax gap has a free case and an expensive one, and the expensive
+// one is the one `const` does not cover.** Worth stating together, because "use `const`" is the
+// answer to one and not the other, and a sweep that did not know the difference would leave the only
+// site where it mattered.
+//
+// ### `crc32Finish` is an involution and nothing says so
+//
+// `crc ^ 0xFFFFFFFF` applied twice is the identity, so a caller who finishes a register twice gets
+// the pre-inverted value: a `u32`, in range, wrong, silent. `Crc` above makes it unspellable by
+// making `finish` a method that returns a different type from the one it is called on — the fifth
+// time in this directory that a phase error is fixed by giving each phase its own type, after the
+// cursor, the bit reader, `Freqs`, and `Table`.
