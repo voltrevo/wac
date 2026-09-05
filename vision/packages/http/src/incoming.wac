@@ -88,8 +88,10 @@ export struct Incoming {
    * The shipped field is `i32 consumed`, a position into a buffer the value does not hold, which
    * `../../../QUESTIONS.md` counts 55 of. `@/packages/http/src/proxy.wac`'s `Established(i32 at)` is
    * the same field in the same package, and both callers want the bytes rather than the number.
+   *
+   * `tail` rather than `rest` since 2026-09-05 — see `./request.wac`, where the same rename says why.
    */
-  Bytes rest;
+  Bytes tail;
 }
 
 /**

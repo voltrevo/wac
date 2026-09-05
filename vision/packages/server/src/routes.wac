@@ -26,6 +26,15 @@ import { Url, parseUrl } from "@/packages/url";
  */
 
 /** What a handler is given: the request, and the path segments after the pattern matched. */
+/**
+ * What a handler is given: the request, and the path segments after the pattern matched.
+ *
+ * **`rest` here survived and `Request.rest` was renamed**, which is the way round worth recording.
+ * When `@/packages/http`'s `Request` gained a `rest` for *bytes not consumed*, a handler could write
+ * `c.rest` and `c.req.rest` one scope apart for two unrelated things — and neither name was wrong.
+ * The concept with three spellings in that package moved to the one it already had, `tail`; the
+ * concept with one spelling kept it.
+ */
 export struct Ctx { const Request req; Vec<Bytes> rest; }
 
 /**

@@ -35,8 +35,15 @@ export struct Request {
   i32 minor;                        // the `x` of HTTP/1.x
   Headers headers;
   Bytes body;
-  /** What is left of the input, not how much was taken — third site of that in this package. */
-  Bytes rest;
+  /**
+   * What is left of the input, not how much was taken.
+   *
+   * **`tail`, not `rest`** — the package spelled this concept three ways (`Request.rest`,
+   * `Incoming.rest`, `ProxyReply.Established(Bytes tail)`) and `@/packages/server`'s `Ctx` already
+   * used `rest` for something else: the path segments after a route's prefix. One word per concept,
+   * and `tail` is the one that was already unambiguous.
+   */
+  Bytes tail;
 }
 
 /**

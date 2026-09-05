@@ -8327,6 +8327,33 @@ language feature.
 > **Verdict:** convention — the costly decisions in a whole-package rewrite are decomposition, not
 > syntax. Settled by: having done one.
 
+## A rename collides where both names are right
+
+*2026-09-05.* Renaming `Request.consumed` to `rest` — a position becoming the thing it indexed —
+created a second collision in `@/packages/http`'s consumer, and it is a different shape from the
+`Method` one a day earlier.
+
+`@/packages/server/src/routes.wac` has `Ctx { const Request req; Vec<Bytes> rest; }`, where `rest` is
+*the path segments after a route's prefix*. `Request.rest` is *the bytes not consumed*. A handler can
+write `c.rest` and `c.req.rest` **one scope apart, for two unrelated things**, and neither name is
+wrong for what it names.
+
+That is not the `Method` case, where two files had written the same type twice. Here two authors used
+one good English word for two good reasons, and the collision arrived when a rename brought them into
+one expression.
+
+**The tell was that one side had three spellings and the other had one.** `packages/http` said
+`Request.rest`, `Incoming.rest` and `ProxyReply.Established(Bytes tail)` for one concept; `Ctx.rest`
+was the only name for its own. So the concept that could not decide what it was called moved to the
+one it had already used unambiguously, and the concept with a settled name kept it.
+
+> **When two right names collide, move the one that has more than one name already.** Which side is
+> ambiguous is a fact about the code rather than a matter of taste, and it decides the rename without
+> anybody preferring a word.
+
+Third consequence of one field rename, after the `Method` type collision and four stale call sites —
+all in the package the change was for, and all found by reading a consumer rather than by any check.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

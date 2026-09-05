@@ -55,7 +55,7 @@ export Served serve(Bytes input, i64 nowMillis) {
       bool keep = wantsKeepAlive(request);
       Response res = route(request, nowMillis);
       return Served.Done(
-        write(res, Sending(!request.method.bodyless(), keep)), request.rest, keep);
+        write(res, Sending(!request.method.bodyless(), keep)), request.tail, keep);
     }
   }
 }
