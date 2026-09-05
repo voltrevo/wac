@@ -6780,19 +6780,39 @@ outside the package could name the union and not take it apart. That is a real b
 *the members were not reachable* as an explanation for the other 137. They were reachable, and
 nobody called them.
 
-*Third and fourth instances, 2026-09-05, both found by one caller in one afternoon:*
-`@/packages/server/src/routes.wac` could not import `writeValue` — so `@/packages/json` could parse
-and could not print, **from outside** — and could not write `Str(x)` or `Object(o)`, because a bare
-variant name has to be in scope at the call site and the barrel re-exported `JsonValue` without its
-arms. So the rule is not *export the union's members*; it is:
+*Third instance, 2026-09-05:* `@/packages/server/src/routes.wac` could not import `writeValue`, so
+`@/packages/json` could parse and could not print **from outside**. Unambiguous, and found by the
+first caller.
 
-> **A barrel that exports a type must export everything needed to take it apart or put it together:
-> a union's members, an enum's arms, and whatever turns the type back into bytes.** A type you can
-> name and cannot use is the default outcome, because the barrel is written from the type list.
+*And a fourth that I got wrong the same hour, then measured properly.* I also reported that the file
+could not write `Str(x)`, because the barrel re-exports `JsonValue` without its arms — on the
+strength of my own name checker flagging `JsonValue.Str`. **That is a documented false positive of
+that tool**, listed in its own header among the thirteen it cannot see: *"a qualified variant,
+`Alphabet.Base32Lower`, where the enum is imported and the arm is not"*. Qualified construction needs
+only the enum. I read the flag and not the tool.
 
-Four instances and every one was found by the first caller from outside the package. None was found
-by reading the barrel, which is what makes it a pattern rather than four slips — a barrel is complete
-against the question *did I export the types*, and that is the wrong question.
+Measuring what is actually true is better than what I claimed:
+
+    variant constructions in vision:   bare 190 in 48 files    qualified 30
+
+**86% bare**, which this directory chose deliberately. And:
+
+    barrels: 29.  Barrels exporting an enum or union without its arms/members: 24.
+
+So a caller outside any of those twenty-four must use the 14% spelling or reach past the barrel. That
+is a real cost and a different one from what I said — not *the type cannot be used*, but **the barrel
+silently withdraws the idiom the directory picked**. Two of the twenty-four are partial —
+`http/Parsed` exports 1 of 3 arms and `wac/Command` 1 of 12 — which is the tell that nobody decided
+this: a rule would not produce two-thirds of one enum.
+
+> **A barrel that exports a type must export everything needed to use it in the way this codebase
+> writes it.** Not *take it apart or put it together* in the abstract — the arms matter because the
+> bare form is the idiom, and `writeValue` matters because a parser that cannot print is half a
+> package.
+
+Every instance was found by the first caller from outside. None by reading the barrel, which is what
+makes it a pattern rather than slips: a barrel is complete against *did I export the types*, and that
+is the wrong question.
 
 ### Second caller, and the hypothesis the first one suggested is wrong
 
