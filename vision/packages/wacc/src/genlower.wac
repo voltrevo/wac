@@ -12,7 +12,9 @@
 import { Vec } from "core";
 import { Expr, Tok, Span, Ty } from "./ast.wac";
 import { Stmt } from "./stmt.wac";
-import { Decl, DeclKind, Func, StructDecl, Field, Param } from "./decl.wac";
+import {
+  Decl, DeclKind, Func, StructDecl, EnumDecl, UnionDecl, Typedef, Import, ReExport, Field, Param
+} from "./decl.wac";
 
 /** One local that outlives a suspension. `asyncplan.wac` already computes this set. */
 export struct Hoisted { Tok name; Ty type; Span at; }
