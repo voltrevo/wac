@@ -9285,11 +9285,28 @@ nine never reach the measurement. So *eleven slots against three* is not a read-
 What survives is the **build** half, untouched and now the whole argument: `lex.wac`'s case is 40,000
 allocations per source file for a stream read once.
 
-> **Both files are right for their own caller and both gave the wrong reason.** A lexer should be
-> flat because it allocates 40,000 objects it reads once. A regex should be boxed because it
-> allocates once and reads a million times, and each read is *cheaper*. Neither said that, and the
+### And the build half, measured too — so there is a crossover and it is about fifteen reads
+
+      prog   builds    bflat  bnarrow    bwide   bagain
+        16   262144       18       21       26       18
+       256    16384       17       20       25       17
+      4096     1024       17       21       27       17
+
+Milliseconds for 4.19M elements written; `bagain` is `bflat` last and matches exactly. **Building
+boxed is slower and here width does matter** — 4.05 ns an element flat, 5.0 narrow, 6.4 wide —
+because allocation is proportional to the fields and reading two of them is not.
+
+    boxed costs, per element, at build     +2.39 ns (eleven fields)   +0.95 ns (three)
+    boxed saves, per read                  -0.164 ns
+    break-even                             ~15 reads                  ~6 reads
+
+> **Both files are right for their own caller, both gave the wrong reason, and they are on opposite
+> sides of a crossover neither knew existed.** A token is read about once, so `lex.wac`'s flat
+> `i32[]` wins by a factor of fifteen rather than by a hair. A regex instruction is dispatched
+> thousands of times and the program outlives the match, so `Op[]` wins by a wide margin too. The
 > rule this entry proposed an hour earlier — that flat wins both halves — was wrong in the direction
-> nobody had checked.
+> nobody had checked, and the corrected rule is a **number** rather than a principle: *box it if each
+> element is read more than about fifteen times.*
 
 ### What could not be written
 

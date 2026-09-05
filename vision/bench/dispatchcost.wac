@@ -159,6 +159,59 @@ export i32 main(Core core, Cli cli) {
              + pad(itoa(tWide), 9) + pad(itoa(tAgain), 9));
   }
 
+  // ── the build half ──────────────────────────────────────────────────────────
+  // The read table above says nothing about allocation, which is `lex.wac`'s whole case: 40,000
+  // objects per source file for a stream read once. Same three shapes, timed while they are made.
+  core.log("");
+  core.log("  prog   builds    bflat  bnarrow    bwide   bagain");
+
+  for (i32 si = 0; si < sizes.len(); si++) {
+    i32 len = sizes[si];
+    i32 builds = (1 << 22) / len;      // constant elements written per arm
+
+    i64 bFlat = 0x7FFFFFFFFFFFFFFF;
+    i64 bNarrow = 0x7FFFFFFFFFFFFFFF;
+    i64 bWide = 0x7FFFFFFFFFFFFFFF;
+    i64 bAgain = 0x7FFFFFFFFFFFFFFF;
+
+    for (i32 r = 0; r < rounds; r++) {
+      i64 b0 = core.monotonicNanos().wait();
+      for (i32 k = 0; k < builds; k++) {
+        i32[] f = i32[len * 3]();
+        for (i32 i = 0; i < len; i++) { f[i * 3] = i % 3; f[i * 3 + 1] = i; f[i * 3 + 2] = i + 1; }
+        sink = sink + (f[0] as i64);
+      }
+      i64 b1 = core.monotonicNanos().wait();
+      for (i32 k = 0; k < builds; k++) {
+        Ins3[] n = Ins3[len](fill: Ins3(0, 0, 0));
+        for (i32 i = 0; i < len; i++) { n[i] = Ins3(i % 3, i, i + 1); }
+        sink = sink + (n[0].tag as i64);
+      }
+      i64 b2 = core.monotonicNanos().wait();
+      for (i32 k = 0; k < builds; k++) {
+        Ins11[] w = Ins11[len](fill: Ins11(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        for (i32 i = 0; i < len; i++) { w[i] = Ins11(i % 3, i, i + 1, 0, 0, 0, 0, 0, 0, 0, 0); }
+        sink = sink + (w[0].tag as i64);
+      }
+      i64 b3 = core.monotonicNanos().wait();
+      for (i32 k = 0; k < builds; k++) {
+        i32[] f = i32[len * 3]();
+        for (i32 i = 0; i < len; i++) { f[i * 3] = i % 3; f[i * 3 + 1] = i; f[i * 3 + 2] = i + 1; }
+        sink = sink + (f[0] as i64);
+      }
+      i64 b4 = core.monotonicNanos().wait();
+
+      bFlat = best(bFlat, (b1 - b0) / 1000000);
+      bNarrow = best(bNarrow, (b2 - b1) / 1000000);
+      bWide = best(bWide, (b3 - b2) / 1000000);
+      bAgain = best(bAgain, (b4 - b3) / 1000000);
+    }
+
+    core.log(pad(itoa(len as i64), 6) + pad(itoa(builds as i64), 9)
+             + pad(itoa(bFlat), 9) + pad(itoa(bNarrow), 9)
+             + pad(itoa(bWide), 9) + pad(itoa(bAgain), 9));
+  }
+
   if (sink == 0) { core.log("sink 0"); }
   return 0;
 }
@@ -188,6 +241,31 @@ export i32 main(Core core, Cli cli) {
 // other nine are never touched and the extra footprint does not reach the measurement. That kills the
 // *eleven slots against three* argument as a **read**-side cost; it says nothing about the memory.
 //
+// ## And the build half, which is the other file's case
+//
+//       prog   builds    bflat  bnarrow    bwide   bagain
+//         16   262144       18       21       26       18
+//        256    16384       17       20       25       17
+//       4096     1024       17       21       27       17
+//
+// Milliseconds for 4.19M elements written. `bagain` is `bflat` last and matches it exactly.
+//
+// **Building boxed is slower, and here width does matter**: 4.05 ns an element flat, 5.0 narrow,
+// 6.4 wide. Exactly the reverse of the read table, and for the obvious reason — allocation is
+// proportional to the number of fields and reading two fields is not.
+//
+// ## So there is a crossover, and it is about fifteen reads
+//
+//     boxed costs, per element, at build     +2.39 ns  (eleven fields)   +0.95 ns  (three)
+//     boxed saves, per read                  -0.164 ns
+//     break-even                             ~15 reads                   ~6 reads
+//
+// **That is the rule both files needed and neither had.** A token is read about once, so `lex.wac`'s
+// flat `i32[]` is right — by a factor of fifteen, not by a hair. A regex instruction is dispatched
+// thousands of times per match and the program outlives the match, so `Op[]` is right — also by a
+// wide margin. The two files reached opposite conclusions because they are on opposite sides of a
+// crossover neither of them knew existed.
+//
 // ## So the rule in `../QUESTIONS.md` was half wrong, and this is the half
 //
 // It said the flat form *"wins the build on allocation and the read on locality, which is why it wins
@@ -210,8 +288,12 @@ export i32 main(Core core, Cli cli) {
 // a proven-in-range index, would close it. `native/wasmtime` is not built here, which is the
 // convention `packages/wactest`'s `nativeHostWhyNot()` exists for.
 //
-// **The memory is not measured.** `wide` is 3.7x `flat`'s footprint and costs nothing in this loop;
-// a matcher whose working set already fills a cache would see something this bench cannot.
+// **The memory is not measured.** `wide` is 3.7x `flat`'s footprint and costs nothing in this *read*
+// loop; a matcher whose working set already fills a cache would see something this bench cannot. The
+// build table charges for the allocation and not for what the residency costs afterwards.
+//
+// **And the crossover is a ratio of two differences, each about 10% of its arm**, so it carries the
+// error of both. Fifteen reads is the order of magnitude; it is not fifteen.
 //
 // **And it is a synthetic dispatch, not a matcher.** Three opcodes, no backtracking stack, no input.
 // It answers *what does indexing a record array cost against three lanes*, which is the question the
