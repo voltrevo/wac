@@ -5026,12 +5026,38 @@ holds *by construction*:
 `@/packages/tls/src/asn1.wac` names the failure mode of the whole class: *"the same check written
 once per call site and forgotten at one of them."*
 
-**The split matters because the two want different features.** An invariant wants the private
-constructor above. A precondition wants something else — a refinement, or a wrapper the callee can
-only be handed after the check — and these entries had been filing both under one heading. Forty
-against five says which is the common case, and it is the one the entries were about; the five are
-the ones that are not, and they include the two in `zstd` that
-`@/packages/zstd/src/stream.wac` found from the other side.
+**The split matters because the two want different features** — an invariant wants the private
+constructor above, and a precondition wants something else. Forty against five says the entries were
+about the common case.
+
+### And the five were read, and none wants anything that is not already here
+
+| | what it says | what answers it |
+|---|---|---|
+| `zstd/src/block.wac` | *"The caller has already checked the block fits in the frame"* | `Slice`, in `core` today |
+| `zstd/src/sequences.wac` | *"Bounded by the caller, which has already checked …"* | the same |
+| `ssh/src/wire.wac` | *"a caller can parse a whole message and check once at the end"* | `try` |
+| `tls/src/asn1.wac` | *"the same check written once per call site and forgotten at one of them"* | `try` |
+| `wacc/src/wapyparse.wac` | *"The caller has already checked that the word after `async` is `def`"* | a witness value — this entry |
+
+Two want a type that exists and did not when the code was written; two want a construct already
+proposed; one is this entry. **The branch closes.** Written up in
+`@/packages/zstd/src/block.wac`, where the precondition becomes the argument type and the comment
+has nowhere left to go.
+
+**The middle pair is worth more than the closure**, because it is the strongest case *against* `try`
+in the tree and both files make it in their own words. `wire.wac` keeps a latch so *"a caller can
+parse a whole message and check once at the end, instead of testing after every field"*; `asn1.wac`
+keeps a shared one so a failure two levels down is visible without *"the same check written once per
+call site and forgotten at one of them."*
+
+Both are describing manual propagation, which is what `try` removes — the per-field test is one
+token and forgetting it is the compile error the second quote fears. So the objection is to a
+`Result` **without** `try`, and neither file could have known that. What survives is smaller and
+real: a latch answers harmless defaults and keeps parsing, so a caller inspects a whole malformed
+structure; `try` stops at the first fault. For a certificate parser that is a design choice about
+whether you want the first error or the shape of the input, and `@/packages/tls` is the one package
+here that might want the second.
 
 ## A value one layer too high makes the capability that needs it undeclarable
 

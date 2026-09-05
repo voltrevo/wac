@@ -1,0 +1,102 @@
+// One block, decoded — and the precondition that a type already in `core` removes.
+//
+// The last entry to be merged in `../../../QUESTIONS.md` split 45 *checked elsewhere* comments into
+// 40 invariants and **5 preconditions**, and said the five wanted something the list did not have.
+// They do not. All five were read, and this file is the two that are the same shape.
+//
+// `packages/zstd/src/block.wac`:
+//
+//     export void decodeCompressed(u8[] src, i32 at, i32 size, Buf out, Decoder d) {
+//       // The caller has already checked the block fits in the frame, so `end` is within `src`.
+//       i32 end = at + size;
+//
+// and `packages/zstd/src/sequences.wac`:
+//
+//     // Bounded by the caller, which has already checked the block fits in the frame.
+//     i32 end = at + len;
+//
+// Three arguments where the invariant is `at + size <= src.len()`, asserted in a comment, twice.
+
+import { Result, Bytes } from "core";
+import { Buf } from "@/packages/bytes";
+import { Fault, Corrupt } from "./stream.wac";
+
+/**
+ * One block's bytes, and nothing else.
+ *
+ * **The precondition is the type**, and the type is `Bytes` — `core/slice.wac`'s `Slice<u8>`, which
+ * carries `from` and `len` and whose `slice(lo, hi)` refuses a range it does not contain. A caller
+ * that has checked the block fits in the frame expresses that by *making the slice*; one that has
+ * not cannot make it. The comment has nowhere left to go.
+ *
+ * No feature is missing. `Slice` is in `core` today and `packages/bytes` had none when this code was
+ * written — the same reason `@/packages/ssh/src/knownhosts.wac` walks a comma-separated field with
+ * two cursors instead of splitting into views.
+ */
+export Result<void, Fault> decodeCompressed(Bytes block, Buf out, Decoder d) { … }
+
+/** Sequences, over the same slice discipline. */
+export Result<SeqTables, Fault> decodeAndExecute(
+  Bytes block, Bytes literals, Buf out, const SeqTables previous, const Reps reps) { … }
+
+export struct Decoder { … }
+export struct SeqTables { … }
+export struct Reps { … }
+
+// ## 1. All five preconditions were read, and none wants a feature that is not already listed
+//
+// | | what it says | what answers it |
+// |---|---|---|
+// | `zstd/src/block.wac` | *"The caller has already checked the block fits in the frame"* | `Slice`, in `core` today |
+// | `zstd/src/sequences.wac` | *"Bounded by the caller, which has already checked …"* | the same |
+// | `ssh/src/wire.wac` | *"a caller can parse a whole message and check once at the end"* | `try` |
+// | `tls/src/asn1.wac` | *"the same check written once per call site and forgotten at one of them"* | `try` |
+// | `wacc/src/wapyparse.wac` | *"The caller has already checked that the word after `async` is `def`"* | a witness value — the private-constructor entry |
+//
+// So the branch that entry opened closes: **two want a type that exists, two want a construct
+// already proposed, and one is the entry it was written beside.** The interesting part is the middle
+// pair, because they are the strongest argument *against* the construct this directory has proposed
+// eight times.
+//
+// ## 2. The two latches are the best case against `try`, and they make it
+//
+// `@/packages/rlp` replaced a sticky-error cursor with `try` and argued that a dropped check becomes
+// a type error rather than a discipline. `ssh/src/wire.wac` and `tls/src/asn1.wac` both keep the
+// latch and both say why, and their reasons are the two halves of one objection:
+//
+// > `ok` latches false on the first read that would run past the end, and every later read is a
+// > no-op returning zero. That means a caller can parse a whole message and **check once at the
+// > end**, instead of testing after every field — which is how a missed check turns into a read of
+// > whatever happened to follow in memory.
+//
+// > It is shared rather than per-cursor because `element` hands out a cursor over a nested region,
+// > and a failure two levels down has to be visible to the caller that started the parse —
+// > otherwise each level would have to check and pass it up, which is **the same check written once
+// > per call site and forgotten at one of them**.
+//
+// Both are describing the cost of *manual* propagation, which is what `try` removes: the per-field
+// test is one token, and forgetting it at one call site is the compile error the second quote is
+// afraid of. So the objection is to a `Result` **without** `try`, and neither file could have known
+// that, because `try` is this directory's proposal and their latches predate it.
+//
+// What survives it is smaller and real: a latch answers *harmless defaults* after a failure, so a
+// parser keeps running and produces a whole malformed structure that a caller inspects once. `try`
+// stops at the first fault. For a certificate parser that difference is a design choice about
+// whether you want the first error or the shape of the input, and `@/packages/tls`'s is the one
+// package here that might genuinely want the second.
+//
+// ## 3. What could not be written
+//
+// **`Decoder` and `SeqTables` carry state across blocks and the type does not say which frame.**
+// A `SeqTables` from one frame handed to another frame's block decodes garbage — the shipped
+// signature threads them through explicitly, which is right, and nothing stops the wrong one being
+// threaded. That is the phantom-parameter half of the merged entry at an eighth site, and the first
+// where the tag would be a *runtime* value (a frame) rather than a static one.
+//
+// **A block's size comes from its header and bounds the slice that contains the header.** The
+// three-byte block header says how long the block is, so the slice cannot be made until it is read,
+// and reading it needs a slice. The shipped code resolves this by passing `src` and offsets and
+// checking; here it is `Bytes.slice(lo, hi)` on the frame, which traps rather than answering a
+// `Result`. **A slice that refuses is the missing piece** — `core/slice.wac`'s `slice` traps on a
+// bad range because it is a programming error, and here the range comes from the input, so it is
+// not.

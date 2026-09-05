@@ -2,3 +2,4 @@
 
 export { Fused } from "./sequences.wac";
 export { unzstd, Pull, FromEnd, Fault, SourceFailed, Corrupt } from "./stream.wac";
+export { decodeCompressed, decodeAndExecute, Decoder, SeqTables, Reps } from "./block.wac";

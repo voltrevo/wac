@@ -88,6 +88,37 @@ It is not a bug and it is not safe either: **safe because of what the one caller
 move at a second setting. The honest note is that a comment on `dropFront` would probably have been
 enough here, because there is one caller and it is right; the type is what makes the *next* one safe.
 
+## The precondition that a type already in `core` removes
+
+[`src/block.wac`](src/block.wac) was added after the merged entry in
+[`../../QUESTIONS.md`](../../QUESTIONS.md) counted 45 *checked elsewhere* comments and split them
+into 40 invariants and 5 preconditions — and claimed the five wanted something the list did not have.
+They do not, and two of the five are here:
+
+```wac
+export void decodeCompressed(u8[] src, i32 at, i32 size, Buf out, Decoder d) {
+  // The caller has already checked the block fits in the frame, so `end` is within `src`.
+```
+
+Three arguments where the invariant is `at + size <= src.len()`, asserted in a comment, twice in this
+package. **The precondition is the type, and the type is `Bytes`** — `core/slice.wac`'s `Slice<u8>`,
+whose `slice(lo, hi)` refuses a range it does not contain. A caller that has checked expresses it by
+*making the slice*; one that has not cannot make it.
+
+No feature is missing. `Slice` is in `core` today and `packages/bytes` had none when this was
+written, which is the same reason [`@/packages/ssh`](../ssh/)'s `known_hosts` walk uses two cursors
+instead of views.
+
+### And the other three close the branch
+
+`ssh/src/wire.wac` and `tls/src/asn1.wac` want `try`; `wacc/src/wapyparse.wac` wants a witness value,
+which is the entry it was filed beside. **The middle pair is worth more than the closure** — it is
+the strongest case against `try` in the tree, and both files make it in their own words:
+*"a caller can parse a whole message and check once at the end"* and *"the same check written once
+per call site and forgotten at one of them."* Both describe manual propagation, which is what `try`
+removes. What survives is real and smaller: a latch keeps parsing and answers harmless defaults, so a
+caller sees a whole malformed structure; `try` stops at the first fault.
+
 ## What could not be written
 
 A language cannot make `Entry[]` fast — that is the finding above, and it is about WasmGC rather than
