@@ -9,5 +9,6 @@
 export { Alphabet, Padding } from "./alphabet.wac";
 export { encode, decode, withoutSpace } from "./rfc4648.wac";
 export {
-  CodecFault, NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail,
+  CodecFault, AtByte, AboutInput,
+  NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail,
 } from "./fault.wac";

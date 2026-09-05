@@ -15,7 +15,8 @@
 
 import { Result, Bytes } from "core";
 import {
-  CodecFault, NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail
+  CodecFault, AtByte, AboutInput,
+  NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail
 } from "@/packages/codec";
 
 /** Refuse, or decode anyway. */
@@ -48,6 +49,31 @@ export Strictness forMime(CodecFault f) {
     NotADigit(_, _):      { return Refuse; }
     ShortGroup(_):        { return Refuse; }
     ImpossibleLength(_):  { return Refuse; }
+  }
+}
+
+/**
+ * And the same policy after the split — **which is where the split turns out to be a choice.**
+ *
+ * `CodecFault` is `union<AtByte, AboutInput>` since 2026-09-05, so a caller that treats every
+ * point-fault alike writes two arms rather than five. `@/packages/box/src/gunzip.wac` established
+ * that a nested union is matchable as a group; this is the second file to use it and the first where
+ * the grouping was designed rather than inherited.
+ *
+ * **And this file already had a different partition of the same five members, in §1.** Point-versus-
+ * whole is not structural-versus-canonicality; they cut across each other:
+ *
+ *     |                    | AtByte | AboutInput |
+ *     | structural         | NotADigit, ShortGroup   | ImpossibleLength |
+ *     | canonicality       | BadPadding, NonZeroTail |    —             |
+ *
+ * A nested union can express **one** of them. Choosing `union<AtByte, AboutInput>` makes
+ * `Err(is Canonicality):` unwritable, and choosing the other makes `f.at` unreachable — see §4.
+ */
+export Strictness forMimeGrouped(CodecFault f) {
+  match (f) {
+    Err(is AtByte):      { return Refuse; }
+    Err(is AboutInput):  { return Refuse; }
   }
 }
 
@@ -121,3 +147,26 @@ export Strictness forMime(CodecFault f) {
 // compile time, which decoder it configured, so a `decode` whose fault type depended on its padding
 // argument would remove the arm. That is a return type computed from an argument value, which is not
 // in `../../../GRAMMAR.md` and is the third distinct place this directory has wanted one.
+
+// ## 4. Nesting picks one partition and this union has two
+//
+// The split above was made for a *field* reason: `../../../QUESTIONS.md` counted 14 unions here where
+// a position is carried by most members and not all, and grouping the point-faults is what would let
+// a caller read `at` without matching. §1's split was made for a *caller* reason: `forJwt` and
+// `forMime` differ on exactly the canonicality members and agree on everything else.
+//
+// Both are real and they are orthogonal, and `union<A, B>` nests in one direction only:
+//
+// > **A union with two useful partitions can spell one of them.** The members are a set; the grouping
+// > is a tree; and there is no way to say *these four share a field* and *these two are where callers
+// > disagree* about the same five values.
+//
+// Which is the same shape as `../../../QUESTIONS.md`'s *`Mount`'s funcref struct forbids
+// per-implementation error sets* — a decision that buys one thing forecloses another, and the
+// foreclosure is invisible until somebody wants the second. Here it took one file wanting both, and
+// the file is this one.
+//
+// **The honest reading is that the split above may be the wrong one.** The caller reason has two
+// callers behind it and the field reason has none — nothing here reads `at` off a `CodecFault` at
+// all. A grouping chosen for a use nobody has, over one two functions in this file demonstrate, is
+// the ordering this directory has argued against everywhere else.

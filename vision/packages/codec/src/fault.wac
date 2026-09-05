@@ -33,4 +33,29 @@ export struct ImpossibleLength { i32 len; }
  */
 export struct NonZeroTail { i32 at; i32 bits; }
 
-export union<NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail> CodecFault;
+/*
+ * ## Two unions, because four members are about a byte and one is about the input
+ *
+ * It was one union of five. `../../../QUESTIONS.md` measured **14 unions here where a field is
+ * carried by most members and not all**, and every near-miss is a position — `at` in 6 of `AbiFault`'s
+ * 7, 4 of these 5, 7 of `TimeFault`'s 8, `path` in 7 of `FileFault`'s 10. Reading the odd ones out
+ * showed they are not missing a field:
+ *
+ *   * `ImpossibleLength { i32 len; }` here — a fact about the **whole input**, which has no position
+ *     in it.
+ *   * `AbiFault`'s `NotWholeWords { i32 len; }` — the same shape, in another package.
+ *   * `FileFault`'s `Unsupported`, `OtherFault` and `NotGranted` — about the **operation or the
+ *     system**, not about the path.
+ *
+ * > **A union where most members carry a position and one does not is mixing two kinds of fault:
+ * > point faults and whole-subject faults.** The odd member is not incomplete; it is a different
+ * > question, and the shared field is the tell.
+ *
+ * So the split is the fix and not a new field. `AtByte` is *the bytes are wrong here*; `AboutInput`
+ * is *the input cannot be right at all*. And `CodecFault` is still one type, because
+ * `@/packages/box/src/gunzip.wac` shows a nested union is matchable as a group —
+ * `Err(is AboutInput):` is one arm.
+ */
+export union<NotADigit, ShortGroup, BadPadding, NonZeroTail> AtByte;
+export union<ImpossibleLength> AboutInput;
+export union<AtByte, AboutInput> CodecFault;

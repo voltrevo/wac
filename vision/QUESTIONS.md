@@ -7339,6 +7339,55 @@ two grew it (lookup table 5→15, path 5→25 packages) and one changed its subj
 claim as it was**, which is the strongest form the rule has: it is not that counting is unreliable,
 it is that the act of listing is where the distinction lives.
 
+## A field most members carry, and the two partitions a union cannot both have
+
+*2026-09-05.* `@/packages/box/src/cp.wac`'s `say(string path, FileFault f)` passes a path the fault
+mostly has — seven of `FileFault`'s ten members carry one. Swept for the shape:
+
+    unions where a field is carried by MOST members and not all:   14
+    unions where EVERY member carries one:                          2
+
+The two are `@/packages/sh`'s `ArithFault` (all three have `at`) and `@/packages/http`'s
+`ProxyUrlFault` (all five have `url`), and for those `f.at` would read it — except that **field access
+on a union is not in the language and nothing here had asked for it.**
+
+The fourteen are more interesting, and every near-miss is a position or a subject: `at` in 6 of
+`AbiFault`'s 7, 4 of `CodecFault`'s 5, 7 of `TimeFault`'s 8; `node` in 8 of `mpt`'s `ProofFault`'s 10;
+`path` in 7 of `FileFault`'s 10; `id` in 6 of `Event`'s 7. Reading the odd members out:
+
+  * `CodecFault`'s `ImpossibleLength { i32 len; }` and `AbiFault`'s `NotWholeWords { i32 len; }` — a
+    fact about the **whole input**, which has no position in it.
+  * `FileFault`'s `Unsupported`, `OtherFault`, `NotGranted` — about the **operation or the system**,
+    not about the path.
+
+> **A union where most members carry a position and one does not is mixing two kinds of fault: point
+> faults and whole-subject faults.** The odd member is not incomplete; it is a different question, and
+> the shared field is the tell.
+
+### And splitting one on that line found the cost of nesting
+
+`@/packages/codec`'s is now `union<AtByte, AboutInput>`, and `@/packages/codec/example/strictness.wac`
+already contained a **different** partition of the same five members — structural versus canonicality,
+which is where its two callers actually differ. They are orthogonal:
+
+    |              | AtByte                   | AboutInput       |
+    | structural   | NotADigit, ShortGroup    | ImpossibleLength |
+    | canonicality | BadPadding, NonZeroTail  | —                |
+
+> **A union with two useful partitions can spell one of them.** The members are a set, the grouping is
+> a tree, and there is no way to say *these four share a field* and *these two are where callers
+> disagree* about the same five values.
+
+Same shape as `Mount`'s funcref struct forbidding per-implementation error sets: a decision that buys
+one thing forecloses another, and the foreclosure is invisible until somebody wants the second. Here
+one file wanted both.
+
+**And the honest reading is that the split may be the wrong one.** The caller reason has two callers
+behind it; the field reason has none — nothing here reads `at` off a `CodecFault`. Choosing a grouping
+for a use nobody has, over one two functions demonstrate, is the ordering this directory argues
+against everywhere else, and it is recorded rather than quietly reversed because the *conflict* is the
+finding and either choice would have hidden it.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
