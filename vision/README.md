@@ -143,6 +143,19 @@ against appears least often in the code.
 Two of the four zeros are soft — 80 of the 157 files have an elided body, and `auto` and a list
 literal live inside bodies. The other two would appear in signatures and do not.
 
+**And the tuple zero has been explained.** Counted what forty packages wrote *instead*: **64
+exported two-field structs with no methods**, the exact population a tuple replaces — and **34 of
+the 64 have both fields at the same type**. `BranchTooShort { have, need }`,
+`ChecksumMismatch { want, got }`, `TrafficKeys { key, iv }`. As `(i32, i32)` every one loses the only
+thing that tells its members apart.
+
+Two of them settle it against each other: `std`'s `WrongSize { want, got }` and `ssz`'s
+`BadFirstOffset { got, want }` are the same two fields in opposite orders, both correct, and as
+tuples they would be one type. **So the zero is not *nobody needed a pair*** — it is that every pair
+here is one whose members must not be confused, which is the property a tuple gives up. Five days
+spent finding places where position was the bug, and the construct that makes position the interface
+found no takers.
+
 ## What twenty-two subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is a hundred and thirty-two entries and getting longer, which is the exercise working and is not a

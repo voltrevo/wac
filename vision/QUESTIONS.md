@@ -17,6 +17,38 @@ See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ## Tuples, and the fact that they would be the first structural type
 
+### Tested 2026-09-05 — 64 candidates, and a tuple would be wrong in every one
+
+The entry above says forty packages found no place for a tuple. Counted what they found instead:
+**64 exported two-field structs with no methods** — the exact population a tuple replaces.
+
+They are overwhelmingly fault members, and **34 of the 64 have both fields at the same type**:
+
+    BranchTooShort   { i32 have;    i32 need    }
+    TooFewParticipants { i32 saw;   i32 want    }
+    ChecksumMismatch { u32 want;    u32 got     }
+    BadDistance      { i32 distance; i32 available }
+    TrafficKeys      { u8[] key;    u8[] iv     }
+    DivMod           { Big q;       Big r       }
+
+As `(i32, i32)` every one of those loses the only thing that distinguishes its members. **That is
+the answer to why nothing reached for a tuple**, and it is not *nobody needed a pair* — it is that
+every pair here is a pair whose members must not be confused, which is the one property a tuple
+gives up.
+
+**And two of the 64 prove it against each other.** `std`'s `WrongSize { i32 want; i32 got; }` and
+`@/packages/ssz`'s `BadFirstOffset { i32 got; i32 want; }` are the same two fields in **opposite
+orders**, in two packages, both correct. As tuples they would be one type, and `Err(WrongSize(a, b))`
+would compile where `BadFirstOffset` was meant.
+
+So the zero is real and the reason is a positive one. What a tuple would be for — a pair whose
+members are told apart by *position* — is what this directory never wants, because it has spent five
+days finding places where position was the bug.
+
+*(A second, smaller thing the count found: `Span` is declared twice, `{ from, to }` in
+`@/packages/ts/src/bundle.wac` and `{ line, col }` in `@/packages/wacc/src/ast.wac`. Same name, two
+meanings, two packages — the bare-variant-namespace entry's shape at the level of a struct.)*
+
 Heterogeneous `Ticket.all(a, b)` answers a tuple and `Ticket.any(a, b)` answers `(i32, union<A, B>)`.
 Both need tuples and variadic arguments — an array literal has one element type, so `[a, b]` forces
 the branches to agree.
