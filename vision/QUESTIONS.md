@@ -1032,6 +1032,41 @@ total, which is the only reason neither is stated above as a finding.)
 
 ## What `defer` means, which no page says and four uses already depend on
 
+### Tested 2026-09-05 — five uses, all want the same answer, and the trap half is a host question
+
+Named the callers and asked what each would do under each answer. There are five now, not four, and
+one is in `core`:
+
+| | what it restores | if `defer` does not run on an early exit |
+|---|---|---|
+| `@/packages/json/src/parse.wac` ×2 | `this.depth -= 1` | a reused parser leaks depth and grows stricter |
+| `@/packages/server/src/main.wac` | `conn.close()` | a connection leaks per failed request |
+| `@/packages/box/src/more.wac` | `in.setMode(was)` | the terminal stays in cbreak |
+| `core/ticket.wac` | `this.inWait = false` | a ticket answers `Circular` for ever after |
+
+**All five want the same answer**: `defer` runs on every exit, including a `return` from inside a
+loop and including a `try` propagation. Not one wants the other, and `core`'s is the sharpest — a
+re-entrancy flag that never clears is a `wait` that refuses everything.
+
+**And the trap half turns out to be a host question, not a language one.**
+`packages/wactest/README.md` settles what a trap does, having been wrong about it for long enough
+that *"72 host-side files were written around it"*: a trap **unwinds that module and nothing else,
+leaving the tests after it to run normally.** So the module is gone, and everything four of the five
+`defer`s restore is module-local state that dies with it. Whether they ran is unobservable.
+
+The exception is `more.wac`, and it is the only one: `in.setMode(was)` restores **the host's**
+terminal, which outlives the module. If a pager traps, the question *did the `defer` run* is answered
+by a person's shell no longer echoing.
+
+So the rule splits cleanly, and neither half is the open question this entry described:
+
+- **On a normal exit** — every use wants it, unanimously, including through `try`. Nothing here is
+  undecided.
+- **On a trap** — observable only where a `defer` restores state outside the module, which is one use
+  in five, and the decision is whether a capability's state should be restored when its holder dies.
+  That is a question about `std` and the host, and `../QUESTIONS.md`'s entry on a terminal mode being
+  ambient is where it already lives.
+
 *(Distinct from* What a trap does to a scope *above, which asks what **unwinding** does to a
 `defer` and to `schedule` together. This asks what the construct **is**. They were easy to read as
 one and answering either leaves the other open.)*

@@ -97,6 +97,38 @@ Where they are densest, measured by what the rewrites promoted: a descriptor wri
 union that replaces one**, which is the single most repeated change the exercise made — and two or
 more scalars that must agree with no type to pair them (`raster`, `ssz`, `ts`, `webrtc`).
 
+## Seven asks put to one test, and five of the seven changed
+
+Added 2026-09-05. The exercise produces feature requests, and by the fourth day it was producing them
+faster than anybody could weigh them. One question turned out to separate the good ones from the rest:
+
+> **Name a caller, and say what it would do differently.**
+
+Seven have been through it. **Two survived, one changed shape, one was answered outright, three were
+retired** — and every one of the retirements had been written into a package file the day before,
+each costing one grep to check.
+
+| ask | result |
+|---|---|
+| a fixed-length byte view | **survives, sharpened** — the argument is *arithmetic*, not constructors: `from(12)` on a `Slice<u8, 32>` is statically a `Slice<u8, 20>`, and no entry had said so |
+| `try` | **survives** — its best counter-argument, two sticky-error latches in `ssh` and `tls`, turns out to be an objection to `Result` *without* `try` |
+| a private constructor | **changed shape** — file-private helps two of seven types and would force four `crypto` files into one; the ask is a **package**, which wac does not have |
+| an overlay for `@/` imports | **retired** — needs a mapping the reader computes, which `Res` already has for git dependencies |
+| a `slice` that refuses | **retired** — all three input-driven callers check first and produce a fault carrying numbers; a `null` would be a worse diagnostic |
+| an `ordinal()` for enums | **retired** — two of six enums want to index at all, and both are answered by putting the index on the table's own type |
+| what `defer` means | **answered** — all five uses want it on every exit including `try`; the trap half is observable in one of five and is a question about `std`, not the language |
+
+**The pattern in the retirements is one sentence:** a feature that looks missing from inside one file
+usually has a caller that would not use it. All three were argued from the file that wanted them, and
+none of the three authors — me — had looked at what the callers do with the failure.
+
+**And the two that survived did not survive unchanged.** Both got sharper under the test: the
+fixed-length ask found its real argument, and `try` found that its strongest opposition was aimed at
+something else. So the test is not a filter, it is a second draft.
+
+The rest of `QUESTIONS.md` has **not** been through it. That is the honest state, and it is the
+obvious next thing: an entry that has not named a caller is a hypothesis.
+
 ## What twenty-two subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is a hundred and thirty-one entries and getting longer, which is the exercise working and is not a
