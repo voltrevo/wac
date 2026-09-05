@@ -94,6 +94,25 @@ export union<BadChar, Unterminated, BadEscape> LexFault;
 // five named fields instead of `tokens[i * 5 + 2]` — has to be bought some other way, and this file
 // keeps `Token` as the *shape of a row* rather than as the element type.
 //
+// ### Measured 2026-09-05, and the conclusion holds for a reason this paragraph did not give
+//
+// `../../../bench/dispatchcost.wac` times the same element three ways. The **read** table says the
+// boxed form is *faster* — 68 ms against 78 for three flat lanes over 67.1M reads — because wasm
+// bounds-checks every index and `a[i*3]`, `a[i*3+1]`, `a[i*3+2]` pays three checks where one record
+// pays one. So *one indirection per read* was the wrong half of the trade to argue from.
+//
+// The **build** table is where this file's case lives: 4.05 ns an element flat against 6.4 boxed,
+// because allocation is proportional to the fields. A token stream is built once per compile and
+// read about once, so at 40,000 tokens the flat form saves ~95 µs of allocation and gives back
+// nothing measurable, and the crossover is at **about fifteen reads per element** — which a lexer is
+// nowhere near and `@/packages/regex`'s instruction array is far past.
+//
+// > **The answer was right and the reason was wrong, and the same day proved the reason wrong in the
+// > file that had copied it.** `@/packages/regex/src/program.wac` argued *a boxed struct per element
+// > in an inner loop* against its class ranges and has since deleted the flat form. This file's
+// > conclusion survives because a lexer is on the other side of the crossover, not because
+// > indirection is expensive.
+//
 // ## 1b. And the entry's own proposal does not reach this case either
 //
 // It proposes `packed struct Entry { u8 extraBits; u8 nbBits; u16 newState; }`, lowering to one
