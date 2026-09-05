@@ -6006,3 +6006,64 @@ throw a `null` away and write their own message.
 All three were written into a package file the day before they were checked, and each cost one grep.
 Worth recording together because the pattern is now the most reliable thing in this directory: **a
 feature that looks missing from inside one file usually has a caller that would not use it.**
+
+## Four proposals have no user in 157 files, and four more have exactly one
+
+The test this directory has been applying — *name a caller* — has an obvious prior question, and
+nobody had asked it: **does anything here use the construct at all?** Counted 2026-09-05, with
+comments and string literals blanked, over the 157 `.wac` files in `vision/`.
+
+| construct | files that use it |
+|---|---|
+| `union<…>` | **27** |
+| `try` | **22** |
+| `gen<…>` | **10** |
+| `secret` | 5 |
+| `defer` | 4 |
+| `never` | 3 |
+| `schedule` | 2 |
+| a brace pattern | 2 |
+| `coroutine e` | 1 — `@/packages/wactest/src/within.wac` |
+| `match` as an expression | 1 — `@/packages/tor/src/onionaddr.wac` |
+| `Err(is T):` | 1 — `@/packages/box/src/gunzip.wac` |
+| a JSX element | 1 — `@/packages/page/src/counter.wac` |
+| `@"verbatim"` | 1 — the same file |
+| **`auto`** | **0** |
+| **a tuple type** | **0** |
+| **optional chaining** | **0** |
+| **a `[…]` list literal** | **0** |
+
+**The caveat first, because it bounds the zeros:** 80 of the 157 files have an elided body, and
+`auto` and a list literal are things that live *inside* bodies. So those two zeros are softer than
+they look. Optional chaining and tuple types would appear in signatures, and their zeros are not.
+
+### What the shape says
+
+`union`, `try` and `gen` are the exercise's answer to what it kept meeting — error sets, propagation
+and streams — and they are used in a sixth, a seventh and a fourteenth of the directory. Nothing
+else comes close.
+
+**And `auto` is the sharpest.** `GRAMMAR.md` recorded it as *"the construct with the widest presence
+on the vetted pages and no presence at all in the grammar until now"* — three of the agreed pages
+write it, `QUESTIONS.md` has an entry about its widening rule, and **not one rewrite reached for
+it.** Five days, forty packages, and the construct that appears most often in the material nobody
+wrote code against appears least often in the code.
+
+That is the measurement this whole directory exists to produce, and it took five days to think of
+running. A page can propose anything; a rewrite either reaches for it or does not.
+
+### Which is not the same as *delete them*
+
+A construct with no user here has three readings and only the first is fatal:
+
+- **Nothing wants it.** Tuples are the candidate: the entry calls them *"the first structural
+  type"*, and forty packages found no place where a struct was too much ceremony.
+- **The rewrites are the wrong sample.** Optional chaining is for call sites, and this directory is
+  mostly type declarations and elided bodies — 80 of 157. It would show up in application code, and
+  `@/packages/page/src/counter.wac` is the only application here.
+- **It is used and the count cannot see it.** `auto` and list literals live in bodies, and half the
+  bodies are `{ … }`.
+
+The honest next step for each is different, and only the first is a question for a page: **write the
+consumer that would use it, and see whether it survives contact.** That is what every other finding
+in this file came from.

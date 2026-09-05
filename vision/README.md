@@ -130,9 +130,22 @@ something else. So the test is not a filter, it is a second draft.
 The rest of `QUESTIONS.md` has **not** been through it. That is the honest state, and it is the
 obvious next thing: an entry that has not named a caller is a hypothesis.
 
+**And the test has a prior question nobody had asked**: does anything here use the construct at all?
+Counted over the 157 files — `union<…>` in 27, `try` in 22, `gen<…>` in 10, and then a long tail:
+`secret` 5, `defer` 4, `never` 3, `schedule` 2, a brace pattern 2, and five constructs with exactly
+one user each. **`auto`, tuple types, optional chaining and a `[…]` list literal have none.**
+
+`auto` is the sharpest: `GRAMMAR.md` calls it *"the construct with the widest presence on the vetted
+pages and no presence at all in the grammar until now"*, and after five days and forty packages **not
+one rewrite reached for it.** The construct that appears most often in the material nobody wrote code
+against appears least often in the code.
+
+Two of the four zeros are soft — 80 of the 157 files have an elided body, and `auto` and a list
+literal live inside bodies. The other two would appear in signatures and do not.
+
 ## What twenty-two subjects found, as patterns rather than as a list
 
-`QUESTIONS.md` is a hundred and thirty-one entries and getting longer, which is the exercise working and is not a
+`QUESTIONS.md` is a hundred and thirty-two entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately
 **not an index**: these are findings about how the design behaves under use, and each stays true
 after the question it produced is answered and deleted.
