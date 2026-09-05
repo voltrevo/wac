@@ -50,4 +50,4 @@ u8[] writeOut(JsonValue v) {
 }
 
 export { JsonValue, JsonObject, JsonMember, numberOf } from "./value.wac";
-export { ParseError, Reason } from "./parse.wac";
+export { ParseError, Reason, render } from "./parse.wac";

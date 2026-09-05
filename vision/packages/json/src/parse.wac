@@ -8,9 +8,20 @@
 import { Result, Vec, Bytes } from "core";
 import { JsonValue, JsonObject, JsonMember } from "./value.wac";
 
-/** Where in the input, and what was wrong with it. */
+/**
+ * What was wrong, and **where in what** — one field, because the two were always one thing.
+ *
+ * `i32 at` until 2026-09-05, which is the shape `../../../QUESTIONS.md` counted 35 of: a fault
+ * carrying a position and not the thing it indexes. The consequence was that
+ * `Result<JsonValue, ParseError>` could not be turned into a message without the caller handing back
+ * the document it had just passed in.
+ *
+ * `Bytes` is `Slice<u8>` — `{ of, from, len }` — so a zero-length slice positioned at the fault *is*
+ * the pair: `at.of` is the document, `at.from` is the offset. Nothing new was added to `core` and no
+ * field was added here; the `i32` became the type that already carried both halves.
+ */
 export struct ParseError {
-  i32 at;
+  Bytes at;
   Reason why;
 }
 
@@ -142,6 +153,82 @@ export struct Parser {
    * parameters, and `Vec<T> empty<T>()` is called as `empty<i32>()`.
    */
   Result<T, ParseError> fail<T>(const this, Reason why) {
-    return Result.Err(ParseError(this.at, why));
+    // A zero-length view at the cursor. `this` already holds `src` — the producer always had both
+    // halves and only ever wrote down one, which is the whole of the 35.
+    return Result.Err(ParseError(this.src.slice(this.at, this.at), why));
   }
 }
+
+/**
+ * The fault as a person reads it, **from the fault alone.**
+ *
+ * This is the test of the change above and the reason it was made. Before it, this function needed
+ * `render(Bytes src, ParseError e)` — the document passed back alongside the error that came out of
+ * parsing it — which is what every other diagnostic in this directory still does:
+ *
+ *     say(string path, FileFault f)              @/packages/box/src/cp.wac
+ *     say(string name, ArgFault f)               @/packages/box/src/lib/args.wac
+ *     say(const Rules rules, const Finding f)    @/packages/git/example/ignorelint.wac
+ *     say(string what, Invalid why)              @/packages/tor/src/verdict.wac
+ *
+ * Five for five took the fault plus the thing it was about. This is the first that does not.
+ */
+export string render(const ParseError e) {
+  i32 line = 1;
+  i32 lineStart = 0;
+  for (i32 i = 0; i < e.at.from; i++) {
+    if (e.at.of[i] == 0x0A) { line = line + 1; lineStart = i + 1; }
+  }
+  i32 lineEnd = lineStart;
+  while (lineEnd < e.at.of.len() && e.at.of[lineEnd] != 0x0A) { lineEnd = lineEnd + 1; }
+  string text = string.fromBytes(Bytes(e.at.of, lineStart, lineEnd - lineStart));
+  return "\{line}:\{e.at.from - lineStart + 1}: \{say(e.why)}\n\{text}\n"
+    + spaces(e.at.from - lineStart) + "^\n";
+}
+
+/** `n` spaces, for the caret line. */
+string spaces(i32 n) { … }
+
+/** One `Reason`, as a sentence. Takes no subject, which is the point. */
+string say(Reason why) { … }
+
+// ## The change worked, and it cost one line in the producer
+//
+// `fail` gained `this.src.slice(this.at, this.at)` and `ParseError`'s `i32` became a `Bytes`. Nothing
+// else in the parser changed, because `fail` is the only place a `ParseError` is constructed — which
+// is why this package was the right one to try it on and is not a general result. A parser with
+// twelve raise sites would have twelve edits, and a fault raised by a *caller* of the parser could
+// not make one at all.
+//
+// **What it bought is `render(const ParseError e)`.** A signature with one parameter, where every
+// other diagnostic function in this directory takes two. The caret comes out of the fault.
+//
+// ## And the cost the sweep predicted does not arise here, for a reason worth stating
+//
+// `../../../QUESTIONS.md` says a fault carrying a `Bytes` keeps the whole input alive for as long as
+// the fault exists, and that this is a real objection for `Truncated` and not for `ParseError`. The
+// difference it named was *how many of the fault get made*, and this parser makes at most one: `try`
+// propagates the first failure out of `document` and there is no recovery, so there is never a second
+// `ParseError` in existence.
+//
+// That is a property of the **parser**, not of the type, and nothing states it. A JSON parser that
+// collected errors rather than stopping — which is what an editor wants and what
+// `@/packages/wacc` does — would hold one `Bytes` per error, all of them views on the same array, so
+// the retention is one document however many faults there are. So the objection is smaller than the
+// sweep made it sound, and the case where it bites is the one the sweep did not name: a fault that
+// **outlives** its input, which here would be a `ParseError` stored past the buffer it was parsed
+// from, and nothing can stop that or notice it.
+//
+// ## What could not be written
+//
+// **`e.at` is a zero-length slice and nothing says so.** Every construction is
+// `src.slice(at, at)` and every reader uses `from` and `of` and ignores `len`. A `Position` type —
+// a slice constrained to be empty — is the honest shape, and the only difference from `Bytes` is a
+// law nothing can state. Same absence as `@/packages/ssh/src/knownhosts.wac`'s *`combine` is
+// associative and nothing says so*, third instance.
+//
+// **`render` walks from the start of the document to count lines.** O(n) per fault, which is right
+// for one fault and wrong for an editor. The information that would fix it — a line table — belongs
+// to whoever read the file, which is neither the parser nor the fault, and this is the third place
+// in the directory where the answer is *the producer should have recorded it* and the producer is
+// somebody else.

@@ -131,7 +131,36 @@ That re-derivation also conflates NaN with ±Infinity, which `Decimal` keeps apa
 because JSON has a spelling for neither, but correct by coincidence of the output format rather than
 because they are alike.
 
+## `ParseError` carries its input now, and it is the only fault here that does
+
+*2026-09-05.* `ParseError` was `{ i32 at; Reason why; }`, which is the shape
+[`../../QUESTIONS.md`](../../QUESTIONS.md) counted **35** of across the directory: a fault carrying a
+position and not the thing it indexes. The consequence was that turning the error into a message
+needed the document handed back alongside it, which is what all five diagnostic functions in this
+directory still do — `say(string path, FileFault f)`, `say(string name, ArgFault f)`, and so on.
+
+It is `{ Bytes at; Reason why; }` now. `Bytes` is `Slice<u8>` — `{ of, from, len }` — so a zero-length
+slice positioned at the fault *is* the pair, and nothing was added to `core`. The change is one line
+in `fail`, the only place a `ParseError` is constructed:
+
+    return Result.Err(ParseError(this.src.slice(this.at, this.at), why));
+
+What it buys is [`src/parse.wac`](src/parse.wac)'s `render(const ParseError e)` — a line, a column,
+the source line and a caret, **from one parameter**. Every other diagnostic in the directory takes
+two.
+
+Not a general result: it was one line because this parser has exactly one raise site. A parser with
+twelve would have twelve, and a fault raised by a *caller* could not make one at all.
+
 ## What could not be written
+
+**`e.at` is a zero-length slice and nothing says so.** Every construction is `src.slice(at, at)` and
+every reader uses `from` and `of` and ignores `len`. A `Position` — a slice constrained to be empty —
+is the honest type and differs from `Bytes` only by a law nothing can state.
+
+**`render` walks from the start of the document to count lines.** O(n) per fault, right for one and
+wrong for an editor. The line table that would fix it belongs to whoever read the file, which is
+neither the parser nor the fault.
 
 (A generic method whose type parameter comes only from the return type was listed here as an open
 question and is not one. `generics.md` `[§wacc-written-type-args]` settles it: inference is
