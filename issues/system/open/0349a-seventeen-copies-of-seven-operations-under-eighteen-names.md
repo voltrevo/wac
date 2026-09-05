@@ -115,7 +115,10 @@ which identity makes it true.
 
 ### The rest are a different problem from the cross-package ones and a smaller one: a package sharing a
 helper with itself needs no `core` change, no `gen:core` and no bootstrap — it is one file importing
-another, or one function moved next to its sibling. **`tor`'s `fields`/`splitSpaces` and `bls`'s
-`frob12C1_3`/`psiY` are the interesting pair**, because in both cases the two names claim to be
-different operations and the bodies say they are the same, which is either a missed abstraction or a
-name that lies.
+another, or one function moved next to its sibling. **Only the `bls` pair is a name that lies**, and the `tor` one was overstated when this was first
+written: `directory.wac:92`'s `fields` and `consensus.wac:423`'s `splitSpaces` are thirteen identical
+lines and do not claim different operations — they are two names for one, and the clearer of the two
+is the **undocumented** one. `fields` carries the comment (*"Split `doc[from..to]` on single
+spaces"*) and `splitSpaces` has none, so a reader looking for the shared helper finds the vaguer name
+described and the precise name bare. Both take `(u8[] doc, i32 from, i32 to)`, which is the
+byte-view-plus-two-loose-integers shape, written twice.
