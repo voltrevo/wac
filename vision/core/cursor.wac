@@ -143,6 +143,26 @@ export struct Cursor {
 // the sweep that produced the type, because a sweep counts what exists and an adoption counts what
 // is used.
 //
+// ## 1c. And the second candidate declined, which says what this type is for
+//
+// `@/packages/abi/src/decode.wac` is a byte reader in a package that cares about malformed input
+// more than most, and it does not want a cursor at all. Ethereum's ABI puts an **offset** in the
+// head and the contents in the tail, measured from the enclosing tuple's head, so the walk is random
+// access by absolute position: `word(data, at, end)`, `data.slice(at + 32, at + 32 + n)`. **There is
+// no position that advances**, so there is nothing for a cursor to hold.
+//
+// > **A cursor is for a format read front to back.** Four of the five shipped `Reader`s are, `rlp`
+// > is, and ABI is not — and that is a property of the format rather than a shortfall in the type.
+//
+// What `abi` has instead is worth recording here because it looks like the same problem and is not.
+// Five functions thread `(Bytes data, i32 at, i32 end)`, and `tupleAt` threads `(data, base, end)`;
+// twenty-three call sites pass some part of that triple. `Bytes` folds exactly **one** of the three,
+// and cannot fold the other two: `end` shrinks as tuples nest while `at` stays absolute in `data`, so
+// slicing would rebase every offset the format defines. The shape that would hold it is a
+// `Region { Bytes data; i32 base; i32 end; }` — three values that must agree, in the package whose
+// README says *"a malformed offset is not an unusual input, it is an attack"* — and it is a
+// different type from this one, for a different reason, in a package that would use it.
+//
 // ## 2. And the failure model is still not shareable, which is the finding
 //
 // The type above serves `tls`, `ssh` and `zstd`. It does not serve `fs`, and the reason is not the
