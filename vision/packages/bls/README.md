@@ -107,3 +107,31 @@ and a nine-limb array type-checks in and reads past its end on the first multipl
 packages to
 want a fixed-length array — after `ens`'s address, `raster`'s tile and `mpt`'s nibbles — and the
 first where the missing bound is *inside* the type rather than on a parameter.
+
+**One 384-bit constant, two names, two files, nothing relating them.** Added with
+[`src/constants.wac`](src/constants.wac). `issues/system/0349a` found it by hashing bodies rather
+than names; checked limb by limb here and it holds exactly — `fp12.wac`'s `frob12C1_3` and
+`g2.wac`'s `psiY` are the same twenty-four hex words, on the **signature-verification path**, with
+nothing importing the other and no test that would notice one being corrected and not the other.
+
+**It is not a copy-paste mistake, which is what makes it interesting.** The doc comments describe
+genuinely different expressions — a Frobenius coefficient on `w`, and the y-coefficient of ψ on G2 —
+which are the same field element by an identity in the tower that neither comment mentions. So the
+duplication is a *naming* decision and a defensible one: each file calls the value by the role it
+plays there. Deleting one is the wrong fix. The right one is `psiY() { return frob12C1_3(); }` with
+the identity in the doc comment, and it costs nothing.
+
+**And this is not a language gap**, which is worth saying in a directory whose job is to find them.
+`const` does not help: two `const` declarations in two files are two constants that can drift, the
+same as two functions. What relates them is an assertion in a test, available today and absent. The
+sharpest defect in a 39-body duplication sweep **wants a test, not a feature** — and the thing that
+would have produced it was somebody hashing the bodies.
+
+**A hand-transcribed constant has no oracle.** `crypto`'s tables have `crc32Bitwise` beside them;
+these limbs were typed from a paper, and the only thing that catches a wrong digit is a known-answer
+test on the whole pairing. That is why two copies matter more here than the count suggests: **two
+chances to be wrong in a way a passing suite still passes**, because one test exercises both.
+
+**And `Fp2` had to be declared in a constants file**, because this directory has `fp.wac` and no
+tower above it. Fourth time today a type landed in the wrong file for want of the right one — the
+resolver check refused the import, which is how it was noticed.

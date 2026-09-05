@@ -1,0 +1,100 @@
+// One 384-bit constant, two names, two files, and nothing saying they must agree.
+//
+// `issues/system/0349a` found this by hashing function bodies rather than comparing names, and
+// called it the sharpest single item in a sweep of 39 duplicated bodies. Checked limb by limb here
+// and it holds exactly:
+//
+//     packages/bls/src/fp12.wac:214   Fp2 frob12C1_3()   /** ξ^((p^3−1)/6), the Fp12 Frobenius
+//                                                            coefficient on w. */
+//     packages/bls/src/g2.wac:158     Fp2 psiY()         /** 1/ξ^((p−1)/2), its y-coefficient. */
+//
+//     a[0] = 0xa55c9ad1; a[1] = 0x3e2f585d; …   identical, all twelve limbs
+//     b[0] = 0x5aa30fda; b[1] = 0x7bcfa7a2; …   identical, all twelve limbs
+//
+// Twenty-four hand-transcribed hex words, twice, on the **signature-verification path**. Nothing
+// imports the other, nothing asserts they are equal, and no test would notice if one were corrected
+// and the other were not.
+//
+// ## It is not a copy-paste mistake, which is what makes it interesting
+//
+// The two doc comments describe genuinely different expressions — a Frobenius coefficient on `w` in
+// the twelfth-degree tower, and the y-coefficient of the ψ endomorphism on G2. They are the same
+// field element because of an identity in the tower, and **neither comment mentions the other**.
+//
+// So the duplication is a *naming* decision and a defensible one: each file calls the value by the
+// role it plays there, and importing `frob12C1_3` into `g2.wac` to serve as `psiY` would put a name
+// from the wrong layer into the reader's way. Deduplicating by deleting one is the wrong fix.
+//
+// The right one costs nothing and nobody did it, because the two names live in two files that have
+// no reason to read each other:
+//
+//     // g2.wac
+//     import { frob12C1_3 } from "./fp12.wac";
+//     /** 1/ξ^((p−1)/2), its y-coefficient — **the same element** as the Fp12 Frobenius
+//      *  coefficient on w, by ξ^((p³−1)/6) = 1/ξ^((p−1)/2) in this tower. */
+//     Fp2 psiY() { return frob12C1_3(); }
+//
+// One value, both names, and the identity written where a reader of either meets it. That is the
+// whole fix and it needs no language feature — which is the finding, because the thing that would
+// have produced it is not a type. It is somebody hashing the bodies.
+
+import { Fp } from "./fp.wac";
+
+/**
+ * An element of Fp2, as a pair of Fp coefficients.
+ *
+ * **Declared here because this directory has no tower file**, and that is a placement this file
+ * would not choose. `./fp.wac` exports `Fp` and `Canonical` and stops; the real package builds Fp2,
+ * Fp6 and Fp12 above it, and `Fp2` belongs with them. Writing it here keeps the import graph honest
+ * — the alternative was `import { Fp2 } from "./fp.wac"`, which the resolver check refused because
+ * `fp.wac` does not export it — and it is the fourth time today a type has landed in the wrong file
+ * because the right one is not written yet.
+ */
+export const struct Fp2 { Fp c0; Fp c1; }
+
+/**
+ * ξ^((p³−1)/6) — the Fp12 Frobenius coefficient on `w`, and by an identity in this tower also
+ * 1/ξ^((p−1)/2), the y-coefficient of ψ on G2.
+ *
+ * **Both names for it are correct and this file holds one value.** `./fp12.wac` and `./g2.wac`
+ * import it and each states the identity in the doc comment a reader of that file will meet.
+ */
+export const Fp2 XI_FROB_3 = Fp2( … );
+
+// ## What could not be written
+//
+// ### Nothing relates two constants that must be equal, and `const` does not help
+//
+// The obvious language answer is *make them constants* — and `../../../QUESTIONS.md`'s *828
+// constants are written as functions* wants exactly that. It does not touch this. Two `const`
+// declarations of one value in two files are two constants that can drift, the same as two
+// functions. `const` fixes how a constant is spelled, not how many of them there are.
+//
+// What would relate them is an assertion — `frob12C1_3() == psiY()` in a test — and that is
+// available today and absent. So this is not a language gap at all, which is worth saying plainly
+// in a directory whose job is to find them: **the sharpest defect in a 39-body duplication sweep
+// wants a test, not a feature.**
+//
+// The nearest thing that *is* a language question is narrow and probably not worth it: a way to say
+// *this declaration is an alias for that one* without re-exporting it under the wrong name and
+// without a wrapper function. wac has no re-export (`[§wac-no-reexport-f7kn4wq]`, specified), so the
+// wrapper above is the available form, and a wrapper is fine — one call, folded or not, on a path
+// that already does a pairing.
+//
+// ### A 384-bit constant is twenty-four assignments and a fixed length nothing checks
+//
+// `u32[12]()` then twelve `a[i] = …` lines, twice per constant, throughout this package. Three
+// things at once, each with its own entry above:
+//
+//   - **a `const` array would replace the twenty-four statements** — available today, and the
+//     package uses functions for the same reason 828 other sites do;
+//   - **`u32[12]` is not a type**, so nothing says an `Fp2` limb array has twelve words. This is the
+//     322-length-checks entry, in the one package where a wrong length is a wrong signature check;
+//   - **the transcription itself has no oracle**. `packages/crypto`'s tables have `crc32Bitwise` and
+//     a bitwise oracle beside them; these limbs were typed from a paper and the only thing that
+//     would catch a wrong digit is a known-answer test on the whole pairing.
+//
+// The third is the one with teeth, and it is why the duplication matters more here than the 39-body
+// count suggests: **a hand-transcribed constant with no independent derivation is checked only by
+// whether the protocol works**, and two copies of it are two chances to be wrong in a way that a
+// passing test suite would still pass — because the same test exercises both.
