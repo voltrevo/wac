@@ -6781,6 +6781,57 @@ has a payload worth keeping — and this directory has not written one in 165 fi
 `cat.wac`'s *a read that fails halfway is indistinguishable from one that ended*, and the first time
 it is the error side that has the value.
 
+### Fourth caller: the prediction was wrong, and the rule that replaces it is better
+
+The entry above named two cases to check the caller-counting rule against, and the first one
+falsifies it. `@/packages/codec/example/strictness.wac`:
+
+> `CodecFault` (5) has one kind — a decoder either accepts base64 or does not — and should turn out
+> over-specified.
+
+Base64 has two kinds of caller and they were in front of me. A JWT segment is base64url **with the
+padding removed** (RFC 7515 §2); MIME requires it (RFC 2045). Two specifications, one alphabet,
+opposite answers about `BadPadding`. One row of five differs — thin, but not thin in the way
+*over-specified* means, because it is the same partition `@/packages/rlp` has:
+
+  * **Structural** — `NotADigit`, `ShortGroup`, `ImpossibleLength`. There are no bytes. Every caller
+    refuses and a caller that wanted not to could not be given anything.
+  * **Canonicality** — `BadPadding`, `NonZeroTail`. **The bytes are there.** The text was not their
+    canonical encoding, and whether that matters is the caller's question.
+
+> **A decode fault union earns its members at the structural/canonicality boundary and almost nowhere
+> else.** Structural members are interchangeable to every caller and differ only in the message.
+> Canonical ones are where callers disagree, because a value exists and the question is whether to
+> hand it over.
+
+Better than the rule it replaces on three grounds: it is about the members rather than about how many
+consumers this tree happens to have; it explained `RlpFault` after the fact and `CodecFault` before
+the file was written; and it says which member to read first in the twenty-eight unions with no
+caller.
+
+**And it retires the caller-counting rule properly rather than quietly.** `TimeFault`'s three callers
+do differ on six rows of eight — but the six are `NoOffset`, `Trailing`, `NoSuchDate`, `OutOfRange`
+and `BadSeparator`, every one a case where a date was recovered and the question is whether to hand it
+over, and the two constant rows are `NotDigits` and `EmptyFraction`, the structural ones. **Same
+boundary. I read it as caller-counting because there were three columns.**
+
+**Which makes `BadPadding` the first member here that a caller should not be able to receive.** The
+fault is carrying a policy question backwards: unpadded base64url is not an error being tolerated, it
+is the specified input format, so the decode should not have failed for that caller at all. The shape
+that removes it is a decoder parameterised by what it accepts — `decode(text, alphabet,
+Padding.Optional)`, which `@/packages/codec`'s `Padding` almost is — and then `BadPadding` is not
+*allowed*, it is **impossible**. That is the `Mount` dead arm from the other side: the caller does
+know at compile time which decoder it configured, so a `decode` whose fault type depended on its
+padding argument would remove the arm. A return type computed from an argument value; not in
+`GRAMMAR.md`, and the third distinct place this directory has wanted one.
+
+**The cost, stated because it is the argument against all of this.** `forMime` is five arms all
+answering `Refuse`. It exists so that a sixth member of `CodecFault` fails to compile there — a
+**completeness assertion spelled as a function**. `cp.wac`'s `policy` had two dead arms and this has
+five constant ones, and they are the same thing: a `match` over a union is the only exhaustive
+construct here, so anything wanting exhaustiveness must be one even with nothing to decide. The
+alternative is a default arm, which is exactly what makes adding a member silent.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

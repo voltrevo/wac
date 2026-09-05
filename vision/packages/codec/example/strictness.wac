@@ -1,0 +1,123 @@
+// Two callers of `CodecFault`, written to falsify a prediction this directory made yesterday.
+//
+// `../../../QUESTIONS.md` proposed that a fault union earns its members when more than one *kind* of
+// caller exists, and then named two cases to check it against:
+//
+// > `CodecFault` (5) has one kind — a decoder either accepts base64 or does not — and should turn
+// > out over-specified. `PageFault` (3) has two, a renderer and a test harness, and should not.
+//
+// **The first half is wrong, and it is wrong for the reason `@/packages/rlp` was.** Base64 has at
+// least two kinds of caller and they were in front of me: a JWT reader, whose input is base64url and
+// is *unpadded by specification* (RFC 7515 §2), and a MIME reader, where padding is required. Two
+// specifications, one alphabet, opposite answers about one member.
+//
+// Written out, the five members split the same way RLP's seven did.
+
+import { Result, Bytes } from "core";
+import {
+  CodecFault, NotADigit, ShortGroup, BadPadding, ImpossibleLength, NonZeroTail
+} from "@/packages/codec";
+
+/** Refuse, or decode anyway. */
+export enum Strictness { Refuse, Allow }
+
+/**
+ * RFC 7515 §2: a JWT's segments are base64url **with the padding removed**.
+ *
+ * So the one member a MIME reader must refuse is the one this reader must accept, and it is not a
+ * matter of taste — a JWT library that refuses unpadded input cannot read a JWT.
+ */
+export Strictness forJwt(CodecFault f) {
+  match (f) {
+    BadPadding(_):        { return Allow; }
+    // Everything else stands, and `NonZeroTail` stands hardest: a signature is computed over the
+    // text and verified against the bytes, so two texts decoding to one byte string is the whole
+    // attack. `@/packages/codec`'s README argues this and a JWT is its sharpest case.
+    NonZeroTail(_, _):    { return Refuse; }
+    NotADigit(_, _):      { return Refuse; }
+    ShortGroup(_):        { return Refuse; }
+    ImpossibleLength(_):  { return Refuse; }
+  }
+}
+
+/** RFC 2045: padding is required and a line that is not a multiple of four is corrupt. */
+export Strictness forMime(CodecFault f) {
+  match (f) {
+    BadPadding(_):        { return Refuse; }
+    NonZeroTail(_, _):    { return Refuse; }
+    NotADigit(_, _):      { return Refuse; }
+    ShortGroup(_):        { return Refuse; }
+    ImpossibleLength(_):  { return Refuse; }
+  }
+}
+
+// ## 1. The prediction was wrong, and the shape that replaces it is the one RLP already had
+//
+// | | JWT | MIME |
+// |---|---|---|
+// | `BadPadding` | **Allow** | Refuse |
+// | `NonZeroTail` | Refuse | Refuse |
+// | `NotADigit`, `ShortGroup`, `ImpossibleLength` | Refuse | Refuse |
+//
+// One row of five differs, which is thin — and it is not thin in the way *over-specified* means. It
+// is the same partition `@/packages/rlp` has:
+//
+//   * **Structural** — `NotADigit`, `ShortGroup`, `ImpossibleLength`. There are no bytes. Every
+//     caller refuses, and a caller that wanted not to could not be given anything.
+//   * **Canonicality** — `BadPadding`, `NonZeroTail`. **The bytes are there.** These say the text was
+//     not the canonical encoding of them, and whether that matters is the caller's question.
+//
+// So the rule that survives two attempts is not about counting callers:
+//
+// > **A decode fault union earns its members at the structural/canonicality boundary and almost
+// > nowhere else.** Structural members are interchangeable to every caller — they differ only in the
+// > message. Canonical ones are where callers disagree, because a value exists and the question is
+// > whether to hand it over.
+//
+// That is a *better* rule than the one it replaces, on three grounds: it is about the members rather
+// than about how many consumers happen to exist in this tree, it predicted `RlpFault`'s split after
+// the fact and `CodecFault`'s before writing this file, and it says which member to look at first in
+// the twenty-eight unions that still have no caller.
+//
+// It also retires the caller-counting rule properly rather than quietly. `TimeFault`'s three callers
+// really do differ six rows out of eight — but look at *which* six: `NoOffset`, `Trailing`,
+// `NoSuchDate`, `OutOfRange`, `BadSeparator` are all cases where a date was recovered and the
+// question is whether to hand it over, and `NotDigits` and `EmptyFraction`, the two constant rows,
+// are the structural ones. **The same boundary, and I read it as caller-counting because there were
+// three columns.**
+//
+// ## 2. What the two functions cost, which is the argument against doing this
+//
+// `forMime` is five arms answering `Refuse`. It exists so that adding a sixth member to `CodecFault`
+// fails to compile here, and that is its whole value — it is a **completeness assertion spelled as a
+// function**. `@/packages/box/src/cp.wac`'s `policy` had two dead arms and this has five constant
+// ones, and both are the same thing: a `match` over a union is the only construct here that can be
+// exhaustive, so anything wanting exhaustiveness has to be a `match`, even when it has nothing to
+// decide.
+//
+// The alternative in most languages is a default arm, and a default arm is exactly what makes adding
+// a member silent. So the cost is real and the fix is not *allow a default*.
+//
+// ## 3. What could not be written
+//
+// **The two functions are one table and nothing says so.** Fifth file to write a per-caller policy as
+// a `match` returning an enum, and the second where two policies over one union sit in one file with
+// no way to state that they are columns of one thing. `../../../QUESTIONS.md` has this from
+// `@/packages/datetime/src/lenient.wac`, where there were three.
+//
+// **`Allow` needs the bytes and the `Err` does not have them.** `forJwt` answering `Allow` for
+// `BadPadding` is a caller asking for a value that `Result<Bytes, CodecFault>` discarded when it
+// took the `Err` branch. Second file in two units to hit this, and here it is unarguable rather than
+// arguable: unpadded base64url is not an error being tolerated, it is **the specified input format**,
+// so the decode that produced `BadPadding` should not have failed for this caller at all. The fault
+// is being used to carry a policy question backwards, and the shape that removes it is a decoder
+// parameterised by what it accepts — `decode(text, alphabet, Padding.Optional)` — which
+// `@/packages/codec`'s `Padding` type already almost is.
+//
+// **Which makes `BadPadding` the first member in this directory that a caller should not be able to
+// receive.** If the decoder takes the policy, a JWT reader configures `Padding.Optional` and
+// `BadPadding` is unreachable for it — not allowed, *impossible*. That is the same *dead arm* the
+// `Mount` entry could not remove, arriving from the other side: here the caller does know, at
+// compile time, which decoder it configured, so a `decode` whose fault type depended on its padding
+// argument would remove the arm. That is a return type computed from an argument value, which is not
+// in `../../../GRAMMAR.md` and is the third distinct place this directory has wanted one.
