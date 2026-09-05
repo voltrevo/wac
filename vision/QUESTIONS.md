@@ -6270,6 +6270,15 @@ met in `@/packages/zstd`.
 
 ## This file does not say what it concludes, and 109 of 127 entries cannot be read by a grep
 
+*The number in this heading is the fourth value it has had.* 125 → 127 → 135 → **161 on
+2026-09-05**, and every quotation of it in this directory is frozen at whichever it was when the
+sentence was written — including the one below, which quotes `../README.md` saying *a hundred and
+twenty-seven* two revisions ago. The heading keeps its original figure because the ratio is what it
+is about and re-deriving `109 of 161` would be a different measurement; the point is that **this is
+the fourth count today found stale in a sentence that is itself arguing counts go stale**, after the
+overlay count in `../wac.json5`, the `Span` deletions, and `core/README.md`'s missing-features list.
+The rule these keep re-discovering: **put the date beside the figure and claim nothing about now.**
+
 `../README.md` already says it: *"`QUESTIONS.md` is a hundred and twenty-seven entries and getting
 longer, which is the exercise working and is not a document anybody can read to find out what it
 concluded."* That is a statement about length. The measurable version is worse and is about shape.
