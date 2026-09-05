@@ -9000,6 +9000,67 @@ signature-shaped hazard**, because the thing that makes it cheap to write — el
 interesting — is exactly what biases every per-function statistic. What it *can* do is what the two
 `abi` signatures above do: put the before and the after next to each other and count that pair.
 
+## A payload-free variant is a `struct.new`, and the fifteen `i32` comparators are why that matters
+
+*2026-09-05.* This directory's most repeated finding is *a closed set spelled as a string or an
+integer gives up a check the language already makes*. `../core/order.wac` applied it to the one such
+set every language has — less, same, greater — and found the first case with a reason to stay an
+integer.
+
+**The census.** Fifteen functions across the shipped tree return a three-way comparison and **all
+fifteen answer `i32`**, in eight packages: `cmp`, `cmpAbs`, `cmpBE`, `cmpBytes`, `cmpNumeric`,
+`cmpNumericThenBytes`, `compareBytes`, `compareIndex`, `compareValue`, `compareMidpoint`,
+`compareScaled`, `bigCmp` and three more. The check given up is the sign convention: nine of the
+fifteen return `a[i] - b[i]` unbounded, so `cmp(a, b) == -1` is the same intent written wrong.
+
+**The reason to keep it.** `../TECHNICAL.md` and `@/packages/wacc/src/emit.wac` settle that *an enum
+is one wasm struct — a tag in slot 0, then a slot per payload field of every variant*. So
+`enum Ordering { Less, Same, Greater }` is a struct of one `i32`, and a comparator answering it does
+**`struct.new` per comparison** — *n log n* times, in the inner loop of the operation people write
+comparators by hand for.
+
+Every language with sum types interns payload-free variants: three values, no state, allocate once.
+**Nothing in `spec/` says wac does**, and nothing here had asked. The nearest entry is *`Map<K, V>`
+with a compiler-supplied hash for payload-free enums*, which is about hashing them rather than about
+making them.
+
+> The question is not *should `Ordering` be an enum*. It is **what a payload-free variant costs**,
+> and it is the first time this directory's favourite refactor has met a cost at all. Fourteen of the
+> fifteen sites are not hot; the fifteenth is every comparison in every sort.
+
+### And it generalises past comparison, which is why it is an entry rather than a note
+
+Payload-free variants are ordinary here: `@/packages/codec`'s `enum Padding { Padded, Unpadded }`
+and the seven arms of its `Alphabet`, `@/packages/http`'s `Incomplete`, and this `Ordering`. Most are
+built once per call and none of those care. The ones that would are the ones inside a loop, and
+**nothing distinguishes them in the source** — `Padding.Unpadded` handed to an encoder and
+`Ordering.Less` returned from a comparator are the same declaration and differ by a factor of *n log
+n*.
+
+*Checked while writing this:* `@/packages/std`'s `NotGranted` and `@/packages/unicode`'s `Truncated`
+are **not** examples. The first is `struct NotGranted { string what; }`, and the second is a
+zero-field struct used as a **union member**, which the lowering gives a payload slot of its own. So
+the population is smaller than *every type with a bare arm* — it is enum arms declared bare, not
+union members that happen to be empty.
+
+So the answer wanted is not a language feature but a **written guarantee**: *a variant with no
+payload is a constant.* One sentence in `spec/spec/enums.md`, and every one of these questions is
+closed. Without it, the honest advice for a hot comparator is the `i32` the tree already writes,
+which is the opposite of what fifty entries here recommend.
+
+### What could not be written
+
+**Nothing here can measure it.** `../README.md` says nothing in this directory compiles, and
+`bench/` — the one part that does — would need a comparator loop in today's language against
+today's compiler, which would measure *today's* answer rather than the guarantee. `@/packages/bls`'s
+2.6 ns for a one-field struct against a 395 ns operation is the nearest number and it is about the
+wrong ratio: there the wrapper is 0.7% of the work, and in a comparator it is most of it.
+
+**And the fifteen are not equally worth changing, which no rule can say.** `compareScaled` is called
+once per float parse and `cmpBytes` is called *n log n* times per `sort`. A blanket *spell closed
+sets as enums* is right for fourteen and needs an argument for the fifteenth, and this file has
+spent five days producing blanket rules.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
