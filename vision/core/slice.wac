@@ -213,6 +213,25 @@ export bool bytesEq(const Bytes a, const Bytes b) {
 }
 
 /**
+ * A one-byte slice — **the operation the body-hash sweep found written three times here.**
+ *
+ * `@/packages/rlp/src/decode.wac` allocates a `u8[1]` and wraps it; `@/packages/tty/src/line.wac`
+ * and `@/packages/tty/src/render.wac` push into a `Buf` and take its bytes, identically. Three
+ * spellings of *a byte, as a slice*, and none of the three authors could have found the others by
+ * grepping for a name, since all three are called `one`.
+ *
+ * Three lines in `core` rather than three copies, and it is the small half of that sweep's finding —
+ * the large half is that the nine shipped byte-concatenations have **no** counterpart here, because
+ * a `Bytes` removed the reason to write one. This one the type did not remove: a single byte really
+ * does have to become a slice somewhere.
+ */
+export Bytes oneByte(u8 b) {
+  u8[] a = u8[1]();
+  a[0] = b;
+  return Bytes.all(a);
+}
+
+/**
  * Byte slices are common enough to deserve the short name.
  *
  * Same form as `vision/packages/http/src/fault.wac`'s `export union<A, B> RequestFault;` — one way

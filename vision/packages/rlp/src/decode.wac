@@ -30,7 +30,7 @@
 // directory that has `Bytes` and spent three days arguing for it."* This is the follow-through, and
 // **three of the cursor's own predictions came true and one did not.** §1 below.
 
-import { Result, Bytes, Vec, Cursor, Overrun } from "core";
+import { Result, Bytes, Vec, Cursor, Overrun, oneByte } from "core";
 import { Item } from "./item.wac";
 import {
   RlpFault, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing,
@@ -64,7 +64,7 @@ Result<Item, RlpFault> item(Cursor c) {
   // and every branch below is an arithmetic one.
   i32 tag = (try c.u8()) as i32;
 
-  if (tag < 0x80)  { return Ok(Str(one(tag as@ u8))); }
+  if (tag < 0x80)  { return Ok(Str(oneByte(tag as@ u8))); }
   if (tag <= 0xB7) { return Ok(Str(try shortString(c, tag - 0x80))); }
   if (tag <= 0xBF) { return Ok(Str(try c.take(try longLength(c, tag - 0xB7)))); }
   if (tag <= 0xF7) { return list(c, tag - 0xC0); }
@@ -131,11 +131,6 @@ Result<i32, RlpFault> longLength(Cursor c, i32 n) {
   return Ok(len);
 }
 
-Bytes one(u8 b) {
-  u8[] a = u8[1]();
-  a[0] = b;
-  return Bytes.all(a);
-}
 
 // ## 1. What the first consumer of `core/cursor.wac` found
 //

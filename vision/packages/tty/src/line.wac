@@ -7,7 +7,7 @@
 //
 // Read the README beside this file first; it is where the two findings are argued.
 
-import { Bytes } from "core";
+import { Bytes, oneByte } from "core";
 import { Mode } from "std";
 import { Buf } from "@/packages/bytes";
 import { glyph, columns, rubOut, crlf } from "./render.wac";
@@ -228,7 +228,7 @@ export struct Line {
     Bytes drawn = this.mode.echo ? glyph(b) : Bytes.empty();
     if (b == INTR) { return Typed(drawn, Signal(Interrupt)); }
     if (b == QUIT) { return Typed(drawn, Signal(Quit)); }
-    return Typed(drawn, Delivered(one(b)));
+    return Typed(drawn, Delivered(oneByte(b)));
   }
 
   /** The canonical rules, unchanged from the original but for the shape of what they answer. */
@@ -343,11 +343,6 @@ bool isWordChar(u8 b) {
   return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z');
 }
 
-Bytes one(u8 b) {
-  Buf out = Buf.create();
-  out.push(b);
-  return out.bytes();
-}
 
 // ## What could not be written
 //

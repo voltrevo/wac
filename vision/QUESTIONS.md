@@ -9116,10 +9116,18 @@ in one file.
 
 ### The same hash over this directory finds four, and three of them cannot be fixed
 
-`vision/` has **four** redundant bodies. Three are `itoa`, `i64toa` and `pad`, each in both of
+`vision/` had **four** redundant bodies. Three are `itoa`, `i64toa` and `pad`, each in both of
 `../bench`'s two files — and `bench/` is *written in today's language and runs*, so those files
-cannot import `../core`. The fourth is `one(u8 b)` in `@/packages/tty/src/line.wac` and
-`@/packages/tty/src/render.wac`, which is a real one and is three lines.
+cannot import `../core`. The fourth was `one(u8 b)`, and the sweep found it in a way the sweep of
+`packages/` predicts: **three copies under one name and two different bodies.**
+`@/packages/rlp/src/decode.wac` allocated a `u8[1]`; `@/packages/tty/src/line.wac` and
+`render.wac` pushed into a `Buf`. It is `../core/slice.wac`'s `oneByte` now and the three are gone,
+**so what remains is exactly the set that cannot be removed** — three helpers in the one directory
+here that is forbidden from importing `core`.
+
+That is the cheap half of acting on a sweep, and it is worth separating from the expensive half: the
+shipped tree's seventeen need `gen:core`, a bootstrap and eight packages, and these three needed one
+`export` and three imports, because everything in here is disposable by the directory's own rule.
 
 **And the two biggest shipped families are gone entirely.** Byte concatenation: nine copies shipped,
 **zero here**. Byte equality: four shipped, **one** — `core`'s, imported by seven files.
