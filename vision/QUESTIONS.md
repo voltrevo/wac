@@ -9094,6 +9094,65 @@ once per float parse and `cmpBytes` is called *n log n* times per `sort`. A blan
 sets as enums* is right for fourteen and needs an argument for the fifteenth, and this file has
 spent five days producing blanket rules.
 
+## Hashing bodies instead of names finds one operation under eight names — and vision has none of them
+
+*2026-09-05.* Three sweeps this week compared **names**: duplicate type names, duplicate constant
+names, duplicate exported function names. Hashing the *body* instead is a different instrument and
+it found what the other three structurally cannot.
+
+Over `packages/*/src`: **eight bodies identical across two or more packages, 25 declarations, 17 of
+them redundant** — and almost every copy has a different name, so no name check sees any of it.
+
+| operation | copies | the names it goes by |
+|---|---:|---|
+| concatenate two `u8[]` | **9** | `joined`, `join`, `joinBytes`, `concat`, `append` |
+| byte equality | 4 | `equal`, `bytesEq`, `oidEquals` — and `core`'s |
+| hex digit → value | 4 | `hexDigitValue`, `hexDigit`, `digitValue` |
+| length-prefixed concat | 3 | `concat`, `derConcat` |
+| three more pairs | 6 | `utoa64`; `afterName`/`bytesAfter`; `eqBytes`/`eqStr` |
+
+Filed as `issues/system/0349a`. `packages/tor/src/relayd.wac` has two of the nine, under two names,
+in one file.
+
+### The same hash over this directory finds four, and three of them cannot be fixed
+
+`vision/` has **four** redundant bodies. Three are `itoa`, `i64toa` and `pad`, each in both of
+`../bench`'s two files — and `bench/` is *written in today's language and runs*, so those files
+cannot import `../core`. The fourth is `one(u8 b)` in `@/packages/tty/src/line.wac` and
+`@/packages/tty/src/render.wac`, which is a real one and is three lines.
+
+**And the two biggest shipped families are gone entirely.** Byte concatenation: nine copies shipped,
+**zero here**. Byte equality: four shipped, **one** — `core`'s, imported by seven files.
+
+### Which did not happen by being tidier, and that is the entry
+
+Nobody here noticed nine `joinBytes`es and shared one. **The operation stopped existing.** A `Bytes`
+is a view, so a caller that wants two arrays as one either slices what it already has or pushes both
+into a `Buf`; there is no moment where you hold two `u8[]`s and want a third. The duplicate did not
+get factored out — the type removed the reason to write it.
+
+> **The strongest evidence a type earns its place is an operation that disappears rather than
+> moves.** A shared helper is the same code in one place; nine callers with nothing to call is the
+> type having absorbed the problem.
+
+`bytesEq` is the honest counterweight, and it went the other way: it is still an operation, `core`
+still exports it, and what changed is only that three packages stopped writing their own. That is
+the ordinary win, and it is smaller.
+
+### What could not be written
+
+**This cannot separate *the type absorbed it* from *nobody got that far*.** 49% of bodies here are
+`{ … }`, and a hand-written concatenation lives in a body. The claim above rests on there being **no
+signature** in the directory that would want one — which is weaker than having written the code and
+found it unnecessary, and is the same limit as every other count taken over a directory of
+signatures.
+
+**And nothing here hashes bodies as a matter of course.** All three of `issues/system/0347a`, `0348a`
+and `0349a` end with a version of *a check that would find this is fifty lines and nothing does it*.
+Writing it would make the shared suite red on the day it landed — 17 duplicates in `packages/` and 23
+under `tools/` — so it needs a ratchet like `cov_ledger`'s, which is why three issues name it and
+none of them is the one that adds it.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
