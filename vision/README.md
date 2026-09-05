@@ -132,6 +132,16 @@ currently right by discipline*, because the answer to *what would it do* is the 
 is cheap and greppable — **is there a comment doing this type's job?** — and `QUESTIONS.md` records
 where that marker is present and where it is not.
 
+**And a third method finding, 2026-09-05, from the other end.** The caller test asks what an existing
+caller would do differently. The complement — **what did the rewrite silently drop?** — is not asked
+anywhere, and `packages/bytes` is the case: its `Buf` lost `toStr` *and* `pushDecimal`, which are the
+two methods the shipped tree's largest string duplication needs, and neither loss was visible from
+inside the rewrite. It surfaced only when the shipped tree was counted — 257 append accumulations in
+loops and sixteen prepends, `issues/lang/0347a`.
+
+> **A rewrite drops what its own callers did not happen to want.** Every other finding here is about
+> the shipped design; this one is about the method, and the sample is the thing that was wrong.
+
 **The pattern in the retirements is one sentence:** a feature that looks missing from inside one file
 usually has a caller that would not use it. All three were argued from the file that wanted them, and
 none of the three authors — me — had looked at what the callers do with the failure.
