@@ -12,8 +12,9 @@ central design, and because `abi` and `mpt` state the same one.
 
 ## The sticky error field, and the sentence that explains it
 
-`decode` walks a recursive structure with a `Cursor` carrying an error string, and the reason is
-written down:
+`decode` walks a recursive structure with a `Cursor` carrying an error string — **the shipped
+package's own type, not `../../core/cursor.wac`'s**, which took the same name three days later and
+has no error field at all — and the reason is written down:
 
 > A struct rather than a return value threaded through every helper, because a failure has to stop
 > the walk without unwinding — **wac has no exceptions**, and a recursive descent that returns an
@@ -114,8 +115,26 @@ on the payload it is measuring. The size of the hole is the unknown. A fixed-wid
 clean version; RLP is the format that does not. That is as far as this goes, and it is further than
 "a `Buf` should be able to insert", which is the wrong request.
 
+**The cursor's best operation is the one this package must decline.** *2026-09-05:* `decode.wac`
+dropped its own `Reader` for `../../core/cursor.wac`, written the same day from a sweep of four
+shipped byte readers. Three of that file's predicted costs came true, its member `Truncated` turned
+out to be `core`'s `Overrun` field for field, and it caused one addition (`Cursor.need`). But
+`Cursor.sub(n)` — a sub-cursor that **cannot** read past a length prefix, the thing that makes a
+nested format safe by construction — is not used here, because it would make `ListOverrun`
+unreachable: a member running past its list's declared end would come back as an overrun on the
+inner cursor. RLP needs those apart, since one is a truncated network read and the other is an
+encoder contradicting itself.
+
+> **A bound enforced by construction cannot report which bound it was.** The same trade as trapping,
+> from the other end: a stricter mechanism gives up the ability to say what happened.
+
+The general question that leaves open is whose type `Cursor` is. It was derived from `tls`, `ssh`,
+`fs` and `zstd`; of its eleven members this package uses six, declines two for reasons that are the
+format's, and never reaches for three. **A sweep counts what exists and an adoption counts what is
+used**, and there has been exactly one adoption.
+
 **Two `try`s in one expression have no stated meaning.**
-`Ok(Str(try this.take(try this.longLength(tag - 0xB7), false)))` is one line and two early returns,
+`Ok(Str(try c.take(try longLength(c, tag - 0xB7))))` is one line and two early returns,
 and the second only runs if the first succeeded. `GRAMMAR.md` lists *`try` in expression position*
 with two examples, both a single `try` at the head of a statement. Written nested on purpose rather
 than split into locals, because the safe reading — left to right, short-circuit, outer construction
