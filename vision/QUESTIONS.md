@@ -8354,6 +8354,43 @@ one it had already used unambiguously, and the concept with a settled name kept 
 Third consequence of one field rename, after the `Method` type collision and four stale call sites —
 all in the package the change was for, and all found by reading a consumer rather than by any check.
 
+## Composition cost is proportional to signature churn, not to redesign depth
+
+*2026-09-05.* `@/packages/http` was rewritten end to end with every consumer updated, and composing
+found four stale call sites in one consumer, a type collision and a name collision. The same test on
+`@/packages/json` finds **none** — and the two packages were redesigned as much as each other.
+
+    ethrpc/src/fault.wac    ParseError
+    ethrpc/src/rpc.wac      parse, JsonValue
+    server/src/routes.wac   JsonValue, JsonObject, Str, Object, writeValue
+
+`json`'s `ParseError` went from `{ i32 at; … }` to `{ Bytes at; … }` and gained `render`;
+`JsonObject.buildIndex` moved onto `Key.by`; the barrel grew `writeValue`. **Not one changed a
+signature.** `http`'s four breakages were all signatures — `write`'s arity, `Response.create`'s name,
+`request.consumed`'s field, `statusFor`'s return type.
+
+> **Two packages, comparable rewrites, four breakages and zero, and the thing that separates them is
+> whether the change reached the boundary.** Depth of redesign is not the variable; churn at the
+> surface is.
+
+That also puts a number on *a redesign leaves its consumers stale silently*, which had been a shrug:
+the exposure is one site per changed signature per consumer, and it is zero for a package that
+changed none.
+
+### And the immune consumer is immune for a reason worth naming
+
+`ethrpc/src/fault.wac` is `export struct NotJson { ParseError why; }` — it **wraps** the fault and
+never reads a field, so `at` changing type is invisible to it.
+
+That is the flip side of *129 union members that nothing discriminates*: **a fault nobody reads costs
+nothing to change and buys nothing either.** The property that makes `json` safe to redesign is the
+one that leaves its precision unproven, and `render` — the first diagnostic here that takes one
+parameter — has no caller in the tree.
+
+It is also a hand-written instance of the wrap `@/packages/http/src/client.wac` found `try` cannot
+do: `NotJson` exists to put a `ParseError` inside `RpcFault`, one struct member wide, because nothing
+spells *this union contains that one's failures*.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

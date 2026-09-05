@@ -193,3 +193,44 @@ descent wants one token of lookahead, which a `Generator<Token, R>` does not off
 would fix it and would be the third container this exercise has asked `core` for; a parser reading
 bytes off a struct is not worse, so it stays. Worth recording as a place the coroutine model has no
 pull rather than pretending it does.
+
+
+## Composed end to end, and it broke nothing — which is the result
+
+*2026-09-05.* [`@/packages/http`](../http/README.md) was rewritten end to end with every consumer
+updated, and the composing found four stale call sites in one consumer, a type collision and a name
+collision. The same test on this package finds **none**, and the difference says what the cost is
+actually proportional to.
+
+Three files import from here:
+
+    packages/ethrpc/src/fault.wac    ParseError
+    packages/ethrpc/src/rpc.wac      parse, JsonValue
+    packages/server/src/routes.wac   JsonValue, JsonObject, Str, Object, writeValue
+
+All three still compile against what this package now is, and this package was redesigned as much as
+`http` was: `ParseError` went from `{ i32 at; … }` to `{ Bytes at; … }` and gained `render`,
+`JsonObject.buildIndex` moved onto `core`'s `Key.by`, and the barrel grew `writeValue`.
+
+**Not one of those changed a signature.** `parse` still answers `Result<JsonValue, ParseError>`;
+`writeValue` still takes a tree. Every edit was *inside* a type or *behind* a function, and
+`http`'s four breakages were all signatures — `write`'s arity, `Response.create`'s name,
+`request.consumed`'s field, `statusFor`'s return type.
+
+> **Composition cost is proportional to signature churn, not to redesign depth.** Two packages,
+> comparable rewrites, four breakages and zero, and the thing that separates them is whether the
+> change reached the boundary.
+
+### And the consumer that is immune is immune for a reason worth naming
+
+`ethrpc/src/fault.wac` is `export struct NotJson { ParseError why; }` — it **wraps** the fault and
+never reads a field, so changing `at` from an `i32` to a `Bytes` is invisible to it.
+
+That is the flip side of [`../../QUESTIONS.md`](../../QUESTIONS.md)'s *129 union members that nothing
+discriminates*: a fault nobody reads costs nothing to change **and buys nothing either**. The same
+property that makes this package safe to redesign is the one that makes its precision unproven, and
+`render` — the first diagnostic here that takes one parameter — has no caller in the tree.
+
+It is also a hand-written wrap of exactly the kind [`../http/src/client.wac`](../http/src/client.wac)
+found `try` cannot do: `NotJson` exists to put a `ParseError` inside `RpcFault`, one struct member
+wide, because there is no spelling that says *this union contains that one's failures*.
