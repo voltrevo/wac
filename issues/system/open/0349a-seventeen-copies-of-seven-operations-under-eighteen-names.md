@@ -122,3 +122,37 @@ is the **undocumented** one. `fields` carries the comment (*"Split `doc[from..to
 spaces"*) and `splitSpaces` has none, so a reader looking for the shared helper finds the vaguer name
 described and the precise name bare. Both take `(u8[] doc, i32 from, i32 to)`, which is the
 byte-view-plus-two-loose-integers shape, written twice.
+
+## Addendum 2026-09-05 — the `bls` pair verified by reading, and why it should be first
+
+The pair above was found by **hashing bodies**, so the claim rested on a hash. Read directly, limb by
+limb, and it holds exactly:
+
+    packages/bls/src/fp12.wac:214   frob12C1_3()   a[0]=0xa55c9ad1 a[1]=0x3e2f585d …  b[0]=0x5aa30fda …
+    packages/bls/src/g2.wac:158     psiY()         a[0]=0xa55c9ad1 a[1]=0x3e2f585d …  b[0]=0x5aa30fda …
+
+All twelve limbs of each coefficient, identical. So the recommendation above — one becomes a call to
+the other, or a test asserts they are equal and names the identity — is safe to act on without
+re-deriving anything.
+
+**And it is not a copy-paste mistake, which changes which fix is right.** The doc comments describe
+different expressions: *"ξ^((p^3−1)/6), the Fp12 Frobenius coefficient on w"* and *"1/ξ^((p−1)/2), its
+y-coefficient"*. They are the same element by an identity in the tower, and **neither comment mentions
+the other**. So each file is naming the value by the role it plays there, which is a good reason to
+keep both names — deleting one would put a name from the wrong layer into a reader's way. The call
+form plus a doc comment stating the identity is the fix; the deletion is not.
+
+### Why this pair outranks the other 38
+
+Every other duplicate in this sweep has an oracle: the same operation written twice is checked by
+whatever tests either copy. **A hand-transcribed constant does not.** These twenty-four hex words were
+typed from a paper, `packages/bls` has no independent derivation of them, and the only thing that
+would catch a wrong digit is a known-answer test on the whole pairing.
+
+That is what makes two copies worse than a duplicated function: they are two chances to be wrong **in
+a way a passing suite still passes**, because one test exercises both and agreement between them is
+not evidence — they were transcribed from the same source by the same hand.
+
+Compare `packages/gzip/src/crc32.wac`, which keeps `crc32Bitwise` explicitly so *"the tests check the
+table against it over random input rather than only against fixed vectors."* The `bls` constants are
+the case with no such companion, on the signature-verification path.
