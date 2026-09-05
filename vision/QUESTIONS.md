@@ -6723,6 +6723,64 @@ consumed union carries it — and it is not visible to any arm-based count. The 
 is transitive closure over member types, which this script does not do, and saying so is better than
 letting 129 read as exact.
 
+### Third caller, and the narrowed hypothesis holds
+
+`@/packages/datetime/src/lenient.wac` writes **three** callers of one eight-member union, because the
+test the last entry proposed is *how many kinds of caller exist*. RFC 3339 timestamps arrive from
+three directions that want different strictness: an HTTP `Date` header, a log line, and something a
+person typed.
+
+| | header | log | typed |
+|---|---|---|---|
+| `LeapSecond`   | Accept | Accept | Accept |
+| `NoOffset`     | Reject | **Accept** | **Explain** |
+| `Trailing`     | Reject | **Accept** | Reject |
+| `NoSuchDate`   | Reject | Reject | **Explain** |
+| `OutOfRange`   | Reject | Reject | **Explain** |
+| `BadSeparator` | Reject | Reject | **Explain** |
+| `NotDigits`    | Reject | Reject | Reject |
+| `EmptyFraction`| Reject | Reject | Reject |
+
+Six of eight rows are not constant and the three columns are pairwise different, so a
+`BadTimestamp { i32 at; }` could serve exactly one of these and the other two would parse the
+message. The hypothesis holds, and it explains the two earlier results without special pleading:
+`RequestFault` earned its ten because a server and a client are two kinds, and `RlpFault` looked
+uniform because this tree has one RLP caller — imagine an inspector rather than a validator and the
+structural/canonicality split appears.
+
+**A prediction it makes, untested:** the twenty-nine unions with no caller should divide by how many
+*kinds* of consumer they will have rather than by size or layer. `CodecFault` (5) has one kind and
+should turn out over-specified; `PageFault` (3) has two and should not.
+
+### The other half of an error design, four times
+
+`forHeader`, `forLog` and `forTyped` differ by **how much the caller may lose**, which is nowhere in
+`TimeFault` and cannot be: the same `NoOffset`, same parser, same payload, is a protocol error, a
+normal log line and a hint.
+
+Fourth instance in four days, same shape at four sizes:
+
+  * `cp.wac` — *operand or run*, passed as a `Side` parameter.
+  * `refuse.wac` — *does the connection survive*, which turned out constant.
+  * `sync.wac` — *whose fault*, which the members happened to encode.
+  * `lenient.wac` — *how much may be lost*, which is three whole functions.
+
+> **A fault says what went wrong, and every caller also needs to know what that means for it, and the
+> second thing is not a function of the first.**
+
+Three of the four supply it by hand; the fourth coincided by luck. This is not an ask for a feature —
+it is the argument that a fault union is *half* of an error design, and this directory has written
+twenty-nine of the halves and one of the wholes. The other half has a shape, a per-caller table over
+the members, and all five files that have one spell it as a `match` returning an enum: a lookup table
+written as control flow, five times in five files, because a union member cannot carry attached data.
+
+**And `Take.Accept` claims a value the type has thrown away.** *Accept* means the parser recovered
+something usable, and by the time a caller sees a `Result<Time, TimeFault>`'s `Err` there is no
+`Time`. The honest shape is an `Err` that carries what was recovered — a `Result` whose error half
+has a payload worth keeping — and this directory has not written one in 165 files. Same absence as
+`cat.wac`'s *a read that fails halfway is indistinguishable from one that ended*, and the first time
+it is the error side that has the value.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

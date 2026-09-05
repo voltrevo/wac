@@ -1,0 +1,160 @@
+// Three callers of one eight-member union, because the last file said the test is how many kinds of
+// caller there are.
+//
+// `../../../QUESTIONS.md`, after two callers: *"a fault union earns its members when more than one
+// kind of caller exists"* — offered as a narrower survivor of a hypothesis that broke. `TimeFault` is
+// the place to test it, because RFC 3339 timestamps arrive from three genuinely different directions
+// and the strictness each one wants is not the same:
+//
+//   * an **HTTP `Date`** header, where the spec fixes the format and anything else is a protocol
+//     error the sender must fix;
+//   * a **log line**, where the file is what it is and a reader that refuses is a reader nobody can
+//     use;
+//   * a **form field** a person typed, where the answer is a sentence telling them what to change.
+//
+// Prediction written first: **the union earns its eight members, and the axis the three callers
+// differ on is not one of them.** Both halves held, and the second is the fourth instance in four
+// days.
+
+import { Result } from "core";
+import {
+  TimeFault, NotDigits, BadSeparator, NoSuchDate, OutOfRange,
+  EmptyFraction, NoOffset, Trailing, LeapSecond
+} from "@/packages/datetime";
+
+/** What a caller does about a fault: three answers, and every caller uses all three. */
+export enum Take {
+  /** Refuse. */
+  Reject,
+  /** Use the value the parser recovered and carry on. */
+  Accept,
+  /** Refuse, and the message can say what to type instead. */
+  Explain
+}
+
+/** RFC 7231 §7.1.1.1: an `HTTP-date` is one format and a sender that gets it wrong is wrong. */
+export Take forHeader(TimeFault f) {
+  match (f) {
+    // The one exception in the whole file, and it is in the spec rather than in taste: POSIX has no
+    // 61st second, RFC 3339 §5.7 requires accepting one, and a header carrying `:60` is *correct*.
+    LeapSecond(_): { return Accept; }
+    NotDigits(_, _):        { return Reject; }
+    BadSeparator(_, _, _):  { return Reject; }
+    NoSuchDate(_, _, _):    { return Reject; }
+    OutOfRange(_, _, _):    { return Reject; }
+    EmptyFraction(_):       { return Reject; }
+    NoOffset(_):            { return Reject; }
+    Trailing(_):            { return Reject; }
+  }
+}
+
+/** A log file is evidence. A reader that refuses it is a reader that cannot be used. */
+export Take forLog(TimeFault f) {
+  match (f) {
+    LeapSecond(_):          { return Accept; }
+    // No zone on a local timestamp: the commonest thing in a log and the parser has a date.
+    NoOffset(_):            { return Accept; }
+    // Whatever followed the timestamp is the rest of the line.
+    Trailing(_):            { return Accept; }
+    // `2024-06-31` — the parser knows the year, month and day and they are not a date. Nothing to
+    // recover: **the only member where leniency has nothing to be lenient with.**
+    NoSuchDate(_, _, _):    { return Reject; }
+    NotDigits(_, _):        { return Reject; }
+    BadSeparator(_, _, _):  { return Reject; }
+    OutOfRange(_, _, _):    { return Reject; }
+    EmptyFraction(_):       { return Reject; }
+  }
+}
+
+/** Somebody typed it. Every refusal is a sentence about what to type instead. */
+export Take forTyped(TimeFault f) {
+  match (f) {
+    LeapSecond(_):          { return Accept; }
+    // The four a person can act on, because the payload says what is wrong with what they wrote.
+    NoSuchDate(_, _, _):    { return Explain; }
+    OutOfRange(_, _, _):    { return Explain; }
+    BadSeparator(_, _, _):  { return Explain; }
+    NoOffset(_):            { return Explain; }
+    // The three where the payload is an offset and a person cannot use an offset.
+    NotDigits(_, _):        { return Reject; }
+    EmptyFraction(_):       { return Reject; }
+    Trailing(_):            { return Reject; }
+  }
+}
+
+// ## 1. The union earns its eight, and the proof is that no two callers agree
+//
+// | | header | log | typed |
+// |---|---|---|---|
+// | `LeapSecond`   | Accept | Accept | Accept |
+// | `NoOffset`     | Reject | **Accept** | **Explain** |
+// | `Trailing`     | Reject | **Accept** | Reject |
+// | `NoSuchDate`   | Reject | Reject | **Explain** |
+// | `OutOfRange`   | Reject | Reject | **Explain** |
+// | `BadSeparator` | Reject | Reject | **Explain** |
+// | `NotDigits`    | Reject | Reject | Reject |
+// | `EmptyFraction`| Reject | Reject | Reject |
+//
+// Six of the eight rows are not constant, and the three columns are pairwise different. A
+// `BadTimestamp { i32 at; }` could serve exactly one of these callers, and the other two would parse
+// the message.
+//
+// So the narrowed hypothesis holds: **more than one kind of caller is what makes the members earn
+// their place.** It also explains the two earlier results without special pleading. `RequestFault`
+// earned its ten because a server and a client are two kinds. `RlpFault` looked uniform because this
+// tree has one RLP caller, and the moment a second is imagined — an inspector rather than a
+// validator — the structural/canonicality split appears.
+//
+// **A prediction that follows, and is not tested here:** the twenty-nine unions with no caller should
+// divide by how many *kinds* of consumer they will have, not by size or by layer. `CodecFault` (5)
+// has one kind — a decoder either accepts base64 or does not — and should turn out over-specified.
+// `PageFault` (3) has two, a renderer and a test harness, and should not.
+//
+// ## 2. And the axis the three callers differ on is not in the union
+//
+// `forHeader`, `forLog` and `forTyped` differ by **how much the caller may lose**, which is a
+// property of the caller and appears nowhere in `TimeFault`. It cannot: the same `NoOffset`, from the
+// same parser, with the same payload, is a protocol error, a normal log line and a hint. So the file
+// has three functions and the union has none of the information that distinguishes them.
+//
+// **Fourth instance in four days**, and the four are the same shape at different sizes:
+//
+//   * `@/packages/box/src/cp.wac` — *operand or run*, passed as a `Side` parameter.
+//   * `@/packages/server/src/refuse.wac` — *does the connection survive*, which turned out constant.
+//   * `@/packages/lightclient/src/sync.wac` — *whose fault*, which the members happened to encode.
+//   * here — *how much may be lost*, which is three whole functions.
+//
+// Written as one sentence: **a fault says what went wrong, and every caller also needs to know what
+// that means for it, and the second thing is not a function of the first.** In three of the four the
+// caller supplies it by hand; in the fourth it coincided with the members by luck.
+//
+// That is not an ask for a feature. It is the argument that a fault union is *half* of an error
+// design and this directory has written twenty-nine of the halves and one of the wholes. The other
+// half has a shape — a per-caller table over the members — and every one of these files spells it as
+// a `match` returning an enum, which works, is checked, and is the fifth time in five files that a
+// lookup table has been written as control flow.
+//
+// ## 3. What could not be written
+//
+// **Three functions over one union, and nothing relates them.** `forHeader`, `forLog` and `forTyped`
+// must each list all eight members or fail to compile, which is the good part — adding a ninth member
+// breaks all three, loudly. What is missing is any way to say *these are three policies over the same
+// set*, so a reader can see the table above. It exists as a comment. `@/packages/box/src/cp.wac`'s
+// `policy(Side, FileFault)` is the same table with the caller as a parameter, and it works because
+// there were two callers and one axis; three callers differing on three axes do not factor.
+//
+// **`Take.Accept` claims a value the type does not carry.** *Accept* means the parser recovered
+// something usable, and `Result<Time, TimeFault>` has thrown it away by the time a caller sees the
+// fault — so `forLog` answering `Accept` for `NoOffset` is a caller saying *give it to me anyway* to
+// something that no longer has it. The honest shape is `Result<Time, Partial>` where `Partial`
+// carries both the fault and what was recovered, which is a `Result` whose `Err` has a value in it,
+// and this directory has not once written one. Same absence as `@/packages/box/src/cat.wac`'s
+// *a read that fails halfway is indistinguishable from one that ended*, and the first time it is the
+// **error** side that has a payload worth keeping rather than the success side.
+//
+// **`LeapSecond` is `Accept` in all three and is in the union.** By the rule this directory reached
+// yesterday — *normal but uninteresting is not a fault* — it should not be. It is different from
+// `NotRelevant` in `@/packages/lightclient` in one way that may or may not matter: a caller that
+// stores the parsed time still has to know a leap second was flattened, because `23:59:60` and
+// `00:00:00` compare equal afterwards and one of them is a second earlier. So it is not a fault and
+// it is not nothing, which is a third category and the union has two.
