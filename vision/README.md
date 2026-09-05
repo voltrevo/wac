@@ -151,6 +151,14 @@ different spelling, because the accessor existed for the representation that cha
 was a real loss.** The check is a candidate generator and there is no version that is not, since
 *is this still reachable* is a question about a package rather than about a name.
 
+**And a third question, which found more in an afternoon than the other two.** *Name a caller* looks
+at an ask and asks who wants it. **What method was this loop standing in for?** looks at ordinary
+code and asks what is absent. It produced `issues/lang/0347a` (257 string accumulations → `Buf` has
+`toStr` and no `pushStr`), `0349a` (byte concatenation written nine times under five names),
+`0350a` (`string` has four methods and the three one-liners on top of `indexOf` are written 42 times),
+and it turned `@/packages/http`'s six-line `findCrlf` into a call. The caller test cannot reach any of
+them, because none of them is an ask — nobody had written them down as wants.
+
 **The pattern in the retirements is one sentence:** a feature that looks missing from inside one file
 usually has a caller that would not use it. All three were argued from the file that wanted them, and
 none of the three authors — me — had looked at what the callers do with the failure.
