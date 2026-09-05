@@ -78,7 +78,7 @@ Deno.test("the corpus is not empty, and the rust half was actually run", () => {
   if (!haveRust()) {
     throw new Error(
       `the rust assembler is not built, so every comparison above was skipped — ` +
-        `run \`cargo build --release\` in rust/`,
+        `run \`cargo build --release\` in bootstrap/rust/`,
     );
   }
 });
