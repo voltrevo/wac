@@ -5025,6 +5025,49 @@ say so:
 it is per declaration — so a type is private to a file or public to everyone, and *public with a
 constructor that is not* cannot be written. `Digest32(someBytes)` is an ordinary struct construction.
 
+### Tested 2026-09-05, and the ask is not a private constructor — it is a package
+
+Counted, with comments stripped, how many files *other than the declaring one* use each of the seven
+in code:
+
+| type | other files | who they are |
+|---|---|---|
+| `Digest32` | 7 | four `crypto` siblings that **legitimately make digests**, plus `ssz` and `quic` |
+| `Chunk` | 5 | three `ssz` siblings, plus `lightclient` twice |
+| `Headers` | 2 | both `http` siblings |
+| `Prefix` | 1 | the `ts` barrel — a re-export, not a construction |
+| `Rule` | 1 | the `git` barrel — the same |
+| `Transcript` | 0 | nobody |
+| `PacketKeys` | 0 | nobody |
+
+**A file-private constructor does nothing for five of the seven.** `Transcript` and `PacketKeys` have
+no other user at all; `Prefix` and `Rule`'s only other mention is a barrel re-exporting the type. For
+those four the guarantee is already held by the file being the only place, which is what the entry
+said was *the arrangement* and turns out to be *the mechanism working*.
+
+**And for the two it does help, file-private is the wrong grain.** `sha256.wac`, `keccak.wac`,
+`hmac.wac` and `hkdf.wac` all construct a `Digest32` and all should: they are the hashes. A
+constructor private to `digest.wac` forces four files into one. What is wanted is *only this package
+may build one*, and `ssz` and `quic` — the two that should be refused — are exactly the ones outside
+it.
+
+So the request is **a module boundary larger than a file**, which wac does not have in any form. A
+package is a directory, a barrel and a convention in `wac.json5`; it is not a language construct, so
+there is nothing for a visibility rule to be relative to. That is a much larger ask than *a private
+field*, and it is the honest one:
+
+- **A private field or constructor**, file-scoped — cheap, and answers two of seven, one of them
+  wrongly.
+- **A package as a language thing**, with visibility relative to it — answers both real cases, and is
+  a feature the language has so far managed without.
+- **Nothing.** Four of the seven are already safe by accident of layout, and the two that are not are
+  guarded by `Chunk.of` and `Digest32`'s absence of a byte constructor, which is a convention that
+  has held.
+
+The measurement that would move it: has anything ever constructed one of these wrongly? Nothing has,
+and the directory is four days old, so the honest reading is that the evidence is thin and the
+feature is larger than it looked.
+
 **A phantom parameter.** `Digest32<Transcript>`, where `T` appears in no field, so a tag says *what
 this was a hash of* rather than *how wide it is*. `sha256` cannot know a `T` — the objection
 `@/packages/ssz` was declined on — so the tagging happens in a constructor, which is the caller's.

@@ -165,7 +165,15 @@ report instead of a mystery.
 
 ## What could not be written
 
-**A value whose guarantee comes from how it was made.** `Digest32`'s guarantee is that every one came out of a hash,
+**A value whose guarantee comes from how it was made — and the fix is a package, not a private
+field.** Tested 2026-09-05 by counting who else can construct one: `sha256.wac`, `keccak.wac`,
+`hmac.wac` and `hkdf.wac` all build a `Digest32` and all **should** — they are the hashes. A
+constructor private to `digest.wac` would force four files into one. The two that should be refused,
+`@/packages/ssz` and `@/packages/quic`, are outside the package, and wac has no package: a package is
+a directory, a barrel and a line in `wac.json5`, not a language construct, so there is nothing for a
+visibility rule to be relative to. `../../QUESTIONS.md` has the count for all seven types.
+
+`Digest32`'s guarantee is that every one came out of a hash,
 and it is held by this package being short: `Digest32(someBytes)` is an ordinary struct construction
 and nothing marks the field private. wac has no visibility inside a module — `export` is the only
 control and it is per declaration — so *constructible here and nowhere else* is not expressible. It
