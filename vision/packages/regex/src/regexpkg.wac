@@ -1,4 +1,11 @@
 // The package, as one name. Named for the directory, so `@/packages/regex` finds it.
 
-export { compile, compileIgnoreCase, search, Searched, Match, Span, PatternFault } from "./regex.wac";
+// `Span` is gone — a match's spans are `Bytes`, which is `core`'s `Slice<u8>` and carries the
+// subject a span was missing. The arms too: `Found`, `None` and `Budget` are the bare form this
+// codebase writes 190 times to 30, and a barrel that omits them withdraws the idiom —
+// `../../../QUESTIONS.md`, 24 of 29 barrels do.
+export {
+  compile, compileIgnoreCase, search, Searched, Match, PatternFault,
+  Found, None, Budget,
+} from "./regex.wac";
 export { Program, Op, Boundary } from "./program.wac";

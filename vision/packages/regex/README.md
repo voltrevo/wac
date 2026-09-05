@@ -58,9 +58,31 @@ nothing.
 
 **Captures come back instead of going in.** `search` took an `i32[] caps` for the callee to fill and
 the caller had to size it with `slotCount(p)`; too short and the fill runs off the end of what it
-was given. A `Match` holds the whole span and a `Vec<Span?>` of groups, where the `?` says what
+was given. A `Match` holds the whole match and a `Vec<Bytes?>` of groups, where the `?` says what
 `-1`-in-an-`i32[]` was saying in the same range as a position: a group that did not participate is
 not a group that matched empty.
+
+**And `Span` is gone, replaced by `Bytes`.** *2026-09-05.* It was
+
+    export struct Span {
+      i32 from;
+      i32 to;
+      Bytes of(const this, Bytes input) { return input.slice(this.from, this.to); }
+    }
+
+— **a method that takes the missing half as a parameter**, which is a type saying in its own
+signature that it does not hold what it needs. [`../../QUESTIONS.md`](../../QUESTIONS.md) counts 55
+values in this directory that name a position in something they do not carry, and this is the
+clearest of them because the gap is *documented in an argument list*.
+
+`Bytes` is `core`'s `Slice<u8>` — `{ of, from, len }` — so a slice is a span that brought its
+subject. `from` is still there for a caller that wants the offset, `of()` loses its parameter by
+ceasing to exist, and the type three packages here invented separately turns out to be one that was
+already in `core`.
+
+Two other `Span`s remain and only one is the same change: `packages/ts`'s `{ from; to; }` is, and
+`packages/wacc`'s `{ line; col; }` is not — a line and a column are a *rendering* of a position
+rather than a position, which is what `packages/json`'s `render` computes from a slice.
 
 **`Program? compile` became `Result<Program, PatternFault>`.** One null for six distinct ways a
 pattern is malformed, in a compiler that knows which one it hit. A caller reporting *bad regex* to

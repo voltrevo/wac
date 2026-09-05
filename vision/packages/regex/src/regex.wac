@@ -25,13 +25,32 @@ export Result<Program, PatternFault> compile(Bytes pattern) { … }
 /** As `compile`, with the `i` flag. ASCII only — see the README. */
 export Result<Program, PatternFault> compileIgnoreCase(Bytes pattern) { … }
 
-/** Where a group matched, or nothing if it did not participate. */
-export struct Span {
-  i32 from;
-  i32 to;
-
-  Bytes of(const this, Bytes input) { return input.slice(this.from, this.to); }
-}
+/*
+ * ## `Span` was here and it is `Bytes`
+ *
+ * It was:
+ *
+ *     export struct Span {
+ *       i32 from;
+ *       i32 to;
+ *       Bytes of(const this, Bytes input) { return input.slice(this.from, this.to); }
+ *     }
+ *
+ * **A method that takes the missing half as a parameter** — the type knowing exactly what it needs
+ * and asking its caller for it at every call. `../../../QUESTIONS.md` counts 55 values here that name
+ * a position in something they do not hold, and this one is the clearest because it *documents* the
+ * gap in a signature.
+ *
+ * `Bytes` is `Slice<u8>` — `{ of, from, len }` — so a slice is a span that brought its subject.
+ * `from` is still there for a caller that wants the offset, `of()` loses its parameter by ceasing to
+ * exist, and the type this directory invented three times in three packages turns out to be one that
+ * was already in `core`.
+ *
+ * Two of the other three are `packages/wacc/src/ast.wac`'s `Span { line; col; }` and
+ * `packages/ts/src/bundle.wac`'s `Span { from; to; }`. Neither is deleted here — the second is the
+ * same change and the first is not, because a line and a column are a *rendering* of a position and
+ * not a position, which is the distinction `@/packages/json/src/parse.wac`'s `render` computes.
+ */
 
 /**
  * The whole match, then one per group in order.
@@ -41,8 +60,8 @@ export struct Span {
  * said it too, and said it in the same range as a position.
  */
 export struct Match {
-  Span whole;
-  Vec<Span?> groups;
+  Bytes whole;
+  Vec<Bytes?> groups;
 }
 
 /**
