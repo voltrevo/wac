@@ -25,6 +25,10 @@ export {
   connectThrough,
   NeedMore, Established, Refused, NotHttp,
   NoAuthority, NoHost, NoPort, PortNotDigits, PortOutOfRange, ProxyRefused, ProxyNotHttp,
+  // `NotGranted` is `std`'s and is an arm of `ProxyFault`, so a caller matching one needs it in
+  // scope through this package. Found by the *an import is not an export* sweep — one hit in the
+  // whole directory, which is the honest size of that finding.
+  NotGranted,
 } from "./proxy.wac";
 // **All ten members, not just the two with payloads.** Until 2026-09-05 this line exported
 // `RequestFault` and two of its members, so a caller outside the package could name the union and

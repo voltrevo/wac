@@ -7807,6 +7807,11 @@ barrel, and the mechanism differs in a way worth keeping: a barrel omits arms by
 this omitted them because **it never had them to export**. They arrived by `import`, and an import is
 not an export.
 
+*Swept for the rest, and there is one:* `@/packages/http/src/proxy.wac`'s `ProxyFault` has
+`NotGranted` as an arm, imported from `"std"` and not republished. Fixed. **One hit in 178 files is
+the honest size of this finding** — worth naming because a caller cannot match an arm it cannot name,
+and not worth more than a sentence, which is what an enumeration is for.
+
 > **Verdict:** convention — one name per exported type per package, checked by a barrel walk.
 > Settled by: the check, which is written. The language is not involved.
 

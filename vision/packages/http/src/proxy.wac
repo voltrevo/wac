@@ -12,6 +12,7 @@
 
 import { Result, Vec, Bytes } from "core";
 import { Net, Socket, NotGranted } from "std";
+export { NotGranted } from "std";
 
 /**
  * Where a proxy is.
