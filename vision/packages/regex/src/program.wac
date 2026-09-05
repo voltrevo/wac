@@ -41,11 +41,24 @@
 // often it is read* — and those point opposite ways here. Neither file made the distinction, and
 // nothing in this directory can measure which dominates.
 //
-// > **The rule both files needed:** an array of records costs an allocation per element at *build*
-// > and an indirection per element at *read*, and which one matters is a property of the caller. A
-// > lexer builds once and reads once; a regex builds once and reads a million times. The flat form
-// > wins the first on allocation and the second on locality, which is why it wins both — and neither
-// > file got there by reasoning, because each looked at one half.
+// ## Measured, and it went the other way
+//
+// `../../../bench/dispatchcost.wac`, v8, 67.1M dispatch steps per arm, best of two:
+//
+//       prog     steps     flat   narrow     wide    again
+//         16  67108864       82       68       68       82
+//        256  67108864       78       69       69       78
+//       4096  67108864       77       68       68       76
+//
+// **The boxed forms are 12% faster**, and eleven fields cost the same as three. Wasm bounds-checks
+// every array index: `code[pc * 3 + k]` is three checked loads and `code[pc]` plus two struct fields
+// is one. The flat form pays per *operand*; the boxed form pays per *instruction*.
+//
+// So `Op[]` is right, for a reason this file did not give — and **the paragraph at the top of this
+// header is the one now in doubt**, because *a boxed struct per range in a matcher's inner loop* is
+// exactly the cost the bench says is negative on the read side. What would rescue it is the build
+// side, which the bench deliberately excludes: a class table is built per compile like a token
+// stream, not once per program like the code array. Nobody has measured that.
 
 import { Bytes } from "core";
 

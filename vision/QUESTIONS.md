@@ -9259,19 +9259,49 @@ slots per instruction** against the original's three `i32` in a flat array, and
 and read once; a `Program` is built once and matched a million times.
 
 `lex.wac` reasoned from *build* and got the flat form. `program.wac` reasoned from *read* — in the
-paragraph about ranges — and then chose the boxed form for the thing that is read most. Each looked
-at one half of the trade and they happen to point the same way, because the flat form wins the build
-on allocation and the read on locality. **Neither file got there by reasoning; one got there by
-looking at the cheaper half.**
+paragraph about ranges — and then chose the boxed form for the thing that is read most.
+
+### Measured the same day, and the read half of that rule is wrong
+
+`../bench/dispatchcost.wac`, v8 host, 67.1M dispatch steps per arm, best of two:
+
+      prog     steps     flat   narrow     wide    again
+        16  67108864       82       68       68       82
+       256  67108864       78       69       69       78
+      4096  67108864       77       68       68       76
+
+**The boxed forms are about 12% faster** — 1.01 ns a step against 1.15. `again` is `flat` measured
+last and lands within 1 ms every time, so the gap is not drift.
+
+The mechanism is one neither file considered: **wasm bounds-checks every array index.**
+`code[pc * 3]`, `[pc * 3 + 1]`, `[pc * 3 + 2]` are three multiplies and three checked loads;
+`code[pc]` then `x.tag`, `x.a` is **one** checked load and two fixed struct offsets, which are not
+checked. The flat form pays per *operand*, the boxed form per *instruction*.
+
+**And width is free.** `narrow` and `wide` agree to the millisecond at every size, including 4096
+instructions where `wide` is 180 KB against `flat`'s 48 KB — only two fields are read and the other
+nine never reach the measurement. So *eleven slots against three* is not a read-side cost at all.
+
+What survives is the **build** half, untouched and now the whole argument: `lex.wac`'s case is 40,000
+allocations per source file for a stream read once.
+
+> **Both files are right for their own caller and both gave the wrong reason.** A lexer should be
+> flat because it allocates 40,000 objects it reads once. A regex should be boxed because it
+> allocates once and reads a million times, and each read is *cheaper*. Neither said that, and the
+> rule this entry proposed an hour earlier — that flat wins both halves — was wrong in the direction
+> nobody had checked.
 
 ### What could not be written
 
-**Nothing here can say which dominates, and that is not a hedge — it is the directory's rule.**
-`../README.md` says nothing in this tree compiles, so a matcher over a real pattern cannot be run, and
-the two numbers that would settle it — instructions dispatched per match, ranges tested per match —
-are properties of a workload. `bench/` could hold it, since it is written in today's language and
-runs, and it would be the first bench entry that arbitrates between two vision files rather than
-pricing one proposal.
+**~~Nothing here can say which dominates~~ — written, run, and it is `../bench/dispatchcost.wac`.**
+The first bench in this directory that arbitrates between two of its own files rather than pricing a
+proposal, and it took forty minutes and three seconds of machine time. The paragraph it replaces said
+the numbers *"are properties of a workload"*, which is true and was doing the work of an excuse: the
+question the two files actually disagreed on is not a workload property at all, it is what an indexed
+load costs, and that is one loop.
+
+What is still unmeasured is the **build** half — 40,000 allocations against 120,000 array writes —
+and the memory, since `wide` is 3.7x the footprint and free in this loop.
 
 **And the contradiction was found by reading, not by any instrument.** The body-hash sweep, the
 dangling check, the unresolved check and the quotation check all pass over both files without a word:

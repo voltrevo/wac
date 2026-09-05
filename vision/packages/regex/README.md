@@ -108,9 +108,20 @@ makes one instruction two heap objects.
 wrote it down — *"`Token[]` is therefore a **regression**, and the flat `i32[]` is correct"*. Two
 files, one week, one question, opposite answers, and neither noticed the other.
 
-The thing neither had is the rule that decides it: **an array of records costs an allocation per
-element at build and an indirection per element at read, and which dominates is a property of the
-caller.** A lexer builds once and reads once; a regex builds once and reads a million times. Each
-file looked at one half. Nothing here can measure which wins, because nothing here compiles — and
-this is the first place in the exercise where two of its own files disagree on a measurable question
-rather than on a matter of taste.
+This is the first place in the exercise where two of its own files disagree on a **measurable**
+question rather than on a matter of taste — so it was measured.
+
+[`../../bench/dispatchcost.wac`](../../bench/dispatchcost.wac), v8, 67.1M dispatch steps per arm:
+**the boxed forms are about 12% faster**, 1.01 ns a step against 1.15, and an eleven-field record is
+indistinguishable from a three-field one. Wasm bounds-checks every array index, so `code[pc * 3 + k]`
+is three checked loads and `code[pc]` then two struct fields is one — the flat form pays per
+*operand* and the boxed form per *instruction*.
+
+So `Op[] code` is right here, and for a reason this file did not give. What is left of the flat
+argument is the **build** side, which is `packages/wacc/src/lex.wac`'s case and not this one: a
+lexer allocates 40,000 objects per source file and reads them once, a `Program` allocates once and is
+matched a million times.
+
+> **Both files are right for their own caller and both gave the wrong reason.** And the paragraph
+> above about the class ranges is now the one to re-examine, since its argument — a boxed struct per
+> range in an inner loop — is the argument the bench just contradicted.

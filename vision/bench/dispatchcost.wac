@@ -1,0 +1,218 @@
+// What an array of records costs a dispatch loop — the number two files here disagreed without.
+//
+// **This file compiles and runs, which nothing outside `bench/` under `vision/` does.** It is a
+// measurement of today's language standing in for the proposed one, the same trick
+// `./slicecost.wac` uses: `../TECHNICAL.md` says an enum lowers to *one wasm struct — a tag, then a
+// slot per payload field of every variant*, so a plain struct of that shape is what the enum
+// compiles to and today's compiler can price it.
+//
+//     wac run vision/bench/dispatchcost.wac
+//
+// Run by hand. Nothing schedules it, because `vision/` is documentation as far as the tooling is
+// concerned and a bench in a lane would make this directory code.
+//
+// ## The disagreement it settles
+//
+// `../QUESTIONS.md` records it: `@/packages/regex/src/program.wac` refuses `Vec<Range>` because it
+// would box a struct per range in a matcher's inner loop, and two paragraphs later declares
+// `Op[] code`, which boxes one per **instruction**. `@/packages/wacc/src/lex.wac` met the identical
+// question and answered the other way — *"`Token[]` is therefore a **regression**, and the flat
+// `i32[]` is correct"*. Neither file could measure it.
+//
+// Three arms, because *boxed* is two effects and they should be separated:
+//
+//   flat    i32[] code, three ints per instruction, `code[pc * 3 + k]`
+//   narrow  Ins3[] — a boxed record of three fields. The pointer, without the width.
+//   wide    Ins11[] — a boxed record of eleven, which is what `Op` lowers to. Pointer and width.
+//   again   the control, measured last, because this machine is shared
+//
+// The program is built **once** and interpreted many times, which is a regex's profile and not a
+// lexer's — that asymmetry is the rule `../QUESTIONS.md` says neither file had, so the bench is
+// deliberately arranged to answer the read half and to say nothing about the build half.
+
+import { Core, Cli } from "std/platform.wac";
+
+/** Three fields: the pointer cost without the width cost. */
+struct Ins3 { i32 tag; i32 a; i32 b; }
+
+/**
+ * Eleven fields, which is what `Op` lowers to.
+ *
+ * Counted from `@/packages/regex/src/program.wac`: `byte`, `index`, `target`, `first`, `second`,
+ * `slot`, `kind`, `loop`, `loop`, `slot`, plus the tag.
+ */
+struct Ins11 {
+  i32 tag; i32 a; i32 b; i32 c; i32 d; i32 e;
+  i32 f; i32 g; i32 h; i32 i; i32 j;
+}
+
+/** A step over the flat form. Sums the operands so nothing folds away. */
+i32 runFlat(i32[] code, i32 len, i32 rounds) {
+  i32 s = 0;
+  for (i32 r = 0; r < rounds; r++) {
+    for (i32 pc = 0; pc < len; pc++) {
+      i32 t = code[pc * 3];
+      if (t == 0) { s = s + code[pc * 3 + 1]; }
+      else if (t == 1) { s = s + code[pc * 3 + 2]; }
+      else { s = s + 1; }
+    }
+  }
+  return s;
+}
+
+i32 runNarrow(Ins3[] code, i32 len, i32 rounds) {
+  i32 s = 0;
+  for (i32 r = 0; r < rounds; r++) {
+    for (i32 pc = 0; pc < len; pc++) {
+      Ins3 x = code[pc];
+      if (x.tag == 0) { s = s + x.a; }
+      else if (x.tag == 1) { s = s + x.b; }
+      else { s = s + 1; }
+    }
+  }
+  return s;
+}
+
+i32 runWide(Ins11[] code, i32 len, i32 rounds) {
+  i32 s = 0;
+  for (i32 r = 0; r < rounds; r++) {
+    for (i32 pc = 0; pc < len; pc++) {
+      Ins11 x = code[pc];
+      if (x.tag == 0) { s = s + x.a; }
+      else if (x.tag == 1) { s = s + x.b; }
+      else { s = s + 1; }
+    }
+  }
+  return s;
+}
+
+i64 best(i64 a, i64 b) { return a < b ? a : b; }
+
+string pad(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}
+
+string itoa(i64 v) {
+  if (v == 0) { return "0"; }
+  string out = "";
+  i64 n = v;
+  while (n > 0) {
+    // `as!` and not `as`: the compiler refuses a narrowing `as` and names the three operators in
+    // the same message. `d` is `0..9`, so the checked cast is the honest one and costs a branch
+    // nothing in this loop can see.
+    i32 d = (n % 10) as! i32;
+    out = "0123456789".slice(d, d + 1) + out;
+    n = n / 10;
+  }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 rounds = 2;
+  i32[] sizes = i32[](16, 256, 4096);
+  i64 sink = 0;
+
+  core.log("  prog     steps     flat   narrow     wide    again");
+
+  for (i32 si = 0; si < sizes.len(); si++) {
+    i32 len = sizes[si];
+
+    // Constant total steps, so the program length changes locality and nothing else.
+    i32 reps = (1 << 26) / len;
+
+    i32[] flat = i32[len * 3]();
+    Ins3[] narrow = Ins3[len](fill: Ins3(0, 0, 0));
+    Ins11[] wide = Ins11[len](fill: Ins11(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+    for (i32 i = 0; i < len; i++) {
+      i32 t = i % 3;
+      flat[i * 3] = t; flat[i * 3 + 1] = i; flat[i * 3 + 2] = i + 1;
+      narrow[i] = Ins3(t, i, i + 1);
+      wide[i] = Ins11(t, i, i + 1, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    i64 tFlat = 0x7FFFFFFFFFFFFFFF;
+    i64 tNarrow = 0x7FFFFFFFFFFFFFFF;
+    i64 tWide = 0x7FFFFFFFFFFFFFFF;
+    i64 tAgain = 0x7FFFFFFFFFFFFFFF;
+
+    for (i32 r = 0; r < rounds; r++) {
+      i64 a0 = core.monotonicNanos().wait();
+      sink = sink + (runFlat(flat, len, reps) as i64);
+      i64 a1 = core.monotonicNanos().wait();
+      sink = sink + (runNarrow(narrow, len, reps) as i64);
+      i64 a2 = core.monotonicNanos().wait();
+      sink = sink + (runWide(wide, len, reps) as i64);
+      i64 a3 = core.monotonicNanos().wait();
+      sink = sink + (runFlat(flat, len, reps) as i64);
+      i64 a4 = core.monotonicNanos().wait();
+
+      tFlat = best(tFlat, (a1 - a0) / 1000000);
+      tNarrow = best(tNarrow, (a2 - a1) / 1000000);
+      tWide = best(tWide, (a3 - a2) / 1000000);
+      tAgain = best(tAgain, (a4 - a3) / 1000000);
+    }
+
+    core.log(pad(itoa(len as i64), 6) + pad(itoa((len * reps) as i64), 10)
+             + pad(itoa(tFlat), 9) + pad(itoa(tNarrow), 9)
+             + pad(itoa(tWide), 9) + pad(itoa(tAgain), 9));
+  }
+
+  if (sink == 0) { core.log("sink 0"); }
+  return 0;
+}
+
+// ## What it answered, on the v8 host, 2026-09-05 — and it contradicts both files
+//
+//       prog     steps     flat   narrow     wide    again
+//         16  67108864       82       68       68       82
+//        256  67108864       78       69       69       78
+//       4096  67108864       77       68       68       76
+//
+// Milliseconds, best of two, 67.1M dispatch steps per arm. `again` is `flat` measured last and lands
+// within 1 ms of it every time, so the machine did not drift and the gap is real.
+//
+// **The boxed forms are about 12% faster than the flat one.** 1.15 ns a step against 1.01 ns. That
+// is the opposite of what `@/packages/wacc/src/lex.wac` concluded and the opposite of the reason
+// `@/packages/regex/src/program.wac` gives for keeping its flat class arrays.
+//
+// The mechanism, once seen, is obvious and neither file considered it: **wasm bounds-checks every
+// array index.** `code[pc * 3]`, `code[pc * 3 + 1]` and `code[pc * 3 + 2]` are three multiplies and
+// three checked loads; `code[pc]` then `x.tag`, `x.a` is **one** checked load and two fixed offsets
+// into a struct, which are not checked at all. The flat form pays per *operand* and the boxed form
+// pays per *instruction*.
+//
+// **And width is free.** `narrow` and `wide` are equal to the millisecond at every size, including
+// 4096 instructions where `wide` is 180 KB against `flat`'s 48 KB. Only two fields are read, so the
+// other nine are never touched and the extra footprint does not reach the measurement. That kills the
+// *eleven slots against three* argument as a **read**-side cost; it says nothing about the memory.
+//
+// ## So the rule in `../QUESTIONS.md` was half wrong, and this is the half
+//
+// It said the flat form *"wins the build on allocation and the read on locality, which is why it wins
+// both"*. The read half is wrong: on this host, in a dispatch loop, the boxed form wins the read.
+//
+// What survives is the **build** half, untouched and now the whole of the argument. `lex.wac`'s case
+// is 40,000 allocations per source file, once per compile, for a stream read once — and this bench
+// deliberately says nothing about that, because it builds the arrays outside the timer. So:
+//
+// > **`lex.wac` is right for its caller and `program.wac` is right for its caller, and both gave the
+// > wrong reason.** A lexer should be flat because it allocates 40,000 objects it reads once; a regex
+// > should be boxed because it allocates once and reads a million times, and each read is cheaper.
+// > The two files reached the correct answers for their own cases while arguing a general rule that
+// > is false in one direction.
+//
+// ## What could not be written
+//
+// **One host, and the mechanism is a host property.** The 12% is bounds-check elimination not
+// happening in v8's baseline path for `pc * 3 + k`. A compiler that hoisted the check, or wasm with
+// a proven-in-range index, would close it. `native/wasmtime` is not built here, which is the
+// convention `packages/wactest`'s `nativeHostWhyNot()` exists for.
+//
+// **The memory is not measured.** `wide` is 3.7x `flat`'s footprint and costs nothing in this loop;
+// a matcher whose working set already fills a cache would see something this bench cannot.
+//
+// **And it is a synthetic dispatch, not a matcher.** Three opcodes, no backtracking stack, no input.
+// It answers *what does indexing a record array cost against three lanes*, which is the question the
+// two files disagreed on, and not *how fast is this regex engine*.
