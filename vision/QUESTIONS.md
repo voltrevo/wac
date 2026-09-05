@@ -8164,6 +8164,48 @@ measuring bytes yet"* stands, and vision cannot close it —
 > already right; what is missing is a byte measurement, which needs a program that allocates unions
 > and therefore needs something outside this directory. Settled by: measuring, elsewhere.
 
+## Costing vision against the parser: nine branches and one ambiguity nothing uses
+
+The operator's standing ask is *consider actually implementing a parser for the new syntax*.
+`@/packages/wacc/src/parse.wac` costs it construct by construct against the 2,580-line
+recursive-descent parser that exists.
+
+| construct | what the parser gains |
+|---|---|
+| `union<A, B>` | nothing — `IDENT type_args` already |
+| `T??` | nothing — the `?` suffix already loops |
+| `fn<R(A)>` | one token, `[` to `<`, reusing `splitGt` |
+| `default:` for `else:` | one token |
+| `try` / `defer` / `schedule` / `yield` | one branch each |
+| a list literal | one branch — a **leading** `[` is unused, indexing is postfix |
+| a brace pattern | one alternative in the arm payload |
+| `never` | nothing — a type name |
+| **`?.`** | **lookahead, and the only ambiguity** |
+
+**Two hypotheses I brought were wrong and the file answered both.** I expected `fn[R(A)]`'s brackets
+to be avoiding the `>>` problem, so `fn<R(A)>` would reintroduce it — but `splitGt` is already there
+(*"Split a munched `>>` or `>>>` so a nested type-argument list can close"*), the bug that bought it
+is recorded at line 852, and 23 nested generics work today. And I expected `union<A, B>` to need a
+production, when `union` is an `IDENT` and `IDENT type_args` is already a type name — which is why
+`GRAMMAR.md` measures deleting `union_type` as changing nothing.
+
+**Nine of the ten are a branch or less**, smaller than a week of pages implies, because the pages
+argue about *meaning* and a recursive-descent parser is paid in *branches*.
+
+`?` already starts a ternary, so `p?.x` and `p ? .x` differ by one token of lookahead — the first
+place vision makes this grammar need two where it needed one. It is also the construct with **zero
+uses here**: eleven unwraps, no chains.
+
+> The only construct that costs the parser anything is the only one nothing here writes. Not an
+> argument for dropping it — this exercise cannot judge `?.`, because the rewrites inherit their call
+> sites. An argument that **the parser is not where this proposal should be decided.**
+
+> **Verdict:** convention — implement it; the cost is nine branches and one lookahead, and the
+> decisions worth arguing are all elsewhere. Settled by: writing it, a day's work rather than a
+> design.
+
+## The lesson about the instrument
+
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
 census from a regex to a token stream fixed one family of instrument error — strings, comments,
 nesting — and I treated that as having fixed them all. **The three that survived were about the
