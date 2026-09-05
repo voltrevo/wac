@@ -63,6 +63,38 @@ So the id is hashed to a `u64` and the map is keyed on that. This is the first p
 subjects where that decision has cost anything, which is worth recording either way: a decision whose
 consequences nobody has met is a decision nobody has tested.
 
+## The seam between two specifications, and a digest that does not know what it digested
+
+[`src/keys.wac`](src/keys.wac) is where QUIC stops deriving its own secrets and starts using TLS's.
+The shipped file describes itself exactly — *"The join between the two specifications is one
+sentence … This file is the sentence."* — and warns about the quietest failure in the package:
+
+> A transcript that included the framing would produce keys that are perfectly well-formed and that
+> no peer shares, which decrypts as noise and **looks exactly like a wrong Diffie-Hellman.**
+
+The hazard is the argument. `handshakeKeys(u8[] dhe, u8[] transcript, bool isServer)` takes the hash
+of every handshake message, and **every wrong value is 32 bytes and is a real digest of something** —
+so [`@/packages/crypto`](../crypto/)'s `Digest32`, whose guarantee is *32 bytes because a hash
+produced it*, cannot refuse one. `Digest32<Transcript>` could, with `Transcript.of(messages)` the
+only way to make one.
+
+That is the same request [`@/packages/ssz`](../ssz/) made about roots and was declined on — `sha256`
+cannot know a `T`. **The objection stands and the prices differ**: in `ssz` a mismatched root
+compares `false`, which a test sees; here it is a connection nobody can decrypt, indistinguishable
+from a failed key exchange.
+
+### And a `secret` loses its qualifier at a package boundary
+
+[`@/packages/tls`](../tls/)'s key schedule is this directory's `secret` consumer, and its finding was
+that `secret` has no return position, so eleven functions re-declare it on the way in. This file is
+the same absence one layer out: the traffic secret is derived in `tls`, is `secret` there, crosses to
+`quic` as a return value, and arrives as a plain `Bytes`.
+
+Eleven functions inside one package is a nuisance. **A package boundary is where the re-declaration
+is a different author** — and it changes what the qualifier would have to be, since inside one file a
+checker could plausibly infer the taint, and across a package the only thing that carries it is the
+signature.
+
 ## What could not be written
 
 **The connection state machine**, which is 3,000 of the 3,279 lines and would have said nothing about

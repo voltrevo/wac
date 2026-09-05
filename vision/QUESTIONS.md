@@ -5781,3 +5781,48 @@ load-bearing**. Nothing in this tree does that automatically — `tools/mutate.t
 what it is for — and no type would have produced the sentence. The finding is worth separating from
 the `Result` one: naming refusals makes the mutation *detectable*, and somebody still has to run it
 and write the answer where the next reader will be.
+
+## A digest that knows what it digested — the same missing feature, at two prices
+
+`@/packages/crypto/src/digest.wac` gives `Digest32`, whose guarantee is *32 bytes because a hash
+produced it*. Two packages have now found that this is the wrong guarantee for their problem, and
+they differ in what it costs.
+
+**`@/packages/ssz` asked first and was declined.** A root is a `Chunk`, so *"a `Chunk` from a
+`BeaconState` and one from a `SyncCommittee` compare `false` rather than failing to type-check"*.
+`Root<T>` is the standard answer; it is unwritten because the `Chunk` comes out of `sha256`, which
+cannot know a `T`.
+
+**`@/packages/quic/src/keys.wac` is the same request and the consequence is not a `false`.** Its
+`handshakeKeys(u8[] dhe, u8[] transcript, bool isServer)` takes the hash of every handshake message,
+and the file warns about exactly the argument:
+
+> `deriveSecret` takes a hash of **every handshake message so far, concatenated with their four-byte
+> headers, and nothing else** — not the records or packets that carried them, not the CRYPTO frames,
+> not lengths added by QUIC. A transcript that included the framing would produce keys that are
+> perfectly well-formed and that no peer shares, which decrypts as noise and **looks exactly like a
+> wrong Diffie-Hellman.**
+
+Every wrong argument there is 32 bytes and is a real digest of something. `Digest32` cannot refuse
+one; `Digest32<Transcript>` could, with `transcriptOf(messages)` the only way to make one.
+
+**So one missing feature has two prices.** In `ssz` it is a comparison that answers `false` — wrong,
+and a test can see it. In `quic` it is a connection that nobody can decrypt, indistinguishable from a
+failed key exchange, which is the failure mode this tree's packages describe as the quiet kind.
+
+### And the feature is a phantom parameter, which is smaller than the other asks here
+
+`Digest32<T>` where `T` appears in no field. `sha256` still cannot know a `T` — that objection stands
+— so the constructor is the *caller's*: `Transcript.of(messages)` hashes and tags in one place, and
+nothing else can produce a `Digest32<Transcript>`. Which reduces it to the entry on **a type only its
+own file may build**, for the third time, and makes the phantom parameter a way of *naming* the
+guarantee rather than establishing it.
+
+Two things fall out that neither entry had alone:
+
+- **The phantom parameter is useless without the private constructor.** If anyone can write
+  `Digest32<Transcript>(bytes)` the tag says nothing, so these are one feature and have been filed as
+  two.
+- **It answers the direction question too.** `quic`'s keys are per-direction and `Side` fixes the
+  argument, not the result: `PacketKeys` for the client and for the server are the same type. A
+  phantom parameter would separate them, so the same feature closes both holes in one file.

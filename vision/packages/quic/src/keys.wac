@@ -1,0 +1,114 @@
+// Where QUIC stops deriving its own secrets and starts using TLS's — one sentence of specification,
+// and three things the types cannot say about it.
+//
+// `packages/quic/src/keys.wac` describes itself exactly:
+//
+// > The join between the two specifications is one sentence: QUIC takes TLS's traffic secret and
+// > runs `HKDF-Expand-Label` on it with `quic key`, `quic iv` and `quic hp` instead of TLS's own
+// > `key` and `iv`. … This file is the sentence.
+//
+// So it is the smallest seam in the tree between two packages implementing two specifications, and
+// the failure it warns about is the quietest:
+//
+// > A transcript that included the framing would produce keys that are perfectly well-formed and
+// > that no peer shares, which decrypts as noise and **looks exactly like a wrong Diffie-Hellman**.
+
+import { Bytes } from "core";
+import { Digest32 } from "@/packages/crypto/src/digest.wac";
+
+/**
+ * The hash of every handshake message so far — and the type that would have prevented the warning.
+ *
+ * `@/packages/crypto/src/digest.wac` gives a `Digest32` whose guarantee is *32 bytes because a hash
+ * produced it*. That is not enough here. The hazard is not a wrong **length**, it is a hash of the
+ * **wrong bytes** — the shipped signature is `handshakeKeys(u8[] dhe, u8[] transcript, bool
+ * isServer)`, and every wrong argument to `transcript` is 32 bytes and is a real digest of
+ * something.
+ *
+ * What would say it is a digest that knows what it digested: `Digest32<Transcript>`, a phantom
+ * parameter carrying provenance rather than shape. Then `transcriptOf(messages)` is the only way to
+ * make one, and hashing the frames instead of the messages produces a `Digest32<Frames>` that this
+ * function refuses.
+ *
+ * **Which is the same request `@/packages/ssz` made about roots** — *"a `Chunk` from a `BeaconState`
+ * and one from a `SyncCommittee` compare `false` rather than failing to type-check"* — and it was
+ * declined there because `sha256` cannot know a `T`. It cannot here either. The difference is that
+ * `ssz`'s consequence is a comparison that answers `false`, and this one's is a connection that
+ * silently cannot be decrypted by anybody, indistinguishable from a failed key exchange.
+ *
+ * So the same missing feature has two prices, and the second is the argument.
+ */
+export const struct Transcript {
+  Digest32 hash;
+
+  /** Every handshake message with its four-byte header, and nothing else. The only constructor. */
+  Transcript of(Bytes messages) { … }
+
+  /** Two runs of messages, concatenated then hashed — not two hashes combined. */
+  Transcript ofTwo(Bytes first, Bytes second) { … }
+}
+
+/** Which side's traffic secret. `bool isServer` in the shipped signature. */
+export enum Side { Client, Server }
+
+/** The packet protection keys for one direction. */
+export struct PacketKeys { Bytes key; Bytes iv; Bytes headerProtection; }
+
+/**
+ * Handshake keys — the first real ones, since they depend on the exchange and on every handshake
+ * byte both sides have seen.
+ *
+ * `dhe` is `secret` and the answer is not, which is the hole `@/packages/crypto/src/secret.wac`
+ * names and this file makes concrete across a **package boundary**: the shared secret arrives from
+ * `@/packages/tls`'s key schedule, is `secret` there, and arrives here as an ordinary `Bytes`
+ * because a return position cannot carry the qualifier.
+ */
+export PacketKeys handshakeKeys(secret Bytes dhe, const Transcript t, Side side) { … }
+
+/** The same for application keys, after the handshake completes. */
+export PacketKeys applicationKeys(secret Bytes dhe, const Transcript t, Side side) { … }
+
+// ## 1. A `secret` that crosses a package boundary loses the qualifier at the seam
+//
+// `@/packages/tls/src/keyschedule.wac` is this directory's `secret` consumer — *"eleven functions
+// that hand a secret to each other, and that is the thing nothing had tried"* — and its finding was
+// that `secret` has no return position, so each of the eleven re-declares it on the way in.
+//
+// This file is the same absence one layer out. The traffic secret is derived in `tls`, is `secret`
+// there, crosses to `quic` as a return value, and arrives as a plain `Bytes` that this file marks
+// `secret` again on its own parameters. **Eleven functions inside one package is a nuisance; a
+// package boundary is where the re-declaration is a different author.**
+//
+// Worth stating because it changes what the qualifier would have to be. Inside one file, a checker
+// could plausibly infer the taint. Across a package, the only thing that carries it is the
+// *signature*, and a qualifier with no return position cannot appear in one.
+//
+// ## 2. `bool isServer` decides which of two secrets, and the shipped comment says it is a hazard
+//
+// > `isServer` picks which side's traffic secret, and it is …
+//
+// A `bool` selecting between two derivations, where getting it backwards produces keys that are
+// well-formed and shared with nobody — the same silent failure as the transcript. `Side` costs
+// nothing and this directory has now found the shape in `@/packages/codec`'s `pad`,
+// `@/packages/git`'s `isDir`, and here; the difference is that the first two are wrong in a way a
+// test sees.
+//
+// ## 3. What could not be written
+//
+// **The two specifications' boundary is a comment.** *"Everything above that line is
+// `packages/tls`'s and everything below it is packet protection that `initial.wac` already does."*
+// That sentence is the whole architecture of the seam and there is no way to state it — no module
+// boundary, no type, no import that says *this is where RFC 9001 takes over from RFC 8446*. A
+// package boundary is the nearest thing and it is one directory away from where the line actually
+// falls.
+//
+// **`PacketKeys` is three `Bytes` and they are 16, 12 and 16.** Eighth package to want a length in a
+// type, and the first where all three fields are different lengths of the same type in one struct —
+// so a constructor that transposed `key` and `headerProtection` builds a value that is wrong and
+// well-formed, and both are 16 bytes.
+//
+// **Nothing says these keys are for one direction.** `handshakeKeys(…, Side.Client)` and the server
+// pair are the same type, so a receiver that protects with the wrong set gets, again, packets nobody
+// can read. `Side` fixes the *argument* and not the *result*, which would need the phantom parameter
+// §1 wanted for the transcript — so one missing feature would answer both, and it is the one `ssz`
+// asked for and was told `sha256` cannot know a `T`.
