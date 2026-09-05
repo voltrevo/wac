@@ -9389,6 +9389,63 @@ in this repository, and `tools/wac/` has a dozen guards of that shape and not th
 rather than as an issue because the population is one directory's prose and the cost is a failed parse
 that the author sees immediately — it wastes minutes, not correctness.
 
+## *A rewrite drops what its callers did not want* — swept, and the alarming version of it is wrong
+
+*2026-09-05.* `@/packages/bytes`'s `Buf` had lost `toStr` and `pushDecimal`, which are the two
+methods the shipped tree's largest string duplication needs, and nothing recorded either loss. That
+produced a method finding — **a rewrite drops what its own callers did not happen to want** — and the
+obvious next move was to ask it of the whole directory. Two sweeps, and the first one measured the
+wrong thing.
+
+### At file granularity there is nothing to find, and the first table said otherwise
+
+Shipped `src` files with no same-named counterpart here: **`box` 74, `tor` 50, `crypto` 23, `wacc`
+22**, and thirty packages with at least one. Read cold that is a scandal, and it is an artefact: the
+rewrites are **samples by design** — `box` has 82 applets and this directory wrote ten on purpose.
+
+The question worth asking is whether the sample is *stated*, and **thirty of thirty state it**. A
+regex for the phrasings found 28; both misses were wordings it did not cover, `@/packages/wacpkg`'s
+*"One file, added later"* among them. So the complement test at this granularity was already answered
+everywhere before it was asked.
+
+### At method granularity nothing states it, and that is where the case came from
+
+`Buf` is a file that **was** rewritten. Built the check that would have caught it: for every type
+with the same name in both trees, which shipped methods have no counterpart?
+
+    11 types share a name and have methods on both sides
+     9 lost at least one — 50 methods in total
+
+| type | absent |
+|---|---|
+| `Parser` (json) | 17 — `parseValue`, `parseObject`, `eatWord` … |
+| `T` (wactest) | 13 — `eqBool`, `eqBytes`, `eqI64` … |
+| `Buf` | 6 — `pushU16`, `pushU32`, `pushCodepoint`, `pushRepeat`, `pushBytes`, `toStr` |
+| `Surface`, `Line`, `JsonObject`, `Headers` | 3 each |
+| `Window`, `Sha256` | 1 each |
+
+**Read by hand, and almost all of them are the capability under a different spelling.** `Headers`
+lost `nameAt(i)` and `valueAt(i)` because the shipped type is two parallel arrays and this one is a
+`Vec<Field>` a caller iterates — the accessors existed *because of* the representation. `Line` lost
+`dropLast` to `Buf.truncate`. `Parser`'s seventeen are parse steps behind an elided body. `T`'s
+thirteen are one assertion per type in a harness this directory rewrote around a different idea. And
+`Surface` and `Window` **gained** more than they lost.
+
+> **One in fifty was a real loss**, and it is the one that started this: `Buf`'s `toStr`, with
+> `pushDecimal` beside it. The instrument cannot tell the two cases apart, because *is this capability
+> still reachable* is a question about the whole package and not about a name.
+
+### What could not be written
+
+**The check is a candidate generator and there is no version of it that is not.** Every row needs a
+reader to decide whether the capability moved or vanished, which is fifty judgements to find one
+answer — and the alternative, comparing capabilities rather than names, is comparing designs, which
+is the exercise itself.
+
+**And it cannot see what neither tree has.** `Buf` was missing `pushStr` in *both*, which is
+`issues/lang/0347a` and the larger half of that finding. A same-name diff is blind to a method nobody
+ever wrote, which is the shape this whole directory exists to find.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

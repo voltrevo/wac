@@ -142,6 +142,15 @@ loops and sixteen prepends, `issues/lang/0347a`.
 > **A rewrite drops what its own callers did not happen to want.** Every other finding here is about
 > the shipped design; this one is about the method, and the sample is the thing that was wrong.
 
+*Swept the same hour, and the alarming reading is wrong.* At **file** granularity there is nothing to
+find: thirty packages have shipped files with no counterpart — `box` 74, `tor` 50 — and all thirty
+**state their sample in prose**, because the rewrites are samples by design. At **method**
+granularity, where `Buf`'s case actually lived, eleven types share a name across the trees and nine
+lost at least one method, fifty in all — and read by hand almost every one is the capability under a
+different spelling, because the accessor existed for the representation that changed. **One in fifty
+was a real loss.** The check is a candidate generator and there is no version that is not, since
+*is this still reachable* is a question about a package rather than about a name.
+
 **The pattern in the retirements is one sentence:** a feature that looks missing from inside one file
 usually has a caller that would not use it. All three were argued from the file that wanted them, and
 none of the three authors — me — had looked at what the callers do with the failure.
