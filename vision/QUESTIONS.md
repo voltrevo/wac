@@ -6175,12 +6175,27 @@ narrower: the opportunity has been taken **zero times out of thirty-three**, acr
 and one application, and this exercise cannot say why. What it can say is that it will not find out
 — a construct that only reads better does not force a change in either kind of file.
 
-**And writing new code found something the entries had not stopped happening.** `shadowedBy` answers
-`-1`, in a directory whose entry on *a sentinel drawn from the value's own range* lists seven of
-them, on the day after the seventh was added, written by the person who wrote both. `i32?` is right;
-`-1` is what came out.
+**And writing new code found something the entries had not stopped happening.** `shadowedBy` and
+`ignoredAncestor` both answered `-1`, in a directory whose entry on *a sentinel drawn from the
+value's own range* lists seven of them, on the day after the seventh was added, written by the person
+who wrote both — and the commit reporting it said **one**, which a sweep the next morning corrected
+to two. Both are `i32?` now.
 
 Which is a finding about the exercise rather than the language, and it is the sharper half of this
-entry: **naming a shape does not stop a writer producing it.** Two of the shapes this directory has
-spent five days cataloguing went into the first draft of the one file written specifically to watch
-for them.
+entry: **naming a shape does not stop a writer producing it.** Two went into the first draft of the
+one file written specifically to watch for them, and the count of them was wrong in the same commit.
+
+### Swept the whole directory afterwards, and the third `-1` is not a slip
+
+Three `i32 … or -1` signatures in 158 files. The two above, and
+`@/packages/raster/src/font16.wac`'s `glyphIndex` — which is **argued** rather than overlooked:
+`surface.wac` names it twice, once as *"`glyphIndex`'s `-1`, which is generated code and stays"* and
+once in its own list, *"`i32?` says it, and the font table is generated code."* A recorded decision
+is not the same as a habit, and a sweep that cannot tell them apart would have reported three.
+
+**And the sweep's first pass reported nine more that do not exist.** It blanked string literals
+before searching, so every `return "…";` became `return "";`. That is the second time an instrument
+here has stripped the thing it was looking for — the quotation checker blanked import paths and
+reported zero importers of `@/packages/codec`. Worth stating as a rule, since it has now cost two
+false readings: **a normaliser that removes noise removes evidence, and the two are told apart only
+by knowing what you are looking for.**

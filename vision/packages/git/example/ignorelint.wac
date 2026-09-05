@@ -40,23 +40,23 @@ export Vec<Finding> dead(const Rules rules) {
   Vec<Finding> out = Vec.create();
   for (i32 i = 0; i < rules.ordered.len(); i++) {
     Rule r = rules.ordered.get(i);
-    i32 later = shadowedBy(rules, i);
-    if (later >= 0) { out.push(Finding(i, Shadowed(later))); continue; }
+    i32? later = shadowedBy(rules, i);
+    if (later !is null) { out.push(Finding(i, Shadowed(later!))); continue; }
     if (r.negated && !anythingIgnores(rules, r)) { out.push(Finding(i, NegatesNothing)); continue; }
-    i32 parent = ignoredAncestor(rules, i);
-    if (parent >= 0) { out.push(Finding(i, UnderIgnoredDir(parent))); }
+    i32? parent = ignoredAncestor(rules, i);
+    if (parent !is null) { out.push(Finding(i, UnderIgnoredDir(parent!))); }
   }
   return out;
 }
 
-/** The index of a later rule with the same pattern and base, or `-1`. */
-i32 shadowedBy(const Rules rules, i32 i) { … }
+/** The index of a later rule with the same pattern and base. */
+i32? shadowedBy(const Rules rules, i32 i) { … }
 
 /** Whether any rule ignores something this negation could apply to. */
 bool anythingIgnores(const Rules rules, const Rule negation) { … }
 
-/** A rule whose directory is already ignored outright, or `-1`. */
-i32 ignoredAncestor(const Rules rules, i32 i) { … }
+/** A rule whose directory is already ignored outright. */
+i32? ignoredAncestor(const Rules rules, i32 i) { … }
 
 /** Read every `.gitignore` under `root`, in the order `Rules` wants them. */
 export async Result<Rules, NotGranted> gather(Files files, string root) { … }
@@ -85,7 +85,7 @@ export async Result<i32, NotGranted> main(Files files, Out out, string root) {
 // | `const` on a parameter | yes | five times, and it is the reason `dead` can take the rules by reference |
 // | **`auto`** | **no** | and `Rule r = rules.ordered.get(i);` is exactly its case |
 // | a `[…]` literal | no | nothing here builds a fixed array |
-// | optional chaining | no | `shadowedBy` answers `-1` rather than `i32?`, which is the finding below |
+// | optional chaining | no | and the two `i32?`s below were `-1` in the first draft, which is the finding |
 // | a tuple | no | `Finding { index, why }` is two fields and they are not interchangeable |
 //
 // **So `auto` went unused again, in the one file that had no shipped text to copy.** That is a
@@ -100,15 +100,18 @@ export async Result<i32, NotGranted> main(Files files, Out out, string root) {
 //
 // ## And the one thing writing new code did find
 //
-// **`shadowedBy` answers `-1`.** I wrote it that way, in a directory that has an entry counting seven
-// sentinels drawn from a value's own range, on the day after adding the seventh. `i32?` is right and
-// `-1` is what came out — so the sentinel is not a habit inherited from the shipped tree either. It
-// is what an index-returning search looks like when you are thinking about the search.
+// **`shadowedBy` and `ignoredAncestor` both answered `-1`.** I wrote them that way, in a directory
+// with an entry counting seven sentinels drawn from a value's own range, on the day after adding the
+// seventh — and then reported *one* of them, which a sweep the next morning corrected to two. `i32?`
+// is right and `-1` is what came out, twice; both are `i32?` now.
+//
+// So the sentinel is not a habit inherited from the shipped tree either. It is what an
+// index-returning search looks like when you are thinking about the search.
 //
 // That is the finding this file exists for, and it is about the exercise rather than the language:
 // **the shapes this directory has spent five days naming are not ones a writer avoids by having
-// named them.** Two of them went in on the first draft of a file written specifically to watch for
-// them, by the person who wrote both entries.
+// named them.** Two went into the first draft of the one file written specifically to watch for
+// them, and the count of them was wrong in the same commit.
 //
 // ## What could not be written
 //
