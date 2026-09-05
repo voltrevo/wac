@@ -6780,6 +6780,20 @@ outside the package could name the union and not take it apart. That is a real b
 *the members were not reachable* as an explanation for the other 137. They were reachable, and
 nobody called them.
 
+*Third and fourth instances, 2026-09-05, both found by one caller in one afternoon:*
+`@/packages/server/src/routes.wac` could not import `writeValue` — so `@/packages/json` could parse
+and could not print, **from outside** — and could not write `Str(x)` or `Object(o)`, because a bare
+variant name has to be in scope at the call site and the barrel re-exported `JsonValue` without its
+arms. So the rule is not *export the union's members*; it is:
+
+> **A barrel that exports a type must export everything needed to take it apart or put it together:
+> a union's members, an enum's arms, and whatever turns the type back into bytes.** A type you can
+> name and cannot use is the default outcome, because the barrel is written from the type list.
+
+Four instances and every one was found by the first caller from outside the package. None was found
+by reading the barrel, which is what makes it a pattern rather than four slips — a barrel is complete
+against the question *did I export the types*, and that is the wrong question.
+
 ### Second caller, and the hypothesis the first one suggested is wrong
 
 `refuse.wac` earning its ten suggested a rule, written down before the next file:

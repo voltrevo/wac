@@ -12,6 +12,7 @@ export { Response, statusHasBody, write } from "./response.wac";
 // comparing a field value case-insensitively is something a caller of this package does, and
 // recognising a tchar is not.
 export { Headers, eqFold } from "./headers.wac";
+export { Response, Status, write } from "./response.wac";
 // **All ten members, not just the two with payloads.** Until 2026-09-05 this line exported
 // `RequestFault` and two of its members, so a caller outside the package could name the union and
 // could not `match` it: `@/packages/server/src/refuse.wac` is the first file that tried and the

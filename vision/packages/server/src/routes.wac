@@ -1,0 +1,131 @@
+// The routes — a table, where the shipped file is a chain of `if`s.
+//
+// `packages/server/src/routes.wac` is 250 lines and nothing here had predicted anything about it. Its
+// header says what it is for and the reason is the best argument in the package:
+//
+// > Each one is chosen because it puts a different package on the request path, so that a bug in how
+// > they fit together shows up as a wrong HTTP response rather than as nothing at all. … every time
+// > something in this repo became the first outside consumer of something else it found a defect.
+//
+// Which is this directory's own method, in the shipped tree, written down first.
+
+import { Result, Vec, Bytes } from "core";
+import { Request, Response, Status } from "@/packages/http";
+import { JsonValue, JsonObject, Str, Object, writeValue } from "@/packages/json";
+import { Url, parseUrl } from "@/packages/url";
+
+/** The methods these routes answer. `Request.method` is a `Bytes` in the shipped tree. */
+export enum Method { Get, Post, Head, Other }
+
+/** What a handler is given: the request, and the path segments after the pattern matched. */
+export struct Ctx { const Request req; Vec<Bytes> rest; }
+
+/**
+ * One route.
+ *
+ * The shipped dispatch is an `if` chain over `segments(path)` with the method tested inside each
+ * arm, so a route is three places: the test, the body, and the comment at the top of the file
+ * listing it. Here it is one row, and the list at the top of the shipped file **is** the table.
+ */
+export struct Route { Method method; string prefix; fn<Response(Ctx)> run; }
+
+/** Every route, in the order the shipped header lists them. */
+export Vec<Route> table() { … }
+
+/** Dispatch: the first row whose method and prefix match, or 404. */
+export Response route(const Vec<Route> rs, const Request req) { … }
+
+// ── The handlers, and the two that are the point ────────────────────────────────────────────────
+
+/**
+ * `GET /echo?a=1&b=2` — the query as JSON.
+ *
+ * **Builds a `JsonValue` and hands it to `writeValue`.** The shipped route builds the JSON by hand
+ * into a `Buf` with a local `writeJsonString`, in a file that imports `writeValue` from
+ * `packages/json` and uses it in the route below. Two JSON producers in one file, one of them the
+ * library's — §1.
+ */
+Response echo(Ctx c) {
+  JsonObject o = JsonObject.create();
+  for (Bytes pair in splitOn(c.req.query, '&')) {
+    Bytes key = upTo(pair, '=');
+    o.push(formDecode(key), Str(formDecode(after(pair, '=')).toArray()));
+  }
+  return json(Status.Ok, writeValue(Object(o)));
+}
+
+/** `POST /json` — parse and canonicalise. The one route the shipped file already does this way. */
+Response canonical(Ctx c) { … }
+
+/** `GET /match/<p>/<s>` — compile and run a pattern. */
+Response matchRoute(Ctx c) { … }
+
+Response json(Status s, Bytes body) { … }
+Response text(Status s, string body) { … }
+
+/** `+` means space, then percent-decoding — which is what a query string is and a path is not. */
+Bytes formDecode(Bytes s) { … }
+
+/** Views, not copies: `@/core/slice.wac` is what makes this a generator over one array. */
+gen<Bytes> void splitOn(Bytes b, u8 sep) { … }
+Bytes upTo(Bytes b, u8 sep) { … }
+Bytes after(Bytes b, u8 sep) { … }
+
+// ## 1. Two JSON producers in one file, and the hand-written one is correct
+//
+// `routes.wac` imports `writeValue` from `packages/json` — uses it once, for `POST /json` — and has
+// a local `writeJsonString` and `writeInt` that the other two JSON-producing routes use. Third
+// instance of the shape `issues/system/0339a` is about, after `packages/tor`'s fourth base64 encoder.
+//
+// **And it is not a bug, which is the part worth writing down.** I read `writeJsonString` expecting
+// to find it wrong — a partial escaper, since its own comment says *"escaped enough to be valid for
+// the values these routes produce"* — and it escapes `"`, `\` and every byte under 0x20 as `\u00XX`,
+// which is complete. So the duplicate is a duplicate and nothing more.
+//
+// That is worth stating because the previous two instances of this shape *were* wrong in some way,
+// and finding a third that is not says what the shape actually costs: **not incorrectness, but that
+// the two must be kept in agreement by nobody.** If `packages/json` ever escapes ` ` — which it
+// should, since a JSON document embedded in JavaScript needs it — one of the three routes gets it
+// and two do not, and no test compares them because the second producer is a private function.
+//
+// The reason the shipped file has one is structural rather than careless: `writeValue` takes a
+// `JsonValue`, and building a `JsonValue` for a query string means allocating a tree to serialise it
+// immediately. The hand-rolled version streams. So the fix is not *call the library*, it is that the
+// library has no streaming producer — which is the entry `@/packages/json`'s README has as
+// *`writeValue` is the only way out and it wants a tree*.
+//
+// ## 2. `segments` counts, allocates, fills, and copies
+//
+//     u8[][] out = u8[][count > 0 ? count : 1]();
+//     …
+//     u8[][] exact = u8[][n]();
+//     for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+//
+// Two passes over the path and a copy of the result, because an array's length is fixed at
+// construction and the first pass's count is an over-estimate. `issues/system/0333a` has this as
+// *ten take-then-rebuild sites*; this is an eleventh and the copy is the whole function's cost.
+//
+// `Vec<Bytes>` removes the second pass and `gen<Bytes>` removes both — `splitOn` above yields views
+// as it walks, so nothing is allocated at all and the caller stops when it has what it needs. Which
+// is what a router does: it wants the first segment, then maybe the second, and never the whole list.
+//
+// ## 3. What could not be written
+//
+// **`Route { Method method; string prefix; … }` cannot express `/match/<p>/<s>`.** A prefix match
+// plus `Ctx.rest` is what the shipped dispatch does by hand and it loses the arity: `/match/a` and
+// `/match/a/b/c` both reach the same handler, which then checks `rest.len()` and answers 404 itself.
+// So the table knows the path and not the shape of it, and every handler re-checks. A pattern with
+// typed holes is the ask and it is a small language of its own; what this directory can say is that
+// the alternative — one row per arity — is not writable either, because `rest` would have to be a
+// tuple of a different width per row and `fn<Response(Ctx)>` is one type.
+//
+// **`table()` is a function because a `Vec` has no literal.** `@/packages/ens`'s README has this
+// from the other side — *three lines of ceremony to say one type* — and here it is six rows that
+// want to be six lines of data and are a function body that pushes. The shipped file does not have
+// this problem because it has no table.
+//
+// **`Ctx.rest` is `Vec<Bytes>` viewing the request, and `Response.body` is a `Bytes` that may view
+// the same array.** The echo route returns a slice of what it was given, twice, and nothing says the
+// response must be written before the buffer is reused. `@/packages/http/src/response.wac` records
+// the decision; what cannot be written is the constraint, and this is the first file where the
+// producer and the consumer of that lifetime are the same function.

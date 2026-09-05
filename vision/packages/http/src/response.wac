@@ -1,0 +1,120 @@
+// A response — the type this package's fault vocabulary has been describing and which nobody wrote.
+//
+// `./fault.wac` declares `ResponseFault` as `union<RequestFault, BadStatus>` and argues carefully
+// about what a *response* can get wrong that a request cannot. There was no `Response`. Ten members
+// of vocabulary for a type the package does not have, which is the shape `../../../QUESTIONS.md`
+// counts as *137 union members that nothing discriminates*, arriving one level up: **the vocabulary
+// for a thing can be finished before the thing exists, and nothing notices.**
+//
+// Written now because `@/packages/server/src/routes.wac` needed one, which is this directory's usual
+// order and the reason it works.
+
+import { Vec, Bytes } from "core";
+import { Headers } from "./headers.wac";
+
+/**
+ * What a handler answers.
+ *
+ * The shipped `Response { i32 status; Headers headers; u8[] body; }` with two changes, both from
+ * writing the routes rather than from reading the type.
+ */
+export struct Response {
+  /**
+   * **A `Status`, not an `i32`** — see below. The shipped `reason(i32)` is a nineteen-arm `if` chain
+   * mapping code to phrase, which is a lookup keyed on a value from a closed set.
+   */
+  Status status;
+  Headers headers;
+  /**
+   * **`Bytes`, not `u8[]`**, so a handler answering a slice of the request it was given does not copy.
+   * `@/packages/server/src/routes.wac`'s echo route returns a view of its own input twice.
+   */
+  Bytes body;
+
+  Response of(Status status) { return Response(status, Headers.create(), Bytes.empty()); }
+
+  /** Add a field. Framing headers are `write`'s to add, which is the shipped rule and a good one. */
+  void set(this, string name, string value) {
+    this.headers.push(name.toBytes(), value.toBytes());
+  }
+}
+
+/**
+ * The status codes this system answers, and **the reason phrase is a property of the arm.**
+ *
+ * The shipped file has `reason(i32 status)`, nineteen `if`s returning a string, and a caller writes
+ * `Response.create(400)`. Two things go wrong with that and both are in the tree: a code with no
+ * phrase falls through to a default, and nothing stops `Response.create(4000)`.
+ *
+ * An enum with a method is the same table with the key checked. It is deliberately **not** every code
+ * in RFC 9110 — the ask is *what this system answers*, and a closed set is only worth having if it is
+ * closed. `Other(i32 code)` is the escape and it is the one arm with no phrase, which is honest:
+ * a code nobody enumerated has no phrase anybody agreed on.
+ */
+export enum Status {
+  Ok, Created, NoContent,
+  MovedPermanently, NotModified,
+  BadRequest, Forbidden, NotFound, MethodNotAllowed, RequestTimeout,
+  PayloadTooLarge, HeaderFieldsTooLarge, UnsupportedMediaType,
+  InternalServerError, NotImplemented, ServiceUnavailable, VersionNotSupported,
+  Other(i32 code)
+
+  /** The wire number. */
+  i32 code(const this) {
+    return match (this) {
+      Ok: 200, Created: 201, NoContent: 204,
+      MovedPermanently: 301, NotModified: 304,
+      BadRequest: 400, Forbidden: 403, NotFound: 404, MethodNotAllowed: 405, RequestTimeout: 408,
+      PayloadTooLarge: 413, HeaderFieldsTooLarge: 431, UnsupportedMediaType: 415,
+      InternalServerError: 500, NotImplemented: 501, ServiceUnavailable: 503,
+      VersionNotSupported: 505,
+      Other(c): c,
+    };
+  }
+
+  /** Decoration — the code is what a client reads. Empty for `Other`, which is the point. */
+  string reason(const this) { … }
+}
+
+/** The response on the wire. Framing is decided here and not by the handler. */
+export Bytes write(const Response r, bool headOnly) { … }
+
+// ## 1. `Status` is the third enum-over-a-closed-i32 in this directory and the first with an escape
+//
+// `@/packages/tor/src/pathsel.wac` turned four states of two booleans into an enum;
+// `@/packages/datetime`'s `Sign` turned `""`/`"+"`/`"-"` into three arms. Both sets are genuinely
+// closed. HTTP status codes are not: the registry has sixty-odd and a private one is legal, so an
+// enum that tried to be complete would be wrong tomorrow.
+//
+// `Other(i32 code)` is what makes the enum honest, and it costs the thing the enum was for: a caller
+// can write `Other(404)` and get a `NotFound` that does not equal `NotFound`. **An open set spelled
+// as a closed one with an escape hatch has two spellings for every member the hatch can reach**, and
+// nothing here can forbid the second — the constructor would have to refuse the seventeen codes the
+// other arms already name, which is a runtime check in a place with no runtime.
+//
+// The shipped `i32` has one spelling and no check. This has a check for the sixteen that matter and
+// two spellings for those sixteen. Neither is right and the difference is worth stating rather than
+// declaring a winner: **you can have one spelling or a checked set, and an open registry gives you
+// the choice and not both.**
+//
+// ## 2. What could not be written
+//
+// **`reason()` is empty for `Other` and the type does not say so.** Every other arm answers a
+// non-empty string; `Other` cannot, because a code nobody enumerated has no agreed phrase. So
+// `reason()` is `string` where it wants to be `string?` for one arm out of seventeen, and making it
+// `string?` costs every caller an unwrap for a case that arises once. Second instance of *a total
+// function that is partial on one arm*, after `@/packages/datetime`'s `Take.Accept`.
+//
+// **`Bytes body` can outlive the request it is a view of.** The reason it is `Bytes` is that the echo
+// route answers a slice of its input; the risk is that a handler stores the `Response` and the buffer
+// is reused. `core/slice.wac` says a slice cannot dangle, so this is retention rather than safety —
+// and `@/packages/json/src/value.wac` made the *opposite* call for the same reason, owning its
+// strings so a tree does not pin a document. **Two files, one question, opposite answers, and both
+// are right**: a response is written and dropped, a tree is kept. Nothing in the type says which kind
+// of value it is, and that is the whole of the difference.
+//
+// **`write` takes `headOnly` and the reason is `HEAD`.** A response to `HEAD` carries the headers of
+// the `GET` and no body, so the flag is *the request's method, remembered*. It is a parameter because
+// `Response` does not know what asked for it — the same missing pairing as
+// `@/packages/box/src/cp.wac`'s `Side`, and the fifth time a caller has had to hand back something it
+// already told the callee once.

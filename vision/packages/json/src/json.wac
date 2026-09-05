@@ -49,5 +49,15 @@ u8[] writeOut(JsonValue v) {
   return out.take();
 }
 
-export { JsonValue, JsonObject, JsonMember, numberOf } from "./value.wac";
+// The arms too, because the bare form is the idiom and a bare name must be in scope at the call
+// site — `@/packages/rlp`'s barrel says the same thing about `Err(is LeadingZero):`. Second reason
+// to widen a barrel found by one caller on one day.
+export { JsonValue, JsonObject, JsonMember, numberOf,
+         Null, Bool, Number, Str, Array, Object } from "./value.wac";
 export { ParseError, Reason, render } from "./parse.wac";
+// **Added 2026-09-05 because `@/packages/server/src/routes.wac` could not import it.** The barrel's
+// header argues that a caller should not have to know which file a name lives in, and then omitted
+// the only way to turn a tree back into bytes — so this package could parse and could not print,
+// from outside. Found by the first caller, which is the third name this directory has had to add to
+// a barrel for that reason after `@/packages/http`'s ten fault members.
+export { writeValue } from "./stringify.wac";
