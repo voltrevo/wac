@@ -7275,7 +7275,8 @@ sites would be twelve edits* was the worry and the number is five.
 
 Two caveats, both real. **23 of the 51 have no construction site here at all**, because their
 producer's body is `{ … }` — so the count is a lower bound and is only honest about the 28 that are
-built. And the sweep first said 81 sites: **32 of those were `match` arms**, `OutOfRange(_, _, _):`
+built. (Measured since: 262 of 580 function bodies here are elided, 45%, not the *most* this file had
+been saying.) And the sweep first said 81 sites: **32 of those were `match` arms**, `OutOfRange(_, _, _):`
 counted as a construction, a 40% inflation concentrated in exactly the faults this directory has been
 writing callers for. Distinguishing them is one token — whether a `:` follows the closing bracket —
 and it is the fifth instance of *the enumeration is only as good as its parser* in two days.
@@ -7413,8 +7414,17 @@ language rather than the lexing**, and a token stream has nothing to say about w
 union member and which is a `Result` constructor. Same family as *assert the property, not one
 spelling*, one level up.
 
-**The honest limit, and why it does not dissolve the number.** Most bodies here are `{ … }`, and a
-consumer missing because no bodies exist is not evidence. But sixty `match` blocks *are* written, in
+**The honest limit, and why it does not dissolve the number — measured 2026-09-05, and the caveat was
+overstated.** *Most bodies here are `{ … }`* is what this said, repeatedly, without counting. Counted:
+
+    function-like declarations in vision:            580
+      body `{ … }`:                                  262   (45%)
+      body with statements:                          318   (54%)
+    files where every function is elided:             23 of 121
+
+**The majority have real bodies.** So *a consumer missing because no bodies exist* is a weaker
+defence than it was given, which makes the number below stronger rather than weaker: 318 written
+bodies, and almost none of them consumes a fault union. But sixty `match` blocks *are* written, in
 the files where a body was written because the body was the argument — and almost none is about a
 fault union. So the measure is not *vision has no code*:
 

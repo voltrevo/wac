@@ -386,6 +386,26 @@ thing it is about**, because `at: 47` cannot be drawn as a caret under a line wi
 Four entries in [`QUESTIONS.md`](QUESTIONS.md) had recorded *paired values with nothing holding the
 pair* separately. They are one shape with 35 instances.
 
+## How much of this is written out
+
+*Measured 2026-09-05, because *most bodies are elided* had been asserted here for a week without a
+count.*
+
+    function-like declarations:            580
+      body `{ … }`:                        262   (45%)
+      body with statements:                318   (54%)
+    files where every function is elided:   23 of 121
+
+A body written `{ … }` means *the same as the original, not repeated here* — it is not a stub. So the
+directory is a little over half written out, and the elisions cluster: 23 files are entirely
+signatures, and they are the ones whose argument is about a **type** rather than about what a function
+does — `core/map.wac`, `crypto/src/sha256.wac`, `datetime/src/civil.wac`.
+
+It matters because it is the caveat attached to most measurements here. *Nothing consumes these
+unions because nothing has bodies* is the objection to
+[the 129 unread union members](QUESTIONS.md), and at 54% written it is a weaker objection than it was
+given credit for.
+
 ## Nothing here is checked by anything
 
 No test reads these pages. Nothing here is a fixture, a list some guard walks, or a promise a suite
