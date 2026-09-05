@@ -171,15 +171,28 @@ export Step close(const Client c) { … }
 // satisfied by the caller **holding** the state — a `Client` value the host passes back in. It does
 // not need the state to be *bytes*; it needs the state to be *the caller's*.
 //
-// So there are two candidate reasons and this directory cannot tell which:
+// So there are two candidate reasons:
 //
 //   - **A boundary that only passes bytes.** If the intended host cannot hold a wasm GC reference,
-//     the blob is forced. Every caller in this repository is wac and could hold a struct, so if this
-//     is the reason it is a design for a host that does not exist here yet.
+//     the blob is forced.
 //   - **Nobody re-examined it.** `server.wac` is the same shape and the comment says *"like the
 //     server"*, which is how one decision becomes two.
 //
-// Naming the question is the honest output. What *is* certain is the cost of the current answer:
+// **Answered later the same day, and it is neither, quite.** `../../ssh/src/channel.wac` names the
+// same boundary for its own flat struct — *"would not survive the bindgen boundary"* — which sent me
+// to read `packages/wacc/src/bindgen.wac`. It emits *"a class per struct **and enum**"*, holding the
+// WasmGC reference with *"nothing copied"*, plus a static constructor per variant and a `tag`. So a
+// struct **crosses by reference** and needs no encoding at all; the only thing a host cannot do is
+// read inside a variant, because accessors are generated inside `if (!isEnum)`.
+//
+// A `Client` struct is not a variant. Its host holds the state and hands it back — `tlsClientFeed`'s
+// contract is *give me what I gave you* — so it never needs to read inside anything, and the one
+// real constraint at that boundary does not touch this file. **The blob is the expensive answer to a
+// problem `tls` does not have**, and the encode-and-decode on every call buys nothing.
+//
+// Left as a correction rather than a rewrite of the paragraph above, because the wrong half is worth
+// keeping: *naming the question* was the right output at the time, and what settled it was reading a
+// second package that named the same boundary for a different reason. What *is* certain is the cost of the current answer:
 // `u8[]` is the type of everything, so `tlsClientFeed(input, state)` with the arguments transposed
 // compiles, and a connection is indistinguishable from a certificate, a record, or a hostname.
 //

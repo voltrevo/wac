@@ -160,7 +160,14 @@ chain offsets, per call. The stated reason is sound and does not require it: *"t
 string and the host owns the socket and the randomness"* is satisfied by the caller **holding** the
 state, which needs it to be the caller's, not to be bytes. Either the intended host cannot hold a
 wasm GC reference — and every caller here is wac and could — or nobody re-examined it after
-`server.wac`. Not settled; the question is the output. The certain cost is that `u8[]` is the type of
+`server.wac`.
+
+*Settled later the same day, and it is neither.* `ssh/src/channel.wac` names the same boundary for
+its own flat struct, which sent me to `packages/wacc/src/bindgen.wac`: it emits a class per struct
+**and enum**, holding the WasmGC reference with *"nothing copied"*. A struct crosses by reference and
+needs no encoding; the only thing a host cannot do is read inside a *variant*. A `Client` is not a
+variant, and its host hands the state back rather than reading into it — so the constraint is real
+and does not touch this file. **The blob is the expensive answer to a problem `tls` does not have.** The certain cost is that `u8[]` is the type of
 everything, so `tlsClientFeed(input, state)` transposed compiles.
 
 **And a caller already reaches past it**, which is the tell:
