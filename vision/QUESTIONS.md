@@ -9446,6 +9446,49 @@ is the exercise itself.
 `issues/lang/0347a` and the larger half of that finding. A same-name diff is blind to a method nobody
 ever wrote, which is the shape this whole directory exists to find.
 
+## `string` has four methods, and moving everything to `Bytes` took one of them away
+
+*2026-09-05.* `@/packages/wacc/src/check.wac`'s builtin table is the authority on what a `string` can
+do: **`len`, `indexOf`, `slice`, `toBytes`**, plus the statics `fromBytes` and `fromCodepoint`. There
+is no `startsWith`, no `endsWith` and no `contains`, and all three are one line on top of `indexOf`.
+
+Swept: **42 declarations across 33 files under twelve names** — `holds` 9, `startsWith` 8, `contains`
+7, `endsWith` 5, `endsWithSlash` 3, `hasSuffix` 3, and six more. `tools/` holds 24 of them.
+`issues/lang/0350a`. **The compiler's own type checker is one**: `check.wac:38` imports `endsWith`
+from `./path.wac` to decide whether a type name ends in `?` or `[]`.
+
+### And this directory made it worse, which is the part that is ours
+
+`Slice<T>` has `len`, `get`, `set`, `slice`, `from`, `items`, `toArray` and `eq`. **No search of any
+kind.** So the exercise moved most of its signatures from `string` to `Bytes` — for good reasons, at
+length, in three packages — and took away the one search the language had.
+
+The cost is a whole file. `@/packages/http/src/bytes.wac` exists to hold `findCrlf`, a search for two
+bytes, because the original *"writes it twice, identically"*; and `../core/core.wac`'s barrel entry
+cites the same function as the thing that had to be duplicated for want of a package-private helper.
+Two separate entries about `findCrlf`, and neither noticed that the function is `indexOf` on a type
+that does not have one.
+
+`../core/slice.wac` has `bytesIndexOf` and `bytesStartsWith` now, and `findCrlf` is a call.
+
+> **A redesign that narrows a type has to carry the type's methods across, and nothing lists them.**
+> `string` → `Bytes` was argued fifty times in this directory on what `Bytes` *adds* — it brings its
+> subject, it does not copy — and not once on what `string` had that it lacks. The list is four
+> entries long and one of them was load-bearing.
+
+### What could not be written
+
+**Free functions again, and it is the second site.** `bytesEq` is a free function because `Bytes` is
+an instantiation of `Slice<u8>`, a method can only live on the generic, and the generic cannot ask
+`T` whether two of them are equal. `bytesIndexOf` and `bytesStartsWith` are three and four. The
+entry that records it says *"the cost of `export Slice<u8> Bytes;` being a name for a type rather
+than a type: it cannot carry its own operations"* — and the population of operations it cannot carry
+is now four rather than one, which is what makes it a cost rather than a curiosity.
+
+**And the five `u8[]` predicates in the shipped sweep have no one-line derivation at all**, because
+`u8[]` has no `indexOf` either. Those five are why `bytesIndexOf` has an elided body here and a real
+one would be a loop: there is nothing underneath to build on.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

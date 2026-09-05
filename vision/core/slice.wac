@@ -232,6 +232,30 @@ export Bytes oneByte(u8 b) {
 }
 
 /**
+ * Where `needle` first occurs in `hay`, or null — **and `Bytes` had less than `string` does.**
+ *
+ * `string` has four methods and one of them is `indexOf`; `Slice<T>` has `len`, `get`, `set`,
+ * `slice`, `from`, `items`, `toArray` and `eq`, and no search of any kind. So this exercise moved
+ * most of its signatures from `string` to `Bytes` and took a search away in the process.
+ *
+ * What that cost is a whole file. `@/packages/http/src/bytes.wac` exists to hold `findCrlf` — a
+ * search for two bytes — because the original *"writes it twice, identically"*, and
+ * `./core.wac`'s barrel note cites the same function as the thing that had to be duplicated for
+ * want of a package-private helper. With this, `findCrlf` is a call.
+ *
+ * A free function rather than a method for `bytesEq`'s reason, which is now at its second site:
+ * `Bytes` is an instantiation of `Slice<u8>`, a method can only live on the generic, and the generic
+ * cannot ask `T` whether two of them are equal.
+ */
+export i32? bytesIndexOf(const Bytes hay, const Bytes needle) { … }
+
+/** Whether `hay` begins with `prefix`. `issues/lang/0350a` counts 42 hand-written spellings of this. */
+export bool bytesStartsWith(const Bytes hay, const Bytes prefix) {
+  if (prefix.len() > hay.len()) { return false; }
+  return bytesEq(hay.slice(0, prefix.len()), prefix);
+}
+
+/**
  * Byte slices are common enough to deserve the short name.
  *
  * Same form as `vision/packages/http/src/fault.wac`'s `export union<A, B> RequestFault;` — one way
