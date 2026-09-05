@@ -70,10 +70,21 @@ export struct FixedBig {
 //     void mulU64(this, u64 v, FixedBig scratch)
 //     void setSum(this, FixedBig a, FixedBig b)
 //
-// `x.mulU64(v, x)` compiles. So does `x.setSum(x, y)`. Both would corrupt `x` mid-operation and
-// neither is checked, mentioned, or reachable by any test that does not think to try it. The shipped
-// file does not warn — not an oversight so much as there being nowhere to put the warning that a
-// caller would have to read.
+// `x.mulU64(v, x)` compiles. So does `x.setSum(x, y)`. Neither is checked or mentioned.
+//
+// **Corrected after tracing both, and the correction is the better argument.** The first version of
+// this note said both would corrupt `x`. Only one does:
+//
+//   - `mulU64` does `scratch.copyFrom(this)` and then uses `scratch` as working space while writing
+//     `this`, so aliasing them is a genuine hazard.
+//   - `setSum` is **accidentally safe**. Its loop reads `a.limbs[i]` and `b.limbs[i]` and writes
+//     `this.limbs[i]`, strictly forward, one index at a time, and `m` is computed before the loop —
+//     so `x.setSum(x, y)` reads each limb before overwriting it and never revisits one.
+//
+// So of two methods with the same shape, one aliasing is fatal and the other is fine, **and nothing
+// in either signature distinguishes them**. That is a sharper ask than *both are hazards*: a caller
+// cannot learn which aliasing is permitted without reading both bodies, and `setSum`'s safety is a
+// property of a loop direction that nobody wrote down and any rewrite could remove.
 //
 // `const` gets closer than it looks and then stops. Marking `sub`, `add`, `cmp`, `copyFrom` and
 // `setSum`'s inputs `const` is legal today and worth doing — it says *this one is not written* — and

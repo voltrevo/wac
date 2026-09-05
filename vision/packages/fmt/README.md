@@ -142,8 +142,14 @@ that does not compile.
 
 **An aliasing precondition, which `const` gets close to and does not reach.** Added with
 [`src/bigint.wac`](src/bigint.wac). `mulU64(this, v, scratch)` and `setSum(this, a, b)` both take a
-`FixedBig` they must not be; `x.mulU64(v, x)` and `x.setSum(x, y)` compile and corrupt `x`
-mid-operation, unchecked and unmentioned. Marking four of the five parameters `const` is legal today,
+`FixedBig` they must not be, and both aliasing calls compile unchecked and unmentioned.
+
+*Traced afterwards, and only one is a hazard.* `mulU64` copies `this` into `scratch` and then uses
+`scratch` as working space while writing `this`. `setSum` is **accidentally safe** — a strictly
+forward loop reading limb `i` before writing it, with `m` computed up front. So of two methods with
+the same shape one aliasing is fatal and the other is fine, **and nothing in either signature says
+which** — a sharper ask than *both are hazards*, since `setSum`'s safety is a loop direction nobody
+wrote down and any rewrite could remove. Marking four of the five parameters `const` is legal today,
 free, and worth doing — but it says *not written*, not *not the receiver*: `x` can be const-as-`a`
 and mutable-as-`this` in one call with nothing relating the two, and `scratch` genuinely is written
 so `const` cannot apply at all. The ask is aliasing, which is larger and less popular than anything
