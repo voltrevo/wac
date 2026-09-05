@@ -2514,6 +2514,14 @@ and here it made the claim harder to check rather than easier: the check was one
 same repository, and the thing to check was a construct's *absence*, which a targeted grep cannot
 find. Reading the production whole is nineteen lines.
 
+*Also re-checked the same day:* every claim in this directory that a construct **is not in the
+grammar** was read against its production, since the one below was wrong. Two survive and both hold —
+`Binary { left: lhs }`, a binding that renames, is refused by `field_pattern = ".." | IDENT , { ","
+, IDENT } , …`, which takes bare identifiers; and `Err(is Corrupt c):` is refused by `binding = IDENT
+| "is" , type`, an alternation. The rest of the hits are quotations of the spec rather than claims.
+So the error below was a single generalisation rather than a habit, which is worth knowing in both
+directions.
+
 *The superseded argument, kept:* Written above about a two-arm error union whose payload is one string, which made it look
 small. `@/packages/wacc/src/ast.wac` counts the positional-swap hazard across the tree and its two
 worst entries are declarations — *"`StructDecl` has seven fields and fifty-four arms; `Func` has
@@ -2884,8 +2892,32 @@ per **clause**. `DECISIONS.md`'s *`_` is a binding that cannot be read* is four 
     reading fails  not in the spec, and the entry says it is the half that matters
 
 A quarter landed. The rule says *deleted once it reaches `spec/`*, so it can never fire, and the
-entry can never be current either: nothing in it distinguishes the clause with 68 uses from the one
+entry can never be current either: nothing in it distinguishes the clause with the uses from the one
 nobody has written.
+
+**Re-measured 2026-09-05 on the token stream, and three of the four clauses move.** The two *zero
+uses* claims are confirmed — no `T _` parameter and no `T _ = e;` local exists in `packages`, `core`,
+`std` or `tools`. The first clause does not reproduce:
+
+    entry says   68 uses across 16 shipped files
+    measured     79 `_` tokens, on 58 distinct lines, in 16 files
+
+Sixteen matches and no measure gives 68, so the number was counted some other way and the entry does
+not say which — which is the ordinal problem this file has an entry about, in this file.
+
+And the measurement found something the entry does not have. **Every one of the 79 is inside
+parentheses:**
+
+    prev='('  next=')'    47   in 12 files
+    prev=','  next=','    14   in  5 files
+    prev=','  next=')'    12   in  9 files
+    prev='('  next=','     6   in  5 files
+
+There is **no bare `_:` arm anywhere in the tree.** So `_` in shipped wac means exactly one thing —
+*this payload field is unused* — and never *this whole case is unused*, which is the use most
+languages have it for and which nobody here has written. The entry frames `_` as *a binding that
+cannot be read*; the tree says it is *a payload position that is not named*, and those differ in
+whether the wildcard-arm use is missing or merely unexercised.
 
 **The failure is quiet, which is why it is worth an entry rather than a tidy-up.** A document whose
 removal rule cannot fire does not accumulate obviously-stale entries — it accumulates entries that
