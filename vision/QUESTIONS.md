@@ -10809,3 +10809,76 @@ brings a reader back to them.**
 lines while the corrected seven do not — which would have made line-wrapping the whole story.
 `packages/sh/src/exec.wac` wraps mid-phrase **and** was corrected, so the correlation is not there.
 Wrapping explains why a grep misses them; it does not explain why a person did.
+
+## The constructor obligation exists, in `wacpkg`, and needs no language feature
+
+Two entries above ask for one thing in different words. The obligations entry says a channel's
+window adjust is *keep doing something* and no type carries it. The `quic` entry asks what a language
+would need to beat a predicate and answers *"something that makes the call unforgettable … that is a
+constructor obligation"*.
+
+**`packages/wacpkg/src/lock.wac` does it, today, with nothing added.**
+
+A lockfile's rule is that an ordinary build may create a missing entry and must never advance an
+existing valid one. Its header states why that is hard and what it did instead:
+
+> That is the whole point of a lockfile and it is the easy thing to get wrong, because **"resolve the
+> ref" is the same operation in both cases and only the surrounding decision differs.** So the
+> decision is made here, by `plan`, and it is **a value a caller cannot ignore rather than a comment
+> telling it what not to do.**
+
+`plan(Manifest, Lock)` is pure — *"No I/O, and no network … this decides whether it may, which is the
+part with the rule in it"* — and returns one decision per mapping. A caller that wants to resolve a
+ref must have been handed a step that says so.
+
+### The technique, stated generally
+
+**Separate the decision from the action, return the decision, and the action becomes unreachable
+without it.** No feature: a function, a return type, and the discipline of not exposing the action
+directly.
+
+Which sets a bar for the other two. `ssh`'s window adjust could take the same shape — a `consume`
+that returns *how much credit to return* rather than a comment saying send it — and the reason it
+does not is that the obligation is *recurring* rather than *once per decision*, so there is no single
+call to attach it to. That is the real distinction the obligations entry was reaching for and did not
+have:
+
+> **An obligation discharged once per decision is a return value. An obligation discharged
+> continuously has no call to hang on**, and that second kind is the one that wants a language.
+
+So `quic`'s frame epochs and `wacpkg`'s lock rule are the first kind and need nothing; `ssh`'s flow
+control is the second and is the only one of the three still asking.
+
+### And the same file gives the value back twenty lines later
+
+    export i32 USE()     { return 0; }
+    export i32 CREATE()  { return 1; }
+    export i32 REFRESH() { return 2; }
+
+    export struct Step {
+      string name;
+      i32 action;
+      string commit;    // set only for USE
+      string why;       // for REFRESH, which input changed; "" otherwise
+    }
+
+Three actions as bare integers, and **each payload field is valid for exactly one of them**. A caller
+reading `step.commit` after a `CREATE` gets `""`. So the file wins the argument it set out to win and
+then hands back the part the value was for.
+
+This is the sharpest evidence in the file for the closed-set entry above, and it earns a sentence
+that entry cannot make from its other nine instances: **getting the obligation right does not carry
+you through the encoding.** The same author did both, twenty lines apart, while explicitly thinking
+about the first. It is not carelessness and it is not ignorance of enums — it is that the two
+problems do not feel related, and nothing in the language relates them.
+
+### A `string` payload that is right, which the `http` entry did not allow for
+
+`Step.why` is a `string`, and `../QUESTIONS.md`'s *a member with a `string` payload is a fault that
+has given up on being matched* would condemn it. Here giving up is correct: nothing branches on
+`why`, one thing prints it, and the set of reasons is open in practice because a future manifest
+field adds one.
+
+**So the rule that entry needs is not *never a string*. It is that a `string` payload is right
+exactly when no caller will branch on it** — a question about callers, not about the type, and the
+same test the caller-test asks everywhere else here.

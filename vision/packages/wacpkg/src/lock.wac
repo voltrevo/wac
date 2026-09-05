@@ -1,0 +1,144 @@
+// The lockfile — the best answer in the tree to a question this directory has been asking all day,
+// and the one place that answer is given away again in the next twenty lines.
+//
+// ## What `packages/wacpkg/src/lock.wac` gets right, and it is the hard part
+//
+// A lockfile's rule is *an ordinary build may create a missing entry and must never advance an
+// existing valid one*. That is an obligation on a caller, and every other package in this tree writes
+// obligations as prose — `ssh`'s window adjust, `quic`'s frame epochs, `git`'s ordering. This file
+// does not:
+//
+//   > That is the whole point of a lockfile and it is the easy thing to get wrong, because
+//   > **"resolve the ref" is the same operation in both cases and only the surrounding decision
+//   > differs.** So the decision is made here, by `plan`, and it is **a value a caller cannot ignore
+//   > rather than a comment telling it what not to do.**
+//
+// `plan(Manifest, Lock)` is pure — *"No I/O, and no network … this decides *whether* it may, which is
+// the part with the rule in it"* — and hands back one decision per mapping. A caller that wants to
+// resolve a ref has to have been given a step that says so.
+//
+// **That is the constructor obligation `@/packages/quic/src/params.wac` said would be needed and did
+// not find.** An entry written an hour before this one asked what a language would have to provide to
+// beat a predicate, answered *"something that makes the call unforgettable"*, and called it a
+// constructor obligation. It needs no language feature at all: separate the decision from the action,
+// return the decision, and the action cannot be reached without it. Recorded as a correction to that
+// entry rather than as a new ask.
+//
+// ## And then the decision is an `i32` with two fields that are usually meaningless
+//
+//     export i32 USE()     { return 0; }
+//     export i32 CREATE()  { return 1; }
+//     export i32 REFRESH() { return 2; }
+//
+//     export struct Step {
+//       string name;
+//       i32 action;
+//       string commit;    // set only for USE
+//       string why;       // for REFRESH, which input changed; "" otherwise
+//     }
+//
+// Three actions as bare integers, and **each payload field is valid for exactly one of them**. A
+// caller reading `step.commit` after a `CREATE` gets `""`, which is not a commit and is not a
+// diagnostic either.
+//
+// So the file wins the argument it set out to win — the decision is a value — and then hands back the
+// part the value was for. The two are independent: **getting the obligation right does not carry you
+// through the encoding**, and this is the clearest demonstration of that in the tree, because the
+// same author did both, twenty lines apart, and was explicitly thinking about the first.
+
+import { Result, Bytes, Vec } from "core";
+
+/** A resolved commit — forty hex characters, and not a ref. */
+export struct Commit { string sha; }
+
+/**
+ * What to do about one mapping.
+ *
+ * The payload travels with the decision, so `commit` exists only where there is one and `why` only
+ * where something changed. `Step.name` stays outside because every arm has it.
+ */
+export struct Step {
+  string name;
+  Action of;
+}
+
+/** The decision, with what it needs. */
+export enum Action {
+  /** The entry is valid: use this commit, and **do not** consult the ref. */
+  Use(Commit commit),
+  /** No entry for this mapping. An ordinary command may resolve the ref and write one. */
+  Create,
+  /** The entry records different inputs. Resolve again — and this is which input changed. */
+  Refresh(Changed what),
+}
+
+/** Which manifest input stopped matching the lock. */
+export enum Changed { Git, Ref, Subdir }
+
+/**
+ * One `Step` per mapping, in the manifest's order.
+ *
+ * Kept whole, including the sentence that is the rule: *"**A branch that moved is not a reason to do
+ * anything.** An entry whose `git`, `ref` and `subdir` still match the manifest is `USE`, and the
+ * commit it names is the answer — no lookup, no network, and the same answer next month. Only a
+ * *manifest* change produces `REFRESH`; `wac update` is the separate, explicit operation and is not
+ * this function."*
+ */
+export Vec<Step> plan(const Manifest m, const Lock l) { … }
+
+/** Lock entries with no mapping — *"a mapping that is gone has nothing to decide."* */
+export Vec<string> orphansOf(const Manifest m, const Lock l) { … }
+
+export struct Manifest { Vec<Mapping> imports; }
+export struct Mapping { string name; string git; string ref; string subdir; }
+export struct Lock { Vec<LockEntry> entries; }
+export struct LockEntry { string name; string git; string ref; string subdir; Commit commit; }
+
+// ## What could not be written
+//
+// ### `Changed` is a guess, and the shipped field is better than it looks
+//
+// `why` is a `string` — *"for REFRESH, which input changed"* — and `Changed` above turns it into
+// three variants. That is the move this directory makes reflexively and it is **not obviously right
+// here**, because `why` is going to a human. A person reading *"the ref changed from `main` to
+// `v2`"* is better served than one reading `Changed.Ref`, and reconstructing the first from the
+// second means every caller formats it and they will not agree.
+//
+// The honest shape is probably both — a variant *carrying* the old and new values, so the message is
+// derived rather than passed — and that is more than a rename. Left as three payload-free variants
+// with this note, because writing `Refresh(Changed.Ref, string was, string now)` without a caller
+// asking for it is the invention this directory is supposed to avoid.
+//
+// **The general form is worth having.** A `string why` is a fault's message, and
+// `../../../QUESTIONS.md` has *a member with a `string` payload is a fault that has given up on being
+// matched* from `http`. This is the first case where giving up looks correct: nothing branches on
+// `why`, one thing prints it, and the set of reasons is open in practice because a future manifest
+// field adds one. **The rule that entry needs is not *never a string* — it is that a `string` payload
+// is right exactly when no caller will branch on it**, and that is a question about callers rather
+// than about the type.
+//
+// ### Every mapping locks independently, and the type cannot say the entries are distinct
+//
+// `design/lang/0009` D10, quoted in the header: *"One entry per mapping, repeating the inputs and
+// recording the full commit SHA, **even when several mappings name one repository** — the cache may
+// deduplicate by repository and commit, but lock ownership stays per mapping, so updating one mapping
+// cannot move another that happens to share a URL."*
+//
+// So `Lock.entries` is keyed by `name` and two entries with one name is a corrupt lockfile. `Vec` does
+// not say that; neither would `Map<string, LockEntry>`, quite, because the *file* is a list and the
+// duplicate has to be detected while reading it rather than prevented by the type. This is the sorted
+// `Table` and the eight-element `Pieces` again — a property of a collection no collection type here
+// carries — and the third form of it: not order, not length, but **uniqueness of a field**.
+//
+// ### And the two-part key next door, which `./resolve.wac` already raised
+//
+// `mapped(from, spec)` is a linear scan because *"references are comparable but not hashable"*, so a
+// `Map` key must be built from two strings and `\0` does it. That entry's distinction is the useful
+// part and belongs here too: **a composite key is cheap exactly when the lookup is allowed to be
+// wrong.** `@/packages/wac`'s build cache hashes four things and a wrong lookup is a cache miss; in
+// the resolver a wrong lookup is a wrong file.
+//
+// The lockfile is the third point on that line and the strictest: a wrong lookup here uses **another
+// mapping's commit**, which is the exact failure D10 is written to prevent. So the same shape has
+// three costs in one package — a miss, a wrong file, a wrong dependency — and nothing distinguishes
+// them at the point where the key is built.

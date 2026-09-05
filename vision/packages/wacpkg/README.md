@@ -126,3 +126,38 @@ resolved once and used by many files, one dependency is N mappings.
 **Nothing.** This is the first entry here whose finding is entirely about the existing
 implementation, and that is the shape the exercise has been converging on since about the tenth
 package: fewer constructs, more checking of what is already there against what was assumed.
+
+**The constructor obligation exists, and it is in this package.** Added with
+[`src/lock.wac`](src/lock.wac). `plan(Manifest, Lock)` is pure and returns one decision per mapping,
+so a caller that wants to resolve a ref must have been handed a step saying so — *"a value a caller
+cannot ignore rather than a comment telling it what not to do."* That is what
+[`../quic/`](../quic/)'s entry asked a language to provide an hour earlier, and it needs **no
+language feature**: separate the decision from the action, return the decision, and the action is
+unreachable without it. Promoted as a correction to that entry.
+
+It also sharpens the obligations entry: **an obligation discharged once per decision is a return
+value; one discharged continuously has no call to hang on.** `quic`'s frame epochs and this lock rule
+are the first kind and need nothing. `ssh`'s window adjust is the second and is the only one of the
+three still asking.
+
+**And the same file gives the value back twenty lines later.** `Step` carries `i32 action` with
+`USE`/`CREATE`/`REFRESH` as bare integers, plus `string commit` *"set only for USE"* and `string why`
+*"for REFRESH … `""` otherwise"* — so a caller reading `commit` after a `CREATE` gets `""`. The file
+wins the argument it set out to win and then hands back the part the value was for. Sharpest evidence
+in the tree that **getting the obligation right does not carry you through the encoding**: same
+author, twenty lines apart, explicitly thinking about the first.
+
+**A `string` payload that is right.** `why` goes to a human, nothing branches on it, and the set of
+reasons is open because a future manifest field adds one. So *a member with a `string` payload is a
+fault that has given up on being matched* needs its converse: a `string` payload is right exactly
+when no caller will branch on it.
+
+**Uniqueness of a field, which no collection type here carries.** `design/lang/0009` D10 makes every
+mapping lock independently — *"even when several mappings name one repository"* — so two entries
+with one name is a corrupt lockfile and `Vec` cannot say so. Third form of the collection-invariant
+problem, after a sorted `Table` and an eight-element `Pieces`: not order, not length, but uniqueness.
+
+**And the two-part key has three costs in one package.** `resolve.wac` already noted that a composite
+key is cheap exactly when the lookup is allowed to be wrong. `wac`'s build cache hashes and a wrong
+lookup is a miss; the resolver's is a wrong file; the lockfile's is **another mapping's commit** —
+the exact failure D10 exists to prevent. Nothing distinguishes the three where the key is built.
