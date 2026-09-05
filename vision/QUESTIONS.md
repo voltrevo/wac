@@ -1547,12 +1547,48 @@ preference between three uglinesses.
 And it is not the whole of the problem: see below, because the *unqualified* form this directory
 writes everywhere does not work at any `T`.
 
-## Whether vision's new words are keywords, which nobody had asked
+## Whether vision's new words are keywords — 226 identifiers say, and 175 of them say `secret`
 
 `try`, `gen`, `defer`, `schedule`, `yield`, `in`, `union` and `secret` are written all over these
 pages and no entry says what they *are*. `vision/GRAMMAR.ebnf` had to decide in order to exist, and
 it decided **contextual** — none of them is a keyword, each is an `IDENT` that a rule matches by
 spelling. Every vision file parses that way, so the question is not *can they be*.
+
+**The other side of the trade, measured 2026-09-05 and never before:** if they were real keywords,
+how much existing code would stop compiling? Counted on the shipped tree's token stream — occurrences
+of each word **as an `IDENT`**, so a string or a comment does not count:
+
+    secret     175   in 30 files
+    gen         38   in  8
+    never        7   in  3
+    union        6   in  1
+    auto, coroutine, defer, schedule, try, yield      0
+                     ————
+                     226
+
+**`secret` is the cost, at 4.6× the next word**, and where it lands is the point:
+
+    packages/quic/src/initial.wac:72     u8[] secret = initialSecret(clientDcid, isServer);
+    packages/quic/src/client.wac:258     u8[] secret = handshakeTrafficSecret(dhe, transcript2(…), true);
+    packages/crypto/test/wac/nistcurve_test.wac:583
+                                         u8[] secret = p256Ecdh(u8[32](fill: 0x22), good);
+
+Every one is `u8[] secret = …` — a **local holding key material**, which is exactly the declaration
+`@/packages/crypto/src/secret.wac` wants to write as `secret u8[] secret = …`. The qualifier whose
+entire purpose is cryptographic material collides precisely with the code that would use it, 175
+times, and the collision is not incidental: it is the same word for the same thing on both sides of
+the declaration.
+
+Six of the ten cost nothing at all, which is worth as much: `try`, `yield`, `defer`, `schedule`,
+`auto` and `coroutine` are free, so *make them keywords* is available for six of the ten and the
+question is really about `secret` and, distantly, `gen`.
+
+So the trade now has both sides. **Contextual**: the grammar cannot state the feature and no tool can
+check it. **Keyword**: 226 renames, 175 of them in the two packages the feature is for. And they are
+not the only two options — a keyword that is only a keyword *before a type* is what `const` already
+is, and `secret u8[] key;` versus `secret = k;` is one token of lookahead. That is not free either:
+it is the contextual case with a rule, which the grammar *can* state, and it is what
+`spec/spec/grammar.md` does for `from` and `fill` today.
 
 **A third cost, measured 2026-09-04, and it is the one that bites a tool rather than a reader: the
 grammar cannot state the feature, so nothing can check it.** `var_decl` is written
