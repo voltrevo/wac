@@ -10,16 +10,31 @@
 // `@/` asks, and nothing reads its contents to answer. The repository root has no manifest, which
 // is why nothing outside `vision/` writes `@/` today.
 //
-// **And seventeen imports across the directory disagree with the paragraph above**, re-measured
-// 2026-09-04 after the crypto digests were written: seventeen references to **twelve distinct files
-// that do not exist here**, and every one of the twelve exists in `packages/` at the same path with
-// `vision/` taken off the front — checked, all twelve.
+// **And some imports across the directory disagree with the paragraph above.** Measured 2026-09-04
+// as seventeen references to twelve distinct files; **re-measured 2026-09-05 and it is eight
+// references to eight distinct files**, one apiece:
 //
-//     4  @/packages/box/src/lib/args.wac
-//     2  ./response.wac        2  ./headers.wac          (http)
-//     1  ./stringify.wac (json)    ./routes.wac (server)  ./atof.wac (fmt)
-//     1  ./huffman.wac  ./crc32.wac (gzip)                ./case.wac  ./printable.wac (unicode)
-//     1  ./percent.wac  ./host.wac (url)
+//     ./atof.wac      (fmt)        ./huffman.wac  ./crc32.wac   (gzip)
+//     ./case.wac  ./printable.wac  (unicode)      ./percent.wac  ./host.wac  (url)
+//     ./directory.wac (tor)
+//
+// Every one exists in `packages/` at the same path with `vision/` taken off the front.
+//
+// **The count fell because the directory kept writing, not because anything was fixed.**
+// `@/packages/box/src/lib/args.wac` was four of the seventeen and exists here now; `./response.wac`,
+// `./headers.wac`, `./routes.wac` and `./stringify.wac` were six more and arrived with the `http`,
+// `server` and `json` rewrites. `./directory.wac` is new since, from `tor`. So the residue is the
+// files nobody has had a reason to write, and the overlay question below is unchanged by the
+// arithmetic — it is about what the resolver would have to do, not about how many sites want it.
+//
+// **Third value for one number, and the paragraph at the foot of this file predicted it.** It says
+// *"a count in a comment ages against work that has nothing to do with it — which is the argument
+// for the numbers living beside the method that produces them"*, and it was written when the number
+// moved from 16/11 to 17/12. It has now moved to 8/8, for the same reason, in the same direction,
+// under the note warning about it. The method is one script over the import graph and it takes a
+// second; **what is missing is not the number, it is that nothing runs the script and rewrites this
+// comment.** Neither will anything, because this directory is prose by design — so the honest form
+// is the one above: a date beside every figure, and no claim that the figure is current.
 //
 // So the code assumes an **overlay**: resolve here, fall through to the repository if absent. That
 // is not what this manifest says and it is not something the resolver can express.

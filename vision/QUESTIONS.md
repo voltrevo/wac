@@ -2360,7 +2360,17 @@ directory, and `@/` is the smaller half of it.
 (An earlier count said fifteen distinct targets and listed three crypto files among them. Those were
 written on 2026-09-04 and five references went with them. A count in a comment ages against work that
 has nothing to do with the question it is counting — the argument for numbers living beside the
-method that produces them.) So this is a *convention* rather than seventeen mistakes: an import may name a file the
+method that produces them.)
+
+*Aged again, 2026-09-05, exactly as that parenthesis said it would.* **Eight references to eight
+distinct files, one apiece** — `./atof.wac`, `./huffman.wac`, `./crc32.wac`, `./case.wac`,
+`./printable.wac`, `./percent.wac`, `./host.wac`, and `./directory.wac`, which is new. The four
+`@/packages/box/src/lib/args.wac` references and the six into `http`, `server` and `json` are gone
+because those files were written, not because anything was resolved. **Third value for one number,
+each move caused by unrelated work, and the second move happened under the sentence warning about the
+first.** Every figure here now carries its date, which is the only form that does not go quiet on
+being wrong. And the two bullets below are untouched by the arithmetic: they are about what a
+resolver would have to do, not about how many sites want it.* So this is a *convention* rather than seventeen mistakes: an import may name a file the
 rewrite chose not to write, meaning *unchanged, take the original*. Every README says which files it
 wrote and why the rest are absent — `json`'s *"`stringify.wac` is not rewritten because nothing in it
 changes"* — and none of them says the imports still point at them.
