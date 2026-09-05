@@ -131,8 +131,18 @@ export Take forTyped(TimeFault f) {
 // That is not an ask for a feature. It is the argument that a fault union is *half* of an error
 // design and this directory has written twenty-nine of the halves and one of the wholes. The other
 // half has a shape — a per-caller table over the members — and every one of these files spells it as
-// a `match` returning an enum, which works, is checked, and is the fifth time in five files that a
-// lookup table has been written as control flow.
+// a `match` returning an enum, which works, is checked, and was claimed here as *the fifth time in
+// five files*. Counted on the token stream 2026-09-05: **15 blocks in 11 files**, and the count was
+// hiding the useful split. Ten of the fifteen have arms exactly three tokens wide — `Member: return
+// Constant;` — a pure member-to-constant map with no computation anywhere in the block. The other
+// five read their payload or a parameter and are real classifiers: `@/packages/box/src/cp.wac`'s
+// `Side` ternary, `@/packages/server/src/refuse.wac` constructing a `Refusal`,
+// `@/packages/ssh/src/knownhosts.wac`'s fold, `@/packages/ts/src/report.wac` reading `from.origin`.
+//
+// And three of the ten predate the error-union thread that produced most of the rest —
+// `@/packages/codec/src/alphabet.wac`, `@/packages/git/src/status.wac`,
+// `@/packages/wac/src/buildcache.wac` — so it is not an artefact of writing callers on purpose.
+// `../../../QUESTIONS.md` has the list.
 //
 // ## 3. What could not be written
 //

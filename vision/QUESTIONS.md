@@ -7280,6 +7280,38 @@ counted as a construction, a 40% inflation concentrated in exactly the faults th
 writing callers for. Distinguishing them is one token — whether a `:` follows the closing bracket —
 and it is the fifth instance of *the enumeration is only as good as its parser* in two days.
 
+### *A lookup table written as control flow*: claimed five times, counted fifteen
+
+Five files each said *the Nth time a lookup table has been written as control flow* and none listed
+the others. Counted — a `match` of three or more arms where every arm is exactly one `return`:
+
+    15 blocks in 11 files
+
+    arms exactly `return X ;` (3 tokens)      10 blocks    a pure member-to-constant map
+    arms that read a payload or parameter      5 blocks    a real classifier
+
+The split is what the count hid. The ten are `Member: return Constant;` with no computation anywhere
+in the block — `@/packages/codec/src/alphabet.wac` (7 arms), `@/packages/git/src/status.wac` (7),
+`@/packages/wac/src/buildcache.wac` (7), `@/packages/lightclient/src/sync.wac` (9),
+`@/packages/datetime/src/lenient.wac` (8, three times), `@/packages/codec/example/strictness.wac`
+(5, twice), `@/packages/page/src/mount.wac` (3, twice). The five are classifiers and are not the
+complaint: `cp.wac`'s `Side` ternary, `refuse.wac` building a `Refusal`, `knownhosts.wac`'s fold,
+`report.wac` reading `from.origin`.
+
+**Three of the ten predate the error-union thread** — `alphabet`, `status`, `buildcache` — so this is
+not an artefact of a fortnight spent writing callers on purpose. It is what an enum with no attached
+data does to every package that has one.
+
+The ask is unchanged and is now sized: **a union member or enum arm cannot carry data**, so every
+per-arm fact is a function, and a function over a closed set with constant results is a table spelled
+as control flow. Ten of them, 61 arms between them.
+
+*Fourth enumeration of a bare ordinal in two days, and the fourth to change the finding.* After the
+fixed-length byte view, the sentinel count and the phantom parameter. The pattern is consistent
+enough to state as a rule about this directory rather than about any one claim: **an ordinal above
+three has been wrong every time it has been checked here, and checking it has never failed to
+sharpen the entry.**
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
