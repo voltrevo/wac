@@ -6325,3 +6325,50 @@ shape this directory has spent five days unpicking, and it is worse than a packa
 be rewritten and a capability's answer is what the host gives. The `NotGranted`-for-everything entry
 has it in the abstract; this is a caller that wanted the distinction, invented it, and had to give it
 back.
+
+## Replacing a two-field result with a `Result` dropped the field that carried the distinction
+
+The fault-ceiling rule, applied to the second of the four packages whose faults describe an
+*operation* failing, found a regression this exercise introduced — and it is the largest of the five
+things the self-audit has turned up.
+
+The **shipped** capability is
+
+    export struct FileResult { bool ok; u8[] bytes; string error; i32 fault; }
+
+with ten `FAULT_*` codes, and the `fault` field's own doc says why it is there:
+
+> The message cannot be branched on: "No such file or directory (os error 2)" from Deno, "ENOENT: no
+> such file or directory" from Node and a `NotFoundError` from the Origin Private File System are
+> three spellings of one fact.
+
+`vision/std` replaced `bool ok` with a `Result` — an improvement — and **threw away the `i32 fault`
+beside it.** `Files.read` answered `Result<Bytes, NotGranted>`: one bit, where the shipped capability
+reports ten. The `bool` was the redundant half and the code was the payload, and the rewrite kept the
+wrong one.
+
+### It was found from two layers up, and the symptom is worse than vagueness
+
+`@/packages/fs`'s `Fault` has nine members derived from those ten codes, and `Mount.onHost` assigns
+`files.read` into a slot typed `Result<…, Fault>`. So a **host** mount could only ever answer
+`NotGranted` while a **memory** mount — which `fs` implements itself — produced all nine. One
+interface, two implementations, **two producible subsets, and nothing saying which**.
+
+And a missing file on a host mount answered `NotGranted`, which is not vague but **wrong**: the grant
+was given and the file was not there. A caller matching on the union gets a correct-looking answer
+that names the wrong cause.
+
+`Files` answers a `FileFault` now — the nine plus `NotGranted`, which stay apart for the reason
+`fs/src/fault.wac` gives: *"`Denied` is the operating system refusing a program that asked;
+`NotGranted` is a program that never held the authority to ask."*
+
+### The general shape, which is not about filesystems
+
+**A `Result` looks like an improvement over a struct with an `ok` flag, and carries less if the
+struct had a second field.** `{ ok, bytes, error, fault }` is four facts; `Result<Bytes, E>` is two
+unless `E` is built to hold the rest. The conversion is mechanical and the loss is silent, because
+the resulting signature reads better than the one it replaced.
+
+Which is the counterweight to every *replace the `bool` with a `Result`* argument in this file, and
+none of them mentions it: the audit that finds a `bool` answering six questions should also ask
+**what was beside the `bool`.**

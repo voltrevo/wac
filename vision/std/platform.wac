@@ -196,15 +196,55 @@ export struct Tasks {
  * showed is that the decision is load-bearing: with a one-directional widening, the two types are
  * not interchangeable at an interface and every boundary picks a side.
  */
+/**
+ * Why a file operation did not happen — **restored 2026-09-05, having been dropped by this rewrite.**
+ *
+ * The shipped `FileResult` is `{ bool ok; u8[] bytes; string error; i32 fault; }`, and the `fault`
+ * field's own doc says why it exists:
+ *
+ * > The message cannot be branched on: "No such file or directory (os error 2)" from Deno, "ENOENT:
+ * > no such file or directory" from Node and a `NotFoundError` from the Origin Private File System
+ * > are three spellings of one fact.
+ *
+ * Ten `FAULT_*` codes. This file replaced `bool ok` with a `Result` — an improvement — and threw
+ * away the `i32 fault` beside it, so `Files.read` answered `Result<Bytes, NotGranted>`: **one bit,
+ * where the shipped capability reports ten.** The `bool` was the redundant half and the code was the
+ * payload, and the rewrite kept the wrong one.
+ *
+ * Found from `@/packages/fs`, whose `Fault` has nine members derived from those codes. Its
+ * `Mount.onHost` assigns `files.read` into a slot typed `Result<…, Fault>`, so a **host** mount could
+ * only ever answer `NotGranted` while a **memory** mount produced all nine — one interface, two
+ * implementations, two producible subsets, and nothing saying which. Worse: a missing file on a host
+ * mount answered `NotGranted`, which is not vague but *wrong*, since the grant was given.
+ *
+ * `Denied` and `NotGranted` stay apart, for the reason `@/packages/fs/src/fault.wac` gives: *"`Denied`
+ * is the operating system refusing a program that asked; `NotGranted` is a program that never held
+ * the authority to ask."*
+ */
+export struct NotFound { string path; }
+export struct Denied { string path; string attempted; }
+export struct Exists { string path; }
+export struct IsDir { string path; }
+export struct NotADir { string path; }
+export struct NotEmpty { string path; i32 entries; }
+export struct ReadOnly { string path; }
+export struct Unsupported { string what; }
+/** The host's own sentence, for the one case its taxonomy does not cover. */
+export struct OtherFault { string message; }
+
+export union<
+  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, OtherFault
+> FileFault;
+
 export struct Files {
-  fn<Ticket<Result<Bytes,    NotGranted>>(string)>          read;
-  fn<Ticket<Result<void,     NotGranted>>(string, Bytes)>   write;
-  fn<Ticket<Result<Stat,     NotGranted>>(string)>          stat;
-  fn<Ticket<Result<string[], NotGranted>>(string)>          readDir;
-  fn<Ticket<Result<void,     NotGranted>>(string, bool)>    mkdir;
-  fn<Ticket<Result<void,     NotGranted>>(string, bool)>    remove;
-  fn<Ticket<Result<void,     NotGranted>>(string, string)>  rename;
-  fn<Ticket<Result<Stat,     NotGranted>>(string)>          linkStat;
+  fn<Ticket<Result<Bytes,    FileFault>>(string)>          read;
+  fn<Ticket<Result<void,     FileFault>>(string, Bytes)>   write;
+  fn<Ticket<Result<Stat,     FileFault>>(string)>          stat;
+  fn<Ticket<Result<string[], FileFault>>(string)>          readDir;
+  fn<Ticket<Result<void,     FileFault>>(string, bool)>    mkdir;
+  fn<Ticket<Result<void,     FileFault>>(string, bool)>    remove;
+  fn<Ticket<Result<void,     FileFault>>(string, string)>  rename;
+  fn<Ticket<Result<Stat,     FileFault>>(string)>          linkStat;
 
   /**
    * A file as a stream of chunks, and a stream that consumes them.
