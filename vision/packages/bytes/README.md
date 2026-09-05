@@ -69,6 +69,18 @@ is why this is a copy and not the no-op it looks like."* So a builder makes the 
 instead of quadratic and cannot make it free, and the third thing in the missing-features line is not
 the builder at all.
 
+**And `pushDecimal` was dropped too, which makes the pattern.** 0347a's 257 is a floor: the count
+sees `x = x + …` and not `x = … + x`, and the second is what a hand-written integer-to-string is,
+because digits come out least-significant first. Sixteen more, eight of them a digit loop — and a
+`Buf` cannot help a prepend at all, since it appends and a prepend needs a reverse. The answer is
+`pushDecimal`, which the shipped `Buf` has and eight files ignore, one of them `packages/fmt`.
+
+So this rewrite had removed **both** methods the shipped tree's largest string duplication needs, and
+neither removal was noticed until somebody counted the shipped tree rather than reading this file.
+**A rewrite drops what its own callers did not happen to want** — which is the cost of choosing a
+surface from a sample of use, and is the first time in this exercise the sample has been shown to be
+the thing that was wrong.
+
 **A doc comment cannot contain a path pattern, and cannot describe the rule that says so.** Writing
 the count above broke `src/buf.wac` twice: once because a glob contains a star and a slash in that
 order and ends a block comment, and once because the sentence explaining that quoted the closing

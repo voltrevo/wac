@@ -135,4 +135,22 @@ export struct Buf {
 
   /** What is in it, as a `string`, taking it to be UTF-8. */
   string str(const this) { … }
+
+  /**
+   * Append `v` in decimal — **the method that answers the other sixteen sites, and this rewrite had
+   * dropped it too.**
+   *
+   * `issues/lang/0347a` counts 257 `x = x + …` accumulations in loops and then 16 more of the
+   * *other* shape, `x = … + x`, which is what a hand-written integer-to-string is because digits
+   * come out least-significant first. **A `Buf` cannot help a prepend** — it appends, and a prepend
+   * needs a reverse — so `pushStr` is not the answer to those and this is: eight files write the
+   * digit loop by hand while `pushDecimal` sits in the shipped `Buf`, and one of the eight is
+   * `@/packages/fmt`, whose job it is.
+   *
+   * So the rewrite had removed **both** methods that the shipped tree's largest string duplication
+   * needs — `toStr` and this — and neither removal was noticed until somebody counted the shipped
+   * tree rather than reading this file. **A rewrite drops what its own callers did not happen to
+   * want**, which is the cost of choosing the surface from a sample of use.
+   */
+  void pushDecimal(this, i32 v) { … }
 }
