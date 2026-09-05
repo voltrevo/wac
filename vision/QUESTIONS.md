@@ -4144,6 +4144,71 @@ equivalent:
 The first is what the code assumes. It should be written down before it is assumed for a
 ninety-first time.
 
+### Swept again, 2026-09-05: 186 sites, and the directory is split about it by the hour
+
+The ninety was `return` position only. Every position, with enum declarations and `case`-less arm
+patterns excluded — **186 bare variant constructions in 24 files.** 160 of them are `Ok` or `Err`;
+**26 are eleven other names across 7 files**, which the first count did not see at all.
+
+*The first attempt at this number said 377* and was wrong: it counted `Str(u8[] bytes),` inside an
+enum body and `List(_, _):` in a match arm, which are a declaration and a pattern. Both are
+capitalised-name-followed-by-paren and neither is a construction. Fixed by tracking brace ranges and
+looking for a `:` after the closing paren, and worth keeping — **the construct is invisible to a
+naive scan for exactly the reason the entry above says it is invisible to the grammar instrument: it
+collides with two other things that already parse.**
+
+**The twenty-six are the interesting ones, because they are in slots the entry's first option does
+not obviously reach.** Three kinds:
+
+    a variant's payload      Ok(Word(w))  Ok(Str(one(tag)))  Ok(List(items))  Err(BadDigit(i, c))
+    a struct's field         Finding(i, Shadowed(later!))    Typed(drawn, Signal(Interrupt))
+    a call argument          o.push(formDecode(key), Str(…))   writeValue(Object(o))
+
+So *from the expected type* has to be **recursive**: `Ok(Word(w))` needs `Word`'s slot to come from
+`Ok`'s payload type, which came from the return type — two levels — and
+`Typed(drawn, Signal(Interrupt))` is three, since `Interrupt` is a bare variant inside a bare variant
+inside a struct constructor. The entry says *a function answering `Res<i32, F>` has a slot*. So does
+every argument position inside that slot, and nothing has said so.
+
+### And five files do the opposite, all written in the same thirty-four minutes
+
+| | files | sites |
+|---|---:|---:|
+| bare — `return Ok(v);` | 23 | 160 |
+| qualified — `return Result.Ok(v);` | 6 | 23 |
+| both, in one file | 1 | — |
+
+The six that qualify are `../core/ticket.wac`, `@/packages/json/src/parse.wac` and `json.wac`,
+`@/packages/stream/src/scalars.wac` and `transform.wac`, and `@/packages/wactest/src/test.wac`. Their
+creation times are **02:22, 02:22, 02:33, 02:37, 02:37 and 02:56 on 2026-09-04** — a thirty-four
+minute window; the next file to construct a `Result` at all is `@/packages/rlp/src/decode.wac` at
+**18:48**, and it and everything after it is bare.
+
+`@/packages/json/src/parse.wac` writes `return Result.Ok(JsonValue.Object(members));` — both names
+qualified, eleven times — and `@/packages/rlp/src/decode.wac` writes
+`return Ok(Str(one(tag as@ u8)));` — neither, in the same shape, sixteen hours later. **Two parsers
+of comparable size, opposite conventions, and nothing chose.** The one file with both is the last of
+the early batch.
+
+> **The exercise changed its mind about its single largest syntactic addition between the second
+> package and the third, and the only record of it is the timestamps.** Which is the same failure
+> mode as `@/packages/abi/src/type.wac`'s `DynBytes` comment — a decision argued in one file, in
+> prose, at the point of collision — and here it was not even argued.
+
+`@/packages/server/src/routes.wac:71` is the sharpest single line: `json(Status.Ok, writeValue(Object(o)))`
+qualifies one variant and leaves the other bare, **in one call, in an author's own file.** So the
+split is not per-package discipline either. It is per-occurrence, and the thing that decides is
+whether the enum's name reads as information at that spot.
+
+### Which is an argument the entry did not have
+
+Its three options were about *resolution*. This says the resolution rule is not the hard part —
+`Status.Ok` and `Object(o)` in one call means a reader wants **both forms available**, and the
+question is whether a language should let the same value be written two ways with no rule about
+which. wac already does that for `is`, deliberately: *"`is` accepts a variant name, bare or qualified
+by the enum."* So the precedent is *both, caller's choice*, and 186 against 23 is what that produces
+when nobody writes the convention down.
+
 ## `u8` is a scalar in sixty-one places here and is an array element type in the language
 
 Measured 2026-09-04 through `bootstrap/ts/ask_wacc.ts`:
