@@ -1,0 +1,203 @@
+// `cp` — the consumer three units of argument about error sets were missing.
+//
+// `../../../std/platform.wac` measured 29 dead arms in `FileFault`, 36% of the 80 (operation,
+// member) pairs, and then counted the callers that would notice:
+//
+//     match arms naming a FileFault member, across 160 files:  0
+//     `match` on any fault union, across 160 files:            0
+//
+// `@/packages/box/src/cat.wac` is typical — `Err(_): { … "cannot read" }`, one sentence for every
+// way a file can refuse to open. So the whole argument concerned a caller that did not exist, and
+// this is that caller: a program that must do something *different* per member, over several
+// operands, deciding after each whether to carry on.
+//
+// Written before reading the table back, so that what it needed could disagree with it. It does.
+
+import { Result, Vec, Bytes } from "core";
+import {
+  Files, Out, Stat,
+  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, OtherFault,
+  FileFault
+} from "std";
+import { Args } from "@/packages/box/src/lib/args.wac";
+
+/**
+ * What to do about a fault, which is the only classification this program actually wants.
+ *
+ * Not a member of `FileFault` and not derivable from one — see the foot of the file. `Fatal` stops
+ * the run, `Operand` fails this operand and continues to the next, `Skip` is not a failure at all.
+ */
+enum Do { Fatal, Operand, Skip }
+
+/** Which of the two paths a fault was about, decided by the caller and not by the fault. */
+enum Side { Source, Dest }
+
+/**
+ * The whole of this program's error policy, and the reason it takes a `Side`.
+ *
+ * **`NotFound` means opposite things on the two sides.** On the source it is *this operand is not
+ * there*, so `cp a b c dir` reports it and copies the rest. On the destination it is *the target
+ * directory does not exist*, which condemns every remaining operand, so continuing would print the
+ * same sentence once per operand and copy nothing.
+ *
+ * Nothing in the union says this. `NotFound` carries a `string path` and the caller could compare it
+ * against the two paths it passed — by string equality, unchecked, and wrong the moment a host
+ * normalises a path it was handed. So the discriminator this program needs is one it holds and the
+ * fault does not, which is why `Side` is a parameter rather than a read.
+ */
+Do policy(Side side, FileFault f) {
+  match (f) {
+    // Neither side can proceed without the grant, and no later operand will get one either.
+    NotGranted:      { return Fatal; }
+    // The union's whole justification, and it is decided by a parameter.
+    NotFound(_):     { return side is Source ? Operand : Fatal; }
+    // Per-path on both sides: another operand may well be readable.
+    Denied(_):       { return Operand; }
+    // Only ever the destination, and only with `-n`, where refusing to overwrite is the request.
+    Exists(_):       { return Skip; }
+    // A directory source without `-r`. The shipped `cp` calls this "omitting directory" and exits 1.
+    IsDir(_):        { return Operand; }
+    // `a/b` where `a` is a file. Per-path on the source, and on the destination it is the target.
+    NotADir(_):      { return side is Source ? Operand : Fatal; }
+    // Unreachable here — nothing this program calls can produce it. See below.
+    NotEmpty(_, _):  { return Operand; }
+    // The target filesystem is read-only, so every remaining operand fails the same way.
+    ReadOnly(_):     { return side is Source ? Operand : Fatal; }
+    // Unreachable here — `linkStat` is the only source of it and this program does not call it.
+    Unsupported(_):  { return Operand; }
+    // Unknown, so the conservative answer is the one that does not print N copies of it.
+    OtherFault(_):   { return Fatal; }
+  }
+}
+
+/** `cp: <path>: <what>`, and the sentence differs per member because that is the point. */
+string say(string path, FileFault f) { … }
+
+/**
+ * Copy each operand to `dest`, carrying on where carrying on makes sense.
+ *
+ * `noClobber` is `-n`. `recursive` is `-r`, and is the one flag this file does not implement — see
+ * the foot.
+ */
+export async i32 cp(Files files, Out out, Args a) {
+  if (a.operands.len() < 2) {
+    _ = out.writeErr("cp: need a source and a destination\n".toBytes());
+    return 2;
+  }
+  string dest = a.operands.get(a.operands.len() - 1)!;
+  bool noClobber = a.has("n");
+
+  // Whether `dest` is a directory decides how every operand is spelled, and asking is itself a call
+  // that can fault — on the destination side, where `NotFound` is fatal.
+  bool destIsDir = false;
+  match (await files.stat(dest)) {
+    Ok(s):    { destIsDir = s.isDir; }
+    Err(f):   {
+      // `NotFound` on a *stat of the destination* is the one place the policy is wrong, and it is
+      // wrong because `stat` is asking a question rather than doing work: a missing destination is
+      // how `cp a b` names a new file. So this call site overrides the policy it shares with the
+      // others, which is the second finding below.
+      if (f !is NotFound) { _ = out.writeErr(say(dest, f)); return 1; }
+    }
+  }
+
+  i32 status = 0;
+  for (i32 i = 0; i < a.operands.len() - 1; i++) {
+    string src = a.operands.get(i)!;
+    string target = destIsDir ? "\{dest}/\{basename(src)}" : dest;
+
+    Bytes body = Bytes.empty();
+    match (await files.read(src)) {
+      Ok(b):  { body = b; }
+      Err(f): {
+        match (policy(Source, f)) {
+          Fatal:   { _ = out.writeErr(say(src, f)); return 1; }
+          Operand: { _ = out.writeErr(say(src, f)); status = 1; continue; }
+          Skip:    { continue; }
+        }
+      }
+    }
+
+    if (noClobber && await exists(files, target)) { continue; }
+
+    match (await files.write(target, body)) {
+      Ok(_):  { }
+      Err(f): {
+        match (policy(Dest, f)) {
+          Fatal:   { _ = out.writeErr(say(target, f)); return 1; }
+          Operand: { _ = out.writeErr(say(target, f)); status = 1; }
+          Skip:    { }
+        }
+      }
+    }
+  }
+  return status;
+}
+
+async bool exists(Files files, string path) { … }
+string basename(string path) { … }
+
+// ## 1. The dead-arm count was right and measures the wrong thing
+//
+// `../../../std/platform.wac` says `read` reaches 6 of 10 members and `write` reaches 7. Both are
+// still true, and `policy` above has **ten arms**, because it is shared by a `read` and a `write`
+// and the union of their reachable sets is 8 — plus two the compiler makes it write anyway.
+//
+// So per-operation unions would have saved this program **two arms out of twenty**, not the 36% the
+// table implies. The table counts (operation, member) pairs; a real caller writes one classifier for
+// several operations, and the arms it can drop are only those *no* operation it calls can produce.
+// The saving is the intersection of the complements, not the sum.
+//
+// That is a straightforward correction of my own arithmetic, and it survives being pushed on: a
+// program calling all eight slots would reach every member and save nothing at all. **The cost of a
+// shared error set falls as the caller uses more of the interface**, which is the opposite of what a
+// per-(operation, member) count suggests and is why the count needed a caller to interpret it.
+//
+// ## 2. And what the caller actually wants is not a member at all
+//
+// `policy` answers `Do`, which has three arms, and the mapping from ten members to three is **not a
+// function of the member**. `NotFound`, `NotADir` and `ReadOnly` all answer differently depending on
+// *which of the two paths* the call was about, so `Side` is a parameter. That distinction is the one
+// piece of information a batch program needs from a fault and the only one no fault carries:
+//
+// > **is this about the thing I am processing, or about the run?**
+//
+// Every batch program has it. `@/packages/git/example/ignorelint.wac` walks files, `cat` walks
+// operands, an installer walks packages, and each has to decide *keep going or stop* after every
+// failure. It cannot be a property of the member, because `Denied` on one source is per-operand and
+// `Denied` on the shared destination is per-run — same member, same data, opposite answers. It is a
+// property of **the call**, and the caller is the only thing that knows which call it made.
+//
+// So the shape of the ask is not a smaller union. It is that the ten members carry *cause* and the
+// caller needs *scope*, and those are orthogonal — a two-column classification where the union
+// supplies one column and nothing supplies the other. Which is a thing a language could offer (a
+// second tag on a call, an effect annotation, a `Result` that knows its subject) and which this
+// program solves by passing an enum by hand, correctly and unenforceably.
+//
+// ## 3. What could not be written
+//
+// **Two arms of `policy` are unreachable and `never` cannot say so.** `NotEmpty` comes only from
+// `remove` and `Unsupported` only from `linkStat`, and this program calls neither. The compiler
+// knows the type of `f` is `FileFault` and cannot know it came from `read` or `write`, so the arms
+// are required, and their bodies are a guess. This is the dead arm the last three units were about,
+// finally in a real caller — **two of them**, not twenty-nine.
+//
+// **The `stat` call site had to override the policy it shares.** A `NotFound` from `files.stat(dest)`
+// is not a failure: it is how `cp a b` says *b does not exist yet*. So `policy` is right for the two
+// calls that do work and wrong for the one that asks a question, and the file distinguishes them with
+// an `if` above the loop. The general form is that a **query** and a **command** disagree about
+// whether absence is an error, and one fault union serves both — the same shape as `Exists`, which is
+// a failure for `mkdir` and the desired state for anything idempotent.
+//
+// **`-r` is not implemented and the reason is a type.** Recursive copy needs `readDir`, a stack, and
+// a per-entry `Stat`, and `Files.readDir` answers `string[]` with no documented order —
+// `@/packages/git/example/ignorelint.wac`'s `gather` wanted the same thing and said the same. A
+// second caller for that gap, and the first where the missing order is not cosmetic: a recursive copy
+// that visits a directory's contents before creating the directory fails on every one of them.
+//
+// **`Bytes.empty()` then overwrite is a `T?` spelled badly.** `body` is declared before the match so
+// both arms can assign it, which is what a language without expression-`match` requires; the empty
+// value is never read and exists to satisfy definite assignment. Sixth site of this shape, and the
+// one that makes the case best, because here the placeholder is *a valid file body* — copying an
+// empty file and failing to read a file produce the same value, and only the `continue` separates
+// them.
