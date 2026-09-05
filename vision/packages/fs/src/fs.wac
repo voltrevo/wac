@@ -1,0 +1,17 @@
+// The barrel `fs` did not have, and which `@/packages/ssh/src/session.wac` had been importing.
+//
+// `import { Mount, Fault } from "@/packages/fs";` with no `src/fs.wac` to resolve to — invisible for
+// the same reason `@/packages/gzip` was: the checker globbed `src/*.wac` when a barrel was missing.
+//
+// Two files, and the whole package is a `Mount` and what it can refuse.
+
+export { Mount, Entry } from "./mount.wac";
+
+// The nine members are re-exported from `std` by `./fault.wac` and re-exported again here, which
+// looks redundant and is not: a caller matching a `Fault` needs the arms in scope, and it should not
+// have to know that this package's vocabulary is `std`'s. `../../../QUESTIONS.md` — *a barrel that
+// exports a type must export everything needed to use it the way this codebase writes it.*
+export {
+  Fault,
+  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, OtherFault,
+} from "./fault.wac";

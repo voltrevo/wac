@@ -7772,8 +7772,40 @@ at**. `crypto`'s is written — and writing it forced one judgement a path impor
 `chachaBlock` and `aesEncrypt` are deliberately *not* exported, because a caller who wants a cipher
 wants the cipher, and today they are reachable by path with nothing recording that they should not be.
 
-> **Verdict:** convention — every package gets a barrel, and the export list is where *what this
-> package is for* gets decided. Settled by: writing eleven of them; the language is not involved.
+> **Verdict:** convention — a package gets a barrel **when something outside it imports the
+> package**, and the export list is where *what this package is for* gets decided. Settled by:
+> writing the three that were needed; the language is not involved.
+
+*The verdict said **eleven** when it was written, and that was wrong.* Going to write them found that
+**eight of the eleven have no consumer outside the package at all** — so the missing barrel is not a
+gap there, it is the absence of a boundary nobody has needed yet, and writing eight export lists
+nobody imports is the ceremony this directory argues against everywhere else. I generalised from the
+one case (`crypto`) that had consumers.
+
+**And the other two were broken imports that nothing had reported.**
+
+    packages/box/src/gunzip.wac:  import { Fault, SourceFailed, Corrupt } from "@/packages/gzip";
+    packages/ssh/src/session.wac: import { Mount, Fault } from "@/packages/fs";
+
+Neither package had a `src/<name>.wac`. They went unseen because the directory's own import checker
+**fell back to globbing `src/*.wac`** when a barrel was missing, so a barrel-form import of a
+barrel-less package resolved against the union of that package's files. The fallback is removed: a
+specifier naming a package means that package's barrel, and nothing else.
+
+> **A lenient resolver hides a missing boundary, which is the one thing a resolver is asked about.**
+> The glob was answering *could this name mean anything here*, and the question was *does this name
+> mean what it says*.
+
+### And writing `fs`'s barrel found that importing a vocabulary does not publish it
+
+`packages/fs/src/fault.wac` imports the nine fault members from `"std"` and declares `Fault` over
+them — so it exported a **type whose arms were not reachable through it**, and the new barrel asked
+for them and got nothing.
+
+That is *24 of 29 barrels export a union without its arms* one level down, at a file rather than a
+barrel, and the mechanism differs in a way worth keeping: a barrel omits arms by **forgetting** them;
+this omitted them because **it never had them to export**. They arrived by `import`, and an import is
+not an export.
 
 > **Verdict:** convention — one name per exported type per package, checked by a barrel walk.
 > Settled by: the check, which is written. The language is not involved.

@@ -60,6 +60,22 @@ export union<
 > Fault;
 
 /**
+ * And the members, re-exported — **importing a vocabulary does not publish it.**
+ *
+ * This file imports the nine from `"std"` and declares the union over them, so it exported a type
+ * whose arms were not reachable through it: `./fs.wac` asked for them and got nothing. That is
+ * `../../../QUESTIONS.md`'s *24 of 29 barrels export an enum or union without its arms* one level
+ * down, at a **file** rather than a barrel, and the mechanism is different in a way worth keeping:
+ * a barrel omits arms by forgetting them, and this omitted them because **it never had them to
+ * export** — they arrived by `import` and an import is not an export.
+ *
+ * A caller of `@/packages/fs` should not have to know that this package's vocabulary is `std`'s.
+ */
+export {
+  NotGranted, NotFound, Denied, Exists, IsDir, NotADir, NotEmpty, ReadOnly, Unsupported, OtherFault
+} from "std";
+
+/**
  * There is no `None`.
  *
  * `FAULT_NONE` is the tenth constant and it is the one that does not belong: it names the *absence*

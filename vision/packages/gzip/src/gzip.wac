@@ -1,0 +1,25 @@
+// The barrel `gzip` did not have, and which two imports had been using for days.
+//
+// `@/packages/box/src/gunzip.wac` imports `{ Fault, SourceFailed, Corrupt }` and `{ gunzip }` from
+// `@/packages/gzip`, and there was no `src/gzip.wac` for that to mean. It went unreported because the
+// directory's own import checker **fell back to globbing `src/*.wac`** when a barrel was missing, so
+// a barrel-form import of a barrel-less package resolved against the union of its files. The fallback
+// is gone; a specifier that names a package means that package's barrel.
+//
+// ## What this exports and what it does not
+//
+// `Window` is not here. It is the sliding window an inflater keeps, and a caller decompressing bytes
+// has no use for one — exporting it would invite a use this package has no opinion about, which is
+// the judgement `@/packages/crypto/src/crypto.wac` made about `chachaBlock` on the same day and the
+// reason a barrel is worth writing rather than generating.
+
+export { gunzip, gunzipBytes } from "./inflate.wac";
+
+// **The members as well as the unions**, which `../../../QUESTIONS.md` records as the thing barrels
+// here get wrong: 24 of 29 export an enum or union without its arms, and this codebase writes the
+// bare form 190 times to 30. `Err(is Corrupt):` at a call site needs `Corrupt` in scope.
+export {
+  Fault, Corrupt, SourceFailed,
+  BadMagic, BadMethod, BadBlockType, BadHuffmanCode, BadDistance, Truncated,
+  ChecksumMismatch, LengthMismatch,
+} from "./fault.wac";
