@@ -286,6 +286,21 @@ the grammar for nine days with no user at all, added because they appear on an a
 `auto`, the most ordinary of them, turns out to have no case: the longest declared type in the tree
 is nineteen characters, and the type worth eliding is a *return* type, where `auto` cannot go.
 
+*2026-09-05 adds both halves.* `core/cursor.wac` was written from a **sweep** — `Reader` in five
+shipped packages — and its first consumer, `packages/rlp`, disproved one of its own four claims: the
+file called `sub(n)` *"the one that makes a length-prefixed format bearable"*, and the first
+length-prefixed consumer declined it, because a sub-cursor makes rlp's `ListOverrun` unreachable.
+**A sweep says a type is missing and an adoption says which parts of it are** — eleven members
+counted, six used, two declined for the format's reasons, three never reached for.
+
+And the second clause inverts. `core/result.wac` shipped 2026-08-18 with **zero users in
+`packages/*/src`** across the 38 files written since, while eleven hand-written result types exist in
+nine packages. *A construct with no consumer has no evidence* is right about a construct nobody
+needed; here the zero **is** the evidence, and what separates the two cases is whether somebody wrote
+a replacement instead. Two files written after it landed priced propagation and declined —
+`wapyparse.wac`'s errors are a flat `i32[]` and a count, `grants.wac`'s `Parsed` carries a
+`string bad`.
+
 **3. A design justified by a limitation outlives the limitation, silently.** `packages/fs` is one
 concrete type with a mount table because *"a funcref cannot capture a filesystem because there are no
 closures"* — written a fortnight after lambdas landed, and the design its own header says it wanted is
