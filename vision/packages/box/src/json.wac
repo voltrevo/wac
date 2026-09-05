@@ -1,0 +1,90 @@
+// `json` — validate, or canonicalise. Written because `render` had no caller.
+//
+// `@/packages/json/src/parse.wac` gave `ParseError` its input two days ago — `{ Bytes at; Reason
+// why; }`, a zero-length slice positioned at the fault — and got `render(const ParseError e)` out of
+// it: **the first diagnostic in this directory that takes one parameter**. Nothing called it, which
+// `../../json/README.md` records as the flip side of a fault nobody reads. This is the caller.
+//
+// The shipped applet is thirty lines and its error path is the whole argument:
+//
+//     core.warn(a.name + ": invalid JSON at byte " + itoa(c.pos) + " (code " + itoa(c.code) + ")");
+//
+// **A byte offset and a numeric code, printed by a program holding the document.** `canonicalize`
+// answers `Canonical { bool ok; i32 code; i32 pos; u8[] text; }`, so the parser has the position and
+// the applet has the bytes, and the two never meet — in the one place where the reader is a person.
+
+import { Result, Bytes } from "core";
+import { Out, In, Files, NotGranted } from "std";
+import { Args } from "@/packages/box/src/lib/args.wac";
+import { JsonValue, ParseError, parse, render, writeValue } from "@/packages/json";
+
+/**
+ * Validate, and with `-c` write the canonical form.
+ *
+ * Without `-c` it says nothing and exits 0, so it composes in a test — the shipped file's rule and a
+ * good one.
+ */
+export async i32 json(Out out, In in, Files files, Args a) {
+  Bytes src = try await readAll(in, files, a);
+  match (parse(src)) {
+    Ok(v):   { if (a.has("c")) { _ = out.write(writeValue(v)); } return 0; }
+    // **One argument.** The fault carries the document it is about, so the applet does not hand it
+    // back — and what comes out is a line, a column, the source line and a caret rather than a byte.
+    Err(e):  { _ = out.writeErr(render(e).toBytes()); return 1; }
+  }
+}
+
+/** Every operand, or standard input. `@/packages/box/src/cat.wac` argues the `-` case. */
+async Result<Bytes, NotGranted> readAll(In in, Files files, const Args a) { … }
+
+// ## 1. What the caller bought, measured against the line it replaces
+//
+//     shipped   json: invalid JSON at byte 47 (code 3)
+//     here      3:12: a string was not closed
+//               	  "name": "unterminated
+//               	           ^
+//
+// Three things changed and only one of them is `render`:
+//
+//   * **the position is a line and a column**, because the fault holds the document and can count
+//     newlines. The shipped applet could have done this and would have needed the parser's offset
+//     *and* its own bytes in one expression — which is exactly the pairing the fault now carries.
+//   * **the reason is a sentence**, because `Reason` is ten named members rather than an `i32` code.
+//     `../../json/README.md` records that conversion; this is the first place its output is read by
+//     somebody rather than compared by a test.
+//   * **the caret**, which needs nothing new — it is the line and the column, and no program that
+//     had them would omit it.
+//
+// So the value of `ParseError { Bytes at; }` is not that it is tidier. It is that the *applet* is
+// where a person reads the answer and the *parser* is where the position is known, and a fault that
+// carries only the offset makes every applet re-derive what the parser already had. There are
+// three JSON entry points in the shipped tree — the applet, `packages/server`'s `POST /json` route,
+// and `packages/ethrpc` — and each would have to write the newline-counting loop separately.
+//
+// ## 2. And the flag is `-c`, which is where this file disagrees with itself
+//
+// `a.has("c")` is a string against a `Spec` this applet does not declare —
+// `@/packages/box/src/lib/args.wac`'s own *what could not be written* says so: *"`spec` is a value
+// and `has(a, "n")` is a string, so nothing checks one against the other."* Second file to write that
+// call knowing it, after `@/packages/box/src/cp.wac`, and the second to be right only because the
+// author held the spec in their head.
+//
+// ## 3. What could not be written
+//
+// **`render` answers a `string` and the caret is a tab-indented block.** Three lines with a `\\t` and
+// a run of spaces, assembled by string concatenation, in a function whose whole purpose is to be
+// read. A diagnostic is a *layout*, and the only thing here that can express one is a string —
+// `@/packages/box/src/lines.wac`'s column code and `@/packages/git/src/prompt.wac`'s status line have
+// the same problem from the other side, and none of the three can share anything with the others.
+//
+// **Nothing says the caret's column and the message's column agree.** `render` computes both from
+// `e.at.from` and they are the same number twice; a caller that wrapped the message would move one
+// and not the other. That is the *paired values with nothing holding the pair* shape at a fifth site
+// and the first where both halves are produced by one function — so the pairing is safe today and is
+// safe by proximity rather than by anything a reader could check.
+//
+// **A validator that says nothing on success cannot be told from one that did not run.** Exit 0 and
+// no output is the shipped rule and it is right for a pipe, and it means `json < /dev/null` and
+// `json` on a valid document are indistinguishable. The shipped file has the same property and does
+// not mention it; noticing it needs the applet to be read as a *program somebody runs* rather than as
+// a function, which is the reading this directory has done least.

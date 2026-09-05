@@ -8391,6 +8391,44 @@ It is also a hand-written instance of the wrap `@/packages/http/src/client.wac` 
 do: `NotJson` exists to put a `ParseError` inside `RpcFault`, one struct member wide, because nothing
 spells *this union contains that one's failures*.
 
+## The caller `render` was missing, and the applet is where the argument lands
+
+*2026-09-05.* `@/packages/json`'s `ParseError` gained its input two days ago and `render(const
+ParseError e)` came out of it — **the first diagnostic here that takes one parameter** — and nothing
+called it. `@/packages/box/src/json.wac` is the caller, and it is the one place the reader is a
+person.
+
+The shipped applet's error path, in a program holding the document:
+
+    core.warn(a.name + ": invalid JSON at byte " + itoa(c.pos) + " (code " + itoa(c.code) + ")");
+
+    shipped   json: invalid JSON at byte 47 (code 3)
+    here      3:12: a string was not closed
+                  "name": "unterminated
+                           ^
+
+`canonicalize` answers `Canonical { bool ok; i32 code; i32 pos; u8[] text; }`, so the parser has the
+position and the applet has the bytes and the two never meet.
+
+> The value of `ParseError { Bytes at; }` is not that it is tidier. **The applet is where a person
+> reads the answer and the parser is where the position is known**, and a fault carrying only the
+> offset makes every applet re-derive what the parser already had. Three JSON entry points in the
+> shipped tree — the applet, `packages/server`'s `POST /json`, `packages/ethrpc` — and each would
+> write the newline-counting loop separately.
+
+Only one of the three improvements is `render`: the line and column need the fault to hold the
+document, the sentence needs `Reason` to be ten named members rather than an `i32`, and the caret
+needs nothing at all — it is the line and the column, and no program that had them would omit it.
+
+### And a validator that says nothing cannot be told from one that did not run
+
+`json` exits 0 silently on success, which is the shipped rule and right for a pipe, and it means
+`json < /dev/null` and `json` on a valid document are indistinguishable. The shipped file has the
+property and does not mention it.
+
+Noticing it needs the applet read as **a program somebody runs** rather than as a function — which is
+the reading this directory has done least, and the one that produced both findings in this entry.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
