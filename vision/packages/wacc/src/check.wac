@@ -23,12 +23,23 @@ import { Tok, Ty } from "./ast.wac";
 /**
  * Whether a value of type `got` may be where a `want` is expected — **the sixth clause**.
  *
- * `union<A, B>` accepts `A`, and accepts `union<A>`, and accepts `union<A, B>`; it does not accept
- * `union<A, C>`. So the rule is **subset**, and it composes with the five that are there rather than
- * sitting beside them: `union<A, B>?` takes a `union<A>` by the nullable clause recursing onto this
- * one, exactly as `Shape?` takes a `Circle?` today.
+ * This said **subset**: `union<A, B>` accepts `A`, accepts `union<A>`, and does not accept
+ * `union<A, C>`. `../../../TECHNICAL.md` settles that it is wrong, and it settles it with a
+ * measurement rather than an argument — the lowering exists and was run:
  *
- * The clause is three lines. What it costs is below.
+ * > `union<A, B>` lowers to an enum of one-field variants … **Injection is implicit.** A value of a
+ * > member type, in a slot whose type is the union, is wrapped … **This is the whole of what the
+ * > language adds.**
+ *
+ * An enum of one variant and an enum of two are different types, so `union<A>` is not a `union<A, B>`
+ * at run time and cannot be at compile time either. And the lowering **nests rather than flattens**,
+ * deliberately — `union<SourceFailed, Corrupt>` becomes an enum whose variant carries `Corrupt`'s
+ * enum, which is what makes `@/packages/box/src/gunzip.wac`'s one-arm `Err(is Corrupt):` possible and
+ * what flattening would destroy.
+ *
+ * So the relation is **nominal membership**, not subset: `union<A, Corrupt>` accepts a `Corrupt`
+ * because `Corrupt` is *a declared member*, not because its members are contained. One lookup —
+ * `c.isUnionMember(want, got)` — with no set comparison, no canonicalisation and no sorting.
  */
 export bool assignable(const Ctx c, Ty want, Ty got) { … }
 
@@ -38,9 +49,13 @@ export struct Ctx { … }
 /*
  * ## And `never` needs no clause at all, which is the one place vision makes this function smaller
  *
- * `never` is the **empty union**. Subset containment then makes it assignable to everything —
- * `{} ⊆ S` for every `S` — so *a bottom type* is not a rule the checker learns; it is the degenerate
- * case of a rule it already has.
+ * `never` is the **empty union** — an enum with no variants, so no value of it exists.
+ *
+ * **That is still the definition and it no longer makes the function smaller**, which the first
+ * version of this file claimed. Under a *subset* rule `{} ⊆ S` gave assignable-to-everything for
+ * free; under nominal membership it does not, and `never` needs a clause of its own. The clause is
+ * one line and vacuously true — a value that cannot exist can go anywhere — but it is a line, and
+ * the saving was an artefact of the wrong relation.
  *
  * `../../../QUESTIONS.md` records `never` as *a type with non-trivial semantics, asserted in one doc
  * comment*. This is the semantics: not *assignable to everything* as a special case, but *the union
@@ -94,9 +109,10 @@ export Ty? missingFrom(const Ctx c, Ty want, Ty got) { … }
 //
 // Three things I expected to pay for and do not:
 //
-//   * **Ordering.** `union<A, B>` and `union<B, A>` are the same type under subset, so nothing has to
-//     canonicalise a member list before comparing. `@/packages/http`'s `ResponseFault =
-//     union<RequestFault, BadStatus>` nests a union in a union and flattens by the same rule.
+//   * **Ordering.** Under nominal membership nothing compares member lists at all, so there is
+//     nothing to canonicalise — and `@/packages/http`'s `ResponseFault = union<RequestFault,
+//     BadStatus>` **nests** rather than flattening, which is the lowering's own decision and the
+//     reason `Err(is RequestFault):` is one arm.
 //   * **`never` as a special case** — §above.
 //   * **Nullable interaction.** The existing clauses recurse, so `union<A, B>?` falls out. That is a
 //     property of how that function was written and not of unions, and it is worth noticing: a

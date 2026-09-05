@@ -8079,9 +8079,39 @@ choice here — a type is its canonical name, and the context answers questions 
 one that makes this cheap rather than the one that makes it expensive, and I assumed the opposite
 without reading why the choice was made.
 
-> **Verdict:** language — union subtyping as subset, `never` as the empty union, and a witness form of
-> the relation for `try`. Settled by: `spec/spec/types.md` for the meaning, and in
-> `packages/wacc/src/check.wac` a sixth clause plus one declaration table.
+### And *subset* was wrong too — the lowering had already decided, and it decided nominal
+
+Third correction in three units, all from the same cause: I proposed a **structural** rule for a
+language whose every existing rule is **nominal**.
+
+`TECHNICAL.md` settles it with a measurement rather than an argument — the lowering exists and was
+run through `bootstrap/ts/ask_wacc.ts`:
+
+> `union<A, B>` lowers to an enum of one-field variants … **Injection is implicit.** A value of a
+> member type, in a slot whose type is the union, is wrapped … **This is the whole of what the
+> language adds.**
+
+An enum of one variant and an enum of two are different types, so `union<A>` is not a `union<A, B>` at
+run time and cannot be at compile time. And the lowering **nests rather than flattens**, deliberately:
+`union<SourceFailed, Corrupt>` becomes an enum whose variant carries `Corrupt`'s enum, which is what
+makes `@/packages/box/src/gunzip.wac`'s one-arm `Err(is Corrupt):` possible and what flattening would
+destroy.
+
+So the relation is **nominal membership**: `union<A, Corrupt>` accepts a `Corrupt` because `Corrupt`
+is a declared member, not because its members are contained. `c.isUnionMember(want, got)` — one
+lookup, no set comparison, no canonicalisation, no sorting. Simpler than what I proposed, and
+`never`'s free ride goes with it: `{} ⊆ S` was a subset argument, and under membership `never` needs
+its own one-line clause, vacuously true because no value of it exists.
+
+> **Three units, three structural proposals, three nominal answers already recorded.** `assignable`'s
+> five clauses all ask the context about a *name*; the lowering wraps by *name*; matching is by
+> *variant name*. I reached for canonicalisation, sorted member lists and subset each time, and each
+> time the answer was a table lookup that the file next door had already written down.
+
+> **Verdict:** language — union assignability as **nominal membership**, `never` as the empty union
+> with its own clause, and a witness form of the relation for `try`. Settled by: `spec/spec/types.md`
+> for the meaning, and in `packages/wacc/src/check.wac` a sixth clause plus the declaration table the
+> lowering needs anyway.
 
 ### The lesson about the instrument
 
