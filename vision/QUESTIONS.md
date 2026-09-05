@@ -7111,6 +7111,30 @@ would retain every record it rejected. That is a real objection to putting it in
 to putting it in `ParseError`, and the difference is how many of the fault get made — which nothing in
 the type says.
 
+**Tried on one, then counted the rest.** `@/packages/json`'s `ParseError` went from `{ i32 at; Reason
+why; }` to `{ Bytes at; Reason why; }` — a zero-length slice at the fault *is* the pair, since `Bytes`
+is `Slice<u8>` — and it bought `render(const ParseError e)`, the first diagnostic in this directory
+that takes one parameter. It cost **one line**, because `fail` is the only place that parser
+constructs one, and the file says that is not a general result.
+
+So how general is it? Counting construction sites of the 51 faults that carry a position and no
+source:
+
+    construction sites per fault:  0 → 23   1 → 18   2 → 5   3 → 2   4 → 1   5 → 2
+
+**The maximum in the directory is five and the median of those that are constructed at all is one.**
+The whole change is 48 edits, and the five largest — `Truncated` (rlp), `OutOfRange` and
+`BadSeparator` (datetime), `LengthOverruns` (abi) — are all raised from inside a cursor that already
+holds the source, so each edit is `this.src.slice(this.at, this.at)` and nothing else. *Twelve raise
+sites would be twelve edits* was the worry and the number is five.
+
+Two caveats, both real. **23 of the 51 have no construction site here at all**, because their
+producer's body is `{ … }` — so the count is a lower bound and is only honest about the 28 that are
+built. And the sweep first said 81 sites: **32 of those were `match` arms**, `OutOfRange(_, _, _):`
+counted as a construction, a 40% inflation concentrated in exactly the faults this directory has been
+writing callers for. Distinguishing them is one token — whether a `:` follows the closing bracket —
+and it is the fifth instance of *the enumeration is only as good as its parser* in two days.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
