@@ -10998,3 +10998,75 @@ field adds one.
 **So the rule that entry needs is not *never a string*. It is that a `string` payload is right
 exactly when no caller will branch on it** — a question about callers, not about the type, and the
 same test the caller-test asks everywhere else here.
+
+## Fifteen oracles: what this repository actually uses to catch defects, and where it stops
+
+This directory spends its time asking what a type would prevent. Worth counting what the repository
+prevents things with today, because it is not types and it is not small.
+
+**Fifteen files named `oracle.{ts,mjs,py}` under `packages/*/test/`**, plus at least two more doing
+the same job under other names:
+
+    bignum  crypto  datetime  fmt  gzip(fuzz)  json  mpt  regex  ssz  tls  tor  unicode  …
+    packages/bls/test/tower.py        the field tower in plain Python integers
+    packages/gzip/src/crc32.wac       `crc32Bitwise`, kept in-source as the definition
+
+Three were read in full and each is **a second implementation in another language**, saying why in
+almost the same words; the remaining twelve are `.ts`, `.mjs` and `.py` under `test/`, which is the
+same arrangement, and are not individually claimed here.
+
+The three, and they say why in almost the same words. `unicode`: *"the JavaScript engine's own
+Unicode data … the only reference here with the whole of Unicode in it."* `bls`: *"No Montgomery form, no limbs, no carries: everything is `int` and `%`.
+That is the point. The implementation under test holds twelve 32-bit limbs in Montgomery form, so a
+bug in its representation cannot also be a bug here."* `gzip`: the bitwise CRC is kept *"because it is
+the definition, and the tests check the table against it over random input rather than only against
+fixed vectors."*
+
+### What that buys, and it is most of what this directory keeps asking for
+
+A cross-language differential catches **wrong values** about as well as anything can, and it catches
+them in the places a type could not reach:
+
+- a hand-transcribed 384-bit constant, because `tower.py` **computes** it from the field definition
+  rather than transcribing it;
+- a generated 65 KB case table, because the host has the whole of Unicode;
+- a table-driven CRC, because the bitwise form is the specification.
+
+None of those is a type question and no type this directory has proposed would help with any of them.
+So a fair reading of the balance is: **the repository's primary defect-catching mechanism is
+differential testing against an independent implementation, and the language questions here are about
+the residue.**
+
+### Where it stops, which is exactly one place and this directory found it
+
+`packages/crypto/src/weierstrass.wac`'s `cmpBE` leaked timing through an early return, and the
+constant-time harness *"reported uniform over 8.19 million events while it was still here, because
+the two secrets `ct.wac` compares both differ from n in their first byte."*
+
+An oracle compares **answers**. A timing leak is not a wrong answer — both implementations return the
+same value — so no differential against any reference in any language would have seen it. The thing
+that would is the `secret` qualifier, which refuses the branch at compile time.
+
+So the division is clean and worth stating as the rule this directory should apply to itself:
+
+> **A differential catches a wrong value. It cannot catch a right value computed the wrong way.**
+> Ask for a type when the defect is invisible in the output — timing, allocation, a path taken — and
+> expect an oracle to be the better answer when it is not.
+
+Measured against that, most of this file is well-founded and some of it is not. The sentinel entries,
+the closed-set entries and the phase entries are about *wrong values a differential would catch if
+someone wrote the case* — which is a real argument, because nobody writes the case, but a weaker one
+than it reads as. The `secret` entry and the constant-time work are about defects no differential can
+see, and they are the strongest asks here.
+
+### And the error that produced this entry
+
+I wrote that `packages/bls`'s duplicated constants had **no** oracle, having grepped the source files
+and found none. The oracle is `test/tower.py` and it is the best kind there is. What made it invisible
+was that it is not named `oracle.*` and does not live beside the code it checks.
+
+Which is the one practical thing to take from the count. **Fifteen are named `oracle.*` and
+`bls/test/tower.py` is not**, and `bls` is precisely the package whose constants a reader is most
+likely to assume are unchecked, because they are the ones that look transcribed. A convention
+followed fifteen times out of sixteen is a convention a reader will trust — and then be wrong about
+in the one case that matters most.
