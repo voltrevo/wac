@@ -7351,6 +7351,22 @@ The two are `@/packages/sh`'s `ArithFault` (all three have `at`) and `@/packages
 `ProxyUrlFault` (all five have `url`), and for those `f.at` would read it — except that **field access
 on a union is not in the language and nothing here had asked for it.**
 
+*And the demand for that feature is thin, which is worth saying before proposing it.* Both unions
+were written in the last two days and both by the same hand — `arith.wac` on 2026-09-04,
+`proxy.wac` on 2026-09-05 — so *two unions want it* is close to *I wrote two unions that want it*.
+The fourteen below are the real evidence, because they are spread across `abi`, `tor`, `box`,
+`codec`, `wacc`, `ssz`, `std`, `fs`, `http`, `mpt`, `ethrpc` and `datetime`, and most predate this
+week.
+
+**What makes the feature worth proposing anyway is that it and the design rule check each other.**
+If `f.at` compiled only when every member had an `at`, then adding `ImpossibleLength { i32 len; }` to
+`CodecFault` would have broken every reader — loudly, at the moment the whole-input fault was mixed
+into a union of point faults. So the feature is not only a convenience: **it is the only mechanism
+that would make the mixing visible**, and without it the rule is a thing to remember. The cost is the
+same fact from the other side — a member added without the field breaks readers at a distance — and
+that cost *is* the check. Which is unusual enough to state plainly: this is a feature whose
+inconvenience is its whole value.
+
 The fourteen are more interesting, and every near-miss is a position or a subject: `at` in 6 of
 `AbiFault`'s 7, 4 of `CodecFault`'s 5, 7 of `TimeFault`'s 8; `node` in 8 of `mpt`'s `ProofFault`'s 10;
 `path` in 7 of `FileFault`'s 10; `id` in 6 of `Event`'s 7. Reading the odd members out:
