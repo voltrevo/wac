@@ -73,11 +73,32 @@ export struct Cursor {
   /**
    * A cursor over the next `n` bytes, and advance past them — `tls`'s `slice(n)`, `sub8`, `sub16`.
    *
-   * The one operation of the four that is not a read, and the one that makes a length-prefixed
-   * format bearable: a nested field is parsed by a cursor that **cannot** run past its prefix, so
-   * the enclosing bound is enforced by construction rather than by every read inside remembering it.
+   * The one operation of the four that is not a read: a nested field is parsed by a cursor that
+   * **cannot** run past its prefix, so the enclosing bound is enforced by construction rather than
+   * by every read inside remembering it.
+   *
+   * **This said *the one that makes a length-prefixed format bearable* and the first
+   * length-prefixed consumer declined it.** `@/packages/rlp/src/decode.wac` reads a list by checking
+   * the bound by hand, because a sub-cursor makes its `ListOverrun` unreachable — a member that runs
+   * past its list's declared end comes back as an overrun on the inner cursor, and RLP needs those
+   * apart: one is a truncated network read and the other is an encoder contradicting itself. §1b.
    */
   Result<Cursor, Overrun> sub(this, i32 n) { … }
+
+  /**
+   * Refuse now if `n` bytes are not there — `ssh`'s `need(n)`, answering the fault rather than a
+   * `bool`.
+   *
+   * **Added because the first consumer built an `Overrun` by hand.** `@/packages/rlp`'s `list` has
+   * to check its own bound (see `sub` above) and had nothing to check it *with*: `left()` answers an
+   * `i32`, so a caller doing its own bounds test has to spell the failure this type would have
+   * spelled. Two producers of one value, which `CLAUDE.md` calls one too many, and the cursor is the
+   * one that should own it.
+   */
+  Result<void, Overrun> need(const this, i32 n) {
+    if (n < 0 || this.left() < n) { return Err(Overrun(this.at, n, this.left())); }
+    return Ok();
+  }
 
   Result<void, Overrun> skip(this, i32 n) { … }
 
@@ -98,6 +119,29 @@ export struct Cursor {
 // One token against one token, and the second cannot be forgotten. That is `try`'s strongest case
 // in this directory and it is stronger than the ones `../README.md` lists, because those are
 // *places `try` reads better* and this is **a type in `core` that does not exist without it**.
+//
+// ## 1b. What the first consumer found, and one of the four predictions was wrong
+//
+// `@/packages/rlp/src/decode.wac` adopted this the day it was written. Three of the costs above came
+// true — `Overrun` in the fault union, `be(n)`'s width, no extension methods — and it is the *fourth*
+// claim, made in passing rather than as a cost, that did not survive:
+//
+// > the one that makes a length-prefixed format bearable
+//
+// RLP is a length-prefixed format and does not use `sub`. The argument for it came from
+// `@/packages/tls`, where a nested field that overruns its prefix and an input that ran out are the
+// same answer; in RLP they are two members of the fault union and the format's canonicity rules turn
+// on which. **A bound enforced by construction cannot report which bound it was**, which is the same
+// trade as the trapping one at the other end of this file: a stricter mechanism gives up the ability
+// to say what happened.
+//
+// So `sub` is right for `tls` and wrong for `rlp`. Counted against the one real adoption: of eleven
+// members, `rlp` uses six — `of`, `left`, `empty`, `at`, `u8`, `take`, and `need`, which it caused —
+// **declines two for reasons that are the format's** (`sub`, and `be` for its width), and never
+// reaches for `le`, `skip` or `atEnd`. Whether a type with that profile belongs in `core` or in
+// `tls` is the question, and one adoption cannot answer it — but it is already better evidence than
+// the sweep that produced the type, because a sweep counts what exists and an adoption counts what
+// is used.
 //
 // ## 2. And the failure model is still not shareable, which is the finding
 //

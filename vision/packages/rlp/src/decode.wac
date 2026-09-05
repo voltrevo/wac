@@ -98,7 +98,7 @@ Result<Bytes, RlpFault> shortString(Cursor c, i32 n) {
  * lengths are only known by decoding them."*
  */
 Result<Item, RlpFault> list(Cursor c, i32 payload) {
-  if (c.left() < payload) { return Err(Overrun(c.at, payload, c.left())); }
+  try c.need(payload);
   i32 end = c.at + payload;
   Vec<Item> items = Vec.create();
   while (c.at < end) { items.push(try item(c)); }
@@ -196,8 +196,12 @@ Bytes one(u8 b) {
 // arm's type is now `Positioned<LeadingZero>`. Recorded as the first place where the two features
 // this exercise has been asking for pull against each other.
 //
-// **And `list` constructs an `Overrun` by hand**, which is the one place this file builds a `core`
-// fault rather than propagating one. `Cursor` has no *would this read fit* that answers the fault —
-// `left()` answers an `i32` — so a caller checking a bound itself has to spell the failure the
-// cursor would have spelled. Two producers of one value, which is the thing `CLAUDE.md` says is one
-// too many, and the cursor is the one that should own it.
+// **`list` constructed an `Overrun` by hand, and that is fixed in the cursor rather than here.**
+// `Cursor` had no *would this read fit* that answers the fault — `left()` answers an `i32` — so a
+// caller checking a bound itself had to spell the failure the cursor would have spelled. Two
+// producers of one value, which `CLAUDE.md` says is one too many. `Cursor.need(n)` exists now and
+// `list` writes `try c.need(payload);`, so the only thing this file spells is the bound.
+//
+// Worth keeping as a sequence rather than as a fix: the gap was invisible while the cursor had no
+// consumer, and it took **one** adoption to find it. The shipped `ssh` reader has `need(n)` and
+// answers a `bool`; the cursor did not have it at all.
