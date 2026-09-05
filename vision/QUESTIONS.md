@@ -6031,6 +6031,35 @@ a memory, which is the failure this directory has now recorded four times in one
 Not done here for 127 entries. Doing it retroactively would mean deciding 109 verdicts in one pass,
 which is the kind of bulk judgement that produces the numbers this entry is about.
 
+### Started 2026-09-05, by the author of each entry rather than in bulk
+
+`scratchpad/verdicts.py` reads an explicit `> **Verdict:**` line and falls back to the stock-phrase
+guess, so the gap between *stated* and *guessed* measures how far the retrofit has got:
+
+    138 entries, 5 with a stated verdict, 133 guessed or unread
+      library        2      (was 1)
+      convention    12      (was 10)
+      language      11      (was 12)
+      unclassified 113      (was 115)
+
+Five, and only five, because the rule this entry set is that a verdict is the author's — these are
+the ones written this week, whose conclusions are first-hand. Deciding the other 113 in one pass is
+exactly what it warned against.
+
+**And the first five already caught the guess being wrong, in an instructive direction.** *Writing
+one elided body closed the `Map.create()` contradiction* had been classified `language`, because it
+contains the phrase *"the language does not"* — quoting `DECISIONS.md` on hashing. Its verdict is
+**library**: `Key<K>` is written, in `core`, and the language limit is the entry's *premise*.
+
+> **A grep for *the language cannot* finds entries that mention a language limit, not entries that
+> ask for a language change.** In an entry about working within a limit, the limit is the first thing
+> said and the conclusion is the last.
+
+One of one is not a rate. What it is, is a mechanism: the guess and the statement disagree in a way
+that says *which* the guess gets wrong, and it is the same direction `../README.md`'s sample found
+by hand — **the list reads as more of a language wishlist than it is.** Two instruments, independent,
+same lean.
+
 ## An ordering between `if`s: eight in the tree, four load-bearing, two shapes among them
 
 `packages/tor/src/pathsel.wac` warns about its own control flow:
@@ -6483,6 +6512,9 @@ be rewritten and a capability's answer is what the host gives. The `NotGranted`-
 has it in the abstract; this is a caller that wanted the distinction, invented it, and had to give it
 back.
 
+> **Verdict:** convention — design a fault union from what its sources can distinguish, not from
+> what could go wrong. Settled by: a paragraph in `spec/` or `docs/`, and nothing in the language.
+
 ## Replacing a two-field result with a `Result` dropped the field that carried the distinction
 
 The fault-ceiling rule, applied to the second of the four packages whose faults describe an
@@ -6587,6 +6619,9 @@ fields that encode failure and silently drops the ones that encode fact.** `exis
 failure and convert; `isSymlink`, `isExecutable` and a picker's `error` are facts and do not. Three
 of the four structs had at least one of each, and the mechanical part of the conversion is exactly
 the part that cannot tell them apart.
+
+> **Verdict:** convention — when converting a struct to a `Result`, list the fields it absorbs and
+> the fields it drops. Settled by: a review question; the language is not involved.
 
 ## Fixing a capability moved a package's taxonomy down a layer
 
@@ -7405,6 +7440,10 @@ for a use nobody has, over one two functions demonstrate, is the ordering this d
 against everywhere else, and it is recorded rather than quietly reversed because the *conflict* is the
 finding and either choice would have hidden it.
 
+> **Verdict:** language — field access on a union whose members all carry that field. Settled by:
+> `spec/spec/types.md`. The partition half of this entry is a **convention** and wants no feature:
+> do not mix point faults with whole-subject faults in one union.
+
 ## Writing one elided body closed the `Map.create()` contradiction and two blockers
 
 *2026-09-05.* `core/map.wac` was four signatures and a long note about a contradiction it had noticed
@@ -7448,6 +7487,10 @@ recorded blockers:
 Which is a sharper form of this file's standing advice. *Write the consumer* is how most entries here
 were tested; this is *write the thing the consumers worked around*, and the workarounds turn out to be
 a specification for it.
+
+> **Verdict:** library — `Key<K> { hash; eq; }` and `Key.by`, written in `core/map.wac`. Settled by:
+> the code, which exists. **Second library verdict in this file**, after *a key and an order are
+> different things* — worth saying because the entry that claimed to be the first was wrong about it.
 
 ## Two states with the same fields are two types, and the residue is a linear value
 
@@ -7529,3 +7572,5 @@ reads them, and 8 more are read only as a group.** That is not an argument that 
 position to find out, and five days of design have produced a vocabulary whose cost and benefit are
 both still entirely theoretical.
 
+> **Verdict:** language — a linear `this`, so `done()` consumes the `Building`. Settled by:
+> `spec/spec/types.md`. The two-state split itself needed nothing and is already written.
