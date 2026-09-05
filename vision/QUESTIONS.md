@@ -4968,44 +4968,70 @@ Three ways to notice, and none exists:
 - **Nothing asks a package who declined it.** A caller that imports one export of a five-export file
   is the cheapest possible signal, and it is greppable.
 
-## A type only its own file may build
+## A value whose guarantee comes from how it was made — one feature, seven witnesses
 
-`@/packages/crypto/src/digest.wac` declares
+**This entry owns the list.** It absorbed *A type only its own file may build*, *A value whose
+guarantee comes from how it was made* and *A digest that knows what it digested*, which were three
+entries for one request and each carried its own partial list — the drift `DECISIONS.md` warns about,
+in the file that is supposed to be the record.
 
-```wac
-export const struct Digest32 { Bytes bytes; }
-```
+Seven types in this directory are trustworthy only because of the code that built them, and none can
+say so:
 
-with no constructor from bytes, on purpose: **a `Digest32` is 32 bytes because of where it came from
-rather than because somebody checked**, and that is the entire value of the type. `sha256` returns
-one; nothing else should be able to make one.
+| type | the guarantee | established by |
+|---|---|---|
+| `@/packages/crypto`'s `Digest32` | it is 32 bytes | it came out of a hash; there is no other constructor |
+| `@/packages/ts`'s `Prefix` | nothing in the input starts with it | something walked every token and looked |
+| `@/packages/http`'s `Headers` | at most one `Content-Length` | a framing check ran over the whole collection |
+| `@/packages/git`'s `Rule` | `pat` has had its `!` and trailing `/` removed | the parser did it |
+| `@/packages/ssz`'s root | this is a `BeaconState`'s, not a `SyncCommittee`'s | which function produced it |
+| `@/packages/quic`'s transcript | it hashed the handshake messages, not the frames | `transcriptOf`, and nothing else |
+| `@/packages/quic`'s `PacketKeys` | these are the client's, not the server's | which `Side` was passed |
 
-Nothing enforces it. `Digest32(someBytes)` is an ordinary struct construction, and wac has no
-visibility inside a module — `export` is the only control and it is per declaration, so a type can be
-private to a *file* or public to everyone, and a type that is public with a constructor that is not
-cannot be written.
+### It is one feature with two halves that are useless apart
 
-The guarantee is therefore held by the file being short and by nobody trying. Which is the same
-arrangement as every *"this is checked once, in the one place where the fact is known"* comment in
-this directory, and it is the one place where the comment is load-bearing rather than explanatory: a
-`Chunk.ofDigest(d)` that skips a length check is only sound if every `Digest32` really came out of a
-hash.
+**A private constructor.** wac has no visibility inside a module — `export` is the only control and
+it is per declaration — so a type is private to a file or public to everyone, and *public with a
+constructor that is not* cannot be written. `Digest32(someBytes)` is an ordinary struct construction.
 
-### Three shapes, and the cheap one may be enough
+**A phantom parameter.** `Digest32<Transcript>`, where `T` appears in no field, so a tag says *what
+this was a hash of* rather than *how wide it is*. `sha256` cannot know a `T` — the objection
+`@/packages/ssz` was declined on — so the tagging happens in a constructor, which is the caller's.
 
-- **A private field.** `struct Digest32 { private Bytes bytes; }` and the construction is refused
-  outside the file. Smallest change, and it introduces a second visibility axis to a language that
-  has exactly one.
-- **A private constructor**, which is the same thing said about the operation rather than the field,
-  and reads better where a type has several fields of which one is the invariant.
-- **Nothing, and say so.** The convention *a type with no public constructor is built by its own
-  file* costs a comment and is what the directory does today. It is also what
-  `@/packages/ssz`'s `Chunk.of` does **not** rely on, since it checks — so the question is really
-  whether a type may be trusted enough to skip a check, and the answer today is no, and the checks
-  are written.
+Which is why they are one feature: **a phantom parameter without a private constructor says
+nothing**, since anyone can write `Digest32<Transcript>(bytes)`; and a private constructor without a
+phantom parameter cannot separate two values of one shape. Rows 1–4 want the first, rows 5–7 want
+both, and no row wants only the second.
 
-The measurement that would settle it: how many *"checked once"* comments in `packages/` guard a value
-that some other file could construct directly. That is greppable and nobody has counted it.
+### The cost of not having it is not uniform, which is the part to decide on
+
+- `ssz`'s mismatched root **compares `false`** — wrong, and a test sees it.
+- `quic`'s mistranscribed handshake **produces keys nobody shares**, which *"decrypts as noise and
+  looks exactly like a wrong Diffie-Hellman"*.
+- `http`'s unchecked `Headers` is a **request smuggling** difference.
+
+Cheap in four places and load-bearing in three, and the three are the ones where the failure is
+invisible.
+
+### Measured: 45 comments stand in for it, and they are two different asks
+
+Counted 2026-09-05 over `packages/` excluding tests — comments claiming a check happened elsewhere or
+holds *by construction*:
+
+    45 total
+     5 preconditions — "the caller has already checked …"
+    40 invariants   — "… by construction", about a value this code made
+
+`@/packages/zstd/src/block.wac`: *"The caller has already checked the block fits in the frame."* And
+`@/packages/tls/src/asn1.wac` names the failure mode of the whole class: *"the same check written
+once per call site and forgotten at one of them."*
+
+**The split matters because the two want different features.** An invariant wants the private
+constructor above. A precondition wants something else — a refinement, or a wrapper the callee can
+only be handed after the check — and these entries had been filing both under one heading. Forty
+against five says which is the common case, and it is the one the entries were about; the five are
+the ones that are not, and they include the two in `zstd` that
+`@/packages/zstd/src/stream.wac` found from the other side.
 
 ## A value one layer too high makes the capability that needs it undeclarable
 
@@ -5350,40 +5376,6 @@ answer costs anonymity took the second.
 - **Nothing, and say so.** *Count by the code, or write a field per variant* is a real answer, and
   it is what four packages will do silently if it is not written down. That is the cheapest outcome
   and the one where the same discovery is made a fifth time.
-
-## A value whose guarantee comes from how it was made — three types, no way to say it
-
-Three types in this directory are trustworthy only because of the code that built them, and none can
-say so:
-
-| type | the guarantee | what makes it true |
-|---|---|---|
-| `@/packages/crypto`'s `Digest32` | it is 32 bytes | it came out of a hash and there is no other constructor |
-| `@/packages/ts`'s `Prefix` | nothing in the input starts with it | something walked every token and looked |
-| `@/packages/http`'s `Headers` | at most one `Content-Length` | a framing check ran over the whole collection |
-
-The first two are the same shape and the entry on *a type only its own file may build* has them: wac
-has no visibility inside a module, so a convention holds what a private constructor would.
-
-**`Headers` is different and is the harder one**, because the guarantee cannot hold for the whole
-life of the value. A parser builds a `Headers` one field at a time and **must** be able to hold an
-invalid one until the last field arrives — a second `Content-Length` is only a fault once there is no
-more input. So a constructor that refuses cannot be the only constructor, and the type wants two
-states, *building* and *checked*, over identical fields.
-
-That is the general version and it is not the same request as a private constructor:
-
-- **A private constructor** gives you *only this file may make one*, which is enough when the check
-  is at construction — `Digest32`, `Prefix`.
-- **What `Headers` wants** is *this value has passed a check that happened after it was built*, and
-  the only ways to say it today are a second type with the same fields, a boolean field nobody may
-  set, or a comment.
-
-Two types with identical fields is what a language without this ends up with, and it costs a copy or
-a cast at the boundary between them. Worth asking whether the cheaper thing — a `Checked<T>` wrapper
-whose only constructor is the checking function — is a library type or needs anything from the
-language. It needs one thing: that nobody else can call the wrapper's constructor, which is the
-private-constructor entry again, arriving from a case that private constructors do not solve.
 
 ## Three predictions that a file would say nothing, three wrong
 
@@ -5781,48 +5773,3 @@ load-bearing**. Nothing in this tree does that automatically — `tools/mutate.t
 what it is for — and no type would have produced the sentence. The finding is worth separating from
 the `Result` one: naming refusals makes the mutation *detectable*, and somebody still has to run it
 and write the answer where the next reader will be.
-
-## A digest that knows what it digested — the same missing feature, at two prices
-
-`@/packages/crypto/src/digest.wac` gives `Digest32`, whose guarantee is *32 bytes because a hash
-produced it*. Two packages have now found that this is the wrong guarantee for their problem, and
-they differ in what it costs.
-
-**`@/packages/ssz` asked first and was declined.** A root is a `Chunk`, so *"a `Chunk` from a
-`BeaconState` and one from a `SyncCommittee` compare `false` rather than failing to type-check"*.
-`Root<T>` is the standard answer; it is unwritten because the `Chunk` comes out of `sha256`, which
-cannot know a `T`.
-
-**`@/packages/quic/src/keys.wac` is the same request and the consequence is not a `false`.** Its
-`handshakeKeys(u8[] dhe, u8[] transcript, bool isServer)` takes the hash of every handshake message,
-and the file warns about exactly the argument:
-
-> `deriveSecret` takes a hash of **every handshake message so far, concatenated with their four-byte
-> headers, and nothing else** — not the records or packets that carried them, not the CRYPTO frames,
-> not lengths added by QUIC. A transcript that included the framing would produce keys that are
-> perfectly well-formed and that no peer shares, which decrypts as noise and **looks exactly like a
-> wrong Diffie-Hellman.**
-
-Every wrong argument there is 32 bytes and is a real digest of something. `Digest32` cannot refuse
-one; `Digest32<Transcript>` could, with `transcriptOf(messages)` the only way to make one.
-
-**So one missing feature has two prices.** In `ssz` it is a comparison that answers `false` — wrong,
-and a test can see it. In `quic` it is a connection that nobody can decrypt, indistinguishable from a
-failed key exchange, which is the failure mode this tree's packages describe as the quiet kind.
-
-### And the feature is a phantom parameter, which is smaller than the other asks here
-
-`Digest32<T>` where `T` appears in no field. `sha256` still cannot know a `T` — that objection stands
-— so the constructor is the *caller's*: `Transcript.of(messages)` hashes and tags in one place, and
-nothing else can produce a `Digest32<Transcript>`. Which reduces it to the entry on **a type only its
-own file may build**, for the third time, and makes the phantom parameter a way of *naming* the
-guarantee rather than establishing it.
-
-Two things fall out that neither entry had alone:
-
-- **The phantom parameter is useless without the private constructor.** If anyone can write
-  `Digest32<Transcript>(bytes)` the tag says nothing, so these are one feature and have been filed as
-  two.
-- **It answers the direction question too.** `quic`'s keys are per-direction and `Side` fixes the
-  argument, not the result: `PacketKeys` for the client and for the server are the same type. A
-  phantom parameter would separate them, so the same feature closes both holes in one file.

@@ -165,7 +165,7 @@ report instead of a mystery.
 
 ## What could not be written
 
-**A type only its own file may build.** `Digest32`'s guarantee is that every one came out of a hash,
+**A value whose guarantee comes from how it was made.** `Digest32`'s guarantee is that every one came out of a hash,
 and it is held by this package being short: `Digest32(someBytes)` is an ordinary struct construction
 and nothing marks the field private. wac has no visibility inside a module — `export` is the only
 control and it is per declaration — so *constructible here and nowhere else* is not expressible. It
