@@ -1,0 +1,161 @@
+// Reading a response — and the message that cannot be parsed without the one before it.
+//
+// `packages/http/src/incoming.wac` is 291 lines and nothing here had predicted anything about it.
+// Its header states the difficulty better than a rewrite could:
+//
+// > Not a mirror of the request parser, because response framing is a different and harder problem.
+// > A request always says how long its body is; a response has five rules to try in order, and two
+// > of them depend on things the message does not contain — **what the *request* method was**, and
+// > whether the connection has closed.
+//
+// So the signature is `parseResponse(u8[] input, u8[] method, bool eof, i32 maxBody)`: **one message
+// and three pieces of context, from three different places, in a flat argument list.**
+
+import { Result, Bytes, Vec } from "core";
+import { Headers, Status } from "@/packages/http";
+import { ResponseFault, BadStatus, AmbiguousFraming, TooLarge } from "./fault.wac";
+
+/**
+ * What was asked, which is what makes a response parseable.
+ *
+ * The shipped parser takes the method as `u8[]` and compares it byte by byte in `isHead` and
+ * `isConnect` — twice, on every response — when the only thing it needs is *which of three
+ * categories*. And the caller **already knew**: it built the request, so it had a method before it
+ * had bytes, and handing the bytes back is re-deriving what was thrown away.
+ *
+ * Fifth site of *a caller handing back what it already told the callee* — `@/packages/http/src/response.wac`
+ * enumerated four and this is the one where the value handed back is a **re-encoding** rather than a
+ * repeat, which is worse: `parseResponse(…, "HEAD".toBytes(), …)` and a typo is a response with a
+ * body that should not have one.
+ */
+export enum Asked { Head, Connect, Other }
+
+/** How much a client will hold before refusing. Policy, not protocol; the shipped `i32 maxBody`. */
+export struct Limits { i64 body; i64 headerBytes; }
+
+/**
+ * **Which of RFC 9112 §6.3's five rules framed this body**, which the shipped type says a fifth of.
+ *
+ * `Incoming` has `bool closeDelimited` — *"true when rule 5 applied … a caller that wants to reuse
+ * the connection cannot, and this is how it finds out"*. One bit for a five-way answer, and it is
+ * the wrong bit to keep: rule 5 is the one a caller can infer from the socket closing. **Rule 1 is
+ * the one that bites**, and nothing records it.
+ *
+ * > Rule 1 is the one that bites: a HEAD response carries the Content-Length the GET would have had
+ * > and *no bytes*. A client that believes the header waits for a body that is never coming, and
+ * > then reads the next response's bytes as this one's — the client-side version of smuggling.
+ *
+ * With this, `NoBody(HeadRequest)` and `Length(0)` are different values, and a caller that reuses a
+ * connection on the strength of a `Content-Length` has to match an arm that says the length was
+ * ignored.
+ */
+export enum Framing {
+  /** Rules 1 and 2: the status or the method says there is no body, whatever the headers say. */
+  NoBody(NoBodyWhy why),
+  /** Rule 3, `chunked` final. */
+  Chunked,
+  /** Rule 4. The number is what the header said **and** what was read; they agree or it faulted. */
+  Length(i64 bytes),
+  /** Rules 3-otherwise and 5: it ended when the connection did. Not reusable. */
+  UntilClose
+}
+
+/** Which of the four *no body* cases, because they differ in what a caller may do next. */
+export enum NoBodyWhy {
+  /** Rule 1, the method. The connection is reusable and the `Content-Length` is a lie about a GET. */
+  HeadRequest,
+  /** Rule 1, the status: 1xx, 204, 304. Reusable. */
+  StatusHasNone,
+  /** Rule 2. What follows on the socket is **not HTTP** — see `./proxy.wac`. */
+  TunnelOpen
+}
+
+/** A response, and how it was framed. */
+export struct Incoming {
+  Status status;
+  i32 minor;
+  Bytes reason;
+  Headers headers;
+  Bytes body;
+  Framing framing;
+  /**
+   * What was not consumed — **the tail, not an offset.**
+   *
+   * The shipped field is `i32 consumed`, a position into a buffer the value does not hold, which
+   * `../../../QUESTIONS.md` counts 55 of. `@/packages/http/src/proxy.wac`'s `Established(i32 at)` is
+   * the same field in the same package, and both callers want the bytes rather than the number.
+   */
+  Bytes rest;
+}
+
+/** Not enough has arrived. Read more and ask again. */
+export struct Incomplete { }
+
+/**
+ * Parse a response to a request that was `asked`.
+ *
+ * `eof` stays a parameter and stays a `bool`, which is worth saying because everything else here
+ * became a type: *the connection has closed* is a fact about the socket at the instant of the call,
+ * it is not derivable from the bytes, and it changes the answer. §2.
+ */
+export Result<Incoming, ResponseFault> read(Bytes input, Asked asked, bool eof, const Limits limits)
+  { … }
+
+// ## 1. `closeDelimited` is one bit of a five-way answer, and it kept the wrong one
+//
+// The shipped `Incoming` records rule 5 and nothing else. A caller therefore knows *this body ended
+// because the connection did* and cannot know *this body was skipped because I sent HEAD* — and the
+// second is the one the file's own header calls **the client-side version of smuggling**.
+//
+// It is not that the bit is wrong; it is that it is the **inferrable** one. A caller that saw the
+// socket close knows rule 5 applied. Nothing outside the parser can reconstruct rule 1, because the
+// evidence is a `Content-Length` header that is still sitting there saying something false.
+//
+// > **When a value keeps one bit of an N-way answer, check whether the bit it kept is the one the
+// > caller could have worked out.** Here it is, and the four it dropped are not.
+//
+// ## 2. Three kinds of context in one argument list, and only two of them are the message's
+//
+// `parseResponse(input, method, eof, maxBody)`:
+//
+// | | what it is | where it comes from |
+// |---|---|---|
+// | `input` | the message | the socket |
+// | `method` | **the previous message** | the caller's own request, re-encoded as bytes |
+// | `eof` | the socket's state now | the socket |
+// | `maxBody` | policy | a configuration nobody in this signature owns |
+//
+// Three of the four are context and they arrive as peers. `Asked` and `Limits` name two of them, and
+// **`eof` deliberately stays a bare `bool`** — it is a fact about the socket at the instant of the
+// call, not derivable from the bytes, and wrapping it would say it is data when it is a reading.
+//
+// The interesting one is `method`. It is the *request*, and an HTTP client holds a request and a
+// response together and has no type that says so. This directory has met that shape before at a
+// smaller size — `@/packages/http/src/response.wac`'s `write(r, headOnly)`, where `headOnly` is also
+// the request's method, remembered. **Two functions in one package take the same fact as an
+// argument because there is no exchange type**, and neither noticed the other.
+//
+// ## 3. What could not be written
+//
+// **An exchange.** `struct Exchange { Request sent; Incoming got; }` is the type both of the above
+// want, and it cannot be the parser's argument because the response does not exist yet. It is the
+// type of the *result*, and then `read` answers an `Exchange` and takes a `Request` — which is
+// right, and makes `Asked` unnecessary, and requires this package to have a `Request` value at the
+// client end, which it does not: `./request.wac` is a **server**'s parse of an incoming request.
+// The client's outbound request is built by `./client.wac` as bytes and never exists as a value.
+//
+// So the missing type is not a language gap; it is a package with two halves that were written from
+// opposite ends and meet only through `u8[]`.
+//
+// **`Framing.Length(i64 bytes)` claims the header and the body agree, and only the parser knows.**
+// The arm exists to say *rule 4 applied and the body is this long*, and a caller reading `bytes`
+// cannot tell whether it is the header's number or the count of what arrived. They agree or the parse
+// faulted — but that is a fact about `read`, stated in a doc comment, which is the *value whose
+// guarantee comes from how it was made* shape at its eighth witness.
+//
+// **`Status` is an enum with an `Other(i32)` arm and a response can carry any code.** So parsing a
+// 599 gives `Other(599)`, parsing a 404 gives `NotFound`, and a client comparing `status.code() ==
+// 404` works while `status is NotFound` works only for the seventeen named. `./response.wac` records
+// this as *an open set spelled as a closed one has two spellings for every member the hatch can
+// reach*, and this is the first file where the **parser** is the thing that must choose which
+// spelling to produce.

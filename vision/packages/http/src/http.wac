@@ -12,6 +12,10 @@ export { Response, statusHasBody, write } from "./response.wac";
 // comparing a field value case-insensitively is something a caller of this package does, and
 // recognising a tchar is not.
 export { Headers, Building, Field, eqFold } from "./headers.wac";
+export {
+  Incoming, Framing, NoBodyWhy, Asked, Limits, Incomplete, read,
+  NoBody, Chunked, Length, UntilClose, HeadRequest, StatusHasNone, TunnelOpen,
+} from "./incoming.wac";
 export { Response, Status, write } from "./response.wac";
 export {
   ProxyAt, ProxyReply, ProxyFault, ProxyUrlFault, parseProxy, connectRequest, readReply,

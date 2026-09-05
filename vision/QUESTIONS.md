@@ -7579,6 +7579,49 @@ than being one.
 > The *funcref-is-a-cost-when-constant* rule is a **convention** and needs nothing. Third library
 > verdict in this file.
 
+## When a value keeps one bit of an N-way answer, check which bit it kept
+
+*2026-09-05.* `packages/http/src/incoming.wac` parses a response, and RFC 9112 §6.3 gives **five**
+rules for where its body ends. The shipped `Incoming` records one of them: `bool closeDelimited`,
+*"true when rule 5 applied … a caller that wants to reuse the connection cannot, and this is how it
+finds out"*.
+
+It kept the rule a caller could already work out. A caller that saw the socket close knows rule 5
+applied. What it cannot reconstruct is **rule 1** — and rule 1 is the one the file's own header calls
+the client-side version of smuggling:
+
+> a HEAD response carries the Content-Length the GET would have had and *no bytes*. A client that
+> believes the header waits for a body that is never coming, and then reads the next response's bytes
+> as this one's.
+
+The evidence for rule 1 is a `Content-Length` header still sitting there saying something false, so
+nothing outside the parser can tell. `@/packages/http/src/incoming.wac` makes it a `Framing` enum with
+four arms and `NoBody(HeadRequest)` distinct from `Length(0)`.
+
+> **When a value keeps one bit of an N-way answer, ask whether the bit it kept is the one the caller
+> could have worked out.** Here it is, and the four it dropped are not.
+
+### And two functions in one package take the same missing type as an argument
+
+`parseResponse(input, method, eof, maxBody)` has one message and three pieces of context from three
+places — the socket, *the caller's own previous request re-encoded as bytes*, and a configuration
+nobody in the signature owns. `Asked` and `Limits` name two; `eof` deliberately stays a bare `bool`,
+because *the connection has closed* is a reading of the socket at the instant of the call and
+wrapping it would say it is data.
+
+`method` is the interesting one. It is the **request**, and `@/packages/http/src/response.wac`'s
+`write(r, headOnly)` takes the same fact for the same reason — *the request's method, remembered*.
+Two functions in one package, written from opposite ends, both taking a request they have no type
+for.
+
+`struct Exchange { Request sent; Incoming got; }` is what both want, and it is not a language gap:
+this package's `Request` is a **server**'s parse of an inbound request, and a client's outbound
+request is built by `./client.wac` as bytes and never exists as a value. **A package with two halves
+that meet only through `u8[]`**, which is a decomposition problem and wants no feature.
+
+> **Verdict:** convention — give the client half a `Request` value and let `read` answer an
+> `Exchange`. Settled by: writing it in `@/packages/http`; the language is not involved.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
