@@ -2504,6 +2504,24 @@ silent wrong answer for a pass that cannot be written at all, and there is no th
 `Func f:` — `Err(is Corrupt c):` generalised — closes it, and with it the swap hazard in the largest
 enum in the compiler goes away for one keystroke per field.
 
+**And rewriting `@/packages/wacc/src/genlower.wac` against the new `Decl` says exactly which half
+stops.** That file had ended at a signature for want of a declaration node; with one, `plan` and
+`emit` are writable and `generatorsIn` is not:
+
+  * **Emitting only constructs.** `StructDecl { name: t, fields: fs, … }` is where the
+    union-of-named-structs is at its best — named, checked, nothing to transpose.
+  * **Walking has to read.** Finding the `gen` functions means matching a `Decl`'s `kind`, and the
+    arm knows it has a `Func` and cannot reach `isAsync`.
+
+> **The binding gap splits a pass in half.** A compiler pass is *find the nodes* and *emit the
+> replacement*; a union of named structs makes the second half safer and the first half impossible.
+
+So the cost is not one function. Every rewriting pass over declarations is blocked until `Func f:`
+exists, and every pass that only *produces* them is not. It also explains why `desugar.wac` and the
+`union` lowering were writable: statements and types in that tree are **enums**, whose arms bind.
+Only declarations are a union, because only declarations were written after the argument for unions
+was made.
+
 ## Giving a paired protocol a value fixed the pairing and kept the buffering
 
 The entry above found three capability groups that are paired calls over hidden state and gave each
