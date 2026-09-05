@@ -5465,17 +5465,43 @@ the question: given a closed set that indexes something, the language offers a t
 or an integer that cannot be checked, and four packages took the first while the one whose wrong
 answer costs anonymity took the second.
 
-### What would answer it, and the smallest version is not a language feature
+### Tested 2026-09-05, and it is answerable today — the index goes on the table, not the enum
 
-- **`Map<K, V>` with a compiler-supplied hash for payload-free enums.** They are a small integer at
-  runtime, and the *no traits* problem the `Map.create()` entry describes does not arise for a type
-  the compiler already knows is a tag.
-- **An `ordinal()` or a `values()`.** Either turns an enum back into something a loop can walk, and
-  both weaken the closedness that is the point — an `ordinal()` is a number a caller can do
-  arithmetic on, and a `values()` is a list whose order becomes an interface.
-- **Nothing, and say so.** *Count by the code, or write a field per variant* is a real answer, and
-  it is what four packages will do silently if it is not written down. That is the cheapest outcome
-  and the one where the same discovery is made a fifth time.
+Six packages here introduced an enum replacing a table of integers or characters. Asked of each
+whether any consumer needs to *index or count* by it rather than `match` on it:
+
+| | wants to tabulate | what it does instead |
+|---|---|---|
+| `@/packages/abi`'s `AbiType` | no | `isDynamic`, `fixedSize`, `chunkLimit` are methods — dispatch |
+| `@/packages/regex`'s ops | no | the VM `match`es |
+| `@/packages/tty`'s `Sig` | no | `Sig.number()` is a method |
+| `@/packages/codec`'s `Alphabet` | no | `bits()`, `groupDigits()`, `digit()` are methods |
+| `@/packages/git`'s `Change` | **yes** | a count per variant, for a prompt |
+| `@/packages/tor`'s `Position` | **yes** | indexes a twelve-number weight table |
+
+**Two of six**, and both want an *index*, not a map and not a `values()`.
+
+And both are answerable without a feature: **put the index on the type that owns the table.**
+`@/packages/tor`'s `Weights.at(Position, Role)` already has the shape — the `position * 4 + role`
+arithmetic belongs to `Weights`, and inside it one `match` per dimension turns each enum into its
+number, **once**, not per call site. `@/packages/git`'s counts are the same: a `Vec<i32>` of seven and
+an `add(Change)` with one `match` in it.
+
+So the cost of a closed set with no ordinal is **one `match` in the table's owner**, and
+`@/packages/tor` declined the enum rather than pay it — which its comment states as *"the arithmetic
+is clearer with a number"* and which is a smaller cost than that reads. The check it then carries,
+`if (position < 0 || position > 2) { trap; }`, is bigger than the `match` it avoided.
+
+### Which leaves the three options weaker than they looked
+
+- **`Map<K, V>` with a compiler-supplied hash for payload-free enums.** Nobody in this directory
+  wants a map keyed by an enum; the two real cases want a dense index and would use an array.
+- **An `ordinal()` or a `values()`.** Both weaken the closedness that is the point — an `ordinal()`
+  is a number a caller can do arithmetic on, a `values()` is a list whose order becomes an interface
+  — and neither is needed once the index lives on the table.
+- **Nothing, and say so.** This is now the recommendation rather than the fallback, with the *say so*
+  part carrying the weight: the rule is *an enum that indexes a table gives the table a method, not
+  the enum an ordinal*, and it is one sentence that would have saved `tor` a trap.
 
 ## Three predictions that a file would say nothing, three wrong
 

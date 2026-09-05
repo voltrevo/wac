@@ -186,6 +186,14 @@ cannot tabulate*, from the other side: four packages introduced an enum and coul
 this one declined the enum in advance and carries `if (position < 0 || position > 2) { trap; }`
 instead — the check an enum would not need.
 
+**Tested 2026-09-05, and the cost it declined is smaller than the comment reads.** Of six packages
+that introduced such an enum, only two want to index or count by one — this and
+[`@/packages/git`](../git/)'s prompt — and both are answerable today by **putting the index on the
+type that owns the table**. `Weights.at(Position, Role)` already has the shape: the `position * 4 +
+role` arithmetic belongs to `Weights`, and one `match` per dimension inside it turns each enum into
+its number **once**, not per call site. The trap this file carries instead is bigger than the `match`
+it avoided.
+
 **`i64` because `i32` fails invisibly in the attacker's favour.** *"a large relay's product overflows
 32 bits — and the failure is silent, giving a negative weight that the chooser skips, which means the
 biggest relays are never picked and nothing looks wrong."* The wrapping entry's sharpest witness:

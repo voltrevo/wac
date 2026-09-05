@@ -86,9 +86,15 @@ tree. Three ways out, each giving something up:
   aggregating consumer reaches for it as a **key**.
 
 The third is what the file would do, which is why the first two are written out. The enum was not
-wrong — a swapped `Added` and `Deleted` is still impossible, which is what it bought. It is that **a
-closed set you cannot enumerate is a closed set you cannot tabulate**, and tabulating is what the
-second consumer of any enum does.
+wrong — a swapped `Added` and `Deleted` is still impossible, which is what it bought.
+
+**And on 2026-09-05 the ask was tested and there is a fourth way, available today.** Put the index on
+the type that owns the table: a `Vec<i32>` of seven and an `add(Change)` with one `match` inside it,
+so the variant becomes a number **once** rather than at every call site.
+[`@/packages/tor`](../tor/)'s `Weights.at(Position, Role)` already has that shape. Of six packages
+here that introduced an enum replacing an integer table, only two want to tabulate at all, and both
+are answered by it — so the rule is *an enum that indexes a table gives the table a method, not the
+enum an ordinal*, and no language feature is needed.
 
 ### And `Untracked` is in the wrong column, which only a consumer notices
 
