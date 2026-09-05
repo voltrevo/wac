@@ -83,9 +83,11 @@ ask was tested against every package that makes it. The other five want a *const
 once instead of once per package — a real gain, and one that moves a check rather than removing it.
 This one wants **arithmetic**: `from(12)` on a `Slice<u8, 32>` is statically a `Slice<u8, 20>`, so
 the magic `12` is checked against both widths and there is no check left to move. The alternative in
-the other five is *a check somewhere else*; here it is *nothing*. Two more packages have since asked for the same thing from other
-directions, `@/packages/ssz`'s `Chunk` and `@/packages/bls`'s `Fp`, and it is one entry in
-`../../QUESTIONS.md` rather than three.
+the other five is *a check somewhere else*; here it is *nothing*.
+
+Six packages ask for this between them — `ens`, `raster`, `bls`, `ssz`, `tor`, `crypto` — and the
+count, the list and the test live in [`../../QUESTIONS.md`](../../QUESTIONS.md) rather than being
+restated here, for the reason that file gives about ordinals.
 
 **A schema and its answer are two values and nothing pairs them.** `decode(returned, schema)` hands
 back a `Vec<Value>` whose shape is entirely determined by `schema`, and the caller then indexes it by
