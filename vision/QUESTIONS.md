@@ -8204,6 +8204,48 @@ uses here**: eleven unwraps, no chains.
 > decisions worth arguing are all elsewhere. Settled by: writing it, a day's work rather than a
 > design.
 
+## What the no-compile rule costs, counted: six stale sites
+
+*2026-09-05.* `@/packages/server/src/serve.wac` had four call sites go stale when `@/packages/http`
+was redesigned under it, and nothing said a word — every name still resolved, and `README.md` says
+nothing here compiles. Rather than leave that as a shrug, swept for the rest: nine names this
+directory has renamed this week, filtered to code rather than prose.
+
+    Response.create, .consumed, DoesNotVerify, cmpBytes(…) == 0,
+    Span, Incomplete, headOnly, Asked        →  0 stale code sites
+    Map.create()                             →  2
+
+**Six in total across the session**, four of them in one file, and every one found by reading a file
+on purpose. That is the honest price of *nothing walks it*: not unbounded, and not free — a rename
+leaves consumers wrong until somebody opens them.
+
+### And the second one is a retention question, not a conversion
+
+`core/map.wac`'s redesign made `Map.create` take a `Key<K>`. Of the two stale sites, one is
+`Map<string, Node>` and takes `Key.text()`. The other is `@/packages/json`'s
+`Map<u8[], i32>` — keyed on an **owned array**, and `core` offers `Key.bytes()`, a `Key<Bytes>`.
+
+The owning is deliberate and the neighbouring type says why:
+
+> Owned, not a view of the document … a tree is what a caller keeps, and one string field held as a
+> `Bytes` would pin the whole document behind it.
+
+So a long-lived key must be owned for the same reason a long-lived value must, and the convenience
+constructor `core` has is for the type that **cannot** be one. That is *which byte type* — an entry
+this file already has — arriving at `Key`, and arriving as a **retention** question rather than a
+conversion one.
+
+**It needs no second constructor.** `Key.by(Key.bytes(), Bytes.all)` is a `Key<u8[]>`: third caller
+for the projection that closed `@/packages/git`'s `Map<Change, i32>` and `@/packages/box`'s
+`Map<u8, string>`, and the first where it converts between two spellings of *bytes* rather than
+reaching into a field.
+
+> **A projection is how a split type reaches a keyed structure.** `core` needs one key per byte
+> type only if `by` does not exist; with it, the split costs a lambda at the call site and nothing in
+> the library.
+
+> **Verdict:** library — `Key.by`, which is written. Settled by: the two call sites, which now use it.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

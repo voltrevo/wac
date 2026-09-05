@@ -13,7 +13,7 @@
 // A union would also need primitives as members — open in `vision/QUESTIONS.md` — and would box the
 // two hottest cases in the language's most-parsed format.
 
-import { Vec, Map } from "core";
+import { Vec, Map, Key, Bytes } from "core";
 
 export enum JsonValue {
   Null,
@@ -137,7 +137,17 @@ export struct JsonObject {
   bool worthIndexing(const this) { return this.members.len() >= 32 && this.scans >= 15; }
 
   void buildIndex(this) {
-    Map<u8[], i32> ix = Map.create();
+    // **`Key.by` again, and the projection is a widening.** `core` offers `Key.bytes()`, a
+    // `Key<Bytes>`, and this map is keyed on `u8[]` — owned, for the reason the member type gives
+    // above: *a tree is what a caller keeps, and one string field held as a `Bytes` would pin the
+    // whole document behind it.* So the key must be owned too, and `core` has no `Key<u8[]>`.
+    //
+    // It does not need one. `Key.by(Key.bytes(), Bytes.all)` is a `Key<u8[]>` — the projection that
+    // closed `@/packages/git`'s `Map<Change, i32>` and `@/packages/box`'s `Map<u8, string>`, at a
+    // third caller and the first where it converts between two spellings of *bytes* rather than
+    // reaching into a field. `../../../QUESTIONS.md`'s *which byte type* entry meets `Key` here, and
+    // the answer is that the split costs a projection rather than a second constructor.
+    Map<u8[], i32> ix = Map.create(Key.by(Key.bytes(), (u8[] a) => Bytes.all(a)));
     for (i32 i = 0; i < this.members.len(); i++) {
       u8[] k = this.members.data[i].key;
       if (ix.get(k) is null) { ix.put(k, i); }

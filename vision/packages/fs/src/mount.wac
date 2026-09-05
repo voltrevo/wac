@@ -57,7 +57,7 @@
 // is three type constructors deep to say *reads a path, may fail*, and there are six of them below.
 // That is a legibility cost with no cure in this file, and it is in `../../../QUESTIONS.md`.
 
-import { Result, Ticket, Bytes, Map } from "core";
+import { Result, Ticket, Bytes, Map, Key } from "core";
 import { Files } from "std";
 import { Fault } from "./fault.wac";
 // The members come from `std` now, not from `./fault.wac` — see that file's note on why a
@@ -88,7 +88,7 @@ export struct Mount {
    * hands the right one to each branch by index.
    */
   Mount inMemory() {
-    Map<string, Node> tree = Map.create();
+    Map<string, Node> tree = Map.create(Key.text());
     return Mount(
       (string p) => memRead(tree, p),
       (string p, Bytes b) => memWrite(tree, p, b),
