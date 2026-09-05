@@ -4048,6 +4048,38 @@ it interacts with everything: a newtype over `i32` needs rules for arithmetic, f
 `match`, and for whether `Slice<Scalar>` may alias an `i32[]` — which is the whole of why it would be
 useful here and the whole of why it is not free.
 
+### Put to the caller test — and the compiler already emits this refinement, for one builtin
+
+*2026-09-05.* *Scalar* is the refinement this entry is about, so: who checks it? Six places, and
+**each does something different when the check fails.**
+
+    packages/wacc/src/lex.wac:363         > 1114111 or 0xD800..0xDFFF   ->  returns -1
+    packages/wacc/src/litchars.wac:72     0xD800..0xDFFF                ->  a classifier, returns true
+    packages/unicode/src/utf8.wac:48      0xD800..0xDFFF                ->  Scalar(INVALID(), 1)
+    packages/json/src/parse.wac:503       0xD800..0xDBFF / 0xDC00..     ->  combines a surrogate pair
+    packages/bytes/src/buf.wac:167        < 0 or > 0x10FFFF or surrogate->  substitutes U+FFFD
+    packages/wacc/src/emit.wac:16147      the same four comparisons     ->  **traps**
+
+**The last one is the finding.** `emitStringFromCp` writes the check into every compiled module —
+*"Out of range, or half of a surrogate pair, which is not a scalar value"* — as `i32.gt_s 1114111`,
+`i32.lt_s 0`, `>= 0xD800`, `< 0xE000`, then `unreachable`. So `string.fromCodepoint(i32)` **is** a
+function whose parameter is an `i32` refined to a scalar, the compiler enforces it, and the
+enforcement exists as emitted wasm rather than as a type anybody can name or reuse.
+
+> **The refinement is implemented. It is implemented once, invisibly, for one builtin.** Five other
+> files re-derive the same four comparisons and answer five different ways, and none of them can say
+> in a signature what `fromCodepoint` says in its prologue.
+
+**Verdict: survives, and the caller test sharpened the argument rather than the feature.** The ask
+was *where does a refinement live* and the answer here is *inside the emitter*, which is the one
+place a user cannot put one. The five hand-written copies are the ordinary duplication finding; the
+sixth is the language doing the thing and not offering it.
+
+And the failure column is the cursor result again: six checks, six behaviours — trap, sentinel,
+substitute, classify, combine, `INVALID`. **A refinement type would have to pick one, and the reason
+`Scalar` is not written is not the allocation, it is that `raster` wants to skip, `buf` wants
+U+FFFD, and `fromCodepoint` wants to trap.**
+
 ## A host's ceiling decides a source file's layout, and no page mentions it
 
 `packages/raster`'s font table is split across two constant arrays, and its README says why:
