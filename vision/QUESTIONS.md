@@ -6581,3 +6581,50 @@ questioning its subject.
 mis-attributed names across declarations, so it reported `NotFound` with twelve funcrefs when it
 meant `Files`. Fourth instrument bug of the same family — a regex applied to structure — and the two
 interfaces examined here were chosen by knowing about them rather than by sweeping.)*
+
+### 117 union members that nothing discriminates
+
+Three units argued about the cost of one error set being shared, and the third found `FileFault` has
+no exhaustive consumer, so a fourth wrote one — `@/packages/box/src/cp.wac` — and it changed the
+design on contact. That makes the question askable for every union rather than one, and
+`tools/specparse.ts --tokens` makes it cheap. **On the token stream, not a regex**, because four of
+this session's instrument bugs were regexes over structure and that flag exists for exactly this,
+with a comment saying so. I had not used it once.
+
+    29 union declarations (28 named, 1 inline), 60 `match` blocks with arms
+
+    with an exhaustive consumer:   4  —  23 members
+    with none:                    25  — 117 members
+
+The four are `Decoded` (utf8), `Invalid` (tor), `Event` (platform, 3 of its 7 arms) and `FileFault`,
+whose only consumer is one day old. **Before yesterday, three.**
+
+The twenty-five include every fault vocabulary this directory is pleased with: `RequestFault` (10),
+`UpdateFault` (9), `Corrupt` (8), `TimeFault` (8), `AbiFault` (7), `RlpFault` (7), `BlsFault` (6),
+`VerifyFault` (6). Each was designed by asking what can go wrong, and each is unread.
+
+**The honest limit, and why it does not dissolve the number.** Most bodies here are `{ … }`, and a
+consumer missing because no bodies exist is not evidence. But sixty `match` blocks *are* written, in
+the files where a body was written because the body was the argument — and almost none is about a
+fault union. So the measure is not *vision has no code*:
+
+> **Where a body was written to make a point, the point was almost never about consuming a fault
+> union — and the vocabularies were designed anyway.**
+
+The four exceptions are the shape of the answer. `Decoded` and `Invalid` are matched because
+classification is what those two files are about. `FileFault` was matched once, deliberately, to test
+the three entries above it, and **the test changed the design**: `cp` needs *is this about the operand
+or about the run*, which is not a member and cannot be one, so `policy` takes a `Side` the union
+cannot supply.
+
+n=1, and a clean one: the only fault union here that has ever met a consumer turned out to be missing
+an axis, and thirty lines of use is how that was found. There is no reason to expect better of the
+other twenty-five. The cheapest next thing this directory could do is not another vocabulary — it is
+twenty-five short callers.
+
+**And it puts a number on the rule above.** *An error type with no exhaustive consumer costs nothing*
+was written yesterday about one union. Measured: **117 of 140 members cost nothing, because nothing
+reads them.** That is not an argument that they are wrong. It is that nothing here has been in a
+position to find out, and five days of design have produced a vocabulary whose cost and benefit are
+both still entirely theoretical.
+

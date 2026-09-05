@@ -308,6 +308,28 @@ Making `In` a stream made the question stop existing, because a generator ending
 and both earlier answers had been arguing inside the wrong frame. Two entries in `QUESTIONS.md` were
 merged into one by that, rather than one of them winning.
 
+## The largest thing this directory has not done
+
+*2026-09-05.* Twenty-nine unions are declared here, carrying 140 members between them. Counted on
+`tools/specparse.ts --tokens`:
+
+    with an exhaustive consumer:   4  —  23 members
+    with none:                    25  — 117 members
+
+Sixty `match` blocks exist, so this is not *no bodies were written* — bodies are written wherever the
+body is the argument. It is that almost none of them consumes a fault union. Every vocabulary this
+directory is pleased with is in the twenty-five: `RequestFault` (10 members), `UpdateFault` (9),
+`Corrupt` (8), `TimeFault` (8), `AbiFault` (7), `RlpFault` (7).
+
+The one that met a consumer changed shape the same day. `FileFault`'s only caller is
+[`packages/box/src/cp.wac`](packages/box/src/cp.wac), written to test three entries in
+`QUESTIONS.md`, and it needs *is this fault about the operand or about the run* — which is not a
+member, cannot be one, and had not come up in five days of designing members.
+
+So the honest summary of the error-handling work here is that its cost and its benefit are both still
+theoretical, and the cheapest way to change that is twenty-five short callers rather than a
+twenty-sixth vocabulary. `QUESTIONS.md` has the measurement and the caveats.
+
 ## Nothing here is checked by anything
 
 No test reads these pages. Nothing here is a fixture, a list some guard walks, or a promise a suite
