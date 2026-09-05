@@ -10,12 +10,20 @@
 // Which is this directory's own method, in the shipped tree, written down first.
 
 import { Result, Vec, Bytes } from "core";
-import { Request, Response, Status } from "@/packages/http";
+import { Request, Method, Response, Status } from "@/packages/http";
 import { JsonValue, JsonObject, Str, Object, writeValue } from "@/packages/json";
 import { Url, parseUrl } from "@/packages/url";
 
-/** The methods these routes answer. `Request.method` is a `Bytes` in the shipped tree. */
-export enum Method { Get, Post, Head, Other }
+/*
+ * `Method` was declared here — `enum Method { Get, Post, Head, Other }` — and `@/packages/http` grew
+ * one the same week, so `Route.method` and `Request.method` were **two types of one name with one
+ * meaning**, in a file that imports `Request`. Nothing said so: both resolved, so the name checker
+ * was content, and a dispatcher comparing them would not have compiled for a reason no message
+ * would have named.
+ *
+ * Imported now. Found by sweeping for exported names declared more than once — 21 across the
+ * directory, and this is the pair that a change three files away created.
+ */
 
 /** What a handler is given: the request, and the path segments after the pattern matched. */
 export struct Ctx { const Request req; Vec<Bytes> rest; }

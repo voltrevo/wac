@@ -7685,6 +7685,59 @@ puts two on the wire — the input this package's own parser refuses. Latent: `O
 production caller. The file's opening paragraph is right about the rule and the type does not have
 it.
 
+## Twenty-one type names are declared twice, and three barrels publish one name from two files
+
+*2026-09-05.* This file has an entry called *Three type names are declared twice, and `union` is the
+reason it matters*. Swept it properly:
+
+    exported type names declared in more than one file:  21
+    ...of those, inside a single package:                 3 — `http`'s `Incomplete` and `NoHost`,
+                                                              `git`'s `Rules`
+
+**The within-package ones are the sharp case, because a barrel then publishes one name twice**, from
+two different files, which cannot be right whatever the two types are. Nothing checked it: every name
+resolved, so the dangling reader was content.
+
+And one of the three is not a collision at all. `git`'s `Rules` is declared in `status.wac` **and**
+`ignore.wac` with the same meaning — *the lowest-precedence ignore rules, parsed* — because two files
+in one package each needed the type and each wrote it. One import removes it.
+
+### Two of the twenty-one I created this week, and the checker caught them before I did
+
+`http`'s `NoHost` (`proxy.wac` and `outgoing.wac`, both mine) and `core`'s `Key` against
+`std/platform.wac`'s. And a third by a change three files away: `@/packages/server/src/routes.wac`
+declared `enum Method { Get, Post, Head, Other }`, `@/packages/http` grew a `Method` the same week,
+and `routes.wac` imports `Request` — so `Route.method` and `Request.method` became **two types of one
+name with one meaning, in one file**. Both resolved, so nothing said a word.
+
+So the check is now in `scratchpad/dangling.py`: *a barrel publishing one name twice*. It found four
+more the moment it ran, all in `http`'s barrel, all from my edits ten minutes earlier — `Request`,
+`Response` and `write` from duplicated export lines, and `NeedMore`, where **the rename I had just
+made to fix a collision created another one.**
+
+### And chasing that last one found something worth more than the collision
+
+`NeedMore` collided because I had renamed `incoming.wac`'s `Incomplete`. Looking at why it existed:
+`read` answered `Result<Exchange, ResponseFault>` and the struct was a leftover that nothing referred
+to. Which is the collapse `@/packages/http/src/request.wac`'s `Parsed` exists to refuse, in the same
+package, one file away:
+
+> The obvious collapse is `Result<Request?, RequestFault>` with a null meaning *keep reading*, and it
+> is exactly the cute encoding `vision/README.md` refuses: two of the three outcomes would share a
+> constructor and a caller could handle the failure, forget the null, and quietly treat a partial
+> message as a whole one.
+
+`read` answers a three-arm `Received` now, mirroring `Parsed`. **The argument was already written, in
+the neighbouring file, and I wrote the `Result` anyway** — and the thing that caught it was a name
+count, not the argument.
+
+> **A duplicate name is worth checking for reasons that have nothing to do with names.** It is the
+> cheapest signal that two files have solved one problem twice, and in three of the seven cases here
+> the second thing found was larger than the first.
+
+> **Verdict:** convention — one name per exported type per package, checked by a barrel walk.
+> Settled by: the check, which is written. The language is not involved.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

@@ -6,20 +6,19 @@
 // duplicated them instead — its header says *"neither wanted to export a helper the other would
 // then depend on"*, which is a duplicate chosen over a leak.
 
-export { Request, Parsed, parseRequest } from "./request.wac";
-export { Response, write } from "./response.wac";
 // `eqFold` is here and `isToken` is not, which is the judgement a barrel exists to record:
 // comparing a field value case-insensitively is something a caller of this package does, and
 // recognising a tchar is not.
 export { Headers, Building, Field, eqFold } from "./headers.wac";
 export {
-  Incoming, Exchange, Framing, NoBodyWhy, Limits, Incomplete, read,
+  Incoming, Exchange, Received, Framing, NoBodyWhy, Limits, read,
   NoBody, Chunked, Length, UntilClose, HeadRequest, StatusHasNone, TunnelOpen,
 } from "./incoming.wac";
 export { Response, Status, write } from "./response.wac";
-export { Request, Method, Get, Head, Post, Put, Delete, Connect, Options, Trace, Patch, Other }
+export { Request, Parsed, parseRequest, Method,
+         Get, Head, Post, Put, Delete, Connect, Options, Trace, Patch, Other }
   from "./request.wac";
-export { Draft, Owned, OutgoingFault, WriterOwns, NoHost, write as writeRequest }
+export { Draft, Owned, OutgoingFault, WriterOwns, HostRequired, write as writeRequest }
   from "./outgoing.wac";
 export {
   ProxyAt, ProxyReply, ProxyFault, ProxyUrlFault, parseProxy, connectRequest, readReply,

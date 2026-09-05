@@ -1,5 +1,5 @@
 // The package, as one name. One slice of 11,883 lines, plus its first consumer — see `../README.md`.
 
-export { Change, Entry, WorktreeChange, Rules, worktreeStatus, statusOf, porcelain } from "./status.wac";
+export { Change, Entry, WorktreeChange, worktreeStatus, statusOf, porcelain } from "./status.wac";
 export { Summary, summarise, render } from "./prompt.wac";
 export { Rule, Rules, Verdict, verdict } from "./ignore.wac";

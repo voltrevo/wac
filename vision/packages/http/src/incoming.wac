@@ -92,8 +92,27 @@ export struct Incoming {
   Bytes rest;
 }
 
-/** Not enough has arrived. Read more and ask again. */
-export struct Incomplete { }
+/**
+ * Complete, refused, or not yet — **three arms, because `./request.wac` already argues for three.**
+ *
+ * The first version of this file had `read` answer `Result<Exchange, ResponseFault>` and a loose
+ * `struct Incomplete { }` that nothing referred to. That is the collapse `./request.wac`'s `Parsed`
+ * exists to refuse:
+ *
+ * > The obvious collapse is `Result<Request?, RequestFault>` with a null meaning *keep reading*, and
+ * > it is exactly the cute encoding `vision/README.md` refuses: two of the three outcomes would
+ * > share a constructor and a caller could handle the failure, forget the null, and quietly treat a
+ * > partial message as a whole one.
+ *
+ * **The same argument, in the same package, one file away, and I wrote the `Result` anyway** — and
+ * the thing that caught it was a barrel publishing one name twice, not the argument. `Received`
+ * mirrors `Parsed` arm for arm.
+ */
+export enum Received {
+  Ok(Exchange exchange),
+  Bad(ResponseFault why),
+  Incomplete
+}
 
 /**
  * A request and the response to it.
@@ -111,8 +130,7 @@ export struct Exchange { Request sent; Incoming got; }
  * became a type: *the connection has closed* is a fact about the socket at the instant of the call,
  * it is not derivable from the bytes, and it changes the answer. §2.
  */
-export Result<Exchange, ResponseFault> read(Bytes input, const Request sent, bool eof,
-                                            const Limits limits) { … }
+export Received read(Bytes input, const Request sent, bool eof, const Limits limits) { … }
 
 // ## 1. `closeDelimited` is one bit of a five-way answer, and it kept the wrong one
 //

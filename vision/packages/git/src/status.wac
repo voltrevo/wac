@@ -6,6 +6,7 @@
 // ambiguity in the shipped API.
 
 import { Vec } from "core";
+import { Rules } from "./ignore.wac";
 
 /**
  * One column's worth of state.
@@ -83,8 +84,13 @@ export Vec<WorktreeChange> worktreeStatus(const Repo r) { … }
  */
 export Vec<Entry> statusOf(const Repo r, Rules? excludes) { … }
 
-/** The lowest-precedence ignore rules, parsed. `null` at the call site is what unset looks like. */
-export struct Rules { … }
+/*
+ * `Rules` was declared here **and** in `./ignore.wac`, with the same meaning — *the lowest-precedence
+ * ignore rules, parsed*. Two files in one package each needed the type and each wrote it, and the
+ * barrel then exported the name twice, from two files, which cannot be right and which nothing
+ * checked. Found 2026-09-05 by sweeping for exported names declared more than once: 21 across the
+ * directory, three of them inside a single package. Imported from `./ignore.wac` now.
+ */
 
 /**
  * `git status --porcelain`'s line for one entry.

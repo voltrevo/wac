@@ -907,12 +907,13 @@ export union<Cancelled, PickFailed, NotGranted> PickFault;
 export struct Click   { string id; }
 export struct Typed   { string id; string value; }
 export struct Changed { string id; string value; }
-export struct Key     { string id; Bytes bytes; }
+/** A key press. `Key` until 2026-09-05, which collided with `core/map.wac`'s `Key<K>`. */
+export struct KeyPress { string id; Bytes bytes; }
 export struct Pointer { string id; i32 x; i32 y; }
 export struct Dropped { string id; string name; Bytes bytes; }
 export struct Quit    { }
 
-export union<Click, Typed, Changed, Key, Pointer, Dropped, Quit> Event;
+export union<Click, Typed, Changed, KeyPress, Pointer, Dropped, Quit> Event;
 
 /**
  * What a path is — three fields where the shipped one has eight, and two of the five missing make

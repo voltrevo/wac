@@ -29,9 +29,16 @@ export enum Owned { ContentLength, TransferEncoding, Connection, Host }
 
 /** A caller set a header the writer decides. */
 export struct WriterOwns { Owned which; Bytes given; }
-/** HTTP/1.1 requires a `Host` and this request has none. */
-export struct NoHost { }
-export union<WriterOwns, NoHost> OutgoingFault;
+/**
+ * HTTP/1.1 requires a `Host` and this request has none.
+ *
+ * `NoHost` when written, which collided with `./proxy.wac`'s member of `ProxyUrlFault` — that one is
+ * *the proxy URL has no authority* and this one is *the request has no Host header*, two different
+ * facts sharing a name in one package. Renamed rather than the other, because the proxy one is older
+ * and because `HostRequired` says the obligation this file is about.
+ */
+export struct HostRequired { }
+export union<WriterOwns, HostRequired> OutgoingFault;
 
 /**
  * A request being built for sending — **the third state, and the one that shows `Building` is not
