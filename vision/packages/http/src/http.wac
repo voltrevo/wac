@@ -19,6 +19,8 @@ export {
 export { Response, Status, write } from "./response.wac";
 export { Request, Method, Get, Head, Post, Put, Delete, Connect, Options, Trace, Patch, Other }
   from "./request.wac";
+export { Draft, Owned, OutgoingFault, WriterOwns, NoHost, write as writeRequest }
+  from "./outgoing.wac";
 export {
   ProxyAt, ProxyReply, ProxyFault, ProxyUrlFault, parseProxy, connectRequest, readReply,
   connectThrough,

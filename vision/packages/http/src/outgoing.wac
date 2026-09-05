@@ -1,0 +1,139 @@
+// Writing a request — the last unpredicted file in this package, and it has a discipline its type
+// does not hold.
+//
+// `packages/http/src/outgoing.wac` is 77 lines and states the rule plainly:
+//
+// > the caller supplies a method, a target, headers and a body, and **this decides the framing**. A
+// > client that lets a caller set `Content-Length` by hand is a client that can be made to disagree
+// > with its own body length, which is the request-smuggling primitive from the other side.
+//
+// `Outgoing.set(name, value)` accepts any name, and `write` emits every header the caller pushed and
+// then adds its own `Content-Length`. So `set("Content-Length", "0")` on a request with a body emits
+// **two**, which is exactly the input this package's own request parser refuses. The rule is real,
+// the code is right about what it should be, and nothing stops the other thing. `issues/system/0342a`.
+//
+// Latent: `Outgoing` has no production caller — tests and `client_probe.wac` — so nobody sets a
+// header from untrusted input today.
+
+import { Result, Bytes, Vec } from "core";
+import { Request, Method } from "./request.wac";
+import { Headers, Building, Field, eqFold } from "./headers.wac";
+
+/**
+ * A header the **writer** owns, which a caller may not set.
+ *
+ * Not a list of strings in a filter loop: naming them is what lets `refuse` below be exhaustive, and
+ * what makes adding a tenth framing rule a compile error at every place that classifies one.
+ */
+export enum Owned { ContentLength, TransferEncoding, Connection, Host }
+
+/** A caller set a header the writer decides. */
+export struct WriterOwns { Owned which; Bytes given; }
+/** HTTP/1.1 requires a `Host` and this request has none. */
+export struct NoHost { }
+export union<WriterOwns, NoHost> OutgoingFault;
+
+/**
+ * A request being built for sending — **the third state, and the one that shows `Building` is not
+ * one type.**
+ *
+ * `./headers.wac` split headers into `Building` (push, cannot read) and `Headers` (read, cannot
+ * push), and `Building.done()` runs the framing check a *parser* needs: at most one
+ * `Content-Length`, not alongside `Transfer-Encoding`. A **writer** needs a different check —
+ * *none of them at all, because I am about to add them* — and the same two operations.
+ *
+ * So `Building` is not *a headers under construction*; it is *a headers under construction for a
+ * purpose*, and the purpose decides the exit check. Two `done`s rather than two types, because the
+ * fields and the pushes are identical and only the gate differs.
+ */
+export struct Draft {
+  Method method;
+  Bytes target;
+  Bytes host;
+  Building headers;
+  Bytes body;
+
+  Draft to(Method method, Bytes target, Bytes host) {
+    return Draft(method, target, host, Building.create(), Bytes.empty());
+  }
+
+  /** Append a header. The refusal happens at `seal`, not here — see §2. */
+  void set(this, string name, string value) {
+    this.headers.push(name.toBytes(), value.toBytes());
+  }
+
+  /**
+   * The check a writer needs, and the only way to get a sendable `Request`.
+   *
+   * `Building.done()` asks *are these headers self-consistent*. This asks *has the caller stayed out
+   * of the writer's way*, which is the opposite question over the same field list.
+   */
+  Result<Request, OutgoingFault> seal(this) { … }
+}
+
+/** Which owned header this name is, or nothing. The classifier `refuse` and `write` share. */
+Owned? ownedBy(Bytes name) {
+  if (eqFold(name, "Content-Length".toBytes()))   { return Owned.ContentLength; }
+  if (eqFold(name, "Transfer-Encoding".toBytes())) { return Owned.TransferEncoding; }
+  if (eqFold(name, "Connection".toBytes()))       { return Owned.Connection; }
+  if (eqFold(name, "Host".toBytes()))             { return Owned.Host; }
+  return null;
+}
+
+/**
+ * Serialise. `keepAlive` false adds `Connection: close`, which is also how a client asks for a
+ * close-delimited response — the case `./incoming.wac`'s `read` needs `eof` for.
+ */
+export Bytes write(const Request req, bool keepAlive) { … }
+
+// ## 1. The shipped file has two request types and this package now has one
+//
+// `Request` is the server's parse and `Outgoing` is the client's build: **two structs for one
+// concept**, in one package, with different field types for the same fields — `u8[] method` in both,
+// but `Request` has `consumed` and `Outgoing` has `host`. `./incoming.wac` found the cost from the
+// other end (a response cannot be parsed without the request, and there was no request value to
+// take) and this is the same split seen directly.
+//
+// One `Request` here, and `Draft` is a **builder** rather than a second request: it exists until
+// `seal`, answers a `Request`, and has no other purpose. The distinction matters because the shipped
+// `Outgoing` is not a builder — it is the value `write` takes, so there is no moment at which the
+// caller stops being able to add a header.
+//
+// ## 2. `Host` is a field on one side and a header on the other, and both are right
+//
+// The shipped writer makes `Host` a parameter — *"because a request without one is not a message a
+// server has to accept"* — and the shipped parser leaves it in the headers, because a server reads
+// what arrived. Same fact, two shapes, and neither is wrong: on the way out it is an obligation, on
+// the way in it is data.
+//
+// `Draft.host` is a field and `Request` has none: `seal` writes it into the headers, so the
+// obligation lives in the builder and the parsed form is uniform. Which is the general answer and it
+// is worth stating, because this directory has met the shape three times now under other names:
+//
+// > **A required field is a property of construction, not of the value.** Once built, it is a header
+// > like any other; before built, it is the thing without which there is no value. Put it in the
+// > builder and the parsed type stays uniform.
+//
+// Same as `@/packages/http/src/headers.wac`'s framing check and `@/packages/ts`'s `Blanked`, and the
+// first where the obligation is a *field* rather than a whole-collection rule.
+//
+// ## 3. What could not be written
+//
+// **`set` cannot refuse, so the refusal is at `seal` and the caller learns late.** `Draft.set` is
+// `void` and pushing `Content-Length` is accepted; `seal` answers `WriterOwns`. Making `set` answer
+// a `Result` means a `try` at every header a caller adds — six or seven in a real request — for a
+// mistake that is a typo in a constant. So the late refusal is the right trade and it is a trade:
+// the type says *this will be checked* and not *this cannot happen*, which is one weaker than
+// `Building` manages for reading.
+//
+// **`Owned` is four arms and the set is not closed.** `Upgrade`, `TE` and `Expect` are also the
+// writer's business under some rules, and adding one is a fourth site of the *open registry as a
+// closed enum* shape `./response.wac` and `./request.wac` already have. Third in this package, which
+// is enough to say it is what HTTP is like rather than what these files are like.
+//
+// **Nothing relates `Owned` to the headers `write` actually emits.** `write` pushes
+// `Content-Length`, `Connection` and `Host`, and `ownedBy` names those three plus
+// `Transfer-Encoding` — which `write` never emits, because this client does not chunk. So the list
+// of *what the caller may not set* and the list of *what the writer sets* are two lists that agree
+// by inspection, and the fourth entry is the one that proves nothing checks them: it is in the first
+// and not the second, correctly, and no reader can tell that from the code.

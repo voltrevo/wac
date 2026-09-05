@@ -7643,6 +7643,48 @@ written** — the shipped package has one and vision's `response.wac` never did.
 now, on the arm, for the same reason `reason()` is; and `Other(c)` has to answer by arithmetic on the
 hundreds digit, which is **the one place the open-set escape hatch has to guess.**
 
+## A required field is a property of construction, not of the value
+
+*2026-09-05.* `packages/http/src/outgoing.wac` — the last source in that package nothing here had
+predicted anything about — makes `Host` a **parameter** rather than a header, *"because a request
+without one is not a message a server has to accept"*. The same package's parser leaves `Host` in the
+headers, because a server reads what arrived.
+
+Same fact, two shapes, and neither is wrong: **on the way out it is an obligation and on the way in
+it is data.** `@/packages/http/src/outgoing.wac` puts it on the builder — `Draft.host` is a field,
+`seal` writes it into the headers, and the parsed `Request` stays uniform.
+
+> **A required field is a property of construction, not of the value.** Once built it is a header
+> like any other; before built it is the thing without which there is no value. Put it in the builder
+> and the parsed type stays uniform.
+
+Fourth instance of *a value whose guarantee comes from how it was made* — after `Prefix`, `Digest32`
+and `headers`' own framing check — and the first where the obligation is a **field** rather than a
+whole-collection rule.
+
+### And it showed `Building` is not one type
+
+`@/packages/http/src/headers.wac` split headers into `Building` (push, cannot read) and `Headers`
+(read, cannot push), and `Building.done()` runs the check a **parser** needs: at most one
+`Content-Length`, not alongside `Transfer-Encoding`. A **writer** needs the opposite check over the
+same field list — *none of them at all, because I am about to add them* — and the identical pushes.
+
+So `Building` is not *a headers under construction*; it is *a headers under construction for a
+purpose*, and the purpose decides the exit check. Two `done`s rather than two types, because only the
+gate differs. Which is a small generalisation of the two-state entry and a real one: **the states are
+not `building` and `checked`, they are `building` and `checked against something`.**
+
+> **Verdict:** convention — one builder type, one exit check per purpose. Settled by: writing it,
+> which is done. The language is not involved.
+
+### The shipped file states this discipline and does not hold it
+
+Filed as `issues/system/0342a`. `Outgoing.set` accepts any header name and `write` emits every one
+the caller pushed *and then adds its own*, so `set("Content-Length", "0")` on a request with a body
+puts two on the wire — the input this package's own parser refuses. Latent: `Outgoing` has no
+production caller. The file's opening paragraph is right about the rule and the type does not have
+it.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
