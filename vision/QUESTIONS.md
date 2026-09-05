@@ -7060,6 +7060,57 @@ generated — a build step's output this bundler merely read — is neither `Use
 by this run, and blaming either party is wrong. Two arms is what the bundler can distinguish, which is
 *a fault union is bounded above by what its sources can distinguish* arriving on an enum.
 
+### A cursor carries its input and its position; a fault carries the position alone
+
+Two findings a day apart said the same thing — a `Tok` is meaningless without its file, a path is
+meaningless without who wrote it — and both were fixed by making the scalar a type. Swept the
+directory for the general case, on the token stream:
+
+    structs carrying a position (`at`, `offset`, `from`, `line`, `col`, `index`):   62
+      ...that also carry the thing it indexes:                                       7
+      ...that do not:                                                               55
+        ...and the name says it is a fault:                                         35
+
+The seven are `Slice { of, from, len }`, `Scan { src, at }`, `Parser { src, json5, at, depth }`,
+`Walk { nodes, used, path, at }`, `Reader { src, at }`, `Received { bytes, from }` — **six cursors**
+— and `Module { at, text, imports }`, which only joined the column an hour earlier, when `Source` was
+introduced for a reason nobody had connected to this.
+
+> **A cursor is built to be read from, so it holds both halves. A fault is built to be raised, so it
+> holds only the half the raiser had in a local variable.**
+
+### And the consequence is that not one fault here can render itself
+
+Every diagnostic function in the directory, without exception:
+
+    say(const Blame b, BundleFault f)          @/packages/ts/src/report.wac
+    say(string path, FileFault f)              @/packages/box/src/cp.wac
+    say(string name, ArgFault f)               @/packages/box/src/lib/args.wac
+    say(const Rules rules, const Finding f)    @/packages/git/example/ignorelint.wac
+    say(string what, Invalid why)              @/packages/tor/src/verdict.wac
+
+**Five for five take the fault plus the thing it is about**, and I wrote four of them without
+noticing. `at: 47` cannot be drawn as a caret under a line without the text, so a `Truncated { at,
+want, have }` is exactly as useful as its caller's memory of what it was parsing — and the caller's
+memory is a parameter, unchecked, threaded by hand.
+
+This is the fourth time this file has recorded *paired values with nothing holding the pair* and the
+first time the pair has been counted. It is not four coincidences; it is one shape with 35 instances,
+and the four entries were each looking at one of them.
+
+**The fix is the one both earlier instances already used, and it is not a `Span` type.** A `Span {
+from, to }` is two positions and no source — `@/packages/regex` has exactly that and it is in the 55.
+What worked twice was giving the *scalar* the thing it needs: `Tok` needs its `Program`, a path needs
+its `Origin`, and an `at` needs its input. The general form is a slice: `Bytes at` rather than
+`i32 at`, which `core/slice.wac`'s `Slice { of, from, len }` already is and which every one of the six
+cursors is holding the pieces of.
+
+Cost, stated because it is the reason nobody has: a fault that carries a `Bytes` keeps the whole input
+alive for as long as the fault exists, and a parser that raises one per malformed record in a stream
+would retain every record it rejected. That is a real objection to putting it in `Truncated` and not
+to putting it in `ParseError`, and the difference is how many of the fault get made — which nothing in
+the type says.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

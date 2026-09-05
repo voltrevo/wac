@@ -366,6 +366,26 @@ structurally biased rather than merely noisy. Moving from regex to a token strea
 of instrument error and I assumed it had removed them all; the three that remained were about the
 *language*, not the lexing.
 
+## Not one fault in this directory can render itself
+
+*2026-09-05.* Swept for scalars that are half of a pair, after finding two of them a day apart:
+
+    structs carrying a position:                     62
+      ...that also carry the thing it indexes:        7   — six of them cursors
+      ...that do not:                                55
+        ...and the name says it is a fault:          35
+
+> **A cursor is built to be read from, so it holds both halves. A fault is built to be raised, so it
+> holds only the half the raiser had in a local variable.**
+
+The consequence shows up in every diagnostic function here, five of five: `say(string path,
+FileFault f)`, `say(string name, ArgFault f)`, `say(const Rules rules, const Finding f)`,
+`say(string what, Invalid why)`, `say(const Blame b, BundleFault f)`. Each takes the fault **plus the
+thing it is about**, because `at: 47` cannot be drawn as a caret under a line without the text.
+
+Four entries in [`QUESTIONS.md`](QUESTIONS.md) had recorded *paired values with nothing holding the
+pair* separately. They are one shape with 35 instances.
+
 ## Nothing here is checked by anything
 
 No test reads these pages. Nothing here is a fixture, a list some guard walks, or a promise a suite
