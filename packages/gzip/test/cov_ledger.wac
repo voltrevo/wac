@@ -58,7 +58,7 @@ Pin[] pins() {
         "`trap_a_distance_code_the_fixed_table_does_not_define` in cov_exercise.wac shows. Kept as " +
         "defence: it stops being dead if the fixed distance table is widened to the 32 patterns 5 " +
         "bits allow."),
-    Pin("packages/gzip/src/gzip.wac", 276, "if (w.out.len > 0) { write(w.out.take()); }", true,
+    Pin("packages/gzip/src/gzip.wac", 280, "if (w.out.len > 0) { write(w.out.take()); }", true,
         "The `else` — a completed block that left the writer with no whole byte to hand on. A block " +
         "cannot be that small: deflate's header is three bits and the smallest thing that can " +
         "follow is a fixed-Huffman end-of-block symbol at seven, so ten bits at minimum, and the " +
