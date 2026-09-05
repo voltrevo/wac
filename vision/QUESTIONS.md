@@ -9722,3 +9722,112 @@ was written yesterday about one union. Measured: **129 of 174 members cost nothi
 reads them, and 8 more are read only as a group.** That is not an argument that they are wrong. It is that nothing here has been in a
 position to find out, and five days of design have produced a vocabulary whose cost and benefit are
 both still entirely theoretical.
+
+## The fastest representation in the bench is the one with no type, and that is a language gap
+
+[`bench/dispatchcost.wac`](bench/dispatchcost.wac) was written to settle *does an array of records
+box its elements*, and it answered a question nobody asked as a side effect. Four ways to hold a
+three-field instruction, 4,096 of them, 67.1M reads, best of three on the v8 host:
+
+    prog     steps     flat   packed   narrow     wide    again
+    4096  67108864       77       65       72       69       78
+
+`narrow` is `Ins3[]`, a three-field record. `wide` is `Ins11[]`. `flat` is three lanes interleaved
+in one `i32[]`. `packed` is **one `i32` per instruction** — tag in bits 31..28, two 14-bit operands
+below — and it wins every size, by 10% over the record and 16% over the lanes.
+
+The reason is the same one that makes records beat lanes: **wasm bounds-checks every array index and
+does not check a struct field.** A record turns three checked loads into one check plus two
+unchecked offsets. Packing turns them into one check plus two *shifts*, and a shift is cheaper than
+a field load through a reference.
+
+### So the fastest table in this repository is the one the type system cannot describe
+
+wasm GC has no packed struct: a `struct` is a heap object reached by reference, and there is no way
+to say *these two small fields live in one `i32`*. So the author writes it by hand —
+`(len << 16) | sym` at the build site, `entry >>> 16` and `entry & 0xFFFF` at the read site, the
+field widths in a comment, and no name for the thing being assembled.
+
+Twenty-eight files under `packages/` shift a field into an integer and or it in. Most are wire
+formats, where the protocol fixes the layout and no language feature would change a line. Three are
+**in-memory tables where the packing is a choice made for speed**:
+
+    packages/gzip/src/inflate.wac      Decoder.fast      (len << 16) | sym, 0 = no code
+    packages/zstd/src/sequences.wac    the sequence instructions
+    packages/regex/src/program.wac     the compiled program
+
+Each is a struct in its author's head. Each has the field widths in prose. And a sentinel falls out
+of it for free, because a packed word has no spare bit for *absent*: gzip takes `0`, and documents
+why it cannot collide — *"a real entry always has len >= 1."*
+
+### What the ask is, and what it is not
+
+Not multi-value returns and not a `bitfield` keyword bolted to `struct`. The narrow version is:
+
+> A struct whose fields have declared bit widths, which the compiler may lay out inside a single
+> scalar when they fit, with field access compiling to shift-and-mask.
+
+Whether that is `struct Entry { i32:16 len; i32:16 sym; }` or an attribute on the declaration is a
+syntax question and the easy half. The hard half is that it changes what a struct *is*: a value with
+no identity, no reference, and no `null` — so `Entry?` cannot be a nullable reference and has to be
+either a wider word with a spare bit or a compile error. That is the same fork as the boxing of
+`i32?` recorded above, and it comes out the other way, because here the whole point is that there is
+no heap object to point at.
+
+**This directory has been arguing from shape all day and this is the case where shape loses.** A
+rule saying *no parallel arrays, no packed integers* replaces gzip's decode table — the hottest loop
+in the package, once per output symbol — with something 10% slower. The deciding input was a
+measurement, and the measurement existed only because two vision files had contradicted each other
+about something else.
+
+## `const` is deep, travels everywhere, and stops at a funcref — which is where this directory put its comparators
+
+`spec/spec/variables.md` is unusually complete about immutability. `[§wac-const-deep-j6b1nyg]`:
+writing through any depth of a `const` reference is a compile error, and *"the constness travels with
+the reference however it was obtained — through a field, through a method's return value, or by
+copying it into a fresh binding — so laundering it through a local or a field is refused too."*
+
+Then it names its own hole:
+
+> **One hole, currently.** Passing a const reference to a function whose parameter is not `const` is
+> accepted, and that function may write through it. … Declaring the parameter `const` is the fix at
+> the call site, and **there is nothing to write for a funcref, whose type has no place for it.**
+
+The first half is a checker gap with an issue against it (0052) and a workaround that works. The
+second half is a hole in the *type grammar*, and it lands squarely on the design this directory has
+been converging on all day.
+
+### Every abstraction here is a struct of funcrefs
+
+`core/order.wac`, written this afternoon, is the clean case:
+
+    struct SortSpec<T> { fn<Ordering(T, T)> key; fn<Ordering(T, T)> tieBreak; }
+
+A comparator must not mutate the values it is comparing — a sort with a mutating comparator is the
+textbook way to corrupt a container, and it is the kind of bug that reproduces once in a thousand
+runs. `SortSpec` cannot say it. Neither can the fifty funcref fields the capability world is built
+from — `fn[Pending<u8[]>()] readStdin` and forty-nine more — where *"a fake is the same struct type
+holding different funcrefs"*. The whole no-ambient-capabilities design is funcref fields, and none
+of them can promise their implementation treats an argument as read-only.
+
+So the guarantee that is strongest in this language for a *named* function is unavailable for
+exactly the values this design passes functions around as.
+
+### And the default is the wrong way round
+
+Related and cheaper to fix. `const` is opt-in on parameters, so a signature says nothing unless
+someone remembered:
+
+    export void forceTwo(i32[] freq, i32 count)          // writes into freq
+    void lengthsFrom(i32[] freq, i32 count, i32[] outLen) // answers through outLen
+
+Both are in `packages/gzip/src/huffman.wac`, both mutate a caller's array, and in both the only
+evidence is a name and a doc comment. The marker exists and is simply not used — `const` on a
+parameter is legal today and the compiler's own sources use it. A reader cannot tell an unmarked
+parameter that is read-only from one that is written, because the language spells both the same way.
+
+**The ask, in order of how much it would change:** `const` as part of a funcref type, so a
+comparator's immutability is checkable; then closing 0052 so const-ness cannot be laundered through
+a call; then, much further out, the question of whether a parameter should be `const` by default,
+which is a language-wide decision this directory has no standing to make and should record rather
+than answer.

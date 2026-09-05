@@ -146,3 +146,24 @@ generator's return, i.e. on the first item above. Flagged rather than settled.
 **`zstd` has the same shape**, which `0102` item 4 already says: `packages/zstd/src/stream.wac` traps
 on `Read.Failed` with no `broken` equivalent at all. Everything here applies to it unchanged, and it
 is not rewritten because it would find nothing new.
+
+**A struct the compiler may lay out inside one `i32`.** Added with
+[`src/huffman.wac`](src/huffman.wac), which pulls the decoder out of `inflate.wac` and then declines
+to change its fast table. `(len << 16) | sym` is the **fastest** of the four representations in
+[`../../bench/dispatchcost.wac`](../../bench/dispatchcost.wac) — 65 ms against 72 for a three-field
+record and 77 for three lanes — so the rewrite this directory has applied everywhere else would make
+the hottest loop in the package 10% slower. wasm GC has no packed struct, so the type is the thing
+that got dropped in exchange. Promoted to [`../../QUESTIONS.md`](../../QUESTIONS.md).
+
+**Splitting the decoder out means splitting `BitReader` out, and the file cannot.** `BitReader` is a
+`struct` inside `inflate.wac`, and `Decoder.decode` peeks, decides a length and skips exactly that
+many bits — one mechanism in two types. Moving `Decoder` up to `huffman.wac` makes `BitReader` a
+name two files need, so it must become a third file, and `./bits.wac` is invented. This is the
+second time in this package: an earlier draft of `src/inflate.wac` imported `BitReader` from a
+`./bitreader.wac` that was never there. **A struct declared inside its only user is invisible as a
+dependency until something else wants it**, and nothing in the source distinguishes it from a module.
+
+**A comparator cannot promise not to write.** `const` is deep in this language and travels through
+fields, returns and copies, and `spec/spec/variables.md` records that *"there is nothing to write for
+a funcref, whose type has no place for it."* That lands on `../../core/order.wac`'s `SortSpec` and on
+every capability struct in the platform design. Promoted.

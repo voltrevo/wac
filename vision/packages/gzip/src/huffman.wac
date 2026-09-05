@@ -1,0 +1,203 @@
+// Canonical Huffman, both directions — and the first table in this directory that should stay
+// packed bits.
+//
+// The shipped package splits this by **direction**: `huffman.wac` builds codes for the encoder, and
+// the decoder is a `struct Decoder` sitting at line 377 of `inflate.wac`'s 826. They are the same
+// object. A canonical code is *a length per symbol*; the encoder derives `symbol -> bits` from it
+// and the decoder derives `bits -> symbol` from it, and RFC 1951 transmits only the lengths for
+// exactly that reason — *"both the encoder and decoder derive the codes from the lengths alone,
+// which is why only lengths are transmitted."* So one file, one `Lengths`, two views.
+//
+// ## The two tables want opposite representations, and the bench says which
+//
+// This directory has spent the day replacing parallel arrays with arrays of records, on a measured
+// 12%. Here that is right once and wrong once, and the difference is not a principle:
+//
+// **The encoder's table is a pair per symbol.** `i32[] len` beside `i32[] code`, where `code[i]` is
+// *"valid where len > 0"* — a lane whose meaning is gated by another lane's zero. Reading it is one
+// probe per emitted symbol. `../../../bench/dispatchcost.wac` puts records 12% ahead of lanes and a
+// generated-once, read-forever table far past the crossover. Records win.
+//
+// **The decoder's fast table is a packed scalar and should stay one.** `i32[] fast` holds
+// `(len << 16) | sym`, one entry per index of a `1 << rootBits()` table, and *"zero means 'no code
+// here', which is unambiguous because a real entry always has len >= 1."* That is the `packed` arm
+// of the same bench, and it is the **fastest of the four**: at 4,096 instructions and 67.1M steps,
+// 65 ms against 72 for a three-field record, 69 for an eleven-field one, and 77 for three lanes.
+// One bounds-checked load and two shifts beats a load plus two unchecked offsets, because wasm
+// checks the index and not the field. `decode` runs once per output symbol, which is the hottest
+// loop in the package.
+//
+// So a style rule — *no parallel arrays, no packed integers* — gets one of these two wrong, and the
+// deciding input is a measurement rather than a shape. That is worth saying plainly because this
+// directory's other twelve entries argue from shape.
+
+import { Result } from "core";
+import { Fault } from "./fault.wac";
+import { BitReader } from "./bits.wac";
+
+/**
+ * A code length per symbol — the transmitted form, and the only thing either direction needs.
+ *
+ * `Lengths` rather than `(i32[] lengths, i32 n)`, which is how both shipped builders take it. The
+ * count beside the array is the repository's commonest unsayable: `build(i32[] freq, i32 count, …)`
+ * means *the first `count` entries of `freq`*, `count` is not `freq.length`, and nothing checks it.
+ */
+export struct Lengths {
+  i32[] of;
+
+  /** The longest length present, or 0 if no symbol is coded. */
+  i32 longest(const this) { … }
+}
+
+/**
+ * One symbol's code — **absent where the symbol is unused**, which is the change.
+ *
+ * The shipped encoder carries `len` and `code` in two arrays and documents the second as *"valid
+ * where len > 0"*. `code[i]` for an unused symbol is `0`, an entirely plausible code, so the
+ * validity of one lane is a predicate over another and a reader who forgets it gets a wrong answer
+ * rather than a trap. `Code?` per symbol makes the unused case unreadable instead of misreadable.
+ */
+export struct Code { i32 len; i32 bits; }
+
+/** Frequencies with the format's precondition already met — see the note below on `forceTwo`. */
+export struct Freqs {
+  i32[] of;
+
+  /**
+   * At least two symbols nonzero, padding an unused one if not.
+   *
+   * *"A code over one symbol needs zero bits to identify it, which the format cannot express, and
+   * decoders disagree about whether a one-code tree is legal."* The shipped package states that as
+   * a sentence on `build` — *"the caller must ensure at least two symbols have a nonzero
+   * frequency"* — and exports the repair as a separate `forceTwo` the caller has to remember. A
+   * constructor is where a precondition that has a repair belongs.
+   */
+  Freqs of(i32[] freq, i32 count) { … }
+}
+
+/** The encoder's view: symbol to bits. */
+export struct Huff {
+  Code?[] of;
+  i32 maxLen;
+
+  /** Build a length-limited canonical code. */
+  Huff build(Freqs f, i32 maxBits) { … }
+}
+
+/** The decoder's view: bits to symbol. */
+export struct Decoder {
+  i32[] count;    // count[len]
+  i32[] symbol;   // symbols sorted by (len, symbol)
+  i32[] fast;     // (len << 16) | sym, or 0 — packed on purpose, see the header
+
+  Decoder build(Lengths ls) { … }
+
+  /**
+   * Read one symbol, or say the bits name no code.
+   *
+   * The shipped `decode` returns `i32` and **traps** when fifteen bits match nothing —
+   * *"corrupt stream"* — and that is deliberate rather than an oversight. The file's first
+   * paragraph states the rule: *"the decoder is fed bytes it did not produce, so every field is
+   * untrusted. Bad input must trap rather than read out of bounds or loop forever."*
+   *
+   * See the note below on what `Result` here costs and why the file rejected it.
+   */
+  Result<i32, Fault> decode(const this, BitReader br) { … }
+}
+
+// ## What could not be written
+//
+// **A struct the compiler is allowed to lay out inside one `i32`.** The decoder's fast table wants
+// to be `Entry { i32 len; i32 sym; }` and to *cost* one `i32`, and wasm GC has no such thing: a
+// struct is a heap object with a reference to it. So the fastest representation in the bench is the
+// one with no type at all — `(len << 16) | sym`, assembled by hand at one site and taken apart by
+// hand at another, with the field widths in a comment.
+//
+// Twenty-eight files under `packages` shift a field into an integer and or it in. Most are wire
+// formats, where the protocol fixes the layout and no language feature would change the code. The
+// ones this entry is about are the three in-memory tables — this decoder, `@/packages/zstd`'s
+// sequence instructions, and the regex program that `@/packages/regex` rewrote — where the packing
+// is a **choice made for speed**, the fields are a struct in the author's head, and the type is
+// the thing that got dropped.
+//
+// That also explains the `0` sentinel. A packed entry has no spare bit for *absent*, so the author
+// took a value the payload cannot produce and documented why — *"a real entry always has len >=
+// 1"*. `Entry?` would say it, and would cost the box.
+//
+// **`i32?` for the parent index costs an allocation per node, and here that is the whole array.**
+// The tree builder in the shipped file runs three parallel arrays over `2 * count` nodes —
+// `weight`, `parent` and `alive` — with `parent[i] = -1` for *no parent*. `Node { i32 weight; i32?
+// parent; bool alive; }` is the obvious rewrite and `../../../QUESTIONS.md` already measured what
+// the middle field costs: a nullable primitive is boxed, at about 1.4 ns per non-null value.
+// Every node but the root acquires one, and a full literal/length alphabet is 288 symbols — 287
+// merges, two parents set per merge, **574 boxes**, and again on every scaling round. All to
+// replace a sentinel that is already outside the index range: unlike `indexOf` returning `-1`,
+// `parent == -1` is not a value a caller could mistake for an answer.
+//
+// **And one of those three lanes is derivable, which no type would have caught.** `alive[i]` is
+// exactly `parent[i] < 0 && weight[i] > 0` at every point in that function: a leaf with zero
+// frequency starts dead, an internal node starts alive with a positive weight, and a node dies in
+// the same statement that gives it a parent. It is a cached predicate over its two neighbours, and
+// collapsing the three arrays into a record keeps all three fields — the record rewrite makes the
+// redundancy *harder* to see, because three fields of one struct look like three facts.
+//
+// **A funcref cannot promise not to write.** `const` in this language is deep and travels through
+// fields, returns and copies, and `spec/spec/variables.md` records the one hole: passing a const
+// reference to a non-const parameter is accepted, *"and there is nothing to write for a funcref,
+// whose type has no place for it."* That lands on `../../../core/order.wac`, written this
+// afternoon: `SortSpec`'s comparator is `fn<Ordering(T, T)>` and there is no spelling in which it
+// promises to leave its two arguments alone. A comparator that mutates during a sort is the classic
+// way to corrupt one.
+//
+// **`forceTwo` mutates its argument and its signature does not say so.** `void forceTwo(i32[] freq,
+// i32 count)` writes into the caller's array; `void lengthsFrom(i32[] freq, i32 count, i32[]
+// outLen)` returns through its third parameter. Both are visible only in a name and a doc comment,
+// and the marker that would show the first one exists and is simply not used — `const` on a
+// parameter is legal today and appears in the compiler. The default is the wrong way round: a
+// parameter is mutable unless marked, so *most* of a signature's parameters carry no information
+// about whether the callee writes to them.
+//
+// **The shipped file rejected `Result` here by name, and gave a reason `try` dissolves.** This is
+// the best-argued *no* in the package and it is worth quoting whole, from the end of `inflate.wac`:
+//
+// > What it would take is not a line: the two places that run out of input — `skip`, and
+// > `copyBytes`'s loop — trap, and a decoder cannot report anything past a trap. Not trapping means
+// > **threading a status back through every symbol read**, and a decoder that keeps going after a
+// > failed read with a status nobody checked is how silent corruption is written. So the promise is
+// > withdrawn rather than half-kept.
+//
+// Two objections, and vision answers them differently. The **cost** — a status threaded through
+// every symbol read — is real and `try` reduces it to one keyword per call site, which is the
+// entire pitch. The **danger** — *a status nobody checked* — is the one that matters, and it is not
+// a cost argument at all: it says a `Result` decoder is worse than a trapping one because the
+// discipline is voluntary. `try` is what makes it involuntary; an unhandled error is not a value a
+// caller can drop, it is a widened error set on the enclosing signature, which then has to be
+// declared. **So the shipped author's reason for refusing the safe design is precisely the property
+// the language change supplies**, and that is a stronger argument for `try` than any of the eleven
+// call sites this directory has counted.
+//
+// It is also filed against a real consumer: `issues/system/0242b` records `packages/git` inflating a
+// remote's packfile with this decoder, documented to trap. So the trap is not hypothetical and the
+// gap is not stylistic.
+//
+// What it does **not** answer is the trap in `skip`, which is a different thing: running out of
+// input mid-symbol is a fault in the *reader*, not in the code table, and turning that into a
+// `Result` widens `BitReader`'s every method. That is the fifth type in this directory whose fault
+// union grows with its verbs, and the entry on cursor faults already has it.
+//
+// **Moving the decoder out means moving the bit reader with it, and that was not foreseen.**
+// `BitReader` is a `struct` inside the shipped `inflate.wac`, not a module beside it, and the
+// decoder is in that file *because* it is — `decode` peeks, decides a length, then skips exactly
+// that many bits, so the two are one mechanism. Pulling `Decoder` up here makes `BitReader` a name
+// two files need, so it has to become a third file, and `./bits.wac` above does not exist. The
+// same mistake is already recorded a few lines into the sibling `inflate.wac` in this directory,
+// where an earlier draft imported `BitReader` from a module that was never there. Twice now, from
+// opposite directions: **a struct declared inside the only file that used it is invisible as a
+// dependency until something else wants it**, and nothing distinguishes it from a module.
+//
+// **Dead arithmetic in our own code, noticed while reading.** The shipped decoder builds its sorted
+// symbol table with `offs[lengths[i] + 1 - 1]`, twice. The offsets array is indexed so that the
+// start of length `L` is `offs[L]`, so `+ 1 - 1` is residue from an earlier convention; the
+// compiler folds it and the behaviour is identical. Worth recording because it is the readable
+// half of the same problem as the packed table — an index whose meaning lives in a convention, so
+// a change to the convention leaves arithmetic behind that nothing can flag.
