@@ -763,6 +763,48 @@ function main(argv: string[]): number {
     return 0;
   }
 
+  // `--rule=<name>` — one production, printed **whole**, from its first line to its terminating `;`.
+  //
+  // **Because a grep of this grammar is a lie about anything that has alternatives on later lines**,
+  // and it has cost two wrong findings in one day. `match_arm` is
+  //
+  //     match_arm      = "case" , IDENT , [ "(" , [ binding_list ] , ")" ] , ":" , { statement }
+  //                    | "else" , ":" , { statement } ;
+  //
+  // and `grep match_arm` prints the first of those two lines, which says a statement `match` cannot
+  // have a default. It can; 635 arms in 94 shipped files use it. The other one was `arm_payload`,
+  // whose second alternative is the brace pattern, and reading only the first produced three commits
+  // claiming a union arm cannot bind its fields.
+  //
+  // Both failures are the same shape and neither is careless: a targeted grep **cannot** find an
+  // absence, because the thing you are looking for is the thing that is not on the line you matched.
+  // So the fix is a flag rather than a habit.
+  const wantRule = flags.find((f) => f.startsWith("--rule="));
+  if (wantRule) {
+    const name = wantRule.slice("--rule=".length);
+    const r = rules.get(name);
+    if (!r) {
+      console.log(`no rule named '${name}'`);
+      return 1;
+    }
+    // The delta's rules replace the spec's, so a patched rule's `line` indexes the delta file.
+    const patched = delta ? parseRules({ text: Deno.readTextFileSync(delta), firstLine: 1 })
+      .some((x) => x.name === name) : false;
+    const src = patched ? delta : GRAMMAR;
+    const lines = Deno.readTextFileSync(src).split("\n");
+    let i = r.line - 1;
+    const out: string[] = [];
+    // To the terminating `;`, which is the only thing that ends a production.
+    while (i < lines.length) {
+      out.push(lines[i]);
+      if (lines[i].replace(/\(\*.*?\*\)/g, "").trimEnd().endsWith(";")) break;
+      i++;
+    }
+    console.log(`${src}:${r.line}`);
+    for (const l of out) console.log(l);
+    return 0;
+  }
+
   let ok = 0;
   const bad: string[] = [];
   const slow: string[] = [];

@@ -2514,6 +2514,22 @@ and here it made the claim harder to check rather than easier: the check was one
 same repository, and the thing to check was a construct's *absence*, which a targeted grep cannot
 find. Reading the production whole is nineteen lines.
 
+*And the instrument that produced it now has a flag.* `tools/specparse.ts --rule=<name>` prints one
+production **whole**, from its first line to its terminating `;`, in the spec grammar or in the
+vision delta. It exists because a grep of an EBNF file is a lie about anything with alternatives on
+later lines, and that cost two wrong findings in one day:
+
+  * `arm_payload`'s second alternative is the brace pattern. Reading the first produced three commits
+    claiming a union arm cannot bind its fields.
+  * `match_arm`'s second alternative is `"else" , ":" , { statement }`. Reading the first produced a
+    half-written claim that a statement `match` cannot have a default, which 635 arms in 94 shipped
+    files disprove. That one was caught before it was written down, by running the parser over
+    `packages/fs` and watching it pass.
+
+Both are the same shape and neither is careless: **a targeted grep cannot find an absence**, because
+the thing being looked for is the thing that is not on the line that matched. A habit does not fix
+that and a flag does.
+
 *Also re-checked the same day:* every claim in this directory that a construct **is not in the
 grammar** was read against its production, since the one below was wrong. Two survive and both hold —
 `Binary { left: lhs }`, a binding that renames, is refused by `field_pattern = ".." | IDENT , { ","
