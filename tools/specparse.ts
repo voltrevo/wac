@@ -697,6 +697,22 @@ function main(argv: string[]): number {
           rules.set(r.name, r);
         }
       }
+      // **`(* keywords += a b c *)`, because a delta could change the grammar and not the lexer.**
+      //
+      // Until 2026-09-05 the keyword set came only from the spec's fence and nothing could add to
+      // it, so every word `vision/` introduces — `gen`, `try`, `defer`, `secret` and the rest —
+      // lexed as an `IDENT` whatever the delta said. `vision/QUESTIONS.md` recorded that as a
+      // decision (*"it decided contextual"*); it was not one, because this file could not express
+      // the alternative. The `…` filter three hundred lines down is the same gap worked around
+      // rather than closed.
+      //
+      // One line in the delta, unioned into the fence's set. Which also makes the *cost* of the
+      // other answer runnable: put `secret` in the list and the shipped tree stops parsing where
+      // its 175 `u8[] secret = …` locals are.
+      for (const m of text.matchAll(/\(\*\s*keywords\s*\+=([^*]*)\*\)/g)) {
+        for (const w of m[1].trim().split(/\s+/)) if (w) keywords.add(w);
+      }
+
       const added = patch.filter((r) => r.add).length;
       console.log(
         `${delta}: ${patch.length - added} rules replaced, ${added} extended, over the spec's`,

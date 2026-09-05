@@ -237,3 +237,7 @@ arm_value      = expr | "continue" | "break" | "return" , [ expr ] ;
    exists for — the parameter needs quoting and the attribute does not, which is the whole point and
    is why `jsx_attr_name` has to admit a keyword. *)
 keyword_as_name = "for" | "if" | "is" | "as" | "in" | "match" | "return" | "const" | "this" ;
+
+(* The six that cost nothing — measured 2026-09-05: zero uses as an identifier in the shipped
+   tree. `secret` (175) and `gen` (38) are deliberately absent; see QUESTIONS.md. *)
+(* keywords += try yield defer schedule auto coroutine *)

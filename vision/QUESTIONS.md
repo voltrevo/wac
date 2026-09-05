@@ -1554,6 +1554,29 @@ pages and no entry says what they *are*. `vision/GRAMMAR.ebnf` had to decide in 
 it decided **contextual** — none of them is a keyword, each is an `IDENT` that a rule matches by
 spelling. Every vision file parses that way, so the question is not *can they be*.
 
+**It did not decide, and that is the first correction here.** `tools/specparse.ts` read the keyword
+set from the spec's fence and the delta was applied to the *rules* only, so a delta could change the
+grammar and **could not change the lexer**. Contextual was not the answer vision picked; it was the
+only thing the mechanism could express. The `…` filter in the same tool — a character dropped by name
+before parsing, because there was nowhere to declare it — is the identical gap, worked around rather
+than closed.
+
+Fixed 2026-09-05: `(* keywords += a b c *)` in the delta, unioned into the fence's set. One line, and
+it makes both answers runnable.
+
+**So the six free words are now demonstrated rather than asserted.** With `try`, `yield`, `defer`,
+`schedule`, `auto` and `coroutine` as real keywords, **178/178 vision files still parse.** They are
+in `GRAMMAR.ebnf` as keywords now; `secret` and `gen` are deliberately not.
+
+**And the cost of the other answer is a parse result rather than a grep.** Put `secret` in the list
+and run the vision grammar over the shipped `packages/quic`:
+
+    secret a keyword:      7 of 40 files refused — "no rule reaches 'secret'"
+                           initial.wac:72, keys.wac:79, server.wac:245, and four tests
+    control, same files:   40/40 parse
+
+Which is what the 175 looks like when something runs it.
+
 **The other side of the trade, measured 2026-09-05 and never before:** if they were real keywords,
 how much existing code would stop compiling? Counted on the shipped tree's token stream — occurrences
 of each word **as an `IDENT`**, so a string or a comment does not count:
