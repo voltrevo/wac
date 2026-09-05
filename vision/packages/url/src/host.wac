@@ -1,0 +1,176 @@
+// Host parsing, and the length that no type in this language can hold.
+//
+// `packages/url/src/host.wac` already does the thing this directory usually arrives to propose:
+// `Host` is an enum with payloads, three arms, and a doc comment explaining why it is three and not
+// five. So the interesting findings here are not about the union. One is a counterexample to this
+// directory's habit, one is a shape seen four times today, and one is a language gap with 322 sites.
+
+import { Result } from "core";
+
+/**
+ * A parsed host.
+ *
+ * **Kept exactly, including the merge — this is the counterexample.** The shipped comment:
+ *
+ * > `Named` covers a domain, an opaque host and the empty host together: they differ in how they
+ * > are *parsed* and validated, but all three serialize as their own bytes, so keeping them apart
+ * > afterwards would be a distinction nothing reads.
+ *
+ * Three kinds the parser can tell apart, deliberately collapsed into one arm because **no consumer
+ * asks**. Every other entry in this directory argues the other way — that a merged representation
+ * hides a distinction someone needs — and the discipline that makes those arguments good is the one
+ * that makes this merge good: *name a caller and say what it would do differently*. Here nobody can,
+ * so the arm stays merged. Same ruling as `../../unicode/src/printable.wac`'s `bool`, and the two
+ * together are worth more than either: a shape is only a smell when the distinction has a reader.
+ */
+export enum Host {
+  Named(u8[] name),
+  Ipv4(u32 address),
+  Ipv6(Pieces address),
+}
+
+/**
+ * Eight 16-bit pieces of an IPv6 address.
+ *
+ * A struct wrapping an array, existing only because **`u16[8]` is not a type in this language** —
+ * see below. The shipped field is a bare `i32[] pieces` with the reason in a comment: *"held in an
+ * `i32[]` because wac has no u16 and the values are small."* Two invariants in that sentence, the
+ * count and the width, and the declaration carries neither.
+ */
+export struct Pieces { i32[] of; }
+
+/**
+ * One dot-separated IPv4 part.
+ *
+ * The shipped type is `struct Part { i64 value; bool ok; bool overflow; }`, which is **four
+ * representable states for three meanings**, and the fourth — not ok, but overflowed — is
+ * unreachable with nothing saying so. Three arms say it instead.
+ *
+ * The three-way split is not an artefact and the shipped comment is why it has to survive the
+ * rewrite:
+ *
+ * > A number too wide to be an address is still a *number*: it makes the host end in one, and so
+ * > selects the IPv4 path, which then rejects it. Failing to parse it here instead would send
+ * > `http://0x100000000/` down the domain path and accept it as a name.
+ *
+ * So `TooWide` is neither a success nor a parse failure — it is a *successful classification* whose
+ * value is out of range, and merging it into either neighbour is a correctness bug with a URL that
+ * demonstrates it. Exactly the kind of arm a `bool ok` cannot hold and a reader of `bool ok` cannot
+ * guess.
+ */
+export enum Part {
+  Number(i64 value),
+  TooWide,
+  NotANumber,
+}
+
+/** Three radixes chosen by prefix, which is what makes `0x7f.1`, `0177.1` and `127.1` one address. */
+Part parseIpv4Number(u8[] s) { … }
+
+/** Whether the last dot-separated part is entirely a number, which is what selects IPv4. */
+export bool endsInNumber(u8[] s) { … }
+
+/** U+0000, tab, LF, CR, space, and the punctuation that would end the host in a URL. */
+export bool isForbiddenHost(i32 c) { … }
+
+/**
+ * The three ways a host can fail, **declared here rather than in `./url.wac`**.
+ *
+ * `./url.wac`'s `UrlFault` listed `BadHost`, `BadIpv4` and `BadIpv6` among its eight arms, which put
+ * the host parser's vocabulary in the file that *calls* the host parser. That is a cycle waiting to
+ * be written: this file's `parse` wants to return them and importing them back would close the loop.
+ * Nominal unions dissolve it — the three live where they are produced, `HostFault` groups them, and
+ * `./url.wac` names that one type. The dependency runs one way and always did; only the declarations
+ * were on the wrong side of it.
+ *
+ * Each carries its evidence, which the shipped `enum` arms could not: a payload-free `BadIpv6` says
+ * a caller cannot report *which* part of the address was wrong, and the shipped comment complains
+ * about exactly that at the level above — *"the test suite had to assert not a URL where the
+ * standard says the host is not a valid IPv6 address."*
+ */
+export struct BadHost { u8[] input; i32 at; }
+export struct BadIpv4 { u8[] input; i32 parts; }
+export struct BadIpv6 { u8[] input; i32 at; }
+
+/** Anything wrong with the host, as one name — see the nesting note in `../../../QUESTIONS.md`. */
+export union<BadHost, BadIpv4, BadIpv6> HostFault;
+
+export Result<Host, HostFault> parse(u8[] input, bool isSpecial) { … }
+export u8[] serialize(Host h) { … }
+
+// ## What could not be written
+//
+// ### A fixed-length array type — 322 sites, and every one restates its length at runtime
+//
+// `u16[8]` for an IPv6 address, `u8[32]` for a key, `u8[20]` for a SHA-1 digest, `u8[16]` for an AES
+// block. None of these is spellable. `u8[32]()` allocates thirty-two bytes and its *type* is
+// `u8[]`, so the length survives the allocation and not the assignment, and the invariant has to be
+// re-checked wherever it matters.
+//
+// Counted over `packages/*/src`: **322 comparisons of a `.len()` against a literal of two or more,
+// across 89 files.** A sample of eight is seven key, digest and block sizes and one syntax-node
+// arity. The distribution is the tell — it is not a spread of arbitrary numbers:
+//
+//     32   169    a key, a scalar, a SHA-256 digest
+//     20    37    a SHA-1 digest, a Tor identity fingerprint
+//     64    27    a signature, a SHA-512 digest
+//      4    22
+//     16    13    an AES block, an IPv6 half
+//
+// Two thirds of them are one number, and that number is *thirty-two bytes of key material*.
+//
+// **And there are five different answers to a violation**, because the check is hand-written each
+// time: `crypto/aes.wac:242` traps, `git/src/commit.wac:113` returns null, `tor/src/vote.wac:226`
+// returns an empty array, `ssh/src/kex.wac:121` returns false, and `tor/src/relayd.wac:347` returns
+// a whole `RsaKey` with a false flag in it. One class of programming error, five behaviours, and a
+// caller of two of them cannot write one handler.
+//
+// The ask is narrow: **a length in the array type, checked at assignment.** Not dependent types and
+// not const generics over arithmetic — a literal bound, so `u8[32]` is a distinct type from `u8[]`
+// and from `u8[20]`, with the widening direction free and the narrowing direction a check that
+// returns something. What makes it worth the number is that these 322 sites are the *diligent* ones.
+// Nothing counts the places where the length is assumed.
+//
+// It also removes `Pieces` above, which is a struct that exists to have a doc comment.
+//
+// ### The same failure literal, written four times
+//
+// `parseIpv4Number` returns `Part(0, false, false)` at four sites: empty input, a non-hex digit
+// under radix 16, a non-digit under radix 10, and an eight or nine under radix 8. The `0` is a
+// payload nobody reads, present because a struct constructor takes every field. `NotANumber` is one
+// token and cannot carry a wrong value.
+//
+// This is `../../QUESTIONS.md`'s *paired values with nothing holding the pair* in its fourth form
+// today, after the generated case tables, the Huffman `code[i]` *"valid where len > 0"*, and the
+// bit reader's `broken`. All four are **a field that is meaningless unless another field says so**,
+// and all four were written by different people in different packages, which is the argument that
+// it is the language and not the authors.
+//
+// Against it: `Part` has two payload-free arms, and `issues/lang/0346a` says a payload-free variant
+// is a `struct.new` at every mention. Two allocations per rejected part, on a URL parse — cold
+// enough to ignore here, and the reason that issue is filed rather than merely noted.
+//
+// ### A doc comment describing a design that was replaced
+//
+//     /** One dot-separated part, as a number, or -1 for a syntax error. Traps nothing. */
+//     struct Part { i64 value; bool ok; bool overflow; }
+//
+// There is no `-1`. The sentinel became a `bool ok` and the sentence above it did not change, so the
+// comment documents an older build — and it is *more* wrong than a missing comment, because a reader
+// who believes it will test `value == -1` and get a syntax error accepted as the number negative
+// one. Nothing checks a doc comment against its declaration and nothing could, in general; what
+// makes this one findable is that the type it describes is right there.
+//
+// ### IDNA, and what this directory does not unblock
+//
+// The header is unusually honest: *"Not implemented: IDNA. A domain containing non-ASCII should be
+// run through UTS-46 ToASCII, which needs Unicode mapping tables; instead such a domain is
+// rejected. That is a divergence from the standard rather than an approximation of it, and the
+// tests assert exactly where the boundary falls rather than skipping the cases."*
+//
+// Worth recording because the obvious inference is wrong. `../../unicode/src/tables.wac` in this
+// directory does case mapping, and UTS-46 needs a **different** table — its own per-code-point
+// disposition of mapped, deviation, disallowed and ignored — which neither the shipped package nor
+// this one has. So vision does not unblock IDNA and nothing here should imply it does. What the two
+// files share is only the question the case tables raised: a generated constant map is eleven
+// parallel arrays and a hand-written binary search, and UTS-46's table is larger than all of them.

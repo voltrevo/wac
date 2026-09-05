@@ -5,7 +5,7 @@
 // *none* and has to spell it as something else.
 
 import { Result, Vec } from "core";
-import { Host } from "./host.wac";
+import { Host, HostFault } from "./host.wac";
 
 /**
  * `query` and `fragment` are null for *none*, which is not the same as empty: `http://h/?` has an
@@ -61,17 +61,30 @@ export i32? defaultPort(u8[] s) {
   return null;
 }
 
-/** What a URL can fail to be. */
-export enum UrlFault {
-  NoScheme,
-  BadScheme,
-  BadHost,
-  BadPort,
-  BadIpv4,
-  BadIpv6,
-  /** A relative reference with no base to resolve it against. */
-  NoBase
-}
+/** No scheme, or one that is not a scheme. */
+export struct NoScheme { }
+export struct BadScheme { u8[] saw; }
+export struct BadPort { u8[] saw; }
+
+/** A relative reference with no base to resolve it against. */
+export struct NoBase { }
+
+/**
+ * What a URL can fail to be — **four members and a nested one, not eight arms.**
+ *
+ * This was `enum UrlFault { NoScheme, BadScheme, BadHost, BadPort, BadIpv4, BadIpv6, NoBase }`, and
+ * two things were wrong with it. Three of those arms are the *host* parser's vocabulary, sitting in
+ * the file that calls the host parser, so `./host.wac` could not return them without a cycle; they
+ * are declared there now. And every arm was payload-free, so a caller could say *the host is bad*
+ * and not *which byte* — which is the same complaint `parseUrl` below makes about the original's
+ * `Url?`, one level down and unnoticed while the arms were an enum.
+ *
+ * Nesting rather than flattening is what makes this worth doing, and `../../../QUESTIONS.md` records
+ * that it was the surprise: a caller who does not care which host problem it was writes
+ * `Err(is HostFault):` as **one arm**, and one who does matches inside it. A flattened seven-member
+ * union could not offer the first.
+ */
+export union<NoScheme, BadScheme, BadPort, NoBase, HostFault> UrlFault;
 
 /**
  * Parse `input`, resolving against `base` if it is relative.

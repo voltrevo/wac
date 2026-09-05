@@ -68,3 +68,36 @@ settling rather than of the exercise running out.
 Written out with `is not null` it is one line and perfectly clear, so this is a note rather than a
 question — and `vision/QUESTIONS.md` already asks whether optional chaining exists, which is the same
 family and the same answer either way.
+
+**A length in the array type.** Added with [`src/host.wac`](src/host.wac), whose IPv6 arm is
+`i32[] pieces` — *"held in an `i32[]` because wac has no u16 and the values are small"* — two
+invariants in a comment and neither in a declaration. Swept: **322 `.len()` comparisons against a
+literal across 89 files**, 169 of them against 32, and **five different answers to a violation** —
+a trap, a null, an empty array, a false, and a struct with a flag in it. Promoted to
+[`../../QUESTIONS.md`](../../QUESTIONS.md).
+
+**The host parser's faults were declared in the file that calls it.** `UrlFault` listed `BadHost`,
+`BadIpv4` and `BadIpv6` among eight payload-free arms, so `host.wac` could not return them without a
+cycle. They move to `host.wac` as structs carrying evidence, grouped as `HostFault`, and `UrlFault`
+becomes `union<NoScheme, BadScheme, BadPort, NoBase, HostFault>` — four members and a nested one.
+The dependency always ran one way; only the declarations were on the wrong side. And nesting is what
+makes it worth doing: `Err(is HostFault):` is one arm, which a flattened seven-member union could
+not offer.
+
+**`Named` merging three parse-time kinds is right, and this is the counterexample.** *"They differ
+in how they are parsed and validated, but all three serialize as their own bytes, so keeping them
+apart afterwards would be a distinction nothing reads."* Every other entry here argues the other
+way. The discipline that makes those arguments good — *name a caller and say what it would do
+differently* — is what makes this merge good, and here nobody can name one. Same ruling as
+`unicode`'s `bool isPrintable`.
+
+**A doc comment describing a design that was replaced.** `/** One dot-separated part, as a number,
+or -1 for a syntax error. */` sits above `struct Part { i64 value; bool ok; bool overflow; }`. There
+is no `-1`. Worse than a missing comment: a reader who believes it tests `value == -1` and accepts a
+syntax error as negative one.
+
+**`Part` is four representable states for three meanings**, and the unreachable fourth — not ok, but
+overflowed — is unmarked. The three-way split has to survive, and the shipped comment is why: a
+number too wide for an address is *still a number*, so it selects the IPv4 path which then rejects
+it, and failing it here would send `http://0x100000000/` down the domain path and accept it as a
+name. `Part(0, false, false)` is written four times, and the `0` is a payload nobody reads.

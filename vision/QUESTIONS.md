@@ -9831,3 +9831,63 @@ comparator's immutability is checkable; then closing 0052 so const-ness cannot b
 a call; then, much further out, the question of whether a parameter should be `const` by default,
 which is a language-wide decision this directory has no standing to make and should record rather
 than answer.
+
+## A length in the array type: 322 sites restate it at runtime, and answer a violation five ways
+
+`u8[32]()` allocates thirty-two bytes. Its **type** is `u8[]`. So the length survives the allocation
+and not the assignment, and every place that depends on it checks again by hand.
+
+Counted over `packages/*/src` — a `.len()` compared for equality or inequality against a literal of
+two or more: **322 sites across 89 files.** A random sample of eight was seven key, digest and block
+sizes and one syntax-node arity, so the count is close to what it looks like. The distribution is
+the part that settles it, because these are not arbitrary numbers:
+
+| bytes | sites | what it is |
+|---:|---:|---|
+| 32 | 169 | a key, a scalar, a SHA-256 digest |
+| 20 | 37 | a SHA-1 digest, a Tor identity fingerprint |
+| 64 | 27 | a signature, a SHA-512 digest |
+| 4 | 22 | |
+| 16 | 13 | an AES block, half an IPv6 address |
+
+More than half of all the fixed lengths in the tree are **thirty-two bytes of key material**.
+
+### Five behaviours for one class of error
+
+Because the check is written by hand at each site, each site decides for itself:
+
+    packages/crypto/src/aes.wac:242    if (block.len() != 16) { trap; }
+    packages/git/src/commit.wac:113    if (raw!.len() != 20) { return null; }
+    packages/tor/src/vote.wac:226      if (digest.len() != 20) { return u8[0](); }
+    packages/ssh/src/kex.wac:121       ... || pub.len() != 32) { return false; }
+    packages/tor/src/relayd.wac:347    if (seed.len() != 32) { return RsaKey(false, u8[0](), …); }
+
+A trap, a null, an empty array, a false, and a zero-valued struct with a flag in it. A caller of two
+of these cannot write one handler, and three of the five are indistinguishable from a legitimate
+empty answer.
+
+### The ask
+
+**A literal length in the array type, checked at assignment.** `u8[32]` a distinct type from `u8[]`
+and from `u8[20]`; widening to `u8[]` free; narrowing a check that produces a value. Not dependent
+types, not const generics over arithmetic, no expressions in the bound — the 322 sites are all
+literals and none of them needs more.
+
+What the language would have to answer, and this directory cannot:
+
+- **What `u8[32][]` and `u8[][32]` each mean**, which is a parser question with a real ambiguity in
+  it, since the second reading is the one a C programmer expects and the wrong one here.
+- **Whether `u8[32]` is a wasm type or a wac one.** wasm GC arrays carry a runtime length, so a
+  fixed length is checked and then forgotten — the representation does not change and neither does
+  the bounds check. This buys correctness and no speed, which is worth stating plainly because the
+  neighbouring entry on packed fields buys speed and no correctness.
+- **What a narrowing conversion returns.** `u8[32]?` costs nothing extra, a reference type having a
+  null already; a `Result` needs a fault type in `core` that does not exist.
+
+### Why the number is a floor
+
+These 322 are the **diligent** sites. Nothing counts the places where a thirty-two-byte key is
+assumed and not checked, and nothing could — the absence has no syntax. `vision/packages/url/src/host.wac`
+is one: an IPv6 address is `i32[] pieces` with *"held in an i32[] because wac has no u16 and the
+values are small"* in a comment, two invariants in one sentence and neither in the declaration, and
+no check anywhere that there are eight of them.
