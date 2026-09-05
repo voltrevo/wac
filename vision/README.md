@@ -328,8 +328,34 @@ The one that met a consumer changed shape the same day. `FileFault`'s only calle
 member, cannot be one, and had not come up in five days of designing members.
 
 So the honest summary of the error-handling work here is that its cost and its benefit are both still
-theoretical, and the cheapest way to change that is twenty-nine short callers rather than a thirtieth
-vocabulary. `QUESTIONS.md` has the measurement and the caveats.
+theoretical, and the cheapest way to change that is short callers rather than another vocabulary.
+`QUESTIONS.md` has the measurement and the caveats.
+
+### Five of them written, four predictions made, two falsified
+
+`RequestFault` (10 members), `UpdateFault` (9), `TimeFault` (8, three callers), `CodecFault` (5, two)
+and `PageFault` (3, two). Each caller was preceded by a written prediction, and two of the four were
+wrong — *`CodecFault` has one kind of caller* and *a fault union earns its members when more than one
+kind of caller exists*, both falsified by files written to test them.
+
+What came out is a taxonomy of **why a member earns its place**, and it is falsifiable:
+
+| mechanism | the question the members answer | can the union carry the answer? |
+|---|---|---|
+| **recovery** | a value exists — hand it over or not? | yes, it is a property of the member |
+| **response** | what outward artefact does this become? | yes, a status code is a fact about the fault |
+| **provenance** | did this program produce the thing that failed? | **no, ever** — it is a fact about the call site |
+
+Three of the five callers had to supply their axis by hand, and all three were provenance. So:
+
+> A fault union is **half** of an error design. The other half is a per-caller table over the
+> members, and it is the half nothing here can express: all five files write it as a `match`
+> returning an enum, which is a lookup table spelled as control flow.
+
+The decode unions split cleanly on the first row — `NotADigit` and `ShortGroup` are **structural**,
+there are no bytes, and every caller refuses; `BadPadding` and `NonZeroTail` are **canonicality**, the
+bytes are there, and that is where callers disagree. `RlpFault` and `TimeFault` partition the same
+way once you look for it.
 
 **Published first as 4 of 29 and 117 members, which was wrong three ways over.** The script keyed
 unions by name, so eight collided away — two packages both declare `Fault`. It knew only the arm
