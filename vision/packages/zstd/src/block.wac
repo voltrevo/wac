@@ -91,7 +91,10 @@ export struct Reps { … }
 // **`Decoder` and `SeqTables` carry state across blocks and the type does not say which frame.**
 // A `SeqTables` from one frame handed to another frame's block decodes garbage — the shipped
 // signature threads them through explicitly, which is right, and nothing stops the wrong one being
-// threaded. That is the phantom-parameter half of the merged entry at an eighth site, and the first
+// threaded. That was filed as the phantom-parameter ask at an eighth site and **it is not one** —
+// `../../../QUESTIONS.md`'s count of eleven was enumerated on 2026-09-05 and three are a larger
+// feature. This is one of the three, and this file said why at the time without drawing the
+// conclusion: the first
 // where the tag would be a *runtime* value (a frame) rather than a static one.
 //
 // **A block's size comes from its header and bounds the slice that contains the header.** The

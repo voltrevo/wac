@@ -146,7 +146,9 @@ export struct Program { Decl[] decls; Tok path; }
 // separately in the driver. Once two files are in the same pass — which is what `Import` above makes
 // possible — a `Span` from one and a `Tok` from another are the same types and mean different things.
 //
-// That is the phantom-parameter shape at its tenth site here, and the first where the tag would
+// That was filed as the phantom-parameter shape at its tenth site and **it is not one**: a resolver
+// holds the importing and exporting `Program` at once, so the tag names a *value* and a type
+// parameter cannot. See `../../../QUESTIONS.md`, where the tag would
 // distinguish two values of one type that a **single function** already holds at once: a resolver
 // looking up an imported name has the importing `Program` and the exporting one in scope together.
 //

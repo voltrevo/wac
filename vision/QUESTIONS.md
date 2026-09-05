@@ -5319,6 +5319,44 @@ nothing**, since anyone can write `Digest32<Transcript>(bytes)`; and a private c
 phantom parameter cannot separate two values of one shape. Rows 1–4 want the first, rows 5–7 want
 both, and no row wants only the second.
 
+### Counted 2026-09-05: eleven sites were claimed and three of them are a different feature
+
+Four files after this entry each incremented an ordinal — *the eighth site*, *the ninth*, *the tenth*,
+*the eleventh* — against the seven above, and I wrote all four without once asking what the tag would
+name. Enumerated:
+
+| site | the tag would say | known at each call site? |
+|---|---|---|
+| rows 1–4 | which function built this | — (they want the constructor half) |
+| `@/packages/ssz`'s root | `BeaconState` or `SyncCommittee` | **yes** |
+| `@/packages/quic`'s transcript | it hashed the handshake | **yes** |
+| `@/packages/quic`'s `PacketKeys` | client or server | **yes** |
+| `@/packages/page`'s `Page` | this program built it, or was handed it | **yes** — a renderer and a harness are different programs |
+| `@/packages/zstd`'s `SeqTables` | which **frame** | **no** — frames come off a stream |
+| `@/packages/wacc`'s `Program` | which **file** a `Tok` indexes | **no** — a resolver holds two at once |
+| `@/packages/ts`'s `blank(Bytes)` | which **array** the slice views | **no** — it is a field of the receiver |
+
+**The discriminator is whether the distinguishing thing is known where the value is made**, and by
+that test three of the eleven are not phantom-parameter cases at all. A type parameter can name a
+type; it cannot name *this frame*, *this program*, *this array*. Those want a singleton or a
+dependent type, which is strictly larger than the feature this entry is about and is not on the
+pages.
+
+`@/packages/fs`'s `Mount` is a fourth and was found independently, in its own words: *"which mount
+this is is a runtime fact rather than a type argument"* — the same conclusion, reached from the other
+end, and never counted here.
+
+**So the count was doing work the enumeration would not have done.** Eleven sites reads as *a feature
+with overwhelming demand*; eight-of-one-feature-and-three-of-a-larger-one reads as *a feature worth
+having and a second one worth naming*. `@/packages/zstd/src/block.wac` even said so at the time —
+*"the first where the tag would be a **runtime** value rather than a static one"* — and I recorded
+the observation and incremented the counter anyway.
+
+Third time in this directory a bare ordinal has hidden something, after the fixed-length byte view
+and the sentinel count. The rule was written down after the first: **a claim that names its subject
+is self-checking and a claim that only counts is not.** It has now been broken by the same author
+three times, which suggests the rule is not the fix — writing the table is.
+
 ### The cost of not having it is not uniform, which is the part to decide on
 
 - `ssz`'s mismatched root **compares `false`** — wrong, and a test sees it.

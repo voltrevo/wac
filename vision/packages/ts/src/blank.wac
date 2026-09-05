@@ -77,8 +77,10 @@ export struct Blanked {
 // slice answers a different question confidently.
 //
 // The shape that would close it is a slice whose array is a type parameter — `Slice<u8, Out>` —
-// which is the phantom-parameter ask at its eleventh site and the first where the tag would name a
-// *value* rather than a type. Nothing on the pages proposes one.
+// which was filed as the phantom-parameter ask at its eleventh site and is **not** one, for the
+// reason this file already gave: the tag would name a *value* rather than a type, and a type
+// parameter cannot. `../../../QUESTIONS.md` enumerates the eleven and finds three of them here.
+// Nothing on the pages proposes what these three want.
 //
 // **A `Bytes` that is a copy, per stripper.** `Blanked.of` copies the source so `src` stays readable
 // while `out` is written. For a 924-line stripper over a 22-file host that is nothing; for the
