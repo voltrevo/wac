@@ -94,7 +94,26 @@ bls          1            frob12C1_3 (fp12.wac:214) / psiY (g2.wac:158) — 9 li
 lightclient, http, git, webrtc   1 each
 ```
 
-These are a different problem from the cross-package ones and a smaller one: a package sharing a
+### And one of them is two 384-bit cryptographic constants that must stay equal
+
+```wac
+packages/bls/src/fp12.wac:214   /** ξ^((p^3−1)/6), the Fp12 Frobenius coefficient on w. */
+                                Fp2 frob12C1_3()
+packages/bls/src/g2.wac:158     /** 1/ξ^((p−1)/2), its y-coefficient. */
+                                Fp2 psiY()
+```
+
+Twenty-four hand-written `u32` limbs each — two 384-bit values — and **every limb is identical**.
+The two doc comments describe different quantities, and in BLS12-381 those quantities coincide; that
+is an identity rather than a coincidence, and **neither file says so.**
+
+So there are two independently transcribed copies of one constant, on the signature-verification
+path, with nothing stating they must agree and nothing checking that they do. Correcting one leaves
+the other silently different. This is the strongest single item in the sweep and the cheapest to act
+on: one of the two becomes a call to the other, or a test asserts `frob12C1_3() == psiY()` and says
+which identity makes it true.
+
+### The rest are a different problem from the cross-package ones and a smaller one: a package sharing a
 helper with itself needs no `core` change, no `gen:core` and no bootstrap — it is one file importing
 another, or one function moved next to its sibling. **`tor`'s `fields`/`splitSpaces` and `bls`'s
 `frob12C1_3`/`psiY` are the interesting pair**, because in both cases the two names claim to be
