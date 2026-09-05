@@ -15,6 +15,7 @@
 
 import { Expr } from "./ast.wac";
 import { Stmt } from "./stmt.wac";
+import { Decl, Func } from "./decl.wac";
 
 /**
  * What the shipped pass emits, reduced to the tail that constructs the ticket.
@@ -31,7 +32,7 @@ import { Stmt } from "./stmt.wac";
  * every time, and it is *drive this machine until it is done*, which is a property of machines and
  * not of any one function.
  */
-export Expr emitShippedTail(Stmt[] body, i32 states) { … }
+export Expr emitShippedTail(const Func f, i32 states) { … }
 
 /**
  * And what it becomes against `Ticket<T>`.
@@ -51,7 +52,7 @@ export Expr emitShippedTail(Stmt[] body, i32 states) { … }
  *
  * That is the whole of the good news and it is real. The rest of this file is the other result.
  */
-export Expr emitTicketTail(Stmt[] body, i32 states) { … }
+export Expr emitTicketTail(const Func f, i32 states) { … }
 
 // ## 1. `advance` and `__wacStep` answer different questions, and the lowering is where they meet
 //
@@ -128,13 +129,16 @@ export Expr emitTicketTail(Stmt[] body, i32 states) { … }
 //
 // ## 3. What could not be written
 //
-// **This file wanted `Decl` and `Program` and this directory's AST has neither.** `ast.wac` declares
-// `Expr`, `Ty`, `Arm` and `Span`; `stmt.wac` declares `Stmt`; nothing declares a function
-// declaration or a compilation unit, so `emitTicketTail` takes a `Stmt[]` and answers the `Expr` that
-// constructs the ticket, which is the honest shape of the tail but is not the pass. **Second file
-// stopped by the same absence** — `@/packages/wacc/src/genlower.wac` says it *"stops at a signature
-// because a generator lowering emits a declaration"* — and the two together are the argument that the
-// gap is the next thing to write rather than a coincidence twice.
+// **This file wanted `Decl` and `Program` and had neither, which is why `./decl.wac` exists.** It
+// took a `Stmt[]` for one commit; it takes a `const Func` now. Worth keeping the sequence, because
+// this file and `./genlower.wac` are the two that stopped on it and neither had said *write a
+// declaration node* — each said *this pass cannot be written here*. **Two files naming the same
+// missing type is the signal; one is a limitation.**
+//
+// The rewrite of `emitTicketTail` to answer a `Decl[]` rather than the tail `Expr` is not done, and
+// the reason is honest rather than structural: the tail is where the disagreement in §1 lives and
+// everything above it is the shipped pass unchanged. A version that emits the whole declaration would
+// be longer and would say the same thing.
 //
 // **`Ticket<R>` is constructed with four positional arguments and three of them are lambdas.** The
 // emitted call is `Ticket<R>(a, b, false, c)` and nothing at the call site says which is `settled`
