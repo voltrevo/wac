@@ -80,6 +80,20 @@ become checkable, it stops existing.**
 `../../QUESTIONS.md` has the sweep and the other two, which are not hazards at all: an IPv6 zero-run
 latch and `</` tested before `<` are both cases where the ordering *is* the algorithm.
 
+### And this file's own export threw the distinction away
+
+`verdictFor` answered a **`bool`** in the first draft — `return verdict is Matched;` — collapsing
+`Vetoed` and `Silent` into one `false`, in the file written because that exact confusion is a
+security hazard. For `known_hosts` they are *this key is revoked* and *I have never seen this host*,
+and an ssh client does opposite things with them.
+
+The body was right: the three-state fold, the absorbing element, the note about order-independence.
+One line at the boundary undid it, because *whether this list accepts the host* is how the question
+sounds when you are writing the signature rather than the loop. Caught by an audit the next morning,
+in the sweep that also found two `-1` sentinels in another file written the same day — and it is the
+third instance in two days of `../../QUESTIONS.md`'s **naming a shape does not stop a writer
+producing it**, and the sharpest, being the exact defect the file exists to describe.
+
 ## What could not be written
 
 **Anything else in the package.** The session loop, the channel, the pty and the line discipline are

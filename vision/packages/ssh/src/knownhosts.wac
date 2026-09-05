@@ -46,13 +46,24 @@ Say combine(Say a, Say b) {
   }
 }
 
-/** Whether this pattern list accepts `wanted`. */
-export bool accepts(Bytes patterns, Bytes wanted) {
+/**
+ * What this pattern list says about `wanted`.
+ *
+ * **Answers the `Say`, and the first draft answered a `bool`** — `return verdict is Matched;`,
+ * collapsing `Vetoed` and `Silent` into one `false` in the file whose entire subject is that those
+ * two must not be confused. For `known_hosts` they are *this key is revoked* and *I have never seen
+ * this host*, and an ssh client does opposite things with them: refuse outright, or prompt to accept
+ * a new host key.
+ *
+ * Caught by an audit the next morning, in the same sweep that found two `-1` sentinels in another
+ * file written the same day. See the foot of this file.
+ */
+export Say verdictFor(Bytes patterns, Bytes wanted) {
   Say verdict = Silent;
   for (Bytes pat in split(patterns, ',')) {
     verdict = combine(verdict, sayOf(pat, wanted));
   }
-  return verdict is Matched;
+  return verdict;
 }
 
 /** One pattern's verdict. `!` vetoes; `|` is a hashed entry; anything else is a glob. */
@@ -88,7 +99,23 @@ gen<Bytes> void split(Bytes b, u8 sep) { … }
 // A reviewer's question, which is what the list-order entry also reduced to: **is this order a rule
 // about the data, or a rule about the search?** The first is removable and the second is not.
 //
-// ## 2. What could not be written
+// ## 2. And this file's own export threw the distinction away
+//
+// `verdictFor` answered a `bool` in the first draft — `return verdict is Matched;` — which collapses
+// `Vetoed` and `Silent` into one `false`. In *this* file: the one written because a veto spelled as
+// an ordered pair of `if`s is a security hazard, whose whole argument is that a refusal and a
+// non-match are different facts.
+//
+// The body was right. The three-state fold, the absorbing element, the note about order-independence
+// — all of it, and then one line at the boundary undid it, because *whether this list accepts the
+// host* is how the question sounds when you are writing the signature rather than the loop.
+//
+// Third instance in two days of the shape `../../../QUESTIONS.md` calls **naming a shape does not
+// stop a writer producing it**, and the sharpest of the three: the other two were a sentinel and a
+// count, and this is the exact defect the file exists to describe, one function below the
+// description.
+//
+// ## 3. What could not be written
 //
 // **`combine` is associative and nothing says so.** The whole argument above is that the fold does
 // not care about order, which is a property of a function that no signature carries — the same

@@ -6193,6 +6193,26 @@ Three `i32 … or -1` signatures in 158 files. The two above, and
 once in its own list, *"`i32?` says it, and the font table is generated code."* A recorded decision
 is not the same as a habit, and a sweep that cannot tell them apart would have reported three.
 
+### The same audit found a third, and it is the sharpest
+
+Swept vision's own `bool` returns: **55 functions, 12 exported**, and almost all are genuine
+predicates — `isOk`, `eq`, `isZero`, `isDigit`, `isLeap`, `before`, `sideEffectFree`. The class this
+directory has always said is fine.
+
+One is not. `@/packages/ssh/src/knownhosts.wac` computed a three-state `Say` — `Vetoed`, `Matched`,
+`Silent` — and its export answered `return verdict is Matched;`, **collapsing `Vetoed` and `Silent`
+into one `false`.** In the file written *because* a veto spelled as an ordered pair of `if`s is a
+security hazard, whose whole argument is that a refusal and a non-match are different facts. For
+`known_hosts` they are *this key is revoked* and *I have never seen this host*, and an ssh client
+does opposite things with them.
+
+The body was right — the fold, the absorbing element, the note about order-independence — and one
+line at the boundary undid it, because *whether this list accepts the host* is how the question
+sounds when you are writing the signature rather than the loop. It answers the `Say` now.
+
+**Three instances in two days**, and they get worse in order: a `-1` sentinel, a miscount of the
+sentinels, and the exact defect a file exists to describe, one function below the description.
+
 **And the sweep's first pass reported nine more that do not exist.** It blanked string literals
 before searching, so every `return "…";` became `return "";`. That is the second time an instrument
 here has stripped the thing it was looking for — the quotation checker blanked import paths and
