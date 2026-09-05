@@ -8915,7 +8915,15 @@ loose parameters.
 | `vision/packages/*/src` | 541 | 131 | **8 (6.1%)** |
 
 Halved. At the shipped rate vision would show 16.2 with a standard deviation of 3.8, so 8 is 2.2
-below — suggestive, not decisive. **And then the number turned out to be measuring something else.**
+below — suggestive, not decisive. **And then the number turned out to be measuring something else,
+three times over.**
+
+**First: *two `i32`s* is not *a window*.** `search(Program p, Bytes input, i32 at, i32 budget)` is a
+position and a step limit; `packages/quic`'s `(at, cidLen)` is a position and a length that is not
+its length. Filtering to pairs whose **names** are a window — `(from,to)`, `(at,end)`, `(start,len)`,
+`(start,end)`, `(lo,hi)` — leaves **82 of the shipped 193 and 4 of vision's 8**, so a little over half
+the count on one side and half on the other was never the shape being hunted. On windows alone the
+rates are 5.3% and 3.1%, and every caveat below still applies to them.
 
 ### `@/packages/abi` scores 5 here and 0 shipped, and the rewrite is the one that threads less
 
