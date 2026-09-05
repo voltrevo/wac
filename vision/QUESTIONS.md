@@ -6618,6 +6618,50 @@ file the script had scored as unconsumed and seeing it match by hand.**
    test that could only ever have passed for unions matched *outside* a `Result`, so the first census
    was structurally incapable of finding what it was looking for.
 
+### And the first of the thirty callers, written the same day
+
+`@/packages/server/src/refuse.wac` consumes `RequestFault`'s ten members. Two predictions were
+written down before the code:
+
+> **`RequestFault` will earn its ten.** A server answers a malformed request with a status and a
+> decision about the connection, and those differ per member.
+
+> **`@/packages/gzip`'s `Corrupt` will not earn its eight**, because only the printed sentence
+> distinguishes them, which is the payload rather than the identity.
+
+The first held: three of the ten get a status the other seven do not — `BadMethod` 501, `BadVersion`
+505, `TooLarge` 431 — so it is not a `BadRequest { string why; }` with extra steps. **First union in
+this directory to meet a caller and come out unchanged.**
+
+What the table said that I had not predicted is the other column. `close` is `true` ten times out of
+ten, and I had put it in expecting it to be the interesting one. The reason is not about framing: a
+server that could not parse the request line does not know where the request ended, so there is
+nothing to resume from, and every member is detected before the message boundary is known. So the
+column I added because it looked sharp is a constant, and the one I added because a response needs it
+is the discriminating one.
+
+> **A table of ten rows and two columns is the smallest thing that can disagree with you about which
+> column matters.** A union with no caller cannot disagree at all, which is the whole of the number
+> above.
+
+The second prediction held and my reason for it was wrong twice. `ChecksumMismatch` and
+`LengthMismatch` are detected *after* the whole stream is decoded and the bytes are already written,
+where the other six are detected before or during — so a caller writing to a file has to decide
+whether to delete its output, and that is the `close` column again in a package with no such column.
+And `BadMagic` is the only member meaning *this is not a gzip file* rather than *this is a broken
+one*, which a type-sniffing caller wants apart. So `Corrupt` earns a two-way split it does not have,
+and *a caller will not distinguish the eight* was right about the caller that exists and wrong about
+why.
+
+**One mechanical cause found and measured away.** Writing `refuse.wac` failed to import eight of the
+ten members: `packages/http/src/http.wac` exported `RequestFault` and two of its members, so a caller
+outside the package could name the union and not take it apart. That is a real barrier and it is
+**1 of 21** barrel-exported unions here — a slip, not a pattern. Which matters, because it rules out
+*the members were not reachable* as an explanation for the other 137. They were reachable, and
+nobody called them.
+
+### The lesson about the instrument
+
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
 census from a regex to a token stream fixed one family of instrument error — strings, comments,
 nesting — and I treated that as having fixed them all. **The three that survived were about the

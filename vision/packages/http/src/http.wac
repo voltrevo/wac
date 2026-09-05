@@ -12,7 +12,20 @@ export { Response, statusHasBody, write } from "./response.wac";
 // comparing a field value case-insensitively is something a caller of this package does, and
 // recognising a tchar is not.
 export { Headers, eqFold } from "./headers.wac";
-export { RequestFault, ResponseFault, TooLarge, BadStatus } from "./fault.wac";
+// **All ten members, not just the two with payloads.** Until 2026-09-05 this line exported
+// `RequestFault` and two of its members, so a caller outside the package could name the union and
+// could not `match` it: `@/packages/server/src/refuse.wac` is the first file that tried and the
+// import failed on eight names. A union's members are its interface — exporting the union without
+// them is exporting a type nobody can take apart.
+//
+// Swept afterwards: **1 of 21** barrel-exported unions here had the hole, so it is a slip rather
+// than a pattern, which matters because it rules out *the members were not reachable* as an
+// explanation for the 137 unconsumed members in `../../../QUESTIONS.md`. They were reachable.
+export {
+  RequestFault, ResponseFault, BadStatus,
+  BadMethod, BadTarget, BadVersion, BadRequestLine,
+  BadHeaderName, BadHeaderValue, ObsFold, AmbiguousFraming, BadChunk, TooLarge
+} from "./fault.wac";
 // **The client half, added when `@/packages/ethrpc` asked for it and not before.** A package with a
 // server and no client is a shape a barrel written without a consumer does not notice, because
 // nothing in the package refers to the missing half.

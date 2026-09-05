@@ -1,0 +1,129 @@
+// What a server does with a `RequestFault` — the first caller of the ten-member union in
+// `@/packages/http/src/fault.wac`.
+//
+// `../../../QUESTIONS.md` measured 137 of 174 union members in this directory with no consumer
+// anywhere, and said the cheapest thing to do about it is thirty short callers rather than a
+// thirty-first vocabulary. This is the first two, and the predictions were written down before the
+// code was:
+//
+// > **`RequestFault` will earn its ten members.** A server's answer to a malformed request is a
+// > status code and a decision about the connection, and those differ per member: `TooLarge` is 431,
+// > `BadMethod` is 501, `AmbiguousFraming` must close. If that holds, the union is doing work no
+// > `BadRequest { string why; }` could do.
+//
+// > **`@/packages/gzip`'s `Corrupt` will not earn its eight.** `gunzip` already matches it as one
+// > group, and I expect the only thing that distinguishes the eight members to be the sentence they
+// > print — which is the *payload*, not the identity.
+//
+// One held and one held for a reason I had wrong. Section 2.
+
+import { Result } from "core";
+import {
+  RequestFault,
+  BadMethod, BadTarget, BadVersion, BadRequestLine,
+  BadHeaderName, BadHeaderValue, ObsFold, AmbiguousFraming, BadChunk, TooLarge
+} from "@/packages/http";
+
+/**
+ * What to send and whether the connection survives.
+ *
+ * `close` is not a formatting detail. RFC 9112 §9.6 is that a server which cannot determine where a
+ * message ends must close, because anything else leaves bytes in the pipe that the *next* parse will
+ * read as a request — which is request smuggling.
+ */
+export struct Refusal { i32 status; string reason; bool close; }
+
+/** The answer, per member, and the reason the ten are not one. */
+export Refusal refuse(RequestFault f) {
+  match (f) {
+    // 501, not 400: RFC 9110 §9.1 distinguishes *this is not a method* from *I do not implement it*,
+    // and a client that gets 400 for `PROPFIND` retries the same request forever.
+    BadMethod:        { return Refusal(501, "Not Implemented", true); }
+    BadTarget:        { return Refusal(400, "Bad Request", true); }
+    BadVersion:       { return Refusal(505, "HTTP Version Not Supported", true); }
+    BadRequestLine:   { return Refusal(400, "Bad Request", true); }
+    BadHeaderName:    { return Refusal(400, "Bad Request", true); }
+    BadHeaderValue:   { return Refusal(400, "Bad Request", true); }
+    // Both of these are framing, and framing decides whether there is a next request at all.
+    ObsFold:          { return Refusal(400, "Bad Request", true); }
+    AmbiguousFraming: { return Refusal(400, "Bad Request", true); }
+    BadChunk:         { return Refusal(400, "Bad Request", true); }
+    // 431 is the one status in this table a caller could not guess from the others.
+    TooLarge:         { return Refusal(431, "Request Header Fields Too Large", true); }
+  }
+}
+
+// ## 1. The prediction held, and then the table said something I did not expect
+//
+// Three of the ten get a status the other seven do not — `BadMethod` 501, `BadVersion` 505,
+// `TooLarge` 431 — so the union is not a `BadRequest { string why; }` with extra steps. That is the
+// prediction, confirmed, and it is the first union in this directory that has met a caller and come
+// out unchanged.
+//
+// **What I did not expect is the `close` column: it is `true` ten times out of ten.**
+//
+// I wrote it expecting it to be the interesting one — framing faults close, the rest do not, and the
+// union's real job is to carry that distinction. It does not work out that way, and the reason is
+// not about framing at all: **a server that could not parse the request line does not know where the
+// request ended**, so there is nothing to resume from. Only a fault detected *after* the message
+// boundary is known could keep the connection, and every member of `RequestFault` is detected before
+// or during it.
+//
+// So a column I put in because it looked like the sharp one is a constant, and the sharp one is the
+// status code, which I put in because a response needs one. Both were guesses; the difference is
+// that writing the ten rows out is what told them apart. **A table of ten rows and two columns is
+// the smallest thing that can disagree with you about which column matters** — and a union with no
+// caller cannot be disagreed with at all, which is the whole of the 137-member finding.
+//
+// It also means the union has a **provable** property, which is better than an argued one: `close`
+// is `true` for every member, so it is not a field of `Refusal` — it is a fact about
+// `RequestFault` itself, and the type could say so by not having the column. It stays here because
+// deleting it would leave the sentence above with nothing to point at, and because `ResponseFault`
+// adds `BadStatus`, where a *client* reading a bad status line has the same problem and the same
+// answer.
+//
+// ## 2. And the other prediction held for the wrong reason
+//
+// `@/packages/gzip`'s `Corrupt` has eight members and I predicted a caller would not distinguish
+// them. `@/packages/box/src/gunzip.wac` already does not: `Err(is Corrupt):` is one arm for all
+// eight, and that file argues the grouping is the point.
+//
+// The reason I gave was that only the *message* differs, so the payload does the work and the
+// identity does not. Reading the eight, that is wrong twice over:
+//
+//   * `ChecksumMismatch { u32 want; u32 got; }` and `LengthMismatch { i32 want; i32 got; }` are
+//     detected **after the whole stream has been decoded**, and the bytes are already written. Every
+//     other member is detected before or during. So a caller writing to a file has to decide whether
+//     to delete what it wrote, and the answer is different for those two — which is exactly the
+//     `close` column above, in a package that has no such column.
+//   * `BadMagic { i32 saw; }` is the only member that can mean *this is not a gzip file*, as opposed
+//     to *this is a broken gzip file*. A tool that dispatches on file type wants that one apart from
+//     the other seven, and `file`-style sniffing is a real caller.
+//
+// So `Corrupt` earns at least a two-way split it does not have — **detected before the output was
+// produced, or after** — and neither the eight-member union nor the one-arm group says it. The
+// prediction *a caller will not distinguish the eight* was right about the caller that exists and
+// wrong about the reason, and the reason is what would have told me which caller to write next.
+//
+// ## 3. What could not be written
+//
+// **`close` is a fact about the type and lives in the value.** Every `RequestFault` closes the
+// connection; nothing can say so, so every construction of a `Refusal` repeats it and a future
+// eleventh member can quietly answer `false`. A `union` with an attached invariant is a large ask;
+// the small version is that a member added to a union cannot be required to satisfy anything the
+// existing members do, which is the same gap `@/packages/ssh/src/knownhosts.wac` has for *`combine`
+// is associative and nothing says so*. Second instance, and the first where the property is a
+// constant rather than a law.
+//
+// **The status table is a fact about HTTP and lives in a `match`.** Ten arms, seven of which are the
+// same three values, is a lookup written as control flow because there is no way to attach data to a
+// union member. `@/packages/tor/src/pathsel.wac` reached the same place from the other side and its
+// answer was an enum, which cannot be used here because the members carry different payloads —
+// `TooLarge` has two fields and the rest have none. That difference is the whole reason this is a
+// union rather than an enum, and it is also what stops the table being data.
+//
+// **`RequestFault` and `ResponseFault` overlap by ten and nothing shares the table.** A client
+// refusing a response wants nine of these ten rows and `BadStatus`, and `ResponseFault` is
+// `union<RequestFault, BadStatus>` — so the natural spelling is a `match` with an
+// `Err(is RequestFault):` arm delegating here, which works and throws away the status. Delegating
+// *and* refining is two matches over one value, and the second one re-tests what the first proved.
