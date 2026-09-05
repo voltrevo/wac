@@ -163,6 +163,13 @@ export struct Cursor {
 // README says *"a malformed offset is not an unusual input, it is an attack"* — and it is a
 // different type from this one, for a different reason, in a package that would use it.
 //
+// **And the shipped `abi` threads more, not less**, which is worth stating because a count of this
+// pattern gets it backwards. `Value valueAt(R r, i32[] schema, i32 s, i32 at, i32 end, i32 base)` is
+// six parameters and four loose integers; the rewrite's is four and two, because the schema stopped
+// being an array plus an index and the bytes stopped being a reader struct with an error field in it.
+// So `abi` declining a cursor is not `abi` keeping its plumbing — it declined this type and halved
+// the plumbing by a different change. `../QUESTIONS.md` has what that did to the measurement.
+//
 // ## 2. And the failure model is still not shareable, which is the finding
 //
 // The type above serves `tls`, `ssh` and `zstd`. It does not serve `fs`, and the reason is not the

@@ -78,7 +78,7 @@ export void unionIsOneStruct(const Decl d) { … }
 // **Nobody can say what a union costs without a program that allocates them.** The numbers above are
 // widths, not bytes: 174 members across 37 unions says how wide the structs are and nothing about how
 // many are made. `@/packages/json/src/parse.wac` makes at most one `ParseError` per document;
-// `@/packages/rlp`'s `Truncated` is raised per malformed field. The emitter's *"nothing here is
+// `@/packages/rlp`'s overrun fault is raised per malformed field. The emitter's *"nothing here is
 // measuring bytes yet"* stands, and vision cannot close it, because
 // `../../../README.md` says nothing here compiles — **the one measurement this file would want is the
 // one the directory's own rule forbids.**

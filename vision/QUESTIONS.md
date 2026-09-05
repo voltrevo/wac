@@ -7482,8 +7482,8 @@ Every diagnostic function in the directory, without exception:
     say(string what, Invalid why)              @/packages/tor/src/verdict.wac
 
 **Five for five take the fault plus the thing it is about**, and I wrote four of them without
-noticing. `at: 47` cannot be drawn as a caret under a line without the text, so a `Truncated { at,
-want, have }` is exactly as useful as its caller's memory of what it was parsing — and the caller's
+noticing. `at: 47` cannot be drawn as a caret under a line without the text, so an
+`Overrun { at, wanted, left }` is exactly as useful as its caller's memory of what it was parsing — and the caller's
 memory is a parameter, unchecked, threaded by hand.
 
 This is the fourth time this file has recorded *paired values with nothing holding the pair* and the
@@ -8315,7 +8315,7 @@ payload slots — the only one of the ten that reaches the emitter, asking for t
 
 The numbers are **widths, not bytes**. 174 members across 37 unions says how wide the structs are and
 nothing about how many are made: `@/packages/json` makes at most one `ParseError` per document,
-`@/packages/rlp`'s `Truncated` is raised per malformed field. The emitter's *"nothing here is
+`@/packages/rlp`'s overrun fault is raised per malformed field. The emitter's *"nothing here is
 measuring bytes yet"* stands, and vision cannot close it —
 
 > `README.md` says nothing here compiles, so **the one measurement this file would want is the one the
@@ -8660,6 +8660,25 @@ that row means something in `tls` that is a latch without being a flag, or it is
 rather than resolved, because the row's *conclusion* — that the objection is to `Result` without
 `try` — does not depend on the second example.
 
+### And renaming one fault left seven references no instrument walks
+
+`@/packages/rlp/src/fault.wac`'s `Truncated` became `core`'s `Overrun` on 2026-09-05. Grepping
+afterwards: **seven mentions across five files** — `../core/slice.wac`, `@/packages/zstd/src/block.wac`,
+`@/packages/wacc/src/emit.wac`, and this file three times.
+
+`scratchpad/dangling.py` caught the one that was an **export** and `unresolved.py` caught the one that
+was a **use**. Neither sees the other five, because they are prose naming a type, and `quotecheck.py`
+does not either — its job is that a quotation matches its source, and four of the five *are* accurate
+quotations of code that existed when they were written.
+
+Two of the seven were claims about the code as it is now and are fixed. Three are records of a past
+state and are correct as records. Two are quotations, and requoting them would be rewriting history
+to match a rename.
+
+> **The three instruments here walk imports, names and quotations, and a type's name in a sentence is
+> none of the three.** Which is the price of a directory whose value is prose: the checkable surface
+> is the code, and the code is the smaller half.
+
 ### Then it was written, and building it moved the answer
 
 `../core/cursor.wac`. Two fields rather than four — `tls`, `ssh` and `fs` all carry an `end` beside
@@ -8881,6 +8900,97 @@ is. A grep for comments adjacent to a helper whose whole body is one comparison 
 **And this entry is a claim about a method with three examples.** Three asks, one shape, and the
 shape was named after the third — which is the count at which this directory has been calling things
 patterns all week, and is still three.
+
+## Counting what `Bytes` removed, and the count is measuring the wrong population
+
+*2026-09-05.* This directory has argued `Slice<u8>` for three days on the grounds that *a slice is a
+span that brought its subject*. It has counted the **types** the argument deleted — the entry above
+on `@/packages/regex`'s and `@/packages/ts`'s `Span` — and never the **signatures**. The obvious
+countable symptom is a function taking a byte view **and two or more `i32`s**: a window spelled as
+loose parameters.
+
+| | function declarations | of those, take a byte view | of those, plus ≥2 `i32`s |
+|---|---:|---:|---:|
+| `packages/*/src` | 5,962 | 1,557 | **193 (12.4%)** |
+| `vision/packages/*/src` | 541 | 131 | **8 (6.1%)** |
+
+Halved. At the shipped rate vision would show 16.2 with a standard deviation of 3.8, so 8 is 2.2
+below — suggestive, not decisive. **And then the number turned out to be measuring something else.**
+
+### `@/packages/abi` scores 5 here and 0 shipped, and the rewrite is the one that threads less
+
+The per-package table says vision's `abi` has eight byte-taking functions of which five carry two or
+more `i32`s, and the shipped `packages/abi` has two, of which none do. Read as written, the rewrite
+introduced the pattern five times.
+
+The signatures say the opposite:
+
+    shipped   Value[] tupleAt(R r, i32[] schema, i32 schemaAt, i32 count, i32 base, i32 end)
+              Value   valueAt(R r, i32[] schema, i32 s, i32 at, i32 end, i32 base)
+    here      Result<Vec<Value>, AbiFault> tupleAt(Bytes data, const Vec<AbiType> schema, i32 base, i32 end)
+              Result<Value, AbiFault>      valueAt(Bytes data, const AbiType t, i32 at, i32 end)
+
+**Six parameters and four loose integers become four and two.** The schema went from an `i32[]` plus
+an index into it to one `AbiType`, which is this package's flat-table-to-tree change; the bytes went
+from `R` — the shipped reader struct, which also carries a sticky error field — to a `Bytes`.
+
+So the instrument scored a halving as a regression, for one reason: **it keys on a `Bytes` or `u8[]`
+parameter, and a package that has already wrapped its bytes in a reader struct has neither.** The
+shipped `abi`, `tls`, `ssh`, `fs`, `zstd` and `rlp` all did, so all six are largely invisible to it —
+in the numerator and in the denominator both.
+
+> **`12.4%` is the rate among the code that has not wrapped its bytes, and `6.1%` is the rate among
+> code that has.** The two figures are over different populations, and the comparison between them
+> says nothing. The instrument detects the *absence* of a fix by looking for a parameter the fix
+> removes, which means it cannot see the fixed cases at all.
+
+### What survives the correction, which is smaller and is real
+
+Two things the same sweep found that do not depend on the ratio:
+
+**One idea, four spellings, 72 of the 193 functions.** `(from, to)` 31, `(at, end)` 20,
+`(start, len)` 15, `(start, end)` 6. The last two have identical signatures and different meanings,
+split by package:
+
+    packages/fmt/src/atof.wac:65    export f64 atofSpan(u8[] src, i32 start, i32 end)
+    packages/wacc/src/lex.wac:118          i64 packSpan(u8[] src, i32 start, i32 len)
+
+**Both named `…Span`, both `(u8[], i32, i32)`, and the second integer means opposite things.** A call
+written for one and passed to the other compiles and reads the wrong number of bytes, and `packSpan`
+is in the lexer that runs over every source file in this repository. That is the *confusable pairs
+are one kind in two roles* finding from the path entry, at a worse site: there both parameters were
+paths and the mistake was an ordering one; here the second parameter has two meanings and nothing
+distinguishes them except which package you are in.
+
+**And the shipped tree's byte readers are the reason the ratio failed**, which is the same population
+`../core/cursor.wac` was derived from. Six packages wrapped their bytes in a struct; four of the six
+called it `Reader`; the sweep that found those four found them by *name*, and this sweep missed them
+by *signature*. Two instruments, one population, and neither can see it the other's way.
+
+### What could not be written
+
+**A measure of *this design removed a hazard* has to name the hazard's signature, and the fix changes
+the signature.** That is not specific to slices: any instrument that counts occurrences of a bad
+shape stops counting a file the moment the file is fixed, which is fine, and also stops counting it
+when the file is fixed *differently* — which is what happened here and is not fine, because the two
+are indistinguishable from the count.
+
+The obvious way out is to count **threaded values** rather than parameter types — `tupleAt` went
+from six parameters to four whatever the first one is called. **Tried, and it fails the same way.**
+Mean parameters per function, shipped against here:
+
+    abi 2.03 → 2.24    tls 1.09 → 1.78    fs 1.57 → 2.38    zstd 1.86 → 2.50    regex 1.53 → 2.20
+
+Every one goes **up**, which is not what the signatures say and is what a selected sample says: this
+directory keeps the wide public entry points and elides the narrow private helpers, so its mean is
+drawn from the top of a distribution whose bottom it never wrote. 49% of bodies here are `{ … }` and
+the functions that do not exist are the small ones.
+
+So two instruments, two confounds, both running the same direction as the selection rather than
+against it. **The honest conclusion is that this directory cannot measure its own effect on a
+signature-shaped hazard**, because the thing that makes it cheap to write — eliding what is not
+interesting — is exactly what biases every per-function statistic. What it *can* do is what the two
+`abi` signatures above do: put the before and the after next to each other and count that pair.
 
 ## The lesson about the instrument
 
