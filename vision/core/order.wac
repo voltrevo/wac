@@ -66,7 +66,20 @@ export struct SortSpec<T> {
   SortSpec<T> total(fn<Ordering(T, T)> cmp) { return SortSpec(cmp, cmp); }
 }
 
-/** Sorted by `spec.order`, stable. */
+/**
+ * Sorted by `spec.order`, **stable** — and the stability is the decision, not the algorithm.
+ *
+ * Swept over the shipped tree: **thirteen functions named `*sort*` and eleven
+ * `while (j >= 0 && …)` insertion-shift loops, across eight packages** — `wac`, `fs`, `sh`,
+ * `wacpkg`, `tor`, `git`, `box`, `wacc`. Every one is an insertion sort or `box`'s merge sort, so
+ * every one is stable, and three produce orderings a person reads: `box`'s `ls`, `box`'s `sort`, and
+ * `git`'s tree listing.
+ *
+ * **An unstable `sort` in `core` would compile at all thirteen sites and change what three of them
+ * print.** That is the whole reason this is a signature with a promise in it rather than a function
+ * somebody adds when they need one — filed as `issues/system/0345a`, because the decision is the
+ * shipped tree's rather than this directory's.
+ */
 export Vec<T> sorted<T>(const Vec<T> xs, const SortSpec<T> spec) { … }
 
 /**
@@ -151,6 +164,22 @@ export Ordering bytesCmp(const Bytes a, const Bytes b) {
 // code. *`An unterminated block comment`* is what the same lexer says when the comment never closes;
 // there is no message for one that closes **early**, and there cannot be, since a comment that ends
 // where a `*/` appears is exactly what the rule says.
+//
+// ## 2c. And `core`'s own list of what is missing names two packages that do not sort
+//
+// `core/README.md`: *"**`sort`.** A generic sort over a `fn[bool(T, T)]` comparator belongs here.
+// `gzip` and `bignum` both sort by hand today."* Checked: `packages/bignum/src` has no sort at all,
+// and `packages/gzip`'s is a **counting sort** inside Huffman table construction — no comparator, and
+// a generic `sort` would not serve it. Eight other packages do sort by hand and the sentence names
+// none of them.
+//
+// Both halves of that sentence are also wrong about the *type*: `fn[bool(T, T)]` cannot express a
+// key, which is the whole of the entry this file is written from. A `bool` says *which comes first*
+// and `sort -u` needs *are these the same line*.
+//
+// Worth recording as a fact about lists rather than about sorting: **a *what is not here yet* section
+// is a claim about the rest of the tree, and nothing checks it.** This one has been wrong in three
+// ways for as long as it has existed, and finding that out cost two greps.
 //
 // ## 3. What could not be written
 //
