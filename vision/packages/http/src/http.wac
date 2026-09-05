@@ -11,7 +11,7 @@ export { Response, statusHasBody, write } from "./response.wac";
 // `eqFold` is here and `isToken` is not, which is the judgement a barrel exists to record:
 // comparing a field value case-insensitively is something a caller of this package does, and
 // recognising a tchar is not.
-export { Headers, eqFold } from "./headers.wac";
+export { Headers, Building, Field, eqFold } from "./headers.wac";
 export { Response, Status, write } from "./response.wac";
 export {
   ProxyAt, ProxyReply, ProxyFault, ProxyUrlFault, parseProxy, connectRequest, readReply,

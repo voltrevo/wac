@@ -18,6 +18,7 @@
 // What is left to change is smaller than usual and worth doing anyway.
 
 import { Result, Bytes, Vec } from "core";
+import { AmbiguousFraming } from "./fault.wac";
 
 /** One field, as it arrived. */
 export struct Field {
@@ -36,10 +37,13 @@ export struct Field {
 export struct Headers {
   Vec<Field> fields;
 
-  Headers create() { … }
-  void push(this, Bytes name, Bytes value) { … }
-  i32 len(const this) { … }
-  Field at(const this, i32 i) { … }
+  /**
+   * **There is no `create()`.** A `Headers` is what `Building.done()` answers, and the only way to
+   * make one is to have been checked — which is §3's *two states, building and checked* written out
+   * rather than described.
+   */
+  i32 len(const this) { return this.fields.len(); }
+  Field at(const this, i32 i) { return this.fields.get(i)!; }
 
   /**
    * How many fields carry this name — *"which is what the framing rules actually ask"*.
@@ -48,7 +52,12 @@ export struct Headers {
    * the bug: `countOf("Content-Length") == 2` is a request that must be refused, and a map cannot
    * hold the input that says so.
    */
-  i32 countOf(const this, string name) { … }
+  i32 countOf(const this, string name) {
+    Bytes want = name.toBytes();
+    i32 n = 0;
+    for (Field f in this.fields.items()) { if (eqFold(f.name, want)) { n = n + 1; } }
+    return n;
+  }
 
   /**
    * The first value with this name, **or nothing**.
@@ -57,11 +66,54 @@ export struct Headers {
    * it"* — a sentinel from the value's own range, and a documented pairing of two calls, in a type
    * that has one other method. `Bytes?` removes both.
    */
-  Bytes? first(const this, string name) { … }
+  Bytes? first(const this, string name) {
+    Bytes want = name.toBytes();
+    for (Field f in this.fields.items()) { if (eqFold(f.name, want)) { return f.value; } }
+    return null;
+  }
+}
+
+/**
+ * A `Headers` under construction — **the same fields and a different set of operations.**
+ *
+ * §3 said the type wants two states and could not say so. It can: they are two types. `Building`
+ * pushes and cannot be read; `Headers` reads and cannot be pushed to; `done` is the only bridge and
+ * it is the only place the framing rule runs.
+ *
+ * That is `@/packages/ts`'s `Blanked` — *a buffer you can only blank* — at a second site, and the
+ * first where the restricted operation is **reading** rather than writing. A parser holds a
+ * `Building` and physically cannot ask it a question the answer to which is not yet true.
+ */
+export struct Building {
+  Vec<Field> fields;
+
+  Building create() { return Building(Vec.create()); }
+
+  /** Append, in arrival order, duplicates intact. No validity question is asked or answerable. */
+  void push(this, Bytes name, Bytes value) { this.fields.push(Field(name, value)); }
+
+  /**
+   * The framing check, and the only way to get a `Headers`.
+   *
+   * RFC 9112 §6.1: a message with both `Content-Length` and `Transfer-Encoding`, or with two
+   * `Content-Length`s that disagree, has no agreed length — which is request smuggling. The shipped
+   * package has this as a function a caller must remember to call; here there is no `Headers` that
+   * has not been through it.
+   */
+  Result<Headers, AmbiguousFraming> done(this) { … }
 }
 
 /** ASCII case-insensitive equality, which is exactly the comparison a field name wants. */
-export bool eqFold(Bytes a, Bytes b) { … }
+export bool eqFold(Bytes a, Bytes b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (lower(a[i]) != lower(b[i])) { return false; }
+  }
+  return true;
+}
+
+/** ASCII only: RFC 9110 field names are `token`s, and a `token` has no non-ASCII byte in it. */
+u8 lower(u8 c) { return c >= 0x41 && c <= 0x5A ? c + 32 : c; }
 
 /** A `token` character, RFC 9110 §5.6.2. Spelled out, because the set is the point. */
 export bool isToken(u8 c) { … }
@@ -112,6 +164,29 @@ export bool isFieldValueByte(u8 c) { … }
 // So the type wants two states, *building* and *checked*, and they are the same fields. That is a
 // third instance of the shape `@/packages/ts`'s `Prefix` and `@/packages/crypto`'s `Digest32` have:
 // **a value whose guarantee comes from how it was made**, with no way to say so.
+//
+// **Written out 2026-09-05, and it works.** They are two types: `Building` pushes and cannot be
+// read, `Headers` reads and cannot be pushed to, and `done()` is the only bridge and the only place
+// the framing rule runs. There is no `Headers.create()`. A parser holds a `Building` and physically
+// cannot ask it a question whose answer is not yet true.
+//
+// That is `@/packages/ts`'s `Blanked` — *a buffer you can only blank* — at a second site, and the
+// first where the operation being withheld is **reading**. Which is the more useful direction: a
+// write-only type stops you corrupting a value, and a read-only-when-valid type stops you *believing*
+// one.
+//
+// **What it costs is a copy, and the copy is the thing that cannot be written.** `done()` has a
+// `Vec<Field>` and must produce a `Headers` holding a `Vec<Field>`; the two structs have identical
+// layouts and there is no way to say *this is now that*. `Headers(this.fields)` moves a reference and
+// is fine here, and it is fine only because `Building` is dropped immediately — nothing stops a
+// caller keeping it and pushing more, into the `Vec` the `Headers` is holding.
+//
+// So the guarantee is *the framing rule ran at some point*, not *this is valid now*, and the
+// difference is one retained reference. Closing it wants either a linear `this` — `done` consumes
+// the `Building` — or a copy, which is O(n) per message on the hot path of a server. **Neither is
+// in the language and the first is the one worth asking for**, because it is the same ask as
+// `@/packages/box/src/cat.wac`'s stream ownership and `Ticket`'s `inWait` flag: a value that may be
+// used once.
 //
 // **`eqFold` is a free function and the comparison it implements is the type's identity.** Every
 // lookup in this file calls it, and a caller doing its own `==` on two names is wrong in a way

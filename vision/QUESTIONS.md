@@ -7449,6 +7449,43 @@ Which is a sharper form of this file's standing advice. *Write the consumer* is 
 were tested; this is *write the thing the consumers worked around*, and the workarounds turn out to be
 a specification for it.
 
+## Two states with the same fields are two types, and the residue is a linear value
+
+*2026-09-05.* `@/packages/http/src/headers.wac` was the largest all-elided file here — ten
+signatures — and its *could not be written* list ended with:
+
+> The type wants two states, *building* and *checked*, and they are the same fields. … **a value
+> whose guarantee comes from how it was made**, with no way to say so.
+
+Written out, it works and needs nothing new. They are two types: `Building` pushes and cannot be
+read, `Headers` reads and cannot be pushed to, `done()` is the only bridge and the only place the
+framing rule runs, and **there is no `Headers.create()`**. A parser holds a `Building` and physically
+cannot ask it a question whose answer is not yet true.
+
+Second instance of `@/packages/ts`'s `Blanked` — *a buffer you can only blank* — and the first where
+the withheld operation is **reading**. Which is the more useful direction: a write-only type stops
+you corrupting a value; a readable-only-when-valid type stops you *believing* one.
+
+### And the residue is the ask, sharpened
+
+`done()` holds a `Vec<Field>` and must produce a `Headers` holding a `Vec<Field>`. `Headers(this.fields)`
+moves a reference, and that is fine **only because the `Building` is dropped immediately** — nothing
+stops a caller keeping it and pushing more, into the `Vec` the `Headers` now holds.
+
+> So the guarantee is *the framing rule ran at some point*, not *this is valid now*, and the
+> difference is one retained reference.
+
+Two ways to close it and only one is worth asking for. A **copy** is O(n) per message on a server's
+hot path. A **linear `this`** — `done` consumes the `Building` — costs nothing at runtime and is the
+same ask as `@/packages/box/src/cat.wac`'s stream ownership and `Ticket`'s `inWait` re-entrancy flag:
+*a value that may be used once*. Third site, and the first where the alternative is not *be careful*
+but *pay a copy*, which is what makes it a language question rather than a style one.
+
+*And the entry it replaces was right about the problem and wrong that it had no answer.* The two
+states were writable all along; what was not writable is the handover. Fourth time here that a *could
+not be written* turned out to be a *could be written, and here is the smaller thing that could not*
+— after `Map.create`, the `Span` deletion and `blank(Bytes)`.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
