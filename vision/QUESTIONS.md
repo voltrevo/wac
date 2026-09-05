@@ -6582,7 +6582,7 @@ mis-attributed names across declarations, so it reported `NotFound` with twelve 
 meant `Files`. Fourth instrument bug of the same family — a regex applied to structure — and the two
 interfaces examined here were chosen by knowing about them rather than by sweeping.)*
 
-### 117 union members that nothing discriminates
+### 137 union members that nothing discriminates
 
 Three units argued about the cost of one error set being shared, and the third found `FileFault` has
 no exhaustive consumer, so a fourth wrote one — `@/packages/box/src/cp.wac` — and it changed the
@@ -6591,17 +6591,39 @@ design on contact. That makes the question askable for every union rather than o
 this session's instrument bugs were regexes over structure and that flag exists for exactly this,
 with a comment saying so. I had not used it once.
 
-    29 union declarations (28 named, 1 inline), 60 `match` blocks with arms
+    37 union declarations, 60 `match` blocks with arms
 
-    with an exhaustive consumer:   4  —  23 members
-    with none:                    25  — 117 members
+    with an exhaustive consumer:   7  —  37 members
+    with none:                    30  — 137 members
 
-The four are `Decoded` (utf8), `Invalid` (tor), `Event` (platform, 3 of its 7 arms) and `FileFault`,
-whose only consumer is one day old. **Before yesterday, three.**
+The seven are `Decoded` (utf8), `Invalid` (tor), `Event` (platform, 3 of its 7 arms), `FileFault`,
+`fs`'s `Fault`, and the two-member `Fault` in each of `gzip` and `zstd`. Two of those seven are one
+result counted twice — `fs`'s `Fault` and `FileFault` have identical member lists, so a `match` on
+one scores both — so it is really **six**, and `FileFault`'s consumer is one day old.
 
-The twenty-five include every fault vocabulary this directory is pleased with: `RequestFault` (10),
-`UpdateFault` (9), `Corrupt` (8), `TimeFault` (8), `AbiFault` (7), `RlpFault` (7), `BlsFault` (6),
-`VerifyFault` (6). Each was designed by asking what can go wrong, and each is unread.
+The thirty include every fault vocabulary this directory is pleased with: `RequestFault` (10),
+`mpt`'s `ProofFault` (10), `UpdateFault` (9), `Corrupt` (8), `TimeFault` (8), `AbiFault` (7),
+`RlpFault` (7), `BlsFault` (6), `VerifyFault` (6). Each was designed by asking what can go wrong, and
+each is unread.
+
+**Published first as 4 of 29 and 117 members. Three bugs, all in one script, all found by reading a
+file the script had scored as unconsumed and seeing it match by hand.**
+
+1. *Keyed by name.* `unions[name]` — and `gzip` and `zstd` both declare `Fault`, `mpt` and `ssz` both
+   declare `ProofFault`. Eight declarations collided away.
+2. *One arm spelling.* It knew `Member:` and not `Err(is Member):`, which is the grouped-by-type
+   match six READMEs here argue for and exactly one file uses.
+3. *The wrapper counted as an arm.* `Ok` and `Err` went into the label set, so `L ⊆ members` failed
+   for every union reached through a `Result` — which is all of them. That one is not noise: it is a
+   test that could only ever have passed for unions matched *outside* a `Result`, so the first census
+   was structurally incapable of finding what it was looking for.
+
+The lesson is narrower than *check your tools* and it is about this session specifically: moving the
+census from a regex to a token stream fixed one family of instrument error — strings, comments,
+nesting — and I treated that as having fixed them all. **The three that survived were about the
+language rather than the lexing**, and a token stream has nothing to say about which identifier is a
+union member and which is a `Result` constructor. Same family as *assert the property, not one
+spelling*, one level up.
 
 **The honest limit, and why it does not dissolve the number.** Most bodies here are `{ … }`, and a
 consumer missing because no bodies exist is not evidence. But sixty `match` blocks *are* written, in
@@ -6619,11 +6641,11 @@ cannot supply.
 
 n=1, and a clean one: the only fault union here that has ever met a consumer turned out to be missing
 an axis, and thirty lines of use is how that was found. There is no reason to expect better of the
-other twenty-five. The cheapest next thing this directory could do is not another vocabulary — it is
-twenty-five short callers.
+other thirty. The cheapest next thing this directory could do is not another vocabulary — it is
+thirty short callers.
 
 **And it puts a number on the rule above.** *An error type with no exhaustive consumer costs nothing*
-was written yesterday about one union. Measured: **117 of 140 members cost nothing, because nothing
+was written yesterday about one union. Measured: **137 of 174 members cost nothing, because nothing
 reads them.** That is not an argument that they are wrong. It is that nothing here has been in a
 position to find out, and five days of design have produced a vocabulary whose cost and benefit are
 both still entirely theoretical.

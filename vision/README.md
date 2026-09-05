@@ -310,16 +310,16 @@ merged into one by that, rather than one of them winning.
 
 ## The largest thing this directory has not done
 
-*2026-09-05.* Twenty-nine unions are declared here, carrying 140 members between them. Counted on
-`tools/specparse.ts --tokens`:
+*2026-09-05.* Thirty-seven unions are declared here, carrying 174 members between them. Counted on
+`tools/specparse.ts --tokens`, after three bugs in the counting script — see below:
 
-    with an exhaustive consumer:   4  —  23 members
-    with none:                    25  — 117 members
+    with an exhaustive consumer:   7  —  37 members
+    with none:                    30  — 137 members
 
 Sixty `match` blocks exist, so this is not *no bodies were written* — bodies are written wherever the
 body is the argument. It is that almost none of them consumes a fault union. Every vocabulary this
-directory is pleased with is in the twenty-five: `RequestFault` (10 members), `UpdateFault` (9),
-`Corrupt` (8), `TimeFault` (8), `AbiFault` (7), `RlpFault` (7).
+directory is pleased with is in the thirty: `RequestFault` (10 members), `ProofFault` (10 in `mpt`),
+`UpdateFault` (9), `Corrupt` (8), `TimeFault` (8), `AbiFault` (7), `RlpFault` (7).
 
 The one that met a consumer changed shape the same day. `FileFault`'s only caller is
 [`packages/box/src/cp.wac`](packages/box/src/cp.wac), written to test three entries in
@@ -327,8 +327,17 @@ The one that met a consumer changed shape the same day. `FileFault`'s only calle
 member, cannot be one, and had not come up in five days of designing members.
 
 So the honest summary of the error-handling work here is that its cost and its benefit are both still
-theoretical, and the cheapest way to change that is twenty-five short callers rather than a
-twenty-sixth vocabulary. `QUESTIONS.md` has the measurement and the caveats.
+theoretical, and the cheapest way to change that is thirty short callers rather than a thirty-first
+vocabulary. `QUESTIONS.md` has the measurement and the caveats.
+
+**Published first as 4 of 29 and 117 members, which was wrong three ways over.** The script keyed
+unions by name, so eight collided away — two packages both declare `Fault`. It knew only the arm
+spelling `Member:` and not `Err(is Member):`, which is the grouped-by-type match six READMEs here
+argue for and one file uses. And it counted `Ok` and `Err` as arm labels, so the subset test failed
+for every union reached through a `Result` — which is all of them, making the first count
+structurally biased rather than merely noisy. Moving from regex to a token stream removed one family
+of instrument error and I assumed it had removed them all; the three that remained were about the
+*language*, not the lexing.
 
 ## Nothing here is checked by anything
 
