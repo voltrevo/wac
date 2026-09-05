@@ -11,7 +11,7 @@
 
 import { Vec, Bytes } from "core";
 import { Headers } from "./headers.wac";
-import { Request } from "./request.wac";
+
 
 /**
  * What a handler answers.
@@ -95,14 +95,32 @@ export enum Status {
 }
 
 /**
- * The response on the wire. Framing is decided here and not by the handler.
+ * What a writer must be told and may not decide — **and this is the third signature this function
+ * has had today, which is the finding.**
  *
- * **Takes the request, not a `bool headOnly`, since 2026-09-05.** The flag was *the request's
- * method, remembered*, and `./incoming.wac` found the same fact being passed to `read` for the same
- * reason — two functions in one package taking a request the package had no type for. It has one
- * now; `sent.method.bodyless()` is the question this used to be handed the answer to.
+ * The shipped one is `write(Response res, u8[] method, bool keepAlive)`. This file first described
+ * that as `bool headOnly` (wrong — it takes the method itself) and then replaced it with
+ * `const Request sent`, on `./incoming.wac`'s argument that two functions in one package were taking
+ * a request the package had no type for.
+ *
+ * **`@/packages/server/src/serve.wac` broke that.** Its error path has no request — parsing failed —
+ * and `write` is still called, so the shipped code passes `"GET".toBytes()` to mean *not a HEAD*: a
+ * real method standing in for *unknown*, which is the sentinel-from-the-value's-own-range shape at a
+ * new site. With `const Request sent` the call cannot be written at all.
+ *
+ * So `write` never wanted the request. It wanted **two decisions the request happens to determine**,
+ * both of which are known on the error path:
  */
-export Bytes write(const Response r, const Request sent) { … }
+export struct Sending {
+  /** Whether a body may be sent. False for a response to `HEAD`, whatever the headers say. */
+  bool bodyAllowed;
+  /** Whether the connection survives. `Connection: close` is the writer's to emit — `./outgoing.wac`'s
+   *  `Owned` says so — so this is told to the writer rather than read by it. */
+  bool keepAlive;
+}
+
+/** The response on the wire. Framing is decided here and not by the handler. */
+export Bytes write(const Response r, const Sending how) { … }
 
 // ## 1. `Status` is the third enum-over-a-closed-i32 in this directory and the first with an escape
 //

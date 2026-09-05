@@ -14,7 +14,19 @@ export {
   Incoming, Exchange, Received, Framing, NoBodyWhy, Limits, read,
   NoBody, Chunked, Length, UntilClose, HeadRequest, StatusHasNone, TunnelOpen,
 } from "./incoming.wac";
-export { Response, Status, write } from "./response.wac";
+export { Response, Status, Sending, write } from "./response.wac";
+// **`Status`'s arms, minus `Other` — and the exception is a finding.** The bare form is what this
+// codebase writes (190 to 30), so a barrel that exports an enum without its arms withdraws the
+// idiom. But `Method` also has an `Other`, and a barrel cannot publish one name twice — the check in
+// `scratchpad/dangling.py` exists because `http`'s barrel already did that four times in one day.
+// So the two open registries in this package collide at exactly the arm that makes them open, and
+// the only spelling left for either is the qualified one.
+export {
+  Ok, Created, NoContent, MovedPermanently, NotModified,
+  BadRequest, Forbidden, NotFound, MethodNotAllowed, RequestTimeout,
+  PayloadTooLarge, HeaderFieldsTooLarge, UnsupportedMediaType,
+  InternalServerError, NotImplemented, ServiceUnavailable, VersionNotSupported,
+} from "./response.wac";
 export { Request, Parsed, parseRequest, Method,
          Get, Head, Post, Put, Delete, Connect, Options, Trace, Patch, Other }
   from "./request.wac";

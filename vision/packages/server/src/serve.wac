@@ -12,7 +12,8 @@
 
 import { Bytes } from "core";
 import {
-  Parsed, Request, parseRequest, RequestFault, TooLarge, Response, write, eqFold,
+  Parsed, Request, parseRequest, RequestFault, TooLarge,
+  Response, Status, Sending, write, eqFold, BadRequest, PayloadTooLarge,
 } from "@/packages/http";
 import { route } from "./routes.wac";
 
@@ -47,12 +48,14 @@ export Served serve(Bytes input, i64 nowMillis) {
       // A malformed request means the byte stream can no longer be trusted to be a sequence of
       // messages, so the connection closes whatever the client asked for. Continuing on a stream
       // whose framing is in doubt is the smuggling condition itself.
-      return Served.Done(bare(statusFor(why), "GET".toBytes(), false), input.len(), false);
+      // **No invented method.** The original writes `"GET"` here — see §2.
+      return Served.Done(bare(statusFor(why), Sending(true, false)), input.len(), false);
     }
     Ok(request): {
       bool keep = wantsKeepAlive(request);
       Response res = route(request, nowMillis);
-      return Served.Done(write(res, request.method, keep), request.consumed, keep);
+      return Served.Done(
+        write(res, Sending(!request.method.bodyless(), keep)), request.rest, keep);
     }
   }
 }
@@ -63,10 +66,10 @@ export Served serve(Bytes input, i64 nowMillis) {
  * `code == ERR_TOO_LARGE()` in the original — an integer compared against a function returning a
  * literal, in a file that also has integers meaning statuses and integers meaning positions.
  */
-i32 statusFor(RequestFault why) {
+Status statusFor(RequestFault why) {
   return match (why) {
-    TooLarge: 413,
-    default:  400,
+    TooLarge: PayloadTooLarge,
+    default:  BadRequest,
   };
 }
 
@@ -84,7 +87,51 @@ bool wantsKeepAlive(Request req) {
   return true;
 }
 
-/** A bare status with no body, for the cases where there is nothing useful to say. */
-u8[] bare(i32 status, Bytes method, bool keepAlive) {
-  return write(Response.create(status), method, keepAlive);
+/**
+ * A bare status with no body, for the cases where there is nothing useful to say.
+ *
+ * **The original takes a method and this takes a `Sending`**, which is the whole of §2. The method
+ * was only ever consulted for *is this a HEAD*, and on the path that calls this there is no request
+ * to ask.
+ */
+Bytes bare(Status status, const Sending how) {
+  return write(Response.of(status), how);
 }
+
+// ## 2. The writer never wanted the request, and the error path is what said so
+//
+// This file's error path is where three days of `@/packages/http` redesign broke. `write` went
+// `bool headOnly` → `const Request sent`, on the argument that two functions in that package were
+// taking a request it had no type for — and **here there is no request**, because parsing is what
+// failed.
+//
+// The shipped code's answer is to invent one:
+//
+//     return Served(true, bare(status, "GET".toBytes(), false), input.len(), false);
+//
+// `"GET"` there means *not a HEAD*. It is a real method standing for *unknown*, which is
+// `../../../QUESTIONS.md`'s *a sentinel drawn from the value's own range* at a new site — and the
+// range it is drawn from is an **open registry**, so there is no spare value to use instead.
+//
+// So the writer wanted **two decisions the request happens to determine**, both known on the error
+// path: may a body be sent, and does the connection survive. `Sending` names them, and the error
+// path says `Sending(true, false)` — a body is allowed, the connection closes — with nothing
+// invented.
+//
+// > **A unification is only right where every caller has the thing.** `read` genuinely holds the
+// > request it sent; both writers hold its *consequences*. I unified on the value rather than on
+// > what the value was consulted for, and the caller that could not supply it is the one that had
+// > no request at all.
+//
+// ## 3. What nothing caught
+//
+// Every call in this file went stale when `@/packages/http` changed and **no checker said a word**:
+// `write(res, request.method, keep)` against a two-argument `write`, `Response.create(status)`
+// against `Response.of(Status)`, `request.consumed` against `rest`, and `statusFor` answering `i32`
+// where `Status` exists. The names all still resolve, and `../../../README.md` says nothing here
+// compiles.
+//
+// That is the directory's own rule working as intended and it has a cost worth stating once: **a
+// redesign of a package leaves its consumers stale silently**, and the only reason these were found
+// is that this file was read on purpose four days later. Four call sites in one file, from one
+// change, in the package that change was for.
