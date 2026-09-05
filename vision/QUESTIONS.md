@@ -6991,6 +6991,44 @@ will not.
 normal. After `NotRelevant` and `LeapSecond`, and the first where the fix is a `?` — `Result<Element?,
 PageFault>` — rather than a redesign.
 
+### Sixth caller: provenance is the producer's to record, not the caller's to supply
+
+The taxonomy's falsifiable claim was *a union whose callers differ on provenance will always need
+something the union cannot hold*. `@/packages/ts/src/report.wac` tests it on the sharpest provenance
+case available — a bundler, half of whose input is its own output, so a `NoSuchModule` in a generated
+barrel is a bug in the bundler and the same fault in a user's file is a bug in the user's program.
+
+The prediction holds and the two callers disagree on three of four members — but the disagreement is
+**total**, and both functions are constants. A constant classifier is the tell: neither is
+classifying, each is asserting a blanket answer. `cp`'s `policy(Side, FileFault)` at least *used* the
+member.
+
+**And the fact needed is not about the call site.** It is *is `from` a file the user wrote or one this
+bundler generated*, which is a property of the string inside the fault, decided against a set only
+the bundler holds. `NoSuchModule { spec, from }` carries `from`, so the data is right there, and
+nothing can decide it — *generated* is not a property of a path, it is a property of whether this run
+made it, and that lives in the module table and is gone by the time a caller has a `Result`.
+
+So the axis cannot be a caller's parameter here. It has to be recorded when the fault is raised:
+`NoSuchModule { spec, from, fromGenerated: bool }` — the union carrying provenance after all, because
+the **producer** knows.
+
+> **Provenance cannot be recovered by a caller and can be recorded by a producer.** Every earlier
+> instance had a caller who happened to know — `cp` knew which argument it passed, the renderer knew
+> it built the page — so the axis looked like caller knowledge. It is not. It belongs to whoever
+> raised the fault, and the four earlier cases were the ones where the caller happened to have it
+> too.
+
+That refines the third row of the taxonomy rather than breaking it, and it makes the ask concrete:
+not *a way for a caller to tag a call*, but **a convention that a fault records what only its producer
+can know**. The reason nothing here does is that a fault union is designed by listing what can go
+wrong, which is a producer thinking about causes rather than about what a reader will need.
+
+**Fourth instance of an `Err` that should carry what was recovered.** A bundler that wanted to retry
+`NoPrefix` with a different prefix — which is exactly what that member invites — cannot, because by
+the time it knows the fault is its own it has returned. After `datetime`'s `Take.Accept`, `cat.wac`'s
+halfway read and `codec`'s `BadPadding`.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

@@ -1,0 +1,120 @@
+// Two callers of `BundleFault`, chosen to test the one falsifiable claim the taxonomy makes.
+//
+// `../../../QUESTIONS.md`, after five callers:
+//
+// > **recovery** — a value exists, hand it over or not? — the union can carry the answer.
+// > **response** — what outward artefact does this become? — the union can carry the answer.
+// > **provenance** — did this program produce the thing that failed? — **it can never carry it**,
+// > because it is a fact about the call site.
+// >
+// > Falsifiable: a union whose callers differ on provenance will always need something the union
+// > cannot hold; one whose callers differ on recovery or response will not.
+//
+// A bundler is the sharpest provenance case there is, because half its input is its own output: a
+// generated barrel, a synthesised entry point and a rewritten import specifier are all things the
+// bundler wrote, and a `NoSuchModule` in one of them is a bug in the bundler where the same fault in
+// a user's file is a bug in the user's program.
+//
+// The prediction is that the union cannot say which. It cannot, and the *way* it cannot is sharper
+// than the five before it — §2.
+
+import { Result, Vec } from "core";
+import { Out } from "std";
+import { BundleFault, NoSuchModule, Cycle, TopLevelAwait, NoPrefix } from "@/packages/ts";
+
+/** Who should read this, which is the only question either caller is asking. */
+export enum Blame { User, Bundler }
+
+/**
+ * What a user sees: a diagnostic against their source.
+ *
+ * Every arm is `User`, and the file argues below that this is the *wrong* answer three times out of
+ * four rather than the right one four times out of four.
+ */
+export Blame forUser(BundleFault f) {
+  match (f) {
+    NoSuchModule { spec, from }: { return User; }
+    Cycle { path }:              { return User; }
+    TopLevelAwait { path, at }:  { return User; }
+    // The one member that is unambiguously ours: `bundle` could not find a prefix that no module
+    // already uses, after `tried` attempts. No user input causes it and no user can act on it.
+    NoPrefix { tried }:          { return Bundler; }
+  }
+}
+
+/** What a bundler's own test suite wants: anything blamed on the user that the bundler caused. */
+export Blame forSelfCheck(BundleFault f) {
+  match (f) {
+    NoPrefix { tried }:          { return Bundler; }
+    NoSuchModule { spec, from }: { return Bundler; }
+    Cycle { path }:              { return Bundler; }
+    TopLevelAwait { path, at }:  { return Bundler; }
+  }
+}
+
+/** `bundle: cannot resolve 'x' from 'y'`, or the internal-error form. */
+export string say(const Blame b, BundleFault f) { … }
+
+// ## 1. The prediction holds, and the two functions are a bad way to write it
+//
+// `forUser` and `forSelfCheck` disagree on three of four members, which by the taxonomy means
+// `BundleFault` earns them. It does not — the disagreement is **total** on those three and the two
+// functions are constants, which is the shape of a caller asking a question the union cannot answer:
+// neither is classifying members, each is asserting a blanket answer and hoping.
+//
+// A constant classifier is the tell. `@/packages/box/src/cp.wac` had `policy(Side, FileFault)` — one
+// function, two callers, and the axis passed by hand — and that at least *used* the member. Here the
+// member is irrelevant to three of four rows in both directions, so writing two functions produces
+// two lookup tables that contain no lookups.
+//
+// ## 2. And the fact needed is not even about the call site — it is about a path
+//
+// This is where it is sharper than the other five. `cp` needed *which of my two arguments* and a
+// `Side` parameter answered it, unpleasantly but completely. Here the question is
+//
+// > **is `from` a file the user wrote, or one this bundler generated?**
+//
+// and the answer is a property of the **string inside the fault**, at the moment the fault is
+// caught, against a set only the bundler holds. `NoSuchModule { spec, from }` carries `from`, so the
+// data is right there — and nothing can decide it, because *generated* is not a property of a path.
+// It is a property of *whether this run made that path*, which lives in the bundler's module table
+// and is gone by the time a caller has a `Result`.
+//
+// So provenance here is not a parameter a caller can supply. It needs the fault to be raised with
+// the answer attached — `NoSuchModule { spec, from, fromGenerated: bool }` — which is the union
+// carrying provenance after all, and only because the *producer* knows it and writes it down.
+//
+// That refines the taxonomy rather than breaking it, and the refinement is the finding:
+//
+// > **Provenance cannot be recovered by a caller, and can be recorded by a producer.** Every earlier
+// > instance had a caller who happened to know — `cp` knew which argument it passed, the renderer
+// > knew it built the page — so the axis looked like caller knowledge. It is not. It is knowledge
+// > that belongs to whoever raised the fault, and the four earlier cases were the ones where the
+// > caller happened to have it too.
+//
+// Which makes the ask concrete instead of philosophical. Not *a way for a caller to tag a call*, but
+// **a convention that a fault records what only its producer can know** — and the reason nothing
+// here does is that a fault union is designed by listing what can go wrong, which is a producer
+// thinking about causes rather than about what a reader will need.
+//
+// ## 3. What could not be written
+//
+// **`say` takes a `Blame` and a fault and cannot check they belong together.** `say(User,
+// NoPrefix(3))` type-checks and prints a user diagnostic for an internal error. The pair is the
+// output of `forUser` applied to that fault and nothing says so — the same *paired values with
+// nothing holding the pair* as `@/packages/git/example/ignorelint.wac`'s index-into-a-`Vec`, and the
+// fourth site.
+//
+// **`Cycle { path }` binds a `Vec<string>` and the arm does nothing with it.** Three of the four arms
+// in each function bind a payload they ignore, and `{ .. }` exists for exactly that — I wrote the
+// names because writing `{ .. }` four times makes the two tables look identical, which they nearly
+// are and which is the point of §1. So the spelling that is *more* honest here is the less
+// informative one, and there is no way to write *bound and deliberately unused*.
+//
+// **A `Blame` is not in the return type of anything.** `bundle` answers `Result<Bytes, BundleFault>`
+// and both functions here are downstream of it, so the classification happens after the value is
+// gone. A bundler that wanted to *recover* from its own faults — retry with a different prefix, which
+// is exactly what `NoPrefix` invites — cannot, because by the time it knows the fault is its own it
+// has returned. Fourth instance of an `Err` that should carry what was recovered, after
+// `@/packages/datetime`'s `Take.Accept`, `@/packages/box/src/cat.wac`'s halfway read and
+// `@/packages/codec`'s `BadPadding`.
