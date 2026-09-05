@@ -707,7 +707,7 @@ opaque needs the arm and `union<never, Fault>` must not — which is exactly the
 raster test. So it is cheap to take, and the 99.4% prose rate is the most extreme in the table by a
 distance, which is what happens when a reserved word is also an ordinary English one.
 
-## A sentinel drawn from the value's own range — ten, one of which is right, and this entry owns the list
+## A sentinel drawn from the value's own range — eleven, two of which are right, and this entry owns the list
 
 Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counted one; **four more added
 2026-09-05** from `gzip`, `url` and `fmt`, and with them the first one that survives scrutiny.
@@ -724,6 +724,7 @@ Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counte
 | `@/packages/gzip`'s `Huff.code[i]` | meaningless unless `len[i] > 0` | a canonical code — `0` is a legal one |
 | `@/packages/url`'s `Part(0, false, false)` | `0` payload on a parse failure | an IPv4 part — `0` is legal |
 | `@/packages/fmt`'s `fastPath` | **NaN** means *I decline* | **nothing** — no JSON number is NaN |
+| `@/packages/json`'s `Number.raw` | `len() == 0` means *built, not parsed* | **nothing** — a parsed number has at least one byte |
 
 `@/packages/tty` listed *"`Read.code`, `search`'s `NO_MATCH`, `decode`'s `-2` and `Socket`'s negative
 handle"* and called itself the fifth. `Read.code` and *`decode`'s `-2`* are the same instance under
@@ -4623,7 +4624,8 @@ or references, and never inline structs. There is no third option at the runtime
 a workaround for **WasmGC** rather than for wac.
 
 *Measured 2026-09-05 and the claim holds — at 5%.* `../bench/dispatchcost.wac` reads the same element
-three ways over 67.1M steps: **packed 65 ms, boxed 68, three flat lanes 78.** So the packed form is
+three ways over 67.1M steps: **packed 65 ms, boxed 68, three flat lanes 78** — figures read across
+rows of that table rather than down one, and the ordering holds in all of them. So the packed form is
 the fastest of the three and *here the type is slower* is right, with a number the phrasing overstates
 — and `zstd`'s own *"over half of decode time"* is about the loads its packing removes elsewhere, not
 about this 5%.
@@ -9346,6 +9348,12 @@ because allocation is proportional to the fields and reading two of them is not.
 beats one checked load and two field reads, which beats three checked loads — so the ordering is
 packed, boxed, lanes, and *a record stored inline in an array* above is confirmed at 5%.
 
+> Those three figures are a **second run** with the packed arm added, and they are read across rows
+> rather than down one — 68 is the 16-instruction row's boxed, 78 the 256-instruction row's flat. The
+> ordering holds in every row and the margins move: at 4,096 instructions it is packed 65, boxed 72
+> (three fields) and 69 (eleven), lanes 77. Noted because a later entry quotes the 4,096 row and a
+> reader comparing the two numbers for *boxed* should not have to guess why they differ.
+
 *Acted on the same hour.* `@/packages/regex/src/program.wac`'s five parallel class arrays are a
 `Vec<CharClass>` now — a class table is built once per compile and scanned on every `Class` step of
 every match, which is not near fifteen. The file's own rule, *a comment that reads as a workaround is
@@ -10145,3 +10153,205 @@ what stops it is `f64.fromBits(lo)` in the body, a primitive named on a *type*, 
 `T.fromBits` and have it resolve per instantiation. A reader who fixed the comment and merged the two
 functions would get a body that does not compile. **The named blocker was not the blocker, and the
 real one is a smaller ask than generics:** a type parameter usable where a primitive type name goes.
+
+
+## A phase in a value, nine times — and where carrying it in the type stops working
+
+Nine values here hold two or more *stages of their own life* in one type, with the stage recorded as
+a field, a sentinel, or nothing at all. Eight were found on 2026-09-05; the ninth, `json`'s, was
+written up in its package README the day before and never promoted, and it belongs with them.
+
+| where | the stages | how the stage is recorded |
+|---|---|---|
+| `@/core`'s `Cursor` | before/after a fault | it was not — `Overrun` is the fix |
+| `@/packages/gzip`'s `BitReader` | reading / starved | `spent`, and `broken` that nothing reads |
+| `@/packages/gzip`'s `Huff` | code assigned / symbol unused | `len[i] > 0`, gating a second lane |
+| `@/packages/gzip`'s `Freqs` | raw / padded to two nonzero | prose, plus an exported `forceTwo` to remember |
+| `@/packages/unicode`'s `Table` | sorted / not | prose |
+| `@/packages/gzip`'s `Crc` | running / finished | nothing — `finish` is an involution |
+| `@/packages/tor`'s `Relay` | listed / microdescriptor attached | `ntorOnionKey` empty, in a doc comment |
+| `@/packages/json`'s number | parsed / built | `raw.len() > 0` |
+| `@/packages/tls`'s connection | five handshake phases | `i32 phase`, `0..4` |
+
+**The fix is not "two types", and saying so was the first draft of this entry getting it wrong.**
+Counted properly, only `tor`'s `Listed`/`Usable` is a genuine split, and `json`'s README proposes a
+second. The other seven put the stage into the type by whatever fitted:
+
+    Cursor      a fault union, so the after-a-fault stage is a different return
+    BitReader   a `Starved` union on the consuming verbs only
+    Huff        `Code?` per symbol, so the unused stage is absence
+    Freqs       a constructor, so the un-padded stage cannot be constructed
+    Table       a wrapper, so the unsorted stage has no name
+    Crc         a method whose return type is not the receiver's
+    Relay       two types
+
+So the generalisation is weaker and more useful: **the stage becomes something the type carries** —
+absence, a wrapper, a constructor, a union, a return type, or a second type — and which one depends
+on how the stages are entered and left. A two-type split is the answer when the transition happens
+once, in one place. It is not the answer when every method can move the value.
+
+### And there is a boundary — `tls` is on the far side of it
+
+`tls` has **five** phases, three of them accept records, and every call can move the connection from
+one to another. None of the seven devices above reaches that: absence and wrappers describe a stage,
+and this needs to *name* five of them and enumerate the transitions. So:
+
+> **A stage entered once wants a type that carries it. Five stages that every call can move between
+> want a tag and an exhaustive match.**
+
+That is not a compromise, it is the actual shape of the problem, and it took eight instances before
+one appeared that tested it. The `tls` entry above has the evidence for why the tag version
+still needs the language's help: its chain handles three of five phases and closes with
+`else { trap; }`, and a peer reached that trap.
+
+### What each answer needs, which is different
+
+- **Carrying the stage in the type** needs nothing. All eight of the non-`tls` rows are writable in
+  wac today — unions, optionals, wrappers and constructors all exist. They were not written because
+  one type looked like the economical choice and the second stage's constraint fitted in a comment.
+- **A tag with exhaustiveness** needs `match` over an enum where the checker rejects a missing arm —
+  which the language has — *plus*, for `tls`, an enum that survives being written to the wire. That
+  second half is the entry above and is not the same ask as `issues/lang/0346a`.
+
+### And `json` got there first, independently
+
+`@/packages/json`'s README, a day before the sweep: *"An empty span is not a real span, so it works,
+for the reason every sentinel in `../../QUESTIONS.md`'s list works. Seventh instance. Two variants is
+better than `Bytes?` here and not for style: a program that reads a document, edits one field and
+writes it back wants to know which of its numbers will come out changed, and that is a `match` rather
+than a null check."*
+
+That is the two-part sentinel rule *and* the right fix for its case, both derived from one file,
+before either was written down here. Worth recording as a check on the method: **the sweep did not
+discover the pattern — a package note had it a day earlier — and what the sweep added was the
+boundary, not the rule.** Which is an argument for reading the READMEs before sweeping, and for the
+brief's instruction to promote from them.
+
+## A closed set spelled as an integer, four times, ending in a peer-reachable trap
+
+Four files today spell a closed set as an open type. Listed together because the sequence is the
+argument — each one's failure is worse than the last, and the fourth is not hypothetical:
+
+| where | the set | what a wrong value does |
+|---|---|---|
+| `@/packages/unicode` `mapAll(s, which)` | 3 mappings as `0,1,2` | `mapAll(s, 3)` case-folds, silently |
+| `@/packages/url` `inEncodeSet(c, set)` | 7 encode sets as `0..6` | an unknown set answers as the *most aggressive*, corrupting a valid URL |
+| `@/packages/tor` `hasFlag(r, "BadExit")` | 10 consensus flags as strings | a typo answers **false** — *safe to exit through* |
+| `@/packages/tls` `c.phase` | 5 handshake phases as `0..4` | **a peer reached a `trap`** |
+
+The first three are arguments from shape. The fourth is an incident with a fuzzer, a reproduction and
+a patch, documented in `packages/tls/src/client.wac`:
+
+> The clean close was the hole, and unlike the one above **a peer could reach it**. `phase == 4` with
+> no failure code is what a `close_notify` leaves behind, and a caller feeds whole records in one
+> call … So a server sending `close_notify` followed by anything at all in the same flight put both
+> records in one `tlsClientFeed`: the first set phase 4, the second fell through to a `trap`. The
+> caller checking the phase between calls, which every caller here does, cannot help — both records
+> are inside one call.
+
+Five phases, no names anywhere: six writes and eight comparisons under three operators, plus an
+encode, a decode and an accessor that indexes byte 0 — seventeen places that have to know what a
+phase is. The structure it fell through is:
+
+    if (c.phase == 1) { … } else if (c.phase == 2) { … } else if (c.phase == 3) { … }
+    else { trap; }
+
+Five phases, three arms. **Exhaustiveness over a closed set is the entire feature**, and a `match` on
+a five-variant `Phase` does not compile with `Closed` missing. The shipped fix is an early return at
+the top of the function — correct, and a guard rather than a structure: the `else { trap; }` is still
+there, and phase `0` still reaches it, unreachable only because `tlsClientInit` assigns `1` before
+returning. That is an argument made outside the function that traps.
+
+### And it is also where *give each phase a type* stops scaling
+
+Six times today a phase error here was fixed by splitting one type into two — the cursor, the bit
+reader, `Freqs`, `Table`, `Crc`, and `tor`'s `Listed`/`Usable`. **This is the seventh case and the
+split is the wrong shape for it.** TLS has five phases and three of them accept records, so the
+two-type version is `Open` covering three phases with the phase *still inside it* — which puts the
+enum back and buys only the outermost check.
+
+So the honest answer here is an enum with an exhaustive match **plus** a guard at the entry that no
+type writes: `feed` still accepts a `Closed` connection and still has to answer. The enum makes the
+missing arm unwritable; it does not make the call unwritable.
+
+Worth recording because six confirmations in one day is exactly when a rule should be tested against
+the case that breaks it, and the boundary is legible: **two phases split into two types; five phases
+want a tag and exhaustiveness.** The cursor and the bit reader were two-state. `directory.wac` was
+two-state. This is not.
+
+**The incident is still the strongest evidence in this directory for anything it has asked for**, and
+it is worth saying that it was not produced by the rewrite. It was already in the shipped tree, written up by
+whoever fixed it, and it took reading the file to connect it to three other entries that had been
+arguing the same point from smaller stakes.
+
+### The same structure is on the other side of the package
+
+`packages/tls/src/server.wac` has **nine** phase writes and the same `} else { trap; }` closing its
+chain, at `:592`. So this is the package's way of holding a handshake state, not one file's shortcut,
+and the client's incident is the one that happened to be found.
+
+Whether the server has an equivalent reachable hole is **not** established here and this entry will
+not guess — it would take reading the server's flight handling the way whoever fuzzed the client did.
+What is established is that the structure which admitted the client's bug sits uncommented in the
+file beside it, which is the argument for changing the shape rather than adding a second guard.
+
+## An enum on the wire is a different ask from an enum as an integer
+
+`packages/wacc/src/kinds.wac` names the gap it is waiting for: *"this file is a candidate for becoming
+[an enum], once an enum can be used where an i32 is expected."* `issues/lang/0346a` is the other half,
+on payload-free variants allocating. Both are about an enum **being** an integer — compared, indexed,
+ranged over.
+
+`tls`'s `phase` needs something adjacent and not the same. It is serialised: `w.u8(c.phase)` out,
+`r.u8()` back, into a state blob that `tlsClientFeed` decodes on every call. So the tag is not an
+implementation detail, it is a **format**. An enum whose numbers come from declaration order is
+actively wrong here: inserting a variant, or reordering two for readability, silently changes a
+serialised encoding with no diagnostic anywhere.
+
+So the ask is **an enum with declared, stable discriminants**, and a checked conversion back:
+
+- `enum Phase : u8 { Fresh = 0, … }` or equivalent, so the number is written down rather than
+  inferred from position;
+- and `Phase.from(u8)` answering something that can fail, because `decodeConn` currently reads
+  `i32 phase = r.u8()` and validates nothing — a state byte of 200 satisfies no comparison in the
+  file and lands in the `else { trap; }`.
+
+**A language change granting the first ask without the second would make this file's rewrite unsafe
+rather than merely unavailable**, which is the reason to record them apart. Every wire format in this
+tree that carries a tag has the same requirement, and nothing in `vision/GRAMMAR.ebnf` addresses it.
+
+## The type of a TLS connection is `u8[]`, and it is re-encoded on every call
+
+    export u8[] tlsClientInit(u8[] host, u8[] rootDer, i32[] rootOffsets, u8[] ephemeralPriv, …)
+    export u8[] tlsClientFeed(u8[] state, u8[] input)
+    export u8[] tlsClientSend(u8[] state, u8[] data)
+    export u8[] tlsClientClose(u8[] state)
+
+Every entry point takes the connection as bytes, calls a private `decodeConn`, works, and re-encodes
+on the way out — transcript, both traffic key sets, the certificate DER and the chain offsets, per
+call, and a caller feeding records in a loop does it per flight.
+
+The stated reason is sound and **does not require this**: *"the state is a byte string and the host
+owns the socket and the randomness."* No-ambient-authority is satisfied by the caller *holding* the
+state. It needs the state to be the caller's, not to be bytes.
+
+Two candidate explanations, and this directory cannot tell which:
+
+- **A boundary that only passes bytes.** If the intended host cannot hold a wasm GC reference the
+  blob is forced — but every caller in this repository is wac and could hold a struct, so this would
+  be a design for a host that does not exist here yet.
+- **Nobody re-examined it.** `server.wac` is the same shape and the client's comment says *"like the
+  server"*, which is how one decision becomes two.
+
+Naming the question is the output. What is certain is the cost: `u8[]` is the type of everything, so
+`tlsClientFeed(input, state)` transposed compiles, and a connection is indistinguishable from a
+certificate, a record or a hostname.
+
+**And a caller already reaches past the abstraction**, which is the tell:
+
+    export i32 tlsClientPhase(u8[] state) { return state[0]; }
+
+The phase accessor does not call `decodeConn` — it indexes the blob. So *phase is a `u8` written
+first* is load-bearing across a package boundary, and changing the serialisation order breaks a
+caller that never mentions the format. Whoever wrote that found decoding too expensive for one byte,
+which is the encode/decode cost reporting itself.

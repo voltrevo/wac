@@ -150,8 +150,8 @@ is not rewritten because it would find nothing new.
 **A struct the compiler may lay out inside one `i32`.** Added with
 [`src/huffman.wac`](src/huffman.wac), which pulls the decoder out of `inflate.wac` and then declines
 to change its fast table. `(len << 16) | sym` is the **fastest** of the four representations in
-[`../../bench/dispatchcost.wac`](../../bench/dispatchcost.wac) — 65 ms against 72 for a three-field
-record and 77 for three lanes — so the rewrite this directory has applied everywhere else would make
+[`../../bench/dispatchcost.wac`](../../bench/dispatchcost.wac) — at 4,096 instructions and 67.1M
+steps, 65 ms against 72 for a three-field record and 77 for three lanes — so the rewrite this directory has applied everywhere else would make
 the hottest loop in the package 10% slower. wasm GC has no packed struct, so the type is the thing
 that got dropped in exchange. Promoted to [`../../QUESTIONS.md`](../../QUESTIONS.md).
 
