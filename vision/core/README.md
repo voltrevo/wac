@@ -14,6 +14,8 @@ deleted when nothing does.
 | `vec.wac` | `pop` answers `T?` |
 | `queue.wac` | new — `Sys.drain` wanted one |
 | `slice.wac` | new, and invented — a view of part of an array, so a parser can stop copying |
+| `cursor.wac` | new — a position in a byte slice, from a sweep that found `Reader` in five shipped packages |
+| `order.wac` | new — `Ordering`, `SortSpec<T>`, `bytesCmp`; the fifteen three-way comparators in the tree all answer `i32` |
 
 **`option.wac` is not here and will not be.** The real `core` has one; `T?` nests, so
 `Option<Option<T>>` has nothing left to do that `T??` does not.
@@ -27,6 +29,25 @@ way. `Option` **narrows** — `case Some(v)` binds the payload, so the arm has a
 not: `is not null` leaves the value nullable, measured, so every use needs a `!`. There are **21**
 `case Some(v)` arms in the tree, and those are the sites that would go from a bound name to an
 unwrap. The other 790 nullables already pay it.
+
+## The two new files were written from sweeps of the shipped tree, not from a rewrite
+
+Every other file here came out of rewriting a package and finding what it needed. These two came out
+of counting, which is a different method with a different failure:
+
+- **`cursor.wac`** — four shipped packages declare a byte cursor called `Reader` and `core` has none.
+  Written, then adopted by `@/packages/rlp/src/decode.wac`, which **declined its best operation**:
+  `sub(n)` bounds a nested field by construction and would make rlp's `ListOverrun` unreachable. One
+  adoption disproved one of the file's own four claims, and a second candidate — `@/packages/abi` —
+  declined the whole type, because ABI is random-access and there is no position that advances.
+- **`order.wac`** — fifteen three-way comparators in the shipped tree, all answering `i32`; three of
+  them are the same eight lines; `core/hash.wac` has `bytesEq` and no `bytesCmp`. Filed as
+  `issues/system/0345a`, because the shipped decision — is `core`'s sort stable? — is not this
+  directory's to make.
+
+> **A sweep says a type is missing and an adoption says which parts of it are.** The cursor's count
+> of shipped `Reader`s said eleven members were wanted; its one real consumer uses six, declines two
+> for reasons that are the format's, and never reaches for three.
 
 ## What could not be written
 
