@@ -10595,6 +10595,31 @@ match can be made to fire — every other finding in this file is about a wrong 
 caller, and this is about a right value never arriving. The instruments this directory has built all
 read what is there.
 
+### Three of them, in two packages, and they are not the same kind
+
+`ssh`'s window is the clearest but not the only one. Swept for the shape — a requirement to *do*
+something, whose omission is a stall rather than an error:
+
+| where | the obligation | what omitting it does |
+|---|---|---|
+| `@/packages/ssh` `channel.wac` | send `WINDOW_ADJUST` as output is consumed | hangs forever, no error |
+| `@/packages/ssh` `channel.wac` | send it at **half** the window, not at zero and not per byte | *"adjusting on every byte would spend a packet per packet, and waiting until the window is empty stalls the sender while the adjustment is in flight"* |
+| `@/packages/quic` `params.wac` | `initial_source_connection_id` **must equal** the source id in the packet carrying the ClientHello | a borrowed ClientHello is accepted; *"an attacker who could rewrite connection ids in flight could move a handshake onto ids of its choosing"* |
+
+The three are different enough to matter. The first is *keep calling*. The second is a **rate** — the
+right answer is neither extreme and the file picks half by reasoning about packets in flight, which
+is a tuning constant no type could hold and no type should. The third is not a repetition at all: it
+is a **cross-field equality** between a transport parameter and a packet header, checkable at one
+point, and the only one of the three a type could plausibly carry.
+
+So *obligation* is a bag, and pulling on it splits: one wants session types, one wants a comment and
+a bench, and one wants a construction that cannot produce the mismatched pair. This entry claims only
+the first is a language gap, and it is the one it declines to propose a feature for.
+
+The `quic` one also has the best provenance in the sweep — *"quinn answers
+`TRANSPORT_PARAMETER_ERROR` with the reason `CID authentication failure`, which is how this file came
+to exist rather than being read out of the RFC."* Found by a real peer refusing it, not by reading.
+
 ### It is also the third hazard in one file that only appears at scale
 
 `channel.wac`'s header lists three, and two of them are invisible under test conditions: confusing
