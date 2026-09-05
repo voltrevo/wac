@@ -9351,6 +9351,44 @@ one declares `i32[]` and the other declares `Op[]`, which is not a duplicate, no
 reference, not an unresolved name and not a misquotation. **A directory whose value is its arguments
 has no check for two arguments that contradict each other**, and this is the first one found.
 
+## A doc comment cannot contain a path pattern, and cannot describe the rule that says so
+
+*2026-09-05.* `../core/order.wac` stopped parsing because a doc comment said
+*"counted over every package's src"* with the glob spelled out: a glob contains a star and a slash in
+that order, which ends a block comment, and the lexer then refuses at the next backtick —
+`stray '`' at 20:32`, three characters past the real fault on a line the author did not touch.
+
+Ordinary C-family behaviour, and worth an entry for what happened next. **An hour later the same
+author broke `@/packages/bytes/src/buf.wac` the same way**, writing the same count into a doc comment
+— and then broke it again with the *sentence explaining the rule*, because that sentence quoted the
+closing delimiter.
+
+> **The natural place to write the rule down is the one place it cannot be written.** That is why it
+> was rediscovered twice in an hour by the person who had just recorded it.
+
+### The asymmetry that makes it bite here specifically
+
+A line comment holds a glob happily. A doc comment does not. And the two are used for different jobs
+in this directory — line comments carry the argument, doc comments describe the type — so **the form
+that documents a type is the one that cannot name the corpus the type was derived from**, which is
+exactly what a `core` addition derived from a sweep of `packages/` wants to say.
+
+Three occurrences in one hour is also a measurement of how often it comes up: this directory writes
+that path constantly.
+
+### What could not be written
+
+**No diagnostic can name it.** A comment that ends where a delimiter appears is what the rule says, so
+there is no such thing as a comment that closed *early* — the lexer is reading prose as code by the
+time anything is wrong, and the message it gives is about whatever token comes next. *An unterminated
+block comment* exists for the opposite mistake and has no counterpart here.
+
+**A checker could, though, and none does.** *A block comment containing a star-slash inside a
+backticked span* is a lexical rule over a file that already lexes, which is the cheapest kind of check
+in this repository, and `tools/wac/` has a dozen guards of that shape and not this one. Filed here
+rather than as an issue because the population is one directory's prose and the cost is a failed parse
+that the author sees immediately — it wastes minutes, not correctness.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

@@ -53,3 +53,24 @@ This file had it as `trap("…")`, which is neither the spelling nor a missing f
 
 What is genuinely missing is `trap` as an **expression** — `core/result.wac` wants one as a match
 arm's value, which needs it typed `never` so the arms unify.
+
+**And two things found on 2026-09-05, after `issues/lang/0347a`.**
+
+`Buf` gained `pushStr` and `str`. The shipped one has `toStr` — two lines, `string.fromBytes(bytes())`
+— and nothing in the other direction, and this rewrite had dropped `toStr` as well, so vision's `Buf`
+had neither. What that costs is counted: **257 string accumulations inside a loop** across the
+package sources and `tools/`, 142 of them in `packages/wacc`, each `out = out + …` where `+` on
+strings is a call to the runtime's ` str_concat` and allocates the combined length.
+
+**`pushStr` still copies, and that is the language part.** A `string` is an `i8[]` at the runtime and
+`Bytes` is `Slice<u8>`, so no view spans them — `packages/wacc/src/emit.wac`'s `emitBytesCopy` exists
+for exactly this and says so: *"`string` and `u8[]` hold the same bytes and are different types, which
+is why this is a copy and not the no-op it looks like."* So a builder makes the accumulation linear
+instead of quadratic and cannot make it free, and the third thing in the missing-features line is not
+the builder at all.
+
+**A doc comment cannot contain a path pattern, and cannot describe the rule that says so.** Writing
+the count above broke `src/buf.wac` twice: once because a glob contains a star and a slash in that
+order and ends a block comment, and once because the sentence explaining that quoted the closing
+delimiter. The first is a nuisance a checker could catch; the second is why the rule keeps being
+rediscovered, since the natural place to write it down is the one place it cannot be written.

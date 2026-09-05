@@ -17,6 +17,24 @@
 
 import { Bytes, Slice } from "core";
 
+// ## And `pushStr` copies, because a `Bytes` cannot view a `string`
+//
+// `this.pushAll(Slice.all(s.toBytes()))` allocates a `u8[]` per append. It is linear over the whole
+// build where `out = out + s` is quadratic, so it is the better trade and it is not the free one, and
+// the reason is in the emitter:
+//
+// > `string` and `u8[]` hold the same bytes and are *different types*, which is why this is a copy
+// > and not the no-op it looks like. One function serves both directions, because the only difference
+// > is which type index goes where.
+//
+// `packages/wacc/src/emit.wac`'s `emitBytesCopy` exists for exactly this. A `string` is an `i8[]` at
+// the runtime and `Bytes` is `Slice<u8>`, so a view would need a `Slice<i8>` or a signed/unsigned
+// reinterpretation of one array — and **the two arrays are the same bytes at two element types**,
+// which is a wasm distinction that reaches all the way up into a `Buf`'s API.
+//
+// So the third thing in `../../../QUESTIONS.md`'s *string builder* line is not the builder: it is
+// that appending text to bytes cannot avoid a copy however the builder is spelled.
+
 export struct Buf {
   u8[] data;
   i32 len;
@@ -91,4 +109,30 @@ export struct Buf {
 
   void pushAll(this, Bytes more) { … }
   void reserveFor(this, i32 n) { … }
+
+  /**
+   * Append a `string`, and it is the method the shipped `Buf` never had.
+   *
+   * `packages/bytes/src/buf.wac` has `toStr()` — `return string.fromBytes(this.bytes());`, two lines
+   * — and no way in. **Somebody wrote the convenience for getting a `string` out and not the one for
+   * putting a `string` in**, and `issues/lang/0347a` counts what that cost: **257 string
+   * accumulations inside a loop across every package's `src` and `tools/`, 142 of them in
+   * `packages/wacc`**, each of them `out = out + …` where `"a" + "b"` is a call to the runtime's
+   * ` str_concat` and allocates the combined length.
+   *
+   * This file lost `toStr` too, so vision's `Buf` had neither direction. Both are here now.
+   *
+   * *This paragraph broke the file twice while being written*, and the second way is the better
+   * finding. `../../../core/order.wac` recorded an hour earlier that a glob ends a block comment,
+   * because it contains a star and a slash in that order. Written here, it broke the file again —
+   * and then the **sentence explaining it** broke the file, because it quoted the closing delimiter.
+   *
+   * So: **a doc comment cannot contain a path pattern, and it cannot describe the rule that says so.**
+   * The first is a nuisance a checker could catch. The second is why the rule keeps being
+   * rediscovered — the natural place to write it down is the one place it cannot be written.
+   */
+  void pushStr(this, string s) { this.pushAll(Slice.all(s.toBytes())); }
+
+  /** What is in it, as a `string`, taking it to be UTF-8. */
+  string str(const this) { … }
 }
