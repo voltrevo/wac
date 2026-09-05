@@ -19,21 +19,38 @@
 // > answer, which is the worst of the three things it could do.**
 //
 // That sentence appears twice in the shipped file, for two different fields. It is the same bug
-// twice, the fix was the same both times — add a field and check it — and the fix does not hold.
-// Measured on the shipped tree, 2026-09-05:
+// twice and the fix was the same both times — add a field and check it. Measuring whether the fix
+// holds is what this file is for, and the first measurement was wrong in a way worth keeping:
 //
 //     applets reading `a.num`:                     16
-//     ...of those that ever mention `a.badNum`:     6
-//     the guard, spelled identically in all six:
-//         if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+//     ...that ever mention `a.badNum`:              6      -> "ten of sixteen never check it"
 //
-// **Ten of sixteen never check it**, so `httpd -p x` serves on 8080 and `base64 -w x` wraps at 76,
-// silently, exit 0. `issues/system/0340a` carries that as a bug against the shipped tree, with the
-// four applets that also still spell their default `a.num == 0 ? d : a.num` — the exact pattern
-// `hasNum`'s own comment says was removed from every applet.
+// That counts applets whose `badNum` can never be set. It is only written by a **valued** flag —
+// `takesValue(name, letter)` decides — and eight of the ten have no valued flag at all, so not
+// reading it is correct. The honest denominator is eight, and the honest answer is **six of eight**:
+// `base64` and `base32` are the two, and `base64 -w x` really does wrap at the default 76 and exit 0
+// where `head -n x` refuses and exits 1. Both run rather than read.
+//
+// Narrowing it produced the better finding, because the five failure-carrying fields split cleanly:
+//
+// | field | who reads it | how often it is right |
+// |---|---|---|
+// | `missingValue`, `longOpt` | `lib/flags.wac`'s `refuseFlags`, called first by **every** applet | always |
+// | `badNum` | each applet, by hand | 6 of 8 |
+//
+// One parser, one file set, one set of conventions, and the only variable is **whether something
+// shared does the checking**. `base64 -w` with no value refuses correctly in an applet that never
+// mentions the field; `base64 -w x` does not, in the same applet, for the field it must read itself.
+//
+// > **A function that cannot fail moves its failures into its output, and an output field is a
+// > request rather than a requirement — unless something shared reads it.**
+//
+// `issues/system/0340a` carries the two applets and the four that still spell their default
+// `a.num == 0 ? d : a.num`, which `hasNum`'s own comment says was removed from every applet.
 //
 // So this is not a tidier parser. It is the same parser with the failures moved from twelve fields
-// into a return type, which is one line per applet instead of five and cannot be forgotten.
+// into a return type, which is the third answer: not *remember to check*, not *hope a shared
+// function checks for you*, but *the compiler will not let you not check*.
 
 import { Result, Vec, Map } from "core";
 
@@ -112,34 +129,56 @@ export string say(string name, ArgFault f) { … }
 
 // ## 1. What the return type is worth, counted rather than asserted
 //
-// The shipped tree spends **59 reads across the five failure fields**, and the guards are
-// copy-pasted: six applets contain the same `badNum` line to the byte. With a `Result` those 59
-// become one `try` per applet — or, more honestly, one `match` per applet, because an applet has to
-// print `say(name, f)` and exit 1 rather than propagate.
+// The `badNum` guard is copy-pasted: six applets contain the same line to the byte, and two do not
+// have it. With a `Result` the six copies and the two absences are both gone, replaced by one
+// `match` per applet — not a `try`, because an applet has to print `say(name, f)` and exit 1 rather
+// than propagate.
 //
-// So the saving is not the character count. It is that **`try` is not optional and reading a field
-// is**, and the evidence that this matters is not an argument: ten of sixteen numeric applets did
-// not read the field, in a tree where the field was added twice, for the same bug, with a comment
-// each time explaining why it must be read.
+// So the saving is not the character count, and it is not even *checking versus not checking*, since
+// `refuseFlags` already shows that a shared reader gets it right every time. It is that **a shared
+// reader has to exist before the failure does.** That is not a guess about anyone's attention; the
+// three fields were all added on 2026-08-07 and the log gives the hour:
 //
-// ## 2. And the reason the fields were unread is not carelessness
+//     10:45  d92a7a94c  sh, box: a count that is not a count, and a sign that means something
+//                       -> `badNum`
+//     15:41  650e656f3  box: refuse the flag rather than ignoring it, in one place
+//                       -> `refuseFlags`
+//     15:59  25b8eb108  box: a long option is one thing, not a run of short ones
+//                       -> `longOpt`, read by `refuseFlags`
+//     19:32  03f1da9bc  box: an operand error says what the real tool says
+//                       -> `missingValue`, read by `refuseFlags`
 //
-// It is worth being precise, because *the applets should have checked* is not a finding. The parser
-// **succeeded**. `parseArgs(cli)` answers an `Args` and there is nothing in the call to suggest a
-// question was left open — the value looks complete, the applet's own logic type-checks, and it runs.
-// Every one of the ten unguarded applets is code that a careful author could write while reading the
-// parser's interface and never see the obligation.
+// **`badNum` predates the shared reader by five hours.** Both failures invented after `refuseFlags`
+// existed went into it; the one invented before it never moved. So the split in the table above is
+// not about which failure is subtle or which author was careful — it is about which side of 15:41 a
+// field was born on, and 15:41's own commit message is *"in one place"*.
 //
-// That is the shape, and it generalises past argument parsing:
+// Three data points is three data points. But the mechanism it names does not need many, because it
+// is not a tendency: a shared reader can only read fields that exist when someone writes it, and
+// nothing goes back to add the older ones. **A convention adopted midway through covers the second
+// half of a file and looks, afterwards, exactly like a convention that is followed.**
 //
-// > **A function that cannot fail moves its failures into its output, and an output field is a
-// > request rather than a requirement.**
+// ## 2. And the reason `badNum` was unread is not carelessness
+//
+// It is worth being precise, because *the two applets should have checked* is not a finding. The
+// parser **succeeded**. `parseArgs(cli)` answers an `Args` and there is nothing in the call to
+// suggest a question was left open — the value looks complete, the applet's own logic type-checks,
+// and it runs. `base64.wac` is code a careful author could write with the parser's interface open in
+// front of them and never see the obligation, and the proof is that the same author's `refuseFlags`
+// call two lines above handles two other failures perfectly, invisibly, by being a call.
 //
 // `@/packages/box/src/cp.wac` found the mirror of this yesterday: `FileFault` has 29 dead arms and
 // nobody pays for them, because every consumer in the directory `try`s or discards. Here the union
 // does not exist and the cost is real and shipped. Two halves of one measurement — **an error type
 // with no exhaustive consumer costs nothing, and an error field with no compelled reader costs
 // everything** — and the difference between them is entirely whether the compiler is involved.
+//
+// And the correction is the third data point, about the measuring rather than the design: the first
+// count here was 10 of 16 and it was wrong because it never asked *which of these can even reach the
+// field*. That is the same mistake as the 29 dead arms, which counted (operation, member) pairs
+// without asking which pairs a caller ever holds at once. **Twice in two days I have counted a
+// cross-product and called it a defect rate**, and both times the fix was to ask what actually
+// reaches the thing being counted. It did not make either finding go away; it made both sharper.
 //
 // ## 3. What could not be written
 //
