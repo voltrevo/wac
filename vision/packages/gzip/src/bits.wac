@@ -1,0 +1,170 @@
+// The bit reader — invented one file ago, and the half of my own claim it falsifies.
+//
+// `./huffman.wac` had to import `BitReader` from somewhere and named `./bits.wac`, a file that did
+// not exist. Its note said the reader would have to move out of `inflate.wac`, and then predicted
+// what moving it would cost: *"turning that into a `Result` widens `BitReader`'s every method."*
+//
+// **That is wrong, and the correct version is the interesting one.** Eight verbs, and four of them
+// cannot fail:
+//
+//     create      streaming     — construct
+//     peek        alignByte     — total, and `peek` is total *on purpose*
+//     skip        readBit       readBits      readByte    — consume, and can run out
+//
+// `peek` pads with zero bits past the end of the stream and the shipped comment says why: *"the
+// last real code in a stream is legitimately shorter than the lookahead window."* A decoder must be
+// allowed to look at bits that are not there. So the fault does not attach to *reading* — it
+// attaches to **consuming**, and the split runs down the middle of the type rather than across it.
+//
+// That is worth more than the prediction it replaces. *A cursor's fault union grows with its verbs*
+// is an entry in `../../../QUESTIONS.md`, and here the verbs divide into two halves with a reason:
+// a peek is a question about the buffer and a skip is a claim about the input.
+
+import { Result, Bytes, AsyncGenerator } from "core";
+import { SourceFailed, Truncated } from "./fault.wac";
+
+/**
+ * Why a consuming read stopped — **a proper subset of `Fault`, and that is the demonstration.**
+ *
+ * `./fault.wac` argues that `SourceFailed` and the corruption members belong in one union because
+ * they are one *return*. The reader can only produce two of the eight, so its signature says two,
+ * and a caller that widens to `Fault` writes nothing: nominal membership means `union<SourceFailed,
+ * Truncated>` is assignable where `Fault` is expected because both its members are members of
+ * `Fault`. The narrow set costs a name and buys a `match` with two arms that the checker knows is
+ * exhaustive.
+ */
+export union<SourceFailed, Truncated> Starved;
+
+/**
+ * LSB-first bit reader with lookahead, over a buffer or a pull source.
+ *
+ * Unchanged in substance. Twenty-four bits of buffer so a decoder can peek a code, look it up whole,
+ * and skip exactly its length — *"reading one bit at a time cannot do that — you have to consume a
+ * bit before you know whether you needed it."*
+ */
+export struct BitReader {
+  u8[] data;
+  i32 pos;
+  i32 bitBuf;
+  i32 bitCount;
+
+  /**
+   * Where more input comes from.
+   *
+   * **Not nullable, and not a funcref, and both changes were forced rather than chosen** — see the
+   * note below. The shipped field is `fn[Read()]? source`, null when `data` is the whole input, and
+   * the file is clear that this is the *only* difference between the two modes: *"the decoder above
+   * never asks where a bit came from, so nothing else in the file changes shape."* `./inflate.wac`
+   * in this directory has already collapsed those two modes — `gunzipBytes` is *"a four-line caller
+   * of the one that is left"* over `once(gz)` — so a buffer is a one-chunk source here and the null
+   * has nothing left to mean.
+   */
+  AsyncGenerator<Bytes, Result<void, SourceFailed>> source;
+
+  /** Set once the source has returned, so it is asked once. */
+  bool spent;
+
+  BitReader over(AsyncGenerator<Bytes, Result<void, SourceFailed>> source) { … }
+
+  /**
+   * The next `count` bits without consuming them, zero-padded past the end.
+   *
+   * **Total, and `async` — two independent facts that this signature runs together.** It cannot
+   * fail, because a legal final code is shorter than the lookahead window and a decoder has to be
+   * allowed to look at bits that are not there. It awaits, because filling the buffer may need the
+   * source's next chunk. The shipped one is neither `Result` nor `async`, and the second of those
+   * is what the generator cost.
+   */
+  async i32 peek(this, i32 count) { … }
+
+  /** Drop to the next byte boundary. Total, and the one verb that touches no input. */
+  void alignByte(this) { … }
+
+  /** Consume `count` bits, which must actually be present. */
+  async Result<void, Starved> skip(this, i32 count) { … }
+
+  async Result<i32, Starved> bit(this) { … }
+  async Result<i32, Starved> bits(this, i32 count) { … }
+  async Result<u8, Starved> byte(this) { … }
+}
+
+// ## What the source type cost, which the first draft of this file got wrong twice
+//
+// This file was first written with the shipped field verbatim — `fn<Read()>? source` — and the
+// unresolved-name check refused it: **`"core" does not export Read`**. Correct, and not a typo.
+// `Read` is the shipped pull-source enum, `Data | End | Failed`, and `vision/core` deliberately has
+// no such thing: `./inflate.wac` takes `AsyncGenerator<Bytes, Result<void, E>>`, and a generator's
+// *return* is where a source's failure lives. So the three-way answer this reader was written to
+// take apart no longer arrives as an enum at all. The instrument found a design inconsistency by
+// finding a missing export, which is the third time here that an invented or borrowed name stood in
+// for a decision rather than for a spelling.
+//
+// **Then the substitution coloured six methods.** A funcref returning `Read` is called
+// synchronously, so the shipped `peek` is a plain `i32`. A generator is awaited, so filling the
+// buffer awaits, so `peek` awaits, so `skip`, `bit`, `bits` and `byte` await, so `./huffman.wac`'s
+// `decode` awaits, so every caller of `decode` awaits. **Six of eight methods changed colour and
+// not one of them changed meaning.** `alignByte` survived because it is the only verb that touches
+// no input, and the constructors because they run before there is any.
+//
+// That is a cost the rewrite paid without noticing and it is worth naming precisely, because the
+// tempting summary — *async is infectious* — is not what happened. Nothing here became concurrent.
+// A field's type changed from a synchronous callback to a coroutine, and the colour propagated
+// **through the struct**, along a path no signature in the file mentions. A reader looking at
+// `async i32 peek(this, i32 count)` cannot tell that the `async` is there because of a field two
+// declarations up. `../../../QUESTIONS.md` has the ticket and coroutine entries and neither asks
+// this: **what makes a method async is not always visible in the method.**
+//
+// ## What could not be written
+//
+// **`broken` is a status nobody checks, in the file that rejects `Result` for producing one.** The
+// shipped `BitReader` has a ninth member this rewrite does not:
+//
+//     /** Empty unless a read failed: the host's message, so a caller can say why it stopped. */
+//     string broken;
+//
+// A read failure is not returned. It is written into a field and the caller is expected to look
+// afterwards — *"a failed read is treated as the source being spent, and the caller is told through
+// `broken`"* — while `peek` goes on answering zero-padded bits that are indistinguishable from real
+// ones. And the closing comment of the same file refuses to return a `Result` on the grounds that
+// *"a decoder that keeps going after a failed read with a status nobody checked is how silent
+// corruption is written."* The design it refused and the design it shipped are the same design; only
+// the returned one is checkable.
+//
+// **And it has no readers.** Two writes — one at the fill site, one where the byte reader sets it
+// and traps on the next statement — and, across every `.wac` file in the repository, zero reads.
+// The one reader that existed was deleted, and the comment where it stood records the line:
+// `return br.broken == "" ? 0 : 1`. Eight other `.broken` fields in the tree, in `fs`, `box` and
+// `platform`, are all read. So the field is a documented capability the type does not have, and it
+// is the doc comment that makes it a defect rather than dead weight: it tells a caller they can say
+// why it stopped. Filed as `issues/system/0353a`; not fixed here, because deleting a struct member
+// is an edit to a shipped package and this directory does not compile.
+//
+// **The empty string is the sentinel, and there is no other choice available.** Even with a reader,
+// `broken == ""` means *nothing failed*, and a host whose error message is empty is a success. The
+// value is drawn from the range of the thing it describes, which is the shape
+// `../../../QUESTIONS.md` names for `indexOf` returning `-1` — but `string?` costs nothing here,
+// unlike `i32?`, because a reference type already has a null. So this one is a sentinel with a free
+// alternative and it was still chosen, which suggests the habit rather than the cost.
+//
+// **Three outcomes arriving as two flags.** `fill` stops for three reasons — the buffer is empty
+// and there is no source, the source said `End`, the source said `Failed` — and returns `void` from
+// all three, leaving `spent` and `broken` to be read apart afterwards. The first two are the same
+// answer and the third is not, which is exactly `Read`'s own `Data | End | Failed` shape flattened
+// back into fields one layer down. `fill` is private, so nothing outside can get this wrong; what it
+// costs is that `skip` cannot say *which* of `Truncated` and `SourceFailed` it hit without
+// consulting state that the failing branch had to remember for it.
+//
+// **A total `peek` is a design decision no signature carries.** `i32 peek(this, i32 count)` and
+// `Result<void, Starved> skip(this, i32 count)` sit next to each other, and the reason the first is
+// total is a two-sentence argument about DEFLATE's last code. Nothing in either type says *this one
+// is deliberately allowed past the end*, and a maintainer tidying for consistency would make `peek`
+// fallible and break the decoder — not loudly, but by making a legal short final code look like a
+// truncated stream. This is the counterpart to the entry on `bool` being right for `isPrintable`:
+// the shape is only a smell when the reason is missing, and here the reason is load-bearing.
+//
+// **The trap in `skip` is not the same fault as the trap in `copyBytes`.** Both are *ran out of
+// input*, one inside a symbol and one inside a back-reference copy, and `Truncated` covers both
+// without saying which. The shipped code traps at both and so distinguishes nothing either; this
+// rewrite distinguishes nothing and *says* it does, which is worse. Either a second member or a
+// field on `Truncated` — and the file cannot choose, because whether a caller cares is a question
+// about `packages/git`'s packfile reader, the one consumer `issues/system/0242b` names.

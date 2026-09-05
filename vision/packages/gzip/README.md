@@ -167,3 +167,28 @@ dependency until something else wants it**, and nothing in the source distinguis
 fields, returns and copies, and `spec/spec/variables.md` records that *"there is nothing to write for
 a funcref, whose type has no place for it."* That lands on `../../core/order.wac`'s `SortSpec` and on
 every capability struct in the platform design. Promoted.
+
+**What makes a method `async` is not always visible in the method.** Added with
+[`src/bits.wac`](src/bits.wac). The shipped `BitReader` takes `fn[Read()]? source`, a synchronous
+callback, so `peek` is a plain `i32`. This directory's `inflate.wac` already replaced pull sources
+with `AsyncGenerator`, so the field's type changes, so filling awaits, so **six of eight methods
+change colour and none changes meaning** — including `huffman.wac`'s `decode` and every caller of
+it. Nothing became concurrent. The colour propagated *through the struct*, along a path no signature
+mentions.
+
+**`broken` is a status nobody checks, in the file that rejects `Result` for producing one.** The
+shipped reader writes a host error message into a `string broken` field — *"so a caller can say why
+it stopped"* — while `peek` goes on answering zero-padded bits indistinguishable from real ones, and
+the closing comment of the same file refuses to return a status because *"a decoder that keeps going
+after a failed read with a status nobody checked is how silent corruption is written."* Same design;
+only the returned one can be made mandatory. The field has **two writes and zero readers** across the
+repository — the one reader was deleted when its branch was shown unreachable, and the doc comment
+stayed. Filed as `issues/system/0353a`. Also: `broken == ""` is a sentinel drawn from the value's own
+range where `string?` would have cost nothing, a reference type having a null already — so unlike
+`i32?`, this one was habit and not price.
+
+**A prediction from shape, falsified within the hour.** [`src/huffman.wac`](src/huffman.wac) said
+returning a `Result` would widen *"`BitReader`'s every method"*. It widens four of eight: `peek` and
+`alignByte` are total, and `peek` is total **deliberately**, because a legal final code is shorter
+than the lookahead window. The fault attaches to consuming, not to reading. Left in place and
+corrected rather than edited away.

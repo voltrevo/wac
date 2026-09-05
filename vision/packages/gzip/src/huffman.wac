@@ -102,7 +102,7 @@ export struct Decoder {
    *
    * See the note below on what `Result` here costs and why the file rejected it.
    */
-  Result<i32, Fault> decode(const this, BitReader br) { … }
+  async Result<i32, Fault> decode(const this, BitReader br) { … }
 }
 
 // ## What could not be written
@@ -181,9 +181,21 @@ export struct Decoder {
 // gap is not stylistic.
 //
 // What it does **not** answer is the trap in `skip`, which is a different thing: running out of
-// input mid-symbol is a fault in the *reader*, not in the code table, and turning that into a
-// `Result` widens `BitReader`'s every method. That is the fifth type in this directory whose fault
-// union grows with its verbs, and the entry on cursor faults already has it.
+// input mid-symbol is a fault in the *reader*, not in the code table.
+//
+// **The sentence that stood here predicted the cost and was wrong.** It said turning that into a
+// `Result` *"widens `BitReader`'s every method"*, making it the fifth type here whose fault union
+// grows with its verbs. Writing `./bits.wac` an hour later showed it widens **four of eight**:
+// `peek` and `alignByte` are total, and `peek` is total *deliberately*, because a legal final code
+// is shorter than the lookahead window. The fault attaches to consuming, not to reading, and the
+// split runs down the middle of the type. Left here as written and corrected rather than edited
+// away, because the prediction was made from the shape and the shape was not enough.
+//
+// Writing that file also made `decode` above `async`, which nothing in this file asked for.
+// `BitReader`'s source is an `AsyncGenerator` in this directory rather than the shipped synchronous
+// callback, so filling awaits, so peeking awaits, so decoding a symbol awaits. `./bits.wac` has the
+// entry: six of eight methods changed colour, none changed meaning, and the cause is a field's type
+// two declarations away from any signature that shows it.
 //
 // **Moving the decoder out means moving the bit reader with it, and that was not foreseen.**
 // `BitReader` is a `struct` inside the shipped `inflate.wac`, not a module beside it, and the
