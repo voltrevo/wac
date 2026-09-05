@@ -4715,6 +4715,46 @@ Two directions, and the first is not a feature:
   or more string literals — which is a dispatch over a closed set written open, every time. Cheap to
   detect and, unlike most lints, it points at a place where the language has a better answer already.
 
+### The counterweight: two files cannot take this entry's advice, for one reason
+
+This entry says an enum recovers exhaustiveness and costs nothing, and for most of the nine that is
+true. **Two files refuse it deliberately and give the same reason: they use the value as an index.**
+
+`packages/tor/src/pathsel.wac`, on `Position`:
+
+> Not an enum because the weights are indexed by it and the arithmetic is clearer with a number.
+
+`packages/wacc/src/kinds.wac`, on its 89 token kinds:
+
+> this file is a candidate for becoming [an enum], **once an enum can be used where an i32 is
+> expected**.
+
+So *parse at the edge, match inside* has a precondition nobody stated: **the value must not also be a
+subscript.** `pathsel`'s weights are a table indexed by position and role, `kinds`' are ranged over —
+*"the keyword kinds `kImport`(5)..`kMatch`(32) are contiguous and `parse.wac` tests that range rather
+than listing them"* — and neither is a dispatch an enum improves.
+
+That is worth having in this entry rather than only in the two files, because it changes the shape of
+the ask. It is not *convert the closed sets*; it is:
+
+> Convert the closed sets that are **only** compared. For the ones that are also indexed or ranged
+> over, the ask is `issues/lang/0346a`'s — an enum usable where an integer is — and until that lands
+> the integer is the right answer and the comment is the only available guard.
+
+Of the nine instances in the table above, **five of the six from 2026-09-05 are compared for equality
+and nothing else**, so they are the free case.
+
+`tls`'s `phase` is the sixth and is not, which was nearly missed: it is compared with `>=` and `<=`
+as well as `==` — `if (c.phase >= 1)` means *at least ClientHello has been sent*. So it wants an
+**ordered** closed set, which is a third obstruction beside indexing and ranging, and an enum does
+not give it either. The conversion still pays — the trap fell through an equality chain, and the two
+relational tests are re-expressible as a `match` over the arms that qualify — but it is not the
+free rename the other five are.
+
+Three obstructions, then, and they are all the same shape: **the value is doing arithmetic as well as
+naming.** *A closed set you cannot enumerate is a closed set you cannot tabulate* below is the fourth
+face of it.
+
 ### 2026-09-05 — six more, and the first one that cost something
 
 This entry's three were argued from shape. The rewrites found six more and one of them is an
