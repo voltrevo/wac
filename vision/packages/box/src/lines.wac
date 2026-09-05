@@ -97,11 +97,24 @@ export Vec<Bytes> sortWith(Vec<Bytes> xs, fn<i32(Bytes, Bytes)> cmp) { … }
 // one caller, two comparators, and the parameter is the point. Recorded as the counterweight to the
 // `Map` entry, which reads as though funcrefs were uniformly a burden.
 //
-// **`cmpBytes(a, b) == 0` is how equality is spelled**, and `@/packages/box/src/applets/diff.wac`
-// uses it that way twice per inner loop. `Slice` has no `eq` — `@/packages/tor/src/onionaddr.wac`
-// found the same absence and wrote two `get`s instead. Second witness, and this one is in a hot
-// loop, where a three-way comparison to answer a yes/no question is the whole cost of the byte scan
-// twice over for the common case of unequal lengths.
+// **~~`cmpBytes(a, b) == 0` is how equality is spelled~~ — answered 2026-09-05, and the answer has a
+// shape.** `Slice.eq` and `core`'s `bytesEq` exist now. Four witnesses in the end, not two: this
+// file, `@/packages/box/src/applets/diff.wac`'s inner loop (twice per iteration),
+// `@/packages/tor/src/onionaddr.wac`, which wrote two `get`s instead, and `core/map.wac`, which
+// declared its own `bytesEq` while arguing about hashing and did not notice it was a fifth site for
+// something else.
+//
+// The length check alone is most of the win — two slices of different lengths are unequal in one
+// comparison, and `cmpBytes` **cannot** know that, because a three-way answer has to say which is
+// smaller and that needs the bytes.
+//
+// And it took a comparator, which is the finding rather than a wart. `Slice<T>` cannot ask `T`
+// whether two of them are equal: no traits, no constraints on type parameters. So
+// `eq(other, same)` is not a convenience API, it is the only spelling — and this file's *other*
+// entry says the funcref is fine for a comparator and `core/map.wac` says it is a burden for a key.
+// **Both are right and the difference is whether the caller has one to hand**: `sortWith` is called
+// with the comparator the caller already chose, and `Map.create` is called with two functions that
+// are the same two functions every time. The funcref is a cost exactly when it is a constant.
 //
 // **Stability is load-bearing and is a property of the algorithm, not the signature.** *"Stable,
 // which `sort -u` then relies on to drop only adjacent equals"* — so replacing `sortWith` with a

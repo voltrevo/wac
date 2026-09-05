@@ -169,6 +169,47 @@ export struct Slice<T> {
 
   /** The copy, when a caller actually wants to keep the bytes past the array's life. */
   T[] toArray(const this) { … }
+
+  /**
+   * Equal contents — **and it takes a comparator, which is the whole finding.**
+   *
+   * Four call sites wanted this and none could have it. `@/packages/box/src/lines.wac`:
+   * *"`cmpBytes(a, b) == 0` is how equality is spelled … `Slice` has no `eq`"*, and it is in
+   * `@/packages/box/src/applets/diff.wac`'s inner loop, **twice per iteration**, where a three-way
+   * comparison answers a yes/no question and walks the whole slice for the common case of unequal
+   * lengths. `@/packages/tor/src/onionaddr.wac` found the same absence and wrote two `get`s.
+   * `./map.wac` needed a `bytesEq` and declared its own.
+   *
+   * The length check alone is most of the win — two slices of different lengths are unequal in one
+   * comparison, and `cmpBytes` cannot know that because a three-way answer has to say *which is
+   * smaller* and that needs the bytes.
+   *
+   * **`T` has no equality, so this cannot be `eq(const this, const Slice<T> other)`.** There are no
+   * traits and no constraints on type parameters, so a generic `Slice<T>` cannot ask `T` whether two
+   * of them are the same. The comparator is not a convenience here; it is the only spelling.
+   */
+  bool eq(const this, const Slice<T> other, fn<bool(T, T)> same) {
+    if (this.len != other.len) { return false; }
+    for (i32 i = 0; i < this.len; i++) {
+      if (!same(this.of[this.from + i], other.of[other.from + i])) { return false; }
+    }
+    return true;
+  }
+}
+
+/**
+ * Byte equality, and the reason it is a free function rather than a method on `Bytes`.
+ *
+ * `Bytes` is `Slice<u8>`, an *instantiation*, and a method cannot be added to one instantiation of a
+ * generic struct — `Slice<T>.eq` is the only place a method can live and it does not know that `T`
+ * is `u8`. So the specialisation that needs no comparator has to be a function beside the type.
+ *
+ * Which is the cost of `export Slice<u8> Bytes;` being a name for a type rather than a type: it
+ * cannot carry its own operations. `@/packages/core/map.wac`'s `Key<Bytes> bytes()` has the mirror
+ * problem — a static whose type parameter is fixed — and both are the same missing thing.
+ */
+export bool bytesEq(const Bytes a, const Bytes b) {
+  return a.eq(b, (u8 x, u8 y) => x == y);
 }
 
 /**

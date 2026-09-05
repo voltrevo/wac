@@ -7529,6 +7529,56 @@ states were writable all along; what was not writable is the handover. Fourth ti
 not be written* turned out to be a *could be written, and here is the smaller thing that could not*
 — after `Map.create`, the `Span` deletion and `blank(Bytes)`.
 
+> **Verdict:** language — a linear `this`, so `done()` consumes the `Building`. Settled by:
+> `spec/spec/types.md`. The two-state split itself needed nothing and is already written.
+
+## A funcref is a cost exactly when it is a constant
+
+*2026-09-05.* `@/packages/box/src/lines.wac` recorded that `Slice` has no `eq`, so equality is spelled
+`cmpBytes(a, b) == 0` — a three-way comparison answering a yes/no question, twice per iteration of
+`@/packages/box/src/applets/diff.wac`'s inner loop. Written into `core`, and the witness count was
+wrong in the usual direction: **four, not two.** This file, `diff.wac`, `@/packages/tor/src/onionaddr.wac`
+which wrote two `get`s instead, and `core/map.wac`, which declared its own `bytesEq` while arguing
+about hashing and never noticed it was a fifth site for something else.
+
+The length check alone is most of the win: two slices of different lengths are unequal in one
+comparison, and `cmpBytes` **cannot** know that, because a three-way answer must say which is smaller
+and that needs the bytes.
+
+### And it had to take a comparator, which resolves a contradiction between two entries
+
+`Slice<T>` cannot ask `T` whether two of them are equal — no traits, no constraints on type
+parameters — so `eq(other, same)` is the only spelling. Which puts two entries in this file directly
+against each other:
+
+  * `core/map.wac` on `Map.create(hash, eq)`: *two arguments at every call site that are the same two
+    functions almost every time* — a burden, and the reason `Key<K>` was invented.
+  * `@/packages/box/src/lines.wac` on `sortWith(cmp)`: *a wrapper saving one argument, for one caller
+    that does not want it, is a name that documents nothing* — not felt as a cost at all.
+
+Both are right, and the difference is one property:
+
+> **A funcref parameter is a cost exactly when it is a constant.** `sortWith` is called with the
+> comparator the caller chose, and it is the point of the call. `Map.create` is called with the same
+> two functions every time, and they are noise. The question is never *is a funcref a burden*; it is
+> *does the caller have one to hand, or is it repeating a default*.
+
+Which also says when `Key`-like bundling is the fix and when it is ceremony: bundle the constants,
+leave the choices as parameters. `Slice.eq`'s comparator is a choice — `u8` equality for bytes,
+something else for a `Slice<Field>` — so it stays a parameter, and `bytesEq` is the bundled constant
+beside it.
+
+*And that free function is itself a finding.* `Bytes` is `Slice<u8>`, an **instantiation**, and a
+method cannot be added to one instantiation of a generic struct — `Slice<T>.eq` is the only place a
+method can live and it does not know `T` is `u8`. So the specialisation that needs no comparator has
+to sit beside the type. `core/map.wac`'s `Key<Bytes> bytes()` — a static whose type parameter is
+fixed — is the mirror of it, and both are the cost of `export Slice<u8> Bytes;` naming a type rather
+than being one.
+
+> **Verdict:** library — `Slice.eq` and `bytesEq`, written in `core/slice.wac`. Settled by: the code.
+> The *funcref-is-a-cost-when-constant* rule is a **convention** and needs nothing. Third library
+> verdict in this file.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
@@ -7571,6 +7621,3 @@ was written yesterday about one union. Measured: **129 of 174 members cost nothi
 reads them, and 8 more are read only as a group.** That is not an argument that they are wrong. It is that nothing here has been in a
 position to find out, and five days of design have produced a vocabulary whose cost and benefit are
 both still entirely theoretical.
-
-> **Verdict:** language — a linear `this`, so `done()` consumes the `Building`. Settled by:
-> `spec/spec/types.md`. The two-state split itself needed nothing and is already written.

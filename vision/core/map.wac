@@ -23,7 +23,7 @@
 // There is a third: **make the pair a value.**
 
 import { Vec } from "./vec.wac";
-import { Bytes } from "./slice.wac";
+import { Bytes, bytesEq } from "./slice.wac";
 
 /**
  * How to use a `K` as a key: hash it, and compare two.
@@ -88,9 +88,12 @@ struct Entry<K, V> { K k; V v; }
 struct Bucket<K, V> { Vec<Entry<K, V>> entries; }
 
 i32 hashBytes(Bytes b) { … }
-bool bytesEq(Bytes a, Bytes b) { … }
 i32 hashText(string s) { … }
 bool textEq(string a, string b) { … }
+
+// `bytesEq` was declared here and is `./slice.wac`'s now — the fourth caller that wanted byte
+// equality and the fourth to write its own. `@/packages/box/src/lines.wac` named the gap and this
+// file was one of the witnesses without knowing it.
 
 // ## 1. What writing four lines settled that a day of arguing had not
 //
