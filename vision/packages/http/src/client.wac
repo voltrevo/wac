@@ -12,7 +12,10 @@
 
 import { Result, Bytes } from "core";
 import { Net } from "std";
-import { Incoming } from "./incoming.wac";
+import { Incoming, Exchange, Received, Limits, read } from "./incoming.wac";
+import { ResponseFault } from "./fault.wac";
+import { Draft, OutgoingFault, write as writeRequest } from "./outgoing.wac";
+import { Request, Method, Post } from "./request.wac";
 
 /**
  * The connection did not open.
@@ -51,11 +54,57 @@ export struct Unparseable { i32 at; }
  */
 export union<NoConnection, SendFailed, ReadFailed, Incomplete, Unparseable> HttpFault;
 
-/** A POST, and the response — or which of the five happened. */
-export async Result<Incoming, HttpFault> post(Net net, string url, Bytes body) { … }
+/**
+ * Everything a call can fail with — **three layers' unions, and the shipped one flattens two.**
+ *
+ * A client does three things and each has its own vocabulary:
+ *
+ *   * **build** — `./outgoing.wac`'s `OutgoingFault`: the caller set a header the writer owns, or
+ *     gave no `Host`.
+ *   * **carry** — the five above, minus the one that is not transport: `NoConnection`,
+ *     `SendFailed`, `ReadFailed`.
+ *   * **read** — `./incoming.wac`'s `ResponseFault`, which is `union<RequestFault, BadStatus>` and
+ *     has eleven members.
+ *
+ * `HttpFault` collapsed the first into nothing and the third into `Unparseable { i32 at; }` — one
+ * member with an offset, standing for eleven named ones next door. Nesting is what the lowering
+ * supports and what `@/packages/box/src/gunzip.wac` showed a caller wants, so the three stay three
+ * and `Err(is Transport):` is one arm for the middle.
+ */
+export union<NoConnection, SendFailed, ReadFailed> Transport;
+export union<OutgoingFault, Transport, ResponseFault> CallFault;
+
+/**
+ * A POST, and the exchange — or which of the three layers refused.
+ *
+ * **Answers an `Exchange`, not an `Incoming`**, which closes the loop `./incoming.wac` opened: *"a
+ * client's outbound request is built by `./client.wac` as bytes and never exists as a value."* It
+ * exists here, because `read` needs it and because `Draft.seal` is what makes one.
+ */
+export async Result<Exchange, CallFault> post(Net net, string url, Bytes body) { … }
 
 /** A GET, the same way. */
-export async Result<Incoming, HttpFault> get(Net net, string url) { … }
+export async Result<Exchange, CallFault> get(Net net, string url) { … }
+
+/**
+ * The shape all three layers meet in, written out because it is the composition test.
+ *
+ *     Draft d = Draft.to(Post, target, host);
+ *     d.set("Content-Type", "application/json");
+ *     Request req = try d.seal();                       // OutgoingFault
+ *     Socket s = try await net.connect(host, port);     // Transport
+ *     _ = await s.send(writeRequest(req, false));
+ *     …
+ *     match (read(got, req, eof, limits)) {             // ResponseFault
+ *       Ok(x):         { return Result.Ok(x); }
+ *       Bad(why):      { return Result.Err(why); }
+ *       Incomplete:    { }                              // read more and ask again
+ *     }
+ *
+ * Three `try`s against three different unions, all propagating into `CallFault`, which is the first
+ * function in this directory where that has been written down rather than argued about. §2.
+ */
+export async Result<Exchange, CallFault> call(Net net, const Draft d, string host, i32 port) { … }
 
 // ## A fault cannot be more precise than the capability under it
 //
@@ -82,3 +131,43 @@ export async Result<Incoming, HttpFault> get(Net net, string url) { … }
 // its sources can distinguish.** Five members is right only if five things are separately knowable;
 // `NoConnection` was a sixth distinction inside one of them, invented at the layer that wanted it
 // rather than the layer that could see it.
+
+// ## 2. Three `try`s, three unions, and `try` cannot map any of them
+//
+// `call` above propagates an `OutgoingFault` from `seal`, a `NotGranted` from `connect` and a
+// `ResponseFault` from `read`, into one `CallFault`. Under nominal membership — which
+// `@/packages/wacc/src/check.wac` settles is the rule — each `try` is legal exactly when the callee's
+// union is a **declared member** of `CallFault`. Two of the three are:
+//
+//     union<OutgoingFault, Transport, ResponseFault> CallFault;
+//
+// and the third is not. `net.connect` answers `Result<Socket, NotGranted>`, and `NotGranted` is a
+// member of `Transport`'s members rather than of `Transport` — `NoConnection` *contains* the idea and
+// is not it. So `try await net.connect(…)` does not typecheck against `CallFault`, and the
+// `NoConnection { string host; }` above is what a hand-written `match` builds instead: the fault this
+// layer wants, from the one the layer below gives, with the host added because the caller knows it
+// and the capability does not.
+//
+// That is `../../../QUESTIONS.md`'s *`try` cannot map, so wrapping a callee's fault costs a `match`*
+// — and this is the first file where the wrap is **load-bearing rather than tidy**. It is not
+// renaming a fault; it is the only place the host's name gets attached to the failure, because
+// `Net.connect`'s answer does not carry one.
+//
+// So of the three layers, two compose by declaration and one needs eight lines. Which is a better
+// answer than *`try` needs a mapping form*: the mapping that is wanted here **adds data**, and no
+// `try e catch F` spelling would supply the host either.
+//
+// ## 3. What could not be written
+//
+// **`read` answers three arms and `call` must loop, so the retry lives in the caller.** `Received`
+// is `Ok | Bad | Incomplete` and `Incomplete` means *read more*, so `call` holds a growing buffer and
+// asks again. The loop is four lines and the thing it cannot say is **when to stop**: a peer that
+// sends nothing keeps the loop honest only because `recv` eventually answers `Failed`, and nothing in
+// the types says a client should bound the wait. `@/packages/wactest/src/within.wac` is the timeout
+// this wants and it is a test helper.
+//
+// **`Exchange` makes the request outlive the call, and that is the point and the cost.** A caller
+// gets back what it sent, so `x.sent.headers` is readable after the response — which is what makes
+// an `Exchange` worth having and also means a client holding a hundred exchanges holds a hundred
+// request bodies. The shipped `Fetched` could not do this and did not have to decide; nothing here
+// says a caller may drop the half it does not want.

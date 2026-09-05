@@ -8246,6 +8246,41 @@ reaching into a field.
 
 > **Verdict:** library — `Key.by`, which is written. Settled by: the two call sites, which now use it.
 
+## A client's error type is three layers' unions, and two of three compose by declaration
+
+*2026-09-05.* `@/packages/http/src/client.wac` is where the whole redesign has to compose: it
+**builds** a request (`Draft.seal` → `OutgoingFault`), **carries** it (`Net.connect` → `NotGranted`,
+`Socket.recv` → a failure), and **reads** the answer (`read` → `ResponseFault`). Three layers, three
+vocabularies, one function.
+
+The shipped `HttpFault` flattens two of the three: the build layer into nothing, and the read layer
+into `Unparseable { i32 at; }` — **one member with an offset standing for eleven named ones next
+door**. Nesting keeps them apart and is what the lowering supports:
+
+    union<NoConnection, SendFailed, ReadFailed>              Transport;
+    union<OutgoingFault, Transport, ResponseFault>           CallFault;
+
+**Two of the three then compose by declaration and the third does not.** Under nominal membership,
+`try` is legal exactly when the callee's union is a *declared member*, so `seal`'s and `read`'s
+propagate for free. `net.connect` answers `NotGranted`, which is a member of `Transport`'s **members**
+rather than of `Transport` — `NoConnection` *contains* the idea and is not it — so that one needs a
+hand-written `match`.
+
+> And the wrap is **load-bearing rather than tidy**. `NoConnection { string host; }` is the only place
+> the host's name gets attached to the failure, because `Net.connect`'s answer does not carry one. So
+> this is not renaming a fault; the mapping **adds data**.
+
+Which is a better answer than *`try` needs a mapping form*, an ask this file has carried since the
+`try` entry: no `try e catch F` spelling would supply the host either. **The wrap that costs eight
+lines is the wrap that is doing something**, and the two that cost nothing are the two a mapping form
+would have automated.
+
+*Also closed:* `./incoming.wac` recorded that *a client's outbound request is built as bytes and
+never exists as a value*. It exists now — `Draft.seal` makes one, `read` takes it, and `post` answers
+an `Exchange` rather than an `Incoming`. The cost is that the request outlives the call, which is the
+point and is also a hundred request bodies for a hundred exchanges, and nothing says a caller may
+drop the half it does not want.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

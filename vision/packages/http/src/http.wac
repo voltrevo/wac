@@ -59,5 +59,6 @@ export {
 // **The client half, added when `@/packages/ethrpc` asked for it and not before.** A package with a
 // server and no client is a shape a barrel written without a consumer does not notice, because
 // nothing in the package refers to the missing half.
-export { post, get, HttpFault, NoConnection, SendFailed, ReadFailed, Incomplete, Unparseable }
+export { post, get, call, CallFault, Transport, HttpFault,
+         NoConnection, SendFailed, ReadFailed, Unparseable }
   from "./client.wac";
