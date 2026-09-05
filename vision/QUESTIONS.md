@@ -7981,6 +7981,75 @@ anyway and says so. The name checker's floor is 15 rather than 13 for that reaso
 > **Verdict:** convention — put the subject on the collection when the elements outnumber it.
 > Settled by: `Lexed`, which is written. The language is not involved.
 
+## `never` is the empty union, and saying so closes three entries
+
+*2026-09-05.* `never` appears in seven places in this directory and none of them says what it **is**.
+This file records it as *a type with non-trivial semantics, asserted in one doc comment*. The
+semantics is one sentence:
+
+> **`never` is the union of nothing.**
+
+From which, by the subset rule a union needs anyway:
+
+  * *assignable to everything* — `{} ⊆ S` for every `S`. Not a special case in the checker; the
+    degenerate case of a rule it already has.
+  * *`union<never, E>` reduces to `E`* — `{} ∪ S = S`. This file lists that as an open operation.
+  * *`@/packages/wacc/src/genlower.wac`'s `Waiting` arm has to be deleted* — a `match` over
+    `Step<never, Y, R>` has two arms because the third's payload type is the empty union and no value
+    of it exists.
+
+Three open questions, one definition, and the definition is a sentence rather than a rule.
+
+## What vision's types cost the checker: one clause, and it cannot be a `bool`
+
+`@/packages/wacc/src/check.wac` is about forty lines of the shipped 10,539:
+`assignable(C c, string want, string got)`, shared by **26 call sites**.
+
+**The premise I started with was wrong.** The shipped header says a returned name must have the
+declared type *exactly*, so I expected `union<A, B>` to be *subtyping added to a language with none*.
+It is not. `assignable` already has **five clauses** — nullable widening both ways, nullable-into-base,
+struct inheritance, a generic child into a parent, a variant into its enum — and *exactly* is about
+rung 3's slice, not the language. Vision adds a clause to a relation that exists.
+
+And every clause there carries the miss it was added for: *"the sweep found it forty times over"*,
+*"missed because nothing in the spec corpus assigns a child to a parent"*. **So the cost of a sixth
+clause is not the clause; it is that the five before it each took a measured miss to find.**
+
+### The part that is not three lines
+
+`try f()` in a function declared to fail with `E2` is legal exactly when the callee's `E1 ⊆ E2` — the
+same relation. When it is not, the checker must say **which member**:
+
+    try: `parseProxy` can fail with `PortNotDigits`, which this function does not declare
+
+`assignable` answers `bool`, and has never needed to say why not, because **none of its five clauses
+can fail partially**: a `string` is not an `i32` and there is nothing to enumerate. A union is the
+first relation in this language where failure has a **witness**.
+
+> This file already counts *78 `bool` functions collapsing 405 refusals*, of which 17 are
+> verifications. A relation is a different case with the same symptom: a verifier throws away *which
+> rule refused* and wants an enum; a **relation** throws away *which element* and wants the element.
+> `Ty? missingFrom(…)`, not `Reason refused(…)`, and the two look alike.
+
+So `assignable` stays a `bool` and gains a sibling — 26 callers want the predicate and one wants the
+witness — and nothing can say the two agree. `missingFrom(c, w, g) is null` **iff**
+`assignable(c, w, g)` is a law, the fourth here after `hash`/`eq`, `combine`'s associativity and
+`Key`'s.
+
+### And what the clause does not cost
+
+Ordering (subset makes `union<A, B>` and `union<B, A>` the same type), `never` (§above), and the
+nullable interaction — `union<A, B>?` falls out because the existing clauses **recurse**. That last
+is a property of how that function was written rather than of unions: a cascade of recursing `if`s
+composes with a new clause, where a `switch` on a pair of type kinds would have wanted a row per
+combination.
+
+> **Verdict:** language — union subtyping as subset, `never` as the empty union, and a witness form of
+> the relation for `try`. Settled by: `spec/spec/types.md`, and forty lines of
+> `packages/wacc/src/check.wac` **given a structured `Ty`** — which it is not: types are `string`s
+> there, so subset means parsing `union<A, B>` on every comparison in the function 26 call sites run
+> on every expression. The clause is three lines with a type tree and a different project without one.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

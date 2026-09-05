@@ -1,0 +1,123 @@
+// What vision's types cost the checker — which is one clause, and the clause cannot be a `bool`.
+//
+// `packages/wacc/src/check.wac` is 10,539 lines and nothing here had predicted anything about it.
+// This file is about forty of them: `assignable(C c, string want, string got)`, which 26 call sites
+// share and which is where every widening in the language lives.
+//
+// **The premise I started with was wrong and worth recording.** The file's header says a returned
+// name must have the declared type *exactly*, so I expected `union<A, B>` to be *subtyping added to a
+// language that has none*. It is not: `assignable` already has five clauses — nullable widening both
+// ways, nullable-into-base, struct inheritance, a generic child into a parent, and a variant into its
+// enum — and the header's *exactly* is about rung 3's slice rather than about the language. The
+// relation exists. Vision adds a clause to it.
+//
+// And every clause there carries the miss it was added for. *"reported, in every position a value can
+// be written: local, parameter, return, field, array element and a later assignment, all six measured
+// against the reference"*; *"the sweep found it forty times over"*; *"missed because nothing in the
+// spec corpus assigns a child to a parent"*. So the honest cost of a sixth clause is not the clause —
+// it is that the five before it each took a measured miss to find, and nothing suggests the sixth is
+// different.
+
+import { Tok, Ty } from "./ast.wac";
+
+/**
+ * Whether a value of type `got` may be where a `want` is expected — **the sixth clause**.
+ *
+ * `union<A, B>` accepts `A`, and accepts `union<A>`, and accepts `union<A, B>`; it does not accept
+ * `union<A, C>`. So the rule is **subset**, and it composes with the five that are there rather than
+ * sitting beside them: `union<A, B>?` takes a `union<A>` by the nullable clause recursing onto this
+ * one, exactly as `Shape?` takes a `Circle?` today.
+ *
+ * The clause is three lines. What it costs is below.
+ */
+export bool assignable(const Ctx c, Ty want, Ty got) { … }
+
+/** The context a check runs in: what is a struct, what is an enum, what a name resolves to. */
+export struct Ctx { … }
+
+/*
+ * ## And `never` needs no clause at all, which is the one place vision makes this function smaller
+ *
+ * `never` is the **empty union**. Subset containment then makes it assignable to everything —
+ * `{} ⊆ S` for every `S` — so *a bottom type* is not a rule the checker learns; it is the degenerate
+ * case of a rule it already has.
+ *
+ * `../../../QUESTIONS.md` records `never` as *a type with non-trivial semantics, asserted in one doc
+ * comment*. This is the semantics: not *assignable to everything* as a special case, but *the union
+ * of nothing*, from which that follows. It also settles what `union<never, E>` reduces to —
+ * `{} ∪ S = S`, no rule needed — which that entry lists as an open operation, and it settles
+ * `@/packages/wacc/src/genlower.wac`'s *the `Waiting` arm has to be deleted*: a `match` over
+ * `Step<never, Y, R>` has two arms because the third's payload type is the empty union and no value
+ * of it exists.
+ *
+ * Three open questions, one definition, and the definition is a sentence rather than a rule. Worth
+ * noticing that it is not written down anywhere: `never` appears in seven places in this directory
+ * and none of them says *the empty union*.
+ */
+
+/**
+ * Why `try` cannot use the function above, and this is the finding.
+ *
+ * `try f()` inside a function declared to fail with `E2` is legal exactly when the callee's error
+ * union `E1` is a subset of `E2` — the same relation, asked the same way round. And when it is not,
+ * the checker has to say **which member** is missing:
+ *
+ *     try: `parseProxy` can fail with `PortNotDigits`, which this function does not declare
+ *
+ * `assignable` answers `bool`. It has never needed to say *why not*, because none of its five clauses
+ * can fail **partially**: a `string` is not an `i32` and there is nothing to enumerate. A union is the
+ * first relation in this language where failure has a *witness*, and the witness is what a caller
+ * needs to fix it.
+ */
+export Ty? missingFrom(const Ctx c, Ty want, Ty got) { … }
+
+// ## 1. A predicate is the wrong shape and this directory has counted the shape before
+//
+// `../../../QUESTIONS.md`: **78 `bool` functions collapse 405 refusals, and 17 of them are
+// verifications.** `assignable` is the 79th and it is not in that count, because it is not a
+// verification — it is a *relation*, and relations that can fail in more than one way have the same
+// problem for the same reason.
+//
+// The difference from the seventeen is what makes it worth its own note. A verifier that answers
+// `bool` throws away *which rule refused*, and the fix is an enum of rules. A **relation** that
+// answers `bool` throws away *which element*, and the fix is not an enum — the set of possible
+// answers is the members of a type the checker was handed. So `Ty? missingFrom(…)` rather than
+// `Reason refused(…)`, and the two look alike and are not.
+//
+// **`assignable` stays a `bool` and gains a sibling.** Twenty-six call sites want the predicate and
+// one wants the witness, and making all twenty-six unwrap an option to ask *may this go here* would
+// be the tail wagging the dog. What the language has no way to say is that the two agree —
+// `missingFrom(c, w, g) is null` **iff** `assignable(c, w, g)` — which is a law, and the fourth in
+// this directory after `hash`/`eq`, `combine`'s associativity, and `Key`'s.
+//
+// ## 2. What the sixth clause does not cost
+//
+// Three things I expected to pay for and do not:
+//
+//   * **Ordering.** `union<A, B>` and `union<B, A>` are the same type under subset, so nothing has to
+//     canonicalise a member list before comparing. `@/packages/http`'s `ResponseFault =
+//     union<RequestFault, BadStatus>` nests a union in a union and flattens by the same rule.
+//   * **`never` as a special case** — §above.
+//   * **Nullable interaction.** The existing clauses recurse, so `union<A, B>?` falls out. That is a
+//     property of how that function was written and not of unions, and it is worth noticing: a
+//     cascade of `if`s that each recurse composes with a new clause, where a `switch` on a pair of
+//     type kinds would have needed a row per combination.
+//
+// ## 3. What could not be written
+//
+// **`Ty` is a `string` in the shipped checker and this file pretends otherwise.** `assignable(C c,
+// string want, string got)` compares type *names*, with `withoutNull`, `isNullableName` and
+// `isArrayName` doing structure by string surgery. Union subset over strings means parsing
+// `union<A, B>` at every comparison, in the function 26 call sites run on every expression. `Ty` as a
+// tree is the answer and it is a rewrite of the checker's spine rather than a clause.
+//
+// So the sixth clause is three lines **given a structured type** and is a different project given a
+// string, and which of those is true is not visible from the proposal. Same shape as
+// `@/packages/wacc/src/lex.wac`'s tokens: the cost of a vision feature is decided by a representation
+// choice made years earlier for another reason.
+//
+// **Nothing says the checker's relation and the runtime's are the same.** `assignable` decides what
+// compiles; `is` decides what a match arm takes at run time; and a union's arms are matched by type.
+// If the two disagree about `union<A, B>` accepting `union<A>`, a program compiles and takes the wrong
+// arm. The shipped language keeps them in step by having one notion of a name; a subset relation is
+// the first place they could drift, and the only thing that would catch it is a test that asks both.
