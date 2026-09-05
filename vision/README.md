@@ -97,16 +97,16 @@ Where they are densest, measured by what the rewrites promoted: a descriptor wri
 union that replaces one**, which is the single most repeated change the exercise made — and two or
 more scalars that must agree with no type to pair them (`raster`, `ssz`, `ts`, `webrtc`).
 
-## Seven asks put to one test, and five of the seven changed
+## Eight asks put to one test, and six of the eight changed
 
 Added 2026-09-05. The exercise produces feature requests, and by the fourth day it was producing them
 faster than anybody could weigh them. One question turned out to separate the good ones from the rest:
 
 > **Name a caller, and say what it would do differently.**
 
-Seven have been through it. **Two survived, one changed shape, one was answered outright, three were
-retired** — and every one of the retirements had been written into a package file the day before,
-each costing one grep to check.
+Eight have been through it. **Three survived — two of them narrowed — one changed shape, one was
+answered outright, three were retired**, and every one of the retirements had been written into a
+package file the day before, each costing one grep to check.
 
 | ask | result |
 |---|---|
@@ -117,6 +117,7 @@ each costing one grep to check.
 | a `slice` that refuses | **retired** — all three input-driven callers check first and produce a fault carrying numbers; a `null` would be a worse diagnostic |
 | an `ordinal()` for enums | **retired** — two of six enums want to index at all, and both are answered by putting the index on the table's own type |
 | what `defer` means | **answered** — all five uses want it on every exit including `try`; the trap half is observable in one of five and is a question about `std`, not the language |
+| a brace pattern for enum payloads | **survives, narrowed** — six of thirteen arms in the one consumer are served by `(_)` today; the unarguable part is *subset* binding, which is one arm |
 
 **The pattern in the retirements is one sentence:** a feature that looks missing from inside one file
 usually has a caller that would not use it. All three were argued from the file that wanted them, and

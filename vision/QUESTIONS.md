@@ -2306,6 +2306,35 @@ property.
 
 ## An enum's payload is a struct and is not treated as one
 
+### Tested 2026-09-05 by counting what the first consumer actually uses it for
+
+`@/packages/wacc/src/walk.wac` is the brace pattern's only consumer, and it has **13 brace arms**.
+They are not one thing:
+
+| | arms | what the positional form does |
+|---|---|---|
+| a whole-payload wildcard — `IntLit { .. }`, `Call { .. }` | **6** | `Call(_)` already, and `ast.wac` says so: *"`{ .. }` duplicates something rather than adding it"* |
+| every field by name — `Ternary { cond, then, els }` | **6** | `Ternary(cond, then, els)`, which compiles with any two of the three transposed |
+| a **subset** by name — `Cast { operand, .. }` | **1** | `Cast(_, operand, _)`, counting underscores |
+
+So **six of thirteen are served today**, six are legibility and transposition safety, and **one does
+something the positional form cannot do at all.**
+
+That is a different claim from the entry's, which leads with *291 match arms in the tree bind two or
+more payload fields where two share a type*. The 291 is the size of the **hazard**, not of what the
+pattern buys — and searched for, the hazard has no incident: no commit in this repository's history
+records a transposed binding being fixed. Weak evidence, since one could have been caught before a
+commit, and it is the only evidence there is.
+
+**So the ask splits three ways and only one part is unarguable:**
+
+- **Subset binding** — impossible today, wanted once in the one consumer, and the case `ast.wac`
+  makes for it is exact: `Func { nameTok, body, .. }` binds two of seven where fifty-four
+  `StructDecl` arms bind a handful of nine.
+- **By-name binding** — legibility, plus a safety property with 291 opportunities and zero known
+  failures. Worth having, and it is not the emergency the count implies.
+- **`{ .. }`** — already available as `(_)`, and this file said so before the consumer existed.
+
 Three spellings of the same fields, and only one of them can use their names:
 
     Point q = Point { x: 3, y: 4 };     // a struct: by name, order-independent, a nullable omitted

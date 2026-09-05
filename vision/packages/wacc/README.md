@@ -89,8 +89,27 @@ it order-independent, has it optional for a nullable, and an enum variant gets n
 that already applies to `Point` to apply to a payload.
 
 So the promotion is not *add a brace pattern*. It is **an enum's payload is a struct and is not
-treated as one**, of which the pattern is one direction — worth having, fixing 291 arms, and leaving
-every construction site as it was.
+treated as one**, of which the pattern is one direction — worth having, and leaving every
+construction site as it was.
+
+### Tested 2026-09-05: what the first consumer uses it for is three things, not one
+
+*"Fixing 291 arms"* is the size of the **hazard**, not of what the pattern buys.
+[`src/walk.wac`](src/walk.wac) has thirteen brace arms and they are three different asks:
+
+| | arms | what the positional form does |
+|---|---|---|
+| a whole-payload wildcard — `Call { .. }` | **6** | `Call(_)` already, which `src/ast.wac` says: *"`{ .. }` duplicates something rather than adding it"* |
+| every field by name — `Ternary { cond, then, els }` | **6** | the same, with any two of three transposable |
+| a **subset** by name — `Cast { operand, .. }` | **1** | `Cast(_, operand, _)`, counting underscores |
+
+**Six of thirteen are served today.** Six are legibility plus transposition safety — and searched
+for, that hazard has no incident: no commit in this repository records a transposed binding being
+fixed, which is weak evidence and the only evidence there is. **One does something the positional
+form cannot do at all**, and it is the one `Func { nameTok, body, .. }` is about: binding two of
+seven, where fifty-four `StructDecl` arms bind a handful of nine.
+
+So the unarguable part is subset binding, and it is one arm in thirteen.
 
 ## The `try` lowering as a pass, and the case the worked example did not have
 
