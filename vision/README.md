@@ -104,9 +104,9 @@ faster than anybody could weigh them. One question turned out to separate the go
 
 > **Name a caller, and say what it would do differently.**
 
-Eight have been through it. **Three survived — two of them narrowed — one changed shape, one was
-answered outright, three were retired**, and every one of the retirements had been written into a
-package file the day before, each costing one grep to check.
+Nine have been through it. **Four survived — three of them changed under the test — one changed
+shape, one was answered outright, three were retired**, and every one of the retirements had been
+written into a package file the day before, each costing one grep to check.
 
 | ask | result |
 |---|---|
@@ -118,14 +118,17 @@ package file the day before, each costing one grep to check.
 | an `ordinal()` for enums | **retired** — two of six enums want to index at all, and both are answered by putting the index on the table's own type |
 | what `defer` means | **answered** — all five uses want it on every exit including `try`; the trap half is observable in one of five and is a question about `std`, not the language |
 | a brace pattern for enum payloads | **survives, narrowed** — six of thirteen arms in the one consumer are served by `(_)` today; the unarguable part is *subset* binding, which is one arm |
+| a type for paths | **survives, inverted** — of 77 shipped signatures with a path beside another `string`, the 40 a `Path` separates are pairs nobody confuses and the **37 it cannot** — `rename(from, to)` — are where the mistake is free |
 
 **The pattern in the retirements is one sentence:** a feature that looks missing from inside one file
 usually has a caller that would not use it. All three were argued from the file that wanted them, and
 none of the three authors — me — had looked at what the callers do with the failure.
 
-**And the two that survived did not survive unchanged.** Both got sharper under the test: the
-fixed-length ask found its real argument, and `try` found that its strongest opposition was aimed at
-something else. So the test is not a filter, it is a second draft.
+**And the ones that survived did not survive unchanged.** Three of the four got sharper under the
+test: the fixed-length ask found its real argument, `try` found that its strongest opposition was
+aimed at something else, and the path ask found that the population it was filed for is the half a
+`Path` type does not help. So the test is not a filter, it is a second draft — and the path row is
+the first where the second draft **contradicts** the first rather than sharpening it.
 
 The rest of `QUESTIONS.md` has **not** been through it. That is the honest state, and it is the
 obvious next thing: an entry that has not named a caller is a hypothesis.

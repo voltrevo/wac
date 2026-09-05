@@ -4277,6 +4277,59 @@ as a want: **no bug has been found from it.** The evidence is four packages inde
 the same thing out of concatenation and a set of helpers with no shared type, which is a smell rather
 than a defect — and the entry exists so that whoever *does* hit the defect finds it already counted.
 
+### Put to the caller test, and the type protects the calls where the mistake is hard
+
+*2026-09-05.* `../README.md`'s question — **name a caller, and say what it would do differently** —
+run over the shipped tree rather than over this entry's argument. Every signature in
+`packages/*/src` and `tools/` taking **two or more `string` parameters**: 302 of them, of which
+**77 have a parameter unambiguously naming a path**. Split by what the path sits beside:
+
+| | count | example | would a `Path` type separate them? |
+|---|---|---|---|
+| a path beside a value of another kind | **40** | `putFile(string path, string text)` | **yes** |
+| a path beside another path | **37** | `rename(string from, string to)` | **no** |
+
+The forty are the calls this entry was arguing about, and they are real: `putFile(path, text)`,
+`write(path, text)`, `chown(path, owner)`, `writeWire(path, what)`, `askBash(dir, script)`,
+`save(who, path)`. **But the mistake in each of them needs two variables in scope that a reader would
+not confuse** — a path and a file's contents, a path and a username — which is a mistake nobody makes
+twice.
+
+The thirty-seven are where the mistake is cheap, and they are the ones a `Path` type cannot touch,
+because after it both parameters are a `Path`:
+
+    rename(string from, string to)                 fs.wac:965, remote.wac:352, grants.wac:181
+    resolvePath(string cwd, string path)           path.wac:48
+    relativeTo(string base, string abs)            wacc/path.wac:69
+    join(string dir, string name)                  wacpkg/fetch.wac:409
+    copyBuilt(string from, string to)              wactest/built.wac:593
+
+> **A newtype separates kinds and the confusable pairs here are the same kind in two roles.** Swapping
+> `from` and `to` in `rename` loses a file and compiles either way, before the change and after it.
+
+**And the roles are not consistently ordered, which is measurable.** Of the functions in the tree
+taking a parameter named `from` and one named `to`, **75 write `(from, to)` and 2 write `(to, from)`
+— and both of the two are in `packages/wacc/src/emit.wac`**, beside neighbours using the other order:
+
+    emit.wac:10268   isDescendantStruct(Env env, string to, string from)
+    emit.wac:10538   emitCast(…, string from, string to)
+    emit.wac:16389   emitBytesCopy(…, string to, string from)
+
+Line 10268 and line 10538 are 270 lines apart. Every argument at every call site is a `string`, so
+each of the four orderings compiles.
+
+That is the `WrongSize { want, got }` / `BadFirstOffset { got, want }` finding from the tuple count —
+*the same two fields in opposite orders, both correct* — reappearing **inside one file** rather than
+across two packages, and in parameters rather than in fields. Which makes it the stronger version:
+two packages disagreeing is a coordination failure, and one file disagreeing with itself is not.
+
+**Verdict: survives, and the argument inverts.** The ask stands, and the reason it was filed —
+`Files.open(name)` and `Files.open(contents)` are the same call — is the weaker half of what is
+there. The half worth having a language answer for is the 37, and a `Path` type is not it. What
+those want is a way to say that **two parameters of one type have distinct roles** — which is what
+named arguments do in other languages, what a distinct type per role does here at the cost of a type
+per role, and what nothing in `../GRAMMAR.ebnf` proposes.
+
 ## Nineteen functions answer `T?` with four or more ways of meaning nothing — 139 sites
 
 The entry above says the best-argued paragraph in a file is a rule the type could hold, from six
