@@ -156,6 +156,16 @@ here is one whose members must not be confused, which is the property a tuple gi
 spent finding places where position was the bug, and the construct that makes position the interface
 found no takers.
 
+**Optional chaining's zero has the same shape.** `?.` shortens a chain, and `x!.` appears eleven
+times in 157 files with **not one instance of two forced links in one expression** — there is no
+chain to shorten. Every one of the eleven is a single unwrap after a null test where the absent case
+has a specific, non-null consequence: a different value, a fault, an early return. `?.` answers
+*something was absent* without saying which link, which is the `bool`-that-answers-several-questions
+at expression level — the shape this directory spent five days removing from signatures.
+
+So two of the four zeros are explained and neither is an oversight: **a construct that collapses a
+distinction finds no users in code written to preserve distinctions.**
+
 ## What twenty-two subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is a hundred and thirty-two entries and getting longer, which is the exercise working and is not a

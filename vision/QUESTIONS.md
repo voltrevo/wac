@@ -1278,6 +1278,33 @@ what shipped.
 
 ## Whether there is optional chaining
 
+### Tested 2026-09-05 — eleven forced unwraps, **no chains at all**, and `?.` is wrong at every one
+
+Optional chaining shortens `a?.b?.c`: a **chain**. Counted over the 157 files — `x!.` appears
+**11 times, and not once with two forced links in one expression.** There is no chain to shorten.
+
+What the eleven are is the finding. Every one is a single `x!` immediately after a null test, and in
+every one **the absent case has a specific, non-null consequence**:
+
+| | what it writes | what `?.` would give |
+|---|---|---|
+| `@/packages/json/src/value.wac` | `(this.index is not null) && (this.index!.get(key) is null)` | `this.index?.get(key) is null` — which conflates *no index* with *no such key* |
+| `@/packages/raster/src/surface.wac` | `this.damage is null ? r : this.damage!.cover(r)` | nothing — the absent case answers `r`, not null |
+| `@/packages/raster/src/frame.wac` | `t!.at.x` … five fields after `if (t is null) { return Ok; }` | five separate absences where the code has one |
+| `@/packages/lightclient/src/validate.wac` | `attested!.slot` after a check that returns a **fault** | a null, where the caller needs `MalformedHeader` |
+
+**`?.` answers *something was absent* without saying which link**, and every site here either needs
+to say which, or needs the absent case to produce a value, a fault or a return.
+
+So this is the `bool` that answers several questions, at expression level — and this directory has
+spent five days removing that shape from signatures. The zero is not an oversight; it is the same
+finding as the tuple one, in the other direction: **a construct that collapses a distinction finds no
+users in code written to preserve distinctions.**
+
+The honest limit: `?.` earns its keep where a caller genuinely wants *null if anything is missing*,
+and with no chain anywhere in 157 files there is no evidence either way about whether such a caller
+exists here. What can be said is that none of the eleven is one.
+
 `?` nests, so `x?.field` on a nullable field would answer `T??` where every language that has the
 operator answers `T?`. That is the one place flattening earns its keep, and wac has neither `?.` nor
 `??` today — so the question is whether adding one means giving it an explicit flatten, or not
