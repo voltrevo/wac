@@ -20,7 +20,7 @@
 
 export { Result } from "./result.wac";
 export { Vec } from "./vec.wac";
-export { Map } from "./map.wac";
+export { Map, Key } from "./map.wac";
 export { Queue } from "./queue.wac";
 export { Slice, Bytes } from "./slice.wac";
 // `all` and `any` are **not** here, and were until the funcref rewrite: they are statics on

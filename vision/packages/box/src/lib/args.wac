@@ -192,6 +192,12 @@ export string say(string name, ArgFault f) { … }
 // would be checked and cannot be parsed generically, which is the trade the shipped `string flags`
 // made without stating it.
 //
+// **`Map<string, string> values` should be `Map<u8, string>` — and since 2026-09-05 it can be.**
+// `core/map.wac`'s `Key.by` makes a key out of a projection, so `Key.by(Key.bytes(), oneByte)` is a
+// `Key<u8>` and the map is keyed on the byte. Found by writing that file's body, which meant reading
+// this workaround and `@/packages/git/src/prompt.wac`'s, and noticing they were the same projection
+// spelled by hand twice. The original complaint, kept:
+//
 // **`Map<string, string> values` should be `Map<u8, string>` and `u8` is not a key.** Flags are
 // single bytes; the shipped file packs the pair into a `string[]` where *"the first byte is the
 // flag"*, which is the packed-key shape `../../../../QUESTIONS.md` already has from `@/packages/box`'s

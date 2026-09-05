@@ -1,40 +1,140 @@
-// A hash map.
+// A hash map — **written out, because the signature it had could not be implemented.**
 //
-// Only the surface a rewritten package reached for — `json` wants one for an object's lazy index.
-// The real `core/map.wac` is unchanged apart from the signatures below, and is not copied here.
+// This file was four signatures and a long note about a contradiction it had noticed and not
+// resolved. `../README.md`'s count says 23 files here are entirely elided; this was one, and
+// `../QUESTIONS.md`'s standing advice is that the way to settle a design is to write the thing.
+// Writing four lines of `put` settles it in one:
 //
-// ## `create()` takes nothing here and takes two funcrefs there, and that contradicts `DECISIONS.md`
+//     void put(this, K key, V value) {
+//       i32 h = ???(key);
 //
-// Found 2026-09-04 by auditing the decisions. The shipped signature is
-// `Map<K, V> create(fn[i32(K)] hash, fn[bool(K, K)] eq)` — the caller supplies both, and
-// `core/map.wac`'s header says why: *"`Map<K, V>` takes its hash and equality as funcrefs rather than
-// requiring anything of K, because wac has no traits and no constraints on type parameters."*
+// **There is no `???`.** `create()` taking nothing can only mean the language hashes `K` for you,
+// and `../DECISIONS.md` settles that it does not — *"Identity hashing is not free … A type that
+// wants to be a hash key carries the field itself."* So the surface this file declared was not a
+// simplification of the shipped `create(fn[i32(K)] hash, fn[bool(K, K)] eq)`; it was a signature
+// with no body, and nothing noticed for a day because nobody wrote one.
 //
-// This file wrote `create()` and said it had changed only the nullability of `get` and `pop`. A
-// `create` with no hash argument can only mean **the language hashes `K` for you** — which is
-// precisely what `../DECISIONS.md` settles that it does not:
+// ## What replaces it, and it is neither of the two the note offered
 //
-// > `is` on two references is `ref.eq` and costs nothing. Identity hashing is not free … A type that
-// > wants to be a hash key carries the field itself.
+// The note framed it as a choice between *restore the two funcrefs*, which puts two arguments at
+// every call site that are the same two functions almost every time, and *keep `create()`*, which
+// needs a story for where the hash comes from and has none.
 //
-// So the decision and this file disagree, and `@/packages/quic` obeyed the decision while this
-// abolished it: its `Router` hashes a connection id to a `u64` and keys on that, calling it *"the
-// first place in nineteen subjects where that decision has cost anything"*. It cost `quic` something
-// because `quic` read the decision; it cost the four callers of this `Map` nothing because this
-// silently granted what the decision refuses.
-//
-// **Not fixed here, because which of the two is right is a real question.** Restoring the funcrefs
-// makes every call site carry two arguments that are the same two functions almost every time —
-// `hashBytes` and `bytesEq` — which is the noise `core/hash.wac` exists to reduce and does not
-// remove. Keeping `create()` needs a story for where the hash comes from, and *no traits* is the
-// reason there is none. `../QUESTIONS.md` has it.
+// There is a third: **make the pair a value.**
+
+import { Vec } from "./vec.wac";
+import { Bytes } from "./slice.wac";
+
+/**
+ * How to use a `K` as a key: hash it, and compare two.
+ *
+ * One argument instead of two, and — the part that matters — **a value that can be named, shared and
+ * derived.** `Key.bytes()` is written once in `core` and passed by everyone, where two loose
+ * funcrefs are written out at each call and can be paired wrongly: nothing stops
+ * `Map.create(hashBytes, stringEq)`, and this type makes that unspellable because the pair is
+ * constructed together.
+ *
+ * It is the same move `@/packages/fs`'s `Mount` makes — a struct of funcrefs standing in for the
+ * interface the language has no way to declare — and the same one `Ticket` makes. Third instance,
+ * and the first in `core`.
+ */
+export struct Key<K> {
+  fn<i32(K)> hash;
+  fn<bool(K, K)> eq;
+
+  /** The two everything actually uses. */
+  Key<Bytes> bytes() { return Key(hashBytes, bytesEq); }
+  Key<string> text() { return Key(hashText, textEq); }
+
+  /**
+   * A key derived from another — `Key.by(Key.text(), c => c.name)`.
+   *
+   * This is what `@/packages/git/src/prompt.wac` could not write. That file wants
+   * `Map<Change, i32>`, records that it cannot have one, and works around it with `Map<u8, i32>`
+   * keyed on `Change.code()` — *"and that is the character"*, its own comment says, unhappily.
+   * With this it is `Map.create(Key.by(Key.text(), c => c.name()))` and the map is keyed on the
+   * `Change`.
+   */
+  Key<T> by<T>(const Key<K> inner, fn<K(T)> project) {
+    return Key<T>(
+      (T t) => inner.hash(project(t)),
+      (T a, T b) => inner.eq(project(a), project(b)),
+    );
+  }
+}
 
 export struct Map<K, V> {
-  Map<K, V> create() { … }
+  Key<K> key;
+  Vec<Bucket<K, V>> buckets;
+  i32 count;
+
+  Map<K, V> create(const Key<K> key) { return Map(key, Vec.create(), 0); }
 
   /** The value, or nothing. Absence is the type — the same rule as `Vec.pop`. */
-  V? get(const this, K key) { … }
+  V? get(const this, K key) {
+    if (this.buckets.len() == 0) { return null; }
+    i32 at = this.key.hash(key) % this.buckets.len();
+    for (Entry<K, V> e in this.buckets.get(at)!.entries.items()) {
+      if (this.key.eq(e.k, key)) { return e.v; }
+    }
+    return null;
+  }
 
   void put(this, K key, V value) { … }
-  i32 len(const this) { … }
+  i32 len(const this) { return this.count; }
 }
+
+struct Entry<K, V> { K k; V v; }
+struct Bucket<K, V> { Vec<Entry<K, V>> entries; }
+
+i32 hashBytes(Bytes b) { … }
+bool bytesEq(Bytes a, Bytes b) { … }
+i32 hashText(string s) { … }
+bool textEq(string a, string b) { … }
+
+// ## 1. What writing four lines settled that a day of arguing had not
+//
+// The note this file used to carry is *right* about the contradiction and offered two ways out,
+// both bad. It did not find the third, and the reason is visible now: it was reasoning about the
+// **signature** — one argument or two — where the problem is that two loose funcrefs are two values
+// that must agree and nothing says so.
+//
+// `Key<K>` is the fourth *value type where two things must agree* in this directory, after
+// `@/packages/raster`'s `Rect`, `@/packages/ssz`'s `Chunk` and `@/packages/ts`'s `blank(from, to)`
+// — and it is the first where the two things are **functions**. The mis-pairing it prevents is not
+// hypothetical arithmetic: `hashBytes` with `stringEq` type-checks under the shipped signature
+// whenever `K` is a type both accept.
+//
+// ## 2. `Key.by` is the piece nobody asked for and two files needed
+//
+// A projection — *use this key, on this part of that value* — is four lines and closes two entries.
+// `@/packages/git/src/prompt.wac` wanted `Map<Change, i32>` and settled for `Map<u8, i32>` keyed on
+// a character. `@/packages/box/src/lib/args.wac` wants `Map<u8, string>` for single-byte flags and
+// records that *"`u8` is not a key"*; with `Key.by(Key.bytes(), (u8 c) => oneByte(c))` it is.
+//
+// Worth noticing how it was found: not by asking *what should `Key` have* but by writing the two
+// call sites that already existed and were written as workarounds. **The workarounds named the
+// missing operation** — `Change.code()` and *keyed on the character* are both projections, spelled
+// by hand, in packages that had no idea they were the same shape.
+//
+// ## 3. What could not be written
+//
+// **`put` is still `{ … }`, and honestly so: it needs growth.** A hash map doubles its bucket array
+// and rehashes, and `Vec<Bucket<K, V>>` where `Bucket` holds a `Vec` is a `Vec` of `Vec`s — two
+// allocations per bucket and a pointer chase per probe. The shipped `core/map.wac` is not copied
+// here and this file has not earned an opinion about its layout. What `put` would show that `get`
+// does not is whether the resize can be written without a second `Key` — it can, since `Key` is a
+// field.
+//
+// **`Key<Bytes> bytes()` and `Key<string> text()` are statics on a generic struct, and their type
+// parameter is fixed.** `Key<K>.bytes()` answers a `Key<Bytes>` whatever `K` is, which reads as a
+// mistake and is the only way to write *a constant of one instantiation* when statics live on the
+// type. A free function `Key<Bytes> bytesKey()` says it better and loses the namespacing;
+// `@/packages/core`'s `Slice.empty()` has the same shape and got away with it because `T` is free
+// there.
+//
+// **Nothing says `hash` and `eq` agree.** `Key(hashBytes, alwaysFalse)` builds a map that never
+// finds anything, and `Key(alwaysZero, bytesEq)` builds one that is a linked list. The pairing is
+// enforced and the *law* — `eq(a, b)` implies `hash(a) == hash(b)` — is not, which is the
+// associativity absence `@/packages/ssh/src/knownhosts.wac` records, fourth instance and the first
+// in `core`.

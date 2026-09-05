@@ -7405,6 +7405,50 @@ for a use nobody has, over one two functions demonstrate, is the ordering this d
 against everywhere else, and it is recorded rather than quietly reversed because the *conflict* is the
 finding and either choice would have hidden it.
 
+## Writing one elided body closed the `Map.create()` contradiction and two blockers
+
+*2026-09-05.* `core/map.wac` was four signatures and a long note about a contradiction it had noticed
+and not resolved: `create()` takes nothing here and two funcrefs in the tree, and `DECISIONS.md` says
+the language does not hash for you. The note offered two ways out and called the choice a real
+question.
+
+Writing four lines of `put` settled it in one:
+
+    void put(this, K key, V value) {
+      i32 h = ???(key);
+
+**There is no `???`.** The surface was not a simplification of the shipped signature; it was a
+signature with no body, and nothing noticed for a day because nobody wrote one.
+
+**And the third way out is neither of the two the note offered, because the note was reasoning about
+the signature.** One argument or two is not the problem; two loose funcrefs are *two values that must
+agree and nothing says so* — `Map.create(hashBytes, stringEq)` type-checks. So:
+
+    export struct Key<K> { fn<i32(K)> hash; fn<bool(K, K)> eq; }
+
+Fourth *value type where two things must agree* here, after `raster`'s `Rect`, `ssz`'s `Chunk` and
+`ts`'s `blank(from, to)`, and the first where the two things are **functions**.
+
+### The piece nobody asked for, that two files had already written by hand
+
+`Key.by(inner, project)` — *use this key, on this part of that value* — is four lines and closes two
+recorded blockers:
+
+  * `@/packages/git/src/prompt.wac` wanted `Map<Change, i32>`, wrote three paragraphs on why it could
+    not have one, and settled for `Map<u8, i32>` keyed on `Change.code()` — *"and that is the
+    character"*. It is `Key.by(Key.bytes(), (Change c) => c.code())` now, and the character is an
+    implementation detail of one `Key` instead of the type of the map.
+  * `@/packages/box/src/lib/args.wac` records that *"`u8` is not a key"*. Same fix.
+
+> **The workarounds named the missing operation.** `by` was not found by asking what `Key` should
+> have; it was found by writing the map's body, which meant reading the two call sites that had
+> worked around its absence — and both were the same projection, spelled by hand, in packages that
+> did not know it.
+
+Which is a sharper form of this file's standing advice. *Write the consumer* is how most entries here
+were tested; this is *write the thing the consumers worked around*, and the workarounds turn out to be
+a specification for it.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

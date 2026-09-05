@@ -66,8 +66,26 @@ export string render(const Summary s) { … }
 //     consumer reaches for `code()` as a **key**. The enum is intact and the character is back, one
 //     layer down, with the type system no longer looking at it.
 //
-// The third is what this file would do and is why the first two are written out. It is not that the
-// enum was wrong — a swapped `Added` and `Deleted` is still impossible, which is what it bought. It
+// **Answered 2026-09-05, by writing `core/map.wac`'s body.** None of the three is needed. The
+// contradiction that entry named — `Map.create()` taking nothing here against two funcrefs in the
+// tree — was resolved by making the pair a value, `Key<K> { hash; eq; }`, and the piece that falls
+// out of it is `Key.by`, a **projection**: `Key.by(Key.bytes(), (Change c) => c.code())` gives a
+// `Key<Change>`, so this file writes `Map<Change, i32>` and the map is keyed on the `Change`.
+//
+// The character is still what gets hashed and that is now an implementation detail of one `Key`
+// rather than the type of the map. Which is the whole of the difference: `code()` as a *key* put the
+// character back in the type system's view, and `code()` inside a `Key<Change>` does not.
+//
+// Worth recording how it was found: `core/map.wac` did not add `by` because somebody asked. It added
+// it because writing the map's body meant reading the two call sites that had worked around its
+// absence — this one and `@/packages/box/src/lib/args.wac`'s *"`u8` is not a key"* — and **both
+// workarounds were the same projection, spelled by hand, in packages that did not know it.**
+//
+// The three below are kept because the reasoning is what made the fourth findable.
+//
+// The third is what this file would have done and is why the first two are written out. It is not
+// that the enum was wrong — a swapped `Added` and `Deleted` is still impossible, which is what it
+// bought. It
 // is that **a closed set you cannot enumerate is a closed set you cannot tabulate**, and tabulating
 // is what the second consumer of any enum does.
 //
