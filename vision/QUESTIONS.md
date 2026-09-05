@@ -7907,9 +7907,37 @@ Two things were merged in the shipped shape and only one is a cost:
     fixes it.
   * *a token holds a span rather than a slice* — the allocation argument, and it stays.
 
-`Token[]` is right **if** `@/packages/…`'s open *a record stored inline in an array* is answered yes,
-and is 40,000 objects by another route if not. So the flat `i32[]` is the shape that does not depend
-on an open question, which is a real argument for it and one nobody had made.
+`Token[]` was hedged as *right **if** inline records in arrays exist*, and that hedge was wrong: the
+entry above is not open on the point that matters. It says *"never inline structs. There is no third
+option at the runtime"*, and `packages/wacc/src/emit.wac` confirms it — a struct element type is
+emitted as `0x63`, the **nullable reference** form. So `Token[]` is 40,000 heap objects today, not
+conditionally, and the flat `i32[]` is correct rather than merely safe.
+
+**I asked a question this file had already answered, one screen away.** Fifth time this week that the
+directory contained its own answer; the tell each time is a claim that names an open entry without
+reading it.
+
+### And one runtime limit has two workarounds, of which one has a proposal
+
+The inline-record entry proposes `packed struct Entry { u8 extraBits; u8 nbBits; u16 newState; }`,
+lowering to one `i32`. That fits `@/packages/zstd`'s three narrow fields and cannot fit a token's
+five, because `start` alone wants a whole word on a file of any size.
+
+    fields narrow enough to share a word   →  a packed struct  →  proposed
+    fields that are not                    →  parallel lanes   →  nothing
+
+**Which means some parallel arrays are the workaround for a runtime limit, and this directory has
+counted them as a style failure five times.** The five: `@/packages/abi`'s descriptor,
+`@/packages/ssz`'s, `@/packages/ts`'s token quintuple, `@/packages/wacc`'s, and `http`'s `Headers`.
+The two token tables are high-cardinality and forced; the other three are tens of entries and are
+habits. So *five parallel arrays and the fifth is deliberate* was three habits and two forced, and
+the count could not tell them apart because **cardinality is what decides and nothing was counting
+it.**
+
+> **Verdict:** language — a way to store a record inline in an array, in the two shapes the runtime
+> forces apart: a packed struct where the fields share a word, and something for a stream of rows
+> where they do not. Settled by: `spec/spec/types.md`, and a WasmGC feature that does not exist for
+> the second.
 
 ### The two unresolved names in that file are the measurement
 

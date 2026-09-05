@@ -77,12 +77,33 @@ export union<BadChar, Unterminated, BadEscape> LexFault;
 // (`kindAt`, `startAt`, `lenAt`, `lineAt`, `colAt`, `textAt`, `tokenCount`) to give five fields
 // names; a struct gives them names and the array stays one allocation.
 //
-// **What it costs, and it is not nothing:** `Token[]` of a five-field struct is an array of
-// references under wasm GC unless the compiler can flatten it, which is
-// `../../../QUESTIONS.md`'s *a record stored inline in an array* — open, and this is the case that
-// decides whether the conversion is free or 40,000 objects by another route. So the honest position
-// is that `Token[]` is right **if** inline records exist and is a regression if they do not, and the
-// flat `i32[]` is the shape that does not depend on the answer.
+// **The hedge this file shipped with was wrong, and the answer was already written down.** It said
+// `Token[]` is right *if* inline records in arrays exist — `../../../QUESTIONS.md`'s open entry — and
+// that entry is not open on the point that matters. It states it outright:
+//
+// > A WasmGC array of a struct is an array of *references* … An array's elements are packed
+// > primitives (`i8`, `i16`) or references, and never inline structs. There is no third option at
+// > the runtime, so the packing is a workaround for **WasmGC** rather than for wac.
+//
+// Confirmed against the emitter rather than the prose: `packages/wacc/src/emit.wac` writes `0x63`,
+// the **nullable reference** form, for a struct element type — `if (env.isStructName(t)) { out.byte(99);
+// out.i32leb(env.structType(t)); }`. So `Token[]` is 40,000 heap objects and 40,000 references, not
+// conditionally but today.
+//
+// `Token[]` is therefore a **regression**, and the flat `i32[]` is correct. What the struct buys —
+// five named fields instead of `tokens[i * 5 + 2]` — has to be bought some other way, and this file
+// keeps `Token` as the *shape of a row* rather than as the element type.
+//
+// ## 1b. And the entry's own proposal does not reach this case either
+//
+// It proposes `packed struct Entry { u8 extraBits; u8 nbBits; u16 newState; }`, lowering to one
+// `i32` — which fits `@/packages/zstd`'s three narrow fields and cannot fit a token's five, since
+// `start` alone wants a whole word on a file of any size.
+//
+// So **one runtime limit produces two workarounds and only one of them has a proposal**: pack into a
+// word where the fields are narrow, and parallel lanes where they are not. The second is what a
+// token stream needs and what nothing here has argued for — because this directory has counted
+// parallel arrays five times and called them a habit every time.
 //
 // ## 2. And this package cannot import the types the argument is about
 //
