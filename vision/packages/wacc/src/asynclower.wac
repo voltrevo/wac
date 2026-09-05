@@ -1,0 +1,158 @@
+// Lowering `async` onto `Ticket` — and the pass that has to emit it disagrees with the type.
+//
+// `packages/wacc/src/asynclower.wac` is 1,382 lines and nothing here had predicted anything about it.
+// It rewrites an `async` function into a flattened state machine and hands back a `Pending<R>`, and
+// its header gives the whole shape:
+//
+// > The body becomes a **flattened state machine**: a `while (true)` over a `switch` on a state
+// > variable, where each `await` ends one arm and begins the next. The machine's locals live in the
+// > enclosing function and the step is a lambda — so a local that outlives a suspension is
+// > *captured* … **the captured local is the state slot.**
+//
+// `@/core/ticket.wac` replaces `Pending<T>` with `Ticket<T>`, and this file is the check that
+// somebody can emit one. Two results: the lowering gets **smaller**, by one loop per async function,
+// and it cannot be written at all with `advance` as `Ticket` currently declares it.
+
+import { Expr } from "./ast.wac";
+import { Stmt } from "./stmt.wac";
+
+/**
+ * What the shipped pass emits, reduced to the tail that constructs the ticket.
+ *
+ * `Pending<R>(0 - 1, __wacResolve, __wacSettled, __wacDrop, null, true)` — six arguments, three of
+ * them lambdas, and `__wacResolve` is
+ *
+ *     fn[R(i32)] __wacResolve = (i32 id) => {
+ *       while (!__wacDone[0]) { __wacStep(); }
+ *       return __wacRes[0];
+ *     };
+ *
+ * **That loop is generated into every async function in the program.** It is the same three lines
+ * every time, and it is *drive this machine until it is done*, which is a property of machines and
+ * not of any one function.
+ */
+export Expr emitShippedTail(Stmt[] body, i32 states) { … }
+
+/**
+ * And what it becomes against `Ticket<T>`.
+ *
+ *     return Ticket<R>(
+ *       () => __wacDone[0],                 // settled
+ *       (bool block) => …,                  // advance  — see below, this is the problem
+ *       false,                              // inWait
+ *       () => __wacRes[0],                  // value
+ *     );
+ *
+ * Four arguments, three lambdas, **no `drop`**, and no loop: `Ticket.wait` is a concrete method and
+ * the `while (!settled()) { advance(…) }` lives there, once, in `core`. So the lowering emits three
+ * fewer lines per async function and one less funcref slot, and the driving logic stops being
+ * generated code — which matters beyond size, because a bug in a generated loop is a bug you find
+ * once per call site.
+ *
+ * That is the whole of the good news and it is real. The rest of this file is the other result.
+ */
+export Expr emitTicketTail(Stmt[] body, i32 states) { … }
+
+// ## 1. `advance` and `__wacStep` answer different questions, and the lowering is where they meet
+//
+// `core/ticket.wac`:
+//
+//     /**
+//      * Do some work towards settling. `block` says whether to wait on the world rather than only
+//      * poll it. Answers **whether anything moved**, which is what lets a driver tell *not yet* from
+//      * *never*.
+//      */
+//     fn<bool(bool)> advance;
+//
+// The generated `__wacStep` answers something else. From the shipped header's own worked example:
+//
+//     case 0: { __wacUp0 = e; __wacState[0] = 1; return false; }
+//     case 1: { … __wacDone[0] = true; return true; }
+//
+// **`__wacStep` answers *am I finished*.** The arm that starts an await returns `false` — and that
+// arm did a great deal: it evaluated the awaited expression, stored the upstream ticket, and moved
+// the state from 0 to 1. Under `advance`'s contract that is `true`, *something moved*. Under
+// `__wacStep`'s it is `false`.
+//
+// Wire them together as written and `Ticket.wait` sees:
+//
+//     while (!this.settled()) {
+//       if (this.advance(false)) { continue; }
+//       if (this.advance(true))  { continue; }
+//       return Result.Err(Stuck());
+//     }
+//
+// A machine that suspends on its first await answers `false` twice — and `wait` returns `Stuck` on a
+// coroutine that is running normally and waiting for a socket. **The most ordinary async function in
+// the language fails on its first suspension.**
+//
+// This is not a bug in either file. It is a seam that exists only when something has to *produce* a
+// `Ticket`, and until this file nothing did: every `Ticket` in this directory is either constructed
+// by a host capability, where the two meanings coincide because the host really does either have
+// bytes or not, or by `Ticket.all`/`firstOf`, which forward `anyAdvanced` — already the *moved*
+// meaning. The one producer that would have disagreed is the one the compiler writes.
+//
+// ## 2. Which of the two meanings is right, and the answer is not the one I expected
+//
+// *Moved* is right and `Stuck` is why. A driver has to tell *not yet* from *never*, and *finished* is
+// already `settled()` — so a second function answering the same thing carries no information. That is
+// `advance`'s doc comment and it is correct.
+//
+// So the lowering must emit a `__wacStep` that answers *moved*, and the shipped convention has to go.
+// The change is small and it is not free: every arm that currently `return false` becomes
+// `return true`, the `default:` arm keeps `return true` for a different reason, and **the one place
+// that must answer `false` is a state whose await is still pending**, which the current machine has
+// no arm for. It suspends by *returning*, so there is no code that runs when a step is entered on a
+// state whose upstream has not settled. That arm has to be written:
+//
+//     case 1: {
+//       if (!__wacUp0!.settled()) { return __wacUp0!.advance(block); }   // nothing of ours moved
+//       T x = __wacUp0!.value();
+//       …
+//     }
+//
+// Which is where `block` finally gets used, and it is the answer to a question the shipped pass never
+// had to ask: **a suspended machine's progress is its upstream's progress.** The shipped `resolve`
+// loop hides that by spinning — `while (!__wacDone[0]) { __wacStep(); }` calls a step that
+// immediately returns, over and over, and the upstream advances because `wait()` inside `case 1`
+// blocks. Vision's ticket cannot spin, because `Stuck` exists.
+//
+// > **A sentinel that means *never* forces every intermediate layer to have an opinion about
+// > progress.** The shipped design has no `Stuck`, so no generated code needs to know whether it
+// > moved; `Ticket` has one, and the obligation reaches all the way into the state machine the
+// > compiler writes.
+//
+// That is a cost of `Stuck` and it is not an argument against it — spinning is how the shipped
+// runtime burns a core on a pending read. But it is a cost that nothing in `../../../QUESTIONS.md`
+// had noticed, because it is invisible until you write the producer.
+//
+// ## 3. What could not be written
+//
+// **This file wanted `Decl` and `Program` and this directory's AST has neither.** `ast.wac` declares
+// `Expr`, `Ty`, `Arm` and `Span`; `stmt.wac` declares `Stmt`; nothing declares a function
+// declaration or a compilation unit, so `emitTicketTail` takes a `Stmt[]` and answers the `Expr` that
+// constructs the ticket, which is the honest shape of the tail but is not the pass. **Second file
+// stopped by the same absence** — `@/packages/wacc/src/genlower.wac` says it *"stops at a signature
+// because a generator lowering emits a declaration"* — and the two together are the argument that the
+// gap is the next thing to write rather than a coincidence twice.
+//
+// **`Ticket<R>` is constructed with four positional arguments and three of them are lambdas.** The
+// emitted call is `Ticket<R>(a, b, false, c)` and nothing at the call site says which is `settled`
+// and which is `value` — they have different types here, so a transposition is caught, but
+// `settled` and any other `fn<bool()>` would not be. The shipped `Pending` has six and the same
+// problem; named arguments exist in this language for calls the compiler writes as much as for the
+// ones people write, and the lowering does not use them because `synthesise a named argument` is
+// more AST than `synthesise a positional one`. That is a real reason and a bad one.
+//
+// **`inWait` is a `bool` field the constructor takes and no caller should set.** It is `wait`'s
+// re-entrancy flag, always `false` at construction, and it is in the constructor because it is in the
+// struct. A field that is state rather than configuration wants to not be an argument, which is a
+// private constructor or a default — the private-constructor entry again, and the first time the
+// caller who must not set it is **the compiler**.
+//
+// **The lowering cannot be checked against the type it emits.** `emitTicketTail` writes tokens; the
+// only thing that says those tokens construct a valid `Ticket<R>` is that the next phase type-checks
+// them. So the disagreement in section 1 is a *runtime* fault in generated code — the emitted program
+// compiles, and the first `await` in the first async function to suspend answers `Stuck`. Nothing in
+// this design catches it earlier, and the shipped pass has the same property, which is why its header
+// says the four inline-lambda refusals were found by writing a test by hand.

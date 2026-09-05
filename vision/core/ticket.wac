@@ -68,6 +68,32 @@ export struct TicketBase {
   fn<bool(bool)> advance;
 }
 
+/*
+ * ## The one producer that disagrees with `advance`, found 2026-09-05
+ *
+ * *Whether anything moved* is right and `Stuck` is why: *finished* is already `settled()`, so a
+ * second function answering it carries nothing. Every producer here agrees — a host capability
+ * either has bytes or not, and `all`/`firstOf` forward `anyAdvanced`, which is already this meaning.
+ *
+ * **The compiler does not.** `packages/wacc/src/asynclower.wac` lowers `async` to a state machine
+ * whose step answers *am I finished*: the arm that starts an await evaluates the expression, stores
+ * the upstream ticket, advances the state — and returns `false`. Wire that in and `wait` sees `false`
+ * twice and answers `Stuck` on a coroutine that is running normally and waiting for a socket, so
+ * **the most ordinary async function in the language fails on its first suspension.**
+ *
+ * `@/packages/wacc/src/asynclower.wac` has the fix, and it is not only a flipped boolean: a suspended
+ * machine has no arm that runs when its upstream is still pending, because it suspends by returning.
+ * The arm has to be written, and it is where `block` finally gets used —
+ * `if (!up!.settled()) { return up!.advance(block); }`. A suspended machine's progress is its
+ * upstream's progress.
+ *
+ * The general point is a cost of `Stuck` rather than an argument against it:
+ *
+ *   **A sentinel that means *never* forces every intermediate layer to have an opinion about
+ *   progress.** The shipped design has no `Stuck`, so no generated code needs to know whether it
+ *   moved; this one has it, and the obligation reaches into the state machine the compiler writes.
+ */
+
 /** A ticket for a `T`. */
 export struct Ticket<T> : TicketBase {
   /**
