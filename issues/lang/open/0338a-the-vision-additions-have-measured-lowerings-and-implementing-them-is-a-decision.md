@@ -65,6 +65,76 @@ therefore makes it available to users and not to the compiler, until the ladder 
 fine, and is the same position `async` was in, and is the reason a *self-hosted* rewrite of wacc in
 the new syntax is a separate and much later question.
 
+## Costed against the three compiler files, 2026-09-05 — and the parser is not where this is decided
+
+Since this was filed, each of `packages/wacc`'s big three has been read for what the additions
+actually cost it. The summary changes the shape of the work: **the parser is nearly free, the emitter
+is entirely free, and the whole bill is one checker clause plus its sibling.**
+
+**`parse.wac` — nine of ten constructs are one branch or less.**
+
+| construct | what the parser gains |
+|---|---|
+| `union<A, B>` | **nothing** — `IDENT type_args` is already a type name |
+| `T??` | nothing — the `?` suffix already loops |
+| `fn<R(A)>` | one token, `[` to `<`, reusing the existing `splitGt` |
+| `default:` for `else:` | one token |
+| `try` / `defer` / `schedule` / `yield` | one branch each, in the statement or unary parser |
+| a list literal `[a, b]` | one branch — a **leading** `[` is unused today |
+| a brace pattern `X { a, b }:` | one alternative in the arm payload |
+| `never` | nothing — a type name |
+| **`?.`** | **one token of lookahead, and it is the only ambiguity** |
+
+Two things I expected to pay for and do not: `fn<` does **not** reintroduce the `>>` problem, because
+`splitGt` is already in the parser with the bug that bought it recorded at line 852 and 23 nested
+generics in the tree; and `union<A, B>` needs no production at all. And the one construct that costs
+the parser something — `?.`, which makes this grammar need two tokens where it needed one — has
+**zero uses** across `vision/`'s 185 files.
+
+**`emit.wac` — nine of ten never reach it.** A proposal reaches the emitter only if it changes what a
+*value* is, and the additions change what a *program* looks like nine times and what a value is once.
+That once is `union`, and the emitter has already priced it: an enum is one wasm struct, a tag plus a
+slot per payload field of every variant, so `union<A, B>` is `{ i32 tag; ref A; ref B; }` with one
+reference live. `never` is the empty union, which is a struct with a tag and no payload slots — one
+type-section entry.
+
+The bill the emitter had already written is worth re-reading in this light: *"the cost is space … that
+is the trade a language with no unions makes anyway, and nothing here is measuring bytes yet."* The
+excusing clause expires. Counted in `vision/`: **37 unions, 174 members, mean 4.7 and a maximum of
+10** — `std`'s `FileFault`, `http`'s `RequestFault` and `mpt`'s `ProofFault` each have ten, so each is
+a struct of a tag and ten reference slots with one live, allocated on every failure. **A union is the
+first enum whose width is not under one author's control.** The lowering's decision to *nest* rather
+than flatten bounds it at each level and was taken for an unrelated reason.
+
+**`check.wac` — the whole bill, and it is smaller than filed above.** `assignable(C c, string want,
+string got)` is shared by 26 call sites and already has five clauses: nullable widening both ways,
+nullable-into-base, struct inheritance, a generic child into a parent, and a variant into its enum.
+So injection is a **sixth clause on an existing relation**, not subtyping added to a language with
+none.
+
+And it is a **lookup, not a parse**. The worry that `Ty` is a string and a union comparison would mean
+re-parsing `"union<A, B>"` is wrong twice: the AST has a `Ty` tree, and `typeOfTy` renders it to a
+canonical name **on purpose** — *"a type is its canonical name … invariance then costs nothing"*. A
+union is *declared*, exactly as a struct is, so the context can answer `c.unionMembers(name)`, which
+is what four of the five existing clauses already do. One table, the same table structs have.
+
+**The one genuinely new thing is that `try` needs a second function.** `try f()` inside a function
+declaring `E2` is legal when the callee's `E1` is contained in `E2`, and when it is not the checker
+has to say **which member** is missing:
+
+    try: `parseProxy` can fail with `PortNotDigits`, which this function does not declare
+
+`assignable` answers a `bool` and has never needed to say why not, because none of its five clauses
+can fail *partially* — a `string` is not an `i32` and there is nothing to enumerate. A union is the
+first relation in this language where refusal has a **witness**. So `Ty? missingFrom(c, want, got)`
+beside `assignable`, with the law that one is null exactly when the other is true — which the language
+cannot state, and which is the fifth such law in this exercise.
+
+**Revised estimate of the work in step 3**, which this issue filed as *"`check.wac` for injection"*:
+one clause that is a table lookup, one sibling function for the diagnostic, and one table populated
+from declarations. The parser and emitter steps are smaller than filed; the checker step is one
+function larger.
+
 ## The decision
 
 Three answers, and the middle one is not obviously wrong:
