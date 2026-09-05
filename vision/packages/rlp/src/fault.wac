@@ -30,8 +30,18 @@
 // Worth separating from finding 1 because they have different fixes and only one of them needs a
 // language feature: the string could always have had the offset in it.
 
-/** The declared length ran past the end of the input. Not necessarily malice — a short read does it. */
-export struct Truncated { i32 at; i32 want; i32 have; }
+// `Overrun` is `core`'s and replaces this file's `Truncated`, 2026-09-05 — see the note at the foot.
+//
+// **Imported *and* re-exported, because an import is not an export.** `./rlp.wac` publishes the
+// union's members so a caller can write `Err(is Overrun):`, and the first version of this file only
+// imported the name — so the barrel asked for something this file did not have. Caught by
+// `scratchpad/dangling.py` the minute it ran, and it is the **second** instance of
+// `../../../QUESTIONS.md`'s *importing a vocabulary does not publish it*, after
+// `@/packages/http/src/proxy.wac`'s `NotGranted`. The mechanism is new: the first arrived from
+// `"std"` and this one from `"core"`, so the shape is **any union whose member comes from
+// somewhere else**, which is what union composition across packages is for.
+import { Overrun } from "core";
+export { Overrun } from "core";
 
 /** `0x81 0x05`: a single byte below `0x80` is itself, never a one-byte string. */
 export struct NotSelfEncoded { i32 at; u8 byte; }
@@ -54,14 +64,14 @@ export struct Trailing { i32 at; i32 extra; }
 /**
  * Anything `decode` refuses.
  *
- * **Two groups, and a caller may want to tell them apart.** `Truncated` is *the input is not all
+ * **Two groups, and a caller may want to tell them apart.** `Overrun` is *the input is not all
  * here*; the other six are *this is not canonical RLP and no honest encoder produced it*. The same
  * split `@/packages/gzip`'s `Fault` makes between `SourceFailed` and `Corrupt`, and for the same
  * reason: one of them is worth retrying with more bytes and the rest are not. Not written as a
  * nested union here, because unlike gzip's there is exactly one member on the retryable side and a
  * union of one is a rename.
  */
-export union<Truncated, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing>
+export union<Overrun, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing>
   RlpFault;
 
 // **Flat, and that is now a choice rather than the only option.** Every member here is disjoint, so
@@ -94,3 +104,25 @@ export union<Truncated, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOv
 // package with the same case itself — `packages/ssz` — so two implementations in this repo refuse
 // input their format permits, for a reason that is about the index type rather than about either
 // format.
+
+// ## `Truncated` was `core`'s `Overrun` field for field, and neither knew
+//
+// *2026-09-05.* This file declared `struct Truncated { i32 at; i32 want; i32 have; }`;
+// `../../../core/cursor.wac`, written the same day from a sweep of four shipped byte readers,
+// declared `struct Overrun { i32 at; i32 wanted; i32 left; }`. **Three fields, same three meanings,
+// two names, no contact between the authors** — and the second was derived from `packages/tls`,
+// `packages/ssh`, `packages/fs` and `packages/zstd` rather than from anything here.
+//
+// So the member is gone and the union names `core`'s. Which is the first time a union in this
+// directory has a `core` type as a member, and it is the cost `cursor.wac` predicted — *"`Overrun`
+// propagates into every fault union above the parse … every fault union in the system would name
+// it"* — arriving as a saving instead, because the thing it displaced was the same type.
+//
+// **And `Truncated` was one of three.** `@/packages/unicode/src/utf8.wac` declares
+// `struct Truncated { }` — no fields, because *"hold what you have and read more"* needs none — and
+// `@/packages/gzip/src/fault.wac` declares `struct Truncated { string field; }`. Three packages,
+// one name, three types, and `@/packages/zstd/src/block.wac`'s comment quotes *this* one's
+// constructor while describing its own. That is the *duplicate names across packages* count from
+// `../../../QUESTIONS.md` with the sharpest instance: **the name that collides three ways is the one
+// naming the failure every byte reader has.**
+

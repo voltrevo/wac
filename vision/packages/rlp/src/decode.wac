@@ -1,4 +1,4 @@
-// Reading canonical RLP, with `try` instead of a sticky error field.
+// Reading canonical RLP — on `core`'s cursor, which is where this file stops being self-contained.
 //
 // **This file is what the shipped one says it could not write.** Its `Cursor`:
 //
@@ -22,11 +22,18 @@
 //
 // That last one is the tell. A function that must produce a value it does not have is a function
 // whose return type is wrong, and `Result` is the type that says so.
+//
+// ## And it declared its own cursor until 2026-09-05, which is why it is the first consumer
+//
+// `../../../core/cursor.wac` was written after a sweep found `Reader` in five shipped packages, and
+// its last paragraph named this file: *"`@/packages/rlp/src/decode.wac` declares one here — in a
+// directory that has `Bytes` and spent three days arguing for it."* This is the follow-through, and
+// **three of the cursor's own predictions came true and one did not.** §1 below.
 
-import { Result, Bytes, Vec } from "core";
+import { Result, Bytes, Vec, Cursor, Overrun } from "core";
 import { Item } from "./item.wac";
 import {
-  RlpFault, Truncated, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing,
+  RlpFault, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing,
 } from "./fault.wac";
 
 /**
@@ -36,103 +43,92 @@ import {
  * has two readings, which is the shape of several real Ethereum vulnerabilities.
  */
 export Result<Item, RlpFault> decode(Bytes input) {
-  Reader r = Reader(input, 0);
-  Item it = try r.item();
-  if (r.at != input.len()) { return Err(Trailing(r.at, input.len() - r.at)); }
+  Cursor c = Cursor.of(input);
+  Item it = try item(c);
+  if (!c.empty()) { return Err(Trailing(c.at, c.left())); }
   return Ok(it);
 }
 
 /**
- * Where the reader is — **and nothing else.**
+ * One item at the cursor.
  *
- * The shipped `Cursor` is `(src, at, error)`, and the third field is the one this file exists to
- * remove. What is left is a position, which is what a cursor is.
+ * **A free function taking a `Cursor`, where it was a method on this file's own `Reader`.** wac has
+ * no extension methods, so a package that adopts a `core` type has to write its own operations
+ * beside it rather than on it — see §1.
+ *
+ * The order of the tests is the order the format is defined in, and the first one matters: a
+ * decoder gets it wrong by treating `0x00..0x7f` as a zero-length prefix.
  */
-struct Reader {
-  Bytes src;
-  i32 at;
+Result<Item, RlpFault> item(Cursor c) {
+  // An `i32`, as the original has it: `tag - 0x80` on a `u8` is a subtraction at the wrong width,
+  // and every branch below is an arithmetic one.
+  i32 tag = (try c.u8()) as i32;
 
-  /**
-   * One item at the cursor.
-   *
-   * The order of the tests is the order the format is defined in, and the first one matters: a
-   * decoder gets it wrong by treating `0x00..0x7f` as a zero-length prefix.
-   */
-  Result<Item, RlpFault> item(this) {
-    if (this.at >= this.src.len()) { return Err(Truncated(this.at, 1, 0)); }
-    // An `i32`, as the original has it: `tag - 0x80` on a `u8` is a subtraction at the wrong width,
-    // and every branch below is an arithmetic one.
-    i32 tag = this.src.get(this.at) as i32;
-    this.at++;
+  if (tag < 0x80)  { return Ok(Str(one(tag as@ u8))); }
+  if (tag <= 0xB7) { return Ok(Str(try shortString(c, tag - 0x80))); }
+  if (tag <= 0xBF) { return Ok(Str(try c.take(try longLength(c, tag - 0xB7)))); }
+  if (tag <= 0xF7) { return list(c, tag - 0xC0); }
+  return list(c, try longLength(c, tag - 0xF7));
+}
 
-    if (tag < 0x80)  { return Ok(Str(one(tag as@ u8))); }
-    if (tag <= 0xB7) { return Ok(Str(try this.take(tag - 0x80, true))); }
-    if (tag <= 0xBF) { return Ok(Str(try this.take(try this.longLength(tag - 0xB7), false))); }
-    if (tag <= 0xF7) { return this.list(tag - 0xC0); }
-    return this.list(try this.longLength(tag - 0xF7));
-  }
+/** `n` bytes in the ≤55 form, where a one-byte payload has a canonical rule. */
+Result<Bytes, RlpFault> shortString(Cursor c, i32 n) {
+  i32 at = c.at;
+  Bytes out = try c.take(n);
+  // `0x81 0x05` spells a byte that spells itself. Canonical RLP has one encoding per value and this
+  // is the second one, so it is invalid input rather than a tolerated variant.
+  if (n == 1 && out.get(0) < 0x80) { return Err(NotSelfEncoded(at, out.get(0))); }
+  return Ok(out);
+}
 
-  /** `n` bytes. `short` marks the ≤55 form, where a one-byte payload has a canonical rule. */
-  Result<Bytes, RlpFault> take(this, i32 n, bool short) {
-    if (this.at + n > this.src.len()) {
-      return Err(Truncated(this.at, n, this.src.len() - this.at));
-    }
-    Bytes out = this.src.slice(this.at, this.at + n);
-    // `0x81 0x05` spells a byte that spells itself. Canonical RLP has one encoding per value and
-    // this is the second one, so it is invalid input rather than a tolerated variant.
-    if (short && n == 1 && out.get(0) < 0x80) {
-      return Err(NotSelfEncoded(this.at, out.get(0)));
-    }
-    this.at = this.at + n;
-    return Ok(out);
-  }
+/**
+ * A list of `payload` bytes' worth of items, read until exactly that many are consumed.
+ *
+ * **`Cursor.sub(payload)` is right here and is not used, which is the finding.** A sub-cursor
+ * bounded by the prefix is the operation `@/packages/tls` wanted and the one that makes a
+ * length-prefixed format safe by construction — and it would make `ListOverrun` **unreachable**,
+ * because a member reading past the list's end would fail against the inner cursor and come back as
+ * an overrun. RLP cares about the difference: *the input is short* is a truncated network read and
+ * *a member ran past its list's declared end* is an encoder that contradicted itself. So the bound
+ * is checked by hand and the sub-cursor is declined.
+ *
+ * `Vec<Item>` where the original grows an `Item[]` by doubling and then copies it down to size —
+ * seventeen lines, and the fifth hand-written grow this exercise has replaced. The original's reason
+ * for growing rather than counting stands: *"counting means decoding twice, and the members'
+ * lengths are only known by decoding them."*
+ */
+Result<Item, RlpFault> list(Cursor c, i32 payload) {
+  if (c.left() < payload) { return Err(Overrun(c.at, payload, c.left())); }
+  i32 end = c.at + payload;
+  Vec<Item> items = Vec.create();
+  while (c.at < end) { items.push(try item(c)); }
+  if (c.at != end) { return Err(ListOverrun(end)); }
+  return Ok(List(items));
+}
 
-  /**
-   * A list of `payload` bytes' worth of items, read until exactly that many are consumed.
-   *
-   * `Vec<Item>` where the original grows an `Item[]` by doubling and then copies it down to size —
-   * seventeen lines, and the fifth hand-written grow this exercise has replaced. The original's
-   * reason for growing rather than counting stands and is worth keeping: *"counting means decoding
-   * twice, and the members' lengths are only known by decoding them."*
-   */
-  Result<Item, RlpFault> list(this, i32 payload) {
-    if (this.at + payload > this.src.len()) {
-      return Err(Truncated(this.at, payload, this.src.len() - this.at));
-    }
-    i32 end = this.at + payload;
-    Vec<Item> items = Vec.create();
-    while (this.at < end) { items.push(try this.item()); }
-    if (this.at != end) {
-      // A member ran past the list's own declared end: the list says one thing and its contents
-      // another, and which to believe is exactly the ambiguity RLP's canonicity forbids.
-      return Err(ListOverrun(end));
-    }
-    return Ok(List(items));
-  }
+/**
+ * The length carried by a long-form prefix: `n` big-endian bytes, checked three ways.
+ *
+ * **`Cursor.be(n)` answers an `i32` and this needs a `u64`**, so the loop stays. Reading up to eight
+ * bytes wide is not a refinement here — `TooLong` carries what the input declared, and a prefix that
+ * spells 6 GB has to survive being read before it can be refused. §1.
+ *
+ * **The order changed from the original, and it buys the number in the message.** The original
+ * refuses `n > 4` *before* reading the bytes, so the fault it reports cannot say what length was
+ * declared — the same sentence for 2^33 and for 2^63.
+ */
+Result<i32, RlpFault> longLength(Cursor c, i32 n) {
+  i32 at = c.at;
+  Bytes raw = try c.take(n);
+  if (raw.get(0) == 0) { return Err(LeadingZero(at)); }
 
-  /**
-   * The length carried by a long-form prefix: `n` big-endian bytes, checked three ways.
-   *
-   * **The order changed, and it buys the number in the message.** The original refuses `n > 4`
-   * *before* reading the bytes, so the fault it reports cannot say what length was declared — the
-   * same sentence for 2^33 and for 2^63. Reading up to eight bytes into a `u64` first costs nothing
-   * (RLP's prefix is at most eight) and lets `TooLong` carry what the input said.
-   */
-  Result<i32, RlpFault> longLength(this, i32 n) {
-    if (this.at + n > this.src.len()) {
-      return Err(Truncated(this.at, n, this.src.len() - this.at));
-    }
-    if (this.src.get(this.at) == 0) { return Err(LeadingZero(this.at)); }
+  u64 v = 0;
+  for (i32 i = 0; i < n; i++) { v = (v * 256) + (raw.get(i) as u64); }
+  if (v > 2147483647) { return Err(TooLong(at, v)); }
 
-    u64 v = 0;
-    for (i32 i = 0; i < n; i++) { v = (v * 256) + (this.src.get(this.at + i) as u64); }
-    if (v > 2147483647) { return Err(TooLong(this.at, v)); }
-    this.at = this.at + n;
-
-    i32 len = v as@ i32;
-    if (len <= 55) { return Err(NotMinimal(this.at - n, len)); }
-    return Ok(len);
-  }
+  i32 len = v as@ i32;
+  if (len <= 55) { return Err(NotMinimal(at, len)); }
+  return Ok(len);
 }
 
 Bytes one(u8 b) {
@@ -141,14 +137,46 @@ Bytes one(u8 b) {
   return Bytes.all(a);
 }
 
-// ## What could not be written
+// ## 1. What the first consumer of `core/cursor.wac` found
+//
+// The cursor file predicted three costs and one benefit. Scored against a real adoption:
+//
+// **Predicted, and true: `Overrun` propagates into the fault union.** `./fault.wac` declares
+// `union<Overrun, NotSelfEncoded, …> RlpFault` and `Overrun` comes from `core`. That is the first
+// union in this directory with a `core` type as a member, and the prediction was that *every* fault
+// union in the system would end up naming it. Here it cost nothing, because the member it replaced —
+// `Truncated { i32 at; i32 want; i32 have; }` — is `Overrun` field for field, invented independently.
+//
+// **Predicted, and true: `be(n)` answering an `i32` cannot say its width, and a consumer needs a
+// wider one.** `longLength` reads up to eight bytes into a `u64` precisely so `TooLong` can carry a
+// length no `i32` holds. The cursor's `be` is unusable here and the hand-written loop stays — which
+// is the only operation of the six this file wanted and could not take.
+//
+// **Predicted, and true: no extension methods.** `item`, `list`, `longLength` and `shortString` were
+// methods on this file's own `Reader` and are free functions now, because a package cannot add a
+// method to a type it imported. The call sites went from `this.item()` to `item(c)`, which is a
+// wash to read and is a real constraint on how far a shared type can go: **the operations that are
+// general live on the type and the operations that are a format's live beside it, and the boundary
+// is drawn by the language rather than by the design.**
+//
+// **Not predicted, and the one that matters: the cursor's best operation is the one this consumer
+// must decline.** `sub(n)` is what makes a length-prefixed format safe by construction, RLP is a
+// length-prefixed format, and using it would delete a member of the fault union that says something
+// the format cares about. The cursor file argued `sub` from `@/packages/tls`, where a nested field
+// that overruns its prefix and an input that ran out are the same answer. Here they are not.
+//
+// > **A bound enforced by construction cannot report which bound it was.** That is the general form,
+// > and it is the same trade as the trapping one from the other end: the stricter mechanism gives up
+// > the ability to say what happened.
+//
+// ## 2. What could not be written
 //
 // **`try` in a nested call reads as one expression and is four control-flow edges.**
-// `Ok(Str(try this.take(try this.longLength(tag - 0xB7), false)))` is one line and two early
-// returns, and the second `try` only runs if the first succeeded. That is what it means and nothing
-// on the pages says so: `GRAMMAR.md` lists *`try` in expression position* with two examples, both a
-// single `try` at the head of a statement. The evaluation order of two `try`s in one expression, and
-// whether the outer construction is even started, are unstated.
+// `Ok(Str(try c.take(try longLength(c, tag - 0xB7))))` is one line and two early returns, and the
+// second `try` only runs if the first succeeded. That is what it means and nothing on the pages says
+// so: `GRAMMAR.md` lists *`try` in expression position* with two examples, both a single `try` at the
+// head of a statement. The evaluation order of two `try`s in one expression, and whether the outer
+// construction is even started, are unstated.
 //
 // Written this way deliberately rather than split into locals, because the question is worth
 // showing. The safe reading — left to right, short-circuit, nothing constructed — is what every
@@ -167,3 +195,9 @@ Bytes one(u8 b) {
 // `Err(is LeadingZero)` — the match this directory has been arguing for — stop working, because the
 // arm's type is now `Positioned<LeadingZero>`. Recorded as the first place where the two features
 // this exercise has been asking for pull against each other.
+//
+// **And `list` constructs an `Overrun` by hand**, which is the one place this file builds a `core`
+// fault rather than propagating one. `Cursor` has no *would this read fit* that answers the fault —
+// `left()` answers an `i32` — so a caller checking a bound itself has to spell the failure the
+// cursor would have spelled. Two producers of one value, which is the thing `CLAUDE.md` says is one
+// too many, and the cursor is the one that should own it.

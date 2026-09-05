@@ -10,5 +10,5 @@ export { Item, fromU64 } from "./item.wac";
 export { decode } from "./decode.wac";
 export { encode } from "./encode.wac";
 export {
-  RlpFault, Truncated, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing,
+  RlpFault, Overrun, NotSelfEncoded, LeadingZero, NotMinimal, TooLong, ListOverrun, Trailing,
 } from "./fault.wac";

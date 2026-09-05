@@ -8024,6 +8024,14 @@ not an export.
 the honest size of this finding** — worth naming because a caller cannot match an arm it cannot name,
 and not worth more than a sentence, which is what an enumeration is for.
 
+*And a second, made rather than found, 2026-09-05.* `@/packages/rlp/src/fault.wac` dropped its own
+`Truncated` for `../core/cursor.wac`'s `Overrun`, so `RlpFault` gained a member from `"core"` — and
+the barrel asked `./fault.wac` for a name it had only imported. The checker said so the minute it
+ran. **The mechanism generalises past the count**: the first arrived from `"std"` and this one from
+`"core"`, so the shape is *any union whose member comes from somewhere else*, which is exactly what
+union composition across packages is for. One hit in 178 files was the size of the sweep; it is not
+the size of the hazard, and the hazard grows with the feature.
+
 > **Verdict:** convention — one name per exported type per package, checked by a barrel walk.
 > Settled by: the check, which is written. The language is not involved.
 
