@@ -9591,6 +9591,16 @@ returned position because `this.at` is the position, and a `Buf`'s `pushAll` nee
 `this.len` is the offset. **Both findings reduce to one — a running index threaded through callers is
 a field on a type nobody wrote.**
 
+*And that one is countable.* A function taking a byte view and **exactly one** position parameter is
+a cursor passed as two arguments: **125 of them in the shipped tree, 2.1% of all declarations**, with
+`@/packages/ts/src/strip.wac` alone at 20. Here it is 5 of 565, and the elided-bodies caveat applies
+as it does to every ratio in this file.
+
+The number worth keeping is not the ratio. It is that `../core/cursor.wac` was derived from a sweep
+of **type names** that found five `Reader`s — and the pattern those five named has **125** sites. A
+name sweep finds the places somebody thought the shape was worth naming, which is a biased sample of
+the shape, biased towards the places it was already half-solved.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

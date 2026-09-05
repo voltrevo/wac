@@ -8,6 +8,12 @@
 //     fs/src/wire.wac       data, at, end, bad, why  byte u32 i64 string bytes(n) wrong(why)
 //     zstd/src/frame.wac    src, pos               byte num(n) num64(n) skip(n) left
 //
+// **And five is what the *name* sweep found, not what the pattern is worth.** Counted by signature
+// instead — a function taking a byte view and exactly one position parameter, which is a cursor
+// passed as two arguments — the shipped tree has **125 of them, 2.1% of all its declarations**, with
+// `packages/ts/src/strip.wac` alone at 20. The five `Reader`s are the places somebody gave the
+// pattern a name; the pattern is twenty-five times larger and mostly anonymous.
+//
 // This file is written to find out **which parts of that are shareable**, and the answer is not the
 // obvious one. The operations are shareable and were never the problem. What the four disagree
 // about is what a read past the end does — two trap, two latch a flag and answer `0` — and that
