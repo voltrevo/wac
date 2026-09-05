@@ -6660,6 +6660,62 @@ outside the package could name the union and not take it apart. That is a real b
 *the members were not reachable* as an explanation for the other 137. They were reachable, and
 nobody called them.
 
+### Second caller, and the hypothesis the first one suggested is wrong
+
+`refuse.wac` earning its ten suggested a rule, written down before the next file:
+
+> A fault union consumed by a **protocol** caller earns its members; one consumed by a **decoder**
+> caller does not, because every member of a decode failure means *reject this input*.
+
+`@/packages/lightclient/src/sync.wac` is the protocol half. Nine members, three answers, and the
+boundaries are not where severity would put them: `NotRelevant` is **not a fault** — the peer did
+nothing wrong and neither did we — `WrongPeriod` is a fault about **us**, and the other seven are
+statements about **the peer**. So the union earns its members, and what it discriminates is not *how
+bad* but **whose fault it is**.
+
+**Third appearance of that axis in three days, and the first where the union carries it rather than
+the caller.** `cp` needed *operand or run* and passed a `Side` by hand; `refuse` needed *does the
+connection survive* and got a constant; here it falls out of the member. And it is luck:
+`UpdateFault`'s members are named after **where the check failed**, and for this protocol where a
+check fails and whose fault it is happen to coincide. `WrongPeriod` is the proof — the one member
+named for the peer's state whose answer is about ours.
+
+**`NotRelevant` should not be in the union.** An update that is well-formed, correctly signed and
+older than our store is the *normal* answer to *give me updates from period N*. Putting it in
+`UpdateFault` runs the happy path of a range sync through `Err`, and a sync that logged one line per
+`Err` would report a healthy sync as hundreds of failures.
+
+> **A union collects what a function can answer other than the value it promised, and *normal but
+> uninteresting* is not that.**
+
+Same shape as `Exists` being a failure for `mkdir` and the goal for anything idempotent, and the
+clearer instance: there `Exists` is a real failure for one caller, here `NotRelevant` is a failure for
+none.
+
+**And the decoder half broke before it could be tested.** `@/packages/rlp`'s `RlpFault` has seven
+members all carrying `i32 at`, which is what made it look like the uniform case. It is not:
+`Truncated`, `NotSelfEncoded`, `ListOverrun` and `TooLong` are **structural** — there is no value —
+and `LeadingZero`, `NotMinimal` and `Trailing` are **canonicality**: the value decoded, and the bytes
+were not its canonical encoding. A block validator must refuse all seven because consensus requires
+canonical RLP; an inspector, a debugger or a reader of a legacy database wants the value and a
+warning. The shipped package decides for both by refusing, correctly for the caller it has, and
+nothing in the type records that a decision was made.
+
+So the hypothesis is wrong as stated and what it was reaching for survives narrower:
+
+> A fault union earns its members when **more than one kind of caller exists**. `RlpFault` looked
+> like the uniform case because this repository has one RLP caller and it is a validator.
+
+Which is a claim about *this tree*, not about decoding, and it predicts the twenty-eight unions still
+without callers split by how many kinds of consumer they will have rather than by what layer they sit
+at. Checkable; not checked.
+
+**A third state the census does not have.** `BadFinalityBranch { ProofFault why; }` nests
+`@/packages/mpt`'s ten-member union, and `sync.wac` answers `Drop` for all of it — so `ProofFault` has
+now been *reached* by a caller without being *discriminated* by one. Not unconsumed, not consumed:
+consumed as a group, which is what `Err(is Corrupt):` in `gunzip` is too. The 137 is a floor for the
+same reason it is an over-count elsewhere.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

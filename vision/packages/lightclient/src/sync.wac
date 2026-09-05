@@ -1,0 +1,133 @@
+// The sync loop — second of the thirty callers, and the test of a hypothesis the first one suggested.
+//
+// `@/packages/server/src/refuse.wac` consumed a ten-member union and it earned its members. That
+// suggested a rule, written down here before the code was:
+//
+// > **A fault union consumed by a *protocol* caller earns its members; one consumed by a *decoder*
+// > caller does not**, because every member of a decode failure means the same thing — reject this
+// > input — and only the message differs.
+//
+// `UpdateFault` is the protocol case: nine members, and a light client applying an update from a
+// peer. If the rule holds it should split several ways. `@/packages/rlp`'s `RlpFault` is the decoder
+// case and is at the foot of this file, because reading it broke the rule before it could be tested.
+
+import { Result } from "core";
+import { Clock } from "std";
+import {
+  UpdateFault,
+  NoBits, TooFewParticipants, MalformedHeader, SlotOrder, WrongPeriod, NotRelevant,
+  BadFinalityBranch, BadCommitteeBranch, BadSignature
+} from "@/packages/lightclient";
+
+/**
+ * What the loop does next, and the three arms are not severities.
+ *
+ * `Skip` is not a failure: the update was well-formed and told us nothing new. `Drop` says the peer
+ * sent something no honest node would. `Stall` says we cannot use this peer's updates *yet* and the
+ * peer may be fine.
+ */
+export enum Then { Skip, Stall, Drop }
+
+/** The whole policy. */
+export Then next(UpdateFault f) {
+  match (f) {
+    // Already ahead of it, or it finalises nothing new. Ordinary and frequent: a peer serving a
+    // range sends updates we have. Not a fault about the peer at all.
+    NotRelevant(_, _):     { return Skip; }
+    // The peer is in a sync period we cannot verify from, because we do not have the committee for
+    // it. That is a fact about *us* — `nextKnown` says whether one more update fixes it.
+    WrongPeriod(_, _, _):  { return Stall; }
+    // Everything below is a statement about the peer.
+    NoBits:                { return Drop; }
+    TooFewParticipants(_, _): { return Drop; }
+    MalformedHeader(_):    { return Drop; }
+    SlotOrder(_, _, _, _): { return Drop; }
+    BadFinalityBranch(_):  { return Drop; }
+    BadCommitteeBranch(_): { return Drop; }
+    BadSignature:          { return Drop; }
+  }
+}
+
+/** Apply what we can, and say what the peer's next request should be. */
+export async Result<i32, UpdateFault> drive(Clock clock, Updates from) { … }
+
+export struct Updates { … }
+
+// ## 1. The hypothesis held here, and the split is three ways rather than two
+//
+// Nine members, three answers, and the boundaries are not where severity would put them:
+//
+// | | |
+// |---|---|
+// | `NotRelevant` | **not a fault.** The peer did nothing wrong and neither did we |
+// | `WrongPeriod` | a fault about **us** — we lack the committee, and `nextKnown` says if one update fixes it |
+// | the other seven | a statement about **the peer** |
+//
+// So the union earns its members, and the thing it is discriminating is not *how bad* — it is
+// **whose fault it is**, which has three values here and had two in `refuse.wac` (`Side`, hand-passed
+// because the fault could not carry it).
+//
+// **Third appearance of that axis in three days**, and this is the first time the union carries it
+// rather than the caller: `cp` needed *operand or run* and passed a `Side`; `refuse` needed
+// *connection survives or not* and got a constant; here *whose fault* falls out of the member alone.
+// The difference is that `UpdateFault`'s members were named after **where the check failed** and it
+// happens that where a check fails and whose fault it is coincide for this protocol. That is luck,
+// not design, and `WrongPeriod` is the proof: it is the one member whose name describes the *peer's*
+// state and whose answer is about *ours*.
+//
+// ## 2. And `NotRelevant` should not be in the union at all
+//
+// It is `Skip`, and `Skip` is a success. An update that is well-formed, correctly signed and older
+// than our store is the **normal** answer to *give me updates from period N* — a peer serving a range
+// sends it every time. Putting it in `UpdateFault` means the happy path of a range sync runs through
+// `Err`, and every caller that does not care writes an arm to un-fail it.
+//
+// The type wants to be `Result<Applied, UpdateFault>` where `Applied` is `Advanced | AlreadyHad`,
+// which is what `@/packages/unicode`'s `Decoded` already is and what this file could not spell
+// without changing `validate.wac`'s signature. It is the same shape as `Exists` being a failure for
+// `mkdir` and the goal for anything idempotent, noticed in `@/packages/box/src/cp.wac` two units ago
+// — and this is the clearer instance, because there `Exists` really is a failure for one caller and
+// here `NotRelevant` is a failure for none.
+//
+// > **A union collects what a function can answer other than the value it promised, and *normal but
+// > uninteresting* is not that.** The test is whether any caller would count it — a sync that logged
+// > one line per `Err` would report a healthy range sync as hundreds of failures.
+//
+// ## 3. The decoder half of the hypothesis broke before it was tested
+//
+// `@/packages/rlp`'s `RlpFault` has seven members and every one carries `i32 at`. The prediction was
+// that a caller rejects all seven identically. Reading them, that is wrong, and the split is sharp:
+//
+//   * **Structural** — `Truncated`, `NotSelfEncoded`, `ListOverrun`, `TooLong`. There is no value
+//     here. Nothing can be recovered.
+//   * **Canonicality** — `LeadingZero`, `NotMinimal`, `Trailing`. **The value decoded.** These say
+//     the bytes were not the canonical encoding *of* it.
+//
+// Those are different questions and different callers answer them differently. Ethereum consensus
+// requires canonical RLP, so a block validator must refuse all seven. A tool inspecting a
+// transaction someone sent, a debugger, or a decoder reading a legacy database wants the value and a
+// warning. The shipped `packages/rlp` decides for both by refusing, which is right for the caller it
+// has and is a decision nothing in the type records.
+//
+// So the hypothesis is wrong as stated, and what it was reaching for survives in a narrower form:
+//
+// > A fault union earns its members when **more than one kind of caller** exists. `RlpFault` looked
+// > like the decoder case because this repository has one RLP caller and it is a validator.
+//
+// Which is a claim about the *tree*, not about decoding — and it predicts that the twenty-eight
+// unions still without callers will split by how many kinds of consumer they will eventually have,
+// not by what layer they sit at. That is checkable and this file does not check it.
+//
+// ## 4. What could not be written
+//
+// **`BadFinalityBranch { ProofFault why; }` nests a ten-member union and the caller here throws it
+// away.** `Drop` is the answer for every `ProofFault`, so nine members of a nested union collapse to
+// one arm — which is fine, and it means `@/packages/mpt`'s `ProofFault` has now been *reached* by a
+// caller without being *discriminated* by one. That is a third state the census does not have: not
+// unconsumed, not consumed, but consumed as a group. `Err(is Corrupt):` in `@/packages/box`'s
+// `gunzip` is the same state with a name.
+//
+// **`Then` is an enum and `UpdateFault` is a union and the mapping is a `match` with nine arms.**
+// Second file in two units to write a lookup table as control flow, for the same reason: a union
+// member cannot carry attached data, so *what to do about it* cannot live beside it. In `refuse.wac`
+// the table had two columns; here it has one and is still nine arms of `return`.
