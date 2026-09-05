@@ -69,6 +69,20 @@ asking anyone**, and it is where three of the largest parallel-array cases in th
 which.** `toUpper` answers `cp` for the code points Unicode maps to several — a value in the range,
 indistinguishable from *already uppercase*. The only statement of that is the generated header.
 
+**The two generated files are two shapes in one representation.** `tables.wac`'s pairs are
+*(key, value)* and its search returns on a hit; `printable.wac`'s are *(first, last)* and its search
+runs to exhaustion, keeps the last candidate and then checks its end. Identical array shapes, opposite
+queries — so one `Entry` type serves one of them, `src/printable.wac` has a `Range` instead, and
+neither search is shareable: the second is *predecessor*, not *find*, and `core` has no name for
+either.
+
+**And `printable.wac` says why it is a separate file, which is a linker fact.** *"Kept apart from
+`tables.wac` on purpose: a module's constant arrays are all emitted when it is linked, so sharing a
+file would make every caller of `isPrintable` carry the case tables too."* A **file boundary standing
+in for dead-code elimination** — the unit of inclusion is the module, so one logical package is split
+across two files to keep 65 KB out of programs that only ask *is this printable*. Nothing expresses
+*include this constant only if reached*, and nothing measures the cost of getting the split wrong.
+
 **And the first draft of `src/case.wac` dropped four of the six exports** — `mapAll`, `lowerAll`,
 `upperAll`, `foldEqual` — because the scalar three are what the *table* rewrite needed and the
 per-string ones are what the *package* has. That is `../../QUESTIONS.md`'s *a rewrite drops what its
