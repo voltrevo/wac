@@ -114,3 +114,45 @@ holds a *current* peer that the router updates, and nothing in the type says the
 change under you. `const` would be wrong and there is no spelling for *this is deliberately mutable
 and shared*. Filed as an observation rather than a proposal, since every language has this and most
 of them say nothing about it either.
+
+**A closed set whose membership depends on who is sending.** Added with
+[`src/params.wac`](src/params.wac). `PARAM_ORIGINAL_DESTINATION_CONNECTION_ID` is *"Server only"* and
+`frame.wac`'s `NEW_TOKEN` is *"Server to client only"* — so `Param` is two overlapping sets, and
+nothing in this directory's vocabulary says so. An enum names a closed set, declared discriminants
+pin its wire values, an exhaustive `match` covers every member; **none expresses that one member is
+illegal from one end.** Three answers and all are worse than the comment: two enums overlapping in
+nine of ten members (deliberate duplication), a predicate (as forgettable as the comment it
+replaces), or a subset type (a much larger language). The file keeps the predicate and says plainly
+that it is **not** a fix.
+
+**And the shipped package already wrote that predicate**, on a second axis: `frame.wac` restricts
+frames by packet number space with a four-rule matrix, not a comment. So `sendableBy` is copying the
+shipped answer rather than improving on it, and the real result is that **on context-dependent
+membership this directory has nothing to add** — worth saying plainly, since restating a shipped
+design in new syntax and counting it as a rewrite is the failure mode a disposable directory is most
+exposed to. It does sharpen what a language would need to beat a predicate: not nicer syntax for the
+matrix, but something that makes the *call* unforgettable — refusing to encode a frame without an
+epoch, or a parameter without a side. Promoted.
+
+**Sparse wire values, and the second file to want a hole.** `0x00`, `0x01`, `0x03`–`0x09`, `0x0f`:
+`0x02` and `0x0a`–`0x0e` are parameters this package does not implement, so the gaps are permanent
+rather than an artefact of ordering. `git`'s pack object types want the same thing — `5` unused, `0`
+invalid. Two files independently wanting `enum K : u8 { A = 0x01, … }` is the argument for declared
+discriminants that neither made alone.
+
+**Absent means deny, and `T?` would be exactly wrong.** *"the defaults are zero: no data may be sent
+and no streams may be opened until the peer says otherwise."* A missing parameter is not *unknown*,
+it is *no* — the same ruling `tor/src/directory.wac` reached for a missing exit-policy summary. In
+both, `null` would mean *ask someone else* where the protocol says *refuse*. Second protocol in two
+days where absent is a decision, which makes it a pattern in wire formats rather than an accident.
+
+**And the best-provenanced finding in the directory.** The one mandatory parameter is mandatory
+because *"an attacker who could rewrite connection ids in flight could move a handshake onto ids of
+its choosing"* — and the file exists because **quinn refused a borrowed ClientHello** with
+`CID authentication failure`, *"which is how this file came to exist rather than being read out of
+the RFC."* Found by a real peer, not by reading a specification, and not by any type.
+
+**Caught while writing it:** the first draft declared `enum Role { Client, Server }` beside
+`keys.wac`'s existing `enum Side { Client, Server }` — two names for one concept in one package,
+which is the collision [`../../QUESTIONS.md`](../../QUESTIONS.md)'s *a rename collides where both
+names are right* is about. This directory has now created that once and caught it once.

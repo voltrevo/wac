@@ -1,0 +1,130 @@
+// QUIC's transport parameters — a closed set whose membership depends on who is sending.
+//
+// `packages/quic/src/params.wac` is 140 lines carrying ten parameter ids and the encoder for them.
+// The interesting shape is not that the ids are integers — that is the sixth instance and
+// `../../../QUESTIONS.md` has it — it is that **the set is not the same set at both ends**.
+
+import { Result, Bytes, Vec } from "core";
+import { Side } from "./keys.wac";
+
+/**
+ * A transport parameter id, RFC 9000 §18.2.
+ *
+ * Ten of them, and the wire values are **sparse**: `0x00`, `0x01`, `0x03` through `0x09`, `0x0f`.
+ * `0x02` and `0x0a`–`0x0e` are other parameters this package does not implement, so the holes are
+ * real and permanent rather than an artefact of ordering — the second instance today, after
+ * `@/packages/git`'s pack object types where `5` is unused and `0` invalid.
+ *
+ * Two files independently wanting `enum K : u8 { A = 0x01, … }` is the argument for declared
+ * discriminants that neither made alone.
+ */
+export enum Param {
+  OriginalDestinationConnectionId,   // 0x00 — server only
+  MaxIdleTimeout,                    // 0x01
+  MaxUdpPayload,                     // 0x03
+  InitialMaxData,                    // 0x04
+  InitialMaxStreamDataBidiLocal,     // 0x05
+  InitialMaxStreamDataBidiRemote,    // 0x06
+  InitialMaxStreamDataUni,           // 0x07
+  InitialMaxStreamsBidi,             // 0x08
+  InitialMaxStreamsUni,              // 0x09
+  InitialSourceConnectionId,         // 0x0f
+}
+
+/**
+ * The parameters one side may send — see the note below on why this is a function and not a type.
+ *
+ * `Side` comes from `./keys.wac`, which already has `enum Side { Client, Server }`. The first draft
+ * of this file declared a `Role` beside it: two names for one concept in one package, which is the
+ * collision `../../../QUESTIONS.md`'s *a rename collides where both names are right* is about, and
+ * which this directory has now created once and caught once.
+ */
+export bool sendableBy(Param p, Side s) { … }
+
+export Bytes encode(Param[] present, Side s) { … }
+export Result<Vec<Param>, Malformed> decode(Bytes ext, Side from) { … }
+
+export struct Malformed { i32 at; string why; }
+
+// ## What could not be written
+//
+// ### A closed set whose membership depends on the sender
+//
+// `PARAM_ORIGINAL_DESTINATION_CONNECTION_ID` carries the comment **"Server only: the id the client
+// put in the *first* Initial it sent, before we had chosen one."** A client that sends it is wrong,
+// and `packages/quic/src/frame.wac` has the same shape one layer down — `NEW_TOKEN` is *"Server to
+// client only."*
+//
+// So `Param` is really two overlapping sets. Nothing in this directory's vocabulary says that. An
+// enum names a closed set; declared discriminants pin its wire values; an exhaustive `match` covers
+// every member. **None of them expresses that one member is illegal from one end**, and the three
+// obvious answers are all worse than the comment:
+//
+//   - **Two enums, `ClientParam` and `ServerParam`**, overlapping in nine of ten members. Then the
+//     decoder returns one or the other by side, every consumer matches twice, and the nine shared
+//     members are two types that must be kept in step — which is the duplication
+//     `issues/system/0349a` counts elsewhere, created deliberately.
+//   - **A predicate**, `sendableBy(p, s)` as above. Honest, checkable, and exactly as forgettable as
+//     the doc comment: nothing calls it unless someone remembers to.
+//   - **A subset type**, which is the thing that would actually work and is a much larger language
+//     than anything else on this list.
+//
+// This file keeps the predicate, which is the smallest of the three and is **not** a fix.
+//
+// **And `packages/quic/src/frame.wac` already wrote it**, on a second axis — a frame is legal only in
+// certain packet number spaces — as a four-rule matrix rather than a comment:
+//
+//     if (k == TYPE_PADDING() || k == TYPE_PING()) { return true; }
+//     if (k == TYPE_ACK() || … )                   { return epoch != EPOCH_0RTT(); }
+//     if (k == TYPE_NEW_TOKEN() || … )             { return epoch == EPOCH_1RTT(); }
+//     return epoch == EPOCH_0RTT() || epoch == EPOCH_1RTT();
+//
+// So `sendableBy` above is **copying the shipped answer, not improving on it**, and this file's real
+// result is that on context-dependent membership this directory has nothing to add. Worth saying
+// plainly: restating a shipped design in new syntax and counting it as a rewrite is the failure mode
+// a disposable directory is most exposed to.
+//
+// It does sharpen what a language would have to beat. Not a nicer way to write the matrix — those
+// four rules are clear and their comments are good. It would have to make the **call** unforgettable:
+// something that refuses to encode a frame without an epoch, or a parameter without a side. That is a
+// constructor obligation, and it is the same shape as the cross-field equality below.
+//
+// ### The default is the most restrictive value, and absence means it
+//
+// > Everything else here has a default, and the defaults are zero: **no data may be sent and no
+// > streams may be opened until the peer says otherwise.**
+//
+// So a *missing* parameter is not *unknown*, it is *deny*. That is the same ruling
+// `@/packages/tor/src/directory.wac` reached for an absent exit-policy summary — where a missing `p`
+// line is a reject-all and *"tor reads it that way"* — and both are cases where `T?` would be
+// exactly wrong, because `null` would mean *ask someone else* when the protocol says *no*.
+//
+// `Param[] present` above is the shape that gets it right for free: a parameter is in the list or it
+// is not, and the reader supplies the default. Recorded because it is the second protocol in two days
+// where **absent is a decision**, and the first time this directory noticed that is a *pattern* in
+// wire formats rather than an accident of one.
+//
+// ### And the mandatory one is mandatory for a reason that reads as a formality
+//
+// The shipped header is worth keeping whole, because it is the best example in the package of why a
+// check that looks like box-ticking is not:
+//
+//   > A client MUST send `initial_source_connection_id`, and it MUST equal the source id in the
+//   > packet that carried the ClientHello. A server checks. **That check is not a formality**:
+//   > without it an attacker who could rewrite connection ids in flight could move a handshake onto
+//   > ids of its choosing, and the parameter is what ties the ids to something the handshake signs.
+//   >
+//   > It is also what refuses a *borrowed* ClientHello sent from an id its author did not use —
+//   > quinn answers `TRANSPORT_PARAMETER_ERROR` with the reason `CID authentication failure`, which
+//   > is how this file came to exist rather than being read out of the RFC.
+//
+// **Found by a real peer refusing it, not by reading the specification.** That is the strongest
+// provenance any finding in this directory has, and it is worth noting that the thing which produced
+// it was interoperability testing rather than any type.
+//
+// The constraint itself — *this field must equal that field in another structure* — is the
+// cross-field equality from `../../../QUESTIONS.md`'s obligation entry, and it is the one of the
+// three obligations there that a type could plausibly carry: a constructor taking the packet's source
+// id and producing the parameter cannot produce a mismatched pair. Not written here, because the
+// packet header lives in another file and hoisting a constructor across that boundary is a
+// decomposition change this file has no evidence for.

@@ -10627,3 +10627,96 @@ the two channel numbers *"works perfectly"* with a single channel numbered zero 
 missing window adjust is *"invisible for short commands"*. These are not edge cases at the boundary
 of a value's range — they are the ordinary case at a size nobody reached, which is a different thing
 for a type system to be asked about and mostly a harder one.
+
+## A closed set whose membership depends on who is sending, and three answers all worse than a comment
+
+`@/packages/quic/src/params.wac` declares ten transport parameter ids. One of them carries:
+
+> **Server only:** the id the client put in the *first* Initial it sent, before we had chosen one.
+
+and `frame.wac` has the same shape a layer down — `NEW_TOKEN` is *"Server to client only."*
+
+So the set is not one set. A client sending `original_destination_connection_id` is wrong, and a
+decoder that accepts it from a client is accepting something no correct peer sends.
+
+**Nothing this directory has proposed says that.** An enum names a closed set. Declared discriminants
+pin its wire values. An exhaustive `match` covers every member. None of them expresses *this member
+is illegal from one end*, and the three available answers are each worse than the doc comment:
+
+- **Two enums, `ClientParam` and `ServerParam`**, overlapping in nine of ten members. The decoder
+  returns one or the other by side, every consumer matches twice, and nine shared members become two
+  declarations to keep in step — `issues/system/0349a`'s duplication, created on purpose.
+- **A predicate**, `sendableBy(Param, Side)`. Honest and checkable and **exactly as forgettable as
+  the comment**: nothing calls it unless someone remembers to.
+- **A subset type**, which is the one that would work and is a much larger language than anything
+  else on this list.
+
+The vision file keeps the predicate and says in the file that it is not a fix. That is worth doing
+explicitly, because this directory has spent a great deal of effort turning comments into types, and
+this is a case where **the type it needs does not exist and the honest output is a function with the
+same failure mode as the comment it replaced.**
+
+### And the shipped package already wrote that predicate, which is the real result here
+
+`packages/quic/src/frame.wac` has the same problem on a second axis — a frame is legal only in
+certain packet number spaces — and it does not use a comment. It writes the matrix as a function:
+
+    // PADDING and PING: every packet type.
+    if (k == TYPE_PADDING() || k == TYPE_PING()) { return true; }
+    // ACK and CRYPTO and the transport-level close: everywhere except 0-RTT, where a client has not
+    // yet received anything to acknowledge and the handshake is not its to talk about.
+    if (k == TYPE_ACK() || … ) { return epoch != EPOCH_0RTT(); }
+    // NEW_TOKEN and PATH_RESPONSE and HANDSHAKE_DONE: 1-RTT alone.
+    if (k == TYPE_NEW_TOKEN() || … ) { return epoch == EPOCH_1RTT(); }
+    // Everything else in the table is application data: 0-RTT and 1-RTT, never Initial or Handshake.
+
+So the answer this entry was going to propose is **already the shipped answer**, arrived at
+independently, and a vision file offering `sendableBy(Param, Side)` is copying it rather than
+improving on it. That is the finding: on context-dependent membership **this directory has nothing to
+add**, and the honest output is to say so rather than to restate the shipped design in new syntax and
+count it as a rewrite.
+
+Which also sharpens what a language would have to provide to beat a predicate. Not a nicer way to
+write the matrix — the four rules above are clear and the comments are good. It would have to make
+the *call* unforgettable: something that refuses to encode a frame without an epoch, or to encode a
+parameter without a side. That is a constructor obligation, and it is the same shape as
+`../QUESTIONS.md`'s cross-field equality — the one obligation of the three that a type could carry.
+
+### Why this is a separate entry and not another row
+
+*A closed set spelled as a string or an integer* above owns the general question and now has nine
+instances in its table. This is not a tenth. That entry is about **naming the members** — a set
+spelled openly gives up exhaustiveness, and an enum recovers it. Every instance there is fixed by the
+same move.
+
+Role-dependent membership is about **who may name them**, and the same move does not fix it: an enum
+with all ten members is exhaustive and still lets a client send a server-only parameter. It is the
+first thing in that family the family's answer does not reach, which is the reason to file it apart
+rather than lengthen a table.
+
+### Sparse values, and the second file to want a hole
+
+`quic`'s ids are `0x00`, `0x01`, `0x03`–`0x09`, `0x0f`. `0x02` and `0x0a`–`0x0e` are parameters this
+package does not implement, so the holes are permanent rather than an artefact of declaration order.
+`@/packages/git`'s pack object types want the same — `5` unused, `0` invalid.
+
+**Two files independently wanting `enum K : u8 { A = 0x01, … }` is the argument for declared
+discriminants that neither made alone**, and it is a different argument from `tls`'s. `tls` needs the
+numbers *stable* because it serialises them; these two need them *chosen*, because the format assigns
+them and leaves gaps. A feature that gave stability without letting the author pick the value would
+serve `tls` and neither of these.
+
+### And absent means deny, for the second time in two days
+
+> Everything else here has a default, and the defaults are zero: no data may be sent and no streams
+> may be opened until the peer says otherwise.
+
+A missing parameter is not *unknown*, it is *no*. `@/packages/tor/src/directory.wac` reached the same
+ruling for a missing exit-policy summary — *"a missing summary is a reject-all and tor reads it that
+way"* — and in both, `T?` would be **exactly wrong**: `null` reads as *ask someone else* where the
+protocol says *refuse*.
+
+Two protocols in two days makes it a property of wire formats rather than an accident of one, and it
+is a caution against this directory's own habit: *absence is a type* has been the answer to a dozen
+sentinels here, and these are the two places where the absence already has a meaning and the type
+must carry that meaning rather than the absence.
