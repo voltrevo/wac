@@ -2482,6 +2482,28 @@ is writable today — and then the `match` has one `Err` arm, so nothing checks 
 for coverage. Matching by type is what makes the two-way split exhaustive; binding is what makes it
 useful; and they are exclusive.
 
+**Promoted 2026-09-05: this is the construct standing between this directory's AST argument and an
+AST.** Written above about a two-arm error union whose payload is one string, which made it look
+small. `@/packages/wacc/src/ast.wac` counts the positional-swap hazard across the tree and its two
+worst entries are declarations — *"`StructDecl` has seven fields and fifty-four arms; `Func` has
+seven and forty-three, including `bool exported` and `bool isAsync`, which are adjacent, identical
+and mean opposite things"* — and the fix that argument implies is a **union of named structs**
+instead of an enum of positional variants. `@/packages/wacc/src/decl.wac` writes it, and it works:
+there is no order to get wrong and a transposition is a compile error.
+
+Then nothing can read one.
+
+| | construction | reading |
+|---|---|---|
+| enum of positional variants | swappable, silent | binds seven locals |
+| union of named structs | **named, checked** | **cannot reach the fields** |
+
+An enum arm binds its payload, in the wrong order if you are unlucky, which is the hazard. A union
+arm gives you the knowledge that it is a `Func` and no way to reach `name`. So the fix trades a
+silent wrong answer for a pass that cannot be written at all, and there is no third option today.
+`Func f:` — `Err(is Corrupt c):` generalised — closes it, and with it the swap hazard in the largest
+enum in the compiler goes away for one keystroke per field.
+
 ## Giving a paired protocol a value fixed the pairing and kept the buffering
 
 The entry above found three capability groups that are paired calls over hidden state and gave each

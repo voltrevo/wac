@@ -1,0 +1,145 @@
+// Declarations and the compilation unit — the two types two files here have stopped on.
+//
+// `./genlower.wac` *"stops at a signature because a generator lowering emits a declaration"*, and
+// `./asynclower.wac` had to take a `Stmt[]` and answer an `Expr` because there was no `Decl` to take.
+// Twice is the argument for writing it.
+//
+// It is also where `./ast.wac`'s argument is sharpest. That file counts the positional-swap hazard
+// across the tree and the two worst entries are both declarations:
+//
+// > `StructDecl` has seven fields and fifty-four arms; `Func` has seven and forty-three, including
+// > `bool exported` and `bool isAsync`, which are adjacent, identical and mean opposite things.
+//
+// So this file is the test of the fix that argument implies, and the fix works and is blocked by
+// something else.
+
+import { Vec } from "core";
+import { Tok, Span, Ty, Expr } from "./ast.wac";
+import { Stmt } from "./stmt.wac";
+
+/** A parameter. Named because two `Tok`s and a `Ty` in a row is the hazard in miniature. */
+export struct Param { Tok name; Ty type; bool isConst; }
+
+/** A struct's field. */
+export struct Field { Tok name; Ty type; Expr? init; }
+
+/**
+ * A function.
+ *
+ * **Seven fields, named, and `exported` and `isAsync` are no longer adjacent positions.** The shipped
+ * `DeclKind.Func(t, ty, ps, body, true, tps, false)` is the call `ast.wac` quotes; here it is
+ *
+ *     Func { name: t, ret: ty, params: ps, body: b, exported: true, typeParams: tps, isAsync: false }
+ *
+ * and swapping the two booleans is a compile error rather than a program that exports nothing and
+ * awaits everything. That is the whole of the fix and it costs one keystroke per field.
+ */
+export struct Func {
+  Tok name;
+  Ty ret;
+  Param[] params;
+  Stmt[] body;
+  bool exported;
+  Tok[] typeParams;
+  bool isAsync;
+}
+
+/** A struct, with its methods. */
+export struct StructDecl {
+  Tok name;
+  Field[] fields;
+  Func[] methods;
+  bool exported;
+  Tok[] typeParams;
+  Tok? extends;
+}
+
+/** An enum and its variants; a variant's payload is a `Param[]` for the same reason. */
+export struct EnumDecl { Tok name; Variant[] variants; bool exported; }
+export struct Variant { Tok name; Param[] payload; }
+
+/** `union<A, B> Name;` */
+export struct UnionDecl { Tok name; Ty[] members; bool exported; }
+
+/** `type Name;` — and `ast.wac` records that this one is written backwards more often than not. */
+export struct Typedef { Ty of; Tok name; bool exported; }
+
+/** `import { a, b } from "path";` */
+export struct Import { Tok[] names; Tok path; }
+
+/** `export { a } from "path";` — a re-export, which is an import and an export at once. */
+export struct ReExport { Tok[] names; Tok path; }
+
+/** What a top-level declaration is. */
+export union<Func, StructDecl, EnumDecl, UnionDecl, Typedef, Import, ReExport> DeclKind;
+
+export struct Decl { DeclKind kind; Span at; }
+
+/** A file. */
+export struct Program { Decl[] decls; Tok path; }
+
+// ## 1. The fix works, and then a `match` cannot use it
+//
+// Replacing the enum of positional variants with a **union of named structs** removes the swap
+// hazard completely: there is no order to get wrong, `exported` and `isAsync` are names, and
+// `ast.wac`'s fifty-four `StructDecl` arms become fifty-four constructions that cannot be
+// transposed.
+//
+// And then nothing can read one. A `match` over a union matches **by type**, and
+// `@/packages/box/src/gunzip.wac` found that matching by type does not bind:
+//
+// > `binding = IDENT | "is" , type` — a payload is bound by **name** or matched by **type**, and
+// > there is no form that does both. `Err(is Corrupt c):` is the obvious spelling and is not in the
+// > grammar.
+//
+// An enum arm binds its payload — `Func(t, ty, ps, body, ex, tps, async):` gives you seven locals,
+// in the wrong order if you are unlucky, which is the hazard. A union arm gives you the knowledge
+// that it is a `Func` and no way to reach `name`. So the fix for the swap trades a *silent wrong
+// answer* for *a compiler that will not let you write the pass at all*, which is worse, and there is
+// no third option in the language today:
+//
+// | | construction | reading |
+// |---|---|---|
+// | enum of positional variants | swappable, silent | binds seven locals |
+// | union of named structs | **named, checked** | **cannot reach the fields** |
+//
+// One construct closes it — `Err(is Corrupt c):`, generalised to `Func f:` — and the entry that
+// proposes it was written about a two-arm error union where the payload was one string. **This is the
+// case that makes it load-bearing**: without it a union of structs cannot be the shape of an AST, and
+// with it the swap hazard in the largest enum in the compiler goes away for one keystroke per field.
+//
+// Promoted accordingly — `../../../QUESTIONS.md` had it as a small gap next to a small union, and it
+// is the thing standing between this directory's AST argument and an AST.
+//
+// ## 2. What `Program` turned out to need that the shipped one does not have
+//
+// `Program { Decl[] decls; Tok path; }` — and the shipped `Program` has no path. A `Tok` is an index
+// into *a* token array and `Span` is a line and column in *a* file, so every node in the tree is
+// meaningless without knowing which file it came from, and the shipped compiler carries that
+// separately in the driver. Once two files are in the same pass — which is what `Import` above makes
+// possible — a `Span` from one and a `Tok` from another are the same types and mean different things.
+//
+// That is the phantom-parameter shape at its tenth site here, and the first where the tag would
+// distinguish two values of one type that a **single function** already holds at once: a resolver
+// looking up an imported name has the importing `Program` and the exporting one in scope together.
+//
+// ## 3. What could not be written
+//
+// **`Field { Expr? init; }` and `Param { bool isConst; }` are two spellings of *optional*.** A field
+// with no initialiser is `null`; a parameter that is not `const` is `false`. Both are *absence*, and
+// the difference is that one absence has a value worth carrying and the other does not — which is
+// the right distinction and is invisible: nothing about `Expr?` and `bool` says one is *there is no
+// initialiser* and the other is *the `const` keyword was absent*. In a tree where every leaf is
+// `Tok` or `bool`, this is the same complaint `ast.wac` makes about `i32`, one level up.
+//
+// **`StructDecl.extends` is `Tok?` and `UnionDecl.members` is `Ty[]`, and both are name references
+// the parser cannot resolve.** The shipped compiler resolves them in a later pass against a symbol
+// table; here they are stored as *the token that spelled it*, so a `StructDecl` is not self-contained
+// and a pass that wants the base struct has to have the table. That is right, and what cannot be
+// written is any way to say the type is unresolved — `Tok?` and a resolved `StructDecl` would be two
+// types in a language with a way to phase a tree, and are one here.
+//
+// **Nothing says a `Program`'s `Decl[]` is in source order and two passes depend on it.** `Import`
+// must precede use for a single-pass resolver, and `ReExport` must not create a cycle. Both are
+// properties of the array's order, which is the *preserved* half of the list-order entry — the caller
+// owns it — and the caller here is the parser, which is not the reader.
