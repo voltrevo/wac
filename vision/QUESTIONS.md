@@ -7127,6 +7127,41 @@ numbers already said so and I did not read them: of the 55 that carry a position
 want the offset, it wants the bytes, and every use of `at` in the shipped file is
 `slice(got, at, got.len())` — the slice the arm could have handed over.
 
+### And the twenty turned out to be trees, plus the same `Span` invented three times
+
+Went and read them. **The fault/non-fault split was never real** — my classifier was a regex over the
+struct's *name*, and it puts `OffsetOutOfRange`, `NonZeroTail`, `LeadingZero`, `DivisionByZero` and
+nine more in the non-fault column while calling `Timestamp { millis, offset }` and
+`Mapping { from, spec, to }` positional at all. So *35 faults and 20 others* was one bad split, not
+two populations.
+
+The real division is three groups, and the one I had not looked at is the largest:
+
+**Tree nodes.** `Expr { ExprKind kind; Span at; }`, `Stmt { StmtKind kind; Span at; }`,
+`Decl { DeclKind kind; Span at; }`, `Hoisted { Tok name; Ty type; Span at; }`,
+`ImportDecl { at, spec, names, namespace }`, and `Token { kind, start, len, line, col }`. **Every AST
+node in this directory carries a position and no file.** That is `@/packages/wacc/src/decl.wac`'s
+`Program { Decl[] decls; Tok path; }` entry, and it is not one entry — it is every node in three
+trees.
+
+**Three `Span` types, in three packages, none carrying a subject.**
+
+    packages/wacc/src/ast.wac      Span { i32 line; i32 col; }
+    packages/ts/src/bundle.wac     Span { i32 from; i32 to; }
+    packages/regex/src/regex.wac   Span { i32 from; i32 to;  Bytes of(const this, Bytes input); }
+
+The third one is the evidence. **It has a method that takes the missing half as a parameter** —
+`of(input)` — so the type knows exactly what it needs and asks its caller for it at every call. A
+`Span` that held its `Bytes` would have `of()` with no arguments, and the reason it does not is that a
+span is built by a scanner that has the input in a local and does not think to put it in the value.
+
+So the general statement, which no longer mentions faults at all:
+
+> **Anything that names a position in something is half a value, and the half it drops is the one its
+> producer had in a local variable.** Faults, success arms, tree nodes and spans; 55 of the 62 in this
+> directory, and the seven that get it right are cursors, which are the only things built to be read
+> from rather than written down.
+
 ### And the consequence is that not one fault here can render itself
 
 Every diagnostic function in the directory, without exception:
