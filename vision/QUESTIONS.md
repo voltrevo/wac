@@ -7735,6 +7735,46 @@ count, not the argument.
 > cheapest signal that two files have solved one problem twice, and in three of the seven cases here
 > the second thing found was larger than the first.
 
+### The fourth case, and the second thing was much larger
+
+`BadPublicKey` and `DoesNotVerify` are each declared in **both** `@/packages/bls/src/verify.wac` and
+`@/packages/crypto/src/ed25519.wac` — two packages, two shared names, one problem. Both are
+`Result<void, XFault> verify(pub, msg, sig)` and both put `DoesNotVerify` in the fault union.
+
+**`DoesNotVerify` is not a fault.** A signature that does not check out is the *answer* to *does this
+check out*, so the ordinary result of a verifier arrived through `Err` — and a caller writing
+`try verify(…)` propagates **signature invalid** as an error indistinguishable from **this is not a
+signature**. For a consensus client those want opposite responses: drop the message, or stop trusting
+the peer.
+
+Third instance of *normal but uninteresting is not a fault* after `lightclient`'s `NotRelevant` and
+`datetime`'s `LeapSecond`, and the first where conflating the two means something. `ed25519.wac`'s own
+doc comment made the argument and then did the other thing — *"the honest answer, and the only one of
+the six that is about the signature"*, on a member of the fault union.
+
+`enum Verified { Valid, Invalid }` lives in `@/packages/crypto` and both verifiers answer
+`Result<Verified, XFault>`. It also sharpens `bls`'s mutation argument: deleting an infinity guard now
+moves the answer from `Err(InfinityPublicKey)` to `Ok(Invalid)` — **across the `Result` boundary**, so
+a caller that only wrote `try` notices.
+
+### And it found that eleven packages have no barrel at all
+
+`Verified` had nowhere to be imported from: `crypto` has no `src/crypto.wac`, and every consumer
+reaches into its file layout — `@/packages/crypto/src/keccak.wac`, `…/sha256.wac`, `…/digest.wac`,
+from three packages.
+
+    packages with no `src/<name>.wac`:  11 of 40
+    box, crypto, ens, fs, gzip, page, quic, ssh, tls, wacc, wacpkg
+
+**So the four barrel findings recorded here were all about the 29 that have one.** The other eleven
+have the same problem in a worse form: not *a name the barrel forgot*, but **no boundary to forget it
+at**. `crypto`'s is written — and writing it forced one judgement a path import never asks for:
+`chachaBlock` and `aesEncrypt` are deliberately *not* exported, because a caller who wants a cipher
+wants the cipher, and today they are reachable by path with nothing recording that they should not be.
+
+> **Verdict:** convention — every package gets a barrel, and the export list is where *what this
+> package is for* gets decided. Settled by: writing eleven of them; the language is not involved.
+
 > **Verdict:** convention — one name per exported type per package, checked by a barrel walk.
 > Settled by: the check, which is written. The language is not involved.
 

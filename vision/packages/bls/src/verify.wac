@@ -19,6 +19,7 @@
 // So the claim can be tested rather than asserted, and it holds.
 
 import { Result, Bytes, Vec } from "core";
+import { Verified } from "@/packages/crypto";
 
 /** The key does not decode to a G1 point. */
 export struct BadPublicKey { i32 which; }
@@ -31,22 +32,21 @@ export struct InfinitySignature { }
 /** No keys, or the lists are different lengths. */
 export struct WrongArity { i32 keys; i32 messages; i32 signatures; }
 /** The pairing equation does not hold. The answer. */
-export struct DoesNotVerify { }
 
-export union<BadPublicKey, BadSignature, InfinityPublicKey, InfinitySignature, WrongArity,
-             DoesNotVerify> BlsFault;
+export union<BadPublicKey, BadSignature, InfinityPublicKey, InfinitySignature, WrongArity>
+  BlsFault;
 
 /** One signer. `e(pk, H(m)) == e(G₁, sig)`. */
-export Result<void, BlsFault> verify(Bytes pubkey, Bytes message, Bytes signature) { … }
+export Result<Verified, BlsFault> verify(Bytes pubkey, Bytes message, Bytes signature) { … }
 
 /** Many signers, one message — the keys sum, so it is one verification plus n−1 G1 additions. */
-export Result<void, BlsFault> fastAggregateVerify(Vec<Bytes> pubkeys, Bytes message, Bytes sig) { … }
+export Result<Verified, BlsFault> fastAggregateVerify(Vec<Bytes> pubkeys, Bytes message, Bytes sig) { … }
 
 /** Many signers, distinct messages — the keys cannot sum, so the pairings combine. */
-export Result<void, BlsFault> aggregateVerify(Vec<Bytes> pubkeys, Vec<Bytes> messages, Bytes sig) { … }
+export Result<Verified, BlsFault> aggregateVerify(Vec<Bytes> pubkeys, Vec<Bytes> messages, Bytes sig) { … }
 
 /** Many signatures at once, randomised so an adversary cannot split the terms. */
-export Result<void, BlsFault> batchVerify(
+export Result<Verified, BlsFault> batchVerify(
   Vec<Bytes> pubkeys, Vec<Bytes> messages, Vec<Bytes> signatures, Bytes entropy) { … }
 
 // ## 1. Four of the five guards become observable, and the fifth already was
@@ -57,9 +57,13 @@ export Result<void, BlsFault> batchVerify(
 // first. So the guard is right and no test can see it.
 //
 // With named refusals it can. Delete `verify`'s `g1IsInfinity(pk)` and an infinity key reaches the
-// pairing, which fails, so the answer is `Err(DoesNotVerify)` where it was `Err(InfinityPublicKey)`.
+// pairing, which fails, so the answer is `Ok(Invalid)` where it was `Err(InfinityPublicKey)`.
 // **Two different answers, so the mutation is caught** — by a test that asserts *which* refusal,
 // which is a test somebody has to write and which a `bool` gives no way to write at all.
+//
+// And since 2026-09-05 the two differ by more than a name: one is an `Ok` and one is an `Err`, so
+// the mutation moves the answer across the `Result` boundary and a caller that only wrote `try`
+// notices. §3.
 //
 // That is lightclient's claim, and here it is checkable against a case where the unobservability was
 // measured rather than argued. Five guards: one observable today, five observable with a named
@@ -69,6 +73,25 @@ export Result<void, BlsFault> batchVerify(
 // depth*, so making them observable does not make them necessary. Four of the five are still
 // arithmetically redundant. What changes is that a later edit that removes one has to remove a test
 // with it, rather than passing quietly.
+//
+// ## 3. `DoesNotVerify` was a member of the union and is the `Ok` now
+//
+// It was `union<BadPublicKey, BadSignature, InfinityPublicKey, InfinitySignature, WrongArity,
+// DoesNotVerify>`, so *the signature does not check out* — the ordinary answer of a verifier —
+// arrived through `Err`. `@/packages/crypto/src/ed25519.wac` had the same member, with a doc comment
+// calling it *"the honest answer, and the only one of the six that is about the signature"*, which is
+// the argument for it not being there, written next to it being there.
+//
+// **Two packages, one union member, both wrong the same way**, and the thing that found it was a
+// duplicate-name sweep: `BadPublicKey` and `DoesNotVerify` are each declared in both files.
+// `../../../QUESTIONS.md`'s rule from that sweep — *a duplicate name is the cheapest signal that two
+// files have solved one problem twice* — and this is the case where the second thing found was much
+// larger than the first.
+//
+// `verify` answers `Result<Verified, BlsFault>` now, `Verified` lives in `@/packages/crypto`, and the
+// consequence is not cosmetic: a caller writing `try verify(…)` used to propagate **signature
+// invalid** as an error indistinguishable from **this is not a signature**. For a consensus client
+// those want opposite responses — drop the message, or stop trusting the peer.
 //
 // ## 2. Four entry points, four refusal sets, and no way to compare them
 //

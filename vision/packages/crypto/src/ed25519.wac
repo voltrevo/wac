@@ -10,6 +10,24 @@
 import { Result, Bytes } from "core";
 import { Digest32 } from "./digest.wac";
 
+/**
+ * **Whether it verified — which is an answer, not a fault.**
+ *
+ * Added 2026-09-05, and it is the third instance of *normal but uninteresting is not a fault* after
+ * `@/packages/lightclient`'s `NotRelevant` and `@/packages/datetime`'s `LeapSecond`. It is the first
+ * where conflating the two means something.
+ *
+ * `DoesNotVerify` was a member of `VerifyFault`, so the answer to *does this signature check out*
+ * arrived through `Err` — and a caller writing `try verify(…)` propagates **signature invalid** as
+ * an error indistinguishable from **this is not a signature**. For a consensus client those want
+ * opposite responses: an invalid signature is a message to drop, and a malformed key is a peer to
+ * stop trusting.
+ *
+ * Exported from `crypto` because `@/packages/bls` answers the same question and had the same member.
+ * §1.
+ */
+export enum Verified { Valid, Invalid }
+
 /** The key was not 32 bytes. A caller's bug, not an input's. */
 export struct BadKeyLength { i32 got; }
 /** The signature was not 64 bytes. */
@@ -28,19 +46,22 @@ export struct NonCanonicalScalar { }
 export struct BadPublicKey { }
 /** `R` does not decode to a point on the curve. */
 export struct BadR { }
-/** `[S]B != R + [k]A` — the honest answer, and the only one of the six that is about the signature. */
-export struct DoesNotVerify { }
-
-export union<BadKeyLength, BadSignatureLength, NonCanonicalScalar, BadPublicKey, BadR, DoesNotVerify>
+/*
+ * `DoesNotVerify` was here, described as *"the honest answer, and the only one of the six that is
+ * about the signature"* — which is exactly the argument for it not being in this union. It is
+ * `Verified.Invalid` now. **The file said why and then put it in anyway.**
+ */
+export union<BadKeyLength, BadSignatureLength, NonCanonicalScalar, BadPublicKey, BadR>
   VerifyFault;
 
 /**
- * `[S]B == R + [k]A`, or which of the six rules refused.
+ * `[S]B == R + [k]A`, or which of the five input rules refused.
  *
  * The shipped `ed25519Verify` has all six as `return false` and the arithmetic is identical; the
- * only change is that a caller can tell them apart.
+ * changes are that a caller can tell them apart, and that **the sixth is not one of them** — it is
+ * the `Ok`, carrying `Valid` or `Invalid`.
  */
-export Result<void, VerifyFault> verify(Bytes pub, Bytes msg, Bytes sig) { … }
+export Result<Verified, VerifyFault> verify(Bytes pub, Bytes msg, Bytes sig) { … }
 
 // ## 1. Three kinds of refusal wearing one answer
 //

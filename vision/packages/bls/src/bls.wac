@@ -4,5 +4,7 @@ export { Fp, Canonical, fromBytes, fromWideBytes } from "./fp.wac";
 export {
   verify, fastAggregateVerify, aggregateVerify, batchVerify,
   BlsFault, BadPublicKey, BadSignature, InfinityPublicKey, InfinitySignature, WrongArity,
-  DoesNotVerify,
 } from "./verify.wac";
+// `Verified` is `@/packages/crypto`'s — two verifiers, one answer type. It is re-exported here so a
+// caller of this package need not import two.
+export { Verified } from "@/packages/crypto";

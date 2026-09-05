@@ -1,0 +1,38 @@
+// The barrel `crypto` did not have — and eleven packages here still do not.
+//
+// Every consumer reaches into this package's file layout: `@/packages/tor/src/onionaddr.wac` imports
+// `@/packages/crypto/src/keccak.wac`, `@/packages/ssz/src/chunk.wac` imports `sha256.wac` **and**
+// `digest.wac`, `@/packages/quic/src/keys.wac` imports `digest.wac`. Three packages, four imports,
+// every one naming a file in somebody else's directory.
+//
+// `../../../QUESTIONS.md`'s barrel entry says a barrel exists so a caller need not know which file a
+// name lives in. Counted 2026-09-05: **11 of the 40 packages have no `src/<name>.wac`** — `box`,
+// `crypto`, `ens`, `fs`, `gzip`, `page`, `quic`, `ssh`, `tls`, `wacc`, `wacpkg` — so the four barrel
+// findings this directory has recorded were all about the 29 that have one. The other eleven have the
+// same problem in a worse form: not *a name the barrel forgot*, but **no boundary to forget it at.**
+//
+// Written now because `@/packages/bls/src/verify.wac` needed `Verified` and there was nowhere to
+// import it from, which is the usual order here: the first caller from outside finds it.
+
+export { Digest32 } from "./digest.wac";
+export { sha256, Sha256 } from "./sha256.wac";
+export { keccak256, sha3_256 } from "./keccak.wac";
+export { hmacSha256 } from "./hmac.wac";
+export { hkdfExtract, hkdfExpand } from "./hkdf.wac";
+
+/**
+ * The signature surface, and **`Verified` is the piece two packages needed and neither had.**
+ *
+ * `./ed25519.wac` and `@/packages/bls/src/verify.wac` both had a `DoesNotVerify` member in their
+ * fault unions — the same name, in two packages, for the same mistake. It is an *answer*, not a
+ * fault, and it is exported from here because both verifiers give it.
+ */
+export { Verified, verify as verifyEd25519, VerifyFault,
+         BadKeyLength, BadSignatureLength, NonCanonicalScalar, BadPublicKey, BadR }
+  from "./ed25519.wac";
+
+// `chachaBlock` and `aesEncrypt` are **not** here. They are primitives a caller composes into a
+// cipher, and a caller that wants one wants the cipher; exporting the block function invites a use
+// this package has no opinion about. Which is the judgement a barrel is for, and the reason a
+// package with no barrel has not made it — `./secret.wac` is reachable today by path, and nothing
+// records that it should not be.
