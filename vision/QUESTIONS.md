@@ -9489,6 +9489,53 @@ is now four rather than one, which is what makes it a cost rather than a curiosi
 `u8[]` has no `indexOf` either. Those five are why `bytesIndexOf` has an elided body here and a real
 one would be a loop: there is nothing underneath to build on.
 
+## A cursor's fault union grows with its verbs, and every caller's `try` inherits the growth
+
+*2026-09-05.* `../core/cursor.wac` was written this morning with one failure: `Overrun`, the bytes ran
+out. Every read had it and the file argued at length about what a caller should do with it.
+
+Then `issues/lang/0351a` produced a verb the type obviously wants. `v = v * 10 + (c - '0')` appears
+**61 times across twelve trees** in the shipped tree, and **49 of the 61 index an array** — a scanner
+consuming digits from a buffer at a position. `packages/fmt`'s `atoi(string)` has 97 callers and
+cannot serve those 49, because it takes a whole string and cannot say where it stopped; the same
+package has `atofSpan(u8[] src, i32 start, i32 end)` for floats, so it knows the shape and gave it to
+the harder type.
+
+**A cursor is that shape** — where it stopped is `this.at` and need not be returned at all — so
+`Cursor.decimal()` went in. And it broke the file's one-fault assumption on arrival:
+
+    u8, take, need     fail because the bytes ran out
+    decimal            fails because they ran out, *or* because they are not digits
+
+Those must stay apart: at the end of a header a missing number is a truncated read and a letter is a
+malformed one, and collapsing them is `@/packages/http`'s `Parsed` argument at a smaller scale. So
+the honest return is `Result<i32, union<Overrun, NoDigits>>`, and the type now has a **fault union**
+rather than a fault.
+
+> **Adding one verb added a member.** A package that wants `hexDigits`, or `quotedString`, or
+> `lineEnd` adds another, and every caller's `try` inherits the growth — because `try` propagates the
+> callee's set into the caller's, which is the whole of what it does.
+
+### Which is the third direction the failure finding has come from
+
+The cursor's §2 says the failure **model** — trap, latch, answer — is not shareable across packages,
+and that four shipped readers chose four. This says the failure **set** is not fixed even inside one
+type. The first is about disagreement between callers; the second is about growth over time, and only
+the second gets worse as the type gets better.
+
+### What could not be written
+
+**Nothing bounds it.** There is no way to say *this type's faults are these and adding a verb is a
+breaking change*, which is what a caller writing `try` would want to know. The union is open by
+construction — that is the feature — and an open set in a return type is a set that grows under you.
+`@/packages/http`'s three-layer `CallFault` is the same shape one level up and has the same property;
+nothing in this directory has argued for a way to freeze one.
+
+**And the alternative is worse in a way that is easy to miss.** Giving `decimal` its own `Result<i32,
+NoDigits>` and making the overrun a trap would keep the union at one member, and it is exactly the
+split `@/packages/tls` makes between `wire.wac` and `x509.wac` — argued, deliberate, and the reason
+this file cannot pick one. A cursor that traps for one caller and answers for another is two cursors.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

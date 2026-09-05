@@ -104,7 +104,38 @@ export struct Cursor {
 
   /** Nothing left — `tls`'s `expectEnd`, which traps there and answers here. */
   Result<void, Overrun> atEnd(const this) { … }
+
+  /**
+   * Consume ASCII digits and answer what they spell — **the operation 61 loops in the shipped tree
+   * are spelling by hand.**
+   *
+   * `issues/lang/0351a`: `v = v * 10 + (c - '0')` appears 61 times across twelve trees, and **49 of
+   * the 61 index an array**. `packages/fmt` has `atoi(string)`, used 97 times and unable to serve
+   * those 49, because it takes a whole string and cannot say where it stopped. The same package has
+   * `atofSpan(u8[] src, i32 start, i32 end)` for floats — it knows the shape and gave it to the
+   * harder type.
+   *
+   * **A cursor is that shape.** Where it stopped is `this.at`, and it does not have to be returned
+   * at all.
+   */
+  Result<i32, NoDigits> decimal(this) { … }
 }
+
+/**
+ * There were no digits here — **and it is not an `Overrun`**, which is the third time this file has
+ * had to say that a failure is not the one it already has.
+ *
+ * `u8`, `take` and `need` fail when the bytes ran out. `decimal` fails when the bytes are *there* and
+ * are not digits, and a caller wants those apart: at the end of a header a missing number is a
+ * truncated read and a letter is a malformed one. Collapsing them is `@/packages/http`'s `Parsed`
+ * argument at a smaller scale — two outcomes sharing a constructor so a caller can handle one and
+ * forget the other.
+ *
+ * So the cursor's fault type is not one type, and this is where that becomes visible rather than
+ * arguable. `Result<i32, union<Overrun, NoDigits>>` is what `decimal` really answers once `take`
+ * inside it can fail too, which is the union composition `../QUESTIONS.md` says is the point.
+ */
+export struct NoDigits { i32 at; u8 saw; }
 
 // ## 1. What `try` buys, which is the whole reason this type can exist
 //
@@ -195,6 +226,20 @@ export struct Cursor {
 //
 // So a shared cursor cannot pick. What it can do is answer a `Result` and let a caller who wants the
 // trap write `(try? c.u8()) ` — except there is no such spelling, which is §3.
+//
+// ## 2d. And the first operation whose failure is not `Overrun`
+//
+// `decimal` was added on 2026-09-05 from `issues/lang/0351a`, and it broke the file's one-fault
+// assumption immediately. Every read above fails one way — the bytes ran out — and `decimal` fails
+// two: they ran out, or they are not digits. **`Result<i32, union<Overrun, NoDigits>>` is the honest
+// return**, and it is the first place this type needs the union composition rather than a single
+// member.
+//
+// Which is the §2 finding arriving from a third direction. That section says the failure *model*
+// (trap, latch, answer) is not shareable across packages. This says the failure *set* is not fixed
+// even within one type: adding one operation added a member, and a package that adds a
+// `hexDigits` or a `quotedString` adds another. **A cursor's fault union grows with its verbs**, and
+// every caller's `try` inherits the growth.
 //
 // ## 3. What could not be written
 //
