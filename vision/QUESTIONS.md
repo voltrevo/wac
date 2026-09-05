@@ -6126,3 +6126,35 @@ A construct with no user here has three readings and only the first is fatal:
 The honest next step for each is different, and only the first is a question for a page: **write the
 consumer that would use it, and see whether it survives contact.** That is what every other finding
 in this file came from.
+
+### All four followed up, 2026-09-05, and the four zeros have four different causes
+
+| | opportunity | cause of the zero |
+|---|---|---|
+| a tuple type | **64** two-field structs, 34 with both fields at one type | **the construct is wrong for it** — a tuple gives up the names that distinguish them |
+| optional chaining | **0** chains; 11 single `x!.` after a null test | **the opportunity does not exist**, and the near-misses each want a value, a fault or a return rather than null |
+| `auto` | **32** declarations whose right-hand side already names the type | **the writer did not reach for it** |
+| a `[…]` literal | **0** array constructions with arguments | **the situation never arises** |
+
+The two soft zeros are now hard, and they came apart. Restricting to the **77 files with no elided
+body** removes the caveat entirely: a list literal has nothing to shorten, and `auto` has
+thirty-two `Buf out = Buf.create();`-shaped lines and appears in none of them.
+
+**The `auto` result is the uncomfortable one and it is not about `auto`.** Thirty-two opportunities
+and zero uses says nothing about the construct; it says the rewrites were written by transcribing
+shipped files, and the shipped tree has no `auto`. Every one of the thirty-two has a counterpart
+reading `Buf out = Buf.create();`, and the rewrite kept the shape while changing the type.
+
+Which is a limit of this whole exercise, found by measurement rather than argued: **a construct that
+only saves typing cannot be discovered by rewriting.** The method finds things that were *impossible*
+or *wrong* — a `bool` that answers six questions, a position where a name was needed — because those
+force a change. A construct that merely reads better leaves the transcription intact, so its absence
+here is not evidence.
+
+That splits the four zeros into two that are findings and two that are not:
+
+- **tuples and `?.` are findings.** A construct that collapses a distinction finds no users in code
+  written to preserve distinctions, and both zeros are that sentence with different subjects.
+- **`auto` and the list literal are not.** One has thirty-two opportunities the method could never
+  have taken, and the other has none at all — so neither the pages nor the rewrites have said
+  anything about whether they are wanted.

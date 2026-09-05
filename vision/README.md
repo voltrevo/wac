@@ -166,6 +166,21 @@ at expression level — the shape this directory spent five days removing from s
 So two of the four zeros are explained and neither is an oversight: **a construct that collapses a
 distinction finds no users in code written to preserve distinctions.**
 
+**The other two came apart, and one of them is a limit of this exercise rather than a finding.**
+Restricting to the 77 files with no elided body removes the caveat: a `[…]` literal has **nothing to
+shorten** — zero inline array constructions — and `auto` has **thirty-two** `Buf out = Buf.create();`
+-shaped declarations and appears in none of them.
+
+Thirty-two opportunities and zero uses says nothing about `auto`. It says the rewrites were written
+by transcribing shipped files, and the shipped tree has no `auto`. **A construct that only saves
+typing cannot be discovered by rewriting** — the method finds what was impossible or wrong, because
+those force a change, and a construct that merely reads better leaves the transcription intact. So
+its absence here is not evidence.
+
+Four zeros, four causes: the construct is wrong for the opportunity (tuples); the opportunity does
+not exist (`?.`); the writer could not have taken it (`auto`); the situation never arises (list
+literals). Only the first two are findings.
+
 ## What twenty-two subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is a hundred and thirty-two entries and getting longer, which is the exercise working and is not a
