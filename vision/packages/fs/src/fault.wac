@@ -42,6 +42,17 @@ import {
  * What stays here is the `Fault` union, because *which* of them a mount can produce is this
  * package's business and not `std`'s — a memory mount produces all nine and a host mount produces
  * whatever the host reports.
+ *
+ * **And that last sentence is aspirational, which was checked the next morning.** `Mount` is a
+ * struct of funcrefs with **one** error type in every slot, so `inMemory()` and `onHost()` both
+ * answer this union and a per-implementation one has nowhere to go. The funcref struct is chosen
+ * deliberately — *"a method would dispatch on `Mount`'s own type and there is only one of those"* —
+ * so the decision that makes mounts composable is the same decision that forbids per-implementation
+ * error sets.
+ *
+ * `Fault` is therefore the **superset**, and the cost is a caller matching on it must handle members
+ * its mount can never produce. `Mount<E>` would fix it and would make a filesystem holding both
+ * kinds impossible to write, since the two mounts would be different types. `../../../QUESTIONS.md`.
  */
 
 export union<

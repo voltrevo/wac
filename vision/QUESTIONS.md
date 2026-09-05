@@ -6462,6 +6462,42 @@ So a fault taxonomy splits cleanly in two, and this directory had not noticed th
 - **the union** belongs to whoever answers, and is a claim about *this* implementation's reach.
 
 That is why `Fault` and `FileFault` are different types over overlapping members and neither is
-redundant — and it is the answer to the earlier entry's *one interface, two implementations, two
-producible subsets, and nothing saying which*. The subsets are unions, and a package can declare one
-per implementation without touching the vocabulary.
+redundant.
+
+### And the last sentence of this entry was wrong, which is the finding
+
+It said the subsets are unions and *"a package can declare one per implementation without touching
+the vocabulary."* Tried to write it. **It cannot be written**, and the reason is a decision the same
+file argues for.
+
+`Mount` is a struct of funcrefs:
+
+    export struct Mount {
+      fn<Ticket<Result<Bytes, Fault>>(string)> read;
+      …
+    }
+
+with **one** error type baked into every slot. `Mount.inMemory()` and `Mount.onHost(files)` both fill
+those slots, so both answer `Fault` — and a per-implementation union has nowhere to go.
+
+The funcref struct is chosen deliberately and the reason is good: *"a method would dispatch on
+`Mount`'s own type and there is only one of those. What varies is the lambda in the field."* So **the
+decision that makes mounts composable is the one that forbids per-implementation error sets**, and
+they are the same decision.
+
+Three ways out, and the third is what the code does:
+
+- **`Mount<E>`**, parameterising the error set. Then `inMemory()` is `Mount<MemFault>`, `onHost()` is
+  `Mount<HostFault>`, and a filesystem holding both **cannot have a `Vec<Mount>`** — the mounts are
+  different types. That is the existential-type problem, arriving from a two-file package rather than
+  from a paper.
+- **Erase `E` behind something common**, which wac has no mechanism for and which would give back the
+  `NotGranted`-for-everything the whole thread started from.
+- **One union that is the superset**, which is `Fault` today. It works, and the cost is that a caller
+  matching on it must handle members the mount it holds can never produce — a **dead arm**, which is
+  exactly what `never` was introduced for and which `never` cannot help with here, because *which
+  mount this is* is a runtime fact rather than a type argument.
+
+So the seam between vocabulary and reach is real, and only the vocabulary half is expressible. The
+reach half needs the interface to be a type rather than a value, and this package chose a value on
+purpose.
