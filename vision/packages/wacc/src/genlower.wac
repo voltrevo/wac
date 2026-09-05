@@ -4,10 +4,10 @@
 // lowering rewrites types into other types. This one turns a function into a struct and a `step`
 // function, and the struct did not exist in the source.
 //
-// **Rewritten 2026-09-05, because the thing it stopped on now exists.** The previous version ended
-// at a signature and said so: *"There is no `Decl` in this tree, so this signature is the end of the
-// file."* `./decl.wac` was written for that reason and for `./asynclower.wac`'s. What that unblocked
-// is not what I expected, and the half that is still blocked is the interesting half — §2.
+// **Rewritten twice on 2026-09-05.** The first version ended at a signature — *"There is no `Decl` in
+// this tree, so this signature is the end of the file."* — and `./decl.wac` was written for that. The
+// second said the pass was still half-blocked, because a `match` over a union cannot bind. That was
+// wrong, the whole pass is writable, and how the claim survived three commits is §2.
 
 import { Vec } from "core";
 import { Expr, Tok, Span, Ty } from "./ast.wac";
@@ -46,9 +46,38 @@ export Plan plan(Func gen, Vec<Hoisted> hoisted) { … }
 export Decl[] emit(const Plan p) { … }
 
 /**
- * Every `gen` function in a program — **and this is the one that cannot be written.** §2.
+ * Every `gen` function in a program.
+ *
+ * **The previous version of this file said this one could not be written, and that was wrong.** §2.
  */
-export Vec<Func> generatorsIn(Decl[] decls) { … }
+export Vec<Func> generatorsIn(Decl[] decls) {
+  Vec<Func> out = Vec.create();
+  for (Decl d in decls) {
+    match (d.kind) {
+      // Rebuilt with named fields, not `Func(name, ret, params, body, exported, typeParams,
+      // isAsync)` — writing the positional form here, in the file arguing against it, is the mistake
+      // this directory has now made three times by cataloguing a shape and then producing it.
+      Func { name, ret, params, body, exported, typeParams, isAsync }: {
+        if (isGen(ret)) {
+          out.push(Func {
+            name: name, ret: ret, params: params, body: body,
+            exported: exported, typeParams: typeParams, isAsync: isAsync,
+          });
+        }
+      }
+      StructDecl { methods, .. }: { for (Func m in methods) { if (isGen(m.ret)) { out.push(m); } } }
+      EnumDecl { .. }:  { }
+      UnionDecl { .. }: { }
+      Typedef { .. }:   { }
+      Import { .. }:    { }
+      ReExport { .. }:  { }
+    }
+  }
+  return out;
+}
+
+/** Whether a return type is `gen<Y> R`. */
+bool isGen(Ty t) { … }
 
 // ## 1. Three lowerings, three levels, and only the third leaves the file's own vocabulary
 //
@@ -65,31 +94,42 @@ export Vec<Func> generatorsIn(Decl[] decls) { … }
 // argument against it — the shipped compiler does exactly this in `asyncsynth.wac` — but *"three
 // lowerings"* is two lowerings and a code generator, and nothing had said so.
 //
-// ## 2. `Decl` unblocked the emitting half and not the walking half, and that is the finding
+// ## 2. I said this pass was half-blocked and it is not, and the reason is worth more than the claim
 //
-// `plan` and `emit` are writable now. `generatorsIn` is not, and the difference is exact:
+// The version of this file committed an hour ago said `generatorsIn` could not be written: a `match`
+// over a union matches by type, and `@/packages/box/src/gunzip.wac` records that matching by type
+// does not bind. `../../../QUESTIONS.md` carried it, `./decl.wac` carried it, and it was wrong.
 //
-//   * **Emitting only constructs.** `StructDecl { name: t, fields: fs, methods: ms, … }` is a
-//     construction, and `./decl.wac`'s union-of-named-structs is at its best there — named, checked,
-//     nothing to transpose.
-//   * **Walking has to read.** `generatorsIn` matches a `Decl`'s `kind`, and a union arm matches by
-//     **type** without binding: the arm knows it has a `Func` and cannot reach `isAsync`. So the
-//     function that finds the generators cannot be written, in the file whose whole subject is
-//     lowering them.
+// `../../../GRAMMAR.ebnf` has **two** pattern languages and I read one:
 //
-// > **The binding gap splits a pass in half.** A compiler pass is *find the nodes* and *emit the
-// > replacement*, and a union of named structs makes the second half safer and the first half
-// > impossible.
+//     binding_list   = binding , { "," , binding } , [ "," ] ;
+//     binding        = IDENT | "is" , type ;
+//     arm_payload    = "(" , [ binding_list ] , ")" | "{" , field_pattern , "}" ;
+//     field_pattern  = ".." | IDENT , { "," , IDENT } , [ "," , ".." ] , [ "," ] ;
 //
-// That is a sharper statement of the entry `./decl.wac` promoted, and it arrives from the opposite
-// direction: that file said the fix for the swap hazard cannot be read, and this one says which
-// **half of which pass** stops. Every rewriting pass in a compiler is the same two halves, so the
-// cost is not one function — it is that no pass over declarations can be written at all until
-// `Func f:` exists, while every pass that only *produces* them can.
+// The parenthesised form binds by **position** and can match by type without binding. The **brace
+// pattern** binds by **field name** — `./walk.wac` uses it in every arm and is the file that argued
+// for it. And `match_arm` is `IDENT , [ arm_payload ]`, which does not care whether the `IDENT` names
+// an enum variant or a union member. So `Func { name, ret, .. }:` is grammatical, and `generatorsIn`
+// above is written with it.
 //
-// It also explains why `./desugar.wac` and the `union` lowering were writable: statements and types
-// in this tree are **enums**, whose arms bind. Only declarations are a union, because only
-// declarations were written after the argument for unions was made.
+// The rule that actually holds is narrower and explains both cases at once:
+//
+// > **The brace pattern binds field names, so an arm can read its subject exactly when the subject
+// > has fields.** An enum variant with a named payload has them. A union member that is a *struct*
+// > has them. A union member that is itself a *union* does not — which is `gunzip`'s
+// > `Err(is Corrupt):`, where `Corrupt` is eight members and there is nothing to name.
+//
+// So the gap is real and it is about **nested unions**, not about unions. I generalised from the one
+// case that had been written to the case in front of me, and the two differ in the one property that
+// matters. `./decl.wac`'s union-of-named-structs is unblocked in both directions: constructions are
+// named and checked, and arms read by field name.
+//
+// **What the mistake cost is the interesting part.** Three commits carried it, and each restated it
+// more confidently than the last — *a small gap*, then *load-bearing*, then *it splits a pass in
+// half*. Nothing checked it, because the check is one grep of a grammar file in the same repository
+// and the claim was about a construct's **absence**, which a targeted grep cannot find. Reading the
+// production whole is the only thing that would have worked, and it is nineteen lines.
 //
 // ## 3. `yield` needs no inference and `await` does, which is a fact about the signature
 //

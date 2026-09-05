@@ -2482,8 +2482,39 @@ is writable today — and then the `match` has one `Err` arm, so nothing checks 
 for coverage. Matching by type is what makes the two-way split exhaustive; binding is what makes it
 useful; and they are exclusive.
 
-**Promoted 2026-09-05: this is the construct standing between this directory's AST argument and an
-AST.** Written above about a two-arm error union whose payload is one string, which made it look
+**Promoted 2026-09-05, then narrowed the same day, and the narrowing is the entry.** What follows was
+written as *this is the construct standing between this directory's AST argument and an AST*, promoted
+twice, and it is wrong in its general form. `GRAMMAR.ebnf` has **two** pattern languages and this
+entry reads one:
+
+    binding_list   = binding , { "," , binding } , [ "," ] ;
+    binding        = IDENT | "is" , type ;
+    arm_payload    = "(" , [ binding_list ] , ")" | "{" , field_pattern , "}" ;
+    field_pattern  = ".." | IDENT , { "," , IDENT } , [ "," , ".." ] , [ "," ] ;
+
+The parenthesised form binds by **position** and can match by type without binding. The **brace
+pattern** binds by **field name** — `@/packages/wacc/src/walk.wac` uses it in every arm — and
+`match_arm` is `IDENT , [ arm_payload ]`, which does not care whether the `IDENT` names an enum
+variant or a union member. So `Func { name, ret, .. }:` is grammatical and
+`@/packages/wacc/src/genlower.wac`'s `generatorsIn` is written with it.
+
+> **The brace pattern binds field names, so an arm can read its subject exactly when the subject has
+> fields.** An enum variant with a named payload has them; a union member that is a *struct* has them;
+> a union member that is itself a *union* does not — which is `gunzip`'s `Err(is Corrupt):`, where
+> `Corrupt` is eight members and there is nothing to name.
+
+So the gap above is real and it is about **nested unions**. It does not reach a union of structs, and
+a union of named structs is therefore usable as an AST in both directions.
+
+**How it survived three commits is the part to keep.** I took a real gap, generalised it to the case
+in front of me, and the two differ in the one property the brace pattern needs. Then each restatement
+was more confident than the last — *a small gap*, *load-bearing*, *it splits a pass in half* — because
+each new file made the consequence larger. **How important a claim would be is not evidence for it**,
+and here it made the claim harder to check rather than easier: the check was one grammar file in the
+same repository, and the thing to check was a construct's *absence*, which a targeted grep cannot
+find. Reading the production whole is nineteen lines.
+
+*The superseded argument, kept:* Written above about a two-arm error union whose payload is one string, which made it look
 small. `@/packages/wacc/src/ast.wac` counts the positional-swap hazard across the tree and its two
 worst entries are declarations — *"`StructDecl` has seven fields and fifty-four arms; `Func` has
 seven and forty-three, including `bool exported` and `bool isAsync`, which are adjacent, identical

@@ -10,8 +10,9 @@
 // > `StructDecl` has seven fields and fifty-four arms; `Func` has seven and forty-three, including
 // > `bool exported` and `bool isAsync`, which are adjacent, identical and mean opposite things.
 //
-// So this file is the test of the fix that argument implies, and the fix works and is blocked by
-// something else.
+// So this file is the test of the fix that argument implies. The fix works, and the first version of
+// §1 said it was blocked by something else, which was wrong — §1b keeps the mistake next to the
+// correction, because the way it survived is worth more than the claim was.
 
 import { Vec } from "core";
 import { Tok, Span, Ty, Expr } from "./ast.wac";
@@ -78,7 +79,35 @@ export struct Decl { DeclKind kind; Span at; }
 /** A file. */
 export struct Program { Decl[] decls; Tok path; }
 
-// ## 1. The fix works, and then a `match` cannot use it
+// ## 1. The fix works, and reading it works too — corrected the same day
+//
+// **The first version of this section said a `match` could not read one, and that was wrong.**
+// `../../../GRAMMAR.ebnf` has two pattern languages: the parenthesised form binds by position and can
+// match by type without binding, and the **brace pattern** `Func { name, ret, .. }:` binds by field
+// name. `match_arm` is `IDENT , [ arm_payload ]` and does not care whether the `IDENT` names an enum
+// variant or a union member, so a union of named structs is readable as well as constructible.
+// `@/packages/wacc/src/genlower.wac`'s `generatorsIn` is written with it and §2 there is the account
+// of how the wrong claim survived three commits.
+//
+// What survives is narrower and explains the case it was generalised from:
+//
+// > **The brace pattern binds field names, so an arm can read its subject exactly when the subject
+// > has fields.** An enum variant with a named payload has them; a union member that is a *struct*
+// > has them; a union member that is itself a *union* does not — which is `@/packages/box`'s
+// > `Err(is Corrupt):`, where `Corrupt` is eight members and there is nothing to name.
+//
+// So this file's design holds in both directions:
+//
+// | | construction | reading |
+// |---|---|---|
+// | enum of positional variants | swappable, silent | binds by position, or by name with `{ }` |
+// | union of named structs | **named, checked** | **named, checked** |
+//
+// The remaining difference is construction, which is the whole of the swap hazard, so the trade is
+// not a trade: `ast.wac`'s fifty-four `StructDecl` arms become fifty-four constructions that cannot
+// be transposed, and nothing is lost at the reading end.
+//
+// ## 1b. What the superseded version said
 //
 // Replacing the enum of positional variants with a **union of named structs** removes the swap
 // hazard completely: there is no order to get wrong, `exported` and `isAsync` are names, and
@@ -101,15 +130,13 @@ export struct Program { Decl[] decls; Tok path; }
 // | | construction | reading |
 // |---|---|---|
 // | enum of positional variants | swappable, silent | binds seven locals |
-// | union of named structs | **named, checked** | **cannot reach the fields** |
+// | union of named structs | **named, checked** | *"cannot reach the fields"* — **false** |
 //
-// One construct closes it — `Err(is Corrupt c):`, generalised to `Func f:` — and the entry that
-// proposes it was written about a two-arm error union where the payload was one string. **This is the
-// case that makes it load-bearing**: without it a union of structs cannot be the shape of an AST, and
-// with it the swap hazard in the largest enum in the compiler goes away for one keystroke per field.
-//
-// Promoted accordingly — `../../../QUESTIONS.md` had it as a small gap next to a small union, and it
-// is the thing standing between this directory's AST argument and an AST.
+// Kept because the reasoning is worth reading against §1: I took `Err(is Corrupt c):`, a real gap
+// about a *nested union*, and applied it to a union of *structs*, which differ in the one property
+// the brace pattern needs. Then I promoted it, twice, on the strength of how load-bearing it would
+// be if true. **How important a claim would be is not evidence for it**, and it is what made this one
+// harder to check rather than easier.
 //
 // ## 2. What `Program` turned out to need that the shipped one does not have
 //
