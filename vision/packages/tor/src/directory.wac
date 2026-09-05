@@ -1,0 +1,208 @@
+// Reading the Tor directory — and a struct with two phases, one of which cannot build a circuit.
+//
+// The last dangling import in this directory: `./pathsel.wac` has been importing `Relay` from a file
+// that did not exist. The shipped `packages/tor/src/directory.wac` is 346 lines and its header is one
+// of the best in the tree — *"Parsing is not believing"*, and the paragraph on why a microdescriptor
+// digest is **recomputed** rather than read from a cache's annotation, *"trust a cache's own
+// labelling instead and a relay can serve a microdescriptor holding somebody else's key."* Kept
+// whole. The parsing is not rewritten; the standard did not move.
+//
+// What is rewritten is the type that comes out of it, because it is two types.
+
+import { Result, Vec, Bytes } from "core";
+
+/**
+ * A relay as the consensus describes it — **and nothing more**, which is the change.
+ *
+ * The shipped `Relay` carries seven consensus fields *and* three that come from a separate document,
+ * with the difference recorded in doc comments: `ntorOnionKey` is *"Empty until a microdescriptor is
+ * matched up"*, `ed25519Identity` is *"Empty until one is matched up, and empty for a relay that
+ * publishes none."*
+ *
+ * So one type has two phases and the phase is not in it. Between `parseConsensus` and
+ * `attachMicrodescriptors` every `Relay` in the array has an empty `ntorOnionKey`; afterwards most
+ * of them do not. **A relay in the first phase cannot be used to build a circuit** — the ntor
+ * handshake needs that key — and the only thing that says so is a sentence beside the field.
+ *
+ * This is the sixth phase error in this directory fixed by giving each phase a type, after the
+ * cursor, the bit reader, `Freqs`, `Table` and `Crc`. It is the first where the wrong phase is a
+ * security property rather than a wrong answer.
+ */
+export struct Listed {
+  string nickname;
+  /** SHA-1 of the RSA identity key, from the consensus `r` line. */
+  Bytes rsaIdentity;
+  string address;
+  i32 orPort;
+  Flags flags;
+  /** Unpadded base64: the key into the microdescriptor set. */
+  string microdescDigest;
+  i32 bandwidth;
+  /** As written. Only believed when mutual — see `./pathsel.wac`. */
+  string[] family;
+}
+
+/**
+ * A relay whose microdescriptor has been matched up — the only thing a circuit can be built from.
+ *
+ * `pathsel` and the circuit builder take this and never `Listed`, so *"I forgot to attach the
+ * microdescriptors"* is a compile error at the call rather than an ntor handshake against an empty
+ * key.
+ */
+export struct Usable {
+  Listed listed;
+  /** The ntor onion key, from the microdescriptor. */
+  Bytes ntorOnionKey;
+  /**
+   * The ed25519 master identity, absent for a relay that publishes none.
+   *
+   * **Not interchangeable with `Listed.rsaIdentity`**, and the shipped comment is emphatic about
+   * why: *"The HSDir hash ring is computed over this one, and computing it over the RSA digest gives
+   * a complete, consistent ring that no service has ever published to."* Two `Bytes` fields, two
+   * lengths, two meanings, one type — see the note below.
+   */
+  Bytes? ed25519Identity;
+  ExitSummary exitPolicy;
+}
+
+/** Accept or reject, and the ports. */
+export enum ExitSummary {
+  /** The relay exits nowhere. **Not** the same as *no summary was parsed* — see below. */
+  RejectAll,
+  Accept(PortRange[] ports),
+  Reject(PortRange[] ports),
+}
+
+/**
+ * One inclusive port range.
+ *
+ * The shipped type is `i32[] ranges` with *"Flattened lo, hi, lo, hi"* in a comment — the same
+ * flattened-pair shape as `unicode`'s generated tables and `gzip`'s Huffman lanes, at its smallest
+ * and most obviously wrong: an odd-length `ranges` is representable and means nothing.
+ */
+export struct PortRange { i32 lo; i32 hi; }
+
+/**
+ * A consensus flag, as a name.
+ *
+ * The shipped API is `bool hasFlag(Relay r, string flag)` over a `string[]`, called ten times across
+ * two files with five distinct literals — `Exit` (3), `BadExit` (3), `Guard` (2), `Valid`,
+ * `Running`. See the note below on why the count is not the point.
+ */
+export enum Flag { Authority, BadExit, Exit, Fast, Guard, HSDir, Running, Stable, V2Dir, Valid }
+
+/** The flags a relay carries. */
+export struct Flags {
+  Flag[] of;
+  bool has(const this, Flag f) { … }
+}
+
+export Result<Vec<Listed>, Malformed> parseConsensus(Bytes doc) { … }
+
+/** Match microdescriptors to the relays that named them, by recomputed digest. */
+export Vec<Usable> attach(Vec<Listed> listed, Bytes microdescriptors) { … }
+
+/** A directory document that is not one. */
+export struct Malformed { i32 line; string why; }
+
+// ## What could not be written
+//
+// ### `null` means two different things, one assignment apart
+//
+// This is the sharpest thing in the file and it is not about a missing feature.
+//
+//     export ExitPolicy? parsePolicy(string line) { … return null; }   // could not parse it
+//
+//     struct Relay {
+//       /**
+//        * Absent means the relay carries nothing, which is not the same as "no policy".
+//        *
+//        * A microdescriptor omits the `p` line when the relay exits nowhere, so a missing summary
+//        * is a reject-all and tor reads it that way.
+//        */
+//       ExitPolicy? exitPolicy;
+//     }
+//
+// Both are `ExitPolicy?`. `parsePolicy`'s `null` is *I could not read this line*; `Relay`'s is
+// **reject everything**, carefully documented as a domain fact. Assigning one to the other is a type
+// error nowhere, and it turns a malformed `p` line into a reject-all.
+//
+// That direction happens to be **safe** — a relay believed to exit nowhere is not chosen as an exit
+// — and nothing in either comment says the safety was noticed. The file is otherwise scrupulous
+// about exactly this kind of reasoning: `parsePolicy`'s own header says *"An unparseable entry is
+// dropped rather than guessed at. Under `accept` that narrows what the relay is believed to carry
+// and under `reject` it widens it, so the safe direction differs by polarity and there is no single
+// conservative default."* An author thinking that carefully about a dropped **entry** did not have
+// anywhere to write down what a dropped **line** means, because both are spelled `null`.
+//
+// `ExitSummary` above makes `RejectAll` a member, so *the relay exits nowhere* is a value and *this
+// line is not a policy* is a `Malformed`. The two stop being assignable.
+//
+// ### Two identities, two lengths, one type — with the consequence written in the comment
+//
+// `rsaIdentity` is 20 bytes, a SHA-1 of an RSA key, from the consensus. `ed25519Identity` is 32
+// bytes, a different key, from the microdescriptor. Both are `u8[]`. The doc comment carries the
+// whole guard rail:
+//
+//   > **Not interchangeable with `identity` above.** … The HSDir hash ring is computed over *this*
+//   > one, and computing it over the RSA digest gives a complete, consistent ring that no service
+//   > has ever published to.
+//
+// A consistent ring nobody publishes to is a failure with no error in it: every lookup succeeds and
+// finds nothing. `../../../QUESTIONS.md`'s fixed-length-array entry counts 322 sites restating a
+// length at run time, and 37 of them are against 20 — Tor fingerprints and SHA-1 digests. This is
+// what those 37 are guarding, and none of them guards *this* pair, because both values are the right
+// length for themselves. **A length in the type would not have caught it either**: what is wanted is
+// that a SHA-1-of-RSA and an ed25519 key are different types, which is the `FixedBig<40>` versus
+// `FixedBig<160>` problem from `../../fmt/src/atof.wac` in its second form today, and the same
+// answer — a distinct type per meaning, not a length per array.
+//
+// A wrapper struct costs an allocation per relay and there are about 7,000 relays in a consensus.
+// Nobody has priced that, and this directory should not pretend the change is free.
+//
+// ### A closed set of ten spelled as string literals, and the count is not the point
+//
+// `hasFlag(r, "BadExit")` is a linear scan over `string[]` and a typo compiles. Ten call sites, five
+// distinct flags, which is small — and the consequence is not. `hasFlag(r, "BadEXit")` answers
+// **false**, and false for `BadExit` means *this relay is fine to exit through*. Every other
+// stringly-typed lookup found today fails towards a visible wrong answer; this one fails towards
+// using a relay the directory authorities marked as hostile.
+//
+// So the argument for `enum Flag` here is not the ten sites. It is that the failure mode of the
+// string version is silent and one-directional, and there is no test that can catch a flag name
+// nobody typed. This is the third *closed set spelled as an open type* today, after `case.wac`'s
+// `which: i32` and `percent.wac`'s `set: i32`, and the first where the default answer is unsafe
+// rather than merely wrong.
+//
+// ### What the split found, which was not what it was for
+//
+// The two types were written to stop a circuit being built from a relay with an empty key. What they
+// actually produced was a boundary nobody had drawn: `./pathsel.wac` imported `Relay` and now imports
+// **`Listed`**, because everything it does — `weighted`, `roleOf` — reads bandwidth and flags and
+// **nothing in it reads a key.**
+//
+// So the ntor requirement does not spread through path selection at all. It stops at the circuit
+// builder, one caller further on. A relay's keys and a relay's *weight in a selection* turn out to be
+// answerable from different halves of the document, and the shipped single type had made that
+// invisible by giving both halves to everyone.
+//
+// That is the argument for the split that the safety story does not make on its own: it is not only
+// that a phase error becomes a compile error, it is that **the smaller type turned out to be the one
+// most callers wanted**, and nobody could have known which until the two were separate.
+//
+// ### And a parser's honesty is not expressible
+//
+// The header's best paragraph is a statement about what the module does **not** promise:
+//
+//   > `parseConsensus` reads a document. It says nothing about whether the document is genuine, and
+//   > on its own it is not safe to build a circuit from: whoever answered the directory request
+//   > chose every byte of it. `consensus.wac` is what decides.
+//
+// `Listed` above is the type that says it — a relay the consensus *claims* exists — but only by
+// convention, and `attach` produces `Usable` from unverified input just as happily. The real
+// distinction is *verified against the authorities' signatures* and it lives in another file, so a
+// third type would have to be threaded from `consensus.wac` through here, and this directory has not
+// worked out whether that is a `Signed<T>` wrapper, a phantom parameter the language does not have,
+// or a decomposition where `directory.wac` never hands out anything a circuit builder accepts.
+// Recorded unresolved, because the two-phase fix above is the same idea and stopping halfway through
+// it is worth noticing.

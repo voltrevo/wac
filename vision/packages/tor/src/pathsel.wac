@@ -12,7 +12,14 @@
 // unnecessary, and one of them is stated as a hazard in the file itself.
 
 import { Vec } from "core";
-import { Relay } from "./directory.wac";
+// `Listed`, not `Usable`. `./directory.wac` split the shipped `Relay` in two — a relay the consensus
+// describes, and one whose microdescriptor has been matched up — and the useful part of the split
+// showed up here: **everything in this file reads bandwidth and flags, and nothing reads a key.**
+// Weighting and role classification are consensus-only operations. So the ntor key requirement does
+// not spread through path selection at all; it stops at the circuit builder, which is the one caller
+// that needs `Usable`. A split made to prevent one bug turned out to say where the boundary already
+// was.
+import { Listed } from "./directory.wac";
 
 /**
  * Where in the circuit a relay is being chosen for.
@@ -82,10 +89,10 @@ export struct Weights {
 }
 
 /** `bandwidth * weight / 10000`, in `i64` — and the reason is a silent failure, not a big number. */
-export Vec<i64> weighted(Vec<Relay> relays, Position p, const Weights w) { … }
+export Vec<i64> weighted(Vec<Listed> relays, Position p, const Weights w) { … }
 
 /** Which of the four a relay is. One place, so the classification cannot disagree with itself. */
-Role roleOf(const Relay r) { … }
+Role roleOf(const Listed r) { … }
 
 // ## 1. `i64` because `i32` fails invisibly, in the direction that helps an attacker
 //

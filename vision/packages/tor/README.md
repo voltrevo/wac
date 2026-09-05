@@ -251,3 +251,40 @@ and unsafe to return.
 being correct where a program genuinely cannot continue, per `Result.orTrap`'s comment — needs
 reading all of them, and reading 41 trap sites in an onion router to classify them is a day's work
 with no instrument behind it.
+
+**One struct with two phases, and the split found a boundary nobody had drawn.** Added with
+[`src/directory.wac`](src/directory.wac). The shipped `Relay` carries seven consensus fields plus
+three from a separate document, marked *"Empty until a microdescriptor is matched up"* — so between
+`parseConsensus` and `attachMicrodescriptors` every relay in the array has an empty `ntorOnionKey`,
+and **a relay in that phase cannot build a circuit**, with only a doc comment saying so. Sixth phase
+error here fixed by giving each phase a type, and the first where the wrong phase is a security
+property rather than a wrong answer.
+
+The useful part was unplanned. `src/pathsel.wac` imported `Relay` and now imports **`Listed`**,
+because `weighted` and `roleOf` read bandwidth and flags and nothing in the file reads a key. The
+ntor requirement stops at the circuit builder instead of spreading through path selection — **the
+smaller type turned out to be the one most callers wanted**, and nobody could know which until the
+two were separate.
+
+**`null` means two different things, one assignment apart.** `parsePolicy` returns `ExitPolicy?`
+where null is *could not read this line*; `Relay.exitPolicy` is `ExitPolicy?` where absent is
+**reject everything**, documented as a domain fact — *"a missing summary is a reject-all and tor
+reads it that way."* Assigning one to the other is a type error nowhere. The direction happens to be
+safe and nothing says the safety was noticed, in a file otherwise scrupulous about exactly this:
+*"the safe direction differs by polarity and there is no single conservative default."* An author
+thinking that carefully about a dropped **entry** had nowhere to write what a dropped **line** means,
+because both are spelled `null`.
+
+**Two identities, two lengths, one type.** `identity` is 20 bytes of SHA-1-over-RSA; `ed25519Identity`
+is a different key; both are `u8[]`, and the comment carries the guard rail — *"computing it over the
+RSA digest gives a complete, consistent ring that no service has ever published to."* A ring nobody
+publishes to is a failure with no error in it. **A length in the type would not catch this**: each
+value is the right length for itself, and what is wanted is a distinct type per meaning. Same shape
+as `fmt`'s `FixedBig<40>` vs `FixedBig<160>`, and the second instance today.
+
+**A closed set of ten spelled as string literals, where the default answer is unsafe.**
+`hasFlag(r, "BadEXit")` compiles and answers false, and false for `BadExit` means *fine to exit
+through*. Ten call sites over five flags — small, and not the point: every other stringly-typed
+lookup found today fails towards a visible wrong answer, and this one fails towards using a relay
+the authorities marked hostile. Third *closed set spelled as an open type* today, after `case.wac`'s
+`which: i32` and `percent.wac`'s `set: i32`.
