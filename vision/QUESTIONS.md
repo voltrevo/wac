@@ -7029,6 +7029,37 @@ wrong, which is a producer thinking about causes rather than about what a reader
 the time it knows the fault is its own it has returned. After `datetime`'s `Take.Accept`, `cat.wac`'s
 halfway read and `codec`'s `BadPadding`.
 
+**And then the fix was applied, and the obvious shape of it was wrong.** The entry above proposed
+`NoSuchModule { spec, from, fromGenerated: bool }` — a flag on the fault. Writing it out, the member
+that breaks it is `Cycle`:
+
+    export struct Cycle { Vec<Source> path; }
+
+**A cycle is not one path.** A fault-level flag would have to say *which* module it was about, and
+there is no such module — the ring is the fault. So the flag collapses to `anyGenerated`, computed
+where the fault is raised, and a caller wanting *which one* cannot ask.
+
+> **Provenance attaches to the thing that has an origin, not to the fault that mentions it.** The four
+> members mention one path, one path, a list of paths, and none. A fault-level flag has to pick one
+> of those four shapes and is wrong for the other three.
+
+So `@/packages/ts/src/bundle.wac` makes the *path* a type — `struct Source { string path; Origin
+origin; }` — and every member then carries as many origins as it has paths, with `NoPrefix` carrying
+none, which is right: it is the one member with no path and the one that needed no new data. The two
+constant classifiers in `report.wac` collapsed into one `blameFor` that reads its payload in three of
+four arms, and **nothing about the callers changed to make that possible** — only the producer did.
+
+Same shape as `@/packages/wacc/src/decl.wac`'s `Program { Decl[] decls; Tok path; }` from the other
+end: there a `Tok` is meaningless without its file, here a path is meaningless without who wrote it.
+**Both are a scalar that was always half of a pair, and in both the fix is a type rather than a
+field.** The cost is that the type change propagates — `Module.path` is `Module.at` and every consumer
+sees a `Source` where it saw a `string` — which is the right cost and not a small one.
+
+*And a new bound found while writing it:* `Origin` has two arms and wants three. A module the **user**
+generated — a build step's output this bundler merely read — is neither `UserWrote` nor `Generated`
+by this run, and blaming either party is wrong. Two arms is what the bundler can distinguish, which is
+*a fault union is bounded above by what its sources can distinguish* arriving on an enum.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

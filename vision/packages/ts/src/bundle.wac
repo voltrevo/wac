@@ -82,20 +82,43 @@ export struct Span { i32 from; i32 to; }
  * package after `Lexed`'s quintuples and `Import`'s flattened names.
  */
 export struct Module {
-  string path;
+  Source at;
   Bytes text;
   Vec<ImportDecl> imports;
 }
 
+/**
+ * Where a module came from — **a path and who wrote it, together, because separately they are the
+ * bug `@/packages/ts/src/report.wac` found.**
+ *
+ * That file wrote two callers of `BundleFault` and neither could answer *is this the user's fault or
+ * ours*, in a bundler where half the input is its own output. The data was in the fault the whole
+ * time: `NoSuchModule` carries `from`. What is not in the fault is whether **this run** produced that
+ * path, which lives in the module table and is gone once a `Result` has been returned.
+ *
+ * So it is recorded here, by the loader, which is the only thing that knows. Added 2026-09-05 to test
+ * the rule that finding produced: *provenance cannot be recovered by a caller and can be recorded by
+ * a producer.*
+ */
+export struct Source { string path; Origin origin; }
+
+/** Who wrote a module. `Generated` is a barrel, a synthesised entry, or a rewritten specifier. */
+export enum Origin { UserWrote, Generated }
+
 /** The bundle, or the first thing that could not be flattened. */
 export Result<Bytes, BundleFault> bundle(Vec<Module> modules, string entry) { … }
 
+// **Every path in a fault is a `Source`, and that is the whole of the change.** Not a
+// `bool fromGenerated` on `NoSuchModule`, which was the first shape and is wrong: provenance attaches
+// to a **path**, not to a fault, and the three members below mention one path, a list of them, and
+// one respectively. A flag per fault would have to be *which* path it was about.
+
 /** A module imports something no module in the set provides. */
-export struct NoSuchModule { string spec; string from; }
+export struct NoSuchModule { string spec; Source from; }
 /** Two modules import each other, and an IIFE per module cannot express that. */
-export struct Cycle { Vec<string> path; }
+export struct Cycle { Vec<Source> path; }
 /** A top-level `await`: making the IIFE async turns `$mN` into a promise. */
-export struct TopLevelAwait { string path; Span at; }
+export struct TopLevelAwait { Source at; Span span; }
 
 export union<NoSuchModule, Cycle, TopLevelAwait, NoPrefix> BundleFault;
 
