@@ -4667,6 +4667,37 @@ What has to be decided is whether that is one feature or two, because a *sized* 
 whose size is a type parameter are different amounts of work — and every one of the six wants only
 the first.
 
+### Tested, 2026-09-05, and it survives — which three other asks did not
+
+Three feature requests written into package files this week were retired by asking *name a caller and
+say what it would do differently*: an overlay needed no language change, five preconditions wanted
+things already on the list, and a refusing `slice` had no caller who would use it. This one was put
+to the same test and it holds, in a sharper form than the entries stated.
+
+**It does not remove checks; it moves them to where bytes enter.** `Chunk.of(Bytes)` checks a length
+and answers a `Result`. With `Slice<u8, 32>` that becomes `Slice<u8, 32>.of(Bytes)` in `core` — the
+same function, one layer down. The gain is real and is not what the entries claimed: **written once
+instead of once per package**, at the boundary rather than at every function that receives the value.
+
+**It removes fault members from public surfaces, and the number is five.** Counted over `vision/`:
+thirteen fault structs are about a length, and five exist *only* because a fixed width is not in a
+type — `ssz`'s `WrongLength` and `NotAChunk`, `crypto`'s `BadKeyLength` and `BadSignatureLength`,
+`tor`'s `WrongKeyLength`. The other eight stay: `bls`'s `WrongArity` is two runtime lengths agreeing
+with each other, `gzip`'s `LengthMismatch` is a trailer against a count, `abi`'s `LengthOverruns` is
+an offset, `codec`'s `ImpossibleLength` is data-dependent, and `std`'s `WrongSize` is `w * h * 4`.
+`tor`'s `WrongAddressLength` is fixed at 56 and would need sized **strings**, which is a second
+feature and not this one.
+
+**And the strongest form is arithmetic, which no entry mentioned.**
+`@/packages/ens/src/answer.wac` writes `got.get(0).asWord()!.from(12)` — twelve bytes into a
+thirty-two-byte word, giving twenty — and calls the `12` *"a slice with a magic 12"*. With sized
+slices `from(12)` on a `Slice<u8, 32>` is statically a `Slice<u8, 20>`: no check anywhere, the
+arithmetic is the type, and the magic number is checked against both widths at once.
+
+That is the case that is not about constructors at all, and it is the one where the alternative is
+not *a check somewhere else* but *nothing*. Whatever is decided about the rest, **the arithmetic is
+the argument**.
+
 ### Two counts, which is why the numbers drifted
 
 *Declaring a fixed-width wrapper* and *wanting the length in the type* are different questions and

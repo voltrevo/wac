@@ -76,7 +76,14 @@ already there and is just not in the type.
 
 The cost lands somewhere unusual. It is not that a wrong-length address is encoded — `writeBlob` pads
 — it is that `readAddr` and `readContenthash` **return the same type**, so a caller can pass one
-where the other is meant. Two more packages have since asked for the same thing from other
+where the other is meant.
+
+**And this file turned out to hold the strongest form of that request**, found on 2026-09-05 when the
+ask was tested against every package that makes it. The other five want a *constructor* that checks
+once instead of once per package — a real gain, and one that moves a check rather than removing it.
+This one wants **arithmetic**: `from(12)` on a `Slice<u8, 32>` is statically a `Slice<u8, 20>`, so
+the magic `12` is checked against both widths and there is no check left to move. The alternative in
+the other five is *a check somewhere else*; here it is *nothing*. Two more packages have since asked for the same thing from other
 directions, `@/packages/ssz`'s `Chunk` and `@/packages/bls`'s `Fp`, and it is one entry in
 `../../QUESTIONS.md` rather than three.
 
