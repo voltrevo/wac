@@ -90,11 +90,17 @@ export const Fp2 XI_FROB_3 = Fp2( … );
 //     package uses functions for the same reason 828 other sites do;
 //   - **`u32[12]` is not a type**, so nothing says an `Fp2` limb array has twelve words. This is the
 //     322-length-checks entry, in the one package where a wrong length is a wrong signature check;
-//   - **the transcription itself has no oracle**. `packages/crypto`'s tables have `crc32Bitwise` and
-//     a bitwise oracle beside them; these limbs were typed from a paper and the only thing that
-//     would catch a wrong digit is a known-answer test on the whole pairing.
+//   - **and a third thing I claimed and then found false**, kept here because the error is the useful
+//     part. I wrote that these limbs have no oracle — typed from a paper, caught only by a broken
+//     pairing. `packages/bls/test/tower.py` is *"the BLS12-381 field tower in plain Python integers …
+//     no Montgomery form, no limbs, no carries … so a bug in its representation cannot also be a bug
+//     here"*, and it **computes** the coefficients rather than transcribing them:
+//     `FROB12_C1 = [f2pow(XI, (P**i - 1) // 6) for i in range(12)]`. `vectors.py` imports it and
+//     generates what the wac tests consume, so a wrong limb disagrees with a value derived from the
+//     field definition.
 //
-// The third is the one with teeth, and it is why the duplication matters more here than the 39-body
-// count suggests: **a hand-transcribed constant with no independent derivation is checked only by
-// whether the protocol works**, and two copies of it are two chances to be wrong in a way that a
-// passing test suite would still pass — because the same test exercises both.
+// So the duplication is real and the urgency I attached to it was not. What produced the wrong claim
+// is worth more than the claim: I grepped the *source* files for an oracle, found none, and did not
+// look in `test/`. The two packages this directory has praised for keeping a definitional oracle
+// beside the implementation — `gzip`'s `crc32Bitwise`, and now `bls` — differ only in **which
+// directory the oracle lives in**, and one of those is visible from the file and the other is not.

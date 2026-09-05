@@ -142,17 +142,31 @@ the other**. So each file is naming the value by the role it plays there, which 
 keep both names — deleting one would put a name from the wrong layer into a reader's way. The call
 form plus a doc comment stating the identity is the fix; the deletion is not.
 
-### Why this pair outranks the other 38
+### Retracted, same day: I said this pair has no oracle and it has a good one
 
-Every other duplicate in this sweep has an oracle: the same operation written twice is checked by
-whatever tests either copy. **A hand-transcribed constant does not.** These twenty-four hex words were
-typed from a paper, `packages/bls` has no independent derivation of them, and the only thing that
-would catch a wrong digit is a known-answer test on the whole pairing.
+The paragraph here argued the pair should be fixed first because a hand-transcribed constant has no
+independent derivation, so a wrong digit would only surface as a broken pairing. **That is wrong and
+the package is better tested than I said.**
 
-That is what makes two copies worse than a duplicated function: they are two chances to be wrong **in
-a way a passing suite still passes**, because one test exercises both and agreement between them is
-not evidence — they were transcribed from the same source by the same hand.
+`packages/bls/test/tower.py` is *"the BLS12-381 field tower in plain Python integers — the oracle for
+fp2/fp6/fp12. No Montgomery form, no limbs, no carries: everything is `int` and `%`. That is the
+point. The implementation under test holds twelve 32-bit limbs in Montgomery form, so a bug in its
+representation cannot also be a bug here."*
 
-Compare `packages/gzip/src/crc32.wac`, which keeps `crc32Bitwise` explicitly so *"the tests check the
-table against it over random input rather than only against fixed vectors."* The `bls` constants are
-the case with no such companion, on the signature-verification path.
+And it does not transcribe the constants — it **computes** them:
+
+    # Frobenius, from constants — and validated against actual exponentiation
+    FROB12_C1 = [f2pow(XI, (P**i - 1) // 6) for i in range(12)]
+
+`vectors.py` imports from `tower` and generates the vectors the wac tests consume, so a wrong limb in
+either `frob12C1_3` or `psiY` makes the wac Frobenius disagree with a value derived from the field
+definition. The oracle I said was missing is the strongest kind there is.
+
+**So the ranking argument is withdrawn and the finding is not.** The pair is still one value under
+two names with nothing relating them, a corrected transcription in one file still would not propagate
+to the other, and the fix in the paragraph above is still the right one. What is no longer true is
+that it is urgent, or that this package's testing is thin.
+
+Recorded rather than deleted because the error is instructive: I checked whether the *source files*
+mentioned an oracle, found nothing, and concluded there was none — without looking in `test/`. The
+directory listing that would have corrected me was one `ls` away.

@@ -127,10 +127,16 @@ same as two functions. What relates them is an assertion in a test, available to
 sharpest defect in a 39-body duplication sweep **wants a test, not a feature** — and the thing that
 would have produced it was somebody hashing the bodies.
 
-**A hand-transcribed constant has no oracle.** `crypto`'s tables have `crc32Bitwise` beside them;
-these limbs were typed from a paper, and the only thing that catches a wrong digit is a known-answer
-test on the whole pairing. That is why two copies matter more here than the count suggests: **two
-chances to be wrong in a way a passing suite still passes**, because one test exercises both.
+**I claimed these limbs have no oracle and they have a good one.** `test/tower.py` is the field
+tower in plain Python integers — *"no Montgomery form, no limbs, no carries … so a bug in its
+representation cannot also be a bug here"* — and it **computes** the Frobenius coefficients rather
+than transcribing them, feeding `vectors.py` and the wac tests. A wrong limb disagrees with a value
+derived from the field definition.
+
+So the duplication stands and the urgency does not. The mistake is the part worth keeping: I grepped
+the **source** files for an oracle, found none, and did not look in `test/`. `gzip`'s `crc32Bitwise`
+and `bls`'s `tower.py` are the same discipline and differ only in which directory it lives in — one
+visible from the file, one an `ls` away.
 
 **And `Fp2` had to be declared in a constants file**, because this directory has `fp.wac` and no
 tower above it. Fourth time today a type landed in the wrong file for want of the right one — the
