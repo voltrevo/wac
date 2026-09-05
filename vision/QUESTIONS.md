@@ -6219,3 +6219,46 @@ here has stripped the thing it was looking for — the quotation checker blanked
 reported zero importers of `@/packages/codec`. Worth stating as a rule, since it has now cost two
 false readings: **a normaliser that removes noise removes evidence, and the two are told apart only
 by knowing what you are looking for.**
+
+## A fault union is bounded above by what its sources can distinguish
+
+Audited this directory against its own findings and the parallel-array sweep came back clean — three
+structs with two list fields, none index-correlated except `@/packages/zstd`'s `Fused`, which is
+argued at length. **Zero unargued instances of the shape criticised five times in the shipped tree.**
+
+The string-error sweep found six, and five are right: a host's message is a string and there is
+nothing else to carry. One was not, and it is the inverse of every other finding here.
+
+`@/packages/http/src/client.wac` declared
+
+    /** The host would not resolve, or the socket would not open. */
+    export struct NoConnection { string host; string why; }
+
+and `std`'s capability is
+
+    fn<Ticket<Result<Socket, NotGranted>>(string, i32)>  connect;
+
+**`NotGranted` is the only thing `connect` can say.** A client cannot tell *the name did not
+resolve* from *the socket was refused* from *this program may not use the network* — three causes,
+one answer — and the fault above invented a field to hold a distinction that never arrives. Five days
+spent making faults more precise than a `bool`, and this one was more precise than the data.
+
+### Which is a rule the other entries do not state
+
+**A fault union is bounded above by what its sources can distinguish.** Five members is right only if
+five things are separately knowable at the layer that answers. `NoConnection`'s `why` was a sixth
+distinction *inside* one of them, invented at the layer that wanted it rather than the layer that
+could see it.
+
+That is the ceiling on every *replace the `bool` with a union* argument in this file, and none of them
+mentions it. `@/packages/ssz`'s six-member `ProofFault` is fine because six things are visible at the
+fold. `@/packages/crypto`'s `ed25519Verify` is fine because six checks run in that function. A fault
+naming something its callee never learned is a `string` with a nicer type around it.
+
+### And underneath is a `std` finding this makes concrete
+
+`Net.connect` collapsing DNS failure, refusal and a missing grant into one `NotGranted` is the same
+shape this directory has spent five days unpicking, and it is worse than a package's: a package can
+be rewritten and a capability's answer is what the host gives. The `NotGranted`-for-everything entry
+has it in the abstract; this is a caller that wanted the distinction, invented it, and had to give it
+back.

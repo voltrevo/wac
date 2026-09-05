@@ -113,6 +113,33 @@ headers**, and its place is the code that reads a particular field. The tempting
 — an enum of the fifteen names this package cares about with an `Other(Bytes)` arm puts an open set
 inside a closed one and makes `Other` the common case.
 
+## A fault cannot be more precise than the capability under it
+
+Found auditing this directory against its own findings. `src/client.wac` declared
+
+```wac
+/** The host would not resolve, or the socket would not open. */
+export struct NoConnection { string host; string why; }
+```
+
+and `std`'s capability is `fn<Ticket<Result<Socket, NotGranted>>(string, i32)> connect;` — so
+**`NotGranted` is the only thing `connect` can say.** A client cannot tell *the name did not resolve*
+from *the socket was refused* from *this program may not use the network*. Three causes, one answer,
+and the fault invented a field to hold a distinction that never arrives.
+
+It is the inverse of everything else here: five days spent making faults more precise than a `bool`,
+and this one was more precise than the data. `ReadFailed`'s `why` stays — `Socket.recv`'s `Read` sum
+has a `Failed(string)` arm, so there is a real message from the host.
+
+**The rule none of the other entries states:** a fault union is bounded above by what its sources can
+distinguish. Five members is right only if five things are separately knowable at the layer that
+answers, and `NoConnection`'s `why` was a sixth distinction *inside* one of them, invented at the
+layer that wanted it rather than the layer that could see it.
+
+Underneath is a `std` finding: `Net.connect` collapsing DNS failure, refusal and a missing grant into
+one `NotGranted` is the shape this directory keeps unpicking, and worse than a package's — a package
+can be rewritten, and a capability's answer is what the host gives.
+
 ## What could not be written
 
 **A named union declaration has no form on the pages.** `export union<A, B, C> RequestFault;` is
