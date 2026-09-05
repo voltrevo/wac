@@ -1,0 +1,102 @@
+// Two callers of `PageFault`, and the last of the four predictions this thread made about itself.
+//
+// `../../../QUESTIONS.md` predicted `PageFault` (3) would earn its members because it has two kinds
+// of caller, a renderer and a test harness. The rule that prediction came from has since been
+// replaced — a decode union earns its members at the **structural/canonicality** boundary — and
+// `PageFault` is not a decode union, so the new rule is silent about it and the old prediction is all
+// there is. Writing it settles both.
+//
+// It lands in neither, and that is the result: **it needs a third mechanism, and naming it explains
+// all four callers this thread has written.**
+
+import { Result } from "core";
+import { Page, PageFault, NoSuchElement, WrongSize, NotGranted } from "std";
+
+/** Refuse, or carry on without the element. */
+export enum Handling { Fatal, Ignore }
+
+/**
+ * A renderer patching a DOM it built.
+ *
+ * `NoSuchElement` means the renderer's own idea of the tree is wrong — it wrote that id — so it is
+ * a bug in this program, not a condition. Everything here is `Fatal`, and the reason is that a
+ * renderer's failures are all self-inflicted.
+ */
+export Handling forRenderer(PageFault f) {
+  match (f) {
+    NoSuchElement(_): { return Fatal; }
+    WrongSize(_, _):  { return Fatal; }
+    NotGranted:       { return Fatal; }
+  }
+}
+
+/**
+ * A test harness driving a page it did not build.
+ *
+ * `NoSuchElement` is the *ordinary* answer to *is the error banner showing* before it shows, so a
+ * harness asking about an element that may not be there needs it as a value rather than a failure.
+ */
+export Handling forHarness(PageFault f) {
+  match (f) {
+    NoSuchElement(_): { return Ignore; }
+    WrongSize(_, _):  { return Fatal; }
+    NotGranted:       { return Fatal; }
+  }
+}
+
+// ## 1. The prediction held and the reason was not the one given
+//
+// One row of three differs, so the union earns `NoSuchElement` as a separate member. But the two
+// callers do not differ about *strictness*, and there is no recovered value for the lenient one to
+// accept — `NoSuchElement` has nothing behind it. What they differ about is:
+//
+// > **whether the thing that failed is something this program wrote.**
+//
+// The renderer put that id in the tree; a missing element is a bug in the renderer. The harness was
+// handed a page somebody else built; a missing element is a fact about the page. Same member, same
+// payload, and the difference is which side of the boundary the *caller* sits on.
+//
+// So this is not the structural/canonicality boundary and it is not caller-counting. It is a third
+// mechanism, and once named it accounts for the other three files without straining:
+//
+// | mechanism | the question the members answer | seen in |
+// |---|---|---|
+// | **recovery** | a value exists — hand it over or not? | `CodecFault`, `RlpFault`, `TimeFault` |
+// | **response** | what outward artefact does this become? | `RequestFault` (a status), `UpdateFault` (a peer policy) |
+// | **provenance** | did this program produce the thing that failed? | `PageFault` here, `FileFault` in `@/packages/box/src/cp.wac` |
+//
+// The third row is the one this thread kept finding and could not name. `cp`'s `Side` is exactly
+// provenance — *is this fault about the operand I was handed or about the run I set up* — and it was
+// passed by hand because the fault cannot know. `refuse.wac`'s constant `close` column is response
+// with nothing to vary. `sync.wac`'s *whose fault* is provenance that happened to coincide with the
+// member names.
+//
+// **And the three mechanisms differ in whether the union can carry the answer.** Recovery can: *is
+// there a value* is a property of the member and nothing else. Response can: a status code is a fact
+// about the fault. **Provenance cannot**, ever, because it is a fact about the call site — which is
+// why three of the four callers in this thread had to supply their axis by hand and why the fourth
+// only looked like it did not.
+//
+// That is the sharpest form this argument has reached, and it is falsifiable: a union whose callers
+// differ on provenance will always need something the union cannot hold, and a union whose callers
+// differ on recovery or response will not.
+//
+// ## 2. What could not be written
+//
+// **`forHarness` answering `Ignore` for `NoSuchElement` is asking a question with a failure.** *Is
+// the error banner showing* is a question whose two answers are both normal, and it is spelled here
+// as a call that fails. The type wants `Result<Element?, PageFault>` — absent is a value, and
+// `PageFault` keeps the two that really are failures. Third instance of *normal but uninteresting is
+// not a fault*, after `@/packages/lightclient`'s `NotRelevant` and `@/packages/datetime`'s
+// `LeapSecond`, and the first where the fix is a `?` rather than a redesign.
+//
+// **`Page` has twelve slots and one `PageFault`**, which is the `Files` shape measured in
+// `../../../std/platform.wac`: `WrongSize` is reachable from two of the twelve and dead in the other
+// ten. The count there was 29 dead arms in 80; here it is smaller and the same, and both are the
+// reason *share the members, vary the union* is written down and not done.
+//
+// **Provenance would be a property of the capability, not of the fault.** A `Page` this program
+// built and a `Page` it was handed are the same type, and if they were not — if a renderer held a
+// `Page<Mine>` and a harness a `Page<Theirs>` — then `NoSuchElement` would be a compile error for one
+// of them rather than a policy. That is a phantom parameter, the ninth site for it in this directory,
+// and the first where it would remove a fault member rather than prevent a mix-up.

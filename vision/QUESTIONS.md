@@ -6832,6 +6832,46 @@ five constant ones, and they are the same thing: a `match` over a union is the o
 construct here, so anything wanting exhaustiveness must be one even with nothing to decide. The
 alternative is a default arm, which is exactly what makes adding a member silent.
 
+### Fifth caller, and the three mechanisms that account for all five
+
+`@/packages/page/src/mount.wac` settles the second half of the prediction. `PageFault`'s three
+members meet a renderer and a test harness, and one row of three differs — so the union earns
+`NoSuchElement`. But not for either reason this thread has proposed. There is no recovered value for
+a lenient caller to accept, and it is not caller-counting. What the two differ about is:
+
+> **whether the thing that failed is something this program wrote.**
+
+The renderer put that id in the tree, so a missing element is its own bug. The harness was handed a
+page somebody else built, so a missing element is a fact about the page. Same member, same payload,
+and the difference is which side of a boundary the *caller* sits on.
+
+Named, it accounts for all five callers without straining:
+
+| mechanism | the question the members answer | seen in |
+|---|---|---|
+| **recovery** | a value exists — hand it over or not? | `CodecFault`, `RlpFault`, `TimeFault` |
+| **response** | what outward artefact does this become? | `RequestFault` (a status), `UpdateFault` (a peer policy) |
+| **provenance** | did this program produce the thing that failed? | `PageFault`, and `FileFault` in `cp.wac` |
+
+The third row is what this thread kept finding and could not name. `cp`'s `Side` **is** provenance —
+*is this about the operand I was handed or the run I set up* — passed by hand because the fault cannot
+know. `refuse.wac`'s constant `close` column is response with nothing to vary. `sync.wac`'s *whose
+fault* is provenance that coincided with the member names.
+
+**And the three differ in whether the union can carry the answer.** Recovery can: *is there a value*
+is a property of the member. Response can: a status code is a fact about the fault. **Provenance
+cannot, ever**, because it is a fact about the call site — which is why three of the five callers had
+to supply their axis by hand and the fourth only looked like it did not.
+
+Falsifiable, which is the point of writing it this way: a union whose callers differ on provenance
+will always need something the union cannot hold; one whose callers differ on recovery or response
+will not.
+
+**Third instance of *normal but uninteresting is not a fault*.** `forHarness` answering `Ignore` for
+`NoSuchElement` asks *is the error banner showing* with a call that fails, when both answers are
+normal. After `NotRelevant` and `LeapSecond`, and the first where the fix is a `?` — `Result<Element?,
+PageFault>` — rather than a redesign.
+
 ### The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
