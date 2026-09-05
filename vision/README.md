@@ -406,6 +406,37 @@ unions because nothing has bodies* is the objection to
 [the 129 unread union members](QUESTIONS.md), and at 54% written it is a weaker objection than it was
 given credit for.
 
+## What the list is, measured
+
+*2026-09-05.* The product of this directory is the *What could not be written* sections. Counted for
+the first time:
+
+    371 items, in 118 files.  Median 3 per file, max 11.
+
+**Four have been tested this week by attempting them, and all four turned out writable** —
+`Map.create`'s contradiction, `regex`'s `Span`, `ts`'s `blank(from, to)`, and `headers`' two states.
+Each left a smaller residue that *was* real. But those four were chosen because they looked
+writable, so the rate says nothing about the list.
+
+So five were taken mechanically — every 74th — and read:
+
+| # | item | what it is |
+|---|---|---|
+| 1 | *An abstract method has no spelling* | **a language gap**, and measured: a subtype that never overrides a trapping method draws no diagnostic |
+| 75 | *`Alphabet.digit(v)` takes an `i32` in `0 .. 2^bits` and nothing says so* | **a language gap** — an integer refinement, already a named recurring ask |
+| 149 | *`render` walks from the start of the document to count lines* | **a design note.** O(n) per fault; the line table that fixes it is writable and nobody wrote it |
+| 223 | *Nothing about how a grant list crosses* | **an undecided mechanism.** Three open questions about serialisation, named before anyone picks |
+| 297 | *`effectivePort` wants `this.port ?? defaultPort(…)` and wac has no `??`* | **a language gap**, verified: no coalescing operator anywhere, and the twelve `??` in this tree are all the `T??` type |
+
+**Three of five are what the heading claims. Two are not** — one is a performance observation and one
+is a design question — and they read identically because they share a heading.
+
+Five is a small sample and the split may not hold. What is certain is that the list is **not one
+kind of thing**, and a reader treating all 371 as *the language cannot express this* would be wrong
+about a meaningful fraction. The fix is not to prune it: a design note and an undecided mechanism are
+both worth having. It is that they want different headings, because *cannot* and *did not* and *have
+not decided* are three different asks of whoever reads this.
+
 ## Nothing here is checked by anything
 
 No test reads these pages. Nothing here is a fixture, a list some guard walks, or a promise a suite
