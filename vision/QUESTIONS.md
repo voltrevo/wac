@@ -6286,6 +6286,38 @@ where a source knows and does not report, that is a bug in the source rather tha
 type. Telling the two apart takes reading the host, which is what neither entry did before writing
 its member.
 
+### The ceiling measured: 27 of `std`'s 39 fallible members answer `NotGranted` and nothing else
+
+    39 capability members answer a Result
+    27  NotGranted
+     9  PageFault        (introduced by this exercise)
+     2  WriteStopped     write, writeErr — introduced by this exercise
+     1  NotATerminal     setMode — introduced by this exercise
+
+**Every one of the twelve that says more than *refused* was added here.** The other twenty-seven are
+one bit: the grant was not given.
+
+Which makes the ceiling structural rather than a slip. A package fault built on those twenty-seven
+can distinguish exactly as much as *the grant was refused* — so any member describing **why a
+capability failed** is invented, and `NoConnection { string why; }` was not carelessness but the
+predictable result of writing a fault type without reading the signature under it.
+
+And it explains which fault unions here are sound. `@/packages/abi`, `rlp`, `codec`, `ssz`, `json`
+and `ts` compute every member **from bytes they hold** — `LengthOverruns(at, n, have)` is arithmetic
+the package did, not a fact a capability reported — so they are unbounded by `std` and every member
+is producible. The ones to check are those whose members describe an *operation* failing, and there
+are four packages of them.
+
+### And the sweep that would have found this mechanically does not work
+
+Counted union members never constructed or matched anywhere in `vision/`: **63 of 131**. That number
+is not evidence of anything, because 80 of the 158 files have elided bodies and the construction
+sites are inside them. Both real inventions were found by **reading the layer below**, not by
+counting.
+
+So the rule is not mechanically checkable here, and that is worth saying plainly next to it: checking
+it means reading a signature or a host, and this directory's instruments only see the directory.
+
 ### And underneath is a `std` finding this makes concrete
 
 `Net.connect` collapsing DNS failure, refusal and a missing grant into one `NotGranted` is the same
