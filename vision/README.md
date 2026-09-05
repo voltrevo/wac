@@ -181,6 +181,21 @@ Four zeros, four causes: the construct is wrong for the opportunity (tuples); th
 not exist (`?.`); the writer could not have taken it (`auto`); the situation never arises (list
 literals). Only the first two are findings.
 
+**And the `auto` excuse was tested.** [`packages/git/example/ignorelint.wac`](packages/git/example/ignorelint.wac)
+is a program with no shipped counterpart to transcribe — it reports `.gitignore` rules that can never
+match, which `git check-ignore` cannot answer. It reached for `Result`, `try`, a payload-carrying
+enum, `Vec`, a bare variant construction and `const` on five parameters. **It did not reach for
+`auto`**, and `Rule r = rules.ordered.get(i);` names `Rule` twice.
+
+So *the rewrites inherited a vocabulary* is not the whole reason. The opportunity has been taken
+**zero times out of thirty-three** across forty rewrites and one application, and this exercise
+cannot say why — only that it will not find out.
+
+Writing that file also produced the sharper half: **naming a shape does not stop a writer producing
+it.** `shadowedBy` answers `-1`, in a directory whose entry on *a sentinel drawn from the value's own
+range* lists seven, on the day after the seventh was added, in the one file written specifically to
+watch for them.
+
 ## What twenty-two subjects found, as patterns rather than as a list
 
 `QUESTIONS.md` is a hundred and thirty-two entries and getting longer, which is the exercise working and is not a

@@ -6158,3 +6158,29 @@ That splits the four zeros into two that are findings and two that are not:
 - **`auto` and the list literal are not.** One has thirty-two opportunities the method could never
   have taken, and the other has none at all — so neither the pages nor the rewrites have said
   anything about whether they are wanted.
+
+### The excuse was tested by writing new code, and it did not hold
+
+`@/packages/git/example/ignorelint.wac` was written for this: a program with **no shipped
+counterpart to transcribe** — it reports `.gitignore` rules that can never match, which
+`git check-ignore` cannot answer because it is about a path rather than a rule set. Written first,
+measured afterwards.
+
+It reached for `Result` and `try`, an enum with payloads, `Vec` and `for … in .items()`, a bare
+variant construction, and `const` on five parameters. **It did not reach for `auto`**, and
+`Rule r = rules.ordered.get(i);` names `Rule` twice.
+
+So *the rewrites inherited a vocabulary* is not the whole reason, and the honest statement is
+narrower: the opportunity has been taken **zero times out of thirty-three**, across forty rewrites
+and one application, and this exercise cannot say why. What it can say is that it will not find out
+— a construct that only reads better does not force a change in either kind of file.
+
+**And writing new code found something the entries had not stopped happening.** `shadowedBy` answers
+`-1`, in a directory whose entry on *a sentinel drawn from the value's own range* lists seven of
+them, on the day after the seventh was added, written by the person who wrote both. `i32?` is right;
+`-1` is what came out.
+
+Which is a finding about the exercise rather than the language, and it is the sharper half of this
+entry: **naming a shape does not stop a writer producing it.** Two of the shapes this directory has
+spent five days cataloguing went into the first draft of the one file written specifically to watch
+for them.

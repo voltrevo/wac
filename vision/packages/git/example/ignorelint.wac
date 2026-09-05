@@ -1,0 +1,126 @@
+// A `.gitignore` linter — new code, written to test what new code reaches for.
+//
+// The last measurement found a limit of this directory's method: **a construct that only saves
+// typing cannot be discovered by rewriting**, because a rewrite transcribes a shipped file and
+// inherits its vocabulary. `auto` had thirty-two opportunities in the files with real bodies and
+// zero uses, and that says nothing about `auto`.
+//
+// So this is the other kind of file: a program with **no shipped counterpart to copy from**. It
+// reports rules that can never match, which `git check-ignore` cannot do because it answers about a
+// path rather than about a rule set. Written first and measured afterwards; the note at the foot is
+// what it turned out to use.
+
+import { Result, Bytes, Vec } from "core";
+import { Files, Out, NotGranted } from "std";
+import { Rule, Rules, Verdict } from "@/packages/git";
+
+/** A rule that cannot affect any answer, and why. */
+export enum Dead {
+  /** An earlier rule ignores a directory this one is inside, so git never looks. */
+  UnderIgnoredDir(i32 by),
+  /** A later rule with the same pattern and the same base wins, being later. */
+  Shadowed(i32 by),
+  /** Negating something no rule ignores. */
+  NegatesNothing
+}
+
+/** One finding: the rule, where it came from, and what is wrong with it. */
+export struct Finding {
+  i32 index;
+  Dead why;
+}
+
+/**
+ * Every rule that cannot change an answer.
+ *
+ * O(n²) over the rule list, which for a repository's worth of `.gitignore` is a few hundred squared
+ * and is not worth an index.
+ */
+export Vec<Finding> dead(const Rules rules) {
+  Vec<Finding> out = Vec.create();
+  for (i32 i = 0; i < rules.ordered.len(); i++) {
+    Rule r = rules.ordered.get(i);
+    i32 later = shadowedBy(rules, i);
+    if (later >= 0) { out.push(Finding(i, Shadowed(later))); continue; }
+    if (r.negated && !anythingIgnores(rules, r)) { out.push(Finding(i, NegatesNothing)); continue; }
+    i32 parent = ignoredAncestor(rules, i);
+    if (parent >= 0) { out.push(Finding(i, UnderIgnoredDir(parent))); }
+  }
+  return out;
+}
+
+/** The index of a later rule with the same pattern and base, or `-1`. */
+i32 shadowedBy(const Rules rules, i32 i) { … }
+
+/** Whether any rule ignores something this negation could apply to. */
+bool anythingIgnores(const Rules rules, const Rule negation) { … }
+
+/** A rule whose directory is already ignored outright, or `-1`. */
+i32 ignoredAncestor(const Rules rules, i32 i) { … }
+
+/** Read every `.gitignore` under `root`, in the order `Rules` wants them. */
+export async Result<Rules, NotGranted> gather(Files files, string root) { … }
+
+/** `path:line: rule can never match — shadowed by line 12`. */
+export string say(const Rules rules, const Finding f) { … }
+
+export async Result<i32, NotGranted> main(Files files, Out out, string root) {
+  Rules rules = try await gather(files, root);
+  Vec<Finding> found = dead(rules);
+  for (Finding f in found.items()) { _ = out.write(say(rules, f).toBytes()); }
+  return Ok(found.len() == 0 ? 0 : 1);
+}
+
+// ## What it reached for, measured after writing rather than while
+//
+// The point of the file is the second column, so it is the honest thing to record and it is not
+// flattering.
+//
+// | construct | used | where |
+// |---|---|---|
+// | `Result` + `try` | yes | `gather` fails with `NotGranted`; `main` propagates in one token |
+// | an enum with payloads | yes | `Dead`, and the payload is *which rule*, which is the whole report |
+// | `Vec<T>` and `for … in .items()` | yes | twice |
+// | a bare variant construction | yes | `Shadowed(later)`, `NegatesNothing` — unqualified, ninety-first use |
+// | `const` on a parameter | yes | five times, and it is the reason `dead` can take the rules by reference |
+// | **`auto`** | **no** | and `Rule r = rules.ordered.get(i);` is exactly its case |
+// | a `[…]` literal | no | nothing here builds a fixed array |
+// | optional chaining | no | `shadowedBy` answers `-1` rather than `i32?`, which is the finding below |
+// | a tuple | no | `Finding { index, why }` is two fields and they are not interchangeable |
+//
+// **So `auto` went unused again, in the one file that had no shipped text to copy.** That is a
+// second data point against the excuse the last measurement offered, and it is worth more than the
+// first: `Rule r = rules.ordered.get(i);` names `Rule` twice and I wrote it without noticing. The
+// habit is not transcription, or not only — it is that a declaration reads as a place where the type
+// goes.
+//
+// Which does not settle whether `auto` is wanted. It settles that **this exercise cannot answer it**,
+// and now for a stated reason rather than a suspected one: two methods, forty packages and one
+// application, and the construct's opportunity is taken zero times out of thirty-three.
+//
+// ## And the one thing writing new code did find
+//
+// **`shadowedBy` answers `-1`.** I wrote it that way, in a directory that has an entry counting seven
+// sentinels drawn from a value's own range, on the day after adding the seventh. `i32?` is right and
+// `-1` is what came out — so the sentinel is not a habit inherited from the shipped tree either. It
+// is what an index-returning search looks like when you are thinking about the search.
+//
+// That is the finding this file exists for, and it is about the exercise rather than the language:
+// **the shapes this directory has spent five days naming are not ones a writer avoids by having
+// named them.** Two of them went in on the first draft of a file written specifically to watch for
+// them, by the person who wrote both entries.
+//
+// ## What could not be written
+//
+// **`Dead.Shadowed(i32 by)` carries an index into a `Vec` the finding does not hold.** Every consumer
+// needs both, so `say(rules, f)` takes them separately and nothing says they belong together — a
+// `Finding` that carried the `Rules` would be the fix and would make a `Vec<Finding>` hold N copies
+// of one reference. The alternative is what `@/packages/ssz`'s `Gindex` did: make the *index* a type
+// that only a `Rules` can produce. Third setting for the same shape and the first where the pair is
+// a container and a position into it.
+//
+// **`gather` needs the order and `Files` gives no order.** `Rules.addFile` takes the base and sorts,
+// which is the whole point of that type — but a directory walk yields entries in whatever order the
+// host answers, so `gather` must sort *paths* before it can add rules in a defensible sequence, and
+// `Files.readDir`'s answer has no documented order. `@/packages/fs`'s listing entry is the same gap
+// and this is a caller for it.
