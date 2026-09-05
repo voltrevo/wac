@@ -694,7 +694,18 @@ The instance, measured 2026-09-04 through `bootstrap/ts/ask_wacc.ts`:
 
     Res<i32, F> f() { return Ok(3); }     // 1 type error: `a call to Ok`
 
-**An unqualified variant construction is not a thing today.** `spec/spec/enums.md` gives the bare
+**An unqualified variant construction is not a thing today.**
+
+**Corrected 2026-09-05: the conclusion holds and the evidence was misattributed.** *a call to Ok* is
+the **emitter's** clause, not a type error. A `wac check` of the same program is clean and exits 0;
+`wac build` exits 1. Both spellings do it — an enum declared in the same file (`E e = A(7);`) and a
+variant imported by name (`Ok(3)`) — and the checker *does* refuse the payload-free form `E e = A;`
+with a position, so it is the argument-list path that walks past. `issues/lang/0341a`.
+
+Which changes the ask. It is not *add a construct the compiler refuses*; it is *the checker already
+accepts it, so decide whether the checker should refuse it or the emitter should emit it*, and the
+second is a smaller change than this section implies. The misattribution came from asking one stage
+and reading its answer as the language's. `spec/spec/enums.md` gives the bare
 form for a type test — *"`is` accepts a variant name, bare or qualified by the enum"* — and for a
 `case` pattern, and construction is `Enum.Variant(args)` everywhere in `packages/`. Unqualified,
 `Ok(3)` is read as a call to a function named `Ok`, which is why the diagnostic says so.
