@@ -72,6 +72,36 @@ what the README's sentence describes and exactly what a builder fixes.
 > the quadratic one, and sorting the 257 into the two buckets is the work this issue is really asking
 > for.
 
+## And 257 is a floor for a named reason: the count only sees appends
+
+`x = x + …` is one of two shapes. The other is `x = … + x`, and it is what every hand-written
+integer-to-string does, because digits come out least-significant first. Counted the same way:
+**16 prepend accumulations inside a loop**, and they cluster exactly there —
+
+```
+packages/fmt/src/itoa.wac:30,62      out = digits[m % 10] + out;
+packages/wactest/src/utoa64.wac:19   out = digits[(m % 10) as! i32] + out;
+packages/ts/src/archive.wac:159      s = string.fromCodepoint(48 + (v % 10)) + s;
+packages/ts/src/transform.wac:81     s = string.fromCodepoint(48 + (k % 10)) + s;
+packages/wacc/src/emit.wac:429       out = string.fromCodepoint(48 + d) + out;
+packages/wacc/src/asyncplan.wac      packages/wacc/src/asyncsynth.wac
+packages/sh/src/printf.wac:207       packages/tor/src/dirclient.wac:57
+tools/wac/mutateoperators.wac x2
+```
+
+**`Buf` cannot help these at all**, which is the part that matters: it appends, and a prepend needs a
+reverse at the end. So `pushStr` is not the fix here — `Buf.pushDecimal(i32)`, which already exists in
+`packages/bytes/src/buf.wac`, is. **Eight files wrote the digit loop by hand with the shared answer
+already in the tree**, and one of the eight is `packages/fmt`, whose job it is.
+
+Two of those eight are also the `utoa64` pair `issues/system/0349a` found by hashing bodies —
+`fmt/src/itoa.wac` and `wactest/src/utoa64.wac`, nine identical lines. So the same site is reachable
+from three different sweeps and none of them saw all of it.
+
+> **An enumeration is only as good as its pattern.** `x = x + …` is the shape somebody types when
+> they picture string building, and it silently excludes the one case where the quadratic cost is
+> unavoidable without a different data structure.
+
 ## Why it is filed rather than fixed
 
 The method is small. **The 257 conversions are not**, they are spread over eight packages including
