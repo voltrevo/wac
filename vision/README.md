@@ -104,8 +104,8 @@ faster than anybody could weigh them. One question turned out to separate the go
 
 > **Name a caller, and say what it would do differently.**
 
-Eleven have been through it. **Six survived — five of them changed under the test — one changed
-shape, one was answered outright, three were retired**, and every one of the retirements had been
+Thirteen have been through it. **Seven survived — five of them changed under the test — one changed
+shape, one was answered outright, three were retired, and one the test could not judge**, and every one of the retirements had been
 written into a package file the day before, each costing one grep to check.
 
 | ask | result |
@@ -118,9 +118,19 @@ written into a package file the day before, each costing one grep to check.
 | an `ordinal()` for enums | **retired** — two of six enums want to index at all, and both are answered by putting the index on the table's own type |
 | what `defer` means | **answered** — all five uses want it on every exit including `try`; the trap half is observable in one of five and is a question about `std`, not the language |
 | a brace pattern for enum payloads | **survives, narrowed** — six of thirteen arms in the one consumer are served by `(_)` today; the unarguable part is *subset* binding, which is one arm |
+| an unqualified variant construction | **survives** — 186 sites in 24 files, and the directory is **split about it by the hour**: the six files that write `Result.Ok` were all created in one thirty-four-minute window and everything after is bare, with no page recording the change |
+| a value type to take an operator away | **the test cannot see it** — `tsnBefore`'s ten call sites are all correct and `a < b` was available at every one, so *what would a caller do differently* answers *nothing* for an ask whose whole value is that nobody has been wrong yet |
 | a refinement of an integer | **survives, and the compiler already emits one** — `string.fromCodepoint`'s prologue checks the scalar rule and traps, in every compiled module; five other files re-derive the same four comparisons and answer five different ways |
 | `==` on a user type |  **survives, and its evidence is self-generated** — six equality methods here against the shipped tree's three, because the shipped tree has almost no value types and compares `u8[]` with a free function; the surface grows with the value types the proposal adds |
 | a type for paths | **survives, inverted** — of 77 shipped signatures with a path beside another `string`, the 40 a `Path` separates are pairs nobody confuses and the **37 it cannot** — `rename(from, to)` — are where the mistake is free |
+
+**And the thirteenth row is the boundary rather than a result.** Three asks — a value type to take an
+operator away, a type for paths, `codec`'s two alphabet sets — all answer *the caller does nothing
+differently*, and all three would be wrong to retire: their value is that the **next** caller cannot
+get it wrong. The test cannot distinguish *the caller is currently wrong* from *the caller is
+currently right by discipline*, because the answer to *what would it do* is the same. The complement
+is cheap and greppable — **is there a comment doing this type's job?** — and `QUESTIONS.md` records
+where that marker is present and where it is not.
 
 **The pattern in the retirements is one sentence:** a feature that looks missing from inside one file
 usually has a caller that would not use it. All three were argued from the file that wanted them, and
