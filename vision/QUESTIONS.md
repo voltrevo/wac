@@ -7162,6 +7162,30 @@ So the general statement, which no longer mentions faults at all:
 > directory, and the seven that get it right are cursors, which are the only things built to be read
 > from rather than written down.
 
+### Two of the three `Span`s are deleted, and the limit is in the third change
+
+`@/packages/regex`'s and `@/packages/ts`'s are `Bytes` now — `core`'s `Slice<u8>` is `{ of, from,
+len }`, so a slice is a span that brought its subject, and `from` survives for a caller that wants
+the offset. Nothing else in either package moved. `@/packages/wacc`'s `Span { line; col; }` stays,
+because a line and a column are a **rendering** of a position rather than a position, which is what
+`@/packages/json`'s `render` computes from a slice.
+
+It also answered an ask that had been open in `@/packages/ts`'s README — *a `Span` for `blank(from,
+to)`, two `i32`s that must agree* — and the way it answered is the finding. `blank(Bytes span)` gets
+`from <= to` and `to <= len` free, because **making the slice is the check** and a caller cannot
+build a bad one.
+
+> **What it does not get is that `span.of` is the receiver's own array.** A slice pairs a position
+> with *an* array; it does not pair it with *the* array the receiver means, so
+> `blank(otherFile.slice(0, 3))` type-checks.
+
+That is the honest limit of this whole argument, and an existing ask found it rather than the sweep.
+For a fault being rendered it does not bite — one array is in play and the slice is a view of it. For
+a **mutation** it does: the receiver has an array of its own, so the question stops being *where* and
+becomes *where in what of mine*, which a slice answers confidently and wrongly. Closing it wants a
+slice whose array is a type parameter, which is the phantom-parameter ask at its eleventh site and the
+first where the tag would name a **value** rather than a type.
+
 ### And the consequence is that not one fault here can render itself
 
 Every diagnostic function in the directory, without exception:

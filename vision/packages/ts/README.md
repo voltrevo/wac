@@ -130,7 +130,14 @@ this package fears most. `defer { ctx.pop(); }` is what the code wants; `defer` 
 constructs whose meaning is open, and this is the third file in the directory blocked on the same
 answer.
 
-**A `Span` for `blank(from, to)`.** Two `i32`s that must agree, offsets into a buffer the receiver
-also holds — the fourth request in this directory for a value type pairing two scalars, after
-`@/packages/raster`'s `Rect`, `@/packages/ssz`'s `Gindex` and `Chunk`. The first where the check
-`from <= to && to <= len` is one the *receiver* can make and no caller can get right alone.
+**~~A `Span` for `blank(from, to)`.~~ Answered 2026-09-05, and the residue is better than the ask.**
+It is `blank(Bytes span)`. A `Slice<u8>` is `{ of, from, len }` and `slice()` traps on a range it
+does not contain, so `from <= to` and `to <= len` are both guaranteed by construction — making the
+slice *is* the check, and a caller cannot build a bad one.
+
+What it does not give is that `span.of` is the buffer being written. **A slice pairs a position with
+*an* array and not with *the* array the receiver means**, so `blank(otherFile.slice(0, 3))`
+type-checks. That is the limit of the *carry the subject* argument
+[`../../QUESTIONS.md`](../../QUESTIONS.md) makes: for a fault being rendered there is one array in
+play and it does not bite; for a **mutation** the receiver has an array of its own, and the question
+becomes *where in what of mine*, which a slice answers confidently and wrongly.

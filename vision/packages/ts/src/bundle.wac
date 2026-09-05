@@ -48,7 +48,15 @@ export struct NoPrefix { i32 tried; }
 
 /** One `import { … } from "…"` — where it is, what it binds, what it names. */
 export struct ImportDecl {
-  Span at;
+  /**
+   * The declaration's own text, as a view into the module's.
+   *
+   * `Span { i32 from; i32 to; }` until 2026-09-05, which is the shape `../../../QUESTIONS.md` counts
+   * 55 of: a position in something the value does not hold. `@/packages/regex` deleted its `Span`
+   * the same day for the same reason and the argument transfers whole — a `Bytes` is a span that
+   * brought its subject, and `from` is still there for a caller that wants the offset.
+   */
+  Bytes at;
   string spec;
   /**
    * The bindings, as **pairs**, where the shipped `Import` has `string[] names` with
@@ -71,8 +79,6 @@ export struct ImportDecl {
 }
 
 export struct Binding { string exported; string local; }
-
-export struct Span { i32 from; i32 to; }
 
 /**
  * One module in the order it must be emitted.
@@ -103,7 +109,10 @@ export struct Module {
 export struct Source { string path; Origin origin; }
 
 /** Who wrote a module. `Generated` is a barrel, a synthesised entry, or a rewritten specifier. */
-export enum Origin { UserWrote, Generated }
+export enum Origin {
+  UserWrote,
+  Generated
+}
 
 /** The bundle, or the first thing that could not be flattened. */
 export Result<Bytes, BundleFault> bundle(Vec<Module> modules, string entry) { … }
@@ -117,8 +126,16 @@ export Result<Bytes, BundleFault> bundle(Vec<Module> modules, string entry) { �
 export struct NoSuchModule { string spec; Source from; }
 /** Two modules import each other, and an IIFE per module cannot express that. */
 export struct Cycle { Vec<Source> path; }
-/** A top-level `await`: making the IIFE async turns `$mN` into a promise. */
-export struct TopLevelAwait { Source at; Span span; }
+/**
+ * A top-level `await`: making the IIFE async turns `$mN` into a promise.
+ *
+ * **The first fault in this directory that carries everything a diagnostic needs**: which file
+ * (`file.path`), who wrote it (`file.origin`), where in it, and the text to render a caret against —
+ * all four, in two fields, both of which are types that brought their subject. It got there by two
+ * separate changes made for two separate reasons on one day, which is the argument for the rule
+ * rather than for either change.
+ */
+export struct TopLevelAwait { Source file; Bytes at; }
 
 export union<NoSuchModule, Cycle, TopLevelAwait, NoPrefix> BundleFault;
 

@@ -37,7 +37,11 @@ export struct Blanked {
    * package this exercise briefly recorded as unwritten — writes into the same buffers and derives
    * the rule again.
    */
-  void blank(this, i32 from, i32 to) { … }
+  /**
+   * Blank a span. **`Bytes`, not `(i32 from, i32 to)`, since 2026-09-05** — and it answers three
+   * quarters of the ask below.
+   */
+  void blank(this, Bytes span) { … }
 
   /** What came out. Same length as the source, always. */
   Bytes bytes(const this) { return this.out; }
@@ -50,12 +54,31 @@ export struct Blanked {
 // which spans are types is the whole difficulty — but it is worth being precise about what has been
 // bought: the invariant D1 states, and not the one a reader might assume from the name.
 //
-// **`from` and `to` are two `i32`s and could be crossed.** A `Span` would pair them, and
-// `@/packages/raster`'s `Rect` and `@/packages/ssz`'s `Chunk` are the same request at other shapes:
-// a value type where two scalars must agree. This is the fourth in the directory, and the first
-// where the two scalars are *offsets into a buffer the receiver also holds*, so the check
-// `from <= to && to <= src.len()` is one the receiver can make and no caller can be wrong about
-// alone.
+// **`from` and `to` were two `i32`s and could be crossed — answered, and the residue is the finding.**
+// This asked for *a value type where two scalars must agree*, the fourth such request here after
+// `@/packages/raster`'s `Rect` and `@/packages/ssz`'s `Gindex` and `Chunk`, and noted that this one
+// is the first where the scalars are **offsets into a buffer the receiver also holds**.
+//
+// `Bytes` answers most of it and was already in `core`. A `Slice<u8>` is `{ of, from, len }` and
+// `slice()` traps on a range it does not contain, so `blank(Bytes span)` gets:
+//
+//   * `from <= to` — guaranteed, a length is not negative;
+//   * `to <= of.len()` — guaranteed by construction, because making the slice **is** the check;
+//   * and a caller cannot be wrong alone, because it cannot build a bad one.
+//
+// **What it does not get is that `span.of` is `this.out`.** A slice pairs a position with *an* array;
+// it does not pair it with *the* array the receiver means. `blank(otherFile.slice(0, 3))` type-checks
+// and this type cannot tell.
+//
+// That is the honest limit of the whole *carry the subject* programme `../../../QUESTIONS.md` argues
+// for, and it took an existing ask to find it. For a fault being rendered the limit does not bite —
+// there is one array in play and the slice is a view of it. For a **mutation** it does: the receiver
+// has an array of its own, so the question is no longer *where* but *where in what of mine*, and a
+// slice answers a different question confidently.
+//
+// The shape that would close it is a slice whose array is a type parameter — `Slice<u8, Out>` —
+// which is the phantom-parameter ask at its eleventh site and the first where the tag would name a
+// *value* rather than a type. Nothing on the pages proposes one.
 //
 // **A `Bytes` that is a copy, per stripper.** `Blanked.of` copies the source so `src` stays readable
 // while `out` is written. For a 924-line stripper over a 22-file host that is nothing; for the

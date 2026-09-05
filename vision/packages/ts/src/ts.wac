@@ -7,7 +7,7 @@
 export { Kind, Token } from "./token.wac";
 export { Blanked } from "./blank.wac";
 export { strip } from "./strip.wac";
-export { bundle, Prefix, Module, Source, Origin, ImportDecl, Binding, Span } from "./bundle.wac";
+export { bundle, Prefix, Module, Source, Origin, UserWrote, Generated, ImportDecl, Binding } from "./bundle.wac";
 export {
   StripFault, LexFault, At, EmitsRuntimeValue, NothingToLeave, ParameterProperty, Unterminated,
 } from "./fault.wac";
