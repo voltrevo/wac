@@ -707,7 +707,7 @@ opaque needs the arm and `union<never, Fault>` must not — which is exactly the
 raster test. So it is cheap to take, and the 99.4% prose rate is the most extreme in the table by a
 distance, which is what happens when a reserved word is also an ordinary English one.
 
-## A sentinel drawn from the value's own range — eleven, two of which are right, and this entry owns the list
+## A sentinel drawn from the value's own range — thirteen, four of which are right, and this entry owns the list
 
 Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counted one; **four more added
 2026-09-05** from `gzip`, `url` and `fmt`, and with them the first one that survives scrutiny.
@@ -725,6 +725,8 @@ Counted 2026-09-04, after `@/packages/tty`'s note claimed five and double-counte
 | `@/packages/url`'s `Part(0, false, false)` | `0` payload on a parse failure | an IPv4 part — `0` is legal |
 | `@/packages/fmt`'s `fastPath` | **NaN** means *I decline* | **nothing** — no JSON number is NaN |
 | `@/packages/json`'s `Number.raw` | `len() == 0` means *built, not parsed* | **nothing** — a parsed number has at least one byte |
+| `packages/wacc`'s `errorWidths` | `0` means *width not measured* | **nothing** — no diagnostic is zero characters wide |
+| `@/packages/ssh`'s `Incoming.kind` | `0` means *not a channel message* | **nothing** — zero is not a valid SSH message number |
 
 `@/packages/tty` listed *"`Read.code`, `search`'s `NO_MATCH`, `decode`'s `-2` and `Socket`'s negative
 handle"* and called itself the fifth. `Read.code` and *`decode`'s `-2`* are the same instance under
@@ -10522,7 +10524,81 @@ compiler is the tenth, it is the largest program here, and `try` has nothing to 
 > distinguishable from "this really is one character wide", which is what `;` is.
 
 Range excludes it — a real diagnostic is never zero characters wide — and the reason is written where
-a reader meets it. That is both halves of the rule, making it the third of the eleven above to clear
-it, after `fmt`'s NaN and `json`'s empty span. All three were written by authors who thought about it;
+a reader meets it. Both halves of the rule, and it is now a row of the table above. All three were written by authors who thought about it;
 the eight that fail were not the product of worse programmers, they are the sites where nobody had a
 reason to look.
+
+## The bindgen boundary carries a tagged union and not its payload — which answers `tls`'s open question
+
+`@/packages/ssh/src/channel.wac` parses eleven message types into **one struct**, and says why:
+
+> One struct for all of them, with the fields each kind happens to use. A tagged union per message
+> would be tidier and **would not survive the bindgen boundary, where this has to arrive as numbers
+> and byte arrays anyway**.
+
+Checked against `packages/wacc/src/bindgen.wac`, the generator in question. It emits *"a class per
+struct **and enum**"*, and for an enum:
+
+- a class holding the WasmGC reference — *"Nothing is copied: `$ref` is the WasmGC reference itself,
+  and every accessor calls back into the module"*;
+- **a static constructor per variant**, `static Data(…)` calling `$bind$e_…_Data_new`;
+- a `tag`, typed in TypeScript as a **string union** of the variant names, with a lookup table.
+
+So a tagged union crosses intact, by reference, with a *better* discriminator than `i32 kind` — one
+a TypeScript checker can make exhaustive. Nothing has to arrive as numbers and byte arrays.
+
+### The real gap is one-directional and much narrower
+
+Field accessors and `$of` are generated inside `if (!isEnum)`. The enum branch emits constructors and
+the tag and stops, because **wac itself has no field access on a variant outside `match`**, so there
+is nothing for the generator to mirror.
+
+For `Incoming` that is exactly the direction that matters: the value is **produced by wac and
+consumed by a host**, so construction is what bindgen supports and reading is what the file needs.
+
+**The ask is therefore not "support enums in bindgen".** It is *a generated accessor per variant
+payload* — or equivalently, a way for a host to perform the match that wac performs. Everything else
+is already there.
+
+### And it settles a question left open two entries ago
+
+`@/packages/tls/src/client.wac`'s whole connection is `u8[]`, re-encoded on every call, and that entry
+could not tell whether the reason was **a boundary that only passes bytes** or **nobody
+re-examining it**. This is the answer: there is a real boundary constraint, two packages independently
+worked around it, and it is *narrower than either assumed* — not "only primitives cross" but "a host
+cannot destructure a variant".
+
+Which also means `tls`'s workaround is the more expensive answer to the smaller problem. A `Client`
+struct crosses by reference and needs no encode; only a caller wanting to *read inside* a variant
+would hit the gap, and `tls`'s host does not — it holds the state and hands it back.
+
+## An obligation is neither a state nor a set, and nothing here has asked for one
+
+Every device this directory has proposed describes a **value**: an enum names which of several it is,
+a wrapper says what it means, a union says how it failed, a phase says where in its life it is.
+
+`@/packages/ssh/src/channel.wac`'s flow control is none of those:
+
+> Each direction has a window: a byte count the sender may transmit before it must stop. Receiving
+> data consumes ours, and it only refills when we send `SSH_MSG_CHANNEL_WINDOW_ADJUST`. A client that
+> never adjusts reads exactly one window of output and then **hangs forever, having done nothing
+> wrong that any error would report.** Since the default window is large, that is invisible for short
+> commands and a deadlock for long ones.
+
+The requirement is *keep doing something*, indefinitely, and no type here can hold it. That is a
+session type or a linear obligation, it is a much larger language than anything else on this list,
+and this entry **names the gap and does not propose the feature**.
+
+What makes it worth recording rather than waving at is the shape of the failure. **There is no
+error.** A deadlock is the absence of an event, so no `Result`, no fault union and no exhaustive
+match can be made to fire — every other finding in this file is about a wrong value reaching a
+caller, and this is about a right value never arriving. The instruments this directory has built all
+read what is there.
+
+### It is also the third hazard in one file that only appears at scale
+
+`channel.wac`'s header lists three, and two of them are invisible under test conditions: confusing
+the two channel numbers *"works perfectly"* with a single channel numbered zero on both sides, and a
+missing window adjust is *"invisible for short commands"*. These are not edge cases at the boundary
+of a value's range — they are the ordinary case at a size nobody reached, which is a different thing
+for a type system to be asked about and mostly a harder one.

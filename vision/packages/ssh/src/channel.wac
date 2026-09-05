@@ -1,0 +1,155 @@
+// SSH channels — three hazards that are all invisible in the common case, and a rationale I checked.
+//
+// `packages/ssh/src/channel.wac` is 233 lines and its header is a list of ways to be wrong that no
+// test would catch. Read together they have one shape:
+//
+//   > **The two channel numbers.** Each side picks its own number for the same channel and they need
+//   > not agree … a client that echoes back its own number addresses a channel the server may not
+//   > have. **With a single channel numbered zero on both sides, which is the common case, that
+//   > mistake works perfectly.**
+//
+//   > **Flow control is not optional.** A client that never adjusts reads exactly one window of
+//   > output and then hangs forever, having done nothing wrong that any error would report. Since the
+//   > default window is large, **that is invisible for short commands and a deadlock for long ones.**
+//
+//   > **Exit status arrives as a request, not a reply.** It is not a response to anything, and
+//   > nothing prompts it.
+//
+// Two of the three fail *only* under conditions a test rarely creates — more than one channel, more
+// than one window of output. That is the interesting property: these are not edge cases at the
+// boundary of a value's range, they are the ordinary case at a scale nobody reached.
+
+import { Result, Bytes } from "core";
+
+/**
+ * A parsed channel message.
+ *
+ * **The shipped type is one struct for all eleven**, and it is the sharpest instance of the
+ * closed-set question in the tree:
+ *
+ *     export struct Incoming {
+ *       i32 kind;           // the message number, or 0 when this is not a channel message
+ *       i32 channel;        // our number
+ *       i32 senderChannel;  // OPEN_CONFIRMATION: the number the server uses. Nothing else sets it.
+ *       i32 window;         // OPEN_CONFIRMATION: their initial window. WINDOW_ADJUST: the increment.
+ *       i32 extra;          // OPEN_CONFIRMATION: max packet. EXTENDED_DATA: type code. REQUEST: exit code.
+ *       u8[] data;          // DATA: the bytes. REQUEST: the request name. FAILURE: the description.
+ *       bool ok;            // false when the message was truncated or malformed
+ *     }
+ *
+ * `extra` means three different things and `data` means three different things, each selected by
+ * `kind`, and nothing relates them. Two fields carrying six meanings is `../../../QUESTIONS.md`'s
+ * *paired values with nothing holding the pair* at its largest, and unlike the generated tables it is
+ * not a performance trade — the union lowering makes an enum **one wasm struct with a tag and a slot
+ * per payload field of every variant**, which is what this struct already is, by hand, without the
+ * tag being checked.
+ */
+export enum Incoming {
+  Open(u32 theirChannel, u32 initialWindow, u32 maxPacket),
+  OpenConfirmation(Ours ours, Theirs theirs, u32 initialWindow, u32 maxPacket),
+  OpenFailure(u32 reason, Bytes description),
+  WindowAdjust(Ours ours, u32 increment),
+  Data(Ours ours, Bytes bytes),
+  ExtendedData(Ours ours, u32 typeCode, Bytes bytes),
+  Eof(Ours ours),
+  Close(Ours ours),
+  Request(Ours ours, Bytes name, bool wantReply, Bytes payload),
+  Success(Ours ours),
+  Failure(Ours ours),
+}
+
+/**
+ * Our number for a channel.
+ *
+ * **Not `Theirs`, and that is the whole point.** The shipped struct has `i32 channel` and
+ * `i32 senderChannel` four lines apart, distinguished by a doc comment, and the header explains that
+ * sending the wrong one addresses a channel the peer may not have. It then says the part that makes
+ * this worth a type rather than a comment: *"With a single channel numbered zero on both sides, which
+ * is the common case, that mistake works perfectly."*
+ *
+ * So the defect is undetectable until a program opens a second channel, at which point it is a
+ * message delivered to the wrong place. Fourth instance here of **two values of one primitive type
+ * with different meanings** — after `tor`'s RSA and ed25519 identities, `fmt`'s two `FixedBig`
+ * capacities and `git`'s two varints — and the first where the failure needs *concurrency* to appear.
+ */
+export struct Ours { u32 of; }
+
+/** The peer's number for the same channel. */
+export struct Theirs { u32 of; }
+
+export Result<Incoming, Malformed> parse(Bytes packet) { … }
+
+/** Not a channel message at all — a transport message arriving here is ordinary, not an error. */
+export struct NotOurs { u32 kind; }
+
+/** The message was truncated or did not parse. */
+export struct Malformed { u32 kind; string why; }
+
+// ## What could not be written
+//
+// ### The stated reason for the flat struct is wrong, and the real one is narrower
+//
+// The shipped comment is explicit about why it is not an enum:
+//
+//   > One struct for all of them, with the fields each kind happens to use. **A tagged union per
+//   > message would be tidier and would not survive the bindgen boundary, where this has to arrive as
+//   > numbers and byte arrays anyway.**
+//
+// Checked against `packages/wacc/src/bindgen.wac`, which is the generator in question. It emits *"a
+// class per struct **and enum**"*, and for an enum:
+//
+//   - a class holding the WasmGC reference — *"Nothing is copied: `$ref` is the WasmGC reference
+//     itself, and every accessor calls back into the module"*;
+//   - **a static constructor per variant**, `static Data(…)` calling `$bind$e_…_Data_new`;
+//   - a `tag`, typed in TypeScript as a **string union** of the variant names, with a lookup table.
+//
+// So a tagged union crosses intact, by reference, with a *better* discriminator than `i32 kind` — a
+// string union a TypeScript checker can make exhaustive. Nothing has to arrive as numbers and byte
+// arrays.
+//
+// **What bindgen does not emit is a way to read a variant's payload.** Field accessors and `$of` are
+// generated inside `if (!isEnum)`; the enum branch generates constructors and the tag and stops. That
+// is because wac itself has no field access on a variant outside `match`, so there is nothing for the
+// generator to mirror.
+//
+// And for `Incoming` that gap is exactly the one that matters: this value is **produced by wac and
+// consumed by a host**, so construction is the direction bindgen supports and reading is the
+// direction it needs. The author reached the right conclusion for their file from a reason that is
+// false about the mechanism — **the third time today the named blocker was not the blocker**, after
+// `atof.wac`'s *"wac has no generics"* and `kinds.wac`'s *"wac has no module-level constants"*.
+//
+// The ask that follows is small and precise, and it is not *"support enums in bindgen"*: it is **a
+// generated accessor per variant payload**, or equivalently a way for a host to perform the match
+// that wac performs. `../../tls/src/client.wac` left open whether its `u8[]` connection state existed
+// because of a real boundary constraint or because nobody re-examined it. **This answers it**: the
+// constraint is real, it is one-directional, and it is narrower than either file assumed.
+//
+// ### An obligation, which no type here has ever been asked to carry
+//
+// Flow control is the first thing in this directory that is neither a *state* nor a *set*. A channel
+// does not require the caller to be in a phase or to pick from a closed list — it requires them to
+// **keep doing something**: send `WINDOW_ADJUST` as output is consumed, forever, or the connection
+// stops with no error anywhere.
+//
+// Every device this directory has proposed describes a value. An enum names which of several a value
+// is; a wrapper says what it means; a union says how it failed. None of them says *you must call this
+// again*. That is a session type or a linear obligation, it is a much larger language than anything
+// else on this list, and the honest position is that this file **names the gap and does not propose
+// the feature** — the same discipline `../../crypto`'s note takes with `leaks(…)`.
+//
+// What is worth recording precisely is the shape of the failure, because it is what makes the ask
+// non-academic: **there is no error.** A deadlock is the absence of an event, so no `Result`, no
+// fault union and no exhaustive match can be made to fire. Every other finding here is about a wrong
+// value reaching a caller; this is about a right value never arriving.
+//
+// ### And `kind == 0` is a correct sentinel, in a struct built out of incorrect ones
+//
+// `Incoming.kind` uses `0` for *this is not a channel message*, and zero is not a valid SSH message
+// number, so the range excludes it. The shipped `parse` also documents why the case is not an error —
+// *"a transport message arriving here is ordinary, not an error, and the caller decides what to do
+// with it."* Both halves of the rule, in a struct whose other six fields are the counterexample.
+//
+// This directory has now found thirteen sentinels and four that clear the bar, and all four are in
+// files whose authors wrote down the disjointness argument. That is the pattern rather than the
+// count: **the sound ones are sound because someone checked, and the unsound ones are in the places
+// nobody had a reason to look.**

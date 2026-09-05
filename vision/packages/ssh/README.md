@@ -99,3 +99,41 @@ producing it**, and the sharpest, being the exact defect the file exists to desc
 **Anything else in the package.** The session loop, the channel, the pty and the line discipline are
 not rewritten. Naming the file `session.wac` rather than `sshd.wac` is the scope: `0309b`'s blocker
 is the accept loop, and the image is what has to be answered before the loop can move.
+
+---
+
+## The second file: `channel.wac`
+
+**Three hazards, two of them invisible in the common case.** Added with
+[`src/channel.wac`](src/channel.wac). The shipped header lists them and the shape is shared:
+confusing the two channel numbers *"works perfectly"* with a single channel numbered zero on both
+sides; a client that never sends `WINDOW_ADJUST` *"hangs forever, having done nothing wrong that any
+error would report"*, which is *"invisible for short commands and a deadlock for long ones"*. These
+are not edge cases at the boundary of a value's range — they are the ordinary case at a size nobody
+reached, which is a harder thing to ask a type system about.
+
+**Eleven message types in one struct, with `extra` and `data` each meaning three things.** Selected
+by `kind`, related by nothing. And it is not a performance trade, unlike the generated tables: the
+union lowering makes an enum *one wasm struct with a tag and a slot per payload field of every
+variant*, which is what this struct already is — by hand, without the tag being checked.
+
+**And the stated reason for it is wrong, which is the finding.** *"A tagged union per message would
+be tidier and would not survive the bindgen boundary, where this has to arrive as numbers and byte
+arrays anyway."* Checked against `packages/wacc/src/bindgen.wac`: it emits a class per struct **and
+enum**, holding the WasmGC reference with nothing copied, a static constructor per variant, and a
+`tag` typed as a **string union** — a better discriminator than `i32 kind`, not a worse one. What it
+does *not* emit is a way to read a variant's payload, because wac has no field access on a variant
+outside `match`.
+
+For `Incoming` that is the direction that matters — produced by wac, consumed by a host — so the
+conclusion holds and the reason does not. Third time today the named blocker was not the blocker.
+**It also answers a question `tls` left open**: its `u8[]` connection state was attributed either to
+a real boundary constraint or to nobody re-examining it, and there is a real one — narrower than
+either file assumed, and one `tls`'s own host never hits. Promoted.
+
+**An obligation is neither a state nor a set.** Flow control is the first thing here that is not a
+property of a value: it requires the caller to *keep doing something*, and the failure is a deadlock,
+which is the absence of an event. No `Result`, no fault union and no exhaustive match can be made to
+fire on it — every other finding in this directory is about a wrong value reaching a caller, and this
+is about a right value never arriving. Named as a gap; the feature is **not** proposed, on the same
+grounds `crypto`'s note declines to shape `leaks(…)`.
