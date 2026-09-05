@@ -9536,6 +9536,39 @@ NoDigits>` and making the overrun a trap would keep the union at one member, and
 split `@/packages/tls` makes between `wire.wac` and `x509.wac` — argued, deliberate, and the reason
 this file cannot pick one. A cursor that traps for one caller and answers for another is two cursors.
 
+## *The answer is already in the tree* has four causes, and only one of them is mechanical
+
+*2026-09-05.* Asking **what method was this loop standing in for** found five things in an afternoon.
+Four of them turned out to be the same sentence — *the shared answer exists and the callers do not
+use it* — and reading them side by side, they are four different problems wearing one face.
+
+| the answer | the callers | why |
+|---|---:|---|
+| `core`'s `bytesEq` | 3 copies | **nobody looked.** It has been there all along, under that name |
+| `packages/bytes`' `Buf.pushDecimal` | 8 digit loops | nobody looked, and one of the eight is `@/packages/fmt` |
+| `packages/fmt`'s `atoi` | **97 users, 61 hand-rolled** | **wrong shape** — takes a `string`, cannot say where it stopped, and 49 of the 61 are scanners over bytes |
+| the language's `copyFrom` | **58 files use it, 178 do not** | **post-dates the code**, 2026-08-02, and nothing swept |
+
+Only the last is a rewrite. `bytesEq` and `pushDecimal` need a reader per site to check the semantics
+match. `atoi` needs a new signature before anything can be converted — `issues/lang/0351a`. And
+`copyFrom`'s 750 sites are mechanical **and** the one place a mechanical pass is dangerous, because
+the call puts the destination offset third where every loop it replaces reads destination-first: a
+transposition compiles, runs, and is wrong.
+
+> **A count of duplicated work does not tell you what kind of problem you have.** Three of the four
+> read as *somebody was careless* and exactly none of them is: one is a missing signature, one is a
+> primitive younger than its callers, and the two that really are *nobody looked* are the two smallest.
+
+### And the largest number was the least interesting
+
+750 against 61 against 8 against 3, and the order of usefulness is close to the reverse. `copyFrom`'s
+750 is a chore with a known answer and a stated date. `atoi`'s 61 produced a **signature** — the
+scanner shape, which `fmt` already provides for `f64` and not for `i32` — and that went straight into
+`../core/cursor.wac` as `decimal()` and immediately turned the cursor's fault into a fault union.
+
+**The instrument's yield is not correlated with how much it finds**, which is worth writing down
+because the temptation on seeing 750 is to work on the 750.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
