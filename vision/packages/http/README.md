@@ -142,6 +142,19 @@ can be rewritten, and a capability's answer is what the host gives.
 
 ## What could not be written
 
+**`findCrlf` was half a language finding and `src/bytes.wac` said it was none.** That file exists
+because the shipped package writes `findCrlf` and `isDigit` twice, identically, in `request.wac` and
+`incoming.wac`, and its header calls that *"not a language finding — the one thing in this package a
+rewrite fixes for free"*. Half of it was. `findCrlf` is a search for two bytes, and `Bytes` had no
+search of any kind: `string` has `indexOf` and this exercise moved off `string` without listing what
+that gave up. [`../../core/slice.wac`](../../core/slice.wac) has `bytesIndexOf` now and the function
+is one line.
+
+What is left in `src/bytes.wac` is three predicates over a `u8`, which *is* the sharing half and is
+exactly what its header claims. So the file was right about itself and wrong about half its contents,
+and the way to tell was to ask what method the loop was standing in for —
+`issues/lang/0350a` counts 42 more of those in the shipped tree.
+
 **~~A named union declaration has no form on the pages.~~ It has one now**, and it was invented here:
 `export union<A, B, C> RequestFault;` is in [`../../GRAMMAR.ebnf`](../../GRAMMAR.ebnf) as
 `union_type`, and the delta's measurement found that deleting the rule changes nothing — `union` is

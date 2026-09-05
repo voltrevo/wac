@@ -7,16 +7,31 @@
 //
 // That is worth saying because it is *not* a language finding. It is the one thing in this package
 // a rewrite fixes for free, and the redesign gets no credit for it.
+//
+// **Half of that was wrong and it took three weeks to see.** `findCrlf` is a search for two bytes,
+// and `Bytes` had no search — `string` has `indexOf` and this exercise moved off `string` without
+// listing what it was giving up. So the duplication is a sharing failure *and* a missing method, and
+// the second half **is** a language finding. `../../../core/slice.wac` has `bytesIndexOf` now and the
+// function below is one line.
+//
+// What is left of this file is three predicates over a `u8`, which is the sharing half and is
+// exactly what the paragraph above claims: nothing in the language stopped them being shared.
 
-import { Bytes } from "core";
+import { Bytes, bytesIndexOf } from "core";
 
-/** The index of the next CRLF at or after `at`, or null if the buffer does not have one yet. */
-export i32? findCrlf(Bytes s, i32 at) {
-  for (i32 i = at; i + 1 < s.len(); i++) {
-    if (s.get(i) == 13 && s.get(i + 1) == 10) { return i; }
-  }
-  return null;
-}
+/**
+ * The index of the next CRLF at or after `at`, or null if the buffer does not have one yet.
+ *
+ * **A loop until `../../../core/slice.wac` grew a search, 2026-09-05.** It was six lines walking the
+ * bytes two at a time, and the reason it was six lines is that `Bytes` had no `indexOf` — `string`
+ * has one and this directory moved off `string`. `../../../QUESTIONS.md` has the general form; here
+ * it is the whole of why this file was worth writing, and the header above is wrong about that: it
+ * says the duplication is *"not a language finding"*, and half of it was.
+ */
+export i32? findCrlf(Bytes s, i32 at) { return bytesIndexOf(s.from(at), crlf()); }
+
+/** Two bytes, and the one place this package spells them. */
+Bytes crlf() { … }
 
 export bool isDigit(u8 c) { return c >= '0' && c <= '9'; }
 
