@@ -9569,6 +9569,28 @@ scanner shape, which `fmt` already provides for `f64` and not for `i32` — and 
 **The instrument's yield is not correlated with how much it finds**, which is worth writing down
 because the temptation on seeing 750 is to work on the 750.
 
+### And this directory's answer to the 750 is not `copyFrom`
+
+Worth separating, because the shipped fix and the redesign are different fixes. The sites look like
+this:
+
+    for (i32 i = 0; i < scid.len(); i++) { out[p + i] = scid[i]; }
+    for (i32 i = 0; i < params.len(); i++) { out[4 + i] = params[i]; }
+
+`copyFrom(scid, 0, p, scid.len())` replaces the loop **and keeps `p`**. A `Buf` removes it:
+`out.pushAll(scid)` has no offset because the buffer tracks its own, and the running `p` that every
+one of these threads by hand — incremented after each piece, in the caller — stops existing.
+
+That is where the bugs in this shape live. `out[p + i]` with a stale `p` compiles, runs, and writes
+over the previous field; the loop is not the hazard, the arithmetic around it is. So the shipped
+answer removes 750 loops and the redesign removes 750 loops **and** the variable they are indexed
+from.
+
+Which is the same relation as `../core/cursor.wac` and `atoi`: a cursor's `decimal()` needs no
+returned position because `this.at` is the position, and a `Buf`'s `pushAll` needs no offset because
+`this.len` is the offset. **Both findings reduce to one — a running index threaded through callers is
+a field on a type nobody wrote.**
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
