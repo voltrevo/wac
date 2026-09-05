@@ -6397,6 +6397,34 @@ both over its own wire protocol. Worse, without `isSymlink` **`Files.linkStat` a
 answer the same type with no way to tell which you called**, which is the entire reason `linkStat`
 exists.
 
+### And the sweep completed: 17 narrowed structs, 16 of them argued
+
+Compared every struct declared under the same path in both trees — 55 file pairs. **Seventeen lost a
+field.** Sixteen are redesigns this directory argues for in the file that made them:
+
+    Headers      names/values/count → Vec<Field>          argued
+    JsonObject   slots/count        → Vec<JsonMember>     argued
+    Typed        hasLine/eof/signal → Effect              argued
+    Line         canonical/echo     → Mode                argued
+    Surface      dx0..dy1           → Rect? damage        argued
+    Store        six fields         → three               argued: "not rewritten, elided so
+                                                          `validate.wac` has something to import"
+
+and four more of the same kind. `Socket`, `Child` and `Sha256` show as total losses because their
+fields became funcrefs, which the instrument cannot see.
+
+**One was not argued, and it is the `Picked` above.** So the fact-vs-failure defect has four
+instances, all now fixed, and the sweep that would have found them is a field-set diff between the
+two trees — which nobody ran until the fourth had already been found by hand.
+
+That is the useful negative: the class is **closed** over same-named structs, and the four were not a
+sample of many.
+
+*(Third instrument bug of one family, worth one line: this one read `return x;` lines as struct
+fields, after the quotation checker blanked import paths and the sentinel sweep blanked string
+literals. All three were regexes applied to structure, and all three produced a confident wrong
+number in the direction of the thing being looked for.)*
+
 So the rule has a sharper form than *look beside the flag*: **a conversion to `Result` absorbs the
 fields that encode failure and silently drops the ones that encode fact.** `exists` and `fault` are
 failure and convert; `isSymlink`, `isExecutable` and a picker's `error` are facts and do not. Three
