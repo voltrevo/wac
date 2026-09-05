@@ -101,3 +101,24 @@ overflowed — is unmarked. The three-way split has to survive, and the shipped 
 number too wide for an address is *still a number*, so it selects the IPv4 path which then rejects
 it, and failing it here would send `http://0x100000000/` down the domain path and accept it as a
 name. `Part(0, false, false)` is written four times, and the `0` is a payload nobody reads.
+
+**A closed set of seven named by bare integers, and a defence against the wrong alternative.** Added
+with [`src/percent.wac`](src/percent.wac). The header rejects a funcref-keyed `Map` — which nobody
+proposed — on criteria an `enum` meets better than either candidate. `inEncodeSet(c, 99)` compiles
+and falls through into the component-set tail, so an unknown set silently answers as the most
+aggressive one. Promoted.
+
+**The header says five sets and a chain; there are seven and it is a tree — and the package's own
+test says so.** `Query` does not contain `Fragment` (the backtick) and `Path` does not contain
+`SpecialQuery` (the apostrophe). `test_fragment_and_query_are_incomparable` in
+`packages/url/test/wac/url_test.wac` pins exactly that, over all 256 bytes, with a note that the
+first version of the test *"passes for the wrong reason"*. Someone found this, got it right, and
+wrote it in the file that executes; the comment it corrects was never touched. The vision file makes
+the relation a function so the claim can be wrong out loud.
+
+**Seven constants spelled as function calls, and 658 tree-wide.** `packages/wacc/src/kinds.wac` says
+why — *"because wac has no module-level constants"* — and that stopped being true on 2026-07-31.
+[`../../bench/constcall.wac`](../../bench/constcall.wac) says the three spellings tie to the
+millisecond on v8, so the case is readability and not speed; it also says the compiler has no
+function inliner, so **v8 is what erased the call**, and the host with no JavaScript in it was not
+asked. Filed as `issues/lang/0354a`.

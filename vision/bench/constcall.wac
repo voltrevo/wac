@@ -1,0 +1,201 @@
+// What a constant spelled as a function call costs, if anything.
+//
+//     wac run vision/bench/constcall.wac
+//
+// Run by hand, like `./dispatchcost.wac`, and for the same reason: `vision/` is documentation as
+// far as the tooling is concerned.
+//
+// ## The question
+//
+// `packages/wacc/src/kinds.wac` says, at the top of 89 declarations:
+//
+// > Every one of these is a zero-argument function because wac has no module-level constants. A
+// > 85-variant enum therefore costs 85 declarations, which is the clearest measurement so far of
+// > that gap.
+//
+// The gap closed on **2026-07-31**. `spec/spec/variables.md` specifies module-level `const`,
+// `[§wac-modconst-import-p7fm2wj]` says an exported one can be imported by name, and its worked
+// example is `export const u32 POLY = 0xEDB88320;` — the CRC-32 polynomial, from the package next
+// door. Verified by compiling and running it: `export const i32`, `export const u32` and a constant
+// built on a constant all work today.
+//
+// **658 zero-argument functions returning an integer literal remain, across 89 files** — 99 in
+// `check.wac`, 89 in `kinds.wac`, 26 in `quic/src/frame.wac`, 24 in `tor/src/relay.wac`. Against 281
+// `const` declarations tree-wide. So the workaround outnumbers the feature by more than two to one,
+// and the compiler is 29% of it.
+//
+// Before proposing 658 edits: **does it cost anything?** A spec that says a `const` initialiser is
+// *"substituted at each use"* and a call that a compiler may or may not inline are not the same
+// program, and nobody here has measured which. This file measures it, so the answer is a number
+// rather than an intuition.
+//
+// ## The shape measured
+//
+// Not one constant read in a loop — a compiler would fold that and the arms would tie for a reason
+// that says nothing. The real shape is a **chain of equality tests**, which is how these constants
+// are consumed: `packages/wacc/src/wapyrewrite.wac:105` is
+//
+//     return k == kAssign() || k == kPlusEq() || k == kMinusEq() || k == kStarEq() || k == kSlashEq()
+//
+// so eight comparisons against eight constants, over a stream of token kinds. Three arms differing
+// only in how the eight are spelled, plus the control.
+//
+//   konst    eight `const i32` at module scope
+//   priv     eight private niladic functions
+//   export   eight exported niladic functions — exported matters, because a call that must exist in
+//            the module's export list is the one a compiler has the least freedom with
+//   again    `konst` a second time, measured last, because this machine is shared
+//
+// ## The answer
+//
+//       tests     konst     priv   export    again
+//   536870912       178      178      178      178
+//
+// **A dead tie, to the millisecond, four ways.** 536 million comparisons in 178 ms is about one per
+// cycle, so nothing is being skipped and the call is not there at run time.
+//
+// **And the compiler is not what removed it.** Grepping `packages/wacc/src/emit.wac` for inlining
+// finds one subject and it is constants, not functions: *"Scalars are **inlined** at every use rather
+// than given a global"*, with a companion comment at `:13717` — *"which is why scalars are inlined
+// instead of given globals."* There is no function-inlining pass. So `p0()` is emitted as a real
+// `call`, and **v8 erases it**, which is a different fact with a different scope.
+//
+// That scope is the reason this bench is worth more than its tie. `--host wasmtime` is the engine
+// with no JavaScript under it, and `design/system/0001` D9 says its whole point is to test the claim
+// that a wac program does not depend on one. A cost that only a JIT removes is a cost that host
+// still pays, and **this checkout has no wasmtime binary to ask** — it is not built by default
+// (`issues/system/0208`). So the honest result is: *free on v8, unmeasured on the host that matters
+// for the claim, and emitted as a call in the module either way.*
+//
+// The recommendation that follows is therefore about **line count and readability**, not speed, and
+// `issues/lang/0354a` is written that way.
+
+import { Core, Cli } from "std/platform.wac";
+
+const i32 C0 = 11;
+const i32 C1 = 23;
+const i32 C2 = 37;
+const i32 C3 = 41;
+const i32 C4 = 59;
+const i32 C5 = 67;
+const i32 C6 = 71;
+const i32 C7 = 89;
+
+i32 p0() { return 11; }
+i32 p1() { return 23; }
+i32 p2() { return 37; }
+i32 p3() { return 41; }
+i32 p4() { return 59; }
+i32 p5() { return 67; }
+i32 p6() { return 71; }
+i32 p7() { return 89; }
+
+export i32 e0() { return 11; }
+export i32 e1() { return 23; }
+export i32 e2() { return 37; }
+export i32 e3() { return 41; }
+export i32 e4() { return 59; }
+export i32 e5() { return 67; }
+export i32 e6() { return 71; }
+export i32 e7() { return 89; }
+
+i32 runKonst(i32[] k, i32 len, i32 rounds) {
+  i32 s = 0;
+  for (i32 r = 0; r < rounds; r++) {
+    for (i32 i = 0; i < len; i++) {
+      i32 v = k[i];
+      if (v == C0 || v == C1 || v == C2 || v == C3
+       || v == C4 || v == C5 || v == C6 || v == C7) { s++; }
+    }
+  }
+  return s;
+}
+
+i32 runPriv(i32[] k, i32 len, i32 rounds) {
+  i32 s = 0;
+  for (i32 r = 0; r < rounds; r++) {
+    for (i32 i = 0; i < len; i++) {
+      i32 v = k[i];
+      if (v == p0() || v == p1() || v == p2() || v == p3()
+       || v == p4() || v == p5() || v == p6() || v == p7()) { s++; }
+    }
+  }
+  return s;
+}
+
+i32 runExport(i32[] k, i32 len, i32 rounds) {
+  i32 s = 0;
+  for (i32 r = 0; r < rounds; r++) {
+    for (i32 i = 0; i < len; i++) {
+      i32 v = k[i];
+      if (v == e0() || v == e1() || v == e2() || v == e3()
+       || v == e4() || v == e5() || v == e6() || v == e7()) { s++; }
+    }
+  }
+  return s;
+}
+
+i64 best(i64 a, i64 b) { return a < b ? a : b; }
+
+string pad(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}
+
+string itoa(i64 v) {
+  if (v == 0) { return "0"; }
+  string out = "";
+  i64 n = v;
+  while (n > 0) {
+    i32 d = (n % 10) as! i32;
+    out = "0123456789".slice(d, d + 1) + out;
+    n = n / 10;
+  }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 rounds = 3;
+  i32 len = 4096;
+  i32 reps = (1 << 26) / len;
+  i64 sink = 0;
+
+  // A stream of kinds where about a quarter hit the chain, so neither the taken nor the untaken
+  // path dominates and a mispredicted branch is paid at a realistic rate.
+  i32[] k = i32[len]();
+  for (i32 i = 0; i < len; i++) {
+    i32 m = i % 32;
+    if (m < 8) { k[i] = 11 + m * 6; } else { k[i] = 200 + m; }
+  }
+
+  i64 tK = 0x7FFFFFFFFFFFFFFF;
+  i64 tP = 0x7FFFFFFFFFFFFFFF;
+  i64 tE = 0x7FFFFFFFFFFFFFFF;
+  i64 tA = 0x7FFFFFFFFFFFFFFF;
+
+  for (i32 r = 0; r < rounds; r++) {
+    i64 a0 = core.monotonicNanos().wait();
+    sink = sink + (runKonst(k, len, reps) as i64);
+    i64 a1 = core.monotonicNanos().wait();
+    sink = sink + (runPriv(k, len, reps) as i64);
+    i64 a2 = core.monotonicNanos().wait();
+    sink = sink + (runExport(k, len, reps) as i64);
+    i64 a3 = core.monotonicNanos().wait();
+    sink = sink + (runKonst(k, len, reps) as i64);
+    i64 a4 = core.monotonicNanos().wait();
+
+    tK = best(tK, (a1 - a0) / 1000000);
+    tP = best(tP, (a2 - a1) / 1000000);
+    tE = best(tE, (a3 - a2) / 1000000);
+    tA = best(tA, (a4 - a3) / 1000000);
+  }
+
+  core.log("  tests     konst     priv   export    again");
+  core.log(pad(itoa((len * reps * 8) as i64), 7)
+           + pad(itoa(tK), 10) + pad(itoa(tP), 9)
+           + pad(itoa(tE), 9) + pad(itoa(tA), 9));
+  core.log("milliseconds, best of 3, lower is better");
+  if (sink == 0) { core.log("sink 0"); }
+  return 0;
+}

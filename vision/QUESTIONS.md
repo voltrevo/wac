@@ -9891,3 +9891,98 @@ assumed and not checked, and nothing could — the absence has no syntax. `visio
 is one: an IPv6 address is `i32[] pieces` with *"held in an i32[] because wac has no u16 and the
 values are small"* in a comment, two invariants in one sentence and neither in the declaration, and
 no check anywhere that there are eight of them.
+
+## A closed set of seven, named by bare integers — and the alternative the file argued against was not the one on offer
+
+`packages/url/src/percent.wac` declares the URL standard's encode sets as seven integers and takes
+one as an `i32`:
+
+    export i32 SET_C0() { return 0; }
+    …
+    export bool inEncodeSet(i32 c, i32 set)
+
+and defends it in the header:
+
+> Passed as an `i32` rather than resolved through a funcref: `Map` takes funcrefs because its key
+> type is open, but these are a closed set of five, and a `switch` on a constant is both faster and
+> easier to read.
+
+**The defence is against an alternative nobody proposed.** Nothing here wanted a funcref-keyed map.
+The alternative is an enum, which is a `switch` on a constant *and* a closed set whose size the
+checker knows — so the argument's own criteria select the thing it did not consider. This is the
+third time in this directory that a shipped file rejects a design by name and rejects a different
+one from the one available: `gzip`'s decoder refused `Result` on the grounds that a status can go
+unchecked, which is what `try` removes, and here `i32` beats `Map<i32, fn>` on a question `enum`
+answers better than either.
+
+What the `i32` costs today is the usual: `inEncodeSet(c, 99)` compiles, and falls through every guard
+into the component-set tail, so an unknown set silently answers as **the most aggressive one**.
+Fail-closed by accident rather than by design — over-encoding a `%` corrupts a URL that was already
+correct — and identical in shape to `case.wac`'s `mapAll(s, 3)` folding.
+
+### And *five* is wrong, in a file whose own test suite has it right
+
+There are **seven** sets, and the header says five twice. The bigger error is structural: *"each a
+superset of the one before it"* is false. `Query` does not contain `Fragment` — the backtick is
+escaped in a fragment and not in a query — and `Path` does not contain `SpecialQuery`. It is a tree
+rooted at `C0` with two branches, and no ordering of the seven makes the sentence true.
+
+**The correction is already in the package, as a test, a hundred lines away.**
+`packages/url/test/wac/url_test.wac`:
+
+> The sets are *not* one chain, which is the thing worth pinning: fragment and query are siblings,
+> not nested. Fragment escapes a backtick and query does not; query escapes `#` and fragment does
+> not. Everything else does form a chain, hanging off query.
+
+It checks that as a property over all 256 bytes, and adds `test_fragment_and_query_are_incomparable`
+with a note on how it was found: *"A test that assumed one — as the first version of the test above
+did — passes for the wrong reason."*
+
+So someone hit this, got it exactly right, and wrote it in the file that executes. The comment it
+corrects was never touched, and a reader of the source meets the wrong one first. The chain that
+test pins is five long — `C0 < Query < Path < Userinfo < Component` — which may be where the
+header's *five* came from: a true sentence about the chain, mistaken for one about the sets. That
+part is a guess; the seven and the false containment are not.
+
+The vision file makes the relation a function, `EncodeSet? parent(EncodeSet)`, so the claim lives
+somewhere it can be wrong out loud and a change that breaks the tree breaks code rather than a
+paragraph. **Nothing checks a doc comment against a declaration and nothing general could** — but a
+package holding two prose accounts of one structure, one of them executable, is a narrower and more
+findable thing than that.
+
+## A constant spelled as a function call, 658 times — and the bench says it is free, on one host
+
+`packages/wacc/src/kinds.wac` gives the reason, above 89 declarations:
+
+> Every one of these is a zero-argument function because wac has no module-level constants.
+
+The gap closed **2026-07-31**. `spec/spec/variables.md` specifies module-level `const`, its worked
+example is `export const u32 POLY = 0xEDB88320;`, and `[§wac-modconst-import-p7fm2wj]` makes an
+exported one importable by name. Compiled and run to check it is not spec-only: it works.
+
+**658 zero-argument functions returning an integer literal across 89 files**, against 281 `const`
+declarations tree-wide. `check.wac` 99, `kinds.wac` 89, `quic/src/frame.wac` 26. Filed as
+`issues/lang/0354a`.
+
+The reason it is here rather than only in an issue is what happened when it was measured.
+[`bench/constcall.wac`](bench/constcall.wac) times a chain of eight equality tests — the shape
+`wapyrewrite.wac:105` actually has — with the eight spelled three ways:
+
+    tests     konst     priv   export    again
+536870912       178      178      178      178
+
+A dead tie. **So the language question is not "does this cost anything" and the answer is not the
+interesting part.** What is interesting is *why* it ties: the wac compiler has no function inliner —
+`emit.wac`'s only inlining is of constant scalars, *"inlined at every use rather than given a
+global"* — so the module contains a real `call`, and **v8 removes it at run time.**
+
+`--host wasmtime` is the engine with no JavaScript in it, and `design/system/0001` D9 says its point
+is to test the claim that a wac program does not depend on one. A cost that only a JIT erases is a
+cost that host still pays, and this checkout has no wasmtime binary to ask. So the bench answers half
+a question and names the other half, which is better than the tie it looked like.
+
+**The general form is the ask.** Every measurement in this directory has been taken on v8, including
+the packed-fields and array-of-records numbers two entries up, and each of them could in principle be
+a property of the JIT rather than of the representation. Nothing here has said so before now, and the
+cheapest fix is not a language feature: it is building the second host and running the three benches
+twice.

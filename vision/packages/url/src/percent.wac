@@ -1,0 +1,169 @@
+// Percent-encoding, and a comment whose reason is false about code that is right.
+//
+// Three things in one small file. The sets are named by integers where an enum is what they are —
+// the same `which: i32` as `../../unicode/src/case.wac`, at a bigger scale and better defended. The
+// integers are spelled as **zero-argument functions**, and the reason given for that tree-wide
+// habit closed five weeks ago. And the header's account of how the sets relate is **wrong**, in a
+// way the code does not share.
+//
+// ## The structural claim, checked
+//
+// > Five sets, each a superset of the one before it, applied to different parts of a URL.
+//
+// There are **seven** — `SET_C0`, `SET_FRAGMENT`, `SET_QUERY`, `SET_SPECIAL_QUERY`, `SET_PATH`,
+// `SET_USERINFO`, `SET_COMPONENT` — and the file says *five* twice, in its first line and again
+// where it defends the representation as *"a closed set of five."*
+//
+// The chain is the part that matters, and it does not hold. Reading the cascade:
+//
+//     C0            controls, and everything above `~`
+//     Fragment      C0 + space " < > `
+//     Query         C0 + space " # < >
+//     SpecialQuery  Query + '
+//     Path          Query + ? ` { }
+//     Userinfo      Path + / : ; = @ [ \ ] ^ |
+//     Component     Userinfo + $ % & + ,
+//
+// **`Query` does not contain `Fragment`**: the backtick is escaped in a fragment and not in a query.
+// **`Path` does not contain `SpecialQuery`**: the apostrophe is escaped in a special-scheme query
+// and not in a path. So it is a *tree* with `C0` at the root and two branches, and no ordering of
+// the seven makes each a superset of its predecessor.
+//
+// The code is right anyway: the cascade tests `Fragment` and returns before reaching the
+// query-rooted tail, so it never assumes the containment it claims.
+//
+// ## And the correction already exists, as a test, a hundred lines away
+//
+// This is the part worth the entry. `packages/url/test/wac/url_test.wac` has it exactly right, in
+// prose, in a test named for it:
+//
+// > The sets are *not* one chain, which is the thing worth pinning: fragment and query are
+// > siblings, not nested. Fragment escapes a backtick and query does not; query escapes `#` and
+// > fragment does not. Everything else does form a chain, hanging off query.
+//
+// It then checks the containment as a property over **all 256 bytes** for the five-long chain
+// `C0 < Query < Path < Userinfo < Component`, checks the two branches separately, and adds a second
+// test, `test_fragment_and_query_are_incomparable`, whose own comment records how it was found:
+// *"Neither contains the other, so there is no single ordering of the sets. A test that assumed one
+// — as the first version of the test above did — passes for the wrong reason."*
+//
+// So somebody hit this, understood it precisely, and wrote it down **in the test file**. The source
+// header it corrects was never touched. Two accounts of one structure in one package, a hundred
+// lines apart, and the wrong one is the one a reader of the code meets first.
+//
+// It also suggests where *five* came from. The chain the test pins is five long — `C0`, `Query`,
+// `Path`, `Userinfo`, `Component` — so the header's *"five sets, each a superset of the one before
+// it"* may be a true sentence about the chain, mistaken for a sentence about the sets. That is a
+// guess and is marked as one; what is not a guess is that there are seven sets and the file says
+// five twice.
+//
+// **A false reason attached to correct code is worse than no comment**, and this is the second
+// today: `@/packages/url/src/host.wac`'s `Part` is documented as returning *"-1 for a syntax error"*
+// over a struct with a `bool ok`. In both cases the comment describes a design and the declaration
+// describes another. The difference is that this one has a *checked* counter-statement in the repo
+// already — the test executes, the comment does not, and nothing brings them together.
+//
+// So this file makes the relation a **value** rather than a sentence. `parent` below returns the set
+// each one extends, `Fragment` and `Query` both answer `C0`, and the shape is a tree because it is
+// written as one.
+
+import { Buf } from "@/packages/bytes";
+
+/**
+ * Which encode set applies, as a name.
+ *
+ * The shipped spelling is `i32`, and the header defends it: *"`Map` takes funcrefs because its key
+ * type is open, but these are a closed set of five, and a `switch` on a constant is both faster and
+ * easier to read."* The defence is against the wrong alternative. Nobody proposed a funcref-keyed
+ * map; the alternative is an enum, which is a `switch` on a constant *and* a closed set the checker
+ * knows the size of. `inEncodeSet(c, 99)` compiles today and silently answers as the component set,
+ * because the cascade's last arm is the default — the same failure as `case.wac`'s `mapAll(s, 3)`,
+ * with a worse blast radius, since over-encoding a `%` corrupts a URL that was already correct.
+ */
+export enum EncodeSet { C0, Fragment, Query, SpecialQuery, Path, Userinfo, Component }
+
+/**
+ * The set this one extends, or absent for `C0`.
+ *
+ * **The header's claim, written where it can be wrong out loud.** `Fragment` and `Query` both answer
+ * `C0` and neither answers the other, which is the fact the prose lost. A reader who wants to know
+ * whether one set contains another follows this rather than trusting a sentence, and a change that
+ * breaks the tree breaks a function rather than a paragraph.
+ */
+export EncodeSet? parent(EncodeSet s) { … }
+
+/** Whether byte `c` must be percent-encoded in `set`. */
+export bool inEncodeSet(i32 c, EncodeSet set) { … }
+
+/** Append `%XX` for one byte, uppercase, which is the form the standard serializes. */
+export void writePercent(Buf out, i32 b) { … }
+
+/** Append `bytes`, percent-encoding whatever `set` requires and passing the rest through. */
+export void encodeInto(Buf out, u8[] bytes, EncodeSet set) { … }
+
+/**
+ * The same, into a fresh array.
+ *
+ * Kept because the shipped file has it and this rewrite did not need it — the first draft dropped
+ * it, which is `../../unicode/src/case.wac`'s *a rewrite drops what its callers did not want* caught
+ * a third time by the same cheap check: diff the `export` list. Its one caller outside the package
+ * is `packages/box/src/applets/urlencode.wac`, which imports `encode` and `SET_COMPONENT` and
+ * nothing else, so it is also the caller who most wants the enum below.
+ */
+export u8[] encode(u8[] bytes, EncodeSet set) { … }
+
+/** Undo percent-encoding. Every `%XX` becomes its byte; anything else passes through. */
+export u8[] decode(u8[] bytes) { … }
+
+// ## What could not be written
+//
+// ### A constant is spelled as a function 658 times, and the reason closed on 2026-07-31
+//
+//     export i32 SET_C0() { return 0; }
+//     export i32 SET_FRAGMENT() { return 1; }
+//     …
+//
+// Seven of them here. `packages/wacc/src/kinds.wac` says why, above 89 more:
+//
+// > Every one of these is a zero-argument function because wac has no module-level constants. A
+// > 85-variant enum therefore costs 85 declarations, which is the clearest measurement so far of
+// > that gap.
+//
+// **wac has module-level constants.** `spec/spec/variables.md` specifies them, its worked example is
+// `export const u32 POLY = 0xEDB88320;` — the CRC-32 polynomial, from the package next door — and
+// `[§wac-modconst-import-p7fm2wj]` says an exported one is importable by name. The section landed
+// 2026-07-31. Compiled and run to be sure: `export const i32`, `export const u32`, and a constant
+// built on a constant all work.
+//
+// Swept: **658 zero-argument functions returning an integer literal, across 89 files**, against 281
+// `const` declarations tree-wide. The workaround outnumbers the feature more than two to one, and
+// the compiler is 188 of the 658 — 99 in `check.wac`, 89 in `kinds.wac`. Then 26 in
+// `quic/src/frame.wac`, 24 in `tor/src/relay.wac`, 21 each in `tor/src/cell.wac` and
+// `tls/src/record.wac`.
+//
+// This is `issues/system/0352a`'s shape exactly — *a design justified by a limitation outlives the
+// limitation* — with a difference that makes it sharper: `copyFrom` was merely unknown to 750 loops,
+// and here **the limitation is written down, in the compiler, as the reason.** A stale comment is
+// load-bearing for 658 declarations. Filed as `issues/lang/0354a`, with the measurement below,
+// because whether it is worth 658 edits depends on whether it costs anything and nobody had asked.
+//
+// ### And whether it costs anything is now measured, not guessed
+//
+// `../../../bench/constcall.wac` times the shape these constants are actually consumed in — a chain
+// of eight equality tests, which is `packages/wacc/src/wapyrewrite.wac:105` — with the eight spelled
+// three ways. See that file for the numbers and `../../../QUESTIONS.md` for what they mean. The
+// point of measuring first is that *"a `const` is substituted at each use"* and *"a call the
+// compiler probably inlines"* are the same program only if someone checks.
+//
+// ### An enum where an `i32` is expected
+//
+// `kinds.wac` names the change it actually wants and it is not `const`: *"wac now has enums — this
+// file is a candidate for becoming one, once an enum can be used where an i32 is expected."* Token
+// kinds are compared, ranged over (*"the keyword kinds `kImport`(5)..`kMatch`(32) are contiguous and
+// `parse.wac` tests that range rather than listing them"*), and stored in arrays, and an enum today
+// does none of those. That is a bigger ask than this file can size, and it is a different one from
+// the `const` gap — which is why the honest reading is that `kinds.wac` is waiting for the second
+// and could have taken the first five weeks ago.
+//
+// This file's seven are the easy case: they are compared and nothing else, so `EncodeSet` above
+// needs no integer behaviour at all.
