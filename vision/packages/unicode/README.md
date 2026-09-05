@@ -42,5 +42,36 @@ now the second.
 
 ## What could not be written
 
-**Nothing new.** Every gap is filed from the earlier packages — this one is small and its finding is
-a data type rather than a construct.
+**~~Nothing new.~~** That was true of `utf8.wac`, which was the whole package here until 2026-09-05.
+The three files it skipped are the **generated tables**, and they hold the largest instance in the
+repository of the shape this directory has counted most.
+
+**Three constant maps, six arrays, and the pairing is a parameter.** `src/tables.wac` is *"Generated
+by tools/gentables.ts. Do not edit."* — 65 KB of literals, `LOWER_KEYS`/`LOWER_VALUES` at 1,459 pairs,
+`UPPER` at 1,450, `FOLD` at 1,481. The binary search is written **once**, which is the sharper version
+rather than a mitigation: `lookup(i32[] keys, i32[] values, i32 cp)` takes two arrays that must be the
+same length in the same order, three such pairs exist, and `lookup(LOWER_KEYS, UPPER_VALUES, cp)`
+compiles and answers plausible nonsense. 4,390 pairs, and the first time the pair is passed **through
+a signature** rather than held in a struct.
+
+**A constant map is not a thing, and three generated files are the workaround.** `unicode/tables.wac`,
+`unicode/printable.wac` and `raster/font16.wac` are the only files in `packages/` headed *"Generated
+by"*, and all three are parallel key/value arrays with a search: **five logical maps, eleven arrays.**
+None can be a `Map<i32, i32>` — not because `Map` is missing but because a `Map` is *built*, and 1,459
+insertions at module start is work a constant does not need.
+
+**And the generator is the caller nobody consulted.** The shape is written by a TypeScript program, so
+`../../README.md`'s *name a caller and say what it would do differently* is vacuous here — the caller
+does what it is told. **A generated file is the one place a representation can be changed without
+asking anyone**, and it is where three of the largest parallel-array cases in the repository live.
+
+**A simple mapping is `i32 -> i32` and a full one is `i32 -> Bytes`, and the signature cannot say
+which.** `toUpper` answers `cp` for the code points Unicode maps to several — a value in the range,
+indistinguishable from *already uppercase*. The only statement of that is the generated header.
+
+**And the first draft of `src/case.wac` dropped four of the six exports** — `mapAll`, `lowerAll`,
+`upperAll`, `foldEqual` — because the scalar three are what the *table* rewrite needed and the
+per-string ones are what the *package* has. That is `../../QUESTIONS.md`'s *a rewrite drops what its
+own callers did not happen to want*, written the same afternoon, reproduced within the hour by its
+author. The method-level diff built for that entry would not have caught it either: these are free
+functions in a file and that instrument walks types.

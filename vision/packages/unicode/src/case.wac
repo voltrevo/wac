@@ -1,0 +1,87 @@
+// Case mapping, and the `which: i32` that selects one of three.
+//
+// Three per-code-point mappings and three per-string ones, and the shipped file spells the second
+// three by passing a number:
+//
+//     u8[]? mapAll(u8[] s, i32 which) { … which == 0 ? toLower(…) : (which == 1 ? toUpper(…) : fold(…)) }
+//     export u8[]? lowerAll(u8[] s) { return mapAll(s, 0); }
+//     export u8[]? upperAll(u8[] s) { return mapAll(s, 1); }
+//     export u8[]? foldAll(u8[] s)  { return mapAll(s, 2); }
+//
+// **A closed set of three, spelled as `0`, `1` and `2`, with the mapping from number to meaning
+// living in a ternary chain inside the callee.** The three wrappers make it safe from outside and
+// nothing makes it safe within — `mapAll(s, 3)` folds, silently, because the chain's last arm is the
+// default.
+//
+// `./tables.wac`'s `Mapping` is that set with names, so `mapAll` takes one and the chain becomes a
+// table lookup that a `match` covers.
+
+import { Bytes, Result } from "core";
+import { Mapping, table } from "./tables.wac";
+import { Malformed } from "./utf8.wac";
+
+/** `cp` uppercased, or `cp` if it has no simple uppercase. */
+export i32 toUpper(i32 cp) { return table(Mapping.Upper).map(cp); }
+
+/** `cp` lowercased, or `cp` if it has no simple lowercase. */
+export i32 toLower(i32 cp) { return table(Mapping.Lower).map(cp); }
+
+/**
+ * `cp` case-folded — **not `toLower`**, and the shipped package is right to keep them apart.
+ *
+ * Folding is for comparison and lowercasing is for display. They differ: `ß` folds towards `ss` and
+ * lowercases to itself. Both tables here hold only the **simple** mappings, so that case is in
+ * neither and maps to itself — which the generated header says outright: *"Simple mappings only:
+ * where the host maps one code point to several, there is no entry and the code point maps to
+ * itself."*
+ */
+export i32 fold(i32 cp) { return table(Mapping.Fold).map(cp); }
+
+/**
+ * A whole string, mapped — **one function taking the mapping, where the original has three taking a
+ * number.**
+ *
+ * `Result` rather than `u8[]?`: the original answers null for input that is not UTF-8, which is the
+ * one-null-for-one-reason case this directory has replaced everywhere else, and here the reason is
+ * already a named type in `./utf8.wac`.
+ */
+export Result<Bytes, Malformed> mapAll(Bytes s, Mapping m) { … }
+
+/**
+ * Equal ignoring case.
+ *
+ * The shipped reasoning is kept exactly, because it is the interesting part and it is not about
+ * types: *"Invalid UTF-8 on either side is unequal, rather than an error or a byte comparison: two
+ * byte strings that are not text cannot be *the same text*, and answering 'true' for two identical
+ * invalid sequences would let a caller use this as an equality check it is not."*
+ */
+export bool foldEqual(const Bytes a, const Bytes b) { … }
+
+// ## What could not be written
+//
+// **The first draft of this file dropped four of the six exports**, and that is the finding worth
+// the most here. It had `toUpper`, `toLower` and `fold` and no `mapAll`, `lowerAll`, `upperAll`,
+// `foldEqual` — because the three scalar functions are what the *table* rewrite needed and the
+// per-string ones are what the *package* has. `../../../QUESTIONS.md`'s *a rewrite drops what its own
+// callers did not happen to want*, written this afternoon, reproduced within the hour by its author,
+// and caught by reading the shipped `export` list rather than by any check.
+//
+// The method-level diff built for that entry — same-named types, which methods went missing — would
+// **not** have caught it either: these are free functions in a file, not methods on a type, and that
+// instrument only walks types. So the honest state is that the finding has an instrument that covers
+// one of the two shapes it applies to.
+//
+// **A simple mapping is `i32 -> i32` and a full one is `i32 -> Bytes`, and the signature cannot say
+// which it is.** `toUpper(i32) -> i32` is total and wrong for the code points Unicode maps to
+// several, and it answers `cp` for them — a value in the range, indistinguishable from *this
+// character is already uppercase*. Every caller has to know the table is simple-only and the only
+// place that is written is the generated file's header. The honest pair is `Bytes toUpperFull(i32)`
+// beside it, which is what other Unicode libraries end up with; this package has one of the two and
+// no note that the other exists.
+//
+// **And the first draft of *this* comment claimed the shipped file writes the binary search three
+// times.** It does not: `./tables.wac` has one `lookup(keys, values, cp)` and the three mappings are
+// one line each. The real shape is worse and quieter — **the pairing is a parameter.** `lookup` takes
+// two arrays that must be the same length in the same order, six arrays make three such pairs, and
+// nothing anywhere checks that a call passes a matching one. `lookup(LOWER_KEYS, UPPER_VALUES, cp)`
+// compiles and answers plausible nonsense.
