@@ -5799,3 +5799,46 @@ load-bearing**. Nothing in this tree does that automatically — `tools/mutate.t
 what it is for — and no type would have produced the sentence. The finding is worth separating from
 the `Result` one: naming refusals makes the mutation *detectable*, and somebody still has to run it
 and write the answer where the next reader will be.
+
+## A trapping bound is right for two reasons and `core` states one
+
+`core/slice.wac` traps on a bad range and says why: *"the bounds come from a scan the caller just
+did."* `core/vec.wac` states the other side of the same rule — `pop` and `last` answer `T?`
+*"because unlike `a[i]` the caller usually does not already know there is one."*
+
+The rule is good and the reason covers five of the eight `slice` call sites in this directory. The
+other three take **input-derived** bounds, which is the case the reason does not cover:
+`@/packages/abi`'s `blobAt` reads a length word out of attacker-controlled data,
+`@/packages/rlp`'s `take` reads one off the wire, and `@/packages/zstd`'s block size comes from a
+three-byte header. A trap there would be a denial of service where a refusal is wanted.
+
+**So a refusing variant looked like the missing piece, and it is not.** All three check the bound
+first, and all three produce a fault carrying numbers:
+
+    Err(LengthOverruns(at, n as u64, end - at - 32))
+    Err(Truncated(this.at, n, this.src.len() - this.at))
+
+A nullable `take(lo, hi)` answers `null`, which cannot say how far over the length ran. It would
+replace a good diagnostic with a worse one and leave the hand-written check exactly where it is.
+
+### The rule, restated to cover both
+
+**A trapping bound is right when the caller either knows the bounds or wants to describe why they
+were wrong.** Only a caller who would be content with *no* needs the nullable form, and there is not
+one in this directory.
+
+That is why `Vec.pop` is nullable and `Slice.slice` is not, and it is a better statement of the same
+principle than *the caller usually knows*: the deciding question is not what the caller knows, it is
+**what the caller would do with the failure**. Three of the three input-driven callers here would
+throw a `null` away and write their own message.
+
+### Which makes it the third feature request retired by checking rather than granted
+
+- *An overlay needs a language change* — it needs a mapping the reader computes, which exists.
+- *The five preconditions want something new* — two want a type that exists, two want `try`, one is
+  another entry.
+- *A slice that refuses is the missing piece* — no caller wants it.
+
+All three were written into a package file the day before they were checked, and each cost one grep.
+Worth recording together because the pattern is now the most reliable thing in this directory: **a
+feature that looks missing from inside one file usually has a caller that would not use it.**

@@ -99,7 +99,7 @@ more scalars that must agree with no type to pair them (`raster`, `ssz`, `ts`, `
 
 ## What twenty-two subjects found, as patterns rather than as a list
 
-`QUESTIONS.md` is a hundred and thirty entries and getting longer, which is the exercise working and is not a
+`QUESTIONS.md` is a hundred and thirty-one entries and getting longer, which is the exercise working and is not a
 document anybody can read to find out what it concluded. This section is that, and it is deliberately
 **not an index**: these are findings about how the design behaves under use, and each stays true
 after the question it produced is answered and deleted.

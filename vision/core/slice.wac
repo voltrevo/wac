@@ -16,7 +16,27 @@
 // **Indexing traps.** `s[i]` is `a[i]` with an offset, and the caller of either usually knows the
 // index is good — the rule `Vec.pop` is on the other side of.
 //
-// **`slice` traps too**, for the same reason: the bounds come from a scan the caller just did.
+// **`slice` traps too**, and for *two* reasons — the second measured 2026-09-05 after a rewrite
+// claimed a refusing variant was the missing piece and was wrong.
+//
+// The first is the stated one: the bounds come from a scan the caller just did. Five of the eight
+// `slice` call sites in `packages/` are that — `@/packages/url`'s `eq` and `at` from a scan of one
+// pair, `@/packages/http`'s `eol` from `findCrlf`, `@/packages/regex`'s own match bounds,
+// `@/packages/tor`'s after a length check, `@/packages/stream`'s held tail.
+//
+// The other three are **input-derived**, which is exactly the case the stated reason does not cover:
+// `@/packages/abi`'s `blobAt` reads a length word out of attacker-controlled data, and
+// `@/packages/rlp`'s `take` reads one off the wire. A trap there would be a denial of service where a
+// refusal is wanted, so both check first and neither reaches the trap.
+//
+// **And a nullable `take(lo, hi)` would help neither.** Both produce a fault carrying numbers —
+// `LengthOverruns(at, n, end - at - 32)` and `Truncated(this.at, n, this.src.len() - this.at)` — and
+// a `null` cannot say how far over the length ran. So the check stays in the package that knows what
+// the numbers mean, and the trap stays for the callers that cannot reach it.
+//
+// The rule underneath, which is not the one this file gave: a trapping bound is right when the
+// caller either **knows** the bounds or **wants to describe** why they were wrong. Only a caller who
+// would be content with *no* needs the nullable form, and there is not one here.
 //
 // **A slice does not own.** It keeps its array alive and nothing more. Writing through a non-const
 // slice writes through to the array, and a `const` one cannot write — deep const already says so.

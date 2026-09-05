@@ -25,9 +25,10 @@ import { Fault, Corrupt } from "./stream.wac";
  * One block's bytes, and nothing else.
  *
  * **The precondition is the type**, and the type is `Bytes` — `core/slice.wac`'s `Slice<u8>`, which
- * carries `from` and `len` and whose `slice(lo, hi)` refuses a range it does not contain. A caller
+ * carries `from` and `len` and whose `slice(lo, hi)` traps on a range it does not contain. A caller
  * that has checked the block fits in the frame expresses that by *making the slice*; one that has
- * not cannot make it. The comment has nowhere left to go.
+ * not cannot make it without tripping the trap where the mistake is, rather than three calls later.
+ * The comment has nowhere left to go.
  *
  * No feature is missing. `Slice` is in `core` today and `packages/bytes` had none when this code was
  * written — the same reason `@/packages/ssh/src/knownhosts.wac` walks a comma-separated field with
@@ -96,7 +97,17 @@ export struct Reps { … }
 // **A block's size comes from its header and bounds the slice that contains the header.** The
 // three-byte block header says how long the block is, so the slice cannot be made until it is read,
 // and reading it needs a slice. The shipped code resolves this by passing `src` and offsets and
-// checking; here it is `Bytes.slice(lo, hi)` on the frame, which traps rather than answering a
-// `Result`. **A slice that refuses is the missing piece** — `core/slice.wac`'s `slice` traps on a
-// bad range because it is a programming error, and here the range comes from the input, so it is
-// not.
+// checking; here it is `Bytes.slice(lo, hi)` on the frame, which traps.
+//
+// **This said *a slice that refuses is the missing piece* and that was wrong**, checked the next
+// day. Of the eight `slice` call sites in this directory, three take input-derived bounds — this,
+// `@/packages/abi`'s `blobAt` and `@/packages/rlp`'s `take` — and **all three check first and
+// produce a fault carrying numbers**: `LengthOverruns(at, n, end - at - 32)`,
+// `Truncated(this.at, n, this.src.len() - this.at)`. A nullable `take(lo, hi)` answers `null`, which
+// cannot say how far over the length ran, so it would replace a good diagnostic with a worse one and
+// leave the check where it is.
+//
+// So `core/slice.wac` is right and its stated reason was incomplete rather than wrong: a trapping
+// bound is correct when the caller **knows** the bounds *or* **wants to describe** why they were
+// wrong, and only a caller content with *no* wants the nullable form. There is not one here.
+// `core/slice.wac` now says both.
