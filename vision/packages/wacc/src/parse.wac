@@ -1,0 +1,82 @@
+// What vision's syntax costs the parser — one branch each, and one real ambiguity nobody uses.
+//
+// `packages/wacc/src/parse.wac` is 2,580 lines of recursive descent, and the operator's standing ask
+// is *consider actually implementing a parser for the new syntax*. This is the costing, construct by
+// construct, against the parser that exists rather than against a blank page.
+//
+// **Two hypotheses I brought to it were wrong**, and both were answered by reading the file:
+//
+//   * *`fn[R(A)]` uses brackets to avoid the `>>` problem, so vision's `fn<R(A)>` reintroduces it.*
+//     No: `splitGt` is already there — *"Split a munched `>>` or `>>>` so a nested type-argument list
+//     can close"* — and line 852 records the bug that bought it, `a < (a >> 1)` read as a generic
+//     call. Nested generics work today, 23 of them in the tree. `fn<` reuses the machinery and the
+//     change is one token in one function.
+//   * *`union<A, B>` needs a production.* No: `union` is an `IDENT` and `IDENT type_args` is already
+//     a type name, which is why `../../../GRAMMAR.md` measures deleting `union_type` from the delta
+//     as changing nothing. The parser cost is **zero**.
+
+import { Lexed } from "./lex.wac";
+import { Decl } from "./decl.wac";
+
+/** The parser state, threaded rather than captured — see §2. */
+export struct P { Lexed src; i32 at; }
+
+/** Parse a whole file. */
+export Decl[] parse(Lexed src) { … }
+
+// ## 1. The table, and only one row is interesting
+//
+// | construct | what the parser gains |
+// |---|---|
+// | `union<A, B>` | nothing — `IDENT type_args` already |
+// | `T??` | nothing — the `?` suffix already loops |
+// | `fn<R(A)>` | one token, `[` to `<`, reusing `splitGt` |
+// | `default:` for `else:` | one token |
+// | `try` / `defer` / `schedule` / `yield` | one branch each in the statement or unary parser |
+// | a list literal `[a, b]` | one branch — a **leading** `[` is unused today, indexing is postfix |
+// | a brace pattern `X { a, b }:` | one alternative in the arm payload |
+// | `never` | nothing — a type name |
+// | **`?.`** | **lookahead, and it is the only ambiguity** |
+//
+// Nine of the ten are a branch or less. That is the useful number and it is smaller than a week of
+// pages implies, because the pages argue about *meaning* and a recursive-descent parser is paid in
+// *branches*.
+//
+// ## 2. `?.` is the one that is not free, and nothing here uses it
+//
+// `?` in expression position already starts a ternary. `p?.x` and `p ? .x` differ by one token of
+// lookahead, so the parser has to peek past the `?` for a `.` before committing — decidable, LL(2),
+// and the **first place vision makes this grammar need two tokens where it needed one**.
+//
+// It is also the construct with **zero uses in this directory**. `../../../QUESTIONS.md` counted the
+// opportunities: eleven unwraps, no chains, and *"optional chaining is for call sites, and this
+// directory is mostly type declarations and elided bodies"*.
+//
+// > **The only construct that costs the parser anything is the only one nothing here writes.** That
+// > is not an argument for dropping it — the measurement's own entry says this exercise cannot judge
+// > `?.`, because the rewrites inherit their call sites from the files they rewrite. It is an
+// > argument that the parser is not where this proposal should be decided, and nine rows above say
+// > the same thing from the other side.
+//
+// ## 3. What could not be written
+//
+// **`P` is threaded because this package cannot use closures, and the reason has expired twice
+// over.** The header says the reference captures the position in a closure and this cannot, *"since
+// this package cannot use closures … the ladder's top rung builds it and the rung below has no
+// lambdas. The **language** has had them since 2026-08-16."* So the constraint is the ladder's, not
+// the language's, and it is the same one `@/packages/wacc/src/lex.wac` records for `Bytes` and
+// `wvec.wac` for `Vec`. Third file, one cause: **a package's shape is set by the weakest rung of the
+// thing that builds it**, and every file that meets it explains it again from scratch.
+//
+// **A parse error is `(code, line, col)` and the source is elsewhere.** Same triple as the lexer's,
+// same shape `../../../QUESTIONS.md` counts 55 of — a position with no subject — and here it is
+// right for the reason `lex.wac` argues: errors are per-file and rare, but they share the array
+// discipline of the tokens, which are neither. So the *same* representation is correct for the
+// tokens and merely inherited for the errors, and nothing distinguishes them.
+//
+// **Positions are placed where the reference places them, and that is a constraint no vision file
+// can lift.** *"A binary node's position is its operator, a ternary's is the `?`, not the start of
+// the condition — and this mirrors that exactly, because the differential test compares them."* Any
+// new construct here inherits an unstated rule: **where does its position go?** `try f()` — at the
+// `try`, or at the call? Nothing in `../../../GRAMMAR.ebnf` says, because a grammar cannot, and the
+// answer is only discoverable by writing the differential the shipped parser is held to.
