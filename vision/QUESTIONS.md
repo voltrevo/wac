@@ -9647,6 +9647,28 @@ The caller is `tools/gentables.ts`, and it would do whatever it is told.
 Which also means the cheapest possible test of the *inline records* ask lives here rather than in
 `@/packages/zstd`: change one emitter, get 4,390 pairs of `Entry` instead of six arrays, and measure.
 
+### And a file boundary is standing in for dead-code elimination
+
+`packages/unicode/src/printable.wac` says why it is a separate file:
+
+> Kept apart from `tables.wac` on purpose: a module's constant arrays are all emitted when it is
+> linked, so sharing a file would make every caller of `isPrintable` carry the case tables too.
+
+**The unit of inclusion is the module**, so one logical package is split across two files to keep
+65 KB out of programs that only ask *is this printable*. The split is correct and it is a **layout
+decision doing a compiler's job**: nothing in the language says *include this constant only if
+something reaches it*, so the author encoded reachability in the directory.
+
+Which makes it fragile in the ordinary way — the constraint is stated in a comment in the file that
+observes it, and the next person to merge two tables for tidiness gets no diagnostic, only a bigger
+binary. And nothing measures it: `packages/wac`'s build cache keys on sources and grants, and no
+check anywhere reports what a module's constants cost.
+
+> **A rule that is enforced by which file something is in is a rule with no checker.** Third instance
+> in this directory after `packages/wacc` may not import `core` — the ladder's rule, stated in three
+> files that meet it — and `bench/` being written in today's language. All three are real constraints
+> that live in a layout.
+
 ### What could not be written
 
 **A constant of a struct type.** `const i32[] KEYS = i32[](…)` is legal.
