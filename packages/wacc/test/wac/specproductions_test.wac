@@ -102,7 +102,56 @@ const Probe[] PROBES = Probe[](
         false),
   Probe("a `static` method", "method_decl", "\"static\"",
         "struct S { i32 n; static i32 z() { return 0; } }", false),
+
+  // ── The vision constructs, measured 2026-09-05 ────────────────────────────────────────────────
+  //
+  // `vision/GRAMMAR.ebnf` proposes a syntax and `vision/GRAMMAR.md` argues for it; every row below
+  // is a construct that directory writes and this parser refuses. They belong here for the reason
+  // the header gives for the other negative rows — *a wanted construct is exactly the one somebody
+  // writes into the grammar before the parser has it* — and these are the most wanted ones there
+  // are, since a whole directory is written in them.
+  //
+  // Each was checked against the binary first, and only the ones refused with a **parse** error are
+  // here; see the note under the table for the two that are not.
+  Probe("`try` on an expression", "unary_expr", "\"try\"",
+        "i32 g() { return 1; }\nexport i32 f() { return try g(); }", false),
+  Probe("a `defer` block", "statement", "defer_stmt",
+        "export i32 f() { defer { } return 0; }", false),
+  Probe("`yield` as a statement", "statement", "yield_stmt",
+        "export i32 f() { yield 1; return 0; }", false),
+  Probe("a `schedule` block", "statement", "schedule_stmt",
+        "export i32 f() { schedule { } return 0; }", false),
+  Probe("optional chaining", "postfix_op", "\"?.\"",
+        "struct P { i32 x; }\nexport i32 f(P? p) { i32? v = p?.x; return v is null ? 0 : v!; }", false),
+  Probe("a brace pattern in a match arm", "match_arm", "field_pattern",
+        "enum E { A(i32 x) }\nexport i32 f(E e) { match (e) { case A { x }: { return x; } } }", false),
+  Probe("a list literal", "primary_expr", "list_literal",
+        "export i32 f() { i32[] xs = [1, 2]; return xs[0]; }", false),
 );
+
+// ## Two of vision's constructs cannot be rowed above, and the reason is this test's own seam
+//
+// `parses` is `wac check` exiting zero — `bool parsed = r.ran() && r.status == 0;` — so it is
+// *checks*, not *parses*. For every row above the two coincide, because the refusal is
+// `unexpected token` or `expected an expression`. For two of vision's they do not:
+//
+//     union<A, B> ab = A(1);      error: undefined type
+//     auto x = 1;                 error: undefined type
+//
+// Both **parse**. `union<A, B>` is read as a generic type named `union` and `auto` as a type name,
+// and each is refused by the checker for not existing. A row asserting that `type` must not mention
+// `"union"` would pass today and would go on passing if somebody added the production, because the
+// probe would still be refused — by the checker, for a different reason.
+//
+// So the negative direction is sound only where the refusal is the parser's, and nothing here can
+// tell which stage answered. That is the same seam the header names one stage further on — *an emit
+// failure is not a parse failure and must not read as one* — and it is guarded against emit and not
+// against typing. `issues/lang/0341a` is the case where it bites in the other direction: a program
+// `check` accepts and the emitter refuses.
+//
+// Fixing it needs the stage in the answer rather than the exit code, which `wac check` does not
+// give: a diagnostic's *code* would, and the two above would then be a different row type rather
+// than an omission.
 
 string read(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
