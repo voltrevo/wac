@@ -105,16 +105,40 @@ export Ty? missingFrom(const Ctx c, Ty want, Ty got) { … }
 //
 // ## 3. What could not be written
 //
-// **`Ty` is a `string` in the shipped checker and this file pretends otherwise.** `assignable(C c,
-// string want, string got)` compares type *names*, with `withoutNull`, `isNullableName` and
-// `isArrayName` doing structure by string surgery. Union subset over strings means parsing
-// `union<A, B>` at every comparison, in the function 26 call sites run on every expression. `Ty` as a
-// tree is the answer and it is a rewrite of the checker's spine rather than a clause.
+// **The `Ty`-is-a-string worry was wrong, and reading the reason gave the answer.** This section
+// first said the checker throws a type tree away and that union subset therefore means parsing
+// `union<A, B>` on every comparison. Both halves are off.
 //
-// So the sixth clause is three lines **given a structured type** and is a different project given a
-// string, and which of those is true is not visible from the proposal. Same shape as
-// `@/packages/wacc/src/lex.wac`'s tokens: the cost of a vision feature is decided by a representation
-// choice made years earlier for another reason.
+// The AST *does* have a tree — `packages/wacc/src/ast.wac` declares `struct Ty` with `Arr(Ty elem)`,
+// `Nullable(Ty inner)`, `Funcref(Ty ret, Ty[] params)` — and `typeOfTy` renders it to a name **on
+// purpose**, with the reason in the file:
+//
+// > A generic instantiation spells itself. `Box<i32>` and `Box<f64>` are different types and the
+// > model here is that a type *is* its canonical name, so the name has to carry the arguments …
+// > **Invariance then costs nothing: two instantiations differ exactly when their names do.**
+//
+// That is a model rather than a shortcut, and the five existing clauses live inside it comfortably:
+// identity is string equality, and *assignability* is a relation over names computed by asking the
+// context — `c.isStruct(want)`, `descendsFrom(c, got, want)` — or by small string surgery,
+// `withoutNull`.
+//
+// So the real question is not *tree or string*. It is **which of those two a new clause needs**, and
+// the answer for unions is the first one:
+//
+//   * `withoutNull` works because `?` is a suffix. A union's members are a *set*, and no amount of
+//     surgery on `"union<A, B>"` is cheaper than parsing it.
+//   * But a union is **declared**, exactly as a struct is, so the context can hold it:
+//     `c.unionMembers(name)` is a lookup and `descendsFrom` is the precedent. The sixth clause asks
+//     `c` a question, which is what four of the five before it do.
+//
+// **So the clause is a lookup, not a parse, and the cost is one table** — the same table structs
+// already have. Canonicalising a union's name (members sorted, deduplicated) then makes equality free
+// as it is for everything else, and only the subset test consults the table.
+//
+// The thing worth keeping from the wrong version: the *cost of a vision feature is decided by a
+// representation choice made years earlier for another reason*. That is still true here. It just
+// happens that the choice — a type is its canonical name, and the context answers questions about
+// names — is the one that makes this clause cheap rather than the one that makes it expensive.
 //
 // **Nothing says the checker's relation and the runtime's are the same.** `assignable` decides what
 // compiles; `is` decides what a match arm takes at run time; and a union's arms are matched by type.

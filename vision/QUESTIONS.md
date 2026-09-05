@@ -8044,11 +8044,44 @@ is a property of how that function was written rather than of unions: a cascade 
 composes with a new clause, where a `switch` on a pair of type kinds would have wanted a row per
 combination.
 
+### The `Ty`-is-a-string worry was wrong, and the reason gave the answer
+
+The paragraph above first said the checker throws a type tree away, so union subset would mean parsing
+`union<A, B>` on every comparison. Both halves are off.
+
+The AST **does** have a tree — `packages/wacc/src/ast.wac` declares `struct Ty` with `Arr(Ty elem)`,
+`Nullable(Ty inner)`, `Funcref(Ty ret, Ty[] params)` — and `typeOfTy` renders it to a name **on
+purpose**:
+
+> A generic instantiation spells itself. `Box<i32>` and `Box<f64>` are different types and the model
+> here is that a type *is* its canonical name, so the name has to carry the arguments … **Invariance
+> then costs nothing: two instantiations differ exactly when their names do.**
+
+A model, not a shortcut, and the five clauses live inside it: identity is string equality, and
+assignability is a relation over names computed by **asking the context** — `c.isStruct(want)`,
+`descendsFrom(c, got, want)` — or by small suffix surgery, `withoutNull`.
+
+So the question is not *tree or string*; it is which of those a new clause needs.
+
+  * `withoutNull` works because `?` is a suffix. A union's members are a **set**, and no surgery on
+    `"union<A, B>"` beats parsing it.
+  * But a union is **declared**, exactly as a struct is, so the context can hold it.
+    `c.unionMembers(name)` is a lookup, and `descendsFrom` is the precedent — four of the five
+    existing clauses already ask `c` a question.
+
+**The clause is a lookup, not a parse, and the cost is one table** — the one structs already have.
+Canonicalising a union's name (members sorted and deduplicated) then makes equality free as it is for
+everything else, and only the subset test consults the table.
+
+What survives from the wrong version is the shape of the lesson: *the cost of a vision feature is
+decided by a representation choice made years earlier for another reason.* Still true. It happens the
+choice here — a type is its canonical name, and the context answers questions about names — is the
+one that makes this cheap rather than the one that makes it expensive, and I assumed the opposite
+without reading why the choice was made.
+
 > **Verdict:** language — union subtyping as subset, `never` as the empty union, and a witness form of
-> the relation for `try`. Settled by: `spec/spec/types.md`, and forty lines of
-> `packages/wacc/src/check.wac` **given a structured `Ty`** — which it is not: types are `string`s
-> there, so subset means parsing `union<A, B>` on every comparison in the function 26 call sites run
-> on every expression. The clause is three lines with a type tree and a different project without one.
+> the relation for `try`. Settled by: `spec/spec/types.md` for the meaning, and in
+> `packages/wacc/src/check.wac` a sixth clause plus one declaration table.
 
 ### The lesson about the instrument
 
