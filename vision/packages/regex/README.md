@@ -9,24 +9,33 @@ because the language did.
 
 ---
 
-## The decision that was to leave something alone
+## The decision that was to leave something alone, and then was not
 
-`Program` holds every character class's ranges in flat parallel arrays — `classLo`, `classHi`,
-`classStart`, `classCount`, `classNeg` — and the original explains itself:
+The shipped `Program` holds every character class's ranges in flat parallel arrays — `classLo`,
+`classHi`, `classStart`, `classCount`, `classNeg` — and explains itself:
 
 > because wac has no generics-free way to hold a list of structs without writing the container
 > again, and the ranges never need to be addressed as a group
 
 That reads like a language gap, and after seven wrong claims of exactly that kind — eight now, since
-[`../wactest`](../wactest/) was checked on 2026-09-04 — this exercise
-checked instead of assuming. **`Vec<Range>` compiles today** — three lines, measured. What the flat
-pair actually buys is not expressiveness but layout: a `Vec<Range>` boxes a struct per range, in the
-inner loop of a matcher. So it is a representation choice, a rewrite that tidied it would be slower,
-and it stays.
+[`../wactest`](../wactest/) was checked on 2026-09-04 — this exercise checked instead of assuming.
+**`Vec<Range>` compiles today**, three lines, measured. So the flat pair buys layout rather than
+expressiveness, and this file kept it: a `Vec<Range>` boxes a struct per range in the inner loop of a
+matcher, so a rewrite that tidied it would be slower. *Third time the answer was to leave something
+alone*, it said, after `json`'s lazy object index and `Buf`'s field layout.
 
-Third time the answer was to leave something alone, after `json`'s lazy object index and `Buf`'s
-field layout. **A comment that reads as a workaround is worth checking before it is treated as one**
-— and this one is written in the language of a limitation.
+**2026-09-05: measured, and the sign was wrong.**
+[`../../bench/dispatchcost.wac`](../../bench/dispatchcost.wac) says a boxed record is **12% faster to
+read** than three flat lanes, because wasm bounds-checks every array index and a struct field is an
+unchecked offset — the flat form pays per operand, the boxed form per element. The build side goes
+the other way, 4.05 ns an element against 6.4, so the crossover is at **about fifteen reads per
+element**. A class table is built once per compile and scanned on every `Class` step of every match.
+
+So `Program` holds a `Vec<CharClass>` now, and the five parallel arrays are gone.
+
+> **The rule was right and it was applied to the wrong conclusion.** *A comment that reads as a
+> workaround is worth checking before it is treated as one* — and checking it meant **running** it,
+> which this directory had spent five days being unable to do and then did in three seconds.
 
 ## Three outcomes, and why they stay three
 
@@ -95,10 +104,11 @@ someone who typed `[z-a]` is the cost.
 which is the second time that has happened and is the clearer signal now than any individual
 finding.
 
-**And then, 2026-09-05, it produced one by contradicting itself.** `src/program.wac` keeps the flat
-`classLo`/`classHi` arrays and argues for them: `Vec<Range>` would cost *"a boxed struct per range in
-a matcher's inner loop"*. Two paragraphs later it declares `Op[] code`, which is a boxed struct **per
-instruction** — and the matcher touches an instruction every step and a range only inside a `Class`.
+**And then, 2026-09-05, it produced one by contradicting itself.** `src/program.wac` kept the flat
+`classLo`/`classHi` arrays and argued for them — `Vec<Range>` would cost *"a boxed struct per range in
+a matcher's inner loop"* — while two paragraphs later declaring `Op[] code`, which is a boxed struct
+**per instruction**, and the matcher touches an instruction every step and a range only inside a
+`Class`.
 
 Counting the lowering: an enum is one wasm struct with a tag and a slot per payload field of every
 variant, so `Op` is **eleven slots** against the original's three `i32`, and `WordBoundary(Boundary)`

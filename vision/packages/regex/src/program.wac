@@ -1,15 +1,26 @@
 // The compiled program a match runs.
 //
-// **The flat arrays stay, and that is the interesting decision.** `classLo`/`classHi` hold every
-// character class's ranges end to end, with `classStart`/`classCount` indexing in — and the original
-// explains itself as *"wac has no generics-free way to hold a list of structs without writing the
-// container again"*, which reads like a language gap and is not one. `Vec<Range>` compiles today;
-// measured, not assumed. What it would cost is a boxed struct per range in a matcher's inner loop,
-// so the flat pair is a representation choice and a rewrite that tidied it would be slower.
+// **The flat arrays are gone, and the reversal is the interesting part.** `classLo`/`classHi` held
+// every character class's ranges end to end, with `classStart`/`classCount` indexing in, and the
+// original explains itself as *"wac has no generics-free way to hold a list of structs without
+// writing the container again"* — which reads like a language gap and is not one, since `Vec<Range>`
+// compiles today.
 //
-// Third time in this exercise the right answer was to leave something alone, after `json`'s lazy
-// object index and `Buf`'s field layout. A comment that reads as a workaround is worth checking
-// before it is treated as one.
+// This file then kept the flat form anyway, on the grounds that `Vec<Range>` would cost *"a boxed
+// struct per range in a matcher's inner loop"*, and called that *the third time the right answer was
+// to leave something alone*. **`../../../bench/dispatchcost.wac` says the opposite**, and says it
+// with a number: on this host a boxed record is **12% faster to read** than three flat lanes, because
+// wasm bounds-checks every array index and a struct field is an unchecked offset. The flat form pays
+// per operand; the boxed form pays per element.
+//
+// The build side goes the other way — 4.05 ns an element flat against 6.4 boxed — so there is a
+// crossover at **about fifteen reads per element**. A class table is built once per compile and every
+// range in it is scanned on every `Class` instruction of every match, which is not near fifteen.
+//
+// > **So the argument was right in form and wrong in sign**, and the entry it produced —
+// > *a comment that reads as a workaround is worth checking before it is treated as one* — is still
+// > true and was applied to the wrong conclusion. Checking it meant running it, and this directory
+// > had spent five days not being able to.
 //
 // ## And then this file boxed the instructions, which is the same trade and the busier loop
 //
@@ -60,7 +71,7 @@
 // side, which the bench deliberately excludes: a class table is built per compile like a token
 // stream, not once per program like the code array. Nobody has measured that.
 
-import { Bytes } from "core";
+import { Bytes, Vec } from "core";
 
 /**
  * One instruction.
@@ -94,18 +105,23 @@ export enum Op {
  */
 export enum Boundary { At, NotAt, WordStart, WordEnd }
 
+/** One `[a-z0-9]`. `negated` is `[^…]`. */
+export struct CharClass {
+  Vec<Range> ranges;
+  bool negated;
+}
+
+/** An inclusive byte range. Two fields, read on every `Class` step — the boxed side of the crossover. */
+export struct Range { i32 lo; i32 hi; }
+
 export struct Program {
   /** **Eleven slots and a heap object per instruction** — see the header. Kept, and now argued. */
   Op[] code;
   i32 groups;           // capturing groups, so slots = (groups + 1) * 2
   i32 loops;            // loop slots needed by Mark/Progress
 
-  /** Every class's ranges, end to end. See the header for why this is not a `Vec<Range>`. */
-  i32[] classLo;
-  i32[] classHi;
-  i32[] classStart;
-  i32[] classCount;
-  bool[] classNeg;
+  /** The character classes `Class(i)` indexes. Five parallel arrays until the bench said otherwise. */
+  Vec<CharClass> classes;
 
   /** Capture slots: two per group, plus two for the whole match. */
   i32 slotCount(const this) { return (this.groups + 1) * 2; }

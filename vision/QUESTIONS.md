@@ -9236,7 +9236,7 @@ none of them is the one that adds it.
 *2026-09-05.* The first place in this exercise where two of its own files disagree on a **measurable**
 question rather than on taste.
 
-`@/packages/regex/src/program.wac` keeps the shipped flat `classLo`/`classHi` arrays and argues for
+`@/packages/regex/src/program.wac` **kept** the shipped flat `classLo`/`classHi` arrays and argued for
 them — a `Vec<Range>` would cost *"a boxed struct per range in a matcher's inner loop"* — and then,
 two paragraphs later, declares `Op[] code`. Which is a boxed struct **per instruction**, and a matcher
 touches an instruction on every step and a range only inside a `Class`.
@@ -9299,6 +9299,12 @@ because allocation is proportional to the fields and reading two of them is not.
     boxed costs, per element, at build     +2.39 ns (eleven fields)   +0.95 ns (three)
     boxed saves, per read                  -0.164 ns
     break-even                             ~15 reads                  ~6 reads
+
+*Acted on the same hour.* `@/packages/regex/src/program.wac`'s five parallel class arrays are a
+`Vec<CharClass>` now — a class table is built once per compile and scanned on every `Class` step of
+every match, which is not near fifteen. The file's own rule, *a comment that reads as a workaround is
+worth checking before it is treated as one*, was right and had been applied to the wrong conclusion,
+because checking it meant **running** it.
 
 > **Both files are right for their own caller, both gave the wrong reason, and they are on opposite
 > sides of a crossover neither knew existed.** A token is read about once, so `lex.wac`'s flat
