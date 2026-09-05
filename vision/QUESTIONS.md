@@ -6501,3 +6501,38 @@ Three ways out, and the third is what the code does:
 So the seam between vocabulary and reach is real, and only the vocabulary half is expressible. The
 reach half needs the interface to be a type rather than a value, and this package chose a value on
 purpose.
+
+### And the cost is not proportional to the number of implementations
+
+Checked the other big funcref interface, `core/ticket.wac`'s `Ticket<T>`, expecting the same problem
+at a much-used type. It is not there, and the reason is the rule:
+
+    Result<T, union<Circular, Stuck>> wait(this) {
+      if (this.inWait) { return Result.Err(Circular()); }
+      …
+      if (this.advance(true)) { continue; }
+      return Result.Err(Stuck());
+    }
+
+`wait` is a **concrete method**, and **both members are produced by `wait` itself** — `Circular` from
+a re-entrancy flag it owns, `Stuck` from `advance` answering false twice. `advance` is the funcref
+that varies, and it contributes no members of its own. So every kind of ticket — a host read, a
+coroutine, a fake — can produce both, the union is exact, and there is no dead arm.
+
+`Mount` is the opposite: **every member comes from the lambda**, so the union is a superset of what
+any one mount can do and a caller writes arms its mount will never take.
+
+So the rule is not *a funcref interface forces one error set* — that is true and is not the cost. It
+is:
+
+> **The cost is proportional to how much of the error set the implementations produce, not to how
+> many implementations there are.**
+
+An interface whose errors come from the shared wrapper pays nothing however many lambdas fill it. One
+whose errors come from the lambdas pays for every member no implementation can reach. And that is
+checkable per interface by reading one function, which is how this one was settled.
+
+*(The census that would have found the others did not work: a regex over `export struct … { … }`
+mis-attributed names across declarations, so it reported `NotFound` with twelve funcrefs when it
+meant `Files`. Fourth instrument bug of the same family — a regex applied to structure — and the two
+interfaces examined here were chosen by knowing about them rather than by sweeping.)*

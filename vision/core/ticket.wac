@@ -160,6 +160,19 @@ export struct Ticket<T> : TicketBase {
    * `http`/`regex` distinction from the other direction — a `Result` earns its place when an arm is
    * something the caller does something about, and here it might be.
    */
+  /*
+   * **Both members come from this function, which is why the shared error set costs nothing here.**
+   *
+   * `@/packages/fs`'s `Mount` has the same shape — a struct of funcrefs — and pays for it: every
+   * member of its `Fault` comes from the lambda, so the union is a superset and a caller writes arms
+   * its mount can never take. Here `Circular` comes from a re-entrancy flag `wait` owns and `Stuck`
+   * from `advance` answering false twice, and `advance` contributes no members of its own. Every
+   * kind of ticket can produce both, so the union is exact.
+   *
+   * The rule, checked 2026-09-05: the cost of one error set across many implementations is
+   * proportional to **how much of the set the implementations produce**, not to how many there are.
+   * `../QUESTIONS.md`.
+   */
   Result<T, union<Circular, Stuck>> wait(this) {
     if (this.inWait) { return Result.Err(Circular()); }
     this.inWait = true;
