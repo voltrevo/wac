@@ -6593,8 +6593,9 @@ with a comment saying so. I had not used it once.
 
     37 union declarations, 60 `match` blocks with arms
 
-    with an exhaustive consumer:   7  —  37 members
-    with none:                    30  — 137 members
+    discriminated — some `match` covers the members:      7  —   37 members
+    reached as a group — one arm names the union itself:  1  —    8 members
+    neither:                                             29  —  129 members
 
 The seven are `Decoded` (utf8), `Invalid` (tor), `Event` (platform, 3 of its 7 arms), `FileFault`,
 `fs`'s `Fault`, and the two-member `Fault` in each of `gzip` and `zstd`. Two of those seven are one
@@ -6710,11 +6711,17 @@ Which is a claim about *this tree*, not about decoding, and it predicts the twen
 without callers split by how many kinds of consumer they will have rather than by what layer they sit
 at. Checkable; not checked.
 
-**A third state the census does not have.** `BadFinalityBranch { ProofFault why; }` nests
-`@/packages/mpt`'s ten-member union, and `sync.wac` answers `Drop` for all of it — so `ProofFault` has
-now been *reached* by a caller without being *discriminated* by one. Not unconsumed, not consumed:
-consumed as a group, which is what `Err(is Corrupt):` in `gunzip` is too. The 137 is a floor for the
-same reason it is an over-count elsewhere.
+**A third state the census did not have, now measured.** `Err(is Corrupt):` in `gunzip` names a
+union as one arm, which is neither *unread* nor *discriminated*. Adding it: **7 unions
+discriminated (37 members), 1 reached as a group (8), 29 neither (129)** — so the headline drops
+from 137 to 129 and gains an honest middle.
+
+And a *fourth* state the census still does not have, which is what `sync.wac` actually does:
+`BadFinalityBranch { ProofFault why; }` nests `@/packages/mpt`'s ten-member union and the caller
+answers `Drop` without ever naming `ProofFault`. That is **reached by containment** — a member of a
+consumed union carries it — and it is not visible to any arm-based count. The right way to measure it
+is transitive closure over member types, which this script does not do, and saying so is better than
+letting 129 read as exact.
 
 ### The lesson about the instrument
 
@@ -6745,8 +6752,8 @@ other thirty. The cheapest next thing this directory could do is not another voc
 thirty short callers.
 
 **And it puts a number on the rule above.** *An error type with no exhaustive consumer costs nothing*
-was written yesterday about one union. Measured: **137 of 174 members cost nothing, because nothing
-reads them.** That is not an argument that they are wrong. It is that nothing here has been in a
+was written yesterday about one union. Measured: **129 of 174 members cost nothing, because nothing
+reads them, and 8 more are read only as a group.** That is not an argument that they are wrong. It is that nothing here has been in a
 position to find out, and five days of design have produced a vocabulary whose cost and benefit are
 both still entirely theoretical.
 

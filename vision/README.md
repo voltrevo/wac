@@ -313,12 +313,13 @@ merged into one by that, rather than one of them winning.
 *2026-09-05.* Thirty-seven unions are declared here, carrying 174 members between them. Counted on
 `tools/specparse.ts --tokens`, after three bugs in the counting script — see below:
 
-    with an exhaustive consumer:   7  —  37 members
-    with none:                    30  — 137 members
+    discriminated — some `match` covers the members:      7  —   37 members
+    reached as a group — one arm names the union itself:  1  —    8 members
+    neither:                                             29  —  129 members
 
 Sixty `match` blocks exist, so this is not *no bodies were written* — bodies are written wherever the
 body is the argument. It is that almost none of them consumes a fault union. Every vocabulary this
-directory is pleased with is in the thirty: `RequestFault` (10 members), `ProofFault` (10 in `mpt`),
+directory is pleased with is in the twenty-nine: `RequestFault` (10 members), `ProofFault` (10 in `mpt`),
 `UpdateFault` (9), `Corrupt` (8), `TimeFault` (8), `AbiFault` (7), `RlpFault` (7).
 
 The one that met a consumer changed shape the same day. `FileFault`'s only caller is
@@ -327,7 +328,7 @@ The one that met a consumer changed shape the same day. `FileFault`'s only calle
 member, cannot be one, and had not come up in five days of designing members.
 
 So the honest summary of the error-handling work here is that its cost and its benefit are both still
-theoretical, and the cheapest way to change that is thirty short callers rather than a thirty-first
+theoretical, and the cheapest way to change that is twenty-nine short callers rather than a thirtieth
 vocabulary. `QUESTIONS.md` has the measurement and the caveats.
 
 **Published first as 4 of 29 and 117 members, which was wrong three ways over.** The script keyed
