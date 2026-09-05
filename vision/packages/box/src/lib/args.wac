@@ -1,0 +1,166 @@
+// Command-line arguments — the file six applets in this directory imported and nobody had written.
+//
+// The shipped `packages/box/src/lib/args.wac` is 458 lines and a struct of twelve fields, and its own
+// doc comments are the best argument against its shape: **five of the twelve exist only because
+// parsing cannot fail.** `parseArgs` returns an `Args` come what may, so every way a command line can
+// be wrong is a field the applet has to remember to look at.
+//
+//     string badNum;        // "The value given for a numeric option that is not a number"
+//     string missingValue;  // "The letter of a flag that takes a value and was given none"
+//     string longOpt;       // "The first `--long` option given" — kept so a refusal can name it
+//     bool   hasNum;        // absence, because 0 was both "absent" and "the user asked for zero"
+//     string numSign;       // `""`, `"+"` or `"-"` — three states in a string
+//
+// Each of the first three is documented with the bug it was added for, and all three read the same:
+//
+// > It used to be nothing at all: the parser ran out of arguments, recorded the flag without a value,
+// > and the applet fell back to its default, so `head -n` printed ten lines and exited 0 where GNU
+// > says "option requires an argument -- 'n'" and exits 1. **A mistake in the command came back as an
+// > answer, which is the worst of the three things it could do.**
+//
+// That sentence appears twice in the shipped file, for two different fields. It is the same bug
+// twice, the fix was the same both times — add a field and check it — and the fix does not hold.
+// Measured on the shipped tree, 2026-09-05:
+//
+//     applets reading `a.num`:                     16
+//     ...of those that ever mention `a.badNum`:     6
+//     the guard, spelled identically in all six:
+//         if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+//
+// **Ten of sixteen never check it**, so `httpd -p x` serves on 8080 and `base64 -w x` wraps at 76,
+// silently, exit 0. `issues/system/0340a` carries that as a bug against the shipped tree, with the
+// four applets that also still spell their default `a.num == 0 ? d : a.num` — the exact pattern
+// `hasNum`'s own comment says was removed from every applet.
+//
+// So this is not a tidier parser. It is the same parser with the failures moved from twelve fields
+// into a return type, which is one line per applet instead of five and cannot be forgotten.
+
+import { Result, Vec, Map } from "core";
+
+/** Every way a command line can be wrong, which the shipped parser spells as five empty strings. */
+export struct UnknownFlag  { string spelled; }
+export struct MissingValue { string flag; }
+export struct NotANumber   { string flag; string given; }
+export struct LongOption   { string spelled; }
+export union<UnknownFlag, MissingValue, NotANumber, LongOption> ArgFault;
+
+/**
+ * Which of GNU's three forms a count was written in — `10`, `+10`, `-10`.
+ *
+ * `numSign` was a `string` holding `""`, `"+"` or `"-"`, and only `head` and `tail` read it, in
+ * opposite directions. Three states in a type with billions is the shape this directory has counted
+ * eight times; here it costs nothing to fix because there are exactly three and they are named.
+ */
+export enum Sign { Plain, Forward, Backward }
+
+/** A numeric option that was given. Absent is `Count?`, which is what `hasNum` was. */
+export struct Count { i32 magnitude; Sign sign; }
+
+/**
+ * What an applet accepts, declared by the applet.
+ *
+ * The shipped parser grew this as `takesValue(string name, i32 letter)` — a function keyed on the
+ * *applet's name*, with a table of every applet in the box inside the shared library. That is the
+ * dependency running the wrong way: `cut` and `fold` are named in the parser, so adding an applet
+ * means editing a file it does not own, and the parser cannot be tested without knowing what a `cut`
+ * is. Here the applet hands its spec in, and the table goes away.
+ */
+export struct Spec {
+  /** Letters that are flags on their own: `-i`, `-v`. */
+  string flags;
+  /** Letters that take a value: `-d,` and `-d ,`. */
+  string valued;
+  /** Whether a bare `-5`, `+5` or `-n 5` is a count for this applet. */
+  bool counts;
+}
+
+/**
+ * A parsed command line, and there is nothing in it that is not an answer.
+ *
+ * Seven fields became four, and the three that went were not merged into the others — they were
+ * failures, and failures are in the return type now.
+ */
+export struct Args {
+  /** What to call this program in its own messages. */
+  string name;
+  /** Positional arguments, in order. */
+  string[] operands;
+  /** The letters of every flag given, in no particular order. */
+  string flags;
+  /** The count, if one was given and this applet takes one. */
+  Count? count;
+  /** The value of each valued flag, by letter. */
+  Map<string, string> values;
+}
+
+/**
+ * Parse `argv` against `spec`.
+ *
+ * `argv` is the applet's own arguments and does not contain its name — which is the whole of what the
+ * shipped `argv`/`own`/`rest` triple was about. That file kept three views of one array because
+ * *"where an applet's arguments start inside it depends on how it was launched"*, and the answer is
+ * that the launcher knows and the applet does not need to: `box echo -n hi` and `bin/echo -n hi`
+ * differ in the *caller*, so the caller slices.
+ */
+export Result<Args, ArgFault> parse(string name, string[] argv, const Spec spec) { … }
+
+/** Whether flag `letter` was given. */
+export bool has(const Args a, string letter) { … }
+
+/** `cp: unrecognized option -- 'q'`, matching GNU because the shipped one already does. */
+export string say(string name, ArgFault f) { … }
+
+// ## 1. What the return type is worth, counted rather than asserted
+//
+// The shipped tree spends **59 reads across the five failure fields**, and the guards are
+// copy-pasted: six applets contain the same `badNum` line to the byte. With a `Result` those 59
+// become one `try` per applet — or, more honestly, one `match` per applet, because an applet has to
+// print `say(name, f)` and exit 1 rather than propagate.
+//
+// So the saving is not the character count. It is that **`try` is not optional and reading a field
+// is**, and the evidence that this matters is not an argument: ten of sixteen numeric applets did
+// not read the field, in a tree where the field was added twice, for the same bug, with a comment
+// each time explaining why it must be read.
+//
+// ## 2. And the reason the fields were unread is not carelessness
+//
+// It is worth being precise, because *the applets should have checked* is not a finding. The parser
+// **succeeded**. `parseArgs(cli)` answers an `Args` and there is nothing in the call to suggest a
+// question was left open — the value looks complete, the applet's own logic type-checks, and it runs.
+// Every one of the ten unguarded applets is code that a careful author could write while reading the
+// parser's interface and never see the obligation.
+//
+// That is the shape, and it generalises past argument parsing:
+//
+// > **A function that cannot fail moves its failures into its output, and an output field is a
+// > request rather than a requirement.**
+//
+// `@/packages/box/src/cp.wac` found the mirror of this yesterday: `FileFault` has 29 dead arms and
+// nobody pays for them, because every consumer in the directory `try`s or discards. Here the union
+// does not exist and the cost is real and shipped. Two halves of one measurement — **an error type
+// with no exhaustive consumer costs nothing, and an error field with no compelled reader costs
+// everything** — and the difference between them is entirely whether the compiler is involved.
+//
+// ## 3. What could not be written
+//
+// **`spec` is a value and `has(a, "n")` is a string, so nothing checks one against the other.**
+// The `Spec` fixes the dependency direction and does not make the flag letters checkable: an applet
+// can declare `flags: "rn"` and then ask `has(a, "f")`, which answers `false` forever. I wrote
+// exactly that class of call one commit ago — `@/packages/box/src/cp.wac`'s `a.has("n")` — and it is
+// right only because I also wrote the spec, in my head, and never wrote it down. The ask is a way for
+// a value to constrain a later literal, which is dependent typing at the small end and is not
+// anywhere on `../../../../GRAMMAR.md`. A `Spec` of *named* fields (`struct CpFlags { bool n; bool r; }`)
+// would be checked and cannot be parsed generically, which is the trade the shipped `string flags`
+// made without stating it.
+//
+// **`Map<string, string> values` should be `Map<u8, string>` and `u8` is not a key.** Flags are
+// single bytes; the shipped file packs the pair into a `string[]` where *"the first byte is the
+// flag"*, which is the packed-key shape `../../../../QUESTIONS.md` already has from `@/packages/box`'s
+// own `lines`. A one-byte key spelled as a `string` allocates per lookup and admits `"ab"`, which is
+// not a flag.
+//
+// **`ArgFault` carries no position.** `cp -q a b` should say which argument was wrong, and
+// `UnknownFlag { string spelled; }` says which *letter*. An index into `argv` is the obvious field
+// and it is the shape `@/packages/git/example/ignorelint.wac` filed as *an index into a `Vec` the
+// finding does not hold* — third instance, and here the container is the caller's own parameter, so
+// the fault could carry it and would then keep the array alive.
