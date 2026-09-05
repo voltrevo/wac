@@ -8113,7 +8113,56 @@ its own one-line clause, vacuously true because no value of it exists.
 > for the meaning, and in `packages/wacc/src/check.wac` a sixth clause plus the declaration table the
 > lowering needs anyway.
 
-### The lesson about the instrument
+## A union is the first enum whose width is not under one person's control
+
+*2026-09-05.* `@/packages/wacc/src/emit.wac` is the shortest of the compiler counterparts, because
+**nine of vision's ten constructs never reach the emitter** — `try`, `defer`, `schedule` and `?.` are
+statement or expression rewrites, `union` is a declaration rewrite, `gen` and `async` are machines,
+and `T??` and a list literal are things the target already has. A proposal reaches the emitter only if
+it changes what a **value** is, and vision does that once.
+
+Two files that were not written for each other price it together. `TECHNICAL.md` measured the
+lowering — `union<A, B>` becomes an enum of one-field variants, run through `ask_wacc.ts` — and
+`emit.wac` says what an enum is:
+
+> **An enum is one wasm struct**, not a base type with a subtype per variant … a tag in slot 0, then
+> a slot per payload field of every variant in declaration order … A variant is then the *same wasm
+> type* as its enum, which is what makes assigning one to the other free and `match` a comparison
+> rather than a test.
+>
+> The cost is space: a `Rect` carries the slots a `Circle` would have used. That is the trade a
+> language with no unions makes anyway, and **nothing here is measuring bytes yet.**
+
+*A language with no unions* is the clause that expires. **37 unions, 174 members** here, mean 4.7,
+maximum 10 — `FileFault`, `RequestFault` and `mpt`'s `ProofFault` all have ten, so each is a struct of
+a tag and ten reference slots with one live, allocated on every failure.
+
+> Not an argument against the lowering. The sentence excusing the measurement was true of enums, whose
+> variants are written by one author who sees all of them, and stops being true of a construct whose
+> purpose is to let two packages contribute members to one type. **A union is the first enum whose
+> width is not under one person's control.**
+
+The nested lowering bounds it, and was chosen for another reason: `ResponseFault = union<RequestFault,
+BadStatus>` is two slots pointing at an eleven-slot struct rather than eleven inlined.
+`TECHNICAL.md` argues nesting from `Err(is Corrupt):` needing a group arm; this is a second reason,
+found from the far end of the compiler.
+
+**And `never` costs one type-section entry.** A zero-variant enum is a struct with a tag and no
+payload slots — the only one of the ten that reaches the emitter, asking for the cheapest thing there.
+
+### What cannot be measured, and the reason is this directory's own rule
+
+The numbers are **widths, not bytes**. 174 members across 37 unions says how wide the structs are and
+nothing about how many are made: `@/packages/json` makes at most one `ParseError` per document,
+`@/packages/rlp`'s `Truncated` is raised per malformed field. The emitter's *"nothing here is
+measuring bytes yet"* stands, and vision cannot close it —
+
+> `README.md` says nothing here compiles, so **the one measurement this file would want is the one the
+> directory's own rule forbids.**
+
+> **Verdict:** convention — the lowering and the representation are both already chosen and both
+> already right; what is missing is a byte measurement, which needs a program that allocates unions
+> and therefore needs something outside this directory. Settled by: measuring, elsewhere.
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
 census from a regex to a token stream fixed one family of instrument error — strings, comments,

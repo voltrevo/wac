@@ -1,0 +1,97 @@
+// What vision costs the emitter — nothing new, and one bill the emitter had already written.
+//
+// `packages/wacc/src/emit.wac` is 16,574 lines and nothing here had predicted anything about it. It
+// turns out to be the shortest of the compiler counterparts, because **nine of vision's ten
+// constructs never reach it**:
+//
+//     try            a statement rewrite      `./desugar.wac`
+//     union          a declaration rewrite    `../../../TECHNICAL.md`, measured and run
+//     gen / yield    a machine and a struct   `./genlower.wac`
+//     async          a machine                `./asynclower.wac`
+//     never          a type argument          `./check.wac` — and see §2
+//     defer          a statement rewrite      the `try` pass's shape
+//     schedule       a statement rewrite      the same
+//     T??            nesting the target has   nothing to do
+//     `?.`           an expression rewrite    nothing to do
+//     list literal   a construction           nothing to do
+//
+// A proposal reaches the emitter only if it changes what a *value* is. Vision changes what a
+// *program* looks like nine times and what a value is once, and that once is `union`.
+
+import { Decl } from "./decl.wac";
+import { Ty } from "./ast.wac";
+
+/**
+ * What a union is, after the lowering, in the shape this emitter already uses.
+ *
+ * `../../../TECHNICAL.md` measured the lowering: `union<A, B>` becomes an enum of one-field variants,
+ * which compiles and runs today. `packages/wacc/src/emit.wac` then says what an enum *is*, and the
+ * two together price the feature without either of them having been written for the other:
+ *
+ * > **An enum is one wasm struct**, not a base type with a subtype per variant … a flat struct — a
+ * > tag in slot 0, then a slot per payload field of every variant in declaration order … A variant is
+ * > then the *same wasm type* as its enum, which is what makes assigning one to the other free and
+ * > `match` a comparison rather than a test.
+ *
+ * So a `union<A, B>` value is `{ i32 tag; ref A; ref B; }` and one of the two references is live.
+ */
+export void unionIsOneStruct(const Decl d) { … }
+
+// ## 1. The bill the emitter had already written, and vision is what makes it worth reading
+//
+// The paragraph above continues:
+//
+// > The cost is space: a `Rect` carries the slots a `Circle` would have used. That is the trade a
+// > language with no unions makes anyway, and **nothing here is measuring bytes yet.**
+//
+// *A language with no unions* is the clause that expires. Counted in this directory: **37 unions,
+// 174 members**, mean 4.7 and a maximum of 10 — `std`'s `FileFault`, `http`'s `RequestFault` and
+// `mpt`'s `ProofFault` all have ten. Under the flat-struct representation each of those is a wasm
+// struct of a tag and **ten reference slots, one of them live**, and it is allocated on every
+// failure.
+//
+// That is not an argument against the lowering. It is that the sentence which excused not measuring
+// — *the trade a language with no unions makes anyway* — was true of enums, whose variants are
+// written by one author who sees all of them, and stops being true of a construct whose whole
+// purpose is to let two packages contribute members to one type. **A union is the first enum whose
+// width is not under one person's control.**
+//
+// The nested form the lowering chose helps here and was chosen for another reason. `http`'s
+// `ResponseFault = union<RequestFault, BadStatus>` is *two* slots, one pointing at `RequestFault`'s
+// eleven-slot struct, rather than eleven slots inlined — so nesting bounds the width at each level.
+// `../../../TECHNICAL.md` argues nesting from `Err(is Corrupt):` needing a group arm, and this is a
+// second reason it was the right call, found from the far end of the compiler.
+//
+// ## 2. `never` is a zero-variant enum and the emitter needs nothing for it
+//
+// `../../../core/coroutine.wac` now defines `never` as the empty union. Through the lowering that is
+// an enum with no variants, and through the representation above that is a wasm struct with a tag and
+// **no payload slots** — a type that emits, that no value is ever constructed of, and that costs one
+// type-section entry.
+//
+// Which is the cheapest possible answer and is worth stating because the pages have been treating
+// `never` as the exotic member of the set. It is the *only* one of the ten that reaches the emitter
+// at all, and what it asks for there is a struct with one field.
+//
+// ## 3. What could not be written
+//
+// **Nobody can say what a union costs without a program that allocates them.** The numbers above are
+// widths, not bytes: 174 members across 37 unions says how wide the structs are and nothing about how
+// many are made. `@/packages/json/src/parse.wac` makes at most one `ParseError` per document;
+// `@/packages/rlp`'s `Truncated` is raised per malformed field. The emitter's *"nothing here is
+// measuring bytes yet"* stands, and vision cannot close it, because
+// `../../../README.md` says nothing here compiles — **the one measurement this file would want is the
+// one the directory's own rule forbids.**
+//
+// **A ten-slot struct for a value with one live field is the `packed struct` question again**, from
+// the third side. `issues/lang/0074` wants records inline in arrays; `@/packages/zstd` wants three
+// narrow fields in a word; and a union wants *one slot reused by every member*, which is what a
+// tagged union is in a language that has them and what a flat struct is not. Three shapes, one
+// missing feature — a value whose representation is chosen by the compiler rather than by the
+// declaration — and this is the first of the three where the alternative representation is not an
+// optimisation but the ordinary one everywhere else.
+//
+// **`match` being a comparison rather than a test is what pays for it.** The flat struct is why
+// assigning a variant to its enum is free and why an arm is one `i32.eq`. A tagged union with a
+// reused slot would need a cast per arm, which is the cost the emitter's comment is buying its way
+// out of — so the space is not waste, it is the price of the speed, and neither number exists.
