@@ -10422,3 +10422,86 @@ all findable by reading and were not found by anything else.
 > **The READMEs are an index this directory does not use.** Three of the day's corrections came from
 > them, and the tool that produced the worklist has no threshold that works. Read them before
 > sweeping.
+
+## A union of one-or-more: `Result` has one `Err`, and the compiler built a container out of lanes
+
+`@/packages/wac`'s README had this and it was never promoted:
+
+> **The nine reasons are not disjoint and nothing orders them.** A `wac run --coverage` with no
+> `$WAC_HOME` and an unknown flag is three of them at once; the shipped code returns at the first, so
+> which one a caller sees is the order the checks are written in. For a *diagnostic* the useful answer
+> is all of them — fixing one and recompiling to find the next is the loop this is supposed to end.
+> `Result` has one `Err`, and a union of one-or-more is not a shape this language has.
+
+Every fault type in this directory — `Fault`, `Starved`, `HostFault`, `UrlFault`, `Corrupt` — is
+**exactly one**. That was never argued; it is what `Result<T, E>` permits. And the case above shows
+the cost is not aesthetic: with three independent faults live, *which one the caller is told* is the
+order the checks happen to be written in, which is the same order-is-load-bearing defect as
+`@/packages/tor`'s `positionWeight` chain, one level up.
+
+### The compiler is the proof, and it abandoned `Result` to do it
+
+`packages/wacc/src/check.wac` is the one program here that **must** report many faults at once, and
+it does. Not with a `Result` — with an accumulator built from primitives:
+
+    i32[] errors;        // (code, line, col) triples, stride 3
+    string[] errorNotes; // the annotation, one per error
+    i32[] errorWidths;   // how wide each is, 0 meaning unknown
+    i32 errorCount;      // the count, separate from any array's length
+
+One diagnostic is a record of five fields. It is stored as **an `i32` three-lane array, a parallel
+`string` array, a parallel `i32` array, and a hand-maintained count** — and the file says exactly why
+the notes are not in the triples:
+
+> It sits beside the triples rather than inside them because **the triples are `i32` and this is
+> not**.
+
+That sentence is the whole argument for records over lanes, written by someone who had no choice: a
+flat array is monotyped, so a heterogeneous record has to be split across arrays *by field type*, and
+then re-associated by index at every use.
+
+### Three of this directory's findings are downstream of one missing shape
+
+Read together with the rest of the file, the accumulator is:
+
+- **flat lanes** — `errors[i*3]`, `[i*3+1]`, `[i*3+2]`, which the bench measures as the slowest of the
+  four read shapes;
+- **paired values with nothing holding the pair** — `errorNotes[i]` and `errorWidths[i]` are keyed by
+  an index into a *different* array, and nothing checks the three stay the same length;
+- **an array beside a count** — `errorCount` is not `errors.len()`, and `errors` is pre-sized with a
+  cap, so `errors.len()` is capacity and `errorCount * 3` is extent.
+
+Each of those has its own entry here, argued from packages that could have done otherwise. **This one
+could not**, and that is what makes it the useful instance: the three workarounds are not taste, they
+are what remains after `Result<T, E>` declines to hold a set. `Vec<Diagnostic>` needs nothing from
+the language and would replace all four fields — the reason it is not there is that the value being
+accumulated is not what any function *returns*.
+
+### What the ask is
+
+Not "make `Err` a list", which would tax every single-fault caller — nine tenths of the uses here —
+with a container they never need. The two candidates, and this directory cannot choose between them:
+
+- **A `Result` whose error side may be a collection by declaration**, so `Result<T, Many<E>>` composes
+  with `try` the way `Result<T, E>` does, and a caller that wants the first still writes one arm.
+- **Or nothing at the `Result` layer at all**, and the honest answer is that *accumulating* diagnostics
+  is a different operation from *returning* a fault, deserves `Vec<Diagnostic>`, and the only real
+  gap is that `try` has no form that says *record this and carry on*.
+
+The second is smaller and probably right, and it has a consequence worth stating: **`try` is a
+control-flow construct for the exactly-one case, and this directory has been promoting it as the
+general answer to error handling.** Nine tenths of the sites are exactly-one and it fits them. The
+compiler is the tenth, it is the largest program here, and `try` has nothing to say to it.
+
+### And a third correct sentinel, on the way past
+
+`errorWidths` uses `0` for *unknown*, and the file discharges it properly:
+
+> **Zero means unknown, not one.** … leaving it `0` elsewhere keeps "we did not measure this"
+> distinguishable from "this really is one character wide", which is what `;` is.
+
+Range excludes it — a real diagnostic is never zero characters wide — and the reason is written where
+a reader meets it. That is both halves of the rule, making it the third of the eleven above to clear
+it, after `fmt`'s NaN and `json`'s empty span. All three were written by authors who thought about it;
+the eight that fail were not the product of worse programmers, they are the sites where nobody had a
+reason to look.

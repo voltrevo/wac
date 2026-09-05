@@ -115,7 +115,9 @@ claims about the same function, and only the wrong one is in the file.
 
 ### Two more, both about the same seam
 
-**`raw.len() > 0` is how a parsed number is told from a built one.** An empty span is not a real
+**`raw.len() > 0` is how a parsed number is told from a built one.** *(Promoted 2026-09-05: the
+eleventh row of the sentinel table and the second that clears it, and this note had both the
+two-part rule and the right fix a day before either was written down there.)* An empty span is not a real
 span, so it works, for the reason every sentinel in `../../QUESTIONS.md`'s list works. Seventh
 instance. Two variants is better than `Bytes?` here and not for style: a program that reads a
 document, edits one field and writes it back wants to know which of its numbers will come out

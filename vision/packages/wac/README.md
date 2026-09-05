@@ -84,6 +84,15 @@ which one a caller sees is the order the checks are written in. For a *diagnosti
 is all of them — fixing one and recompiling to find the next is the loop this is supposed to end.
 `Result` has one `Err`, and a union of one-or-more is not a shape this language has.
 
+*Promoted 2026-09-05, and it turned out to be the largest of these.* `packages/wacc/src/check.wac`
+is the one program here that must report many faults at once, and it does — by abandoning `Result`
+and building an accumulator out of primitives: an `i32[]` of `(code, line, col)` triples, a parallel
+`string[]` of annotations, a parallel `i32[]` of widths, and a hand-maintained count. Three of this
+directory's other findings — flat lanes, paired values with nothing holding the pair, an array beside
+a count — are all downstream of this one missing shape, and the file says so in one line: the
+annotations sit beside the triples *"because the triples are `i32` and this is not."* See
+[../../QUESTIONS.md](../../QUESTIONS.md).
+
 **`--no-cache` serves two callers with opposite needs.** `packages/wacc/test/wac/selfhost_test.wac`
 builds wacc twice and requires byte equality — *"served from cache that is one file compared with
 itself"* — and `bootstrap.sh`'s fixpoint loop is the same shape. Both are *a build that must prove

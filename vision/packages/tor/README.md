@@ -179,6 +179,11 @@ can hold, and a `match` over `Role { Both, GuardOnly, ExitOnly, Neither }` is ex
 order-independent — **there is no first arm, so there is no wrong order to put the arms in.** One
 enum and one classifying function, in the file where a silent wrong answer costs anonymity.
 
+*Promoted 2026-09-05.* It is the fifth *closed set spelled openly* and the only one where the defect
+is **ordering** rather than a missing case — `tls` fell through a chain that lacked an arm, this
+would take a wrong arm that is present — and *"there is no first arm, so there is no wrong order to
+put the arms in"* is the best line about exhaustive matching in the directory.
+
 **And the positions are not an enum, deliberately.** *"Not an enum because the weights are indexed by
 it and the arithmetic is clearer with a number."* That is
 [`../../QUESTIONS.md`](../../QUESTIONS.md)'s *a closed set you cannot enumerate is a closed set you
