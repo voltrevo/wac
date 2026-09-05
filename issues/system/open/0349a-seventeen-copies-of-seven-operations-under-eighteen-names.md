@@ -79,5 +79,24 @@ names and `0348a` swept duplicate bodies under `tools/`; this is the same hash o
 it found what a name sweep structurally cannot: **one operation under eight names.** A check that
 hashes bodies is about fifty lines and nothing in `tools/wac/` does it.
 
-Bodies under four lines are ignored, so 17 is a floor. Within-package duplicates are excluded too —
-`relayd.wac`'s pair is counted once here and there will be more.
+Bodies under four lines are ignored, so every count here is a floor.
+
+**Within-package duplicates were excluded above, and measured since: the total is 39 redundant
+bodies, of which 22 are inside a single package.** So the cross-package 17 is under half of it.
+
+```
+ssh          5 groups     atoi twice (ssh.wac:259, sshd.wac:1031) and four more
+tor          4 groups     fields (directory.wac:92) / splitSpaces (consensus.wac:423) — 13 lines, two names
+box          2 groups     wrapped, in the base32 and base64 applets
+wacc         2 groups     planDecimal (asyncplan.wac:400) / synthDecimal (asyncsynth.wac:192)
+tls          1            result, in server.wac and client.wac
+bls          1            frob12C1_3 (fp12.wac:214) / psiY (g2.wac:158) — 9 lines
+lightclient, http, git, webrtc   1 each
+```
+
+These are a different problem from the cross-package ones and a smaller one: a package sharing a
+helper with itself needs no `core` change, no `gen:core` and no bootstrap — it is one file importing
+another, or one function moved next to its sibling. **`tor`'s `fields`/`splitSpaces` and `bls`'s
+`frob12C1_3`/`psiY` are the interesting pair**, because in both cases the two names claim to be
+different operations and the bodies say they are the same, which is either a missed abstraction or a
+name that lies.
