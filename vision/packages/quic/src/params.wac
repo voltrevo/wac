@@ -64,30 +64,43 @@ export struct Malformed { i32 at; string why; }
 //     decoder returns one or the other by side, every consumer matches twice, and the nine shared
 //     members are two types that must be kept in step — which is the duplication
 //     `issues/system/0349a` counts elsewhere, created deliberately.
-//   - **A predicate**, `sendableBy(p, s)` as above. Honest, checkable, and exactly as forgettable as
-//     the doc comment: nothing calls it unless someone remembers to.
+//   - **A predicate**, `sendableBy(p, s)` as above — and whether that is forgettable depends
+//     entirely on where it lives. See the correction below: it is forgettable as written here, and
+//     `frame.wac` shows the arrangement in which it is not.
 //   - **A subset type**, which is the thing that would actually work and is a much larger language
 //     than anything else on this list.
 //
 // This file keeps the predicate, which is the smallest of the three and is **not** a fix.
 //
 // **And `packages/quic/src/frame.wac` already wrote it**, on a second axis — a frame is legal only in
-// certain packet number spaces — as a four-rule matrix rather than a comment:
+// certain packet number spaces — as a four-rule matrix rather than a comment.
 //
-//     if (k == TYPE_PADDING() || k == TYPE_PING()) { return true; }
-//     if (k == TYPE_ACK() || … )                   { return epoch != EPOCH_0RTT(); }
-//     if (k == TYPE_NEW_TOKEN() || … )             { return epoch == EPOCH_1RTT(); }
-//     return epoch == EPOCH_0RTT() || epoch == EPOCH_1RTT();
+// ### Corrected: it is not a forgettable predicate, and that is the whole lesson
 //
-// So `sendableBy` above is **copying the shipped answer, not improving on it**, and this file's real
-// result is that on context-dependent membership this directory has nothing to add. Worth saying
-// plainly: restating a shipped design in new syntax and counting it as a rewrite is the failure mode
-// a disposable directory is most exposed to.
+// The first version of this note said `frame.wac`'s matrix was a predicate with the same failure mode
+// as a comment, and that this directory therefore had nothing to add. **Checked, and it is wrong.**
 //
-// It does sharpen what a language would have to beat. Not a nicer way to write the matrix — those
-// four rules are clear and their comments are good. It would have to make the **call** unforgettable:
-// something that refuses to encode a frame without an epoch, or a parameter without a side. That is a
-// constructor obligation, and it is the same shape as the cross-field equality below.
+//     bool permitted(i64 kind, i32 epoch) { … }          // not exported
+//
+//     export Next nextIn(u8[] b, i32 at, i32 epoch) {
+//       …
+//       if (!permitted(kind, epoch)) { return stop(Frame.NotPermitted(kind)); }
+//
+// `permitted` is **private**, and `nextIn` is the only way to obtain a frame. It takes the epoch as a
+// parameter, so a caller cannot ask for a frame without supplying the context, and cannot receive an
+// impermissible one at all. The check is not something a caller remembers — it is on the only path.
+//
+// So this is `@/packages/wacpkg/src/lock.wac`'s technique arrived at independently in a second
+// package, and **the rule is not predicate-versus-value**:
+//
+//   > A check is unforgettable when it is **private and the only constructor calls it**. It is
+//   > forgettable when it is exported beside the thing it guards.
+//
+// `sendableBy(Param, Side)` above is the forgettable arrangement — exported, and `encode` will take a
+// `Side` whether or not anyone consults it. The fix is available today and needs nothing: make the
+// predicate private and have `encode` do the refusing. Not applied here, because doing so would make
+// this file's finding disappear into a design that works, and the finding is what the directory is
+// for.
 //
 // ### The default is the most restrictive value, and absence means it
 //

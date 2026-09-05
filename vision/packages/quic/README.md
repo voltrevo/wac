@@ -126,13 +126,19 @@ replaces), or a subset type (a much larger language). The file keeps the predica
 that it is **not** a fix.
 
 **And the shipped package already wrote that predicate**, on a second axis: `frame.wac` restricts
-frames by packet number space with a four-rule matrix, not a comment. So `sendableBy` is copying the
-shipped answer rather than improving on it, and the real result is that **on context-dependent
-membership this directory has nothing to add** — worth saying plainly, since restating a shipped
-design in new syntax and counting it as a rewrite is the failure mode a disposable directory is most
-exposed to. It does sharpen what a language would need to beat a predicate: not nicer syntax for the
-matrix, but something that makes the *call* unforgettable — refusing to encode a frame without an
-epoch, or a parameter without a side. Promoted.
+frames by packet number space with a four-rule matrix, not a comment.
+
+*Corrected after writing, and the correction is the finding.* I said that matrix was a forgettable
+predicate. It is not: `permitted` is **private**, and `nextIn` — the only way to obtain a frame —
+takes the epoch and refuses an impermissible one before returning. So a caller cannot ask for a frame
+without supplying the context. That is the same technique `wacpkg`'s `plan` uses, found independently
+in a second package, and between them they give the rule: **a check is unforgettable when it is
+private and the only constructor calls it; forgettable when it is exported beside the thing it
+guards.** `sendableBy` as written here is the forgettable arrangement, and fixing it needs nothing.
+
+What survives is smaller and still real: that arrangement makes the *check* unavoidable, not the
+illegal value unrepresentable. A type under which a client cannot construct
+`original_destination_connection_id` is a different and larger thing. Promoted with the correction.
 
 **Sparse wire values, and the second file to want a hole.** `0x00`, `0x01`, `0x03`–`0x09`, `0x0f`:
 `0x02` and `0x0a`–`0x0e` are parameters this package does not implement, so the gaps are permanent

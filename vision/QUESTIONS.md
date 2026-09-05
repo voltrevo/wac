@@ -10703,7 +10703,39 @@ explicitly, because this directory has spent a great deal of effort turning comm
 this is a case where **the type it needs does not exist and the honest output is a function with the
 same failure mode as the comment it replaced.**
 
-### And the shipped package already wrote that predicate, which is the real result here
+### Corrected: the shipped predicate is not forgettable, and that is the rule
+
+The first version of this entry said `frame.wac` writes the same predicate and that it has the
+comment's failure mode, so this directory had nothing to add. **Checked, and wrong.**
+
+    bool permitted(i64 kind, i32 epoch) { … }          // not exported
+
+    export Next nextIn(u8[] b, i32 at, i32 epoch) {
+      …
+      if (!permitted(kind, epoch)) { return stop(Frame.NotPermitted(kind)); }
+
+`permitted` is **private** and `nextIn` is the only way to obtain a frame. It takes the epoch as a
+parameter, so a caller cannot ask for a frame without supplying the context and cannot receive an
+impermissible one at all.
+
+So this is the same technique as *the constructor obligation exists, in `wacpkg`* below, found
+independently in a second package — and between them they give the rule, which is **not**
+predicate-versus-value:
+
+> A check is unforgettable when it is **private and the only constructor calls it**. It is
+> forgettable when it is exported beside the thing it guards.
+
+`sendableBy(Param, Side)` is the forgettable arrangement: exported, with `encode` taking a `Side`
+whether or not anyone consults it. Making the predicate private and having `encode` do the refusing
+needs nothing from the language.
+
+**Which leaves this entry with less than it claimed and one thing that is still real.** The
+role-dependent *membership* is not fixed by that arrangement — `nextIn` can refuse an impermissible
+frame because it is handed the epoch, and a type that made `original_destination_connection_id`
+unconstructible by a client is a different and larger thing. The technique makes the check
+unavoidable; it does not make the illegal value unrepresentable.
+
+### The shipped package wrote that predicate first, and this directory is copying
 
 `packages/quic/src/frame.wac` has the same problem on a second axis — a frame is legal only in
 certain packet number spaces — and it does not use a comment. It writes the matrix as a function:
@@ -10717,17 +10749,10 @@ certain packet number spaces — and it does not use a comment. It writes the ma
     if (k == TYPE_NEW_TOKEN() || … ) { return epoch == EPOCH_1RTT(); }
     // Everything else in the table is application data: 0-RTT and 1-RTT, never Initial or Handshake.
 
-So the answer this entry was going to propose is **already the shipped answer**, arrived at
-independently, and a vision file offering `sendableBy(Param, Side)` is copying it rather than
-improving on it. That is the finding: on context-dependent membership **this directory has nothing to
-add**, and the honest output is to say so rather than to restate the shipped design in new syntax and
-count it as a rewrite.
-
-Which also sharpens what a language would have to provide to beat a predicate. Not a nicer way to
-write the matrix — the four rules above are clear and the comments are good. It would have to make
-the *call* unforgettable: something that refuses to encode a frame without an epoch, or to encode a
-parameter without a side. That is a constructor obligation, and it is the same shape as
-`../QUESTIONS.md`'s cross-field equality — the one obligation of the three that a type could carry.
+So the arrangement this entry was going to ask a language for is **already the shipped answer**,
+arrived at independently and twice. The honest output is to say so rather than to restate a shipped
+design in new syntax and count it as a rewrite — which is the failure mode a disposable directory is
+most exposed to, and the reason this entry now leads with its own correction.
 
 ### Why this is a separate entry and not another row
 
