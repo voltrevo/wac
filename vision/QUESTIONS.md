@@ -6255,6 +6255,37 @@ mentions it. `@/packages/ssz`'s six-member `ProofFault` is fine because six thin
 fold. `@/packages/crypto`'s `ed25519Verify` is fine because six checks run in that function. A fault
 naming something its callee never learned is a `string` with a nicer type around it.
 
+### Applied to `std`, and the second instance splits the rule in two
+
+`vision/std`'s `PageFault` has a `NoSuchElement { string id; }`, added in the rewrite that removed
+nine `Ticket<bool>`s **for being unproducible** — so the same pass that deleted a `bool` no host
+computes added a fault no host reports. Fourth instance in two days of *naming a shape does not stop
+a writer producing it*.
+
+But the reason differs from `NoConnection`'s, and the difference matters more than the instance.
+`packages/platform/host/entryBrowser.ts`:
+
+    setText: (id, text) => {
+      const el = doc.getElementById(id);
+      if (el !== null) el.textContent = text;
+    },
+
+`setValue` and `setStyle` are the same three lines and `value` answers `""`. **The host detects the
+missing element and throws the fact away**, four times.
+
+So a source can fail to report something for two reasons, and only one of them bounds a fault union:
+
+- **It cannot know.** `Net.connect` answers `Result<Socket, NotGranted>`; DNS failure and refusal are
+  not separable anywhere below it. `NoConnection { string why; }` was unfixable and is gone.
+- **It knows and drops.** `entryBrowser.ts` has `el !== null` in its hand and returns `EMPTY`.
+  `NoSuchElement` is three lines away in the host, and is a **request on the layer below** rather
+  than an error in the type above.
+
+The rule stands and gains a second half: a fault union is bounded by what its sources *report*, and
+where a source knows and does not report, that is a bug in the source rather than a ceiling on the
+type. Telling the two apart takes reading the host, which is what neither entry did before writing
+its member.
+
 ### And underneath is a `std` finding this makes concrete
 
 `Net.connect` collapsing DNS failure, refusal and a missing grant into one `NotGranted` is the same

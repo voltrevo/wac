@@ -723,7 +723,29 @@ export struct Random {
  * JSX writes thirteen lines of string concatenation underneath it to turn its `Node` back into a
  * string — for a host that parses it into a tree again. `@/packages/page` has the case written out.
  */
-/** The element named does not exist in the document. */
+/**
+ * The element named does not exist in the document.
+ *
+ * **Not producible today, and the reason is not the one that killed `NoConnection.why`.** Audited
+ * 2026-09-05 against `@/packages/http`'s finding that *a fault union is bounded above by what its
+ * sources can distinguish*. `packages/platform/host/entryBrowser.ts` is
+ *
+ *     setText: (id, text) => {
+ *       const el = doc.getElementById(id);
+ *       if (el !== null) el.textContent = text;
+ *     },
+ *
+ * — and `setValue` and `setStyle` are the same three lines. **The host detects the missing element
+ * and throws the fact away**, in three places, and `value` answers `""` for a fourth.
+ *
+ * So this member is not an invention like `NoConnection { string why; }`, where `Net.connect` can
+ * only ever say `NotGranted` and no host change would help. It is a fact the host *has* and does not
+ * return, which is three lines away and is a request on the host rather than an error in this type.
+ *
+ * The distinction is the finding: a source can fail to report something because it **cannot know**
+ * it, or because it **knows and drops** it. The first bounds the fault union; the second is a bug in
+ * the layer below. Only the second is fixable, and this is the second.
+ */
 export struct NoSuchElement { string id; }
 /** The bytes handed to a draw are not `w * h * 4`. The browser host throws on this today. */
 export struct WrongSize { i32 want; i32 got; }
