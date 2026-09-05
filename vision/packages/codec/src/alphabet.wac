@@ -15,6 +15,51 @@
 //
 // That is `../../../QUESTIONS.md`'s *closed set spelled as a string or an integer* with the sharpest
 // version of the consequence: not a value outside the set, but a value **inside a different set**.
+//
+// ## The two callers this file guessed at do not exist, and the two that do had to rename
+//
+// *2026-09-05, under `../../../README.md`'s caller test.* The paragraph above names
+// `@/packages/url` and `@/packages/http` as callers who would import both. **Neither imports either
+// codec** — one grep, and the guess was wrong in the safe direction.
+//
+// The real callers are in the package's own test directory, and both of them already paid:
+//
+//     codec/test/probe.wac:14        import { …, ALPHABET_STANDARD, ALPHABET_URL } from "../src/base64.wac";
+//     codec/test/probe.wac:15        import { …, ALPHABET_STANDARD as B32_STANDARD,
+//                                              ALPHABET_HEX as B32_HEX } from "../src/base32.wac";
+//
+// `codec/test/wac/codec_test.wac` has the same two lines. **The one signal the language gives about
+// these four names is the import collision on `ALPHABET_STANDARD`, and it is a fact about spelling.**
+// `ALPHABET_URL` and `ALPHABET_HEX` do not collide, so nothing forces anything — and one author
+// renamed `ALPHABET_HEX` anyway and left `ALPHABET_URL` bare, in one import block, which is what
+// discipline looks like when it is the only mechanism.
+//
+// **And the substitution is not merely type-correct, it is value-identical.** Both sets are numbered
+// `{0, 1}`, so `b64Encode(d, B32_HEX, true)` and `b64Encode(d, ALPHABET_URL(), true)` are the same
+// call and produce the same bytes. `codec_test.wac:272` asserts base64url round-trips; written with
+// `B32_HEX` it would still pass. **No test can distinguish the confusion, and that is a property of
+// the numbering rather than of the tests** — it survives exactly until either set gains a member.
+//
+// ## And the collision is one of twenty-one, of which two are worse
+//
+// Counted over `packages/*/src`: **788 exported nullary constant functions under 771 names, and 130
+// exported `const` declarations under 126.** Twenty-one names are exported from more than one file:
+//
+//   * **thirteen are one protocol constant written twice** — `hsClientHello`, `typeHandshake` and six
+//     more shared by `tls` and `webrtc`; `dcepOpen`, `ppidDcep` and two more declared twice *inside*
+//     `webrtc`; `LS_IPV4`, `MAC_LEN` and two more twice inside `tor`. Same value each time, so the
+//     hazard is drift rather than confusion, and the value is an RFC's.
+//   * **`ALPHABET_STANDARD`** — same name, same value, **different sets**, which is this file.
+//   * **`kEof` and `kIdent`** — same name, **different values**, different sets:
+//     `packages/ts/src/lex.wac` numbers them 0 and 1, `packages/wacc/src/kinds.wac` numbers them 83
+//     and 4. Two token-kind enumerations spelled as integers, sharing exactly two of their 7 and 89
+//     member names, **disagreeing on both**.
+//
+// So `ALPHABET_STANDARD` is the *benign* member of its own class. Substituting across the two
+// alphabets is a no-op; substituting `ts`'s `kEof` for `wacc`'s is `0` where `83` was meant, which
+// is `kIdent`-adjacent nonsense that compiles. The entry that generalises this should be about the
+// **two lexers**, not about the two alphabets — and the reason it was written about the alphabets is
+// that they are the pair whose names collide, which is the one thing that does not matter.
 
 import { Bytes } from "core";
 

@@ -4557,6 +4557,41 @@ arriving at an edge, and this one never leaves the program. So *parse at the edg
 prevented it — what would is the observation that **two files declaring the same constant name are
 declaring the same set or they are not**, and nothing anywhere asks which.
 
+#### Asked, 2026-09-05 — twenty-one names, and the alphabets are the benign case
+
+Over `packages/*/src`: **788 exported nullary constant functions under 771 names, 130 exported
+`const` declarations under 126, and twenty-one names exported from more than one file.**
+
+| | count | example |
+|---|---:|---|
+| one protocol constant written twice, same value | **13** | `hsClientHello` in `tls/handshake.wac` and `webrtc/dtls.wac` |
+| same name, same value, **different sets** | 1 | `ALPHABET_STANDARD` |
+| same name, **different values**, different sets | 2 | `kEof` — `0` in `ts/lex.wac`, `83` in `wacc/kinds.wac` |
+| a shared layout number | 1 | `tokenStride` = 5, in both lexers |
+
+Eight of the thirteen are `tls` and `webrtc` agreeing on DTLS's handshake and record numbers; the
+other five are one package declaring a constant twice in two of its own files — `webrtc` four times,
+`tor` twice. Same value everywhere, so the hazard there is **drift**, and the value is an RFC's.
+
+**And the pair this entry is written about is the harmless one.** `base64`'s and `base32`'s alphabet
+sets are both numbered `{0, 1}`, so substituting across them produces identical bytes: no test can
+see it, and the safety is a property of the numbering rather than of anything anybody decided.
+`kEof` is the same shape with the numbering gone — `ts` says 0 and `wacc` says 83, and the two
+lexers share exactly two of their 7 and 89 member names and **disagree on both**.
+
+So the generalisation should be about the two lexers rather than the two alphabets. The reason it
+was not is that the alphabets are the pair whose **names** collide, and a name collision is the one
+signal the language gives here: it is a fact about spelling, it fired on `ALPHABET_STANDARD`, and it
+can never fire on `ALPHABET_URL` against `ALPHABET_HEX`.
+
+**Also: the two callers named for this were guessed.** The entry says `@/packages/url` and
+`@/packages/http` would import both, and neither imports either codec. The real callers are
+`codec/test/probe.wac` and `codec/test/wac/codec_test.wac`, and **both already renamed on import** —
+`ALPHABET_STANDARD as B32_STANDARD, ALPHABET_HEX as B32_HEX` — one rename forced by the collision and
+one written by hand beside a bare `ALPHABET_URL`, in the same import block. Which is what discipline
+looks like when it is the only mechanism, and it is evidence that was in the repository the whole
+time.
+
 The reason this belongs here rather than in an issue: **the cost is not uniform, and that is the
 design question.** `forCommand`'s default hands out ambient authority; `abi`'s reads past an array
 and traps, which is bad and is bounded. A rule that treats a dispatch over commands and a dispatch
@@ -8481,6 +8516,83 @@ property and does not mention it.
 
 Noticing it needs the applet read as **a program somebody runs** rather than as a function — which is
 the reading this directory has done least, and the one that produced both findings in this entry.
+
+## Five packages export a `Reader`, and the four that are byte cursors disagree about overrun
+
+*2026-09-05.* Swept exported type names over `packages/*/src`: **352 exported types under 312 names,
+32 names declared in more than one file.** The most-duplicated is `Reader`, in five packages.
+
+One of the five — `packages/box/src/lib/input.wac` — is a *line* reader over files and is not this.
+The other four are the same object: a byte array, a position, and big-endian or little-endian reads
+off the front.
+
+| | fields | the operations |
+|---|---|---|
+| `tls/src/wire.wac` | `buf, pos, end` | `u8 u16 u24 u32 take(n) vec8 vec16 vec24 slice(n) sub8 sub16 expectEnd` |
+| `ssh/src/wire.wac` | `src, pos, end, ok` | `byte bool u32 str need(n)` |
+| `fs/src/wire.wac` | `data, at, end, bad, why` | `byte u32 i64 string bytes(n) wrong(why)` |
+| `zstd/src/frame.wac` | `src, pos` | `byte num(n) num64(n) skip(n) left` |
+
+`core` has no cursor. Neither does `../core/` — `Slice<T>` is a **window**, and none of the four
+wanted a window. What none of them can get from anywhere is a *position*.
+
+### The interesting disagreement is not the names, it is what a read past the end does
+
+Four cursors, **three contracts**:
+
+    tls    if (this.pos >= this.end) { trap; }
+    zstd   if (this.pos >= this.src.len()) { trap; }
+    ssh    if (!this.need(1)) { return 0; }        // and this.ok latches false
+    fs     if (this.bad || …) { this.bad = true; return 0; }   // plus wrong(why), which returns -1
+
+Two trap. Two latch a flag and answer **`0`** — a byte value indistinguishable from a real zero,
+which is *a sentinel drawn from the value's own range* at an eighth site and the first where the
+range is a whole byte. Of the two that latch, `fs` keeps a reason and `ssh` does not.
+
+**And every one of the four is argued in its own file.** `tls`: *"almost every parsing bug in a TLS
+implementation is a length prefix trusted without checking it against the bytes actually present, so
+the reader here bounds-checks every read against the enclosing slice and traps rather than returning
+a short value."* `fs`'s `end` is deliberately **not** `data.len()` — it stops short of the image's
+checksum, because *"a malformed image could read its own checksum as payload"*, which is a bug that
+file records having had.
+
+The one that settles it is inside `tls`. `x509.wac` takes the **opposite** policy on the same
+question — *"a malformed certificate produces a `Cert` full of harmless defaults rather than a
+trap"*, and *"trapping instead would conflate malformed with cannot check this"* — so one package
+answers *what do we do about bytes a stranger sent* two ways, deliberately, one file apart. **The
+split is not framing-versus-content by accident: a length prefix is the program's own invariant and
+a certificate field is the world's.**
+
+### Which is why this is a question and not an ask for `core.Reader`
+
+A shared cursor has to pick one of the three contracts, and the four packages did not pick
+differently out of carelessness — each picked what its *caller* could do with the answer. A TLS
+record reader has no caller that can proceed past a bad length; an image reader has one that must
+report which field was wrong; a zstd frame reader is inside a decompressor that has already been
+told how long the frame is.
+
+So the shared thing is not the failure model. It is everything above it: a position, a bound, and
+five reads. What `core` could hold is a cursor **parameterised by what it does when it runs out** —
+and nothing in `../GRAMMAR.ebnf` proposes a way to say that, because the parameter is a *behaviour*
+and the only behaviours this language can pass are `fn<…>` values, which is a call per byte.
+
+The honest smaller version: `Result<T, Overrun>` per read is what vision would say, and **all four
+authors rejected it before it was offered** — two by trapping and two by latching a flag, which is
+what a sticky `Result` is when you cannot afford one per read.
+
+*One loose end, left loose on purpose.* `../README.md`'s `try` row cites *"two sticky-error latches
+in `ssh` and `tls`"*. The `ssh` one is `Reader.ok` above. **The `tls` one this sweep could not find:**
+no `bool ok` or `bool bad` field exists anywhere in `packages/tls/src`, and its cursor traps. Either
+that row means something in `tls` that is a latch without being a flag, or it is wrong; recorded
+rather than resolved, because the row's *conclusion* — that the objection is to `Result` without
+`try` — does not depend on the second example.
+
+### What could not be written
+
+**Nothing counts a hand-written cursor.** The four were found by a *name* collision, which only
+catches the ones that happened to be called `Reader`. A cursor called `Parser`, `Scan` or nothing at
+all is invisible to the same sweep, and `../packages/rlp/src/decode.wac` declares one here — in a
+directory that has `Bytes` and spent three days arguing for it.
 
 ## The lesson about the instrument
 
