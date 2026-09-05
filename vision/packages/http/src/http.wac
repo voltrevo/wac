@@ -13,6 +13,12 @@ export { Response, statusHasBody, write } from "./response.wac";
 // recognising a tchar is not.
 export { Headers, eqFold } from "./headers.wac";
 export { Response, Status, write } from "./response.wac";
+export {
+  ProxyAt, ProxyReply, ProxyFault, ProxyUrlFault, parseProxy, connectRequest, readReply,
+  connectThrough,
+  NeedMore, Established, Refused, NotHttp,
+  NoAuthority, NoHost, NoPort, PortNotDigits, PortOutOfRange, ProxyRefused, ProxyNotHttp,
+} from "./proxy.wac";
 // **All ten members, not just the two with payloads.** Until 2026-09-05 this line exported
 // `RequestFault` and two of its members, so a caller outside the package could name the union and
 // could not `match` it: `@/packages/server/src/refuse.wac` is the first file that tried and the

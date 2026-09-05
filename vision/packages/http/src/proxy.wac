@@ -1,0 +1,142 @@
+// `CONNECT` through a proxy — and the file that shows last week's finding was about the wrong half.
+//
+// `packages/http/src/proxy.wac` is 257 lines and nothing here had predicted anything about it. It
+// opens a tunnel and stops, leaving a socket that is no longer carrying HTTP, and its header names
+// three things that are easy to get wrong. One of them is the finding this file is for:
+//
+// > **Bytes past the blank line are kept.** A proxy may put the end of its reply and the start of the
+// > tunnel in one packet … Dropping the remainder loses the first record of any protocol whose far
+// > end speaks first. TLS is not one — the client sends the hello — so this is precisely the case
+// > that passes everywhere it is tested and fails against something else later. `Established` carries
+// > the offset for that reason.
+
+import { Result, Vec, Bytes } from "core";
+import { Net, Socket, NotGranted } from "std";
+
+/**
+ * Where a proxy is.
+ *
+ * `ProxyAt { bool ok; string host; i32 port; }` in the shipped file — an `ok` flag and two fields
+ * that mean nothing when it is false, which `Result` replaces. What `Result` also buys here is the
+ * reason, and there are **five distinct ones answering the same `ProxyAt(false, "", 0)`**: an empty
+ * authority, an empty host, an empty port, a non-digit in the port, and a port of zero or above
+ * 65535. An operator whose `HTTP_PROXY` is wrong gets none of them.
+ */
+export struct ProxyAt { string host; i32 port; }
+
+export struct NoAuthority { string url; }
+export struct NoHost { string url; }
+export struct NoPort { string url; }
+export struct PortNotDigits { string url; u8 saw; }
+export struct PortOutOfRange { string url; i64 saw; }
+export union<NoAuthority, NoHost, NoPort, PortNotDigits, PortOutOfRange> ProxyUrlFault;
+
+/**
+ * `http://gateway:3128`, the shape `HTTP_PROXY` and `HTTPS_PROXY` carry.
+ *
+ * The scheme is accepted and ignored, which the shipped file explains and is right about: `https://`
+ * in a proxy variable means *the proxy to use for https*, not *speak TLS to the proxy*.
+ */
+export Result<ProxyAt, ProxyUrlFault> parseProxy(string url) { … }
+
+/** The request that opens a tunnel. No `Connection: close` — it would ask the proxy to hang up. */
+export Bytes connectRequest(string host, i32 port) { … }
+
+/**
+ * What a proxy's reply says, given everything read so far.
+ *
+ * **`Established(Bytes tail)`, where the shipped arm is `Established(i32 at)`** — see §1. And two
+ * refusals rather than one, because a proxy's *code* decides who fixes it — see §2.
+ */
+export enum ProxyReply {
+  /** The blank line has not arrived. Read more and ask again. */
+  NeedMore,
+  /** A tunnel is open. `tail` is what arrived early and belongs to the tunnel. */
+  Established(Bytes tail),
+  /** The proxy answered with a status. `line` is its own first line, verbatim. */
+  Refused(i32 status, string line),
+  /** Not an HTTP reply at all. */
+  NotHttp(string line)
+}
+
+/** Read a proxy's reply out of what has arrived so far. */
+export ProxyReply readReply(Bytes got) { … }
+
+/** Open a tunnel. The only function here that owns a socket, which is the shipped file's rule. */
+export async Result<Socket, ProxyFault> connectThrough(Net net, const ProxyAt at, string host, i32 port) { … }
+
+export struct ProxyRefused { i32 status; string line; }
+export struct ProxyNotHttp { string line; }
+export union<ProxyRefused, ProxyNotHttp, NotGranted> ProxyFault;
+
+// ## 1. `Established(i32 at)` is the cursor/fault finding, in a success value
+//
+// `../../../QUESTIONS.md` counted 62 structs carrying a position, found 7 carrying the thing it
+// indexes and 55 not, and framed it as **a cursor holds both halves and a fault holds one**. This arm
+// is neither a cursor nor a fault and has the same defect:
+//
+//     Established(i32 at)     // the first byte that belongs to the tunnel
+//
+// `at` is an offset into the buffer the caller passed to `readReply`, so the caller must keep that
+// buffer and slice it. Which is exactly what the shipped `connectThrough` does, and it works — and
+// the entry's framing does not cover it, because the value is a **success**.
+//
+// So the rule is wider than the sweep said and simpler:
+//
+// > **A position is meaningless without the thing it indexes, wherever it appears.** Cursors get this
+// > right because they were built to be read from; every other producer writes down the half it had
+// > in a local variable, and *fault* was a coincidence of where I looked.
+//
+// The sweep's own numbers say so and I did not read them that way: of the 55 that carry a position
+// and not its subject, **20 are not named like faults**. I reported the 35 and treated the other 20 as
+// noise. They are the rest of the finding.
+//
+// `Established(Bytes tail)` is also the better answer for a second reason, which is that the caller
+// does not want the offset. It wants the bytes. Every use of `at` in the shipped file is
+// `slice(got, at, got.len())`, which is the slice the arm could have handed over.
+//
+// ## 2. One `Refused` for two operator actions
+//
+//     Refused(string line)    // "The proxy answered and said no. The text is its own first line."
+//
+// The header explains why the text is kept — *Squid answers `403` for a host that is not on its
+// allowlist, and that is operational information rather than a network error* — and the text is all
+// there is. A proxy has two refusals a caller can act on and they need opposite fixes:
+//
+//   * **403** — the host is not on the allowlist. Somebody edits a file on the machine running the
+//     proxy.
+//   * **407** — the proxy wants credentials. The *program* supplies a `Proxy-Authorization` header
+//     and can retry without anyone being asked.
+//
+// So one of the two is recoverable in-process and the other is not, and they are one arm. `Refused(i32
+// status, string line)` splits them for the cost of a field the parser already has — `readReply` must
+// read the status line to know it is a refusal at all, and then keeps only the text.
+//
+// **That is the `Take.Accept` shape again**: the producer had the discriminating value in hand and
+// dropped it because the arm it was building did not have a slot. Fourth instance, and the first where
+// the dropped value is a *number the wire carried*, rather than something the producer computed.
+//
+// ## 3. What could not be written
+//
+// **`parseProxy` has five faults and the shipped function has one answer, and I cannot show the
+// difference costs anything.** No test names a bad proxy URL, no issue reports one, and the container
+// sets `HTTP_PROXY` from a file that has been right since it was written. So this is a redesign whose
+// benefit is *an operator would get a sentence instead of a timeout*, argued from the shape rather
+// than from an incident — which is weaker than most entries here and is worth marking as such.
+//
+// **`PortOutOfRange { i64 saw; }` needs an `i64` to report an `i32` field's overflow.** The port is
+// parsed into something wider than it will be stored in, precisely so the fault can say what was
+// written; the shipped loop checks `port > 65535` inside the accumulation and answers false, so it
+// never has the whole number. A parser that wants to report the value it rejected has to be able to
+// hold it, and *the type that can hold what I must reject* is a size larger than the one that holds
+// what I accept — which nothing states and which is the second reason a fault's payload is not the
+// value's type.
+//
+// **`connectThrough` answers `ProxyFault` and `parseProxy` answers `ProxyUrlFault` and they never
+// meet.** A caller does both, so its own error type is `union<ProxyUrlFault, ProxyFault>` — which
+// nests, and which `@/packages/box/src/gunzip.wac` shows is matchable as a group. What cannot be
+// written is the *order*: `parseProxy` runs once at startup and `connectThrough` per connection, so
+// the caller wants the first as a fatal and the second as a retry, and the union that joins them
+// erases exactly that distinction. Provenance again — *which of my two calls failed* — and the third
+// time it has appeared as **two faults in one union that a caller must tell apart by remembering
+// where it was**.

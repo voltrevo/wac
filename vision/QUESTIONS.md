@@ -7113,6 +7113,20 @@ introduced for a reason nobody had connected to this.
 > **A cursor is built to be read from, so it holds both halves. A fault is built to be raised, so it
 > holds only the half the raiser had in a local variable.**
 
+**Corrected 2026-09-05, by a value that is neither.** `@/packages/http/src/proxy.wac`'s
+`ProxyReply.Established(i32 at)` — *the first byte that belongs to the tunnel* — is a **success**
+carrying an offset into a buffer the caller must keep, and the framing above does not cover it. The
+numbers already said so and I did not read them: of the 55 that carry a position and not its subject,
+**20 are not named like faults.** I reported the 35 and treated the rest as noise.
+
+> **A position is meaningless without the thing it indexes, wherever it appears.** Cursors get it
+> right because they were built to be read from; every other producer writes down the half it had in
+> a local variable, and *fault* was a coincidence of where I looked.
+
+`Established(Bytes tail)` is also better for a reason independent of the rule: the caller does not
+want the offset, it wants the bytes, and every use of `at` in the shipped file is
+`slice(got, at, got.len())` — the slice the arm could have handed over.
+
 ### And the consequence is that not one fault here can render itself
 
 Every diagnostic function in the directory, without exception:
