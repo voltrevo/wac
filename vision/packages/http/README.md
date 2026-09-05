@@ -142,18 +142,60 @@ can be rewritten, and a capability's answer is what the host gives.
 
 ## What could not be written
 
-**A named union declaration has no form on the pages.** `export union<A, B, C> RequestFault;` is
-invented here. `union<…>` appears everywhere as a type *expression*; nothing shows giving one a
-name, and this package is unwritable without it — the alternative is repeating ten members at every
-signature that mentions them. Whether the name is a distinct type or an alias also matters, and
-`vision/QUESTIONS.md` already asks a related thing under *whether a named union can be a match arm*.
+**~~A named union declaration has no form on the pages.~~ It has one now**, and it was invented here:
+`export union<A, B, C> RequestFault;` is in [`../../GRAMMAR.ebnf`](../../GRAMMAR.ebnf) as
+`union_type`, and the delta's measurement found that deleting the rule changes nothing — `union` is
+an `IDENT` and `IDENT type_args` is already a type name. So the form parses today and the
+*declaration* is the only new part.
 
-**Nothing says a union may contain a union.** `union<RequestFault, BadStatus>` relies on the members
-of the first being flattened into the second. Set semantics say they should be, and it is the whole
-value of the line, but it is stated nowhere.
+**~~Nothing says a union may contain a union.~~ Answered, and in the opposite direction.** This said
+`union<RequestFault, BadStatus>` *"relies on the members of the first being **flattened** into the
+second … it is the whole value of the line"*. [`../../TECHNICAL.md`](../../TECHNICAL.md) settled it
+by measurement — the lowering makes an enum of one-field variants and **nests**:
+
+    enum Corrupt { AsBadMagic(BadMagic v), AsChecksum(ChecksumMismatch v) }
+    enum Fault   { AsSourceFailed(SourceFailed v), AsCorrupt(Corrupt v) }
+
+and nesting is deliberate, because flattening destroys `Err(is Corrupt):` as a one-arm group — which
+is what [`@/packages/box/src/gunzip.wac`](../box/src/gunzip.wac) needs and what
+[`src/client.wac`](src/client.wac) needs for `Err(is Transport):`.
+
+So the line's value is the reverse of what this claimed: not that ten members join eleven, but that
+`ResponseFault` has **two** members and a client can answer *anything wrong with the request shape*
+in one arm. The worry was right that nothing stated it; the guess about which way it would go was
+wrong, and the guess was the part that read as obvious.
 
 **Where a fault's *message* lives is unresolved.** Eleven structs with no fields need eleven strings
 somewhere for a server to log or return. A method on each is eleven declarations; a `match` in one
 place is a function that must be updated whenever a fault is added, with nothing to catch a miss
 unless the match is exhaustive over a named union — which is the match-arm question again, now with
 a use.
+
+
+## Nine files later: what one whole package cost
+
+*2026-09-05.* This was four files when the sections above were written — `request`, `response`,
+`headers`, `fault`. It is nine, and it is the first package in this directory rewritten end to end
+with **every consumer updated too**, so it is the only place the whole proposal has had to compose
+rather than be argued about one file at a time.
+
+    bytes  client  fault  headers  http  incoming  outgoing  proxy  request  response
+
+**What composing found, that reading did not.**
+
+  * **`write` never wanted the request.** It went `bool headOnly` → `const Request sent` →
+    `const Sending how`, and the thing that settled it was `@/packages/server`'s error path, which
+    has no request because parsing is what failed. The shipped code invents `"GET"` there to mean
+    *not a HEAD*. **A unification is only right where every caller has the thing.**
+  * **A client's error type is three layers' unions**, and two of the three compose by declaration
+    while the third needs a hand-written `match` — because that wrap is the only place the host's
+    name reaches the failure. The wrap that costs eight lines is the one doing something.
+  * **Two open registries in one package collide at the arm that makes them open.** `Method.Other`
+    and `Status.Other` cannot both be published bare by one barrel.
+  * **A redesign leaves its consumers stale silently.** Four call sites in `@/packages/server`, found
+    four days later by reading the file on purpose.
+
+**And what it did not cost.** Nine of vision's ten constructs never reach the emitter, nine of ten
+cost the parser a branch or less, and the type checker gains one clause plus a declaration table.
+The expensive parts of this package were all **decomposition** — which type holds what, and who is
+told rather than asked — and none of them was a language feature.

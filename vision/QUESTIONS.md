@@ -8281,6 +8281,52 @@ an `Exchange` rather than an `Incoming`. The cost is that the request outlives t
 point and is also a hundred request bodies for a hundred exchanges, and nothing says a caller may
 drop the half it does not want.
 
+## `union<A, B>` where `A` is a union: the guess that read as obvious was backwards
+
+*2026-09-05.* `@/packages/http`'s README, written when the package was four files, listed as a gap:
+
+> **Nothing says a union may contain a union.** `union<RequestFault, BadStatus>` relies on the
+> members of the first being **flattened** into the second. Set semantics say they should be, and it
+> is the whole value of the line, but it is stated nowhere.
+
+`TECHNICAL.md` settled it by measurement and the answer is the reverse. The lowering makes an enum of
+one-field variants and **nests**, deliberately, because flattening destroys `Err(is Corrupt):` as a
+one-arm group — which `@/packages/box/src/gunzip.wac` needs and which
+`@/packages/http/src/client.wac` needs for `Err(is Transport):`.
+
+So the line's value is not that ten members join eleven. It is that `ResponseFault` has **two**
+members, and a client can answer *anything wrong with the request shape* in one arm.
+
+> The worry was right that nothing stated it. **The guess about which way it would go was wrong, and
+> the guess was the part that read as obvious** — *set semantics say they should be* is the sentence
+> to distrust, because a set is what a union looks like from the type system and a tree is what it is
+> at run time.
+
+Third time this week a claim about unions assumed structure where the answer is nominal, after
+*subset assignability* and *canonicalising member lists*.
+
+## Nine files: what one whole package cost
+
+`@/packages/http` is the first package here rewritten end to end **with every consumer updated**, so
+it is the only place the proposal has had to compose rather than be argued a file at a time.
+
+What composing found that reading did not:
+
+  * **`write` never wanted the request** — settled by an error path with no request.
+  * **A client's error type is three layers' unions**, two composing by declaration and one needing a
+    wrap that *adds data*.
+  * **Two open registries collide at the arm that makes them open** — `Method.Other` and
+    `Status.Other`.
+  * **A redesign leaves its consumers stale silently** — four call sites, found four days later.
+
+And what it did not cost: nine of ten constructs never reach the emitter, nine of ten cost the parser
+a branch or less, the checker gains one clause and a table. **Every expensive part of this package was
+decomposition** — which type holds what, and who is told rather than asked — and none of them was a
+language feature.
+
+> **Verdict:** convention — the costly decisions in a whole-package rewrite are decomposition, not
+> syntax. Settled by: having done one.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the
