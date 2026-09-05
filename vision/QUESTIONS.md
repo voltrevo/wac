@@ -1877,6 +1877,57 @@ written as a type, checked on every build rather than on the runs somebody remem
 
 Two things make it a question rather than a proposal to take.
 
+### The arm this argument was missing, found 2026-09-05
+
+The case for the qualifier had two examples and neither is the one that decides it. `sha256` and
+`chachaBlock` are *already uniform*, so the rule costs them nothing. `aesEncrypt` *wrongly refuses*.
+**Missing: a case that was wrong, where the qualifier would have caught it.**
+
+`packages/crypto/src/weierstrass.wac`'s `cmpBE` is that case, and it is fixed and written up:
+
+> This used to return on the first byte that differed, which made **how many bytes it read** a
+> function of the values — and one of the values is routinely a private key or a nonce, since
+> `curvePublicKey` and `ecdsaSign` both call it to check the secret is below n.
+> `issues/system/0224`.
+
+An early `return` on a condition derived from a secret byte is exactly what *branching on a secret is
+a compile error* forbids. Under the qualifier the old `cmpBE` is not a subtle mistake to be traced —
+it is not a program.
+
+**And the measurement that should have caught it did not**, which is what turns this entry from a
+preference into an argument:
+
+> **No measurement caught this**, which is the part worth remembering. `p256PublicKey` reported
+> uniform over **8.19 million events** while it was still here, because the two secrets `ct.wac`
+> compares both differ from n in their *first* byte — so both runs left the old loop at i=0 and
+> agreed. A differential is only as wide as its inputs.
+
+This entry says the rule is the tracer's finding *"checked on every build rather than on the runs
+somebody remembered to trace"*. That understates it and should be corrected: **here somebody did
+remember, the run was traced at 8.19 million events, and it said uniform.** No number of additional
+events would have helped, because the inputs agreed on the only byte that mattered.
+
+So the honest comparison is not *a type instead of a measurement someone might skip*. It is **a
+timing harness samples the input space and a type quantifies over it**, and a sampled answer can be
+confidently wrong.
+
+### One more thing the qualifier would buy, which is not about correctness
+
+`issues/system/0345a` proposes a `core` `bytesCmp` because three comparators are *"identical apart
+from parentheses"*, and then has to add:
+
+> A fourth, `crypto/weierstrass.wac`'s `cmpBE`, is branch-free and constant-time and must not be
+> swept up with them, and **nothing in either signature says which a caller needs.**
+
+Four functions, one signature, one of them load-bearing for a private key, and the only thing keeping
+the de-duplication from breaking it is that the person filing the issue knew. `secret Bytes` in the
+parameter makes the exclusion mechanical — the three ordinary comparators cannot be handed a secret,
+and `cmpBE` cannot be replaced by a body that branches, so the sweep cannot merge them because the
+signatures differ.
+
+**That is a type preventing a refactor rather than describing a value**, and it is the first example
+of that in this directory.
+
 It would refuse AES: the S-box lookups the published table flags at `aes.wac:129`–`132` are what AES
 *is*, so the rule needs a declared exemption at the site or it gets turned off. And it inherits
 `issues/lang/open/0315a`, where const taint is laundered through an argument, an array element, a

@@ -1,0 +1,120 @@
+// Scalar validation, and the arm `./secret.wac`'s argument was missing.
+//
+// That file makes the case for a `secret` qualifier with two examples. `sha256` and `chachaBlock`
+// are *"already uniform … under the qualifier they could not have been anything else"* — the rule
+// costs them nothing. `aesEncrypt` *"refuses to compile"* and the refusal is structural, because AES
+// with a lookup table is what AES is, so it needs a `leaks(…)` escape that is *"invented and
+// unshaped"*.
+//
+// **Already correct** and **wrongly refuses**. What is missing is the middle: a case that was
+// *wrong*, where the qualifier would have caught it. `packages/crypto/src/weierstrass.wac` has one,
+// it is fixed, and it is written up in the file.
+//
+// ## The bug the qualifier would have refused
+//
+// `cmpBE` compares two big-endian scalars, and *"one of the values is routinely a private key or a
+// nonce, since `curvePublicKey` and `ecdsaSign` both call it to check the secret is below n."*
+//
+//   > This used to return on the first byte that differed, which made **how many bytes it read** a
+//   > function of the values. `issues/system/0224`.
+//
+// An early `return` whose condition is derived from a secret byte is precisely what
+// *"branching on it … is a compile error"* forbids. Under the qualifier the old `cmpBE` is not a
+// subtle mistake to be found by tracing — **it is not a program.**
+//
+// ## And the measurement that should have caught it did not
+//
+// This is the part that turns a preference into an argument:
+//
+//   > **No measurement caught this**, which is the part worth remembering. `p256PublicKey` reported
+//   > uniform over **8.19 million events** while it was still here, because the two secrets `ct.wac`
+//   > compares both differ from n in their *first* byte — so both runs left the old loop at i=0 and
+//   > agreed. A differential is only as wide as its inputs.
+//
+// So the alternative to a compile-time rule is not *measure instead*. Measurement was in place, ran
+// at scale, and reported the wrong answer for a reason no amount of extra events would fix: the
+// inputs agreed on the only byte that mattered. **A timing harness samples the input space and a
+// type quantifies over it**, and this is a case where the sampling was fine and the space was wrong.
+//
+// `./secret.wac`'s first arm says the qualifier *"says at compile time rather than after a traced run
+// somebody has to remember to do"*. That understates it. Here somebody did remember, the run was
+// traced, and it said uniform.
+
+import { Bytes } from "core";
+
+/**
+ * Compare two equal-length big-endian scalars — reading every byte.
+ *
+ * `secret` on `a` is the whole point: the branch-free body below is not a style, it is the only body
+ * that compiles. The shipped file achieves the same thing with a comment three paragraphs long and a
+ * reference to the issue where it went wrong.
+ */
+export i32 cmpBE(secret Bytes a, const Bytes b) { … }
+
+/** Whether every byte is zero, without saying which. */
+export bool isZeroBE(secret Bytes a) { … }
+
+/**
+ * A scalar known to be in `1 .. n-1` — the thing `cmpBE` and `isZeroBE` exist to establish.
+ *
+ * **The field cannot be `secret` and the parser said so.** `secret Bytes be;` is refused —
+ * *"no rule reaches 'be'"* — because `../../../GRAMMAR.ebnf` has the qualifier on a **parameter** and
+ * nowhere else. `../../tls/README.md` found the same wall from the other side: `TrafficKeys` has a
+ * `key` and an `iv` and *"neither is marked, because `secret` is not a field qualifier either … the
+ * struct that exists to separate the two cannot say which of them is which."*
+ *
+ * So this is the second type whose whole purpose is to carry a secret and which cannot say it. The
+ * qualifier reaches the arguments of `cmpBE` and `scalarOf` below and stops at the boundary of the
+ * type they exist to build — which means the taint is announced at every call and forgotten by the
+ * value, and a `Scalar` handed to a third function arrives unmarked.
+ */
+export struct Scalar { Bytes be; }
+
+/** The only way to get one. */
+export Scalar? scalarOf(secret Bytes be, const Bytes order) { … }
+
+// ## What could not be written
+//
+// ### The release this needs is already filed, and this is a caller for it
+//
+// `cmpBE` takes a secret and answers `i32`, and **that answer is public** — the caller branches on it
+// to reject an out-of-range key. `../../../QUESTIONS.md`'s *`secret` has no return position, no field
+// position and no release* owns that question and this file adds a caller rather than an argument:
+// the release here is safe for a reason worth recording, which is that **one bit is what the protocol
+// already reveals.** The key was accepted or it was not, and a peer learns that from what happens
+// next regardless.
+//
+// `cmpBE`'s three-way `i32` is more than one bit and is still safe, because every caller tests it
+// against zero — which is a property of the callers, not of the signature, and is therefore exactly
+// the kind of thing that stops being true when someone adds a fourth caller.
+//
+// ### The signature that a sweep is about to delete
+//
+// `issues/system/0345a` proposes a `bytesCmp` in `core`, on the evidence that three comparators —
+// `tor`'s `compareBytes`, `tor`'s `compareIndex`, `box`'s `cmpBytes` — are *"identical apart from
+// parentheses"*. It also says:
+//
+//   > A fourth, `crypto/weierstrass.wac`'s `cmpBE`, is branch-free and constant-time and must not be
+//   > swept up with them, and **nothing in either signature says which a caller needs.**
+//
+// Four functions, one signature `(u8[], u8[]) -> i32`, and one of them is load-bearing for a private
+// key. The de-duplication is correct and the exclusion is correct and **the only thing keeping them
+// apart is that the person who filed the issue happened to know.**
+//
+// `secret Bytes` in the parameter is what makes the exclusion mechanical: the three ordinary
+// comparators do not take one and cannot be passed a secret, and `cmpBE` takes one and cannot be
+// replaced by a body that branches. The sweep then cannot merge them because they no longer have the
+// same signature — which is the point. **This is the first place in this directory where a type would
+// prevent a refactor rather than describe a value.**
+//
+// ### And `Scalar` above is a validity type nothing can enforce past construction
+//
+// `scalarOf` is the only constructor and it checks `1 <= be < n`, so a `Scalar` is in range when
+// made. Nothing stops a caller mutating `be` afterwards — `Bytes` is a reference and the field is not
+// `const`. Marking it `const Bytes` fixes that specific hole and, per `spec/spec/variables.md`, leaves
+// the one it names: *"passing a const reference to a function whose parameter is not `const` is
+// accepted."*
+//
+// Which is the same gap `../../fmt/src/bigint.wac` reached from aliasing, and the same one
+// `../../../QUESTIONS.md`'s `const`-and-funcrefs entry reached from comparators. Three files, three
+// routes, one hole — and this is the one where the value on the other side of it is a private key.

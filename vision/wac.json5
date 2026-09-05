@@ -36,6 +36,29 @@
 // comment.** Neither will anything, because this directory is prose by design — so the honest form
 // is the one above: a date beside every figure, and no claim that the figure is current.
 //
+// **Fourth value, 2026-09-05, and it is zero.** All eight were written the same day: `./atof.wac` and
+// `./crc32.wac` and `./huffman.wac` and `./case.wac` and `./printable.wac` and `./percent.wac` and
+// `./host.wac` and `./directory.wac`, plus `./bits.wac` and `./bigint.wac` which the writing of them
+// created and closed in turn. **There is no residue.**
+//
+// That is not the fourth decrement of a series, it is the end of one, and it changes what the
+// question below can rest on. The overlay was always argued two ways — *the code assumes it* and
+// *N files prove the assumption is load-bearing* — and the second is gone. Nothing in this directory
+// currently imports a file it has not written.
+//
+// So the question survives on the first argument alone, which is the better one and was always the
+// real one: **a resolver cannot express *resolve here, fall through to the repository*, and `./x.wac`
+// meaning two directories is not a thing a manifest key could say.** That is a language question with
+// zero instances rather than a backlog with eight, and the entry in `../QUESTIONS.md` is written that
+// way — *"it is about what the resolver would have to do, not about how many sites want it"*, which
+// this file said before the count reached zero and can now be checked against it.
+//
+// The other thing zero settles is the note below about counts ageing. It predicted three drifts and
+// got them; the fourth is the one where a reader who trusted the figure would have been wrong in the
+// *safe* direction, having gone looking for eight problems and found none. Dating every figure is
+// what made that recoverable, and it remains the whole of the discipline available here — nothing
+// runs the script, and nothing will.
+//
 // So the code assumes an **overlay**: resolve here, fall through to the repository if absent. That
 // is not what this manifest says and it is not something the resolver can express.
 //

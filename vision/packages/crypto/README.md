@@ -201,3 +201,44 @@ attribute on a function, or something else is not proposed here.
 
 **Nothing about the propagation is new**, which is the point: if `secret` needs machinery `const`
 does not already have, the argument for it is much weaker.
+
+**The arm the `secret` argument was missing.** Added with [`src/scalar.wac`](src/scalar.wac).
+[`src/secret.wac`](src/secret.wac) makes the case with two examples — `sha256` and `chachaBlock` are
+*already uniform* so the rule costs them nothing, and `aesEncrypt` *wrongly refuses* because an S-box
+is what AES is. Neither decides it. What was missing is a case that **was wrong and the qualifier
+would have caught**, and `packages/crypto/src/weierstrass.wac` has one, fixed, written up:
+`cmpBE` *"used to return on the first byte that differed, which made how many bytes it read a
+function of the values — and one of the values is routinely a private key or a nonce"*
+(`issues/system/0224`). An early return on a secret-derived condition is not a subtle mistake under
+the qualifier; it is not a program.
+
+**And the measurement that should have caught it did not**, which is what makes this an argument
+rather than a preference: *"`p256PublicKey` reported uniform over 8.19 million events while it was
+still here, because the two secrets `ct.wac` compares both differ from n in their first byte."* The
+`secret` entry says the rule beats *"the runs somebody remembered to trace"* — that understates it.
+Here somebody remembered, the run happened at 8.19M events, and it said uniform. **A timing harness
+samples the input space and a type quantifies over it**, and a sampled answer can be confidently
+wrong. Promoted as a correction to that entry.
+
+**A type that would prevent a refactor rather than describe a value.**
+`issues/system/0345a` proposes a `core` `bytesCmp` because three comparators are "identical apart
+from parentheses", then has to add that `cmpBE` *"must not be swept up with them, and nothing in
+either signature says which a caller needs."* Four functions, one signature, one load-bearing for a
+private key, and the only thing preventing the merge is that the person filing knew. `secret Bytes`
+in the parameter makes the exclusion mechanical — the signatures stop matching. First example of
+that in this directory.
+
+**And the parser refused the field.** `struct Scalar { secret Bytes be; }` does not parse — *"no
+rule reaches 'be'"* — because the grammar has `secret` on a **parameter** and nowhere else.
+[`../tls/`](../tls/)'s note found the same wall from the other side: `TrafficKeys` has a `key` and an
+`iv` and *"neither is marked … the struct that exists to separate the two cannot say which of them is
+which."* Second type whose whole purpose is to carry a secret and which cannot say so — the taint is
+announced at every call and forgotten by the value, so a `Scalar` handed on arrives unmarked. Worth
+noting that the instrument caught this rather than a reader.
+
+**`Scalar` is a validity type nothing enforces past construction.** `scalarOf` is the only
+constructor and checks `1 <= be < n`; nothing stops a caller mutating `be` afterwards. `const Bytes`
+closes that and leaves the hole `spec/spec/variables.md` names — *"passing a const reference to a
+function whose parameter is not `const` is accepted"* — which `fmt/src/bigint.wac` reached from
+aliasing and the `const`-and-funcrefs entry reached from comparators. Three routes, one hole, and
+this is the one with a private key on the other side of it.
