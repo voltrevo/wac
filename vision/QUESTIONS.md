@@ -8627,6 +8627,90 @@ catches the ones that happened to be called `Reader`. A cursor called `Parser`, 
 all is invisible to the same sweep, and `../packages/rlp/src/decode.wac` declares one here — in a
 directory that has `Bytes` and spent three days arguing for it.
 
+## `Result` has been in `core` for eighteen days and has no user, and ten types were written instead
+
+*2026-09-05.* The strongest evidence in this directory for `try`, and it was a census rather than an
+argument. Counted in `packages/*/src`, excluding comments and `coretext.wac`'s string literals:
+
+| `core` export | files that use it | code lines |
+|---|---:|---:|
+| `Vec<T>` | 45 | 347 |
+| `Read` | 26 | 89 |
+| `Map<K, V>` | 6 | 12 |
+| `Option<T>` | 2 | 8 |
+| **`Result<T, E>`** | **0** | **0** |
+| `hashBytes` | 0 | 0 |
+
+`core/result.wac` landed **2026-08-18**. It is one of the nine files carried *inside* the compiler as
+`packages/wacc/src/coretext.wac`, so every wac program compiled since has had it embedded — and every
+`Result<` in `packages/*/src` is a comment, a doc example, or a line of `coretext.wac`'s own string
+literal. Its only live callers are `spec/tour.wac` and two compiler tests.
+
+**`Option`'s two is explained and `Result`'s zero is not.** `T?` is the language's own and does
+`Option`'s job, so a low number there is the language working. Nothing in the language does
+`Result`'s job.
+
+### What was written instead: ten types, three designs, and two pairs written twice
+
+Sweeping `packages/*/src` for exported parse results:
+
+| | shape | how failure travels |
+|---|---|---|
+| `http/request.wac` `Parsed` | enum | `Ok(Request) / Bad(i32 code) / Incomplete` |
+| `http/incoming.wac` `ParsedResponse` | enum | `Ok(Incoming) / Bad(i32 code) / Incomplete` |
+| `git/commit.wac` `Parsed` | enum | `Understood(Commit) / Malformed(string why)` |
+| `git/commit.wac` `ParsedTag` | enum | `Annotated(Tag) / Unreadable(string why)` |
+| `abi/abi.wac` `Decoded` | struct | `{bool ok; Value[] items; string error}` + `of(…)` |
+| `rlp/rlp.wac` `Decoded` | struct | `{bool ok; Item item; string error}` + `of(…)` |
+| `datetime/rfc3339.wac` `Parsed` | struct | `{bool ok; …}`, *"the fields are then meaningless"* |
+| `wac/grants.wac` `Parsed` | struct | `{Asked asked; i32 at; string bad}` — a sentinel string |
+| `wacc/wapyparse.wac` `WParsed` | struct | seven fields, errors a flat `i32[]` and a count |
+| `json/parse.wac` `Parser` | struct | a code on the parser, every entry point answers `T?` |
+
+Ten types and **three designs**: a payload-carrying enum, a `bool ok` beside fields that are
+meaningless when it is false, and a sentinel. Two of the pairs are the same design written twice in
+one place — `Parsed` and `ParsedTag` are in one *file*, `Parsed` and `ParsedResponse` in one
+*package* — so even where the answer was in front of the author it was retyped rather than shared.
+
+`abi`'s and `rlp`'s `Decoded` are the sharpest: **`{bool ok; T value; string error}` with a static
+`of`, in two packages, independently. That is `Result<T, string>` with the parameters filled in by
+hand**, and both were written 2026-08-06, twelve days before `Result` existed.
+
+### Which is the transcription excuse, and one file refutes it
+
+Seven of the ten predate `core/result.wac`, so *what the language had when it was written* — which
+is what `json/src/parse.wac`'s header says, in those words — accounts for them.
+
+**Thirty-eight source files under `packages/*/src` have been created since 2026-08-18, and not one
+imports `Result`.** Two of the thirty-eight are the case:
+
+- `packages/wacc/src/wapyparse.wac` — a **parser**, in the compiler, whose errors are a flat `i32[]`
+  and an `i32 errorCount`, with a second count for how many of them are the lexer's;
+- `packages/wac/src/grants.wac` — created 2026-08-25, a week after, and its `Parsed` carries
+  `string bad`.
+
+So the reason is not inertia and not ignorance. **A `Result` you cannot propagate is a `match` at
+every call site**, and both authors priced that and declined — which is what
+`@/packages/tls/src/wire.wac` and `@/packages/zstd` also did by trapping, and what
+`@/packages/ssh` and `@/packages/fs` did by latching a flag.
+
+> `../README.md`'s `try` row concluded from two examples that the objection to `Result` is an
+> objection to `Result` **without** `try`. The census is the same conclusion at the scale of the
+> whole tree: the type shipped, the propagation did not, and in eighteen days and thirty-eight new
+> files it has been used zero times.
+
+### What could not be written
+
+**This cannot distinguish *nobody needed it* from *nobody could use it*.** The zero is consistent
+with both, and the thing that separates them is the ten types — a package that needed no result type
+would have written none. That inference is the whole weight of the entry and it is an inference.
+
+**And it says nothing about whether `try` would be enough.** The four cursors rejected `Result` for a
+cost `try` removes; `fs`'s `wrong(string why)` and `wapyparse`'s two error counts are carrying
+information a `Result<T, E>` carries only if `E` is right, and nothing here has tested that on a
+consumer that was not written for it. `@/core/cursor.wac` is one attempt and it serves three of the
+four it was written for.
+
 ## The lesson about the instrument
 
 The lesson is narrower than *check your tools* and it is about this session specifically: moving the

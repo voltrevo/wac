@@ -111,7 +111,7 @@ written into a package file the day before, each costing one grep to check.
 | ask | result |
 |---|---|
 | a fixed-length byte view | **survives, sharpened** — the argument is *arithmetic*, not constructors: `from(12)` on a `Slice<u8, 32>` is statically a `Slice<u8, 20>`, and no entry had said so |
-| `try` | **survives** — its best counter-argument, two sticky-error latches in `ssh` and `tls`, turns out to be an objection to `Result` *without* `try` |
+| `try` | **survives, and now measured** — its best counter-argument, two sticky-error latches in `ssh` and `tls`, turns out to be an objection to `Result` *without* `try`; and `core/result.wac` shipped 2026-08-18 with **zero users in `packages/*/src`** across 38 files written since, against **ten hand-written parse-result types in three designs** |
 | a private constructor | **changed shape** — file-private helps two of seven types and would force four `crypto` files into one; the ask is a **package**, which wac does not have |
 | an overlay for `@/` imports | **retired** — needs a mapping the reader computes, which `Res` already has for git dependencies |
 | a `slice` that refuses | **retired** — all three input-driven callers check first and produce a fault carrying numbers; a `null` would be a worse diagnostic |
