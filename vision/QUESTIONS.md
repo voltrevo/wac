@@ -4715,6 +4715,45 @@ Two directions, and the first is not a feature:
   or more string literals — which is a dispatch over a closed set written open, every time. Cheap to
   detect and, unlike most lints, it points at a place where the language has a better answer already.
 
+### 2026-09-05 — six more, and the first one that cost something
+
+This entry's three were argued from shape. The rewrites found six more and one of them is an
+incident, which changes what the entry can claim.
+
+| where | the set | spelled as | what a wrong value does |
+|---|---|---|---|
+| `@/packages/unicode` `mapAll` | 3 mappings | `which: i32` | `mapAll(s, 3)` case-folds, silently |
+| `@/packages/url` `inEncodeSet` | 7 encode sets | `set: i32` | an unknown set answers as the **most aggressive**, corrupting a valid URL |
+| `@/packages/tor` `hasFlag` | 10 consensus flags | `string[]` + linear scan | a typo answers **false**, and false for `BadExit` means *safe to exit through* |
+| `@/packages/tor` `positionWeight` | 4 roles | 2 booleans, ordered chain | the wrong *order* leaks exit capacity into the guard position |
+| `@/packages/ssh` `Incoming` | 11 message types | one struct, `extra` and `data` each meaning three things | reads a field the message did not set |
+| `@/packages/tls` `c.phase` | 5 handshake phases | `i32`, `0..4` | **a peer reached a `trap`** |
+
+**The last is the evidence this entry did not have.** `packages/tls/src/client.wac` dispatches on
+`phase` with a chain handling three of five and closing `else { trap; }`, and the file documents what
+happened:
+
+> The clean close was the hole, and unlike the one above **a peer could reach it**. `phase == 4` with
+> no failure code is what a `close_notify` leaves behind … So a server sending `close_notify`
+> followed by anything at all in the same flight put both records in one `tlsClientFeed`: the first
+> set phase 4, the second fell through to a `trap`. The caller checking the phase between calls,
+> which every caller here does, cannot help — both records are inside one call.
+
+Found by fuzzing, fixed with an early return at the top of the function. The fix is a guard, not a
+structure: the `else { trap; }` is still there and phase `0` still reaches it, unreachable only
+because `tlsClientInit` assigns `1` before returning — an argument made outside the function that
+traps.
+
+So the entry's framing holds and its stakes were understated. *Exhaustiveness is already free at
+every `match`* was true when this was three shapes; with a peer-reachable trap in the list, **the
+cost of not converting at the edge is no longer hypothetical**, and the *"something that notices"*
+proposal above is the cheapest thing here that would have caught it.
+
+`@/packages/tor`'s row is worth separating from the rest, because its defect is **ordering** rather
+than a missing case — the chain takes a *wrong arm that is present*, where `tls` fell through to none.
+Its own note has the best line anyone here has written about why a `match` fixes both: *"there is no
+first arm, so there is no wrong order to put the arms in."*
+
 ### The third one is worse than a missing case, and it took two files to see
 
 Added 2026-09-04 from the `@/packages/codec` rewrite. Two of that package's three files declare:
@@ -9958,7 +9997,11 @@ is one: an IPv6 address is `i32[] pieces` with *"held in an i32[] because wac ha
 values are small"* in a comment, two invariants in one sentence and neither in the declaration, and
 no check anywhere that there are eight of them.
 
-## A closed set of seven, named by bare integers — and the alternative the file argued against was not the one on offer
+## The alternative `percent.wac` argued against was not the one on offer
+
+> **The general question is the closed-set entry above; `url`'s seven sets are a row in its table.**
+> What is specific to this file is the *defence* it wrote, and a structural claim its own tests
+> contradict.
 
 `packages/url/src/percent.wac` declares the URL standard's encode sets as seven integers and takes
 one as an `i32`:
@@ -10221,7 +10264,11 @@ discover the pattern — a package note had it a day earlier — and what the sw
 boundary, not the rule.** Which is an argument for reading the READMEs before sweeping, and for the
 brief's instruction to promote from them.
 
-## A closed set spelled as an integer, four times, ending in a peer-reachable trap
+## The `tls` phase trap, and where *carry the stage in the type* stops working
+
+> **The general question lives in *A closed set spelled as a string or an integer gives up a check
+> the language already makes*, above, and the six instances found on 2026-09-05 are in its table.**
+> This entry keeps only what is specific: the incident, and the boundary it revealed.
 
 Four files today spell a closed set as an open type. Listed together because the sequence is the
 argument — each one's failure is worse than the last, and the fourth is not hypothetical:
@@ -10720,3 +10767,45 @@ Two protocols in two days makes it a property of wire formats rather than an acc
 is a caution against this directory's own habit: *absence is a type* has been the answer to a dozen
 sentinels here, and these are the two places where the absence already has a meaning and the type
 must carry that meaning rather than the absence.
+
+### And the same sweep turned on this file, which came out clean
+
+The stale-claim sweep that found five wrong statements in shipped comments was run against
+`QUESTIONS.md` itself — *"wac has no X"*, *"the language has no X"*, *"there is no way to X"*, every
+occurrence checked against `spec/`.
+
+**Nothing found stale.** The hits are of two kinds:
+
+- **Quotations**, correctly attributed — every *"wac has no generics"*, *"wac has no closures"* and
+  *"wac has no top-level constants"* in this file is inside the 2026-09-05 entry that exists to record
+  those comments as wrong.
+- **Assertions**, eight occurrences over six claims.
+
+All eight checked against `spec/`, and all eight hold:
+
+| claim | where the spec says so |
+|---|---|
+| no re-export | `imports.md` *No implicit re-export*, `[§wac-no-reexport-f7kn4wq]` — importing from a file that merely imports it is a **compile error**, and there is no `export … from` production |
+| no traits, no constraints | `generics.md:207` — *"There is no `T: Default` and there are no traits."* |
+| no visibility inside a module | `export` is the only control; the five `private` mentions in `spec/` are file-private **functions**, and none is about a field |
+| no tuples | zero mentions in `spec/` |
+| no operator overloading | zero mentions in `spec/` |
+| no top-level variables | the grammar's top level is `func_decl`, `const_decl`, `struct_decl`, `enum_decl` — `var_decl` is a statement |
+
+The first is the one that mattered: it is not merely absent but **specified** absent.
+
+That last one matters because `@/packages/fmt/src/fmt.wac` exists solely to demonstrate the gap, and
+a barrel file whose premise had quietly expired would have been the most embarrassing thing in the
+directory.
+
+**Five for five wrong in code comments, nought for eight here.** The asymmetry is worth a sentence,
+because it is not that one set of authors is more careful. A language claim in `QUESTIONS.md` is
+*what the entry is about*, so it gets checked when written and re-read whenever the entry is. A
+language claim in a code comment is incidental to what its file does — it explains a decision once
+and is never the thing anyone came to read. **The rot is not in the claims, it is in whether anything
+brings a reader back to them.**
+
+*A tidier version of that was checked and is false.* The draft said the two survivors wrap across
+lines while the corrected seven do not — which would have made line-wrapping the whole story.
+`packages/sh/src/exec.wac` wraps mid-phrase **and** was corrected, so the correlation is not there.
+Wrapping explains why a grep misses them; it does not explain why a person did.
