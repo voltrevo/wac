@@ -1,0 +1,168 @@
+// A position in a byte slice — the type four packages wrote and `core` did not have.
+//
+// `../QUESTIONS.md`'s sweep of exported type names found `Reader` in five packages. One is a line
+// reader; the other four are this, with four names for the same five operations:
+//
+//     tls/src/wire.wac      buf, pos, end          u8 u16 u24 u32 take(n) slice(n) expectEnd
+//     ssh/src/wire.wac      src, pos, end, ok      byte bool u32 str need(n)
+//     fs/src/wire.wac       data, at, end, bad, why  byte u32 i64 string bytes(n) wrong(why)
+//     zstd/src/frame.wac    src, pos               byte num(n) num64(n) skip(n) left
+//
+// This file is written to find out **which parts of that are shareable**, and the answer is not the
+// obvious one. The operations are shareable and were never the problem. What the four disagree
+// about is what a read past the end does — two trap, two latch a flag and answer `0` — and that
+// disagreement is the file.
+
+import { Result } from "./result.wac";
+import { Bytes } from "./slice.wac";
+
+/**
+ * A read that could not be served.
+ *
+ * `at` and `wanted` rather than a message, because the caller knows what it was reading and this
+ * does not — the same split `@/packages/json/src/parse.wac`'s `ParseError` makes and the opposite
+ * of what `fs/src/wire.wac`'s `wrong(string why)` does. See §3 for why `fs` is right for `fs`.
+ */
+export struct Overrun { i32 at; i32 wanted; i32 left; }
+
+/**
+ * A byte slice and a position in it.
+ *
+ * **Two fields, not four.** `tls`, `ssh` and `fs` all carry an `end` beside the array, and all three
+ * carry it because they hold a `u8[]`. A `Bytes` is already a bound, so `fs`'s *stop short of the
+ * checksum* — the one of the three that is a domain fact rather than plumbing, and which its own
+ * comment records as a bug it had — is `Cursor.of(image.slice(0, image.len() - 4))` and needs no
+ * field at all.
+ */
+export struct Cursor {
+  Bytes src;
+  i32 at;
+
+  Cursor of(Bytes src) { return Cursor(src, 0); }
+
+  i32 left(const this) { return this.src.len() - this.at; }
+  bool empty(const this) { return this.at >= this.src.len(); }
+
+  /** One byte. */
+  Result<u8, Overrun> u8(this) {
+    if (this.left() < 1) { return Err(Overrun(this.at, 1, this.left())); }
+    u8 v = this.src.get(this.at);
+    this.at++;
+    return Ok(v);
+  }
+
+  /**
+   * `n` bytes, big-endian, as an `i32`.
+   *
+   * One method rather than `u16`/`u24`/`u32`, which `tls` writes as three and `zstd` writes as
+   * `num(n)`. **The width is a parameter and nothing bounds it** — see §3.
+   */
+  Result<i32, Overrun> be(this, i32 n) { … }
+
+  /** The same, little-endian. `zstd` is little-endian everywhere and `tls` is big-endian everywhere. */
+  Result<i32, Overrun> le(this, i32 n) { … }
+
+  /** `n` bytes as a view, not a copy. */
+  Result<Bytes, Overrun> take(this, i32 n) {
+    if (n < 0 || this.left() < n) { return Err(Overrun(this.at, n, this.left())); }
+    Bytes out = this.src.slice(this.at, this.at + n);
+    this.at += n;
+    return Ok(out);
+  }
+
+  /**
+   * A cursor over the next `n` bytes, and advance past them — `tls`'s `slice(n)`, `sub8`, `sub16`.
+   *
+   * The one operation of the four that is not a read, and the one that makes a length-prefixed
+   * format bearable: a nested field is parsed by a cursor that **cannot** run past its prefix, so
+   * the enclosing bound is enforced by construction rather than by every read inside remembering it.
+   */
+  Result<Cursor, Overrun> sub(this, i32 n) { … }
+
+  Result<void, Overrun> skip(this, i32 n) { … }
+
+  /** Nothing left — `tls`'s `expectEnd`, which traps there and answers here. */
+  Result<void, Overrun> atEnd(const this) { … }
+}
+
+// ## 1. What `try` buys, which is the whole reason this type can exist
+//
+// Every read answers a `Result`, and **all four shipped authors rejected that before it was
+// offered**: two by trapping and two by latching a flag and returning `0`. Neither is carelessness.
+// A `match` per byte is unwritable, and a sticky flag is what a `Result` degrades to when you
+// cannot afford one per read.
+//
+//     tls     i32 v = r.u16();                          // traps on a short record
+//     here    i32 v = try c.be(2);
+//
+// One token against one token, and the second cannot be forgotten. That is `try`'s strongest case
+// in this directory and it is stronger than the ones `../README.md` lists, because those are
+// *places `try` reads better* and this is **a type in `core` that does not exist without it**.
+//
+// ## 2. And the failure model is still not shareable, which is the finding
+//
+// The type above serves `tls`, `ssh` and `zstd`. It does not serve `fs`, and the reason is not the
+// mechanism:
+//
+//     fs/src/wire.wac:92   i32 wrong(this, string why) { this.bad = true; … return -1; }
+//
+// `fs` records **which field** was wrong, not where the bytes ran out. Its faults are about a
+// document's structure and `Overrun` is about a buffer, so `fs` keeps a wrapper whatever `core`
+// provides — and the honest count is *three of four*, not four.
+//
+// The two that trap are the sharper case. `tls/src/wire.wac` argues it:
+//
+// > almost every parsing bug in a TLS implementation is a length prefix trusted without checking it
+// > against the bytes actually present, so the reader here bounds-checks every read against the
+// > enclosing slice and traps rather than returning a short value.
+//
+// A trap is the right answer *there* because a length prefix is the program's own invariant. And
+// the same package takes the opposite line one file away — `x509.wac`: *"a malformed certificate
+// produces a `Cert` full of harmless defaults rather than a trap"*, because *"trapping instead would
+// conflate malformed with cannot check this"*. One package, two policies on *bytes a stranger sent*,
+// both argued, and the line between them is **whose invariant it is**.
+//
+// So a shared cursor cannot pick. What it can do is answer a `Result` and let a caller who wants the
+// trap write `(try? c.u8()) ` — except there is no such spelling, which is §3.
+//
+// ## 3. What could not be written
+//
+// **A caller cannot ask for the trapping contract.** `tls` and `zstd` want reads that trap, and the
+// only way to get one from a `Result` is `orTrap("…")` at every call site — one string per read,
+// where the shipped version has none. `Cursor` cannot be parameterised by it either: the difference
+// is a *behaviour*, and the only behaviours this language can pass are `fn<…>` values, which is a
+// call per byte. So the type that exists here is the non-trapping one and the two packages that
+// chose trapping are served worst by the thing written to serve them.
+//
+// **`Overrun` propagates into every signature above the parse.** A `try` in a function whose fault
+// union does not list `Overrun` is a type error, so a TLS handshake parser's `RecordFault` gains a
+// member from `core` at every level — and `@/packages/http`'s three-layer `CallFault` already shows
+// what that composition looks like. This is the flattening question with a new wrinkle: the member
+// comes from `core` rather than from a peer, so **every fault union in the system would name it**,
+// and nothing has argued whether a type that universal should be a union member or something else.
+//
+// **`be(n)` takes an `i32` in `1 .. 4` and nothing says so.** Same shape as
+// `@/packages/codec/src/rfc4648.wac`'s note on `Alphabet.digit(v)` — *"takes an `i32` in
+// `0 .. 2^bits` and nothing says so"* — and the second time a `core`-adjacent method has a
+// parameter whose legal range is stated in prose. `be(9)` is a silent wrong answer; `be(0)`
+// is a zero.
+//
+// **The result of `be(2)` is an `i32` and nothing says it is sixteen bits.** `tls`'s `u16` says it
+// in the name and cannot be parameterised; `be(n)` is parameterised and cannot say it. That is the
+// *fixed-length byte view* ask at scalar size, and it is the third shape after `Slice<u8, 32>` and
+// `packed struct` — a width the compiler could know and the type system cannot hold.
+//
+// **`peek` and `read` differ only in the mutation and neither can be derived from the other.**
+// `left()` is `const this` and `u8()` is `this`; a caller that wants to look without advancing has
+// to write a second method with the same body and one line removed. `const` marks the difference
+// and does nothing about the duplication.
+//
+// **A `take` hands out a view into a buffer the caller may still own.** `./slice.wac` states the
+// rule — *"a view of a private buffer is safe when the buffer is append-only, and needs a release
+// point when it is not"* — and a cursor is exactly the case where the buffer is somebody else's.
+// Nothing here can say *this view does not outlive the cursor*.
+//
+// **And nothing counts the cursors that were not called `Reader`.** The four above were found by a
+// name collision. A cursor called `Parser`, `Scan`, or nothing at all is invisible to that sweep,
+// and `@/packages/rlp/src/decode.wac` declares one **in this directory** — written after `Bytes`
+// existed, by an author who had argued for it.

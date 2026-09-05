@@ -8587,6 +8587,39 @@ that row means something in `tls` that is a latch without being a flag, or it is
 rather than resolved, because the row's *conclusion* — that the objection is to `Result` without
 `try` — does not depend on the second example.
 
+### Then it was written, and building it moved the answer
+
+`../core/cursor.wac`. Two fields rather than four — `tls`, `ssh` and `fs` all carry an `end` beside
+the array and all three carry it **because they hold a `u8[]`**; a `Bytes` is already a bound, so
+`fs`'s *stop short of the checksum*, the one of the three that is a domain fact, is
+`Cursor.of(image.slice(0, image.len() - 4))` and needs no field.
+
+**`try` is what makes the type possible, and this is its strongest case here.** `i32 v = try
+c.be(2);` against `tls`'s `i32 v = r.u16();` — one token either way, and the second cannot be
+forgotten. Every entry in `../README.md`'s `try` row is a place `try` *reads better*; this is a type
+in `core` that **does not exist without it**, because a `match` per byte is unwritable and a sticky
+flag is what a `Result` degrades to when you cannot afford one per read. Which is exactly what two
+of the four wrote.
+
+**And the count is three of four, not four.** `fs`'s `wrong(string why)` records *which field* was
+wrong, not where the bytes ran out — its faults are about a document's structure and `Overrun` is
+about a buffer, so `fs` keeps a wrapper whatever `core` provides.
+
+Three things the file could not write, all new:
+
+- **A caller cannot ask for the trapping contract.** `tls` and `zstd` want reads that trap, and from
+  a `Result` the only route is `orTrap("…")` per call site — one string per read where the shipped
+  version has none. `Cursor` cannot be parameterised by it either: the difference is a *behaviour*,
+  and the only behaviours this language passes are `fn<…>` values, which is a call per byte. **The
+  two packages that chose trapping are served worst by the type written to serve them.**
+- **`Overrun` propagates into every fault union above the parse**, and it comes from `core` rather
+  than from a peer — so *every* fault union in the system would name it. The flattening question has
+  not considered a member that universal.
+- **`be(n)` is parameterised by a width and its result cannot say what the width was.** `tls`'s
+  `u16` says it in the name and cannot be parameterised; `be(n)` is parameterised and cannot say it.
+  Third shape of the *fixed-length* ask, after `Slice<u8, 32>` and `packed struct`, and the first at
+  scalar size.
+
 ### What could not be written
 
 **Nothing counts a hand-written cursor.** The four were found by a *name* collision, which only
