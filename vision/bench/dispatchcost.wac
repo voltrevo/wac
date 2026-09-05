@@ -86,6 +86,28 @@ i32 runWide(Ins11[] code, i32 len, i32 rounds) {
   return s;
 }
 
+/**
+ * One `i32` per instruction — tag in bits 31..28, `a` in 27..14, `b` in 13..0.
+ *
+ * **This is `@/packages/zstd`'s shape and not the shipped regex's**, and the difference matters:
+ * `flat` above is *three* checked loads per instruction and this is **one** plus two shifts. The
+ * inline-records entry in `../QUESTIONS.md` argues from the packed form, so the `flat` arm does not
+ * speak to it and this one does.
+ */
+i32 runPacked(i32[] code, i32 len, i32 rounds) {
+  i32 s = 0;
+  for (i32 r = 0; r < rounds; r++) {
+    for (i32 pc = 0; pc < len; pc++) {
+      i32 w = code[pc];
+      i32 t = w >> 28;
+      if (t == 0) { s = s + ((w >> 14) & 0x3FFF); }
+      else if (t == 1) { s = s + (w & 0x3FFF); }
+      else { s = s + 1; }
+    }
+  }
+  return s;
+}
+
 i64 best(i64 a, i64 b) { return a < b ? a : b; }
 
 string pad(string s, i32 w) {
@@ -114,7 +136,7 @@ export i32 main(Core core, Cli cli) {
   i32[] sizes = i32[](16, 256, 4096);
   i64 sink = 0;
 
-  core.log("  prog     steps     flat   narrow     wide    again");
+  core.log("  prog     steps     flat   packed   narrow     wide    again");
 
   for (i32 si = 0; si < sizes.len(); si++) {
     i32 len = sizes[si];
@@ -123,16 +145,19 @@ export i32 main(Core core, Cli cli) {
     i32 reps = (1 << 26) / len;
 
     i32[] flat = i32[len * 3]();
+    i32[] packed = i32[len]();
     Ins3[] narrow = Ins3[len](fill: Ins3(0, 0, 0));
     Ins11[] wide = Ins11[len](fill: Ins11(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     for (i32 i = 0; i < len; i++) {
       i32 t = i % 3;
       flat[i * 3] = t; flat[i * 3 + 1] = i; flat[i * 3 + 2] = i + 1;
+      packed[i] = (t << 28) | ((i & 0x3FFF) << 14) | ((i + 1) & 0x3FFF);
       narrow[i] = Ins3(t, i, i + 1);
       wide[i] = Ins11(t, i, i + 1, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     i64 tFlat = 0x7FFFFFFFFFFFFFFF;
+    i64 tPacked = 0x7FFFFFFFFFFFFFFF;
     i64 tNarrow = 0x7FFFFFFFFFFFFFFF;
     i64 tWide = 0x7FFFFFFFFFFFFFFF;
     i64 tAgain = 0x7FFFFFFFFFFFFFFF;
@@ -141,6 +166,8 @@ export i32 main(Core core, Cli cli) {
       i64 a0 = core.monotonicNanos().wait();
       sink = sink + (runFlat(flat, len, reps) as i64);
       i64 a1 = core.monotonicNanos().wait();
+      sink = sink + (runPacked(packed, len, reps) as i64);
+      i64 a1b = core.monotonicNanos().wait();
       sink = sink + (runNarrow(narrow, len, reps) as i64);
       i64 a2 = core.monotonicNanos().wait();
       sink = sink + (runWide(wide, len, reps) as i64);
@@ -149,13 +176,14 @@ export i32 main(Core core, Cli cli) {
       i64 a4 = core.monotonicNanos().wait();
 
       tFlat = best(tFlat, (a1 - a0) / 1000000);
-      tNarrow = best(tNarrow, (a2 - a1) / 1000000);
+      tPacked = best(tPacked, (a1b - a1) / 1000000);
+      tNarrow = best(tNarrow, (a2 - a1b) / 1000000);
       tWide = best(tWide, (a3 - a2) / 1000000);
       tAgain = best(tAgain, (a4 - a3) / 1000000);
     }
 
     core.log(pad(itoa(len as i64), 6) + pad(itoa((len * reps) as i64), 10)
-             + pad(itoa(tFlat), 9) + pad(itoa(tNarrow), 9)
+             + pad(itoa(tFlat), 9) + pad(itoa(tPacked), 9) + pad(itoa(tNarrow), 9)
              + pad(itoa(tWide), 9) + pad(itoa(tAgain), 9));
   }
 
@@ -218,13 +246,16 @@ export i32 main(Core core, Cli cli) {
 
 // ## What it answered, on the v8 host, 2026-09-05 — and it contradicts both files
 //
-//       prog     steps     flat   narrow     wide    again
-//         16  67108864       82       68       68       82
-//        256  67108864       78       69       69       78
-//       4096  67108864       77       68       68       76
+//       prog     steps     flat   packed   narrow     wide    again
+//         16  67108864       83       65       68       68       82
+//        256  67108864       78       65       69       69       78
+//       4096  67108864       77       65       72       69       78
 //
 // Milliseconds, best of two, 67.1M dispatch steps per arm. `again` is `flat` measured last and lands
 // within 1 ms of it every time, so the machine did not drift and the gap is real.
+//
+// **Three shapes, and they order cleanly: packed 65 < boxed 68 < flat 78.** One checked load and
+// two shifts beats one checked load and two field reads, which beats three checked loads.
 //
 // **The boxed forms are about 12% faster than the flat one.** 1.15 ns a step against 1.01 ns. That
 // is the opposite of what `@/packages/wacc/src/lex.wac` concluded and the opposite of the reason
@@ -240,6 +271,24 @@ export i32 main(Core core, Cli cli) {
 // 4096 instructions where `wide` is 180 KB against `flat`'s 48 KB. Only two fields are read, so the
 // other nine are never touched and the extra footprint does not reach the measurement. That kills the
 // *eleven slots against three* argument as a **read**-side cost; it says nothing about the memory.
+//
+// ## And `packed` wins, which is the ask `../QUESTIONS.md` files under *a record stored inline*
+//
+// `@/packages/zstd` packs three fields into an `i32` by hand and the entry that records it says
+// **"Here the type is slower"** — a `Vec<Entry>` would be one indirection per read in a loop that
+// exists to remove them. That is now measured and it is **right**: packed 65 against boxed 68.
+//
+// It is also **5%**, where the entry's phrasing implies more, and worth putting beside `zstd`'s own
+// number — *"thirteen loads per sequence cut to six, in over half of decode time"* — which is about
+// the loads the packing removes elsewhere and not about this. So the ask survives with its direction
+// confirmed and its magnitude smaller than it reads.
+//
+// And it settles what `Op[]` should have been, which is not `packed`: `Op` has ten payload fields
+// and `packed struct` is for the ones that fit a word. Among the shapes actually available at that
+// width, boxed is the fastest, which is what the regex file now does.
+//
+// > **Pack it if the payload fits a word; box it if it does not and each element is read more than
+// > about fifteen times; three lanes are never the right answer for reading.**
 //
 // ## And the build half, which is the other file's case
 //

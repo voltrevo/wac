@@ -4595,6 +4595,21 @@ cut to six, in *"over half of decode time"*. An array's elements are packed prim
 or references, and never inline structs. There is no third option at the runtime, so the packing is
 a workaround for **WasmGC** rather than for wac.
 
+*Measured 2026-09-05 and the claim holds — at 5%.* `../bench/dispatchcost.wac` reads the same element
+three ways over 67.1M steps: **packed 65 ms, boxed 68, three flat lanes 78.** So the packed form is
+the fastest of the three and *here the type is slower* is right, with a number the phrasing overstates
+— and `zstd`'s own *"over half of decode time"* is about the loads its packing removes elsewhere, not
+about this 5%.
+
+The same table settles what the ask does **not** cover. `@/packages/regex`'s `Op` has ten payload
+fields and `packed struct` is for the ones that fit a word; among the shapes available at that width
+the boxed array is the fastest, which is what that package does now.
+
+> **Pack it if the payload fits a word; box it if it does not and each element is read more than
+> about fifteen times; three lanes are never the right answer for reading.** The third clause is the
+> surprise — wasm bounds-checks every index, so `a[i*3]`, `a[i*3+1]`, `a[i*3+2]` pays three checks
+> where one record pays one.
+
 **And it is not `issues/lang/0074`**, which is the closest thing filed. That issue wants values with
 no identity *exploded into locals*, its evidence is ChaCha20 at 4.7x and `packages/bls` at −64% —
 both from moving array elements into registers — and its crux is stated as a lowering rule: *"the
@@ -9299,6 +9314,10 @@ because allocation is proportional to the fields and reading two of them is not.
     boxed costs, per element, at build     +2.39 ns (eleven fields)   +0.95 ns (three)
     boxed saves, per read                  -0.164 ns
     break-even                             ~15 reads                  ~6 reads
+
+*And a third arm, added after: **packed 65, boxed 68, flat 78**.* One checked load and two shifts
+beats one checked load and two field reads, which beats three checked loads — so the ordering is
+packed, boxed, lanes, and *a record stored inline in an array* above is confirmed at 5%.
 
 *Acted on the same hour.* `@/packages/regex/src/program.wac`'s five parallel class arrays are a
 `Vec<CharClass>` now — a class table is built once per compile and scanned on every `Class` step of
