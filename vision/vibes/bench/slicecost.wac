@@ -6,7 +6,7 @@
 // plain `struct View { u8[] b; i32 lo; i32 hi; }` is what `Slice<u8>` compiles to, so today's
 // compiler can answer the question the proposal raises.
 //
-//     wac run vision/bench/slicecost.wac
+//     wac run vision/vibes/bench/slicecost.wac
 //
 // Run by hand. Nothing schedules it, because `vision/` is documentation as far as the tooling is
 // concerned and a bench in a lane would make this directory code.

@@ -6,7 +6,7 @@
 // slot per payload field of every variant*, so a plain struct of that shape is what the enum
 // compiles to and today's compiler can price it.
 //
-//     wac run vision/bench/dispatchcost.wac
+//     wac run vision/vibes/bench/dispatchcost.wac
 //
 // Run by hand. Nothing schedules it, because `vision/` is documentation as far as the tooling is
 // concerned and a bench in a lane would make this directory code.

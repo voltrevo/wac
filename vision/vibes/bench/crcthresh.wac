@@ -1,6 +1,6 @@
 // What `crc32()` pays to build its table, per call, measured.
 //
-//     wac run vision/bench/crcthresh.wac
+//     wac run vision/vibes/bench/crcthresh.wac
 //
 // Run by hand, like the other two benches here.
 //
@@ -58,7 +58,7 @@
 // `issues/system/0355a` and `../QUESTIONS.md`.
 
 import { Core, Cli } from "std/platform.wac";
-import { crc32, crc32Bitwise, crcTable8, crc32Start, crc32Finish, crc32Update } from "../../packages/gzip/src/crc32.wac";
+import { crc32, crc32Bitwise, crcTable8, crc32Start, crc32Finish, crc32Update } from "../../../packages/gzip/src/crc32.wac";
 
 i64 best(i64 a, i64 b) { return a < b ? a : b; }
 string pad(string s, i32 w) { string o = s; while (o.len() < w) { o = " " + o; } return o; }

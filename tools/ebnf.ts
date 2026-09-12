@@ -32,7 +32,7 @@ export interface Rule {
    * exists, rather than a replacement of it.
    *
    * Only a patch file uses this, and it exists because a patch that copies a whole rule in order to
-   * add one branch goes stale the moment the original changes. `vision/GRAMMAR.ebnf` copied
+   * add one branch goes stale the moment the original changes. `vision/vibes/GRAMMAR.ebnf` copied
    * `primary_expr` to add `trap`, and two hours later the spec's `primary_expr` gained
    * `string_literal` and `jsx_expr` — so the vision grammar stopped parsing two of its own files,
    * for a reason that had nothing to do with vision.
@@ -45,7 +45,7 @@ export function ebnfSource(text: string): { text: string; firstLine: number }[] 
   const out: { text: string; firstLine: number }[] = [];
   const lines = text.split("\n");
   // A file with no fence in it *is* the block. `spec/spec/grammar.md` carries its grammar inside
-  // ```ebnf fences because it is prose with a grammar in it; `vision/GRAMMAR.ebnf` is a grammar, and
+  // ```ebnf fences because it is prose with a grammar in it; `vision/vibes/GRAMMAR.ebnf` is a grammar, and
   // asking for the fences in one returns nothing — which is how `tools/ebnfaudit.ts` came to report
   // *0 rules, 0 distinct* and a clean bill of health for a file with nine duplicate definitions in
   // it. Answering the whole text is what every caller meant.

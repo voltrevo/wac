@@ -8,13 +8,13 @@
 #
 # Two things it has to do to get a parse-stage answer:
 #
-#   - **Skip `vision/bench/`.** Those files are the one thing under `vision/` written in *today's*
+#   - **Skip `vision/vibes/bench/`.** Those files are the one thing under `vision/` written in *today's*
 #     language on purpose — they measure a proposal's cost with a struct standing in for the type
 #     it proposes — so a tool asking where today's parser refuses vision syntax has nothing to say
 #     about them, and the stale-spelling pass would be asking them to use spellings that do not
 #     exist.
 #   - **Strip the imports.** `vision/` imports modules the compiler does not carry — its own
-#     `vision/core/queue.wac` and the rest — and that fails during resolution, before parsing, so
+#     `vision/vibes/core/queue.wac` and the rest — and that fails during resolution, before parsing, so
 #     the file's real syntax is never reached. Blanking the import lines gets past it.
 #   - **Keep only parse-stage diagnostics.** Everything after the parser will complain about the
 #     types the stripped imports took away, and none of that is about grammar.
@@ -55,7 +55,7 @@ trap 'rm -rf "$work"' EXIT
 
 raw=${1:-}
 
-for f in $(find vision -name '*.wac' -not -path 'vision/bench/*' | sort); do
+for f in $(find vision -name '*.wac' -not -path 'vision/vibes/bench/*' | sort); do
   # Blank the imports rather than delete them, so reported line numbers still match the real file,
   # and take out the `…` so `{ … }` becomes an empty body the lexer accepts. Both have to go before
   # the parser is reached at all: an unresolved import aborts during resolution, and a lexical error
@@ -84,13 +84,13 @@ done
 
 # ── Constructs nobody has accounted for: gone, and where it went ─────────────────────────────────
 #
-# This pass desugared every construct `vision/GRAMMAR.md` lists into the nearest thing today's
+# This pass desugared every construct `vision/vibes/GRAMMAR.md` lists into the nearest thing today's
 # parser accepts and parsed again, so whatever was *still* refused was something nobody had written
 # down. It found three that way, all invisible before: `yield`, an enum variant with an unnamed
 # payload, and inheriting from a generic instantiation — the last used five times and load-bearing
 # for the whole ticket design.
 #
-# **`vision/GRAMMAR.ebnf` answers the same question directly**, and better. That file is the vision
+# **`vision/vibes/GRAMMAR.ebnf` answers the same question directly**, and better. That file is the vision
 # additions as productions, and `tools/specparse.ts` parses every file under `vision/` with it:
 #
 #     deno run --allow-read tools/specparse.ts vision
@@ -111,7 +111,7 @@ done
 #
 # A rewrite is only as honest as the thing it compares itself against, and four of them here were
 # written against the *oldest* file in their area: `server` against a header saying "wac has no
-# sockets", `stream` against a callback pair, `vision/core/ticket.wac` against a `wait` that has since
+# sockets", `stream` against a callback pair, `vision/vibes/core/ticket.wac` against a `wait` that has since
 # grown D7's trap, and `std` against a capability layer that had learned to carry the scheduler.
 # Each claimed something that had already landed.
 #
@@ -120,7 +120,7 @@ done
 echo
 echo "-- subjects that moved after the rewrite --"
 moved=0
-for vdir in vision/core vision/std vision/packages/*/; do
+for vdir in vision/vibes/core vision/vibes/std vision/vibes/packages/*/; do
   name=$(basename "$vdir")
   case "$name" in
     core) real="core" ;;
@@ -142,7 +142,7 @@ for vdir in vision/core vision/std vision/packages/*/; do
 done
 # `none` today is the expected answer and is not evidence the check works: every vision file was
 # edited more recently than its subject while this was being written. Verified against an older
-# revision instead — `vision/packages/json`'s first commit against `packages/wacc`'s latest fires.
+# revision instead — `vision/vibes/packages/json`'s first commit against `packages/wacc`'s latest fires.
 [ "$moved" = 0 ] && echo "  none (every vision file is newer than its subject)"
 
 echo
@@ -155,13 +155,13 @@ echo
 #
 # This is a list of spellings already known to be wrong, not a parser. It cannot find a *new* kind
 # of mistake, which is the honest limit of it — the general instrument for that is reading
-# `spec/spec/grammar.md`, and `vision/GRAMMAR.md` says so.
+# `spec/spec/grammar.md`, and `vision/vibes/GRAMMAR.md` says so.
 echo "-- spellings that parse and are still wrong --"
 stale=0
 
 # A hit inside backticks is a **quotation**, not a spelling in use.
 #
-# `vision/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])] write)`
+# `vision/vibes/packages/gzip` quotes the shipped `gunzipStream(fn[Read()] read, fn[bool(u8[])] write)`
 # three times, because quoting the code an argument is about is how every file in this directory is
 # grounded — and all three came back asking to be rewritten as `fn<…>`, which would falsify the
 # quotation. The three were the first hits this pass had ever produced, so its clean run had never

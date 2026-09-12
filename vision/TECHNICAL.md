@@ -8,45 +8,6 @@ Read together these are meant to be enough to implement the language from.
 Each is marked **done** or **not yet**, and that marker is the only thing here that refers to an
 implementation.
 
-**The marker is about the example, not about the heading**, and the two come apart often enough to
-say so. *"`pop` answers an absence rather than trapping"* is marked **not yet** and `core/vec.wac`'s
-`pop` has answered `Option<T>` — *"None if empty"* — all along; what does not compile is the entry's
-`v.pop() is null`, because the change is `Option<T>` to `T?`. Same for *"an enum with a default"*,
-where a catch-all arm compiles today as `else:`, and *"matching an enum"*, which is only *not yet*
-because its example writes arms without `case` and matches a payload by type.
-
-**All thirty checked now, and seven were this.** The other two: *"an `await` is a boundary because it
-is written"* is a property of the language today — there is no preemption and
-`std/platform.wac` says *"a park in `waitAny` runs nothing at all"* — and only its coroutine example
-is *not yet*. *"`Vec<T>.pop` is written once and is honest at every `T`"* is written once today,
-`Option<T> pop(this)` in `core/vec.wac`; what is *not yet* is the second half, since `T?` at
-`T = i32` boxes and at `T = Node?` gives `Node??`, which is the thing the entry is really about.
-
-Five were correctly marked and it is worth saying which, because they are the pattern to copy: *"an
-arm can leave"* (`continue` in a match **expression** is `expected an expression` today), *"a
-hyphenated attribute"* (`data-size="8"` is `unexpected token`), and *"`Sys.drain`"*, *"a continuation
-is a ticket and a call"*, *"calling a `Waiting` continuation … traps"* — all three of which name a
-**vision type** in the heading, so no reader takes them for a claim about wac. Naming the vision type
-is the whole difference — and it is what let the remaining twenty be triaged rather than measured one
-at a time. Seventeen of them name `never`, `coroutine`, `schedule`, `try`, `T??`, `Ticket.any`, a
-verbatim name or a `Continuation` in the heading itself, so no reader can take them for a claim about
-wac. Two more were read and are fine: *"an unawaited call hands its continuation to the current
-target"* is half-shipped and says so, since *the current target* is `schedule`'s and today there is
-one scheduler; *"`wait` answers `Err`"* names the vision answer where the shipped one traps.
-
-The last two make seven. *"A nested pause does not change the caller's type"* is true today —
-measured, an `async` calling an `async` compiles and the caller still answers a ticket — and only the
-coroutine example is new. *"A test names itself"* is the subtlest: a test names itself today as
-`export string test_the_thing()`, and what is *not yet* is naming itself with a **sentence**,
-`@"test: an empty read returns End"`. Same shape as `pop` — the capability is there and the
-expressiveness is what changes — and a reader scanning would conclude wac's tests cannot name
-themselves.
-
-So a reader scanning headings and markers is being told that wac cannot do things it does. That is
-this directory's most expensive habit — `packages/README.md` counts seven times a rewrite claimed a
-shipped feature was missing — and the markers are a machine for producing it. **Read the heading as
-the design point and the marker as *"this spelling does not compile yet"*.**
-
 See [README.md](README.md) for the three tiers and why nothing checks them.
 
 ---
@@ -141,7 +102,7 @@ Node three() { return <"caption">Name</"caption">; }
 
 ---
 
-## A test names itself with a sentence, not an identifier
+## A test names itself
 
 ```wac
 export void @"test: an empty read returns End"() {
@@ -186,24 +147,11 @@ error: a non-const reference cannot be taken from a const one
 
 `table` hands back the real `Vec`. Reading it is allowed and writing to it is not.
 
-**Done, except the message.** Both halves are current behaviour, measured: reading through a `const`
-accessor checks clean and writing through it is refused. `issues/lang/closed/0060` — *a value
-returned from a `const this` method stays const* — is what implemented it.
-
-The caret above is **not** what the compiler says. Today it is
-
-```
-   |                                                     ^
-   = help: take a copy, or declare the destination `const` too
-```
-
-and that help is wrong at this site — there is no destination — which is
-`issues/lang/open/0316a`, filed from this entry's own example. So the entry is a picture of the
-diagnostic it should have, and it was marked *Not yet* as though the rule were unimplemented.
+**Not yet.**
 
 ---
 
-## Matching an enum, with no `case` and a payload matched by type
+## Matching an enum
 
 ```wac
 async void show(Sys sys) {
@@ -254,7 +202,7 @@ An arm that leaves gives no value, and is not asked to agree with the others.
 
 ---
 
-## An enum with a `default` arm, spelled `default` rather than `else`
+## An enum with a default
 
 ```wac
 string advice(Fault f) {
@@ -543,11 +491,7 @@ error: `await` needs a ticket, and `5` is an `i32`
 JavaScript accepts any value here, which is what lets a forgotten `async` on the callee compile:
 `await maybePromise` is fine either way and the bug surfaces somewhere else.
 
-**Half done, and the half that is missing is this entry's example.** `await n` for an `i32 n` is
-already refused — `[§wac-await-pending-9km2xtr]`, code 212, *this cannot be awaited*. `await 5` is
-not: it checks clean and fails in the emitter with *a null in a `Pending<i32>` slot*. The refusal
-fires on a name and on nothing else, which is `issues/lang/open/0323a`, found by checking this
-entry.
+**Not yet.**
 
 ---
 
@@ -592,16 +536,7 @@ error: `total` returns `i32`, and `size(sys, "a.txt")` is a `Ticket<i32>`
 the two spellings are not interchangeable and dropping the `await` is not a shortcut. JavaScript
 adopts, which is why `Promise<Promise<T>>` cannot be built there.
 
-**Done** — and it is not a rule. `design/lang/0014` D4 says so outright: *"an earlier draft made this
-an error; the mistake it was aimed at […] is an ordinary return-type mismatch that needs no special
-rule."* The compiler already answers, word for word with the note:
-
-```
-error: expected i32, found Pending<FileResult>
-  = help: `await` it for the FileResult, or declare `async Pending<FileResult>` to hand the ticket on
-```
-
-This entry was written as though the refusal needed inventing. It needed nothing.
+**Not yet.**
 
 ---
 
@@ -621,9 +556,7 @@ arriving. A caller that only wants to know it was sent awaits once and keeps the
 drops it. Adoption would merge the two events into one and there would be no way to ask about the
 first.
 
-**Done.** `async Pending<FileResult> later(Cli cli) { return cli.readFile("x"); }` checks clean and
-its caller holds a `Pending<Pending<FileResult>>` — measured. `design/lang/0014` D4 decided it and
-records it as *"verified to compile and run today"*.
+**Not yet.**
 
 ---
 
@@ -678,7 +611,7 @@ async void tick() {
 
 ---
 
-## A nested pause does not change the caller's type — shown with a coroutine
+## A nested pause does not change the caller's type
 
 ```wac
 void example() {
@@ -730,7 +663,7 @@ async gen<i32> void counter(Ticket<i32> t) {
 
 ---
 
-## An `await` is a boundary because it is written — shown with a coroutine
+## An `await` is a boundary because it is written
 
 ```wac
 void example() {
@@ -890,17 +823,11 @@ void example() {
 `as` is what types the literal. Widening a typed value wraps it, so a `Node?` reaching a `Node??`
 arrives present whatever it holds, and only a bare `null` means the outermost absence.
 
-**Mostly done, and the exception is the interesting line.** `Node?? a = null`, widening a `Node` two
-levels, and `c!!` all check *and emit* today — measured, so nesting is not the new part. `null as
-Node?` checks and then fails to emit with *cast to an unsupported type*, at one level of nullability
-as readily as two. That is `issues/lang/open/0324a`, found from this entry: the one construct that
-reaches the middle state is the one that cannot be built.
-
 **Not yet.**
 
 ---
 
-## `pop` answers an absence rather than trapping — spelled `T?`
+## `pop` answers an absence rather than trapping
 
 ```wac
 void example() {
@@ -917,7 +844,7 @@ void example() {
 
 ---
 
-## `Vec<T>.pop` is written once — and with `T?` must be honest at every `T`
+## `Vec<T>.pop` is written once and is honest at every `T`
 
 ```wac
 struct Vec<T> {
@@ -947,294 +874,3 @@ apart again.
 
 **Not yet.**
 
-
-## `union<A, B>` lowers to an enum of one-field variants — **done**, in the sense that the target runs
-
-The marker needs its usual care: the *source* form does not parse today, and the **target** below is
-today's wac, checked and run on 2026-09-04 through `bootstrap/ts/ask_wacc.ts`. That is what makes
-this entry worth having — `union` has looked like a type-system feature all week and the measurement
-says it is a declaration form and one coercion.
-
-**What is written:**
-
-```wac
-export struct Truncated { i32 at; }
-export struct LeadingZero { i32 at; }
-export union<Truncated, LeadingZero> RlpFault;
-
-Result<Item, RlpFault> decode(Bytes b) {
-  …
-  return Err(LeadingZero(at));          // an `Err` of a *member*, not of the union
-}
-```
-
-**What it becomes:**
-
-```wac
-enum RlpFault { AsTruncated(Truncated v), AsLeadingZero(LeadingZero v) }
-
-Res<Item, RlpFault> decode(Bytes b) {
-  …
-  return Res.Err(RlpFault.AsLeadingZero(LeadingZero(at)));
-}
-```
-
-`probe() = 207` for the two-member case, `1004` for the same inside a generic `Result<T, E>`; zero
-parse errors and zero type errors on both.
-
-### Three rules, and only the second is new
-
-1. **The declaration** generates an enum with one unary variant per member. The variant names are
-   compiler-internal and never written — `AsLeadingZero` above is a name invented for the example,
-   and the fact that no natural one exists is the reason the source form does not name them either.
-2. **Injection is implicit.** A value of a member type, in a slot whose type is the union, is wrapped.
-   `Err(LeadingZero(at))` against `E = RlpFault` becomes `Err(RlpFault.AsLeadingZero(…))`. **This is
-   the whole of what the language adds** — everything else here compiles today — and it is the same
-   coercion `T` to `T?` already has, at a slot rather than at a nullable.
-3. **`Err(is Corrupt):` is `case AsCorrupt(c):`.** Matching a member by type is matching its variant,
-   and the binding that `../QUESTIONS.md` records as impossible — *"a payload matched by type does
-   not bind"* — is not impossible in the target: `case AsCorrupt(c)` binds. So the missing binding is
-   a property of the **source syntax** rather than of the lowering, which narrows that question to a
-   spelling.
-
-### Nesting works, and it settles the flattening question
-
-`union<SourceFailed, Corrupt>` where `Corrupt` is itself a union becomes an enum whose variant
-carries an enum. Measured:
-
-```wac
-enum Corrupt { AsBadMagic(BadMagic v), AsChecksum(ChecksumMismatch v) }
-enum Fault   { AsSourceFailed(SourceFailed v), AsCorrupt(Corrupt v) }
-
-match (f) {
-  case AsSourceFailed(s): …
-  case AsCorrupt(c):      …      // all of Corrupt's members, in one arm
-}
-```
-
-`probe() = 20`, constructed as `Fault.AsCorrupt(Corrupt.AsBadMagic(BadMagic(3)))`.
-
-That is exactly what `@/packages/box/src/gunzip.wac` wants — one sentence for the whole `Corrupt`
-group — and it is the argument against flattening made concrete: under a flattening lowering
-`union<A, union<B, C>>` is `union<A, B, C>`, `AsCorrupt` does not exist, and the applet is back to
-eight arms.
-
-**And it is not the whole argument, which is worth correcting here rather than elsewhere.** This
-entry said nesting *"is the one that preserves the grouping, and it is also the simpler one to
-implement"*, and grouping is only one of the two things an error union is for. The other is
-stacking, and `@/packages/box/src/upper.wac` — the first program in this directory to compose two
-stream transforms — is the case that wants the opposite.
-
-`upperCase<E>` takes a stream failing with `E` and answers one failing with `union<E, NotText>`. Two
-stages give `union<union<NotGranted, NotText>, NotText>`: **`NotText` at two depths**, two variants
-of two enums, and `Err(is NotText):` matching the outer one only. A caller asking *was the input not
-text* is right when the second stage found it and wrong when the first did.
-
-Flattening gives `union<NotGranted, NotText>` — one `NotText`, the question answerable, the depth
-gone — and loses `is Corrupt`.
-
-So the two lowerings each have a consumer and the consumers want opposite things. Neither is a
-corner case: grouping a family of faults and stacking a pipeline are what error unions are for. The
-lowering above is still what a `union` *compiles to*; which of the two the **declaration** means is
-open, and is `../QUESTIONS.md`'s.
-
-### What the lowering does not answer
-
-**Two unions sharing a member** are two enums with two wrappers, so an `A` injects into either by
-slot and a `union<A,B>` is not assignable to a `union<A,B,C>`. Whether it should be is a subtyping
-question the lowering does not force; nothing in this directory needs it.
-
-**A member appearing twice** — `union<A, A>` — is two variants of one payload type, which the
-lowering builds and no rule refuses. Worth refusing at the declaration.
-
-**And the cost of not having it, from the same programs.** `Res.Err(RlpFault.AsLeadingZero(
-LeadingZero(at)))` against `Err(LeadingZero(at))`: three constructor calls and one invented name,
-against one call. Eleven files here declare a union and fifteen use one in a type, so the injection
-rule is the difference between the error types this exercise has been arguing for and a spelling
-nobody would write twice.
-
-### `union<never, E>` has to reduce to `E`, and that is the same operation as a dead arm
-
-Found 2026-09-04, from `@/packages/gzip`. A stream over a value the program already holds cannot
-fail, and `AsyncGenerator<Y, R>`'s `R` is not optional — so it answers `Result<void, never>`, and a
-consumer declared over `union<E, Fault>` sees `union<never, Fault>` at that call site. If that does
-not reduce, every buffer-in caller in the tree answers a union with a member nobody can construct,
-and every `match` over one carries an arm that cannot run.
-
-Under the lowering above — a union is an enum whose variants each hold one member — reducing the
-union **is** deleting the variant, which is the operation `core/coroutine.wac` already asserts for
-`Step<never, Y, R>`. So this is not a second feature. It is the same one, needed by the part of the
-design that has the most callers, and the entry that describes it says it is *"asserted in one doc
-comment"*. `QUESTIONS.md`.
-
-## `gen<T>` and `yield` lower to a struct with a resume tag — **the target runs; the transform is wacc's own**
-
-Same treatment as `union` above, and the same caveat: the source form does not parse today, the
-**target** does. Both programs below were checked and run on 2026-09-04.
-
-**A `Vec`'s `items()`**, which is 18 of this directory's 42 `for … in` receivers:
-
-```wac
-enum Step<T> { Yielded(T value), Done }
-struct Items<T> { Vec2<T> of; i32 at; }
-
-Step<i32> next(Items<i32> it) {
-  if (it.at >= it.of.len) { return Step.Done; }
-  i32 v = it.of.data[it.at];
-  it.at = it.at + 1;
-  return Step.Yielded(v);
-}
-```
-
-and the loop that consumes it — which is what `for (i32 x in v.items()) { … }` becomes:
-
-```wac
-Items<i32> it = itemsOf(v);
-while (true) {
-  match (next(it)) { case Done: { break; } case Yielded(x): { sum = sum + x; } }
-}
-```
-
-`probe() = 15`. Zero parse errors, zero type errors.
-
-**A yield inside a nested loop**, which is the case that decides whether this is a real lowering or
-a special case for cursors. Both counters and a resume tag go into the state:
-
-```wac
-struct Pairs { i32 n; i32 i; i32 j; i32 resume; }
-```
-
-`probe() = 22` — `0 + 1 + 10 + 11` over a 2×2 sweep, resuming into the inner loop each time.
-
-### Why `Step<T>` and not `T?`
-
-`T? next()` cannot distinguish *done* from *a null element*, and `Vec<Node?>` is not hypothetical —
-`core/vec.wac`'s `pop` already documents the same problem and answers `T??`, where *"the outer
-absence is the vec was empty and the inner is the element was null"*. A generator is stepped in a
-loop, so the outer absence is the loop's exit condition and getting it wrong is an infinite loop
-rather than a wrong value. `Step<T>` is two arms and no nesting.
-
-### The transform is one wacc already performs
-
-**And the file that performs it said otherwise until today.** `packages/wacc/src/asyncplan.wac` is
-the plan for lowering `async` bodies, and its header said an `await` inside a loop *"needs the loop's
-back edge as a state, which is the next increment rather than this one"*. Three other places in the
-same file say the increment landed — the walk descends into `While`, `For` and `DoWhile`; `hoistTy`
-records that locals *"started being hoisted out of loop bodies"*; `suspendAt` records that a
-top-level index stopped meaning anything *"with loops"* — and `test/wac/asyncplan_test.wac` pins an
-`await` in a `for` body at `ok suspends=1 hoist=3`, *"total, i and a hoisted"*. The header is
-corrected.
-
-Which matters here rather than only there: **a generator needs exactly what that plan computes** —
-where the suspension points are, which locals outlive one, and their types. The differences are that
-a generator is driven by its caller rather than by a scheduler, and that it passes a value out at
-each suspension. Neither needs new analysis.
-
-What still declines in that plan declines here too: an `await` — or a `yield` — in a loop's
-**condition, initialiser or update**, or nested inside a larger expression. `@/packages/rlp`'s
-`while (this.at < end) { items.push(try this.item()); }` is a suspension in a *body* and is fine;
-`while (try more())` would not be.
-
-### What this does not lower
-
-**`try await for`** is three constructs at once — a generator, an await, and a failure propagated as
-the loop's own return — and the target for it is a `while` over `Step<T>` inside an `async` body
-whose `Err` arm returns. Each part is above; nothing has written the combination out, and it is the
-loop head in eleven files here.
-
-## `try` and `try for` lower to a `match` with an early return — **the targets run**
-
-The last two entries lowered `union` and `gen`/`yield`. This is the third piece, and with it
-`try await for` — the loop head in eleven files here — has no part left unaccounted for.
-
-**`T x = try e;`**, in a function answering `Result<U, F>`:
-
-```wac
-i32 x = 0;
-match (step(a)) {
-  case Err(e): { return Res.Err(e); }
-  case Ok(v):  { x = v; }
-}
-```
-
-`probe() = 10` on the happy path and `probeBad() = -9` on the failing one — the `Err` propagated
-through two chained steps. Zero parse and zero type errors.
-
-**That program is correct and the lowering it shows is not general**, which is worth putting here
-rather than quietly fixing, because the reason is the antipattern this whole directory is about.
-
-`i32 x = 0;` invents a value. It is available at `i32` and not at a `T` with no cheap construction —
-and wac has no uninitialised declaration to fall back on: `Foo x;` is **two parse errors**, measured.
-So *declare, then assign in the arm* only works where the desugarer can make up an `x`, which is the
-same *invent a value you do not have* that `@/packages/rlp`'s four `Item.Bytes(u8[0]())` and
-`@/packages/abi`'s `Value[0](fill: …)` are findings about.
-
-**The general lowering puts the rest of the block inside the `Ok` arm:**
-
-```wac
-Res<i32, Fault> use(i32 a) {
-  match (step(a)) {
-    case Err(e): { return Res.Err(e); }
-    case Ok(x): {
-      // everything that followed `Big x = try step(a);` is now here
-      return Res.Ok(x.limbs.len());
-    }
-  }
-}
-```
-
-`probe() = 3` and `probeBad() = -9` at a `Big` that has no default. Nothing is invented.
-
-### And that is the cost, which is not the one the first version suggested
-
-Each declaration-form `try` nests the remainder of its block one level deeper.
-`@/packages/datetime`'s `parse` has **eight** of them — `i32 year = try c.digits(4);` and its
-siblings, one per field of the grammar — so its lowered form is eight `match`es deep before the
-first arithmetic.
-
-Which decides something about the *shape of the implementation* rather than about the language:
-**a source-to-source desugarer is the wrong target.** Its output for that function is unreadable, and
-unreadable output is not a minor cost for a tool whose purpose is to let people run the proposal —
-every diagnostic, every line number and every stack frame would point into it. The transform belongs
-in a compiler pass over an AST, where the nesting is a tree shape nobody reads.
-
-The declaration also has to be split from the binding, because a `match` arm is a block and cannot
-introduce a name into its enclosing scope — which is why `try` is not a token rewrite at all: it
-needs the statement it sits in **and everything after it**.
-
-**`try for (T x in src) { … }`** over a generator answering `Result<void, E>`:
-
-```wac
-while (true) {
-  match (nextOf(s)) {
-    case Yielded(x): { sum = sum + x; }
-    case Done(r): {
-      match (r) { case Err(e): { return Res2.Err(e); } case Ok(_): { } }
-      break;
-    }
-  }
-}
-```
-
-`probe() = 3` over a source yielding 1 and 2, `probeBad() = -5` when the same source ends with
-`Err`. Zero errors on both.
-
-### `try await for` is these three and nothing else
-
-| part | established by |
-|---|---|
-| the `while` over a two-arm `Step`, `Done(Err)` returning and `Done(Ok)` breaking | the program above |
-| `try`'s propagation | the program above it |
-| an `await` in the loop **body** | `packages/wacc/test/wac/asyncplan_test.wac` — `ok suspends=1 hoist=3` |
-
-Nothing in the combination is new. What the three-word head buys is that the reader does not write
-fourteen lines of it per loop, and what it costs an implementation is a tree — every one of the
-three needs the enclosing statement, and none is a token substitution.
-
-### The `Step` the loop matches has two arms and the type has three
-
-`core/coroutine.wac` declares `Step<W, Y, R>` with `Waiting`, `Yielded` and `Done`, and an
-`AsyncGenerator`'s `nextStep` answers `Ticket<Step<never, Y, R>>` — *"a slot typed `never` removes
-its arm"*. The target above is a two-arm enum, so the lowering of `Step<never, Y, R>` is *the enum
-with the `never` arm deleted*, which is a fourth transform and is the one place `never` earns its
-keep rather than being a type nobody can construct. Two files use `never`; both are that.

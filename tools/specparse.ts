@@ -11,7 +11,7 @@
 // probes reaches — and where it does not, the failure names a token and a rule.
 //
 // It also answers the other thing the operator asked for. Vision's additions become
-// `vision/GRAMMAR.ebnf`, a patch of productions, rather than a prose list of eight constructs — and
+// `vision/vibes/GRAMMAR.ebnf`, a patch of productions, rather than a prose list of eight constructs — and
 // the patched grammar parsing every file under `vision/` is what "vision has a parser" means here.
 //
 // ## Why Earley rather than recursive descent
@@ -674,7 +674,7 @@ function main(argv: string[]): number {
   // Editing it in place works and leaves the tree wrong if the run is killed, which on this machine
   // it might be.
   const given = flags.find((f) => f.startsWith("--delta="));
-  const delta = given ? given.slice("--delta=".length) : (wantsVision ? "vision/GRAMMAR.ebnf" : "");
+  const delta = given ? given.slice("--delta=".length) : (wantsVision ? "vision/vibes/GRAMMAR.ebnf" : "");
 
   const grammarText = Deno.readTextFileSync(GRAMMAR);
   const keywords = keywordsFromFence(grammarText);
@@ -701,7 +701,7 @@ function main(argv: string[]): number {
       //
       // Until 2026-09-05 the keyword set came only from the spec's fence and nothing could add to
       // it, so every word `vision/` introduces — `gen`, `try`, `defer`, `secret` and the rest —
-      // lexed as an `IDENT` whatever the delta said. `vision/QUESTIONS.md` recorded that as a
+      // lexed as an `IDENT` whatever the delta said. `vision/vibes/QUESTIONS.md` recorded that as a
       // decision (*"it decided contextual"*); it was not one, because this file could not express
       // the alternative. The `…` filter three hundred lines down is the same gap worked around
       // rather than closed.
@@ -768,7 +768,7 @@ function main(argv: string[]): number {
   //
   // Not a parse: it says a word is *there*, not that it is used as the construct. `auto` is an
   // ordinary `IDENT` and this cannot tell a variable named `auto` from the keyword, which is the
-  // contextual-keyword cost written down in `vision/QUESTIONS.md`. A tree would; a chart big enough
+  // contextual-keyword cost written down in `vision/vibes/QUESTIONS.md`. A tree would; a chart big enough
   // to reconstruct one is not affordable on this machine.
   if (flags.includes("--tokens")) {
     for (const f of files) {

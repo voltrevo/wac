@@ -1,6 +1,6 @@
 // What a constant spelled as a function call costs, if anything.
 //
-//     wac run vision/bench/constcall.wac
+//     wac run vision/vibes/bench/constcall.wac
 //
 // Run by hand, like `./dispatchcost.wac`, and for the same reason: `vision/` is documentation as
 // far as the tooling is concerned.

@@ -4,7 +4,7 @@
 // `vision/`. It measures today's language, because today's language already has nullable primitives
 // and already boxes them.
 //
-//     wac run vision/bench/nullablecost.wac
+//     wac run vision/vibes/bench/nullablecost.wac
 //
 // `../QUESTIONS.md` calls `indexOf` answering `i32?` *"the principle's largest concrete consequence
 // in this repository"* and sizes it at 734 call sites, 355 of which test the sentinel. What that

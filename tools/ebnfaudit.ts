@@ -132,7 +132,7 @@ function repsOf(t: Term, into: Term[]): void {
 function main(argv: string[]): number {
   // A path, because until 2026-09-04 this audited `spec/spec/grammar.md` and nothing else — it took
   // no argument and silently ignored one. So its very first check, *two rules with one name*, had
-  // never been pointed at `vision/GRAMMAR.ebnf`, which had nine of them: 47 entries under 38 names,
+  // never been pointed at `vision/vibes/GRAMMAR.ebnf`, which had nine of them: 47 entries under 38 names,
   // with the later definition winning and the earlier one dead text carrying the comment that
   // explained it. A check that exists, passes, and has never seen the artefact that needs it.
   const which = argv.find((a) => !a.startsWith("--")) ?? GRAMMAR;

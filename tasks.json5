@@ -34,7 +34,7 @@
   // The same audit over the vision delta, which it had never been pointed at — it took no argument
   // until 2026-09-04 and its *two rules with one name* check found nine the first time it ran.
   // Registered rather than remembered, for the reason `grammar:parse` not walking `bootstrap` gives.
-  "grammar:audit-vision": "deno run --allow-read tools/ebnfaudit.ts vision/GRAMMAR.ebnf",
+  "grammar:audit-vision": "deno run --allow-read tools/ebnfaudit.ts vision/vibes/GRAMMAR.ebnf",
   // `bootstrap` was not in this list and it is the only directory the spec grammar has ever had
   // something to say about: of 1,578 `.wac` files it refuses ten, seven of them `spec/cases`
   // written to be refused and three of them `bootstrap/drivers/`, on a module-level variable that
