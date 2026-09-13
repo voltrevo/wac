@@ -172,9 +172,8 @@ union<f64, string, bool> parseCell(string text) {
   if (text == "true")  { return true; }
   if (text == "false") { return false; }
 
-  f64? n = parseNum(text);
-  if (n is null) { return text; }
-  return n;
+  if (f64 n matches parseNum(text)) { return n; }
+  return text;
 }
 ```
 
@@ -190,5 +189,38 @@ string render(union<f64, string, bool> cell) {
 
 A member is returned as itself; there is nothing to construct. An arm names a type, and inside it the
 value is that type.
+
+**Not yet.**
+
+---
+
+## A value that might not be there, and what to use instead
+
+```wac
+i32 timeoutMs(Config? cfg) {
+  return cfg?.timeoutMs ?? 5000;
+}
+```
+
+`cfg?.timeoutMs` is an `i32?`: the field's value, or null if `cfg` is absent. `??` replaces the null
+with 5000, so the function returns an `i32`.
+
+**Not yet.**
+
+---
+
+## Reaching through more than one absence
+
+```wac
+struct Addr   { string city; }
+struct Person { Addr? home; }
+
+string? cityOf(Person? p) {
+  return p?.home?.city;
+}
+```
+
+The result is `string?`. Both absences — no person, no address — produce null, and `city` is read
+only when both are present.
 
 **Not yet.**

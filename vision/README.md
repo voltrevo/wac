@@ -60,6 +60,21 @@ that stays true afterwards. **A decisions entry is deleted once it reaches `spec
 spec is the test, since an implementation can have a bug, and a rule written twice is a rule that
 drifts. **A question is deleted once it is answered**, and the answer has to land somewhere first.
 
+## Let the code do the talking
+
+Prose is the fallback. Where an example can show the thing, write the example; where two readings are
+possible, add the case that separates them rather than a sentence ruling one out.
+
+Comments inside an example give outcomes, not explanations:
+
+```wac
+v.pop()!;        // 3
+p?.home;         // Addr?, not Addr??
+```
+
+An example pins exactly what it shows. A paragraph states more than has been decided, and the excess
+is the part that turns out to be wrong — so the pages stay short, and the language stays open.
+
 ## Nothing here is checked by anything
 
 No test reads these pages. Nothing here is a fixture, a list some guard walks, or a promise a suite

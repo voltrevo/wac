@@ -41,6 +41,34 @@ default: { … }        // there is no shape here at all
 Reusing `_` for both would be a pun on the payload wildcard rather than a generalisation of it, and
 the two mean different things in the same arm.
 
+## The ternary's type is decided by its branches
+
+`Ternary<Left, Right>` is the narrowest available type containing both, except `anyref`: the greater
+of the two nullability depths, over the nearest common ancestor of the non-nullable forms.
+
+* `Ternary<T??, T????>` → `T????`
+* `Ternary<Square, Circle>` → `Shape`
+* `Ternary<Square, Circle?>` → `Shape?`
+* `Ternary<S?, null>` → `S?` — `null` is depth one over no type
+
+`anyref` is excluded because it contains everything, so a rule allowed to reach it could never refuse
+a pair. Branches that meet nowhere else are an error.
+
+Today `spec/spec/control.md` has a `null` branch giving "the other branch's, made nullable", which
+appends rather than takes the greater, and the compiler answers unknown for the mixed cases.
+
+## A nullable subject is matched, not unwrapped first
+
+`match` takes a `T?`, and the arms name `null` alongside the variants. `default` covers it like any
+other unnamed case; every other arm sees a non-null subject.
+
+Requiring the unwrap puts one case outside the check. `match (s!)` traps unless a null test ran
+first, so the null case gets handled in a statement above the match and the variants inside it, and
+exhaustiveness then proves something about only part of the decision.
+
+Today `spec/spec/enums.md:484` requires the unwrap, with `[§enum-match-nullable]` pinning
+`match (s)` on a `Shape?` as a compile error.
+
 ## References are comparable but not hashable
 
 `is` on two references is `ref.eq` and costs nothing. Identity hashing is not free, and the language

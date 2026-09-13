@@ -237,6 +237,104 @@ error: this `default` is unreachable
 
 ---
 
+## A nullable subject takes a `null` arm
+
+```wac
+f64? area(Shape? s) {
+  return match (s) {
+    Circle(r):  3.14159 * r * r,
+    Square(sd): sd * sd,
+    null:       null,
+  };
+}
+```
+
+```wac
+f64? area(Shape? s) {
+  return match (s) {
+    Circle(r): 3.14159 * r * r,
+    default:   null,              // Square and null
+  };
+}
+```
+
+A nullable subject is not covered until the arms name `null` or carry a `default`. Every other arm
+sees a non-null subject.
+
+**Not yet.**
+
+---
+
+## `matches` takes a match arm's pattern
+
+```wac
+bool missing(Result<u8[], Fault> res) {
+  return Err(is NotFound) matches res;
+}
+
+bool configured(Result<Config, string> res) {
+  return Ok(cfg) matches res && cfg.timeoutMs > 0;
+}
+```
+
+The payload binds, `is` tests a variant inside it, and the result is an ordinary bool.
+
+**Not yet.**
+
+---
+
+## `default` is arm syntax, not a pattern
+
+```wac
+bool anyShape(Shape s) {
+  return default matches s;
+}
+```
+
+```
+error: unexpected token
+  --> shapes.wac:2:10
+   |
+ 2 |   return default matches s;
+   |          ^ expected expression
+```
+
+**Not yet.**
+
+---
+
+## A `matches` name is scoped to its statement
+
+```wac
+f64? radius(Shape? s) {
+  return Circle c matches s ? c.r : null;
+}
+
+i32 circles(Shape[] shapes, f64 min) {
+  i32 n = 0;
+  for (Shape s in shapes) {
+    if (Circle c matches s && c.r > min) { n += 1; }
+  }
+  return n;
+}
+```
+
+```wac
+void example(Shape? s) {
+  if (Circle c matches s) { c.r; }     // in scope
+  else { return; }
+  c.r;                                 // out of scope
+}
+```
+
+Within the statement the name is readable in the right operand of `&&`, the then-arm of `?:`, the
+block of an `if` or `while`, and the body and update of a `for`. It does not outlive the statement,
+whether or not the match plainly succeeded.
+
+**Not yet.**
+
+---
+
 ## An unawaited call hands its continuation to the current target
 
 ```wac
@@ -389,8 +487,7 @@ struct Sys {
   async void drain(this) {
     schedule this.pending.push;
 
-    while (this.pending.len() > 0) {
-      Continuation c = this.pending.pop()!;
+    while (Continuation c matches this.pending.pop()) {
       await c.t;
       c.call();
     }
@@ -871,6 +968,95 @@ Neither `return` mentions nullability and neither needs a second case. At `T = N
 `null` is the outer absence, and `this.data[i]` widens into a present outer whatever it holds. Under
 flattening the two would arrive as one value, and there is nothing the body could write to tell them
 apart again.
+
+**Not yet.**
+
+---
+
+## `?.` makes the member's type nullable only if it is not already
+
+```wac
+struct Addr   { string city; }
+struct Person { Addr here;  Addr? home;  Addr?? prev; }
+
+void example(Person? p) {
+  auto a = p?.here;      // Addr?
+  auto b = p?.home;      // Addr?     not Addr??
+  auto c = p?.prev;      // Addr??    not Addr???
+}
+```
+
+`?.` adds one absence, its own short circuit, and where the member is already nullable it merges into
+the member's. The result is the member's type, made nullable only if it was not. The `?` type
+constructor does not behave this way — `T??` is a distinct type — so a `T??` result comes only from a
+`T??` member.
+
+**Not yet.**
+
+---
+
+## `?.` and `??` need an operand that can be absent
+
+```wac
+void example(Person p, Person? q) {
+  p?.home;              // error: `p` cannot be absent
+  p.home ?? Addr();     // ok — `p.home` can
+  q?.home;              // ok
+}
+```
+
+A `?.` or `??` on a non-nullable operand has no case to handle: the short circuit and the default are
+both unreachable. Refusing it means a reader who finds one knows the operand can be absent.
+
+**Not yet.**
+
+---
+
+## `?.` stops at a `T??`
+
+```wac
+void example(Person? p) {
+  p?.prev?.city;              // error: `Addr?` has no member `city`
+  (p?.prev ?? null)?.city;    // string?
+}
+```
+
+Stripping one `?` from an `Addr??` leaves an `Addr?`, which is not a struct and has no members. A
+`T??` distinguishes two absences; collapsing them is what `?? null` does, and the chain requires it
+to be written.
+
+**Not yet.**
+
+---
+
+## `?? null` collapses a `T??`, and does nothing to a `T?`
+
+```wac
+void example(Person? p, Addr? one) {
+  Addr?? two = p?.prev;
+
+  two ?? null;      // Addr?  — absent and present-holding-null both arrive as null
+  one ?? null;      // Addr?  — a tautology: this is `one`
+}
+```
+
+The result type of `??` is the non-null form of the left operand joined with the type of the right.
+For `Addr??` that is `Addr?`, which accepts the bare `null`, so the result is `Addr?`.
+
+**Not yet.**
+
+---
+
+## `?.` is not an assignment target
+
+```wac
+void example(Person? p) {
+  p?.home = Addr();     // error: `?.` is not an assignment target
+}
+```
+
+A read has somewhere to put the absent case, because the result is nullable. A write has nowhere: the
+right side would be evaluated and dropped, and the statement would succeed having done nothing.
 
 **Not yet.**
 

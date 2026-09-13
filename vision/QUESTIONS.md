@@ -93,13 +93,6 @@ code is assumed throughout. Whether `std` should assume it is open. A sync `main
 own work holds a `Result` and has nowhere to put it, so it either matches on it to pick an exit code
 or discards it. `Result<i32> main` would answer that and is ugly; nothing else has been proposed.
 
-## Matching in a `while` or `for` condition
-
-`Sys.drain` writes `this.pending.pop()!` under a `len()` test, which is two operations and an unwrap
-where `while (Continuation c = this.pending.pop())` would be one of each. Whether that is a
-nullable-specific form, a `match` in a condition, or something in the `if let` family is open — as
-is whether it reaches `for`, and whether it binds an enum variant as well as a non-null.
-
 ## How should a `Vec` drop its reference to a popped element?
 
 `pop` decrements a length and leaves the reference in the slot, so the element stays reachable until
@@ -115,11 +108,4 @@ case it is in.
 
 The retention is bounded by the vec's high-water mark rather than growing, which sizes the problem
 without excusing it: one popped root can hold a whole graph.
-
-## Whether there is optional chaining
-
-`?` nests, so `x?.field` on a nullable field would answer `T??` where every language that has the
-operator answers `T?`. That is the one place flattening earns its keep, and wac has neither `?.` nor
-`??` today — so the question is whether adding one means giving it an explicit flatten, or not
-adding it.
 
