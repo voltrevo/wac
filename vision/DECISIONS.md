@@ -69,6 +69,14 @@ exhaustiveness then proves something about only part of the decision.
 Today `spec/spec/enums.md:484` requires the unwrap, with `[§enum-match-nullable]` pinning
 `match (s)` on a `Shape?` as a compile error.
 
+## A packed type is an ordinary type
+
+`u8 i8 u16 i16` may be a local, a parameter, a field and a return type, and indexing a `u8[]` answers
+a `u8`. The width is a fact about storage, not about the type.
+
+Three spec rules assume otherwise and go with it: `[§wac-packed-nullable-2knq6wv]`,
+`[§wac-cast-packed-v7nq4mj]`, and an element reading as `i32` and writing by truncation.
+
 ## References are comparable but not hashable
 
 `is` on two references is `ref.eq` and costs nothing. Identity hashing is not free, and the language

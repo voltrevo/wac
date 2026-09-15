@@ -93,19 +93,3 @@ code is assumed throughout. Whether `std` should assume it is open. A sync `main
 own work holds a `Result` and has nowhere to put it, so it either matches on it to pick an exit code
 or discards it. `Result<i32> main` would answer that and is ugly; nothing else has been proposed.
 
-## How should a `Vec` drop its reference to a popped element?
-
-`pop` decrements a length and leaves the reference in the slot, so the element stays reachable until
-a later `push` overwrites it. Nothing the body can write clears it: a `T[]` at a non-nullable `T`
-has no null to store, and `Point[10]()` builds ten distinct `Point()`s rather than ten absences. The
-queue `Sys.drain` pops from has the same hole, which is where it turned up.
-
-Holding `T?[]` instead is free for a reference `T`, since a `ref null` array is the same array, and
-boxes every element of a `Vec<i32>` — the one case that cannot wear it. An array operation meaning
-*put this slot back to nothing*, and doing nothing where the element type has no null to write,
-would cost nothing anywhere; it needs the generic body to be able to say it without knowing which
-case it is in.
-
-The retention is bounded by the vec's high-water mark rather than growing, which sizes the problem
-without excusing it: one popped root can hold a whole graph.
-

@@ -941,20 +941,9 @@ void example() {
 
 ---
 
-## `Vec<T>.pop` is written once and is honest at every `T`
+## `pop` separates an empty vec from a null element
 
 ```wac
-struct Vec<T> {
-  T[] data;
-  i32 len;
-
-  T? pop(this) {
-    if (this.len == 0) { return null; }
-    this.len -= 1;
-    return this.data[this.len];
-  }
-}
-
 i32 example(Vec<Node?> v) {
   Node?? got = v.pop();
 
@@ -964,10 +953,9 @@ i32 example(Vec<Node?> v) {
 }
 ```
 
-Neither `return` mentions nullability and neither needs a second case. At `T = Node?` the bare
-`null` is the outer absence, and `this.data[i]` widens into a present outer whatever it holds. Under
-flattening the two would arrive as one value, and there is nothing the body could write to tell them
-apart again.
+`pop` answers `T?`, so at `T = Node?` the bare `null` is the outer absence and a popped element
+arrives as a present outer whatever it holds. Under flattening the two would arrive as one value,
+and there is nothing the caller could write to tell them apart again.
 
 **Not yet.**
 
@@ -1057,6 +1045,264 @@ void example(Person? p) {
 
 A read has somewhere to put the absent case, because the result is nullable. A write has nowhere: the
 right side would be evaluated and dropped, and the statement would succeed having done nothing.
+
+**Not yet.**
+
+---
+
+## A packed type is an ordinary type
+
+```wac
+struct Pixel { u8 r; u8 g; u8 b; }
+
+u8 brightest(Pixel p) {
+  u8 best = p.r;
+  if (p.g > best) { best = p.g; }
+  if (p.b > best) { best = p.b; }
+  return best;
+}
+```
+
+```wac
+void example() {
+  u8?   maybe = null;
+  u8?[] four  = u8?[4]();     // four nulls
+}
+```
+
+`u8 i8 u16 i16` are ordinary types wherever a value can be: a local, a parameter, a field, a return,
+and the answer of indexing a `u8[]`. The width is a fact about storage, so the nullable forms follow —
+the value has somewhere to go.
+
+**Not yet.**
+
+---
+
+## Packed arithmetic answers the packed type
+
+```wac
+void example() {
+  u8 a = 200;
+  u8 b = 100;
+  u8 c = a + b;                     // 44 — wraps at 8 bits
+
+  i32 wide = a as i32 + b as i32;   // 300
+}
+```
+
+Nothing promotes. `i32` does not widen to `i64` under `+` either, and the `u32` a `u8` is held in is
+representation rather than type.
+
+**Not yet.**
+
+---
+
+## A packed type converts with `as`, in both directions
+
+```wac
+void example(i32 n, u32 m, u8[] xs) {
+  u8 a = n;                // error: expected u8, got i32
+  u8 b = n as u8;          // truncates
+  i32 c = b;               // error: expected i32, got u8
+  i32 d = b as i32;        // widens
+
+  xs[0] = m;               // error: expected u8, got u32
+  xs[0] = m as u8;         // truncates
+  i32 e = xs[0];           // error: expected i32, got u8
+  i32 f = xs[0] as i32;    // 255 for 0xFF — zero-extended, and an i8[] sign-extends
+}
+```
+
+`spec/spec/types.md` has no implicit conversions between any types, and an ordinary type is one that
+obeys that rule rather than a lenient one. An element is not a special case in either direction.
+
+**Not yet.**
+
+---
+
+## A literal out of range for a packed type is refused
+
+```wac
+u8 x = 300;
+```
+
+```
+error: literal out of range for its type
+  --> pixel.wac:1:8
+   |
+ 1 | u8 x = 300;
+   |        ^
+```
+
+A literal takes the type expected of it when the value has a reading there. 300 has none in a `u8`.
+
+**Not yet.**
+
+---
+
+## A constant condition warns unless it came from a type parameter
+
+```wac
+void example(Sys sys) {
+  if (false) { sys.log("never"); }     // warning: condition is always false
+  if (1 > 2) { sys.log("never"); }     // warning: condition is always false
+}
+```
+
+```wac
+i32 tag<T>() {
+  if (typeref(T).isRef()) { return 0; }
+  return 1;
+}
+
+tag<Node>();    // 0 — the second return is folded away
+tag<i32>();     // 1 — the first is
+```
+
+Neither emits the branch it folded away. The second does not warn, because the condition is constant
+only at an instantiation.
+
+**Not yet.**
+
+---
+
+## A folded-away branch is still type-checked
+
+```wac
+i32 size<T>(T x) {
+  if (typeref(T).isRef()) { return x.len(); }
+  return 0;
+}
+
+size<string>("ab");    // 2
+size<i32>(5);          // error: no method `len` on i32 — the branch is dead here, and checked
+```
+
+**Not yet.**
+
+---
+
+## Type logic is ordinary wac
+
+```wac
+typeref slot(typeref t) {
+  return t.isRef() && !t.isNullable() ? t.pushNull() : t;
+}
+
+type Slot<T> = type(slot(typeref(T)));
+```
+
+`typeref` is a type and `slot` a function; neither is a second language. `typeref(T)` names a type,
+`type(…)` binds the type a `typeref` names, and `pushNull` adds one level of nullability rather than
+ensuring it — `?` does not flatten, so neither does the method standing for it.
+
+**Not yet.**
+
+---
+
+## `type(…)` is the only expression a type position takes
+
+```wac
+struct Vec<T> {
+  slot(typeref(T))[] data;        // error: expected a type
+  type(slot(typeref(T)))[] data;  // ok
+}
+```
+
+**Not yet.**
+
+---
+
+## `static_match` chooses an arm at compile time
+
+```wac
+i32 width<T>() {
+  return static_match (T) {
+    u32:     4,
+    u64:     8,
+    default: static_trap "width is defined for u32 and u64",
+  };
+}
+```
+
+`static_trap` is `never`, so it satisfies the arm like any other, and it fires only where that arm is
+chosen.
+
+**Not yet.**
+
+---
+
+## `static_if` drops the branch not taken
+
+```wac
+T get(const this, i32 i) {
+  static_if (typeref(Slot<T>) == typeref(T)) {
+    return this.data[i];
+  } else {
+    return this.data[i]!;        // not compiled where Slot<T> is T
+  }
+}
+```
+
+The dropped branch is checked at the definition like any generic body. Only the per-instantiation
+pass skips it, so what a drop can hide is a type error that needed a `T` to see.
+
+**Not yet.**
+
+---
+
+## A `static_` condition must be known statically
+
+```wac
+void example(Sys sys) {
+  static_if (sys.now() > 0) { }    // error: condition is not known statically
+}
+```
+
+**Not yet.**
+
+---
+
+## A popped slot is cleared where it can hold a reference
+
+```wac
+T fromSlot<T>(Slot<T> s) {
+  static_if (typeref(Slot<T>) == typeref(T)) { return s; } else { return s!; }
+}
+
+T? pop(this) {
+  if (this.n == 0) { return null; }
+  this.n--;
+  T out = fromSlot<T>(this.data[this.n]);
+  static_if (typeref(T).isRef()) { this.data[this.n] = null; }
+  return out;
+}
+```
+
+```wac
+Vec<Node>  a;    // Slot is Node?  — unwraps, and clears
+Vec<Node?> b;    // Slot is Node?  — no unwrap, and clears
+Vec<i32>   c;    // Slot is i32    — neither
+```
+
+The two conditions differ. A slot is unwrapped where `Slot<T>` is not `T`, and cleared wherever `T`
+is a reference — which includes `Vec<Node?>`, where the slot type is already `T` and still holds
+something worth dropping.
+
+**Not yet.**
+
+---
+
+## Capacity needs no element
+
+```wac
+Vec<T> withCapacity(i32 capacity) {
+  return Vec(Slot<T>[capacity](), 0);
+}
+```
+
+`Slot<T>` is defaultable at every `T` — null where `T` is a reference, zero where it is numeric — so
+growing an array no longer needs a value to fill it with.
 
 **Not yet.**
 
