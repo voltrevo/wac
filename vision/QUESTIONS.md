@@ -21,12 +21,6 @@ Heterogeneous `Ticket.all(a, b)` answers a tuple, and `Ticket.any(a, b)` answers
 `(i32, union<A, B>)`. Both need tuples, which have never been explored, and variadic arguments —
 an array literal has one element type, so `[a, b]` forces the branches to agree.
 
-## Dynamic dispatch
-
-The ticket design assumes it. `advance` and `settled` are overridden per kind of ticket, which is
-what lets a fake `Sys` add a kind without editing `core`; a closed enum of kinds would not.
-`issues/lang/0144` suggests the intent already exists and today's behaviour is the accident.
-
 ## The name for the erased ticket
 
 `Ticket<T>` inherits an empty base: the value type is rubbed out and what remains is `advance` and

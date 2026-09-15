@@ -339,7 +339,7 @@ whether or not the match plainly succeeded.
 
 ```wac
 struct Slot {
-  i32 n;
+  i32 n = 0;
 
   async void tick(this) {
     this.n += 1;
@@ -661,7 +661,7 @@ first.
 
 ```wac
 struct Slot {
-  i32 n;
+  i32 n = 0;
 
   async void tick(this) {
     this.n += 1;
@@ -1296,13 +1296,167 @@ something worth dropping.
 ## Capacity needs no element
 
 ```wac
+T zero<T>() {
+  return static_match (T) {
+    f32:  0.0,
+    f64:  0.0,
+    bool: false,
+    default: 0,
+  };
+}
+
 Vec<T> withCapacity(i32 capacity) {
-  return Vec(Slot<T>[capacity](), 0);
+  static_if (typeref(Slot<T>).isRef()) {
+    return Vec(Slot<T>[capacity](), 0);
+  } else {
+    return Vec(Slot<T>[capacity](fill: zero<T>()), 0);
+  }
 }
 ```
 
-`Slot<T>` is defaultable at every `T` — null where `T` is a reference, zero where it is numeric — so
-growing an array no longer needs a value to fill it with.
+The caller supplies nothing. `Slot<T>` is `T?` where `T` is a reference and defaults to null; where
+it is not, a value is needed and none is observable, since every slot above `n` is unread before it
+is written. `zero<T>()` is the value nobody reads — one literal will not do, because an integer
+literal has no reading in an `f64` or a `bool`.
+
+**Not yet.**
+
+---
+
+## A virtual method dispatches on the runtime type
+
+```wac
+struct Base {
+  virtual i32 fire(const this) { return 0; }
+}
+
+struct Kid : Base {
+  override i32 fire(const this) { return 40; }
+}
+
+void example() {
+  Kid  k = Kid();
+  Base b = k;
+
+  k.fire();     // 40
+  b.fire();     // 40
+}
+```
+
+**Not yet.**
+
+---
+
+## A method that is not virtual cannot be overridden or shadowed
+
+```wac
+struct Base {
+  i32 fire(const this) { return 0; }
+}
+
+struct Kid : Base {
+  i32 fire(const this) { return 40; }     // and `override` here fails the same way
+}
+```
+
+```
+error: `Base.fire` is not virtual
+  --> kid.wac:6:7
+   |
+ 6 |   i32 fire(const this) { return 40; }
+   |       ^
+   = help: rename it, or mark `Base.fire` virtual
+```
+
+One object answering two ways depending on which static type reached it is what shadowing would
+allow. `virtual` is the base granting the override; without it there is nothing to take.
+
+**Not yet.**
+
+---
+
+## A default is an absence, not a value
+
+```wac
+void example() {
+  i32    n;       // no default — unassigned until written
+  Node?  p;       // null
+  Node[] xs;      // empty
+}
+```
+
+`T?` and `T[]` have a default because theirs means *nothing here*. Zero is a number someone might
+have meant, so `i32` has none to fall back on.
+
+**Not yet.**
+
+---
+
+## A field initialiser gives the field a default
+
+```wac
+struct Conn {
+  i32 retries = 3;
+  Socket sock = Socket.loopback();
+}
+
+Conn c;           // both run — Socket has no default of its own, Conn does
+```
+
+A field has a default where its type does or where it has an initialiser, and a struct has one where
+every field does. The initialiser runs at each construction rather than once, and cannot reach the
+world, since a struct body has no capability in scope to hand it.
+
+**Not yet.**
+
+---
+
+## A declaration leaves the defaultless fields pending
+
+```wac
+struct Half {
+  i32 retries = 3;
+  Socket sock;
+}
+
+void example(Socket s) {
+  Half h;
+  h.sock = s;     // retries is already 3
+}
+
+void bad() {
+  Half h;
+  use(h);         // error: `h.sock` is never assigned
+}
+```
+
+**Not yet.**
+
+---
+
+## Braces supply what has no default, parens supply everything
+
+```wac
+Half a = Half { sock: s };    // retries is 3
+Half b = Half(3, s);          // ok
+Half c = Half(s);             // error: positional construction writes every field
+```
+
+**Not yet.**
+
+---
+
+## A field initialiser cannot read another field
+
+```wac
+struct Bad {
+  i32 a = 1;
+  i32 b = this.a + 1;         // error: a field initialiser cannot read `this`
+}
+```
+
+Independent expressions, so there is no order to know and no field that is half-built when another
+is computed.
 
 **Not yet.**
 
