@@ -63,10 +63,19 @@ i32 totalLength(Vec<string> lines) {
   }
   return n;
 }
+
+async i32 totalIncoming(Sys sys, string path) {
+  i32 n = 0;
+  for await (auto line in readLines(sys, path)) {
+    n += line.len();
+  }
+  return n;
+}
 ```
 
-The same head walks an array and a `Vec`, and an index that exists only to be a cursor never appears.
-The head keeps its parentheses, and declares its variable the way any local is declared.
+The same head walks an array, a `Vec`, and an async generator, and an index that exists only to be a
+cursor never appears. The head keeps its parentheses, and declares its variable the way any local is
+declared. The `await` is there because the suspension is per step, not because iterating changed.
 
 **Not yet.**
 
@@ -100,8 +109,8 @@ instantiation supplies the type.
 
 ```wac
 async i32 total(Sys sys) {
-  auto got = await Ticket.all([sys.readFile("a.txt"), sys.readFile("b.txt")]);
-  return got[0].len() + got[1].len();
+  auto got = await Ticket.all(sys.readFile("a.txt"), sys.readFile("b.txt"));
+  return got.0.len() + got.1.len();
 }
 ```
 

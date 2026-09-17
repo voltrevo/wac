@@ -760,6 +760,65 @@ async gen<i32> void counter(Ticket<i32> t) {
 
 ---
 
+## `for await` iterates an async generator
+
+```wac
+async i32 total(Ticket<i32> t) {
+  i32 n = 0;
+  for await (i32 x in counter(t)) { n += x; }
+  return n;                                      // 3
+}
+```
+
+The loop awaits on `Waiting`, binds on `Yielded` and stops on `Done` — the three cases the entry
+above steps through by hand.
+
+**Not yet.**
+
+---
+
+## Iterating an async generator needs the await written
+
+```wac
+async void bad(Ticket<i32> t) {
+  for (i32 x in counter(t)) { }        // error: iterating an async generator needs `for await`
+}
+
+void alsoBad(Ticket<i32> t) {
+  for await (i32 x in counter(t)) { }  // error: `await` outside an async function
+}
+```
+
+A boundary is a boundary because it is written, and a plain `for … in` that suspends once per step
+is one nobody wrote. The second error is the existing rule about `await`, which is why a synchronous
+loop over a generator needs no rule of its own — there is no marker to write, so driving it from
+sync code stays `wait`'s job.
+
+**Not yet.**
+
+---
+
+## `for await` drops the generator's return
+
+```wac
+async gen<i32> string counted(Ticket<i32> t) {
+  yield 1;
+  yield await t;
+  return "done";
+}
+
+async void example(Ticket<i32> t) {
+  for await (i32 x in counted(t)) { }  // "done" is not available here
+}
+```
+
+The value arrives inside `Done`, which the loop consumes as it ends, so there is nothing left on the
+generator to ask for it afterwards. Taking it means stepping by hand.
+
+**Not yet.**
+
+---
+
 ## An `await` is a boundary because it is written
 
 ```wac
@@ -877,10 +936,10 @@ async void example(Sys sys) {
   Ticket<i32> b;
   Slot s;
 
-  Ticket<i32> win = Ticket.any([
+  Ticket<i32> win = Ticket.any(
     add(s, a),
     add(s, b),
-  ]);
+  );
 
   a.resolve(1);
   await win;
@@ -1457,6 +1516,131 @@ struct Bad {
 
 Independent expressions, so there is no order to know and no field that is half-built when another
 is computed.
+
+**Not yet.**
+
+---
+
+## A tuple is a fixed-length heterogeneous type
+
+```wac
+(string, i32) pair = ("a", 1);
+
+pair.0;      // "a"
+pair.1;      // 1
+```
+
+Identity is the ordered list of member types, so a tuple written in two places is one type. That
+makes it the only structural type in the language, and the smallest one it could have — an anonymous
+struct would add names, and with them width and order.
+
+**Not yet.**
+
+---
+
+## Tuples of zero and one
+
+```wac
+()         unit = ();
+(i32,)     one  = (1,);
+string     s    = ("a");        // grouping, not a 1-tuple
+(i32, i32) two  = (1, 2,);      // the trailing comma means nothing here
+```
+
+`()` is a value of a type with no members, the way `null` is a value rather than the absence of a
+type — `void` is the one that means *no value*. A trailing comma is accepted wherever a list is, and
+carries meaning only at length one.
+
+**Not yet.**
+
+---
+
+## A tuple index must be known at compile time
+
+```wac
+void example((string, i32) t, i32 i) {
+  t.0;       // string
+  t.(i);     // error: a tuple index must be known at compile time
+}
+```
+
+`.` resolves statically and `[]` takes a runtime value, so the member type can depend on the index
+in the first and could not in the second.
+
+**Not yet.**
+
+---
+
+## `static_for` unrolls, so each iteration types differently
+
+```wac
+bool same<Ts>(Ts a, Ts b) {
+  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+    if (a.(i) != b.(i)) { return false; }
+  }
+  return true;
+}
+
+same(("a", 1), ("a", 1));    // true
+same(("a", 1), ("a", 2));    // false
+```
+
+`a.(i)` is a `string` at 0 and an `i32` at 1, so the body is checked once per iteration rather than
+once. A runtime `i` would leave it with no type at all.
+
+**Not yet.**
+
+---
+
+## A tuple is built member by member
+
+```wac
+typeref[] popEach(typeref[] ts) {
+  Vec<typeref> out;
+  for (typeref t in ts) { out.push(t.popNull()); }
+  return out.toArray();
+}
+
+type Unwrapped<Ts> = type(tupleOf(popEach(typeref(Ts).members())));
+
+Unwrapped<Ts> unwrapAll<Ts>(Ts t) {
+  Unwrapped<Ts> out;                                   // no default at arbitrary members
+  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+    out.(i) = t.(i)!;
+  }
+  return out;
+}
+
+unwrapAll((maybeNode, maybeCount));    // (Node?, i32?) → (Node, i32)
+```
+
+`out` is declared without an initialiser and each member is assigned exactly once, which the unrolled
+loop makes straight-line. A tuple cannot be accumulated instead — an accumulator has one type, and a
+tuple built a member at a time has a different one at every step.
+
+**Not yet.**
+
+---
+
+## A variadic parameter is a tuple the call site fills
+
+```wac
+async Values<Ts> all<Ts>(Ts ...tickets) {
+  Values<Ts> out;
+  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+    out.(i) = await tickets.(i);
+  }
+  return out;
+}
+
+Ticket.all(a, b);    // Ts is (Ticket<A>, Ticket<B>)
+Ticket.all(a);       // Ts is (Ticket<A>,)
+Ticket.all();        // Ts is ()
+```
+
+At most one, and last. The marker hugs the name because it is the binding that receives the packed
+arguments — the type is a tuple either way. Zero and one need no special handling, since `()` and
+`(T,)` are ordinary tuples.
 
 **Not yet.**
 

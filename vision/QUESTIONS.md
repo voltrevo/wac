@@ -15,12 +15,6 @@ See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ---
 
-## Tuples and variadic arguments
-
-Heterogeneous `Ticket.all(a, b)` answers a tuple, and `Ticket.any(a, b)` answers
-`(i32, union<A, B>)`. Both need tuples, which have never been explored, and variadic arguments —
-an array literal has one element type, so `[a, b]` forces the branches to agree.
-
 ## The name for the erased ticket
 
 `Ticket<T>` inherits an empty base: the value type is rubbed out and what remains is `advance` and
@@ -35,12 +29,6 @@ A `Dropped` state would let *awaiting something nobody will ever settle* be diag
 hang. Every case found so far dissolves: a ticket holds its own coroutine, so whoever holds the
 ticket can always drive it, and a capability that gives up should settle with an error rather than
 vanish. Left open because the better error is worth having if a case turns up.
-
-## `for … in` over an async generator
-
-Stepping one can answer `Waiting`, which a synchronous loop has no way to handle. So either that
-loop is legal only inside an async function, or iterating an async generator is a different
-construct.
 
 ## Whether `wait` caches what it is waiting on
 
