@@ -36,8 +36,11 @@ export void statics() {
   c.step();              // 2
 }
 
-/** `const` on a reference is deep, and travels with the reference. */
-export void constness(const Point p) {
+/**
+ * `const` on a reference is deep, and travels with the reference. Elsewhere it binds the name and
+ * leaves the contents open; here it reaches the elements.
+ */
+export void constness(const Point p, const i32[] xs, const Point[] ps) {
   p.sum();               // reading is fine
 
   // ERROR: cannot assign through a const reference
@@ -45,6 +48,25 @@ export void constness(const Point p) {
 
   // ERROR: cannot call a method taking `this` on a const reference
   // p.shift(1);
+
+  // ERROR: cannot write through a const reference — it reaches the elements
+  // xs[0] = 9;
+
+  // ERROR: and it travels, so an element of a const array is const too
+  // ps[0].x = 1;
+}
+
+/** A whole struct may be const, so no reference to one was ever writable. */
+export const struct Frozen {
+  i32 w = 0;
+  i32 h = 0;
+}
+
+export void frozen(Frozen f) {
+  f.w;
+
+  // ERROR: `Frozen` is a const struct
+  // f.w = 1;
 }
 
 /** A struct inherits fields and methods, and the parent grants each override. */
