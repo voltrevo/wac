@@ -1755,3 +1755,41 @@ what gets printed.
 
 **Not yet.**
 
+---
+
+## A program that cannot make progress is hung
+
+```wac
+async void main(Sys sys) {
+  Ticket<i32> t;
+  await t;        // exits 1 — nothing can run and nothing is outstanding
+}
+```
+
+The condition belongs to the program rather than the ticket, which is why no ticket state models it.
+A program awaiting a socket read is not hung — the host has the read outstanding — and one awaiting a
+ticket nobody holds is, because the scheduler is empty and no event is pending.
+
+**Not yet.**
+
+---
+
+## An unawaited call is still the program's work
+
+```wac
+async void stuck() {
+  Ticket<i32> t;
+  await t;
+}
+
+async void main(Sys sys) {
+  stuck();
+  await sys.drain();    // exits 1 — drain waits on a ticket nothing settles
+}
+```
+
+Draining is the right thing to do and does not rescue it. The work was the program's from the call,
+not from the `await` that was never written.
+
+**Not yet.**
+

@@ -23,13 +23,6 @@ keep, not the whole thing with a field removed. `Waitable` is worse than it look
 answers `T` and the erased type is the one thing you cannot wait on. What the erasure preserves is
 *driving*, and no candidate naming that is a word worth adding.
 
-## Whether a ticket can become undeliverable
-
-A `Dropped` state would let *awaiting something nobody will ever settle* be diagnosed rather than
-hang. Every case found so far dissolves: a ticket holds its own coroutine, so whoever holds the
-ticket can always drive it, and a capability that gives up should settle with an error rather than
-vanish. Left open because the better error is worth having if a case turns up.
-
 ## Whether `wait` caches what it is waiting on
 
 `advance(false)` steps a blocked machine to learn it is still blocked, and `advance(true)` steps it
