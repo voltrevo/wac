@@ -524,9 +524,10 @@ i32 example() {
 }
 ```
 
-`wait` advances the ticket, advances it again blocking, and if neither moved it there is nobody left
-to try: the sync caller is the driver. The same ticket under `await` is the caller's driver's
-problem instead, which is why `await` answers a value and `wait` answers a `Result`.
+`wait` resolves, in turn, each thing the ticket awaited, and each resolution needs the `sys` that
+produced that ticket to permit synchronous resolution. Here there is nothing to resolve and nobody to
+ask, so it refuses at once. The same ticket under `await` is the caller's driver's problem instead,
+which is why `await` answers a value and `wait` answers a `Result`.
 
 **Not yet.**
 
@@ -552,7 +553,7 @@ different failure from the entry above, where nothing could ever move it.
 
 ---
 
-## `wait` advances each member of the set once
+## A `wait` that depends on itself loops
 
 ```wac
 struct Cell { Ticket<i32>? t; }
@@ -562,7 +563,7 @@ Result<i32> example(Sys sys) {
   Ticket<i32> t = selfish(sys, c);
   c.t = t;                       // it awaits the ticket it will settle
 
-  return t.wait();               // Err — advanced once, and advancing it needs it advanced
+  return t.wait();               // never returns
 }
 
 async i32 selfish(Sys sys, Cell c) {
@@ -578,11 +579,62 @@ started
 resumed
 ```
 
-The call runs to the first suspension and `wait` resumes it once, which is as far as it gets.
-Descending into the set depth-first would recurse without bound; advancing each member once finds
-nothing moved and says so.
+`wait` resolves the empty dependency of the bare `await`, which resumes `selfish` as far as awaiting
+its own ticket. Resolving `t` then needs `t` resolved. Nothing refuses, so there is no `Err`, and the
+hung-program check does not see it either — `wait` is running, so the program is spinning rather than
+idle.
 
 The `await;` is load-bearing — without it `selfish` reads `c.t` before the assignment and traps.
+
+**Not yet.**
+
+---
+
+## `x.wait()!` and `await x` answer the same value
+
+```wac
+async i32 total(Sys sys)     { return (await job(sys)) + 1; }
+i32       totalSync(Sys sys) { return job(sys).wait()! + 1; }
+```
+
+What differs is what else got to run. Under `await` the caller parks and its siblings advance; under
+`wait` the caller's frame is live and they do not. So the value is identical and the program
+afterwards may not be — and `wait` can refuse where `await` cannot.
+
+**Not yet.**
+
+---
+
+## `wait` resolves what was awaited, not what was started
+
+```wac
+Result<i32> example(Sys sys) {
+  sys.readFile("side.txt");      // started, never awaited
+  return counted(sys).wait();    // resolves only what `counted` awaited
+}
+```
+
+The side read is still outstanding when this returns. If main returns with it pending that is the
+work-left-scheduled error, arriving where it belongs rather than being `wait`'s to absorb.
+
+**Not yet.**
+
+---
+
+## A refused `wait` leaves a resting state
+
+```wac
+async i32 recover(Sys sys, Ticket<i32> p) {
+  return match (p.wait()) {
+    Ok  { v }:  v,
+    Err { .. }: await p,         // picks up from the link that refused
+  };
+}
+```
+
+`wait` stops between continuations, never inside one, so everything up to the refusal ran and is
+settled. The fallibility belongs to the attempt rather than the ticket, which is why `p.wait()` is a
+`Result` while `await p` is a value, and why `Ticket<T>` is not `Ticket<Result<T, E>>`.
 
 **Not yet.**
 
@@ -613,9 +665,13 @@ a
 b
 ```
 
-`tick` is the one from *Giving other work a turn*. Same machine, two drivers: `wait` advances it
-from sync code, `await` suspends the caller and lets the caller's driver advance it. Only the
-failure reporting differs, and that difference is forced rather than chosen.
+`tick` is the one from *Giving other work a turn*. Same machine, two drivers: `wait` resolves it from
+sync code, `await` suspends the caller and lets the caller's driver do it. Only the failure reporting
+differs, and that difference is forced rather than chosen.
+
+They coincide here for a reason that is not general: a drain ticket's dependency set is the whole
+scheduler, so there is no narrower set for `wait` to pick. Elsewhere `wait` resolves what was awaited
+and leaves the caller's siblings where they are.
 
 **Not yet.**
 

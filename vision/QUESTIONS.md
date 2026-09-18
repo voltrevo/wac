@@ -15,6 +15,13 @@ See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ---
 
+## Whether a self-dependent `wait` can be diagnosed
+
+`t.wait()` where `t`'s coroutine awaits `t` never returns, and the quiescence check that catches an
+idle program does not see it — `wait` is running, so the program is spinning rather than idle. A walk
+that refused to revisit a ticket it had already tried in the same call would answer `Err`, at the
+cost of carrying that set for every `wait`. Whether there is something cheaper is open.
+
 ## What example should capture `defer`
 
 And whether `sys.atEnd` wants one beside it, since the pair is the whole cleanup story — `defer`
