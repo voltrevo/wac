@@ -731,6 +731,43 @@ async void inner() {
 
 ---
 
+## Three constructs, three called forms, one operator to descend
+
+```wac
+gen<i32> void       values()     { … }
+async i32           doubled(t)   { … }
+async gen<i32> void counter(t)   { … }
+
+Generator<i32, void>      a = values();
+Ticket<i32>               b = doubled(t);
+AsyncGenerator<i32, void> c = counter(t);
+
+Coroutine<never, i32, void>       d = coroutine values();
+Coroutine<TicketBase, never, i32> e = coroutine doubled(t);
+Coroutine<TicketBase, i32, void>  f = coroutine counter(t);
+```
+
+`Coroutine<W, Y, R>` is the machine: what it waits on, what it yields, what it returns. `W` is
+`never` where it cannot wait.
+
+**Not yet.**
+
+---
+
+## Async is the same thing wrapped in a `Ticket`, and `Waiting` lives on the machine
+
+```wac
+a.step();    // Yielded(i32) | Done(void)
+c.step();    // Ticket<Yielded(i32) | Done(void)>
+
+d.step();    // Yielded(i32) | Done(void)              — W is never, so there is no Waiting arm
+f.step();    // Yielded(i32) | Done(void) | Waiting
+```
+
+**Not yet.**
+
+---
+
 ## An async generator uses both variants
 
 ```wac
