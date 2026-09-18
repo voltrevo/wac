@@ -74,7 +74,7 @@ what it calls.
 ```wac
 void main(Sys sys) {
   i32 found = sys.run(scan, Grant[](Grant.Read));
-  sys.log(decimal(found) + " matches");
+  sys.log(itoa(found) + " matches");
 }
 
 i32 scan(Sys sys) {

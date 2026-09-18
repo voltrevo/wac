@@ -52,7 +52,9 @@ form, and it is the thing that lets `Result`'s current blessing expire.
 
 ## How is a number rendered
 
-Interpolation is `+`, and `+` will not take a number, so `"\{n}"` on an `i32` is a type error and
-there is nothing in `core` to reach for instead. Three packages have written their own `decimal`.
+Interpolation is `+`, and `+` will not take a number, so `"\{n}"` on an `i32` is a type error. The
+answer today is `itoa` from `packages/fmt`, which is not in `core` and not reachable from one — and
+44 other files have written their own anyway.
 
-Whatever answers this decides whether interpolation stays exactly `+`.
+So the question is where it lives rather than whether it exists, and whatever answers it decides
+whether interpolation stays exactly `+`.
