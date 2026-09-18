@@ -4,13 +4,30 @@
 
 import { Point } from "./types.wac";
 
-/** Arithmetic is for numbers, and `+` on a string is the one exception. */
-export void arithmetic(i32 a, i32 b, string s, string t, Point p, Point q) {
+/** Arithmetic is for numbers, both sides the same type, and `+` on a string is the exception. */
+export void arithmetic(i32 a, i32 b, f64 x, string s, string t, Point p, Point q) {
   a + b; a - b; a * b; a / b; a % b;
   s + t;                       // concatenation
 
-  // ERROR: `+ - * / %` on a reference are refused
+  // ERROR: i32 + f64 is a type mismatch, not a widening
+  // a + x;
+
+  // ERROR: `+ - * / %` on a reference are refused, for every reference
   // p + q;
+
+  // ERROR: arithmetic on a bool
+  // true + 1;
+}
+
+/** `%` on floats follows the left operand's sign, and is exact rather than an approximation. */
+export void modulo() {
+  7.0 % 2.0;                   // 1.0
+  1.0 % 0.1;                   // 0.09999999999999995, not a tiny negative
+  -7.0 % 2.0;                  // -1.0
+  7.0 % -2.0;                  // 1.0
+  1e300 % 3.0;                 // 0.0, exactly
+  7.0 % 0.0;                   // NaN
+  7.0 % (1.0 / 0.0);           // 7.0
 }
 
 /** Unary minus wants something with a negation, so an unsigned type has none. */
@@ -22,20 +39,54 @@ export void negation(i32 a, u32 u) {
 }
 
 /** Comparison is by identity for a reference, and by content for a `string` alone. */
-export void comparison(Point p, Point q, string s, string t) {
-  p is q;                      // identity
+export void comparison(Point p, Point q, string s, string t, f64 x, f64 y) {
+  p is q;
   p is not q;
 
-  s == t;                      // bytes
-  s < t;                       // and ordering by bytes
+  s == t;
+  s < t;
+
+  x == y;                      // floats compare, with the usual float answers
 
   // ERROR: `==` is not allowed on struct types
   // p == q;
 }
 
-/** A shift amount may be any integer width, and the result keeps the left side's. */
+/**
+ * A shift amount may be any integer width; the result keeps the left side's. `>>` copies the sign
+ * bit, `>>>` fills with zeros, and there is no `<<<` because a left shift discards either way.
+ */
+export void shifts(i64 big, i32 n) {
+  big << n;                    // 4294967296 for 1 << 32
+  -16 >> 1;                    // -8
+  -16 >>> 1;                   // 2147483640
+  -1 >>> 28;                   // 15
+  (-16 as i64) >>> 4;          // 1152921504606846975
+}
+
+/** `>>>` asks for what `>>` already gives on an unsigned type, so it is refused there. */
+export void unsignedShifts(u32 u, f64 f) {
+  u >> 1;                      // logical, because u is unsigned
+
+  // ERROR: `>>>` is redundant on u32
+  // u >>> 1;
+
+  // ERROR: `>>>` requires an integer type, got f64
+  // f >>> 1;
+}
+
 export u64 rotl(u64 v, i32 n) {
   return (v << n) | (v >> (64 - n));
+}
+
+/** `&&` and `||` short-circuit, so the right side may not be evaluated at all. */
+export struct Tally { i32 n = 0; }
+
+export bool incr(Tally t) { t.n += 1; return true; }
+
+export void shortCircuit(Tally t) {
+  false && incr(t);            // t.n stays 0 — the right side is not evaluated
+  true  || incr(t);            // t.n stays 0
 }
 
 /** `++` and `--` want an integer, floats included in what they refuse. */
@@ -48,6 +99,14 @@ export void stepping(i32 a, f64 f) {
   // f++;
 }
 
+/** Compound assignment is the operator and the store, with the same type rules. */
+export i32 compound() {
+  i32 n = 10;
+  n += 10;
+  n *= 2;
+  return n;                    // 40
+}
+
 /** `!` is the forced unwrap, and is refused where there is no `?` to remove. */
 export void unwrapping(Point? maybe, Point sure) {
   maybe!;
@@ -57,8 +116,8 @@ export void unwrapping(Point? maybe, Point sure) {
 }
 
 /**
- * Precedence, tightest first: unary, then the casts, `* / %`, `+ -`, the shifts, the orderings,
- * the equalities, `&`, `^`, `|`, `&&`, `||`, `is`, and the ternary last.
+ * Precedence, tightest first: unary, the casts, `* / %`, `+ -`, the shifts, the orderings, the
+ * equalities, `&`, `^`, `|`, `&&`, `||`, `is`, and the ternary last.
  */
 export bool precedence(i32 a, i32 b, i32 c) {
   return a + b * c > a && b < c;   // (a + (b * c)) > a, and (b < c)

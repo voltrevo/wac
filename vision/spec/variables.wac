@@ -32,6 +32,9 @@ export void deepConst(Point p) {
  * initialiser has to be something the module can build then, so a call is not one.
  */
 export const i32 BLOCK = 64;
+
+// ERROR: there is no mutable module-level state — a module declaration is const
+// export i32 counter = 0;
 export const i32 TWO_BLOCKS = BLOCK * 2;      // 128 — a constant may read another
 
 const i32[] TABLE = i32[](1, 2, 3);
