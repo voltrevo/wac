@@ -77,6 +77,23 @@ a `u8`. The width is a fact about storage, not about the type.
 Three spec rules assume otherwise and go with it: `[§wac-packed-nullable-2knq6wv]`,
 `[§wac-cast-packed-v7nq4mj]`, and an element reading as `i32` and writing by truncation.
 
+## Some tuple returns must be optimised
+
+A sync function that creates the tuple it returns, and gives nothing a chance to hold that reference
+after the call, must be compiled to return the members instead. The condition is judged inside that
+one function. A caller that destructures the result immediately, or reads a single member of it,
+must build no tuple. Optimising by returning members in other cases is permitted but not required
+(eg async functions).
+
+Being an optimisation, it changes nothing a program can observe. Where the two forms would otherwise
+differ, the optimised function is wrapped in one that returns a tuple, and the wrapper is what is
+used: an exported function's wasm signature comes from its declared parameter and return types, and
+a funcref points at the wrapper, so two funcrefs to one function stay equal. It is the same wrapper
+in both cases.
+
+Requiring this optimisation allows performance-sensitive code that cannot afford the unnecessary
+tuple allocations to rely on it.
+
 ## References are comparable but not hashable
 
 `is` on two references is `ref.eq` and costs nothing. Identity hashing is not free, and the language
