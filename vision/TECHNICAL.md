@@ -535,22 +535,18 @@ problem instead, which is why `await` answers a value and `wait` answers a `Resu
 ## `drain().wait()` and `await drain()` are the same program
 
 ```wac
-i32 main(Sys sys) {
+Result<void> main(Sys sys) {
   tick(sys, "a");
   tick(sys, "b");
-  return match (sys.drain().wait()) {
-    Ok  { .. }: 0,
-    Err { .. }: 1,
-  };
+  return sys.drain().wait();
 }
 ```
 
 ```wac
-async i32 main(Sys sys) {
+async void main(Sys sys) {
   tick(sys, "a");
   tick(sys, "b");
   await sys.drain();
-  return 0;
 }
 ```
 
@@ -1690,6 +1686,72 @@ auto (q, r)       = divmod(n, d);
 
 The four alternatives collide as written; they are spellings rather than a program. The last line is
 an assignment to locals that already exist, which is the shape a round function wants.
+
+**Not yet.**
+
+---
+
+## What `main` returns, and what the program exits with
+
+```wac
+void         main(Sys sys) { }                        // 0
+never        main(Sys sys) { serve(sys); }            // does not return
+i32          main(Sys sys) { return 3; }              // 3
+Result<void> main(Sys sys) { return Result.Ok(); }    // 0
+Result<i32>  main(Sys sys) { return Result.Ok(3); }   // 3
+Result<i32>  main(Sys sys) { return Result.Err(e); }  // 1
+```
+
+Six spellings, not six programs. A `never` main has no status of its own — it comes from `sys.exit`,
+a trap, or the host. The async forms settle first and then answer the same way.
+
+**Not yet.**
+
+---
+
+## `main` returns `void`, `never`, `i32`, or a `Result` of those
+
+```wac
+string main(Sys sys) { return "hi"; }   // error: not a return type for main
+```
+
+**Not yet.**
+
+---
+
+## `try` works in `main`
+
+```wac
+async Result<void> main(Sys sys) {
+  u8[] src = try await sys.readFile("in.txt");
+  try await sys.writeFile("out.txt", transform(src));
+  return Result.Ok();
+}
+```
+
+Every call at the top of a program is fallible, and a `main` answering `void` or `i32` has to match
+each one by hand.
+
+**Not yet.**
+
+---
+
+## Work left scheduled overrides what `main` returned
+
+```wac
+i32 main(Sys sys) {
+  tick(sys, "a");
+  return 0;          // exits 1 — scheduled work never ran
+}
+
+i32 main(Sys sys) {
+  tick(sys, "a");
+  sys.exit(0);       // exits 0 — abandoning the rest, said out loud
+}
+```
+
+A trap does the same. Neither is distinguished from an `Err` by its status; what separates them is
+what gets printed.
 
 **Not yet.**
 

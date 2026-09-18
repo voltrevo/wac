@@ -123,11 +123,10 @@ async i32 total(Sys sys) {
 ## Giving other work a turn
 
 ```wac
-async i32 main(Sys sys) {
+async void main(Sys sys) {
   tick(sys, "a");
   tick(sys, "b");
   await sys.drain();
-  return 0;
 }
 
 async void tick(Sys sys, string name) {

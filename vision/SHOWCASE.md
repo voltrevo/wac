@@ -13,11 +13,12 @@ See [README.md](README.md) for the three tiers and why nothing checks them.
 ## A server
 
 ```wac
-async i32 main(Sys sys) {
-  auto listener = await sys.listen(8080);
+async Result<never> main(Sys sys) {
+  auto listener = try await sys.listen(8080);
   sys.log("listening on \{listener.port}");
 
   while (true) {
+    // todo: is accept fallible?
     auto sock = await listener.accept();
     answer(sys, sock);          // not awaited — the loop goes straight back to accept
   }
@@ -71,10 +72,9 @@ what it calls.
 ## Authority narrows on the way in
 
 ```wac
-i32 main(Sys sys) {
+void main(Sys sys) {
   i32 found = sys.run(scan, [Grant.Read]);
   sys.log("\{found} matches");
-  return 0;
 }
 
 i32 scan(Sys sys) {
