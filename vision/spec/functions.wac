@@ -32,6 +32,51 @@ export i32 pure(i32[] xs) {
   return n;
 }
 
+/** A void function may return early, or fall off the end. Nothing else may fall off the end. */
+export void early(i32 n) {
+  if (n < 0) { return; }
+}
+
+export i32 allPaths(bool c) {
+  if (c) { return 1; }
+  return 0;
+
+  // ERROR: not every path returns a value
+  // i32 bad(bool c) { if (c) { return 1; } }
+}
+
+/** An argument's type has to match: there is no widening at a call any more than anywhere else. */
+export f64 sqrt(f64 x) { trap; }
+
+export void arguments(f32 approx) {
+  // ERROR: expected f64, got f32
+  // sqrt(approx);
+
+  sqrt(approx as f64);
+}
+
+/**
+ * `const` on a parameter is per-parameter, and refuses every write through it — a field, an array
+ * element, or the binding itself. It is the same guarantee `const this` gives a receiver, and the
+ * two compose.
+ */
+export i32 peek(const Rgb p, Rgb q) {
+  q.r = 1;                     // the mutable one beside it is untouched
+
+  // ERROR: cannot write through a const reference
+  // p.r = 1;
+
+  // ERROR: cannot assign to a const variable
+  // p = Rgb(0, 0, 0);
+
+  return p.r as i32;
+}
+
+/** A bare name in call position resolves to a function, so a local never shadows one into a call. */
+export i32 resolution(i32 twice) {
+  return twice(3);             // the function, not the parameter
+}
+
 /** A type parameter is supplied by the instantiation, and `auto` takes the type an expression has. */
 export i32 totalLength<C>(C parts) {
   i32 n = 0;

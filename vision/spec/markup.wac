@@ -2,12 +2,20 @@
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
-import { div, p, label } from "core/html.wac";
+import { div, p, span, label } from "core/html.wac";
 
 /**
+ * A JSX element evaluates to a `Node`, which is an ordinary enum from `core`:
+ *
+ *     enum Node {
+ *       Element(string tag, Attr[] attrs, Node[] kids),
+ *       Fragment(Node[] kids),
+ *       Text(string s),
+ *     }
+ *
  * Every tag is a name in scope. A tag is a function, its attributes are that function's named
- * parameters, and its children are a parameter — so `Node` is an ordinary type from `core` rather
- * than a thing the language knows about.
+ * parameters, and its children are a parameter — so nothing here is a thing the language knows
+ * about beyond the syntax.
  */
 export Node greeting(string who) {
   return <p class="hi">Hello, {who}</p>;
@@ -16,6 +24,14 @@ export Node greeting(string who) {
 /** A tag that is yours is called the same way one from an import is. */
 export Node page(string who) {
   return <div><greeting who={who} /></div>;
+}
+
+/** An attribute's value is a string, written as a literal or as an expression. */
+export Node attributes(string id) {
+  return <div class="card" id={id}></div>;
+
+  // ERROR: an attribute is written once
+  // <div class="a" class="b" />;
 }
 
 /** An attribute name is written as it is in HTML, so a hyphen needs no escaping. */
@@ -31,4 +47,53 @@ export Node keywordAttribute(string id, Node[] kids) {
 /** A quoted tag is a tag whose name is not an identifier. */
 export Node quoted(Node[] kids) {
   return <"my-widget">{kids}</"my-widget">;
+}
+
+/** Text between tags is a child. An expression child has to be a `Node` already. */
+export Node children(Node inner, string who) {
+  return <div>
+    text is text
+    {inner}
+    <span>and so is this</span>
+  </div>;
+
+  // ERROR: a `{…}` child must be a Node — a string is not one
+  // <div>{who}</div>;
+}
+
+/** Between an element's tags the lexer reads text, so nothing there is an operator. */
+export Node notOperators() {
+  return <p>a < b and c > d</p>;
+}
+
+/** Inside `{…}` it is an expression again, so `>` is whatever it is there. */
+export Node insideBraces(i32 a, i32 b) {
+  return <p>{boolNode(a > b)}</p>;
+}
+
+export Node boolNode(bool v) { trap; }
+
+/** A closing tag names the element it closes. */
+export Node closing() {
+  // ERROR: `</span>` does not close `<div>`
+  // return <div></span>;
+
+  return <div></div>;
+}
+
+/** A run of text is trimmed at an end only where the whitespace reaches a line break. */
+export Node whitespace() {
+  return <p>
+    kept  inside
+  </p>;                        // the inner spaces stay; the leading and trailing runs go
+}
+
+/** A run the trimming empties is not a child, so two elements on one line are two children. */
+export Node twoChildren() {
+  return <div><span>a</span> <span>b</span></div>;   // two, not three
+}
+
+/** `<>…</>` is an element with no tag, and evaluates to a fragment. */
+export Node fragment(Node a, Node b) {
+  return <>{a}{b}</>;
 }

@@ -31,22 +31,31 @@ sits on.
 A file is a grouping rather than a chapter, and they import from each other where a type is worth
 sharing. A later test should be able to read almost like the file it tests.
 
-    values.wac      primitives, literals, conversion, defaults, construction
-    operators.wac   what each operator takes, and where one is refused
-    control.wac     branching, loops, the ternary's type, `matches`, `defer`
-    functions.wac   parameters, capability, funcrefs, lambdas
-    generics.wac    letters, instantiation, invariance, and the absence of constraints
-    types.wac       structs, methods, `const`, inheritance, dispatch, identity
+    values.wac      primitives, literals, defaults, construction
+    variables.wac   locals, module constants, and what `const` binds
+    casts.wac       the four operators, chosen by what the conversion costs
+    operators.wac   what each takes, and where one is refused
+    control.wac     branching, loops, `switch`, the ternary's type, `matches`, `defer`
+    functions.wac   parameters, `const` on one, capability, return paths
+    funcrefs.wac    a function as a value, a method as a value, a lambda
+    generics.wac    letters, the angle-bracket rule, where a construction is resolved
+    types.wac       structs, construction, methods, `const`, inheritance, dispatch, identity
+    naming.wac      what may collide, what may shadow, keywords in a name position
     nullable.wac    `T?`, `T??`, the forced unwrap, `?.` and `??`
-    arrays.wac      construction, access, packed and nullable element types
-    strings.wac     the one reference that compares by content
+    arrays.wac      construction, access, bulk moves, packed and nullable elements
+    strings.wac     UTF-8 bytes, escapes, interpolation, and content comparison
     tuples.wac      a fixed-length heterogeneous type, and the variadic built on it
-    enums.wac       variants, matching, `Result`, `try`
+    enums.wac       variants, matching, narrowing, `Result`, `try`
+    coretypes.wac   sketches of the types the other files lean on
     async.wac       tickets, the machine underneath, and the two ways to drive one
     typelogic.wac   `typeref`, `type(…)`, and the `static_` family
     markup.wac      a tree of ordinary values, written as tags
-    imports.wac     what crosses a file boundary
+    imports.wac     the four kinds of specifier, and what crosses a file boundary
+    bindgen.wac     the host boundary: what crosses, as what, and what does not
     program.wac     `Sys`, what `main` answers, and when a program is finished
+
+It is meant to replace `spec/spec/` rather than summarise it, with one exception: `wapy`, the
+indentation surface, is not covered here at all.
 
 ## How these were checked
 

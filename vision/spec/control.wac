@@ -30,6 +30,52 @@ export i32 loops(i32[] xs) {
   return n;
 }
 
+/**
+ * `switch` dispatches on a 32-bit integer — `i32` or `u32`, since an equality match has no
+ * signedness — and there is no fallthrough: each case is its own block.
+ *
+ * At most one `default`, and two constant case values that are equal are an error at the second.
+ * A repeated case is unreachable for the reason a second `default` is, and `match` refuses a
+ * variant named twice for the same one. The three are one rule.
+ */
+export i32 dayType(i32 day) {
+  switch (day) {
+    case 0: { return 0; }
+    case 6: { return 0; }
+    default: { return 1; }
+  }
+}
+
+export i32 noFallthrough() {
+  i32 x = 0;
+  switch (1) {
+    case 0: { x = 10; }
+    case 1: { x = 20; }
+    case 2: { x = 30; }
+  }
+  return x;                    // 20 — only the matching case ran
+
+  // ERROR: duplicate case value, reported at the second
+  // switch (1) { case 0: { } case 0: { } }
+}
+
+/** A loop with no exit needs no trailing return, because the checker knows it cannot fall out. */
+export i32 firstMultiple(i32 of, i32 from) {
+  i32 n = from;
+  while (true) {
+    if (n % of == 0) { return n; }
+    n += 1;
+  }
+}
+
+/** A loop that can end does need one. */
+export i32 bounded(i32 n) {
+  for (i32 i = 0; i < n; i++) {
+    if (i == 3) { return i; }
+  }
+  return n;                    // without this, the function does not return on every path
+}
+
 /** `break` leaves the loop, `continue` takes the next turn. */
 export i32 leaving(i32[] xs) {
   i32 n = 0;
@@ -39,6 +85,33 @@ export i32 leaving(i32[] xs) {
     n += x;
   }
   return n;
+}
+
+/** `continue` in a `while` takes the test, not the top of the body — the update is yours to run. */
+export i32 whileContinue(i32[] xs) {
+  i32 n = 0;
+  i32 i = 0;
+  while (i < xs.len()) {
+    i++;                       // before the `continue`, or this loop does not end
+    if (xs[i - 1] % 2 == 0) { continue; }
+    n += xs[i - 1];
+  }
+  return n;
+}
+
+/** Both are refused outside a loop, and a `switch` is not one. */
+export void outside(i32 n) {
+  // ERROR: `break` outside a loop
+  // break;
+
+  // ERROR: `continue` outside a loop
+  // continue;
+
+  switch (n) {
+    // ERROR: `continue` inside a switch that is not inside a loop
+    // case 0: { continue; }
+    default: { }
+  }
 }
 
 /**
