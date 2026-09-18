@@ -1,0 +1,217 @@
+// What a refusal looks like: the structure behind it, and the wording of the common ones.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+//
+// Every other file here writes `// ERROR:` and comments the offending line out. This one is where
+// those refusals are spelled in full, because the exact message is part of the language: a rule
+// nobody can act on is a rule that does not help.
+
+import { Point } from "./types.wac";
+
+/**
+ * A diagnostic is structured, and the rendering is a view of it. Every field below is produced by
+ * the phase that found the problem rather than added afterwards by a formatter.
+ */
+export enum Severity { Error, Warning }
+export enum Phase { Lex, Parse, Resolve, Typecheck }
+
+export struct Diagnostic {
+  Severity severity;
+  Phase phase;
+  string message;              // the headline, naming the rule
+  string file;
+  i32 line;                    // 1-based
+  i32 col;                     // 1-based
+  i32 span;                    // source characters to underline
+  string? annotation;          // after the underline: "expected i32, found f64"
+  string? hint;                // after `help:`: what to write instead
+  i32? contextStart;           // the first line of leading context, for a multi-line span
+}
+
+/**
+ * A compile answers diagnostics either way. It fails if and only if one of them is an error, so a
+ * successful compile's diagnostics are all warnings, and a clean one answers an empty array.
+ */
+export enum Compiled {
+  Ok(Module m, Diagnostic[] diagnostics),
+  Failed(Diagnostic[] diagnostics),
+}
+
+export struct Module { u8[] wasm; }
+
+/**
+ * The rendering. The gutter is as wide as the largest line number in the view, so the `|` column
+ * stays aligned however far into a file the error is.
+ *
+ *     error: <message>
+ *       --> <file>:<line>:<col>
+ *        |
+ *      N |   <source line>
+ *        |   <underline> <annotation>
+ *        = help: <hint>
+ */
+export void shape() { }
+
+/**
+ * A condition is a bool, and an integer is not one.
+ *
+ *     error: condition must be bool
+ *       --> err.wac:3:7
+ *        |
+ *      3 |   if (x) { return 1; }
+ *        |       ^ expected bool, found i32
+ *        = help: use a comparison: if (x != 0) { ... }
+ */
+export i32 condition(i32 x) {
+  // ERROR:
+  // if (x) { return 1; }
+
+  return 0;
+}
+
+/**
+ * The underline covers the whole offending expression, so its width says what was read.
+ *
+ *     error: type mismatch in assignment
+ *       --> err.wac:4:11
+ *        |
+ *      4 |   i32 n = 3.14;
+ *        |           ^^^^ expected i32, found f64
+ *        = help: use `as!` for a checked conversion or `as~` for the nearest value
+ */
+export void assignment() {
+  // ERROR:
+  // i32 n = 3.14;
+}
+
+/**
+ * A cast wider than the conversion needs is refused, and the help names the one that fits.
+ *
+ *     error: lossy cast not needed
+ *       --> file.wac:2:11
+ *        |
+ *      2 |   i64 a = x as~ i64;
+ *        |           ^^^^^^^^^ i32 -> i64 is lossless
+ *        = help: use `as` instead: i64 a = x as i64;
+ */
+export void widerThanNeeded(i32 x) {
+  // ERROR:
+  // i64 a = x as~ i64;
+}
+
+/**
+ *     error: cannot assign nullable to non-null
+ *       --> file.wac:5:13
+ *        |
+ *      5 |   Point p = q;
+ *        |             ^ expected Point, found Point?
+ *        = help: unwrap with `!`: Point p = q!;
+ */
+export void nullable(Point? q) {
+  // ERROR:
+  // Point p = q;
+}
+
+/**
+ * Some refusals have nothing to suggest, and those carry no help line rather than an empty one.
+ *
+ *     error: cannot write through const reference
+ *       --> file.wac:8:3
+ *        |
+ *      8 |   p.x = 5;
+ *        |   ^^^ p is const
+ */
+export void constWrite(const Point p) {
+  // ERROR:
+  // p.x = 5;
+}
+
+/**
+ * A span may cross lines. The lines before it are context, and the underline sits under the last.
+ *
+ *     error: incompatible argument type
+ *        --> algo.wac:14:7
+ *         |
+ *      12 |     i32 result = compute(
+ *      13 |       x,
+ *      14 |       3.14
+ *         |       ^^^^ expected i32, found f64
+ *      15 |     );
+ */
+export void multiline() { }
+
+/**
+ * The lexer never hands on a token for something that ran off the end of the file. Both of these
+ * point at the character that opened the thing that was never closed.
+ *
+ *     error: unterminated string literal
+ *       --> main.wac:2:10
+ *        |
+ *      2 |   return "hello;
+ *        |          ^ string literal is never closed
+ *
+ *     error: unterminated block comment
+ *       --> main.wac:2:3
+ *        |
+ *      2 |   /* oops, forgot to close
+ *        |   ^ block comment is never closed
+ */
+export void lexical() { }
+
+/**
+ * A parse error names what was expected there, rather than what was found.
+ *
+ *     error: unexpected token
+ *       --> main.wac:5:11
+ *        |
+ *      5 |   i32 x = ;
+ *        |           ^ expected expression
+ *
+ *     error: expected ';'
+ *       --> main.wac:3:16
+ *        |
+ *      3 |   i32 x = 5 + 2
+ *        |                ^ expected ';' after statement
+ *      4 |   i32 y = 3;
+ *
+ *     error: expected ')'
+ *       --> main.wac:3:19
+ *        |
+ *      3 |   i32 x = add(1, 2;
+ *        |                   ^ expected ')' to close argument list
+ *
+ *     error: expected type
+ *       --> main.wac:2:3
+ *        |
+ *      2 |   foo x = 5;
+ *        |   ^^^ unknown type 'foo'
+ *
+ *     error: expected field or method declaration
+ *       --> main.wac:3:3
+ *        |
+ *      3 |   = 5;
+ *        |   ^ expected type name
+ */
+export void parsing() { }
+
+/**
+ * An unclosed delimiter shows both ends: where it was opened, and where the closer was wanted.
+ * `...` elides the lines between.
+ *
+ *     error: expected '}'
+ *       --> main.wac:7:1
+ *        |
+ *      2 | export i32 foo() {
+ *        |                   - block opened here
+ *      ...
+ *      7 |
+ *        | ^ expected '}' to close block
+ */
+export void unclosed() { }
+
+/**
+ * The guarantee underneath all of it: a binary the compiler produced is accepted by a conforming
+ * WasmGC runtime. A validation rejection is a compiler bug and never a program's fault, so it is
+ * not in the list above — there is no diagnostic for it, because there is no program it describes.
+ */
+export void soundness() { }

@@ -3,12 +3,17 @@
 // Part of `vision/spec`, which is not vetted — see README.md. Vision spells the ticket type
 // `Ticket<T>` where today's spec says `Pending<T>`; the rename is not settled.
 
-import { Sys } from "./program.wac";
+import { Sys, Grant } from "./program.wac";
 import { Ticket, TicketBase, Continuation, Coroutine, Generator, AsyncGenerator } from "./coretypes.wac";
 import { Vec } from "core/vec.wac";
 import { Result } from "core/result.wac";
 
-/** An `async` function answers a ticket for what its body returns. */
+/**
+ * An `async` function answers a ticket for what its body returns. The declared type is what the
+ * body returns, and the caller derives the ticket — `async Ticket<i32>` means something else.
+ *
+ * `async` is written after any `export` and before the return type.
+ */
 export async i32 doubled(Ticket<i32> t) {
   return (await t) * 2;
 }
@@ -30,6 +35,82 @@ export void unawaited(Sys sys) {
 
 export async void sleeper(Sys sys) {
   await sys.sleepMillis(1);
+}
+
+/**
+ * A method may be `async`, written where it sits on a free function — after any `override`, before
+ * the return type. The receiver crosses a suspension the way any other parameter does.
+ */
+export struct Reader {
+  Sys sys;
+
+  async i32 readByte(this) {
+    await this.sys.sleepMillis(1);
+    return 7;
+  }
+}
+
+/** A ticket answered by an async function is not flattened: two awaits mean two different things. */
+export async Ticket<i32> later(Ticket<i32> t) {
+  return doubled(t);
+}
+
+export async i32 twoAwaits(Ticket<i32> t) {
+  Ticket<i32> inner = await later(t);   // the call is under way
+  return await inner;                   // and this is its answer
+
+  // ERROR: expected i32, got Ticket<i32> — await it for the value, or declare the
+  // function `async Ticket<i32>` to hand the ticket on. There is no cast between the two.
+  // async i32 bad(Ticket<i32> t) { return doubled(t); }
+}
+
+/** `await` wants a ticket, and answers what that ticket answers. */
+export async void awaitType(Ticket<i32> t, i32 n) {
+  await t;                      // i32
+
+  // ERROR: `await` requires a Ticket, got i32
+  // await n;
+}
+
+/** `await` binds tighter than any binary operator and looser than postfix. */
+export async i32 binding(Ticket<i32> t, Reader r) {
+  await r.readByte();           // the call is awaited, not the receiver
+  return await t + 1;           // (await t) + 1
+}
+
+/** `await` belongs to the function it is written in, so a plain lambda may not contain one. */
+export async void lambdas(Ticket<i32> t) {
+  fn<Ticket<i32>()> a = async () => await t;
+  await a();
+
+  // ERROR: `await` outside an async function — the lambda is a different function
+  // fn<i32()> b = () => await t;
+}
+
+/**
+ * A lambda writes no return type, so its slot is both the permission and the type: `async` is
+ * allowed where the slot is `fn<Ticket<R>(…)>`, and `R` is what the body is checked against. A
+ * lambda captures, and a captured name survives the suspensions — which is the reason to want one.
+ */
+export void slots(Ticket<i32> t) {
+  i32 base = 10;
+  fn<Ticket<i32>()> f = async () => base + await t;   // `base` is still there afterwards
+  f;
+
+  // ERROR: `async` on a slot that wants no ticket
+  // fn<void()> g = async () => { await t; };
+}
+
+/**
+ * `void` may be written as a type argument, and erases the parameter it stood in for:
+ * `Ticket<void>`'s continuation takes nothing. A container of it remains an error.
+ */
+export void voidArgument(Sys sys) {
+  Ticket<void> t = sys.drain();
+  t;
+
+  // ERROR: Vec<void> — nothing can hold a value of a type that has none
+  // Vec<void> v;
 }
 
 /**
@@ -108,6 +189,22 @@ export async i32 iterate(Ticket<i32> t) {
 export Result<i32> driving(Ticket<i32> t) {
   return t.wait();
 }
+
+/** However it is driven, a body runs once: a `wait` takes back a registered continuation first. */
+export void once(Sys sys) {
+  Vec<Continuation> pending;
+  schedule pending.push;
+
+  Ticket<void> t = alsoSleeps(sys);
+  t.wait();                     // the continuation is taken back, not run twice
+  sys.drain().wait();           // nothing left to dispatch
+}
+
+export async void alsoSleeps(Sys sys) {
+  await sys.sleepMillis(1);
+}
+
+export Sys fakeSys() { trap; }
 
 export void refusals(Sys real) {
   Ticket<i32> dead;

@@ -53,9 +53,16 @@ sharing. A later test should be able to read almost like the file it tests.
     imports.wac     the four kinds of specifier, and what crosses a file boundary
     bindgen.wac     the host boundary: what crosses, as what, and what does not
     program.wac     `Sys`, what `main` answers, and when a program is finished
+    diagnostics.wac what a refusal looks like, and the wording of the common ones
+    examples.wac    two whole programs — a growable buffer and a linked list
 
-It is meant to replace `spec/spec/` rather than summarise it, with one exception: `wapy`, the
-indentation surface, is not covered here at all.
+It is meant to replace `spec/spec/` rather than summarise it, with two exceptions. `wapy`, the
+indentation surface, is not covered here at all. And `grammar.md` has no equivalent: a grammar is
+the one thing that cannot be written as source in the language it describes —
+`vision/vibes/GRAMMAR.ebnf` is the draft of that.
+
+`spec/spec/buffer.md` and `spec/spec/linkedlist.md` both say they are examples rather than language;
+both are in `examples.wac`.
 
 ## How these were checked
 
@@ -68,20 +75,37 @@ bodies on functions that must return, and a method's own type letter that nothin
 carries, so it stops before parsing. `tools/visiongrammar.sh` reaches it anyway, because that pass
 strips imports first, and reports one first refusal per file:
 
-    async.wac       ^ expected '=', found ';'        an uninitialised local
-    control.wac     ^^ expected '=', found 'in'      `for … in`
-    coretypes.wac   ^^^^^^^ found 'settled'          `virtual`
-    enums.wac       ^^^^^^ found 'Circle'            an arm without `case`
-    generics.wac    ^ expected '[', found '<'        `fn<…>` rather than `fn[…]`
-    markup.wac      ^ expected '=', found '-'        a hyphenated attribute
-    strings.wac     ^ found '?'                      `??`
-    tuples.wac      ^ expected ')', found ','        a tuple literal
-    typelogic.wac   ^ expected '(', found '='        a `type` alias
-    types.wac       ^ found '='                      a field initialiser
+    async.wac       expected '=', found ';'      an uninitialised local
+    bindgen.wac     found '='                    a field initialiser
+    control.wac     expected '=', found 'in'     `for … in`
+    coretypes.wac   found 'settled'              `virtual`
+    enums.wac       found 'Circle'               an arm without `case`
+    examples.wac    found '='                    a field initialiser
+    funcrefs.wac    expected '[', found '<'      `fn<…>` rather than `fn[…]`
+    functions.wac   expected '=', found 'in'     `for … in`
+    generics.wac    found '='                    a field initialiser
+    imports.wac     found '='                    a field initialiser
+    markup.wac      expected '=', found '-'      a hyphenated attribute
+    naming.wac      found '='                    a field initialiser
+    nullable.wac    found '='                    a field initialiser
+    operators.wac   found '='                    a field initialiser
+    program.wac     expected '[', found '<'      `fn<…>`
+    tuples.wac      expected ')', found ','      a tuple literal
+    typelogic.wac   expected '(', found '='      a `type` alias
+    types.wac       found '='                    a field initialiser
+    values.wac      found '='                    a field initialiser
 
-Each of those is an addition vision makes, which is the distance being measured. One hit is noise:
-that pass matches comment text, so the word *static* in an `// ERROR:` line is reported as though it
-were code.
+Each is an addition vision makes, which is the distance being measured. `arrays.wac`, `casts.wac`,
+`diagnostics.wac`, `strings.wac` and `variables.wac` are absent from that list because they have no
+refusals at all — everything in them is the language as it stands today.
+
+A file whose first refusal is early hides whatever is behind it, so a file that leans on an addition
+in its first lines was also checked with that addition written out the long way. `examples.wac` done
+that way reports eight more, all of them the decision that a packed type is an ordinary type: `u8` as
+a parameter, and an element read answering `u8` rather than `i32`.
+
+One hit is noise: that pass matches comment text, so the word *static* in an `// ERROR:` line is
+reported as though it were code.
 
 ## What checks this
 

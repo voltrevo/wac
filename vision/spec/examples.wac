@@ -1,0 +1,190 @@
+// Two whole programs, to see the constructs in the other files doing work together.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+//
+// Neither type belongs in the language. `Buffer` is here because a growable byte buffer is the
+// smallest thing that needs a packed array, a capacity, and a method that reallocates; `List` is
+// here because a singly-linked list is the smallest thing that needs a recursive nullable field.
+
+/**
+ * A growable byte buffer. `u8[]` is packed — one byte per element — so nothing here does its own
+ * bit arithmetic, and the elements are read and written as ordinary integers.
+ */
+export struct Buffer {
+  u8[] data;
+  i32 len = 0;
+
+  /** A field initialiser covers `len`, so construction names only what is left. */
+  Buffer create(i32 cap) {
+    return Buffer(u8[cap]());
+  }
+
+  i32 cap(const this) {
+    return this.data.len();
+  }
+
+  /** A read past the end is a trap rather than a default: the caller asked a question with no answer. */
+  u8 get(const this, i32 i) {
+    if (i < 0 || i >= this.len) { trap; }
+    return this.data[i];
+  }
+
+  void set(this, i32 i, u8 v) {
+    if (i < 0 || i >= this.len) { trap; }
+    this.data[i] = v;
+  }
+
+  /** Doubling means a push costs constant time when it is averaged over the pushes before it. */
+  void push(this, u8 v) {
+    if (this.len == this.data.len()) {
+      this.grow(this.len == 0 ? 8 : this.len * 2);
+    }
+    this.data[this.len] = v;
+    this.len += 1;
+  }
+
+  void grow(this, i32 cap) {
+    u8[] bigger = u8[cap]();
+    bigger.copyFrom(this.data, 0, 0, this.len);   // a bulk move, not a loop
+    this.data = bigger;
+  }
+
+  /** The result is exactly as long as the contents, so the spare capacity does not escape. */
+  u8[] toArray(const this) {
+    u8[] out = u8[this.len]();
+    out.copyFrom(this.data, 0, 0, this.len);
+    return out;
+  }
+
+  void clear(this) {
+    this.len = 0;
+  }
+}
+
+export void buffer() {
+  Buffer b = Buffer.create(2);
+  b.cap();                     // 2
+  b.push(1);
+  b.push(2);
+  b.push(3);                   // the third push grows it
+  b.cap();                     // 4
+  b.len;                       // 3
+  b.get(2);                    // 3
+  b.toArray().len();           // 3
+
+  // ERROR: a u8 element holds a byte, and 300 is not one
+  // b.push(300);
+
+  b.clear();
+  b.len;                       // 0
+  b.cap();                     // 4 — clearing keeps the memory
+}
+
+/** A node refers to the next one, so the field is `Link?` and the type is recursive. */
+export struct Link {
+  i32 val;
+  Link? next = null;
+}
+
+/**
+ * A singly-linked list holding both ends, so a push at either end is constant time and only the
+ * pop at the back is not.
+ */
+export struct List {
+  Link? head = null;
+  Link? tail = null;
+  i32 count = 0;
+
+  bool isEmpty(const this) {
+    return this.head is null;
+  }
+
+  void pushFront(this, i32 v) {
+    Link n = Link(v, this.head);
+    this.head = n;
+    if (this.tail is null) { this.tail = n; }
+    this.count += 1;
+  }
+
+  void pushBack(this, i32 v) {
+    Link n = Link(v);
+    if (Link t matches this.tail) {
+      t.next = n;
+    } else {
+      this.head = n;
+    }
+    this.tail = n;
+    this.count += 1;
+  }
+
+  /** Nothing to answer is answered with nothing, so the return type carries the empty case. */
+  i32? popFront(this) {
+    if (Link h matches this.head) {
+      this.head = h.next;
+      if (this.head is null) { this.tail = null; }
+      this.count -= 1;
+      return h.val;
+    }
+    return null;
+  }
+
+  bool contains(const this, i32 v) {
+    Link? cur = this.head;
+    while (Link n matches cur) {
+      if (n.val == v) { return true; }
+      cur = n.next;
+    }
+    return false;
+  }
+
+  /** Walking the list to build an array is the only place its length is used twice. */
+  i32[] toArray(const this) {
+    i32[] out = i32[this.count]();
+    i32 i = 0;
+    Link? cur = this.head;
+    while (Link n matches cur) {
+      out[i] = n.val;
+      i += 1;
+      cur = n.next;
+    }
+    return out;
+  }
+
+  void reverse(this) {
+    Link? prev = null;
+    Link? cur = this.head;
+    this.tail = this.head;
+    while (Link n matches cur) {
+      Link? next = n.next;
+      n.next = prev;
+      prev = n;
+      cur = next;
+    }
+    this.head = prev;
+  }
+}
+
+export void list() {
+  List l = List();
+  l.isEmpty();                 // true
+
+  l.pushBack(1);
+  l.pushBack(2);
+  l.pushFront(0);
+  l.count;                     // 3
+  l.toArray();                 // i32[](0, 1, 2)
+
+  l.contains(2);               // true
+  l.contains(9);               // false
+
+  l.popFront();                // 0
+  l.toArray();                 // i32[](1, 2)
+
+  l.reverse();
+  l.toArray();                 // i32[](2, 1)
+
+  l.popFront();                // 2
+  l.popFront();                // 1
+  l.popFront();                // null — and the answer has a place to go
+  l.isEmpty();                 // true
+}
