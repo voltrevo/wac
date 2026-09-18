@@ -1,44 +1,113 @@
-// Strings: the one reference that compares by content.
+// Strings: UTF-8 bytes, indexed by byte, and the one reference that compares by content.
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
-/** A `string` is a reference, and the only one `==` will look inside. */
+/** Length is in bytes, and so is everything else. */
+export void length() {
+  "hello".len();               // 5
+  "😀😀".len();                // 8 — bytes, not characters
+}
+
+/** Escapes are one character each, and a backslash run resolves left to right. */
+export void escapes() {
+  "\n\t\\\"\0".len();          // 5 — each escape is one byte
+  "a\\b".len();                // 3 — a, one backslash, b
+  "\\\\".len();                // 2 — two backslashes, not one
+  "\u{41}";                    // "A"
+  "\u{1F600}".len();           // 4 — UTF-8 for one code point
+
+  // ERROR: not a code point
+  // "\u{110000}"; "\u{D800}"; "\u{}";
+}
+
+/** A literal ends at a newline, and a raw control or invisible byte is refused in one. */
+export void literals() {
+  // ERROR: a newline ends the literal where it occurs
+  // string broken = "one
+  // two";
+
+  // ERROR: a raw U+202E, U+0094, U+200B or U+FEFF in a literal is refused
+  // string sneaky = "before after";
+}
+
+/**
+ * Interpolation is exactly sugar for `+`: `"a\{e}b"` is the same program as `"a" + e + "b"`, with
+ * the same type rules and the same diagnostics. There is no formatting language, so the expression
+ * has to be something `+` accepts beside a string — a number is not.
+ */
+export void interpolation(string name, i32 n) {
+  "a\{two()}b".len();          // 4 — the same as ("a" + two() + "b").len()
+  "\{two()}".len();            // 2 — a literal may be interpolation alone
+  "\{two() + "\{two()}"}".len();   // 4 — the braces are matched, not counted
+
+  "hi \{name}";
+
+  // ERROR: no implicit conversion — interpolation is `+`, and `+` will not take a number here
+  // "n = \{n}";
+
+  "\\{n}".len();               // 4 — an escaped backslash, then an ordinary brace
+}
+
+export string two() { return "xy"; }
+
+/** Indexing answers the character at a byte offset, or nothing where the offset is mid-sequence. */
+export void indexing() {
+  "hello"[1];                  // "e"
+  "a😀b"[1];                   // "😀" — the whole sequence, from its first byte
+  "a😀b"[2];                   // ""   — mid-sequence, so there is no character there
+  "a😀b"[2].len();             // 0
+
+  "abc"[5];                    // traps — out of bounds
+}
+
+/** `+` concatenates, and it is the only arithmetic a reference gets. */
+export void joining(i32 n) {
+  "hello" + " " + "world";     // "hello world"
+  ("foo" + "bar").len();       // 6
+
+  // ERROR: no implicit conversion — a number is not a string
+  // "n = " + n;
+}
+
+/** Comparison is by bytes, for equality and for ordering. */
 export void comparison() {
-  string a = "hi";
-  string b = "h" + "i";
-
-  a == b;                      // true — bytes, not identity
-  a < "hj";                    // true — ordering is by bytes too
-
-  // ERROR: the exception is `string` exactly, not `string?`
-  // string? c = a; c == b;
+  "abc" == "abc";              // true
+  "abc" != "abd";              // true
+  "abc" < "abd";               // true
+  "b" > "abc";                 // true
 }
 
-/** Interpolation takes an expression, and the braces are escaped by the backslash. */
-export string greet(string name, i32 n) {
-  return "hello \{name}, \{n} times";
+/** Building one from a code point, and from bytes. */
+export void building() {
+  string.fromCodepoint(65);            // "A" — its len() is 1, 2, 3 or 4
+  // ERROR: negative, above 0x10FFFF, or a surrogate
+  // string.fromCodepoint(0x110000);
+
+  string.fromBytes(u8[](0x68, 0x69));  // "hi" — copied verbatim, whatever the bytes are
+  string.fromBytes(u8[](0xFF, 0x41))[0];   // "" — an invalid lead byte is no character
 }
 
-/** Concatenation is the one arithmetic operator a reference gets. */
-export void joining(string a, string b) {
-  a + b;
+/** And taking one apart. */
+export void bytes() {
+  "hi".toBytes()[0];           // 104
+  "é".toBytes().len();         // 2 — 0xC3, 0xA9
 
-  // ERROR: `-` on a reference is refused
-  // a - b;
+  u8[] copy = "hi".toBytes();
+  copy[0] = 0;                 // the string is unchanged; the array is a copy
 }
 
-/** Length is in bytes, and indexing a string is not how you reach them. */
-export void bytes(string s) {
-  s.len();                     // bytes, not characters
+/** Validity is a question you can ask, and a repair you can make. */
+export void validity() {
+  "é".isUtf8();                // true
+  string.fromBytes(u8[](0xC0, 0x80)).isUtf8();   // false — an overlong encoding
 
-  u8[] raw = s.toBytes();
-  raw.len();                   // the same count
-  raw[0] as i32;
+  "é".toUtf8();                // "é" — already valid, so unchanged
+  string.toUtf8(u8[](0xE1, 0x80, 0x41)).len();   // 4 — one U+FFFD, then "A"
 }
 
-/** A nullable string is an ordinary nullable: the absence is not the empty string. */
-export void absence(string? s) {
-  s is null;
-
-  s ?? "";                     // string — the two are different things and this says which
+/** Searching and slicing are by byte offset, like everything else. */
+export void searching() {
+  "hello world".slice(6, 11);  // "world"
+  "hello world".indexOf("world");   // 6
+  "hello".indexOf("xyz");           // -1
 }

@@ -1,0 +1,78 @@
+// The host boundary: what crosses, as what, and what does not cross at all.
+//
+// Part of `vision/spec`, which is not vetted — see README.md. The JavaScript side cannot be written
+// in wac, so the comments carry it.
+
+/**
+ * An exported struct crosses as a class wrapping the reference rather than a copy of it. So identity
+ * survives the boundary — two wrappers over one reference are one object, a write through either is
+ * visible to the other and to wac, and a cyclic structure crosses at all.
+ *
+ *     class Point {
+ *       constructor(readonly ref: unknown)      wrap one you already have
+ *       static of(x: number, y: number): Point  build a fresh one
+ *       get x(): number;  set x(v: number)
+ *       distanceSq(other: Point): number        the receiver is passed for you
+ *       toObject(): { x: number; y: number }    a plain-data snapshot
+ *     }
+ *
+ * `toObject` is one level deep and leaves a struct-typed field as its wrapper, so a `Node? next`
+ * that loops back on itself does not hang.
+ */
+export struct Point {
+  i32 x = 0;
+  const i32 y = 0;             // a const field gets a getter and no setter
+
+  i32 distanceSq(const this, Point other) { trap; }
+}
+
+/** A nullable struct crosses as `T | null`, which is what JavaScript already means by an absence. */
+export Point? maybePoint() { trap; }
+
+/** A generic instantiation is named for what the author wrote: `Vec<i32>` binds as `Vec_i32`. */
+export struct Box<T> { T v; }
+
+export Box<i32> boxed() { trap; }        // Box_i32
+
+/**
+ * Every struct and enum named in an exported signature is bound, and so is every type their fields
+ * name — but only through a field the boundary can carry. A field whose type is an array of structs
+ * is not a route to anything, because nothing binds one.
+ *
+ * That costs less than it sounds: a container reaches its contents through methods, and methods
+ * bind, so a tree is walkable from the host without an array of structs ever crossing.
+ */
+export struct Tree {
+  Tree[] kids;                 // not followed
+  i32 len(const this) { trap; }
+  Tree get(const this, i32 i) { trap; }    // followed, and enough
+}
+
+/** A host function is passed in, never ambient: the parameter is how one arrives. */
+export i32 fold(i32[] xs, fn<i32(i32, i32)> f) { trap; }
+
+/** Primitives cross as themselves, with the widths JavaScript has. */
+export i32 small() { trap; }             // number
+export i64 wide() { trap; }              // bigint — add64(100n, 200n) is 300n
+export u32 unsigned() { trap; }          // number, read unsigned: 0xFF000000 is 4278190080
+export f64 real() { trap; }              // number
+export bool flag() { trap; }             // boolean
+export string text() { trap; }           // string
+
+/** `i32?` crosses as `number | null`. It is a one-field struct wasm-side, so all 32 bits survive. */
+export i32? maybeSmall() { trap; }
+
+/** Array parameters are copied in, so the caller's typed array is never modified. */
+export u8[] echoBytes(u8[] data) { return data; }
+
+/**
+ * An enum whose variant is called `tag`, `ref` or `toObject` is skipped rather than renamed: the
+ * generated member would collide, and a renamed variant would no longer be the name in the source.
+ */
+export enum Kind { Start, Stop }
+
+/** A function whose signature the boundary cannot carry is omitted, with a comment saying why. */
+export void unsupported(anyref a) { trap; }
+
+/** Compiled modules carry a `name` section, so a stack trace names wac functions. */
+export i32 named() { trap; }

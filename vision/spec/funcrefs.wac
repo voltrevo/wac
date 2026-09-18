@@ -1,0 +1,85 @@
+// Function references: a function as a value, a method as a value, and a lambda.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/** A named function assigns into a matching `fn<…>` slot, and the slot is called like a function. */
+export bool less(i32 a, i32 b) { return a < b; }
+export i32 double(i32 x) { return x * 2; }
+
+export void values() {
+  fn<bool(i32, i32)> cmp = less;
+  cmp(3, 5);                   // true
+
+  fn<i32(i32)> f = double;
+  f(5);                        // 10
+}
+
+/** One is an ordinary parameter, and an ordinary return. */
+export i32 apply(fn<i32(i32)> f, i32 x) { return f(x); }
+
+export fn<bool(i32, i32)> pick(bool up) {
+  return up ? less : greater;
+}
+
+export bool greater(i32 a, i32 b) { return a > b; }
+
+export void passing() {
+  apply(double, 5);            // 10
+  pick(true)(3, 5);            // true
+}
+
+/** A nullable funcref is an ordinary nullable: absent is not a function that does nothing. */
+export i32 callIfThere(fn<i32(i32)>? f, i32 x) {
+  if (fn<i32(i32)> g matches f) { return g(x); }
+  return 0;                    // 0 without trapping, where there is none
+}
+
+/** A method is a value too, and its receiver is the first parameter. */
+export struct Counter {
+  i32 n = 0;
+
+  i32 inc(this) { this.n += 1; return this.n; }
+}
+
+export void methodRefs(Counter c) {
+  fn<i32(Counter)> step = Counter.inc;
+  step(c);                     // 1 — the same as c.inc()
+  step(c);                     // 2
+
+  fn<i32()> bound = c.inc;     // a bound one has no receiver parameter
+  bound();                     // 3
+}
+
+/**
+ * A lambda is a `fn<…>` value written inline. Parameters carry their types; the return type comes
+ * from the slot it is written into, which is why a method's own letter has to be written at the call.
+ */
+export void lambdas() {
+  apply((i32 a) => a + 1, 5);          // 6
+  apply((i32 a) => { return a * 3; }, 5);   // 15 — a block where one expression will not do
+}
+
+/** A lambda captures by reference, primitives included, so the capture sees later writes. */
+export i32 capturing() {
+  i32 n = 1;
+  fn<i32()> read = () => n;
+  n = 2;
+  return read();               // 2
+}
+
+/** Inside a method it captures `this` the same way. */
+export struct Adder {
+  i32 base = 0;
+
+  fn<i32(i32)> plus(this) {
+    return (i32 x) => this.base + x;
+  }
+}
+
+/** An array of them is an array like any other. */
+export i32 table(i32 x) {
+  fn<i32(i32)>[] ops = fn<i32(i32)>[](double, negate);
+  return ops[0](x) + ops[1](x);    // 10 + -5 for 5
+}
+
+export i32 negate(i32 x) { return -x; }
