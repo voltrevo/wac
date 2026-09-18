@@ -2,51 +2,109 @@
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
-/** A variant may carry a payload, or nothing. */
+/** A variant may carry a payload, or nothing, and two variants may reuse a payload name. */
 export enum Shape {
-  Circle(f64 r), Square(f64 side), Dot
+  Circle(f64 r), Rect(f64 w, f64 h), Point
+
+  // ERROR: duplicate payload name within one variant
+  // Bad(i32 x, i32 x)
 }
 
-export enum Fault {
-  NotFound, IsDir, Denied
+export enum Fault { NotFound, IsDir, Denied }
+
+/** A variant is built through the enum, and that is the spelling a test uses too. */
+export void building() {
+  Shape a = Shape.Circle(1.0);
+  Shape b = Shape.Point;
+
+  a is Shape.Circle;           // true — a type test needs no payload
+  a is Circle;                 // the same test, unqualified
+  b is not Shape.Circle;       // true
+
+  // ERROR: a payload in a type test — nothing is being constructed
+  // a is Shape.Circle(1.0);
 }
 
 /** An arm is a shape and a consequence. A payload name binds; `_` ignores one. */
 export f64 area(Shape s) {
   return match (s) {
     Circle(r):    3.14159 * r * r,
-    Square(side): side * side,
-    Dot:          0.0,
+    Rect(w, h):   w * h,
+    Point:        0.0,
   };
 }
 
-/** `default` is the arm for the shapes not named above, and is refused where none are left. */
-export string advice(Fault f) {
-  return match (f) {
-    NotGranted: "start it with the grant it needs",
-    default:    "",
-  };
-}
-
-export f64 areaAgain(Shape s) {
+export bool isRound(Shape s) {
   return match (s) {
-    Circle(r): 3.14159 * r * r,
-    Square(_): 0.0,
-    Dot:       0.0,
+    Circle(_): true,
+    default:   false,
+  };
+}
+
+/** A payload list shorter or longer than the variant is refused rather than positioned. */
+export void arity(Shape s) {
+  // ERROR: `Rect` has two fields
+  // match (s) { Rect(w): 0.0, default: 0.0 };
+
+  // ERROR: `Point` has none
+  // match (s) { Point(x): 0.0, default: 0.0 };
+}
+
+/** The arms cover the enum, or carry a `default` — and a `default` that covers nothing is refused. */
+export f64 covering(Shape s) {
+  // ERROR: match does not cover 'Rect'
+  // return match (s) { Circle(r): r, Point: 0.0 };
+
+  return match (s) {
+    Circle(r):  r,
+    Rect(w, _): w,
+    Point:      0.0,
 
     // ERROR: this `default` is unreachable — every variant is already named
-    // default:   0.0,
+    // default:    0.0,
   };
 }
 
-/** Arms hold blocks or values, and one that leaves is not asked to agree with the others. */
+/** Two arms for one variant is a compile error, not a first-match. */
+export f64 duplicate(Shape s) {
+  // ERROR: duplicate arm for 'Circle'
+  // return match (s) { Circle(r): r, Circle(r2): r2, default: 0.0 };
+  return 0.0;
+}
+
+/**
+ * An arm narrows its subject where the subject is a name, so the arm can read the variant's fields
+ * off it. The narrowed binding is `const`, and a payload name may not reuse the subject's name.
+ */
+export f64 narrowing(Shape s) {
+  return match (s) {
+    Circle:  s.r,              // narrowed: the arm's `s` is a Circle
+    default: 0.0,
+
+    // ERROR: cannot assign to `s` — a matched subject is const within its arm
+    // Circle: { s = Shape.Point; 0.0 },
+
+    // ERROR: duplicate binding — the payload name is the subject's
+    // Circle(s): s,
+  };
+}
+
+/** Where the subject is not a name there is nothing to narrow. */
+export f64 noName(Shape[] shapes) {
+  return match (shapes[0]) {
+    Circle(r): r,              // the payload still binds
+    default:   0.0,
+  };
+}
+
+/** An arm that leaves gives no value, and is not asked to agree with the others. */
 export i32 leaving(Shape[] shapes) {
   i32 n = 0;
   for (Shape s in shapes) {
     f64 a = match (s) {
       Circle(r): 3.14159 * r * r,
-      Square(w): w * w,
-      Dot:       continue,
+      Rect(w, h): w * h,
+      Point:     continue,
     };
     n += a as~ i32;
   }
@@ -56,10 +114,22 @@ export i32 leaving(Shape[] shapes) {
 /** A nullable subject names `null` alongside the variants, or carries a `default`. */
 export f64 maybeArea(Shape? s) {
   return match (s) {
-    Circle(r):    3.14159 * r * r,
-    Square(side): side * side,
-    Dot:          0.0,
-    null:         0.0,
+    Circle(r):  3.14159 * r * r,
+    Rect(w, h): w * h,
+    Point:      0.0,
+    null:       0.0,
+  };
+}
+
+/** An enum may hold itself, so a recursive shape folds. */
+export enum Tree {
+  Leaf(i32 v), Node(Tree left, Tree right)
+}
+
+export i32 sum(Tree t) {
+  return match (t) {
+    Leaf(v):        v,
+    Node(l, r):     sum(l) + sum(r),
   };
 }
 
@@ -73,9 +143,9 @@ export enum Result<T, E = union> {
 
 export string describe(Result<i32, Fault> r) {
   return match (r) {
-    Ok(v):              "got it",
-    Err(is NotFound):   "no such thing",
-    Err(e):             "some other fault",
+    Ok(v):            "got it",
+    Err(is NotFound): "no such thing",
+    Err(e):           "some other fault",
   };
 }
 

@@ -2,10 +2,12 @@
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
+export struct Box<T> { T v; }
+export struct Holder { Box<i32> b; }
+export enum Maybe<T> { Just(T v), Absent }
+
 /** A letter on a function is filled by the call. */
-export T first<T>(T[] xs) {
-  return xs[0];
-}
+export T first<T>(T[] xs) { return xs[0]; }
 
 export void inferred(i32[] ns, string[] ss) {
   first(ns);                   // i32
@@ -13,45 +15,75 @@ export void inferred(i32[] ns, string[] ss) {
 }
 
 /** Where there is nothing to infer from, the call writes the argument. */
-export T zero<T>() {
-  trap;
-}
+export T zero<T>() { trap; }
 
 export void written() {
   zero<i32>();
   zero<string>();
 }
 
-/** A letter on a struct is filled by the type. */
-export struct Pair<A, B> {
-  A left;
-  B right;
-
-  A takeLeft(const this) { return this.left; }
-}
-
-export void instantiated() {
-  Pair<i32, string> p = Pair(1, "a");
-  p.takeLeft();                // i32
-}
-
 /**
- * A method may declare letters its owner has not got. A lambda takes its return type from the slot
- * it is written into, so where that slot is the method's own letter there is nothing to infer from
- * and the call writes it.
+ * Angle brackets are type syntax only: `IDENT <` is ambiguous with less-than, and the parse commits
+ * to the type reading if it succeeds, whatever follows. A program that meant the comparison says so
+ * with one pair of parentheses, on the *first* comparison.
  */
-export struct Box<T> {
-  T v;
+export void ambiguity(i32 a, i32 b, i32 e, i32[] list, i32 count) {
+  // ERROR: type arguments, and a value cannot follow them
+  // g(a < b, c > e);
 
-  U mapped<U>(const this, fn<U(T)> f) { return f(this.v); }
+  g2((a < b), b > e);          // two comparisons, as written
+
+  count < list.len();          // untouched — `list.len()` is a call, so the type parse fails
+
+  // `a < b > c` was an error before the rule claimed it: it compares a bool with an integer.
+  // What changed is which error it gets.
+
+  // What the rule buys: a mistake inside the arguments is reported as one.
+  // ERROR: unknown type `Typoo`
+  // Box<Typoo> t;
 }
 
-export void ownLetters(Box<i32> b) {
-  b.mapped<i32>((i32 x) => x + 1);
-  b.mapped<string>((i32 x) => "n");
+export void g2(bool p, bool q) { }
 
-  // ERROR: nothing says what U is
-  // b.mapped((i32 x) => x + 1);
+/** A construction is resolved from the slot it goes into, and there are eight of them. */
+export void positions(Box<i32>[] a, Holder h) {
+  Box<i32> v = Box(1);         // a declaration
+  v = Box(2);                  // a local
+  h.b = Box(3);                // a field
+  a[0] = Box(4);               // an element
+  take(Box(5));                // an argument
+  Holder k = Holder(Box(6));   // a construction's argument
+  Box<i32> w = Box.of(7);      // a static on the template
+
+  v; k; w;
+}
+
+export void take(Box<i32> b) { }
+
+/** What has no slot has no expected type, and the fix is the two statements wac already writes. */
+export void noSlot() {
+  // ERROR: nothing says what T is
+  // Box().v;
+
+  Box<i32> b = Box(1);
+  b.v;
+}
+
+/** Receiver position has no rewrite, so an instantiation may be written out there. */
+export void receivers() {
+  Maybe<i32>.Just(4);
+  Maybe<i32>.Absent;
+  Box<i32>.of(23).v;
+
+  // ERROR: `Ty<Args>` is an expression only as the object of a `.`
+  // Maybe<i32>;
+}
+
+/** A letter on a struct is filled by the type, and two files naming one name one struct. */
+export void instantiated() {
+  Box<i32> a = Box(1);
+  Box<i32> b = Box(2);
+  a is b;                      // false — but they are the same type
 }
 
 /** Two instantiations are unrelated unless their arguments are identical. */
@@ -68,12 +100,30 @@ export void invariance(Box<Square> sq) {
 }
 
 /**
- * Nothing is asked of a letter, so a body may use what a letter has not got, and the complaint
- * arrives at the instantiation that cannot supply it rather than at the definition.
+ * A method may declare letters its owner has not got. A lambda takes its return type from the slot
+ * it is written into, so where that slot is the method's own letter there is nothing to infer from
+ * and the call writes it.
  */
-export i32 lengthOf<T>(T x) {
-  return x.len();
+export struct Mapper<T> {
+  T v;
+
+  U mapped<U>(const this, fn<U(T)> f) { return f(this.v); }
 }
+
+export void ownLetters(Mapper<i32> m) {
+  m.mapped<i32>((i32 x) => x + 1);
+  m.mapped<string>((i32 x) => "n");
+
+  // ERROR: nothing says what U is
+  // m.mapped((i32 x) => x + 1);
+}
+
+/**
+ * Nothing is asked of a letter, so a body may use what a letter has not got, and the complaint
+ * arrives at the instantiation that cannot supply it rather than at the definition. A generic used
+ * at two types is checked at each.
+ */
+export i32 lengthOf<T>(T x) { return x.len(); }
 
 export void unconstrained(string s, i32 n) {
   lengthOf(s);                 // 3 for "abc"
