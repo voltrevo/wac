@@ -1,0 +1,129 @@
+// Asynchrony: tickets, the machine underneath, and the two ways to drive one.
+//
+// Part of `vision/spec`, which is not vetted — see README.md. Vision spells the ticket type
+// `Ticket<T>` where today's spec says `Pending<T>`; the rename is not settled.
+
+import { Sys } from "./program.wac";
+
+/** An `async` function answers a ticket for what its body returns. */
+export async i32 doubled(Ticket<i32> t) {
+  return (await t) * 2;
+}
+
+export async void awaiting(Ticket<i32> t) {
+  Ticket<i32> p = doubled(t);   // the call answers the ticket
+  i32 v = await p;              // and awaiting it answers the value
+  v;
+}
+
+/** An unawaited call runs to its first suspension and hands its continuation to the target. */
+export void unawaited(Sys sys) {
+  Vec<Continuation> pending;
+  schedule pending.push;
+
+  sleeper(sys);                 // runs until it suspends, then lands in `pending`
+  pending.len();                // 1
+}
+
+export async void sleeper(Sys sys) {
+  await sys.sleepMillis(1);
+}
+
+/**
+ * `coroutine` answers the machine and runs nothing. `Coroutine<W, Y, R>` is what it waits on, what
+ * it yields, and what it returns — `W` is `never` where it cannot wait.
+ */
+export void machine(Ticket<i32> t) {
+  Coroutine<TicketBase, never, i32> c = coroutine doubled(t);
+
+  t.resolve(21);
+  c.step();                     // Waiting
+  c.step();                     // Done(42)
+  c.step();                     // Done(42) — stepping a finished machine changes nothing
+}
+
+/** Three constructs, three called forms, and one operator to descend to the machine. */
+export void taxonomy(Ticket<i32> t) {
+  Generator<i32, void>      a = values();
+  Ticket<i32>               b = doubled(t);
+  AsyncGenerator<i32, void> c = counter(t);
+
+  Coroutine<never, i32, void>       d = coroutine values();
+  Coroutine<TicketBase, never, i32> e = coroutine doubled(t);
+  Coroutine<TicketBase, i32, void>  f = coroutine counter(t);
+
+  a; b; c; d; e; f;
+}
+
+export gen<i32> void values() {
+  yield 1;
+  yield 2;
+}
+
+export async gen<i32> void counter(Ticket<i32> t) {
+  yield 1;
+  yield await t;
+}
+
+/** Async is the same thing wrapped in a ticket, so `Waiting` only appears on the machine. */
+export void stepping(Ticket<i32> t) {
+  Generator<i32, void>      a = values();
+  AsyncGenerator<i32, void> c = counter(t);
+
+  a.step();                     // Yielded(1) | Done(void)
+  c.step();                     // Ticket<Yielded(i32) | Done(void)>
+
+  Coroutine<TicketBase, i32, void> f = coroutine counter(t);
+  f.step();                     // Yielded(i32) | Done(void) | Waiting
+}
+
+/** `await` is illegal in a generator, `yield` in an async function, and both belong to the pair. */
+export gen<i32> void keywords(Ticket<i32> t) {
+  yield 1;
+
+  // ERROR: `await` in a generator
+  // await t;
+}
+
+/** Iterating an async generator needs the await written, because a boundary is written. */
+export async i32 iterate(Ticket<i32> t) {
+  i32 n = 0;
+  for await (i32 x in counter(t)) { n += x; }
+
+  // ERROR: iterating an async generator needs `for await`
+  // for (i32 x in counter(t)) { }
+
+  return n;
+}
+
+/**
+ * `wait` resolves, in turn, each thing the ticket awaited, and each resolution needs the `sys` that
+ * produced that ticket to permit synchronous resolution. It answers the value or refuses.
+ *
+ * Replacing `await x` with `x.wait()!` never changes the value. It changes what else got to run.
+ */
+export Result<i32> driving(Ticket<i32> t) {
+  return t.wait();
+}
+
+export void refusals(Sys real) {
+  Ticket<i32> dead;
+  dead.wait();                  // Err — nothing behind it and nobody to ask
+
+  Sys fake = fakeSys();
+  fake.run(async (Sys sys) => {
+    real.sleepMillis(10);       // unawaited — its continuation lands in fake's queue
+    return sys.drain().wait();  // Err — the ticket is real's, and fake cannot advance it
+  }, []);
+}
+
+/** `drain` runs the work nobody awaited, and the two ways to finish it are the same program. */
+export async void drainAsync(Sys sys) {
+  sleeper(sys);
+  await sys.drain();
+}
+
+export Result<void> drainSync(Sys sys) {
+  sleeper(sys);
+  return sys.drain().wait();
+}

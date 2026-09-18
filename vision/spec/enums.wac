@@ -1,0 +1,86 @@
+// Enums, matching, and the error type built on both.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/** A variant may carry a payload, or nothing. */
+export enum Shape {
+  Circle(f64 r), Square(f64 side), Dot
+}
+
+export enum Fault {
+  NotFound, IsDir, Denied
+}
+
+/** An arm is a shape and a consequence. A payload name binds; `_` ignores one. */
+export f64 area(Shape s) {
+  return match (s) {
+    Circle(r):    3.14159 * r * r,
+    Square(side): side * side,
+    Dot:          0.0,
+  };
+}
+
+/** `default` is the arm for the shapes not named above, and is refused where none are left. */
+export string advice(Fault f) {
+  return match (f) {
+    NotGranted: "start it with the grant it needs",
+    default:    "",
+  };
+}
+
+export f64 areaAgain(Shape s) {
+  return match (s) {
+    Circle(r): 3.14159 * r * r,
+    Square(_): 0.0,
+    Dot:       0.0,
+
+    // ERROR: this `default` is unreachable — every variant is already named
+    // default:   0.0,
+  };
+}
+
+/** Arms hold blocks or values, and one that leaves is not asked to agree with the others. */
+export i32 leaving(Shape[] shapes) {
+  i32 n = 0;
+  for (Shape s in shapes) {
+    f64 a = match (s) {
+      Circle(r): 3.14159 * r * r,
+      Square(w): w * w,
+      Dot:       continue,
+    };
+    n += a as~ i32;
+  }
+  return n;
+}
+
+/** A nullable subject names `null` alongside the variants, or carries a `default`. */
+export f64 maybeArea(Shape? s) {
+  return match (s) {
+    Circle(r):    3.14159 * r * r,
+    Square(side): side * side,
+    Dot:          0.0,
+    null:         0.0,
+  };
+}
+
+/**
+ * `Result<T, E = union>` is an ordinary generic with a default argument rather than a blessed form.
+ * `is` inside a payload tests a variant there; a bare name binds it.
+ */
+export enum Result<T, E = union> {
+  Ok(T v), Err(E e)
+}
+
+export string describe(Result<i32, Fault> r) {
+  return match (r) {
+    Ok(v):              "got it",
+    Err(is NotFound):   "no such thing",
+    Err(e):             "some other fault",
+  };
+}
+
+/** `try` hands the error upward, and the error has to be in the set rather than equal to it. */
+export Result<i32, union<NotFound>> load(Result<i32, union<NotFound>> r) {
+  i32 v = try r;
+  return Result.Ok(v + 1);
+}

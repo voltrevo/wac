@@ -1,0 +1,88 @@
+// Type logic: ordinary wac, run where a type is wanted.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/**
+ * `typeref` is a type like any other, and a function over one is a function like any other. What is
+ * new is only the crossing: `typeref(T)` names a type, and `type(…)` binds the type a typeref names.
+ */
+export typeref slot(typeref t) {
+  return t.isRef() && !t.isNullable() ? t.pushNull() : t;
+}
+
+export type Slot<T> = type(slot(typeref(T)));
+
+/** `pushNull` adds one level rather than ensuring one, because `?` does not flatten either. */
+export void levels() {
+  typeref a = typeref(i32);
+  typeref b = typeref(Node);
+
+  a.isRef();                   // false
+  b.isRef();                   // true
+  b.pushNull().isNullable();   // true
+  b.pushNull().popNull();      // typeref(Node)
+}
+
+export struct Node { i32 v = 0; }
+
+/** Only `type(…)` admits an expression where a type is wanted. */
+export struct Holder<T> {
+  // ERROR: expected a type
+  // slot(typeref(T))[] wrong;
+
+  Slot<T>[] data;
+}
+
+/** `static_match` chooses an arm at compile time, and `static_trap` refuses an instantiation. */
+export i32 width<T>() {
+  return static_match (T) {
+    u32:     4,
+    u64:     8,
+    default: static_trap "width is defined for u32 and u64",
+  };
+}
+
+/** `static_if` drops the branch not taken, so only the live one reaches the second pass. */
+export T fromSlot<T>(Slot<T> s) {
+  static_if (typeref(Slot<T>) == typeref(T)) {
+    return s;
+  } else {
+    return s!;
+  }
+}
+
+/** An ordinary `if` folds and eliminates too, but checks both branches. */
+export i32 tag<T>() {
+  if (typeref(T).isRef()) { return 0; }
+  return 1;
+}
+
+/** A constant condition warns unless the constant came from a type parameter. */
+export void warnings(Sys sys) {
+  if (false) { sys.log("never"); }    // warning: condition is always false
+}
+
+/** `static_for` unrolls, so each iteration is checked at its own types. */
+export bool same<Ts>(Ts a, Ts b) {
+  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+    if (a.(i) != b.(i)) { return false; }
+  }
+  return true;
+}
+
+/** A tuple is built member by member, against the definite-assignment rule. */
+export type Unwrapped<Ts> = type(tupleOf(popEach(typeref(Ts).members())));
+
+export Unwrapped<Ts> unwrapAll<Ts>(Ts t) {
+  Unwrapped<Ts> out;
+  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+    out.(i) = t.(i)!;
+  }
+  return out;
+}
+
+export typeref[] popEach(typeref[] ts) {
+  Vec<typeref> out;
+  for (typeref t in ts) { out.push(t.popNull()); }
+  return out.toArray();
+}

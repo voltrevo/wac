@@ -1,0 +1,77 @@
+// A program: what it is handed, what it answers, and when it is finished.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/**
+ * `Sys` is the authority a program is handed. Nothing reaches the world without one.
+ *
+ * This is a sketch of the capability rather than the library: wac has no declaration-only form, so
+ * a body whose content is not the point is written `{ trap; }`, which satisfies any return type.
+ */
+export struct Sys {
+  Queue<Continuation> pending;
+
+  void log(const this, string line) { trap; }
+  async u8[] readFile(const this, string path) { trap; }
+  async void writeFile(const this, string path, u8[] bytes) { trap; }
+  async void sleepMillis(const this, i32 ms) { trap; }
+  i32 run(const this, fn<i32(Sys)> f, Grant[] grants) { trap; }
+  void exit(const this, i32 code) { trap; }
+
+  async void drain(this) {
+    schedule this.pending.push;
+    while (Continuation c matches this.pending.pop()) {
+      await c.t;
+      c.call();
+    }
+  }
+}
+
+export enum Grant { Read, Write, Listen, Spawn }
+
+/**
+ * `main` returns `void`, `never`, `i32`, or a `Result` of those, and the host reads whatever it
+ * answered. Nothing in the language assumes a posix exit code.
+ */
+export void quiet(Sys sys) { }                            // exits 0
+export i32 coded(Sys sys) { return 3; }                   // exits 3
+export never serving(Sys sys) { forever(sys); }           // does not return
+export Result<void> fallible(Sys sys) { return Result.Ok(); }   // Ok: 0, Err: 1
+export Result<i32> both(Sys sys) { return Result.Ok(3); } // Ok(3): 3, Err: 1
+
+export never forever(Sys sys) { trap; }
+
+/** A `Result` is what makes `try` available at the top of a program, where every call can fail. */
+export async Result<void> copy(Sys sys, string from, string to) {
+  u8[] src = try await sys.readFile(from);
+  try await sys.writeFile(to, src);
+  return Result.Ok();
+}
+
+/** Authority narrows on the way in: a subsystem holds what it was granted and no more. */
+export void narrowing(Sys sys) {
+  i32 found = sys.run(scan, [Grant.Read]);
+  sys.log("\{found} matches");
+}
+
+export i32 scan(Sys sys) {
+  return 0;                    // reads; it cannot write, listen or spawn, whatever it asks for
+}
+
+/** Work left scheduled at exit overrides what main returned, and so does a trap. */
+export i32 leftBehind(Sys sys) {
+  sys.sleepMillis(10);         // unawaited, and never drained
+  return 0;                    // exits 1 — scheduled work never ran
+}
+
+export i32 abandoning(Sys sys) {
+  sys.sleepMillis(10);
+  sys.exit(0);                 // exits 0 — abandoning the rest, said out loud
+  return 0;
+}
+
+/** A program that cannot make progress is hung, which is the same check from the other side. */
+export async void stuck(Sys sys) {
+  Ticket<i32> t;
+  await t;                     // exits 1 — nothing can run and nothing is outstanding
+}
