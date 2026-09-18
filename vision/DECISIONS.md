@@ -79,11 +79,19 @@ Three spec rules assume otherwise and go with it: `[§wac-packed-nullable-2knq6w
 
 ## Some tuple returns must be optimised
 
-A sync function that creates the tuple it returns, and gives nothing a chance to hold that reference
-after the call, must be compiled to return the members instead. The condition is judged inside that
-one function. A caller that destructures the result immediately, or reads a single member of it,
-must build no tuple. Optimising by returning members in other cases is permitted but not required
-(eg async functions).
+A function that returns a tuple may be compiled to return the members instead. When this
+representation is used, a caller that destructures the result immediately, or reads a single member
+of it, must build no tuple.
+
+A function must use this representation when the following conditions are met:
+
+1. The function is synchronous (not async).
+2. The returned tuple is created inside the function.
+3. The function gives nothing a chance to hold a reference to that tuple after the call.
+4. There exists a caller that destructures the resulting tuple or reads a single member of it.
+
+Optimising by returning members under other conditions is permitted but not required by this
+decision.
 
 Being an optimisation, it changes nothing a program can observe. Where the two forms would otherwise
 differ, the optimised function is wrapped in one that returns a tuple, and the wrapper is what is
