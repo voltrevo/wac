@@ -99,10 +99,15 @@ Each is an addition vision makes, which is the distance being measured. `arrays.
 `diagnostics.wac`, `strings.wac` and `variables.wac` are absent from that list because they have no
 refusals at all — everything in them is the language as it stands today.
 
-A file whose first refusal is early hides whatever is behind it, so a file that leans on an addition
-in its first lines was also checked with that addition written out the long way. `examples.wac` done
-that way reports eight more, all of them the decision that a packed type is an ordinary type: `u8` as
-a parameter, and an element read answering `u8` rather than `i32`.
+**The method has a limit worth knowing.** A parse error stops the file, so a file whose first
+refusal is on line 15 has had nothing after line 15 type-checked — which is most of them, and it is
+why a wrong type in one of these would survive. Only the four files that build clean have been
+checked all the way through.
+
+Where a file leans on an addition in its first lines, it was also built with that addition written
+out the long way, which reaches the rest. `examples.wac` done like that reports eight more, all of
+them the decision that a packed type is an ordinary type: `u8` as a parameter, and an element read
+answering `u8` rather than `i32`.
 
 One hit is noise: that pass matches comment text, so the word *static* in an `// ERROR:` line is
 reported as though it were code.
