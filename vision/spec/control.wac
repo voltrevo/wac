@@ -88,6 +88,16 @@ export i32 alwaysTrue(Rgb certain) {
   return 0;
 }
 
+/** `defer` runs when the block exits, however it exits. */
+export i32 cleanup(i32 n) {
+  defer release();
+
+  if (n < 0) { return -1; }    // release() runs here
+  return n;                    // and here
+}
+
+export void release() { }
+
 /** Draining a queue is the loop the construct was wanted for: one test, one binding. */
 export i32 drainLike(Queue<i32> q) {
   i32 n = 0;

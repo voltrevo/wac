@@ -1,0 +1,39 @@
+// Imports: what crosses a file boundary, and what a path means.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+//
+// A path starting `@/` names the project root, so the same header works from any file in the
+// project. The files here use `./` because this directory is not a project of its own.
+
+import { Point } from "./types.wac";
+import { Shape, Fault } from "./enums.wac";
+
+/** An import brings in a name, and the name is used as if it were declared here. */
+export i32 usingThem(Point p, Shape s, Fault f) {
+  return p.sum();
+}
+
+/**
+ * `export` is what makes a declaration importable. Without it a name is file-private, and that is
+ * the default rather than something to ask for.
+ */
+export i32 visible(i32 x) { return hidden(x); }
+
+i32 hidden(i32 x) { return x + 1; }
+
+/** A struct, an enum, a function and a constant all cross the same way. */
+export const i32 LIMIT = 100;
+
+export struct Window {
+  i32 w = 0;
+  i32 h = 0;
+}
+
+export enum Edge { Top, Bottom }
+
+export Window clamped(Window win) {
+  return Window {
+    w: win.w > LIMIT ? LIMIT : win.w,
+    h: win.h > LIMIT ? LIMIT : win.h,
+  };
+}

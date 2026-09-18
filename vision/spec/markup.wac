@@ -1,0 +1,34 @@
+// Markup: a tree of ordinary values, written as tags.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+import { div, p, label } from "core/html.wac";
+
+/**
+ * Every tag is a name in scope. A tag is a function, its attributes are that function's named
+ * parameters, and its children are a parameter — so `Node` is an ordinary type from `core` rather
+ * than a thing the language knows about.
+ */
+export Node greeting(string who) {
+  return <p class="hi">Hello, {who}</p>;
+}
+
+/** A tag that is yours is called the same way one from an import is. */
+export Node page(string who) {
+  return <div><greeting who={who} /></div>;
+}
+
+/** An attribute name is written as it is in HTML, so a hyphen needs no escaping. */
+export Node hyphenated() {
+  return <div data-role="banner"></div>;
+}
+
+/** A name the lexer would otherwise take as a keyword is written verbatim with `@`. */
+export Node keywordAttribute(string id, Node[] kids) {
+  return <label id={id} for={@"for"}>{kids}</label>;
+}
+
+/** A quoted tag is a tag whose name is not an identifier. */
+export Node quoted(Node[] kids) {
+  return <"my-widget">{kids}</"my-widget">;
+}

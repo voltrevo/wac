@@ -1,0 +1,44 @@
+// Strings: the one reference that compares by content.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/** A `string` is a reference, and the only one `==` will look inside. */
+export void comparison() {
+  string a = "hi";
+  string b = "h" + "i";
+
+  a == b;                      // true — bytes, not identity
+  a < "hj";                    // true — ordering is by bytes too
+
+  // ERROR: the exception is `string` exactly, not `string?`
+  // string? c = a; c == b;
+}
+
+/** Interpolation takes an expression, and the braces are escaped by the backslash. */
+export string greet(string name, i32 n) {
+  return "hello \{name}, \{n} times";
+}
+
+/** Concatenation is the one arithmetic operator a reference gets. */
+export void joining(string a, string b) {
+  a + b;
+
+  // ERROR: `-` on a reference is refused
+  // a - b;
+}
+
+/** Length is in bytes, and indexing a string is not how you reach them. */
+export void bytes(string s) {
+  s.len();                     // bytes, not characters
+
+  u8[] raw = s.toBytes();
+  raw.len();                   // the same count
+  raw[0] as i32;
+}
+
+/** A nullable string is an ordinary nullable: the absence is not the empty string. */
+export void absence(string? s) {
+  s is null;
+
+  s ?? "";                     // string — the two are different things and this says which
+}
