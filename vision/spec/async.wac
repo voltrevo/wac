@@ -4,6 +4,9 @@
 // `Ticket<T>` where today's spec says `Pending<T>`; the rename is not settled.
 
 import { Sys } from "./program.wac";
+import { Ticket, TicketBase, Continuation, Coroutine, Generator, AsyncGenerator } from "./coretypes.wac";
+import { Vec } from "core/vec.wac";
+import { Result } from "core/result.wac";
 
 /** An `async` function answers a ticket for what its body returns. */
 export async i32 doubled(Ticket<i32> t) {

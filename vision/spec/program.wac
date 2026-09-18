@@ -2,6 +2,9 @@
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
+import { Ticket, Continuation, Queue } from "./coretypes.wac";
+import { Result } from "core/result.wac";
+
 /**
  * `Sys` is the authority a program is handed. Nothing reaches the world without one.
  *

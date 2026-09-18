@@ -1,0 +1,53 @@
+// Sketches of the types the rest of this directory leans on.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+//
+// `Vec` and `Result` are imported from `core` for real, because the compiler carries them. The rest
+// stand in for what `core` will hold once the coroutine model lands, and every body is `{ trap; }`
+// because the bodies are not the point.
+
+import { Result } from "core/result.wac";
+
+/** The erased ticket: the value type rubbed out, leaving what a scheduler needs. */
+export struct TicketBase {
+  virtual bool settled(const this) { trap; }
+}
+
+/** A ticket for a `T`. `await` answers the value; `wait` answers it or refuses. */
+export struct Ticket<T> : TicketBase {
+  Result<T> wait(this) { trap; }
+  void resolve(this, T v) { trap; }
+}
+
+/** What a scheduler holds: something to wait on, and something to call when it settles. */
+export struct Continuation {
+  TicketBase? t;
+  void call(this) { trap; }
+}
+
+/** A queue consumes at one end and grows at the other, which is what draining wants. */
+export struct Queue<T> {
+  T? pop(this) { trap; }
+  void push(this, T v) { trap; }
+  i32 len(const this) { trap; }
+}
+
+/** What stepping a machine answers. `Waiting` exists only where `W` is not `never`. */
+export enum Step<Y, R> {
+  Yielded(Y v), Done(R v), Waiting(TicketBase t)
+}
+
+/** The machine: what it waits on, what it yields, what it returns. */
+export struct Coroutine<W, Y, R> {
+  Step<Y, R> step(this) { trap; }
+}
+
+/** The called form of a sync generator. Its step cannot answer `Waiting`. */
+export struct Generator<Y, R> {
+  Step<Y, R> step(this) { trap; }
+}
+
+/** The called form of an async one: the same thing wrapped in a ticket. */
+export struct AsyncGenerator<Y, R> {
+  Ticket<Step<Y, R>> step(this) { trap; }
+}

@@ -2,6 +2,9 @@
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
+import { Sys } from "./program.wac";
+import { Vec } from "core/vec.wac";
+
 /**
  * `typeref` is a type like any other, and a function over one is a function like any other. What is
  * new is only the crossing: `typeref(T)` names a type, and `type(…)` binds the type a typeref names.
