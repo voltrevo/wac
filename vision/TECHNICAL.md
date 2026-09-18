@@ -1586,7 +1586,8 @@ same(("a", 1), ("a", 2));    // false
 ```
 
 `a.(i)` is a `string` at 0 and an `i32` at 1, so the body is checked once per iteration rather than
-once. A runtime `i` would leave it with no type at all.
+once. A runtime `i` would leave it with no type at all. `same` is what `==` does — written out here
+to show the unrolling, not because comparing two tuples needs it.
 
 **Not yet.**
 
@@ -1641,6 +1642,54 @@ Ticket.all();        // Ts is ()
 At most one, and last. The marker hugs the name because it is the binding that receives the packed
 arguments — the type is a tuple either way. Zero and one need no special handling, since `()` and
 `(T,)` are ordinary tuples.
+
+**Not yet.**
+
+---
+
+## `==` compares members, `is` compares objects
+
+```wac
+(1, 2) == (1, 2);      // true
+(1, 2) is (1, 2);      // false — two objects
+```
+
+**Not yet.**
+
+---
+
+## A tuple is a reference
+
+```wac
+auto a = (1, 2);
+auto b = a;
+
+a is b;       // true — one object, two names
+b.0 = 5;
+a.0;          // 5
+```
+
+**Not yet.**
+
+---
+
+## Taking a tuple apart
+
+```wac
+(u32 q, u32 r)    = divmod(n, d);    // four spellings of one declaration
+(u32, u32) (q, r) = divmod(n, d);
+auto (q, r)       = divmod(n, d);
+(auto q, auto r)  = divmod(n, d);
+```
+
+```wac
+((i32 a, i32 b), i32 c) = nested();
+
+(a, b, c, d) = quarterRound(a, b, c, d);    // existing locals, not a declaration
+```
+
+The four alternatives collide as written; they are spellings rather than a program. The last line is
+an assignment to locals that already exist, which is the shape a round function wants.
 
 **Not yet.**
 
