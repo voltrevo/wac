@@ -49,3 +49,10 @@ elements disagree is the case that separates them.
 form, and it is the thing that lets `Result`'s current blessing expire.
 
 
+
+## How is a number rendered
+
+Interpolation is `+`, and `+` will not take a number, so `"\{n}"` on an `i32` is a type error and
+there is nothing in `core` to reach for instead. Three packages have written their own `decimal`.
+
+Whatever answers this decides whether interpolation stays exactly `+`.

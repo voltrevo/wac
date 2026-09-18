@@ -95,3 +95,13 @@ export i32 keywords() {
 export i32 verbatim(i32 @"n") {
   return n * 2;                // warning: `@"n"` is just `n`
 }
+
+/**
+ * A verbatim name may hold anything, including spaces, which is what a test is: an exported
+ * function taking nothing and answering nothing, whose name is the sentence the runner prints.
+ *
+ *     ok   test: an empty read returns End
+ */
+export void @"test: an empty read returns End"() {
+  // the body is the test
+}

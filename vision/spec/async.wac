@@ -161,6 +161,65 @@ export void stepping(Ticket<i32> t) {
   f.step();                     // Yielded(i32) | Done(void) | Waiting
 }
 
+/**
+ * `await` with no operand suspends on a ticket that is already settled, so the machine pauses once
+ * and its next step finishes. It is the smallest thing that can be paused, and it has no rival:
+ * `await;` as an ordinary statement would be `await e;` with the `e` left out, and that shape names
+ * no type for the slot to suspend into, so there is nothing for this spelling to collide with.
+ */
+export async void tick() {
+  await;
+}
+
+export void settled() {
+  Coroutine<TicketBase, never, void> c = coroutine tick();
+
+  match (c.step()) {
+    Waiting(t): { t.settled(); }   // true — there was never anything to wait for
+    Done(_):    { }
+  }
+  c.step();                        // Done
+}
+
+/**
+ * A pause deeper down is still one pause at the top: the caller's machine does not gain a state for
+ * each frame beneath it, so its type is what its own body says.
+ */
+export void nested() {
+  Coroutine<TicketBase, never, void> c = coroutine outer();
+
+  c.step();                        // Waiting
+  c.step();                        // Done
+}
+
+export async void outer() { await middle(); }
+export async void middle() { await tick(); }
+
+/**
+ * `Ticket.any` answers the first to settle, and the losers are not cancelled — nothing here
+ * cancels. They are still the program's work and still run, which is what `drain` then finishes.
+ */
+export struct Slot { i32 n = 0; }
+
+export async void racing(Sys sys, Ticket<i32> a, Ticket<i32> b) {
+  Slot s = Slot();
+
+  Ticket<i32> win = Ticket.any(add(s, a), add(s, b));
+
+  a.resolve(1);
+  await win;
+  s.n;                             // 1
+
+  b.resolve(10);
+  await sys.drain();
+  s.n;                             // 11 — the loser ran too
+}
+
+export async i32 add(Slot s, Ticket<i32> t) {
+  s.n += await t;
+  return s.n;
+}
+
 /** `await` is illegal in a generator, `yield` in an async function, and both belong to the pair. */
 export gen<i32> void keywords(Ticket<i32> t) {
   yield 1;

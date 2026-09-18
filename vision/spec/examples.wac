@@ -5,6 +5,10 @@
 // Neither type belongs in the language. `Buffer` is here because a growable byte buffer is the
 // smallest thing that needs a packed array, a capacity, and a method that reallocates; `List` is
 // here because a singly-linked list is the smallest thing that needs a recursive nullable field.
+// The server at the end is here because it is the shortest program that uses most of the rest.
+
+import { Sys, Listener, Socket } from "./program.wac";
+import { Result } from "core/result.wac";
 
 /**
  * A growable byte buffer. `u8[]` is packed — one byte per element — so nothing here does its own
@@ -187,4 +191,42 @@ export void list() {
   l.popFront();                // 1
   l.popFront();                // null — and the answer has a place to go
   l.isEmpty();                 // true
+}
+
+/**
+ * A server, which is the shortest program that uses most of the rest: an authority handed in, a
+ * fallible setup passed upward with `try`, interpolation, an unawaited call, and a match that has
+ * to name every way a read can end.
+ */
+export async Result<never> server(Sys sys) {
+  Listener listener = try await sys.listen(8080);
+  sys.log("listening on \{listener.addr}");
+
+  while (true) {
+    Socket sock = await listener.accept();
+    answer(sys, sock);         // not awaited — the loop goes straight back to accept
+  }
+}
+
+export async void answer(Sys sys, Socket sock) {
+  match (await readAll(sock)) {
+    Ok(bytes):  { await sock.send(bytes); }
+    Err(why):   { sys.log("dropped: \{why}"); }
+  }
+  sock.close();
+}
+
+/**
+ * `End` and `Failed` are separate cases and the match covers all three, so neither can be skipped.
+ * The failure is handed to the caller, which is the only place that knows what it means.
+ */
+export async Result<u8[], string> readAll(Socket sock) {
+  Buffer got = Buffer.create(64);
+  while (true) {
+    match (await sock.recv()) {
+      Data(bytes): { for (u8 b in bytes) { got.push(b); } }
+      End:         { return Result.Ok(got.toArray()); }
+      Failed(why): { return Result.Err(why); }
+    }
+  }
 }

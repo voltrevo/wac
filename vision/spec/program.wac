@@ -18,6 +18,7 @@ export struct Sys {
   async u8[] readFile(const this, string path) { trap; }
   async void writeFile(const this, string path, u8[] bytes) { trap; }
   async void sleepMillis(const this, i32 ms) { trap; }
+  async Result<Listener> listen(const this, i32 port) { trap; }
   i32 run(const this, fn<i32(Sys)> f, Grant[] grants) { trap; }
   void exit(const this, i32 code) { trap; }
 
@@ -31,6 +32,24 @@ export struct Sys {
 }
 
 export enum Grant { Read, Write, Listen, Spawn }
+
+/**
+ * A socket reached through a `Sys` is a socket and nothing more: its methods touch one connection,
+ * so handing one on hands on exactly that. A read answers which of the three things happened.
+ */
+export struct Listener {
+  string addr;                 // "0.0.0.0:8080"
+  i32 port;
+  async Socket accept(this) { trap; }
+}
+
+export struct Socket {
+  async Recv recv(this) { trap; }
+  async void send(this, u8[] bytes) { trap; }
+  void close(this) { trap; }
+}
+
+export enum Recv { Data(u8[] bytes), End, Failed(string why) }
 
 /**
  * `main` returns `void`, `never`, `i32`, or a `Result` of those, and the host reads whatever it

@@ -15,7 +15,7 @@ See [README.md](README.md) for the three tiers and why nothing checks them.
 ```wac
 async Result<never> main(Sys sys) {
   auto listener = try await sys.listen(8080);
-  sys.log("listening on \{listener.port}");
+  sys.log("listening on \{listener.addr}");
 
   while (true) {
     // todo: is accept fallible?
@@ -73,8 +73,8 @@ what it calls.
 
 ```wac
 void main(Sys sys) {
-  i32 found = sys.run(scan, [Grant.Read]);
-  sys.log("\{found} matches");
+  i32 found = sys.run(scan, Grant[](Grant.Read));
+  sys.log(decimal(found) + " matches");
 }
 
 i32 scan(Sys sys) {

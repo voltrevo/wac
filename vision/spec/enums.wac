@@ -154,3 +154,37 @@ export Result<i32, union<NotFound>> load(Result<i32, union<NotFound>> r) {
   i32 v = try r;
   return Result.Ok(v + 1);
 }
+
+/**
+ * `union<…>` is an anonymous sum with no constructors: a member is returned as itself, and there is
+ * nothing to build. An arm names a type rather than a variant, and inside it the value is that type.
+ */
+export union<f64, string, bool> parseCell(string text) {
+  if (text == "true")  { return true; }
+  if (text == "false") { return false; }
+
+  if (f64 n matches parseNum(text)) { return n; }
+  return text;
+}
+
+export f64? parseNum(string s) { trap; }
+export string fmt(f64 x) { trap; }
+
+export string render(union<f64, string, bool> cell) {
+  return match (cell) {
+    f64:    fmt(cell),
+    string: cell,
+    bool:   cell ? "true" : "false",
+  };
+}
+
+/** Order and repetition do not make a different type, so a union is its set of members. */
+export void unionIdentity(union<f64, string> a, union<string, f64> b) {
+  a = b;                       // the same type
+
+  // ERROR: a member is not in the union
+  // union<f64> c = a;
+
+  // ERROR: `union<f64, f64>` is `union<f64>`, which is `f64` — write the type
+  // union<f64, f64> d;
+}

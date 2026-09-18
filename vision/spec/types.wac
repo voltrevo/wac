@@ -109,6 +109,24 @@ export void constness(const Point p, const i32[] xs, const Point[] ps) {
   // ps[0].x = 1;
 }
 
+/**
+ * A `const this` method hands back the real thing rather than a copy, so what it returns carries the
+ * constness with it. Reading it is allowed; the write is where it is caught.
+ */
+export struct Server {
+  Point[] routes;
+
+  Point[] table(const this) { return this.routes; }
+}
+
+export i32 accessor(const Server s) {
+  return s.table().len();      // reading through it is fine
+
+  // ERROR: a non-const reference cannot be taken from a const one —
+  // `set` writes, and `s.table()` is const
+  // s.table()[0] = Point(1, 1);
+}
+
 /** A whole struct may be const, so no reference to one was ever writable. */
 export const struct Frozen {
   i32 w = 0;
@@ -173,4 +191,26 @@ export void identity() {
 
   // ERROR: `==` is not allowed on struct types
   // a == b;
+}
+
+/**
+ * Identity comparison costs nothing, and identity *hashing* is not free, so the language does not
+ * give it to every reference. A moving collector invalidates anything derived from an address and
+ * wasm GC exposes no header to stash a lazy hash in, which leaves a field assigned at allocation as
+ * the only portable implementation — a word on every object, half again the size of a `Point`.
+ *
+ * A type that wants to be a hash key carries the field itself.
+ */
+export struct Keyed {
+  i32 x;
+  i32 id;                      // assigned by whoever allocates it
+
+  i32 hash(const this) { return this.id; }
+}
+
+export void hashing(Point p, Keyed k) {
+  k.hash();
+
+  // ERROR: `Point` has no `hash` — a reference is not hashable unless its type says how
+  // p.hash();
 }
