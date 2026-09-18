@@ -15,17 +15,13 @@ See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ---
 
-## Whether `wait` caches what it is waiting on
-
-`advance(false)` steps a blocked machine to learn it is still blocked, and `advance(true)` steps it
-again. Both are no-ops, so it is correct and wasteful. Caching the awaited ticket fixes it and adds
-state that something has to invalidate when the machine moves on.
-
 ## What examples should capture `wait`
 
-Nothing on the page mentions it. Candidates: driving a coroutine to completion from sync code, the
-`Err` when this host cannot be waited on, that it drains the dependency set rather than descending
-depth-first, and the circular case. Four is probably too many for one feature.
+Two entries cover it so far: the `Err` when nothing can advance the ticket, and driving a coroutine
+to completion from sync code. Two candidates remain. The `Err` when *this host* cannot be waited on
+is a different failure from the first — it does not depend on the tickets at all. And the circular
+case, where advancing each member of the dependency set once is what makes a diagnosis out of what
+would otherwise be a depth-first recursion.
 
 ## What example should capture `defer`
 
