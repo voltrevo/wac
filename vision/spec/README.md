@@ -55,8 +55,24 @@ unattributable complaint is a mistake in the file, and that is the whole of the 
 lossy cast written as `as`, a redundant cast on a literal that already took its slot's type, empty
 bodies on functions that must return, and a method's own type letter that nothing could infer.
 
-`markup.wac` is the exception: `core/html.wac` is not one of the five modules the compiler carries,
-so it stops before parsing and nothing there is verified.
+`markup.wac` cannot be built that way — `core/html.wac` is not one of the five modules the compiler
+carries, so it stops before parsing. `tools/visiongrammar.sh` reaches it anyway, because that pass
+strips imports first, and reports one first refusal per file:
+
+    async.wac       ^ expected '=', found ';'        an uninitialised local
+    control.wac     ^^ expected '=', found 'in'      `for … in`
+    coretypes.wac   ^^^^^^^ found 'settled'          `virtual`
+    enums.wac       ^^^^^^ found 'Circle'            an arm without `case`
+    generics.wac    ^ expected '[', found '<'        `fn<…>` rather than `fn[…]`
+    markup.wac      ^ expected '=', found '-'        a hyphenated attribute
+    strings.wac     ^ found '?'                      `??`
+    tuples.wac      ^ expected ')', found ','        a tuple literal
+    typelogic.wac   ^ expected '(', found '='        a `type` alias
+    types.wac       ^ found '='                      a field initialiser
+
+Each of those is an addition vision makes, which is the distance being measured. One hit is noise:
+that pass matches comment text, so the word *static* in an `// ERROR:` line is reported as though it
+were code.
 
 ## What checks this
 
