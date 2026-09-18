@@ -1301,21 +1301,24 @@ representation rather than type.
 
 ---
 
-## A packed type converts with `as`, in both directions
+## A packed type is cast like any other numeric
 
 ```wac
 void example(i32 n, u32 m, u8[] xs) {
   u8 a = n;                // error: expected u8, got i32
-  u8 b = n as u8;          // truncates
+  u8 b = n as@ u8;         // keeps the low 8 bits
   i32 c = b;               // error: expected i32, got u8
-  i32 d = b as i32;        // widens
+  i32 d = b as i32;        // widens, and every u8 fits, so `as` is the one that applies
 
   xs[0] = m;               // error: expected u8, got u32
-  xs[0] = m as u8;         // truncates
+  xs[0] = m as@ u8;        // keeps the low 8 bits
   i32 e = xs[0];           // error: expected i32, got u8
   i32 f = xs[0] as i32;    // 255 for 0xFF — zero-extended, and an i8[] sign-extends
 }
 ```
+
+Widening is lossless, so it is `as` and the others are refused there. Narrowing picks its behaviour:
+`as@` keeps the low bits, `as!` traps unless the value fits, `as~` clamps.
 
 `spec/spec/types.md` has no implicit conversions between any types, and an ordinary type is one that
 obeys that rule rather than a lenient one. An element is not a special case in either direction.

@@ -75,7 +75,8 @@ Today `spec/spec/enums.md:484` requires the unwrap, with `[§enum-match-nullable
 a `u8`. The width is a fact about storage, not about the type.
 
 Three spec rules assume otherwise and go with it: `[§wac-packed-nullable-2knq6wv]`,
-`[§wac-cast-packed-v7nq4mj]`, and an element reading as `i32` and writing by truncation.
+`[§wac-cast-packed-v7nq4mj]`, and an element reading as `i32` and writing by truncation. The lossless
+cast table gains rows too — it names no packed type today, because none could be cast at all.
 
 ## Some tuple returns must be optimised
 
