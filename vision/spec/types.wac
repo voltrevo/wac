@@ -1,8 +1,8 @@
-// Structs: fields, methods, inheritance, and what `const` reaches.
+// Structs: fields, construction, methods, inheritance, and what `const` reaches.
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
-/** A struct is a heap reference. Fields are declared, and a method takes `this` to have one. */
+/** A struct is a heap reference. A method takes `this` to have a receiver. */
 export struct Point {
   i32 x = 0;
   i32 y = 0;
@@ -11,37 +11,90 @@ export struct Point {
   void shift(this, i32 by) { this.x += by; }
 }
 
-export void methods() {
-  Point p = Point(3, 4);
-  p.sum();               // 7
+/** Positional construction writes every field; braces write the ones without a default. */
+export void construction() {
+  Point a = Point(3, 4);
+  a.x;                         // 3
+  a.y;                         // 4
 
-  p.shift(1);
-  p.x;                   // 4
+  Point b = Point { y: 4, x: 3 };   // order does not matter
+  Point c = Point { };              // every field has a default
 
-  // ERROR: a method without `this` is a static method and has no receiver
-  // Point.sum();
+  b.x;                         // 3
+  c.x;                         // 0
+
+  // ERROR: positional construction must provide every field
+  // Point d = Point(3);
 }
 
-/** A method without `this` is static, and is reached through the type. */
+/** A nullable field may be left out of a named construction, since its absence is its default. */
+export struct Node {
+  i32 val = 0;
+  Node? next;
+}
+
+export void nullableField() {
+  Node n = Node { val: 42 };
+  n.val;                       // 42
+  n.next is null;              // true
+}
+
+/** A non-null recursive reference has no default, because the construction would not finish. */
+export struct Bad {
+  // ERROR: `Bad` has no default — a recursive non-null reference
+  // Bad next;
+}
+
+/** A field whose type is an array defaults to an empty one, whatever the element type. */
+export struct Holder {
+  Node[] data;
+}
+
+export void emptyByDefault() {
+  Holder h;
+  h.data.len();                // 0
+}
+
+/** Two names for one struct are one object. */
+export void aliasing() {
+  Point a = Point(1, 2);
+  Point b = a;
+  b.x = 99;
+  a.x;                         // 99
+}
+
+/** A method reaches its fields through `this`, and a bare field name is not in scope. */
 export struct Counter {
-  i32 n = 0;
+  const i32 id = 0;
+  i32 count = 0;
 
-  Counter create() { return Counter(0); }
-  i32 step(this) { this.n += 1; return this.n; }
+  Counter create(i32 id) { return Counter { id: id }; }
+
+  i32 inc(this) {
+    this.count += 1;
+
+    // ERROR: `id` is a const field
+    // this.id = 5;
+
+    // ERROR: a bare field name is not in scope inside a method
+    // count += 1;
+
+    return this.count;
+  }
+
+  i32 getCount(const this) { return this.count; }
 }
 
-export void statics() {
-  Counter c = Counter.create();
-  c.step();              // 1
-  c.step();              // 2
+export void counting() {
+  Counter c = Counter.create(1);
+  c.getCount();                // 0
+  c.inc();
+  c.getCount();                // 1
 }
 
-/**
- * `const` on a reference is deep, and travels with the reference. Elsewhere it binds the name and
- * leaves the contents open; here it reaches the elements.
- */
+/** `const` on a reference is deep, and it travels with the reference. */
 export void constness(const Point p, const i32[] xs, const Point[] ps) {
-  p.sum();               // reading is fine
+  p.sum();
 
   // ERROR: cannot assign through a const reference
   // p.x = 1;
@@ -49,7 +102,7 @@ export void constness(const Point p, const i32[] xs, const Point[] ps) {
   // ERROR: cannot call a method taking `this` on a const reference
   // p.shift(1);
 
-  // ERROR: cannot write through a const reference — it reaches the elements
+  // ERROR: it reaches the elements
   // xs[0] = 9;
 
   // ERROR: and it travels, so an element of a const array is const too
@@ -69,27 +122,44 @@ export void frozen(Frozen f) {
   // f.w = 1;
 }
 
-/** A struct inherits fields and methods, and the parent grants each override. */
+/** A subtype adds fields, and positional construction takes the parent's first, in order. */
 export struct Shape {
-  virtual i32 sides(const this) { return 0; }
+  i32 x = 0;
+  i32 y = 0;
+
+  i32 getX(const this) { return this.x; }
+  virtual string name(const this) { return "shape"; }
+}
+
+export struct Rect : Shape {
+  i32 w = 0;
+  i32 h = 0;
+
+  override string name(const this) { return "rect"; }
 }
 
 export struct Square : Shape {
-  override i32 sides(const this) { return 4; }
+  override string name(const this) { return "square"; }
 }
 
+export void inheritance() {
+  Rect r = Rect(1, 2, 10, 20);      // x, y, then w, h
+  Shape s = r;                      // a subtype widens
+
+  r.getX();                         // 1 — inherited
+  s.name();                         // "rect" — dispatch is on the runtime type
+
+  // ERROR: an inherited static cannot be called on a subtype
+  // Rect.create();
+}
+
+/** `override` is the child's half and `virtual` the parent's, and both are required. */
 export struct Blob : Shape {
-  // ERROR: `Shape.sides` is not virtual — nothing here to override
-  // i32 sides(const this) { return 1; }
-}
+  // ERROR: a colliding method without `override`
+  // string name(const this) { return "blob"; }
 
-/** Dispatch is on the runtime type, so the declared type of the reference does not decide it. */
-export void dispatch() {
-  Square s = Square();
-  Shape  b = s;
-
-  s.sides();             // 4
-  b.sides();             // 4
+  // ERROR: nothing to override
+  // override string missing(const this) { return ""; }
 }
 
 /** References compare by identity, and identity alone. */
@@ -98,8 +168,8 @@ export void identity() {
   Point b = Point(1, 2);
   Point c = a;
 
-  a is b;                // false — two objects
-  a is c;                // true
+  a is b;                      // false — two objects
+  a is c;                      // true
 
   // ERROR: `==` is not allowed on struct types
   // a == b;

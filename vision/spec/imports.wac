@@ -1,27 +1,83 @@
-// Imports: what crosses a file boundary, and what a path means.
+// Imports: the four kinds of specifier, and what crosses a file boundary.
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
-//
-// A path starting `@/` names the project root, so the same header works from any file in the
-// project. The files here use `./` because this directory is not a project of its own.
 
 import { Point } from "./types.wac";
 import { Shape, Fault } from "./enums.wac";
+import { Point as Pt } from "./types.wac";
+import { Vec } from "core/vec.wac";
 
-/** An import brings in a name, and the name is used as if it were declared here. */
+/**
+ * A specifier is one of four things, and anything else is an error naming the specifier and the
+ * four it could have been.
+ *
+ *   ./x.wac  ../x.wac   relative to the importing file
+ *   @/src/x.wac         the root of the project containing the importing file
+ *   core/vec.wac        a built-in tree
+ *   dep/lib.wac         a mapping declared in that project's wac.json5
+ *
+ * `sub/lib.wac` is a mapping name or it is nothing — it is never joined to the importing file's
+ * directory, because a path that is usually absent and occasionally present is the worse failure.
+ */
 export i32 usingThem(Point p, Shape s, Fault f) {
   return p.sum();
 }
 
 /**
- * `export` is what makes a declaration importable. Without it a name is file-private, and that is
- * the default rather than something to ask for.
+ * `@/` names the project containing the *importing* file — the nearest directory at or above it
+ * holding a `wac.json5` — not the one the compiler was started in, and not the entry's. A program
+ * may span two projects and each file's `@/` means its own.
+ *
+ * With no manifest above it, `@/` is a compile error rather than a fallback to something relative:
+ * joining it to nothing gives a path that looks real and is relative to a directory nobody named.
+ * An empty `wac.json5` is a valid one; its presence is the whole question.
  */
+
+/** Every specifier is quoted, `core` included, and a bare word after `from` is an error. */
+
+/**
+ * `core` has a root module for what the language itself refers to — a capability's answer, and JSX.
+ * Everything else in the tree is reached by its file, so `Vec` is `core/vec.wac` and importing it
+ * from `"core"` is an error.
+ *
+ * However a file in the tree is reached, it is one module. wac's types are nominal, so two modules
+ * would be two types with nothing to convert between them.
+ */
+export i32 counted() {
+  Vec<i32> v = Vec.create();
+  v.push(1);
+  return v.len();              // 1
+}
+
+/** `export` is what makes a declaration importable. Without it a name is file-private. */
 export i32 visible(i32 x) { return hidden(x); }
 
 i32 hidden(i32 x) { return x + 1; }
 
-/** A struct, an enum, a function and a constant all cross the same way. */
+/** Importing a struct brings its constructors, methods and statics with it. */
+export Point built() {
+  Point p = Point(1, 2);
+  p.sum();
+  return p;
+}
+
+/** A name that collides is renamed at the import, and both spellings are the same type. */
+export Pt aliased(Point p) {
+  Pt q = p;                    // one type, two names
+  return q;
+}
+
+/** Two files that never mention each other name the same type when they reach the same file. */
+export bool sameType(Point a, Point b) {
+  return a is b;
+}
+
+/** Circular imports resolve, so two files may name each other. */
+export i32 ping(i32 n) {
+  return n;
+}
+
+/** A symbol from a file that merely re-exports it arrives as the original. */
 export const i32 LIMIT = 100;
 
 export struct Window {
