@@ -1,30 +1,60 @@
-// Arrays: construction, access, and the element types that behave unlike the rest.
+// Arrays: construction, access, bulk moves, and the element types that behave unlike the rest.
 //
 // Part of `vision/spec`, which is not vetted — see README.md.
 
 import { Point } from "./types.wac";
 
-/** A sized construction needs a value for every slot, since every slot exists at once. */
+/** Three construction forms: sized with a default, sized with a fill, and a literal. */
 export void building() {
-  i32[] a = i32[3](fill: 0);
-  a.len();                     // 3
+  i32[] a = i32[5]();          // every element the type's default
+  a.len();                     // 5
+  a[0];                        // 0
 
-  i32[] b = i32[]();           // the literal form, no elements and no fill needed
-  b.len();                     // 0
+  i32[] b = i32[](1, 2, 3);    // a literal, elements written out
+  b.len();                     // 3
+  b[2];                        // 3
 
-  Point[] c = Point[2](fill: Point(1, 1));
-  c.len();                     // 2
+  i32[] c = i32[3](fill: 7);   // every element `fill`'s value
+  c[0];                        // 7
 
-  // ERROR: i32 has no default, so a sized construction needs a fill
-  // i32[] d = i32[3]();
+  Point[] d = Point[](Point(1, 1), Point(2, 2));
+  Point?[] e = Point?[](Point(1, 1), null);
+  i32[][] f = i32[][](i32[](7));
+
+  d; e; f;
+
+  // ERROR: the fill argument is named
+  // i32[2](7);
+
+  // ERROR: i32 has no default, so the sized form needs a fill
+  // i32[] g = i32[3]();
+}
+
+/** `fill` supplies one value, so a reference element is the *same* reference in every slot. */
+export void filling() {
+  Point p = Point(1, 1);
+  Point[] shared = Point[3](fill: p);
+  shared[0].x = 99;
+  shared[1].x;                 // 99 — one object, three slots
+
+  Point[] distinct = Point[3]();
+  distinct[0].x = 99;
+  distinct[1].x;               // 0 — the sized form builds one per slot
 }
 
 /** Indexing traps outside the array rather than answering something. */
 export void access(i32[] xs) {
   xs[0];
   xs[xs.len() - 1];
-
   xs[xs.len()];                // traps
+}
+
+/** An array is a reference, so two names for one are one array. */
+export void aliasing() {
+  i32[] a = i32[](1, 2, 3);
+  i32[] b = a;
+  b[0] = 99;
+  a[0];                        // 99
 }
 
 /** A nullable element type starts empty, which is the one case a sized form needs no fill for. */
@@ -37,24 +67,57 @@ export void nullableElements() {
   ps[0] is null;               // false
 }
 
-/**
- * A packed element is stored at its width and widens on the way out: `u8` and `u16` zero-extend,
- * `i8` and `i16` sign-extend. Writing narrows, and the conversion is written like any other.
- */
-export void packed() {
-  u8[] bytes = u8[2](fill: 0);
-  bytes[0] = 0xFF;             // the literal takes the element's type
-  bytes[0] as i32;             // 255
+/** Copying and filling a range are single instructions rather than loops. */
+export i32 bulk() {
+  i32[] src = i32[](1, 2, 3, 4, 5);
+  i32[] dst = i32[8](fill: 0);
 
-  i8[] signed = i8[2](fill: 0);
-  signed[0] = 0xFF as@ i8;     // 255 has no reading in an i8, so the bits are placed raw
-  signed[0] as i32;            // -1 — the same byte, read as signed
+  dst.copyFrom(src, 1, 3, 3);  // src[1..4) into dst[3..6)
+  dst.fill(9, 0, 2);           // 9 into dst[0..2)
+
+  return dst[0] + dst[3] + dst[5];   // 9 + 2 + 4 = 15
+}
+
+/** The element types must match exactly: a copy that reinterprets is not a copy. */
+export void bulkTypes(u8[] bytes, i32[] words) {
+  // ERROR: element types must match
+  // words.copyFrom(bytes, 0, 0, 1);
 }
 
 /** An array of arrays is an ordinary array whose element type happens to be one. */
 export void nested() {
-  i32[][] rows = i32[][2](fill: i32[]());
-  rows[0] = i32[3](fill: 7);
-  rows[0][2];                  // 7
-  rows.len();                  // 2
+  i32[][] grid = i32[][](i32[](1, 2, 3), i32[](4, 5, 6));
+  grid[1][2];                  // 6
+  grid.len();                  // 2
+}
+
+/**
+ * A packed element is stored at its width and widens on the way out: `u8` and `u16` zero-extend,
+ * `i8` and `i16` sign-extend. Writing narrows, and a literal takes the element's type.
+ */
+export void packed() {
+  u8[] bytes = u8[2](fill: 0);
+  bytes[0] = 0xFF;
+  bytes[0] as i32;             // 255
+
+  i8[] signed = i8[2](fill: 0);
+  signed[0] = 0xFF as@ i8;     // 255 has no reading in an i8, so the bits go in raw
+  signed[0] as i32;            // -1 — the same byte, read as signed
+
+  u16[] shorts = u16[](1000);
+  shorts[0] as i32;            // 1000
+
+  u8[] chars = u8[]('h', 'i'); // an ASCII character literal is a byte
+  chars[0] as i32;             // 104
+
+  u8[] over = u8[](300);       // truncates to 8 bits
+  over[0] as i32;              // 44
+
+  // ERROR: a non-i32 element in a packed array literal
+  // u8[] wrong = u8[]("a");
+}
+
+/** A packed element casts onward like anything else. */
+export i64 wideByte(u8[] bytes) {
+  return bytes[0] as i64;      // 200 for a byte of 200
 }
