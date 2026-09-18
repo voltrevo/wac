@@ -1,0 +1,75 @@
+// Casts: four operators, chosen by what the conversion costs.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+import { Shape, Square } from "./types.wac";
+
+/**
+ * `as` is lossless and always exact. It is a compile error where anything could be lost, and the
+ * other three are compile errors where `as` would have done — so exactly one operator applies to
+ * each pair, and the spelling says what the conversion costs.
+ *
+ * Lossless: `i32→i64`, `i32→f64`, `u32→i64`, `u32→u64`, `u32→f64`, `f32→f64`, and `bool` to any
+ * numeric. Not `i32→u64`, because an `i32` can be negative and a `u64` cannot.
+ */
+export void lossless(i32 x, bool flag) {
+  x as i64;                    // 42 for 42 — sign-extend
+  x as f64;                    // 42.0
+  flag as i32;                 // false to 0, true to 1
+
+  // ERROR: i32 -> i64 is lossless, use `as`
+  // x as~ i64;
+  // x as! i64;
+  // x as@ i64;
+
+  // ERROR: an i32 can be negative and a u64 cannot, so this is checked rather than lossless
+  // x as u64;
+}
+
+/** `as!` traps unless the value survives exactly. It is defined for every pair `as` is not. */
+export void checked(i64 big, f64 f) {
+  big as! i32;                 // 42 for 42, and traps at 1000000000000
+  f as! i32;                   // 3 for 3.0, and traps at 3.5 — a fraction is the inexactness
+  f as! f32;                   // traps unless the value has an exact f32 form
+}
+
+/** `as~` takes the nearest, clamping at the ends. */
+export void nearest(f64 f, i64 big, i32 n) {
+  f as~ i32;                   // 4 for 3.7, -2 for -2.3
+  big as~ i32;                 // 2147483647 for 1000000000000 — clamped
+  n as~ bool;                  // false for 0, true for anything else, at every width
+}
+
+/** `as@` keeps the bits, and never traps. */
+export void raw(i64 big, f64 f, i32 n) {
+  big as@ i32;                 // -727379968 for 1000000000000 — the low 32 bits
+  f as@ i32;                   // 3 for 3.7 — toward zero, and 0 for NaN
+  n as@ u32;                   // 4294967295 for -1 — the same bits, read unsigned
+
+  // ERROR: no raw conversion for f64 -> f32, use as~
+  // f as@ f32;
+}
+
+/** A reference casts only to a reference, so a numeric target is refused rather than emitted. */
+export void referencesOnly(string s) {
+  // ERROR: cannot cast reference type 'string' to 'i32'
+  // s as! i32;
+}
+
+/** Upcast with `as`, downcast with `as!`, and test with `is`. */
+export void hierarchy(Shape s, Square sq) {
+  sq as Shape;                 // always succeeds, and needs no check
+
+  s as! Square;                // traps where it is not one
+  s is Square;                 // the test that does not trap
+  s is not Square;
+
+  // ERROR: a downcast may fail, use `as!`
+  // s as Square;
+}
+
+/** The one conversion that looks like a reference cast and is not. */
+export void unboxing(i32 n) {
+  i31ref packed = n as! i31ref;
+  packed as i32;               // 42 for 42 — a real conversion rather than a cast
+}

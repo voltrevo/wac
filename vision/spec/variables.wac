@@ -1,0 +1,61 @@
+// Variables and constants: what may be written, and when a value must be known.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+import { Point } from "./types.wac";
+
+/** A local is declared with its type, and `const` makes the binding unwritable. */
+export i32 locals() {
+  i32 x = 1;
+  x = 2;
+
+  const i32 y = 10;
+
+  // ERROR: `y` is const
+  // y = 11;
+
+  return x + y;                // 12
+}
+
+/** `const` on a reference reaches what it refers to, at any depth. */
+export void deepConst(Point p) {
+  const Point q = p;
+
+  q.sum();
+
+  // ERROR: writing through a const reference is refused, however deep
+  // q.x = 3;
+}
+
+/**
+ * A module constant is built once, in the module's start, and may be imported by name. Its
+ * initialiser has to be something the module can build then, so a call is not one.
+ */
+export const i32 BLOCK = 64;
+export const i32 TWO_BLOCKS = BLOCK * 2;      // 128 — a constant may read another
+
+const i32[] TABLE = i32[](1, 2, 3);
+const Point ORIGIN = Point(0, 0);
+const Point[] CORNERS = Point[](Point(0, 0), Point(1, 1));
+
+// ERROR: a call is not something the module can build at start
+// const i32 COMPUTED = compute();
+
+export i32 compute() { return 1; }
+
+/** A constant array is one array, so two mentions of it are the same one. */
+export void sameArray() {
+  TABLE is TABLE;              // true
+
+  // ERROR: writing to a constant array is refused, as is compound assignment
+  // TABLE[0] = 9;
+}
+
+/** A length that has to be computed is not a constant length. */
+export void lengths() {
+  const i32[] fixed = i32[](1, 2, 3);
+  fixed.len();                 // 3
+
+  // ERROR: the length must be known when the module is built
+  // const i32[] grown = i32[compute()](fill: 0);
+}

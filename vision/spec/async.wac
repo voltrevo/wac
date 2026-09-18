@@ -117,7 +117,7 @@ export void refusals(Sys real) {
   fake.run(async (Sys sys) => {
     real.sleepMillis(10);       // unawaited — its continuation lands in fake's queue
     return sys.drain().wait();  // Err — the ticket is real's, and fake cannot advance it
-  }, []);
+  }, Grant[]());
 }
 
 /** `drain` runs the work nobody awaited, and the two ways to finish it are the same program. */

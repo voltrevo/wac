@@ -1,0 +1,97 @@
+// Names: what may collide, what may shadow, and how an import resolves a clash.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+//
+// PascalCase for structs and enums, camelCase for functions, methods and variables.
+
+import { Rgb } from "./values.wac";
+import { Point as Pt } from "./types.wac";
+
+/** Every collision at the same scope level is a compile error, whatever the two things are. */
+export i32 collisions() {
+  return 1;
+}
+
+// ERROR: duplicate function 'collisions'
+// export i32 collisions() { return 2; }
+
+// ERROR: a function and a struct cannot share a name
+// export struct collisions { i32 x; }
+
+export struct Holder {
+  i32 v = 0;
+
+  // ERROR: duplicate field 'v'
+  // i32 v;
+
+  // ERROR: a method and a field cannot share a name
+  // i32 v(const this) { return 0; }
+
+  i32 get(const this) { return this.v; }
+
+  // ERROR: duplicate method 'get'
+  // i32 get(const this) { return 1; }
+}
+
+/** An import that collides with a local name is an error, and renaming resolves it. */
+export Pt renamed(Pt p) {
+  return p;                    // `Point` was taken, so the import arrives as `Pt`
+}
+
+export struct Point { i32 other = 0; }
+
+/** A block, and a `for` initialiser, each open a scope a name may shadow into. */
+export i32 shadowing() {
+  i32 n = 1;
+  {
+    i32 n = 2;                 // a separate variable
+    n;                         // 2
+  }
+  return n;                    // 1
+}
+
+export i32 loopShadow() {
+  i32 i = 99;
+  for (i32 i = 0; i < 3; i++) { i; }
+  return i;                    // 99
+}
+
+/** A parameter may be shadowed by a block, but two parameters may not share a name. */
+export i32 shadowParam(i32 a) {
+  { i32 a = 0; a; }
+  return a;                    // 7 for 7
+}
+
+// ERROR: duplicate parameter 'a'
+// i32 twice(i32 a, i32 a) { return a; }
+
+/** A name declared inside a block is not in scope after it. */
+export i32 scoped() {
+  { i32 inner = 1; inner; }
+
+  // ERROR: undefined name
+  // return inner;
+
+  return 0;
+}
+
+/**
+ * A keyword in a name position is refused, and the error names the keyword and points at it. The
+ * wording is the rule rather than a courtesy: a reserved word used where a name goes once reported a
+ * missing semicolon a hundred lines further on.
+ *
+ * So `i32 match = 1;` is claimed as a declaration even though `match` is not an identifier, in order
+ * that the complaint can be about the name. The guard is that an `=` must follow — without it,
+ * `x as i32;` would read as a declaration of something called `as`.
+ */
+export i32 keywords() {
+  // ERROR: `match` is a keyword
+  // i32 match = 1;
+
+  return 0;
+}
+
+/** `@"…"` writes a name verbatim, and is the same name as the bare one. */
+export i32 verbatim(i32 @"n") {
+  return n * 2;                // warning: `@"n"` is just `n`
+}

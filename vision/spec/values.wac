@@ -42,11 +42,8 @@ export void arithmetic() {
 }
 
 /**
- * There are no implicit conversions between any types, so a conversion is always written.
- *
- * Which operator depends on what it costs. `as` is lossless and is refused where anything could be
- * lost; `as!` traps unless the value fits; `as~` rounds or clamps; `as@` keeps the low bits. Using a
- * wider one where `as` would do is itself an error.
+ * There are no implicit conversions between any types, so a conversion is always written. Which
+ * operator applies is in `casts.wac`.
  *
  * A packed type is ordinary here as everywhere: a local, a parameter, a field, a return, and the
  * answer of indexing a `u8[]`. The width is a fact about storage rather than about the type.
