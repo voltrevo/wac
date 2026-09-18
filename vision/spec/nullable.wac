@@ -1,0 +1,68 @@
+// Absence: `T?`, the forced unwrap, and reaching through something that might not be there.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+export struct Addr { string city = ""; }
+export struct Person { Addr? home; Addr?? prev; }
+
+/** `null` inhabits a nullable type and no other. */
+export void absence(Addr a) {
+  Addr? p = null;
+  Addr? q = a;                 // a non-null value widens into the nullable
+
+  p is null;                   // true
+  q is null;                   // false
+
+  // ERROR: null is assignable to no non-nullable type
+  // Addr r = null;
+}
+
+/** `!` unwraps, and traps where there is nothing there. */
+export void unwrap(Addr? p) {
+  p!.city;                     // traps if `p` is null
+
+  // ERROR: `!` is refused on anything with no `?` to unwrap
+  // Addr a = Addr(); a!;
+}
+
+/**
+ * `?` does not flatten, so `T??` is a type of its own with three states: absent, present holding a
+ * null, and present holding a value.
+ */
+export void nested(Addr a) {
+  Addr?? x = null;             // absent
+  Addr?? y = null as Addr?;    // present, holding a null
+  Addr?? z = a;                // present, holding it
+
+  x is null;                   // true
+  y is null;                   // false
+  y! is null;                  // true
+  z!! is a;                    // true
+}
+
+/**
+ * `?.` short-circuits on absence and makes the member's type nullable only if it is not already, so
+ * a chain never manufactures a `T??`. Both it and `??` need an operand that can be absent.
+ */
+export void chaining(Person? who, Person here) {
+  who?.home;                   // Addr?   — the member was already nullable
+  who?.prev;                   // Addr??  — and stays what it was
+
+  // ERROR: `who` here cannot be absent
+  // here?.home;
+
+  // ERROR: `?.` is not an assignment target
+  // who?.home = Addr();
+}
+
+/** `??` answers the non-null form of its left side joined with its right. */
+export void defaulting(Addr? maybe, Addr?? two, Addr fallback) {
+  maybe ?? fallback;           // Addr
+  two ?? null;                 // Addr?  — the two absences merge, said out loud
+  maybe ?? null;               // Addr?  — a tautology: this is `maybe`
+}
+
+/** Together they read as one question with one answer. */
+export string cityOf(Person? who) {
+  return who?.home?.city ?? "unknown";
+}

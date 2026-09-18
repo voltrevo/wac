@@ -1,0 +1,60 @@
+// Arrays: construction, access, and the element types that behave unlike the rest.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+import { Point } from "./types.wac";
+
+/** A sized construction needs a value for every slot, since every slot exists at once. */
+export void building() {
+  i32[] a = i32[3](fill: 0);
+  a.len();                     // 3
+
+  i32[] b = i32[]();           // the literal form, no elements and no fill needed
+  b.len();                     // 0
+
+  Point[] c = Point[2](fill: Point(1, 1));
+  c.len();                     // 2
+
+  // ERROR: i32 has no default, so a sized construction needs a fill
+  // i32[] d = i32[3]();
+}
+
+/** Indexing traps outside the array rather than answering something. */
+export void access(i32[] xs) {
+  xs[0];
+  xs[xs.len() - 1];
+
+  xs[xs.len()];                // traps
+}
+
+/** A nullable element type starts empty, which is the one case a sized form needs no fill for. */
+export void nullableElements() {
+  Point?[] ps = Point?[4]();
+  ps.len();                    // 4
+  ps[0] is null;               // true
+
+  ps[0] = Point(1, 2);
+  ps[0] is null;               // false
+}
+
+/**
+ * A packed element is stored at its width and widens on the way out: `u8` and `u16` zero-extend,
+ * `i8` and `i16` sign-extend. Writing narrows, and the conversion is written like any other.
+ */
+export void packed() {
+  u8[] bytes = u8[2](fill: 0);
+  bytes[0] = 0xFF;             // the literal takes the element's type
+  bytes[0] as i32;             // 255
+
+  i8[] signed = i8[2](fill: 0);
+  signed[0] = 0xFF as@ i8;     // 255 has no reading in an i8, so the bits are placed raw
+  signed[0] as i32;            // -1 — the same byte, read as signed
+}
+
+/** An array of arrays is an ordinary array whose element type happens to be one. */
+export void nested() {
+  i32[][] rows = i32[][2](fill: i32[]());
+  rows[0] = i32[3](fill: 7);
+  rows[0][2];                  // 7
+  rows.len();                  // 2
+}

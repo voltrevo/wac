@@ -1,0 +1,78 @@
+// Tuples: a fixed-length heterogeneous type, and the variadic parameter built on it.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/** Identity is the ordered list of member types, so one written twice is one type. */
+export void basics() {
+  (string, i32) pair = ("a", 1);
+
+  pair.0;                      // "a"
+  pair.1;                      // 1
+}
+
+/** Zero and one exist, and the trailing comma carries meaning only at length one. */
+export void edges() {
+  ()         unit = ();
+  (i32,)     one  = (1,);
+  string     s    = ("a");     // grouping, not a 1-tuple
+  (i32, i32) two  = (1, 2,);   // the trailing comma means nothing here
+
+  unit; one; s; two;
+}
+
+/** A tuple is a reference: `b = a` aliases, `==` compares members, `is` compares objects. */
+export void identity() {
+  auto a = (1, 2);
+  auto b = a;
+
+  a is b;                      // true — one object, two names
+  b.0 = 5;
+  a.0;                         // 5
+
+  (1, 2) == (1, 2);            // true
+  (1, 2) is (1, 2);            // false — two objects
+}
+
+/** An index must be known at compile time, since the member type depends on it. */
+export void indexing((string, i32) t, i32 i) {
+  t.0;                         // string
+  t.(1);                       // i32 — parens where an expression goes
+
+  // ERROR: a tuple index must be known at compile time
+  // t.(i);
+}
+
+/** Four spellings take one apart, and nesting works in all of them. */
+export void destructuring(i32 n, i32 d) {
+  (u32 q, u32 r)    = divmod(n, d);
+  (u32, u32) (s, t) = divmod(n, d);
+  auto (u, v)       = divmod(n, d);
+  (auto w, auto x)  = divmod(n, d);
+
+  q; r; s; t; u; v; w; x;
+}
+
+/** Assignment to locals that already exist is the shape a round function wants. */
+export void inPlace(u32 a, u32 b) {
+  (a, b) = swap(a, b);
+  a; b;
+}
+
+export (u32, u32) divmod(i32 n, i32 d) {
+  return (n / d as@ u32, n % d as@ u32);
+}
+
+export (u32, u32) swap(u32 a, u32 b) {
+  return (b, a);
+}
+
+/** A variadic parameter is a tuple the call site fills, at most one, and last. */
+export i32 count<Ts>(Ts ...items) {
+  return typeref(Ts).members().len();
+}
+
+export void variadic() {
+  count(1, "a");               // 2 — Ts is (i32, string)
+  count(1);                    // 1 — Ts is (i32,)
+  count();                     // 0 — Ts is ()
+}

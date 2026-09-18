@@ -1,0 +1,100 @@
+// Primitives, literals, and conversion between them.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/** Three packed fields, shared with the other files here. */
+export struct Rgb {
+  u8 r = 0;
+  u8 g = 0;
+  u8 b = 0;
+}
+
+/** A literal takes the type its slot expects. */
+export void literals() {
+  i32    a = 42;
+  i64    b = 42;
+  u8     c = 200;
+  f64    d = 1.5;
+  bool   e = true;
+  string f = "hi";
+
+  a;    // 42
+  b;    // 42
+  c;    // 200
+  d;    // 1.5
+  e;    // true
+  f;    // "hi"
+}
+
+/** Where the value has no reading in the slot, there is nothing for the literal to become. */
+export void outOfRange() {
+  // ERROR: literal out of range for its type
+  // u8 n = 300;
+}
+
+/** Arithmetic answers the type of its operands. Nothing promotes. */
+export void arithmetic() {
+  u8 a = 200;
+  u8 b = 100;
+
+  a + b;                  // 44 — wraps at 8 bits, as every other width does
+  a as i32 + b as i32;    // 300
+}
+
+/**
+ * There are no implicit conversions between any types, so a conversion is always written.
+ *
+ * Which operator depends on what it costs. `as` is lossless and is refused where anything could be
+ * lost; `as!` traps unless the value fits; `as~` rounds or clamps; `as@` keeps the low bits. Using a
+ * wider one where `as` would do is itself an error.
+ *
+ * A packed type is ordinary here as everywhere: a local, a parameter, a field, a return, and the
+ * answer of indexing a `u8[]`. The width is a fact about storage rather than about the type.
+ */
+export void conversion(i32 n, u8[] xs) {
+  // ERROR: expected u8, got i32
+  // u8 a = n;
+
+  // ERROR: i32 to u8 can lose information
+  // u8 a = n as u8;
+
+  u8 b = n as@ u8;        // keeps the low 8 bits
+  b as i32;               // widens, and every u8 fits
+
+  // ERROR: expected i32, got u8
+  // i32 c = xs[0];
+
+  xs[0] as i32;           // 255 where the byte is 0xFF — a u8[] zero-extends, an i8[] sign-extends
+}
+
+/**
+ * A default is an absence rather than a value, so `T?` and `T[]` have one and `i32` does not — zero
+ * is a number somebody might have meant. A local without an initialiser is unassigned until it is
+ * written, and reading it before that is an error.
+ */
+export void defaults() {
+  i32   n;                // no default
+  Rgb?  p;                // null
+  Rgb[] xs;               // empty
+
+  p;                      // null
+  xs.len();               // 0
+
+  n = 1;
+  n;                      // 1
+}
+
+/** A field initialiser gives a field a default, and a struct has one where every field does. */
+export void constructed() {
+  Rgb a;                  // 0, 0, 0 — every field carries an initialiser
+  Rgb b = Rgb { r: 255 }; // braces supply what has no default
+  Rgb c = Rgb(1, 2, 3);   // parens supply everything
+
+  a.r;                    // 0
+  b.r;                    // 255
+  b.g;                    // 0
+  c.b;                    // 3
+
+  // ERROR: positional construction writes every field
+  // Rgb d = Rgb(1);
+}

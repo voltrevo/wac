@@ -1,0 +1,84 @@
+// Structs: fields, methods, inheritance, and what `const` reaches.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/** A struct is a heap reference. Fields are declared, and a method takes `this` to have one. */
+export struct Point {
+  i32 x = 0;
+  i32 y = 0;
+
+  i32 sum(const this) { return this.x + this.y; }
+  void shift(this, i32 by) { this.x += by; }
+}
+
+export void methods() {
+  Point p = Point(3, 4);
+  p.sum();               // 7
+
+  p.shift(1);
+  p.x;                   // 4
+
+  // ERROR: a method without `this` is a static method and has no receiver
+  // Point.sum();
+}
+
+/** A method without `this` is static, and is reached through the type. */
+export struct Counter {
+  i32 n = 0;
+
+  Counter create() { return Counter(0); }
+  i32 step(this) { this.n += 1; return this.n; }
+}
+
+export void statics() {
+  Counter c = Counter.create();
+  c.step();              // 1
+  c.step();              // 2
+}
+
+/** `const` on a reference is deep, and travels with the reference. */
+export void constness(const Point p) {
+  p.sum();               // reading is fine
+
+  // ERROR: cannot assign through a const reference
+  // p.x = 1;
+
+  // ERROR: cannot call a method taking `this` on a const reference
+  // p.shift(1);
+}
+
+/** A struct inherits fields and methods, and the parent grants each override. */
+export struct Shape {
+  virtual i32 sides(const this) { return 0; }
+}
+
+export struct Square : Shape {
+  override i32 sides(const this) { return 4; }
+}
+
+export struct Blob : Shape {
+  // ERROR: `Shape.sides` is not virtual — nothing here to override
+  // i32 sides(const this) { return 1; }
+}
+
+/** Dispatch is on the runtime type, so the declared type of the reference does not decide it. */
+export void dispatch() {
+  Square s = Square();
+  Shape  b = s;
+
+  s.sides();             // 4
+  b.sides();             // 4
+}
+
+/** References compare by identity, and identity alone. */
+export void identity() {
+  Point a = Point(1, 2);
+  Point b = Point(1, 2);
+  Point c = a;
+
+  a is b;                // false — two objects
+  a is c;                // true
+
+  // ERROR: `==` is not allowed on struct types
+  // a == b;
+}

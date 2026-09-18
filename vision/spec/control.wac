@@ -1,0 +1,96 @@
+// Branching, looping, and binding a value while testing it.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+import { Rgb } from "./values.wac";
+
+/** Blocks take braces. There is no statement form without them. */
+export i32 branching(i32 n) {
+  if (n < 0) {
+    return -1;
+  } else if (n == 0) {
+    return 0;
+  }
+  return 1;
+}
+
+/** Four loop heads: three that exist and one over a thing rather than its indices. */
+export i32 loops(i32[] xs) {
+  i32 n = 0;
+
+  for (i32 i = 0; i < xs.len(); i++) { n += xs[i]; }
+
+  i32 j = 0;
+  while (j < xs.len()) { n += xs[j]; j++; }
+
+  do { n += 1; } while (false);
+
+  for (i32 x in xs) { n += x; }
+
+  return n;
+}
+
+/** `break` leaves the loop, `continue` takes the next turn. */
+export i32 leaving(i32[] xs) {
+  i32 n = 0;
+  for (i32 x in xs) {
+    if (x < 0) { continue; }
+    if (x > 99) { break; }
+    n += x;
+  }
+  return n;
+}
+
+/**
+ * A ternary's type is the narrowest available containing both branches, except `anyref`: the greater
+ * of the two nullability depths, over the nearest common ancestor of the non-nullable forms.
+ *
+ * `anyref` is excluded because it contains everything, so a rule allowed to reach it could never
+ * refuse a pair. Branches that meet nowhere else are an error.
+ */
+export void ternary(bool c, Rgb s, Rgb? o) {
+  i32  a = c ? 1 : 2;
+  Rgb? b = c ? s : o;          // the greater depth of the two
+  Rgb? d = c ? o : null;       // null is depth one over no type
+
+  a; b; d;
+
+  // ERROR: the two branches of a ternary have unrelated types
+  // auto e = c ? s : "red";
+}
+
+/**
+ * `matches` tests a pattern against a subject and binds a name for it. The name is scoped to the
+ * statement, and readable only where the match is what let control reach it: the right operand of
+ * `&&`, the then-arm of `?:`, the block of an `if` or `while`, and the body and update of a `for`.
+ */
+export i32 binding(Rgb? maybe) {
+  if (Rgb p matches maybe) { return p.r; }
+
+  // ERROR: undefined name
+  // return p.r;
+
+  return 0;
+}
+
+export i32 guarded(Rgb? maybe) {
+  if (Rgb p matches maybe && p.r > 0) { return p.r; }
+  return 0;
+}
+
+export i32 conditional(Rgb? maybe) {
+  return Rgb p matches maybe ? p.g : 0;
+}
+
+/** A pattern whose answer is known is still a question, so it is not refused. */
+export i32 alwaysTrue(Rgb certain) {
+  if (Rgb p matches certain) { return p.b; }
+  return 0;
+}
+
+/** Draining a queue is the loop the construct was wanted for: one test, one binding. */
+export i32 drainLike(Queue<i32> q) {
+  i32 n = 0;
+  while (i32 v matches q.pop()) { n += v; }
+  return n;
+}

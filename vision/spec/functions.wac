@@ -1,0 +1,57 @@
+// Functions: what they take, what they answer, and what they are allowed to reach.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+import { Rgb } from "./values.wac";
+
+/** Return type first, parameters explicit, and no overloading — a name is defined once. */
+export u8 brightest(Rgb p) {
+  u8 best = p.r;
+  if (p.g > best) { best = p.g; }
+  if (p.b > best) { best = p.b; }
+  return best;
+}
+
+/** A file-private function has no `export` and cannot be imported. */
+i32 twice(i32 x) {
+  return x * 2;
+}
+
+export void calls() {
+  brightest(Rgb(1, 9, 3));    // 9
+  twice(21);                  // 42
+}
+
+/**
+ * A function takes no capability unless one is handed to it, so a signature says what a function can
+ * reach. `twice` above cannot read a file, open a socket or find the time, whatever it asks for.
+ */
+export i32 pure(i32[] xs) {
+  i32 n = 0;
+  for (i32 x in xs) { n += x; }
+  return n;
+}
+
+/** A type parameter is supplied by the instantiation, and `auto` takes the type an expression has. */
+export i32 totalLength<C>(C parts) {
+  i32 n = 0;
+  for (auto part in parts) { n += part.len(); }
+  return n;
+}
+
+export void generics(string[] names, Rgb[] swatches) {
+  totalLength(names);         // each `part` is a string
+
+  auto first = swatches[0];   // Rgb
+  first.r;
+}
+
+/** A funcref is an ordinary value, and a lambda takes its return type from the slot it goes into. */
+export i32 apply(i32 x, fn<i32(i32)> f) {
+  return f(x);
+}
+
+export void lambdas() {
+  apply(20, twice);                 // 40
+  apply(20, (i32 x) => x + 1);      // 21
+}
