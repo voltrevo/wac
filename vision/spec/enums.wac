@@ -124,6 +124,24 @@ export f64 maybeArea(Shape? s) {
 /** An enum may hold itself, so a recursive shape folds. */
 export enum Tree {
   Leaf(i32 v), Node(Tree left, Tree right)
+
+  /** An enum carries methods, and a generator method is how a tree is iterated. */
+  gen<i32> void values(const this) {
+    match (this) {
+      Leaf(v): { yield v; }
+      Node(l, r): {
+        for (i32 x in l.values()) { yield x; }
+        for (i32 x in r.values()) { yield x; }
+      }
+    }
+  }
+}
+
+/** `for … in` steps a `Generator<T, void>`, so writing an iterator is writing a loop. */
+export i32 walk(Tree t) {
+  i32 total = 0;
+  for (i32 v in t.values()) { total += v; }
+  return total;
 }
 
 export i32 sum(Tree t) {

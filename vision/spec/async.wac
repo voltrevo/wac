@@ -196,6 +196,37 @@ export async void outer() { await middle(); }
 export async void middle() { await tick(); }
 
 /**
+ * `Ticket.all` answers a tuple, so two reads cost one wait and the results keep their own types.
+ * It is variadic, and the tuple is as long as the call.
+ */
+export async i32 both(Sys sys) {
+  auto got = await Ticket.all(sys.readFile("a.txt"), sys.readFile("b.txt"));
+  return got.0.len() + got.1.len();
+}
+
+/**
+ * `await;` is also how a loop gives other work a turn, since a suspension is where the scheduler
+ * gets to run something else. Two of these interleave rather than running one after the other.
+ *
+ *     a
+ *     b
+ *     a
+ *     b
+ */
+export async void interleaving(Sys sys) {
+  ticking(sys, "a");
+  ticking(sys, "b");
+  await sys.drain();
+}
+
+export async void ticking(Sys sys, string name) {
+  for (i32 i = 0; i < 2; i++) {
+    sys.log(name);
+    await;
+  }
+}
+
+/**
  * `Ticket.any` answers the first to settle, and the losers are not cancelled — nothing here
  * cancels. They are still the program's work and still run, which is what `drain` then finishes.
  */

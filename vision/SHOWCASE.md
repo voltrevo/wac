@@ -116,7 +116,7 @@ function, its attributes are that function's named parameters, and its children 
 ## Const is deep
 
 ```wac
-const i32[] xs = [1, 2, 3];
+const i32[] xs = i32[](1, 2, 3);
 xs[0] = 9;
 ```
 
@@ -141,7 +141,7 @@ import { compile } from "wacc";
 
 async Result<i32> runSource(Sys sys, string src) {
   u8[] wasm  = try compile("main.wac", src);
-  auto child = try await sys.spawn(wasm, [], [Grant.Read]);
+  auto child = try await sys.spawn(wasm, string[](), Grant[](Grant.Read));
   return Result.Ok(await child.exit());
 }
 ```

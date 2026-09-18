@@ -19,6 +19,7 @@ export struct Sys {
   async void writeFile(const this, string path, u8[] bytes) { trap; }
   async void sleepMillis(const this, i32 ms) { trap; }
   async Result<Listener> listen(const this, i32 port) { trap; }
+  async Result<Child> spawn(const this, u8[] wasm, string[] args, Grant[] grants) { trap; }
   i32 run(const this, fn<i32(Sys)> f, Grant[] grants) { trap; }
   void exit(const this, i32 code) { trap; }
 
@@ -50,6 +51,23 @@ export struct Socket {
 }
 
 export enum Recv { Data(u8[] bytes), End, Failed(string why) }
+
+export struct Child {
+  async i32 exit(this) { trap; }
+}
+
+/**
+ * The compiler is a library, so compiling is a call that answers bytes and spawning is a call that
+ * takes them. No file is written and no toolchain is looked up, and the child holds the grants
+ * named here — never more than the caller holds.
+ */
+export Result<u8[]> compile(string name, string src) { trap; }
+
+export async Result<i32> runSource(Sys sys, string src) {
+  u8[] wasm = try compile("main.wac", src);
+  Child child = try await sys.spawn(wasm, string[](), Grant[](Grant.Read));
+  return Result.Ok(await child.exit());
+}
 
 /**
  * `main` returns `void`, `never`, `i32`, or a `Result` of those, and the host reads whatever it
