@@ -15,14 +15,6 @@ See [README.md](README.md) for what this directory is and why nothing checks it.
 
 ---
 
-## What examples should capture `wait`
-
-Two entries cover it so far: the `Err` when nothing can advance the ticket, and driving a coroutine
-to completion from sync code. Two candidates remain. The `Err` when *this host* cannot be waited on
-is a different failure from the first — it does not depend on the tickets at all. And the circular
-case, where advancing each member of the dependency set once is what makes a diagnosis out of what
-would otherwise be a depth-first recursion.
-
 ## What example should capture `defer`
 
 And whether `sys.atEnd` wants one beside it, since the pair is the whole cleanup story — `defer`

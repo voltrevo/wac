@@ -532,6 +532,62 @@ problem instead, which is why `await` answers a value and `wait` answers a `Resu
 
 ---
 
+## `wait` answers `Err` for a ticket the driver does not own
+
+```wac
+Result<void> example(Sys real) {
+  Sys fake = fakeSys();
+
+  return fake.run(async (Sys sys) => {
+    real.sleepMillis(10);         // unawaited — its continuation lands in fake's queue
+    return sys.drain().wait();    // Err — the ticket is real's, and fake cannot advance it
+  }, []);
+}
+```
+
+The ticket is live and something will settle it. The driver is simply the wrong one, which is a
+different failure from the entry above, where nothing could ever move it.
+
+**Not yet.**
+
+---
+
+## `wait` advances each member of the set once
+
+```wac
+struct Cell { Ticket<i32>? t; }
+
+Result<i32> example(Sys sys) {
+  Cell c;
+  Ticket<i32> t = selfish(sys, c);
+  c.t = t;                       // it awaits the ticket it will settle
+
+  return t.wait();               // Err — advanced once, and advancing it needs it advanced
+}
+
+async i32 selfish(Sys sys, Cell c) {
+  sys.log("started");
+  await;
+  sys.log("resumed");
+  return await c.t!;
+}
+```
+
+```
+started
+resumed
+```
+
+The call runs to the first suspension and `wait` resumes it once, which is as far as it gets.
+Descending into the set depth-first would recurse without bound; advancing each member once finds
+nothing moved and says so.
+
+The `await;` is load-bearing — without it `selfish` reads `c.t` before the assignment and traps.
+
+**Not yet.**
+
+---
+
 ## `drain().wait()` and `await drain()` are the same program
 
 ```wac
