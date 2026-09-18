@@ -1,0 +1,65 @@
+// Operators, and the places one is refused.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+import { Point } from "./types.wac";
+
+/** Arithmetic is for numbers, and `+` on a string is the one exception. */
+export void arithmetic(i32 a, i32 b, string s, string t, Point p, Point q) {
+  a + b; a - b; a * b; a / b; a % b;
+  s + t;                       // concatenation
+
+  // ERROR: `+ - * / %` on a reference are refused
+  // p + q;
+}
+
+/** Unary minus wants something with a negation, so an unsigned type has none. */
+export void negation(i32 a, u32 u) {
+  -a;
+
+  // ERROR: `-` on a u32 is refused
+  // -u;
+}
+
+/** Comparison is by identity for a reference, and by content for a `string` alone. */
+export void comparison(Point p, Point q, string s, string t) {
+  p is q;                      // identity
+  p is not q;
+
+  s == t;                      // bytes
+  s < t;                       // and ordering by bytes
+
+  // ERROR: `==` is not allowed on struct types
+  // p == q;
+}
+
+/** A shift amount may be any integer width, and the result keeps the left side's. */
+export u64 rotl(u64 v, i32 n) {
+  return (v << n) | (v >> (64 - n));
+}
+
+/** `++` and `--` want an integer, floats included in what they refuse. */
+export void stepping(i32 a, f64 f) {
+  i32 b = a;
+  b++;
+  b--;
+
+  // ERROR: `++` wants an integer
+  // f++;
+}
+
+/** `!` is the forced unwrap, and is refused where there is no `?` to remove. */
+export void unwrapping(Point? maybe, Point sure) {
+  maybe!;
+
+  // ERROR: `!` is refused on anything with no `?` to unwrap
+  // sure!;
+}
+
+/**
+ * Precedence, tightest first: unary, then the casts, `* / %`, `+ -`, the shifts, the orderings,
+ * the equalities, `&`, `^`, `|`, `&&`, `||`, `is`, and the ternary last.
+ */
+export bool precedence(i32 a, i32 b, i32 c) {
+  return a + b * c > a && b < c;   // (a + (b * c)) > a, and (b < c)
+}

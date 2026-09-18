@@ -1,0 +1,83 @@
+// Generics: letters the caller supplies, and what the language does not ask of them.
+//
+// Part of `vision/spec`, which is not vetted — see README.md.
+
+/** A letter on a function is filled by the call. */
+export T first<T>(T[] xs) {
+  return xs[0];
+}
+
+export void inferred(i32[] ns, string[] ss) {
+  first(ns);                   // i32
+  first(ss);                   // string
+}
+
+/** Where there is nothing to infer from, the call writes the argument. */
+export T zero<T>() {
+  trap;
+}
+
+export void written() {
+  zero<i32>();
+  zero<string>();
+}
+
+/** A letter on a struct is filled by the type. */
+export struct Pair<A, B> {
+  A left;
+  B right;
+
+  A takeLeft(const this) { return this.left; }
+}
+
+export void instantiated() {
+  Pair<i32, string> p = Pair(1, "a");
+  p.takeLeft();                // i32
+}
+
+/**
+ * A method may declare letters its owner has not got. A lambda takes its return type from the slot
+ * it is written into, so where that slot is the method's own letter there is nothing to infer from
+ * and the call writes it.
+ */
+export struct Box<T> {
+  T v;
+
+  U mapped<U>(const this, fn<U(T)> f) { return f(this.v); }
+}
+
+export void ownLetters(Box<i32> b) {
+  b.mapped<i32>((i32 x) => x + 1);
+  b.mapped<string>((i32 x) => "n");
+
+  // ERROR: nothing says what U is
+  // b.mapped((i32 x) => x + 1);
+}
+
+/** Two instantiations are unrelated unless their arguments are identical. */
+export struct Shape { i32 sides = 0; }
+export struct Square : Shape { }
+
+export void invariance(Box<Square> sq) {
+  // ERROR: Box<Square> is not a Box<Shape> — a mutable container cannot be covariant soundly
+  // Box<Shape> s = sq;
+
+  Square one = sq.v;
+  Shape  two = one;            // the elements still widen
+  two;
+}
+
+/**
+ * Nothing is asked of a letter, so a body may use what a letter has not got, and the complaint
+ * arrives at the instantiation that cannot supply it rather than at the definition.
+ */
+export i32 lengthOf<T>(T x) {
+  return x.len();
+}
+
+export void unconstrained(string s, i32 n) {
+  lengthOf(s);                 // 3 for "abc"
+
+  // ERROR: no method `len` on i32 — at the call, not at `lengthOf`
+  // lengthOf(n);
+}
