@@ -5,7 +5,7 @@ disposable.
 
 The real package is `packages/ssh`: 9,418 lines. **Nothing here is a rewrite of it.** One file,
 `session.wac`, which is the filesystem a session would be handed under
-[`issues/system/0309b`](../../../issues/system/open/)'s fourth option — the one
+[`issues/system/0309b`](../../../../issues/system/open/)'s fourth option — the one
 [`@/packages/fs`](../fs/) proposes and nothing had written.
 
 Written because 26 of this directory's 35 packages are imported by nothing, and the two ticks before
