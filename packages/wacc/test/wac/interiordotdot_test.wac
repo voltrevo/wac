@@ -8,7 +8,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 
-const string LIB = "export i32 answer() { return 42; }\n";
+static string LIB = "export i32 answer() { return 42; }\n";
 
 /** The walker's own normalisation: what `gather` would have supplied these files under. */
 string[] paths() { return ["main.wac", "lib.wac"]; }

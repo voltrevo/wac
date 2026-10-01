@@ -36,11 +36,11 @@ import { check } from "../../../wactest/src/oracle.wac";
 import { fpAdd, fpSub, fpMul, fpSquare, fpNeg, fpInvert, fpToBytes, fpFromBytes, fpOne,
          fpIsZero, fpEquals } from "../../src/fieldp.wac";
 
-const i32 SIGN = 0;
-const i32 VERIFY = 1;
-const i32 PUBKEY = 2;
-const i32 P256 = 256;
-const i32 P384 = 384;
+static i32 SIGN = 0;
+static i32 VERIFY = 1;
+static i32 PUBKEY = 2;
+static i32 P256 = 256;
+static i32 P384 = 384;
 
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
@@ -68,7 +68,7 @@ export string test_the_group_orders() {
   return t.report();
 }
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 Answers askEc(T t, Cli cli, Lines lines, string what) {
   return ask(t, cli, "node", [ORACLE], lines, what);
@@ -230,7 +230,7 @@ export string test_signatures_outside_the_group_order_are_refused() {
 // which is exactly the generalisation most likely to be wrong, and a corpus that ran one width at a
 // time could not see a table indexed from the wrong one.
 
-const string CRYPTO_ORACLE = "packages/crypto/test/oracle.mjs";
+static string CRYPTO_ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** A deterministic spread, so a failure reproduces exactly. */
 struct FieldRng {

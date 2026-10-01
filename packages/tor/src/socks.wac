@@ -75,7 +75,7 @@ import { Read } from "core";
  * quarter of the ring rather than all of it — raising it further is a question about how much work one
  * client may demand, not about the transport.
  */
-const i32 MAX_CLIENTS = CALL_SLOTS / 4;
+static i32 MAX_CLIENTS = CALL_SLOTS / 4;
 
 /**
  * How many circuits to keep. One per port in practice, built on demand.
@@ -83,10 +83,10 @@ const i32 MAX_CLIENTS = CALL_SLOTS / 4;
  * Bounded because each is three handshakes through three relays, and because a client that
  * asks for a hundred ports should not get a hundred paths built on its say-so.
  */
-const i32 MAX_CIRCUITS = 6;
+static i32 MAX_CIRCUITS = 6;
 
 /** What fits in a RELAY_DATA cell beside the eleven-byte relay header. */
-const i32 CELL_DATA = 498;
+static i32 CELL_DATA = 498;
 
 /**
  * How much unsent client data to hold before we stop reading from that client.
@@ -96,7 +96,7 @@ const i32 CELL_DATA = 498;
  * or to stop reading, and stopping reading is the one that pushes the problem back to where
  * it can be solved. Sized at a few cells' worth so a socket read is never wasted.
  */
-const i32 CLIENT_BACKLOG = 32768;
+static i32 CLIENT_BACKLOG = 32768;
 
 /** A SOCKS connection, and the Tor stream carrying it. */
 struct Client {
@@ -381,7 +381,7 @@ void handleCell(Core core, Cli cli, Proxy x, u8[] cell) {
  * the backlog rather than being refused, which is the property that mattered; what it costs is up to
  * `FULL_POLL_MS` of delay before a freed slot is noticed.
  */
-const i32 FULL_POLL_MS = 25;
+static i32 FULL_POLL_MS = 25;
 
 /**
  * How long the drain waits for a continuation before looking at the link itself.
@@ -397,7 +397,7 @@ const i32 FULL_POLL_MS = 25;
  * for the loop it replaced, and the difference that started it was a rebuild counted as run time.
  * One sample each, and a mechanism invented to explain the gap between them.
  */
-const i32 IDLE_MS = 50;
+static i32 IDLE_MS = 50;
 
 async void pumpAccept(Core core, Cli cli, Proxy x) {
   while (!x.stopped) {

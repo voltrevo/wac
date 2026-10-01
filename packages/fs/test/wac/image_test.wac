@@ -42,8 +42,8 @@ import { Written, Loaded, write, read, dump } from "../../src/image.wac";
 import { imageBadOps } from "./cov_probe.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
-const i64 NOW = 1754500000000;
-const string FIXTURE = "packages/fs/test/fixtures/image-v1.wacimg";
+static i64 NOW = 1754500000000;
+static string FIXTURE = "packages/fs/test/fixtures/image-v1.wacimg";
 
 string oneByte(i32 c) {
   u8[] one = u8[].filled(1, 0);

@@ -20,8 +20,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { binaryPath, freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 
-const string WC = "packages/platform/example/wc.wac";
-const string HEXDUMP = "packages/platform/example/hexdump.wac";
+static string WC = "packages/platform/example/wc.wac";
+static string HEXDUMP = "packages/platform/example/hexdump.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

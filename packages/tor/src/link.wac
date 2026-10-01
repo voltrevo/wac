@@ -97,8 +97,8 @@ export struct Link {
 }
 
 /** How long a relay gets to answer. Generous: this is a bound on wedging, not a deadline. */
-const i32 CONNECT_TIMEOUT_MS = 15000;
-const i32 READ_TIMEOUT_MS = 30000;
+static i32 CONNECT_TIMEOUT_MS = 15000;
+static i32 READ_TIMEOUT_MS = 30000;
 
 export Link connectRelay(Core core, Cli cli, string host, i32 port) {
   Pending<Socket> dial = cli.connect(host, port);

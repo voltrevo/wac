@@ -26,7 +26,7 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { splitLines } from "../../../wactest/src/strings.wac";
 
 /** How long a run gets before the bound is called a hang. Generous on purpose. */
-export const i32 DEFAULT_SECONDS = 60;
+export static i32 DEFAULT_SECONDS = 60;
 
 /** What a bounded run answers: the program's own result, or the fact that it never gave one. */
 export struct Ran {
@@ -244,10 +244,10 @@ u8[] joinedNul(string[] parts) {
 // eight importers — and this never needed it. A `.wasm` and the wasmtime host are the two things the
 // comparison is actually about.
 
-export const string SEALED = "packages/box/src/bin/sealedsh.wac";
-export const string OPEN = "packages/box/src/bin/sh.wac";
+export static string SEALED = "packages/box/src/bin/sealedsh.wac";
+export static string OPEN = "packages/box/src/bin/sh.wac";
 /** How many corpus scripts the gate runs. The rest is `wac task corpus:hosts`, which runs all 800-odd. */
-export const string BUILT = ".cache/hostshell";
+export static string BUILT = ".cache/hostshell";
 
 export string root(Cli cli) { return cli.cwd().wait(); }
 

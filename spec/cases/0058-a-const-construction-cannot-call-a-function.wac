@@ -3,5 +3,5 @@
 // from: specSingle's §wac-modconst-notconst cluster
 struct P { i32 x; }
 i32 f() { return 1; }
-const P A = P(f());
+static P A = P(f());
 export i32 g() { return A.x; }

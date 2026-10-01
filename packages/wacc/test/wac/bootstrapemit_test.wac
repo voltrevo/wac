@@ -64,7 +64,7 @@ import { emitFilesSelfDescribing, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
 
-const string SELFDRIVE = "packages/wacc/test/wac/selfdrive.wac";
+static string SELFDRIVE = "packages/wacc/test/wac/selfdrive.wac";
 /**
  * Under `.cache/`, which the corpus walk does not enter — and that is the point rather than tidiness.
  *
@@ -74,7 +74,7 @@ const string SELFDRIVE = "packages/wacc/test/wac/selfdrive.wac";
  * back `[236, 236, 236, 236]` — which reads as the emitter having lost the shift, not as the test
  * having poisoned its own corpus.
  */
-const string DRIVER = ".cache/_bootdrive.wac";
+static string DRIVER = ".cache/_bootdrive.wac";
 
 /**
  * The driver: one export, folding the eight answers into one word.

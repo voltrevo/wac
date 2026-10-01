@@ -17,8 +17,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string GENERATED = "packages/bls/src/fpkernel.wac";
-const string GENERATOR = "packages/bls/tools/genfpkernel.py";
+static string GENERATED = "packages/bls/src/fpkernel.wac";
+static string GENERATOR = "packages/bls/tools/genfpkernel.py";
 
 /** The `n`th line of `text`, without its newline. `-1` past the end is `""`. */
 string lineAt(string text, i32 n) {

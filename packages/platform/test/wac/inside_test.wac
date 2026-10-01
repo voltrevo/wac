@@ -20,7 +20,7 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string INSIDE = "packages/platform/example/inside.wac";
+static string INSIDE = "packages/platform/example/inside.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

@@ -28,7 +28,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { importSpecs } from "../../src/files.wac";
 import { resolveFrom } from "../../src/path.wac";
 
-const string ORACLE = "packages/wacc/test/files_oracle.ts";
+static string ORACLE = "packages/wacc/test/files_oracle.ts";
 
 bool endsWith(string s, string suffix) {
   return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;

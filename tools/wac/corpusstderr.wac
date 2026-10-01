@@ -47,7 +47,7 @@ import { Diff, known } from "../../packages/sh/test/wac/knownstderr.wac";
 import { sameName } from "../../packages/sh/test/wac/shname.wac";
 
 /** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
-const i32 KILLED = 124;
+static i32 KILLED = 124;
 
 /** What one script printed on standard error. */
 struct Said {

@@ -29,9 +29,9 @@ import { gcmEncrypt, gcmTag, gcmDecrypt, gcmInc32 } from "../../src/aesgcm.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 ECB = 0;
-const i32 CTR = 1;
-const i32 GCM = 2;
+static i32 ECB = 0;
+static i32 CTR = 1;
+static i32 GCM = 2;
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
@@ -63,7 +63,7 @@ export string test_fips_197_worked_examples() {
   return t.report();
 }
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /**
  * Ask node's ciphers.

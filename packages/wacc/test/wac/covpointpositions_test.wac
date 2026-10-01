@@ -37,8 +37,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { covTableFiles } from "../../src/api.wac";
 import { wireField, wireLines } from "./wire_probe.wac";
 
-const string LIB = "/lib.wac";
-const string ENTRY = "/entry.wac";
+static string LIB = "/lib.wac";
+static string ENTRY = "/entry.wac";
 
 // The table's own columns: `index⇥line⇥col⇥kind⇥file`.
 i32 LINE() { return 1; }
@@ -91,13 +91,13 @@ void assertDistinct(T t, string[] ps) {
   t.eqI32(shared, 0, itoa(shared) + " decision(s) cannot be told apart:\n  " + shown(ps));
 }
 
-const string ELSE_LIB =
+static string ELSE_LIB =
   "export enum E { A, B }\n\n" +
   "export i32 pick(E e) {\n  match (e) {\n    A: { return 1; }\n" +
   "    default: { return 2; }\n  }\n}\n\n" +
   "export i32 other(E e) {\n  match (e) {\n    A: { return 10; }\n" +
   "    default: { return 20; }\n  }\n}\n";
-const string ELSE_ENTRY =
+static string ELSE_ENTRY =
   "import { E, other, pick } from \"./lib.wac\";\n\n" +
   "export i32 go(bool useA) {\n  E e = E.B;\n  if (useA) { e = E.A; }\n" +
   "  return pick(e) + other(e);\n}\n";
@@ -131,12 +131,12 @@ export string test_each_else_arm_is_its_own_point_in_its_own_file_at_its_own_lin
   return t.report();
 }
 
-const string LOOP_LIB =
+static string LOOP_LIB =
   "export i32 spin(i32 n) {\n  i32 k = 0;\n  for (;;) {\n    k = k + 1;\n" +
   "    if (k >= n) { break; }\n  }\n  return k;\n}\n\n" +
   "export i32 other(i32 n) {\n  i32 k = 0;\n  for (;;) {\n    k = k + 2;\n" +
   "    if (k >= n) { break; }\n  }\n  return k;\n}\n";
-const string LOOP_ENTRY =
+static string LOOP_ENTRY =
   "import { other, spin } from \"./lib.wac\";\n\n" +
   "export i32 go(i32 n) {\n  return spin(n) + other(n);\n}\n";
 
@@ -159,12 +159,12 @@ export string test_a_loop_with_no_condition_is_placed_at_the_loop_not_at_0_0() {
   return t.report();
 }
 
-const string KINDS_LIB =
+static string KINDS_LIB =
   "export i32 spinDo(i32 n) {\n  i32 k = 0;\n  do { k = k + 1; } while (k < n);\n  return k;\n}\n\n" +
   "export i32 spinWhile(i32 n) {\n  i32 k = 0;\n  while (k < n) { k = k + 1; }\n  return k;\n}\n\n" +
   "export i32 spinFor(i32 n) {\n  i32 k = 0;\n  for (;;) {\n    k = k + 1;\n" +
   "    if (k >= n) { break; }\n  }\n  return k;\n}\n";
-const string KINDS_ENTRY =
+static string KINDS_ENTRY =
   "import { spinDo, spinFor, spinWhile } from \"./lib.wac\";\n\n" +
   "export i32 go(i32 n) {\n  return spinDo(n) + spinWhile(n) + spinFor(n);\n}\n";
 

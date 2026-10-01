@@ -32,11 +32,11 @@ import { ptDecode } from "../../src/ed25519.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 ED_PUB = 0;
-const i32 ED_SIGN = 1;
-const i32 ED_VERIFY = 2;
-const i32 X_BASE = 3;
-const i32 X_SHARED = 4;
+static i32 ED_PUB = 0;
+static i32 ED_SIGN = 1;
+static i32 ED_VERIFY = 2;
+static i32 X_BASE = 3;
+static i32 X_SHARED = 4;
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 41 + seed * 7 + 13) & 0xFF; }
@@ -71,7 +71,7 @@ export string test_rfc_7748_x25519_vectors() {
   return t.report();
 }
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /**
  * Ask node's X25519 and Ed25519.

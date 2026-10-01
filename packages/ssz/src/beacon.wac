@@ -36,14 +36,14 @@
  * 24,896 bytes to 1,856. Ethereum's *sync-protocol* vectors exist only for `minimal`, while its
  * `ssz_static` vectors here are `mainnet`, so both are needed and neither is the default.
  */
-export const i32 SYNC_COMMITTEE_SIZE_MAINNET = 512;
-export const i32 SYNC_COMMITTEE_SIZE_MINIMAL = 32;
+export static i32 SYNC_COMMITTEE_SIZE_MAINNET = 512;
+export static i32 SYNC_COMMITTEE_SIZE_MINIMAL = 32;
 
 // Branch lengths are `floorlog2` of the generalized index the branch proves, so they are derived from
 // the BeaconState layout rather than chosen: FINALIZED_ROOT_GINDEX 105 -> 6,
 // CURRENT_SYNC_COMMITTEE_GINDEX 54 -> 5, NEXT_SYNC_COMMITTEE_GINDEX 55 -> 5.
-export const i32 FINALITY_BRANCH_DEPTH = 6;
-export const i32 SYNC_COMMITTEE_BRANCH_DEPTH = 5;
+export static i32 FINALITY_BRANCH_DEPTH = 6;
+export static i32 SYNC_COMMITTEE_BRANCH_DEPTH = 5;
 
 // ── Type indices ──────────────────────────────────────────────────────────────
 //

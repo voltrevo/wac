@@ -49,10 +49,10 @@ import {
 import { slice } from "../../bytes/src/slice.wac";
 
 /** tor's `HS_DESC_SUPERENC_PLAINTEXT_PAD_MULTIPLE`. */
-export const i32 SUPERENC_PAD_MULTIPLE = 10000;
+export static i32 SUPERENC_PAD_MULTIPLE = 10000;
 
 /** What tor prepends before checking a descriptor's signature — `strlen`, so no terminating NUL. */
-export const string DESC_SIG_PREFIX = "Tor onion service descriptor sig v3";
+export static string DESC_SIG_PREFIX = "Tor onion service descriptor sig v3";
 
 /**
  * One encryption layer: plaintext in, `SALT | ENCRYPTED | MAC` out.

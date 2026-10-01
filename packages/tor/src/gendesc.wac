@@ -409,7 +409,7 @@ string voteVectorJson(AuthorityKeys k, VoteInfo vi, RelayOpinion r, u8[] cert, u
 string field2(string name, string escaped) { return "  \"" + name + "\": \"" + escaped + "\",\n"; }
 
 /** The weights a real chutney consensus carries, which are the defaults when nothing is measured. */
-const string WEIGHTS =
+static string WEIGHTS =
   "Wbd=3333 Wbe=0 Wbg=0 Wbm=10000 Wdb=10000 Web=10000 Wed=3333 Wee=10000 Weg=3333 Wem=10000 " +
   "Wgb=10000 Wgd=3333 Wgg=10000 Wgm=10000 Wmb=10000 Wmd=3333 Wme=0 Wmg=0 Wmm=10000";
 

@@ -26,13 +26,13 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { mlkemKeyGen, mlkemEncaps, mlkemDecaps } from "../../src/mlkem.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 
-const i32 SEED = 64;
-const i32 EK = 1184;
-const i32 DK = 2400;
-const i32 CT = 1088;
-const i32 SS = 32;
+static i32 SEED = 64;
+static i32 EK = 1184;
+static i32 DK = 2400;
+static i32 CT = 1088;
+static i32 SS = 32;
 
-const string ORACLE = "packages/crypto/test/mlkem_oracle.ts";
+static string ORACLE = "packages/crypto/test/mlkem_oracle.ts";
 
 /** One WebCrypto key and the encapsulation it did against it. */
 struct Vector {

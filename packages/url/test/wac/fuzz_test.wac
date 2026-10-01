@@ -27,7 +27,7 @@ import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse, parseWithBase } from "../probe.wac";
 
-const string ORACLE = "packages/url/test/batchOracle.ts";
+static string ORACLE = "packages/url/test/batchOracle.ts";
 
 /**
  * The oracle needs `--allow-run` of its own, which is why this does not use `checkDeno`.

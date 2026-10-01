@@ -44,8 +44,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/unicode/test/cov_exercise.wac";
-const string PREFIX = "packages/unicode/";
+static string EXERCISE = "packages/unicode/test/cov_exercise.wac";
+static string PREFIX = "packages/unicode/";
 
 /** What the exercise's tests need: a process to ask, files to read, and the environment to find them. */
 string[] grants() {

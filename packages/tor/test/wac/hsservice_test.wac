@@ -37,8 +37,8 @@ import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac"
 import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const string ORACLE = "packages/tor/test/oracle.mjs";
-const string VECTOR = "packages/tor/test/data/estintro_vectors.json";
+static string ORACLE = "packages/tor/test/oracle.mjs";
+static string VECTOR = "packages/tor/test/data/estintro_vectors.json";
 
 JsonObject vector(Cli cli) { return jsonFile(cli, VECTOR); }
 u8[] authSeed(JsonObject v) { return decoded(strOf(v, "authSeed")); }

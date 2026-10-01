@@ -55,7 +55,7 @@ export i32 innerPlainLen(Cli cli) { return numOf(top(cli), "innerPlainLen"); }
 export i32 periodNum(Cli cli) { return numOf(top(cli), "periodNum"); }
 export i32 periodLength(Cli cli) { return numOf(top(cli), "periodLength"); }
 
-export const i32 DECOY_CLIENTS = 16;
+export static i32 DECOY_CLIENTS = 16;
 
 /** The `i`-th decoy client the generator writes: forty bytes of `(i * 97 + j * 11 + 3) & 0xff`. */
 export u8[] decoyClient(i32 i) {

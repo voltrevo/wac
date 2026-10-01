@@ -66,7 +66,7 @@ import { Read } from "core";
 import { streamed as hashStreamed, whole as hashWhole, ragged as hashRagged }
   from "./wac/xxh64_probe.wac";
 
-const string ORACLE = "packages/zstd/test/oracle.ts";
+static string ORACLE = "packages/zstd/test/oracle.ts";
 
 /** The reference, under Node — Deno's `node:zlib` shim ignores zstd's `dictionary` option. */
 Answers askZ(Cli cli, Lines lines, string what) {
@@ -367,7 +367,7 @@ Answers reference(Cli cli) {
 }
 
 /** Where the reference batch's `compress` answers stop and its `writedesc` answers start. */
-const i32 DESC0 = 12;
+static i32 DESC0 = 12;
 
 /**
  * The FSE descriptions asked for, as protocol lines.

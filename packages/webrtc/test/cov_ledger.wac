@@ -40,8 +40,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/webrtc/test/cov_exercise.wac";
-const string PREFIX = "packages/webrtc/";
+static string EXERCISE = "packages/webrtc/test/cov_exercise.wac";
+static string PREFIX = "packages/webrtc/";
 
 /** Datagram sockets for the live tests, a process for aiortc and coturn, and the vendored captures. */
 string[] grants() {

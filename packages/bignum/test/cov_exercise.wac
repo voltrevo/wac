@@ -106,7 +106,7 @@ import {
   test_u64_a_u32_product_widens as u64__u64_a_u32_product_widens,
 } from "./wac/u64_test.wac";
 
-const string ORACLE = "packages/bignum/test/operands.ts";
+static string ORACLE = "packages/bignum/test/operands.ts";
 
 
 /**

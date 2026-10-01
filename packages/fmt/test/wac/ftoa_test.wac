@@ -38,7 +38,7 @@ f64 nextDouble(Rng rng) {
   return ofBits((hi << 32) | lo);
 }
 
-const string ORACLE = "packages/fmt/test/oracle.ts";
+static string ORACLE = "packages/fmt/test/oracle.ts";
 
 string ftoa(f64 x) { return string.fromBytes(ftoaBytes(x)); }
 f64 atof(string s) { return atofSpan(s.toBytes(), 0, s.len()); }

@@ -41,8 +41,8 @@ import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 
-const string ENTRY = "packages/platform/example/echod.wac";
-const string PEER = "packages/platform/test/udppeer.ts";
+static string ENTRY = "packages/platform/example/echod.wac";
+static string PEER = "packages/platform/test/udppeer.ts";
 
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 string scratch(Cli cli) { return cli.cwd().wait() + "/.cache/echod"; }

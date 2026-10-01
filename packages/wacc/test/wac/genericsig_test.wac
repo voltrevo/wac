@@ -31,7 +31,7 @@ import { emitFilesChecked } from "../../src/api.wac";
 import { leb, declaredFunctions, allExportNames } from "./wasm_probe.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string BOX =
+static string BOX =
   "struct Box<T> {\n" +
   "  T v;\n" +
   "  Box<T> of(T v) { return Box(v); }\n" +

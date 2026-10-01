@@ -26,12 +26,12 @@ import { NTOR_KEY_MATERIAL } from "./relay.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
 
 /** The key material one hop needs: `Df | Db | Kf | Kb` for SHA-1 and AES-128. */
-export const i32 HOP_KEY_LEN = 72;
+export static i32 HOP_KEY_LEN = 72;
 
 /** An ntor CREATE2 request is 84 bytes: NODEID (20) | KEYID (32) | CLIENT_PK (32). */
-export const i32 NTOR_REQUEST_LEN = 84;
+export static i32 NTOR_REQUEST_LEN = 84;
 /** An ntor CREATED2 reply is 64: SERVER_PK (32) | AUTH (32). */
-export const i32 NTOR_REPLY_LEN = 64;
+export static i32 NTOR_REPLY_LEN = 64;
 
 /**
  * The ntor handshake out of a CREATE2 payload, or empty.
@@ -124,13 +124,13 @@ export u8[] destroyCell(i32 circId, i32 reason) {
 }
 
 /** `NONE` — no reason given, which is what a relay sends rather than explaining itself. */
-export const i32 DESTROY_NONE = 0;
+export static i32 DESTROY_NONE = 0;
 /** `PROTOCOL` — the peer sent something that violates the protocol. */
-export const i32 DESTROY_PROTOCOL = 1;
+export static i32 DESTROY_PROTOCOL = 1;
 /** `INTERNAL` — an error at this relay, not the peer's doing. (2 is INTERNAL; TORPROTOCOL is 1.) */
-export const i32 DESTROY_INTERNAL = 2;
+export static i32 DESTROY_INTERNAL = 2;
 /** `RESOURCELIMIT` — this relay could have carried it and has run out of room. */
-export const i32 DESTROY_RESOURCELIMIT = 5;
+export static i32 DESTROY_RESOURCELIMIT = 5;
 
 // ── Being a hop ───────────────────────────────────────────────────────────────
 
@@ -242,10 +242,10 @@ export Extend parseExtend2(u8[] payload) {
   return Extend(true, specs, hType, handshake);
 }
 
-export const i32 LS_IPV4 = 0;
-export const i32 LS_IPV6 = 1;
-export const i32 LS_LEGACY_IDENTITY = 2;
-export const i32 LS_ED25519_IDENTITY = 3;
+export static i32 LS_IPV4 = 0;
+export static i32 LS_IPV6 = 1;
+export static i32 LS_LEGACY_IDENTITY = 2;
+export static i32 LS_ED25519_IDENTITY = 3;
 
 /**
  * The address and port from an IPv4 link specifier, as `a.b.c.d` and a port, or empty.
@@ -349,7 +349,7 @@ export u8[] extended2Body(u8[] reply) {
 // relay sends CREATE_FAST, which is how this came to be implemented.
 
 /** `X` in a CREATE_FAST cell, and `Y` in the reply: 20 bytes each. */
-export const i32 CREATE_FAST_LEN = 20;
+export static i32 CREATE_FAST_LEN = 20;
 
 /**
  * KDF-TOR: `K = H(K0 | [00]) | H(K0 | [01]) | …`, tor-spec §5.2.1.

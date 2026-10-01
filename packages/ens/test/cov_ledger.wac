@@ -12,8 +12,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/ens/test/cov_exercise.wac";
-const string PREFIX = "packages/ens/";
+static string EXERCISE = "packages/ens/test/cov_exercise.wac";
+static string PREFIX = "packages/ens/";
 
 /** What the tests need: the vendored fixtures on disk, and a process for the live ones. */
 string[] grants() {

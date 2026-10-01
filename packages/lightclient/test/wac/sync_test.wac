@@ -39,7 +39,7 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { Store, initializeStore, processUpdate, forceUpdate, headerSlot, headerBeaconRoot,
          safetyThreshold, hasSupermajority, isBetterUpdate, countBits } from "../../src/store.wac";
 
-const string MANIFEST = "packages/ssz/test/fixtures.json";
+static string MANIFEST = "packages/ssz/test/fixtures.json";
 
 // `LightClientUpdate` is entirely fixed-size in Altair — `LightClientHeader` is just a
 // `BeaconBlockHeader` — so every field is at a known offset and a test can reach one without

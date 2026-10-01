@@ -38,7 +38,7 @@ i32 pick(Rng rng) {
   return rng.upto(0x100);                          // anything
 }
 
-const string ORACLE = "packages/json/test/oracle.ts";
+static string ORACLE = "packages/json/test/oracle.ts";
 
 /** A one-string document containing exactly these bytes. */
 u8[] doc(u8[] body) {

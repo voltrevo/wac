@@ -486,7 +486,7 @@ i32[] fixedDistLengths() {
 
 // The code-length code order from RFC 1951 §3.2.7. A module-level constant, so
 // it is built once at instantiation rather than on every call.
-const i32[] CL_ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+static i32[] CL_ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
 /**
  * Read a dynamic block's two code tables. Returns the literal/length lengths

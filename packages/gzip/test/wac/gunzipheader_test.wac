@@ -24,10 +24,10 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { gunzipBytes } from "../../src/inflate.wac";
 import { gzipBest } from "../../src/gzip.wac";
 
-const i32 FEXTRA = 4;
-const i32 FNAME = 8;
-const i32 FCOMMENT = 16;
-const i32 FHCRC = 2;
+static i32 FEXTRA = 4;
+static i32 FNAME = 8;
+static i32 FCOMMENT = 16;
+static i32 FHCRC = 2;
 
 /**
  * Rebuild a stream with `flg` set and `fields` spliced in after the fixed header.

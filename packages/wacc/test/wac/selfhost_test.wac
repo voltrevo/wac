@@ -28,7 +28,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 
-const string ENTRY = "packages/wac/src/wac.wac";
+static string ENTRY = "packages/wac/src/wac.wac";
 
 /** Where to put the two builds, named for this agent so two runs cannot overwrite each other. */
 string workDir(Cli cli) {

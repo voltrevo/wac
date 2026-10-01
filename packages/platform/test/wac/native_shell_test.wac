@@ -43,7 +43,7 @@ import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, DEFAULT_SEC
 import { Built, OPEN, SEALED, buildOne, builds, denoAll, difference, root, shell } from "./hostfs.wac";
 
 /** How many corpus scripts the gate runs. The rest is `wac task corpus:hosts`, which runs them all. */
-const i32 SAMPLE = 25;
+static i32 SAMPLE = 25;
 
 
 

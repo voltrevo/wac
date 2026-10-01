@@ -49,10 +49,10 @@ import { addFingerprint, addIntegrity, attrCount, attrOf, checkFingerprint, chec
          mappedAddress, parses, request, requestWithSoftware, roundTripAddress, tidOf }
   from "./stun_probe.wac";
 
-const string ORACLE = "packages/webrtc/test/stun_oracle.py";
+static string ORACLE = "packages/webrtc/test/stun_oracle.py";
 
 /** A fixed transaction id, so a failure prints the same bytes twice running. */
-const string TID = "0102030405060708090a0b0c";
+static string TID = "0102030405060708090a0b0c";
 
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 u8[] tid() { return decoded(TID); }
@@ -70,19 +70,19 @@ u8[] tid() { return decoded(TID); }
  * each one's header length plus twenty equals the number of bytes extracted, which is the check that
  * the extraction was faithful.
  */
-const string RFC_REQUEST =
+static string RFC_REQUEST =
   "000100582112a442b7e7a701bc34d686fa87dfae802200105354554e207465737420636c6965" +
   "6e74002400046e0001ff80290008932ff9b151263b36000600096576746a3a68367659202020" +
   "000800149aeaa70cbfd8cb56781ef2b5b2d3f249c1b571a280280004e57a3bcf";
-const string RFC_IPV4 =
+static string RFC_IPV4 =
   "0101003c2112a442b7e7a701bc34d686fa87dfae8022000b7465737420766563746f72200020" +
   "00080001a147e112a643000800142b91f599fd9e90c38c7489f92af9ba53f06be7d780280004" +
   "c07d4c96";
-const string RFC_IPV6 =
+static string RFC_IPV6 =
   "010100482112a442b7e7a701bc34d686fa87dfae8022000b7465737420766563746f72200020" +
   "00140002a1470113a9faa5d3f179bc25f4b5bed2b9d900080014a382954e4be67bf11784c97c" +
   "8292c275bfe3ed4180280004c8fb0b4c";
-const string RFC_LONG_TERM =
+static string RFC_LONG_TERM =
   "000100602112a44278ad3433c6ad72c029da412e00060012e3839ee38388e383aae38383e382" +
   "afe382b900000015001c662f2f3439396b39353464364f4c33346f4c39465354767936347341" +
   "0014000b6578616d706c652e6f72670000080014f67024656dd64a3e02b8e0712e85c9a28ca8" +

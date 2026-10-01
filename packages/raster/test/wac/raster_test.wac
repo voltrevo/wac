@@ -30,7 +30,7 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          gridCursorColumn, gridDrawnAt, deskClosedOutOfRange, deskTypedWithNoWindows,
          damageOfDegenerate, glyphAt} from "./scenes.wac";
 
-const string HEX = "packages/raster/tools/unscii-16.hex";
+static string HEX = "packages/raster/tools/unscii-16.hex";
 
 // ── unscii-16, parsed here and not by the generator ───────────────────────────
 

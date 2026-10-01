@@ -39,7 +39,7 @@ import { Resolved, ownerOf, resolverOf } from "../../src/verified.wac";
 import { namehash } from "../../src/ens.wac";
 import { ownerSlot, resolverSlot } from "../../src/registry.wac";
 
-const string FIXTURE = "packages/ens/test/vendor/registry.json";
+static string FIXTURE = "packages/ens/test/vendor/registry.json";
 
 // ── Reading the fixture ───────────────────────────────────────────────────────
 

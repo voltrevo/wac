@@ -246,15 +246,15 @@ bool sameLine(u8[] a, u8[] b) {
   return true;
 }
 
-const string CONSENSUS_METHODS = "28 29 30 31 32";
-const string TOR_VERSION = "0.4.7.13";
-const string KNOWN_FLAGS =
+static string CONSENSUS_METHODS = "28 29 30 31 32";
+static string TOR_VERSION = "0.4.7.13";
+static string KNOWN_FLAGS =
   "Authority Exit Fast Guard HSDir Running Stable StaleDesc Sybil V2Dir Valid";
-const string PARAMS = "";
-const string RELAY_PROTOCOLS =
+static string PARAMS = "";
+static string RELAY_PROTOCOLS =
   "Cons=2 Desc=2 DirCache=2 HSDir=2 HSIntro=4 HSRend=2 Link=4-5 LinkAuth=3 Microdesc=2 Relay=2";
-const string CLIENT_PROTOCOLS =
+static string CLIENT_PROTOCOLS =
   "Cons=2 Desc=2 DirCache=2 HSDir=2 HSIntro=4 HSRend=2 Link=4-5 Microdesc=2 Relay=2";
-const string RELAY_SUBPROTOCOLS =
+static string RELAY_SUBPROTOCOLS =
   "Cons=1-2 Desc=1-2 DirCache=2 FlowCtrl=1 HSDir=2 HSIntro=4-5 HSRend=1-2 Link=1-5 " +
   "LinkAuth=1,3 Microdesc=1-2 Padding=2 Relay=1-4";

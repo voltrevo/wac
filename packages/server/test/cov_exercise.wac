@@ -20,7 +20,7 @@
 import { handle } from "./probe.wac";
 
 /** 2020-06-15T10:00:00Z, the clock the tests pin so `/time` has one answer. */
-const i64 NOW = 1592215200000;
+static i64 NOW = 1592215200000;
 
 /** One request, with its answer's length folded into the accumulator so nothing is dropped. */
 i32 one(string request) {

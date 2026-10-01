@@ -55,7 +55,7 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/fs/test/cov_exercise.wac";
+static string EXERCISE = "packages/fs/test/cov_exercise.wac";
 
 /**
  * `src/` and **not** `packages/fs/`: the probe's own branches are a test's branches.
@@ -63,7 +63,7 @@ const string EXERCISE = "packages/fs/test/cov_exercise.wac";
  * Counting them would put the driver's coverage into the package's number — and, worse, into the
  * ratchet, where an unexercised line of the *probe* would read as an unaccounted line of the package.
  */
-const string PREFIX = "packages/fs/src/";
+static string PREFIX = "packages/fs/src/";
 
 /** Points that cannot be reached from a probe, each named on its own line. */
 Pin[] pins() {

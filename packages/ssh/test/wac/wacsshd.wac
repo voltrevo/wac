@@ -103,7 +103,7 @@ void reapAbandoned(Cli cli) {
            u8[]()).wait();
 }
 
-const string WACSSHD_REAP =
+static string WACSSHD_REAP =
   "ps -eo pid=,ppid=,args= 2>/dev/null | while read pid ppid rest; do " +
   "  case \"$ppid\" in 1) ;; *) continue;; esac; " +
   "  case \"$rest\" in *'/.cache/wacsshd/sshd'*'.wasm'*) ;; *) continue;; esac; ";

@@ -31,24 +31,24 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 
 // Fixture numbering. The names are here now, not on the host side.
-const i32 ROOT = 0;
-const i32 INTER = 1;
-const i32 LEAF = 2;
-const i32 OTHER_CA = 3;
-const i32 IMPOSTER = 4;
-const i32 LEAF_CRIT = 5;
-const i32 LEAF_NONCRIT = 6;
-const i32 LEAF_CLIENTAUTH = 7;
-const i32 LEAF_SERVERAUTH = 8;
-const i32 NC_OK = 9;
-const i32 NC_BAD = 10;
-const i32 NC_EXCL = 11;
-const i32 NC_IP = 12;
-const i32 NC_SUFFIX = 13;
-const i32 NC_UPPER = 14;
+static i32 ROOT = 0;
+static i32 INTER = 1;
+static i32 LEAF = 2;
+static i32 OTHER_CA = 3;
+static i32 IMPOSTER = 4;
+static i32 LEAF_CRIT = 5;
+static i32 LEAF_NONCRIT = 6;
+static i32 LEAF_CLIENTAUTH = 7;
+static i32 LEAF_SERVERAUTH = 8;
+static i32 NC_OK = 9;
+static i32 NC_BAD = 10;
+static i32 NC_EXCL = 11;
+static i32 NC_IP = 12;
+static i32 NC_SUFFIX = 13;
+static i32 NC_UPPER = 14;
 
 /** 2030-01-01, inside every fixture's 2020-2045 window. */
-const i64 NOW = 1893456000;
+static i64 NOW = 1893456000;
 
 /** A chain or store: the DER blobs concatenated, with start/end pairs. */
 struct Bundle {
@@ -271,12 +271,12 @@ export string test_name_constraints(Core core, Cli cli) {
 
 // ── Matching an IP address ───────────────────────────────────────────────────
 
-const i32 NC_SAMELEN = 17;   // permitted DNS:xyz.test — as long as the leaf's name
-const i32 RSA_CA = 18;       // CN=rsa test CA, CA:TRUE, sha256WithRSAEncryption
-const i32 RSA_LEAF = 19;     // CN=wac.test under it, DNS:wac.test/localhost, IP:127.0.0.1
-const i32 ED_LEAF = 20;      // CN=wac.test, an ed25519 key — the only one in this file's set
-const i32 EC_LEAF = 15;      // DNS:wac.test, DNS:localhost, IP:127.0.0.1
-const i32 IP_AS_DNS = 16;    // DNS:127.0.0.1, DNS:example.test — and no iPAddress at all
+static i32 NC_SAMELEN = 17;   // permitted DNS:xyz.test — as long as the leaf's name
+static i32 RSA_CA = 18;       // CN=rsa test CA, CA:TRUE, sha256WithRSAEncryption
+static i32 RSA_LEAF = 19;     // CN=wac.test under it, DNS:wac.test/localhost, IP:127.0.0.1
+static i32 ED_LEAF = 20;      // CN=wac.test, an ed25519 key — the only one in this file's set
+static i32 EC_LEAF = 15;      // DNS:wac.test, DNS:localhost, IP:127.0.0.1
+static i32 IP_AS_DNS = 16;    // DNS:127.0.0.1, DNS:example.test — and no iPAddress at all
 
 /** The file each fixture number names — the list the host wrapper used to hold. */
 string fixtureName(i32 n) {

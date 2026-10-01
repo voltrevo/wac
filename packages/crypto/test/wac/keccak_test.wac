@@ -28,10 +28,10 @@ import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } 
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 SHA3_256 = 0;
-const i32 SHA3_512 = 1;
-const i32 SHAKE128 = 2;
-const i32 SHAKE256 = 3;
+static i32 SHA3_256 = 0;
+static i32 SHA3_512 = 1;
+static i32 SHAKE128 = 2;
+static i32 SHAKE256 = 3;
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed) & 0xFF; }
@@ -59,7 +59,7 @@ export string test_the_permutation_of_an_all_zero_state() {
   return t.report();
 }
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /**
  * Ask node, which has SHAKE where WebCrypto does not.

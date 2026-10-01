@@ -20,11 +20,11 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 import { fpFromWideBytes } from "./fp.wac";
 import { Fp2 } from "./fp2.wac";
 
-const i32 SHA256_OUT = 32;
-const i32 SHA256_BLOCK = 64;
+static i32 SHA256_OUT = 32;
+static i32 SHA256_BLOCK = 64;
 
 /** `L` from RFC 9380 §8.8.2: bytes of expansion per base field element. */
-const i32 L = 64;
+static i32 L = 64;
 
 /**
  * `expand_message_xmd(msg, DST, len)`.

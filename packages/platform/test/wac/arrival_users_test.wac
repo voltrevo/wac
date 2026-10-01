@@ -36,7 +36,7 @@ import { Daemon, Held, start, stop, logOf, waitForLogWithin } from "../../../wac
 import { keygen, restrict, publicLine } from "../../../wactest/src/keys.wac";
 import { builtProgram, builtByDeno } from "../../../wactest/src/built.wac";
 
-const string ENTRY = "packages/ssh/src/sshd.wac";
+static string ENTRY = "packages/ssh/src/sshd.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

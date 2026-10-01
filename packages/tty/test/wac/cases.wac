@@ -10,14 +10,14 @@
 
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-export const i32 DEL = 0x7F;
-export const i32 KILL = 0x15;      // ^U
-export const i32 WERASE = 0x17;    // ^W
-export const i32 REPRINT = 0x12;   // ^R
-export const i32 LNEXT = 0x16;     // ^V
-export const i32 INTR = 0x03;      // ^C
-export const i32 QUIT = 0x1C;      // ^\
-export const i32 EOF = 0x04;       // ^D
+export static i32 DEL = 0x7F;
+export static i32 KILL = 0x15;      // ^U
+export static i32 WERASE = 0x17;    // ^W
+export static i32 REPRINT = 0x12;   // ^R
+export static i32 LNEXT = 0x16;     // ^V
+export static i32 INTR = 0x03;      // ^C
+export static i32 QUIT = 0x1C;      // ^\
+export static i32 EOF = 0x04;       // ^D
 
 /** ASCII text as bytes, for the cases that have no control characters in them. */
 export u8[] t(string s) { return s.toBytes(); }
@@ -174,7 +174,7 @@ export string[] modeCaseNames() {
 }
 
 /** Only the nine `typed()` shares; the last two are about the modes rather than the rules. */
-export const i32 SHARED = 9;
+export static i32 SHARED = 9;
 
 /** The modes, in the order the vectors record them. */
 export string[] modes() { return ["canonical", "noecho", "cbreak"]; }

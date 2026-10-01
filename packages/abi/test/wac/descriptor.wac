@@ -10,15 +10,15 @@
 
 // The descriptor tags, as these tests believe them.
 // `corpus_test.wac`'s last case is what keeps the belief honest.
-export const i32 T_UINT = 1;
-export const i32 T_BOOL = 2;
-export const i32 T_ADDRESS = 3;
-export const i32 T_BYTES32 = 4;
-export const i32 T_BYTES = 5;
-export const i32 T_STRING = 6;
-export const i32 T_ARRAY = 7;
-export const i32 T_FIXED = 8;
-export const i32 T_TUPLE = 9;
+export static i32 T_UINT = 1;
+export static i32 T_BOOL = 2;
+export static i32 T_ADDRESS = 3;
+export static i32 T_BYTES32 = 4;
+export static i32 T_BYTES = 5;
+export static i32 T_STRING = 6;
+export static i32 T_ARRAY = 7;
+export static i32 T_FIXED = 8;
+export static i32 T_TUPLE = 9;
 
 // ── Hex ───────────────────────────────────────────────────────────────────────
 

@@ -492,7 +492,7 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
   // function, or for module-level code the `const` being initialised.
   //
   // The `const` half is not a detail. The largest tables in the repo are module-level
-  // `const u8[] SBOX = [...]` initialisers, which are outside every function span; keying them
+  // `static u8[] SBOX = [...]` initialisers, which are outside every function span; keying them
   // all to one empty scope put `unicode/src/tables.wac`'s six separate tables into a single class
   // and sampled three literals for the lot. Six tables are six questions.
   string[] scope = string[].filled(tokens.len(), "");
@@ -504,7 +504,7 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
   string lastConst = "";
   for (i32 k = 0; k < tokens.len(); k++) {
     if (scope[k] != "") { continue; }
-    if (tokens[k].kind == "const") {
+    if (tokens[k].kind == "static") {
       for (i32 j = k + 1; j < tokens.len() && tokens[j].kind != ";"; j++) {
         if (tokens[j].kind == "=") {
           if (j > 0 && tokens[j - 1].kind == "ident") { lastConst = tokens[j - 1].text; }

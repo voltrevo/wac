@@ -32,7 +32,7 @@ import {
   oidRsaSha512, oidKeyUsage, oidExtKeyUsage, oidServerAuth, oidAnyExtKeyUsage, oidNameConstraints,
 } from "../../src/asn1.wac";
 
-const string SOURCE = "packages/tls/src/asn1.wac";
+static string SOURCE = "packages/tls/src/asn1.wac";
 
 /** The name of every OID constant, in declaration order. */
 string[] names() {

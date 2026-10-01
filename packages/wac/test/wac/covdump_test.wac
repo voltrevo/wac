@@ -28,7 +28,7 @@ import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { manifestIn } from "../../../wacc/src/manifest.wac";
 
 /** A program that reads a file and says whether it could. */
-const string READER =
+static string READER =
   "import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
   "export i32 main(Core core, Cli cli) {\n" +
   "  FileResult r = cli.readFile(\"README.md\").wait();\n" +
@@ -42,7 +42,7 @@ const string READER =
  * `main` returns a value with nothing to do with a status, which is the shape every coverage exercise
  * has — an accumulator — and is why `covdump`'s own exit code cannot be the program's.
  */
-const string TRAPPER =
+static string TRAPPER =
   "i32 guard(i32 n) { if (n < 0) { trap; } return n; }\n" +
   "export i32 main() { return guard(1) + 40; }\n" +
   "export i32 first() { return guard(0 - 1); }\n" +
@@ -61,7 +61,7 @@ const string TRAPPER =
  * interleaved with the returning ones — which is the arrangement a single export cannot survive,
  * since the first trap would end it and lose every case after.
  */
-const string SWEEPER =
+static string SWEEPER =
   "i32 guard(i32 n) { if (n < 0) { trap; } return n; }\n" +
   "export i32 main() { return 0; }\n" +
   "export i32 sweep(i32 i) {\n" +

@@ -47,7 +47,7 @@ import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { closureOf } from "./source_probe.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string ENTRY = "packages/wacc/src/api.wac";
+static string ENTRY = "packages/wacc/src/api.wac";
 
 export string test_what_the_emitter_declines_across_waccs_own_sources(Core core, Cli cli) {
   T t = T.create();

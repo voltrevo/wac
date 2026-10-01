@@ -50,24 +50,24 @@ import { decode as b64decode } from "../../codec/src/base64.wac";
 import { slice } from "../../bytes/src/slice.wac";
 
 /** `HS_DESC_MAX_LEN`. A descriptor of exactly this length is refused, as tor's `>=` refuses it. */
-export const i32 MAX_DESCRIPTOR_LEN = 50000;
+export static i32 MAX_DESCRIPTOR_LEN = 50000;
 
 /** `HS_DESC_MAX_LIFETIME`, in minutes, which is the unit the descriptor states it in. */
-export const i32 MAX_LIFETIME_MINUTES = 12 * 60;
+export static i32 MAX_LIFETIME_MINUTES = 12 * 60;
 
-export const i32 PUB_OK = 0;
-export const i32 PUB_TOO_LARGE = 1;      // past HS_DESC_MAX_LEN
-export const i32 PUB_NOT_V3 = 2;         // not `hs-descriptor 3`
-export const i32 PUB_LIFETIME = 3;       // absent, zero, or longer than twelve hours
-export const i32 PUB_NO_CERT = 4;        // no `descriptor-signing-key-cert` block, or it will not decode
-export const i32 PUB_CERT_TYPE = 5;      // a certificate that is not type 8
-export const i32 PUB_NO_BLINDED_KEY = 6; // type 8 without extension 4 — nothing to file it under
-export const i32 PUB_CERT_SIG = 7;       // the certificate is not signed by the key it carries
-export const i32 PUB_NO_REVISION = 8;    // no `revision-counter`
-export const i32 PUB_NO_BODY = 9;        // no `superencrypted` block
-export const i32 PUB_SIGNATURE = 10;     // the document's own signature does not verify
-export const i32 PUB_EXPIRED = 11;       // the certificate expired, when a clock was supplied
-export const i32 PUB_NOT_NEWER = 12;     // a revision counter no greater than the one held
+export static i32 PUB_OK = 0;
+export static i32 PUB_TOO_LARGE = 1;      // past HS_DESC_MAX_LEN
+export static i32 PUB_NOT_V3 = 2;         // not `hs-descriptor 3`
+export static i32 PUB_LIFETIME = 3;       // absent, zero, or longer than twelve hours
+export static i32 PUB_NO_CERT = 4;        // no `descriptor-signing-key-cert` block, or it will not decode
+export static i32 PUB_CERT_TYPE = 5;      // a certificate that is not type 8
+export static i32 PUB_NO_BLINDED_KEY = 6; // type 8 without extension 4 — nothing to file it under
+export static i32 PUB_CERT_SIG = 7;       // the certificate is not signed by the key it carries
+export static i32 PUB_NO_REVISION = 8;    // no `revision-counter`
+export static i32 PUB_NO_BODY = 9;        // no `superencrypted` block
+export static i32 PUB_SIGNATURE = 10;     // the document's own signature does not verify
+export static i32 PUB_EXPIRED = 11;       // the certificate expired, when a clock was supplied
+export static i32 PUB_NOT_NEWER = 12;     // a revision counter no greater than the one held
 
 /** The verdict, and the name — which is only meaningful when `reason` is `PUB_OK`. */
 export struct Checked {

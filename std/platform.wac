@@ -1587,15 +1587,15 @@ export struct Datagram {
  * There is deliberately no flag for standard input and output: a child always has those, they
  * are how a parent talks to it at all, and they reach nothing the parent did not hand over.
  */
-export const i32 GRANT_NONE = 0;
+export static i32 GRANT_NONE = 0;
 /** `readFile`, `stat`, `readDir`, `openInput` on a path. */
-export const i32 GRANT_READ = 1;
+export static i32 GRANT_READ = 1;
 /** `writeFile`, `mkdir`, `remove`, `rename`, `openOutput` to a path. */
-export const i32 GRANT_WRITE = 2;
+export static i32 GRANT_WRITE = 2;
 /** `connect`, `listen`, `accept` — the child's own sockets, not the parent's. */
-export const i32 GRANT_NET = 4;
+export static i32 GRANT_NET = 4;
 /** `env`, which reports every variable unset without it. */
-export const i32 GRANT_ENV = 8;
+export static i32 GRANT_ENV = 8;
 
 /**
  * Running a host program — `Cli.exec`.
@@ -1607,7 +1607,7 @@ export const i32 GRANT_ENV = 8;
  * bit is how it hands this one on — a test runner granting its own oracle the right to spawn, and
  * nothing else getting it by default. `issues/system/0264c`.
  */
-export const i32 GRANT_RUN = 16;
+export static i32 GRANT_RUN = 16;
 /**
  * Every grant there is: "narrow nothing", which is not the same as "everything".
  *
@@ -1627,7 +1627,7 @@ export i32 GRANT_ALL() { return GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV
  * streams am I standing in for* — and a capability may not have seven parameters,
  * `issues/lang/0291c`.
  */
-export const i32 INHERIT_NONE = 0;
+export static i32 INHERIT_NONE = 0;
 /**
  * The child reads this program's own standard input instead of the queue `send` fills.
  *
@@ -1635,7 +1635,7 @@ export const i32 INHERIT_NONE = 0;
  * `cat; cat` prints one line as it does in every real shell — a parent cannot know how much a child
  * read, and with this it does not have to.
  */
-export const i32 INHERIT_IN = 1;
+export static i32 INHERIT_IN = 1;
 /**
  * The child writes this program's own output streams instead of queues the parent relays.
  *
@@ -1649,7 +1649,7 @@ export const i32 INHERIT_IN = 1;
  * printed `1 2 3` and counted `0`. Pass it when the program's whole job is to *be* the thing it
  * started, which is what `wac <prog.wasm>` is.
  */
-export const i32 INHERIT_OUT = 2;
+export static i32 INHERIT_OUT = 2;
 
 /**
  * How many host calls one worker may have outstanding at once.
@@ -1663,7 +1663,7 @@ export const i32 INHERIT_OUT = 2;
  * sixteen, 128) and every copy of the old number becomes a limit nobody can explain.
  * `test/wac/slots_test.wac` fails if this and `host/layout.ts` disagree.
  */
-export const i32 CALL_SLOTS = 128;
+export static i32 CALL_SLOTS = 128;
 
 /**
  * Standard input's handle, so that `waitAny` can watch it beside a socket and a child.
@@ -1671,7 +1671,7 @@ export const i32 CALL_SLOTS = 128;
  * Reserved rather than allocated: a host's handle counter starts past the reserved ones, so this
  * can never name anything else. `test/wac/handles_test.wac` is what holds the hosts to that.
  */
-export const i32 STDIN = 0;
+export static i32 STDIN = 0;
 
 /**
  * The handle a **child** reads and writes to reach its parent's filesystem — the other end of
@@ -1683,7 +1683,7 @@ export const i32 STDIN = 0;
  * only caller, and `recv(PARENT_FS)` on a program that was not spawned answers nothing — which is
  * how a program can tell the difference without a capability to ask with.
  */
-export const i32 PARENT_FS = 1;
+export static i32 PARENT_FS = 1;
 
 export struct Child {
   /**

@@ -33,8 +33,8 @@ import { hashPair, zeroHash, merkleize, rootBasic, rootBasicVector, rootBitvecto
          bitlistLength, floorLog2, subtreeIndex, isValidMerkleBranch,
          isValidNormalizedMerkleBranch } from "../../src/merkle.wac";
 
-const string MANIFEST = "packages/ssz/test/fixtures.json";
-const string ORACLE = "packages/ssz/test/oracle.ts";
+static string MANIFEST = "packages/ssz/test/fixtures.json";
+static string ORACLE = "packages/ssz/test/oracle.ts";
 
 // ── Reading a case name ───────────────────────────────────────────────────────
 

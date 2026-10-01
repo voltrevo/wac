@@ -24,10 +24,10 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const i32 W = 200;
-const i32 H = 150;
-const i32 SHIFT = 8;
-const i32 DROP = 90 << SHIFT;
+static i32 W = 200;
+static i32 H = 150;
+static i32 SHIFT = 8;
+static i32 DROP = 90 << SHIFT;
 
 void step(i32[] before, i32[] now, i32[] next) {
   for (i32 y = 1; y < H - 1; y++) {

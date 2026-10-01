@@ -25,8 +25,8 @@ import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_NOT_REP
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
-const string V8_HOST = "native/v8/src/main.rs";
-const string WASMTIME_HOST = "native/src/main.rs";
+static string V8_HOST = "native/v8/src/main.rs";
+static string WASMTIME_HOST = "native/src/main.rs";
 
 string read(Core core, Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();

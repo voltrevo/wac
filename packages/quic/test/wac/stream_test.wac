@@ -36,8 +36,8 @@ import { ackPacket, applicationPacketNumber, clientFinishedPacket, closeCodeIn, 
          lostThenResent, openApplication, resendAfterAckIsEmpty, streamBytes, streamFinished,
          streamPacket } from "./hello_probe.wac";
 
-const string SERVER = "packages/quic/test/quicserver.ts";
-const string NAME = "localhost";
+static string SERVER = "packages/quic/test/quicserver.ts";
+static string NAME = "localhost";
 
 u8[] dcid() { return decoded("8394c8f03e515708"); }
 u8[] scid() { return decoded("11223344"); }

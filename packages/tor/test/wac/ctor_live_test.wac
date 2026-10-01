@@ -110,7 +110,7 @@ struct Net {
 
 Net failed(string why) { return Net(false, why, "", "", "", Daemon[].filled(0, Daemon(-1, "", ""))); }
 
-const string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
+static string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
                     " -M v.consensus.micro -m v.consensus.mds";
 
 /** What every relay wrote when it had done so, so a wait that fails can say how far each got. */

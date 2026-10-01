@@ -23,7 +23,7 @@
 import { sha256 } from "../../crypto/src/sha256.wac";
 
 /** Bytes per chunk. A chunk is a SHA-256 output, and SSZ leaves are the same width by construction. */
-const i32 CHUNK = 32;
+static i32 CHUNK = 32;
 
 /** `hash(a || b)` for two 32-byte chunks, which is every internal node in an SSZ tree. */
 export u8[] hashPair(u8[] a, u8[] b) {

@@ -42,12 +42,12 @@ import { merkleize, mixInLength, padToChunks, chunkCount, rootBasic, rootBitvect
          rootBitlist, rootBasicVector, rootBasicList } from "./merkle.wac";
 import { slice } from "../../bytes/src/slice.wac";
 
-export const i32 KIND_BASIC = 0;
-export const i32 KIND_BITVECTOR = 1;
-export const i32 KIND_BITLIST = 2;
-export const i32 KIND_VECTOR = 3;
-export const i32 KIND_LIST = 4;
-export const i32 KIND_CONTAINER = 5;
+export static i32 KIND_BASIC = 0;
+export static i32 KIND_BITVECTOR = 1;
+export static i32 KIND_BITLIST = 2;
+export static i32 KIND_VECTOR = 3;
+export static i32 KIND_LIST = 4;
+export static i32 KIND_CONTAINER = 5;
 /**
  * `boolean` — one byte, and **the only two legal values are 0 and 1**.
  *
@@ -60,12 +60,12 @@ export const i32 KIND_CONTAINER = 5;
  * bytes are zero, so `0x02` and `0x01` give *different* roots. Accepting both means two encodings of
  * "true" with two different `hash_tree_root`s, which is a consensus split.
  */
-export const i32 KIND_BOOLEAN = 6;
+export static i32 KIND_BOOLEAN = 6;
 
-const i32 STRIDE = 4;
-const i32 CHUNK = 32;
+static i32 STRIDE = 4;
+static i32 CHUNK = 32;
 /** An SSZ offset is a 4-byte little-endian uint32. */
-const i32 OFFSET_BYTES = 4;
+static i32 OFFSET_BYTES = 4;
 
 i32 kindOf(i32[] t, i32 i) { return t[i * STRIDE + 0]; }
 i32 paramOf(i32[] t, i32 i) { return t[i * STRIDE + 1]; }

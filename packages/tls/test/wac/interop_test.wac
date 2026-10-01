@@ -33,9 +33,9 @@ import { jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
 import { openssl35, have } from "./openssl.wac";
 
 
-const string DATA = "packages/tls/test/data";
-const string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
-const string BODY = "hello from wac over TLS 1.3\n";
+static string DATA = "packages/tls/test/data";
+static string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
+static string BODY = "hello from wac over TLS 1.3\n";
 
 /** Our server, built and listening, or the reason it is not. */
 struct Ours {

@@ -30,9 +30,9 @@ string blockedFor(string src) {
 
 i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
 
-const string MIXED_INT = "export i64 f(i32 a, i64 b) { return a + b; }\n";
-const string MIXED_FLOAT = "export f64 g(f32 a, f64 b) { return a * b; }\n";
-const string SHIFT = "export i64 k(i32 a, i64 b) { return b << a; }\n";
+static string MIXED_INT = "export i64 f(i32 a, i64 b) { return a + b; }\n";
+static string MIXED_FLOAT = "export f64 g(f32 a, f64 b) { return a * b; }\n";
+static string SHIFT = "export i64 k(i32 a, i64 b) { return b << a; }\n";
 
 /**
  * The emitter's own answer, which is the half that used to be a guess.

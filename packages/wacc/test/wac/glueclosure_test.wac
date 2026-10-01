@@ -23,10 +23,10 @@ import { has, joined } from "../../../wactest/src/strings.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Artifacts, artifactsOfOne } from "./artifacts_probe.wac";
 
-const string ENTRY = "/t/main.wac";
+static string ENTRY = "/t/main.wac";
 
 /** `u8[][]` is named **only** inside the callback signature, exactly as `Cli.spawn` names it. */
-const string SOURCE = "export struct Runner {\n" +
+static string SOURCE = "export struct Runner {\n" +
                       "  fn<i32(u8[][])> run;\n" +
                       "}\n" +
                       "export i32 drive(Runner r) { return r.run([u8[].filled(1, 0), u8[].filled(2, 0)]); }\n";

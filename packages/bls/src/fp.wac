@@ -37,7 +37,7 @@
 
 import { montMul, montAdd, montSub, atLeastP, subPInPlace, pWord } from "./fpkernel.wac";
 
-const i32 LIMBS = 12;
+static i32 LIMBS = 12;
 
 /** p, least-significant limb first. */
 u32[] modulus() {
@@ -63,7 +63,7 @@ u32[] r2() {
  * Chosen so that `m = t[0] · INV mod 2³²` makes `t + m·p` end in a zero limb, which is the
  * one step that makes the reduction work.
  */
-const u64 INV = 0xfffcfffd;
+static u64 INV = 0xfffcfffd;
 
 /** One, in Montgomery form: R mod p. */
 export u32[] fpOne() {

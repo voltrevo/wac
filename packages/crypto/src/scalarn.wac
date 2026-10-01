@@ -57,7 +57,7 @@
 // the bits of the exponent — which is `n − 2`, a published constant, and is noted there.
 
 /** 32 ones, as the mask that keeps a limb. Written in decimal for `fieldp.wac`'s reason. */
-const i64 LOW32 = 4294967295;
+static i64 LOW32 = 4294967295;
 
 /**
  * A group order and the two values derived from it.

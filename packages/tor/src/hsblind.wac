@@ -43,11 +43,11 @@ import { Point, ptDecode, ptEncode, ptMul, scMulAdd } from "../../crypto/src/ed2
 import { sha512 } from "../../crypto/src/sha512.wac";
 
 /** `SHARED_RANDOM_N_ROUNDS`, the rounds in one phase of the shared-random protocol. */
-export const i32 SHARED_RANDOM_N_ROUNDS = 12;
+export static i32 SHARED_RANDOM_N_ROUNDS = 12;
 /** `SHARED_RANDOM_N_PHASES` — commit, then reveal. */
-export const i32 SHARED_RANDOM_N_PHASES = 2;
+export static i32 SHARED_RANDOM_N_PHASES = 2;
 /** `HS_TIME_PERIOD_LENGTH_DEFAULT`, in minutes. One day, and only on the real network. */
-export const i64 TIME_PERIOD_LENGTH_DEFAULT = 1440;
+export static i64 TIME_PERIOD_LENGTH_DEFAULT = 1440;
 
 /** The literal decimal-string form of the ed25519 basepoint that the blinding hash covers. */
 u8[] basepointString() {
@@ -169,7 +169,7 @@ export u8[] blindedPublicKey(u8[] identityKey, i64 periodNum, i64 periodLength) 
 }
 
 /** What tor hashes to derive the blinded key's prefix half. `strlen`, so no terminating NUL. */
-export const string BLIND_PREFIX_STRING = "Derive temporary signing key hash input";
+export static string BLIND_PREFIX_STRING = "Derive temporary signing key hash input";
 
 /**
  * The blinded **secret** a service signs its descriptor with: 64 bytes, scalar then prefix.

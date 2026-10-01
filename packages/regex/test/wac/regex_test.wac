@@ -37,8 +37,8 @@ import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { compile, compileIgnoreCase, search, slotCount } from "../../src/regex.wac";
 import { compileFlags } from "../../src/compile.wac";
 
-const string ORACLE = "packages/regex/test/oracle.ts";
-const i32 STEPS = 1000000;
+static string ORACLE = "packages/regex/test/oracle.ts";
+static i32 STEPS = 1000000;
 
 /** `null`, or groups separated by `;` — `start,end` or `-` for one that did not participate. */
 struct Answer {

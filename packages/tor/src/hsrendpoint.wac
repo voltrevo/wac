@@ -36,12 +36,12 @@
 
 import { LS_ED25519_ID, LS_IPV4, LS_LEGACY_ID, linkSpecifiersValid } from "./hsintro.wac";
 
-export const i32 REND_OK = 0;
-export const i32 REND_MALFORMED = 1;       // the list does not parse as a list
-export const i32 REND_EMPTY = 2;           // no specifiers at all
-export const i32 REND_NO_ADDRESS = 3;      // no usable IPv4 address and port
-export const i32 REND_NO_LEGACY_ID = 4;    // the mandatory RSA identity digest is absent or short
-export const i32 REND_PRIVATE_ADDRESS = 5; // internal or multicast, and we are not allowed there
+export static i32 REND_OK = 0;
+export static i32 REND_MALFORMED = 1;       // the list does not parse as a list
+export static i32 REND_EMPTY = 2;           // no specifiers at all
+export static i32 REND_NO_ADDRESS = 3;      // no usable IPv4 address and port
+export static i32 REND_NO_LEGACY_ID = 4;    // the mandatory RSA identity digest is absent or short
+export static i32 REND_PRIVATE_ADDRESS = 5; // internal or multicast, and we are not allowed there
 
 /** Where to extend to, once a client's link specifiers have been believed as far as they may be. */
 export struct RendPoint {

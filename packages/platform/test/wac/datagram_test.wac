@@ -27,10 +27,10 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 import { wacBinary, nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 
-const string PROBE = "packages/platform/test/wac/datagram_probe.wac";
+static string PROBE = "packages/platform/test/wac/datagram_probe.wac";
 
 /** What every host must print, line for line. */
-const string WANT = "bound: yes yes distinct-ports yes\n"
+static string WANT = "bound: yes yes distinct-ports yes\n"
   + "sent: yes\n"
   + "got: ping from 127.0.0.1 sender-is-a yes error ''\n";
 

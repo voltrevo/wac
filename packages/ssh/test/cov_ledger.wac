@@ -41,8 +41,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/ssh/test/cov_exercise.wac";
-const string PREFIX = "packages/ssh/";
+static string EXERCISE = "packages/ssh/test/cov_exercise.wac";
+static string PREFIX = "packages/ssh/";
 
 /**
  * The exercise's grants.

@@ -21,10 +21,10 @@ import { sessionFor, sessionReceive, sessionChecks, sessionOpen, sessionPending,
          kChunkBytes, kPpidString, kPpidDcep } from "./session_probe.wac";
 import { check, priorityOf, hostPref, reportedAddress } from "./ice_probe.wac";
 
-const string OUR_UFRAG = "wacUF";
-const string OUR_PWD = "wac-password-0123456789";
-const string THEIR_UFRAG = "peerUF";
-const string THEIR_PWD = "peer-password-0123456";
+static string OUR_UFRAG = "wacUF";
+static string OUR_PWD = "wac-password-0123456789";
+static string THEIR_UFRAG = "peerUF";
+static string THEIR_PWD = "peer-password-0123456";
 
 u8[] filled(i32 n, i32 v) {
   u8[] out = u8[].filled(n, 0);

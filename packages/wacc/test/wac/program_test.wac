@@ -31,8 +31,8 @@ import { Graph, graphOf } from "./graph.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 
-const string SOURCE = "packages/wac/src/wac.wac";
-const string GLUERUN = "packages/wacc/test/gluerun.ts";
+static string SOURCE = "packages/wac/src/wac.wac";
+static string GLUERUN = "packages/wacc/test/gluerun.ts";
 
 string freshScratch(T t, Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/" + name;

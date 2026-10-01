@@ -34,7 +34,7 @@ import { decodeRender, roundTrip, encodeMismatch, tags } from "./probe.wac";
 import { Ints, unhex, hex, writeDescriptor, T_UINT, T_BOOL, T_ADDRESS, T_BYTES32, T_BYTES,
          T_STRING, T_ARRAY, T_FIXED, T_TUPLE } from "./descriptor.wac";
 
-const string FIXTURE = "packages/abi/test/vendor/corpus.json";
+static string FIXTURE = "packages/abi/test/vendor/corpus.json";
 
 // ── The fixture ───────────────────────────────────────────────────────────────
 

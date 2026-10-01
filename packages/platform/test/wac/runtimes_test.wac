@@ -22,9 +22,9 @@ import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac"
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
-const string WC = "packages/platform/example/wc.wac";
-const string ROUNDTRIP = "packages/platform/example/roundtrip.wac";
-const string PROBE = "packages/platform/test/wac/exec_probe.wac";
+static string WC = "packages/platform/example/wc.wac";
+static string ROUNDTRIP = "packages/platform/example/roundtrip.wac";
+static string PROBE = "packages/platform/test/wac/exec_probe.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

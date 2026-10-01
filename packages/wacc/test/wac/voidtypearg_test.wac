@@ -26,7 +26,7 @@ import { Core, Cli, Pending } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { diagnoseGraph } from "../../src/api.wac";
 
-const string ENTRY = "main.wac";
+static string ENTRY = "main.wac";
 
 export string test_a_void_ticket_is_made_waited_on_and_continued(Core core, Cli cli) {
   T t = T.create();

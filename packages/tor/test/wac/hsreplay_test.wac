@@ -14,7 +14,7 @@ import {
   HORIZON_FOREVER, REND_REPLAY_SECONDS, ReplayCache, cookieReplayCache, introReplayCache, seenBefore,
 } from "../../src/hsreplay.wac";
 
-const i64 NOW = 1785931200;
+static i64 NOW = 1785931200;
 
 /** The first sight of a cell is not a replay; the second is. */
 export string test_the_second_time_is_a_replay() {

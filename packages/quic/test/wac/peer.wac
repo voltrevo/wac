@@ -19,7 +19,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { clientFinishedPacket, flight } from "./hello_probe.wac";
 
-const string SERVER = "packages/quic/test/quicserver.ts";
+static string SERVER = "packages/quic/test/quicserver.ts";
 
 /** A running `quicserver.ts`, or `ok` false with the reason. */
 export struct Server {

@@ -54,7 +54,7 @@ import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
 string seconds() { return "10"; }
 
 /** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
-const i32 KILLED = 124;
+static i32 KILLED = 124;
 
 /** What one script did on one shell. */
 struct Run {

@@ -41,40 +41,40 @@ import { rsaSignRawPkcs1 } from "../../crypto/src/rsa.wac";
  * and tor refuses a CERTS cell without it with "Missing legacy RSA ID certificate". Found exactly
  * that way, from a C tor client, after TLS and version negotiation had both succeeded.
  */
-export const i32 CERT_TYPE_RSA_ID = 2;
+export static i32 CERT_TYPE_RSA_ID = 2;
 
 /** `ed25519 signing key, signed with identity key`. */
-export const i32 CERT_TYPE_SIGNING = 4;
+export static i32 CERT_TYPE_SIGNING = 4;
 /** `TLS link certificate, signed with ed25519 signing key`. */
-export const i32 CERT_TYPE_LINK = 5;
+export static i32 CERT_TYPE_LINK = 5;
 /** `Ed25519 AUTHENTICATE cell key, signed with ed25519 signing key`. */
-export const i32 CERT_TYPE_AUTH = 6;
+export static i32 CERT_TYPE_AUTH = 6;
 /** `Ed25519 identity, signed with RSA identity` — a different format from 4, 5 and 6. */
-export const i32 CERT_TYPE_RSA_CROSSCERT = 7;
+export static i32 CERT_TYPE_RSA_CROSSCERT = 7;
 /** `SIGNING_HS_DESC` — a blinded key certifying an onion service's descriptor signing key. */
-export const i32 CERT_TYPE_SIGNING_HS_DESC = 8;
+export static i32 CERT_TYPE_SIGNING_HS_DESC = 8;
 /** `AUTH_HS_IP_KEY` — the descriptor signing key certifying an introduction point's auth key. */
-export const i32 CERT_TYPE_AUTH_HS_IP_KEY = 9;
+export static i32 CERT_TYPE_AUTH_HS_IP_KEY = 9;
 /**
  * `CROSS_HS_IP_KEYS` — the same key certifying the **ed25519 form** of an introduction point's
  * curve25519 encryption key. The conversion is proposal 228's, the one
  * `ntor-onion-key-crosscert` already needs in a router descriptor.
  */
-export const i32 CERT_TYPE_CROSS_HS_IP_KEYS = 11;
+export static i32 CERT_TYPE_CROSS_HS_IP_KEYS = 11;
 /**
  * `ntor onion key, cross-certifying ed25519 identity`, the `ntor-onion-key-crosscert` in a router
  * descriptor. Signed by a key that does not exist as a seed: proposal 228 derives it from the
  * curve25519 onion key, so this type is built by `ed25519CertExpanded` rather than `ed25519Cert`.
  */
-export const i32 CERT_TYPE_ONION_ID = 10;
+export static i32 CERT_TYPE_ONION_ID = 10;
 
 /** `CERT_KEY_TYPE`: the certified key is an ed25519 public key. */
-export const i32 KEY_TYPE_ED25519 = 1;
+export static i32 KEY_TYPE_ED25519 = 1;
 /** `CERT_KEY_TYPE`: the certified key is a SHA-256 digest of an X.509 certificate. */
-export const i32 KEY_TYPE_SHA256_X509 = 3;
+export static i32 KEY_TYPE_SHA256_X509 = 3;
 
 /** `signed-with-ed25519-key`, cert-spec §2.2.1. */
-export const i32 EXT_SIGNED_WITH_KEY = 4;
+export static i32 EXT_SIGNED_WITH_KEY = 4;
 
 u8[] be32(i64 v) {
   u8[] b = u8[].filled(4, 0);

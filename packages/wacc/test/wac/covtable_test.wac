@@ -18,8 +18,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, has } from "../../../wactest/src/strings.wac";
 import { covTableFiles } from "../../src/api.wac";
 
-const string MAIN = "/t/main.wac";
-const string HELPER = "/t/helper.wac";
+static string MAIN = "/t/main.wac";
+static string HELPER = "/t/helper.wac";
 
 string[] paths() { return [MAIN, HELPER]; }
 

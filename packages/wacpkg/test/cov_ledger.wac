@@ -43,8 +43,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/wacpkg/test/cov_exercise.wac";
-const string PREFIX = "packages/wacpkg/";
+static string EXERCISE = "packages/wacpkg/test/cov_exercise.wac";
+static string PREFIX = "packages/wacpkg/";
 
 /** What the exercise needs: the fixtures it reads from disk. Nothing here spawns or opens a socket. */
 string[] grants() { return ["--allow-read"]; }

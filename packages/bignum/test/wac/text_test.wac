@@ -34,7 +34,7 @@ import { roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64, fromU64
  */
 i32 bit(Rng rng) { return (rng.next() & 1) as@ i32; }
 
-const string ORACLE = "packages/bignum/test/oracle.ts";
+static string ORACLE = "packages/bignum/test/oracle.ts";
 
 string text(u8[] b) { return string.fromBytes(b); }
 u8[] b(string s) { return s.toBytes(); }

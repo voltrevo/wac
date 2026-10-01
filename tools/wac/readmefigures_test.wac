@@ -43,7 +43,7 @@ import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { contains, splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
 
 /** Ten per cent either way. Rot, not drift. */
-const i32 TOLERANCE_PERCENT = 10;
+static i32 TOLERANCE_PERCENT = 10;
 
 string read(Core core, Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();

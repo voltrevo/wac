@@ -35,7 +35,7 @@ import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { closureOf } from "./source_probe.wac";
 import { Ran, runEmitted, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
 
-const string ENTRY = "/m.wac";
+static string ENTRY = "/m.wac";
 
 /** Every diagnostic's message, in order — field 4 of the wire. */
 string[] messagesOf(string src) {
@@ -250,7 +250,7 @@ export string test_a_lambda_runs_in_every_position_that_can_hold_one(Core core, 
     "fn<i32()> mk() { return () => 42; } export i32 f() { return mk()(); }",
     // **A module-level constant**, whose initialiser is emitted in `__wac_start` rather than in any
     // function body. The walk did not visit constants at all.
-    "const fn<i32()> ANSWER = () => 42;\nexport i32 f() { fn<i32()> g = ANSWER; return g(); }",
+    "static fn<i32()> ANSWER = () => 42;\nexport i32 f() { fn<i32()> g = ANSWER; return g(); }",
     // **Assigned to a local that already exists** — the last position with no wanted type.
     "export i32 f() { fn<i32()> g = () => 1; g = () => 42; return g(); }",
     // Shadowing, which is what makes the scope a stack rather than a table.

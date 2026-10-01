@@ -33,7 +33,7 @@ import { Ran, runEmittedOne, scratchDir, Validated,
          validateAll } from "./artifacts_probe.wac";
 import { emitFiles } from "../../src/api.wac";
 
-const string ENTRY = "/main.wac";
+static string ENTRY = "/main.wac";
 
 /** One program, and the calls to ask of it — `name arg…`, several separated by `;`. */
 string[] sources() {
@@ -182,31 +182,31 @@ string[] sources() {
     // A struct in a loop, mutated each time round.
     "struct C { i32 n; } export i32 f(i32 k) { C c = C(0); for (i32 i = 0; i < k; i++) { c.n = c.n + i; } return c.n; }",
     // ── Module-level constants, inlined at each use ────────────────────────────
-    "const i32 K = 7; export i32 f() { return K; }",
-    "const i32 K = 7; export i32 f(i32 n) { return K * n + K; }",
+    "static i32 K = 7; export i32 f() { return K; }",
+    "static i32 K = 7; export i32 f(i32 n) { return K * n + K; }",
     // Arithmetic in the initialiser, which wasm would not accept as a constant expression and which
     // inlining makes ordinary — the substituted expression sits in a function body like any other.
-    "const i32 K = 3 * 4 + 1; export i32 f() { return K; }",
-    "const i64 W = 4294967296; export i64 f() { return W + 1; }",
-    "const f64 P = 1.5; export f64 f() { return P * 2.0; }",
-    "const bool T = true; export bool f() { return !T; }",
+    "static i32 K = 3 * 4 + 1; export i32 f() { return K; }",
+    "static i64 W = 4294967296; export i64 f() { return W + 1; }",
+    "static f64 P = 1.5; export f64 f() { return P * 2.0; }",
+    "static bool T = true; export bool f() { return !T; }",
     // A local of the same name is nearer and wins.
-    "const i32 K = 7; export i32 f() { i32 K = 2; return K; }",
+    "static i32 K = 7; export i32 f() { i32 K = 2; return K; }",
     // Two constants, and one used inside a loop where it is substituted every time round.
-    "const i32 A = 2; const i32 B = 5; export i32 f() { i32 t = 0; for (i32 i = 0; i < B; i++) { t = t + A; } return t; }",
+    "static i32 A = 2; static i32 B = 5; export i32 f() { i32 t = 0; for (i32 i = 0; i < B; i++) { t = t + A; } return t; }",
     // ── Constants with identity, which live in a global ────────────────────────
-    "const i32[] T = [4, 5, 6]; export i32 f() { return T[1] + T.len(); }",
-    "const u8[] B = [1, 2, 250]; export i32 f(i32 i) { return B[i]; }",
-    "const i64[] W = i64[].filled(2, 4294967296); export i64 f() { return W[0] + W[1]; }",
-    "const i32[] Z = i32[].filled(4, 0); export i32 f() { return Z[3] + Z.len(); }",
+    "static i32[] T = [4, 5, 6]; export i32 f() { return T[1] + T.len(); }",
+    "static u8[] B = [1, 2, 250]; export i32 f(i32 i) { return B[i]; }",
+    "static i64[] W = i64[].filled(2, 4294967296); export i64 f() { return W[0] + W[1]; }",
+    "static i32[] Z = i32[].filled(4, 0); export i32 f() { return Z[3] + Z.len(); }",
     // One array, not one per use: read twice in the same expression and once from a loop.
-    "const i32[] T = [1, 2, 3]; export i32 f() { i32 t = 0; for (i32 i = 0; i < T.len(); i++) { t = t + T[i]; } return t + T[0]; }",
+    "static i32[] T = [1, 2, 3]; export i32 f() { i32 t = 0; for (i32 i = 0; i < T.len(); i++) { t = t + T[i]; } return t + T[0]; }",
     // A struct constant, whose initialiser is `struct.new` — also a constant expression.
-    "struct P { i32 x; i32 y; } const P O = P(3, 4); export i32 f() { return O.x * O.y; }",
+    "struct P { i32 x; i32 y; } static P O = P(3, 4); export i32 f() { return O.x * O.y; }",
     // Two of them, so the global indices have to be distinct and stable.
-    "const i32[] A = [1, 2]; const i32[] B = [30, 40]; export i32 f() { return A[1] + B[1]; }",
+    "static i32[] A = [1, 2]; static i32[] B = [30, 40]; export i32 f() { return A[1] + B[1]; }",
     // A scalar beside an array, so the inlined and the global paths coexist.
-    "const i32 K = 5; const i32[] T = [7, 8]; export i32 f() { return K + T[0]; }",
+    "static i32 K = 5; static i32[] T = [7, 8]; export i32 f() { return K + T[0]; }",
     // ── A ternary of two literals, which takes the slot's type ─────────────────
     "export i32 f(bool c) { return c ? 1 : 2; }",
     "export i64 f(bool c) { return c ? 4294967296 : 1; }",
@@ -234,7 +234,7 @@ string[] sources() {
     "i32 size(string s) { return s.len(); } export i32 f() { return size(\"abcd\"); }",
     "struct S { string name; } export i32 f() { S s = S(\"wacc\"); return s.name.len(); }",
     // A string constant, which has identity and so lives in a global.
-    "const string G = \"global\"; export i32 f() { return G.len(); }",
+    "static string G = \"global\"; export i32 f() { return G.len(); }",
     // An array of strings, so the element type is itself a reference.
     "export i32 f() { string[] xs = [\"ab\", \"cde\"]; return xs[1].len() + xs.len(); }",
     // ── String equality, which is a generated helper rather than an instruction ─
@@ -248,7 +248,7 @@ string[] sources() {
     "export bool f() { return \"abcd\" == \"abce\"; }",
     // Multi-byte, where equality is over bytes and not characters.
     "export bool f() { return \"é\" == \"é\"; }",
-    "const string G = \"wac\"; export bool f() { return G == \"wac\"; }",
+    "static string G = \"wac\"; export bool f() { return G == \"wac\"; }",
     // ── Concatenation and the byte conversions, all generated helpers ──────────
     "export i32 f() { string s = \"ab\" + \"cde\"; return s.len(); }",
     "export bool f() { return \"ab\" + \"cd\" == \"abcd\"; }",
@@ -289,7 +289,7 @@ string[] sources() {
     "export i64 f() { return 0x7fffffffffffffff; }",
     "export i32 f() { return 0x0; }",
     "export i32 f(i32 n) { return n & 0xff; }",
-    "const i32 M = 0xffff; export i32 f(i32 n) { return n & M; }",
+    "static i32 M = 0xffff; export i32 f(i32 n) { return n & M; }",
     "export i32 f() { i32[] a = [0x10, 0x20]; return a[0] + a[1]; }",
     // ── Inheritance and generics ───────────────────────────────────────────────
     //

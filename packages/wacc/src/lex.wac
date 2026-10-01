@@ -20,7 +20,7 @@ import {
   kImport, kExport, kStruct, kConst, kThis, kOverride,
   kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
   kBreak, kContinue, kReturn, kTrap, kTrue, kFalse, kNull,
-  kIs, kNot, kAs, kVoid, kFn, kEnum, kMatch, kAsync, kAwait,
+  kIs, kNot, kAs, kVoid, kFn, kEnum, kMatch, kAsync, kAwait, kStatic,
   kAsBang, kAsTilde, kAsAt,
   kPlus, kMinus, kStar, kSlash, kPercent, kAssign, kEq, kNe,
   kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kAnd, kOr, kCaret, kTilde,
@@ -178,6 +178,7 @@ i32 keywordKind(u8[] src, i32 start, i32 len) {
     if (v == p6('i', 'm', 'p', 'o', 'r', 't')) { return kImport(); }
     if (v == p6('e', 'x', 'p', 'o', 'r', 't')) { return kExport(); }
     if (v == p6('s', 't', 'r', 'u', 'c', 't')) { return kStruct(); }
+    if (v == p6('s', 't', 'a', 't', 'i', 'c')) { return kStatic(); }
     if (v == p6('s', 'w', 'i', 't', 'c', 'h')) { return kSwitch(); }
     if (v == p6('r', 'e', 't', 'u', 'r', 'n')) { return kReturn(); }
     return kIdent();

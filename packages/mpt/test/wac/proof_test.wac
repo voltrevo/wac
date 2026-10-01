@@ -32,8 +32,8 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { Proved, verify } from "../../src/proof.wac";
 
-const string ORACLE = "packages/mpt/test/oracle.ts";
-const string FIXTURES = "packages/mpt/test/vendor/trieanyorder.json";
+static string ORACLE = "packages/mpt/test/oracle.ts";
+static string FIXTURES = "packages/mpt/test/vendor/trieanyorder.json";
 
 /** One fixture: named pairs and the root Ethereum published for them. */
 struct Case {

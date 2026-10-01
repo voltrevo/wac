@@ -36,10 +36,10 @@ import { Diff, known } from "./knownstderr.wac";
 import { sameName } from "./shname.wac";
 
 /** The bound, in seconds, named once so the message below cannot state a different one. */
-const i32 BOUND_S = 20;
+static i32 BOUND_S = 20;
 
 /** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
-const i32 KILLED = 124;
+static i32 KILLED = 124;
 
 /**
  * The load average, for the one message that needs it.

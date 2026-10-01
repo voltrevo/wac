@@ -35,10 +35,10 @@ import { equal } from "../../../bytes/src/slice.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
 
-const string ENTRY = "/t/m.wac";
+static string ENTRY = "/t/m.wac";
 
 /** The operations, at every width and signedness the flag touches. */
-const string OPS =
+static string OPS =
   "export i32 addI32(i32 a, i32 b) { return a + b; }\n" +
   "export i32 subI32(i32 a, i32 b) { return a - b; }\n" +
   "export i32 mulI32(i32 a, i32 b) { return a * b; }\n" +

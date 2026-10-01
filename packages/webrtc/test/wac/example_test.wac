@@ -33,12 +33,12 @@ import { checkIntegrity, kindOf } from "./stun_probe.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 
-const string ORACLE = "packages/webrtc/test/sdp_oracle.py";
-const string SOURCE = "packages/webrtc/example/answer.wac";
+static string ORACLE = "packages/webrtc/test/sdp_oracle.py";
+static string SOURCE = "packages/webrtc/example/answer.wac";
 
 /** The offer we play, which is only as much of one as the program reads. */
-const string OFFER_UFRAG = "peerUF";
-const string OFFER_PWD = "peer-password-0123456";
+static string OFFER_UFRAG = "peerUF";
+static string OFFER_PWD = "peer-password-0123456";
 
 string offerText() {
   return "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n" +

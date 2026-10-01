@@ -42,8 +42,8 @@ import { check as iceCheck, consentAnswered, consentDue, consentLive, consentSen
          rejected, relayPref, reportedAddress, srflxPref, success, tidOf }
   from "./ice_probe.wac";
 
-const string ORACLE = "packages/webrtc/test/ice_oracle.py";
-const string AGENT = "packages/webrtc/test/ice_agent.py";
+static string ORACLE = "packages/webrtc/test/ice_oracle.py";
+static string AGENT = "packages/webrtc/test/ice_agent.py";
 
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 

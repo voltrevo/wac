@@ -15,14 +15,14 @@ import { Core, Cli } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { diagnoseGraph } from "../../src/api.wac";
 
-const string ENTRY = "main.wac";
+static string ENTRY = "main.wac";
 
 string diagnose(string src) {
   return diagnoseGraph([ENTRY], [src], ENTRY);
 }
 
 /** A stand-in for the real ticket, since `diagnoseGraph` resolves no built-ins. */
-const string TICKET = "struct Pending<T> {\n"
+static string TICKET = "struct Pending<T> {\n"
                     + "  i32 id;\n"
                     + "  Pending<T> of(i32 id) { return Pending<T>(id); }\n"
                     + "}\n";

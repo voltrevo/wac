@@ -21,7 +21,7 @@ import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string WC = "packages/platform/example/wc.wac";
+static string WC = "packages/platform/example/wc.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

@@ -37,8 +37,8 @@ import { equal } from "../../../bytes/src/slice.wac";
 
 
 
-const i64 PERIOD_LENGTH = 1440;
-const i64 PERIOD = 3720629;
+static i64 PERIOD_LENGTH = 1440;
+static i64 PERIOD = 3720629;
 
 /**
  * More introduction points is a longer inner layer and the *same* outer one.

@@ -69,8 +69,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/tls/test/cov_exercise.wac";
-const string PREFIX = "packages/tls/";
+static string EXERCISE = "packages/tls/test/cov_exercise.wac";
+static string PREFIX = "packages/tls/";
 
 /** Sockets to OpenSSL, a process to start it, the vendored certificates, and a temp dir to write. */
 string[] grants() {

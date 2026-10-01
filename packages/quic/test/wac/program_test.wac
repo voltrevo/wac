@@ -39,7 +39,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Server, pause, receiveWithin, startServer, stopServer } from "./peer.wac";
 
-const string ENTRY = "packages/quic/example/handshake.wac";
+static string ENTRY = "packages/quic/example/handshake.wac";
 
 /** `example/handshake.wac`, built once with the grant it needs. */
 string handshakeModule(Cli cli) {

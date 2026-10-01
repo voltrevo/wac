@@ -3318,9 +3318,9 @@ the message was accurate about wasm and wrong about what follows from it. wasm's
 expression is narrow — literals, `ref.null`, `ref.func`, and the GC allocations — and wac's is not:
 
 ```wac
-const string S = "ab" + "cd";       // a call
-const u8[] T = mk(5);               // a call
-const i32[] A = [0 - 5, 3];    // arithmetic
+static string S = "ab" + "cd";       // a call
+static u8[] T = mk(5);               // a call
+static i32[] A = [0 - 5, 3];    // arithmetic
 ```
 
 None of those can be written in a global's initialiser. All of them can be **assigned** to one. So a

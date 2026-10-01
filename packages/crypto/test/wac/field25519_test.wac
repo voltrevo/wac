@@ -310,7 +310,7 @@ i64[] feCopyOf(i64[] a) {
 // exactly the input the field was, and it answers from `2^255 - 19` written down rather than in
 // limbs.
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /**
  * The values every case runs over.

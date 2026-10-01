@@ -38,8 +38,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/zstd/test/cov_exercise.wac";
-const string PREFIX = "packages/zstd/";
+static string EXERCISE = "packages/zstd/test/cov_exercise.wac";
+static string PREFIX = "packages/zstd/";
 
 /**
  * The exercise's grants.

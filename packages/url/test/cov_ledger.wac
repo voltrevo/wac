@@ -56,8 +56,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/url/test/cov_exercise.wac";
-const string PREFIX = "packages/url/";
+static string EXERCISE = "packages/url/test/cov_exercise.wac";
+static string PREFIX = "packages/url/";
 
 /** What the tests need: a process to ask Node's own `URL`, and the environment to find it. */
 string[] grants() {

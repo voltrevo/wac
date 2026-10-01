@@ -25,9 +25,9 @@ import { introduceAuthKey, parseEstablishIntro, EstablishedIntro } from "./hsser
 import { ctEqual } from "../../crypto/src/ct.wac";
 
 /** `TRUNNEL_HS_INTRO_ACK_STATUS_*` — what an INTRODUCE_ACK carries. */
-export const i32 INTRO_ACK_SUCCESS = 0;
-export const i32 INTRO_ACK_UNKNOWN_ID = 1;
-export const i32 INTRO_ACK_BAD_FORMAT = 2;
+export static i32 INTRO_ACK_SUCCESS = 0;
+export static i32 INTRO_ACK_UNKNOWN_ID = 1;
+export static i32 INTRO_ACK_BAD_FORMAT = 2;
 
 /**
  * The circuits this relay is holding open as introduction points.

@@ -16,9 +16,9 @@ import { closeCodeIn, closeReasonIn, handshakeTypeIn, kindsIn, streamLen } from 
 import { openServer } from "./initial_probe.wac";
 import { ask } from "./peer.wac";
 
-const i32 HAS_ACK = 4;
-const i32 HAS_CRYPTO = 8;
-const i32 HAS_CLOSE = 16;
+static i32 HAS_ACK = 4;
+static i32 HAS_CRYPTO = 8;
+static i32 HAS_CLOSE = 16;
 
 u8[] dcid() { return decoded("8394c8f03e515708"); }
 u8[] scid() { return decoded("11223344"); }

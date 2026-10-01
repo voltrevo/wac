@@ -82,7 +82,7 @@ export string test_the_export_scan_reads_what_a_source_declares() {
                "i32 hidden() { return 2; }\n" +
                "export struct S { i32 v; }\n" +
                "export enum E { X }\n" +
-               "export const i32 K = 1;\n" +
+               "export static i32 K = 1;\n" +
                "export T pick<T>(T x) { return x; }\n" +
                "// export i32 commented() { return 0; }\n" +
                "  export u8[] spaced(i32 n) { return u8[].filled(n, 0); }\n";

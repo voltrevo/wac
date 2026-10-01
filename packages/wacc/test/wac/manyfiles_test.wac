@@ -29,8 +29,8 @@ import { Core, Cli } from "std/platform.wac";
 import { blockedFiles, covTableFiles, emitFilesSelfDescribing } from "../../src/api.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 
-const i32 N = 560;   // past 512, and cheap enough to compile in a test
-const string ENTRY = "/many/main.wac";
+static i32 N = 560;   // past 512, and cheap enough to compile in a test
+static string ENTRY = "/many/main.wac";
 
 /** The `n`th tab-separated field of a line, or `""`. */
 string field(string line, i32 n) {

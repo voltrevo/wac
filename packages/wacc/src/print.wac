@@ -726,8 +726,8 @@ void printDecl(Pr w, Decl d) {
       }
       w.s("))");
     }
-    ConstDecl(nameTok, type, init, exported): {
-      w.open("const", d.line, d.col);
+    StaticDecl(nameTok, type, init, exported): {
+      w.open("static", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");
       w.sp(); w.tok(nameTok);
       w.sp(); printTy(w, type);

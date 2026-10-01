@@ -23,9 +23,9 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string SITE = "site/src/next/Home.tsx";
-const string TERM = "packages/box/example/term.wac";
-const string SHELL = "packages/box/example/boxsh.wac";
+static string SITE = "site/src/next/Home.tsx";
+static string TERM = "packages/box/example/term.wac";
+static string SHELL = "packages/box/example/boxsh.wac";
 
 string read(Core core, Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();

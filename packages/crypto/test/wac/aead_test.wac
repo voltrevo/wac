@@ -82,7 +82,7 @@ export string test_poly1305_forced_carries() {
   return t.report();
 }
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** Ask node's ChaCha20-Poly1305 — `chacha` judges a seal, `open` answers about bytes we did not. */
 Answers askAead(T t, Cli cli, Lines lines, string what) {
@@ -300,7 +300,7 @@ export string test_traps_on_a_truncated_ciphertext() {
 // Both sweeps compute every tag here and hand the whole batch over once; the oracle reports only
 // what it disagrees with.
 
-const string CRYPTO_ORACLE = "packages/crypto/test/oracle.mjs";
+static string CRYPTO_ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** An LCG, so the fuzz corpus is the same on every run and a failure can be looked at again. */
 struct Rng {

@@ -34,7 +34,7 @@ import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Socket, Pending } from "std/platform.wac";
 
-const string PATIENCE = "packages/platform/example/patience.wac";
+static string PATIENCE = "packages/platform/example/patience.wac";
 
 /** How many times `needle` occurs in `s`. */
 i32 count(string s, string needle) {

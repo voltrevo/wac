@@ -56,13 +56,13 @@ export struct Dtls {
  * One definition used twice: the reaper walks `ps` with it and `wouldReap` applies it to a line the
  * caller supplies, so the test of the pattern cannot drift from the pattern.
  */
-const string ARMS =
+static string ARMS =
   "ours() { " +
   "  case \"$1\" in *s_server*) ;; *) return 1;; esac; " +
   "  case \"$1\" in *-dtls1_2*) ;; *) return 1;; esac; " +
   "  return 0; }; ";
 
-const string REAP =
+static string REAP =
   ARMS +
   "ps -eo pid=,ppid=,args= 2>/dev/null | while read pid ppid rest; do " +
   "  case \"$ppid\" in 1) ;; *) continue;; esac; " +

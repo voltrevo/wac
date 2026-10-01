@@ -33,7 +33,7 @@ u8[] emptyModule() {
   return m;
 }
 
-const string SRC =
+static string SRC =
   "export i32 twice(i32 n) { if (n > 0) { return n * 2; } return 0; }\n" +
   "export i32 main() { return twice(3); }\n";
 

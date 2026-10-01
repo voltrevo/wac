@@ -734,12 +734,12 @@ const globals: [string, string, number | null][] = [
   // `unexpected token . before len` two lines away. The third case below is that one: it is still
   // refused, because the rung honours no initialiser but `= 0`, and it is now refused on line 1 for
   // the initialiser rather than on line 2 for its brackets.
-  ["a module-level const is a global and its name resolves",
-    "const i32 N = 0;\nexport i32 f() { return N; }", 0],
-  ["a const initialised to anything else is refused, like any other global",
-    "const i32 N = 7;\nexport i32 f() { return N; }", null],
-  ["a const array is refused for its initialiser, not for its brackets",
-    "const i32[] T = i32[](1,2,3);\nexport i32 f() { return T[1]; }", null],
+  ["a module-level static is a global and its name resolves",
+    "static i32 N = 0;\nexport i32 f() { return N; }", 0],
+  ["a static initialised to anything else is refused, like any other global",
+    "static i32 N = 7;\nexport i32 f() { return N; }", null],
+  ["a static array is refused for its initialiser, not for its brackets",
+    "static i32[] T = [1, 2, 3] as i32[];\nexport i32 f() { return T[1]; }", null],
 ];
 
 for (const [name, source, want] of globals) {

@@ -87,7 +87,7 @@ HEADER = """// GENERATED FILE — do not edit. Produced by `packages/bls/tools/g
 // that indexes it in a loop, and checks it against these immediates.
 
 /** -p^-1 mod 2^32. Chosen so `m = t[0] * MINV mod 2^32` makes `t + m*p` end in a zero limb. */
-const u64 MINV = 0x%08x;
+static u64 MINV = 0x%08x;
 """
 
 HELPERS = """

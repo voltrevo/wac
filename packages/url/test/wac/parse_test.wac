@@ -33,7 +33,7 @@ import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse, parseWithBase } from "../probe.wac";
 
-const string ORACLE = "packages/url/test/batchOracle.ts";
+static string ORACLE = "packages/url/test/batchOracle.ts";
 
 /** The oracle spawns Node, so it needs `--allow-run` of its own. */
 void ask(T t, Cli cli, Lines lines, string what) {

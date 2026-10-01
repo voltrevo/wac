@@ -95,10 +95,10 @@ string[] nextHandleStarts(string src) {
 export string test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host(
     Core core, Cli cli) {
   T t = T.create();
-  // The wac side: `export const i32 NAME = N;`
+  // The wac side: `export static i32 NAME = N;`
   string wacSrc = sourceOf(t, cli, "std/platform.wac");
-  i32 stdinWac = declared(wacSrc, "export const i32 ", "STDIN", " = ");
-  i32 parentWac = declared(wacSrc, "export const i32 ", "PARENT_FS", " = ");
+  i32 stdinWac = declared(wacSrc, "export static i32 ", "STDIN", " = ");
+  i32 parentWac = declared(wacSrc, "export static i32 ", "PARENT_FS", " = ");
   // The shared host module, which both reserved numbers and the counter's floor live in.
   string jsSrc = sourceOf(t, cli, "packages/platform/host/children.ts");
   i32 parentJs = declared(jsSrc, "export const ", "PARENT_FS_HANDLE", " = ");

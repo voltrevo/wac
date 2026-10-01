@@ -90,13 +90,13 @@ string upArrow() { return string.fromCodepoint(27) + "[A"; }
 string downArrow() { return string.fromCodepoint(27) + "[B"; }
 
 /** How many commands to remember. A ring, so the oldest falls off rather than growing forever. */
-const i32 HISTORY = 64;
+static i32 HISTORY = 64;
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
-const string SOURCE =
+static string SOURCE =
   "https://github.com/voltrevo/wac-mono/blob/master/packages/box/example/README.md#termwac";
 
-const string BANNER =
+static string BANNER =
   "wac sh — packages/sh with every packages/box applet, in a browser tab. Type at the\n" +
   "prompt; `help` lists the sixty programs, Up and Down walk the history, `clear` empties\n" +
   "the screen. / is an Origin Private File System: what you write survives a reload and is\n" +

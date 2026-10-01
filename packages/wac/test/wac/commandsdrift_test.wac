@@ -32,7 +32,7 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string SOURCE = "packages/wac/src/wac.wac";
+static string SOURCE = "packages/wac/src/wac.wac";
 
 /** Every `cmd == "…"` the dispatcher tests, in the order it tests them, without duplicates. */
 string[] acceptedCommands(string src) {

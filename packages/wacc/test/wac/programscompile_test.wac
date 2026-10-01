@@ -56,7 +56,7 @@ import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "../../../../tools/wa
  * A floor rather than the exact number keeps this from failing every time somebody writes a program —
  * the exact count lives in `MAP.md`, which is regenerated and checked by `tools/wac/map_test.wac`.
  */
-const i32 AT_LEAST = 30;
+static i32 AT_LEAST = 30;
 
 /** At most six lines of a diagnostic, since the second is often the one that names the cause. */
 string firstLines(string s, i32 want) {

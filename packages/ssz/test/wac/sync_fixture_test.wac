@@ -27,7 +27,7 @@ import { beaconTypesMainnet, beaconTypesMinimal, beaconFields, TY_BEACON_BLOCK_H
          TY_LIGHT_CLIENT_HEADER, TY_LIGHT_CLIENT_BOOTSTRAP,
          TY_LIGHT_CLIENT_UPDATE } from "../../src/beacon.wac";
 
-const string MANIFEST = "packages/ssz/test/fixtures.json";
+static string MANIFEST = "packages/ssz/test/fixtures.json";
 
 // Field indices, in the order `src/beacon.wac` lists them.
 i32 UPDATE_ATTESTED_HEADER() { return 0; }

@@ -45,14 +45,14 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { stale, newestFor } from "./hostfs.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string BOXSH = "packages/box/example/boxsh.wac";
-const string SPAWNSH = "packages/box/src/bin/sh.wac";
-const string IMAGED = "packages/box/src/bin/imaged.wac";
+static string BOXSH = "packages/box/example/boxsh.wac";
+static string SPAWNSH = "packages/box/src/bin/sh.wac";
+static string IMAGED = "packages/box/src/bin/imaged.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
 /** A script that reaches four different capability families in five lines. */
-const string SCRIPT =
+static string SCRIPT =
   "seq 1 20 | grep 7 | wc -l\n" +
   "echo $((6*7))\n" +
   "sha256sum README.md\n" +
@@ -111,7 +111,7 @@ string spawningScript(string dir) {
 }
 
 /** `sha256sum` of the six bytes `spawningScript` writes — a constant because the fixture is fixed. */
-const string FIXTURE_SHA =
+static string FIXTURE_SHA =
   "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
 
 /** The V8 host binary, or "" with the reason said out loud. */

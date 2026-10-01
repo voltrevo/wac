@@ -16,7 +16,7 @@ import {
   introPointShouldExpire, introPointsWanted, newIntroPoint, shouldRemoveIntroPoint,
 } from "../../src/hsintropoint.wac";
 
-const i64 NOW = 1785931200;
+static i64 NOW = 1785931200;
 
 /** The constants are tor's, and the ranges are half-open as tor's random range actually is. */
 export string test_the_limits_are_tors() {

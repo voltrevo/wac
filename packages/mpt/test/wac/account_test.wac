@@ -27,7 +27,7 @@ import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { AccountProof, StorageProof, accountAt, storageAt, emptyStorageRoot,
          emptyCodeHash } from "../../src/account.wac";
 
-const string ORACLE = "packages/mpt/test/oracle.ts";
+static string ORACLE = "packages/mpt/test/oracle.ts";
 
 // ── RLP, the twenty lines this file needs ─────────────────────────────────────
 

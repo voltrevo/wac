@@ -37,7 +37,7 @@ import { abortPacket, ackChannelPacket, chunkKindAt, chunkKinds, cookieEchoPacke
          labelOf, newAssociation, openChannelPacket, sackPacket, sackPacketGaps, shutdownAckPacket,
          shutdownPacket, tagOf } from "./sctp_probe.wac";
 
-const string ORACLE = "packages/webrtc/test/sctp_oracle.py";
+static string ORACLE = "packages/webrtc/test/sctp_oracle.py";
 
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 

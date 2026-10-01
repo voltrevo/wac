@@ -50,8 +50,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/quic/test/cov_exercise.wac";
-const string PREFIX = "packages/quic/";
+static string EXERCISE = "packages/quic/test/cov_exercise.wac";
+static string PREFIX = "packages/quic/";
 
 /** A datagram socket for the live tests, a process for quinn, and the vendored captures. */
 string[] grants() {

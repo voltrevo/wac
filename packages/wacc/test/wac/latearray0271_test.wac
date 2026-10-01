@@ -36,7 +36,7 @@ import { Built } from "../../src/emit.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string ENTRY = "/t/main.wac";
+static string ENTRY = "/t/main.wac";
 
 /** The reproduction, parameterised by the array element `Pending` is instantiated at. */
 string program(string elem) {

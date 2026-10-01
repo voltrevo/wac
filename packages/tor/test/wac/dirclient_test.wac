@@ -21,8 +21,8 @@ u8[] doc(string after, string fresh, string until) {
 u8[] hourly() {
   return doc("2026-08-02 10:00:00", "2026-08-02 11:00:00", "2026-08-02 13:00:00");
 }
-const i64 FRESH = 1785668400;   // 2026-08-02 11:00:00 UTC
-const i64 VALID = 1785675600;   // 2026-08-02 13:00:00 UTC
+static i64 FRESH = 1785668400;   // 2026-08-02 11:00:00 UTC
+static i64 VALID = 1785675600;   // 2026-08-02 13:00:00 UTC
 
 export string test_request_paths() {
   T t = T.create();

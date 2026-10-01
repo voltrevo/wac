@@ -27,7 +27,7 @@ import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForLogWithi
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
-const string ENTRY = "packages/platform/example/whichever.wac";
+static string ENTRY = "packages/platform/example/whichever.wac";
 
 string[] splitLines(string s) {
   if (s == "") { return string[].filled(0, ""); }

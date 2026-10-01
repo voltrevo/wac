@@ -101,7 +101,7 @@ string fileOf(string row) {
  * than the one doing the checking, and could not notice the sweep going blind. This is the same claim
  * as an oracle: the run must report **exactly this file and nothing else**.
  */
-const string CANARY = "/packages/fmt/src/zzz_corpuscheck_canary.wac";
+static string CANARY = "/packages/fmt/src/zzz_corpuscheck_canary.wac";
 
 export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core core, Cli cli) {
   T t = T.create();

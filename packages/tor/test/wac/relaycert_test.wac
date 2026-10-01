@@ -44,7 +44,7 @@ import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac"
 import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const string ORACLE = "packages/tor/test/oracle.mjs";
+static string ORACLE = "packages/tor/test/oracle.mjs";
 
 /** A throwaway RSA key from the host: modulus, exponent, private exponent. */
 struct Rsa {

@@ -185,7 +185,7 @@ void collect(Decls d, u8[] src) {
         }
         for (i32 k = 0; k < methods.len(); k++) { addName(d, tokenTextOf(src, lexed, methods[k].nameTok)); }
       }
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         addName(d, tokenTextOf(src, lexed, nameTok));
       }
       default: { }

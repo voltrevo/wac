@@ -26,7 +26,7 @@ import { Buf } from "../../../bytes/src/buf.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { prfOf, master, block, finished, aadOf, sealed, opened } from "./keys_probe.wac";
 
-const string ORACLE = "packages/webrtc/test/oracle.mjs";
+static string ORACLE = "packages/webrtc/test/oracle.mjs";
 
 /** `a` then `b`. Through a `Buf` because that is what the repository already has for the job. */
 u8[] joined(u8[] a, u8[] b) {

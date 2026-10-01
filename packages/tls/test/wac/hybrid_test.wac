@@ -26,9 +26,9 @@ import {
 } from "../../src/hybrid.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 
-const i32 DK_LEN = 2400;
-const i32 EK_LEN = 1184;
-const i32 CT_LEN = 1088;
+static i32 DK_LEN = 2400;
+static i32 EK_LEN = 1184;
+static i32 CT_LEN = 1088;
 
 u8[] pattern(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
@@ -155,9 +155,9 @@ export string test_a_tampered_share_gives_a_different_secret_not_an_error() {
 // server share is the 1088-byte ciphertext then another point; the offer a client keeps is its
 // share followed by the 2400-byte decapsulation key.
 
-const i32 CLIENT_SHARE = EK_LEN + 32;
-const i32 SERVER_SHARE = CT_LEN + 32;
-const i32 OFFER = CLIENT_SHARE + DK_LEN;
+static i32 CLIENT_SHARE = EK_LEN + 32;
+static i32 SERVER_SHARE = CT_LEN + 32;
+static i32 OFFER = CLIENT_SHARE + DK_LEN;
 
 /**
  * The genuine values, so a refusal test is not passing because everything traps.

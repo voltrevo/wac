@@ -108,9 +108,9 @@ export i32 strictBool(i32 x) {
 // A `const` at the top level is a named compile-time value. It has no storage —
 // the initialiser is substituted at each use — so there is nothing to
 // initialise and no ordering between declarations.
-const i32 BLOCK = 64;
-const i32 TWO_BLOCKS = BLOCK * 2;      // constants may build on constants
-export const u32 CRC_POLY = 0xEDB88320;   // and may be imported
+static i32 BLOCK = 64;
+static i32 TWO_BLOCKS = BLOCK * 2;      // constants may build on constants
+export static u32 CRC_POLY = 0xEDB88320;   // and may be imported
 export i32 useConst(i32 x) { return (x & BLOCK) + TWO_BLOCKS; }
 // The initialiser must be a compile-time expression: literals, operators over
 // them, casts, other constants. Nothing evaluated at run time, which is what
@@ -122,7 +122,7 @@ export i32 useConst(i32 x) { return (x & BLOCK) + TWO_BLOCKS; }
 // A constant ARRAY is one shared table, built once when the module is
 // instantiated rather than rebuilt at every use — which is the whole reason to
 // want them. Writing through one is an error, since there is only the one.
-const i32[] TABLE = [10, 20, 30];
+static i32[] TABLE = [10, 20, 30];
 export i32 fromTable(i32 i) { return TABLE[i]; }
 // ERROR: TABLE[0] = 9;              // one object, shared by every use
 // ERROR: const i32[] S = i32[].filled(8, 0);  // no elements written down to evaluate

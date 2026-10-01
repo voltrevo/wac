@@ -36,7 +36,7 @@ import {
   cmdAuthChallenge, cellCommand, cellPayload, cellLen, ID_NARROW, ID_WIDE} from "./cell.wac";
 
 /** Authentication method 3: `Ed25519-SHA256-RFC5705`, the only one a modern relay offers. */
-export const i32 AUTH_METHOD_ED25519_SHA256_RFC5705 = 3;
+export static i32 AUTH_METHOD_ED25519_SHA256_RFC5705 = 3;
 
 /** Link protocol versions this relay speaks. 5 is the current one; 4 is still widely used. */
 export i32[] supportedVersions() { return [4, 5] as i32[]; }

@@ -23,8 +23,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string WAC = "std/platform.wac";
-const string LAYOUT = "packages/platform/host/layout.ts";
+static string WAC = "std/platform.wac";
+static string LAYOUT = "packages/platform/host/layout.ts";
 
 string readOr(T t, Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
@@ -55,7 +55,7 @@ i32 numberAfter(string src, string marker) {
 
 export string test_platform_wacs_call_slots_is_the_rings_real_size(Core core, Cli cli) {
   T t = T.create();
-  i32 guest = numberAfter(readOr(t, cli, WAC), "export const i32 CALL_SLOTS = ");
+  i32 guest = numberAfter(readOr(t, cli, WAC), "export static i32 CALL_SLOTS = ");
   i32 host = numberAfter(readOr(t, cli, LAYOUT), "export const SLOTS = ");
 
   t.isTrue(guest >= 0, "platform.wac no longer declares CALL_SLOTS");

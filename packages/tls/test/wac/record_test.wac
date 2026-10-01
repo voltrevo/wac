@@ -41,7 +41,7 @@ import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac"
 import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const string ORACLE = "packages/tls/test/oracle.mjs";
+static string ORACLE = "packages/tls/test/oracle.mjs";
 
 /**
  * The nonce RFC 8446 §5.3 specifies: the IV xored with the sequence number, right-aligned.
@@ -319,7 +319,7 @@ export string test_a_chunk_of_eighty_records_with_the_last_one_split() {
 
 // ── The refusals ─────────────────────────────────────────────────────────────
 
-const i32 APPLICATION = 23;
+static i32 APPLICATION = 23;
 
 /** A sealed record and the key it was sealed under, so a refusal is about the input under test. */
 u8[] sealedKey() { return fill(16, 13); }

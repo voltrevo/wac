@@ -26,9 +26,9 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Node, anvil, anvilPath, castRpc, haveAnvil, runExample, stopAnvil, toDec }
   from "./anvil_probe.wac";
 
-const string ENTRY = "packages/ethrpc/example/ethbalance.wac";
+static string ENTRY = "packages/ethrpc/example/ethbalance.wac";
 // anvil's first prefunded account: 10000 ether, far past what an i64 holds.
-const string FUNDED = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+static string FUNDED = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
 string firstLine(string s) {
   i32 nl = s.indexOf("\n");

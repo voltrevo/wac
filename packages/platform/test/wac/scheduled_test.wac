@@ -19,7 +19,7 @@ import { Core, Cli, Exec, Pending } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 
-const string ENTRY = "packages/platform/example/scheduled.wac";
+static string ENTRY = "packages/platform/example/scheduled.wac";
 
 struct Ran {
   bool ran;

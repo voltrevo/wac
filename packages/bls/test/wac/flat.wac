@@ -49,8 +49,8 @@
 // worth having — but they are worth having in the *cheap* operations, which is the opposite of
 // where I would have aimed the feature before measuring.
 
-const i32 N = 12;
-const u64 MINV = 0xfffcfffd;
+static i32 N = 12;
+static u64 MINV = 0xfffcfffd;
 
 /** The modulus, written into a caller-owned buffer at `off`. */
 export void putModulus(u32[] buf, i32 off) {

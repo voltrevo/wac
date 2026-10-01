@@ -26,7 +26,7 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
 
 /** The statement that must be found, wherever it is buried. */
-const string BAD = "i32 bad = \"s\";";
+static string BAD = "i32 bad = \"s\";";
 
 /**
  * A bad *sub-expression*: an operand mismatch on an `i32` and an `f64`.
@@ -34,7 +34,7 @@ const string BAD = "i32 bad = \"s\";";
  * It lives inside an expression rather than being a statement of its own, so burying it proves the
  * expression walk descends rather than that the statement walk does.
  */
-const string SUB = "(p + q)";
+static string SUB = "(p + q)";
 
 bool reports(string src) { return dumpTypeErrors(src.toBytes()).len() > 0; }
 

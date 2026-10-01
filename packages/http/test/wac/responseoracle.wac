@@ -21,7 +21,7 @@ import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 
-const string RESPONSE_ORACLE = "packages/http/test/response_oracle.mjs";
+static string RESPONSE_ORACLE = "packages/http/test/response_oracle.mjs";
 
 /** What llhttp's client made of one response. */
 export enum ResponseOutcome {

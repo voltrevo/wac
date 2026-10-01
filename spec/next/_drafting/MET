@@ -14,6 +14,7 @@ spec/next/1-programs/01-names-and-identity.md#15
 spec/next/1-programs/01-names-and-identity.md#16
 spec/next/1-programs/01-names-and-identity.md#17
 spec/next/1-programs/01-names-and-identity.md#18
+spec/next/1-programs/02-modules-and-imports.md#2
 spec/next/1-programs/02-modules-and-imports.md#3
 spec/next/1-programs/02-modules-and-imports.md#4
 spec/next/1-programs/02-modules-and-imports.md#5
@@ -178,7 +179,9 @@ spec/next/3-expressions/25-control-flow.md#9
 spec/next/3-expressions/25-control-flow.md#10
 spec/next/3-expressions/25-control-flow.md#13
 spec/next/3-expressions/26-errors-and-results.md#1
+spec/next/4-static/27-static-declarations.md#2
 spec/next/4-static/27-static-declarations.md#3
+spec/next/4-static/27-static-declarations.md#6
 spec/next/4-static/28-static-evaluation.md#4
 spec/next/4-static/28-static-evaluation.md#5
 spec/next/4-static/29-static-dependencies.md#3

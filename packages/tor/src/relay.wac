@@ -41,8 +41,8 @@ import { Sha3_256 } from "../../crypto/src/keccak.wac";
 import { Sha1 } from "../../crypto/src/sha1.wac";
 import { CtrStream } from "../../crypto/src/aesctr.wac";
 
-const i32 PAYLOAD_LEN = 509;
-const i32 RELAY_HEADER_LEN = 11;
+static i32 PAYLOAD_LEN = 509;
+static i32 RELAY_HEADER_LEN = 11;
 export i32 relayDataLen() { return PAYLOAD_LEN - RELAY_HEADER_LEN; }
 
 // dead-exports: exempt — as in `cell.wac`, the numbering is tor-spec's and its completeness is what
@@ -117,10 +117,10 @@ export i32 relayIntroduceAck() { return 40; }
  * produce a circuit that works for everything except hosting an onion service — a failure that only
  * shows up as an introduction point refusing an ESTABLISH_INTRO whose MAC was keyed with nothing.
  */
-export const i32 NTOR_KEY_MATERIAL = 92;
+export static i32 NTOR_KEY_MATERIAL = 92;
 
 /** The hop's share of it — two digests and two keys. The rest is the circuit's. */
-export const i32 HOP_KEY_MATERIAL = 72;
+export static i32 HOP_KEY_MATERIAL = 72;
 
 export struct Hop {
   bool wide;

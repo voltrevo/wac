@@ -75,7 +75,7 @@ export string test_rfc_4231_hmac_vectors() {
   return t.report();
 }
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /**
  * Ask node's HMAC-SHA256.

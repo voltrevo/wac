@@ -39,7 +39,7 @@ u64 next64(Rng r) {
   return (hi << 32) | lo;
 }
 
-const string ORACLE = "packages/fmt/test/oracle.ts";
+static string ORACLE = "packages/fmt/test/oracle.ts";
 
 /** A u64 as sixteen hex digits, big-endian, which is how an operand travels. */
 string u64Hex(u64 v) {

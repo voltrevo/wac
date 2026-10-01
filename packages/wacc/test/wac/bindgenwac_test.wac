@@ -27,7 +27,7 @@ import { Graph, graphOf } from "./graph.wac";
 import { emitFiles, bindgenDeclinedFiles, bindgenFiles, bindgenWire } from "../../src/api.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string ORACLE = "packages/wacc/test/bindgenOracle.ts";
+static string ORACLE = "packages/wacc/test/bindgenOracle.ts";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

@@ -49,9 +49,9 @@
 import { sha3_256, shake256 } from "../../crypto/src/keccak.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 
-export const i32 S_KEY_LEN = 32;
-export const i32 MAC_LEN = 32;
-export const i32 PK_PUBKEY_LEN = 32;
+export static i32 S_KEY_LEN = 32;
+export static i32 MAC_LEN = 32;
+export static i32 PK_PUBKEY_LEN = 32;
 
 u8[] protoid() { return "tor-hs-ntor-curve25519-sha3-256-1".toBytes(); }
 

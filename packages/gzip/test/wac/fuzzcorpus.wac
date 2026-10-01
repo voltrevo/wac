@@ -52,15 +52,15 @@ export struct Case {
   u8[] data;
 }
 
-export const i32 GEN_INCOMPRESSIBLE = 0;
-export const i32 GEN_RUNS = 1;
-export const i32 GEN_TEXT = 2;
-export const i32 GEN_SPARSE = 3;
-export const i32 GEN_PERIODIC = 4;
-export const i32 GEN_WINDOW_EDGE = 5;
-export const i32 GEN_SMALL_ALPHABET = 6;
-export const i32 GEN_SKEWED = 7;
-export const i32 GEN_MIXED = 8;
+export static i32 GEN_INCOMPRESSIBLE = 0;
+export static i32 GEN_RUNS = 1;
+export static i32 GEN_TEXT = 2;
+export static i32 GEN_SPARSE = 3;
+export static i32 GEN_PERIODIC = 4;
+export static i32 GEN_WINDOW_EDGE = 5;
+export static i32 GEN_SMALL_ALPHABET = 6;
+export static i32 GEN_SKEWED = 7;
+export static i32 GEN_MIXED = 8;
 
 export string[] generatorNames() {
   return [

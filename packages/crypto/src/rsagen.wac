@@ -47,10 +47,10 @@ import { shake256 } from "./keccak.wac";
  * asserted as a constant, which is what `rsagen_test.wac` does, and the reason for the number lives
  * here rather than in a test that could check it.
  */
-export const i32 MILLER_RABIN_ROUNDS = 40;
+export static i32 MILLER_RABIN_ROUNDS = 40;
 
 /** The public exponent everything uses. 65537: prime, and only two bits set, so verification is fast. */
-export const i64 PUBLIC_EXPONENT = 65537;
+export static i64 PUBLIC_EXPONENT = 65537;
 
 /**
  * A generated keypair. All values are big-endian magnitudes.

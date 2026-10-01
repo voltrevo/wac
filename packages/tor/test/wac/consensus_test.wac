@@ -34,7 +34,7 @@ u8[] copyOf(u8[] s) {
   return o;
 }
 
-const string ORACLE = "packages/tor/test/oracle.mjs";
+static string ORACLE = "packages/tor/test/oracle.mjs";
 
 /**
  * Everything the host makes for these tests, in one round trip.

@@ -49,7 +49,7 @@ import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
  * It reports what it read back rather than asserting anything itself: a probe that judges is a probe
  * that can be wrong twice.
  */
-const string PROBE =
+static string PROBE =
   "import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
   "export i32 main(Core core, Cli cli) {\n" +
   "  cli.openOutput(\"probe.out\").wait();\n" +
@@ -61,7 +61,7 @@ const string PROBE =
   "}\n";
 
 /** A program with no imports beyond `Core`, so what is being tested is the command and not a graph. */
-const string PROGRAM =
+static string PROGRAM =
   "import { Core } from \"std/platform.wac\";\n" +
   "export i32 main(Core core) { core.log(\"it compiled and it ran\"); return 0; }\n";
 

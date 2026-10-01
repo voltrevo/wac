@@ -31,10 +31,10 @@ import { kindAtIn, sizeAtIn, streamId, streamOffset, streamData, streamFin, newC
          newCidToken, maxStreamDataFor, maxStreamsIsUni, streamText, streamWholeFor,
          streamFinFor, streamLenFor } from "./frame_probe.wac";
 
-const i32 EPOCH_INITIAL = 0;
-const i32 EPOCH_HANDSHAKE = 1;
-const i32 EPOCH_0RTT = 2;
-const i32 EPOCH_1RTT = 3;
+static i32 EPOCH_INITIAL = 0;
+static i32 EPOCH_HANDSHAKE = 1;
+static i32 EPOCH_0RTT = 2;
+static i32 EPOCH_1RTT = 3;
 
 i32[] token() {
   i32[] out = i32[].filled(16, 0);

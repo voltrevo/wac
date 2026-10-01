@@ -55,7 +55,7 @@ import { x25519Base } from "../../crypto/src/x25519.wac";
 import { onionAddress } from "./onionaddr.wac";
 
 /** Two hours, which is what a real service asks for. */
-const i32 LIFETIME_MINUTES = 180;
+static i32 LIFETIME_MINUTES = 180;
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 3) {

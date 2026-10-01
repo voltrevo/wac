@@ -43,7 +43,7 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, boundedAgain, hangReport } from "./hostfs.wac";
 
-const string ENTRY = "packages/box/src/bin/imaged.wac";
+static string ENTRY = "packages/box/src/bin/imaged.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

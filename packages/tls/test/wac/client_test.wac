@@ -28,9 +28,9 @@ import { Reply, request, rootsFrom, noRoots, fixedFirstFlight } from "./tlsclien
 import { Server, startServer, stopServer, have, openssl35 } from "./openssl.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string DATA = "packages/tls/test/data";
-const string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
-const string BODY = "hello from the wac server";
+static string DATA = "packages/tls/test/data";
+static string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
+static string BODY = "hello from the wac server";
 
 string freshScratch(T t, Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/tls/" + name;

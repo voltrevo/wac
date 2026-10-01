@@ -35,8 +35,8 @@ import { Canonical, canonicalize, canonicalizeJson5, parse, parseJson5 } from ".
 import { JsonValue } from "../../src/value.wac";
 import { ERR_COMMENT, ERR_UNSUPPORTED } from "../../src/parse.wac";
 
-const string ORACLE = "packages/json/test/oracle.ts";
-const string DIR = "packages/json/test/jsontestsuite";
+static string ORACLE = "packages/json/test/oracle.ts";
+static string DIR = "packages/json/test/jsontestsuite";
 
 /**
  * The oracle, with read access and nothing else.

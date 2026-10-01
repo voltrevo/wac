@@ -75,6 +75,7 @@ export string parseMessage(i32 code) {
   if (code == 39) { return "an array's length is not part of its type"; }
   if (code == 40) { return "an array with elements is written [a, b]"; }
   if (code == 41) { return "an array type's factories are filled and defaulted"; }
+  if (code == 42) { return "a module-level variable must be static"; }
   if (code == 33) { return "type arguments, and a value cannot follow them — parenthesise to compare"; }
   return "the parser refused this";
 }
@@ -126,7 +127,7 @@ export string checkMessage(i32 code) {
   if (code == 31) { return "there is no loop here to break out of or continue"; }
   if (code == 32) { return "wrong number of arguments"; }
   if (code == 33) { return "a packed type cannot be nullable"; }
-  if (code == 34) { return "a module-level const must be computable at compile time"; }
+  if (code == 34) { return "a static initialiser must be computable at compile time"; }
   if (code == 35) { return "undefined name"; }
   if (code == 36) { return "void cannot be used as a type here"; }
   if (code == 37) { return "a return with a value in a void function, or without one where a value is wanted"; }
@@ -284,6 +285,7 @@ export string parseHintFor(i32 code) {
   if (code == 39) { return "write `T[].filled(n, value)`, or `T[].defaulted(n)` where `T` has a default"; }
   if (code == 40) { return "the elements in brackets, `[a, b]` — or `[a, b] as T[]` to give them a type"; }
   if (code == 41) { return "`T[].filled(n, value)` or `T[].defaulted(n)`"; }
+  if (code == 42) { return "write `static`: its initialiser runs at compile time, and there is no mutable module state"; }
   if (code == 25) { return "a field is `type name;` — the name comes after the type"; }
   // No hint for 30: the annotation already names the keyword and the position, and this file's rule
   // is that a hint with nothing to add is filler.

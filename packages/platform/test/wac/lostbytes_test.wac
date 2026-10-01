@@ -51,7 +51,7 @@ import { contains } from "../../../wactest/src/strings.wac";
  * The child sleeps well past the parent's deadline, so the parent is certainly parked on an empty
  * queue when it gives up — the case only exists when the reader has nothing yet and waits.
  */
-const string PROGRAM =
+static string PROGRAM =
   "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std/platform.wac\";\n" +
   "import { Read } from \"core\";\n" +
   "\n" +
@@ -85,7 +85,7 @@ const string PROGRAM =
   "}\n";
 
 /** An abandoned `readStdin` used to take the whole of standard input with it — `0310b`. */
-const string STDIN_PROGRAM =
+static string STDIN_PROGRAM =
   "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std/platform.wac\";\n" +
   "\n" +
   "export i32 main(Core core, Cli cli) {\n" +
@@ -128,7 +128,7 @@ const string STDIN_PROGRAM =
   "}\n";
 
 /** An abandoned `accept` used to orphan the connection it had taken — `0310b`. */
-const string ACCEPT_PROGRAM =
+static string ACCEPT_PROGRAM =
   "import { Core, Cli, Child, Pending, Socket, GRANT_ALL } from \"std/platform.wac\";\n" +
   "import { itoa } from \"../../packages/fmt/src/itoa.wac\";\n" +
   "\n" +
@@ -185,7 +185,7 @@ const string ACCEPT_PROGRAM =
  * would be meaningless and leaving it is a handle that never returns and a peer holding a line
  * to nobody — which this sees as a read that never ends.
  */
-const string CONNECT_PROGRAM =
+static string CONNECT_PROGRAM =
   "import { Core, Cli, Pending, Socket, GRANT_ALL } from \"std/platform.wac\";\n" +
   "import { Read } from \"core\";\n" +
   "\n" +
@@ -238,7 +238,7 @@ const string CONNECT_PROGRAM =
  * `Cli.exec` was refused there for every program, so this probe read 0 of 3 on *both* arms and
  * looked like a broken instrument. A bug that hides evidence about other bugs.
  */
-const string OWNSTDIN_PROGRAM =
+static string OWNSTDIN_PROGRAM =
   "import { Core, Cli, Pending, Exec } from \"std/platform.wac\";\n" +
   "\n" +
   "export i32 main(Core core, Cli cli) {\n" +
@@ -316,7 +316,7 @@ string written(Cli cli) { return writtenAs(cli, "probe", PROGRAM); }
  * it with probability 0.3^5, near enough one in three hundred. Raise this if the case is ever seen
  * flapping; do not lower it without re-measuring the rate it is derived from.
  */
-const i32 TRIES = 5;
+static i32 TRIES = 5;
 
 void check(T t, Cli cli, string binary, string path, string host) {
   // The canary first: if the control arm cannot see the payload, the abandoned arm proves nothing.

@@ -22,7 +22,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 
 /** How long a handshake and one reply may take before the peer is called dead. */
-const i32 READ_TIMEOUT_MS = 20000;
+static i32 READ_TIMEOUT_MS = 20000;
 
 /** What a request came to. */
 export struct Reply {

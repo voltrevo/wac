@@ -21,7 +21,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Canonical, canonicalize } from "../../src/json.wac";
 import { ERR_NONE, ERR_DEPTH } from "../../src/parse.wac";
 
-const string ORACLE = "packages/json/test/oracle.ts";
+static string ORACLE = "packages/json/test/oracle.ts";
 
 string[] cases() {
   return [

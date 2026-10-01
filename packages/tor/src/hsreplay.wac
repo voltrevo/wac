@@ -37,10 +37,10 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 import { ctEqual } from "../../crypto/src/ct.wac";
 
 /** `REND_REPLAY_TIME_INTERVAL` — how long a rendezvous cookie is remembered. */
-export const i64 REND_REPLAY_SECONDS = 300;
+export static i64 REND_REPLAY_SECONDS = 300;
 
 /** A horizon of zero means never forget, which is what tor's `replaycache_new(0, 0)` asks for. */
-export const i64 HORIZON_FOREVER = 0;
+export static i64 HORIZON_FOREVER = 0;
 
 /**
  * What has been seen, and when.

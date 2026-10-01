@@ -38,7 +38,7 @@ import { Civil, isLeap, daysInMonth, isValidDate, daysFromCivil, civilFromDays, 
          dayOfYear } from "../../src/civil.wac";
 import { Parsed, parse, format } from "../../src/rfc3339.wac";
 
-const string ORACLE = "packages/datetime/test/oracle.ts";
+static string ORACLE = "packages/datetime/test/oracle.ts";
 
 void check(T t, Cli cli, Lines lines, string what) { checkDeno(t, cli, ORACLE, lines, what); }
 

@@ -90,7 +90,7 @@ import { builtByDeno, wacBinary } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains, joined } from "../../../wactest/src/strings.wac";
 
-const string ENTRY = "packages/wac/src/wac.wac";
+static string ENTRY = "packages/wac/src/wac.wac";
 
 string scratch(Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/parity-" + name;

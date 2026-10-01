@@ -25,8 +25,8 @@
 // VERSIONS as the one exception, which is what tor's own `cell_command_is_var_length`
 // does once a version is settled.
 
-const i32 PAYLOAD_LEN = 509;
-const i32 CELL_LEN = 514;
+static i32 PAYLOAD_LEN = 509;
+static i32 CELL_LEN = 514;
 
 /**
  * The width of the circuit id in front of a cell's command, which the *reader* has to know.
@@ -43,8 +43,8 @@ const i32 CELL_LEN = 514;
  * is the state that decides, and it is the link's own, because the answer is a fact about the
  * conversation rather than about the buffer.
  */
-export const i32 ID_NARROW = 2;
-export const i32 ID_WIDE = 4;
+export static i32 ID_NARROW = 2;
+export static i32 ID_WIDE = 4;
 
 // dead-exports: exempt — these are tor's own cell-command numbers and the table's *completeness* is the
 // contract, not its use. Four of them have no caller here and each is a fact about the protocol rather

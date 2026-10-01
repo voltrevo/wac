@@ -25,7 +25,7 @@ import { encode as hexEncode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 /** The largest legal request: 255 blocks of SHA-256. */
-const i32 LIMIT = 8160;
+static i32 LIMIT = 8160;
 
 string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
 

@@ -26,8 +26,8 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
 
-const string ORACLE = "packages/tls/test/roots_oracle.ts";
-const string BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+static string ORACLE = "packages/tls/test/roots_oracle.ts";
+static string BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 
 /** `offsets` as the oracle wants them: decimal, comma-separated, no trailing comma. */
 string offsetsCsv(i32[] offsets) {

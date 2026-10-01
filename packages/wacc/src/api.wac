@@ -577,7 +577,7 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
           }
         }
       }
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
       }
       default: { }
@@ -1165,7 +1165,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
           }
         }
         // A module-level `const`'s type, for the same reason and by the same reach.
-        ConstDecl(nameTok, type, init, exported): {
+        StaticDecl(nameTok, type, init, exported): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           tyNames(src, lx, type, found, seen);
         }

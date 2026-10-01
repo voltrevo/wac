@@ -32,7 +32,7 @@ import { Commit, Parsed, parseCommit } from "../src/commit.wac";
 import { Entry, Tree, parseTree } from "../src/tree.wac";
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
-const string SOURCE =
+static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/git/example/gitpage.wac";
 
 /**
@@ -46,10 +46,10 @@ const string SOURCE =
  * So this number is honest about what it does: it stops the page holding a hundred megabytes, and it
  * promises nothing about the wait. The page says "reading…" before it starts for the same reason.
  */
-const i32 LIMIT = 16777216;
+static i32 LIMIT = 16777216;
 
 /** How many commits to offer in the list. A repository's whole history would be a scrolling wall. */
-const i32 SHOWN = 200;
+static i32 SHOWN = 200;
 
 /** Twenty raw bytes as forty hex characters. */
 string hexOf(u8[] name) { return string.fromBytes(encode(name)); }

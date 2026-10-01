@@ -21,7 +21,7 @@ import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 
 
-const i64 NOW = 1785931200;
+static i64 NOW = 1785931200;
 
 
 

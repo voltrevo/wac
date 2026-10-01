@@ -49,7 +49,7 @@ import { b64Unpadded, lineValue, pastLineStarting } from "./routerdesc.wac";
 import { slice } from "../../bytes/src/slice.wac";
 
 /** The summary a non-exit relay gets, and the one whose `p` line tor omits. */
-export const string POLICY_REJECT_ALL = "reject 1-65535";
+export static string POLICY_REJECT_ALL = "reject 1-65535";
 
 /**
  * The microdescriptor for a router descriptor.

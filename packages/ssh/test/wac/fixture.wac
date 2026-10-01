@@ -97,7 +97,7 @@ void reapAbandoned(Cli cli) {
  * line the caller supplies. Two copies would let the reaper and the test of the reaper drift apart,
  * and the test would go on passing against its own copy.
  */
-const string ARMS =
+static string ARMS =
   "ours() { " +
   "  case \"$1\" in *sshd*) ;; *) return 1;; esac; " +
   "  case \"$1\" in *' -D -f '*'/sshd_config'*) ;; *) return 1;; esac; " +
@@ -111,7 +111,7 @@ const string ARMS =
   "  case \"$d\" in /tmp/*|*/.cache/*) ;; *) return 1;; esac; " +
   "  return 0; }; ";
 
-const string REAP =
+static string REAP =
   ARMS +
   "ps -eo pid=,ppid=,args= 2>/dev/null | while read pid ppid rest; do " +
   "  case \"$ppid\" in 1) ;; *) continue;; esac; " +

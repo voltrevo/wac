@@ -54,7 +54,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { decodeRender } from "./probe.wac";
 import { unhex, T_UINT, T_BOOL, T_ADDRESS } from "./descriptor.wac";
 
-const string ORACLE = "packages/abi/test/toolsOracle.ts";
+static string ORACLE = "packages/abi/test/toolsOracle.ts";
 
 /** One row: the malformation, the type, the bytes, and what each real tool does with them. */
 struct Row {

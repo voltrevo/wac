@@ -63,7 +63,7 @@ import { announce, unannounce } from "./suitegate.wac";
  * lane holds back. Four is the width measured for the suite's own passes; the same number here needs
  * no separate argument.
  */
-const i32 WORKERS = 4;
+static i32 WORKERS = 4;
 
 string timesPath() { return ".cache/coverage-times"; }
 string staleTimesPath() { return ".cache/coverage-times.json"; }

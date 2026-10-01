@@ -87,8 +87,8 @@ import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
 import { closureOf, literalOf, chunkedLiteral } from "./source_probe.wac";
 
-const string ENTRY = "packages/wacc/src/api.wac";
-const string DRIVER = ".cache/_selfhost.wac";
+static string ENTRY = "packages/wacc/src/api.wac";
+static string DRIVER = ".cache/_selfhost.wac";
 
 /** The same checksum the driver computes, so the two can be compared at all. */
 i32 checksum(u8[] b) {
@@ -156,7 +156,7 @@ string driverFor(string[] paths, string[] sources) {
   return string.fromBytes(out.take());
 }
 
-const string STAGE_A = ".cache/_selfhost_stageA.txt";
+static string STAGE_A = ".cache/_selfhost_stageA.txt";
 
 /**
  * What produced stage A's answers: the driver, and the compiler that runs it.

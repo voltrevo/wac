@@ -45,7 +45,7 @@ i32[] boundaries(i32 rate, i32 lenBytes) {
   ] as i32[];
 }
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /**
  * Ask node — a `sha2 <bits> <msg> <claimed>` line per digest this file computed.

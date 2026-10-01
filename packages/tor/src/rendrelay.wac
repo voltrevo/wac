@@ -27,13 +27,13 @@
 import { ctEqual } from "../../crypto/src/ct.wac";
 
 /** `REND_COOKIE_LEN`. */
-export const i32 REND_COOKIE_LEN = 20;
+export static i32 REND_COOKIE_LEN = 20;
 
-export const i32 RV_OK = 0;
+export static i32 RV_OK = 0;
 /** Not an edge circuit, the wrong length, or a cookie already held. */
-export const i32 RV_REFUSED = 1;
+export static i32 RV_REFUSED = 1;
 /** No circuit is waiting for that cookie — usually a client that gave up. */
-export const i32 RV_UNKNOWN_COOKIE = 2;
+export static i32 RV_UNKNOWN_COOKIE = 2;
 
 /** The circuits waiting at this relay for somebody to present their cookie. */
 export struct RendPoints {

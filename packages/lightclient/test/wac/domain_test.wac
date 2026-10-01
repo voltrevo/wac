@@ -42,7 +42,7 @@ import { altairForkVersionMinimal, altairForkVersionMainnet, computeForkDataRoot
          computeForkDigest, computeDomain, domainSyncCommittee,
          syncCommitteeSigningRoot } from "../../src/domain.wac";
 
-const string MANIFEST = "packages/ssz/test/fixtures.json";
+static string MANIFEST = "packages/ssz/test/fixtures.json";
 
 // Field indices, from `src/beacon.wac`'s field lists.
 i32 UPDATE_ATTESTED()             { return 0; }

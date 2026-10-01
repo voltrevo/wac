@@ -58,7 +58,7 @@ import { clamped } from "../../bytes/src/slice.wac";
  * Far in the past, so `notBefore` comparisons refuse it and `notAfter` comparisons refuse it
  * too — an unreadable date is never inside a validity window, whichever end it was on.
  */
-const i64 TIME_UNREADABLE = -62135596800;
+static i64 TIME_UNREADABLE = -62135596800;
 
 /** Key types this understands. */
 export i32 keyEd25519() { return 1; }

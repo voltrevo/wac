@@ -28,8 +28,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/rlp/test/cov_exercise.wac";
-const string PREFIX = "packages/rlp/";
+static string EXERCISE = "packages/rlp/test/cov_exercise.wac";
+static string PREFIX = "packages/rlp/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
 string[] grants() {

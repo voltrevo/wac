@@ -27,7 +27,7 @@ import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** What a test matches on, unless it names its own. Fixed, so an assertion can name the bytes. */
-const string DEFAULT_BODY = "hello from the wac server\n";
+static string DEFAULT_BODY = "hello from the wac server\n";
 
 string reply(string body) {
   return "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n" +

@@ -270,10 +270,10 @@ export function generate(
   const bodySpans = functions(tokens);
 
   // Token index -> the declaration a literal belongs to, for `shapeKey`: the enclosing top-level
-  // function, or for module-level code the `const` being initialised.
+  // function, or for module-level code the `static` being initialised.
   //
-  // The `const` half is not a detail. The largest tables in the repo are module-level
-  // `const u8[] SBOX = [...]` initialisers, which are outside every function span; keying them
+  // The `static` half is not a detail. The largest tables in the repo are module-level
+  // `static u8[] SBOX = [...]` initialisers, which are outside every function span; keying them
   // all to one empty scope put `unicode/src/tables.wac`'s six separate tables into a single class
   // of 8758 members and sampled three literals for the lot. Six tables are six questions.
   const scope = new Array<string>(tokens.length).fill("");
@@ -283,8 +283,8 @@ export function generate(
   let lastConst = "";
   for (let k = 0; k < tokens.length; k++) {
     if (scope[k] !== "") continue;                       // inside a function; already named
-    if (tokens[k].kind === "const") {
-      // `const <type> <ident> = ...` — the identifier is the one just before the `=`.
+    if (tokens[k].kind === "static") {
+      // `static <type> <ident> = ...` — the identifier is the one just before the `=`.
       for (let j = k + 1; j < tokens.length && tokens[j].kind !== ";"; j++) {
         if (tokens[j].kind === "=") {
           if (tokens[j - 1]?.kind === "ident") lastConst = tokens[j - 1].text;

@@ -25,7 +25,7 @@ import {
   kInt, kFloat, kString, kIdent, kEof, kTrue, kFalse, kNull, kVoid, kFn, kThis,
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
   kConst, kExport, kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
-  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kImport,
+  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kImport,
   kOverride, kAssign,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq,
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
@@ -54,12 +54,14 @@ export i32 perrCaseArm()     { return 36; }
 export i32 perrElseArm()     { return 37; }
 /** A statement `match` arm whose body is not a block. */
 export i32 perrArmBlock()    { return 38; }
-/** `T[].defaulted(5)` or `T[].filled(n, v)` — a size in an array type's brackets. */
+/** `T[5]()` — a size in an array type's brackets. */
 export i32 perrSizedArray()  { return 39; }
-/** `[a, b]` — a typed constructor with elements. */
+/** `T[](a, b)` — a typed constructor with elements, which is a literal now. */
 export i32 perrArrayElems()  { return 40; }
 /** `T[].other(…)` — an array type has two factories. */
 export i32 perrArrayFactory() { return 41; }
+/** `const i32 X = 1;` or `i32 X = 1;` at module scope — a module-level variable is `static`. */
+export i32 perrModuleVar()   { return 42; }
 export i32 perrBareSpec()    { return 29; }
 /**
  * A keyword where a name belongs — `[§wac-keyword-name-8wnq4kp]`.
@@ -300,7 +302,7 @@ export struct P {
  * what found it.
  */
 bool isKeywordKind(i32 k) {
-  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait();
+  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait() || k == kStatic();
 }
 
 bool atKeyword(P p) {
@@ -2519,17 +2521,44 @@ Decl parseFuncDecl(P p) {
     typeParams, isAsync), line, col);
 }
 
-Decl parseConstDecl(P p, bool exported) {
+/**
+ * `static i32 SIZE = 64;` — a module-level declaration, whose initialiser runs at compile time.
+ *
+ * **`const` and a bare type are refused by name and then read as the static they meant**, so one
+ * mistake is one diagnostic: module-level variables are `static` because there is no mutable module
+ * state, and `const` alone does not ask for compile-time evaluation.
+ */
+Decl parseStaticDecl(P p, bool exported) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
-  p.expect(kConst());
+  if (p.at1(kConst())) {
+    p.fail(perrModuleVar());
+    p.advance();
+  } else if (!p.eat(kStatic())) {
+    p.fail(perrModuleVar());
+  }
   Ty t = parseType(p);
   i32 nameTok = -1;
   if (p.at1(kIdent())) { nameTok = p.advance(); } else { p.fail(perrExpected()); }
   p.expect(kAssign());
   Expr init = parseExpr(p);
   p.expect(kSemi());
-  return Decl(DeclKind.ConstDecl(nameTok, t, init, exported), line, col);
+  return Decl(DeclKind.StaticDecl(nameTok, t, init, exported), line, col);
+}
+
+/** `i32 counter = 0;` at `from`: a type, a name, and an `=` or `;` where a function would have `(`. */
+bool moduleVarAhead(P p, i32 from) {
+  if (p.kindAt(from) != kIdent()) { return false; }
+  i32 j = from + 1;
+  i32 afterArgs = afterTypeArgs(p, j);
+  if (afterArgs > 0) { j = afterArgs; }
+  while (true) {
+    if (p.kindAt(j) == kLbrack() && p.kindAt(j + 1) == kRbrack()) { j += 2; }
+    else if (p.kindAt(j) == kQuestion()) { j++; }
+    else { break; }
+  }
+  if (p.kindAt(j) != kIdent()) { return false; }
+  return p.kindAt(j + 1) == kAssign() || p.kindAt(j + 1) == kSemi();
 }
 
 /** The whole file. */
@@ -2552,7 +2581,7 @@ export Program parseProgram(P p) {
   while (!p.at1(kEof())) {
     if (p.at1(kImport())) { decls.push(parseImport(p)); continue; }
 
-    // `export` may precede a struct, an enum, a const or a function, and the
+    // `export` may precede a struct, an enum, a static or a function, and the
     // declaration kind is only known after it.
     bool exported = p.at1(kExport());
     i32 after = exported ? 1 : 0;
@@ -2563,9 +2592,9 @@ export Program parseProgram(P p) {
     } else if (k == kEnum()) {
       if (exported) { p.advance(); }
       decls.push(parseEnumDecl(p, exported));
-    } else if (k == kConst()) {
+    } else if (k == kStatic() || k == kConst() || moduleVarAhead(p, after)) {
       if (exported) { p.advance(); }
-      decls.push(parseConstDecl(p, exported));
+      decls.push(parseStaticDecl(p, exported));
     } else if (exported || k == kFn() || k == kVoid() || k == kIdent() || k == kAsync()) {
       // A function: `parseFuncDecl` consumes its own `export`. Entered only when the
       // token could actually begin one — a return type is an `ident` (the primitives

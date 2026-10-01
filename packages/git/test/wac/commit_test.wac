@@ -28,7 +28,7 @@ import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string DATE = "1700000000 +0000";
+static string DATE = "1700000000 +0000";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentSuffix(Cli cli) {

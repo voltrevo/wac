@@ -34,7 +34,7 @@ import { ed25519FromCurve25519Public } from "../../crypto/src/ed25519.wac";
 import { x25519Base } from "../../crypto/src/x25519.wac";
 
 /** Two hours, which is what a real service asks for. */
-const i32 LIFETIME_MINUTES = 180;
+static i32 LIFETIME_MINUTES = 180;
 
 /**
  * The revision counter, and the one after it.
@@ -46,8 +46,8 @@ const i32 LIFETIME_MINUTES = 180;
  * that, and a second one edited by hand would not verify — the revision line is inside the span the
  * signature covers.
  */
-const i64 REVISION = 42;
-const i64 REVISION_NEXT = 43;
+static i64 REVISION = 42;
+static i64 REVISION_NEXT = 43;
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 2) {

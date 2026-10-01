@@ -45,8 +45,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet } from "../../tools/wac/covledger.wac";
 
-const string EXERCISE = "core/test/cov_exercise.wac";
-const string PREFIX = "core/";
+static string EXERCISE = "core/test/cov_exercise.wac";
+static string PREFIX = "core/";
 
 /** The eleven tests that expect a trap, called one at a time with the trap caught. */
 string[] cases() { return ["trapCase:11"] as string[]; }

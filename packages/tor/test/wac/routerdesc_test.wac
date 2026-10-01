@@ -63,7 +63,7 @@ import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { decode as b64decode } from "../../../codec/src/base64.wac";
 
-const string ORACLE = "packages/tor/test/oracle.mjs";
+static string ORACLE = "packages/tor/test/oracle.mjs";
 
 JsonArray descriptors(Cli cli) {
   return arrayOf(jsonFile(cli, "packages/tor/test/data/routerdesc_vectors.json"), "descriptors");

@@ -51,9 +51,9 @@ import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, submit, col
   from "./hostfs.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
-const string ENTRY = "packages/box/src/bin/sh.wac";
+static string ENTRY = "packages/box/src/bin/sh.wac";
 /** Where the built shells live, so seven cases do not build six artifacts each. */
-const string BUILT = ".cache/hostfs";
+static string BUILT = ".cache/hostfs";
 /** A name longer than any filesystem here will take — `ENAMETOOLONG`, at 300 bytes. */
 string tooLong() {
   string n = "";

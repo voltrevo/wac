@@ -32,7 +32,7 @@ import { Core, Cli, Exec, Change, FileResult, execReason} from "std/platform.wac
 import { itoa } from "../../fmt/src/itoa.wac";
 import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
 
-const string CACHE = ".cache/ct-table";
+static string CACHE = ".cache/ct-table";
 
 /** One row of the table: what to run, and with which secrets. */
 struct Case {

@@ -55,7 +55,7 @@ import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot }
   from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string PROBE = "packages/platform/test/wac/loadprobe.wac";
+static string PROBE = "packages/platform/test/wac/loadprobe.wac";
 
 /** The module whose exports get called, built once by the `wac` binary. */
 string loadee(Cli cli) {

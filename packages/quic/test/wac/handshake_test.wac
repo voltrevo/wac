@@ -22,10 +22,10 @@ import { chainLength, chainVerdict, flight, handshakeAt, handshakeCrypto, handsh
 import { ask } from "./peer.wac";
 
 /** TLS handshake message types, as the bits `serverFlightKinds` sets. */
-const i32 ENCRYPTED_EXTENSIONS = 1 << 8;
-const i32 CERTIFICATE = 1 << 11;
-const i32 CERTIFICATE_VERIFY = 1 << 15;
-const i32 FINISHED = 1 << 20;
+static i32 ENCRYPTED_EXTENSIONS = 1 << 8;
+static i32 CERTIFICATE = 1 << 11;
+static i32 CERTIFICATE_VERIFY = 1 << 15;
+static i32 FINISHED = 1 << 20;
 
 u8[] dcid() { return decoded("8394c8f03e515708"); }
 u8[] scid() { return decoded("11223344"); }

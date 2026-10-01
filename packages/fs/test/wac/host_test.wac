@@ -27,7 +27,7 @@ import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
-const string OPS = "packages/fs/example/ops.wac";
+static string OPS = "packages/fs/example/ops.wac";
 
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 

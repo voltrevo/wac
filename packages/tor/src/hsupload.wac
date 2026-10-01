@@ -30,13 +30,13 @@
 // succeeded.
 
 /** This directory has the descriptor. */
-export const i32 UPLOAD_OK = 0;
+export static i32 UPLOAD_OK = 0;
 /** The directory read the descriptor and refused it — every other one will too. */
-export const i32 UPLOAD_REJECTED = 1;
+export static i32 UPLOAD_REJECTED = 1;
 /** An answer tor calls unexpected: this directory, rather than the descriptor. */
-export const i32 UPLOAD_UNEXPECTED = 2;
+export static i32 UPLOAD_UNEXPECTED = 2;
 /** No answer at all — the circuit broke or the stream closed unanswered. */
-export const i32 UPLOAD_NO_ANSWER = 3;
+export static i32 UPLOAD_NO_ANSWER = 3;
 
 /**
  * What a directory's HTTP status means for an upload, following `handle_response_upload_hsdesc`.

@@ -158,7 +158,7 @@ export struct Conn {
 }
 
 /** What a peer may send in one packet. OpenSSH's default, and what `open` is asked to enforce. */
-export const i32 MAX_PACKET = 35000;
+export static i32 MAX_PACKET = 35000;
 
 /** Everything the handshake produced, for the test whose subject is the handshake itself. */
 export struct Session {

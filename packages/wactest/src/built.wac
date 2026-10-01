@@ -134,7 +134,7 @@ string resolvedFrom(string fromPath, string spec) {
 }
 
 /** How many files one program's closure is allowed to reach. `sshd` is the largest here at 190. */
-const i32 CLOSURE_CAP = 1024;
+static i32 CLOSURE_CAP = 1024;
 
 /**
  * What one walk of a program's import closure found.

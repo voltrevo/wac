@@ -62,7 +62,7 @@ import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
  */
 string[] targets() { return ["packages/wacc/src/kinds.wac", "packages/wacc/src/ast.wac"]; }
 
-const string DRIVER = ".cache/_fixdrive.wac";
+static string DRIVER = ".cache/_fixdrive.wac";
 
 /**
  * The driver: one export folding all four answers, and **no `main`**, which is what makes one compile

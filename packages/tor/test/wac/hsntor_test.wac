@@ -24,7 +24,7 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { objectOf } from "../../../wactest/src/jsonfile.wac";
 
-const i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) svcPub(32)
+static i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) svcPub(32)
                         // subcred(32) encOut(32) macOut(32) authMac(32) keySeed(32)
                         // introEncSecret(32) serviceEphemeralSecret(32) — appended, so the
                         // offsets above are unchanged

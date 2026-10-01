@@ -24,7 +24,7 @@ import { itoa64 } from "../../src/itoa64.wac";
 import { utoa64 } from "../../src/utoa64.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string ORACLE = "packages/wactest/test/oracle.ts";
+static string ORACLE = "packages/wactest/test/oracle.ts";
 
 /** Sixteen hex digits, big-endian — the form the oracle reads. */
 string bits(u64 v) {

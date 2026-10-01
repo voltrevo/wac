@@ -26,7 +26,7 @@ import { Ran, realOut, runApplet, runAppletIn } from "./replay.wac";
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-streaming"; }
 
 /** One 64 KiB read. The fixture is sized against this rather than against a round number. */
-const i32 CHUNK = 65536;
+static i32 CHUNK = 65536;
 
 /**
  * Larger than one chunk and not a multiple of it, so boundaries land in the middle of words and runs

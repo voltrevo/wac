@@ -146,7 +146,7 @@ export Asked forCommand(string cmd) {
 // and a named function with a written signature is checked against the field it is passed to. A
 // lambda whose parameter list is a character wrong wires to its neighbour and compiles.
 
-const string DENIED = "Not granted to this application";
+static string DENIED = "Not granted to this application";
 
 Pending<u8[]?> noEnv(string name) {
   // Null, not a fault — see the header. `Cli.env`'s type says null is how "no value" is spelled.

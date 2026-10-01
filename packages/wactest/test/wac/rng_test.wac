@@ -56,7 +56,7 @@ struct Folded {
 }
 
 /** Widths a caller actually asks for: a round one, two powers of two, and a wide one. */
-const i32[] WIDTHS = [1000, 2, 256, 0x40, 6000];
+static i32[] WIDTHS = [1000, 2, 256, 0x40, 6000];
 
 /** `json/test/wac/utf8_test.wac`'s draw, as a free function — a struct's methods do not extend. */
 i32 pick(Rng r) {

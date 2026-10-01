@@ -45,7 +45,7 @@ import { Parser, parseDocument } from "../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../json/src/value.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 
-const string CACHE_DIR = ".cache/fixtures";
+static string CACHE_DIR = ".cache/fixtures";
 
 /** A fixture set, or why it could not be produced. */
 export struct Fixture {

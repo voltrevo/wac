@@ -261,8 +261,8 @@ bool strictJson(u8[] src) {
   return !(v is null);
 }
 
-const string SHA_A = "1111111111111111111111111111111111111111";
-const string SHA_B = "2222222222222222222222222222222222222222";
+static string SHA_A = "1111111111111111111111111111111111111111";
+static string SHA_B = "2222222222222222222222222222222222222222";
 
 /**
  * `applyPlan` handed steps that did not come from `plan`, which is the case its own comment defends.

@@ -10,7 +10,7 @@
 import { Buf } from "../../../bytes/src/buf.wac";
 
 /** The most files one entry's import closure is expected to reach. */
-const i32 CLOSURE_CAP = 512;
+static i32 CLOSURE_CAP = 512;
 
 /** `/a/b/c.wac` → `/a/b`. */
 export string dirOf(string path) {

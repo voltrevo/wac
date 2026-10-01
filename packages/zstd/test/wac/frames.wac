@@ -15,7 +15,7 @@ import { Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const string ORACLE = "packages/zstd/test/oracle.ts";
+static string ORACLE = "packages/zstd/test/oracle.ts";
 
 /**
  * Ask the reference, **under Node**.

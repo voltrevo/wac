@@ -46,7 +46,7 @@ import { stale } from "./hostfs.wac";
 import { builtProgram, builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
-const string BUILT = ".cache/hostexamples";
+static string BUILT = ".cache/hostexamples";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -264,7 +264,7 @@ string builtOnce(Cli cli, string tmp, Case c, bool haveNative) {
  * `clocks` compares verdicts a busy machine cannot falsify, since a sleep that is asked for 50ms and
  * takes 300 still waited at least as long as it was asked.
  */
-const i32 AT_ONCE = 3;
+static i32 AT_ONCE = 3;
 
 export string test_the_capability_examples_answer_the_same_on_both_hosts(Core core, Cli cli) {
   T t = T.create();

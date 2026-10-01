@@ -20,8 +20,8 @@ import { Buf } from "../../../bytes/src/buf.wac";
 import { splitLines, has, joined } from "../../../wactest/src/strings.wac";
 import { bindTypesFiles, blockedFiles } from "../../src/api.wac";
 
-const i32 COUNT = 90;   // comfortably past the 64 that boxsh ran into
-const string ENTRY = "/t/main.wac";
+static i32 COUNT = 90;   // comfortably past the 64 that boxsh ran into
+static string ENTRY = "/t/main.wac";
 
 /**
  * `COUNT` structs, each returned by an exported function — which is what makes one cross.

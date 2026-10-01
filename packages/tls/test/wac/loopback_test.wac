@@ -59,10 +59,10 @@ import {
 } from "../../src/client.wac";
 
 // Fixed and inside the certificate's validity. Seconds, as `selfSignedEd25519` takes them.
-const i64 NOT_BEFORE = 1000 as i64;
-const i64 NOT_AFTER = 2000000000 as i64;
-const i64 NOW = 1600000000 as i64;
-const string HOST = "wac.test";
+static i64 NOT_BEFORE = 1000 as i64;
+static i64 NOT_AFTER = 2000000000 as i64;
+static i64 NOW = 1600000000 as i64;
+static string HOST = "wac.test";
 
 /** The server's long-term identity: one seed, and the self-signed certificate over it. */
 u8[] identitySeed() {

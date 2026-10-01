@@ -19,7 +19,7 @@ const literals = (src: string, perShape?: number) => {
 
 Deno.test("a long constant table yields three mutants, not one per entry", () => {
   const table = Array.from({ length: 200 }, (_, i) => i * 3).join(", ");
-  const { count, st } = literals(`const i32[] T = [${table}];\n`);
+  const { count, st } = literals(`static i32[] T = [${table}];\n`);
   // Three for the interior class, plus the few entries near `(` and `)` whose token neighbourhood
   // genuinely differs. Far fewer than 200 is the property; the exact boundary count is not.
   if (count > 12) throw new Error(`expected a handful of mutants, got ${count}`);
@@ -30,7 +30,7 @@ Deno.test("a long constant table yields three mutants, not one per entry", () =>
 Deno.test("the three samples are spread through the table, not the first three", () => {
   // Distinct values so a mutant name identifies which entry it came from.
   const table = Array.from({ length: 300 }, (_, i) => 1000 + i).join(", ");
-  const { names } = literals(`const i32[] T = [${table}];\n`);
+  const { names } = literals(`static i32[] T = [${table}];\n`);
   const picked = names
     .map((n) => /\/(\d+)→/.exec(n)?.[1])
     .filter((v): v is string => v !== undefined)
@@ -85,14 +85,14 @@ Deno.test("each function's table is its own class, so none is left untested", ()
   }
 });
 
-Deno.test("each module-level const table is its own class, so none is left untested", () => {
+Deno.test("each module-level static table is its own class, so none is left untested", () => {
   // The case that was wrong in the first version: everything at module level shared one scope, so
   // six separate tables in unicode/src/tables.wac became a single class of 8758 members and got
   // three samples for the lot. Five tables here for the same reason as above — with two, spread
   // sampling covers both by accident and the test cannot see the fault.
   const run = (base: number) => Array.from({ length: 60 }, (_, i) => base + i).join(", ");
   const bases = [1000, 2000, 3000, 4000, 5000];
-  const src = bases.map((b, i) => `const i32[] T${i} = [${run(b)}];`).join("\n") + "\n";
+  const src = bases.map((b, i) => `static i32[] T${i} = [${run(b)}];`).join("\n") + "\n";
   const { names } = literals(src);
   const values = names
     .map((n) => Number(/\/(\d+)→/.exec(n)?.[1]))
@@ -108,7 +108,7 @@ Deno.test("each module-level const table is its own class, so none is left untes
 
 Deno.test("--no-sample generates one mutant per literal", () => {
   const table = Array.from({ length: 200 }, (_, i) => i * 3).join(", ");
-  const src = `const i32[] T = [${table}];\n`;
+  const src = `static i32[] T = [${table}];\n`;
   const all = literals(src, Number.POSITIVE_INFINITY);
   if (all.count !== 200) throw new Error(`expected 200 mutants unsampled, got ${all.count}`);
   if (all.st.literalSkipped !== 0) throw new Error(`--no-sample skipped ${all.st.literalSkipped}`);

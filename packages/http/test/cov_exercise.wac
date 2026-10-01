@@ -76,9 +76,9 @@ import {
   test_every_reason_phrase_is_the_one_node_writes as rs__every_reason_phrase_is_the_one_node_writes,
 } from "./wac/response_test.wac";
 
-const i32 MAX_BODY = 1048576;
+static i32 MAX_BODY = 1048576;
 /** 2020-06-15T00:00:00Z, the clock `packages/server`'s probe is pinned to. */
-const i64 NOW = 1592179200000;
+static i64 NOW = 1592179200000;
 
 /**
  * `charCodeAt(i) & 0xff` — **latin-1, not UTF-8**, which is what the TypeScript's `wire` did.

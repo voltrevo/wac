@@ -132,7 +132,7 @@ i32 numberRoundTrip(i32 n) {
   return shortPacketNumber(p, 0, keys(), 4) as~ i32;
 }
 
-const i32 N = 16;
+static i32 N = 16;
 
 export string test_every_sealed_short_header_opens_to_what_went_in() {
   T t = T.create();

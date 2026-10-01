@@ -33,8 +33,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/stream/test/cov_exercise.wac";
-const string PREFIX = "packages/stream/";
+static string EXERCISE = "packages/stream/test/cov_exercise.wac";
+static string PREFIX = "packages/stream/";
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);

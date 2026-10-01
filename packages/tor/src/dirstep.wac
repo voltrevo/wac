@@ -32,7 +32,7 @@ import { PUB_NOT_NEWER, PUB_OK, Checked, checkForPublication, revisionOf } from 
 import { equal } from "../../bytes/src/slice.wac";
 
 /** `HS_DESC_MAX_LEN`, since a descriptor is the only body a directory accepts. */
-export const i32 MAX_BODY = 50000;
+export static i32 MAX_BODY = 50000;
 
 /**
  * What to do about the bytes received so far.

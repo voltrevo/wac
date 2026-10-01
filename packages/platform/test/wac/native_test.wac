@@ -39,9 +39,9 @@ import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { customSection } from "./section.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string ENTRY = "packages/platform/example/wacland.wac";
+static string ENTRY = "packages/platform/example/wacland.wac";
 /** The `Cli.execWith` transcript, for the comparison `conformance_test.wac` asks for. */
-const string EXEC_PROBE = "packages/platform/test/wac/exec_probe.wac";
+static string EXEC_PROBE = "packages/platform/test/wac/exec_probe.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

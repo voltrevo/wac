@@ -29,12 +29,12 @@ import { Daemon, Held, start, stop, waitForLogWithin, logOf } from "../../../wac
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 
-const string SERVE = "packages/server/host/serve.ts";
-const string FETCH = "packages/server/test/fetchclient.ts";
-const string NODE = "packages/server/test/nodeclient.js";
+static string SERVE = "packages/server/host/serve.ts";
+static string FETCH = "packages/server/test/fetchclient.ts";
+static string NODE = "packages/server/test/nodeclient.js";
 
 /** How long any single read may take before the test fails rather than parks. */
-const i32 PATIENCE = 5000;
+static i32 PATIENCE = 5000;
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

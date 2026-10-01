@@ -64,8 +64,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/raster/test/cov_exercise.wac";
-const string PREFIX = "packages/raster/";
+static string EXERCISE = "packages/raster/test/cov_exercise.wac";
+static string PREFIX = "packages/raster/";
 
 /** What the tests need: the vendored font hex, read from disk. */
 string[] grants() { return ["--allow-read"]; }

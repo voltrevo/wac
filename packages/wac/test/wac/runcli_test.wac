@@ -39,7 +39,7 @@ import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 
-const string NOCAPS = "export i32 main() { return 3; }\n";
+static string NOCAPS = "export i32 main() { return 3; }\n";
 
 Exec wac(Cli cli, string[] args) {
   return cli.exec(binaryPath(cli), args, u8[]()).wait();

@@ -16,7 +16,7 @@ import { Opened, Plain, aeadPaddingFor, keyLength, open, peekLength, seal, tagLe
   from "../../src/cipher.wac";
 import { ramp, filled, flipped, slice } from "./build.wac";
 
-const i32 MAX = 35000;
+static i32 MAX = 35000;
 
 string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
 

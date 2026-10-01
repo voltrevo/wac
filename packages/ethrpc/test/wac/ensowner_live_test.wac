@@ -28,10 +28,10 @@ import { freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, blockHash, castRpc, castRun, haveAnvil, runExample, stopAnvil }
   from "./anvil_probe.wac";
 
-const string ENTRY = "packages/ethrpc/example/ensowner.wac";
-const string REGISTRY = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e";
-const string OWNER = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
-const string RESOLVER = "0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41";
+static string ENTRY = "packages/ethrpc/example/ensowner.wac";
+static string REGISTRY = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e";
+static string OWNER = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
+static string RESOLVER = "0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41";
 
 string firstLine(string s) {
   i32 nl = s.indexOf("\n");

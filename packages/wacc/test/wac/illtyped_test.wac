@@ -425,7 +425,7 @@ export string test_a_mismatched_comparison_has_no_type() {
 
 export string test_a_const_of_type_void_is_one_diagnostic() {
   T t = T.create();
-  i32[] d = dumpTypeErrors("const void A = 1;\nexport i32 g() { return 0; }\n".toBytes());
+  i32[] d = dumpTypeErrors("static void A = 1;\nexport i32 g() { return 0; }\n".toBytes());
   t.eqI32(d.len() / 3, 1, "one fault, and this many diagnostics");
   if (d.len() >= 3) { t.eqI32(d[0], 36, "the code — `errVoidType`"); }
 
@@ -434,7 +434,7 @@ export string test_a_const_of_type_void_is_one_diagnostic() {
   t.eqI32(local.len() / 3, 1, "the local form, and this many diagnostics");
 
   // An ordinary constant, so neither is met by refusing module-level consts.
-  i32[] fine = dumpTypeErrors("const i32 A = 1;\nexport i32 g() { return A; }\n".toBytes());
+  i32[] fine = dumpTypeErrors("static i32 A = 1;\nexport i32 g() { return A; }\n".toBytes());
   t.eqI32(fine.len() / 3, 0, "refused a valid module-level constant");
   return t.report();
 }

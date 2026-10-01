@@ -70,8 +70,8 @@ bool sameG2(G2 a, G2 b) {
 // The two cases from `vendor/eth_deserialization_*.json` that get past the encoding rules, named as
 // the fixtures name them. `not_in_curve` decodes to nothing — its x has no y — and `not_in_G1`
 // decodes to a real curve point outside the subgroup.
-const string G1_NOT_IN_G1 = "8123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-const string G2_NOT_IN_G2 = "8123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+static string G1_NOT_IN_G1 = "8123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+static string G2_NOT_IN_G2 = "8123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /**
  * The composite entry point refuses what the three checks refuse, on the corpus's own input.

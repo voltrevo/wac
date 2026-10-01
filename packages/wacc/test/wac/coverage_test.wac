@@ -27,10 +27,10 @@ import { emitFiles, emitFilesCovered, covTableFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
 
-const string ENTRY = "/t/m.wac";
+static string ENTRY = "/t/m.wac";
 
 /** Each `case` on its own line, so a point's line is a point rather than three of them. */
-const string SRC =
+static string SRC =
   "export i32 classify(i32 n) {\n" +
   "  if (n > 10) { return 1; }\n" +
   "  i32 t = 0;\n" +

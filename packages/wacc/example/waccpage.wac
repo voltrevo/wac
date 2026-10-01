@@ -33,10 +33,10 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 import { blocked, emitFiles } from "../src/api.wac";
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
-const string SOURCE =
+static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/wacc/example/waccpage.wac";
 
-const string SAMPLE =
+static string SAMPLE =
   "// wacc is compiling this, in your browser.\n" +
   "//\n" +
   "// `main` takes no function parameter, so the module below has no import\n" +
@@ -51,7 +51,7 @@ const string SAMPLE =
   "  return fib(20);\n" +
   "}\n";
 
-const string ONE_FN =
+static string ONE_FN =
   "// One function parameter, and one import appears: `wac.cb0`, the dispatcher\n" +
   "// the host calls back through. Nothing else about the program changed.\n" +
   "\n" +
@@ -59,7 +59,7 @@ const string ONE_FN =
   "  return f(2) + f(3);\n" +
   "}\n";
 
-const string TWO_FN =
+static string TWO_FN =
   "// Two exports, both taking a function of the same shape — and still *one*\n" +
   "// import. The dispatcher is per signature, not per parameter, which is the\n" +
   "// part that surprises people. Change one to fn<i32(i32,i32)> and a second\n" +

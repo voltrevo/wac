@@ -24,7 +24,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Canonical, canonicalize } from "../../src/json.wac";
 import { ERR_NONE } from "../../src/parse.wac";
 
-const string ORACLE = "packages/json/test/oracle.ts";
+static string ORACLE = "packages/json/test/oracle.ts";
 
 string oneByte(i32 c) {
   u8[] one = u8[].filled(1, 0);

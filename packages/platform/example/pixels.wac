@@ -19,12 +19,12 @@
 
 import { Cli, Core, Event, Page } from "std/platform.wac";
 
-const i32 W = 480;
-const i32 H = 300;
-const i32 MAX = 160;
+static i32 W = 480;
+static i32 H = 300;
+static i32 MAX = 160;
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
-const string SOURCE =
+static string SOURCE =
   "https://github.com/voltrevo/wac-mono/blob/master/packages/platform/example/README.md#pixelswac";
 
 export i32 page(Core core, Cli cli, Page page) {

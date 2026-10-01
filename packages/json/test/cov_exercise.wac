@@ -87,8 +87,8 @@ import {
   test_utf8_random_byte_sequences_agree_with_a_strict_decoder as u8__utf8_random_byte_sequences_agree_with_a_strict_decoder,
   test_utf8_a_hand_built_tree_cannot_produce_invalid_json as u8__utf8_a_hand_built_tree_cannot_produce_invalid_json,
 } from "./wac/utf8_test.wac";
-const string SUITE = "packages/json/test/jsontestsuite";
-const string JSON5 = "packages/json/test/vendor/json5.json";
+static string SUITE = "packages/json/test/jsontestsuite";
+static string JSON5 = "packages/json/test/vendor/json5.json";
 
 /** Whether a name ends in `.json`, which is what the corpus directory is filtered by. */
 bool isJson(string name) {

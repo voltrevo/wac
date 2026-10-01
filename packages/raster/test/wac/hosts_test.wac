@@ -28,9 +28,9 @@ import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
-const string ENTRY = "packages/raster/example/deskshot.wac";
-const i32 WIDTH = 320;
-const i32 HEIGHT = 200;
+static string ENTRY = "packages/raster/example/deskshot.wac";
+static i32 WIDTH = 320;
+static i32 HEIGHT = 200;
 
 
 

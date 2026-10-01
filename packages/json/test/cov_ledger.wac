@@ -50,8 +50,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/json/test/cov_exercise.wac";
-const string PREFIX = "packages/json/";
+static string EXERCISE = "packages/json/test/cov_exercise.wac";
+static string PREFIX = "packages/json/";
 
 /** The four bounds checks that expect a trap, each its own export so the trap is caught per case. */
 string[] cases() {

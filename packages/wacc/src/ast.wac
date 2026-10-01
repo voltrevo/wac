@@ -415,8 +415,8 @@ export enum DeclKind {
    */
   EnumDecl(i32 nameTok, Variant[] variants, bool exported, Method[] methods,
            i32[] typeParams),
-  /** `[export] const <type> <name> = <expr>;` at file scope. */
-  ConstDecl(i32 nameTok, Ty type, Expr init, bool exported),
+  /** `[export] static <type> <name> = <expr>;` at file scope. */
+  StaticDecl(i32 nameTok, Ty type, Expr init, bool exported),
 }
 
 export struct Program {

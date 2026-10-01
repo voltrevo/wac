@@ -41,7 +41,7 @@ import { bcryptPbkdf } from "../../src/bcryptpbkdf.wac";
 import { aesCtr } from "../../src/aesctr.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** A cursor over SSH wire format: uint32 lengths, big-endian, everything length-prefixed. */
 struct Rd {

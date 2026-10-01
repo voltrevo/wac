@@ -45,7 +45,7 @@ import { freshDir } from "../../../wactest/src/host.wac";
  * specifier. `packages/json` and `packages/url` write **no entry** without the fix and one with it.
  * A subject that is cacheable regardless makes this test green whatever `closure_of` does.
  */
-const string SUBJECT = "packages/json/test/wac";
+static string SUBJECT = "packages/json/test/wac";
 
 i32 entriesIn(Cli cli, string dir) {
   string[]? names = cli.readDir(dir).wait();

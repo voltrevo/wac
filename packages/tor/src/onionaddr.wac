@@ -25,9 +25,9 @@
 import { sha3_256 } from "../../crypto/src/keccak.wac";
 import { encode as b32encode, decode as b32decode, ALPHABET_STANDARD } from "../../codec/src/base32.wac";
 
-export const i32 ONION_ADDRESS_LEN = 56;
-export const i32 ED25519_PUBKEY_LEN = 32;
-const i32 VERSION = 3;
+export static i32 ONION_ADDRESS_LEN = 56;
+export static i32 ED25519_PUBKEY_LEN = 32;
+static i32 VERSION = 3;
 
 /** `".onion checksum"`, the constant the checksum is domain-separated by. */
 u8[] checksumPrefix() { return ".onion checksum".toBytes(); }

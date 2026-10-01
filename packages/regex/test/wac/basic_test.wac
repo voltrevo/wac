@@ -47,9 +47,9 @@ import { Rewritten, compileExtended, compileExtendedIgnoreCase } from "../../src
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
 /** 1 matched, 0 did not, -1 the pattern was refused, -2 the step budget ran out. */
-const i32 MATCHED = 1;
-const i32 MISSED = 0;
-const i32 REJECTED = -1;
+static i32 MATCHED = 1;
+static i32 MISSED = 0;
+static i32 REJECTED = -1;
 
 /**
  * As `run`, case-folded — the two entry points in this package that no test in it ever called.

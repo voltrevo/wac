@@ -6521,7 +6521,7 @@ bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settle
 bool isModuleConst(C c, Program prog, string name) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         if (tokenText(c, nameTok) == name) { return true; }
       }
       default: { }
@@ -9533,7 +9533,7 @@ string declaredNameOf(C c, Decl d) {
       return tokenText(c, nameTok);
     }
     EnumDecl(nameTok, variants, exported, methods, typeParams): { return tokenText(c, nameTok); }
-    ConstDecl(nameTok, type, init, exported): { return tokenText(c, nameTok); }
+    StaticDecl(nameTok, type, init, exported): { return tokenText(c, nameTok); }
     default: { return ""; }
   }
 }
@@ -9744,7 +9744,7 @@ void checkDuplicates(C c, Program prog) {
           }
         }
       }
-      ConstDecl(nameTok, type, init, exported): { name = tokenText(c, nameTok); }
+      StaticDecl(nameTok, type, init, exported): { name = tokenText(c, nameTok); }
       default: { }
     }
     if (name == "") { continue; }
@@ -9876,7 +9876,7 @@ export void declareModule(C c, Program prog, string[] only) {
   // the way a `const P p` parameter is.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         c.declareConst(c.renamed(tokenText(c, nameTok)), typeOfTy(c, type), true);
         c.noteFuncArity(funcrefArityOfTy(c, type));
@@ -10331,7 +10331,7 @@ void checkDeclaredTypeNames(C c, Program prog) {
         for (i32 i = 0; i < params.len(); i++) { typeOfTy(c, params[i].type); }
         c.activeParamCount = 0;
       }
-      ConstDecl(nameTok, type, init, exported): { typeOfTy(c, type); }
+      StaticDecl(nameTok, type, init, exported): { typeOfTy(c, type); }
       default: { }
     }
   }
@@ -10539,7 +10539,7 @@ export void checkModule(C c, Program prog) {
   i32 settledCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         // **The initialiser is an expression, and nothing was walking it.** Every rule in this file
         // about literals, elements, defaults and names applied to a local's initialiser and to none
         // of these — `const E[] T = E[].defaulted(3)` was silent where the same line inside a function was

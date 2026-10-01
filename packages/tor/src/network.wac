@@ -120,15 +120,15 @@ import { itoa } from "../../fmt/src/itoa.wac";
  * leave it alone for the wrong reason. A description that expects to fail — the control runs, which
  * stand a network up deliberately broken — says `timeout 5000` and gets its answer in seconds.
  */
-const i32 READY_TIMEOUT_MS = 120000;
+static i32 READY_TIMEOUT_MS = 120000;
 
 /** How long the thing run across the network has to finish. */
-const i32 RUN_TIMEOUT_MS = 180000;
+static i32 RUN_TIMEOUT_MS = 180000;
 
 /** A line from the description: a server to bring up, work to do, or a state to wait for. */
-const i32 KIND_NODE = 0;
-const i32 KIND_RUN = 1;
-const i32 KIND_WAIT = 2;
+static i32 KIND_NODE = 0;
+static i32 KIND_RUN = 1;
+static i32 KIND_WAIT = 2;
 
 struct Directive {
   i32 kind;

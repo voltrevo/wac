@@ -49,7 +49,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir, madeDir, putFile } from "../../../wactest/src/host.wac";
 
-const string WACC = "packages/wac/src/wac.wac";
+static string WACC = "packages/wac/src/wac.wac";
 
 /** Where the checkout's command is built to; `.wasm` beside it is what these cases run. */
 string runnerStem(Cli cli) { return cli.cwd().wait() + "/.cache/buildcache-runner/wac"; }

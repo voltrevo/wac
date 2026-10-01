@@ -23,13 +23,13 @@
 import { Cli, Core, Event, Page, Pending, Picked } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
-const string SOURCE =
+static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/life.wac";
 
-const i32 W = 128;
-const i32 H = 96;
+static i32 W = 128;
+static i32 H = 96;
 /** Each cell is this many screen pixels square, so the canvas is 512×384. */
-const i32 SCALE = 4;
+static i32 SCALE = 4;
 
 /** Neighbours of `(x, y)` that are alive, with the edges wrapped. */
 i32 around(u8[] cells, i32 x, i32 y) {

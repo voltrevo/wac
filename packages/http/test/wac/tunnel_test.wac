@@ -23,7 +23,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
 import { withEnv, withoutEnv } from "../../../wactest/src/childenv.wac";
 
-const string ENTRY = "packages/http/example/tunnel.wac";
+static string ENTRY = "packages/http/example/tunnel.wac";
 
 string trimmedEnd(string s) {
   i32 n = s.len();

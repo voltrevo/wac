@@ -113,7 +113,7 @@ export i32 main(Core core, Cli cli) {
  * something else, all non-negative. A caller that cannot tell "no such applet" from "it ran and
  * failed" reports the wrong thing — which is the same distinction `packages/sh` needs `found` for.
  */
-export const i32 UNKNOWN = -1;
+export static i32 UNKNOWN = -1;
 
 /**
  * The table, and the only copy of it.

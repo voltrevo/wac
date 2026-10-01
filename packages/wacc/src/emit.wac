@@ -4845,7 +4845,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       // A **module-level constant** names a type as surely as a field or a parameter does, and its
       // initialiser can name another. Third time this pre-pass has been found one declaration short:
       // the rule is *every place a type can be named*, and the list is longer than it looks.
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);
         registerNamed(env, ct);
         collectArrayTypesOfExpr(env, src, lexed, init);
@@ -9250,7 +9250,7 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
       // true, and no help at all. The wanted type is written on the declaration, so this is the same
       // move the `Var` arm makes one scope down. `issues/lang/0142` is where the enumeration that
       // found it is recorded.
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         env.walkCount = 0;
         env.assignedCount = 0;
         env.walkFuncLine = lexedLine(lexed, nameTok);
@@ -12488,7 +12488,7 @@ string blockedOf(Front f) {
           return from;
         }
       }
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);
         if (isArrayType(ct) || env.isStructName(ct)) {
           i32 ci = env.constAt(tokenTextOf(src, lexed, nameTok));
@@ -13163,7 +13163,7 @@ void declareConsts(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
 
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      ConstDecl(nameTok, type, init, exported): {
+      StaticDecl(nameTok, type, init, exported): {
         if (env.constCount >= env.constNames.len()) {
           env.ranOut("constants");
           continue;

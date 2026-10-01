@@ -31,7 +31,7 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 
-const string PROBE = "packages/platform/test/wac/setexecutable_probe.wac";
+static string PROBE = "packages/platform/test/wac/setexecutable_probe.wac";
 
 /** Build for the Deno host, as `runtimes_test.wac` does. */
 bool buildDeno(T t, Cli cli, string out) {

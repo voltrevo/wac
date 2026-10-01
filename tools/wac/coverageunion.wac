@@ -67,11 +67,11 @@ export bool allDigits(string s) {
 export i32 percent(i32 n, i32 d) { return d == 0 ? 0 : (200 * n + d) / (2 * d); }
 
 /** Bit set in `flags` for a point some driver compiled. */
-const i32 EXISTS = 1;
+static i32 EXISTS = 1;
 /** Bit set for a point some driver *reached*. */
-const i32 ANY = 2;
+static i32 ANY = 2;
 /** Bit set for a point the file's own package reached. */
-const i32 OWN = 4;
+static i32 OWN = 4;
 
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();

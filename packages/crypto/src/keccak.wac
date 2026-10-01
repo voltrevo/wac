@@ -31,7 +31,7 @@
 // it and applying it uniformly is easier to check than a list of exceptions.
 
 /** The 24 round constants, from FIPS 202 Table 1. */
-const u64[] RC = [
+static u64[] RC = [
   0x0000000000000001 & 4294967295,
   0x0000000000008082 & 4294967295,
   0x800000000000808A,

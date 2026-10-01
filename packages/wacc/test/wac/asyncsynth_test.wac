@@ -20,14 +20,14 @@ import {
 } from "../../src/asyncsynth.wac";
 
 /** How many suspension slots the cases below ask for — three awaits' worth. */
-const i32 UPS = 3;
+static i32 UPS = 3;
 /** And how many states, which is what the numerals are sized from. */
-const i32 STATES = 6;
+static i32 STATES = 6;
 
 /** And how many `__wacArgK` names — an async lambda of two parameters' worth. */
-const i32 ARGS = 2;
+static i32 ARGS = 2;
 
-const string SRC = "i32 main() { return 0; }\n";
+static string SRC = "i32 main() { return 0; }\n";
 
 export string test_the_tail_is_appended_once_and_found_again() {
   T t = T.create();

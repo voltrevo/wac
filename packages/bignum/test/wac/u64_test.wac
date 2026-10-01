@@ -28,7 +28,7 @@ import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string ORACLE = "packages/bignum/test/oracle.ts";
+static string ORACLE = "packages/bignum/test/oracle.ts";
 
 /** Sixteen hex digits, big-endian — the form the oracle reads. */
 string hex16(u64 v) {

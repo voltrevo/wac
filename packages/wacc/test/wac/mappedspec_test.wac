@@ -22,8 +22,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { escapeRepo } from "../../../wacpkg/src/cache.wac";
 import { Change, Cli, Core, Exec, FileResult } from "std/platform.wac";
 
-const string REPO = "https://example.invalid/dep.git";
-const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
+static string REPO = "https://example.invalid/dep.git";
+static string COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 /** One file, with its directory made first. */
 /**

@@ -11,7 +11,7 @@
 import { beWord64, storeBE64 } from "./layout.wac";
 
 /** All ones, which a 0/1 bit multiplies up to. The mask, without a subtraction that has to wrap. */
-const u64 ALL_ONES = 0xFFFFFFFFFFFFFFFF;
+static u64 ALL_ONES = 0xFFFFFFFFFFFFFFFF;
 
 /**
  * z = x * y in GF(2^128).

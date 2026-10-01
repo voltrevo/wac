@@ -26,8 +26,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Canonical, canonicalize } from "../../src/json.wac";
 import { ERR_NONE } from "../../src/parse.wac";
 
-const string ORACLE = "packages/json/test/oracle.ts";
-const string DIR = "packages/json/test/jsontestsuite";
+static string ORACLE = "packages/json/test/oracle.ts";
+static string DIR = "packages/json/test/jsontestsuite";
 
 /** One document: its name, its bytes, and what the name says the answer is. */
 struct Case {

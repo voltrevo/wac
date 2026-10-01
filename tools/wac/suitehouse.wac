@@ -284,7 +284,7 @@ export string mergedTimes(string existing, string[] fresh) {
  *
  * Reports only when it acted, like the sweeps above.
  */
-const i64 STALE_MS = 7200000 as i64;
+static i64 STALE_MS = 7200000 as i64;
 
 export void reapStaleDaemons(Core core, Cli cli) {
   reapMatching(core, cli, cli.cwd().wait() + "/.cache/", STALE_MS);

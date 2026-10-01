@@ -11,7 +11,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Entry, selectCircuit, retirable, maxDirtinessMs } from "../../src/pool.wac";
 
-const i64 T0 = 1000000000000;
+static i64 T0 = 1000000000000;
 
 Entry e(i32 id, string iso, i64 firstUsed) { return Entry(id, iso, firstUsed, false, 0); }
 

@@ -50,7 +50,7 @@ import { Core, Cli } from "std/platform.wac";
 import { blockedFiles, emitDeclineFiles, emitFilesSelfDescribing } from "../../src/api.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 
-const string ENTRY = "/pn/main.wac";
+static string ENTRY = "/pn/main.wac";
 
 string[] pnPaths() {
   return ["/pn/held.wac", "/pn/lib.wac", "/pn/stranger.wac", ENTRY];

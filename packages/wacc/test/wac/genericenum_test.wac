@@ -7,11 +7,11 @@ import { T } from "../../../wactest/src/assert.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
 import { diagnoseFiles } from "../../src/api.wac";
 
-const string ENTRY = "/t/m.wac";
+static string ENTRY = "/t/m.wac";
 
-const string MAYBE = "enum Maybe<T> {\n  Just(T v), Absent\n\n" +
+static string MAYBE = "enum Maybe<T> {\n  Just(T v), Absent\n\n" +
   "  T orElse(const this, T d) { return match (this) { Just(v): v, Absent: d }; }\n}\n";
-const string PLAIN = "enum E {\n  A(i32 v), B\n\n" +
+static string PLAIN = "enum E {\n  A(i32 v), B\n\n" +
   "  i32 get(const this) { return match (this) { A(v): v, B: 0 }; }\n}\n";
 
 /** Every diagnostic's message — field 4 of the wire. */

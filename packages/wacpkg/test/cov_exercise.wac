@@ -99,10 +99,10 @@ string[] manifests() {
 /** One import entry, as a manifest fragment. */
 string entryOf(string name) { return "'" + name + "': { git: 'g', ref: 'r' }"; }
 
-const string A40 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const string B40 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const string C40 = "cccccccccccccccccccccccccccccccccccccccc";
-const string D40 = "dddddddddddddddddddddddddddddddddddddddd";
+static string A40 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static string B40 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+static string C40 = "cccccccccccccccccccccccccccccccccccccccc";
+static string D40 = "dddddddddddddddddddddddddddddddddddddddd";
 
 string lockText() {
   return "{ imports: {\n" +

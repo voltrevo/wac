@@ -25,7 +25,7 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir, putFile } from "../../../wactest/src/host.wac";
 
-const string PROBE =
+static string PROBE =
   "import { Core, Cli } from \"std/platform.wac\";\n"
   + "export i32 main(Core core, Cli cli) {\n"
   + "  u8[]? id = cli.env(\"WAC_COMPILER_ID\").wait();\n"

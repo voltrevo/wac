@@ -21,8 +21,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
 
-const string IMPORTED = "import { Unzipped, unzip } from \"./a.wac\";\n";
-const string LOCAL = "enum Object { Ok(i32 kind, u8[] content), Bad(string why) }\n";
+static string IMPORTED = "import { Unzipped, unzip } from \"./a.wac\";\n";
+static string LOCAL = "enum Object { Ok(i32 kind, u8[] content), Bad(string why) }\n";
 
 /**
  * The codes this checker reports for one file, with nothing else supplied — **except the import**.

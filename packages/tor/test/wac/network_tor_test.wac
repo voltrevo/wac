@@ -44,7 +44,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
 /** How long a network gets before the bound is called a wedge, in seconds. */
-const i32 BOUND_SECONDS = 330;
+static i32 BOUND_SECONDS = 330;
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -150,7 +150,7 @@ string report(Cli cli, Ran r) {
          "\n--- stdout ---\n" + tail(r.out, 25);
 }
 
-const string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
+static string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
                     " -M v.consensus.micro -m v.consensus.mds";
 
 /**

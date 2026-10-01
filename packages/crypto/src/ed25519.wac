@@ -57,8 +57,8 @@ import {
  * than producing a curve nobody recognises. They also agree with ref10's published `d` and `d2`, which
  * is a second opinion this repository did not write.
  */
-const i64[] D_LIMBS = [-10913610, 13857413, -15372611, 6949391, 114729, -8787816, -6275908, -3247719, -18696448, -12055116];
-const i64[] D2_LIMBS = [-21827239, -5839606, -30745221, 13898782, 229458, 15978800, -12551817, -6495438, 29715968, 9444199];
+static i64[] D_LIMBS = [-10913610, 13857413, -15372611, 6949391, 114729, -8787816, -6275908, -3247719, -18696448, -12055116];
+static i64[] D2_LIMBS = [-21827239, -5839606, -30745221, 13898782, 229458, 15978800, -12551817, -6495438, 29715968, 9444199];
 
 /**
  * d = -121665/121666, the curve parameter. A copy, because a caller may carry it in place.
@@ -104,7 +104,7 @@ export i64[] curveD2Derived() { return feMulSmall(curveDDerived(), 2); }
  * still here and why the test compares against it rather than against a second copy of the limbs:
  * the exponent is the part that can be quietly wrong, and it is checked, once.
  */
-const i64[] SQRT_M1_LIMBS = [-32595792, -7943725, 9377950, 3500415, 12389472, -272473, -25146209, -2005654, 326686, 11406482];
+static i64[] SQRT_M1_LIMBS = [-32595792, -7943725, 9377950, 3500415, 12389472, -272473, -25146209, -2005654, 326686, 11406482];
 
 i64[] sqrtM1() { return feCopy(SQRT_M1_LIMBS); }
 
@@ -143,8 +143,8 @@ export Point ptIdentity() { return Point(feZero(), feOne(), feOne(), feZero()); 
  * `packages/crypto/test/wac/ed25519const_test.wac` requires this to equal it, so the recovery code is
  * still exercised on this point on every test run; what is gone is paying for it per operation.
  */
-const i64[] BASE_X_LIMBS = [-14297830, -7645148, 16144683, -16471763, 27570974, -2696100, -26142465, 8378389, 20764389, 8758491];
-const i64[] BASE_Y_LIMBS = [-26843541, -6710886, 13421773, -13421773, 26843546, 6710886, -13421773, 13421773, -26843546, -6710886];
+static i64[] BASE_X_LIMBS = [-14297830, -7645148, 16144683, -16471763, 27570974, -2696100, -26142465, 8378389, 20764389, 8758491];
+static i64[] BASE_Y_LIMBS = [-26843541, -6710886, 13421773, -13421773, 26843546, 6710886, -13421773, 13421773, -26843546, -6710886];
 
 export Point ptBase() {
   i64[] x = feCopy(BASE_X_LIMBS);
@@ -297,7 +297,7 @@ export Point ptMul(u8[] scalar, Point p) {
  * the two is the classic Ed25519 error and produces signatures that verify only against
  * the same broken implementation.
  */
-const u8[] L = [
+static u8[] L = [
   0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
   0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

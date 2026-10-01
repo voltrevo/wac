@@ -29,8 +29,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/platform/test/cov_exercise.wac";
-const string PREFIX = "packages/platform/";
+static string EXERCISE = "packages/platform/test/cov_exercise.wac";
+static string PREFIX = "packages/platform/";
 
 /** What the tests need: a process to build and spawn children, sockets, and a temp dir. */
 string[] grants() {

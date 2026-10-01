@@ -30,16 +30,16 @@
 import { Cli, Core, Event, Page, Pending } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
-const string SOURCE =
+static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/ripple.wac";
 
-const i32 W = 200;
-const i32 H = 150;
-const i32 SCALE = 3;
+static i32 W = 200;
+static i32 H = 150;
+static i32 SCALE = 3;
 /** Fixed-point fraction bits: heights are in 1/256ths of a unit. */
-const i32 SHIFT = 8;
+static i32 SHIFT = 8;
 /** How hard a click hits the surface, in fixed point. */
-const i32 DROP = 90 << SHIFT;
+static i32 DROP = 90 << SHIFT;
 
 /**
  * One timestep of the wave equation, from `before` and `now` into `next`.

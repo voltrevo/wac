@@ -82,7 +82,7 @@ import { DirAction, dirStep, filed } from "./dirstep.wac";
 import { PUB_OK } from "./hsstore.wac";
 
 /** How many onion service descriptors this relay will hold as an HSDir. */
-const i32 MAX_STORED_DESCRIPTORS = 32;
+static i32 MAX_STORED_DESCRIPTORS = 32;
 import { microdescDigests } from "./microdesc.wac";
 import {
   Link, chunkRequest, connectRelay, feedLink, handshakeTls, itoa, linkHandshake, pump, sendCells,
@@ -138,12 +138,12 @@ import {
 import { slice } from "../../bytes/src/slice.wac";
 
 /** How long a circuit may be silent before the connection is dropped. */
-const i32 IDLE_TIMEOUT_MS = 120000;
+static i32 IDLE_TIMEOUT_MS = 120000;
 /** How often a relay that is waiting for its directory documents looks to see whether they exist. */
-const i32 DIR_POLL_MS = 500;
+static i32 DIR_POLL_MS = 500;
 
 /** How many connections a relay will hold at once. Beyond this it refuses rather than collapses. */
-export const i32 MAX_CONNS = 64;
+export static i32 MAX_CONNS = 64;
 
 /**
  * How many circuits one connection may carry.
@@ -152,7 +152,7 @@ export const i32 MAX_CONNS = 64;
  * predictive building adds a few more. Eight is well clear of that and keeps the wait list, which is
  * rebuilt from every connection's circuits each round, a size worth walking.
  */
-export const i32 MAX_CIRCS = 8;
+export static i32 MAX_CIRCS = 8;
 
 /**
  * How much of the platform's ring to leave for everything that is not a wait-list entry.
@@ -161,7 +161,7 @@ export const i32 MAX_CIRCS = 8;
  * each holds a slot for as long as it takes. Sixteen of 128 is room for those with the wait list at
  * its ceiling.
  */
-const i32 RING_MARGIN = 16;
+static i32 RING_MARGIN = 16;
 
 /**
  * Whether one more circuit fits inside the ring, given what is outstanding now.
@@ -196,11 +196,11 @@ export bool ringHasRoom(i32 held) { return held + 2 <= CALL_SLOTS - RING_MARGIN;
  * digest has to be threaded out of the relay crypto. `sendmeBodyV1` in `relay.wac` is there for the
  * day a consensus raises that minimum.
  */
-const i32 STREAM_SENDME_EVERY = 50;
-const i32 CIRCUIT_SENDME_EVERY = 100;
+static i32 STREAM_SENDME_EVERY = 50;
+static i32 CIRCUIT_SENDME_EVERY = 100;
 
 /** An hour in seconds, for certificate lifetimes. */
-const i64 HOUR = 3600;
+static i64 HOUR = 3600;
 
 /**
  * Everything a relay is, on disk.

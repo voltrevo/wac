@@ -36,8 +36,8 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { escapeRepo } from "../../src/cache.wac";
 import { Cli, Core, Exec } from "std/platform.wac";
 
-const string REPO = "https://example.invalid/dep.git";
-const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
+static string REPO = "https://example.invalid/dep.git";
+static string COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 /** `wac update` in `dir`, with `$WAC_HOME` pointed at the fixture's cache. */
 Exec update(Cli cli, string home, string dir) {

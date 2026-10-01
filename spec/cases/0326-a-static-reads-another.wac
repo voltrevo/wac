@@ -1,0 +1,8 @@
+// expect: answers f = 192
+// why: a module-level `static` is its value wherever it is read, and may read another static
+// from: the `static` flip (design/lang/0016), spec/next ch27
+static i32 BLOCK = 64;
+static i32 TWO_BLOCKS = BLOCK * 2;
+export static i32 SIZE = BLOCK;
+
+export i32 f() { return TWO_BLOCKS + SIZE; }

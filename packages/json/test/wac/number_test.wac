@@ -17,7 +17,7 @@ import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { parseNumberValue } from "../../src/json.wac";
 
-const string ORACLE = "packages/json/test/oracle.ts";
+static string ORACLE = "packages/json/test/oracle.ts";
 
 /** The eight bytes of an f64, big-endian, as hex — the form the oracle reads. */
 string bits64(f64 x) {

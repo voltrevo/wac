@@ -23,7 +23,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { diagnoseGraph, diagnoseGraphRendered, wireHasErrors } from "../../src/api.wac";
 import { MESSAGE, PHASE, bySeverity, messagesOf, wireField } from "./wire_probe.wac";
 
-const string PATH = "/m.wac";
+static string PATH = "/m.wac";
 
 string wireOf(string src) { return diagnoseGraph([PATH], [src], PATH); }
 string renderedOf(string src) {
@@ -32,9 +32,9 @@ string renderedOf(string src) {
 string[] warningsIn(string src) { return bySeverity(wireOf(src), true); }
 string[] errorsIn(string src) { return bySeverity(wireOf(src), false); }
 
-const string DECLS =
+static string DECLS =
   "struct A { i32 a; }\nstruct B { i32 b; }\nstruct P { i32 n; }\nstruct Q : P { i32 m; }\n";
-const string IS_NULL =
+static string IS_NULL =
   "struct P { i32 n; }\nexport i32 f(P p) { return p is null ? 1 : 0; }\n";
 
 export string test_a_non_null_reference_tested_against_null_warns_and_still_compiles() {

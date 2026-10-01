@@ -22,7 +22,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Port, freePortOr, freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, haveAnvil, runExample, stopAnvil } from "./anvil_probe.wac";
 
-const string ENTRY = "packages/ethrpc/example/blocknumber.wac";
+static string ENTRY = "packages/ethrpc/example/blocknumber.wac";
 
 string trimmedEnd(string s) {
   i32 n = s.len();

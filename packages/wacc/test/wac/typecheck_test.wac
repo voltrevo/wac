@@ -1465,8 +1465,8 @@ export string test_rung3_array_elements_duplicate_parameters_and_module_level_co
     "export void f(i32 a, i32 a) { }",
     "struct S { i32 v; void m(this, i32 a, f64 a) { } }",
     // A module-level const is const everywhere, including through a field.
-    "const i32 K = 1; export void f() { K = 2; }",
-    "struct P { i32 v; } const P S = P(1); export void f() { S.v = 9; }"
+    "static i32 K = 1; export void f() { K = 2; }",
+    "struct P { i32 v; } static P S = P(1); export void f() { S.v = 9; }"
   ],
   [
     // The element type accepts a literal the same way an initialiser does.
@@ -1480,8 +1480,8 @@ export string test_rung3_array_elements_duplicate_parameters_and_module_level_co
     "export void f(i32 a, i32 b) { }",
     "struct S { i32 v; void m(this, i32 a) { } void n(this, i32 a) { } }",
     // Reading a module-level const, and a local of the same name in a body.
-    "const i32 K = 1; export i32 f() { return K; }",
-    "struct P { i32 v; } const P S = P(1); export i32 f() { return S.v; }"
+    "static i32 K = 1; export i32 f() { return K; }",
+    "struct P { i32 v; } static P S = P(1); export i32 f() { return S.v; }"
   ],
   "elements, parameters and module consts");
   return t.report();
@@ -1795,7 +1795,7 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
     "struct X { i32 n; i32 t(const this) { i32 v = this.n; v = 5; return v; } }",
     // A string is a reference and an immutable one: assigning a new string mutates nothing, so
     // aliasing a const string carries no constness. Seven sites in one file said so.
-    "const string B = \"x\"; export void f() { string s = B; s = s + \"y\"; }"
+    "static string B = \"x\"; export void f() { string s = B; s = s + \"y\"; }"
   ],
   "a literal's value and a const alias");
   return t.report();
@@ -2207,8 +2207,8 @@ export string test_rung3_arity_loop_depth_representation_and_compile_time_consta
     "export void f() { u8? x = null; }",
     "export void f(i8? y) { }",
     // A constant computed by calling something.
-    "i32 n() { return 3; } const i32 K = n(); export i32 f() { return K; }",
-    "i32 n() { return 3; } const i32[] T = i32[].filled(n(), 0); export i32 f() { return T[0]; }"
+    "i32 n() { return 3; } static i32 K = n(); export i32 f() { return K; }",
+    "i32 n() { return 3; } static i32[] T = i32[].filled(n(), 0); export i32 f() { return T[0]; }"
   ],
   [
     // Every enclosing form that makes `break` legal. **`continue` in a switch was here** and both
@@ -2233,9 +2233,9 @@ export string test_rung3_arity_loop_depth_representation_and_compile_time_consta
     "export i32 ok2(i32? x) { return 1; }",
     // Constants that are computable: arithmetic on literals, and a construction, which is a shape
     // rather than a computation.
-    "const i32 K = 1 + 2; export i32 ok() { return K; }",
-    "struct P { i32 v; } const P S = P(1); export i32 ok() { return S.v; }",
-    "const i32[] T = i32[].filled(3, 0); export i32 ok() { return T[0]; }"
+    "static i32 K = 1 + 2; export i32 ok() { return K; }",
+    "struct P { i32 v; } static P S = P(1); export i32 ok() { return S.v; }",
+    "static i32[] T = i32[].filled(3, 0); export i32 ok() { return T[0]; }"
   ],
   "arity, loop depth, representation and constants");
   return t.report();
@@ -2305,7 +2305,7 @@ export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declar
     // Every binder, one per line. A gap in any of these is a false alarm rather than a missed case.
     "export i32 local() { i32 v = 1; return v; }",
     "export i32 param(i32 v) { return v; }",
-    "const i32 G = 1; export i32 global() { return G; }",
+    "static i32 G = 1; export i32 global() { return G; }",
     "struct P { i32 x; i32 m(const this) { return this.x; } }",
     "export i32 fwd() { i32 later = 1; return later; }",
     "export i32 loopVar() { for (i32 i = 0; i < 2; i++) { } return 0; }",

@@ -22,7 +22,7 @@ import { memberText } from "../../../wactest/src/fixtures.wac";
 import { JsonValue } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 
-const string ORACLE = "packages/tor/test/oracle.mjs";
+static string ORACLE = "packages/tor/test/oracle.mjs";
 
 /** A named field of one of the generated-document JSON files, or `""` if anything went wrong. */
 string field(T t, Cli cli, string file, string key) {

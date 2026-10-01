@@ -3,5 +3,5 @@
 // from: specSingle's §wac-modconst-notconst cluster
 enum E { A(i32 v), B }
 i32 f() { return 1; }
-const E X = E.A(f());
+static E X = E.A(f());
 export i32 g() { return 0; }

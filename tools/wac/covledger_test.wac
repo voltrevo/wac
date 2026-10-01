@@ -25,9 +25,9 @@ import { freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { Core, Cli, Change } from "std/platform.wac";
 
 /** Line 1 of the subject, which the covered point sits on. */
-const string COVERED_SNIPPET = "i32 reached() { return 1; }";
+static string COVERED_SNIPPET = "i32 reached() { return 1; }";
 /** Line 2, which the uncovered point sits on. */
-const string UNCOVERED_SNIPPET = "i32 neverCalled() { return 2; }";
+static string UNCOVERED_SNIPPET = "i32 neverCalled() { return 2; }";
 
 /**
  * A second subject with a *shape*: a struct, a method inside it, and a body line inside that.

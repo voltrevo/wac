@@ -261,7 +261,7 @@ i64 normalise(i64[] h) {
  * argued at `reduceWide`; the fourth pass is margin, and a pass with `k` already zero adds zero and
  * costs `2n` additions.
  */
-const i32 FOLD_ROUNDS = 4;
+static i32 FOLD_ROUNDS = 4;
 
 /**
  * Reduce a 2n-word product modulo p. `c` is consumed.

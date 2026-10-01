@@ -50,7 +50,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 
-const i32 RELAYS = 3;
+static i32 RELAYS = 3;
 
 /**
  * How long any single read waits before the case calls it a failure.
@@ -58,7 +58,7 @@ const i32 RELAYS = 3;
  * Ten seconds is far more than a loopback circuit needs and far less than the suite's patience —
  * the point is only that it is finite. See `carry` for what an infinite one cost.
  */
-const i32 READ_MS = 10000;
+static i32 READ_MS = 10000;
 
 /** Every program this needs, built once and cached under `.cache/`. */
 struct Built {

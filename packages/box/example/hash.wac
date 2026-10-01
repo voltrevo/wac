@@ -29,7 +29,7 @@ import { encode as hexBytes } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
-const string SOURCE =
+static string SOURCE =
   "https://github.com/voltrevo/wac-mono/blob/master/packages/box/example/README.md#hashwac";
 
 /**
@@ -38,7 +38,7 @@ const string SOURCE =
  * Not a limit of anything below it — `gzip` compresses whatever it is handed. It is a limit on
  * how long a demonstration may sit silent.
  */
-const i32 LIMIT = 8388608;
+static i32 LIMIT = 8388608;
 
 export i32 page(Core core, Cli cli, Page page) {
   page.title("wac: hash and compress").wait();

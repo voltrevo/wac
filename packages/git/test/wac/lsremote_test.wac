@@ -47,7 +47,7 @@ import { has } from "../../../wactest/src/strings.wac";
 
 // Small enough to be polite, and it carries the shapes: heads, lightweight tags, an annotated tag
 // with a peeled entry, and four thousand `refs/pull/*` with deep names.
-const string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
+static string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
 
 string trimmedEnd(string s) {
   i32 n = s.len();

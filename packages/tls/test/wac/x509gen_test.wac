@@ -27,7 +27,7 @@ import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac"
 import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
-const string ORACLE = "packages/tls/test/oracle.mjs";
+static string ORACLE = "packages/tls/test/oracle.mjs";
 
 /** What openssl made of one certificate: `cert <0|1> <subject-hex> <keytype-hex>`. */
 struct Facts {
@@ -43,8 +43,8 @@ Facts factsOf(string line) {
 }
 
 // 2026-08-05 and a year later, well inside UTCTime's range.
-const i64 NOT_BEFORE = 1785888000;
-const i64 NOT_AFTER = 1817424000;
+static i64 NOT_BEFORE = 1785888000;
+static i64 NOT_AFTER = 1817424000;
 
 export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, Cli cli) {
   T t = T.create();

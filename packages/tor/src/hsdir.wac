@@ -42,13 +42,13 @@ import {
 } from "./hsblind.wac";
 
 /** `hsdir_n_replicas`, consensus parameter, default 2. */
-export const i32 HSDIR_N_REPLICAS_DEFAULT = 2;
+export static i32 HSDIR_N_REPLICAS_DEFAULT = 2;
 /** `hsdir_spread_fetch` — how many of the following relays a *client* may pick from. Default 3. */
-export const i32 HSDIR_SPREAD_FETCH_DEFAULT = 3;
+export static i32 HSDIR_SPREAD_FETCH_DEFAULT = 3;
 /** `hsdir_spread_store` — how many a *service* uploads to. Default 4, and larger than fetch on
  *  purpose: a descriptor is stored more widely than it is looked for, so the system tolerates an
  *  HSDir disappearing between the upload and the fetch. */
-export const i32 HSDIR_SPREAD_STORE_DEFAULT = 4;
+export static i32 HSDIR_SPREAD_STORE_DEFAULT = 4;
 
 /** A big-endian u64, which is how every field of both indices is written. */
 u8[] u64be(i64 v) {

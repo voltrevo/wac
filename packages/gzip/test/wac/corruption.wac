@@ -23,7 +23,7 @@ import { gzipBest } from "../../src/gzip.wac";
 import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
 
-const string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
+static string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
 
 /** What a sweep found. Every count a caller asserts on is here rather than asserted inside. */
 export struct Swept {

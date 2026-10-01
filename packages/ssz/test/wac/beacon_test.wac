@@ -28,7 +28,7 @@ import { beaconTypesMainnet, beaconFields, TY_UINT8, TY_UINT64, TY_BYTES32, TY_B
          TY_LIGHT_CLIENT_FINALITY_UPDATE,
          TY_LIGHT_CLIENT_OPTIMISTIC_UPDATE } from "../../src/beacon.wac";
 
-const string MANIFEST = "packages/ssz/test/fixtures.json";
+static string MANIFEST = "packages/ssz/test/fixtures.json";
 
 string[] containers() {
   return [

@@ -31,8 +31,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/codec/test/cov_exercise.wac";
-const string PREFIX = "packages/codec/";
+static string EXERCISE = "packages/codec/test/cov_exercise.wac";
+static string PREFIX = "packages/codec/";
 
 /**
  * The exports that trap by contract, called one at a time with the trap caught.

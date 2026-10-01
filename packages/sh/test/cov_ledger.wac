@@ -29,8 +29,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { LedgerFlags, Measured, measure, report, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/sh/test/cov_exercise.wac";
-const string PREFIX = "packages/sh/";
+static string EXERCISE = "packages/sh/test/cov_exercise.wac";
+static string PREFIX = "packages/sh/";
 
 /**
  * Nothing, and that is the point of `test/wac/probe.wac`.

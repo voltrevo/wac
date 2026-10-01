@@ -42,9 +42,9 @@ import { Vec } from "core/vec.wac";
  * command it is asking about. That is a better subject than either function was: it is where a flag
  * is *declared* rather than one of the places one was checked.
  */
-const string CLI = "packages/wac/src/wac.wac";
-const string CMD_DIR = "packages/wac/src";
-const string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
+static string CLI = "packages/wac/src/wac.wac";
+static string CMD_DIR = "packages/wac/src";
+static string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
 
 /**
  * Flags `wac test` accepts but no row supplies, with the reason each is out of scope.

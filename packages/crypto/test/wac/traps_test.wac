@@ -380,9 +380,9 @@ export string test_traps_ed25519_refuses_a_128_byte_expanded_secret_for_signing(
 // ML-KEM-768. The share lengths are spelled out rather than read from the module, so a refusal test
 // does not follow its own bound wherever it moves.
 
-const i32 EK_LEN = 1184;
-const i32 DK_LEN = 2400;
-const i32 CT_LEN = 1088;
+static i32 EK_LEN = 1184;
+static i32 DK_LEN = 2400;
+static i32 CT_LEN = 1088;
 
 u8[] goodBoth() { return mlkemKeyGen(u8[].filled(64, 0)); }
 u8[] goodEk() { return slice(goodBoth(), 0, EK_LEN); }
@@ -659,10 +659,10 @@ export string test_traps_p256_sign_on_a_33_byte_nonce() {
 // square root that search returns; `test_the_small_x_point_is_on_the_curve` is what says the pair is
 // genuine, so the refusal is about the encoding rather than about the point.
 
-const string SMALL_X = "0000000000000000000000000000000000000000000000000000000000000005";
-const string SMALL_Y = "459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc";
+static string SMALL_X = "0000000000000000000000000000000000000000000000000000000000000005";
+static string SMALL_Y = "459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc";
 /** x + p, which is the same x modulo p and a different 32 bytes. */
-const string SMALL_X_PLUS_P =
+static string SMALL_X_PLUS_P =
   "ffffffff00000001000000000000000000000001000000000000000000000004";
 
 u8[] uncompressed(string x, string y) {
@@ -705,11 +705,11 @@ u8[] wide48(string h) {
  * it is one in 2^255. That makes P-384's out-of-range band unreachable by accident and no harder to
  * construct on purpose — **x = 2** is on the curve, and 2 + p fits in 48 bytes.
  */
-const string P384_X = "2";
-const string P384_Y =
+static string P384_X = "2";
+static string P384_Y =
   "8cdeadbbd04911a3c1931e26df3fa6439dca9c7eb286fbd46fc319f0e2bb7802" +
   "32baf57825fc0c1912ada2fefe84024c";
-const string P384_X_PLUS_P =
+static string P384_X_PLUS_P =
   "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
   "ffffffff000000000000000100000001";
 

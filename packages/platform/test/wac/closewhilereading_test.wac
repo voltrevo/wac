@@ -35,12 +35,12 @@ import { itoa } from "../../../fmt/src/itoa.wac";
  * immediate when it happens at all — the control proves that in well under a millisecond — so this
  * is three orders of magnitude of margin rather than a guess.
  */
-const i32 WAIT_MS = 1000;
+static i32 WAIT_MS = 1000;
 
 /** What is outstanding on the server socket when it is closed. */
-const i32 MODE_NO_READ = 0;
-const i32 MODE_LIVE_READ = 1;
-const i32 MODE_CANCELLED = 2;
+static i32 MODE_NO_READ = 0;
+static i32 MODE_LIVE_READ = 1;
+static i32 MODE_CANCELLED = 2;
 
 /** What the client saw after the server closed. */
 struct Saw {

@@ -281,7 +281,7 @@ export i32 circuitReady() { return 3; }
 export i32 circuitFailed() { return -1; }
 
 /** How many guards to consider before giving up. Tor keeps a primary list of three. */
-const i32 GUARD_TRIES = 8;
+static i32 GUARD_TRIES = 8;
 
 export Guard connectGuard(Core core, Cli cli, Network n) {
   Guard bad = Guard(false, Link(core, cli, "", -1, u8[](), u8[](), true, u8[](), false), -1, "");

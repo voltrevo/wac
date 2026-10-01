@@ -63,8 +63,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/bls/test/cov_exercise.wac";
-const string PREFIX = "packages/bls/";
+static string EXERCISE = "packages/bls/test/cov_exercise.wac";
+static string PREFIX = "packages/bls/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the Python oracle. */
 string[] grants() {

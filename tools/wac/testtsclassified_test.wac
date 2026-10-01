@@ -35,7 +35,7 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
-const string ISSUE_NAME = "0161-moving-the-suite-off-deno-the-order.md";
+static string ISSUE_NAME = "0161-moving-the-suite-off-deno-the-order.md";
 
 /**
  * The issue, wherever it currently lives.

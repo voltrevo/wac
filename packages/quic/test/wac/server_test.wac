@@ -38,7 +38,7 @@ import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { answer, done, flight, readable, streamBytes } from "./srv_probe.wac";
 import { readIfPresent, pause } from "./peer.wac";
 
-const string CLIENT = "packages/quic/test/quicclient.ts";
+static string CLIENT = "packages/quic/test/quicclient.ts";
 
 u8[] scid() { return decoded("a1b2c3d4"); }
 

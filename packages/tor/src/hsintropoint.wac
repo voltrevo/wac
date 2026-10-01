@@ -32,18 +32,18 @@
 // been caught three times already.
 
 /** `NUM_INTRO_POINTS_DEFAULT` — how many a service maintains at once. */
-export const i32 NUM_INTRO_POINTS_DEFAULT = 3;
+export static i32 NUM_INTRO_POINTS_DEFAULT = 3;
 
 /** `INTRO_POINT_MIN_LIFETIME_INTRODUCTIONS`, and its double. Exclusive upper bound. */
-export const i32 INTRO_POINT_MIN_INTRODUCE2 = 16384;
-export const i32 INTRO_POINT_MAX_INTRODUCE2 = 32768;
+export static i32 INTRO_POINT_MIN_INTRODUCE2 = 16384;
+export static i32 INTRO_POINT_MAX_INTRODUCE2 = 32768;
 
 /** `INTRO_POINT_LIFETIME_MIN_SECONDS` and `..._MAX_SECONDS`. Exclusive upper bound. */
-export const i64 INTRO_POINT_MIN_LIFETIME = 64800;   // 18 hours
-export const i64 INTRO_POINT_MAX_LIFETIME = 86400;   // 24 hours
+export static i64 INTRO_POINT_MIN_LIFETIME = 64800;   // 18 hours
+export static i64 INTRO_POINT_MAX_LIFETIME = 86400;   // 24 hours
 
 /** `MAX_INTRO_POINT_CIRCUIT_RETRIES` — how many times a circuit to it may fail before giving up. */
-export const i32 MAX_INTRO_POINT_CIRCUIT_RETRIES = 3;
+export static i32 MAX_INTRO_POINT_CIRCUIT_RETRIES = 3;
 
 /** An introduction point as the service holds it, with the two limits it was born with. */
 export struct ServiceIntro {

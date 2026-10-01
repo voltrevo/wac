@@ -40,7 +40,7 @@ import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /** The shortest repeated unit worth reporting. Below this it is punctuation, not prose. */
-const i32 FLOOR = 12;
+static i32 FLOOR = 12;
 
 /**
  * The length of the shortest unit `b[from, to)` is two or more copies of, or `0`.

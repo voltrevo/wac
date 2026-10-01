@@ -19,8 +19,8 @@ import { ackLargest, closeReason, closeReasonAtIn, cryptoLen, cryptoWhole, frame
          walkWhole } from "./frame_probe.wac";
 import { anInitial } from "./minted.wac";
 
-const i32 EPOCH_INITIAL = 0;
-const i32 EPOCH_1RTT = 3;
+static i32 EPOCH_INITIAL = 0;
+static i32 EPOCH_1RTT = 3;
 
 /** Bytes from a list of small integers, which is how the hand-built frames below read. */
 u8[] bytesOf(i32[] vs) {

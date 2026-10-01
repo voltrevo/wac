@@ -44,7 +44,7 @@ import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 
-const string ORACLE = "packages/http/test/oracle_node.mjs";
+static string ORACLE = "packages/http/test/oracle_node.mjs";
 
 /** What llhttp made of one case. */
 export enum Outcome {

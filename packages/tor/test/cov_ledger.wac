@@ -52,8 +52,8 @@ import { Core, Cli } from "std/platform.wac";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/tor/test/cov_exercise.wac";
-const string PREFIX = "packages/tor/";
+static string EXERCISE = "packages/tor/test/cov_exercise.wac";
+static string PREFIX = "packages/tor/";
 
 /** Sockets to relays and to C tor, a process to start it, and the vendored directory documents. */
 string[] grants() {

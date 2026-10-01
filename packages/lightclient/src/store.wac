@@ -34,33 +34,33 @@ import { fastAggregateVerify } from "../../bls/src/verify.wac";
 import { syncCommitteeSigningRoot } from "./domain.wac";
 
 /** Slots per sync committee period, minimal config: SLOTS_PER_EPOCH 8 x EPOCHS_PER_PERIOD 8. */
-export const i64 SLOTS_PER_SYNC_COMMITTEE_PERIOD = 64;
+export static i64 SLOTS_PER_SYNC_COMMITTEE_PERIOD = 64;
 /** `Slot(SLOTS_PER_EPOCH * EPOCHS_PER_SYNC_COMMITTEE_PERIOD)`. */
-export const i64 UPDATE_TIMEOUT = 64;
-export const i32 MIN_SYNC_COMMITTEE_PARTICIPANTS = 1;
+export static i64 UPDATE_TIMEOUT = 64;
+export static i32 MIN_SYNC_COMMITTEE_PARTICIPANTS = 1;
 
 // Generalized indices, Altair. Electra moves these — see `packages/ssz`'s proof tests.
-const i64 FINALIZED_ROOT_GINDEX = 105;
-const i64 CURRENT_SYNC_COMMITTEE_GINDEX = 54;
-const i64 NEXT_SYNC_COMMITTEE_GINDEX = 55;
+static i64 FINALIZED_ROOT_GINDEX = 105;
+static i64 CURRENT_SYNC_COMMITTEE_GINDEX = 54;
+static i64 NEXT_SYNC_COMMITTEE_GINDEX = 55;
 
 // Field indices, from `packages/ssz`'s `beaconFields`.
-const i32 UPDATE_ATTESTED_HEADER = 0;
-const i32 UPDATE_NEXT_SYNC_COMMITTEE = 1;
-const i32 UPDATE_NEXT_SYNC_COMMITTEE_BRANCH = 2;
-const i32 UPDATE_FINALIZED_HEADER = 3;
-const i32 UPDATE_FINALITY_BRANCH = 4;
-const i32 UPDATE_SYNC_AGGREGATE = 5;
-const i32 UPDATE_SIGNATURE_SLOT = 6;
-const i32 BOOTSTRAP_HEADER = 0;
-const i32 BOOTSTRAP_CURRENT_SYNC_COMMITTEE = 1;
-const i32 BOOTSTRAP_CURRENT_SYNC_COMMITTEE_BRANCH = 2;
-const i32 HEADER_BEACON = 0;
-const i32 BEACON_SLOT = 0;
-const i32 BEACON_STATE_ROOT = 3;
-const i32 AGGREGATE_BITS = 0;
-const i32 AGGREGATE_SIGNATURE = 1;
-const i32 COMMITTEE_PUBKEYS = 0;
+static i32 UPDATE_ATTESTED_HEADER = 0;
+static i32 UPDATE_NEXT_SYNC_COMMITTEE = 1;
+static i32 UPDATE_NEXT_SYNC_COMMITTEE_BRANCH = 2;
+static i32 UPDATE_FINALIZED_HEADER = 3;
+static i32 UPDATE_FINALITY_BRANCH = 4;
+static i32 UPDATE_SYNC_AGGREGATE = 5;
+static i32 UPDATE_SIGNATURE_SLOT = 6;
+static i32 BOOTSTRAP_HEADER = 0;
+static i32 BOOTSTRAP_CURRENT_SYNC_COMMITTEE = 1;
+static i32 BOOTSTRAP_CURRENT_SYNC_COMMITTEE_BRANCH = 2;
+static i32 HEADER_BEACON = 0;
+static i32 BEACON_SLOT = 0;
+static i32 BEACON_STATE_ROOT = 3;
+static i32 AGGREGATE_BITS = 0;
+static i32 AGGREGATE_SIGNATURE = 1;
+static i32 COMMITTEE_PUBKEYS = 0;
 
 /**
  * The client's whole state.

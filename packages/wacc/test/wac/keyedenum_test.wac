@@ -33,8 +33,8 @@ import { splitLines, trimmed, contains } from "../../../wactest/src/strings.wac"
 import { bindgenOf } from "../../src/bindgen.wac";
 
 /** The smallest module that has one: an enum with a payload, named as the linker keys a second. */
-const string WIRE = "E\tNode@2\tNode__two\tElement:tag:string;Text:\n";
-const string SIGS = "make\tNode@2\t\n";
+static string WIRE = "E\tNode@2\tNode__two\tElement:tag:string;Text:\n";
+static string SIGS = "make\tNode@2\t\n";
 
 /** A bare wasm header — nothing here instantiates it. */
 u8[] header() { return [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0] as u8[]; }

@@ -29,7 +29,7 @@ import { itoa } from "../../fmt/src/itoa.wac";
 import { field, hex } from "./capturejson.wac";
 
 /** Each key file is a 32-byte NUL-padded tag followed by the key material. */
-const i32 TAG_LEN = 32;
+static i32 TAG_LEN = 32;
 
 /**
  * chutney's nodes directory, under *this* agent's workspace.

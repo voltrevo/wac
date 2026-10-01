@@ -36,7 +36,7 @@ import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { AccountProof, StorageProof, accountAt, storageAt } from "../../src/account.wac";
 import { keccak256 } from "../../../crypto/src/keccak.wac";
 
-const string FIXTURE = "packages/mpt/test/vendor/getproof.json";
+static string FIXTURE = "packages/mpt/test/vendor/getproof.json";
 
 // ── The fixture ───────────────────────────────────────────────────────────────
 

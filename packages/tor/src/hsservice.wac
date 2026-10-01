@@ -49,10 +49,10 @@ import { ed25519Sign, ed25519Verify } from "../../crypto/src/ed25519.wac";
 import { ctEqual } from "../../crypto/src/ct.wac";
 
 /** ed25519, and the only type this builds. Tor's own check rejects anything else before verifying. */
-export const i32 AUTH_KEY_TYPE_ED25519 = 2;
+export static i32 AUTH_KEY_TYPE_ED25519 = 2;
 
 /** What tor prepends before verifying the signature — `strlen`, so no terminating NUL. */
-export const string ESTABLISH_INTRO_SIG_PREFIX = "Tor establish-intro cell v1";
+export static string ESTABLISH_INTRO_SIG_PREFIX = "Tor establish-intro cell v1";
 
 /**
  * The body of an ESTABLISH_INTRO cell, or empty if the inputs are not the right sizes.

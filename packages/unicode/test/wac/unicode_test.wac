@@ -41,8 +41,8 @@ import { toLower, toUpper, fold, lowerAll, upperAll, foldAll, foldEqual } from "
 import { isPrintable } from "../../src/printable.wac";
 import { Scalar, decode, encodedLength, encode, isValid, count } from "../../src/utf8.wac";
 
-const string ORACLE = "packages/unicode/test/oracle.ts";
-const i32 MAX = 0x10FFFF;
+static string ORACLE = "packages/unicode/test/oracle.ts";
+static i32 MAX = 0x10FFFF;
 
 bool isSurrogate(i32 cp) { return cp >= 0xD800 && cp <= 0xDFFF; }
 

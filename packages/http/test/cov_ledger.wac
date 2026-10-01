@@ -56,8 +56,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/http/test/cov_exercise.wac";
-const string PREFIX = "packages/http/";
+static string EXERCISE = "packages/http/test/cov_exercise.wac";
+static string PREFIX = "packages/http/";
 
 /** What the tests need: a process to ask `node`, and the environment to find it in. */
 string[] grants() {

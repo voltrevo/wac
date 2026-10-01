@@ -16,7 +16,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-const string CLIENT = "packages/quic/test/quicclient.ts";
+static string CLIENT = "packages/quic/test/quicclient.ts";
 
 /**
  * The first datagram quinn sends, or empty with `t` already told why.

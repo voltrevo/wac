@@ -38,13 +38,13 @@ import { hsMac } from "./hsntor.wac";
 import { findKeywordLine, keywordValue, pemBlock, certCertifiedKey, certType} from "./hsdesc.wac";
 import { slice } from "../../bytes/src/slice.wac";
 
-export const i32 LS_IPV4 = 0;
-export const i32 LS_IPV6 = 1;
-export const i32 LS_LEGACY_ID = 2;
-export const i32 LS_ED25519_ID = 3;
+export static i32 LS_IPV4 = 0;
+export static i32 LS_IPV6 = 1;
+export static i32 LS_LEGACY_ID = 2;
+export static i32 LS_ED25519_ID = 3;
 
 /** The certificate type of an introduction point's `auth-key`. */
-export const i32 CERT_TYPE_INTRO_AUTH = 9;
+export static i32 CERT_TYPE_INTRO_AUTH = 9;
 
 /**
  * One introduction point, as the descriptor gives it.

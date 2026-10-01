@@ -18,9 +18,9 @@ import { Cli, FileResult, Stat } from "std/platform.wac";
 import { isSpace } from "../../packages/wactest/src/strings.wac";
 
 /** A `main` — something with a command line. */
-export const i32 KIND_CLI = 0;
+export static i32 KIND_CLI = 0;
 /** A `page` — something a browser opens. */
-export const i32 KIND_PAGE = 1;
+export static i32 KIND_PAGE = 1;
 
 export struct Program {
   /** Repository-relative, as `MAP.md` prints it. */

@@ -19,7 +19,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { blockedFiles, dumpTypeErrorsFiles, emitFilesChecked } from "../../src/api.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string POINT = "export struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n";
+static string POINT = "export struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n";
 
 /** The two keys name one file: `/src/point.wac` normalised, and a spelling that normalises to it. */
 string[] twoKeyPaths() {

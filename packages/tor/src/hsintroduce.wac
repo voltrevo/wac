@@ -40,17 +40,17 @@ import { RendPoint, REND_OK, rendezvousPoint } from "./hsrendpoint.wac";
 import { serviceRendezvousKeys } from "./hsntor.wac";
 import { x25519Base } from "../../crypto/src/x25519.wac";
 
-export const i32 INTRO2_OK = 0;
+export static i32 INTRO2_OK = 0;
 /** This exact ENCRYPTED section has arrived here before. */
-export const i32 INTRO2_REPLAYED = 1;
+export static i32 INTRO2_REPLAYED = 1;
 /** Malformed, or the MAC does not verify under our own introduction point key. */
-export const i32 INTRO2_UNREADABLE = 2;
+export static i32 INTRO2_UNREADABLE = 2;
 /** A rendezvous we are already working on — usually a client retrying, not an attack. */
-export const i32 INTRO2_COOKIE_SEEN = 3;
+export static i32 INTRO2_COOKIE_SEEN = 3;
 /** The client named a rendezvous point we will not connect to. */
-export const i32 INTRO2_BAD_RENDEZVOUS = 4;
+export static i32 INTRO2_BAD_RENDEZVOUS = 4;
 /** The handshake produced nothing usable — a degenerate client key, or bad service inputs. */
-export const i32 INTRO2_NO_KEYS = 5;
+export static i32 INTRO2_NO_KEYS = 5;
 
 /** What to do about one INTRODUCE2. */
 export struct Introduction {

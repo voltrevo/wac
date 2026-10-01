@@ -28,7 +28,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
-const string DIR = "spec/spec";
+static string DIR = "spec/spec";
 
 bool isTagChar(string c) {
   return (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "-";

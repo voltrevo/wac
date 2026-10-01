@@ -35,7 +35,7 @@ import { dumpTypeErrors, blockedFiles } from "../../src/api.wac";
 i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
 
 /** A JSX program needs core's tree in scope, as `spec/cases/0121` does. */
-const string JSX = "import { Attr, Node } from \"core\";\n";
+static string JSX = "import { Attr, Node } from \"core\";\n";
 
 string[] refusedNames() {
   return [

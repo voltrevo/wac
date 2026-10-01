@@ -245,7 +245,7 @@ import { hashString, stringEq } from "core/hash.wac";
 import { parseInt } from "./directory.wac";
 
 /** The weights in the order `positionWeight` expects: four per position. */
-const i32 WEIGHT_COUNT = 12;
+static i32 WEIGHT_COUNT = 12;
 
 string weightName(i32 i) {
   string[] names = [

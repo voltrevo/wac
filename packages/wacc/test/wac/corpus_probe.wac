@@ -31,7 +31,7 @@ import { endsWith } from "../../../wactest/src/strings.wac";
 import { sortNames } from "../../../fs/src/fs.wac";
 
 /** As many `.wac` files as the repository is ever expected to hold. */
-const i32 CAP = 4096;
+static i32 CAP = 4096;
 
 /** The corpus, or why there isn't one. */
 export struct Corpus {

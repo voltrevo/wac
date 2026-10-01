@@ -26,8 +26,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { lexErrors, lexTokens } from "../../src/lex.wac";
 
-const i32 STRIDE = 5;
-const i32 K_JSX_TEXT = 84;
+static i32 STRIDE = 5;
+static i32 K_JSX_TEXT = 84;
 
 /** `import … Node f() { return <p>BODY</p>; }`, the shape every text case is wrapped in. */
 string element(string body) {

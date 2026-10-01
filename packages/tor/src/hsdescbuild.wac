@@ -38,13 +38,13 @@ import {
 import { encryptedConstant, superencryptedConstant } from "./hsdesc.wac";
 import { x25519Base } from "../../crypto/src/x25519.wac";
 
-export const i32 BUILD_OK = 0;
-export const i32 BUILD_BAD_IDENTITY = 1;   // the identity seed is not 32 bytes, or will not blind
-export const i32 BUILD_BAD_SIGNING = 2;    // the signing seed is not 32 bytes
-export const i32 BUILD_NO_INTROS = 3;      // a descriptor with no introduction points reaches nobody
-export const i32 BUILD_BAD_INTRO = 4;      // an introduction point's keys are the wrong size
-export const i32 BUILD_BAD_ENC_KEY = 5;    // an encryption key that does not convert to ed25519
-export const i32 BUILD_FAILED = 6;         // a layer, a certificate or the document would not build
+export static i32 BUILD_OK = 0;
+export static i32 BUILD_BAD_IDENTITY = 1;   // the identity seed is not 32 bytes, or will not blind
+export static i32 BUILD_BAD_SIGNING = 2;    // the signing seed is not 32 bytes
+export static i32 BUILD_NO_INTROS = 3;      // a descriptor with no introduction points reaches nobody
+export static i32 BUILD_BAD_INTRO = 4;      // an introduction point's keys are the wrong size
+export static i32 BUILD_BAD_ENC_KEY = 5;    // an encryption key that does not convert to ed25519
+export static i32 BUILD_FAILED = 6;         // a layer, a certificate or the document would not build
 
 /**
  * One introduction point, as the service holds it.

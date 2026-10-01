@@ -45,10 +45,10 @@ import { HOP_KEY_MATERIAL, NTOR_KEY_MATERIAL,
 import { encodeFixed, cmdRelay, cmdRelayEarly, cmdDestroy, cellCommand, cellPayload, ID_WIDE} from "./cell.wac";
 
 /** tor-spec §7.3: the windows, and how often credit is returned. */
-const i32 CIRCUIT_WINDOW = 1000;
-const i32 CIRCUIT_INCREMENT = 100;
-const i32 STREAM_WINDOW = 500;
-const i32 STREAM_INCREMENT = 50;
+static i32 CIRCUIT_WINDOW = 1000;
+static i32 CIRCUIT_INCREMENT = 100;
+static i32 STREAM_WINDOW = 500;
+static i32 STREAM_INCREMENT = 50;
 
 /** What a received cell turned out to be. */
 export i32 gotNothing() { return 0; }

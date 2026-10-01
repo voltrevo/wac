@@ -26,7 +26,7 @@ import { dumpTypeErrors } from "../../src/api.wac";
 
 i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
 
-const string ENUM = "enum E { A(i32 x, i32 y), B }\n";
+static string ENUM = "enum E { A(i32 x, i32 y), B }\n";
 
 /** The nine rules, each as the smallest program that breaks it. */
 export string test_every_match_rule_the_reference_has_is_enforced() {

@@ -39,7 +39,7 @@ import { runBytes } from "./runprog.wac";
  * A shell comment, so the preamble stays a valid script. Looked for **only in the text before the
  * module**, so a byte sequence inside the module cannot pass for a version line.
  */
-export const string APP_MARK = "# wac-app ";
+export static string APP_MARK = "# wac-app ";
 
 /** This host's version, or "" if it did not say — see the note at the top of this file. */
 export string wacVersion(Cli cli) {

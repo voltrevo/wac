@@ -30,8 +30,8 @@ import { Frame, Grants, childCliGranted } from "../../src/frame.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
-const string HOST = "packages/platform/example/inside.wac";
-const string VALUE = "packages/platform/example/insideValue.wac";
+static string HOST = "packages/platform/example/inside.wac";
+static string VALUE = "packages/platform/example/insideValue.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

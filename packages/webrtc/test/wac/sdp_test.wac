@@ -21,9 +21,9 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { attr, candidateLine, colons, hasChannel, offer, printOf } from "./sdp_probe.wac";
 
-const string ORACLE = "packages/webrtc/test/sdp_oracle.py";
+static string ORACLE = "packages/webrtc/test/sdp_oracle.py";
 
-const string FINGERPRINT =
+static string FINGERPRINT =
   "96:E0:AA:F2:B4:46:16:EC:63:75:AB:2E:7F:0E:D5:CD:EF:25:B4:99:91:20:9D:94:D7:AA:93:C0:DC:6B:3B:83";
 
 string hexOf(string s) { return string.fromBytes(hexEncode(s.toBytes())); }

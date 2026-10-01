@@ -77,7 +77,7 @@ struct Three {
 }
 
 /** `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself. */
-const i32 KILLED = 124;
+static i32 KILLED = 124;
 
 /**
  * The environment every child gets, and it is total.

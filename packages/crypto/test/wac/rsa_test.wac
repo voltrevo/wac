@@ -51,7 +51,7 @@ import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1, rsaSignRawPkcs1, rsaRecover
 import { slice } from "../../../bytes/src/slice.wac";
 import { check } from "../../../wactest/src/oracle.wac";
 
-const string ORACLE = "packages/crypto/test/oracle.mjs";
+static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 Answers askRsa(T t, Cli cli, Lines lines, string what) {
   return ask(t, cli, "node", [ORACLE], lines, what);

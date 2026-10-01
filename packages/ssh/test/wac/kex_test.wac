@@ -18,7 +18,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { deriveKey, ephemeralPublic, sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
 import { cat, str, strOf, ramp, filled } from "./build.wac";
 
-const string ORACLE = "packages/ssh/test/kdf_oracle.ts";
+static string ORACLE = "packages/ssh/test/kdf_oracle.ts";
 
 export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core core, Cli cli) {
   // Written out against the RFC rather than round-tripped, because the interesting rule only

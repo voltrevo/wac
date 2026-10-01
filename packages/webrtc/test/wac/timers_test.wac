@@ -23,7 +23,7 @@ import { newAssociation, associationReceive, associationSend, associationDue, as
          tsnOf } from "./sctp_probe.wac";
 import { newPeer, peerDue, peerFlightSize } from "./peer_probe.wac";
 
-const i32 OUR_TAG = 0x77777777;
+static i32 OUR_TAG = 0x77777777;
 
 u8[] cookie() {
   u8[] out = u8[].filled(8, 0);

@@ -47,8 +47,8 @@
 import { Core, Cli } from "std/platform.wac";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
-const string EXERCISE = "packages/bytes/test/cov_exercise.wac";
-const string PREFIX = "packages/bytes/";
+static string EXERCISE = "packages/bytes/test/cov_exercise.wac";
+static string PREFIX = "packages/bytes/";
 
 /**
  * The trap sweep: twelve bounds checks, each expecting to trap.
