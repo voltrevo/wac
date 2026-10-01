@@ -102,7 +102,8 @@ and on `string`, which compares and orders by its bytes:
 struct Point { i32 x; i32 y; }
 
 export i32 main() {
-  bool a = 1.0 == 1.0;
+  f64 one = 1.0;
+  bool a = one == 1.0;
   Point p = Point(1, 2);
   Point q = Point(1, 2);
 
@@ -118,7 +119,7 @@ export i32 main() {
 }
 ```
 
-`[§wac-cmpfloat-68s8unj]` `1.0 == 1.0` is `true`.
+`[§wac-cmpfloat-68s8unj]` An `f64` holding `1.0` compares equal to `1.0`.
 
 `[§wac-struct-eq-k4rm7xq]` `==` on a struct that does not implement `operators.equal` is refused. `is` tests
 identity.

@@ -21,80 +21,80 @@ reference says so, and links.
 - 01 [Names and identity](1-programs/01-names-and-identity.md)
 - 02 [Modules and imports](1-programs/02-modules-and-imports.md)
 - 03 [Namespaces](1-programs/03-namespaces.md)
-- 04 Packages
-- 05 Reachability
-- 06 Checking a project
-- 07 Programs
+- 04 [Packages](1-programs/04-packages.md)
+- 05 [Reachability](1-programs/05-reachability.md)
+- 06 [Checking a project](1-programs/06-checking-a-project.md)
+- 07 [Programs](1-programs/07-programs.md)
 
 **2 — Types**
 
-- 08 Primitives
-- 09 Numeric literals
-- 10 Nullability
-- 11 Never and uninhabited types
-- 12 Structs
-- 13 Enums
-- 14 Tuples
-- 15 Arrays
-- 16 Strings
-- 17 Const
-- 18 Unions
-- 19 Generics
-- 20 Functions and funcrefs
-- 21 Symbols
+- 08 [Primitives](2-types/08-primitives.md)
+- 09 [Numeric literals](2-types/09-numeric-literals.md)
+- 10 [Nullability](2-types/10-nullability.md)
+- 11 [Never and uninhabited types](2-types/11-never-and-uninhabited.md)
+- 12 [Structs](2-types/12-structs.md)
+- 13 [Enums](2-types/13-enums.md)
+- 14 [Tuples](2-types/14-tuples.md)
+- 15 [Arrays](2-types/15-arrays.md)
+- 16 [Strings](2-types/16-strings.md)
+- 17 [Const](2-types/17-const.md)
+- 18 [Unions](2-types/18-unions.md)
+- 19 [Generics](2-types/19-generics.md)
+- 20 [Functions and funcrefs](2-types/20-functions-and-funcrefs.md)
+- 21 [Symbols](2-types/21-symbols.md)
 
 **3 — Expressions**
 
-- 22 Operators
-- 23 Interpolation and markup
-- 24 Casts
-- 25 Control flow
-- 26 Errors and results
+- 22 [Operators](3-expressions/22-operators.md)
+- 23 [Interpolation and markup](3-expressions/23-interpolation-and-markup.md)
+- 24 [Casts](3-expressions/24-casts.md)
+- 25 [Control flow](3-expressions/25-control-flow.md)
+- 26 [Errors and results](3-expressions/26-errors-and-results.md)
 
 **4 — Static**
 
-- 27 Static declarations
-- 28 Static evaluation
-- 29 Static dependencies
-- 30 Computed types
-- 31 Static control
+- 27 [Static declarations](4-static/27-static-declarations.md)
+- 28 [Static evaluation](4-static/28-static-evaluation.md)
+- 29 [Static dependencies](4-static/29-static-dependencies.md)
+- 30 [Computed types](4-static/30-computed-types.md)
+- 31 [Static control](4-static/31-static-control.md)
 
 **5 — Inference**
 
-- 32 Widening
-- 33 Placeholders
-- 34 Recursive inference
+- 32 [Widening](5-inference/32-widening.md)
+- 33 [Placeholders](5-inference/33-placeholders.md)
+- 34 [Recursive inference](5-inference/34-recursive-inference.md)
 
 **6 — Concurrency**
 
-- 35 Tickets and await
-- 36 Coroutines and generators
+- 35 [Tickets and await](6-concurrency/35-tickets-and-await.md)
+- 36 [Coroutines and generators](6-concurrency/36-coroutines-and-generators.md)
 
 **7 — Library**
 
-- 37 Core
-- 38 Vec
-- 39 Map and hash
-- 40 Option and Result
-- 41 Read
-- 42 Buf
-- 43 Markup types
-- 44 Std
+- 37 [Core](7-library/37-core.md)
+- 38 [Vec](7-library/38-vec.md)
+- 39 [Map and hash](7-library/39-map-and-hash.md)
+- 40 [Option and Result](7-library/40-option-and-result.md)
+- 41 [Read](7-library/41-read.md)
+- 42 [Buf](7-library/42-buf.md)
+- 43 [Markup types](7-library/43-markup-types.md)
+- 44 [Std](7-library/44-std.md)
 
 **8 — Tooling**
 
-- 45 The `wac` command
-- 46 Manifest and lock
-- 47 Testing
-- 48 Bindgen
-- 49 Audit
+- 45 [The `wac` command](8-tooling/45-cli.md)
+- 46 [Manifest and lock](8-tooling/46-manifest-and-lock.md)
+- 47 [Testing](8-tooling/47-testing.md)
+- 48 [Bindgen](8-tooling/48-bindgen.md)
+- 49 [Audit](8-tooling/49-audit.md)
 
 **Appendices**
 
-- A Grammar
-- B Diagnostics
-- C Glossary
-- D Tag migration
+- A [Grammar](appendices/A-grammar.md)
+- B [Diagnostics](appendices/B-diagnostics.md)
+- C [Glossary](appendices/C-glossary.md)
+- D [Tag migration](appendices/D-tag-migration.md)
 
 ## Conventions
 

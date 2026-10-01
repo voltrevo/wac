@@ -66,3 +66,79 @@ Status: **taken** (the chapter follows it; say if wrong) · **needs you** (the c
 - `spec/spec/imports.md` *Name mangling* and *Import resolution*: how the compiler labels and indexes
   declarations. 01 states the observable rule they served — identity is the declaring file, not a
   spelling.
+
+## Chapters 04–49 and the appendices
+
+All **taken**. Where one reverses something written in chapters 01–03, it says so.
+
+### Programs (04–07)
+
+- **Prefix mappings are gone.** A dependency key is a whole package name (`[§wac-package-key-exact-rme93fh]`);
+  `[§wac-import-mapped-6np2rkq]` retired.
+- **Item 3 above is taken as proposed:** `[§wac-std-imports-core-7hn3qrz]` is retired (D), not placed.
+- **05's section on statics** was rewritten to remove a contradiction with 27–29.
+- **Every 06 example carries its `wac.json5`**, since full-project checking is defined by one.
+
+### Types (08–21)
+
+- **Packed types are ordinary types** (vision/DECISIONS): nullable, castable, locals, parameters and results. Seven
+  `wac-arr-i8-*`/packed tags retired or replaced.
+- **Uninhabited types are valid** (proposal 18 and vision); `[§wac-recursive-nodefault-1os4yl4]` replaced.
+- **Struct defaults come only from field initialisers.** A field without one has no default; a local may be declared
+  unassigned and must be assigned before it is read. `[§wac-struct-default-ar2wgyf]`, `[§wac-uninit-nypziz8]` replaced.
+- **`virtual`/`override` dispatch dynamically** (vision/TECHNICAL); the static-dispatch tag is retired.
+- **Sized arrays are `T[].filled(n, v)` and `T[].defaulted(n)`**; `T[n]()` is gone.
+- **Hex literals:** the bit-pattern/value question is Open in 09, and five hex tags are suspended (D).
+- **A call skips a non-callable local** of the same name (01), reconciling `vision/spec/functions.wac`.
+- **Generic enum methods are checked at definition**, like everything else under two-pass checking.
+- **An expected type infers type parameters**, and computed types never do: `fromSlot<i32>(5)` is written.
+
+### Expressions (22–26)
+
+- **Interpolation converts through `toString`; markup tags are functions** in `core.html`, children through `toNode`.
+  `[§jsx-component-renders]` replaced.
+- **`default` replaces `else` in `match`**; a nullable subject takes a `null` arm; `matches` and `defer` added (vision).
+- **`??` binds looser than arithmetic** (22's table).
+- **`as~` rounds half to even.**
+- **A char literal at or above 128 is not a byte** (16).
+
+### Static (27–31)
+
+- **Module `const` is `static`.** `wac-modconst-*` tags kept where the rule is unchanged, replaced where static
+  evaluation now allows calls.
+- **`static_if` checks every branch**; only the chosen one is emitted.
+- **`typeref` at run time is Open**; examples use it only in static initialisers.
+
+### Concurrency (35–36)
+
+- **`wait` answers `Result`**, and refuses rather than traps when nothing can advance the ticket.
+- **`drain` and `schedule`** replace `core.drain()`; a default schedule target is stated.
+
+### Library (37–44)
+
+- **`core` and `std` export from their roots;** no subpaths. `std`'s root exports `Sys`, which replaces `Cli`/`Core` as
+  the capability.
+- **`Vec.pop` and `Map.get` answer `T?`**, not `Option<T>`.
+- **`Buf` is in `core`, with `pushStr`.** The linked list and the old `Buffer` were example programs; their tags are
+  retired (D).
+- **The rest of the host surface** (directories, processes, environment, terminal) is Open in 44.
+
+### Tooling (45–49)
+
+- **Host and build history is dropped** from the CLI chapter; it states behaviour only.
+- **`wac update` is the only networked command**, and a missing lock entry is refused naming it (46).
+- **Tests:** `test*` exports, `""` or `void` return passes, `test_traps_*` must trap, verbatim names allowed (47). A
+  test wanting an ungranted capability is *not run*, not failed.
+- **Bindgen** follows the new spellings (`fn<…>`), maps packed types and `u*[]` arrays, and binds `T?` as `T | null`
+  everywhere — `Map.get` therefore returns `number | null`, not an `Option_*` class. Its file is `main.wac.ts`
+  (bindgen.md), not `main.gen.ts` (cli/wac.md). Async exports are Open.
+- **Audit's bearing types** are `Sys` and the handles `std` gives out, replacing `Cli`/`Core`; derived authority is
+  therefore in scope rather than a stated limit.
+
+### Appendices
+
+- **A** is rewritten against the new syntax; the keyword rule is now "reserved", not "matches the lexer".
+- **B** keeps the diagnostic tags whose wording is unchanged; the `i32 n = 3.14` diagnostic is restated for literals with
+  no type of their own. Soundness stays in 26.
+- **D** lists every current tag not carried, replaced or retired, with the reason. Nine pairs of current tags share a
+  suffix; both are carried, and D says so.

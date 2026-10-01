@@ -2,7 +2,7 @@
 
 `std` is the package of capabilities: everything that reaches the world. Its central type is `Sys`, the authority a
 program is handed on its `main` ([07](../1-programs/07-programs.md)). Like `core` it ships with the toolchain and cannot
-be replaced, and it may import `core` and nothing else.
+be replaced.
 
 ```wac
 // expect: prints
@@ -148,7 +148,7 @@ async Result<i32> runSource(Sys sys, string src) {
 `[§wac-std-spawn-grants-ykmq5tw]` A spawned child holds at most the grants passed to `spawn`, and never more than its parent
 holds.
 
-No file is written and no toolchain is looked up: the compiler is a library call ([48](../8-tooling/48-bindgen.md)).
+No file is written and no toolchain is looked up: the compiler is a library call.
 
 ## Ending, and the work left over
 

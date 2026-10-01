@@ -285,7 +285,8 @@ A reference is non-null unless its type says otherwise: `T` is never null, `T?` 
 struct Point { i32 x; i32 y; }
 
 export i32 main() {
-  i31ref small = 42 as! i31ref;            // no allocation
+  i32 n = 42;
+  i31ref small = n as! i31ref;             // checked: n must fit in 31 bits; no allocation
   anyref[] items = [small, Point(1, 2)];   // an i31ref and a struct, one array
 
   if (i31ref x matches items[0]) {
