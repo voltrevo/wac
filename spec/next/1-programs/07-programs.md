@@ -305,8 +305,10 @@ async Result<never> main(Sys sys) {
   sys.log("listening on \{listener.addr}");
 
   while (true) {
-    auto sock = try await listener.accept();
-    answer(sys, sock);          // not awaited — the loop goes straight back to accept
+    match (await listener.accept()) {
+      Ok(sock): { answer(sys, sock); }   // not awaited — the loop goes straight back to accept
+      Err(why): { await sys.sleepMillis(100); }   // the listener is short of something; wait it out
+    }
   }
 }
 
@@ -315,10 +317,6 @@ async void answer(Sys sys, Socket sock) {
 }
 ```
 
-`Result<never>` says the program runs until something fails. The unawaited `answer` is work the
+`Result<never>` says the program runs until something fails — here, only `listen`: an `Err` from `accept` is about
+the listener and is waited out ([44](../7-library/44-std.md)). The unawaited `answer` is work the
 program owns, and it runs alongside the loop ([35](../6-concurrency/35-tickets-and-await.md)).
-
-## Open
-
-- **Whether `listener.accept()` can fail.** Vision's server marks it as a question; it is written
-  with `try` above.
