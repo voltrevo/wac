@@ -30,7 +30,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, Pending, Socket } from "std";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -154,7 +154,7 @@ u8[] fieldOf(string text, string name) {
     i32 v = hexValue(c);
     if (v < 0) { break; }                       // the next field's name
     if (nibble < 0) { nibble = v; continue; }
-    out.push(nibble * 16 + v);
+    out.push((nibble * 16 + v) as@ u8);
     nibble = -1;
   }
   u8[] bytes = out.take();

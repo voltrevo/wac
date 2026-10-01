@@ -1,23 +1,26 @@
 # bytes
 
-`Buf` — a growable byte buffer.
+Byte-array helpers — `slice`, `clamped`, `equal`.
+
+**`Buf` lived here and is in core now** (spec/next ch42): `import { Buf } from "core";`. What follows
+is its history, kept because the reasons for its shape still hold and now live in `core/buf.wac`.
 
 ```wac
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 Buf b = Buf.create();
 b.push('h');
-b.pushAll(['i'] as u8[]);
+b.pushStr("i");
 string s = b.toStr();     // "hi"
 ```
 
-## Why it is a package
+## Why it was a package
 
 `gzip` and `json` had each written this type, independently and almost
 identically. wac had no generics when that happened, so a container could not be
 written once over its element type — but it could be written once over `u8`, and
 that is what this is. (It has them now: `core/vec.wac` is `Vec<T>`, which
-`src/buf.wac`'s own header records. A `Buf` is still not a `Vec<u8>`, because half
+`core/buf.wac`'s own header records. A `Buf` is still not a `Vec<u8>`, because half
 its surface is about *bytes* — `pushU32`, `pushDecimal`, `pushCodepoint` — rather
 than about holding a sequence.)
 

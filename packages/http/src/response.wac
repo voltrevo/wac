@@ -13,7 +13,7 @@
 //
 // The first two are why `write` takes the request method and not just the response.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Headers } from "./headers.wac";
 
 export struct Response {

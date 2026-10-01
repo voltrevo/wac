@@ -21,7 +21,7 @@
 // zstd decoder goes subtly wrong: it produces valid-looking output that diverges thousands of
 // bytes later.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { BackBits, FseTable, initState, nextState, readTable, rleTable, symbolAt, buildFromCounts } from "./fse.wac";
 
 // ── The code tables ───────────────────────────────────────────────────────────

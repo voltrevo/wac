@@ -11,7 +11,7 @@
 // removed a builtin that bash has and that a quarter of the corpus depends on. Moved here instead, where
 // the deletion cannot reach it.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Vec } from "core";
 import { Sink } from "../../platform/src/stream.wac";
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
@@ -62,7 +62,7 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
     i32 i = 0;
     while (i < f.len() && !fatal && !stopped) {
       if (f[i] == 0x5c) { i = escapeInto(out, f, i); continue; }
-      if (f[i] != 0x25) { out.push(f[i] as i32); i++; continue; }
+      if (f[i] != 0x25) { out.push(f[i]); i++; continue; }
 
       i32 j = i + 1;
       if (j < f.len() && f[j] == 0x25) { out.push(0x25); i = j + 1; continue; }
@@ -119,7 +119,7 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
           // `\c`: stop, and produce nothing more anywhere.
           if (ab[k] == 0x5c && k + 1 < ab.len() && ab[k + 1] == 0x63) { stopped = true; break; }
           if (ab[k] == 0x5c) { k = escapeInto(decoded, ab, k); continue; }
-          decoded.push(ab[k] as i32);
+          decoded.push(ab[k]);
           k++;
         }
         text = string.fromBytes(decoded.take());
@@ -178,7 +178,7 @@ i32 escapeInto(Buf out, u8[] f, i32 at) {
     i32 n = 0;
     while (p < f.len() && n < 2 && digitValue(f[p] as i32) >= 0) { v = v * 16 + digitValue(f[p] as i32); p++; n++; }
     if (n == 0) { out.push(0x5c); out.push(0x78); return at + 2; }
-    out.push(v);
+    out.push(v as@ u8);
     return p;
   }
   if (c >= 0x30 && c <= 0x37) {                              // \NNN, and \0NNN for the same thing
@@ -187,7 +187,7 @@ i32 escapeInto(Buf out, u8[] f, i32 at) {
     i32 v = 0;
     i32 n = 0;
     while (p < f.len() && n < 3 && f[p] >= 0x30 && f[p] <= 0x37) { v = v * 8 + (f[p] as i32 - 0x30); p++; n++; }
-    out.push(v & 0xFF);
+    out.push((v & 0xFF) as@ u8);
     return p;
   }
   // Anything else keeps its backslash, as bash does — `\q` is two characters.
@@ -230,7 +230,7 @@ void padInto(Buf out, string text, i32 width, bool left, bool zero) {
   i32 from = 0;
   if (zero && b.len() > 0 && b[0] == 0x2d) { out.push(0x2d); from = 1; }
   for (i32 i = 0; i < gap; i++) { out.push(zero ? 0x30 : 32); }
-  for (i32 i = from; i < b.len(); i++) { out.push(b[i] as i32); }
+  for (i32 i = from; i < b.len(); i++) { out.push(b[i]); }
 }
 
 

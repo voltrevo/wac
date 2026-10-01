@@ -17,7 +17,7 @@
 // `ok` goes false and the cursor stops. A remote peer chooses these lengths, so running off the
 // end is not an internal error, it is Tuesday.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** Appends the wire types to a buffer. */
 export struct Writer {
@@ -25,15 +25,15 @@ export struct Writer {
 
   Writer create() { return Writer(Buf.create()); }
 
-  void byte(this, i32 v) { this.out.push(v & 255); }
+  void byte(this, i32 v) { this.out.push((v & 255) as@ u8); }
 
   void bool(this, bool v) { this.out.push(v ? 1 : 0); }
 
   void u32(this, i32 v) {
-    this.out.push((v >>> 24) & 255);
-    this.out.push((v >>> 16) & 255);
-    this.out.push((v >>> 8) & 255);
-    this.out.push(v & 255);
+    this.out.push(((v >>> 24) & 255) as@ u8);
+    this.out.push(((v >>> 16) & 255) as@ u8);
+    this.out.push(((v >>> 8) & 255) as@ u8);
+    this.out.push((v & 255) as@ u8);
   }
 
   /** Raw bytes, with no length in front — for payloads that are already framed. */

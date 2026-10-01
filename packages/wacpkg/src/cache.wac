@@ -30,7 +30,7 @@
 // Reversible is the property worth having: `unescapeRepo(escapeRepo(u)) == u` is a test a machine
 // can check over any corpus, where "these look different enough" is not.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** `$WAC_HOME/cache/git` — the directory every fetched repository lives under. */
 export string cacheRoot(string wacHome) {
@@ -89,7 +89,7 @@ export string unescapeRepo(string name) {
       if (i + 1 >= b.len()) { return ""; }
       i32 n = b[i + 1] as i32;
       if (n < 'a' || n > 'z') { return ""; }
-      out.push(n - 32);
+      out.push((n - 32) as@ u8);
       i = i + 2;
       continue;
     }
@@ -98,7 +98,7 @@ export string unescapeRepo(string name) {
       i32 hi = hexVal(b[i + 1] as i32);
       i32 lo = hexVal(b[i + 2] as i32);
       if (hi < 0 || lo < 0) { return ""; }
-      out.push((hi << 4) | lo);
+      out.push(((hi << 4) | lo) as@ u8);
       i = i + 3;
       continue;
     }
@@ -106,7 +106,7 @@ export string unescapeRepo(string name) {
     bool plain = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
                  || c == '.' || c == '_' || c == '-';
     if (!plain) { return ""; }
-    out.push(c);
+    out.push(c as@ u8);
     i = i + 1;
   }
   return string.fromBytes(out.bytes());

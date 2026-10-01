@@ -20,7 +20,7 @@
 //     would find a longer one.
 //   - Transmitted tables, and choosing between them per block.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { BitOut, CTable, Step, buildCTable, encodeStep, initialState, normalize, optimalLog, writeDescription } from "./fseenc.wac";
 import {
   LL_BASE, LL_BITS, ML_BASE, ML_BITS, LL_DEFAULT, ML_DEFAULT, OF_DEFAULT,
@@ -360,15 +360,15 @@ i32[] countCodes(i32[] codes, i32 count, i32 maxSymbol) {
 /** The number of sequences, in one, two or three bytes. */
 void writeSequenceCount(Buf out, i32 n) {
   if (n < 128) {
-    out.push(n);
+    out.push(n as@ u8);
   } else if (n < 32512) {
-    out.push(128 + (n >>> 8));
-    out.push(n & 255);
+    out.push((128 + (n >>> 8)) as@ u8);
+    out.push((n & 255) as@ u8);
   } else {
     out.push(255);
     i32 v = n - 32512;
-    out.push(v & 255);
-    out.push((v >>> 8) & 255);
+    out.push((v & 255) as@ u8);
+    out.push(((v >>> 8) & 255) as@ u8);
   }
 }
 
@@ -398,16 +398,16 @@ void writeLiterals(Buf out, u8[] literals) {
   if (distinct == 1) {
     // RLE: the kind, the length, and the byte.
     if (n < 32) {
-      out.push(1 | (n << 3));
+      out.push((1 | (n << 3)) as@ u8);
     } else if (n < 4096) {
       out.push(1 | (1 << 2) | ((n & 15) << 4));
-      out.push(n >>> 4);
+      out.push((n >>> 4) as@ u8);
     } else {
       out.push(1 | (3 << 2) | ((n & 15) << 4));
-      out.push((n >>> 4) & 255);
-      out.push((n >>> 12) & 255);
+      out.push(((n >>> 4) & 255) as@ u8);
+      out.push(((n >>> 12) & 255) as@ u8);
     }
-    out.push(literals[0] as i32);
+    out.push(literals[0]);
     return;
   }
 
@@ -430,14 +430,14 @@ i32 rawLiteralsSize(i32 n) {
 void writeRawLiterals(Buf out, u8[] literals) {
   i32 n = literals.len();
   if (n < 32) {
-    out.push(n << 3);                                  // kind 0, one-byte size
+    out.push((n << 3) as@ u8);                                  // kind 0, one-byte size
   } else if (n < 4096) {
     out.push(((n & 15) << 4) | (1 << 2));              // kind 0, two-byte size
-    out.push(n >>> 4);
+    out.push((n >>> 4) as@ u8);
   } else {
     out.push(((n & 15) << 4) | (3 << 2));              // kind 0, three-byte size
-    out.push((n >>> 4) & 255);
-    out.push((n >>> 12) & 255);
+    out.push(((n >>> 4) & 255) as@ u8);
+    out.push(((n >>> 12) & 255) as@ u8);
   }
   out.pushBytes(literals, 0, n);
 }
@@ -449,7 +449,7 @@ u8[] bodyWith(Block b, u8[] literals, CTable cLL, CTable cOF, CTable cML, i32 mo
   writeSequenceCount(body, b.count);
 
   if (b.count > 0) {
-    body.push(modes);
+    body.push(modes as@ u8);
     body.pushBytes(tables, 0, tables.len());
     u8[] stream = writeSequenceStream(b, cLL, cOF, cML);
     body.pushBytes(stream, 0, stream.len());
@@ -493,9 +493,9 @@ u8[] compressedBody(Block b, CTable cLL, CTable cOF, CTable cML, i32 rawSize) {
 /** A block header: the size, the type, and whether it is the last. */
 void writeBlockHeader(Buf out, i32 size, i32 type, bool last) {
   i32 h = (size << 3) | (type << 1) | (last ? 1 : 0);
-  out.push(h & 255);
-  out.push((h >>> 8) & 255);
-  out.push((h >>> 16) & 255);
+  out.push((h & 255) as@ u8);
+  out.push(((h >>> 8) & 255) as@ u8);
+  out.push(((h >>> 16) & 255) as@ u8);
 }
 
 /**
@@ -514,12 +514,12 @@ export u8[] compress(u8[] data) {
   out.push(0x2F);
   out.push(0xFD);
   out.push((2 << 6) | (1 << 2));                       // 4-byte content size, checksum present
-  out.push(windowDescriptor());
+  out.push(windowDescriptor() as@ u8);
   i32 n = data.len();
-  out.push(n & 255);
-  out.push((n >>> 8) & 255);
-  out.push((n >>> 16) & 255);
-  out.push((n >>> 24) & 255);
+  out.push((n & 255) as@ u8);
+  out.push(((n >>> 8) & 255) as@ u8);
+  out.push(((n >>> 16) & 255) as@ u8);
+  out.push(((n >>> 24) & 255) as@ u8);
 
   // The predefined tables, built once for the whole frame — every block uses them.
   CTable cLL = buildCTable(LL_DEFAULT, LL_DEFAULT.len() - 1, 6);

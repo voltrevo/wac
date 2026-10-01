@@ -42,7 +42,7 @@
 //     some positions; this follows POSIX, and the difference is noted in the README rather than guessed
 //     at, because a test that disagrees with GNU here would be testing GNU's extensions.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Program } from "./program.wac";
 import { Compiled, compileFlags } from "./compile.wac";
 import { Rewritten, bracketReason, bufferAnchor, copyBracket, writeAny } from "./posix.wac";
@@ -114,7 +114,7 @@ export Rewritten toExtended(u8[] pattern) {
       if (anchor >= 0) {
         unitStart = out.len;
         lastWasQuantifier = false;
-        out.push(anchor);
+        out.push(anchor as@ u8);
         quantifiable = true;
         i = i + 2;
         continue;
@@ -129,7 +129,7 @@ export Rewritten toExtended(u8[] pattern) {
           unitStart = out.len;
           lastWasQuantifier = false;
           out.push('\\');
-          out.push(next);
+          out.push(next as@ u8);
           quantifiable = true;
           i = i + 2;
           continue;
@@ -142,7 +142,7 @@ export Rewritten toExtended(u8[] pattern) {
           out.push('{');
           i = i + 2;
           while (i < pattern.len() && !(pattern[i] == '\\' && i + 1 < pattern.len() && pattern[i + 1] == '}')) {
-            out.push(pattern[i] as i32);
+            out.push(pattern[i]);
             i++;
           }
           if (i + 1 >= pattern.len()) {
@@ -161,7 +161,7 @@ export Rewritten toExtended(u8[] pattern) {
           continue;
         }
         if (next == '(') { unitStart = out.len; }
-        out.push(next);
+        out.push(next as@ u8);
         // Everything but an opening group or an alternation leaves something to quantify.
         quantifiable = next != '(' && next != '|';
         lastWasQuantifier = next == '+' || next == '?';
@@ -172,8 +172,8 @@ export Rewritten toExtended(u8[] pattern) {
       // both, and `\\` is a backslash in both.
       unitStart = out.len;
       lastWasQuantifier = false;
-      out.push(c);
-      out.push(next);
+      out.push(c as@ u8);
+      out.push(next as@ u8);
       quantifiable = true;
       i = i + 2;
       continue;
@@ -185,7 +185,7 @@ export Rewritten toExtended(u8[] pattern) {
       unitStart = out.len;
       lastWasQuantifier = false;
       out.push('\\');
-      out.push(c);
+      out.push(c as@ u8);
       quantifiable = true;
       i++;
       continue;
@@ -196,14 +196,14 @@ export Rewritten toExtended(u8[] pattern) {
       unitStart = out.len;
       lastWasQuantifier = false;
       out.push('\\');
-      out.push(c);
+      out.push(c as@ u8);
       i++;
       continue;
     }
 
     if (c == '*') {
       if (lastWasQuantifier) { wrapLast(out, unitStart); }
-      out.push(c);
+      out.push(c as@ u8);
       lastWasQuantifier = true;
       quantifiable = true;
       i++;
@@ -212,7 +212,7 @@ export Rewritten toExtended(u8[] pattern) {
 
     unitStart = out.len;
     lastWasQuantifier = false;
-    out.push(c);
+    out.push(c as@ u8);
     // `^` and `$` are assertions and cannot be quantified; everything else can, including a `*` that has
     // just been emitted.
     quantifiable = c != '^' && c != '$';

@@ -29,7 +29,7 @@ import {
 import { hsMac } from "../../src/hsntor.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../../../crypto/src/ed25519.wac";
 import { EstablishedIntro, parseEstablishIntro } from "../../src/hsservice.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { equal } from "../../../bytes/src/slice.wac";
 import { jsonFile, strOf, numOf, boolOf, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
@@ -277,16 +277,16 @@ export string test_the_relay_accepts_what_tor_built(Core core, Cli cli) {
 u8[] rebuilt(u8[] cell, u8[] kh, u8[] seed, i32 keyType, i32 sigLen) {
   if (cell.len() < 38) { return u8[](); }
   Buf b = Buf.create();
-  b.push(keyType);
+  b.push(keyType as@ u8);
   b.push(0);
   b.push(32);
-  for (i32 i = 3; i < 35; i++) { b.push(cell[i] as i32); }
+  for (i32 i = 3; i < 35; i++) { b.push(cell[i]); }
   b.push(0);
   u8[] macSpan = b.bytes();
   b.pushAll(hsMac(kh, macSpan));
   u8[] sigSpan = b.bytes();
-  b.push((sigLen >> 8) & 0xFF);
-  b.push(sigLen & 0xFF);
+  b.push(((sigLen >> 8) & 0xFF) as@ u8);
+  b.push((sigLen & 0xFF) as@ u8);
   b.pushAll(ed25519Sign(seed, prefixed(sigSpan)));
   return b.bytes();
 }

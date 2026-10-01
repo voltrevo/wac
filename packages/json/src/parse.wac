@@ -12,7 +12,7 @@
 // what is written here is what the language had when it was written.
 
 import { JsonValue, JsonArray, JsonObject } from "./value.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { atofSpan } from "../../fmt/src/atof.wac";
 
 export i32 ERR_NONE()         { return 0; }
@@ -331,7 +331,7 @@ export struct Parser {
       }
       if (b == '\\') { this.fail(ERR_UNSUPPORTED()); return null; }
       if (!isIdentStart(b) && !(b >= '0' && b <= '9')) { break; }
-      name.push(b);
+      name.push(b as@ u8);
       this.pos++;
     }
     return name.bytes();
@@ -360,7 +360,7 @@ export struct Parser {
       // "not a control character", and U+2028 and U+2029 are named back in by the grammar.
       if (c < ' ' && (!this.json5 || c == '\n' || c == '\r')) { this.fail(ERR_CONTROL()); return null; }
       if (c < 0x80) {
-        out.push(c);
+        out.push(c as@ u8);
         this.pos++;
         continue;
       }
@@ -369,7 +369,7 @@ export struct Parser {
       // string every legal byte is ASCII, so a bad one already fails structurally.
       i32 seq = this.utf8SeqLen();
       if (seq < 0) { this.fail(ERR_UTF8()); return null; }
-      for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k] as i32); }
+      for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
       this.pos += seq;
     }
   }
@@ -479,10 +479,10 @@ export struct Parser {
       this.pos += 3;                                   // U+2028, U+2029
       return true;
     }
-    if (e < 0x80) { out.push(e); this.pos++; return true; }
+    if (e < 0x80) { out.push(e as@ u8); this.pos++; return true; }
     i32 seq = this.utf8SeqLen();
     if (seq < 0) { this.fail(ERR_UTF8()); return false; }
-    for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k] as i32); }
+    for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
     this.pos += seq;
     return true;
   }

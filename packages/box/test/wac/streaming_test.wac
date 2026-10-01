@@ -18,7 +18,7 @@
 
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, realOut, runApplet, runAppletIn } from "./replay.wac";
 
@@ -55,7 +55,7 @@ string cols(string s) {
     while (i < b.len() && (b[i] == 0x20 || b[i] == 0x09 || b[i] == 0x0a)) { i++; }
     if (i >= b.len()) { break; }
     if (found > 0) { out.push(0x20); }
-    while (i < b.len() && b[i] != 0x20 && b[i] != 0x09 && b[i] != 0x0a) { out.push(b[i] as i32); i++; }
+    while (i < b.len() && b[i] != 0x20 && b[i] != 0x09 && b[i] != 0x0a) { out.push(b[i]); i++; }
     found++;
   }
   return out.toStr();
@@ -131,7 +131,7 @@ export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
   Buf want = Buf.create();
   for (i32 i = 0; i < text.len(); i++) {
     i32 c = text[i] as i32;
-    want.push(c >= 0x61 && c <= 0x7a ? c - 32 : c);
+    want.push((c >= 0x61 && c <= 0x7a ? c - 32 : c) as@ u8);
   }
 
   Ran got = runAppletIn(core, cli, dir, ["tr", "a-z", "A-Z"], text);

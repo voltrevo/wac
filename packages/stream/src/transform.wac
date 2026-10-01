@@ -12,7 +12,7 @@
 
 import { Scalar, decode, encode, encodedLength } from "../../unicode/src/utf8.wac";
 import { toUpper } from "../../unicode/src/case.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Read } from "core";
 
 /**

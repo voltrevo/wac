@@ -26,7 +26,7 @@
 
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { rsaSignRawPkcs1 } from "../../crypto/src/rsa.wac";
 import { AuthorityKeys, plainFingerprint } from "./authcert.wac";

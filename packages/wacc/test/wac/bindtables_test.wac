@@ -16,7 +16,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { splitLines, has, joined } from "../../../wactest/src/strings.wac";
 import { bindTypesFiles, blockedFiles } from "../../src/api.wac";
 

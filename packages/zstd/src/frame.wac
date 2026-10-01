@@ -11,7 +11,7 @@
 // real encoder emits raw blocks for incompressible input and RLE blocks for runs, so the
 // tests are against zstd's own output rather than against a reading of the specification.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Decoder, decodeCompressed } from "./block.wac";
 import { xxh64Low } from "./xxh64.wac";
 
@@ -257,7 +257,7 @@ void decodeBlocks(Reader r, Buf out, Decoder d) {
       if (size > blockMaxSize()) { trap; }
       i32 v = r.byte();
       for (i32 i = 0; i < size; i++) {
-        out.push(v);
+        out.push(v as@ u8);
       }
     } else if (blockType == 2) {
       if (size > r.left()) { trap; }

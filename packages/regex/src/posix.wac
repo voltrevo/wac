@@ -31,7 +31,7 @@
 // every differential test's environment, and `[[:alpha:]]` in any other locale is a question about a
 // Unicode database rather than about bytes. `packages/box`'s `tr` reads the same table from here.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Program } from "./program.wac";
 import { Compiled, compileFlags } from "./compile.wac";
 
@@ -77,9 +77,9 @@ export Rewritten toJs(u8[] pattern) {
     // An escaped byte is not a bracket, whatever it is: `\[` is a literal `[`.
     if (c == '\\' && i + 1 < pattern.len()) {
       i32 anchor = bufferAnchor(pattern[i + 1] as i32);
-      if (anchor >= 0) { out.push(anchor); i = i + 2; continue; }
-      out.push(c);
-      out.push(pattern[i + 1] as i32);
+      if (anchor >= 0) { out.push(anchor as@ u8); i = i + 2; continue; }
+      out.push(c as@ u8);
+      out.push(pattern[i + 1]);
       i = i + 2;
       continue;
     }
@@ -89,7 +89,7 @@ export Rewritten toJs(u8[] pattern) {
       continue;
     }
     if (c != '[') {
-      out.push(c);
+      out.push(c as@ u8);
       i++;
       continue;
     }
@@ -200,7 +200,7 @@ export void writeAny(Buf out) {
  */
 void writeMember(Buf out, i32 b) {
   if (b == ']' || b == '\\' || b == '^' || b == '-') { out.push('\\'); }
-  out.push(b);
+  out.push(b as@ u8);
 }
 
 /** Write a named class as ranges. False when the name is not one of the twelve. */

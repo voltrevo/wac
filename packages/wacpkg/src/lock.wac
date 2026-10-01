@@ -25,7 +25,7 @@
 
 import { JsonValue, JsonObject, JsonMember } from "../../json/src/value.wac";
 import { parseJson5 } from "../../json/src/json.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Manifest, Mapping } from "./manifest.wac";
 
 export i32 L_OK()          { return 0; }

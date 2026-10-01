@@ -40,7 +40,7 @@
 // host. A caller reporting "connection failed" sends somebody to look at the wrong thing.
 
 import { Cli, Socket } from "std";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 /** Where a proxy is. */
@@ -251,7 +251,7 @@ string firstLine(u8[] b) {
   Buf out = Buf.create();
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] == 13 || b[i] == 10) { break; }
-    out.push(b[i] as i32);
+    out.push(b[i]);
   }
   return out.toStr();
 }

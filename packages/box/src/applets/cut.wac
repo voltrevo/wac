@@ -9,7 +9,7 @@ import { Args, flagValue, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { tryHelp } from "../lib/operands.wac";
 import { Ranges, parseRanges } from "../lib/ranges.wac";
 import { Fs } from "../../../fs/src/fs.wac";
@@ -65,7 +65,7 @@ u8[] fieldsOf(u8[] line, i32 delim, Ranges want) {
     bool end = i == line.len() || line[i] as i32 == delim;
     if (!end) { continue; }
     if (want.has(n)) {
-      if (wrote) { out.push(delim); }
+      if (wrote) { out.push(delim as@ u8); }
       out.pushBytes(line, start, i - start);
       wrote = true;
     }
@@ -79,7 +79,7 @@ u8[] fieldsOf(u8[] line, i32 delim, Ranges want) {
 u8[] bytesOf(u8[] line, Ranges want) {
   Buf out = Buf.create();
   for (i32 i = 0; i < line.len(); i++) {
-    if (want.has(i + 1)) { out.push(line[i] as i32); }
+    if (want.has(i + 1)) { out.push(line[i]); }
   }
   return out.take();
 }

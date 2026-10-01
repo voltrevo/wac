@@ -18,7 +18,7 @@
 // process substitution. Each is noted where it would go.
 
 import { Vec } from "core";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 export enum Kind {
   /** A word, in `parts`. */
@@ -478,7 +478,7 @@ i32 lexWord(u8[] s, i32 at, Token word) {
           i32 after = ansiEscape(s, p + 1, body);
           if (after > 0) { p = after; continue; }
         }
-        body.push(s[p] as i32);
+        body.push(s[p]);
         p++;
       }
       if (p >= s.len()) { return -1; }                       // unterminated
@@ -737,7 +737,7 @@ i32 ansiEscape(u8[] s, i32 at, Buf out) {
     i32 n = 0;
     while (p < s.len() && n < 2 && hexValue(s[p] as i32) >= 0) { v = v * 16 + hexValue(s[p] as i32); p++; n++; }
     if (n == 0) { return -1; }
-    out.push(v & 0xFF);
+    out.push((v & 0xFF) as@ u8);
     return p;
   }
   if (c >= 0x30 && c <= 0x37) {                               // \NNN — up to three octal digits
@@ -745,7 +745,7 @@ i32 ansiEscape(u8[] s, i32 at, Buf out) {
     i32 v = 0;
     i32 n = 0;
     while (p < s.len() && n < 3 && s[p] >= 0x30 && s[p] <= 0x37) { v = v * 8 + (s[p] as i32 - 0x30); p++; n++; }
-    out.push(v & 0xFF);
+    out.push((v & 0xFF) as@ u8);
     return p;
   }
   return -1;

@@ -16,7 +16,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { ALPHABET_STANDARD, decode as b64Decode, encode as b64Encode }
   from "../../../codec/src/base64.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { KeyError, PrivateKey, readEd25519 } from "../../src/privatekey.wac";
 import { freshScratch } from "./fixture.wac";
 import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";

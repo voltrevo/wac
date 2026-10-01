@@ -28,7 +28,7 @@ import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Shapes, askZstd, compressLine, compressed, frameAt, frameShapes, mergeShapes,
          noShapes } from "./frames.wac";
 import { decompress } from "../../src/frame.wac";

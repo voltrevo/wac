@@ -56,7 +56,7 @@
 // checksum nobody compresses with is arguably not the gzip package.
 
 import { Map, Vec, hashString, stringEq } from "core";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { crc32 } from "../../gzip/src/crc32.wac";
 import { Reader, putI64, putString } from "./wire.wac";
 import { Cli, Core, FAULT_NOT_FOUND, FileResult } from "std";
@@ -125,7 +125,7 @@ export Written write(Fs fs) {
   Buf out = Buf.create();
   u8[] magic = "wacimg\0".toBytes();
   out.pushAll(magic);
-  out.push(VERSION());
+  out.push(VERSION() as@ u8);
   out.pushU32(memory.len() as@ u32);
   for (i32 i = 0; i < memory.len(); i++) {
     Mount m = fs.mounts.get(memory.get(i));
@@ -307,7 +307,7 @@ void dumpNode(Buf out, Fs fs, i32 node, string indent, string name) {
 
 void putNode(Buf out, Fs fs, i32 node) {
   Inode n = fs.nodes.get(node);
-  out.push(n.isDir ? KIND_DIR() : KIND_FILE());
+  out.push((n.isDir ? KIND_DIR() : KIND_FILE()) as@ u8);
   out.pushU32(n.mode as@ u32);
   putString(out, n.owner);
   putI64(out, n.mtime);

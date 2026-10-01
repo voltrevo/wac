@@ -14,7 +14,7 @@ import { Cli, Core } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { dump } from "../../../fs/src/image.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";

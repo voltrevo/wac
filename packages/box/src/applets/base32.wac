@@ -4,7 +4,7 @@
 import { Cli, Core } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Input, readInput } from "../lib/input.wac";
 import { withNewline } from "../lib/bytes.wac";
 
@@ -52,7 +52,7 @@ u8[] withoutSpace(u8[] text) {
   for (i32 i = 0; i < text.len(); i++) {
     i32 c = text[i] as i32;
     if (c == 32 || c == 9 || c == 10 || c == 13) { continue; }
-    out.push(c);
+    out.push(c as@ u8);
   }
   return out.take();
 }

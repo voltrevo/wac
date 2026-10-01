@@ -13,7 +13,7 @@
 // different reasons: an image is a file somebody hands you, and a request arrives over a channel
 // from another process. Neither is a reason to end the program that is reading.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /**
  * A position in the bytes, and whether it has already run off the end.
@@ -111,5 +111,5 @@ export void putString(Buf out, string s) {
 }
 
 export void putI64(Buf out, i64 v) {
-  for (i32 i = 0; i < 8; i++) { out.push(((v >> (i * 8)) & 255 as i64) as! i32); }
+  for (i32 i = 0; i < 8; i++) { out.push((((v >> (i * 8)) & 255 as i64) as! i32) as@ u8); }
 }

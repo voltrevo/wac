@@ -12,7 +12,7 @@
 //
 // Not implemented: IDNA, so a non-ASCII domain is rejected rather than mapped. See host.wac.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { bytesEq, Vec } from "core";
 import { Host, HostResult, parseHost, writeHost, isForbiddenHost } from "./host.wac";
 import { encodeInto, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
@@ -167,7 +167,7 @@ u8[] clean(u8[] input) {
   for (i32 i = lo; i < hi; i++) {
     i32 c = input[i] as i32;
     if (c == 0x09 || c == 0x0A || c == 0x0D) { continue; }
-    out.push(c);
+    out.push(c as@ u8);
   }
   return out.take();
 }
@@ -196,7 +196,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
 
     if (state == S_SCHEME_START()) {
       if (!eof && isAsciiAlpha(c)) {
-        buffer.push(c >= 'A' && c <= 'Z' ? c + 32 : c);
+        buffer.push((c >= 'A' && c <= 'Z' ? c + 32 : c) as@ u8);
         state = S_SCHEME();
       } else {
         state = S_NO_SCHEME();
@@ -205,7 +205,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
 
     } else if (state == S_SCHEME()) {
       if (!eof && (isAsciiAlnum(c) || c == '+' || c == '-' || c == '.')) {
-        buffer.push(c >= 'A' && c <= 'Z' ? c + 32 : c);
+        buffer.push((c >= 'A' && c <= 'Z' ? c + 32 : c) as@ u8);
       } else if (c == ':') {
         url.scheme = buffer.take();
         if (eqStr(url.scheme, "file")) {
@@ -364,7 +364,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         buffer = Buf.create();
         state = S_HOST();
       } else {
-        buffer.push(c);
+        buffer.push(c as@ u8);
       }
 
     } else if (state == S_HOST()) {
@@ -385,12 +385,12 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
       } else {
         if (c == '[') { insideBrackets = true; }
         if (c == ']') { insideBrackets = false; }
-        buffer.push(c);
+        buffer.push(c as@ u8);
       }
 
     } else if (state == S_PORT()) {
       if (!eof && isAsciiDigit(c)) {
-        buffer.push(c);
+        buffer.push(c as@ u8);
       } else if (eof || c == '/' || c == '?' || c == '#'
                  || (isSpecial(url.scheme) && c == '\\')) {
         if (buffer.len > 0) {
@@ -479,7 +479,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           state = S_PATH_START();
         }
       } else {
-        buffer.push(c);
+        buffer.push(c as@ u8);
       }
 
     } else if (state == S_PATH_START()) {
@@ -595,7 +595,7 @@ void writeDecimal(Buf out, i32 v) {
   i32 n = 0;
   i32 x = v;
   while (x > 0) { tmp[n] = (48 + (x % 10)) as@ u8; x = x / 10; n++; }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
 }
 
 /** The href: scheme, authority if there is one, path, query, fragment. */

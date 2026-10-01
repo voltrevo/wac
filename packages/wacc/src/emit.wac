@@ -3492,6 +3492,15 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
       fwdSrc[fwdCount] = parts[2];
       fwdCount = fwdCount + 1;
     }
+    // **An interpolation converts through core** (spec/next ch23) — `"\{n}"` calls core's spelling of
+    // an `i32` — so a file with one needs core linked whether or not it imports anything from it.
+    if (hasInterpolation(b, lexed)) {
+      if (qn >= queue.len()) { starts[0] = 2; return false; }
+      queue[qn] = " core";
+      queueSpec[qn] = "core";
+      queueFrom[qn] = path;
+      qn = qn + 1;
+    }
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         Import(pathTok, prefixTok, items): {
@@ -8645,7 +8654,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         i32 cc = env.funcAt(" str_concat");
         if (!haveRequired(env, cc, " str_concat")) { return; }
         emitExpr(fb, src, lexed, env, left);
-        emitExpr(fb, src, lexed, env, right);
+        // **An interpolated value converts to text** (spec/next ch23) — the `+` the lexer wrote for
+        // `\{` is the one place a value that is not a string may stand beside one.
+        if (isInterpPlus(src, lexed, op)) {
+          emitToText(fb, src, lexed, env, right);
+        } else {
+          emitExpr(fb, src, lexed, env, right);
+        }
         fb.byte(16);
         fb.u32leb(env.funcIndex[cc]);
         return;
@@ -9559,6 +9574,8 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         return "bool";
       }
       if (k == kQuestion()) { return coalesceType(src, lexed, env, left, right); }
+      // An interpolated literal is a string, whatever it interpolates (spec/next ch23).
+      if (k == kPlus() && isInterpPlus(src, lexed, op)) { return "string"; }
       string lt = typeOfE(src, lexed, env, left);
       string rt = typeOfE(src, lexed, env, right);
       // **A shift's amount is not an operand**, so it does not have to match: the reference states it
@@ -9762,6 +9779,57 @@ void emitCoalesce(B fb, u8[] src, Lexed lexed, Env env, Expr left, Expr right, s
     fb.u32leb(0);
   }
   fb.byte(11);
+}
+
+/** Whether a file interpolates anything — whether it has a `+` the lexer wrote for `\{`. */
+bool hasInterpolation(u8[] src, Lexed lexed) {
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (lexed.tokens[t * tokenStride()] == kPlus() && isInterpPlus(src, lexed, t)) { return true; }
+  }
+  return false;
+}
+
+/** Whether a `+` is the one the lexer wrote for `\{` in an interpolated literal. */
+bool isInterpPlus(u8[] src, Lexed lexed, i32 op) {
+  return lexed.tokens[op * tokenStride() + 2] == 2 && tokenTextOf(src, lexed, op) == "\\{";
+}
+
+/** The core function that spells a built-in type as text, or "" for a type with no built-in one. */
+string textFunctionFor(string t) {
+  if (t == "i32" || t == "i8" || t == "i16" || t == "u8" || t == "u16") { return "coreTextI32"; }
+  if (t == "u32") { return "coreTextU32"; }
+  if (t == "i64") { return "coreTextI64"; }
+  if (t == "u64") { return "coreTextU64"; }
+  if (t == "f64") { return "coreTextF64"; }
+  if (t == "f32") { return "coreTextF32"; }
+  if (t == "bool") { return "coreTextBool"; }
+  return "";
+}
+
+/**
+ * `e` as a string, through core's `toString` (spec/next ch23 `§wac-interp-tostring-2qpb4rs`): a string
+ * as itself, a built-in type through core's spelling of it, anything else through its `[toString]`
+ * method. The checker has refused a value with none.
+ */
+void emitToText(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
+  string t = typeOfE(src, lexed, env, e);
+  if (t == "" || t == "string") { emitExprAt(fb, src, lexed, env, e, "string"); return; }
+  string fname = textFunctionFor(t);
+  if (fname != "") {
+    i32 at = env.funcAt(fname);
+    if (!haveRequired(env, at, fname)) { return; }
+    // A packed value is carried in an `i32` already, which is what the conversion takes.
+    emitExprAt(fb, src, lexed, env, e, t);
+    fb.byte(16); fb.u32leb(env.funcIndex[at]);
+    return;
+  }
+  i32 m = env.methodAt(t, "[toString]");
+  if (m < 0 || env.funcIndex[m] < 0) {
+    env.declineFor("text from a " + t + ", which has no `[toString]`");
+    return;
+  }
+  emitExprAt(fb, src, lexed, env, e, t);
+  fb.byte(16); fb.u32leb(env.funcIndex[m]);
 }
 
 /** The type a binary operator's operands share, taken from whichever side is not a literal. */

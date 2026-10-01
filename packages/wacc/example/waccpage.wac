@@ -26,7 +26,7 @@
 
 import { Cli, Core, Event, Page, Pending, Picked } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Vec } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
@@ -89,7 +89,7 @@ string wasmName(u8[] b, i32[] at) {
   i32 n = uleb(b, at);
   Buf out = Buf.create();
   for (i32 i = 0; i < n && at[0] < b.len(); i++) {
-    out.push(b[at[0]] as i32);
+    out.push((b[at[0]] as i32) as@ u8);
     at[0] = at[0] + 1;
   }
   return out.toStr();

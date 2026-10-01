@@ -14,7 +14,7 @@
 // zstd computes it arithmetically from two per-symbol deltas instead, which is smaller and much
 // harder to be sure of; this is the version that can be checked by eye against `fse.wac`.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { FseTable, buildFromCounts } from "./fse.wac";
 
 /** The position of the highest set bit, or -1 for zero. */
@@ -68,7 +68,7 @@ export struct BitOut {
     this.cur = this.cur | ((v & ((1 << n) - 1)) << this.used);
     this.used += n;
     while (this.used >= 8) {
-      this.bytes.push(this.cur & 255);
+      this.bytes.push((this.cur & 255) as@ u8);
       this.cur = this.cur >>> 8;
       this.used -= 8;
     }
@@ -84,7 +84,7 @@ export struct BitOut {
    */
   u8[] flush(this) {
     if (this.used > 0) {
-      this.bytes.push(this.cur);
+      this.bytes.push(this.cur as@ u8);
       this.cur = 0;
       this.used = 0;
     }
@@ -95,7 +95,7 @@ export struct BitOut {
   u8[] finish(this) {
     this.write(1, 1);
     if (this.used > 0) {
-      this.bytes.push(this.cur);
+      this.bytes.push(this.cur as@ u8);
       this.cur = 0;
       this.used = 0;
     }

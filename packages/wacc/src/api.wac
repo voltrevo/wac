@@ -1541,6 +1541,13 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
       string canonical = c.renamed(wantName[k]);
       if (wantAlias[k] != canonical) { c.addLocalAlias(wantAlias[k], canonical); }
     }
+    // **How this file spells core's `toString`**, which is what interpolation converts through — under
+    // whatever alias it was imported (spec/next ch23 `§wac-conversion-symbol-identity-4ga8txc`).
+    if (isBuiltinSpec(paths[i]) || paths[i] == corePath()) {
+      for (i32 k = 0; k < n; k++) {
+        if (wantFrom[k] == paths[i] && wantName[k] == "toString") { c.coreToString = c.renamed("toString"); }
+      }
+    }
     // **Closed over what the wanted names reach**, so a type that arrives only through somebody
     // else's field signature still has its members. Everything past `only.len()` was added here
     // rather than asked for, so it is declared and *not* put in scope: writing its name stays the

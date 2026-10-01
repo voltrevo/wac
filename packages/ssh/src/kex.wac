@@ -26,7 +26,7 @@
 //   **session_id is H from the *first* exchange** and never changes, even though H itself does on
 //   every rekey. It is what authentication signatures bind to.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { ed25519Verify } from "../../crypto/src/ed25519.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
@@ -160,7 +160,7 @@ export u8[] deriveKey(u8[] k, u8[] h, u8[] sessionId, i32 letter, i32 needed) {
 
   Buf first = Buf.create();
   first.pushAll(base);
-  first.push(letter);
+  first.push(letter as@ u8);
   first.pushAll(sessionId);
 
   Buf out = Buf.create();

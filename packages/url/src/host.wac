@@ -9,7 +9,7 @@
 // from the standard rather than an approximation of it, and the tests assert exactly where the
 // boundary falls rather than skipping the cases — see the package README.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { decode, encodeInto, SET_C0 } from "./percent.wac";
 
 /**
@@ -350,7 +350,7 @@ export HostResult parseHost(u8[] s, bool special) {
   for (i32 i = 0; i < decoded.len(); i++) {
     i32 c = decoded[i] as i32;
     if (c > 0x7F) { ascii = false; }
-    lowered.push(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    lowered.push((c >= 'A' && c <= 'Z' ? c + 32 : c) as@ u8);
   }
   if (!ascii) { return HostResult(null, true); }
 
@@ -374,7 +374,7 @@ void writeU32Decimal(Buf out, u32 v) {
     x = x / 10;
     n++;
   }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
 }
 
 void writeHexLower(Buf out, i32 v) {
@@ -388,7 +388,7 @@ void writeHexLower(Buf out, i32 v) {
     x = x >> 4;
     n++;
   }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
 }
 
 /** Append the host in its canonical form, brackets included for IPv6. */

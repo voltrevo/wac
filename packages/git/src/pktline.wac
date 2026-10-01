@@ -19,7 +19,7 @@
 // a reader that subtracted four from them would compute a negative payload length. They are separate
 // answers here for that reason, rather than a packet whose payload happens to be empty.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 /** One packet read off the wire. */
@@ -84,7 +84,7 @@ export u8[] writePkt(u8[] payload) {
   // comparing bytes will expect even though it must accept either case.
   for (i32 shift = 12; shift >= 0; shift = shift - 4) {
     i32 nib = (n >> shift) & 0xf;
-    out.push(nib < 10 ? 48 + nib : 87 + nib);
+    out.push((nib < 10 ? 48 + nib : 87 + nib) as@ u8);
   }
   out.pushAll(payload);
   return out.take();

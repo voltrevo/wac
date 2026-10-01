@@ -11,7 +11,7 @@
 
 import { deflateDynamic } from "../../gzip/src/deflate.wac";
 import { inflate } from "../../gzip/src/inflate.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /**
  * Adler-32 of `data`, RFC 1950 §9.
@@ -53,10 +53,10 @@ export u8[] zlibCompress(u8[] data) {
   out.push(0x9c);
   out.pushAll(deflateDynamic(data));
   // Big-endian, which is the one place zlib disagrees with gzip: gzip's CRC and length are little.
-  out.push(((sum >> 24) & 0xff) as@ i32);
-  out.push(((sum >> 16) & 0xff) as@ i32);
-  out.push(((sum >> 8) & 0xff) as@ i32);
-  out.push((sum & 0xff) as@ i32);
+  out.push((((sum >> 24) & 0xff) as@ i32) as@ u8);
+  out.push((((sum >> 16) & 0xff) as@ i32) as@ u8);
+  out.push((((sum >> 8) & 0xff) as@ i32) as@ u8);
+  out.push(((sum & 0xff) as@ i32) as@ u8);
   return out.take();
 }
 

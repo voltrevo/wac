@@ -16,7 +16,7 @@
 // trip; a subtler one is caught when somebody re-runs this and reads the diff.
 
 import { Change, Cli, Core, Exec } from "std";
-import { Buf } from "../../packages/bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { ErrCase, Fixture, cases, fixtures, operandCases, operandErrorCases, operandErrorFixtures,
          appletCases, appletFixtures, notDirCases, notDirFixtures, operandFixtures } from "../../packages/box/test/wac/cases.wac";

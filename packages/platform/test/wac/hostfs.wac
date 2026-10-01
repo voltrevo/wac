@@ -20,7 +20,7 @@ import { Core, Cli, Exec, Stat, Pending } from "std";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { newestInClosure } from "../../../wactest/src/built.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { splitLines } from "../../../wactest/src/strings.wac";

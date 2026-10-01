@@ -10,13 +10,13 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { chunkedLiteral, literalOf } from "./source_probe.wac";
 
 /** `n` copies of `b`, as the filler either side of a boundary. */
 string run(i32 b, i32 n) {
   Buf out = Buf.withCapacity(n);
-  for (i32 i = 0; i < n; i++) { out.push(b); }
+  for (i32 i = 0; i < n; i++) { out.push(b as@ u8); }
   return string.fromBytes(out.take());
 }
 

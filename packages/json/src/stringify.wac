@@ -10,7 +10,7 @@
 // forgotten case fell through to `trap` at run time.
 
 import { JsonValue, JsonMember } from "./value.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { writeF64 } from "../../fmt/src/ftoa.wac";
 
 export void writeValue(Buf out, JsonValue v) {
@@ -96,7 +96,7 @@ export void writeString(Buf out, u8[] bytes) {
       continue;
     }
     if (width > 1) {
-      for (i32 k = 0; k < width; k++) { out.push(bytes[i + k] as i32); }
+      for (i32 k = 0; k < width; k++) { out.push(bytes[i + k]); }
       i = i + width - 1;
       continue;
     }
@@ -114,7 +114,7 @@ export void writeString(Buf out, u8[] bytes) {
         if (c < ' ') {
           writeUnicodeEscape(out, c);
         } else {
-          out.push(c);
+          out.push(c as@ u8);
         }
       }
     }
@@ -125,10 +125,10 @@ export void writeString(Buf out, u8[] bytes) {
 void writeUnicodeEscape(Buf out, i32 c) {
   out.push('\\');
   out.push('u');
-  out.push(hexChar((c >> 12) & 0xF));
-  out.push(hexChar((c >> 8) & 0xF));
-  out.push(hexChar((c >> 4) & 0xF));
-  out.push(hexChar(c & 0xF));
+  out.push(hexChar((c >> 12) & 0xF) as@ u8);
+  out.push(hexChar((c >> 8) & 0xF) as@ u8);
+  out.push(hexChar((c >> 4) & 0xF) as@ u8);
+  out.push(hexChar(c & 0xF) as@ u8);
 }
 
 // Lowercase, matching JSON.stringify.

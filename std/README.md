@@ -18,7 +18,7 @@ host call it belongs here.
 
 **And it must import nothing but `core`.** This is a hard mechanical limit rather than taste. Both
 compilers carry this tree as *text* — the reference bundles into a browser with no filesystem, wacc
-keeps it inside a wasm module — so there is no `../../bytes/src/buf.wac` to reach at the far end. A
+keeps it inside a wasm module — so there is no package path to reach at the far end. A
 file here that imports a package cannot be embedded at all.
 
 That limit is what decided the tree's contents. `frame.wac` and `stream.wac` sit beside

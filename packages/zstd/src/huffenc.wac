@@ -15,7 +15,7 @@
 //     by weight and then by value. The two must agree bit for bit, so this derives the code the
 //     same way the decoder derives the table rather than by a separate canonical ordering.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { BitOut } from "./fseenc.wac";
 
 /** The longest code the format allows, and so the width of a decoder's lookup. */
@@ -184,12 +184,12 @@ HuffEnc build(i32[] counts, i32 maxSymbol) {
 void writeTree(Buf out, HuffEnc h) {
   i32 count = h.maxSymbol;
   if (count < 1 || count > maxDirectSymbol()) { trap; }
-  out.push(127 + count);
+  out.push((127 + count) as@ u8);
   for (i32 i = 0; i < count; i += 2) {
     i32 hi = h.weights[i];
     i32 lo = 0;
     if (i + 1 < count) { lo = h.weights[i + 1]; }
-    out.push((hi << 4) | lo);
+    out.push(((hi << 4) | lo) as@ u8);
   }
 }
 
@@ -278,25 +278,25 @@ export u8[] compressLiterals(u8[] data, i32[] counts, i32 maxSymbol) {
   if (streams == 1) {
     // The only layout with a single stream, and the reason 1023 keeps appearing: ten bits each.
     i32 v = 2 | (0 << 2) | (n << 4) | (compressedSize << 14);
-    out.push(v & 255);
-    out.push((v >>> 8) & 255);
-    out.push((v >>> 16) & 255);
+    out.push((v & 255) as@ u8);
+    out.push(((v >>> 8) & 255) as@ u8);
+    out.push(((v >>> 16) & 255) as@ u8);
   } else if (n < 16384 && compressedSize < 16384) {
     i32 v = 2 | (2 << 2) | (n << 4);
-    out.push(v & 255);
-    out.push((v >>> 8) & 255);
-    out.push(((v >>> 16) & 3) | ((compressedSize << 2) & 255));
-    out.push((compressedSize >>> 6) & 255);
+    out.push((v & 255) as@ u8);
+    out.push(((v >>> 8) & 255) as@ u8);
+    out.push((((v >>> 16) & 3) | ((compressedSize << 2) & 255)) as@ u8);
+    out.push(((compressedSize >>> 6) & 255) as@ u8);
   } else {
     // Five bytes: four bits of kind and format, then eighteen bits of each size. The fields do
     // not land on byte boundaries — the regenerated size ends six bits into the third byte and
     // the compressed size starts there — which is the whole reason to write it out a byte at a
     // time rather than build a number and shift it.
     out.push(2 | (3 << 2) | ((n & 15) << 4));                     // kind, format, regen 0-3
-    out.push((n >>> 4) & 255);                                    // regen 4-11
-    out.push(((n >>> 12) & 63) | ((compressedSize & 3) << 6));    // regen 12-17, compressed 0-1
-    out.push((compressedSize >>> 2) & 255);                       // compressed 2-9
-    out.push((compressedSize >>> 10) & 255);                      // compressed 10-17
+    out.push(((n >>> 4) & 255) as@ u8);                                    // regen 4-11
+    out.push((((n >>> 12) & 63) | ((compressedSize & 3) << 6)) as@ u8);    // regen 12-17, compressed 0-1
+    out.push(((compressedSize >>> 2) & 255) as@ u8);                       // compressed 2-9
+    out.push(((compressedSize >>> 10) & 255) as@ u8);                      // compressed 10-17
   }
   out.pushBytes(content, 0, compressedSize);
   return out.take();

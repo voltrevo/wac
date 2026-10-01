@@ -33,7 +33,7 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
 string[] coreTree() {
   return [
     "core/read.wac", "core/jsx.wac", "core/option.wac", "core/result.wac", "core/hash.wac",
-    "core/map.wac", "core/vec.wac"
+    "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac"
   ];
 }
 

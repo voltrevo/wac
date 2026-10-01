@@ -16,7 +16,7 @@
 // signature that verifies against nothing, at a point far enough from here that the cause is not
 // obvious.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** What this client announces. Anything after `SSH-2.0-` is free-form. */
 export u8[] clientVersion() {

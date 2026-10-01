@@ -22,7 +22,7 @@
 
 import { fmtF64, fmtF32, parseF64, parseF32, itoaOf } from "./probe.wac";
 import { ftoa, ftoa32, writeF32 } from "../src/ftoa.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../src/itoa.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 

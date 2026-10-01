@@ -33,7 +33,7 @@
 // object ends where the trailing checksum begins. Walking sequentially and inflating to find each
 // boundary would work too and would mean inflating every object to read one.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { framed } from "./object.wac";
 import { Kind } from "./object.wac";
@@ -261,11 +261,11 @@ export u8[]? applyDelta(u8[] base, u8[] delta) {
       // cannot say 0x10000 and a copy of nothing would be pointless, so the value is reused.
       if (cpSize == 0) { cpSize = 0x10000; }
       if (cpOff < 0 || cpOff + cpSize > base.len()) { return null; }
-      for (i32 i = 0; i < cpSize; i++) { out.push(base[cpOff + i] as i32); }
+      for (i32 i = 0; i < cpSize; i++) { out.push(base[cpOff + i]); }
     } else {
       if (cmd == 0) { return null; }
       if (pos[0] + cmd > delta.len()) { return null; }
-      for (i32 i = 0; i < cmd; i++) { out.push(delta[pos[0] + i] as i32); }
+      for (i32 i = 0; i < cmd; i++) { out.push((delta[pos[0] + i] as i32) as@ u8); }
       pos[0] = pos[0] + cmd;
     }
   }
@@ -585,10 +585,10 @@ bool nameGreater(u8[] names, i32 a, i32 b) {
 
 /** Four bytes, big-endian. */
 void packU32(Buf out, i32 v) {
-  out.push((v >> 24) & 255);
-  out.push((v >> 16) & 255);
-  out.push((v >> 8) & 255);
-  out.push(v & 255);
+  out.push(((v >> 24) & 255) as@ u8);
+  out.push(((v >> 16) & 255) as@ u8);
+  out.push(((v >> 8) & 255) as@ u8);
+  out.push((v & 255) as@ u8);
 }
 
 /**
@@ -608,12 +608,12 @@ void pushObject(Buf out, i32 kind, u8[] body) {
   i32 first = ((kind & 7) << 4) | (body.len() & 0x0f);
   i32 rest = body.len() >> 4;
   if (rest != 0) { first = first | 0x80; }
-  out.push(first);
+  out.push(first as@ u8);
   while (rest != 0) {
     i32 b = rest & 0x7f;
     rest = rest >> 7;
     if (rest != 0) { b = b | 0x80; }
-    out.push(b);
+    out.push(b as@ u8);
   }
   // Each object is its own zlib stream, which is what lets a reader find the next one without a length
   // field: the inflater says where it ended.
@@ -652,10 +652,10 @@ export u8[] completePack(u8[] pack, i32[] kinds, Vec<u8[]> contents) {
   if (pack.len() < 32) { return pack; }
   i32 was = (pack[8] as i32 << 24) | (pack[9] as i32 << 16) | (pack[10] as i32 << 8) | pack[11] as i32;
   Buf out = Buf.create();
-  for (i32 i = 0; i < 8; i++) { out.push(pack[i] as i32); }
+  for (i32 i = 0; i < 8; i++) { out.push(pack[i]); }
   packU32(out, was + contents.len());
   // Everything between the header and the old trailing checksum, verbatim.
-  for (i32 i = 12; i < pack.len() - 20; i++) { out.push(pack[i] as i32); }
+  for (i32 i = 12; i < pack.len() - 20; i++) { out.push(pack[i]); }
   for (i32 i = 0; i < contents.len(); i++) { pushObject(out, kinds[i], contents.get(i)); }
   out.pushAll(sha1(out.bytes()));
   return out.take();

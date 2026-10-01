@@ -32,7 +32,7 @@
 // discipline behind it, and the modes in the request are not read — canonical with echo is the one
 // arrangement this serves.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Cli, Core, FileResult, Socket } from "std";
 import { Conn, msgNewKeys } from "./conn.wac";
@@ -913,7 +913,7 @@ u8[] forTerminal(u8[] bytes) {
   Buf out = Buf.create();
   for (i32 i = 0; i < bytes.len(); i++) {
     if (bytes[i] == 10) { out.push(13); }
-    out.push(bytes[i] as i32);
+    out.push(bytes[i]);
   }
   return out.take();
 }

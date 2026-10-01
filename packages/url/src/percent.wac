@@ -9,7 +9,7 @@
 // to encode — "UTF-8 percent-encode" is defined byte-wise — so a multi-byte scalar becomes one
 // `%XX` per byte with no special handling, and this file needs no notion of a code point at all.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 // The sets, ordered so that each includes every one above it. Passed as an i32 rather than
 // resolved through a funcref: `Map` takes funcrefs because its key type is open, but these are
@@ -73,8 +73,8 @@ i32 hexUpper(i32 nibble) { return nibble < 10 ? 48 + nibble : 55 + nibble; }
 /** Append `%XX` for one byte, uppercase, which is the form the standard serializes. */
 export void writePercent(Buf out, i32 b) {
   out.push('%');
-  out.push(hexUpper((b >> 4) & 15));
-  out.push(hexUpper(b & 15));
+  out.push(hexUpper((b >> 4) & 15) as@ u8);
+  out.push(hexUpper(b & 15) as@ u8);
 }
 
 /** Append `bytes`, percent-encoding whatever `set` requires and passing the rest through. */
@@ -84,7 +84,7 @@ export void encodeInto(Buf out, u8[] bytes, i32 set) {
     if (inEncodeSet(c, set)) {
       writePercent(out, c);
     } else {
-      out.push(c);
+      out.push(c as@ u8);
     }
   }
 }
@@ -109,18 +109,18 @@ export u8[] decode(u8[] bytes) {
   while (i < bytes.len()) {
     i32 c = bytes[i] as i32;
     if (c != '%' || i + 2 >= bytes.len()) {
-      out.push(c);
+      out.push(c as@ u8);
       i++;
       continue;
     }
     i32 hi = hexDigitValue(bytes[i + 1] as i32);
     i32 lo = hexDigitValue(bytes[i + 2] as i32);
     if (hi < 0 || lo < 0) {
-      out.push(c);
+      out.push(c as@ u8);
       i++;
       continue;
     }
-    out.push(hi * 16 + lo);
+    out.push((hi * 16 + lo) as@ u8);
     i = i + 3;
   }
   return out.take();

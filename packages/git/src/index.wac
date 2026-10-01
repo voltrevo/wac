@@ -38,7 +38,7 @@
 // entry, so a v2 reader that ignored the version would read the first path correctly and then produce
 // nonsense. git writes v2 unless asked otherwise.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
@@ -80,10 +80,10 @@ i32 be32at(u8[] b, i32 at) {
 }
 
 void pushBe32(Buf out, i32 v) {
-  out.push((v >> 24) & 0xff);
-  out.push((v >> 16) & 0xff);
-  out.push((v >> 8) & 0xff);
-  out.push(v & 0xff);
+  out.push(((v >> 24) & 0xff) as@ u8);
+  out.push(((v >> 16) & 0xff) as@ u8);
+  out.push(((v >> 8) & 0xff) as@ u8);
+  out.push((v & 0xff) as@ u8);
 }
 
 export Staged parseIndex(u8[] b) {
@@ -140,7 +140,7 @@ export Staged parseIndex(u8[] b) {
     if (pathEnd > bodyLen) { return Staged.Unreadable("a path runs past the end"); }
 
     Buf path = Buf.create();
-    for (i32 i = pathAt; i < pathEnd; i++) { path.push(b[i] as i32); }
+    for (i32 i = pathAt; i < pathEnd; i++) { path.push(b[i]); }
     entries.push(IndexEntry(path.toStr(), name, mode, size, stage));
 
     // Each entry is padded with NULs to a multiple of eight, counted from the start of the entry, and
@@ -151,7 +151,7 @@ export Staged parseIndex(u8[] b) {
   }
 
   Buf ext = Buf.create();
-  for (i32 i = at; i < bodyLen; i++) { ext.push(b[i] as i32); }
+  for (i32 i = at; i < bodyLen; i++) { ext.push(b[i]); }
   return Staged.Present(GitIndex(entries, ext.bytes()));
 }
 
@@ -185,8 +185,8 @@ export u8[] writeIndex(const GitIndex idx) {
     u8[] pathBytes = it.path.toBytes();
     i32 lenField = pathBytes.len() < 0x0fff ? pathBytes.len() : 0x0fff;
     i32 flags = ((it.stage & 3) << 12) | lenField;
-    out.push((flags >> 8) & 0xff);
-    out.push(flags & 0xff);
+    out.push(((flags >> 8) & 0xff) as@ u8);
+    out.push((flags & 0xff) as@ u8);
     out.pushAll(pathBytes);
 
     // At least one NUL, and up to a multiple of eight from the entry's start.

@@ -13,7 +13,7 @@
 
 import { Cli, Core } from "std";
 import { Line, Typed } from "../src/line.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 export i32 main(Core core, Cli cli) {
   u8[] typed = cli.readStdin().wait();
@@ -51,7 +51,7 @@ export u8[] ttycatBytes(u8[] typed, string mode) {
     if (t.hasLine) {
       for (i32 j = 0; j < t.line.len(); j++) {
         if (t.line[j] == 10) { out.push(13); }
-        out.push(t.line[j] as i32);
+        out.push(t.line[j]);
       }
     }
     // An interrupt kills `cat`, and the pty stops being read: whatever was typed after it is lost. The

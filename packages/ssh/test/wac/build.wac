@@ -13,7 +13,7 @@
 // `Buf` rather than repeated `u8[] +`, because several of these build a message a field at a time
 // and the concatenating form is quadratic in the number of fields.
 
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** A uint32, big-endian — RFC 4251 §5. */
 export u8[] u32be(i32 n) {

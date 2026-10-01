@@ -20,7 +20,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { ALPHABET_STANDARD, decode as b64Decode } from "../../../codec/src/base64.wac";
 import { startsWith, contains, trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Verdict, lookUp as knownHost } from "../../src/knownhosts.wac";
 import { Proposal, decode as decodeKexInit, negotiate, clientProposal } from "../../src/kexinit.wac";

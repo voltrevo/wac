@@ -73,7 +73,7 @@
 import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS,
          FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE } from "std";
 import { Read } from "core";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Parsed, parseRequest } from "../../http/src/request.wac";
 import { DirDocuments, dirSourceFingerprint } from "./dirserve.wac";
 import { ALPHABET_STANDARD, encode as base64Encode } from "../../codec/src/base64.wac";

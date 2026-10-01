@@ -3125,7 +3125,7 @@ in the world to write:
 - Stage A must **decline nothing** — two eight-byte headers agree about nothing at all. (This fired
   immediately: the first run carried only `packages/wacc/src/*.wac` and reported 41 characters of
   reason, which is exactly *"an import of a file that was not supplied"*. One of wacc's sources
-  reaches into `bytes/src/buf.wac`, so the closure is nine files and not eight.)
+  reached into `packages/bytes` for its byte buffer then, so the closure was nine files and not eight.)
 - Stage A's module must be over 100,000 bytes, so "it emitted something" is not "it emitted a header".
 - And stage B's bytes must equal what the **harness** gets from `emitFiles` directly — the number
   every other test in this package has been measuring all along.

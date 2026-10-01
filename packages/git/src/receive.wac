@@ -29,7 +29,7 @@
 // **`report-status` is asked for.** Without it the server says nothing and a client cannot tell a rejected
 // ref from an accepted one; with it, `unpack ok` covers the pack and one line per ref covers each update.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Vec } from "core";
 import { Pkt, flushPkt, readPkt, writePkt } from "./pktline.wac";
 import { Ad, Advertised, parseAdvertisement } from "./fetch.wac";
@@ -173,7 +173,7 @@ export struct Report {
 
 string textOf(u8[] b, i32 from, i32 to) {
   Buf out = Buf.create();
-  for (i32 i = from; i < to; i++) { out.push(b[i] as i32); }
+  for (i32 i = from; i < to; i++) { out.push(b[i]); }
   return out.toStr();
 }
 

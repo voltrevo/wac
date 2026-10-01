@@ -20,7 +20,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, Pending, Socket } from "std";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
@@ -126,7 +126,7 @@ Identity identity(Cli cli) {
     i32 v = hexValue(c);
     if (v < 0) { nibble = -1; continue; }
     if (nibble < 0) { nibble = v; continue; }
-    priv.push(nibble * 16 + v);
+    priv.push((nibble * 16 + v) as@ u8);
     nibble = -1;
   }
   return Identity(true, "", der.stdout, priv.take());

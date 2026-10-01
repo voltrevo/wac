@@ -5,7 +5,7 @@
 // decode returns null rather than trapping, and encoding chooses a case while decoding accepts
 // either.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 i32 lowerDigit(i32 v) { return v < 10 ? 48 + v : 87 + v; }
 i32 upperDigit(i32 v) { return v < 10 ? 48 + v : 55 + v; }
@@ -22,8 +22,8 @@ export u8[] encode(u8[] data) {
   Buf out = Buf.create();
   out.reserveFor(data.len() * 2);
   for (i32 i = 0; i < data.len(); i++) {
-    out.push(lowerDigit((data[i] as i32 >> 4) & 15));
-    out.push(lowerDigit(data[i] as i32 & 15));
+    out.push(lowerDigit((data[i] as i32 >> 4) & 15) as@ u8);
+    out.push(lowerDigit(data[i] as i32 & 15) as@ u8);
   }
   return out.take();
 }
@@ -32,8 +32,8 @@ export u8[] encodeUpper(u8[] data) {
   Buf out = Buf.create();
   out.reserveFor(data.len() * 2);
   for (i32 i = 0; i < data.len(); i++) {
-    out.push(upperDigit((data[i] as i32 >> 4) & 15));
-    out.push(upperDigit(data[i] as i32 & 15));
+    out.push(upperDigit((data[i] as i32 >> 4) & 15) as@ u8);
+    out.push(upperDigit(data[i] as i32 & 15) as@ u8);
   }
   return out.take();
 }

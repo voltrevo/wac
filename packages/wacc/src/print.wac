@@ -15,7 +15,6 @@
 // exact shape of code the node pool made unsafe, a dispatch on tag where nothing
 // checked that the fields being read meant what the tag implied.
 
-import { Buf } from "../../bytes/src/buf.wac";
 import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
@@ -24,14 +23,46 @@ import { blockValue, escapeValue, isBlockLiteral, tokenStride, unicodeEscapeEnd,
 import { kindName } from "./kinds.wac";
 
 /** Everything the printer needs: the AST's token table and the source behind it. */
+/**
+ * The printer's byte builder — its own rather than core's `Buf`, because this package compiles on
+ * wac-L5, which reads no `core` (packages/wacc's README, "One thing the bootstrap asks of this
+ * package"). The few operations it needs, and nothing else.
+ */
+struct PrintOut {
+  u8[] data;
+  i32 len;
+
+  void push(this, i32 v) {
+    if (this.len >= this.data.len()) {
+      u8[] next = u8[].filled(this.data.len() * 2 + 16, 0);
+      next.copyFrom(this.data, 0, 0, this.len);
+      this.data = next;
+    }
+    this.data[this.len] = v as@ u8;
+    this.len++;
+  }
+
+  void pushAll(this, u8[] src) {
+    for (i32 i = 0; i < src.len(); i++) { this.push(src[i] as i32); }
+  }
+
+  u8[] bytes(const this) {
+    u8[] out = u8[].filled(this.len, 0);
+    out.copyFrom(this.data, 0, 0, this.len);
+    return out;
+  }
+
+  string toStr(const this) { return string.fromBytes(this.bytes()); }
+}
+
 export struct Pr {
-  Buf out;
+  PrintOut out;
   u8[] src;
   i32[] toks;
   i32 tokCount;
 
   Pr create(u8[] src, i32[] toks, i32 tokCount) {
-    return Pr(Buf.withCapacity(4096), src, toks, tokCount);
+    return Pr(PrintOut(u8[].filled(4096, 0), 0), src, toks, tokCount);
   }
 
   void s(this, string text) { this.out.pushAll(text.toBytes()); }

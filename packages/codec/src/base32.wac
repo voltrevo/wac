@@ -9,7 +9,7 @@
 // RFC 4648 §10 — which are normative, and a stronger oracle than an implementation would be —
 // plus a round-trip over random input and a strictness suite mirroring base64's.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** `A-Z2-7`, from §6. */
 export i32 ALPHABET_STANDARD() { return 0; }
@@ -61,7 +61,7 @@ export u8[] encode(u8[] data, i32 alphabet, bool pad) {
     u64 n = 0;
     for (i32 k = 0; k < 5; k++) { n = (n << 8) | ((data[i + k] as i64) as@ u64); }
     for (i32 k = 7; k >= 0; k--) {
-      out.push(encodeDigit(((n >> (((k * 5) as i64) as@ u64)) & 31) as@ i32, alphabet));
+      out.push(encodeDigit(((n >> (((k * 5) as i64) as@ u64)) & 31) as@ i32, alphabet) as@ u8);
     }
     i = i + 5;
   }
@@ -73,7 +73,7 @@ export u8[] encode(u8[] data, i32 alphabet, bool pad) {
     }
     i32 digits = digitsFor(left);
     for (i32 k = 0; k < digits; k++) {
-      out.push(encodeDigit(((n >> ((((7 - k) * 5) as i64) as@ u64)) & 31) as@ i32, alphabet));
+      out.push(encodeDigit(((n >> ((((7 - k) * 5) as i64) as@ u64)) & 31) as@ i32, alphabet) as@ u8);
     }
     if (pad) {
       for (i32 k = 0; k < padFor(left); k++) { out.push('='); }

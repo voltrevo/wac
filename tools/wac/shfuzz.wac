@@ -37,7 +37,7 @@
 //     Generating them buries the real findings under a class that is already understood.
 
 import { Change, Cli, Core, Exec } from "std";
-import { Buf } from "../../packages/bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Frame, childCli, childCore } from "../../packages/platform/src/frame.wac";
 import { Shell } from "../../packages/sh/src/exec.wac";

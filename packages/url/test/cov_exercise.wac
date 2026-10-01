@@ -22,7 +22,7 @@ import { parse, parseWithBase } from "./probe.wac";
 import { Host, writeHost, parseIpv4, parseIpv6, endsInNumber } from "../src/host.wac";
 import { encode, decode, inEncodeSet, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
          SET_PATH, SET_USERINFO, SET_COMPONENT } from "../src/percent.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Rng } from "../../wactest/src/rng.wac";
 import { Core, Cli } from "std";
 import {

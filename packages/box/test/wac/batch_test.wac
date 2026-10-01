@@ -9,7 +9,7 @@
 
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, differs, runApplet, runAppletIn, splitOn, trimEnd } from "./replay.wac";
 

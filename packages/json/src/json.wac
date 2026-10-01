@@ -15,7 +15,7 @@
 import { JsonValue } from "./value.wac";
 import { Parser, parseDocument, ERR_NONE } from "./parse.wac";
 import { writeValue } from "./stringify.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** The parsed tree, or null if the document is not JSON. */
 export JsonValue? parse(u8[] src) {

@@ -7,7 +7,7 @@
 //
 // See `remote.wac` for what the channel is and why a child gets one at all. wac-mono 0116.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Change, Cli, FAULT_OTHER } from "std";
 import { Fs } from "./fs.wac";
 import { Reader, putString } from "./wire.wac";

@@ -10,7 +10,7 @@ import { Host, HostResult, writeHost, parseIpv4, parseIpv6, endsInNumber, parseO
          parseHost } from "../../src/host.wac";
 import { encode, decode, inEncodeSet, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
          SET_PATH, SET_USERINFO, SET_COMPONENT } from "../../src/percent.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 u8[] hostStr(Host h) {
   Buf b = Buf.create();

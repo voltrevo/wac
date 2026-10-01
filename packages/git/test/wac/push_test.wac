@@ -26,7 +26,7 @@ import { Vec } from "core";
 import { Report, RefReport, readReport, noRefsIn, oldFor } from "../../src/receive.wac";
 import { Ad, parseAdvertisement } from "../../src/fetch.wac";
 import { writeText } from "../../src/pktline.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 
 Exec git(Cli cli, string where, string[] args, u8[] stdin) {

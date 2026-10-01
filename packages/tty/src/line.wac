@@ -69,7 +69,7 @@
 // sequences, and the kernel does not handle them either: readline does, in the program. Erase is
 // backwards-only, which is what a line discipline is.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** DEL, the erase character. Not `^H` — see the header. */
 i32 ERASE() { return 127; }
@@ -213,7 +213,7 @@ export struct Line {
   Typed feed(this, i32 b) {
     if (!this.canonical) { return this.feedByte(b); }
     if (!this.echo && b == REPRINT()) {
-      this.held.push(b);
+      this.held.push(b as@ u8);
       return Typed.nothing();
     }
     Typed t = this.feedLine(b);
@@ -243,7 +243,7 @@ export struct Line {
   Typed feedLine(this, i32 b) {
     if (this.literal) {
       this.literal = false;
-      this.held.push(b);
+      this.held.push(b as@ u8);
       // The `^` from the `^V` is already on the screen; back over it and show what actually arrived.
       Buf out = Buf.create();
       out.push(8);
@@ -268,7 +268,7 @@ export struct Line {
       // erasing it takes two backspaces — this rubbed out one and left a stray caret on the screen,
       // which the kernel comparison caught on the first run and which no test of *delivered lines*
       // could ever see.
-      i32 wide = columns(this.held.get(this.held.len - 1));
+      i32 wide = columns(this.held.get(this.held.len - 1) as i32);
       this.dropLast();
       return Typed.echoed(rubOut(wide));
     }
@@ -305,7 +305,7 @@ export struct Line {
       Buf out = Buf.create();
       out.pushAll("^R".toBytes());
       out.pushAll(crlf());
-      for (i32 i = 0; i < this.held.len; i++) { out.pushAll(render(this.held.get(i))); }
+      for (i32 i = 0; i < this.held.len; i++) { out.pushAll(render(this.held.get(i) as i32)); }
       return Typed.echoed(out.take());
     }
     if (b == EOFC()) {
@@ -314,7 +314,7 @@ export struct Line {
       // nothing, because nothing was typed *at* the terminal.
       return Typed(u8[](), this.held.take(), true, false, 0);
     }
-    this.held.push(b);
+    this.held.push(b as@ u8);
     return Typed.echoed(render(b));
   }
 
@@ -329,7 +329,7 @@ export struct Line {
   void dropLast(this) {
     u8[] all = this.held.take();
     Buf keep = Buf.create();
-    for (i32 i = 0; i < all.len() - 1; i++) { keep.push(all[i] as i32); }
+    for (i32 i = 0; i < all.len() - 1; i++) { keep.push(all[i]); }
     this.held = keep;
   }
 

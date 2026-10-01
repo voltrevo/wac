@@ -18,7 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { JsonValue, JsonArray, JsonObject, bytesEqual, numberOf } from "../../src/value.wac";
 import { writeValue } from "../../src/stringify.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Parser, parseDocument, hexDigit, ERR_NONE, ERR_TRAILING, ERR_CONTROL } from "../../src/parse.wac";
 
 /**

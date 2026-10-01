@@ -23,7 +23,7 @@
 // including `<` and spaces. So it is parsed from the right — the zone is the last field, the seconds
 // the one before — rather than by splitting on spaces from the left.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { decode, encode } from "../../codec/src/hex.wac";
 import { Vec } from "core";
 import { itoa64 } from "../../fmt/src/itoa.wac";
@@ -70,7 +70,7 @@ i32 lineEnd(u8[] b, i32 from) {
 
 string slice(u8[] b, i32 from, i32 to) {
   Buf out = Buf.create();
-  for (i32 i = from; i < to; i++) { out.push(b[i] as i32); }
+  for (i32 i = from; i < to; i++) { out.push(b[i]); }
   return out.toStr();
 }
 
@@ -174,7 +174,7 @@ export Parsed parseCommit(u8[] content) {
   if (committer is null) { return Parsed.Malformed("no committer"); }
 
   Buf msg = Buf.create();
-  for (i32 i = at; i < content.len(); i++) { msg.push(content[i] as i32); }
+  for (i32 i = at; i < content.len(); i++) { msg.push(content[i]); }
   return Parsed.Understood(Commit(tree!, parents, author!, committer!, msg.toStr()));
 }
 
@@ -241,7 +241,7 @@ export ParsedTag parseTag(u8[] content) {
   if (kindWord == "") { return ParsedTag.Unreadable("no type"); }
 
   Buf msg = Buf.create();
-  for (i32 i = at; i < content.len(); i++) { msg.push(content[i] as i32); }
+  for (i32 i = at; i < content.len(); i++) { msg.push(content[i]); }
   return ParsedTag.Annotated(Tag(object!, kindWord, name, msg.toStr()));
 }
 

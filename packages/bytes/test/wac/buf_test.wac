@@ -4,16 +4,16 @@
 // path — were unverified.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "../../src/buf.wac";
+import { Buf } from "core";
 
 export string test_growth_from_empty() {
   T t = T.create();
   Buf b = Buf.create();
   t.eqI32(b.len, 0, "starts empty");
-  for (i32 i = 0; i < 100; i++) { b.push(i); }
+  for (i32 i = 0; i < 100; i++) { b.push(i as@ u8); }
   t.eqI32(b.len, 100, "length after 100 pushes");
-  t.eqI32(b.get(0), 0, "first byte");
-  t.eqI32(b.get(99), 99, "last byte");
+  t.eqI32(b.get(0) as i32, 0, "first byte");
+  t.eqI32(b.get(99) as i32, 99, "last byte");
   // bytes() must hand back exactly len, not the doubled capacity.
   t.eqI32(b.bytes().len(), 100, "bytes() trims spare capacity");
   return t.report();
@@ -26,8 +26,8 @@ export string test_bytes_are_stored_unsigned() {
   Buf b = Buf.create();
   b.push(0xFF);
   b.push(0x80);
-  t.eqI32(b.get(0), 255, "0xFF reads back as 255");
-  t.eqI32(b.get(1), 128, "0x80 reads back as 128");
+  t.eqI32(b.get(0) as i32, 255, "0xFF reads back as 255");
+  t.eqI32(b.get(1) as i32, 128, "0x80 reads back as 128");
   t.eqBytes(b.bytes(), [0xFF, 0x80] as u8[], "and survives the copy out");
   return t.report();
 }
@@ -35,10 +35,12 @@ export string test_bytes_are_stored_unsigned() {
 export string test_push_truncates_to_a_byte() {
   T t = T.create();
   Buf b = Buf.create();
-  b.push(0x1FF);
-  b.push(-1);
-  t.eqI32(b.get(0), 0xFF, "0x1FF truncates to 0xFF");
-  t.eqI32(b.get(1), 0xFF, "-1 truncates to 0xFF");
+  // `push` takes a byte (spec/next ch42); a wider value says which bits it means, and `as@` keeps
+  // the low eight.
+  b.push(0x1FF as@ u8);
+  b.push((-1) as@ u8);
+  t.eqI32(b.get(0) as i32, 0xFF, "0x1FF truncates to 0xFF");
+  t.eqI32(b.get(1) as i32, 0xFF, "-1 truncates to 0xFF");
   return t.report();
 }
 
@@ -46,16 +48,16 @@ export string test_with_capacity() {
   T t = T.create();
   Buf b = Buf.withCapacity(64);
   t.eqI32(b.len, 0, "capacity is not length");
-  for (i32 i = 0; i < 64; i++) { b.push(i); }
+  for (i32 i = 0; i < 64; i++) { b.push(i as@ u8); }
   t.eqI32(b.len, 64, "fills to capacity without growing");
   b.push(64);
   t.eqI32(b.len, 65, "and still grows past it");
-  t.eqI32(b.get(64), 64, "the byte past the original capacity survived");
+  t.eqI32(b.get(64) as i32, 64, "the byte past the original capacity survived");
 
   // A capacity below the default floor is raised to it rather than honoured, so
   // a tiny hint cannot make growth quadratic.
   Buf small = Buf.withCapacity(1);
-  for (i32 i = 0; i < 16; i++) { small.push(i); }
+  for (i32 i = 0; i < 16; i++) { small.push(i as@ u8); }
   t.eqI32(small.len, 16, "a capacity of 1 still holds 16 without trouble");
   return t.report();
 }
@@ -81,10 +83,10 @@ export string test_push_bytes_grows_once_and_correctly() {
   for (i32 i = 0; i < 300; i++) { src[i] = (i & 0xFF) as@ u8; }
   b.pushBytes(src, 0, 300);
   t.eqI32(b.len, 300, "all 300 arrived");
-  t.eqI32(b.get(0), 0, "first");
-  t.eqI32(b.get(255), 255, "the byte at the wrap point");
-  t.eqI32(b.get(256), 0, "and just past it");
-  t.eqI32(b.get(299), 299 & 0xFF, "last");
+  t.eqI32(b.get(0) as i32, 0, "first");
+  t.eqI32(b.get(255) as i32, 255, "the byte at the wrap point");
+  t.eqI32(b.get(256) as i32, 0, "and just past it");
+  t.eqI32(b.get(299) as i32, 299 & 0xFF, "last");
   return t.report();
 }
 
@@ -178,7 +180,7 @@ export string test_take_avoids_the_copy_when_exactly_full() {
   // later write through the returned array is visible in it — which is exactly
   // why the contract is documented and why bytes() exists separately.
   Buf full = Buf.withCapacity(16);
-  for (i32 i = 0; i < 16; i++) { full.push(i); }
+  for (i32 i = 0; i < 16; i++) { full.push(i as@ u8); }
   u8[] taken = full.take();
   t.eqI32(taken.len(), 16, "exact length");
   t.eqI32(taken[15] as i32, 15, "contents intact");
@@ -204,12 +206,12 @@ export string test_grows_from_zero_capacity() {
   // A buffer with no capacity at all, which `take` now produces. Doubling zero is
   // zero, so this is where a missing floor in `reserve` goes out of bounds.
   Buf b = Buf.withCapacity(16);
-  for (i32 i = 0; i < 16; i++) { b.push(i); }
+  for (i32 i = 0; i < 16; i++) { b.push(i as@ u8); }
   u8[] gone = b.take();
   t.eqI32(gone.len(), 16, "the storage was handed over");
-  for (i32 i = 0; i < 40; i++) { b.push(i); }
+  for (i32 i = 0; i < 40; i++) { b.push(i as@ u8); }
   t.eqI32(b.len, 40, "and the emptied buffer refills");
-  t.eqI32(b.get(39), 39, "with the right contents");
+  t.eqI32(b.get(39) as i32, 39, "with the right contents");
   return t.report();
 }
 
@@ -223,10 +225,10 @@ export string test_bulk_append_onto_a_partly_filled_buffer() {
   for (i32 i = 0; i < 100; i++) { big[i] = i as@ u8; }
   b.pushAll(big);
   t.eqI32(b.len, 103, "both parts are there");
-  t.eqI32(b.get(0), 'a', "the original bytes survived the growth");
-  t.eqI32(b.get(2), 'c', "including the last of them");
-  t.eqI32(b.get(3), 0, "and the appended block starts where it should");
-  t.eqI32(b.get(102), 99, "through to its end");
+  t.eqI32(b.get(0) as i32, 'a', "the original bytes survived the growth");
+  t.eqI32(b.get(2) as i32, 'c', "including the last of them");
+  t.eqI32(b.get(3) as i32, 0, "and the appended block starts where it should");
+  t.eqI32(b.get(102) as i32, 99, "through to its end");
   return t.report();
 }
 
@@ -235,12 +237,12 @@ export string test_bulk_append_from_zero_capacity() {
   // reserveFor's capacity floor. Reachable only when the buffer has no capacity at
   // all, since 16 doubled already clears the floor — so only after `take`.
   Buf b = Buf.withCapacity(16);
-  for (i32 i = 0; i < 16; i++) { b.push(i); }
+  for (i32 i = 0; i < 16; i++) { b.push(i as@ u8); }
   u8[] taken = b.take();
   t.eqI32(taken.len(), 16, "storage handed over");
   b.pushAll(['x', 'y'] as u8[]);
   t.eqI32(b.len, 2, "the emptied buffer takes a bulk append");
-  t.eqI32(b.get(1), 'y', "with the right contents");
+  t.eqI32(b.get(1) as i32, 'y', "with the right contents");
   return t.report();
 }
 
@@ -304,8 +306,8 @@ export string test_drop_front_shifts_what_is_left() {
 
   b.dropFront(2);
   t.eqI32(b.len, 3, "the length drops by what was dropped");
-  t.eqI32(b.get(0), 'c', "and the rest moves to the front");
-  t.eqI32(b.get(2), 'e', "all of it, not just the first byte");
+  t.eqI32(b.get(0) as i32, 'c', "and the rest moves to the front");
+  t.eqI32(b.get(2) as i32, 'e', "all of it, not just the first byte");
 
   b.pushAll(['f'] as u8[]);
   t.eqBytes(b.take(), ['c', 'd', 'e', 'f'] as u8[], "a push after a drop lands after the tail");

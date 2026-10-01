@@ -242,12 +242,12 @@ export string test_the_flag_adds_code_and_the_emitter_is_deterministic(Core core
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
-  // Chosen for arithmetic: an integer formatter, a hash, a byte buffer and a varint codec. Each is
+  // Chosen for arithmetic: an integer formatter, a hash, a byte-buffer user and a varint codec. Each is
   // a whole closure, so this is four real builds rather than four files.
   string[] entries = [
     "packages/fmt/src/itoa.wac",
     "packages/crypto/src/sha256.wac",
-    "packages/bytes/src/buf.wac",
+    "packages/json/src/json.wac",
     "packages/quic/src/varint.wac"
   ];
 

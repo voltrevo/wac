@@ -46,7 +46,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { literalOf, chunkedLiteral } from "./source_probe.wac";
 import { Core, Cli, Exec, Change } from "std";
 import { emitFilesSelfDescribing } from "../../src/api.wac";

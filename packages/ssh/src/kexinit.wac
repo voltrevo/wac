@@ -11,7 +11,7 @@
 // So the message has to be kept, not just parsed — re-encoding our own from the parsed fields
 // would be a different byte string if any detail of the encoding differed.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Reader, Writer } from "./wire.wac";
 
 // Only the one this file needs. The rest of the message numbers arrive with the code that

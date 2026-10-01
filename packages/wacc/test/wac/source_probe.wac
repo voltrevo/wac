@@ -7,7 +7,7 @@
 // needs — a name it cannot resolve is one the compiler reports on anyway — and a scan does not
 // depend on the parser under test.
 
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** The most files one entry's import closure is expected to reach. */
 static i32 CLOSURE_CAP = 512;
@@ -125,7 +125,7 @@ export string literalOf(string text) {
     else if (c == '"') { out.push('\\'); out.push('"'); }
     else if (c == '\n') { out.push('\\'); out.push('n'); }
     else if (c == '\t') { out.push('\\'); out.push('t'); }
-    else { out.push(c); }
+    else { out.push(c as@ u8); }
   }
   out.push('"');
   return string.fromBytes(out.take());

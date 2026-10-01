@@ -37,7 +37,7 @@
 // [0065](../../../issues/system/closed/0065-a-spawned-programs-arguments-are-not-byte-exact.md).
 
 import { Map, Vec, hashString, stringEq } from "core";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
   FAULT_IS_DIR, FAULT_NOT_A_DIR, FAULT_OTHER, FAULT_READ_ONLY, FAULT_UNSUPPORTED, FileResult,
   PARENT_FS, Pending, Stat }

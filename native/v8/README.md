@@ -470,7 +470,7 @@ beside the module:
 branch coverage: 97 of 341 points (28%)
      53 / 97    packages/bytes/test/wac/buf_test.wac
       6 / 40    packages/wactest/src/assert.wac
-     38 / 42    packages/bytes/src/buf.wac
+     38 / 42    core/buf.wac
       0 / 25    packages/fmt/src/itoa.wac
       0 / 79    packages/fmt/src/ftoa.wac
 ```

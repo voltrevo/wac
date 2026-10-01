@@ -8,7 +8,7 @@
 // `Host` is required for HTTP/1.1 and is a parameter rather than a header, because a request
 // without one is not a message a server has to accept.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Headers } from "./headers.wac";
 
 export struct Outgoing {

@@ -17,7 +17,7 @@
 // README says so under what this does not do.
 
 import { Vec, Map, Option, hashString, stringEq, Read } from "core";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Change, Child, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
   GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_IN, INHERIT_NONE, Pending, Stat, readReason, reasonOf }
   from "std";
@@ -2686,11 +2686,11 @@ Output readLine(Shell sh, Vec<string> argv) {
         sh.stdinPos++;
         // A backslash-newline is a continuation: the line goes on, and neither character shows.
         if (n == 10) { joining = true; break; }
-        line.push(n);
+        line.push(n as@ u8);
         escaped.push(1);
         continue;
       }
-      line.push(c);
+      line.push(c as@ u8);
       escaped.push(0);
     }
   }
@@ -4270,7 +4270,7 @@ bool ifsSpace(string ifs, i32 c) {
 void appendMasked(Buf field, Buf mask, string text, i32 quoted) {
   u8[] b = text.toBytes();
   field.pushAll(b);
-  for (i32 i = 0; i < b.len(); i++) { mask.push(quoted); }
+  for (i32 i = 0; i < b.len(); i++) { mask.push(quoted as@ u8); }
 }
 
 /**
@@ -4498,7 +4498,7 @@ string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
       if (up && c >= 0x61 && c <= 0x7a) { c = c - 32; }
       else if (!up && c >= 0x41 && c <= 0x5a) { c = c + 32; }
     }
-    out.push(c);
+    out.push(c as@ u8);
   }
   return string.fromBytes(out.bytes());
 }
@@ -4617,7 +4617,7 @@ string substitutePattern(Shell sh, string value, string arg, bool all) {
   while (at < raw.len() && !split) {
     if (raw[at] == 0x5c && at + 1 < raw.len() && raw[at + 1] == 0x2f) { patBuf.push(0x2f); at += 2; }
     else if (raw[at] == 0x2f) { split = true; at++; }
-    else { patBuf.push(raw[at] as i32); at++; }
+    else { patBuf.push(raw[at]); at++; }
   }
   string patText = string.fromBytes(patBuf.bytes());
   string repText = split ? string.fromBytes(sliceBytes(raw, at, raw.len())) : "";
@@ -4667,7 +4667,7 @@ string substitutePattern(Shell sh, string value, string arg, bool all) {
       i = end;
       if (!all) { more = false; }
     } else {
-      out.push(v[i] as i32);
+      out.push(v[i]);
       i++;
     }
   }
@@ -4705,7 +4705,7 @@ string applyReplacement(string rep, u8[] matched) {
   for (i32 i = 0; i < r.len(); i++) {
     if (r[i] == 0x5c && i + 1 < r.len() && r[i + 1] == 0x26) { out.push(0x26); i++; }
     else if (r[i] == 0x26) { out.pushAll(matched); }
-    else { out.push(r[i] as i32); }
+    else { out.push(r[i]); }
   }
   return string.fromBytes(out.bytes());
 }
@@ -5064,7 +5064,7 @@ string withHome(Shell sh, string text, bool startable, bool colons) {
 
   Buf out = Buf.create();
   for (i32 i = 0; i < b.len(); i++) {
-    if (homeTilde(b, i, startable, colons)) { out.pushAll(h); } else { out.push(b[i] as i32); }
+    if (homeTilde(b, i, startable, colons)) { out.pushAll(h); } else { out.push(b[i]); }
   }
   return string.fromBytes(out.bytes());
 }

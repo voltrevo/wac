@@ -10,7 +10,7 @@
 // and one `divSmall` on the way out, instead of nine of each.
 
 import { Big, DivSmall, divSmall, mul, mulSmall, add, abs, isZero, cmpAbs } from "./big.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** 10^9, the largest power of ten in a u32. */
 i32 CHUNK_DIGITS() { return 9; }
@@ -69,13 +69,13 @@ export u8[] formatDecimal(Big a) {
       // The most significant chunk: emit its digits and stop, so there are no
       // leading zeros. `rem` is nonzero here, since a trimmed value's top chunk is.
       while (rem != 0) {
-        digits.push(48 + ((rem % 10) as@ i32));
+        digits.push((48 + ((rem % 10) as@ i32)) as@ u8);
         rem = rem / 10;
       }
     } else {
       // An interior chunk stands for exactly nine digits, zeros included.
       for (i32 k = 0; k < CHUNK_DIGITS(); k++) {
-        digits.push(48 + ((rem % 10) as@ i32));
+        digits.push((48 + ((rem % 10) as@ i32)) as@ u8);
         rem = rem / 10;
       }
     }
@@ -86,7 +86,7 @@ export u8[] formatDecimal(Big a) {
   u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   if (a.neg) { out[0] = '-'; at = 1; }
-  for (i32 i = 0; i < n; i++) { out[at + i] = digits.get(n - 1 - i) as@ u8; }
+  for (i32 i = 0; i < n; i++) { out[at + i] = digits.get(n - 1 - i); }
   return out;
 }
 
@@ -103,13 +103,13 @@ export u8[] formatHex(Big a) {
     if (i == a.n - 1) {
       // The top limb, which is nonzero in canonical form: significant digits only.
       while (v != 0) {
-        digits.push(hexDigit(v & 15));
+        digits.push(hexDigit(v & 15) as@ u8);
         v = v >> 4;
       }
     } else {
       // Every other limb contributes exactly eight digits, zeros included.
       for (i32 k = 0; k < 8; k++) {
-        digits.push(hexDigit(v & 15));
+        digits.push(hexDigit(v & 15) as@ u8);
         v = v >> 4;
       }
     }
@@ -119,7 +119,7 @@ export u8[] formatHex(Big a) {
   u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   if (a.neg) { out[0] = '-'; at = 1; }
-  for (i32 i = 0; i < n; i++) { out[at + i] = digits.get(n - 1 - i) as@ u8; }
+  for (i32 i = 0; i < n; i++) { out[at + i] = digits.get(n - 1 - i); }
   return out;
 }
 

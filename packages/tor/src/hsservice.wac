@@ -42,7 +42,7 @@
 // The MAC construction is `crypto_mac_sha3_256`, which `hsMac` already is: SHA3-256 over the key
 // length as eight big-endian bytes, then the key, then the message.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { aesCtr } from "../../crypto/src/aesctr.wac";
 import { hsMac, serviceIntroduceKeys } from "./hsntor.wac";
 import { ed25519Sign, ed25519Verify } from "../../crypto/src/ed25519.wac";
@@ -68,7 +68,7 @@ export u8[] establishIntroCell(u8[] authPublic, u8[] authSeed, u8[] circuitKH) {
   if (authPublic.len() != 32 || authSeed.len() != 32 || circuitKH.len() == 0) { return u8[](); }
 
   Buf b = Buf.create();
-  b.push(AUTH_KEY_TYPE_ED25519);
+  b.push(AUTH_KEY_TYPE_ED25519 as@ u8);
   b.push(0);
   b.push(32);
   b.pushAll(authPublic);

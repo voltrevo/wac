@@ -1,0 +1,342 @@
+// Text — the built-in `toString` conversions. spec/next ch23 `§wac-tostring-builtin-4t3buvz`.
+//
+// `bool`, every integer and every float type convert to text without a method of their own: decimal
+// digits for an integer, the shortest decimal that reads back as the same float, and `true` or
+// `false`. Interpolation (`"\{n}"`) and `n.[toString]()` both arrive here; the compiler calls these
+// by name, which is why they are private — nothing outside core names them, and the core's public
+// surface is ch37's table.
+//
+// The float formatter is Burger & Dybvig's free-format algorithm, the same as `packages/fmt/src/
+// ftoa.wac`'s, which matches JavaScript's `Number::toString`. Core cannot import a package, so it
+// carries its own copy, and differs in exactly one place the spec decides: negative zero is "-0".
+// A fix to the digit loop belongs in both copies.
+
+import { Buf } from "./buf.wac";
+
+/** The conversion interpolation uses: a method named by this turns its type into text (ch23). */
+export symbol toString;
+/** The conversion markup uses: a method named by this turns its type into a `Node` (ch23). */
+export symbol toNode;
+
+/** Decimal text of an `i32`, a minus sign if negative — the minimum included. */
+string coreTextI32(i32 v) { return coreTextI64(v as i64); }
+
+/** Decimal text of an `i64`. The minimum is spelled out: negating it gives itself. */
+string coreTextI64(i64 v) {
+  if (v == 0) { return "0"; }
+  if (v == -9223372036854775807 - 1) { return "-9223372036854775808"; }
+  bool neg = v < 0;
+  u64 m = (neg ? 0 - v : v) as@ u64;
+  string digits = coreTextU64(m);
+  return neg ? "-" + digits : digits;
+}
+
+string coreTextU32(u32 v) { return coreTextU64(v as u64); }
+
+string coreTextU64(u64 v) {
+  if (v == 0) { return "0"; }
+  u8[] tmp = u8[].filled(20, 0);
+  i32 n = 0;
+  u64 m = v;
+  while (m > 0) {
+    tmp[19 - n] = ('0' + (m % 10) as@ i32) as@ u8;
+    m = m / 10;
+    n++;
+  }
+  u8[] out = u8[].filled(n, 0);
+  out.copyFrom(tmp, 20 - n, 0, n);
+  return string.fromBytes(out);
+}
+
+string coreTextBool(bool b) { return b ? "true" : "false"; }
+
+string coreTextF64(f64 x) {
+  u64 bits = f64.toBits(x);
+  bool neg = (bits >> 63) != 0;
+  i32 be = ((bits >> 52) & 2047) as@ i32;
+  u64 frac = bits & 4503599627370495;
+  return floatText(neg, be, frac, 2047, 4503599627370496, 1075);
+}
+
+string coreTextF32(f32 x) {
+  u32 bits = f32.toBits(x);
+  bool neg = (bits >> 31) != 0;
+  i32 be = ((bits >> 23) & 255) as@ i32;
+  u64 frac = (bits & 8388607) as u64;
+  return floatText(neg, be, frac, 255, 8388608, 150);
+}
+
+/** A float's text from its fields: the specials, zero with its sign, or the shortest digits. */
+string floatText(bool neg, i32 be, u64 frac, i32 maxBe, u64 implicitBit, i32 bias) {
+  if (be == maxBe) {
+    if (frac != 0) { return "NaN"; }
+    return neg ? "-Infinity" : "Infinity";
+  }
+  if (be == 0 && frac == 0) { return neg ? "-0" : "0"; }
+  u8[] digits = u8[].filled(24, 0);
+  i32[] meta = i32[].filled(2, 0);               // [count, exp10]
+  shortestDigits(be, frac, implicitBit, bias, digits, meta);
+  Buf out = Buf.create();
+  if (neg) { out.push('-'); }
+  placePoint(out, digits, meta[0], meta[1]);
+  return out.toStr();
+}
+
+/**
+ * The shortest digit string that identifies this float, into `digits`; `meta` gets the count and
+ * the decimal exponent (the value is 0.digits × 10^exp10). Burger & Dybvig — see the file header.
+ */
+void shortestDigits(i32 be, u64 frac, u64 implicitBit, i32 bias, u8[] digits, i32[] meta) {
+  i32 count = 0;
+  u64 f = frac;
+  i32 e = 1 - bias;
+  bool lowerCloser = false;
+  if (be != 0) {
+    f = frac + implicitBit;
+    e = be - bias;
+    lowerCloser = (frac == 0 && be > 1);
+  }
+  bool boundaryOk = (f & 1) == 0;
+
+  TextBig r = TextBig.fromU64(f);
+  TextBig s = TextBig.zero();
+  TextBig mPlus = TextBig.zero();
+  TextBig mMinus = TextBig.zero();
+  if (e >= 0) {
+    TextBig pow = TextBig.fromU64(1);
+    pow.shiftLeft(e);
+    r.shiftLeft(e);
+    if (lowerCloser) {
+      r.mulSmall(4);
+      s.setU64(4);
+      mPlus.copyFrom(pow);
+      mPlus.mulSmall(2);
+      mMinus.copyFrom(pow);
+    } else {
+      r.mulSmall(2);
+      s.setU64(2);
+      mPlus.copyFrom(pow);
+      mMinus.copyFrom(pow);
+    }
+  } else {
+    s.setU64(1);
+    s.shiftLeft(-e);
+    if (lowerCloser) {
+      r.mulSmall(4);
+      s.mulSmall(4);
+      mPlus.setU64(2);
+      mMinus.setU64(1);
+    } else {
+      r.mulSmall(2);
+      s.mulSmall(2);
+      mPlus.setU64(1);
+      mMinus.setU64(1);
+    }
+  }
+
+  i32 k = 0;
+  TextBig scratch = TextBig.zero();
+  while (true) {
+    scratch.setSum(r, mPlus);
+    i32 c = scratch.cmp(s);
+    if (c > 0 || (boundaryOk && c == 0)) { s.mulSmall(10); k++; } else { break; }
+  }
+  while (true) {
+    scratch.setSum(r, mPlus);
+    scratch.mulSmall(10);
+    if (scratch.cmp(s) <= 0) {
+      r.mulSmall(10);
+      mPlus.mulSmall(10);
+      mMinus.mulSmall(10);
+      k--;
+    } else {
+      break;
+    }
+  }
+  i32 exp10 = k;
+
+  TextBig twice = TextBig.zero();
+  while (true) {
+    r.mulSmall(10);
+    mPlus.mulSmall(10);
+    mMinus.mulSmall(10);
+    i32 digit = 0;
+    while (r.cmp(s) >= 0) { r.sub(s); digit++; }
+    i32 cLow = r.cmp(mMinus);
+    bool low = boundaryOk ? cLow <= 0 : cLow < 0;
+    scratch.setSum(r, mPlus);
+    i32 cHigh = scratch.cmp(s);
+    bool high = boundaryOk ? cHigh >= 0 : cHigh > 0;
+    if (!low && !high) {
+      digits[count] = ('0' + digit) as@ u8;
+      count++;
+      continue;
+    }
+    i32 last = digit;
+    if (low && high) {
+      twice.copyFrom(r);
+      twice.mulSmall(2);
+      i32 c = twice.cmp(s);
+      if (c > 0 || (c == 0 && (digit % 2) != 0)) { last = digit + 1; }
+    } else if (high) {
+      last = digit + 1;
+    }
+    if (last < 10) {
+      digits[count] = ('0' + last) as@ u8;
+      count++;
+      meta[0] = count;
+      meta[1] = exp10;
+      return;
+    }
+    // A 9 rounding up carries only on the first digit (fmt's ftoa.wac has the proof), so the value
+    // becomes the next power of ten.
+    if (count != 0) { trap; }
+    digits[0] = '1';
+    meta[0] = 1;
+    meta[1] = exp10 + 1;
+    return;
+  }
+}
+
+/** The digits with the decimal point placed as `Number::toString` places it. */
+void placePoint(Buf out, u8[] digits, i32 k, i32 n) {
+  if (k <= n && n <= 21) {
+    out.pushBytes(digits, 0, k);
+    for (i32 i = 0; i < n - k; i++) { out.push('0'); }
+    return;
+  }
+  if (0 < n && n <= 21) {
+    out.pushBytes(digits, 0, n);
+    out.push('.');
+    out.pushBytes(digits, n, k - n);
+    return;
+  }
+  if (-6 < n && n <= 0) {
+    out.push('0');
+    out.push('.');
+    for (i32 i = 0; i < -n; i++) { out.push('0'); }
+    out.pushBytes(digits, 0, k);
+    return;
+  }
+  out.push(digits[0]);
+  if (k > 1) {
+    out.push('.');
+    out.pushBytes(digits, 1, k - 1);
+  }
+  out.push('e');
+  i32 exp = n - 1;
+  if (exp < 0) { out.push('-'); exp = -exp; } else { out.push('+'); }
+  out.pushDecimal(exp);
+}
+
+/** A fixed-width unsigned bignum, enough limbs for any float's exact digits (about 2^1030). */
+struct TextBig {
+  u32[] limbs;
+  i32 n;
+
+  TextBig zero() { return TextBig(u32[].filled(40, 0), 0); }
+
+  TextBig fromU64(u64 v) {
+    TextBig b = TextBig.zero();
+    b.setU64(v);
+    return b;
+  }
+
+  void trim(this) {
+    while (this.n > 0 && this.limbs[this.n - 1] == 0) { this.n--; }
+  }
+
+  void setU64(this, u64 v) {
+    for (i32 i = 0; i < this.n; i++) { this.limbs[i] = 0; }
+    this.limbs[0] = v as@ u32;
+    this.limbs[1] = (v >> 32) as@ u32;
+    this.n = 2;
+    this.trim();
+  }
+
+  void copyFrom(this, TextBig src) {
+    for (i32 i = src.n; i < this.n; i++) { this.limbs[i] = 0; }
+    for (i32 i = 0; i < src.n; i++) { this.limbs[i] = src.limbs[i]; }
+    this.n = src.n;
+  }
+
+  void shiftLeft(this, i32 bits) {
+    if (this.n == 0 || bits == 0) { return; }
+    i32 words = bits / 32;
+    i32 rem = bits % 32;
+    if (rem == 0) {
+      for (i32 i = this.n - 1; i >= 0; i--) { this.limbs[i + words] = this.limbs[i]; }
+      this.n = this.n + words;
+    } else {
+      this.limbs[this.n + words] = 0;
+      for (i32 i = this.n - 1; i >= 0; i--) {
+        u32 v = this.limbs[i];
+        this.limbs[i + words + 1] = this.limbs[i + words + 1] | (v >> ((32 - rem) as@ u32));
+        this.limbs[i + words] = v << (rem as@ u32);
+      }
+      this.n = this.n + words + 1;
+    }
+    for (i32 i = 0; i < words; i++) { this.limbs[i] = 0; }
+    this.trim();
+  }
+
+  void mulSmall(this, u32 m) {
+    if (this.n == 0) { return; }
+    u64 carry = 0;
+    for (i32 i = 0; i < this.n; i++) {
+      u64 t = (this.limbs[i] as u64) * (m as u64) + carry;
+      this.limbs[i] = t as@ u32;
+      carry = t >> 32;
+    }
+    while (carry != 0) {
+      this.limbs[this.n] = carry as@ u32;
+      carry = carry >> 32;
+      this.n++;
+    }
+  }
+
+  i32 cmp(const this, TextBig o) {
+    if (this.n != o.n) { return this.n > o.n ? 1 : -1; }
+    for (i32 i = this.n - 1; i >= 0; i--) {
+      if (this.limbs[i] != o.limbs[i]) { return this.limbs[i] > o.limbs[i] ? 1 : -1; }
+    }
+    return 0;
+  }
+
+  void sub(this, TextBig o) {
+    u64 borrow = 0;
+    for (i32 i = 0; i < this.n; i++) {
+      u64 a = this.limbs[i] as u64;
+      u64 b = borrow;
+      if (i < o.n) { b = b + (o.limbs[i] as u64); }
+      if (a >= b) {
+        this.limbs[i] = (a - b) as@ u32;
+        borrow = 0;
+      } else {
+        this.limbs[i] = ((a + 4294967296) - b) as@ u32;
+        borrow = 1;
+      }
+    }
+    this.trim();
+  }
+
+  void setSum(this, TextBig a, TextBig b) {
+    i32 m = a.n > b.n ? a.n : b.n;
+    u64 carry = 0;
+    for (i32 i = 0; i < m; i++) {
+      u64 t = carry;
+      if (i < a.n) { t = t + (a.limbs[i] as u64); }
+      if (i < b.n) { t = t + (b.limbs[i] as u64); }
+      this.limbs[i] = t as@ u32;
+      carry = t >> 32;
+    }
+    i32 top = m;
+    if (carry != 0) {
+      this.limbs[m] = carry as@ u32;
+      top = m + 1;
+    }
+    for (i32 i = top; i < this.limbs.len(); i++) { this.limbs[i] = 0; }
+    this.n = top;
+    this.trim();
+  }
+}

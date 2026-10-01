@@ -20,7 +20,7 @@
 // is the only thing here that changes anything — creating objects, moving refs and committing are
 // step 5 of `design/system/0005`.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Change, FAULT_EXISTS, FileResult, Stat } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { decode } from "../../codec/src/hex.wac";
@@ -201,7 +201,7 @@ export u8[]? treeOfCommit(Repo r, u8[] commitName) {
       if (data.len() < 45) { return null; }
       if (data[0] != 't' || data[1] != 'r' || data[2] != 'e' || data[3] != 'e' || data[4] != 32) { return null; }
       Buf hex = Buf.create();
-      for (i32 i = 5; i < 45; i++) { hex.push(data[i] as i32); }
+      for (i32 i = 5; i < 45; i++) { hex.push(data[i]); }
       u8[]? raw = decode(hex.bytes());
       if (raw is null) { return null; }
       if (raw!.len() != 20) { return null; }

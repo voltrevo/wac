@@ -6,7 +6,7 @@
 import { Outgoing, write as writeRequest } from "../src/outgoing.wac";
 import { Incoming, ParsedResponse, parseResponse } from "../src/incoming.wac";
 import { Headers } from "../src/headers.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 void writeInt(Buf out, i32 v) {
   if (v == 0) { out.push('0'); return; }
@@ -14,7 +14,7 @@ void writeInt(Buf out, i32 v) {
   i32 n = 0;
   i32 x = v;
   while (x > 0) { tmp[n] = (48 + (x % 10)) as@ u8; x = x / 10; n++; }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
 }
 
 /** Build a request. Headers arrive as a NUL-separated name/value list. */

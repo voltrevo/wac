@@ -39,7 +39,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";

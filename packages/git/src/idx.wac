@@ -25,7 +25,7 @@
 // table exists precisely for packs over 2 GiB and a type that cannot represent those would push the
 // failure to whoever first opened a big repository.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
@@ -165,10 +165,10 @@ export i32 find(const PackIndex idx, u8[] name) {
 
 /** Four bytes, big-endian. Written from an `i32`'s bit pattern, so a top-bit-set marker works. */
 void u32be(Buf out, i32 v) {
-  out.push((v >> 24) & 255);
-  out.push((v >> 16) & 255);
-  out.push((v >> 8) & 255);
-  out.push(v & 255);
+  out.push(((v >> 24) & 255) as@ u8);
+  out.push(((v >> 16) & 255) as@ u8);
+  out.push(((v >> 8) & 255) as@ u8);
+  out.push((v & 255) as@ u8);
 }
 
 /**
@@ -205,7 +205,7 @@ export u8[] writeIdx(const PackIndex idx, u8[] packChecksum) {
     u32be(out, running);
   }
 
-  for (i32 i = 0; i < idx.count * 20; i++) { out.push(idx.names[i] as i32); }
+  for (i32 i = 0; i < idx.count * 20; i++) { out.push(idx.names[i]); }
   for (i32 i = 0; i < idx.count; i++) { u32be(out, idx.crcs[i] as@ i32); }
 
   // Offsets, and the table the big ones live in. Built alongside, because the flag in the small slot is
@@ -234,7 +234,7 @@ export u8[] writeIdx(const PackIndex idx, u8[] packChecksum) {
   }
   out.pushAll(large.bytes());
 
-  for (i32 i = 0; i < 20; i++) { out.push(packChecksum[i] as i32); }
+  for (i32 i = 0; i < 20; i++) { out.push(packChecksum[i]); }
   // The trailer is over everything above it, this file's own bytes — not over the pack.
   out.pushAll(sha1(out.bytes()));
   return out.take();

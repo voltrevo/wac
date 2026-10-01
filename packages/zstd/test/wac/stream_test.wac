@@ -29,7 +29,7 @@ import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Read } from "core";
 import { askZstd, compressLine, frameAt } from "./frames.wac";
 import { unzstdStream } from "../../src/stream.wac";

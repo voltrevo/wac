@@ -25,7 +25,7 @@
 // fails with no indication of why — which is what makes strict KEX's reset at NEWKEYS something
 // to get exactly right rather than approximately.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { chacha20, chachaBlock } from "../../crypto/src/chacha20.wac";
 import { poly1305 } from "../../crypto/src/poly1305.wac";
 
@@ -112,7 +112,7 @@ export u8[] seal(u8[] key, i32 seq, u8[] payload, u8[] random, i32 block) {
 
   // The body, in the clear: padding length, payload, padding.
   Buf body = Buf.withCapacity(packetLength);
-  body.push(pad);
+  body.push(pad as@ u8);
   body.pushAll(payload);
   body.pushBytes(random, 0, pad);
 

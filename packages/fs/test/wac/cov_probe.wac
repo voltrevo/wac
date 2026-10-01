@@ -13,7 +13,7 @@
 // module-level state: there is nowhere to keep an `Fs` between two calls from the driver.
 
 import { Vec } from "core";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Change, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending, Stat }
          from "std";
 import { Fs, Mount, mountSystem } from "../../src/fs.wac";
@@ -340,7 +340,7 @@ Buf oneMount() {
 
 /** A node header: kind, mode, owner, mtime — everything before the kind-specific part. */
 void node(Buf b, i32 kind) {
-  b.push(kind);
+  b.push(kind as@ u8);
   b.pushU32(420 as@ u32);
   putStr(b, "root");
   for (i32 i = 0; i < 8; i++) { b.push(0); }

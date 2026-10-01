@@ -318,6 +318,8 @@ export i32 errNeverVariant() { return 227; }
 export i32 errAbsenceOperand() { return 228; }
 /** `for (T x in e)` where `e` is neither an array nor a `Vec` — spec/next ch25. */
 export i32 errForInIterable() { return 229; }
+/** `"\{x}"` where `x` has no conversion to text — spec/next ch23. */
+export i32 errNoTextConversion() { return 230; }
 
 /** What `for (… in e)` binds each time round: `e`'s element type, or `typeNone` when it has none. */
 string forInElemOf(C c, Expr iterable) {
@@ -348,6 +350,28 @@ bool checkSymbolName(C c, i32 tok) {
   if (c.isSymbol(resolved)) { return true; }
   c.reportTok(errUndefinedName(), tok, "no symbol '" + spelled + "' in scope");
   return false;
+}
+
+/** Whether a `+` is the one the lexer wrote for `\{` in an interpolated literal. */
+bool isInterpPlusTok(C c, i32 op) {
+  return c.toks[op * tokenStride() + 2] == 2 && tokenText(c, op) == "\\{";
+}
+
+/**
+ * Whether a value interpolates: a string, a number or a `bool` by core's own spelling, and anything
+ * else only through a method named by core's `toString` — under whatever alias it was imported
+ * (spec/next ch23 `§wac-conversion-symbol-identity-4ga8txc`). Nullables, arrays and tuples have none
+ * (`§wac-conversion-none-for-compound-urda9vz`).
+ */
+void checkToText(C c, Expr e) {
+  string t = typeOfExpr(c, e);
+  if (t == typeNone() || t == "" || t == "string" || t == "bool" || numericShape(t)) { return; }
+  if (c.coreToString != "" && c.isStruct(templateOf(t))) {
+    string key = "[" + c.canon(c.coreToString) + "]";
+    i32 mi = c.methodAt(templateOf(t), key);
+    if (mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "string") { return; }
+  }
+  c.reportWith(errNoTextConversion(), e.line, e.col, t + " has no toString conversion");
 }
 
 /** Whether an expression is the literal `null`. */
@@ -2316,6 +2340,8 @@ export struct C {
   string bodyOf;
   /** Whether each field (by index, as `fieldNames`) has an initialiser — spec/next ch12. */
   bool[] fieldInits;
+  /** How this file spells core's `toString`, or "" when it does not import it — spec/next ch23. */
+  string coreToString;
   /** The symbols in scope, as this file spells them (renames applied) — spec/next ch21. */
   string[] symbols;
   i32 symbolCount;
@@ -2414,7 +2440,7 @@ export struct C {
              string[].defaulted(decls), string[].defaulted(decls), 0,
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
-             string[](), 0, "", bool[].filled(decls, false), string[](), 0);
+             string[](), 0, "", bool[].filled(decls, false), "", string[](), 0);
   }
 
   /**
@@ -4413,6 +4439,7 @@ export string typeOfExpr(C c, Expr e) {
     SafeMember(obj, nameTok): { return safeMemberTypeOf(c, obj, nameTok); }
     Binary(op, left, right): {
       i32 bk = tokenKind(c, op);
+      if (bk == kPlus() && isInterpPlusTok(c, op)) { return "string"; }
       // `a ?? b` — `a`'s type with its absence removed, or kept where `b` is `null` (spec/next ch10).
       if (bk == kQuestion()) {
         string clt = typeOfExpr(c, left);
@@ -5184,6 +5211,12 @@ void checkExpr(C c, Expr e) {
       // **`??` is not arithmetic**, so none of the operand rules below apply to it.
       if (k == kQuestion()) {
         checkCoalesce(c, left, right);
+        return;
+      }
+      // **An interpolated value converts to text** (spec/next ch23); the `+` the lexer wrote for `\{`
+      // asks only that it can.
+      if (k == kPlus() && isInterpPlusTok(c, op)) {
+        checkToText(c, right);
         return;
       }
       // **Two literals compared have no type to be compared at** — `1 + 2 == 3` is `true` as an `i32`

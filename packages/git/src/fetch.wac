@@ -35,7 +35,7 @@
 // a library wants. `ofs-delta` *is* asked for, because it is what lets the server use the smaller kind
 // of delta, and `packages/git`'s pack reader handles both.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Pkt, flushPkt, readPkt, writeText } from "./pktline.wac";
 import { Vec } from "core";
 import { decode, encode } from "../../codec/src/hex.wac";
@@ -64,7 +64,7 @@ export enum Ad {
 u8[]? hex20(u8[] b, i32 from) {
   if (from + 40 > b.len()) { return null; }
   Buf h = Buf.create();
-  for (i32 i = from; i < from + 40; i++) { h.push(b[i] as i32); }
+  for (i32 i = from; i < from + 40; i++) { h.push(b[i]); }
   u8[]? raw = decode(h.bytes());
   if (raw is null) { return null; }
   if (raw!.len() != 20) { return null; }
@@ -73,7 +73,7 @@ u8[]? hex20(u8[] b, i32 from) {
 
 string slice(u8[] b, i32 from, i32 to) {
   Buf out = Buf.create();
-  for (i32 i = from; i < to; i++) { out.push(b[i] as i32); }
+  for (i32 i = from; i < to; i++) { out.push(b[i]); }
   return out.toStr();
 }
 

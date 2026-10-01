@@ -1,0 +1,6 @@
+// expect: answers f = hello
+// why: a conversion is a method named by core's symbol, under whatever alias it was imported
+// from: spec/next ch23 §wac-conversion-symbol-identity-4ga8txc
+import { toString as text } from "core";
+struct Label { string [text](const this) { return "hello"; } }
+export string f() { Label label = Label(); return "\{label}"; }

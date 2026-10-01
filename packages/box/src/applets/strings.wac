@@ -8,7 +8,7 @@ import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Sink } from "../../../platform/src/stream.wac";
 import { Span, nextSpan } from "../lib/input.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Fs } from "../../../fs/src/fs.wac";
 
 export i32 strings(Core core, Cli cli, Fs fs, Args a) {
@@ -34,7 +34,7 @@ export i32 strings(Core core, Cli cli, Fs fs, Args a) {
     u8[] data = got.bytes;
     for (i32 i = 0; i < data.len(); i++) {
       i32 b = data[i] as i32;
-      if (b >= 32 && b < 127) { run.push(b); continue; }
+      if (b >= 32 && b < 127) { run.push(b as@ u8); continue; }
       emit(out, run, min);
     }
   }

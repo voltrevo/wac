@@ -28,7 +28,7 @@
 // space-separated groups of four. Same value, two spellings, and this one has to match the digest tor
 // computes from the identity key it just read or the certificate is refused.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { encodeUpper } from "../../codec/src/hex.wac";
 import { rsaSignRawPkcs1 } from "../../crypto/src/rsa.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";

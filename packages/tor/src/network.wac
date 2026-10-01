@@ -99,7 +99,7 @@ import {
   Child, Cli, Core, FileResult, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_NONE, Pending,
 } from "std";
 import { Read } from "core";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 /**
@@ -639,14 +639,14 @@ Substituted substituted(u8[] arg, Node?[] nodes, i32 live) {
   Buf out = Buf.create();
   i32 i = 0;
   while (i < arg.len()) {
-    if (arg[i] != 123) { out.push(arg[i] as i32); i = i + 1; continue; }
+    if (arg[i] != 123) { out.push(arg[i]); i = i + 1; continue; }
     i32 close = -1;
     for (i32 j = i + 1; j < arg.len(); j++) {
       if (arg[j] == 125) { close = j; break; }
       // A brace or a space inside means this was never a reference.
       if (arg[j] == 123 || arg[j] == 32) { break; }
     }
-    if (close < 0 || close == i + 1) { out.push(arg[i] as i32); i = i + 1; continue; }
+    if (close < 0 || close == i + 1) { out.push(arg[i]); i = i + 1; continue; }
     u8[] name = u8[].filled(close - i - 1, 0);
     for (i32 k = i + 1; k < close; k++) { name[k - i - 1] = arg[k]; }
     string want = string.fromBytes(name);

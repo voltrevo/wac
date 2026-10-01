@@ -18,7 +18,7 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Input, Span, nextSpan, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Fs } from "../../../fs/src/fs.wac";
 
 export i32 cat(Core core, Cli cli, Fs fs, Args a) {
@@ -96,7 +96,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
           if (tabs) { line.pushAll("^I".toBytes()); } else { line.push(9); }
           continue;
         }
-        if (!nonPrinting || (c >= 32 && c < 127)) { line.push(c); continue; }
+        if (!nonPrinting || (c >= 32 && c < 127)) { line.push(c as@ u8); continue; }
         pushVisible(line, c);
       }
       // `-E` marks a line *end*, and a last line that arrived without a newline has none: `printf x |
@@ -164,12 +164,12 @@ void pushVisible(Buf out, i32 c) {
   }
   if (v < 32) {
     out.push('^');
-    out.push(v + 64);
+    out.push((v + 64) as@ u8);
     return;
   }
   if (v == 127) {
     out.pushAll("^?".toBytes());
     return;
   }
-  out.push(v);
+  out.push(v as@ u8);
 }

@@ -35,7 +35,7 @@
 // **Line continuations** with a trailing backslash are also unhandled: git accepts them inside values and
 // this does not, so a value ending in `\` is taken literally rather than joined to the next line.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Vec } from "core";
 
 /** One setting: the full dotted name, and its value. */
@@ -78,7 +78,7 @@ export Vec<Setting> parseConfig(u8[] text) {
       Buf name = Buf.create();
       i32 i = from + 1;
       while (i < stop && text[i] != ']' && text[i] != '"' && !isSpace(text[i] as i32)) {
-        name.push(lower(text[i] as i32));
+        name.push(lowertext[i]);
         i = i + 1;
       }
       string sec = name.toStr();
@@ -88,7 +88,7 @@ export Vec<Setting> parseConfig(u8[] text) {
         i = i + 1;
         while (i < stop && text[i] != '"') {
           if (text[i] == 92 && i + 1 < stop) { i = i + 1; }
-          sub.push(text[i] as i32);
+          sub.push(text[i]);
           i = i + 1;
         }
         sec = sec + "." + sub.toStr();
@@ -110,7 +110,7 @@ export Vec<Setting> parseConfig(u8[] text) {
     for (i32 i = from; i < keyEnd; i++) {
       // A comment can follow a bare key, and there is no value to hide it in.
       if (eq < 0 && (text[i] == '#' || text[i] == ';')) { break; }
-      key.push(lower(text[i] as i32));
+      key.push(lowertext[i]);
     }
     if (key.len == 0) { continue; }
     string full = section == "" ? key.toStr() : section + "." + key.toStr();
@@ -137,19 +137,19 @@ export Vec<Setting> parseConfig(u8[] text) {
         i32 e = text[v + 1] as i32;
         if (e == 'n') { value.push(10); }
         else if (e == 't') { value.push(9); }
-        else { value.push(e); }
+        else { value.push(e as@ u8); }
         lastReal = value.len;
         v = v + 2;
         continue;
       }
-      value.push(c);
+      value.push(c as@ u8);
       // Trailing space outside quotes is not part of the value; inside, it is.
       if (inQuotes || !isSpace(c)) { lastReal = value.len; }
       v = v + 1;
     }
     u8[] all = value.bytes();
     Buf trimmed = Buf.create();
-    for (i32 i = 0; i < lastReal; i++) { trimmed.push(all[i] as i32); }
+    for (i32 i = 0; i < lastReal; i++) { trimmed.push(all[i]); }
     out.push(Setting(full, trimmed.toStr(), true));
   }
   return out;

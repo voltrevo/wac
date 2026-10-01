@@ -12,7 +12,7 @@
 
 import { Cli, Core } from "std";
 import { Args } from "../lib/args.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Fs } from "../../../fs/src/fs.wac";
 
 export i32 echo(Core core, Cli cli, Fs fs, Args a) {
@@ -66,7 +66,7 @@ bool isFlagWord(string s) {
 bool expandInto(Buf out, u8[] s) {
   i32 i = 0;
   while (i < s.len()) {
-    if (s[i] != 92 || i + 1 >= s.len()) { out.push(s[i] as i32); i++; continue; }
+    if (s[i] != 92 || i + 1 >= s.len()) { out.push(s[i]); i++; continue; }
     i32 c = s[i + 1] as i32;
     if (c == 92) { out.push(92); i = i + 2; continue; }
     if (c == 'a') { out.push(7); i = i + 2; continue; }
@@ -88,7 +88,7 @@ bool expandInto(Buf out, u8[] s) {
         k++;
         digits++;
       }
-      out.push(v & 255);
+      out.push((v & 255) as@ u8);
       i = k;
       continue;
     }
@@ -103,12 +103,12 @@ bool expandInto(Buf out, u8[] s) {
       }
       // `\x` with no digit after it is a literal `\x`, which is what coreutils prints.
       if (digits == 0) { out.push(92); out.push('x'); i = i + 2; continue; }
-      out.push(v & 255);
+      out.push((v & 255) as@ u8);
       i = k;
       continue;
     }
     out.push(92);
-    out.push(c);
+    out.push(c as@ u8);
     i = i + 2;
   }
   return true;

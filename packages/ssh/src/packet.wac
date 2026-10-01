@@ -22,7 +22,7 @@
 // Randomness comes from the caller. wac cannot ask the host for entropy on its own, and threading
 // it in explicitly is the same arrangement `packages/tls` uses.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** The unencrypted block size. Once a cipher is negotiated this becomes the cipher's. */
 export i32 minBlock() { return 8; }
@@ -73,11 +73,11 @@ export u8[] frame(u8[] payload, u8[] random, i32 block) {
   i32 packetLength = 1 + payload.len() + pad;
 
   Buf out = Buf.withCapacity(4 + packetLength);
-  out.push((packetLength >>> 24) & 255);
-  out.push((packetLength >>> 16) & 255);
-  out.push((packetLength >>> 8) & 255);
-  out.push(packetLength & 255);
-  out.push(pad);
+  out.push(((packetLength >>> 24) & 255) as@ u8);
+  out.push(((packetLength >>> 16) & 255) as@ u8);
+  out.push(((packetLength >>> 8) & 255) as@ u8);
+  out.push((packetLength & 255) as@ u8);
+  out.push(pad as@ u8);
   out.pushAll(payload);
   out.pushBytes(random, 0, pad);
   return out.take();

@@ -26,7 +26,7 @@
 import { Core, Cli, Socket, FileResult } from "std";
 import { Read } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Parsed, parseRequest } from "../../http/src/request.wac";
 import { DirDocuments, dirSourceFingerprint } from "./dirserve.wac";
 import { DirAction, MAX_BODY, dirStep, filed } from "./dirstep.wac";

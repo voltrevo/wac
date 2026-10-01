@@ -16,7 +16,7 @@
 // that starts with its code lands on it. That costs `2^maxBits` entries — at most 2048 — and
 // buys one lookup per literal instead of a walk down a tree.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { BackBits, decompress } from "./fse.wac";
 
 /** The largest code length the format allows, and so the widest table index. */
@@ -162,7 +162,7 @@ HuffTable build(i32[] weights, i32 count) {
 i32 decodeOne(HuffTable t, BackBits b, Buf out) {
   i32 index = b.peek(t.maxBits);
   b.consume(t.nbBits[index]);
-  out.push(t.symbol[index]);
+  out.push(t.symbol[index] as@ u8);
   return t.symbol[index];
 }
 

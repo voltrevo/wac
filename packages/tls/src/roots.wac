@@ -39,7 +39,7 @@
 // twenty lines is cheaper than a `codec` entry that everything imports for the sake of two callers
 // that want different answers. Same trade `zlib` gets in `design/system/0005`.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { decode } from "../../codec/src/base64.wac";
 
 /** Every certificate in a bundle: the DER concatenated, with a `[start, end)` pair for each. */
@@ -106,7 +106,7 @@ export Store pemBundle(u8[] pem) {
         break;
       }
       i32 c = pem[at] as i32;
-      if (c != 10 && c != 13 && c != 32 && c != 9) { digits.push(c); }
+      if (c != 10 && c != 13 && c != 32 && c != 9) { digits.push(c as@ u8); }
       at = at + 1;
     }
     if (!closed) { break; }

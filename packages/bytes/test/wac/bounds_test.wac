@@ -15,7 +15,7 @@
 // export; `test_traps_*` is what lets a test say it wants one. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "../../src/buf.wac";
+import { Buf } from "core";
 import { slice, clamped, equal } from "../../src/slice.wac";
 
 u8[] five() { return ['a', 'b', 'c', 'd', 'e'] as u8[]; }
@@ -23,14 +23,14 @@ u8[] five() { return ['a', 'b', 'c', 'd', 'e'] as u8[]; }
 export string test_traps_getting_past_the_end() {
   Buf b = Buf.create();
   b.push(1);
-  b.get(1);
+  b.get(1) as i32;
   return "";
 }
 
 export string test_traps_getting_a_negative_index() {
   Buf b = Buf.create();
   b.push(1);
-  b.get(0 - 1);
+  b.get(0 - 1) as i32;
   return "";
 }
 
@@ -38,7 +38,7 @@ export string test_traps_getting_a_negative_index() {
 export string test_traps_getting_at_capacity_not_length() {
   Buf b = Buf.withCapacity(16);
   b.push(1);
-  b.get(5);
+  b.get(5) as i32;
   return "";
 }
 
@@ -98,7 +98,7 @@ export string test_get_returns_the_byte_when_in_range() {
   T t = T.create();
   Buf b = Buf.create();
   b.push(42);
-  t.eqI32(b.get(0), 42, "the byte that was pushed");
+  t.eqI32(b.get(0) as i32, 42, "the byte that was pushed");
   return t.report();
 }
 
@@ -128,7 +128,7 @@ export string test_repeating_from_the_last_written_byte_is_allowed() {
   b.push('a');
   b.pushRepeat(0, 3);
   t.eqI32(b.len, 4, "one byte plus three repeated");
-  t.eqI32(b.get(3), 'a', "the run is the byte it started from");
+  t.eqI32(b.get(3) as i32, 'a', "the run is the byte it started from");
   return t.report();
 }
 

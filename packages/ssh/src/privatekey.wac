@@ -29,7 +29,7 @@
 // Only `ssh-ed25519` keys and the `aes256-ctr` + `bcrypt` combination are read here. Others parse
 // far enough to be refused by name rather than misread.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { decode } from "../../codec/src/base64.wac";
 import { aesCtr } from "../../crypto/src/aesctr.wac";
 import { bcryptPbkdf } from "../../crypto/src/bcryptpbkdf.wac";

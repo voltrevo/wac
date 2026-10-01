@@ -15,7 +15,7 @@
 
 import { Cli, Core, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";
 import { Loaded, Ran, differs, layFixtures, load, runApplet, runCase, show } from "./replay.wac";

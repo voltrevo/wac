@@ -30,7 +30,7 @@
 // the answer would fill memory with output nobody is going to read.
 
 import { Cli } from "std";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Read } from "core";
 
 /**
@@ -119,7 +119,7 @@ export struct Sink {
   /** One byte. */
   bool byte(this, i32 b) {
     if (this.broken) { return false; }
-    this.held.push(b);
+    this.held.push(b as@ u8);
     return this.maybeFlush();
   }
 

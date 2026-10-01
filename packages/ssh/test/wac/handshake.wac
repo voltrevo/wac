@@ -21,7 +21,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Socket } from "std";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Framed, Status, frame, minBlock, paddingFor, unframe } from "../../src/packet.wac";
 import { Opened, Plain, aeadPaddingFor, keyLength, open, seal } from "../../src/cipher.wac";

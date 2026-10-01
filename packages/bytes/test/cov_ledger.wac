@@ -60,19 +60,9 @@ static string PREFIX = "packages/bytes/";
 string[] cases() { return ["trapCase:12"]; }
 
 Pin[] pins() {
-  return [
-        Pin("packages/bytes/src/buf.wac", 88, "if (cap > 2147483647) { cap = 2147483647; }", false,
-        "**Reachable, and nobody is going to build the input.** `Buf` doubles its capacity until it " +
-        "covers what is needed, and this clamps the doubling at `i32.MAX` so the `as! i32` below it " +
-        "cannot trap on a checked conversion. Getting here needs a buffer already past a gigabyte " +
-        "asking to grow again — a real two-gigabyte allocation, in a test, on every run of " +
-        "`coverage:all`.\n" +
-        "         `proven: false` rather than `true`, and the distinction is the point: this is not a " +
-        "line no input reaches, it is a line whose input costs more than the measurement is worth. " +
-        "Marking it unreachable would be a claim about the code that is false — the clamp is exactly " +
-        "what stops a 3-gigabyte request from becoming a negative length, and it is the only thing " +
-        "standing between `cap * 2` overflowing and `u8[].filled(cap as! i32, 0)` being handed it.")
-  ];
+  // The one pin here was `Buf`'s capacity clamp, which moved to `core/buf.wac` with `Buf` itself
+  // (spec/next ch42) and is core's coverage to account for now.
+  return Pin[]();
 }
 
 export i32 main(Core core, Cli cli) {

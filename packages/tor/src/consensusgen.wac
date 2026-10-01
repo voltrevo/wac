@@ -25,7 +25,7 @@
 //   - The footer holds `bandwidth-weights` and then one `directory-signature` per signing authority,
 //     all over the same digest — the span ends at the *first* one.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { rsaSignRawPkcs1 } from "../../crypto/src/rsa.wac";
 import { AuthorityKeys, plainFingerprint } from "./authcert.wac";

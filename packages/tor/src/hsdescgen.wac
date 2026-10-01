@@ -38,7 +38,7 @@
 // checked against C tor *before* either encrypted layer exists — which is the only way to get an
 // oracle at each stage rather than one at the end of a week's work.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { aesCtr } from "../../crypto/src/aesctr.wac";
 import { ed25519Sign } from "../../crypto/src/ed25519.wac";
@@ -157,7 +157,7 @@ u8[] pemBlock(string label, u8[] body) {
   u8[] b64 = b64encode(body, 0, true);
   for (i32 i = 0; i < b64.len(); i = i + 64) {
     i32 end = i + 64 < b64.len() ? i + 64 : b64.len();
-    for (i32 j = i; j < end; j++) { out.push(b64[j] as i32); }
+    for (i32 j = i; j < end; j++) { out.push(b64[j]); }
     out.push(10);
   }
   out.pushAll(("-----END " + label + "-----\n").toBytes());

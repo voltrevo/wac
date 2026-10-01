@@ -18,7 +18,7 @@
 // finite double, which is the only way to have confidence in this.
 
 import { FixedBig } from "./bigint.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /**
  * What a float turned out to be.
@@ -305,15 +305,15 @@ void writeDigits(Buf out, u8[] digits, i32 count, i32 exp10) {
 
   if (k <= n && n <= 21) {
     // Integer with trailing zeros: 1e3 prints as 1000.
-    for (i32 i = 0; i < k; i++) { out.push(digits[i] as i32); }
+    for (i32 i = 0; i < k; i++) { out.push(digits[i]); }
     for (i32 i = 0; i < n - k; i++) { out.push('0'); }
     return;
   }
   if (0 < n && n <= 21) {
     // Decimal point inside the digits.
-    for (i32 i = 0; i < n; i++) { out.push(digits[i] as i32); }
+    for (i32 i = 0; i < n; i++) { out.push(digits[i]); }
     out.push('.');
-    for (i32 i = n; i < k; i++) { out.push(digits[i] as i32); }
+    for (i32 i = n; i < k; i++) { out.push(digits[i]); }
     return;
   }
   if (-6 < n && n <= 0) {
@@ -321,15 +321,15 @@ void writeDigits(Buf out, u8[] digits, i32 count, i32 exp10) {
     out.push('0');
     out.push('.');
     for (i32 i = 0; i < -n; i++) { out.push('0'); }
-    for (i32 i = 0; i < k; i++) { out.push(digits[i] as i32); }
+    for (i32 i = 0; i < k; i++) { out.push(digits[i]); }
     return;
   }
 
   // Exponential. The exponent is n-1 because the point sits after the first digit.
-  out.push(digits[0] as i32);
+  out.push(digits[0]);
   if (k > 1) {
     out.push('.');
-    for (i32 i = 1; i < k; i++) { out.push(digits[i] as i32); }
+    for (i32 i = 1; i < k; i++) { out.push(digits[i]); }
   }
   out.push('e');
   i32 exp = n - 1;
@@ -348,5 +348,5 @@ void writeSmallInt(Buf out, i32 v) {
     n++;
     m = m / 10;
   }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
 }

@@ -18,7 +18,7 @@
 // A `-` first or last is a literal hyphen, not a range, which is the rule every implementation shares and
 // nobody writes down.
 
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { classRanges } from "../../../regex/src/posix.wac";
 
 /** A parsed set: the bytes it names, or why it could not be read. */
@@ -53,7 +53,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
       if (members.len() == 0) {
         return TrSet(false, u8[](), who + ": invalid character class '" + name + "'\n");
       }
-      for (i32 k = 0; k < members.len(); k++) { out.push(members[k] as i32); plain.push(0); }
+      for (i32 k = 0; k < members.len(); k++) { out.push(members[k]); plain.push(0); }
       i = end + 2;
       continue;
     }
@@ -66,7 +66,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
         return TrSet(false, u8[](), who + ": " + string.fromBytes(sliceOf(raw, i + 2, end)) +
           ": equivalence class operand must be a single character\n");
       }
-      out.push(raw[i + 2] as i32);
+      out.push(raw[i + 2]);
       plain.push(1);
       i = end + 2;
       continue;
@@ -104,7 +104,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
         padAt = out.len;
         padByte = what.value;
       } else {
-        for (i32 k = 0; k < n; k++) { out.push(what.value); plain.push(0); }
+        for (i32 k = 0; k < n; k++) { out.push(what.value as@ u8); plain.push(0); }
       }
       i = close + 1;
       continue;
@@ -120,11 +120,11 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
         return TrSet(false, u8[](), who + ": range-endpoints of '" + charOf(one.value) + "-" +
           charOf(hi.value) + "' are in reverse collating sequence order\n");
       }
-      for (i32 c = one.value; c <= hi.value; c++) { out.push(c); plain.push(1); }
+      for (i32 c = one.value; c <= hi.value; c++) { out.push(c as@ u8); plain.push(1); }
       i = hi.at;
       continue;
     }
-    out.push(one.value);
+    out.push(one.value as@ u8);
     plain.push(1);
     i = after;
   }
@@ -137,7 +137,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
   if (fill < 0) { fill = 0; }
   Buf padded = Buf.create();
   padded.pushBytes(head, 0, padAt);
-  for (i32 k = 0; k < fill; k++) { padded.push(padByte); }
+  for (i32 k = 0; k < fill; k++) { padded.push(padByte as@ u8); }
   padded.pushBytes(head, padAt, head.len() - padAt);
   return TrSet(true, padded.take(), "");
 }
@@ -148,7 +148,7 @@ export u8[] complementOf(u8[] set) {
   for (i32 i = 0; i < set.len(); i++) { seen[set[i]] = 1; }
   Buf out = Buf.create();
   for (i32 c = 0; c < 256; c++) {
-    if (seen[c] == 0) { out.push(c); }
+    if (seen[c] == 0) { out.push(c as@ u8); }
   }
   return out.take();
 }
@@ -250,7 +250,7 @@ u8[] classBytes(string name) {
   i32[] ranges = classRanges(name);
   Buf out = Buf.create();
   for (i32 k = 0; k + 1 < ranges.len(); k = k + 2) {
-    for (i32 c = ranges[k]; c <= ranges[k + 1]; c++) { out.push(c); }
+    for (i32 c = ranges[k]; c <= ranges[k + 1]; c++) { out.push(c as@ u8); }
   }
   return out.take();
 }

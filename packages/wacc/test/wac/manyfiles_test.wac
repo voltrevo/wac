@@ -24,7 +24,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, has } from "../../../wactest/src/strings.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Core, Cli } from "std";
 import { blockedFiles, covTableFiles, emitFilesSelfDescribing } from "../../src/api.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";

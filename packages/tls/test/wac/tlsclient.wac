@@ -17,7 +17,7 @@ import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure, clientStep, ClientStep } from "../../src/client.wac";
 import { recordsReady } from "../../src/record.wac";
 import { pemBundle, Store } from "../../src/roots.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 

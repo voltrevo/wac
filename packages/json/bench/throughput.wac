@@ -13,7 +13,7 @@
 
 import { Core, Cli } from "std";
 import { Canonical, canonicalize, parse } from "../src/json.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { JsonValue } from "../src/value.wac";
 
 i32 MIB() { return 1048576; }

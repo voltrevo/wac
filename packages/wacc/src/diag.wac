@@ -159,6 +159,7 @@ export string checkMessage(i32 code) {
   if (code == 227) { return "this variant's payload has no value, so the variant cannot be constructed"; }
   if (code == 228) { return "this operand can never be absent"; }
   if (code == 229) { return "`for … in` walks an array or a Vec"; }
+  if (code == 230) { return "this value has no conversion to text"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -222,6 +223,7 @@ export string checkMessage(i32 code) {
  * already read the message.
  */
 export string hintFor(i32 code) {
+  if (code == 230) { return "give its type a `[toString]` method, or convert it before interpolating"; }
   if (code == 229) { return "index it with a counting `for`, or put the elements in an array or a Vec"; }
   if (code == 228) { return "`?.` and `??` are for a value that may be absent — read this one directly"; }
   if (code == 1) { return "use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value"; }

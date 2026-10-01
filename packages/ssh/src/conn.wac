@@ -10,7 +10,7 @@
 // rather than state machines — `packages/tls` had to be a `feed(state, input)` pump precisely
 // because it predates that capability.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Cli, Core, Pending } from "std";
 import { Framed, Status, frame, maxPacket, minBlock, paddingFor, unframe } from "./packet.wac";
 import { Opened, Plain, aeadPaddingFor, open, seal } from "./cipher.wac";

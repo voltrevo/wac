@@ -22,7 +22,7 @@ import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { slice } from "../../../bytes/src/slice.wac";
 import { prfOf, master, block, finished, aadOf, sealed, opened } from "./keys_probe.wac";
 

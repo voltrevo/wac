@@ -23,8 +23,8 @@
 //
 // ## It is a list, not a prohibition
 //
-// `print.wac` imports `packages/bytes/src/buf.wac` and has for a long time, and the bootstrap works:
-// `Buf` is inside the subset. So the rule that matters is *"every file wacc reaches is one the
+// `print.wac` imported `packages/bytes/src/buf.wac` for a long time, and the bootstrap worked: `Buf`
+// was inside the subset. So the rule that matters is *"every file wacc reaches is one the
 // reference can parse"*, which no test here can decide — the reference is TypeScript and this is
 // wac. What a list can do is make each addition deliberate, which is the part that failed: four
 // `import { Vec }` lines arrived as a side effect of wiring a frontend, and nobody asked.
@@ -96,9 +96,9 @@ string[] graphOf(T t, Cli cli, string entry, i32 cap) {
 export string test_the_compilers_graph_is_inside_its_own_package(Core core, Cli cli) {
   T t = T.create();
   string[] g = graphOf(t, cli, "packages/wacc/src/api.wac", 256);
-  // **Sanctioned, with the reason.** `print.wac` renders the AST and needs a byte buffer; `Buf` is
-  // inside the reference's subset, which is why the bootstrap has always worked with it here.
-  string[] allowed = ["packages/bytes/src/buf.wac"];
+  // **Nothing is sanctioned now.** `print.wac` imported `packages/bytes/src/buf.wac` until `Buf` moved
+  // into core (spec/next ch42); it has a builder of its own, since this package reads no `core`.
+  string[] allowed = string[]();
   string outside = "";
   i32 count = 0;
   for (i32 i = 0; i < g.len(); i++) {

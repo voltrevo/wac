@@ -45,7 +45,7 @@ import { T } from "../../wactest/src/assert.wac";
 import { Lines, Answers, askCached, hex, word } from "../../wactest/src/oracle.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { decoded } from "../../codec/src/hex.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Block, LitHeader, firstCompressedBlock, literalsHeader, weightBytes } from "./wac/frames.wac";
 
 import { decompress } from "../src/frame.wac";
@@ -288,7 +288,7 @@ u8[] records(i32 n) {
   for (i32 i = 0; i < n; i++) {
     string rec = "{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) + "\"},";
     u8[] r = rec.toBytes();
-    for (i32 k = 0; k < r.len(); k++) { b.push(r[k] as i32); }
+    for (i32 k = 0; k < r.len(); k++) { b.push(r[k]); }
   }
   return b.take();
 }
@@ -300,7 +300,7 @@ u8[] logLines(i32 n) {
     string line = "2026-08-02T10:00:00Z INFO id=" + itoa(i) + " path=/api status=200 ms=" +
                   itoa(i % 97) + "\n";
     u8[] r = line.toBytes();
-    for (i32 k = 0; k < r.len(); k++) { b.push(r[k] as i32); }
+    for (i32 k = 0; k < r.len(); k++) { b.push(r[k]); }
   }
   return b.take();
 }
@@ -803,8 +803,8 @@ export void blockBody(i32 i) {
     i32 n = rest / 2;
     i32 fill = (rest % 2) == 0 ? 0x00 : 0xFF;
     Buf b = Buf.create();
-    b.push(first);
-    for (i32 k = 1; k < n; k++) { b.push(fill); }
+    b.push(first as@ u8);
+    for (i32 k = 1; k < n; k++) { b.push(fill as@ u8); }
     decompress(oneBlock(b.take()));
     return;
   }
@@ -817,8 +817,8 @@ export void blockBody(i32 i) {
     Buf b = Buf.create();
     b.push(0x02 | (0 << 2) | ((8 & 15) << 4));
     b.push((8 >> 4) | ((comp & 63) << 6));
-    b.push(comp >> 2);
-    b.push(128 + treeBytes);
+    b.push((comp >> 2) as@ u8);
+    b.push((128 + treeBytes) as@ u8);
     for (i32 k = 0; k < treeBytes; k++) { b.push(0x11); }
     decompress(oneBlock(b.take()));
     return;
@@ -858,7 +858,7 @@ export void blockBody(i32 i) {
     u8[] claim = claims[i / 7];
     i32 extra = i % 7;
     Buf b = Buf.create();
-    for (i32 k = 0; k < claim.len(); k++) { b.push(claim[k] as i32); }
+    for (i32 k = 0; k < claim.len(); k++) { b.push(claim[k]); }
     for (i32 k = 0; k < extra; k++) { b.push(0x11); }
     decompress(oneBlock(b.take()));
     return;
@@ -925,9 +925,9 @@ export void huffCase(i32 i) {
   if (i < weights.len() * 3) {
     i32[] w = weights[i / 3];
     Buf b = Buf.create();
-    b.push(128 + w.len());
+    b.push((128 + w.len()) as@ u8);
     for (i32 k = 0; k < w.len(); k = k + 2) {
-      b.push((w[k] << 4) | (k + 1 < w.len() ? w[k + 1] : 0));
+      b.push(((w[k] << 4) | (k + 1 < w.len() ? w[k + 1] : 0)) as@ u8);
     }
     u8[] desc = b.take();
     i32 which = i % 3;
@@ -1009,10 +1009,10 @@ export void encCase(i32 i) {
       x = x ^ (x << 13);
       x = x ^ ((x >> 17) & 0x7FFF);
       x = x ^ (x << 5);
-      b.push(alphabet.toBytes()[((x >> 8) & 0x7FFFFFFF) % 64] as i32);
+      b.push((alphabet.toBytes()[((x >> 8) & 0x7FFFFFFF) % 64] as i32) as@ u8);
       if ((k % 64) == 63) {
         u8[] key = "\nkey ".toBytes();
-        for (i32 q = 0; q < key.len(); q++) { b.push(key[q] as i32); }
+        for (i32 q = 0; q < key.len(); q++) { b.push(key[q]); }
       }
     }
     decompress(compress(b.take()));
@@ -1048,7 +1048,7 @@ export void encCase(i32 i) {
     Buf b = Buf.create();
     u8[] mark = "MARKERPHRASE".toBytes();
     for (i32 k = 0; k < reps[i]; k++) {
-      for (i32 q = 0; q < mark.len(); q++) { b.push(mark[q] as i32); }
+      for (i32 q = 0; q < mark.len(); q++) { b.push(mark[q]); }
       b.push(0x78);
     }
     decompress(compress(b.take()));

@@ -1,0 +1,13 @@
+// expect: answers f = hi wac!
+// why: `Buf` is core's byte builder — `push` takes a byte, `pushStr` a string's UTF-8 bytes, and `get` reads a byte back
+// from: spec/next ch42 §wac-buf-push-pw83mxx
+import { Buf } from "core";
+export string f() {
+  Buf b = Buf.create();
+  b.push('h');
+  b.push('i');
+  b.pushAll([' ', 'w']);
+  b.pushBytes(['x', 'a', 'c', 'y'], 1, 2);
+  b.pushStr("!");
+  return b.get(0) == 'h' ? b.toStr() : "";
+}

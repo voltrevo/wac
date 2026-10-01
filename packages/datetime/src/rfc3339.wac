@@ -11,7 +11,7 @@
 // in a way that only shows up years later. Rejecting says so at the point of use.
 
 import { Civil, civilFromDays, daysFromCivil, isValidDate } from "./civil.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** A parse result. `ok` is false for anything malformed; the fields are then meaningless. */
 export struct Parsed {
@@ -135,7 +135,7 @@ void pad(Buf out, i32 value, i32 width) {
   for (i32 i = 1; i < width; i++) { divisor = divisor * 10; }
   i32 v = value;
   while (divisor > 0) {
-    out.push(48 + (v / divisor) % 10);
+    out.push((48 + (v / divisor) % 10) as@ u8);
     divisor = divisor / 10;
   }
 }

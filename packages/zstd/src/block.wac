@@ -11,7 +11,7 @@
 // Everything here is per frame, so the state lives in `Decoder` and is passed along rather than
 // stashed somewhere a second frame could see it.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { HuffTable, decodeLiterals, readTable } from "./huffman.wac";
 import { SeqTables, decodeAndExecute } from "./sequences.wac";
 

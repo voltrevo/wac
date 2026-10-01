@@ -20,7 +20,7 @@
 import { T } from "./assert.wac";
 import { Cli, Exec, Stat, FileResult } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { madeDir } from "./host.wac";
 
 /** Lines to hand an oracle, accumulated as bytes. */
@@ -343,8 +343,8 @@ export string hex(u8[] b) {
   u8[] digits = "0123456789abcdef".toBytes();
   Buf out = Buf.withCapacity(b.len() * 2);
   for (i32 i = 0; i < b.len(); i++) {
-    out.push(digits[b[i] as i32 / 16] as i32);
-    out.push(digits[b[i] as i32 % 16] as i32);
+    out.push((digits[b[i] as i32 / 16] as i32) as@ u8);
+    out.push((digits[b[i] as i32 % 16] as i32) as@ u8);
   }
   return string.fromBytes(out.take());
 }

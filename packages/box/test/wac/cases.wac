@@ -15,7 +15,7 @@
 // those answers in process. Data two languages hold twice is data that drifts.
 
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 
 /** Every invocation, run through a shell so that redirection and pipelines are available. */
 export string[] cases() {

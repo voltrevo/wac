@@ -17,7 +17,7 @@
 
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, runApplet } from "./replay.wac";
 
@@ -130,7 +130,7 @@ export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli
       i32 target = 65536 - split;
       Buf b = Buf.create();
       i32 at = 0;
-      while (b.len < target) { b.push(word[at % word.len()] as i32); at++; }
+      while (b.len < target) { b.push(word[at % word.len()]); at++; }
       b.pushCodepoint(wide[i].cp);
       b.pushAll(" tail\n".toBytes());
       t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the split case");

@@ -45,7 +45,7 @@
 // operation returns. Both use `wire.wac`, which is `image.wac`'s codec — one set of conventions for
 // every format this package writes.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Read } from "core";
 import { Change, Cli, FAULT_OTHER, FileResult, Pending, Stat }
   from "std";
@@ -255,7 +255,7 @@ void compact(Chan c) {
   if (c.at == 0) { return; }
   u8[] all = c.held.bytes();
   Buf rest = Buf.create();
-  for (i32 i = c.at; i < all.len(); i++) { rest.push(all[i] as i32); }
+  for (i32 i = c.at; i < all.len(); i++) { rest.push(all[i]); }
   c.held = rest;
   c.at = 0;
 }
@@ -270,7 +270,7 @@ void compact(Chan c) {
  */
 export Buf request(i32 op) {
   Buf b = Buf.create();
-  b.push(op);
+  b.push(op as@ u8);
   return b;
 }
 

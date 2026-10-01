@@ -1,14 +1,12 @@
-// Buf — a growable byte buffer.
+// Buf — a growable byte buffer. spec/next ch42.
 //
-// Shared because `gzip` and `json` had written the same type twice. It exists as
-// a package rather than a copy per consumer for the reason the monorepo exists.
+// In core because the language's own text needs one — interpolation and every `toString` build a
+// string a piece at a time — and because `gzip`, `json` and a hundred-odd files besides had all
+// imported the same one from `packages/bytes`.
 //
-// **This said "wac has no generics" and that has expired**: `core/vec.wac` is `Vec<T>`, and both
-// `Vec<i32>` and `Vec<u8[]>` compile today. So the question "why is this not `Vec<u8>`" needs its real
-// answer, which is two lines down rather than in the type system — `len` is a public field read once
-// per pushed byte in gzip's inner loops, and `reserve()` checks for exactly one byte to keep `push` to
-// a single comparison. A generic container cannot offer either without giving every element type the
-// same shape. The structure stands; the reason for it was dated.
+// Why it is not `Vec<u8>`: `len` is a public field read once per pushed byte in gzip's inner loops,
+// and `reserve()` checks for exactly one byte to keep `push` to a single comparison. A generic
+// container cannot offer either without giving every element type the same shape.
 //
 // Capacity doubles, so appending n bytes is amortised O(n).
 //
@@ -41,9 +39,10 @@ export struct Buf {
     return Buf(u8[].filled(capacity, 0), 0);
   }
 
-  i32 get(const this, i32 i) {
+  /** Byte `i`, trapping outside `0 … len - 1` (`§wac-buf-push-pw83mxx`). */
+  u8 get(const this, i32 i) {
     if (i < 0 || i >= this.len) { trap; }
-    return this.data[i] as i32;
+    return this.data[i];
   }
 
   // Make room for at least one more byte.
@@ -91,25 +90,31 @@ export struct Buf {
     this.data = next;
   }
 
-  void push(this, i32 v) {
+  /** One byte. A byte is a `u8`: a wider value says which of its bits it means. */
+  void push(this, u8 v) {
     this.reserve();
-    this.data[this.len] = v as@ u8;
+    this.data[this.len] = v;
     this.len++;
+  }
+
+  /** A string's UTF-8 bytes (`§wac-buf-push-pw83mxx`). */
+  void pushStr(this, string s) {
+    this.pushAll(s.toBytes());
   }
 
   // gzip and DEFLATE are little-endian throughout.
   // Unsigned, because a header field is a bit pattern rather than a magnitude.
   // `>>` is the logical shift on an unsigned type, so no `>>>` is needed.
   void pushU16(this, u32 v) {
-    this.push((v & 0xFF) as@ i32);
-    this.push(((v >> 8) & 0xFF) as@ i32);
+    this.push(v as@ u8);
+    this.push((v >> 8) as@ u8);
   }
 
   void pushU32(this, u32 v) {
-    this.push((v & 0xFF) as@ i32);
-    this.push(((v >> 8) & 0xFF) as@ i32);
-    this.push(((v >> 16) & 0xFF) as@ i32);
-    this.push(((v >> 24) & 0xFF) as@ i32);
+    this.push(v as@ u8);
+    this.push((v >> 8) as@ u8);
+    this.push((v >> 16) as@ u8);
+    this.push((v >> 24) as@ u8);
   }
 
   /**
@@ -131,7 +136,7 @@ export struct Buf {
     u8[] tmp = u8[].filled(12, 0);
     i32 n = 0;
     while (x > 0) { tmp[n] = (48 + ((x % 10) as! i32)) as@ u8; x = x / 10; n++; }
-    for (i32 i = n - 1; i >= 0; i--) { this.push(tmp[i] as i32); }
+    for (i32 i = n - 1; i >= 0; i--) { this.push(tmp[i]); }
   }
 
   // `start`, not `from` — `from` is a keyword (import ... from "...").
@@ -166,19 +171,19 @@ export struct Buf {
   void pushCodepoint(this, i32 cp0) {
     i32 cp = (cp0 < 0 || cp0 > 0x10FFFF || (cp0 >= 0xD800 && cp0 <= 0xDFFF)) ? 0xFFFD : cp0;
     if (cp < 0x80) {
-      this.push(cp);
+      this.push(cp as@ u8);
     } else if (cp < 0x800) {
-      this.push(0xC0 | (cp >> 6));
-      this.push(0x80 | (cp & 0x3F));
+      this.push((0xC0 | (cp >> 6)) as@ u8);
+      this.push((0x80 | (cp & 0x3F)) as@ u8);
     } else if (cp < 0x10000) {
-      this.push(0xE0 | (cp >> 12));
-      this.push(0x80 | ((cp >> 6) & 0x3F));
-      this.push(0x80 | (cp & 0x3F));
+      this.push((0xE0 | (cp >> 12)) as@ u8);
+      this.push((0x80 | ((cp >> 6) & 0x3F)) as@ u8);
+      this.push((0x80 | (cp & 0x3F)) as@ u8);
     } else {
-      this.push(0xF0 | (cp >> 18));
-      this.push(0x80 | ((cp >> 12) & 0x3F));
-      this.push(0x80 | ((cp >> 6) & 0x3F));
-      this.push(0x80 | (cp & 0x3F));
+      this.push((0xF0 | (cp >> 18)) as@ u8);
+      this.push((0x80 | ((cp >> 12) & 0x3F)) as@ u8);
+      this.push((0x80 | ((cp >> 6) & 0x3F)) as@ u8);
+      this.push((0x80 | (cp & 0x3F)) as@ u8);
     }
   }
 

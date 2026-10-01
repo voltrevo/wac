@@ -17,7 +17,7 @@ import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Shapes, askZstd, frameShapes } from "./frames.wac";
 import { compress } from "../../src/encode.wac";
 import { decompress } from "../../src/frame.wac";
@@ -238,7 +238,7 @@ export string test_fuzz_every_shape_and_size_round_trips_through_zstd(Core core,
       // Repetition with noise, which is where matches and literals mix.
       u8[] noise = prng(n, rng.x);
       u8[] data = u8[].filled(n, 0);
-      for (i32 k = 0; k < n; k++) { data[k] = k % 20 < 15 ? (0x61 + (k % 5)) as@ u8 : (noise[k] as i32) as@ u8; }
+      for (i32 k = 0; k < n; k++) { data[k] = k % 20 < 15 ? (0x61 + (k % 5)) as@ u8 : noise[k]; }
       inputs[i] = data;
       names[i] = itoa(n) + " mixed";
     }
@@ -307,7 +307,7 @@ export string test_literals_are_coded_when_that_helps_and_left_alone_when_it_doe
   Rng rng = Rng(0x1234);
   Buf b64 = Buf.create();
   for (i32 i = 0; i < 40000; i++) {
-    b64.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32] as i32);
+    b64.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32]);
     if (i % 64 == 63) { b64.pushAll("\nkey ".toBytes()); }
   }
   t.isTrue(frameShapes(compress(b64.take())).hasKind("compressed"),
@@ -322,7 +322,7 @@ export string test_literals_are_coded_when_that_helps_and_left_alone_when_it_doe
   Rng wideRng = Rng(0x9e37);
   Buf wide = Buf.create();
   for (i32 i = 0; i < 400; i++) {
-    for (i32 j = 0; j < 50; j++) { wide.push((wideRng.next() as@ i32) & 0xff); }
+    for (i32 j = 0; j < 50; j++) { wide.push(((wideRng.next() as@ i32) & 0xff) as@ u8); }
     wide.pushAll(marker);
   }
   t.isTrue(frameShapes(compress(wide.take())).hasKind("raw"), "a 256-symbol alphabet");
@@ -337,7 +337,7 @@ export string test_coding_the_literals_is_worth_what_it_claims() {
   Rng rng = Rng(0xBEEF);
   Buf data = Buf.create();
   for (i32 i = 0; i < 60000; i++) {
-    data.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32] as i32);
+    data.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32]);
   }
   u8[] bytes = data.take();
   i32 got = compress(bytes).len();
@@ -369,7 +369,7 @@ export string test_literals_sections_at_every_header_width(Core core, Cli cli) {
     // literal, so literal volume tracks the input size closely.
     Buf out = Buf.create();
     for (i32 i = 0; i < sizes[c]; i++) {
-      out.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32] as i32);
+      out.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32]);
       if (i % 70 == 69) { out.pushAll("\nid ed25519 ".toBytes()); }
     }
     inputs[c] = out.take();

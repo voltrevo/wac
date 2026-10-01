@@ -37,7 +37,7 @@
 // `.git/info/exclude`, measured with `git check-ignore -v` rather than read off the documentation.
 // `example/gitst.wac` does that, and `test/wac/status_test.wac` fails if the order is reversed.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { Vec } from "core";
 
 /** One line of a `.gitignore`, parsed. */
@@ -120,7 +120,7 @@ export Vec<Rule> parseIgnore(u8[] text, string base) {
     }
 
     Buf p = Buf.create();
-    for (i32 i = from; i < stop; i++) { p.push(text[i] as i32); }
+    for (i32 i = from; i < stop; i++) { p.push(text[i]); }
     out.push(Rule(p.toStr(), negated, dirOnly, anchored, base));
   }
   return out;
@@ -282,7 +282,7 @@ export bool ignored(const Vec<Rule> rules, string path, bool isDir) {
     i32 cut = from;
     while (cut < p.len() && p[cut] != '/') { cut = cut + 1; }
     Buf prefix = Buf.create();
-    for (i32 i = 0; i < cut; i++) { prefix.push(p[i] as i32); }
+    for (i32 i = 0; i < cut; i++) { prefix.push(p[i]); }
     string sub = prefix.toStr();
     bool subIsDir = cut < p.len() ? true : isDir;
 

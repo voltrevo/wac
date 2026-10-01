@@ -14,7 +14,7 @@
 
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { encode } from "../../codec/src/hex.wac";
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Unzipped, zlibCompress, zlibDecompress } from "./zlib.wac";
 
@@ -137,7 +137,7 @@ export Object parseFramed(u8[] raw) {
   if (space < 0) { return Object.Unreadable("no space in the header"); }
 
   Buf w = Buf.create();
-  for (i32 i = 0; i < space; i++) { w.push(raw[i] as i32); }
+  for (i32 i = 0; i < space; i++) { w.push(raw[i]); }
   Kind? kind = kindOf(w.toStr());
   if (kind is null) { return Object.Unreadable("unknown object kind '" + w.toStr() + "'"); }
 

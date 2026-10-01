@@ -43,7 +43,7 @@
 //     canonicalises the list before writing it (`nodefamily_canonicalize`) for consensus methods that
 //     support it, so copying the descriptor's line across would not be enough.
 
-import { Buf } from "../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { b64Unpadded, lineValue, pastLineStarting } from "./routerdesc.wac";
 import { slice } from "../../bytes/src/slice.wac";

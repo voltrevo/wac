@@ -99,7 +99,7 @@ is 1.34 of it.
 **Both numbers predate the fix and nothing has re-measured them.** The gather was slow because
 `Buf.pushBytes` moved a megabyte one element at a time at about 790 MB/s, `wac` issue 0056 asked for
 `array.copy` to be reachable from the language, and it **closed**: spec/spec/arrays.md has
-`copyFrom` and `fill` as `[§wac-arr-bulk-7kmq4wn]`, and `packages/bytes/src/buf.wac`'s `pushBytes` is
+`copyFrom` and `fill` as `[§wac-arr-bulk-7kmq4wn]`, and `core/buf.wac`'s `pushBytes` is
 one `this.data.copyFrom(src, start, this.len, count)`. So the 1.34 ms is a measurement of a build
 that no longer exists, and the recommendation under it — *"that one change would close most of this
 gap"* — points at a change already made. There is no task that reproduces this table; whoever

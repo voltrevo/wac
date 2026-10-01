@@ -23,7 +23,7 @@ import { Read } from "core";
 import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsServerClose,
          tlsPhase, tlsRecordNeeded } from "../../src/server.wac";
 import { clientStep, ClientStep } from "../../src/client.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
+import { Buf } from "core";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** What a test matches on, unless it names its own. Fixed, so an assertion can name the bytes. */
