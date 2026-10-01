@@ -75,12 +75,13 @@ And a static branch that is not taken still retains what it names ([05](../1-pro
 
 ```wac
 // expect: emits
-import { Sys } from "std";
-
-export void main(Sys sys) {
-  // ERROR: condition is not known statically
-  // static_if (sys.random() > 0.5) { }
+i32 f(i32 n) {
+  // ERROR: condition is not known statically — n is a runtime value
+  // static_if (n > 0) { return 1; }
+  return 0;
 }
+
+export i32 main() { return f(1); }
 ```
 
 `[§wac-static-cond-known-bfmhguj]` A `static_if`, `static_for` or `static_match` whose condition, bounds or subject
