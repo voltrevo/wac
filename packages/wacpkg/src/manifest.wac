@@ -110,8 +110,8 @@ export Manifest readManifest(u8[] src) {
 
   JsonObject root = JsonObject.create();
   match (doc!) {
-    case Object(o): { root = o; }
-    else: { return failed(M_NOT_OBJECT(), ""); }
+    Object(o): { root = o; }
+    default: { return failed(M_NOT_OBJECT(), ""); }
   }
 
   JsonValue? importsVal = root.getStr("imports");
@@ -119,8 +119,8 @@ export Manifest readManifest(u8[] src) {
 
   JsonObject table = JsonObject.create();
   match (importsVal!) {
-    case Object(o): { table = o; }
-    else: { return failed(M_IMPORTS_KIND(), "imports"); }
+    Object(o): { table = o; }
+    default: { return failed(M_IMPORTS_KIND(), "imports"); }
   }
 
   Mapping[] out = Mapping[table.count]();
@@ -140,8 +140,8 @@ export Manifest readManifest(u8[] src) {
 
     JsonObject entry = JsonObject.create();
     match (m.value) {
-      case Object(o): { entry = o; }
-      else: { return failed(M_MAPPING_KIND(), name); }
+      Object(o): { entry = o; }
+      default: { return failed(M_MAPPING_KIND(), name); }
     }
 
     Field git = stringField(entry, "git");
@@ -153,8 +153,8 @@ export Manifest readManifest(u8[] src) {
     JsonValue? sub = entry.getStr("subdir");
     if (sub is not null) {
       match (sub!) {
-        case Str(bytes): { subdir = string.fromBytes(bytes); }
-        else: { return failed(M_SUBDIR_KIND(), name); }
+        Str(bytes): { subdir = string.fromBytes(bytes); }
+        default: { return failed(M_SUBDIR_KIND(), name); }
       }
       if (escapes(subdir)) { return failed(M_SUBDIR_ESCAPE(), name); }
     }
@@ -178,8 +178,8 @@ Field stringField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return Field(false, ""); }
   match (v!) {
-    case Str(bytes): { return Field(true, string.fromBytes(bytes)); }
-    else: { return Field(false, ""); }
+    Str(bytes): { return Field(true, string.fromBytes(bytes)); }
+    default: { return Field(false, ""); }
   }
 }
 

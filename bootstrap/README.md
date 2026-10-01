@@ -165,7 +165,7 @@ reference globals — compiled through six languages and two interpreters.
     enum Option {
       Some(i32 v), None
       bool isSome(const this) {
-        return match (this) { case Some(_): true, case None: false };
+        return match (this) { Some(_): true, None: false };
       }
     }
 

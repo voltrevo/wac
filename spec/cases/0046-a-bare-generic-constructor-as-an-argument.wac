@@ -5,5 +5,5 @@ struct Box<T> { T v; }
 enum Wrap<T> { W(Box<T> b) }
 export i32 f() {
   Wrap<i32> w = Wrap.W(Box(5));
-  return match (w) { case W(b): b.v };
+  return match (w) { W(b): b.v };
 }

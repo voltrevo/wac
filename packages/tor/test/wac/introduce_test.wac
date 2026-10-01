@@ -39,8 +39,8 @@ JsonObject vectors(Cli cli) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -48,8 +48,8 @@ JsonArray cases(Cli cli) {
   JsonValue? cs = vectors(cli).getStr("cases");
   if (cs is null) { trap; }
   match (cs!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
@@ -58,8 +58,8 @@ i32 caseCount(Cli cli) { return cases(cli).len(); }
 /** One hex field of case `i`, decoded — which is all the wrapper was doing. */
 u8[] field(Cli cli, i32 i, string key) {
   match (cases(cli).get(i)) {
-    case Object(members): { return decoded(strOf(members, key)); }
-    else: { trap; }
+    Object(members): { return decoded(strOf(members, key)); }
+    default: { trap; }
   }
 }
 

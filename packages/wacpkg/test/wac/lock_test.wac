@@ -228,7 +228,7 @@ export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_co
     t.isTrue(l.ok, "\"" + empty[i] + "\" is a valid lock");
     if (l.ok) { t.eqI32(l.entries.len(), 0, "\"" + empty[i] + "\" has no entries"); }
   }
-  // Present but the wrong kind, for each field in turn. The `else:` arms for `git` and `ref` were
+  // Present but the wrong kind, for each field in turn. The `default:` arms for `git` and `ref` were
   // the only unreached branches in the file until every field got a case of its own.
   string[] texts = string[](
     "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",

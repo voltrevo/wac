@@ -27,11 +27,11 @@ export i32 main(Core core, Cli cli) {
   Fs fs = Fs.onHost(cli, 0);
 
   match (openRepo(fs, root + "/.git", root)) {
-    case NoRepo(why): {
+    NoRepo(why): {
       core.warn("gitco: " + why);
       return 1;
     }
-    case Opened(repo): {
+    Opened(repo): {
       u8[]? at = head(repo);
       if (at is null) {
         core.warn("gitco: HEAD does not resolve to a commit");
@@ -43,11 +43,11 @@ export i32 main(Core core, Cli cli) {
         return 1;
       }
       match (checkout(repo, tree!, root)) {
-        case Stopped(why): {
+        Stopped(why): {
           core.warn("gitco: " + why);
           return 1;
         }
-        case Files(count, modesUnset, linksAsFiles): {
+        Files(count, modesUnset, linksAsFiles): {
           core.log(itoa(count) + " files");
           // Said before the mode warning because it is the larger difference: a mode is wrong, a
           // symlink is the wrong *kind* of thing on disk.

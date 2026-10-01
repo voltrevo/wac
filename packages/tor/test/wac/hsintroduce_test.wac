@@ -55,8 +55,8 @@ JsonObject introTop(Cli cli) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -64,8 +64,8 @@ JsonArray introCases(Cli cli) {
   JsonValue? cs = introTop(cli).getStr("cases");
   if (cs is null) { trap; }
   match (cs!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
@@ -73,15 +73,15 @@ i32 caseCount(Cli cli) { return introCases(cli).len(); }
 
 string fieldOf(Cli cli, i32 i, string key) {
   match (introCases(cli).get(i)) {
-    case Object(members): {
+    Object(members): {
       JsonValue? v = members.getStr(key);
       if (v is null) { trap; }
       match (v!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        else: { trap; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        default: { trap; }
       }
     }
-    else: { trap; }
+    default: { trap; }
   }
 }
 
@@ -104,12 +104,12 @@ export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
   JsonValue? src = introTop(cli).getStr("source");
   if (src is null) { trap; }
   match (src!) {
-    case Str(bytes): {
+    Str(bytes): {
       string source = string.fromBytes(bytes);
       t.isTrue(source.indexOf("hs_cell_build_introduce1") >= 0,
                "the cells must come from tor's builder, not ours — source is " + source);
     }
-    else: { trap; }
+    default: { trap; }
   }
   i32 n = caseCount(cli);
   for (i32 i = 0; i < n; i++) {

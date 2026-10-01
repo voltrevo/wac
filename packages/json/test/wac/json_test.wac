@@ -31,54 +31,54 @@ import { Parser, parseDocument, hexDigit, ERR_NONE, ERR_TRAILING, ERR_CONTROL } 
  */
 i32 tagOf(JsonValue v) {
   match (v) {
-    case Null:   return 0;
-    case Bool:   return 1;
-    case Number: return 2;
-    case Str:    return 3;
-    case Array:  return 4;
-    case Object: return 5;
+    Null: { return 0; }
+    Bool: { return 1; }
+    Number: { return 2; }
+    Str: { return 3; }
+    Array: { return 4; }
+    Object: { return 5; }
   }
 }
 
 u8[] strBytes(JsonValue v) {
   match (v) {
-    case Str(bytes): return bytes;
-    else: trap;
+    Str(bytes): { return bytes; }
+    default: { trap; }
   }
 }
 
 bool boolValue(JsonValue v) {
   match (v) {
-    case Bool(value): return value;
-    else: trap;
+    Bool(value): { return value; }
+    default: { trap; }
   }
 }
 
 f64 numValue(JsonValue v) {
   match (v) {
-    case Number(value, raw): return value;
-    else: trap;
+    Number(value, raw): { return value; }
+    default: { trap; }
   }
 }
 
 u8[] numRaw(JsonValue v) {
   match (v) {
-    case Number(value, raw): return raw;
-    else: trap;
+    Number(value, raw): { return raw; }
+    default: { trap; }
   }
 }
 
 JsonArray asArray(JsonValue v) {
   match (v) {
-    case Array(items): return items;
-    else: trap;
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
 JsonObject asObject(JsonValue v) {
   match (v) {
-    case Object(members): return members;
-    else: trap;
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 

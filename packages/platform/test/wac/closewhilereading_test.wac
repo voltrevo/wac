@@ -63,9 +63,9 @@ Saw sawClose(Core core, Cli cli, i32 h) {
     return Saw(false, true, "nothing arrived within " + itoa(WAIT_MS) + "ms");
   }
   match (p.wait()) {
-    case Data(got): { return Saw(false, false, "got " + itoa(got.len()) + " byte(s), not a close"); }
-    case End: { return Saw(true, false, "End"); }
-    case Failed(why): { return Saw(true, false, "Failed: " + why); }
+    Data(got): { return Saw(false, false, "got " + itoa(got.len()) + " byte(s), not a close"); }
+    End: { return Saw(true, false, "End"); }
+    Failed(why): { return Saw(true, false, "Failed: " + why); }
   }
   return Saw(false, false, "unreachable");
 }

@@ -50,11 +50,11 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
   match (parseAdvertisement(a.body)) {
-    case Garbled(why): {
+    Garbled(why): {
       core.warn("gitls: the advertisement did not parse: " + why);
       return 1;
     }
-    case Said(ad): {
+    Said(ad): {
       for (i32 i = 0; i < ad.refs.len(); i++) {
         AdRef one = ad.refs.get(i);
         core.log(string.fromBytes(encode(one.target)) + "\t" + one.name);

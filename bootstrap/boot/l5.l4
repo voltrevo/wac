@@ -2310,10 +2310,10 @@ i32 match_body(i32 wantValue, i32 out) {
   i32 elseLen = 0;
   want(123);
   while (ispunct(125) == 0 & kind() != K_EOF) {
-    // **`else:` is an arm with no tag test.** It reads like a variant named `else` otherwise, and a
-    // `match` with a default is what wac writes whenever the interesting cases are a minority —
+    // **`default:` is an arm with no tag test.** It reads like a variant named `default` otherwise, and
+    // a `match` with a default is what wac writes whenever the interesting cases are a minority —
     // which in a compiler over an AST is most of them.
-    if (isword("else")) {
+    if (isword("default")) {
       next();
       want(58);
       elseAt = dp;
@@ -2328,12 +2328,11 @@ i32 match_body(i32 wantValue, i32 out) {
       word("br"); label(done); nl();
       elseLen = dp - elseAt;
     } else {
-    eatword("case");
     i32 vp = tstart();
     i32 vn = tlen();
     next();
     i32 vi = var_find(vp, vn);
-    // Loudly: a `case` naming no variant would index the variant table at -1, and a GC array says
+    // Loudly: an arm naming no variant would index the variant table at -1, and a GC array says
     // so at runtime rather than reading whatever is next in memory — which is the one place this
     // ladder's newest rung is better off than its oldest.
     if (vi == 0 - 1) { oops(); return 0; }

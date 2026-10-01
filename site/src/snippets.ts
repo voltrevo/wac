@@ -11,8 +11,8 @@ export const EX_ENUM = `enum Shape {
 
   f64 area(const this) {
     return match (this) {
-      case Circle(r): 3.14159 * r * r,
-      case Rect(w, h): w * h
+      Circle(r): 3.14159 * r * r,
+      Rect(w, h): w * h
     };
   }
 }
@@ -154,9 +154,9 @@ export const EX_CORE_LIB = `import { Read } from "core";
 
 export string describe(Read r) {
   match (r) {
-    case Data(bytes): return "read some bytes";
-    case End:         return "finished";
-    case Failed(why): return "failed: " + why;
+    Data(bytes): return "read some bytes";
+    End:         return "finished";
+    Failed(why): return "failed: " + why;
   }
 }`;
 

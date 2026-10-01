@@ -27,12 +27,12 @@ string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
 /** A `KeyError` as its own name, so a failure says which refusal it was. */
 string errorName(KeyError e) {
   match (e) {
-    case Ok: return "ok";
-    case NotOpenSsh: return "not-openssh";
-    case Unsupported: return "unsupported";
-    case Malformed: return "malformed";
-    case BadPassphrase: return "bad-passphrase";
-    else: return "not-ed25519";
+    Ok: { return "ok"; }
+    NotOpenSsh: { return "not-openssh"; }
+    Unsupported: { return "unsupported"; }
+    Malformed: { return "malformed"; }
+    BadPassphrase: { return "bad-passphrase"; }
+    default: { return "not-ed25519"; }
   }
 }
 

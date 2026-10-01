@@ -12,8 +12,8 @@ i32 countRects(Shape[] shapes) {
   i32 n = 0;
   for (i32 i = 0; i < shapes.len(); i++) {
     match (shapes[i]) {
-      case Rect: n++;
-      else:      { }
+      Rect: { n++; }
+      default:      { }
     }
   }
   return n;

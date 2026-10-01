@@ -36,38 +36,38 @@ i32 MAX_BODY() { return 1048576; }
 /** `ok`, `bad` or `incomplete`. */
 string wacOutcome(ParsedResponse p) {
   match (p) {
-    case Ok(_): { return "ok"; }
-    case Bad(_): { return "bad"; }
-    case Incomplete: { return "incomplete"; }
+    Ok(_): { return "ok"; }
+    Bad(_): { return "bad"; }
+    Incomplete: { return "incomplete"; }
   }
 }
 
 i32 codeOf(ParsedResponse p) {
   match (p) {
-    case Bad(code): { return code; }
-    else: { return -1; }
+    Bad(code): { return code; }
+    default: { return -1; }
   }
 }
 
 /** The response body, or `""` when there is none to speak of. */
 string bodyOf(ParsedResponse p) {
   match (p) {
-    case Ok(res): { return string.fromBytes(res.body); }
-    else: { return ""; }
+    Ok(res): { return string.fromBytes(res.body); }
+    default: { return ""; }
   }
 }
 
 i32 consumedOf(ParsedResponse p) {
   match (p) {
-    case Ok(res): { return res.consumed; }
-    else: { return -1; }
+    Ok(res): { return res.consumed; }
+    default: { return -1; }
   }
 }
 
 i32 statusOf(ParsedResponse p) {
   match (p) {
-    case Ok(res): { return res.status; }
-    else: { return -1; }
+    Ok(res): { return res.status; }
+    default: { return -1; }
   }
 }
 
@@ -126,16 +126,16 @@ void check(T t, Cli cli, string[] texts, string[] methods) {
     }
 
     match (want[i]) {
-      case Ok(status, version, rawHeaders, body): {
+      Ok(status, version, rawHeaders, body): {
         compareOk(t, label, got, status, version, rawHeaders, body);
       }
-      case Refused(code): {
+      Refused(code): {
         t.isFalse(wacOutcome(got) == "ok", label + ": llhttp rejected (" + code + "), wac accepted");
       }
       // llhttp "incomplete" is not compared: its client gives up on a timer, which says nothing
       // about the bytes.
-      case Incomplete: { }
-      case Broken(why): { t.fail(label + ": " + why); }
+      Incomplete: { }
+      Broken(why): { t.fail(label + ": " + why); }
     }
   }
 }
@@ -143,7 +143,7 @@ void check(T t, Cli cli, string[] texts, string[] methods) {
 void compareOk(T t, string label, ParsedResponse got, i32 status, string version,
                string[] rawHeaders, u8[] body) {
   match (got) {
-    case Ok(res) : {
+    Ok(res) : {
       t.eqI32(res.status, status, label + ": status");
       t.eqStr("1." + itoa(res.minor), version, label + ": version");
       t.eqStr(string.fromBytes(res.body), string.fromBytes(body), label + ": body");
@@ -156,7 +156,7 @@ void compareOk(T t, string label, ParsedResponse got, i32 status, string version
                 label + ": header " + itoa(k) + " value");
       }
     }
-    else: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
+    default: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
   }
 }
 
@@ -228,8 +228,8 @@ export string test_bodies_that_are_not_there_whatever_the_headers_say(Core core,
 /** Whether rule 5 applied — the body was however many bytes arrived before the close. */
 bool closeDelimitedOf(ParsedResponse p) {
   match (p) {
-    case Ok(res): { return res.closeDelimited; }
-    else: { return false; }
+    Ok(res): { return res.closeDelimited; }
+    default: { return false; }
   }
 }
 
@@ -324,12 +324,12 @@ export string test_the_request_writer_produces_what_our_own_parser_reads_back(Co
   if (parsed.len() != methods.len()) { return t.report(); }
   for (i32 i = 0; i < methods.len(); i++) {
     match (parsed[i]) {
-      case Ok(method, target, _, _, body, _): {
+      Ok(method, target, _, _, body, _): {
         t.eqStr(method, methods[i], methods[i] + " " + targets[i] + ": method");
         t.eqStr(target, targets[i], methods[i] + " " + targets[i] + ": target");
         t.eqStr(string.fromBytes(body), bodies[i], methods[i] + " " + targets[i] + ": body");
       }
-      else: {
+      default: {
         t.fail(methods[i] + " " + targets[i] + ": llhttp refused our request:\n" +
                string.fromBytes(requests[i]));
       }

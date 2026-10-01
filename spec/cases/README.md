@@ -1,7 +1,7 @@
 # cases — the smallest program that shows each thing
 
 A compiler is easiest to fix when the failure is four lines long. Everything here is a
-whole program, its expectation written at the top, and nothing else: no reference
+whole program, its expectation written at the top, and nothing default: no reference
 compiler to agree with, no package graph to stand up, no corpus to load, no timing.
 
 The point is what a *next* compiler needs. spec/spec says what the language is;

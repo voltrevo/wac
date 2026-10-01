@@ -95,7 +95,7 @@ export i32 ASK_SET_EXECUTABLE() { return 17; }
 /**
  * The channel to a filesystem in another process.
  *
- * Held by a `Backing.Remote`, and by nothing else: a program does not talk to this, it holds an `Fs`
+ * Held by a `Backing.Remote`, and by nothing default: a program does not talk to this, it holds an `Fs`
  * that does.
  */
 export struct Chan {
@@ -212,14 +212,14 @@ export Reader answer(Chan c) {
     // `armed` says it is, which is what lets a `waitAny` elsewhere hold this channel's ticket.
     c.armed = false;
     match (c.pending.wait()) {
-      case Data(bytes): { c.held.pushAll(bytes); }
+      Data(bytes): { c.held.pushAll(bytes); }
       // The far end has gone. Not an error in itself — a parent that has finished with a child
       // closes the channel — but every question still outstanding is now unanswerable.
-      case End: {
+      End: {
         c.broken = true;
         return Reader(u8[0](), 0, 0, true, "the filesystem channel ended");
       }
-      case Failed(why): {
+      Failed(why): {
         c.broken = true;
         return Reader(u8[0](), 0, 0, true, why);
       }

@@ -67,18 +67,18 @@ export struct Client {
     while (true) {
       Version v = scanVersion(this.conn.buf.data, 0, this.conn.buf.len);
       match (v.status) {
-        case Ok: {
+        Ok: {
           serverVersion = v.line;
           this.conn.buf.dropFront(v.used);
         }
-        case Incomplete: {
+        Incomplete: {
           if (!this.conn.fill()) {
             this.conn.fail("the connection closed during the version exchange");
             return;
           }
           continue;
         }
-        else: {
+        default: {
           this.conn.fail("the server did not send a usable version line");
           return;
         }

@@ -40,10 +40,10 @@ string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
 /** A `Verdict` as its own name — the same spelling `files_test.wac` uses. */
 string verdictName(Verdict v) {
   match (v) {
-    case Unknown: return "unknown";
-    case Match: return "match";
-    case Mismatch: return "mismatch";
-    else: return "revoked";
+    Unknown: { return "unknown"; }
+    Match: { return "match"; }
+    Mismatch: { return "mismatch"; }
+    default: { return "revoked"; }
   }
 }
 

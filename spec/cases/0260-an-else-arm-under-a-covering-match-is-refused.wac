@@ -10,9 +10,9 @@ enum Shape {
 
 export f64 all(Shape s) {
   match (s) {
-    case Point:      return 0.0;
-    case Circle(r):  return r;
-    case Rect(w, h): return w * h;
-    else:            return 1.0;
+    Point: { return 0.0; }
+    Circle(r): { return r; }
+    Rect(w, h): { return w * h; }
+    default: { return 1.0; }
   }
 }

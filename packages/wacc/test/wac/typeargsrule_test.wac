@@ -154,7 +154,7 @@ export string test_a_generic_function_is_a_value_when_it_names_its_type_argument
 export string test_the_receiver_exemption_still_resolves_what_is_written() {
   T t = T.create();
   string decl = "enum Maybe<T> { Just(T v), Absent\n" +
-                "  T orElse(const this, T d) { return match (this) { case Just(v): v, case Absent: d }; } }\n";
+                "  T orElse(const this, T d) { return match (this) { Just(v): v, Absent: d }; } }\n";
 
   string good = said(decl + "export i32 main() { return Maybe<i32>.Just(4).orElse(0); }");
   t.isTrue(!contains(good, "error"),

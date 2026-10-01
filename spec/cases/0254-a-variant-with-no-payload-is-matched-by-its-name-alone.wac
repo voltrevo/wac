@@ -10,9 +10,9 @@ enum Shape {
 
 f64 area(Shape s) {
   match (s) {
-    case Point:      return 0.0;
-    case Circle(r):  return 3.14159 * r * r;
-    case Rect(w, h): return w * h;
+    Point: { return 0.0; }
+    Circle(r): { return 3.14159 * r * r; }
+    Rect(w, h): { return w * h; }
   }
 }
 export i32 f() { return area(Shape.Point) == 0.0 ? 7 : 0; }

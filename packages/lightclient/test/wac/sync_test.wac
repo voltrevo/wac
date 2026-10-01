@@ -68,8 +68,8 @@ JsonObject? memberObject(JsonValue v, string key) {
   JsonValue? found = member(v, key);
   if (found is null) { return null; }
   match (found!) {
-    case Object(members): { return members; }
-    else: { return null; }
+    Object(members): { return members; }
+    default: { return null; }
   }
 }
 
@@ -77,8 +77,8 @@ string textAt(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return ""; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { return ""; }
   }
 }
 

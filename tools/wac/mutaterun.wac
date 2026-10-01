@@ -296,7 +296,7 @@ export i32 main(Core core, Cli cli) {
 
   // **The profile, over the staged tree and before anything is mutated.** It has to describe the
   // code the baseline ran, or it names lines that no longer exist. A pass that refuses costs
-  // narrowing and nothing else: `runPlanFor` widens every mutant to the whole scope, which is what
+  // narrowing and nothing default: `runPlanFor` widens every mutant to the whole scope, which is what
   // this did before the profile existed.
   string[] testFiles = testsUnder(cli, testDir);
   Profiled prof = buildProfile(core, cli, binary, stage, testFiles,

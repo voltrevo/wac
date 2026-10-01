@@ -51,27 +51,27 @@ export Task[] tasksIn(u8[] src) {
   JsonValue? parsed = parseJson5(src);
   if (parsed is null) { return Task[0](); }
   match (parsed!) {
-    case Object(obj): {
+    Object(obj): {
       Task[] out = Task[obj.len()](fill: Task("", ""));
       i32 n = 0;
       for (i32 i = 0; i < obj.len(); i++) {
         JsonMember m = obj.at(i);
         match (m.value) {
-          case Str(bytes): {
+          Str(bytes): {
             out[n] = Task(m.keyStr(), string.fromBytes(bytes));
             n = n + 1;
           }
           // A task whose value is not a string is not a task. Skipped rather than refused: the file
           // may grow fields this command does not read, and a new field should not stop `wac task`
           // from running the ones it understands.
-          else: { }
+          default: { }
         }
       }
       Task[] exact = Task[n](fill: Task("", ""));
       for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
       return exact;
     }
-    else: { return Task[0](); }
+    default: { return Task[0](); }
   }
 }
 

@@ -264,8 +264,8 @@ export string test_traps_past_the_255_block_cap(Core core, Cli cli) {
 
 JsonObject objectOfJson(JsonValue v) {
   match (v) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -273,7 +273,7 @@ string strOfJson(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { trap; }
   }
 }

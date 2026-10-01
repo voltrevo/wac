@@ -157,7 +157,7 @@ Three pieces, and the awkwardness is all in the third:
 Two more constructs came with the same corpus, both of which the working half of the corpus happened
 not to contain:
 
-- **`match` as an expression** (`case P: value,` arms), which is how half of `Option<T>` is written.
+- **`match` as an expression** (`P: value,` arms), which is how half of `Option<T>` is written.
   `Arm` gained a `value`, so one arm type serves both forms — a body for the statement, a value for
   the expression.
 - **methods in an enum body**, which `Option<T>` has six of. A method is told from a variant by shape
@@ -588,7 +588,7 @@ first run: **14 legal programs this checker refused**, none of which any oracle 
 at. Eleven were one bug — a local that aliases something const could not be *rebound*, which made
 every linked-list walk in the spec illegal, because one flag was answering both "may I write through
 this?" and "may I rebind this name?". A twelfth was `match` used as an expression, which never
-narrowed its subject, so `case Circle: s.radius` looked for a field on the un-narrowed value.
+narrowed its subject, so `Circle: s.radius` looked for a field on the un-narrowed value.
 
 **`match` was the first group closed out of what the widening exposed**, and it went as one feature
 rather than eight bugs: an arm for every variant or an `else`, no variant named twice, no `else` that
@@ -1050,7 +1050,7 @@ fields* are different facts and only one of them means say nothing.
 
 **The find of the slot was a statement nothing walked.** `p.set(1);` is an `ExprStmt`, and `checkStmt`
 had no arm for one — so every expression rule reached only expressions that were part of something
-else: a return, an initialiser, a condition. A statement that is just a call is the commonest shape in
+default: a return, an initialiser, a condition. A statement that is just a call is the commonest shape in
 the language and had no rule applied to it at all. It surfaced as the const-receiver check looking
 broken when it was merely unreached, which is the second time this week a rule has looked wrong and
 been unvisited instead.
@@ -1279,7 +1279,7 @@ the reference does real inference. `Box(1.0)` is legal where a `Box<f64>` is exp
 `Box(1).get()` is not, and nothing local to the expression distinguishes them.
 
 The substitution itself is asserted in `typecheck.test.ts` rather than by the corpus, which has one
-invariance case and nothing else: fields, `T[]` under a suffix, multi-parameter `Pair<A, B>`,
+invariance case and nothing default: fields, `T[]` under a suffix, multi-parameter `Pair<A, B>`,
 constructor arguments, and a missing method on an instantiation, each against the reference's exact
 position.
 
@@ -1339,7 +1339,7 @@ which is what the rule is actually made of.
 Two of them were found by the guards rather than by thinking:
 
 - **A match used as an expression binds names too**, and the declaration pass walks statements. So
-  `case Some(v): v * 3` reported `v` as undefined in three files. The bindings are now declared where
+  `Some(v): v * 3` reported `v` as undefined in three files. The bindings are now declared where
   they are used, which works because an arm's value is walked immediately afterwards.
 - **An assignment's target is an `Lvalue`, not an `Expr`**, so `undeclared = 5;` went unreported by a
   rule that handles `i32 x = undeclared;`. The same rule, one node kind along — the fourth time that
@@ -1980,7 +1980,7 @@ confidently rather than not at all:
 - **`anyref` and `i31ref` are unmodelled**, and the test says so by name rather than tolerating a
   count.
 
-And one that was a real gap rather than a shape to stay silent about: **a `case B:` arm narrows its
+And one that was a real gap rather than a shape to stay silent about: **a `B:` arm narrows its
 subject**, exactly as `if (s is Circle)` does. Going silent on enum members instead would have cost
 the diagnostic for a field no variant declares — the generated sweep priced it immediately, 99% down
 to 98% — so the arm walk retypes the subject for its body and puts it back, and both numbers hold.
@@ -2089,7 +2089,7 @@ is exactly the size of thing that gets committed on the strength of the number m
 
 The variant-arity rule was reverted last slot for a false alarm, and the false alarm was the real
 finding: a variant is declared as a **struct under its bare name**, because that is how `is Circle`
-and `case Circle:` write it and how a narrowed value finds its payload. That spelling cannot tell
+and `Circle:` write it and how a narrowed value finds its payload. That spelling cannot tell
 two enums apart. `enum Opened { Ok(i32 fd) }` beside `enum Found { Ok(i32 at) }` is *one* `Ok` in
 the struct table holding both payloads — so asking it how many arguments `Ok` takes answers two, and
 the answer belongs to neither.
@@ -2440,14 +2440,14 @@ writes is a 78-digit constant split across two lines. Recursing fixed it and imm
 four working files, because a **comparison answers `bool` whatever it compared** and the recursion
 had to be told: `!(status == 204)` had become a unary operator on a number.
 
-And the one that matters: **`case List(xs)` binds `xs` to the variant's payload, and this checker
+And the one that matters: **`List(xs)` binds `xs` to the variant's payload, and this checker
 bound it to nothing.** A variant is a struct here and its payload is that struct's fields in order,
 so the answer was already in the table and nothing was asking for it. Every question about a payload
 — `xs.len(1)`, a field that is not there, a return of the wrong type — was silent.
 
 Two guards, both found by the oracles within a minute of each other. The enum is what may be generic,
 not the variant: `Opt<T> { Some(T v) }` registers `Some` as an ordinary struct whose field is written
-`T`, and binding to that made a working `case Some(v): v` return the wrong type in six programs.
+`T`, and binding to that made a working `Some(v): v` return the wrong type in six programs.
 Asking `isGeneric` does not help — it reads the struct table and an enum has no row there — so the
 test is on the *type*: bind only to something this checker can name, and a parameter is a name
 nothing declares. The second guard is the one this package keeps relearning: only when a single enum
@@ -2533,13 +2533,13 @@ now the only one.
 The corpus harness broke files seven ways while the generated one broke programs twenty-six. Widening
 it to twenty-three — casts, `const`, `break` outside a loop, an index that is not an integer, a
 `case` naming a variant that is not there — found a category missed **entirely**, and it is one only
-real code has in this shape: `case Nope(v):` on a `match`.
+real code has in this shape: `Nope(v):` on a `match`.
 
 The reference reports it at the **`case`**, which is the token before the name — reachable here
 because the tokens are a flat array and an arm knows its own index.
 
 Making it *right* took two goes at the same wall this checker keeps hitting. Asking "is this a
-variant of the subject's enum" refuses `case Match:` in `packages/ssh`, which is correct code: the
+variant of the subject's enum" refuses `Match:` in `packages/ssh`, which is correct code: the
 file imports the *function* whose return type that enum is, the enum's own declaration never came
 with it, and an enum whose members were never read answers "not a variant" to everything. Adding
 "…and its variants are known" did not help either, because the file imports a **different** `Match`
@@ -3658,7 +3658,7 @@ did not know about the new node**:
   not that problem; canonicalising both sides through the variant table before comparing is the
   difference between an enum this emitter can do and one that declines on its first line.
 - `typeOfE` on a match *expression* read each arm's value with the arm's bindings out of scope, so
-  `case B(x): x` was untyped and the honest "untyped match" guard declined all six of the generated
+  `B(x): x` was untyped and the honest "untyped match" guard declined all six of the generated
   cells. The type walk needed the same scope push the other two walks had already been given.
 
 The sweep is where all three showed up: **3,050 programs, 2,699 compared, 0 mismatched, 0 declined**
@@ -3708,7 +3708,7 @@ the arguments are emitted 2, 0, 1, 3. Measured, as the routine now goes, and the
 with it.
 
 **Then the thing worth the slot.** Chasing why two constants were declined turned up a literal reader
-that took decimal digits and stopped at anything else: `0xff` compiled to **0**, and `1_000` to **1**.
+that took decimal digits and stopped at anything default: `0xff` compiled to **0**, and `1_000` to **1**.
 Not a decline — a *wrong answer*, which is the failure this rung exists to catch, and it had been
 sitting there since the first slice.
 
@@ -3951,7 +3951,7 @@ gate — the numbers are printed, because a rung under construction that may nev
 rung nobody can restructure.
 
 **The first run said 15 valid of 336, and the number was a lie.** Every walk in the emitter ends in
-`else: { }`, which for an expression means emitting *nothing* where a value was expected. That is not
+`default: { }`, which for an expression means emitting *nothing* where a value was expected. That is not
 a gap, it is a corruption, and wasm reports it as *"not enough arguments on the stack"* — 199 of 308
 broken modules, naming a stack depth rather than a construct, and telling me nothing about what was
 missing.

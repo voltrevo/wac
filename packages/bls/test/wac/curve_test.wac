@@ -78,15 +78,15 @@ struct Vectors {
 
 string memberText(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return ""; }
       match (found!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        else: { return ""; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -98,39 +98,39 @@ string memberText(JsonValue v, string key) {
  */
 string coordinate(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return ""; }
       match (found!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        case Array(items): {
+        Str(bytes): { return string.fromBytes(bytes); }
+        Array(items): {
           string out = "";
           for (i32 i = 0; i < items.len(); i++) {
             match (items.get(i)) {
-              case Str(bytes): { out = out + string.fromBytes(bytes); }
-              else: { }
+              Str(bytes): { out = out + string.fromBytes(bytes); }
+              default: { }
             }
           }
           return out;
         }
-        else: { return ""; }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
 JsonArray? memberArray(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return null; }
       match (found!) {
-        case Array(items): { return items; }
-        else: { return null; }
+        Array(items): { return items; }
+        default: { return null; }
       }
     }
-    else: { return null; }
+    default: { return null; }
   }
 }
 

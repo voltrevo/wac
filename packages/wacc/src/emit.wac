@@ -196,11 +196,11 @@ bool parentIsGeneric(Env env, Program prog, u8[] src, Lexed lexed, i32 parentTok
     u8[] psrc = srcFor(env.fileSrcs, src, pf);
     Lexed plex = lexFor(env.fileLexeds, lexed, pf);
     match (pd[d].kind) {
-      case StructDecl(nameTok, ptok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, ptok, fields, methods, exported, isConst, typeParams): {
         if (tokenTextOf(psrc, plex, nameTok) != pn) { continue; }
         if (typeParams.len() > 0) { return true; }
       }
-      else: { }
+      default: { }
     }
   }
   return false;
@@ -406,7 +406,7 @@ string primStaticArg(string owner, string name) {
 /** The type name a bare identifier spells, when it is a primitive rather than a value. */
 string primTypeName(Env env, u8[] src, Lexed lexed, Expr obj) {
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenTextOf(src, lexed, tok);
       if (env.localAt(n) >= 0) { return ""; }
       if (n == "f32" || n == "f64" || n == "i32" || n == "i64" || n == "u32" || n == "u64") {
@@ -414,7 +414,7 @@ string primTypeName(Env env, u8[] src, Lexed lexed, Expr obj) {
       }
       return "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -511,15 +511,15 @@ string emittedSigOf(Env env, u8[] src, Lexed lexed, string ret, Param[] params, 
 /** The type a literal is when nothing else says — the default of its family, or `""`. */
 string naturalLiteralType(Expr e) {
   match (e.kind) {
-    case IntLit(tok): { return "i32"; }
-    case FloatLit(tok): { return "f64"; }
-    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
-    case JsxText(startOff, endOff): { return "Node"; }
-    case StrLit(tok): { return "string"; }
-    case BoolLit(value): { return "bool"; }
+    IntLit(tok): { return "i32"; }
+    FloatLit(tok): { return "f64"; }
+    Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
+    JsxText(startOff, endOff): { return "Node"; }
+    StrLit(tok): { return "string"; }
+    BoolLit(value): { return "bool"; }
     // A `null` says nothing about what it is a null *of*, so a type parameter it is the only
     // evidence for cannot be inferred at all.
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -535,13 +535,13 @@ string naturalLiteralType(Expr e) {
  */
 bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] tps, string[] out) {
   match (t.kind) {
-    case Prim(tok): { return true; }
-    case Arr(elem): {
+    Prim(tok): { return true; }
+    Arr(elem): {
       if (!isArrayType(actual)) { return false; }
       return matchTypeParams(env, src, lexed, elem, elemOf(actual), tps, out);
     }
-    case Nullable(inner): { return matchTypeParams(env, src, lexed, inner, actual, tps, out); }
-    case Funcref(ret, params): {
+    Nullable(inner): { return matchTypeParams(env, src, lexed, inner, actual, tps, out); }
+    Funcref(ret, params): {
       if (!isFuncrefType(actual)) { return false; }
       if (sigParamCount(actual) != params.len()) { return false; }
       if (!matchTypeParams(env, src, lexed, ret, sigReturn(actual), tps, out)) { return false; }
@@ -552,7 +552,7 @@ bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] 
       }
       return true;
     }
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       string nm = tokenTextOf(src, lexed, tok);
       for (i32 i = 0; i < tps.len(); i++) {
         if (tokenTextOf(src, lexed, tps[i]) != nm) { continue; }
@@ -588,7 +588,7 @@ bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] 
 string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
   if (env.prog is null) { return ""; }
   match (qual.kind) {
-    case Named(tok, targs): {
+    Named(tok, targs): {
       if (targs.len() == 0) { return ""; }
       string raw = tokenTextOf(src, lexed, tok);
       Program pg = env.prog!;
@@ -600,7 +600,7 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
         u8[] gs = srcFor(env.fileSrcs, src, env.declFile(d));
         Lexed gl = lexFor(env.fileLexeds, lexed, env.declFile(d));
         match (gd[d].kind) {
-          case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+          Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() != targs.len()) { continue; }
             if (tokenTextOf(gs, gl, nameTok) != raw) { continue; }
             string inst = raw + "<";
@@ -614,12 +614,12 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
             env.instantiate(inst, raw);
             return inst;
           }
-          else: { }
+          default: { }
         }
       }
       return "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -640,7 +640,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
     u8[] cs = srcFor(env.fileSrcs, src, env.declFile(d));
     Lexed cl = lexFor(env.fileLexeds, lexed, env.declFile(d));
     match (cd[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(cs, cl, nameTok) != raw) { continue; }
         if (params.len() != args.len()) { return ""; }
@@ -687,7 +687,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
         env.instantiate(inst, raw);
         return inst;
       }
-      else: { }
+      default: { }
     }
   }
   return "";
@@ -809,10 +809,10 @@ string templateNameOf(string inst) {
 string templateStatic(Env env, u8[] src, Lexed lexed, Expr obj, string want) {
   if (!isInstance(want)) { return ""; }
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       return tokenTextOf(src, lexed, tok) == templateNameOf(want) ? want : "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -918,7 +918,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
     u8[] ms = srcFor(env.fileSrcs, src, env.declFile(d));
     Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
     match (md[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(ms, ml, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
@@ -956,7 +956,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
           return inst;
         }
       }
-      else: { }
+      default: { }
     }
   }
   return "";
@@ -1015,8 +1015,8 @@ bool isMethodInstance(Env env, i32 i) { return env.instOf[i].indexOf(".") > 0; }
  */
 bool isNullableTy(Ty t) {
   match (t.kind) {
-    case Nullable(inner): { return true; }
-    else: { return false; }
+    Nullable(inner): { return true; }
+    default: { return false; }
   }
 }
 
@@ -1075,7 +1075,7 @@ bool constantFalseIs(Env env, string target, string lty) {
  */
 i32 identityConstIndex(Env env, u8[] src, Lexed lexed, Ty target) {
   match (target.kind) {
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       if (typeArgs.len() > 0) { return -1; }
       string nm = tokenTextOf(src, lexed, tok);
       if (env.isStructName(nm) || env.isEnumName(nm) || env.variantAt(nm) >= 0) { return -1; }
@@ -1083,20 +1083,20 @@ i32 identityConstIndex(Env env, u8[] src, Lexed lexed, Ty target) {
       if (ci < 0) { return -1; }
       return env.constGlobal[ci] >= 0 ? ci : -1;
     }
-    else: { return -1; }
+    default: { return -1; }
   }
 }
 
 string identityLocalName(Env env, u8[] src, Lexed lexed, Ty target) {
   match (target.kind) {
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       if (typeArgs.len() > 0) { return ""; }
       string nm = tokenTextOf(src, lexed, tok);
       if (env.isStructName(nm) || env.isEnumName(nm) || env.variantAt(nm) >= 0) { return ""; }
       if (env.localAt(nm) < 0) { return ""; }
       return isRefType(env, env.localType(nm)) ? nm : "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -1193,17 +1193,17 @@ bool isBoxedPrimName(string t) {
  */
 bool boxesAtBranches(Expr e) {
   match (e.kind) {
-    case Ternary(cond, then, els): { return true; }
-    case MatchExpr(subject, arms): { return true; }
-    else: { return false; }
+    Ternary(cond, then, els): { return true; }
+    MatchExpr(subject, arms): { return true; }
+    default: { return false; }
   }
 }
 
 /** Whether an expression is literally `null`, which a `T?` slot takes without boxing. */
 bool isNullLit(Expr e) {
   match (e.kind) {
-    case NullLit: { return true; }
-    else: { return false; }
+    NullLit: { return true; }
+    default: { return false; }
   }
 }
 
@@ -2998,39 +2998,39 @@ export struct Env {
 void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): {
+      Var(type, nameTok, init, isConst): {
         registerNamed(env, typeOfTyName(env, src, lexed, type));
         collectArrayTypesOfExpr(env, src, lexed, init);
       }
       // **The expressions too.** This walk looked only at what a `var` *declared*, so a type named
       // by a construction, a cast or an argument was invisible until the moment it was emitted —
       // which is one type past the end of a section already written.
-      case ExprStmt(e2): { collectArrayTypesOfExpr(env, src, lexed, e2); }
-      case Return(value): {
+      ExprStmt(e2): { collectArrayTypesOfExpr(env, src, lexed, e2); }
+      Return(value): {
         if (!(value is null)) { collectArrayTypesOfExpr(env, src, lexed, value!); }
       }
-      case Assign(target, op, rhs): { collectArrayTypesOfExpr(env, src, lexed, rhs); }
-      case Block(inner): { collectArrayTypes(env, src, lexed, inner); }
-      case If(cond, then, els): {
+      Assign(target, op, rhs): { collectArrayTypesOfExpr(env, src, lexed, rhs); }
+      Block(inner): { collectArrayTypes(env, src, lexed, inner); }
+      If(cond, then, els): {
         collectArrayTypesOfExpr(env, src, lexed, cond);
         collectArrayTypes(env, src, lexed, then);
         collectArrayTypes(env, src, lexed, els);
       }
-      case While(cond, inner): {
+      While(cond, inner): {
         collectArrayTypesOfExpr(env, src, lexed, cond);
         collectArrayTypes(env, src, lexed, inner);
       }
-      case DoWhile(inner, cond): {
+      DoWhile(inner, cond): {
         collectArrayTypesOfExpr(env, src, lexed, cond);
         collectArrayTypes(env, src, lexed, inner);
       }
-      case For(init, cond, update, inner): {
+      For(init, cond, update, inner): {
         if (!(init is null)) { collectArrayTypes(env, src, lexed, Stmt[](init!)); }
         if (!(cond is null)) { collectArrayTypesOfExpr(env, src, lexed, cond!); }
         if (!(update is null)) { collectArrayTypes(env, src, lexed, Stmt[](update!)); }
         collectArrayTypes(env, src, lexed, inner);
       }
-      case Switch(subject, cases): {
+      Switch(subject, cases): {
         collectArrayTypesOfExpr(env, src, lexed, subject);
         for (i32 c = 0; c < cases.len(); c++) {
           if (!(cases[c].value is null)) {
@@ -3042,11 +3042,11 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       // **An arm is a block.** The enum spec says five separate walks were missing this case, and
       // each failure was a type or a name reachable only through an arm — invisible here, and
       // reported by wasm as something else entirely.
-      case Match(subject, arms): {
+      Match(subject, arms): {
         collectArrayTypesOfExpr(env, src, lexed, subject);
         for (i32 a = 0; a < arms.len(); a++) { collectArrayTypes(env, src, lexed, arms[a].body); }
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -3062,23 +3062,23 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
 void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): {
+      Var(type, nameTok, init, isConst): {
         env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(env, src, lexed, type));
       }
-      case Block(inner): { collectLocals(env, src, lexed, inner); }
-      case If(cond, then, els): {
+      Block(inner): { collectLocals(env, src, lexed, inner); }
+      If(cond, then, els): {
         collectLocals(env, src, lexed, then);
         collectLocals(env, src, lexed, els);
       }
-      case While(cond, inner): { collectLocals(env, src, lexed, inner); }
-      case DoWhile(inner, cond): { collectLocals(env, src, lexed, inner); }
-      case For(init, cond, update, inner): {
+      While(cond, inner): { collectLocals(env, src, lexed, inner); }
+      DoWhile(inner, cond): { collectLocals(env, src, lexed, inner); }
+      For(init, cond, update, inner): {
         if (!(init is null)) {
           match (init!.kind) {
-            case Var(type, nameTok, ini, isConst): {
+            Var(type, nameTok, ini, isConst): {
               env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(env, src, lexed, type));
             }
-            else: { }
+            default: { }
           }
         }
         collectLocals(env, src, lexed, inner);
@@ -3087,10 +3087,10 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       // retired after it, which is what makes them arm-scoped. Its `var`s are ordinary locals and
       // have to be, or a declaration inside an arm has no slot and every use of it reads whatever
       // slot 0 happens to hold.
-      case Match(subject, arms): {
+      Match(subject, arms): {
         for (i32 a = 0; a < arms.len(); a++) { collectLocals(env, src, lexed, arms[a].body); }
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -3308,7 +3308,7 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
     }
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
-        case Import(pathTok, prefixTok, items): {
+        Import(pathTok, prefixTok, items): {
           // A capability import names no file, so it cannot be resolved into one — it is *carried*
           // instead, under a path no source can spell, which makes it a file to everything below.
           if (prefixTok >= 0) {
@@ -3375,7 +3375,7 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
             en = en + 1;
           }
         }
-        else: { }
+        default: { }
       }
     }
   }
@@ -3712,7 +3712,7 @@ string bindTypesOf(Front f) {
       src = srcFor(env.fileSrcs, b1s, env.curFile);
       lexed = lexFor(env.fileLexeds, b1l, env.curFile);
       match (b1d[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) {
             if (tpl == "" || tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
             i32 pushed = pushSubstitution(env, src, lexed, typeParams, name, tpl);
@@ -3723,7 +3723,7 @@ string bindTypesOf(Front f) {
           if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
           out = out + methodLines(env, src, lexed, bind, name, methods);
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() > 0) {
             if (tpl == "" || tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
             i32 epushed = pushSubstitution(env, src, lexed, typeParams, name, tpl);
@@ -3734,7 +3734,7 @@ string bindTypesOf(Front f) {
           if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
           out = out + methodLines(env, src, lexed, bind, name, methods);
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = b1f; src = b1s; lexed = b1l;
@@ -4019,7 +4019,7 @@ string exportSigsOf(Front f) {
     src = srcFor(env.fileSrcs, b2s, env.curFile);
     lexed = lexFor(env.fileLexeds, b2l, env.curFile);
     match (b2d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         bool ok = env.funcIndex[at] >= 0;
         at = at + 1;
@@ -4033,15 +4033,15 @@ string exportSigsOf(Front f) {
         }
         out = out + line + "\n";
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = b2f; src = b2s; lexed = b2l;
@@ -4797,28 +4797,28 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     src = srcFor(env.fileSrcs, blobSrc, env.curFile);
     lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
     match (pd1[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         if (env.funcIndex[countAt] < 0) { countAt = countAt + 1; continue; }
         countAt = countAt + 1;
         count = count + 1;
         if (exported && (entryDecls < 0 || d < entryDecls)) { exportCount = exportCount + 1; }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (env.funcIndex[countAt] >= 0) { count = count + 1; }
           countAt = countAt + 1;
         }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (env.funcIndex[countAt] >= 0) { count = count + 1; }
           countAt = countAt + 1;
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -4832,7 +4832,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     src = srcFor(env.fileSrcs, blobSrc, env.curFile);
     lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
     match (pd2[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
         registerNamed(env, rt);
@@ -4845,7 +4845,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       // A **module-level constant** names a type as surely as a field or a parameter does, and its
       // initialiser can name another. Third time this pre-pass has been found one declaration short:
       // the rule is *every place a type can be named*, and the list is longer than it looks.
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);
         registerNamed(env, ct);
         collectArrayTypesOfExpr(env, src, lexed, init);
@@ -4857,7 +4857,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       // An enum's payloads are fields, and the rule this pre-pass keeps re-learning is *every place a
       // type can be named*. A `Node(i32[] kids)` whose array type is registered while the type
       // section is being written refers to an index that is not there yet.
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 v = 0; v < variants.len(); v++) {
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
@@ -4866,7 +4866,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           }
         }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < fields.len(); i++) {
           string ft2 = typeOfTyName(env, src, lexed, fields[i].type);
@@ -4882,7 +4882,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -4976,13 +4976,13 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
       match (pd3[di].kind) {
         // One function per instance, in the same place in the order its registration put it.
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           if (env.funcIndex[countAt] >= 0) { count = count + 1; }
           countAt = countAt + 1;
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -4993,7 +4993,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           }
           popSubstitution(env, epushed);
         }
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -5004,7 +5004,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           }
           popSubstitution(env, pushed);
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -5095,11 +5095,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     src = srcFor(env.fileSrcs, blobSrc, env.curFile);
     lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
     match (pd4[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         registerFuncTypes(env, src, lexed, returnType, params, "");
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string owner2 = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
@@ -5108,7 +5108,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
                                  methods[m].hasThis ? owner2 : "");
         }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string eowner2 = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
@@ -5117,7 +5117,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
                                  methods[m].hasThis ? eowner2 : "");
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -5145,7 +5145,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       src = srcFor(env.fileSrcs, blobSrc, env.curFile);
       lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
       match (pd5[di].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 fpushed2 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -5153,7 +5153,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           registerFuncTypes(env, src, lexed, returnType, params, "");
           popSubstitution(env, fpushed2);
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -5169,7 +5169,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           }
           popSubstitution(env, epushed);
         }
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -5185,7 +5185,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           }
           popSubstitution(env, pushed);
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -5450,7 +5450,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     src = srcFor(env.fileSrcs, blobSrc, env.curFile);
     lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
     match (pd6[d].kind) {
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string eowner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
@@ -5462,7 +5462,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           index = index + 1;
         }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
@@ -5474,7 +5474,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           index = index + 1;
         }
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
         emitAt = emitAt + 1;
@@ -5484,7 +5484,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
                      returnType, params, body, "", index, declTypes, nameTok);
         index = index + 1;
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -5519,7 +5519,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         src = srcFor(env.fileSrcs, blobSrc, env.curFile);
         lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
         match (pd7[md].kind) {
-          case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != mtmpl) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
@@ -5540,7 +5540,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
               popSubstitution(env, op2);
             }
           }
-          else: { }
+          default: { }
         }
       }
       env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -5554,7 +5554,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       match (pd8[di].kind) {
         // **Never exported.** An instance's name is not a name anybody wrote, and two modules that
         // happened to infer the same one would collide on it.
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
@@ -5566,7 +5566,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           popSubstitution(env, fpushed3);
           index = index + 1;
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -5585,7 +5585,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           }
           popSubstitution(env, epushed);
         }
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -5604,7 +5604,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           }
           popSubstitution(env, pushed);
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = 0 - 1; src = blobSrc; lexed = blobLexed;
@@ -6115,10 +6115,10 @@ export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
 /** A declared type's name, enough to tell `void` from a value. */
 string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
-    case Prim(tok): {
+    Prim(tok): {
       return tokenTextOf(src, lexed, tok);
     }
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       string raw = tokenTextOf(src, lexed, tok);
       // **`anyref` and `i31ref` are spelled as identifiers and declared by nobody.** The lexer has
       // no keyword for them, so they arrive here looking like a type name to resolve — and
@@ -6172,7 +6172,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     // out, every array type came back as the empty string — the type section had no array entry, the
     // local was declared an `i32`, and the module asked for an array of whatever was on the stack.
     // A "" that means *unknown* propagates silently, which is the cost of using it for two things.
-    case Arr(elem): {
+    Arr(elem): {
       string inner = typeOfTyName(env, src, lexed, elem);
       return inner == "" ? "" : inner + "[]";
     }
@@ -6183,7 +6183,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     // `fn[i32(i32, u8[])]` — spelled canonically, since the string *is* the identity: two spellings
     // of one signature have to reach the same type index or a value of one cannot be called as the
     // other.
-    case Funcref(ret, params): {
+    Funcref(ret, params): {
       string r = typeOfTyName(env, src, lexed, ret);
       if (r == "") { return ""; }
       string out = "fn[" + r + "(";
@@ -6206,11 +6206,11 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       }
       return out + ")]";
     }
-    case Nullable(inner): {
+    Nullable(inner): {
       match (inner.kind) {
         // A nullable **primitive** has no representation — there is no null `i32` — except that
         // `string` is a primitive by spelling and a reference by nature, so `string?` is a string.
-        case Prim(tok): {
+        Prim(tok): {
           string pn = tokenTextOf(src, lexed, tok);
           // **`anyref` and `i31ref` are references too**, and they lex as primitives — which is how
           // `anyref? interruptCtx;` became a field of no type at all, and `Shell.create` came back
@@ -6238,7 +6238,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         // substitution, so the question has to be asked again here rather than above, where `inner`
         // is still `T`. `issues/lang/0300a`: the signature of `firstOf<i32>` said it returned a bare
         // `i32` while `return null` pushed nothing, and the engine refused the module.
-        else: {
+        default: {
           string n = typeOfTyName(env, src, lexed, inner);
           // **The same three questions the `Prim` arm asks, and not `isWritableValType`.** That
           // predicate counts `anyref` and `i31ref`, which the arm above deliberately returns
@@ -6310,7 +6310,7 @@ i32 methodOn(Env env, string t, string name) {
 
 string variantOfMemberAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok, string want) {
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       // `Option.Some(3)` names a **template**, and which instance it is comes from the slot — the
       // same rule `Vec.create()` follows, because the instantiation is not in the call either way.
       if (isInstance(want) && templateNameOf(want) == tokenTextOf(src, lexed, tok)) {
@@ -6326,13 +6326,13 @@ string variantOfMemberAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok, 
     // `want` stood: `typeOfTyName` answers the instance and registers it, and the variant is then
     // looked up in that instance exactly as a slot-derived one is. No `want` is consulted, which is
     // the point — this spelling exists for the positions that have no slot.
-    case TypeName(nt): {
+    TypeName(nt): {
       string inst = typeOfTyName(env, src, lexed, nt);
       if (inst == "") { return ""; }
       string vw = inst + "." + tokenTextOf(src, lexed, nameTok);
       return env.enumOf(vw) == inst ? vw : "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -6760,7 +6760,7 @@ void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32
   // is a *name* whose wac type is the variant, so `s.width` resolves to one slot rather than to
   // whichever variant declared that field first.
   match (subject.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       env.addLocal(tokenTextOf(src, lexed, tok), vn);
       i32 sh = env.localCount - 1;
       fb.byte(32);
@@ -6768,7 +6768,7 @@ void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32
       fb.byte(33);
       fb.u32leb(sh);
     }
-    else: { }
+    default: { }
   }
 }
 
@@ -6953,7 +6953,7 @@ void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
  */
 void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       string vt = typeOfTyName(env, src, lexed, type);
       emitExprAt(fb, src, lexed, env, init, vt);
       // **A captured local is born in a cell.** The walk recorded which declarations are captured, by
@@ -6974,10 +6974,10 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(33);   // local.set
       fb.u32leb(env.localCount - 1);
     }
-    case Assign(rawTarget, op, rhs): {
+    Assign(rawTarget, op, rhs): {
       Lvalue target = peelLv(rawTarget);
       match (target.kind) {
-        case LField(base, nameTok): {
+        LField(base, nameTok): {
           string ot3 = typeOfLv(src, lexed, env, base);
           if (!env.isStructName(ot3)) { return; }
           string fname = tokenTextOf(src, lexed, nameTok);
@@ -7022,7 +7022,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.u32leb(env.structType(ot3));
           fb.u32leb(slot);
         }
-        case LIndex(base, index): {
+        LIndex(base, index): {
           // The array and the index are pushed before the value, which is the order `array.set`
           // wants and the reverse of how the statement reads.
           string bt = typeOfLv(src, lexed, env, base);
@@ -7057,7 +7057,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.u32leb(14);   // array.set
           fb.u32leb(env.arrayType(bt));
         }
-        case LIdent(tok): {
+        LIdent(tok): {
           string name = tokenTextOf(src, lexed, tok);
           // **Writing a captured name, from inside the lambda.** It has no local — it is a cell in
           // the capture record — so without this the assignment found nothing and emitted nothing,
@@ -7125,17 +7125,17 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.byte(33);
           fb.u32leb(at);
         }
-        else: { }
+        default: { }
       }
     }
-    case Return(value): {
+    Return(value): {
       // The **function's** return type, which a `return` is the one statement that needs and the only
       // one that had no way to know: `return 1;` in an `i64` function is an `i64` constant, and
       // emitting it at the literal's own guess made seven corpus files invalid at once.
       if (!(value is null)) { emitExprAt(fb, src, lexed, env, value!, env.returnType); }
       fb.byte(15);   // return
     }
-    case If(cond, then, els): {
+    If(cond, then, els): {
       emitExpr(fb, src, lexed, env, cond);
       fb.byte(4);    // if
       fb.byte(64);   // blocktype: nothing
@@ -7168,10 +7168,10 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(11);   // end
       env.depth = env.depth - 1;
     }
-    case While(cond, inner): {
+    While(cond, inner): {
       emitLoop(fb, src, lexed, env, cond, inner, null, s.line, s.col);
     }
-    case DoWhile(inner, cond): {
+    DoWhile(inner, cond): {
       // The body runs before the condition is asked, so the test moves to the bottom: the loop
       // branches back only while it holds, and there is no jump out at the top to write.
       i32 savedB = env.breakAt;
@@ -7206,7 +7206,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       env.breakAt = savedB;
       env.continueAt = savedC;
     }
-    case For(init, cond, update, inner): {
+    For(init, cond, update, inner): {
       // **The loop's own scope.** `for (i32 i = …)` beside an outer `i` is two locals, and the
       // init is emitted outside the body — so without this the loop's `i` stayed in the enclosing
       // scope and `localAt` found it afterwards, since it searches backwards. The spec has a case
@@ -7216,15 +7216,15 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       emitLoop(fb, src, lexed, env, cond is null ? null : cond, inner, update, s.line, s.col);
       retireFrom(env, savedFor);
     }
-    case Break: {
+    Break: {
       fb.byte(12);
       fb.u32leb(env.depth - env.breakAt);
     }
-    case Continue: {
+    Continue: {
       fb.byte(12);
       fb.u32leb(env.depth - env.continueAt);
     }
-    case Trap(tvalue): {
+    Trap(tvalue): {
       // **The message first**, because after `unreachable` there is nothing left to run. Emitted at
       // `string`, which is what the checker already required of it.
       if (!(tvalue is null) && env.trapGlobal >= 0) {
@@ -7233,7 +7233,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       }
       fb.byte(0);
     }
-    case Switch(subject, cases): {
+    Switch(subject, cases): {
       // A chain of comparisons rather than a jump table. `br_table` is what the reference emits and
       // is an optimisation of exactly this — the values a canonical form would have to normalise
       // anyway, and the answers are what this rung compares.
@@ -7274,14 +7274,14 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       env.depth = env.depth - 1;
       env.breakAt = savedS;
     }
-    case IncrStmt(rawTarget, op): {
+    IncrStmt(rawTarget, op): {
       Lvalue target = peelLv(rawTarget);
       // `i++` is the commonest `for` update in the language and had **no arm here at all**, so the
       // update emitted nothing and the loop never advanced. It did not fail: it validated and span,
       // and the test hung rather than reporting — which is the failure mode this rung's oracle was
       // chosen to catch and the one it cannot report politely.
       match (target.kind) {
-        case LIdent(tok): {
+        LIdent(tok): {
           // `n++` on a captured name, from inside the lambda — the same read-modify-write through the
           // cell as the assignment above. Without it the increment found no local and emitted
           // nothing, so a captured counter stayed put while every other mutation worked.
@@ -7334,7 +7334,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         // nothing at all, and `lex.wac`'s cursor never advanced. That is a lexer that validates and
         // loops for ever, and it is what the bootstrap found in its first minute: 336 corpus files
         // and three and a half thousand generated programs had never incremented a field.
-        case LField(base, nameTok): {
+        LField(base, nameTok): {
           string ot4 = typeOfLv(src, lexed, env, base);
           if (!env.isStructName(ot4)) { return; }
           string fn4 = tokenTextOf(src, lexed, nameTok);
@@ -7359,7 +7359,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.u32leb(env.structType(ot4));
           fb.u32leb(slot4);
         }
-        case LIndex(base, index): {
+        LIndex(base, index): {
           string bt4 = typeOfLv(src, lexed, env, base);
           if (!isArrayType(bt4)) { return; }
           string et4 = elemOf(bt4);
@@ -7380,12 +7380,12 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.u32leb(14);
           fb.u32leb(env.arrayType(bt4));
         }
-        else: { }
+        default: { }
       }
     }
-    case Match(subject, arms): { emitMatchStmt(fb, src, lexed, env, subject, arms); }
-    case Block(inner): { emitBody(fb, src, lexed, env, inner); }
-    case ExprStmt(e) : {
+    Match(subject, arms): { emitMatchStmt(fb, src, lexed, env, subject, arms); }
+    Block(inner): { emitBody(fb, src, lexed, env, inner); }
+    ExprStmt(e) : {
       // A call for its effect — and if it *does* return something, the value has to go somewhere.
       // wasm's stack is not a suggestion: a function that leaves one is ill-typed at its end, which
       // is what *"expected 0 elements on the stack"* was saying about six corpus files.
@@ -7496,8 +7496,8 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
   i32 kind = lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus();
   match (target.kind) {
     // Peeled above, so this cannot arrive — but the language wants every variant named.
-    case LUnwrap(base): { emitIncrExpr(fb, src, lexed, env, base, op, prefix); }
-    case LIdent(tok): {
+    LUnwrap(base): { emitIncrExpr(fb, src, lexed, env, base, op, prefix); }
+    LIdent(tok): {
       i32 at = env.localAt(tokenTextOf(src, lexed, tok));
       if (at < 0) {
         env.declineFor("`" + tokenTextOf(src, lexed, tok) + "`, which is incremented here and is "
@@ -7517,7 +7517,7 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
       emitBinary(fb, env, kind, t);
       fb.byte(33); fb.u32leb(at);
     }
-    case LField(base, nameTok): {
+    LField(base, nameTok): {
       string ot = typeOfLv(src, lexed, env, base);
       if (!env.isStructName(ot)) { return; }
       string fname = tokenTextOf(src, lexed, nameTok);
@@ -7541,7 +7541,7 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
       fb.byte(251); fb.u32leb(5); fb.u32leb(env.structType(ot)); fb.u32leb(slot);
       if (prefix) { fb.byte(32); fb.u32leb(v); }
     }
-    case LIndex(base, index): {
+    LIndex(base, index): {
       string bt = typeOfLv(src, lexed, env, base);
       if (!isArrayType(bt)) { return; }
       string et = elemOf(bt);
@@ -7607,7 +7607,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // The env is null because capture is not built yet. That is the *whole* of what remains: the
     // pair, the wrapper, the hoisted body and the signature are all here, and a capturing lambda
     // differs only by carrying a generated struct where this carries `ref.null any`.
-    case Lambda(params, body, lamAsync): {
+    Lambda(params, body, lamAsync): {
       i32 li = env.lambdaAtPos(e.line, e.col);
       if (li < 0 || env.lambdaSigs[li] == "") {
         env.declineFor("a lambda whose type this emitter could not work out");
@@ -7635,7 +7635,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.byte(251); fb.u32leb(0);                       // struct.new
       fb.u32leb(env.pairType(env.lambdaSigs[li]));
     }
-    case IntLit(tok): {
+    IntLit(tok): {
       // A literal is emitted at the type its **context** wants, which is the same fact the checker
       // states as "a literal is polymorphic over a family": `i64 x = 1;` needs `i64.const`, and the
       // `1` says nothing about that.
@@ -7646,7 +7646,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.byte(65);
       fb.i32leb(v as@ i32);
     }
-    case FloatLit(tok): {
+    FloatLit(tok): {
       f64 v = floatLit(tokenTextOf(src, lexed, tok));
       if (want == "f32") { fb.byte(67); fb.f32bits(v as~ f32); return; }
       fb.byte(68);
@@ -7657,7 +7657,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // `Member`, where resolving the member consumes it. Emitting nothing would produce a module
     // that computes the wrong thing silently, so this traps — the same treatment every other
     // "cannot happen" in this walk gets. `issues/lang/0088`.
-    case TypeName(tn): {
+    TypeName(tn): {
       // `id<i32>` as a value: the same pair every funcref is, pointing at the instance. Registering
       // it is `genericFuncInstance`'s doing and happens in the discovery walk; by here it has an
       // index like any other function.
@@ -7666,19 +7666,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (fr >= 0 && env.funcIndex[fr] >= 0) { emitFuncPair(fb, env, fr, want); return; }
       env.declineFor("a written instantiation used as a value, which named no function here");
     }
-    case BoolLit(value): {
+    BoolLit(value): {
       fb.byte(65);
       fb.i32leb(value ? 1 : 0);
     }
-    case Jsx(tagTok, closeTok, attrs, kids): {
+    Jsx(tagTok, closeTok, attrs, kids): {
       emitJsx(fb, src, lexed, env, tagTok, attrs, kids);
       return;
     }
-    case JsxText(startOff, endOff): {
+    JsxText(startOff, endOff): {
       emitJsxText(fb, src, env, startOff, endOff);
       return;
     }
-    case StrLit(tok): {
+    StrLit(tok): {
       // **The bytes go in the data segment, and the code says where.** A literal's token spans the
       // quotes, so the span is walked rather than taken whole, and the four escapes wac's own
       // sources use are resolved on the way.
@@ -7708,7 +7708,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         fb.u32leb(0);   // the one segment
       }
     }
-    case Cast(op, operand, target): {
+    Cast(op, operand, target): {
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(env, src, lexed, target);
       // **A literal has no type of its own, so it takes the slot's** — and the slot here is the
@@ -7746,7 +7746,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitExprAt(fb, src, lexed, env, operand, want2);
       emitCast(fb, env, want2, to, tokenKindOf(lexed, op));
     }
-    case Ident(tok): {
+    Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
       // **A captured name comes from the receiver, not from a local.** Checked before `localAt`,
       // because the hoisted function has no local of that name at all — and after the lambda's own
@@ -7786,8 +7786,8 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // **Declined before emission reaches here** by `unsupportedExpr`, which names it. The arm exists
     // because the match is exhaustive, and it traps rather than emitting a plausible value: a wrong
     // answer for `await` would be a program that runs and lies, which is worse than one that stops.
-    case Await(operand): { fb.byte(0); }
-    case Unary(op, operand): {
+    Await(operand): { fb.byte(0); }
+    Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kBang()) {
         emitExpr(fb, src, lexed, env, operand);
@@ -7816,7 +7816,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
     }
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kAndAnd() || k == kOrOr()) {
         emitExpr(fb, src, lexed, env, left);
@@ -7932,9 +7932,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitAt(fb, src, lexed, env, right, ot);
       emitBinary(fb, env, k, ot);
     }
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           // A **local** of function-reference type, called: `g(5)` is spelled exactly like a call to
           // a function named `g`, and only the scope can tell them apart. The local wins, as it does
           // everywhere else in this emitter.
@@ -8029,7 +8029,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           fb.byte(16);   // call
           fb.u32leb(env.funcIndex[at]);
         }
-        else: { }
+        default: { }
       }
     }
     /**
@@ -8040,7 +8040,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
      * which is unusually generous of the format and means none of them has to be built out of the
      * others.
      */
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       string et = typeOfTyName(env, src, lexed, elem);
       i32 ti = env.arrayType(et + "[]");
       if (elements.len() > 0) {
@@ -8121,7 +8121,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.u32leb(7);        // array.new_default
       fb.u32leb(ti);
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       string at2 = typeOfE(src, lexed, env, arr);
       // A string index is a decode and so a call, not an `array.get`.
       if (at2 == "string") {
@@ -8142,9 +8142,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       traceIndex(fb, env, index.line, index.col);
       emitArrayGet(fb, env, at2);
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           string mname = tokenTextOf(src, lexed, nameTok);
           // `Shape.Circle(2.0)` reaches here as a **call**, because that is what it looks like from
           // the parser's side. It builds a value instead — and for a template's variant, which
@@ -8357,7 +8357,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         // A call through a **value** rather than a name: the arguments, then the reference, then
         // `call_ref` with the signature's type index. The reference goes last because that is the
         // order the instruction pops in, and the reverse of how the call reads.
-        else: {
+        default: {
           string ct = typeOfE(src, lexed, env, callee);
           if (!isFuncrefType(ct)) { return; }
           // **The general call-through-a-value path**, and a `fn[…]` value is a pair — so the callee
@@ -8379,7 +8379,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         }
       }
     }
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       // A payload-less variant is a **value and not a call** — `Shape.Point`, with no parentheses —
       // so the construction has to be recognised here as well as under `Call`.
       string vnew2 = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
@@ -8427,7 +8427,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     // `s is Circle` is a **tag comparison**. No cast and no test instruction: a variant and its enum
     // are the same wasm type here, so what distinguishes them is the value in slot 0 and nothing else.
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       // Three tests share one node, and which one it is comes from what is present: a type, a value,
       // or neither, which is `x is null`.
       if ((target is null) && (other is null)) {
@@ -8532,10 +8532,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.i32leb(env.variantTags[vi]);
       fb.byte(negated ? 71 : 70);   // i32.ne / i32.eq
     }
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       emitMatchExpr(fb, src, lexed, env, subject, arms, want);
     }
-    case NullLit: {
+    NullLit: {
       // The same question `isRefType` answers everywhere else. Asked inline here, it was one kind of
       // reference short the moment a new one existed, and a `null` that emits nothing is an argument
       // that never arrives.
@@ -8544,7 +8544,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // `x!` asserts and **traps** where the assertion fails. Emitting nothing would be the same value
     // with the same type — our references are all nullable — and a different answer: the reference
     // traps on a null and silence would return one.
-    case Unwrap(operand): {
+    Unwrap(operand): {
       emitExpr(fb, src, lexed, env, operand);
       fb.byte(212);   // ref.as_non_null
       // **A boxed primitive needs two operations, not one.** `ref.as_non_null` is the whole of `!` for
@@ -8558,8 +8558,8 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         fb.u32leb(0);
       }
     }
-    case Incr(target, op, prefix): { emitIncrExpr(fb, src, lexed, env, target, op, prefix); }
-    case Ternary(cond, then, els): {
+    Incr(target, op, prefix): { emitIncrExpr(fb, src, lexed, env, target, op, prefix); }
+    Ternary(cond, then, els): {
       // **The branches' type, not `i32`.** A block that produces a value declares which, and this
       // declared `i32` for every ternary — so `n == 0 ? x : y` on two `u64`s was a block promising an
       // `i32` and delivering an `i64`. wasm says so at the *end* of the function, in a fall-through
@@ -8611,20 +8611,20 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     // emission uses. Without this arm the blocked walk asked what a lambda is, got nothing, and
     // declined every module with one as *"untyped lambda"*, from a check that had never heard of the
     // feature. `design/lang/0002` tier two.
-    case Lambda(lparams, lbody, lamAsync): {
+    Lambda(lparams, lbody, lamAsync): {
       i32 li = env.lambdaAtPos(e.line, e.col);
       return li < 0 ? "" : env.lambdaSigs[li];
     }
-    case IntLit(tok): { return ""; }
-    case FloatLit(tok): { return ""; }
-    case BoolLit(value): { return "bool"; }
+    IntLit(tok): { return ""; }
+    FloatLit(tok): { return ""; }
+    BoolLit(value): { return "bool"; }
     // A string literal, unlike a numeric one, *has* a type: it is an `i8[]` and no context can make
     // it anything else. `typeOfE` had no arm for one at all, so it came back unknown and the walk
     // declined the very literal the emitter had just learned to write.
-    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
-    case JsxText(startOff, endOff): { return "Node"; }
-    case StrLit(tok): { return "string"; }
-    case Ident(tok): {
+    Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
+    JsxText(startOff, endOff): { return "Node"; }
+    StrLit(tok): { return "string"; }
+    Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
       // A captured name has a type without having a local — the capture struct's field.
       i32 ic = env.captureAt(env.emittingLambda, nm);
@@ -8642,14 +8642,14 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     // the arm above with the letters supplied — `id<i32>` is `fn(i32) -> i32`. Without this the
     // module was declined as *"untyped a type used as a value"*: the emitter could write the value
     // and could not say what it was, which is a check two steps away from the fact.
-    case TypeName(vt): {
+    TypeName(vt): {
       string vinst = genericFuncInstance(env, src, lexed, vt);
       i32 vfi = vinst == "" ? 0 - 1 : env.funcAt(vinst);
       return vfi < 0 ? "" : signatureOf(env, vfi);
     }
-    case Cast(op, operand, target): { return typeOfTyName(env, src, lexed, target); }
-    case ArrNew(elem, size, fill, elements): { return typeOfTyName(env, src, lexed, elem) + "[]"; }
-    case Member(obj, nameTok): {
+    Cast(op, operand, target): { return typeOfTyName(env, src, lexed, target); }
+    ArrNew(elem, size, fill, elements): { return typeOfTyName(env, src, lexed, elem) + "[]"; }
+    Member(obj, nameTok): {
       // A variant construction's type is the **variant**, not the enum: `Shape.Circle(2.0)` is a
       // `Circle`, which is what makes `s.radius` resolve to one slot in the arm that narrowed it.
       string vn3 = variantOfMember(src, lexed, env, obj, nameTok);
@@ -8672,7 +8672,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       i32 bat = boundRefAt(src, lexed, env, o, nameTok);
       return bat < 0 ? "" : boundSignatureOf(env, bat);
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       string a = typeOfE(src, lexed, env, arr);
       // `s[i]` is a one-character **string**, not a byte — the representation is shared with `i8[]`
       // and the type is not, which is the same distinction `repType` exists for.
@@ -8684,13 +8684,13 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       if (e == "u8" || e == "i8" || e == "u16" || e == "i16") { return "i32"; }
       return e;
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        else: {
+        default: {
           string ct2 = typeOfE(src, lexed, env, callee);
           return isFuncrefType(ct2) ? sigReturn(ct2) : "";
         }
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
           string vn4 = variantOfMember(src, lexed, env, obj, nameTok);
           if (vn4 != "") { return vn4; }
@@ -8723,12 +8723,12 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         }
       }
     }
-    case Unary(op, operand): {
+    Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kBang()) { return "bool"; }
       return typeOfE(src, lexed, env, operand);
     }
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
           k == kAndAnd() || k == kOrOr()) {
@@ -8780,16 +8780,16 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       if (lt != rt) { return ""; }
       return lt;
     }
-    case Is(left, target, other, negated): { return "bool"; }
-    case Incr(target, op, prefix): { return typeOfLv(src, lexed, env, peelLv(target)); }
-    case Unwrap(operand): {
+    Is(left, target, other, negated): { return "bool"; }
+    Incr(target, op, prefix): { return typeOfLv(src, lexed, env, peelLv(target)); }
+    Unwrap(operand): {
       // Unwrapping a boxed primitive yields the primitive; for a nullable reference `T?` and `T` are
       // already one name here, so this changes nothing for those.
       string ut = typeOfE(src, lexed, env, operand);
       return isBoxedPrimName(ut) ? boxedPrimInner(ut) : ut;
     }
-    case MatchExpr(subject, arms): {
-      // **With the arm's names in scope.** An arm whose value is its own binding — `case B(x): x`,
+    MatchExpr(subject, arms): {
+      // **With the arm's names in scope.** An arm whose value is its own binding — `B(x): x`,
       // which is most of them — is untyped to anyone who cannot see `x`, and a match whose type is
       // unknown is declined by the guard above. Pushing the names here is what the emitter does when
       // it walks the same arm, and the two answers have to be the same one.
@@ -8803,14 +8803,14 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return mt;
     }
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       string tt = typeOfE(src, lexed, env, then);
       if (tt != "") { return tt; }
       return typeOfE(src, lexed, env, els);
     }
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           string nm3 = tokenTextOf(src, lexed, tok);
           string lt3 = env.localType(nm3);
           // **And a captured funcref, which this did not ask about** — the same two lines the emitter's
@@ -8834,10 +8834,10 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (at < 0) { at = env.funcAt(genericCallInstance(env, src, lexed, tok, args)); }
           return at < 0 ? "" : env.funcReturns[at];
         }
-        else: { return ""; }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -9212,14 +9212,14 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
       // true, and no help at all. The wanted type is written on the declaration, so this is the same
       // move the `Var` arm makes one scope down. `issues/lang/0142` is where the enumeration that
       // found it is recorded.
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         env.walkCount = 0;
         env.assignedCount = 0;
         env.walkFuncLine = lexedLine(lexed, nameTok);
         env.walkFuncCol = lexedCol(lexed, nameTok);
         findLambdasExpr(env, src, lexed, init, typeOfTyName(env, src, lexed, type));
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0 && bodyHasLambda(src, lexed, body)) { env.lambdaInGeneric = true; }
         if (typeParams.len() == 0) {
           env.walkCount = 0;
@@ -9235,7 +9235,7 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
           markWritingLambdas(env, first);
         }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) {
           for (i32 m = 0; m < methods.len(); m++) {
             if (bodyHasLambda(src, lexed, methods[m].body)) { env.lambdaInGeneric = true; }
@@ -9274,7 +9274,7 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
           }
         }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         // The third arm, and it needs the same guard as the other two. A generic enum's *instantiated*
         // methods are reached by the blocked walk, so this one already declined — but with the
         // ordinary message, which read "this module has 0" lambdas and pointed nowhere near the
@@ -9306,7 +9306,7 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w1f; src = w1s; lexed = w1l;
@@ -9364,7 +9364,7 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
     src = srcFor(env.fileSrcs, w2s, env.curFile);
     lexed = lexFor(env.fileLexeds, w2l, env.curFile);
     match (w2d[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
@@ -9378,7 +9378,7 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
           return opushed + mpushed;
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w2f; src = w2s; lexed = w2l;
@@ -9399,28 +9399,28 @@ i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string in
       src = srcFor(env.fileSrcs, w3s, env.curFile);
       lexed = lexFor(env.fileLexeds, w3l, env.curFile);
       match (w3d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
           env.curFile = w3f;
           return pushed;
         }
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
           env.curFile = w3f;
           return pushed;
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
           env.curFile = w3f;
           return pushed;
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = w3f; src = w3s; lexed = w3l;
@@ -9456,7 +9456,7 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
     src = srcFor(env.fileSrcs, w4s, env.curFile);
     lexed = lexFor(env.fileLexeds, w4l, env.curFile);
     match (w4d[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
@@ -9483,7 +9483,7 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
           popSubstitution(env, opushed);
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w4f; src = w4s; lexed = w4l;
@@ -9503,7 +9503,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       src = srcFor(env.fileSrcs, w5s, env.curFile);
       lexed = lexFor(env.fileLexeds, w5l, env.curFile);
       match (w5d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
@@ -9520,7 +9520,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           markWritingLambdas(env, first);
           popSubstitution(env, pushed);
         }
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
@@ -9550,7 +9550,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           }
           popSubstitution(env, pushed);
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
@@ -9580,7 +9580,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           }
           popSubstitution(env, pushed);
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = w5f; src = w5s; lexed = w5l;
@@ -9591,7 +9591,7 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
   match (s.kind) {
     // The declared type is the wanted type — the commonest position a lambda is written in, and the
     // only one where the answer is written down beside it.
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       string vt = typeOfTyName(env, src, lexed, type);
       findLambdasExpr(env, src, lexed, init, vt);
       // Declared *after* the initialiser is walked, so `i32 x = x;` reads the outer `x` — the same
@@ -9601,50 +9601,50 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
     // **The target's type, from the walk's scope rather than the emitter's locals** — which do not
     // exist yet. This is the position that was left guessing: `g = () => 2;` had no wanted type, so
     // the lambda got no signature and the module declined.
-    case Assign(target, op, rhs): {
+    Assign(target, op, rhs): {
       findLambdasLv(env, src, lexed, target, ret);
       string tw = "";
       match (target.kind) {
-case LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
+LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
         // **A field target types the lambda too.** `h.f = (i32 x) => …` left `tw` empty, so the
         // walk had no expected type for the lambda and declined the whole module — *a lambda … in
         // a position the walk does not type yet*. The same lambda as a constructor argument was
         // fine, which is what says the shape is supported and only this position was missed.
         // `issues/lang/0303c`.
-        case LField(base, fieldTok): {
+        LField(base, fieldTok): {
           match (base.kind) {
-            case LIdent(btok): {
+            LIdent(btok): {
               string ot = env.walkTypeOf(tokenTextOf(src, lexed, btok));
               if (ot != "") { tw = env.fieldType(ot, tokenTextOf(src, lexed, fieldTok)); }
             }
-            else: { }
+            default: { }
           }
         }
-        else: { }
+        default: { }
       }
       findLambdasExpr(env, src, lexed, rhs, tw);
     }
-    case IncrStmt(target, op): { findLambdasLv(env, src, lexed, target, ret); }
-    case If(cond, then, els): {
+    IncrStmt(target, op): { findLambdasLv(env, src, lexed, target, ret); }
+    If(cond, then, els): {
       findLambdasExpr(env, src, lexed, cond, "bool");
       findLambdas(env, src, lexed, then, ret);
       findLambdas(env, src, lexed, els, ret);
     }
-    case While(cond, wbody): {
+    While(cond, wbody): {
       findLambdasExpr(env, src, lexed, cond, "bool");
       findLambdas(env, src, lexed, wbody, ret);
     }
-    case For(init, cond, update, fbody): {
+    For(init, cond, update, fbody): {
       if (!(init is null)) { findLambdasStmt(env, src, lexed, init!, ret); }
       if (!(cond is null)) { findLambdasExpr(env, src, lexed, cond!, "bool"); }
       if (!(update is null)) { findLambdasStmt(env, src, lexed, update!, ret); }
       findLambdas(env, src, lexed, fbody, ret);
     }
-    case DoWhile(dbody, cond): {
+    DoWhile(dbody, cond): {
       findLambdas(env, src, lexed, dbody, ret);
       findLambdasExpr(env, src, lexed, cond, "bool");
     }
-    case Switch(subject, cases): {
+    Switch(subject, cases): {
       findLambdasExpr(env, src, lexed, subject, "");
       for (i32 i = 0; i < cases.len(); i++) {
         if (!(cases[i].value is null)) { findLambdasExpr(env, src, lexed, cases[i].value!, ""); }
@@ -9653,18 +9653,18 @@ case LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
     }
     // The enclosing function's return type, threaded down from `findLambdasInProgram` — which is why
     // it is threaded at all.
-    case Return(value): {
+    Return(value): {
       if (!(value is null)) { findLambdasExpr(env, src, lexed, value!, ret); }
     }
-    case Break: { }
-    case Continue: { }
-    case Trap(value): { if (!(value is null)) { findLambdasExpr(env, src, lexed, value!, "string"); } }
-    case Match(subject, arms): {
+    Break: { }
+    Continue: { }
+    Trap(value): { if (!(value is null)) { findLambdasExpr(env, src, lexed, value!, "string"); } }
+    Match(subject, arms): {
       findLambdasExpr(env, src, lexed, subject, "");
       for (i32 i = 0; i < arms.len(); i++) { findLambdas(env, src, lexed, arms[i].body, ret); }
     }
-    case Block(bbody): { findLambdas(env, src, lexed, bbody, ret); }
-    case ExprStmt(expr): { findLambdasExpr(env, src, lexed, expr, ""); }
+    Block(bbody): { findLambdas(env, src, lexed, bbody, ret); }
+    ExprStmt(expr): { findLambdasExpr(env, src, lexed, expr, ""); }
   }
 }
 
@@ -9673,17 +9673,17 @@ void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
   match (lv.kind) {
     // Assigning to a captured name captures it as surely as reading it does — more so, since
     // reference semantics is what makes the write visible outside.
-    case LIdent(tok): {
+    LIdent(tok): {
       string an = tokenTextOf(src, lexed, tok);
       env.noteRead(an);
       env.noteAssigned(an);
     }
-    case LField(base, nameTok): { findLambdasLv(env, src, lexed, base, ret); }
-    case LIndex(base, index): {
+    LField(base, nameTok): { findLambdasLv(env, src, lexed, base, ret); }
+    LIndex(base, index): {
       findLambdasLv(env, src, lexed, base, ret);
       findLambdasExpr(env, src, lexed, index, "i32");
     }
-    case LUnwrap(base): { findLambdasLv(env, src, lexed, base, ret); }
+    LUnwrap(base): { findLambdasLv(env, src, lexed, base, ret); }
   }
 }
 
@@ -9700,8 +9700,8 @@ void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
  */
 string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
   match (callee.kind) {
-    case Ident(ctok): { return env.walkTypeOf(tokenTextOf(src, lexed, ctok)); }
-    case Unwrap(inner): {
+    Ident(ctok): { return env.walkTypeOf(tokenTextOf(src, lexed, ctok)); }
+    Unwrap(inner): {
       string t = walkCalleeSig(env, src, lexed, inner);
       // `fn[…]?` and `fn[…]` are one type to this emitter; the question mark is the checker\'s.
       u8[] b = t.toBytes();
@@ -9710,9 +9710,9 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
     }
     // **A receiver that is itself a call**, which `core.delay(1).then(f)` is. The type of a call is
     // its callee's return type, and for a method that is the entry the method table already holds.
-    case Call(icallee, iargs, callTargs): {
+    Call(icallee, iargs, callTargs): {
       match (icallee.kind) {
-        case Member(iobj, inameTok): {
+        Member(iobj, inameTok): {
           string it = walkCalleeSig(env, src, lexed, iobj);
           if (it == "") { return ""; }
           i32 ma = methodSlotFor(env, src, lexed, it, tokenTextOf(src, lexed, inameTok), callTargs);
@@ -9726,37 +9726,37 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
         }
         // A call through anything else — a local holding a funcref, or one unwrapped from a nullable.
         // Its type is what it answers with, the same rule as above with no field lookup in the way.
-        else: {
+        default: {
           string ct = walkCalleeSig(env, src, lexed, icallee);
           return isFuncrefType(ct) ? sigReturn(ct) : "";
         }
       }
     }
-    case Construct(ictype, iargs2, inamed): {
+    Construct(ictype, iargs2, inamed): {
       // The same for a bare-name call, which is how the parser spells `f(x)` — a declared function's
       // return type, or nothing when the name is a struct being constructed (which *is* the type).
       match (ictype.kind) {
-        case Named(intok, intargs): {
+        Named(intok, intargs): {
           string inm = tokenTextOf(src, lexed, intok);
           if (env.isStructName(inm)) { return inm; }
           i32 fa2 = env.funcAt(inm);
           return fa2 < 0 ? "" : env.funcReturns[fa2];
         }
-        else: { return ""; }
+        default: { return ""; }
       }
     }
-    case Member(cobj, cnameTok): {
+    Member(cobj, cnameTok): {
       string ot = walkCalleeSig(env, src, lexed, cobj);
       if (ot != "") { return env.fieldType(ot, tokenTextOf(src, lexed, cnameTok)); }
       match (cobj.kind) {
-        case Ident(otok): {
+        Ident(otok): {
           string dt = env.walkTypeOf(tokenTextOf(src, lexed, otok));
           return dt == "" ? "" : env.fieldType(dt, tokenTextOf(src, lexed, cnameTok));
         }
-        else: { return ""; }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -9770,7 +9770,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // already refused any lambda whose parameters disagree with it. Recording it rather than
     // rebuilding it from the parameters keeps the hoisted function's type and the pair's type the
     // same string by construction.
-    case Lambda(params, lbody, lamAsync): {
+    Lambda(params, lbody, lamAsync): {
       if (env.lambdaCount >= env.lambdaParams.len()) {
         env.ranOut("lambdas in one module");
         return;
@@ -9806,42 +9806,42 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       env.walkLambdaDepth = depth;
       env.walkCount = lmark;
     }
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       findLambdasExpr(env, src, lexed, subject, "");
       for (i32 i = 0; i < arms.len(); i++) {
         if (!(arms[i].value is null)) { findLambdasExpr(env, src, lexed, arms[i].value!, want); }
         findLambdas(env, src, lexed, arms[i].body, want);
       }
     }
-    case IntLit(tok): { }
-    case FloatLit(tok): { }
-    case StrLit(tok): { }
-    case Jsx(tagTok, closeTok, attrs, kids): {
+    IntLit(tok): { }
+    FloatLit(tok): { }
+    StrLit(tok): { }
+    Jsx(tagTok, closeTok, attrs, kids): {
       for (i32 i = 0; i < attrs.len(); i++) { findLambdasExpr(env, src, lexed, attrs[i].value, ""); }
       for (i32 i = 0; i < kids.len(); i++) { findLambdasExpr(env, src, lexed, kids[i], ""); }
     }
-    case JsxText(startOff, endOff): { }
-    case BoolLit(value): { }
-    case NullLit: { }
+    JsxText(startOff, endOff): { }
+    BoolLit(value): { }
+    NullLit: { }
     // **Where a capture is noticed.** A name read inside a lambda that resolves below the lambda's
     // own scope mark was declared outside it, so the lambda has to carry it. A name resolving above
     // the mark is its own parameter or local; a name resolving nowhere is a function, a struct or a
     // constant rather than a local, and is not captured either.
-    case Ident(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
-    case Await(operand): { findLambdasExpr(env, src, lexed, operand, ""); }
-    case Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
-    case Binary(op, left, right): {
+    Ident(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
+    Await(operand): { findLambdasExpr(env, src, lexed, operand, ""); }
+    Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
+    Binary(op, left, right): {
       findLambdasExpr(env, src, lexed, left, "");
       findLambdasExpr(env, src, lexed, right, "");
     }
-    case Cast(op, operand, target): { findLambdasExpr(env, src, lexed, operand, ""); }
-    case Is(left, target, other, negated): {
+    Cast(op, operand, target): { findLambdasExpr(env, src, lexed, operand, ""); }
+    Is(left, target, other, negated): {
       findLambdasExpr(env, src, lexed, left, "");
       if (!(other is null)) { findLambdasExpr(env, src, lexed, other!, ""); }
     }
     // Both arms stand where the whole ternary stands, which is what makes `p ? () => 1 : () => 2`
     // two lambdas of the same type rather than two of no type.
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       findLambdasExpr(env, src, lexed, cond, "bool");
       findLambdasExpr(env, src, lexed, then, want);
       findLambdasExpr(env, src, lexed, els, want);
@@ -9851,12 +9851,12 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // by the time this walk does, so `funcAt` can answer for a plain function, and a method or an
     // expression callee needs a receiver this pre-pass has no way to type. Those stay `""` and the
     // module declines by name rather than guessing a signature.
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       findLambdasExpr(env, src, lexed, callee, "");
       i32 fat = -1;
       string inst = "";
       match (callee.kind) {
-        case Ident(tok): { fat = env.funcAt(tokenTextOf(src, lexed, tok)); }
+        Ident(tok): { fat = env.funcAt(tokenTextOf(src, lexed, tok)); }
         // **A method call**, which is most of this repository's APIs — `issues/lang/0141`.
         // `Pending.of` is a static taking three funcrefs and every capability answers through it, so
         // without this a lambda could be handed to a free function and to nothing else.
@@ -9864,10 +9864,10 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         // The receiver's type comes from the walk's own scope for a value, and from the name itself
         // for a static — `Box.make` is called on the type. A method is registered with its declared
         // parameters and the receiver is pushed at the call site, so argument `i` is parameter `i`.
-        case Member(mobj, mnameTok): {
+        Member(mobj, mnameTok): {
           string recv = "";
           match (mobj.kind) {
-            case Ident(rtok): {
+            Ident(rtok): {
               string rn = tokenTextOf(src, lexed, rtok);
               recv = env.walkTypeOf(rn);
               if (recv == "" && (env.isStructName(rn) || env.isEnumName(rn))) { recv = rn; }
@@ -9876,7 +9876,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
             // unwrapped from its nullable. `walkCalleeSig` walks exactly that chain — name, field,
             // unwrap — and without it the method was not found, so its parameters were unknown and a
             // lambda argument had no target.
-            else: { recv = walkCalleeSig(env, src, lexed, mobj); }
+            default: { recv = walkCalleeSig(env, src, lexed, mobj); }
           }
           // **A generic static reads its parameters in the caller's world.** `Slot.of` is declared
           // `Slot<T> of(…)` inside `struct Slot<T>`, so it returns the owner instantiated — and the
@@ -9887,11 +9887,11 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
           // receiver is recognised by matching the wanted type's base rather than by looking it up.
           if (recv == "") {
             match (mobj.kind) {
-              case Ident(gtok): {
+              Ident(gtok): {
                 string gn = tokenTextOf(src, lexed, gtok);
                 if (gn == genericBaseOf(want)) { recv = gn; inst = want; }
               }
-              else: { }
+              default: { }
             }
           }
           // Looked up on the *instantiation* where there is one: a generic's methods are registered
@@ -9911,7 +9911,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
                                     callTargs, args);
           }
         }
-        else: { }
+        default: { }
       }
       // **A call through a funcref value has parameter types too**, and they are written on the
       // funcref. Without this a lambda handed to one had no target — `run((i32 n) => …)` where `run`
@@ -9929,12 +9929,12 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         findLambdasExpr(env, src, lexed, args[i], inst == "" ? pw : substGeneric(env, inst, pw));
       }
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       findLambdasExpr(env, src, lexed, arr, "");
       findLambdasExpr(env, src, lexed, index, "i32");
     }
-    case Member(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
-    case Unwrap(operand): { findLambdasExpr(env, src, lexed, operand, want); }
+    Member(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
+    Unwrap(operand): { findLambdasExpr(env, src, lexed, operand, want); }
     // **A call and a construction are the same node.** `use(() => 1)` parses as `Construct`, not
     // `Call` — wac cannot tell `Point(1, 2)` from `f(1, 2)` by syntax, so the parser builds one shape
     // and the emitter sorts it out by asking whether the name is a struct. This arm is therefore
@@ -9947,8 +9947,8 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // **A type is not a value**, so this reaches the emitter only for a program the checker should
     // already have refused — `TypeName` is valid solely as the object of a `Member`, where the
     // member resolution consumes it. `issues/lang/0088`.
-    case TypeName(tn): { }
-    case Construct(ctype, args, named): {
+    TypeName(tn): { }
+    Construct(ctype, args, named): {
       // **Resolve the name only when an argument is actually a lambda.** `typeOfTyName` resolves
       // through `env`'s declaration tables, and that lookup *marks the module ambiguous* as a side
       // effect when more than one file declares the name. Calling it for every construction ran it
@@ -9966,18 +9966,18 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       // Only a funcref: a bare name that is a declared function is a call to that function and
       // captures nothing.
       match (ctype.kind) {
-        case Named(rtok, rtargs): {
+        Named(rtok, rtargs): {
           string rnm = tokenTextOf(src, lexed, rtok);
           if (isFuncrefType(env.walkTypeOf(rnm))) { env.noteRead(rnm); }
         }
-        else: { }
+        default: { }
       }
       bool anyLambda = false;
       for (i32 i = 0; i < args.len(); i++) {
-        match (args[i].kind) { case Lambda(lp, lb, la): { anyLambda = true; } else: { } }
+        match (args[i].kind) { Lambda(lp, lb, la): { anyLambda = true; } default: { } }
       }
       for (i32 i = 0; i < named.len(); i++) {
-        match (named[i].value.kind) { case Lambda(lp, lb, la): { anyLambda = true; } else: { } }
+        match (named[i].value.kind) { Lambda(lp, lb, la): { anyLambda = true; } default: { } }
       }
       if (!anyLambda) {
         for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, src, lexed, args[i], ""); }
@@ -9999,10 +9999,10 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       string localSig = "";
       if (!isStruct && cat < 0) {
         match (ctype.kind) {
-          case Named(ntok, targs): {
+          Named(ntok, targs): {
             localSig = env.walkTypeOf(tokenTextOf(src, lexed, ntok));
           }
-          else: { }
+          default: { }
         }
       }
 
@@ -10016,8 +10016,8 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
                         isStruct ? env.fieldType(cname, tokenTextOf(src, lexed, named[i].nameTok)) : "");
       }
     }
-    case Incr(target, op, prefix): { findLambdasLv(env, src, lexed, target, ""); }
-    case ArrNew(elem, size, fill, elements): {
+    Incr(target, op, prefix): { findLambdasLv(env, src, lexed, target, ""); }
+    ArrNew(elem, size, fill, elements): {
       if (!(size is null)) { findLambdasExpr(env, src, lexed, size!, "i32"); }
       string et = typeOfTyName(env, src, lexed, elem);
       if (!(fill is null)) { findLambdasExpr(env, src, lexed, fill!, et); }
@@ -10171,11 +10171,11 @@ i32 intBuiltinOp(string t, string name) {
  */
 string narrowedBy(u8[] src, Lexed lexed, Env env, Expr cond) {
   match (cond.kind) {
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       if (negated) { return ""; }
       if (target is null) { return ""; }
       match (left.kind) {
-        case Ident(tok): {
+        Ident(tok): {
           string name = tokenTextOf(src, lexed, tok);
           if (env.localAt(name) < 0) { return ""; }
           string to = typeOfTyName(env, src, lexed, target!);
@@ -10185,10 +10185,10 @@ string narrowedBy(u8[] src, Lexed lexed, Env env, Expr cond) {
           }
           return name + " " + to;
         }
-        else: { return ""; }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -10856,15 +10856,15 @@ void emitArrayGet(B fb, Env env, string arrayType) {
  */
 Lvalue peelLv(Lvalue lv) {
   match (lv.kind) {
-    case LUnwrap(base): { return peelLv(base); }
-    else: { return lv; }
+    LUnwrap(base): { return peelLv(base); }
+    default: { return lv; }
   }
 }
 
 /** An lvalue's wac type, which a write through an index needs to know which array it is. */
 string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): {
+    LIdent(tok): {
       // **A captured name has a type without having a local**, exactly as on the reading side — the
       // capture struct's field. Without this arm every `a[i] = v` and `s.f = v` *inside* a lambda
       // asked the type of a name the hoisted function does not declare, got the empty string, and
@@ -10874,12 +10874,12 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
       if (lc >= 0) { return env.capTypes[env.emittingLambda * capsPerLambda() + lc]; }
       return env.localType(ln);
     }
-    case LUnwrap(base): { return typeOfLv(src, lexed, env, base); }
-    case LIndex(base, index): {
+    LUnwrap(base): { return typeOfLv(src, lexed, env, base); }
+    LIndex(base, index): {
       string b = typeOfLv(src, lexed, env, base);
       return isArrayType(b) ? elemOf(b) : "";
     }
-    case LField(base, nameTok): {
+    LField(base, nameTok): {
       string b = typeOfLv(src, lexed, env, base);
       return env.isStructName(b) ? env.fieldType(b, tokenTextOf(src, lexed, nameTok)) : "";
     }
@@ -10889,19 +10889,19 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
 /** An lvalue as a *value*, which is what pushing an array before `array.set` needs. */
 void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): {
+    LIdent(tok): {
       // The *value* of the name, cell unwrapped — `a[i] = v` and `s.f = v` need the array or the
       // struct the name holds, not the cell holding it.
       emitNameValue(fb, src, lexed, env, tokenTextOf(src, lexed, tok));
     }
-    case LUnwrap(base): { emitLvalue(fb, src, lexed, env, base); }
-    case LIndex(base, index): {
+    LUnwrap(base): { emitLvalue(fb, src, lexed, env, base); }
+    LIndex(base, index): {
       string bt = typeOfLv(src, lexed, env, base);
       emitLvalue(fb, src, lexed, env, base);
       emitAt(fb, src, lexed, env, index, "i32");
       emitArrayGet(fb, env, bt);
     }
-    case LField(base, nameTok): {
+    LField(base, nameTok): {
       string bt2 = typeOfLv(src, lexed, env, base);
       if (!env.isStructName(bt2)) { return; }
       emitLvalue(fb, src, lexed, env, base);
@@ -11085,7 +11085,7 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
 /**
  * The first construct in a function this emitter cannot do, or `""` when it can do all of them.
  *
- * **Why this exists.** Every walk here ends in `else: { }`, which for an *expression* means emitting
+ * **Why this exists.** Every walk here ends in `default: { }`, which for an *expression* means emitting
  * nothing where a value was expected. That is not a gap, it is a corruption: the function that
  * follows is wrong in a way wasm reports as *"not enough arguments on the stack"*, naming a stack
  * depth rather than the construct. Across the repository it accounted for 199 of 308 broken modules
@@ -11156,15 +11156,15 @@ i32 pushArmNames(u8[] src, Lexed lexed, Env env, Arm arm, Expr subject) {
     env.addLocal(bn, env.fieldTypeAt(en, env.variantSlot[vi] + b));
   }
   match (subject.kind) {
-    case Ident(tok): { env.addLocal(tokenTextOf(src, lexed, tok), vn); }
-    else: { }
+    Ident(tok): { env.addLocal(tokenTextOf(src, lexed, tok), vn); }
+    default: { }
   }
   return saved;
 }
 
 string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       string t = typeOfTyName(env, src, lexed, type);
       if (t == "") { return "local of an unspelled type"; }
       string r0 = unsupportedValueAt(src, lexed, env, init, t);
@@ -11194,7 +11194,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       }
       return "";
     }
-    case Assign(target, op, rhs): {
+    Assign(target, op, rhs): {
       string lv = unsupportedLvalue(src, lexed, env, target);
       if (lv != "") { return lv; }
       string tt2 = typeOfLv(src, lexed, env, target);
@@ -11211,8 +11211,8 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       // in hand — the same omission the array `fill` and the variant payload had.
       return unsupportedValueAt(src, lexed, env, rhs, tt2);
     }
-    case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
-    case Return(value): {
+    IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
+    Return(value): {
       if (value is null) { return ""; }
       string rv = unsupportedValueAt(src, lexed, env, value!, env.returnType);
       if (rv != "") { return rv; }
@@ -11235,7 +11235,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       }
       return "";
     }
-    case ExprStmt(e): {
+    ExprStmt(e): {
       string r = unsupportedExpr(src, lexed, env, e);
       if (r != "") { return r; }
       // A statement's value has to be *dropped*, and dropping needs to know whether there is one.
@@ -11244,7 +11244,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       // type, seven files away from the statement that caused it.
       return typeOfE(src, lexed, env, e) == "" ? "a statement whose value this slice cannot place" : "";
     }
-    case If(cond, then, els): {
+    If(cond, then, els): {
       string c = unsupportedExpr(src, lexed, env, cond);
       if (c != "") { return c; }
       // The guarded block sees the narrowed type, exactly as the emitter will.
@@ -11255,17 +11255,17 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       if (t != "") { return t; }
       return unsupportedIn(src, lexed, env, els);
     }
-    case While(cond, inner): {
+    While(cond, inner): {
       string c = unsupportedExpr(src, lexed, env, cond);
       if (c != "") { return c; }
       return unsupportedIn(src, lexed, env, inner);
     }
-    case DoWhile(inner, cond): {
+    DoWhile(inner, cond): {
       string c = unsupportedExpr(src, lexed, env, cond);
       if (c != "") { return c; }
       return unsupportedIn(src, lexed, env, inner);
     }
-    case For(init, cond, update, inner): {
+    For(init, cond, update, inner): {
       // The same scope the emitter gives it: a `for`'s own variable is not in the scope that
       // follows the loop, and a walk that thinks otherwise types the code after it against the
       // wrong local.
@@ -11278,8 +11278,8 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       env.localCount = savedFor;
       return r2;
     }
-    case Block(inner): { return unsupportedIn(src, lexed, env, inner); }
-    case Switch(subject, cases): {
+    Block(inner): { return unsupportedIn(src, lexed, env, inner); }
+    Switch(subject, cases): {
       string sj = unsupportedExpr(src, lexed, env, subject);
       if (sj != "") { return sj; }
       for (i32 i = 0; i < cases.len(); i++) {
@@ -11288,10 +11288,10 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       }
       return "";
     }
-    case Break: { return ""; }
-    case Continue: { return ""; }
-    case Trap: { return ""; }
-    case Match(subject, arms): {
+    Break: { return ""; }
+    Continue: { return ""; }
+    Trap: { return ""; }
+    Match(subject, arms): {
       string ms = unsupportedMatch(src, lexed, env, subject, arms);
       if (ms != "") { return ms; }
       for (i32 a = 0; a < arms.len(); a++) {
@@ -11307,15 +11307,15 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
 
 string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): { return ""; }
-    case LUnwrap(base): { return unsupportedLvalue(src, lexed, env, base); }
-    case LIndex(base, index): {
+    LIdent(tok): { return ""; }
+    LUnwrap(base): { return unsupportedLvalue(src, lexed, env, base); }
+    LIndex(base, index): {
       string b = unsupportedLvalue(src, lexed, env, base);
       if (b != "") { return b; }
       if (!isArrayType(typeOfLv(src, lexed, env, base))) { return "index of an unknown type"; }
       return unsupportedExpr(src, lexed, env, index);
     }
-    case LField(base, nameTok): {
+    LField(base, nameTok): {
       string b = unsupportedLvalue(src, lexed, env, base);
       if (b != "") { return b; }
       return env.isStructName(typeOfLv(src, lexed, env, base)) ? "" : "field of an unknown type";
@@ -11406,8 +11406,8 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // **A type is not a value**, so this reaches the emitter only for a program the checker should
     // already have refused — `TypeName` is valid solely as the object of a `Member`, where the
     // member resolution consumes it. `issues/lang/0088`.
-    case TypeName(tn): { return unsupportedValue(src, lexed, env, e); }
-    case Construct(ctype, args, named): {
+    TypeName(tn): { return unsupportedValue(src, lexed, env, e); }
+    Construct(ctype, args, named): {
       string cn = typeOfTyName(env, src, lexed, ctype);
       if (!env.isStructName(cn) && isInstance(want) && templateNameOf(want) == cn
           && env.isStructName(want)) {
@@ -11417,15 +11417,15 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     // A payload-less variant of a template is a **value and not a call** — `Opt.None` — so it needs
     // the slot in the same way and reaches it through a different node.
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       return variantOfMemberAt(src, lexed, env, obj, nameTok, want) != ""
         ? "" : unsupportedValue(src, lexed, env, e);
     }
     // A static on a template takes its instantiation from the slot, so it can only be asked about
     // where there is one — `typeOfE` has none and would call the whole call untyped.
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           // A **template's variant** — `Option.Some(3)` — before its statics, since both are written
           // on the template and only the table can tell a variant from a method.
           string vw = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
@@ -11453,14 +11453,14 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           return "";
         }
-        else: { return unsupportedValue(src, lexed, env, e); }
+        default: { return unsupportedValue(src, lexed, env, e); }
       }
     }
     // **And a `match` expression hands it to every arm**, for the same reason and one node over:
-    // `return match (o) { case Some(v): Opt.Some(f(v)), case None: Opt.None };` is a whole generic
+    // `return match (o) { Some(v): Opt.Some(f(v)), None: Opt.None };` is a whole generic
     // function's body, and which instance those variants build is written nowhere but the return
     // type. The arm's own bindings go into scope first, exactly as the emitter puts them there.
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       string mm2 = unsupportedMatch(src, lexed, env, subject, arms);
       if (mm2 != "") { return mm2; }
       for (i32 a = 0; a < arms.len(); a++) {
@@ -11477,7 +11477,7 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // build comes from the return type — and this walk had no arm for one, so the question reached
     // the version that has no slot to give and came back as "unresolved name Option". The order is
     // the emitter's: the branches' own type first, and the slot only when they have none.
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       string tc = unsupportedValue(src, lexed, env, cond);
       if (tc != "") { return tc; }
       string tw2 = typeOfE(src, lexed, env, then);
@@ -11487,13 +11487,13 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (t2 != "") { return t2; }
       return unsupportedValueAt(src, lexed, env, els, tw2);
     }
-    case NullLit: {
+    NullLit: {
       if (isRefType(env, want)) { return ""; }
       // Named, not categorised: which slot it is, is the whole of what a reader needs — and where
       // the slot has no type at all, that is a different problem wearing the same message.
       return want == "" ? "a null in a slot of no known type" : "a null in a " + want + " slot";
     }
-    else: { return unsupportedValue(src, lexed, env, e); }
+    default: { return unsupportedValue(src, lexed, env, e); }
   }
 }
 
@@ -11519,7 +11519,7 @@ string unsupportedValue(u8[] src, Lexed lexed, Env env, Expr e) {
  */
 string operandNote(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       string lt = typeOfE(src, lexed, env, left);
       string rt = typeOfE(src, lexed, env, right);
       if (lt != "" && rt != "") { return " whose operands disagree: " + lt + " and " + rt; }
@@ -11527,7 +11527,7 @@ string operandNote(u8[] src, Lexed lexed, Env env, Expr e) {
       return lt == "" ? " whose left operand is untyped, the right being " + rt
                       : " whose right operand is untyped, the left being " + lt;
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -11547,12 +11547,12 @@ bool narrowIntegerName(string t) { return t == "i32" || t == "u32"; }
 
 bool integerLiteralsFitI32(u8[] src, Lexed lexed, Expr e) {
   match (e.kind) {
-    case IntLit(tok): {
+    IntLit(tok): {
       i64 v = parseInt(tokenTextOf(src, lexed, tok));
       return v >= (0 - 2147483648) as i64 && v <= 2147483647 as i64;
     }
-    case Unary(op, operand): { return integerLiteralsFitI32(src, lexed, operand); }
-    case Binary(op, left, right): {
+    Unary(op, operand): { return integerLiteralsFitI32(src, lexed, operand); }
+    Binary(op, left, right): {
       return integerLiteralsFitI32(src, lexed, left) && integerLiteralsFitI32(src, lexed, right);
     }
     // **A ternary passes its arms' values out untouched, so their literals are this expression's.**
@@ -11565,11 +11565,11 @@ bool integerLiteralsFitI32(u8[] src, Lexed lexed, Expr e) {
     // **The condition is not asked**, and that is the point of naming the arms rather than walking
     // the node: a condition's value does not leave the ternary, so a wide literal inside it says
     // nothing about the type this expression needs.
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       return integerLiteralsFitI32(src, lexed, then) && integerLiteralsFitI32(src, lexed, els);
     }
     // A match expression is the same shape with more arms — the subject is its condition.
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       for (i32 i = 0; i < arms.len(); i++) {
         Expr? v = arms[i].value;
         if (!(v is null) && !integerLiteralsFitI32(src, lexed, v!)) { return false; }
@@ -11581,16 +11581,16 @@ bool integerLiteralsFitI32(u8[] src, Lexed lexed, Expr e) {
     // carry one out at all. What made this a bug was that the two shapes above are neither, and the
     // `else` arm cannot tell the difference: it answers "they fit" for anything nobody has looked at.
     // A shape added to the language that passes a value through untouched belongs above this line.
-    else: { return true; }
+    default: { return true; }
   }
 }
 
 bool isFloatLiteral(Expr e) {
   match (e.kind) {
-    case FloatLit(tok): { return true; }
-    case Unary(op, operand): { return isFloatLiteral(operand); }
-    case Binary(op, left, right): { return isFloatLiteral(left) || isFloatLiteral(right); }
-    else: { return false; }
+    FloatLit(tok): { return true; }
+    Unary(op, operand): { return isFloatLiteral(operand); }
+    Binary(op, left, right): { return isFloatLiteral(left) || isFloatLiteral(right); }
+    default: { return false; }
   }
 }
 
@@ -11604,29 +11604,29 @@ bool isFloatLiteral(Expr e) {
  */
 bool isLiteral(Expr e) {
   match (e.kind) {
-    case IntLit(tok): { return true; }
-    case FloatLit(tok): { return true; }
-    case BoolLit(value): { return true; }
+    IntLit(tok): { return true; }
+    FloatLit(tok): { return true; }
+    BoolLit(value): { return true; }
     // `null` takes its type from the slot exactly as `0` does — it is context-typed rather than
     // untyped, which is why the emitter can give it the wanted reference type and why the guard that
     // declines an expression of unknown type is not about it.
-    case NullLit: { return true; }
-    case Unary(op, operand): { return isLiteral(operand); }
+    NullLit: { return true; }
+    Unary(op, operand): { return isLiteral(operand); }
     // Both sides literal *and of the same family*. `1 / 2.0` is two literals and not one type: the
     // context cannot settle it, because whatever it says one of the two will be wrong. Treating it as
     // context-typed emitted an `f64.const` into an `i32` division.
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       if (!isLiteral(left) || !isLiteral(right)) { return false; }
       return isFloatLiteral(left) == isFloatLiteral(right);
     }
     // `cond ? 1 : 2` has no type of its own for the same reason `1` does not: both branches are
     // literals and the slot is what settles them. The condition is not part of the question — it is
     // always a boolean and never the value.
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       if (!isLiteral(then) || !isLiteral(els)) { return false; }
       return isFloatLiteral(then) == isFloatLiteral(els);
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -11641,7 +11641,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // without that reported 0 for every program, which looks exactly like a walk that works and
     // finds nothing. Naming the number is what makes the walk observable: a form it failed to
     // descend into would report fewer than the program has.
-    case Lambda(params, body, lamAsync): {
+    Lambda(params, body, lamAsync): {
       // **A lambda that captures is declined**, because emission for it is not built: the hoisted
       // body reads a name that is not one of its locals, the emitter emits nothing for it, and the
       // module fails to validate — `not enough arguments on the stack for i32.add`. Loud rather than
@@ -11726,11 +11726,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
            + numText(untyped) + " in a position the walk does not type yet, "
            + numText(dup) + " sharing a position key)";
     }
-    case IntLit(tok): { return ""; }
-    case FloatLit(tok): { return ""; }
-    case BoolLit(value): { return ""; }
-    case JsxText(startOff, endOff): { return ""; }
-    case Jsx(tagTok, closeTok, attrs, kids): {
+    IntLit(tok): { return ""; }
+    FloatLit(tok): { return ""; }
+    BoolLit(value): { return ""; }
+    JsxText(startOff, endOff): { return ""; }
+    Jsx(tagTok, closeTok, attrs, kids): {
       // **The tree has to be reachable**, which it is exactly when the program imported it: `core`
       // is only linked in when something names it. Saying which import is missing beats declining
       // an expression the reader can see is well formed.
@@ -11747,18 +11747,18 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return "";
     }
-    case StrLit(tok): {
+    StrLit(tok): {
       return knownEscapes(src, lexed, tok) ? "" : "a string literal with an escape this slice cannot read";
     }
-    case NullLit: { return "null"; }
+    NullLit: { return "null"; }
     // **A type is not a value.** Reaches here only for a program the checker should have refused:
     // `TypeName` is valid solely as a `Member`'s object. `issues/lang/0088`.
-    case TypeName(tn): {
+    TypeName(tn): {
       // A generic function named with its type arguments **is** a value — `design/lang/0011`
       // criterion 3. Anything else standing here is a type where a value belongs.
       return genericFuncInstance(env, src, lexed, tn) == "" ? "a type used as a value" : "";
     }
-    case Ident(tok): {
+    Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
       if (env.localAt(nm) >= 0) { return ""; }
       i32 ci = env.constAt(nm);
@@ -11789,9 +11789,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
       return unsupportedValue(cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!);
     }
-    case Await(operand): { return "`await`, which the emitter does not lower yet — `design/lang/0014` step 4"; }
-    case Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
-    case Binary(op, left, right): {
+    Await(operand): { return "`await`, which the emitter does not lower yet — `design/lang/0014` step 4"; }
+    Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
+    Binary(op, left, right): {
       string l = unsupportedValue(src, lexed, env, left);
       if (l != "") { return l; }
       string r = unsupportedValue(src, lexed, env, right);
@@ -11813,7 +11813,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return "";
     }
-    case Cast(op, operand, target): {
+    Cast(op, operand, target): {
       string t = typeOfTyName(env, src, lexed, target);
       bool known = isArrayType(t) || env.isStructName(t) || t == "i32" || t == "u32" ||
                    t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool" ||
@@ -11821,7 +11821,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (!known) { return "cast to an unsupported type"; }
       return unsupportedExpr(src, lexed, env, operand);
     }
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       string c = unsupportedValue(src, lexed, env, cond);
       if (c != "") { return c; }
       // **A branch's slot is the other branch.** `cond is null ? null : cond` asks nothing of the
@@ -11833,14 +11833,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (t != "") { return t; }
       return unsupportedValueAt(src, lexed, env, els, tw);
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       string a = unsupportedValue(src, lexed, env, arr);
       if (a != "") { return a; }
       string ia = typeOfE(src, lexed, env, arr);
       if (ia != "string" && !isArrayType(ia)) { return "index of an unknown type"; }
       return unsupportedValue(src, lexed, env, index);
     }
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       // The variant question comes **first**, because the object of `Shape.Point` is a bare name
       // that is not a local and every other path here would decline it as one.
       if (variantOfMember(src, lexed, env, obj, nameTok) != "") { return ""; }
@@ -11861,7 +11861,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return env.isStructName(ot3) ? "" : "member of an unknown type";
     }
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       string et2 = typeOfTyName(env, src, lexed, elem);
       if (et2 == "") { return "array of an unspelled type"; }
       if (!(size is null)) {
@@ -11882,9 +11882,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return "";
     }
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           string lraw2 = tokenTextOf(src, lexed, tok);
           string lty2 = env.localType(lraw2);
           if (isFuncrefType(lty2)) {
@@ -11919,12 +11919,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           return "";
         }
-        else: { return "a construction kind"; }
+        default: { return "a construction kind"; }
       }
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
           string pw = primTypeName(env, src, lexed, obj);
           if (primStaticType(pw, mn) != "") {
@@ -12080,7 +12080,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // A call through a value is a `call_ref`, and what it needs is a signature this emitter can
         // name: the arguments are checked against the *signature's* parameters rather than a
         // declaration's, since there is no declaration at a call site like this.
-        else: {
+        default: {
           string cv = unsupportedValue(src, lexed, env, callee);
           if (cv != "") { return cv; }
           string cty = typeOfE(src, lexed, env, callee);
@@ -12094,7 +12094,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         }
       }
     }
-    case Incr(target, op, prefix): {
+    Incr(target, op, prefix): {
       string it = typeOfLv(src, lexed, env, peelLv(target));
       if (it != "i32" && it != "i64" && it != "u8" && it != "u32" && it != "u64" && it != "i8" &&
           it != "i16" && it != "u16") {
@@ -12102,7 +12102,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return unsupportedLvalue(src, lexed, env, target);
     }
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       if ((target is null) && (other is null)) {
         string nl = unsupportedValue(src, lexed, env, left);
         if (nl != "") { return nl; }
@@ -12145,8 +12145,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return env.isEnumName(env.canonType(typeOfE(src, lexed, env, left))) ? ""
                                                                            : "a test on a non-enum";
     }
-    case Unwrap(operand): { return unsupportedValue(src, lexed, env, operand); }
-    case MatchExpr(subject, arms): {
+    Unwrap(operand): { return unsupportedValue(src, lexed, env, operand); }
+    MatchExpr(subject, arms): {
       string mm = unsupportedMatch(src, lexed, env, subject, arms);
       if (mm != "") { return mm; }
       for (i32 a = 0; a < arms.len(); a++) {
@@ -12361,7 +12361,7 @@ string blockedOf(Front f) {
     src = srcFor(env.fileSrcs, b3s, env.curFile);
     lexed = lexFor(env.fileLexeds, b3l, env.curFile);
     match (b3d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // A generic function is a **template**, and a template emits nothing: `mapOption<T, U>` is
         // not a function until its arguments say which one. Declining the declaration declined every
         // file that merely imports the file it lives in — which is most of `std`'s consumers, none
@@ -12369,7 +12369,7 @@ string blockedOf(Front f) {
         if (typeParams.len() > 0) { continue; }
         canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         // A **template emits nothing** — `Vec<T>` is not a type. Its instances are structs of
         // their own and their methods functions like any other, so there is nothing to refuse here.
         if (typeParams.len() > 0) { continue; }
@@ -12387,14 +12387,14 @@ string blockedOf(Front f) {
       // arm must not answer `""` for the whole module: this loop reports the *first* thing that
       // stops it, so returning "nothing wrong here" ends the scan before the functions are asked,
       // and the module then comes back empty while the report says it is whole.
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         // A template emits nothing; its instances are enums of their own.
         if (typeParams.len() > 0) { continue; }
       }
       // An import is only a blocker when nothing resolved it. Linked, the names it brings in are
       // already in the pool — except a capability import, which names no file and would be a wasm
       // import of something this emitter has no way to supply.
-      case Import(pathTok, prefixTok, items): {
+      Import(pathTok, prefixTok, items): {
         if (entryDecls < 0) { env.curFile = b3f; return "an import"; }
         // `core` is carried by the linker; anything else with a bare specifier is a module this
         // compiler has never heard of, which is worth saying by name.
@@ -12404,7 +12404,7 @@ string blockedOf(Front f) {
           return from;
         }
       }
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);
         if (isArrayType(ct) || env.isStructName(ct)) {
           i32 ci = env.constAt(tokenTextOf(src, lexed, nameTok));
@@ -12482,7 +12482,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
       src = srcFor(env.fileSrcs, w6s, env.curFile);
       lexed = lexFor(env.fileLexeds, w6l, env.curFile);
       match (w6d[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
@@ -12542,7 +12542,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
             popSubstitution(env, opushed);
           }
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = w6f; src = w6s; lexed = w6l;
@@ -12565,7 +12565,7 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
     src = srcFor(env.fileSrcs, w7s, env.curFile);
     lexed = lexFor(env.fileLexeds, w7l, env.curFile);
     match (w7d[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
@@ -12584,7 +12584,7 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
           popSubstitution(env, op);
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w7f; src = w7s; lexed = w7l;
@@ -12611,11 +12611,11 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       src = srcFor(env.fileSrcs, w8s, env.curFile);
       lexed = lexFor(env.fileLexeds, w8l, env.curFile);
       match (w8d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() > 0) { continue; }
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
         }
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) { continue; }
           string sowner = nameKeyOf(env, src, lexed, nameTok);
           for (i32 m = 0; m < methods.len(); m++) {
@@ -12631,7 +12631,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
         // module lost the function. The identical call from a plain function builds, which is what
         // isolates it. Found by enumerating this file's declaration walks after `issues/lang/0172a`
         // gap 2, not by a failing corpus case — nothing in `spec/` exercises it.
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() > 0) { continue; }
           string eowner = nameKeyOf(env, src, lexed, nameTok);
           for (i32 m = 0; m < methods.len(); m++) {
@@ -12640,7 +12640,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
                     typeOfTyName(env, src, lexed, methods[m].returnType));
           }
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = w8f; src = w8s; lexed = w8l;
@@ -12665,7 +12665,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
         src = srcFor(env.fileSrcs, w9s, env.curFile);
         lexed = lexFor(env.fileLexeds, w9l, env.curFile);
         match (w9d[d].kind) {
-          case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
             i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
@@ -12756,7 +12756,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           // A generic **function**. It has no type of its own to build — only a body to compile once
           // per binding — so registering it is registering *one function* under the instance's name,
           // with its parameters and return type resolved under the substitution the name carries.
-          case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+          Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
             if (env.funcAt(inst) >= 0) { continue; }
@@ -12785,7 +12785,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           // slot per payload field of every variant. Its variants are registered under the
           // instance's own name, since `Some` belongs to `Option<i32>` and to `Option<string>` and
           // they are not the same variant.
-          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          EnumDecl(nameTok, variants, exported, methods, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
             i32 epushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
@@ -12856,7 +12856,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             }
             popSubstitution(env, epushed);
           }
-          else: { }
+          default: { }
         }
       }
       env.curFile = w9f; src = w9s; lexed = w9l;
@@ -12977,7 +12977,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // method's receiver type is one of them.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string sname = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
@@ -13012,7 +13012,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       // and the rest are every variant's payload laid end to end. The slots are named `Variant.field`
       // — a spelling no wac identifier has, so a payload can share a name with a real field, and with
       // another variant's payload, without either being reachable by accident.
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string ename = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
@@ -13069,7 +13069,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           slot = slot + variants[v].fields.len();
         }
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -13079,7 +13079,7 @@ void declareConsts(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
 
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         if (env.constCount >= env.constNames.len()) {
           env.ranOut("constants");
           continue;
@@ -13093,7 +13093,7 @@ void declareConsts(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         env.constInitFiles[env.constCount] = env.curFile;
         env.constCount = env.constCount + 1;
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -13105,7 +13105,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // down, which is the same argument the checker makes for collecting signatures before bodies.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         string[] pts = string[params.len()]();
         for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(env, src, lexed, params[i].type); }
@@ -13116,7 +13116,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       // A method is a function with the receiver as its first parameter — which is what the call site
       // does too, pushing the object before the arguments. Registered under `Struct.name` so a bare
       // function of the same name is a different entry.
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 i = 0; i < methods.len(); i++) {
@@ -13137,7 +13137,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       // with *a method on an enum* rather than emitting one. The instances of a *generic* enum have
       // had their methods emitted all along, which is what made the gap look like a missing feature
       // rather than a missing case. `spec/cases/0097`.
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string eowner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 i = 0; i < methods.len(); i++) {
@@ -13150,7 +13150,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.funcRecv[env.funcCount - 1] = methods[i].hasThis ? eowner : "";
         }
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -13169,11 +13169,11 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
     src = srcFor(env.fileSrcs, w10s, env.curFile);
     lexed = lexFor(env.fileLexeds, w10l, env.curFile);
     match (w10d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         collectArrayTypesIn(env, src, lexed, params, body);
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
@@ -13186,15 +13186,15 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       //
       // This is the third `EnumDecl` arm missing from a declaration walk in this file today — after
       // `declinedExport`'s, which made it read another function's slot (`issues/lang/0170a`). The
-      // shape to distrust is `case Func` and `case StructDecl` followed by `else: { }`: enums have
+      // shape to distrust is `case Func` and `case StructDecl` followed by `default: { }`: enums have
       // methods, so a walk that wants bodies wants theirs.
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w10f; src = w10s; lexed = w10l;
@@ -13352,7 +13352,7 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
     src = srcFor(env.fileSrcs, w11s, env.curFile);
     lexed = lexFor(env.fileLexeds, w11l, env.curFile);
     match (w11d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         // Only the entry file's exports become the module's, which is what the counter checks too.
         bool mine = entryDecls < 0 || d < entryDecls;
@@ -13382,15 +13382,15 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
         }
         at = at + 1;
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w11f; src = w11s; lexed = w11l;
@@ -13406,7 +13406,7 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
     src = srcFor(env.fileSrcs, w12s, env.curFile);
     lexed = lexFor(env.fileLexeds, w12l, env.curFile);
     match (w12d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         // **Two questions, because they have different answers.** `funcOk` is the settling's
         // verdict — "did anything unsupported stop this" — and `funcIndex` is whether the function
@@ -13428,7 +13428,7 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
         }
         at = at + 1;
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }
@@ -13441,11 +13441,11 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
       //
       // `settleEmittable` below and the export counter in `emitModule` both have all three arms and
       // are the convention; this was the one walk of the four that did not.
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w12f; src = w12s; lexed = w12l;
@@ -13463,7 +13463,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
       src = srcFor(env.fileSrcs, w13s, env.curFile);
       lexed = lexFor(env.fileLexeds, w13l, env.curFile);
       match (w13d[d].kind) {
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() > 0) { continue; }
           // **Declined whole, not only where an `await` is.** The checker gives an async function the
           // signature `Pending<T>` — D3 — and this emitter would write one returning `T`, so even a
@@ -13485,7 +13485,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
           }
           at = at + 1;
         }
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) { continue; }
           string owner = nameKeyOf(env, src, lexed, nameTok);
           for (i32 m = 0; m < methods.len(); m++) {
@@ -13503,7 +13503,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
         // **And an enum's, in the same place in the order.** `at` walks the function table, so an
         // arm that does not advance it does not merely skip a verdict: every function after it takes
         // somebody else's. Registration puts an enum's methods here, so this must too.
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() > 0) { continue; }
           string eowner = nameKeyOf(env, src, lexed, nameTok);
           for (i32 m = 0; m < methods.len(); m++) {
@@ -13518,7 +13518,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
             at = at + 1;
           }
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = w13f; src = w13s; lexed = w13l;
@@ -13536,7 +13536,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
         src = srcFor(env.fileSrcs, w14s, env.curFile);
         lexed = lexFor(env.fileLexeds, w14l, env.curFile);
         match (w14d[di].kind) {
-          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          EnumDecl(nameTok, variants, exported, methods, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
             i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -13566,7 +13566,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
             }
             popSubstitution(env, epushed);
           }
-          case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
             i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
@@ -13596,7 +13596,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
             }
             popSubstitution(env, pushed);
           }
-          else: { }
+          default: { }
         }
       }
       env.curFile = w14f; src = w14s; lexed = w14l;
@@ -13705,13 +13705,13 @@ string namesOfFront(Front? f) {
  */
 bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
-    case IntLit(tok): { return true; }
-    case FloatLit(tok): { return true; }
-    case BoolLit(value): { return true; }
+    IntLit(tok): { return true; }
+    FloatLit(tok): { return true; }
+    BoolLit(value): { return true; }
     // A string literal is `array.new_fixed` over its bytes, which *is* a constant expression — so a
     // `const string` can live in a global like any other array constant.
-    case StrLit(tok): { return true; }
-    case ArrNew(elem, size, fill, elements): {
+    StrLit(tok): { return true; }
+    ArrNew(elem, size, fill, elements): {
       if (typeOfTyName(env, src, lexed, elem) == "") { return false; }
       for (i32 i = 0; i < elements.len(); i++) {
         if (!isConstExpr(src, lexed, env, elements[i])) { return false; }
@@ -13724,22 +13724,22 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return true;
     }
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       for (i32 i = 0; i < named.len(); i++) {
         if (!isConstExpr(src, lexed, env, named[i].value)) { return false; }
       }
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           if (!env.isStructName(tokenTextOf(src, lexed, tok))) { return false; }
         }
-        else: { return false; }
+        default: { return false; }
       }
       for (i32 i = 0; i < args.len(); i++) {
         if (!isConstExpr(src, lexed, env, args[i])) { return false; }
       }
       return true;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -13834,7 +13834,7 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
 /** Every array type an expression constructs, which a constant's initialiser can do at module level. */
 void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
   match (e.kind) {
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       string t = typeOfTyName(env, src, lexed, elem);
       if (t != "") { registerNamed(env, t + "[]"); }
       for (i32 i = 0; i < elements.len(); i++) {
@@ -13846,18 +13846,18 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     // **A construction names its type**, and `Vec<i32>(…)` names an instantiation nothing else in
     // the file has to mention. Registering it here is what stops the type table growing while the
     // section that declares it is being written.
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       // **A call to a generic function is registered on sight**, exactly as a generic type written
       // in the source is — the difference being that nothing here is written, so the instance has to
       // be inferred from what the arguments turned out to be.
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           if (typeArgs.len() == 0) {
             string gi = genericCallInstance(env, src, lexed, tok, args);
             if (gi != "") { env.instantiate(gi, tokenTextOf(src, lexed, tok)); }
           }
         }
-        else: { }
+        default: { }
       }
       registerNamed(env, typeOfTyName(env, src, lexed, ctype));
       for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
@@ -13865,16 +13865,16 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
         collectArrayTypesOfExpr(env, src, lexed, named[i].value);
       }
     }
-    case Cast(op, operand, target): {
+    Cast(op, operand, target): {
       registerNamed(env, typeOfTyName(env, src, lexed, target));
       collectArrayTypesOfExpr(env, src, lexed, operand);
     }
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       if (!(target is null)) { registerNamed(env, typeOfTyName(env, src, lexed, target!)); }
       collectArrayTypesOfExpr(env, src, lexed, left);
       if (!(other is null)) { collectArrayTypesOfExpr(env, src, lexed, other!); }
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       collectArrayTypesOfExpr(env, src, lexed, callee);
       for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
     }
@@ -13886,62 +13886,62 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     // It went unnoticed because until `issues/lang/0142` a lambda could not be written inside a
     // generic and nothing in the tree called one *from* a lambda: `packages/platform`\'s `ready<T>`,
     // three concrete copies until that landed, is the first.
-    case Lambda(lamParams, lamBody, lamAsync): { collectArrayTypes(env, src, lexed, lamBody); }
-    case Member(obj, nameTok): { collectArrayTypesOfExpr(env, src, lexed, obj); }
-    case Index(arr, index): {
+    Lambda(lamParams, lamBody, lamAsync): { collectArrayTypes(env, src, lexed, lamBody); }
+    Member(obj, nameTok): { collectArrayTypesOfExpr(env, src, lexed, obj); }
+    Index(arr, index): {
       collectArrayTypesOfExpr(env, src, lexed, arr);
       collectArrayTypesOfExpr(env, src, lexed, index);
     }
-    case Await(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
-    case Unary(op, operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
-    case Unwrap(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
-    case Binary(op, left, right): {
+    Await(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
+    Unary(op, operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
+    Unwrap(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
+    Binary(op, left, right): {
       collectArrayTypesOfExpr(env, src, lexed, left);
       collectArrayTypesOfExpr(env, src, lexed, right);
     }
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       collectArrayTypesOfExpr(env, src, lexed, cond);
       collectArrayTypesOfExpr(env, src, lexed, then);
       collectArrayTypesOfExpr(env, src, lexed, els);
     }
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       collectArrayTypesOfExpr(env, src, lexed, subject);
       for (i32 a = 0; a < arms.len(); a++) {
         if (arms[a].value is null) { continue; }
         collectArrayTypesOfExpr(env, src, lexed, arms[a].value!);
       }
     }
-    else: { }
+    default: { }
   }
 }
 
 /** A one-word name for an expression kind, so a decline says *what* rather than merely *that*. */
 string kindOfExpr(Expr e) {
   match (e.kind) {
-    case Lambda(params, body, lamAsync): { return "lambda"; }
-    case IntLit(tok): { return "int literal"; }
-    case FloatLit(tok): { return "float literal"; }
-    case StrLit(tok): { return "string literal"; }
-    case Jsx(tagTok, closeTok, attrs, kids): { return "JSX element"; }
-    case JsxText(startOff, endOff): { return "JSX text"; }
-    case BoolLit(value): { return "bool literal"; }
-    case NullLit: { return "null"; }
-    case TypeName(named): { return "a type used as a value"; }
-    case Ident(tok): { return "name"; }
-    case Await(operand): { return "await"; }
-    case Unary(op, operand): { return "unary"; }
-    case Binary(op, left, right): { return "binary"; }
-    case Cast(op, operand, target): { return "cast"; }
-    case Ternary(cond, then, els): { return "ternary"; }
-    case Index(arr, index): { return "index"; }
-    case Member(obj, nameTok): { return "member"; }
-    case Call(callee, args, callTargs): { return "call"; }
-    case Construct(ctype, args, named): { return "construct"; }
-    case ArrNew(elem, size, fill, elements): { return "array"; }
-    case Unwrap(operand): { return "unwrap"; }
-    case Is(left, target, other, negated): { return "is"; }
-    case Incr(target, op, prefix): { return "incr"; }
-    case MatchExpr(subject, arms): { return "match"; }
+    Lambda(params, body, lamAsync): { return "lambda"; }
+    IntLit(tok): { return "int literal"; }
+    FloatLit(tok): { return "float literal"; }
+    StrLit(tok): { return "string literal"; }
+    Jsx(tagTok, closeTok, attrs, kids): { return "JSX element"; }
+    JsxText(startOff, endOff): { return "JSX text"; }
+    BoolLit(value): { return "bool literal"; }
+    NullLit: { return "null"; }
+    TypeName(named): { return "a type used as a value"; }
+    Ident(tok): { return "name"; }
+    Await(operand): { return "await"; }
+    Unary(op, operand): { return "unary"; }
+    Binary(op, left, right): { return "binary"; }
+    Cast(op, operand, target): { return "cast"; }
+    Ternary(cond, then, els): { return "ternary"; }
+    Index(arr, index): { return "index"; }
+    Member(obj, nameTok): { return "member"; }
+    Call(callee, args, callTargs): { return "call"; }
+    Construct(ctype, args, named): { return "construct"; }
+    ArrNew(elem, size, fill, elements): { return "array"; }
+    Unwrap(operand): { return "unwrap"; }
+    Is(left, target, other, negated): { return "is"; }
+    Incr(target, op, prefix): { return "incr"; }
+    MatchExpr(subject, arms): { return "match"; }
   }
 }
 
@@ -13954,7 +13954,7 @@ string kindOfExpr(Expr e) {
  */
 string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string raw = tokenTextOf(src, lexed, tok);
       if (env.localAt(raw) >= 0) { return ""; }
       string n = nameKeyOf(env, src, lexed, tok);
@@ -13965,11 +13965,11 @@ string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
     // the arm for `Cell.of(3)`, which has to take the instantiation from the slot it lands in and
     // therefore cannot work in receiver position; this is the spelling that does.
     // `issues/lang/0088`, `design/lang/0011`.
-    case TypeName(nt): {
+    TypeName(nt): {
       string inst = typeOfTyName(env, src, lexed, nt);
       return inst != "" && env.isStructName(inst) ? inst : "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -14473,7 +14473,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
       src = srcFor(env.fileSrcs, w15s, env.curFile);
       lexed = lexFor(env.fileLexeds, w15l, env.curFile);
       match (w15d[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
           i32 tf = fileFor(env, lexed, nameTok, 0 - 1);
@@ -14489,7 +14489,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
             n = n + 1;
           }
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = w15f; src = w15s; lexed = w15l;
@@ -14503,7 +14503,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
       src = srcFor(env.fileSrcs, w16s, env.curFile);
       lexed = lexFor(env.fileLexeds, w16l, env.curFile);
       match (w16d[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) { continue; }
           // **The key, not the text.** Five files here declare a `Reader`; the first keeps the name
           // and the rest are keyed `Reader@<file>`, so matching on the token text matched all five
@@ -14520,7 +14520,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
             n = n + 1;
           }
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() > 0) { continue; }
           if (nameKeyOf(env, src, lexed, nameTok) != owner) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
@@ -14533,7 +14533,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
             n = n + 1;
           }
         }
-        else: { }
+        default: { }
       }
     }
     env.curFile = w16f; src = w16s; lexed = w16l;
@@ -14691,19 +14691,19 @@ string templatePathOf(Env env, u8[] src, Lexed lexed, string tpl) {
     u8[] ts = srcFor(env.fileSrcs, src, tf);
     Lexed tl = lexFor(env.fileLexeds, lexed, tf);
     match (td[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(ts, tl, nameTok) != tpl) { continue; }
         i32 f = tf >= 0 ? tf : fileFor(env, tl, nameTok, 0 - 1);
         return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(ts, tl, nameTok) != tpl) { continue; }
         i32 f = tf >= 0 ? tf : fileFor(env, tl, nameTok, 0 - 1);
         return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
       }
-      else: { }
+      default: { }
     }
   }
   return "";
@@ -14739,8 +14739,8 @@ string metaTypeOfTy(Env env, u8[] src, Lexed lexed, Ty t) {
   string base = metaTypeSpelling(env, typeOfTyName(env, src, lexed, t));
   if (base == "") { return base; }
   match (t.kind) {
-    case Nullable(inner): { return base + "?"; }
-    else: { return base; }
+    Nullable(inner): { return base + "?"; }
+    default: { return base; }
   }
 }
 
@@ -14821,13 +14821,13 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
     src = srcFor(env.fileSrcs, w17s, env.curFile);
     lexed = lexFor(env.fileLexeds, w17l, env.curFile);
     match (w17d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!exported || typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < params.len(); i++) {
           n = noteCallbackSig(env, n, typeOfTyName(env, src, lexed, params[i].type));
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w17f; src = w17s; lexed = w17l;
@@ -14876,7 +14876,7 @@ i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, 
     src = srcFor(env.fileSrcs, w18s, env.curFile);
     lexed = lexFor(env.fileLexeds, w18l, env.curFile);
     match (w18d[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string want = tpl == "" ? owner : tpl;
         if (tokenTextOf(src, lexed, nameTok) != want) { continue; }
         if (typeParams.len() > 0 && tpl == "") { continue; }
@@ -14898,7 +14898,7 @@ i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, 
         }
         if (tpl != "") { popSubstitution(env, pushed); }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w18f; src = w18s; lexed = w18l;
@@ -14946,7 +14946,7 @@ i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
     src = srcFor(env.fileSrcs, w19s, env.curFile);
     lexed = lexFor(env.fileLexeds, w19l, env.curFile);
     match (w19d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!exported || typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
         if (isFuncrefType(rt)) { n = addOutSig(out, n, rt); }
@@ -14968,7 +14968,7 @@ i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w19f; src = w19s; lexed = w19l;
@@ -15428,7 +15428,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
     lexed = lexFor(env.fileLexeds, w20l, env.curFile);
     if (entryDecls >= 0 && d >= entryDecls) { break; }
     match (w20d[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!exported || typeParams.len() > 0) { continue; }
         n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, returnType)));
         n = noteSignatureTypes(env, out, n, typeOfTyName(env, src, lexed, returnType));
@@ -15446,7 +15446,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
       // is how a type with an invariant is constructed — is reachable from no signature at all, and
       // was bound nowhere although the language had already been told it is public.
       // `$bind$sm_Procs_create` is what a host saw missing. `issues/lang/0089`.
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         // **The key, not the name written here.** A bare name that another file already took is
         // registered as `Word@<file>`, and `Word` alone is then whatever *did* take it — in
@@ -15456,12 +15456,12 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
         n = noteBindStruct(env, out, n,
                            env.keyAt(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, 0 - 1)));
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         n = noteBindStruct(env, out, n,
                            env.keyAt(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, 0 - 1)));
       }
-      else: { }
+      default: { }
     }
   }
   env.curFile = w20f; src = w20s; lexed = w20l;
@@ -15482,7 +15482,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
         src = srcFor(env.fileSrcs, w21s, env.curFile);
         lexed = lexFor(env.fileLexeds, w21l, env.curFile);
         match (w21d[d].kind) {
-          case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() > 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
@@ -15494,7 +15494,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
               }
             }
           }
-          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          EnumDecl(nameTok, variants, exported, methods, typeParams): {
             if (typeParams.len() > 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
@@ -15506,7 +15506,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
               }
             }
           }
-          else: { }
+          default: { }
         }
       }
       env.curFile = w21f; src = w21s; lexed = w21l;
@@ -16404,14 +16404,14 @@ void emitBytesCopy(B types, B funcs, B code, Env env, i32 index, i32 declTypes, 
 /** Whether a receiver is the *type name* `string`, as in `string.fromBytes(b)`. */
 bool isStringTypeName(u8[] src, Lexed lexed, Env env, Expr obj) {
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenTextOf(src, lexed, tok);
       // A local of that name would be a value, and shadowing wins — the same order every receiver
       // question in this emitter uses.
       if (env.localAt(n) >= 0 || env.constAt(n) >= 0) { return false; }
       return n == "string";
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 

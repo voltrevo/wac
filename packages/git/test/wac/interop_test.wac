@@ -154,8 +154,8 @@ export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_
     t.isTrue(f.ok, "git's object file could be read for " + what);
     if (!f.ok) { continue; }
     match (readLoose(f.bytes)) {
-      case Unreadable(why): { t.isTrue(false, "we could not read git's object: " + why); }
-      case Loaded(kind, content): {
+      Unreadable(why): { t.isTrue(false, "we could not read git's object: " + why); }
+      Loaded(kind, content): {
         t.eqStr(kind.word(), "blob", "we read git's blob as a blob");
         t.eqStr(string.fromBytes(content), all[i], "we read the same bytes out of git's object");
       }
@@ -193,11 +193,11 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
 
   u8[] content = u8[0]();
   match (readLoose(f.bytes)) {
-    case Unreadable(why): {
+    Unreadable(why): {
       t.isTrue(false, "git's tree object did not read back: " + why);
       return t.report();
     }
-    case Loaded(kind, bytes): {
+    Loaded(kind, bytes): {
       t.eqStr(kind.word(), "tree", "and it read back as a tree");
       content = bytes;
     }
@@ -205,11 +205,11 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
 
   Vec<Entry> es = Vec.create();
   match (parseTree(content)) {
-    case Bad(why): {
+    Bad(why): {
       t.isTrue(false, "parse failed: " + why);
       return t.report();
     }
-    case Ok(entries): { es = entries; }
+    Ok(entries): { es = entries; }
   }
 
   // `ls-tree` prints the mode zero-padded to six and git stores it in five, which is the trap this
@@ -267,8 +267,8 @@ export string test_adler32_matches_its_published_vector_and_a_zlib_stream_round_
   string[] all = blobs();
   for (i32 i = 0; i < all.len(); i++) {
     match (zlibDecompress(zlibCompress(all[i].toBytes()))) {
-      case Bad(why): { t.isTrue(false, "round trip failed: " + why); }
-      case Ok(bytes): {
+      Bad(why): { t.isTrue(false, "round trip failed: " + why); }
+      Ok(bytes): {
         t.eqStr(string.fromBytes(bytes), all[i], "the round trip kept the bytes");
       }
     }
@@ -278,8 +278,8 @@ export string test_adler32_matches_its_published_vector_and_a_zlib_stream_round_
 
 bool badStream(Unzipped u) {
   match (u) {
-    case Bad(why): { return true; }
-    case Ok(bytes): { return false; }
+    Bad(why): { return true; }
+    Ok(bytes): { return false; }
   }
 }
 
@@ -313,8 +313,8 @@ u8[] copyOf(u8[] b) {
 
 bool unreadableObject(Object o) {
   match (o) {
-    case Unreadable(why): { return true; }
-    case Loaded(kind, content): { return false; }
+    Unreadable(why): { return true; }
+    Loaded(kind, content): { return false; }
   }
 }
 

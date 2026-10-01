@@ -163,8 +163,8 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // ── The advertisement ──
   u8[] adv = advertise(cli, target);
   match (parseAdvertisement(adv)) {
-    case Garbled(why): { t.isTrue(false, "the advertisement did not parse: " + why); }
-    case Said(ad): { t.isTrue(true, "the advertisement parsed"); }
+    Garbled(why): { t.isTrue(false, "the advertisement did not parse: " + why); }
+    Said(ad): { t.isTrue(true, "the advertisement parsed"); }
   }
   // **An empty repository advertises one line that is not a ref**, asserted rather than assumed — a
   // client treating it as a branch would try to update something called `capabilities^{}`.

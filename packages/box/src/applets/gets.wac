@@ -95,9 +95,9 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
 
     bool closed = false;
     match (cli.recv(sock.handle).wait()) {
-      case Data(bytes): { buffered = concat(buffered, bytes); }
-      case End: { closed = true; }            // the peer closed
-      case Failed(why): {
+      Data(bytes): { buffered = concat(buffered, bytes); }
+      End: { closed = true; }            // the peer closed
+      Failed(why): {
         core.warn(a.name + ": " + host + ": " + why);
         cli.closeSocket(sock.handle);
         return 1;
@@ -135,9 +135,9 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
 
 i32 show(Core core, Cli cli, ParsedResponse p, bool headers, string name) {
   match (p) {
-    case Incomplete: { core.warn(name + ": the response ended mid-message"); return 1; }
-    case Bad(code): { core.warn(name + ": unparseable response (" + itoa(code) + ")"); return 1; }
-    case Ok(res): {
+    Incomplete: { core.warn(name + ": the response ended mid-message"); return 1; }
+    Bad(code): { core.warn(name + ": unparseable response (" + itoa(code) + ")"); return 1; }
+    Ok(res): {
       if (headers) {
         core.log("HTTP " + itoa(res.status));
         for (i32 i = 0; i < res.headers.count; i++) {

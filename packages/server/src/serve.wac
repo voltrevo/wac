@@ -57,17 +57,17 @@ u8[] bare(i32 status, u8[] method, bool keepAlive) {
  */
 export Served serve(u8[] input, i64 nowMillis) {
   match (parseRequest(input, MAX_BODY())) {
-    case Incomplete: {
+    Incomplete: {
       return Served(false, u8[0](), 0, true);
     }
-    case Bad(code): {
+    Bad(code): {
       // A malformed request means the byte stream can no longer be trusted to be a sequence of
       // messages, so the connection closes whatever the client asked for. Continuing on a stream
       // whose framing is in doubt is the smuggling condition itself.
       i32 status = code == ERR_TOO_LARGE() ? 413 : 400;
       return Served(true, bare(status, "GET".toBytes(), false), input.len(), false);
     }
-    case Ok(request): {
+    Ok(request): {
       bool keep = wantsKeepAlive(request);
       Response res = route(request, nowMillis);
       return Served(true, write(res, request.method, keep), request.consumed, keep);

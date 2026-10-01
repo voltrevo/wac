@@ -15,39 +15,39 @@ export enum Result<T, E> {
   Ok(T v), Err(E e)
 
   bool isOk(const this) {
-    return match (this) { case Ok(_): true, case Err(_): false };
+    return match (this) { Ok(_): true, Err(_): false };
   }
 
   bool isErr(const this) {
-    return match (this) { case Ok(_): false, case Err(_): true };
+    return match (this) { Ok(_): false, Err(_): true };
   }
 
   /** The value, or `d` if this is an error. */
   T orElse(const this, T d) {
-    return match (this) { case Ok(v): v, case Err(_): d };
+    return match (this) { Ok(v): v, Err(_): d };
   }
 
   /** The value, or a trap. For when an error here means the program is wrong. */
   T unwrap(const this) {
     match (this) {
-      case Ok(v): return v;
-      case Err(_): trap;
+      Ok(v): { return v; }
+      Err(_): { trap; }
     }
   }
 
   /** The value if there is one, discarding the error — for when only presence matters. */
   Option<T> ok(const this) {
     return match (this) {
-      case Ok(v): Option.Some(v),
-      case Err(_): Option.None,
+      Ok(v): Option.Some(v),
+      Err(_): Option.None,
     };
   }
 
   /** The error if there is one. */
   Option<E> err(const this) {
     return match (this) {
-      case Ok(_): Option.None,
-      case Err(e): Option.Some(e),
+      Ok(_): Option.None,
+      Err(e): Option.Some(e),
     };
   }
 }

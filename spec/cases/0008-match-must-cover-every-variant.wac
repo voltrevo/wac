@@ -3,7 +3,7 @@
 enum Shape { Point, Circle(f64 radius), Rect(f64 width, f64 height) }
 export f64 f(Shape s) {
   match (s) {
-    case Point:     return 0.0;
-    case Circle(r): return r;
+    Point: { return 0.0; }
+    Circle(r): { return r; }
   }
 }

@@ -3,5 +3,5 @@
 enum Shape { Point, Circle(i32 radius) }
 export i32 f() {
   Shape s = Shape.Circle(5);
-  return match (s) { case Point: 0, case Circle: s.radius };
+  return match (s) { Point: 0, Circle: s.radius };
 }

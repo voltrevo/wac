@@ -6,9 +6,9 @@ HTTP/1.1: parsing requests and responses, and writing both.
 import { Parsed, Request, parseRequest } from "../../http/src/request.wac";
 
 match (parseRequest(buffer, 1 << 20)) {
-  case Ok(request): { /* request.method, .target, .headers, .body, .consumed */ }
-  case Incomplete:  { /* read more bytes and call again */ }
-  case Bad(code):   { /* refuse the connection */ }
+  Ok(request): { /* request.method, .target, .headers, .body, .consumed */ }
+  Incomplete:  { /* read more bytes and call again */ }
+  Bad(code):   { /* refuse the connection */ }
 }
 ```
 

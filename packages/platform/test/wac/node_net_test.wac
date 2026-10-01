@@ -152,9 +152,9 @@ string greetedBy(Core core, Cli cli, i32 port) {
   if (s.handle < 0) { return "connect failed: " + s.error; }
   string said = "";
   match (cli.recv(s.handle).wait()) {
-    case Data(bytes): { said = string.fromBytes(bytes); }
-    case End: { }
-    case Failed(why): { said = "recv failed: " + why; }
+    Data(bytes): { said = string.fromBytes(bytes); }
+    End: { }
+    Failed(why): { said = "recv failed: " + why; }
   }
   cli.closeSocket(s.handle);
   return said;
@@ -262,7 +262,7 @@ export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_c
   t.eqStr(onNode.error, "", "the Node server ran");
 
   t.eqStr(onDeno.said, "hello 127.0.0.1\n", "deno: " + onDeno.logged);
-  t.eqStr(onNode.said, onDeno.said, "node said something else: " + onNode.logged);
+  t.eqStr(onNode.said, onDeno.said, "node said something default: " + onNode.logged);
   t.eqI32(onNode.code, 0, onNode.logged);
   t.eqI32(onDeno.code, 0, onDeno.logged);
 

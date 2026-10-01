@@ -57,23 +57,23 @@ Boundary manifestOf(Cli cli, string entry, string stem) {
   }
   JsonValue? doc = parse(text.toBytes());
   if (doc is null) { return Boundary(string[0](fill: ""), -1, "the manifest is not JSON"); }
-  JsonObject top = match (doc!) { case Object(members): members, else: JsonObject.create() };
+  JsonObject top = match (doc!) { Object(members): members, default: JsonObject.create() };
 
   JsonValue? structs = top.getStr("structs");
   if (structs is null) { return Boundary(string[0](fill: ""), -1, "no `structs` in the manifest"); }
-  JsonArray items = match (structs!) { case Array(a): a, else: JsonArray.create() };
+  JsonArray items = match (structs!) { Array(a): a, default: JsonArray.create() };
   string[] names = string[items.len()](fill: "");
   for (i32 i = 0; i < items.len(); i++) {
-    JsonObject s = match (items.get(i)) { case Object(m): m, else: JsonObject.create() };
+    JsonObject s = match (items.get(i)) { Object(m): m, default: JsonObject.create() };
     JsonValue? name = s.getStr("name");
     if (name is null) { continue; }
-    names[i] = match (name!) { case Str(bytes): string.fromBytes(bytes), else: "" };
+    names[i] = match (name!) { Str(bytes): string.fromBytes(bytes), default: "" };
   }
 
   JsonValue? callbacks = top.getStr("callbacks");
   i32 n = -1;
   if (callbacks is not null) {
-    JsonArray cbs = match (callbacks!) { case Array(a): a, else: JsonArray.create() };
+    JsonArray cbs = match (callbacks!) { Array(a): a, default: JsonArray.create() };
     n = cbs.len();
   }
   return Boundary(names, n, "");

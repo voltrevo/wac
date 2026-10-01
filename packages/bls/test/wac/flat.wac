@@ -6,7 +6,7 @@
 // its parent) rather than as an independent heap object.
 //
 // This file measures the *upper bound* on what that could win, by writing the same Montgomery
-// multiplication three ways and changing nothing else:
+// multiplication three ways and changing nothing default:
 //
 //   A  as `src/fp.wac` has it — allocates the result, the u64 accumulator, and the modulus
 //   B  accumulator and modulus hoisted to caller-owned buffers — allocates only the result

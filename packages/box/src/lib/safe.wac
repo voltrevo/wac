@@ -44,17 +44,17 @@ export Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
   string broke = "";
   while (copying) {
     match (cli.readChunk()) {
-      case Data(bytes): {
+      Data(bytes): {
         if (!cli.write(bytes)) {
           copying = false;
           broke = cli.outputError().wait();
           if (broke == "") { broke = "could not write " + tmp; }
         }
       }
-      case End: { copying = false; }
+      End: { copying = false; }
       // Half a file renamed over the original is the worst outcome available here, so a failed read
       // abandons the temporary and leaves the target alone.
-      case Failed(why): { copying = false; broke = why; }
+      Failed(why): { copying = false; broke = why; }
     }
   }
   if (broke != "") {

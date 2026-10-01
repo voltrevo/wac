@@ -262,12 +262,12 @@ async void pumpGuard(Core core, Cli cli, Proxy x) {
     Read got = await cli.recv(x.guard.link.sock);
     bool linkLive = false;
     match (got) {
-      case Data(bytes): { linkLive = feedLink(x.guard.link, bytes); }
-      case End: { }
+      Data(bytes): { linkLive = feedLink(x.guard.link, bytes); }
+      End: { }
       // A guard that closed and a guard whose connection failed are both fatal to this proxy, but
       // an operator reading the log needs to know which — one is a relay going away, the other is
       // the network under us.
-      case Failed(why): { core.warn("tor: the link to the guard failed: " + why); }
+      Failed(why): { core.warn("tor: the link to the guard failed: " + why); }
     }
     if (!linkLive) {
       core.warn("tor: the link to the guard is gone");
@@ -448,11 +448,11 @@ async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
     u8[] chunk = u8[0]();
     bool ended = false;
     match (got) {
-      case Data(bytes): { chunk = bytes; }
-      case End: { ended = true; }
+      Data(bytes): { chunk = bytes; }
+      End: { ended = true; }
       // A client whose connection failed is dropped like one that closed; the warning is what
       // distinguishes a browser that navigated away from a network that broke under it.
-      case Failed(why): { core.warn("tor: a client connection failed: " + why); ended = true; }
+      Failed(why): { core.warn("tor: a client connection failed: " + why); ended = true; }
     }
     if (ended) { dropClient(cli, x, c); return; }
     c.pending = concat(c.pending, chunk);

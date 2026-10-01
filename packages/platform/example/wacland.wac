@@ -117,9 +117,9 @@ export i32 main(Core core, Cli cli) {
   i32 which = core.waitAny(i32[](over.id, tick.id), -1);
   core.log("wacland: stage 5 first " + itoa(which));
   match (said.wait()) {
-    case Data(bytes): { core.log("wacland: stage 5 heard " + string.fromBytes(bytes)); }
-    case End: { core.log("wacland: stage 5 heard nothing"); }
-    case Failed(why): { core.log("wacland: stage 5 read failed " + why); }
+    Data(bytes): { core.log("wacland: stage 5 heard " + string.fromBytes(bytes)); }
+    End: { core.log("wacland: stage 5 heard nothing"); }
+    Failed(why): { core.log("wacland: stage 5 read failed " + why); }
   }
   core.log("wacland: stage 5 status " + itoa(over.wait()));
   tick.cancel();
@@ -164,9 +164,9 @@ string said(Core core, Cli cli, u8[][] argv, i32 grants) {
   string said = "";
   while (true) {
     match (cli.recv(kid.handle).wait()) {
-      case Data(bytes): { said = said + string.fromBytes(bytes); }
-      case End: { break; }
-      case Failed(why): { break; }
+      Data(bytes): { said = said + string.fromBytes(bytes); }
+      End: { break; }
+      Failed(why): { break; }
     }
   }
   cli.exitCode(kid.handle).wait();

@@ -34,15 +34,15 @@ struct Vector {
 
 string memberText(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return ""; }
       match (found!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        else: { return ""; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -114,8 +114,8 @@ Suite suite(T t, Cli cli) {
     if (!(us is null)) {
       for (i32 k = 0; k < us!.len(); k++) {
         match (us!.get(k)) {
-          case Str(bytes): { u[k] = string.fromBytes(bytes); }
-          else: { }
+          Str(bytes): { u[k] = string.fromBytes(bytes); }
+          default: { }
         }
       }
     }
@@ -241,8 +241,8 @@ export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Core core, Cli c
   if (doc is null) { return t.report(); }
   JsonObject cases = JsonObject.create();
   match (doc!) {
-    case Object(members): { cases = members; }
-    else: { t.fail("eth_hash_to_G2.json is not an object"); return t.report(); }
+    Object(members): { cases = members; }
+    default: { t.fail("eth_hash_to_G2.json is not an object"); return t.report(); }
   }
 
   u8[] dst = "QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_".toBytes();

@@ -7,7 +7,7 @@
  *
  * The receiver is an ordinary parameter, so the machine that already carries arguments across a
  * suspension carries `this` too — which is why the lowering needed no new mechanism, only somewhere
- * to look. `lowerProgram` matched `case Func(…)` and let every other declaration fall into an
+ * to look. `lowerProgram` matched `Func(…)` and let every other declaration fall into an
  * `else`, so a struct's methods were never offered to it, and the four registries that size the
  * synthesised machine could not see them either.
  *

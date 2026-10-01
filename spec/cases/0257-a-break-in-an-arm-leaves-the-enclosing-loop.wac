@@ -9,8 +9,8 @@ export i32 f() {
     n = n + 1;
     Step s = n < 3 ? Step.Working : Step.Done;
     match (s) {
-      case Done:    break;
-      case Working: { }
+      Done: { break; }
+      Working: { }
     }
   }
   return n;

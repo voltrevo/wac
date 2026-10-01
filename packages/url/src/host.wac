@@ -394,15 +394,15 @@ void writeHexLower(Buf out, i32 v) {
 /** Append the host in its canonical form, brackets included for IPv6. */
 export void writeHost(Buf out, Host h) {
   match (h) {
-    case Named(name): out.pushAll(name);
-    case Ipv4(address): {
+    Named(name): { out.pushAll(name); }
+    Ipv4(address): {
       // Most significant octet first, which is the reverse of how it was accumulated.
       for (i32 i = 3; i >= 0; i--) {
         writeU32Decimal(out, (address >> ((i * 8) as@ u32)) & 255);
         if (i > 0) { out.push('.'); }
       }
     }
-    case Ipv6(pieces): {
+    Ipv6(pieces): {
       out.push('[');
       // The longest run of two or more zero pieces is replaced by `::`; ties go to the first.
       i32 bestStart = -1;

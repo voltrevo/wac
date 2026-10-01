@@ -68,9 +68,9 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
   string why = "";
   while (reading) {
     match (cli.recv(s.handle).wait()) {
-      case Data(bytes): { all = append(all, bytes); }
-      case End: { reading = false; }
-      case Failed(reason): { why = reason; reading = false; }
+      Data(bytes): { all = append(all, bytes); }
+      End: { reading = false; }
+      Failed(reason): { why = reason; reading = false; }
     }
   }
   cli.closeSocket(s.handle);
@@ -79,9 +79,9 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
   if (why != "") { return failed(host + ": " + why); }
 
   match (parseResponse(all, method, true, 1 << 26)) {
-    case Incomplete: { return failed("the response ended mid-message"); }
-    case Bad(code): { return failed("unparseable response (" + itoa(code) + ")"); }
-    case Ok(res): { return Fetched.of(true, res, ""); }
+    Incomplete: { return failed("the response ended mid-message"); }
+    Bad(code): { return failed("unparseable response (" + itoa(code) + ")"); }
+    Ok(res): { return Fetched.of(true, res, ""); }
   }
 }
 

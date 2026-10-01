@@ -5,5 +5,5 @@
 enum E { A(i32 x), B }
 export i32 f() {
   E[] a = E[2]();
-  return match (a[0]) { case A(x): x, case B: 0 };
+  return match (a[0]) { A(x): x, B: 0 };
 }

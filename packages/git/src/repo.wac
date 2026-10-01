@@ -101,8 +101,8 @@ export RepoAt openRepo(Fs fs, string gitDir, string workTree) {
         FileResult packFile = fs.readFile(gitDir + "/objects/pack/" + stem + ".pack");
         if (idxFile.ok && packFile.ok) {
           match (openPack(packFile.bytes, idxFile.bytes)) {
-            case Ready(p): { packs.push(p); }
-            case Refused(why): {
+            Ready(p): { packs.push(p); }
+            Refused(why): {
               // A pack we cannot read is not a repository we cannot open: git carries on with the
               // others, and saying which one failed is more useful than refusing everything.
               return RepoAt.NoRepo("pack " + stem + ": " + why);
@@ -136,14 +136,14 @@ export Got readObject(Repo r, u8[] name) {
   FileResult f = r.fs.readFile(loosePath);
   if (f.ok) {
     match (readLoose(f.bytes)) {
-      case Loaded(kind, data): return Got.Found(kindNumber(kind), data);
-      case Unreadable(why): return Got.Absent("loose object " + hex + ": " + why);
+      Loaded(kind, data): { return Got.Found(kindNumber(kind), data); }
+      Unreadable(why): { return Got.Absent("loose object " + hex + ": " + why); }
     }
   }
   for (i32 i = 0; i < r.packs.len(); i++) {
     match (objectNamed(r.packs.get(i), name)) {
-      case Found(kind, data): return Got.Found(kind, data);
-      case Absent(why): { }
+      Found(kind, data): { return Got.Found(kind, data); }
+      Absent(why): { }
     }
   }
   return Got.Absent("object " + hex + " is not in this repository");
@@ -152,10 +152,10 @@ export Got readObject(Repo r, u8[] name) {
 /** The number `pack.wac` uses for a kind: 1 commit, 2 tree, 3 blob, 4 tag. */
 i32 kindNumber(Kind k) {
   return match (k) {
-    case Commit: 1,
-    case Tree: 2,
-    case Blob: 3,
-    case Tag: 4
+    Commit: 1,
+    Tree: 2,
+    Blob: 3,
+    Tag: 4
   };
 }
 
@@ -172,9 +172,9 @@ export u8[]? resolveRef(Repo r, string refName) {
     FileResult loose = r.fs.readFile(r.gitDir + "/" + name);
     if (loose.ok) {
       match (parseRef(loose.bytes)) {
-        case Direct(target): return target;
-        case Symbolic(next): { name = next; continue; }
-        case Unparsed(why): return null;
+        Direct(target): { return target; }
+        Symbolic(next): { name = next; continue; }
+        Unparsed(why): { return null; }
       }
     }
     FileResult packed = r.fs.readFile(r.gitDir + "/packed-refs");
@@ -193,8 +193,8 @@ export u8[]? head(Repo r) { return resolveRef(r, "HEAD"); }
 /** The tree a commit names. */
 export u8[]? treeOfCommit(Repo r, u8[] commitName) {
   match (readObject(r, commitName)) {
-    case Absent(why): return null;
-    case Found(kind, data): {
+    Absent(why): { return null; }
+    Found(kind, data): {
       if (kind != 1) { return null; }
       // Only the `tree` header is needed here, and it is always the first line of a commit — so this
       // does not pull in the whole commit parser for one field.
@@ -246,12 +246,12 @@ i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry> entri
          i32[] unset) {
   if (depth <= 0) { return -1; }
   match (readObject(r, treeName)) {
-    case Absent(why): return -1;
-    case Found(kind, data): {
+    Absent(why): { return -1; }
+    Found(kind, data): {
       if (kind != 2) { return -1; }
       match (parseTree(data)) {
-        case Bad(why): return -1;
-        case Ok(list): {
+        Bad(why): { return -1; }
+        Ok(list): {
           i32 count = 0;
           for (i32 i = 0; i < list.len(); i++) {
             Entry e = list.get(i);
@@ -281,8 +281,8 @@ i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry> entri
               entries.push(IndexEntry(rel, e.hash, modeNumber(e.mode), 0, 0));
             } else {
               match (readObject(r, e.hash)) {
-                case Absent(why): return -1;
-                case Found(k, bytes): {
+                Absent(why): { return -1; }
+                Found(k, bytes): {
                   Change w = r.fs.writeFile(path, bytes);
                   if (!w.ok()) { return -1; }
                   // The mode git records is one of four, and only the executable bit is a real
@@ -397,8 +397,8 @@ export Vec<string> worktreeStatus(Repo r) {
   FileResult f = r.fs.readFile(r.gitDir + "/index");
   if (!f.ok) { return out; }
   match (parseIndex(f.bytes)) {
-    case Unreadable(why): { return out; }
-    case Present(idx): {
+    Unreadable(why): { return out; }
+    Present(idx): {
       for (i32 i = 0; i < idx.entries.len(); i++) {
         IndexEntry e = idx.entries.get(i);
         if (e.stage != 0) { continue; }
@@ -446,12 +446,12 @@ struct TreeAt {
 bool flattenTree(Repo r, u8[] treeName, string prefix, Vec<TreeAt> out, i32 depth) {
   if (depth <= 0) { return false; }
   match (readObject(r, treeName)) {
-    case Absent(why): { return false; }
-    case Found(kind, data): {
+    Absent(why): { return false; }
+    Found(kind, data): {
       if (kind != 2) { return false; }
       match (parseTree(data)) {
-        case Bad(why): { return false; }
-        case Ok(list): {
+        Bad(why): { return false; }
+        Ok(list): {
           for (i32 i = 0; i < list.len(); i++) {
             Entry e = list.get(i);
             string rel = prefix == "" ? e.name : prefix + "/" + e.name;
@@ -622,8 +622,8 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
   }
 
   match (parseIndex(f.bytes)) {
-    case Unreadable(why): { return out; }
-    case Present(idx): {
+    Unreadable(why): { return out; }
+    Present(idx): {
       for (i32 i = 0; i < idx.entries.len(); i++) {
         IndexEntry e = idx.entries.get(i);
         if (e.stage != 0) { continue; }
@@ -733,13 +733,13 @@ bool reachTree(Repo r, u8[] treeName, Vec<Reachable> out, i32 depth) {
   if (depth <= 0) { return false; }
   if (haveName(out, treeName)) { return true; }
   match (readObject(r, treeName)) {
-    case Absent(why): { return false; }
-    case Found(kind, data): {
+    Absent(why): { return false; }
+    Found(kind, data): {
       if (kind != 2) { return false; }
       out.push(Reachable(2, treeName));
       match (parseTree(data)) {
-        case Bad(why): { return false; }
-        case Ok(list): {
+        Bad(why): { return false; }
+        Ok(list): {
           for (i32 i = 0; i < list.len(); i++) {
             Entry e = list.get(i);
             if (e.isTree()) {
@@ -779,13 +779,13 @@ export Vec<Reachable> reachableFrom(Repo r, u8[] commit, i32 depth) {
     at = at + 1;
     if (haveName(out, name)) { continue; }
     match (readObject(r, name)) {
-      case Absent(why): { return Vec.create(); }
-      case Found(kind, data): {
+      Absent(why): { return Vec.create(); }
+      Found(kind, data): {
         if (kind != 1) { return Vec.create(); }
         out.push(Reachable(1, name));
         match (parseCommit(data)) {
-          case Malformed(why): { return Vec.create(); }
-          case Understood(c): {
+          Malformed(why): { return Vec.create(); }
+          Understood(c): {
             if (!reachTree(r, c.tree, out, depth)) { return Vec.create(); }
             for (i32 i = 0; i < c.parents.len(); i++) { queue.push(c.parents.get(i)); }
           }
@@ -859,18 +859,18 @@ export enum Completion {
  */
 export Completion completeThin(Repo r, u8[] pack) {
   match (indexPack(pack)) {
-    case Built(idx): { return Completion.Complete(pack); }
-    case Unindexable(why): { return Completion.Unusable(why); }
-    case Thin(bases): {
+    Built(idx): { return Completion.Complete(pack); }
+    Unindexable(why): { return Completion.Unusable(why); }
+    Thin(bases): {
       i32[] kinds = i32[bases.len()]();
       Vec<u8[]> contents = Vec.create();
       for (i32 i = 0; i < bases.len(); i++) {
         match (readObject(r, bases.get(i))) {
-          case Absent(why): {
+          Absent(why): {
             return Completion.Missing("the pack is deltified against " + hexOf(bases.get(i))
               + ", which this repository does not have: " + why);
           }
-          case Found(kind, data): {
+          Found(kind, data): {
             kinds[i] = kind;
             contents.push(data);
           }
@@ -909,8 +909,8 @@ export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> i
     string rel = prefix == "" ? n : prefix + "/" + n;
     if (dirs.get(i)) {
       match (writeWorkTree(r, path, rel, index)) {
-        case NotStored(why): return Stored.NotStored(why);
-        case Named(sub): {
+        NotStored(why): { return Stored.NotStored(why); }
+        Named(sub): {
           // A directory with nothing in it has no entry: git cannot represent one.
           if (!isEmptyTree(sub)) { entries.push(Entry("40000", n, sub)); }
         }
@@ -924,8 +924,8 @@ export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> i
       // mode change nobody asked for. issues/system/0132.
       bool exec = r.fs.stat(path).isExecutable;
       match (writeObject(r, Kind.Blob, f.bytes)) {
-        case NotStored(why): return Stored.NotStored(why);
-        case Named(blob): {
+        NotStored(why): { return Stored.NotStored(why); }
+        Named(blob): {
           entries.push(Entry(exec ? "100755" : "100644", n, blob));
           index.push(IndexEntry(rel, blob, exec ? 33261 : 33188, f.bytes.len(), 0));
         }
@@ -993,8 +993,8 @@ export Stored commitTree(Repo r, u8[] tree, string refName, Who author, string m
   if (!(current is null)) { parents.push(current!); }
 
   match (writeObject(r, Kind.Commit, formatCommit(tree, parents, author, author, message))) {
-    case NotStored(why): return Stored.NotStored(why);
-    case Named(commit): {
+    NotStored(why): { return Stored.NotStored(why); }
+    Named(commit): {
       // A ref file is forty hex characters and a newline. Written whole rather than appended: git
       // rewrites it too, and an interrupted append would leave a ref nothing can read.
       Change moved = r.fs.writeFile(r.gitDir + "/" + refName, (hexOf(commit) + "\n").toBytes());
@@ -1013,8 +1013,8 @@ export string headRef(Repo r) {
   FileResult f = r.fs.readFile(r.gitDir + "/HEAD");
   if (!f.ok) { return ""; }
   match (parseRef(f.bytes)) {
-    case Symbolic(target): return target;
-    case Direct(name): return "";
-    case Unparsed(why): return "";
+    Symbolic(target): { return target; }
+    Direct(name): { return ""; }
+    Unparsed(why): { return ""; }
   }
 }

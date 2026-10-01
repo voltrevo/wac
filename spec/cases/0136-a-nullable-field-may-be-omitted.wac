@@ -22,9 +22,9 @@ struct Card {
 
 string textOf(Node n) {
   match (n) {
-    case Text(t): return t;
-    case Fragment(kids): return "";
-    case Element(tag, attrs, kids): {
+    Text(t): { return t; }
+    Fragment(kids): { return ""; }
+    Element(tag, attrs, kids): {
       string out = "";
       for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
       return out;

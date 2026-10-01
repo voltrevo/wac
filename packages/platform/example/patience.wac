@@ -84,11 +84,11 @@ export i32 main(Core core, Cli cli) {
       // Three outcomes, and a deadline is exactly the situation where they differ: a peer that
       // closed, a connection that broke, and bytes that arrived all used to be two cases.
       match (r.wait()) {
-        case Data(bytes): {
+        Data(bytes): {
           core.log("peer sent " + itoa(bytes.len()) + " bytes after " + itoa(waited) + "ms");
         }
-        case End: { core.log("peer closed after " + itoa(waited) + "ms"); }
-        case Failed(why): { core.log("connection failed after " + itoa(waited) + "ms: " + why); }
+        End: { core.log("peer closed after " + itoa(waited) + "ms"); }
+        Failed(why): { core.log("connection failed after " + itoa(waited) + "ms: " + why); }
       }
       cli.closeSocket(s.handle);
       return 0;

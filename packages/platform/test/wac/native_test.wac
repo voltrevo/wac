@@ -270,16 +270,16 @@ string[] namesOf(JsonArray items) {
   string[] out = string[items.len()](fill: "");
   for (i32 i = 0; i < items.len(); i++) {
     match (items.get(i)) {
-      case Object(members): {
+      Object(members): {
         JsonValue? n = members.getStr("name");
         if (n is not null) {
           match (n!) {
-            case Str(bytes): { out[i] = string.fromBytes(bytes); }
-            else: { }
+            Str(bytes): { out[i] = string.fromBytes(bytes); }
+            default: { }
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return out;
@@ -288,16 +288,16 @@ string[] namesOf(JsonArray items) {
 JsonObject? structNamed(JsonArray structs, string want) {
   for (i32 i = 0; i < structs.len(); i++) {
     match (structs.get(i)) {
-      case Object(members): {
+      Object(members): {
         JsonValue? n = members.getStr("name");
         if (n is not null) {
           match (n!) {
-            case Str(bytes): { if (string.fromBytes(bytes) == want) { return members; } }
-            else: { }
+            Str(bytes): { if (string.fromBytes(bytes) == want) { return members; } }
+            default: { }
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return null;
@@ -307,8 +307,8 @@ JsonArray arrayIn(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return JsonArray.create(); }
   match (v!) {
-    case Array(items): { return items; }
-    else: { return JsonArray.create(); }
+    Array(items): { return items; }
+    default: { return JsonArray.create(); }
   }
 }
 
@@ -316,8 +316,8 @@ string stringIn(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return ""; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { return ""; }
   }
 }
 
@@ -372,13 +372,13 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
   string[] callbackTypes = string[callbacks.len()](fill: "");
   for (i32 i = 0; i < callbacks.len(); i++) {
     match (callbacks.get(i)) {
-      case Object(members): { callbackTypes[i] = stringIn(members, "type"); }
-      else: { }
+      Object(members): { callbackTypes[i] = stringIn(members, "type"); }
+      default: { }
     }
   }
   for (i32 i = 0; i < fields.len(); i++) {
     match (fields.get(i)) {
-      case Object(f): {
+      Object(f): {
         string name = stringIn(f, "name");
         string ty = stringIn(f, "type");
         if (ty.len() >= 3 && ty.slice(0, 3) == "fn[") {
@@ -397,7 +397,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
                  "Core." + name + " is " + ty +
                  ", which is neither a callback nor a struct the module can make");
       }
-      else: { }
+      default: { }
     }
   }
   cli.remove(dir, true).wait();

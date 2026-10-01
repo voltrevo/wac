@@ -3,7 +3,7 @@
 // why: the base struct is the closest common ancestor of every variant
 // from: spec/spec/enums.md, whose only checker was the reference's suite
 enum E { A(i32 x), B }
-i32 got(E e) { return match (e) { case A(x): x, case B: 1 }; }
+i32 got(E e) { return match (e) { A(x): x, B: 1 }; }
 export i32 f() {
   bool cond = true;
   E one = cond ? E.A(9) : E.B;              // two different variants

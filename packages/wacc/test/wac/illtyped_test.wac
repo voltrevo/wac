@@ -95,11 +95,11 @@ string[] programs() {
     "export i32 f(i32 x) { string s = ++x; return s.len(); }\n",
     "export i32 f(i32 x) { string s = x--; return s.len(); }\n",
     "i32 g(string s) { return s.len(); }\nexport i32 f(i32 x) { return g(x++); }\n",
-    "enum E { A, B }\nexport i32 f(E e) { string s = match (e) { case A: 1, else: 2 }; return s.len(); }\n",
-    "enum E { A, B }\nexport i32 f(E e) { bool z = match (e) { case A: 1, else: 2 }; return z ? 1 : 0; }\n",
-    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: \"x\", else: \"y\" }; return n; }\n",
-    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: true, else: false }; return n; }\n",
-    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { case A: 1, else: 2 }; return d; }\n",
+    "enum E { A, B }\nexport i32 f(E e) { string s = match (e) { A: 1, default: 2 }; return s.len(); }\n",
+    "enum E { A, B }\nexport i32 f(E e) { bool z = match (e) { A: 1, default: 2 }; return z ? 1 : 0; }\n",
+    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { A: \"x\", default: \"y\" }; return n; }\n",
+    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { A: true, default: false }; return n; }\n",
+    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { A: 1, default: 2 }; return d; }\n",
     "export bool f() { return null is null; }\n",
     "export bool f() { return null is not null; }\n",
     "export i32 f() { return null!; }\n",
@@ -306,7 +306,7 @@ export string test_a_match_expression_unifies_its_arms_like_a_ternary() {
   i32 tern1 = dumpTypeErrors((NULLABLE_DECL +
     "export i32 f(bool c, P a, P? b) { P r = c ? a : b; return r.x; }\n").toBytes()).len() / 3;
   i32 match1 = dumpTypeErrors((NULLABLE_DECL +
-    "export i32 f(E e, P a, P? b) { P r = match (e) { case A: a, else: b }; return r.x; }\n").toBytes()).len() / 3;
+    "export i32 f(E e, P a, P? b) { P r = match (e) { A: a, default: b }; return r.x; }\n").toBytes()).len() / 3;
   t.isTrue(tern1 > 0, "the ternary stopped refusing a nullable arm in a non-null slot");
   t.eqI32(match1, tern1, "a match and a ternary disagree about a nullable arm");
 
@@ -314,7 +314,7 @@ export string test_a_match_expression_unifies_its_arms_like_a_ternary() {
   i32 tern2 = dumpTypeErrors((SUB_DECL +
     "export i32 f(bool c, Sub a, Base b) { Sub r = c ? a : b; return r.s; }\n").toBytes()).len() / 3;
   i32 match2 = dumpTypeErrors((SUB_DECL +
-    "export i32 f(E e, Sub a, Base b) { Sub r = match (e) { case A: a, else: b }; return r.s; }\n").toBytes()).len() / 3;
+    "export i32 f(E e, Sub a, Base b) { Sub r = match (e) { A: a, default: b }; return r.s; }\n").toBytes()).len() / 3;
   t.isTrue(tern2 > 0, "the ternary stopped refusing a parent arm in a child slot");
   t.eqI32(match2, tern2, "a match and a ternary disagree about a subtype pair");
 
@@ -323,7 +323,7 @@ export string test_a_match_expression_unifies_its_arms_like_a_ternary() {
   i32 okTern = dumpTypeErrors((SUB_DECL +
     "export i32 f(bool c, Sub a, Base b) { Base r = c ? a : b; return r.b; }\n").toBytes()).len() / 3;
   i32 okMatch = dumpTypeErrors((SUB_DECL +
-    "export i32 f(E e, Sub a, Base b) { Base r = match (e) { case A: a, else: b }; return r.b; }\n").toBytes()).len() / 3;
+    "export i32 f(E e, Sub a, Base b) { Base r = match (e) { A: a, default: b }; return r.b; }\n").toBytes()).len() / 3;
   t.eqI32(okTern, 0, "a ternary widening to the parent was refused");
   t.eqI32(okMatch, 0, "a match widening to the parent was refused");
   return t.report();
@@ -537,8 +537,8 @@ export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled
 export string test_a_duplicate_binding_and_a_duplicate_else_report_at_the_duplicate() {
   T t = T.create();
 
-  string bindHead = "enum E { A(i32 x, i32 y), B } export i32 f(E e) { match (e) { case A(v, ";
-  string bindSrc = bindHead + "v): { return v; } else: { return 0; } } return 0; }\n";
+  string bindHead = "enum E { A(i32 x, i32 y), B } export i32 f(E e) { match (e) { A(v, ";
+  string bindSrc = bindHead + "v): { return v; } default: { return 0; } } return 0; }\n";
   i32[] bind = dumpTypeErrors(bindSrc.toBytes());
   t.eqI32(bind.len() / 3, 1, "one duplicate binding, and this many diagnostics");
   if (bind.len() >= 3) {
@@ -547,8 +547,8 @@ export string test_a_duplicate_binding_and_a_duplicate_else_report_at_the_duplic
   }
 
   string elseHead =
-      "enum E { A, B } export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } ";
-  string elseSrc = elseHead + "else: { return 3; } } return 0; }\n";
+      "enum E { A, B } export i32 f(E e) { match (e) { A: { return 1; } default: { return 2; } ";
+  string elseSrc = elseHead + "default: { return 3; } } return 0; }\n";
   i32[] dup = dumpTypeErrors(elseSrc.toBytes());
   t.isTrue(dup.len() >= 3, "a second `else` drew nothing at all");
   if (dup.len() >= 3) {
@@ -557,7 +557,7 @@ export string test_a_duplicate_binding_and_a_duplicate_else_report_at_the_duplic
 
   // And one `else` is not a duplicate, so that neither of the above is satisfied by refusing `else`.
   i32 fine = dumpTypeErrors(
-      ("enum E { A, B } export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } }"
+      ("enum E { A, B } export i32 f(E e) { match (e) { A: { return 1; } default: { return 2; } }"
        + " return 0; }\n").toBytes()).len() / 3;
   t.eqI32(fine, 0, "refused a match with a single else arm");
   return t.report();

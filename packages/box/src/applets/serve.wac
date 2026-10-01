@@ -49,9 +49,9 @@ void connection(Core core, Cli cli, i32 sock) {
     if (!s.ready) {
       // Not a whole request yet. More bytes, or the peer has gone.
       match (cli.recv(sock).wait()) {
-        case Data(bytes): { buffered = concat(buffered, bytes); }
-        case End: { return; }
-        case Failed(why): { core.warn("serve: " + why); return; }
+        Data(bytes): { buffered = concat(buffered, bytes); }
+        End: { return; }
+        Failed(why): { core.warn("serve: " + why); return; }
       }
       continue;
     }

@@ -137,9 +137,9 @@ export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
   bool reading = true;
   while (reading) {
     match (cli.recv(s.handle).wait()) {
-      case Data(got): { reply = reply + string.fromBytes(got); }
-      case End: { reading = false; }
-      case Failed(e): { reading = false; why = e; }
+      Data(got): { reply = reply + string.fromBytes(got); }
+      End: { reading = false; }
+      Failed(e): { reading = false; why = e; }
     }
   }
   cli.closeSocket(s.handle);

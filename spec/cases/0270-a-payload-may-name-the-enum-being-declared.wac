@@ -8,8 +8,8 @@ enum Tree {
 }
 i32 sum(Tree t) {
   match (t) {
-    case Leaf(v):    return v;
-    case Node(l, r): return sum(l) + sum(r);
+    Leaf(v): { return v; }
+    Node(l, r): { return sum(l) + sum(r); }
   }
 }
 export i32 f() { return sum(Tree.Node(Tree.Leaf(1), Tree.Leaf(2))); }

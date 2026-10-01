@@ -44,8 +44,8 @@ export string greet(string who) { return "hello " + who; }
 export Point origin(i32 x, i32 y) { return Point(x, y); }
 export i32 area(Shape s) {
   match (s) {
-    case Circle(r): return 3 * r * r;
-    case Square(q): return q * q;
+    Circle(r): return 3 * r * r;
+    Square(q): return q * q;
   }
 }
 export i32[] doubled(i32[] xs) {

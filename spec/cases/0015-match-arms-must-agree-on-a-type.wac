@@ -3,5 +3,5 @@
 enum Shape { Point, Circle(f64 radius) }
 export f64 f() {
   Shape s = Shape.Point;
-  return match (s) { case Point: 0.0, else: "x" };
+  return match (s) { Point: 0.0, default: "x" };
 }

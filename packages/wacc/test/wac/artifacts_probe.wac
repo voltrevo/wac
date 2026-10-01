@@ -4,7 +4,7 @@
 // package's tests are about the *artefacts* — the wasm wacc emits, or the glue its bindgen writes —
 // rather than about running the program, and every one of them starts by compiling a `Map` of
 // sources. Written once here rather than per file, because the three things that make it correct
-// are easy to leave out and each failure looks like something else:
+// are easy to leave out and each failure looks like something default:
 //
 //   - **the checker runs first.** Asking only what the emitter declined builds a program with type
 //     errors as long as the emitter can guess its way through, and the module then fails validation

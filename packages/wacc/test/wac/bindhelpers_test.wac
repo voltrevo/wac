@@ -116,7 +116,7 @@ export string test_a_string_an_enum_and_a_method_reach_the_host_under_the_names_
     "enum Shape { Circle(f64 r), Empty }\n" +
     "struct Counter { i32 n; i32 get(const this) { return this.n; } " +
     "Counter create(i32 v) { return Counter(v); } }\n" +
-    "export f64 radiusOf(Shape s) { return match (s) { case Circle(r): r, else: 0.0 }; }\n" +
+    "export f64 radiusOf(Shape s) { return match (s) { Circle(r): r, default: 0.0 }; }\n" +
     "export i32 use(Counter c) { return c.get(); }\n" +
     "export string echo(string s) { return s; }\n");
 

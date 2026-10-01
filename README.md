@@ -62,8 +62,8 @@ export string main() {
   // Option<string> name = Option.Some("Alice and Bob");
 
   return "Hello, " + match (name) {
-    case Some(v): v,
-    case None: "world"
+    Some(v): v,
+    None: "world"
   } + "!";
 }
 

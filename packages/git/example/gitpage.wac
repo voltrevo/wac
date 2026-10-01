@@ -160,14 +160,14 @@ export i32 page(Core core, Cli cli, Page page) {
       page.setText("note", "reading " + f.name + "…").wait();
       i64 began = core.monotonicNanos().wait();
       match (indexPack(f.bytes)) {
-        case Unindexable(why): {
+        Unindexable(why): {
           // Said, not swallowed. A file that is not a pack is the commonest thing to drop here, and
           // "nothing happened" would leave the reader with no idea which of us was wrong.
           page.setText("note", "not a packfile this can read: " + why).wait();
           page.setText("detail", "").wait();
           continue;
         }
-        case Thin(bases): {
+        Thin(bases): {
           // A thin pack is a real thing to be handed — it is what a server sends an incremental
           // fetch — and it cannot be read alone, because its deltas point at objects that are not
           // in it. Naming that is more useful than refusing.
@@ -177,7 +177,7 @@ export i32 page(Core core, Cli cli, Page page) {
           page.setText("detail", "").wait();
           continue;
         }
-        case Built(built): {
+        Built(built): {
           idx = built;
           packBytes = f.bytes;
           i64 took = (core.monotonicNanos().wait() - began) / 1000000;
@@ -222,8 +222,8 @@ Vec<string> commitsIn(Page page, u8[] pack, PackIndex idx) {
     u8[] name = u8[20]();
     for (i32 k = 0; k < 20; k++) { name[k] = idx.names[i * 20 + k]; }
     match (objectNamed(p, name)) {
-      case Absent(why): { }
-      case Found(kind, data): {
+      Absent(why): { }
+      Found(kind, data): {
         if (kind == 1) {
           commits = commits + 1;
           if (found.len() < SHOWN) { found.push(idx.hexAt(i)); }
@@ -270,11 +270,11 @@ void detail(Page page, u8[] pack, PackIndex idx, string hex) {
   for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
 
   match (objectNamed(p, name)) {
-    case Absent(why): { page.setText("detail", "could not read it: " + why).wait(); }
-    case Found(kind, data): {
+    Absent(why): { page.setText("detail", "could not read it: " + why).wait(); }
+    Found(kind, data): {
       match (parseCommit(data)) {
-        case Malformed(why): { page.setText("detail", "not a commit: " + why).wait(); }
-        case Understood(c): {
+        Malformed(why): { page.setText("detail", "not a commit: " + why).wait(); }
+        Understood(c): {
           // Names are twenty raw bytes here, not text — `hexOf` is where they become readable, and
           // doing it at the edge rather than in the parser is why `objectNamed` can compare them
           // without allocating.
@@ -309,11 +309,11 @@ string treeListing(Pack p, PackIndex idx, string hex) {
   u8[] name = u8[20]();
   for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
   match (objectNamed(p, name)) {
-    case Absent(why): { return "  (unreadable: " + why + ")\n"; }
-    case Found(kind, data): {
+    Absent(why): { return "  (unreadable: " + why + ")\n"; }
+    Found(kind, data): {
       match (parseTree(data)) {
-        case Bad(why): { return "  (not a tree: " + why + ")\n"; }
-        case Ok(entries): {
+        Bad(why): { return "  (not a tree: " + why + ")\n"; }
+        Ok(entries): {
           string out = "";
           for (i32 i = 0; i < entries.len(); i++) {
             Entry e = entries.get(i);

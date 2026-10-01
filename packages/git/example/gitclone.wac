@@ -18,7 +18,7 @@
 // ## Three things a clone needs that a fetch does not
 //
 // **A `.git` that git recognises.** `HEAD` as a symbolic ref, the branch under `refs/heads/`, and
-// `objects/pack/` for the pack to live in. Nothing else: no config, no logs, no description. git reads a
+// `objects/pack/` for the pack to live in. Nothing default: no config, no logs, no description. git reads a
 // repository with those three and no more.
 //
 // **The pack named the way git names it.** `pack-<hash>.pack` where the hash is the pack's own trailing
@@ -111,11 +111,11 @@ export i32 main(Core core, Cli cli) {
   string branch = "";
   string caps = "";
   match (parseAdvertisement(refs.body)) {
-    case Garbled(why): {
+    Garbled(why): {
       core.warn("gitclone: the advertisement did not parse: " + why);
       return 1;
     }
-    case Said(ad): {
+    Said(ad): {
       for (i32 i = 0; i < ad.refs.len(); i++) {
         AdRef one = ad.refs.get(i);
         if (one.name == "HEAD") { head = one.target; }
@@ -151,11 +151,11 @@ export i32 main(Core core, Cli cli) {
   }
   u8[] pack = u8[0]();
   match (findPack(got.body)) {
-    case NoPack(why): {
+    NoPack(why): {
       core.warn("gitclone: " + why);
       return 1;
     }
-    case Packfile(bytes): { pack = bytes; }
+    Packfile(bytes): { pack = bytes; }
   }
   Vec<u8[]> cuts = shallowsIn(got.body);
 
@@ -164,7 +164,7 @@ export i32 main(Core core, Cli cli) {
   for (i32 i = 0; i < 20; i++) { checksum[i] = pack[pack.len() - 20 + i]; }
   string stem = gitDir + "/objects/pack/pack-" + hexOf(checksum);
   match (indexPack(pack)) {
-    case Unindexable(why): {
+    Unindexable(why): {
       core.warn("gitclone: the pack could not be indexed: " + why);
       return 1;
     }
@@ -172,12 +172,12 @@ export i32 main(Core core, Cli cli) {
     // `have`, so the server has nothing to delta against and sends a complete pack; a thin one would mean
     // it deltified against an object we never claimed. `completePack` is what repairs one, and the caller
     // that will need it is an incremental fetch, which is not this program.
-    case Thin(bases): {
+    Thin(bases): {
       core.warn("gitclone: the server sent a thin pack, wanting " + itoa(bases.len())
         + " object(s) we did not ask about");
       return 1;
     }
-    case Built(idx): {
+    Built(idx): {
       Change wrotePack = fs.writeFile(stem + ".pack", pack);
       if (!wrotePack.ok()) {
         core.warn("gitclone: cannot write the pack: " + wrotePack.message);
@@ -215,22 +215,22 @@ export i32 main(Core core, Cli cli) {
 
   // The working tree, which is step 4's code doing step 4's job on somebody else's repository.
   match (openRepo(fs, gitDir, dir)) {
-    case NoRepo(why): {
+    NoRepo(why): {
       core.warn("gitclone: the repository we just wrote does not open: " + why);
       return 1;
     }
-    case Opened(repo): {
+    Opened(repo): {
       u8[]? tree = treeOfCommit(repo, head);
       if (tree is null) {
         core.warn("gitclone: HEAD is not a commit, or names no tree");
         return 1;
       }
       match (checkout(repo, tree!, dir)) {
-        case Stopped(why): {
+        Stopped(why): {
           core.warn("gitclone: " + why);
           return 1;
         }
-        case Files(count, modesUnset, linksAsFiles): {
+        Files(count, modesUnset, linksAsFiles): {
           core.log(itoa(count) + " files on " + branch);
           if (linksAsFiles > 0) {
             core.warn("gitclone: " + itoa(linksAsFiles) +

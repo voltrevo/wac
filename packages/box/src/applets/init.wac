@@ -199,15 +199,15 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
         if (!serveOn(chans.get(kind)!, fs)) { chans.set(kind, null); }
       } else if (kind == -2) {
         match (outT.wait()) {
-          case Data(bytes): { cli.write(bytes); outT = cli.recv(h); }
-          case End: { reading = false; }
-          case Failed(why): { reading = false; }
+          Data(bytes): { cli.write(bytes); outT = cli.recv(h); }
+          End: { reading = false; }
+          Failed(why): { reading = false; }
         }
       } else {
         match (errT.wait()) {
-          case Data(bytes): { cli.writeErr(bytes); errT = cli.recv(eh); }
-          case End: { complaining = false; }
-          case Failed(why): { complaining = false; }
+          Data(bytes): { cli.writeErr(bytes); errT = cli.recv(eh); }
+          End: { complaining = false; }
+          Failed(why): { complaining = false; }
         }
       }
     }

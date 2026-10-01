@@ -63,8 +63,8 @@ JsonObject jsonObject(Cli cli, string path) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -72,15 +72,15 @@ JsonArray arrayField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
 JsonObject objectAt(JsonArray a, i32 i) {
   match (a.get(i)) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -96,8 +96,8 @@ i32 numberField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Number(value, raw): { return value as~ i32; }
-    else: { trap; }
+    Number(value, raw): { return value as~ i32; }
+    default: { trap; }
   }
 }
 
@@ -105,8 +105,8 @@ string stringField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { trap; }
   }
 }
 
@@ -114,8 +114,8 @@ bool boolField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Bool(value): { return value; }
-    else: { trap; }
+    Bool(value): { return value; }
+    default: { trap; }
   }
 }
 

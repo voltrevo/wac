@@ -127,8 +127,8 @@ Program[] cases() {
          "enum Shape { Circle(i32 r), Square(i32 s) }\n" +
          "export i32 area(Shape s) {\n" +
          "  match (s) {\n" +
-         "    case Circle(r): return 3 * r * r;\n" +
-         "    case Square(q): return q * q;\n" +
+         "    Circle(r): return 3 * r * r;\n" +
+         "    Square(q): return q * q;\n" +
          "  }\n" +
          "}\n"),
     Program("a numeric array in both directions",
@@ -151,8 +151,8 @@ Program[] cases() {
          "export Point origin(i32 x, i32 y) { return Point(x, y); }\n" +
          "export i32 area(Shape s) {\n" +
          "  match (s) {\n" +
-         "    case Circle(r): return 3 * r * r;\n" +
-         "    case Square(q): return q * q;\n" +
+         "    Circle(r): return 3 * r * r;\n" +
+         "    Square(q): return q * q;\n" +
          "  }\n" +
          "}\n" +
          "export u8[] bytes(u8[] b) { return b; }\n"));

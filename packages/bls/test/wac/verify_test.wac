@@ -42,15 +42,15 @@ u8[] un(string h) {
 
 string memberText(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return ""; }
       match (found!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        else: { return ""; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -59,8 +59,8 @@ bool memberBool(JsonValue v, string key, bool missing) {
   JsonValue? found = member(v, key);
   if (found is null) { return missing; }
   match (found!) {
-    case Bool(value): { return value; }
-    else: { return missing; }
+    Bool(value): { return value; }
+    default: { return missing; }
   }
 }
 
@@ -73,8 +73,8 @@ JsonObject? fixture(T t, Cli cli, string path) {
   t.isTrue(!(doc is null), path + " did not parse");
   if (doc is null) { return null; }
   match (doc!) {
-    case Object(members): { return members; }
-    else: { t.fail(path + " is not an object"); return null; }
+    Object(members): { return members; }
+    default: { t.fail(path + " is not an object"); return null; }
   }
 }
 

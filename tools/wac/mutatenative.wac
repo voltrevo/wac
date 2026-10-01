@@ -33,29 +33,29 @@ export enum Verdict {
 
   bool isKilled(const this) {
     return match (this) {
-      case Killed: true, case Survived: false, case NoTestsHere: false, case Abort(_): false
+      Killed: true, Survived: false, NoTestsHere: false, Abort(_): false
     };
   }
 
   bool isAbort(const this) {
     return match (this) {
-      case Abort(_): true, case Killed: false, case Survived: false, case NoTestsHere: false
+      Abort(_): true, Killed: false, Survived: false, NoTestsHere: false
     };
   }
 
   bool isSurvived(const this) {
     return match (this) {
-      case Survived: true, case Killed: false, case NoTestsHere: false, case Abort(_): false
+      Survived: true, Killed: false, NoTestsHere: false, Abort(_): false
     };
   }
 
   /** The word a report prints, and what `mergeRuns`'s decision table is written against. */
   string word(const this) {
     return match (this) {
-      case Survived: "survived",
-      case Killed: "killed",
-      case NoTestsHere: "no-tests-here",
-      case Abort(_): "abort"
+      Survived: "survived",
+      Killed: "killed",
+      NoTestsHere: "no-tests-here",
+      Abort(_): "abort"
     };
   }
 }
@@ -282,10 +282,10 @@ export Outcome outcomeOf(bool timedOut, Verdict[] verdicts, bool notCovered) {
   string why = "";
   if (!killed && !v.isSurvived()) {
     why = match (v) {
-      case NoTestsHere: "nothing in that scope ran",
-      case Abort(reason): reason,
-      case Killed: "",
-      case Survived: ""
+      NoTestsHere: "nothing in that scope ran",
+      Abort(reason): reason,
+      Killed: "",
+      Survived: ""
     };
   }
   return Outcome(killed, notCovered && !killed, why);

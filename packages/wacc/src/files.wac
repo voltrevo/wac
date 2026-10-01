@@ -48,21 +48,21 @@ export string[] importSpecsOf(string path, u8[] src) {
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Import(pathTok, prefixTok, items): { if (pathTok >= 0) { n = n + 1; } }
-      else: { }
+      Import(pathTok, prefixTok, items): { if (pathTok >= 0) { n = n + 1; } }
+      default: { }
     }
   }
   string[] out = string[n](fill: "");
   i32 at = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Import(pathTok, prefixTok, items): {
+      Import(pathTok, prefixTok, items): {
         if (pathTok < 0) { continue; }
         if (at >= out.len()) { continue; }
         out[at] = string.fromBytes(stringLiteralBytes(src, lexed, pathTok));
         at = at + 1;
       }
-      else: { }
+      default: { }
     }
   }
   return out;

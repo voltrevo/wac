@@ -82,8 +82,8 @@ string lowerHex(u8[] b) {
 /** The named member of `v`, or `null` when `v` is not an object or has no such member. */
 export JsonValue? member(JsonValue v, string key) {
   match (v) {
-    case Object(members): { return members.getStr(key); }
-    else: { return null; }
+    Object(members): { return members.getStr(key); }
+    default: { return null; }
   }
 }
 
@@ -92,8 +92,8 @@ export string memberText(JsonValue v, string key) {
   JsonValue? found = member(v, key);
   if (found is null) { return ""; }
   match (found!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { return ""; }
   }
 }
 
@@ -108,8 +108,8 @@ export i32 memberI32(JsonValue v, string key, i32 missing) {
   JsonValue? found = member(v, key);
   if (found is null) { return missing; }
   match (found!) {
-    case Number(value, _): { return value as~ i32; }
-    else: { return missing; }
+    Number(value, _): { return value as~ i32; }
+    default: { return missing; }
   }
 }
 
@@ -118,8 +118,8 @@ export JsonArray? memberArray(JsonValue v, string key) {
   JsonValue? found = member(v, key);
   if (found is null) { return null; }
   match (found!) {
-    case Array(items): { return items; }
-    else: { return null; }
+    Array(items): { return items; }
+    default: { return null; }
   }
 }
 

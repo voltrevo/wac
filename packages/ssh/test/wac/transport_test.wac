@@ -32,9 +32,9 @@ string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
 i32 unframeCode(u8[] buf) {
   Framed f = unframe(buf, 0, buf.len());
   match (f.status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 
@@ -42,9 +42,9 @@ i32 unframeCode(u8[] buf) {
 i32 scanCode(u8[] buf) {
   Version v = scanVersion(buf, 0, buf.len());
   match (v.status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 

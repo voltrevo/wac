@@ -34,9 +34,9 @@ async void serve(Core core, Cli cli, i32 sock, i32[] served) {
     u8[] echo = u8[0]();
     bool over = false;
     match (r) {
-      case Data(bytes): { echo = bytes; }
-      case End: { over = true; }
-      case Failed(why): { over = true; }
+      Data(bytes): { echo = bytes; }
+      End: { over = true; }
+      Failed(why): { over = true; }
     }
     if (over) { cli.closeSocket(sock); return; }
     bool ok = await cli.send(sock, echo);
@@ -56,7 +56,7 @@ async void accepting(Core core, Cli cli, i32 listener, i32 n, i32[] served) {
 string readBack(Cli cli, i32 handle) {
   Read r = cli.recv(handle).wait();
   string out = "";
-  match (r) { case Data(x): { out = string.fromBytes(x); } else: { } }
+  match (r) { Data(x): { out = string.fromBytes(x); } default: { } }
   return out;
 }
 

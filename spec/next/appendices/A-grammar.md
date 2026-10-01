@@ -112,7 +112,7 @@ statement      = block
                | local_decl | destructure | assign
                | if_stmt | while_stmt | do_while | for_stmt | for_in | switch_stmt
                | static_if | static_for
-               | match , ";"?                                (* a match whose arms are blocks *)
+               | match_stmt
                | "return" , [ expr ] , ";"
                | "break" , ";" | "continue" , ";"
                | "trap" , [ expr ] , ";"                       (* a string message: 26 *)
@@ -218,8 +218,10 @@ string_lit     = STRING | BLOCK_STRING | STR_HEAD , expr , { STR_MID , expr } , 
 ### `match` and patterns
 
 ```ebnf
-match          = "match" , "(" , expr , ")" , "{" , [ arm , { "," , arm } , [ "," ] ] , "}" ;
-arm            = ( pattern | "null" | "default" ) , ":" , ( expr | block ) ;
+match_stmt     = "match" , "(" , expr , ")" , "{" , { arm_head , block } , "}" ;      (* block arms *)
+match          = "match" , "(" , expr , ")" , "{" ,                                    (* value arms *)
+                 [ arm_head , expr , { "," , arm_head , expr } , [ "," ] ] , "}" ;
+arm_head       = ( pattern | "null" | "default" ) , ":" ;
 static_match   = "static_match" , "(" , type , ")" , "{" , [ static_arm , { "," , static_arm } , [ "," ] ] , "}" ;
 static_arm     = ( type | "default" ) , ":" , expr ;                          (* 31 *)
 

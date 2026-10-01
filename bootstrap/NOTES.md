@@ -364,9 +364,9 @@ tested.
 Six, and they are the useful half of this repository. Each produced a module that assembled, that
 the engine accepted, and that was wrong.
 
-- **A `match`'s default arm went where it was written.** `else:` has no tag test, so wherever its
+- **A `match`'s default arm went where it was written.** `default:` has no tag test, so wherever its
   code sits is where the match stops — and wacc's own `typeOfE` writes `match (callee.kind) {
-  else: … case Member(…): … }`. Every method call took the default and came back untyped, so
+  default: … Member(…): … }`. Every method call took the default and came back untyped, so
   `.len()` on an array was declined by a compiler that had read the arm for it and jumped over it.
   Sixteen spec cases turned on this one.
 - **An integer literal wider than a token's value.** wacc writes `4503599627370496` — two to the

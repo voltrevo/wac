@@ -64,7 +64,7 @@
 // What the adoption moved, for anyone reading the diff: `deno.json`'s two tasks, `tools/push.sh`'s
 // `guard` and `free` helpers, and `docs/development.md`'s link to the worker-count table — which is
 // now the docstring on `defaultJobs` below, carried over so that deleting a file did not delete the
-// measurements in it. `tools/suiteGate.ts` keeps `announceHeavy` and nothing else: its lock,
+// measurements in it. `tools/suiteGate.ts` keeps `announceHeavy` and nothing default: its lock,
 // thresholds, cooldown and refusal are gone, because they are here. `tools/suiteGuard.ts` stays
 // whole — `SUITE_ENV` and `refuseIfNested` have two callers that are still TypeScript, both of them
 // `mutate`.
@@ -1484,7 +1484,7 @@ export i32 main(Core core, Cli cli) {
   // one day each ran the whole thing twice. A run that starts should be a run that can land.
   //
   // The pid is the caller's, because the caller is what stays alive; see `takeAs`. `--queue` waits for
-  // the *lock* and for nothing else: a machine short of memory, or an agent inside its cooldown, is
+  // the *lock* and for nothing default: a machine short of memory, or an agent inside its cooldown, is
   // not a queue to join. Refusing is still the default and still the right answer — the useful
   // response to "someone else is pushing" is to go and do something else.
   if (sub == "lock") {

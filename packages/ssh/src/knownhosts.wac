@@ -72,10 +72,10 @@ export Verdict lookUp(u8[] file, u8[] host, i32 port, u8[] keyType, u8[] keyBlob
     Verdict v = checkLine(file, at, lineEnd, host, port, keyType, keyBlob);
     match (v) {
       // A revocation is final and outranks anything else in the file.
-      case Revoked: return Verdict.Revoked;
-      case Match: { matched = true; sawHost = true; }
-      case Mismatch: { sawHost = true; }
-      else: {}
+      Revoked: { return Verdict.Revoked; }
+      Match: { matched = true; sawHost = true; }
+      Mismatch: { sawHost = true; }
+      default: {}
     }
     at = stop + 1;
   }

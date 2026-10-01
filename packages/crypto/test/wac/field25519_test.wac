@@ -17,7 +17,7 @@
 //
 // Every law here holds in *any* commutative ring, so they are anchored by three values
 // that name the modulus — (p-1)+1 == 0, p encodes as zero, p+1 encodes as one. Reducing
-// modulo 2^255-18 instead is caught by those anchors and by nothing else: the ring laws
+// modulo 2^255-18 instead is caught by those anchors and by nothing default: the ring laws
 // pass, because it is a perfectly consistent ring.
 //
 // But a reduction that stops before it is canonical passes the laws *and* the anchors *and* forty

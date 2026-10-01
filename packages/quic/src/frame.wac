@@ -448,11 +448,11 @@ export Reassembly cryptoStream(u8[] payload) {
     Next n = next(payload, at);
     if (n.size == 0) { break; }
     match (n.frame) {
-      case Crypto(off, data): {
+      Crypto(off, data): {
         i64 last = off + (data.len() as i64);
         if (last > end) { end = last; }
       }
-      else: {}
+      default: {}
     }
     at = at + n.size;
   }
@@ -471,14 +471,14 @@ export Reassembly cryptoStream(u8[] payload) {
     Next n = next(payload, at);
     if (n.size == 0) { break; }
     match (n.frame) {
-      case Crypto(off, data): {
+      Crypto(off, data): {
         i32 base = off as~ i32;
         for (i32 i = 0; i < data.len(); i++) {
           out[base + i] = data[i];
           have[base + i] = true;
         }
       }
-      else: {}
+      default: {}
     }
     at = at + n.size;
   }
@@ -568,14 +568,14 @@ export StreamData streamFrames(u8[] payload, i64 streamId) {
     Next n = nextIn(payload, at, EPOCH_1RTT());
     if (n.size == 0) { break; }
     match (n.frame) {
-      case Stream(id, offset, data, f): {
+      Stream(id, offset, data, f): {
         if (id == streamId) {
           i64 last = offset + (data.len() as i64);
           if (last > end) { end = last; }
           if (f) { fin = true; }
         }
       }
-      else: {}
+      default: {}
     }
     at = at + n.size;
   }
@@ -589,7 +589,7 @@ export StreamData streamFrames(u8[] payload, i64 streamId) {
     Next n = nextIn(payload, at, EPOCH_1RTT());
     if (n.size == 0) { break; }
     match (n.frame) {
-      case Stream(id, offset, data, f): {
+      Stream(id, offset, data, f): {
         if (id == streamId) {
           i32 base = offset as~ i32;
           for (i32 i = 0; i < data.len(); i++) {
@@ -598,7 +598,7 @@ export StreamData streamFrames(u8[] payload, i64 streamId) {
           }
         }
       }
-      else: {}
+      default: {}
     }
     at = at + n.size;
   }

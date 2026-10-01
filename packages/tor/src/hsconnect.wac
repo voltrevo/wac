@@ -253,7 +253,7 @@ i32 introduceVia(Core core, Cli cli, Network net, IntroPoint p, u8[] subcred, u8
 i32 afterJoin(Core core, Cli cli, Session rend, i32 port) {
   // ── 4. An ordinary stream, to an extraordinary last hop ─────────────────────
   // **The address is empty.** A BEGIN cell on a rendezvous circuit carries `":port"` and nothing
-  // else: the service is the far end, so there is no host to name, and tor's
+  // default: the service is the far end, so there is no host to name, and tor's
   // `connection_ap_handshake_send_begin` writes the empty string for any circuit that is not a
   // general one. Sending `127.0.0.1:port` instead is accepted by nothing and refused silently — the
   // service simply never answers, which reads as a broken circuit.

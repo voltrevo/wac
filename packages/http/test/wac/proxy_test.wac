@@ -27,27 +27,27 @@ import { ProxyAt, ProxyReply, parseProxy, connectRequest, readReply } from "../.
 /** The variant's name, for a message that says what came back rather than what did not. */
 string tagOf(ProxyReply r) {
   match (r) {
-    case NeedMore: { return "NeedMore"; }
-    case Established(_): { return "Established"; }
-    case Refused(_): { return "Refused"; }
-    case NotHttp(_): { return "NotHttp"; }
+    NeedMore: { return "NeedMore"; }
+    Established(_): { return "Established"; }
+    Refused(_): { return "Refused"; }
+    NotHttp(_): { return "NotHttp"; }
   }
 }
 
 /** Where the tunnel starts, or `-1` when the reply is not an established one. */
 i32 startsAt(ProxyReply r) {
   match (r) {
-    case Established(at): { return at; }
-    else: { return -1; }
+    Established(at): { return at; }
+    default: { return -1; }
   }
 }
 
 /** The proxy's own first line, for the two variants that carry one, or `""`. */
 string lineOf(ProxyReply r) {
   match (r) {
-    case Refused(line): { return line; }
-    case NotHttp(line): { return line; }
-    else: { return ""; }
+    Refused(line): { return line; }
+    NotHttp(line): { return line; }
+    default: { return ""; }
   }
 }
 

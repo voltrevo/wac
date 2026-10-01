@@ -174,7 +174,7 @@ Pin[] pins() {
         "`slice` asked for more bytes than remain. Its callers all check the length first — those are " +
         "the thirty-two guards `test/wac/truncated_test.wac` now sweeps — so this is the belt under " +
         "those braces and reaching it means one of them is wrong."),
-    Pin("packages/quic/src/frame.wac", 601, "else: {}", false,
+    Pin("packages/quic/src/frame.wac", 601, "default: {}", false,
         "The catch-all arm of a match over `Frame`, for a variant the walk does not act on. Every " +
         "variant the tests produce is named above it."),
     Pin("packages/quic/src/keys.wac", 65, "if (take > room) { take = room; }", false,

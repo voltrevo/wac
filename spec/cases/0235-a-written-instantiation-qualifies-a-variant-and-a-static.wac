@@ -8,7 +8,7 @@
 // from: issues/lang/0088
 enum Maybe<T> {
   Just(T v), Absent
-  T orElse(const this, T d) { return match (this) { case Just(v): v, case Absent: d }; }
+  T orElse(const this, T d) { return match (this) { Just(v): v, Absent: d }; }
 }
 
 struct Cell<T> {

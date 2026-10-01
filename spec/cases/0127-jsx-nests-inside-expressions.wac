@@ -6,17 +6,17 @@ import { Attr, Node } from "core";
 
 i32 kidsOf(Node n) {
   match (n) {
-    case Element(tag, attrs, ks): return ks.len();
-    case Text(t): return -1;
-    case Fragment(ks): return ks.len();
+    Element(tag, attrs, ks): { return ks.len(); }
+    Text(t): { return -1; }
+    Fragment(ks): { return ks.len(); }
   }
 }
 
 string tagOf(Node n) {
   match (n) {
-    case Element(tag, attrs, ks): return tag;
-    case Text(t): return "";
-    case Fragment(ks): return "";
+    Element(tag, attrs, ks): { return tag; }
+    Text(t): { return ""; }
+    Fragment(ks): { return ""; }
   }
 }
 
@@ -27,9 +27,9 @@ export i32 run() {
   // The classic one: `>` inside `{}` is a comparison, not the end of the tag.
   Node cmp = <div a={x > 1 ? "y" : "n"}/>;
   match (cmp) {
-    case Element(tag, attrs, ks): { if (attrs[0].value != "y") { return 1; } }
-    case Text(t): return 2;
-    case Fragment(ks): return 3;
+    Element(tag, attrs, ks): { if (attrs[0].value != "y") { return 1; } }
+    Text(t): { return 2; }
+    Fragment(ks): { return 3; }
   }
   // An element is an expression, so it nests in one, is an argument, and is a ternary's arm.
   Node inner = <div>{<b/>}</div>;

@@ -29,17 +29,17 @@ export i32 main(Core core, Cli cli) {
   while (true) {
     Read got = cli.recv(peer.handle).wait();
     match (got) {
-      case Data(bytes): {
+      Data(bytes): {
         core.log("echo: " + itoa(bytes.len()) + " bytes back");
         cli.send(peer.handle, bytes).wait();
       }
-      case End: {
+      End: {
         core.log("echo: the client hung up");
         cli.closeSocket(peer.handle);
         cli.closeSocket(listener.handle);
         return 0;
       }
-      case Failed(why): {
+      Failed(why): {
         core.warn("echo: " + why);
         return 1;
       }

@@ -46,8 +46,8 @@ export string test_option_match_is_exhaustive() {
   // compiler checks covers every variant.
   Option<i32> o = Option.Some(7);
   i32 got = match (o) {
-    case Some(v): v * 3,
-    case None: -1,
+    Some(v): v * 3,
+    None: -1,
   };
   t.eqI32(got, 21, "match binds the payload");
   return t.report();

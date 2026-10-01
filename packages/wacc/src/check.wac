@@ -394,10 +394,10 @@ export i32 errLambdaSignature() { return 74; }
 export i32 errMethodTypeParams() { return 75; }
 
 /**
- * `case C(p, q)` where `C` carries one field: the arm binds names the variant does not have.
+ * `C(p, q)` where `C` carries one field: the arm binds names the variant does not have.
  *
  * The reference reports it at the `case` keyword and only when the count is *non-zero* and wrong —
- * binding nothing is how a payload is ignored, and `case C(_)` binds one name that happens to be a
+ * binding nothing is how a payload is ignored, and `C(_)` binds one name that happens to be a
  * discard. Measured against it before writing this, because "fewer names than fields" is the half a
  * reader would guess is allowed and is not.
  *
@@ -1272,7 +1272,7 @@ export struct C {
    * Which enum each variant belongs to, and how many payload fields it has.
    *
    * A variant is *also* declared as a struct under its bare name, because that is how `is Circle`
-   * and `case Circle:` write it and how a narrowed value finds its payload. That spelling cannot
+   * and `Circle:` write it and how a narrowed value finds its payload. That spelling cannot
    * tell two enums apart: `enum Opened { Ok(i32 fd) }` beside `enum Found { Ok(i32 at) }` is one
    * `Ok` in the struct table holding both payloads, so asking it how many arguments `Ok` takes
    * answers two and belongs to neither. Recorded here per declaration instead — no de-duplication,
@@ -1482,7 +1482,7 @@ export struct C {
    *
    * `locals` sizes the four that are *per function* — the name table and what goes beside it, which
    * `clearScope` empties between functions, so it only ever holds one body's worth. `decls` sizes
-   * everything else: structs, fields, methods, variants, functions, which accumulate across every
+   * everything default: structs, fields, methods, variants, functions, which accumulate across every
    * file the entry imports.
    *
    * They were one number, and it was the entry file's token count. Sizing both by the closure's
@@ -2471,14 +2471,14 @@ string tokenText(C c, i32 t) {
  */
 bool bindingAsType(C c, Ty elem) {
   match (elem.kind) {
-    case Named(etok, eargs): {
+    Named(etok, eargs): {
       if (eargs.len() > 0) { return false; }
       string ebase = c.canon(c.renamed(tokenText(c, etok)));
       if (!c.scopeTypes) { return false; }
       if (c.isStruct(ebase) || c.isEnum(ebase) || c.isVariantName(ebase)) { return false; }
       return !c.isImportOnlyName(ebase) && c.isDeclaredName(ebase);
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -2496,12 +2496,12 @@ bool bindingAsType(C c, Ty elem) {
 bool reportBindingAsType(C c, Ty elem) {
   if (!bindingAsType(c, elem)) { return false; }
   match (elem.kind) {
-    case Named(etok, eargs): {
+    Named(etok, eargs): {
       c.reportTok(errUndefinedType(), etok,
                   "unknown type '" + c.canon(c.renamed(tokenText(c, etok))) + "'");
       return true;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -2515,8 +2515,8 @@ bool knownTypeName(C c, string base) {
 
 export string typeOfTy(C c, Ty t) {
   match (t.kind) {
-    case Prim(tok): { return tokenText(c, tok); }
-    case Named(tok, typeArgs): {
+    Prim(tok): { return tokenText(c, tok); }
+    Named(tok, typeArgs): {
       // A generic instantiation spells itself. `Box<i32>` and `Box<f64>` are different types and the
       // model here is that a type *is* its canonical name, so the name has to carry the arguments —
       // an earlier version returned unknown for all of them, which made every generic invisible.
@@ -2611,7 +2611,7 @@ export string typeOfTy(C c, Ty t) {
     // `i32[]` and `P?` are names too, built from the name inside. An element or inner type this
     // slice cannot spell makes the whole thing unspellable rather than half-named: `Box<i32>[]` is
     // not `[]`.
-    case Arr(elem): {
+    Arr(elem): {
       // A name inside `[]` is a type or the program is wrong — `reportBindingAsType`. This is how
       // `issues/lang/0265c` is *seen* rather than what causes it: `a[0]()` reads as constructing an
       // array of the type `a` because nothing at parse time separates a type name from a variable, and
@@ -2622,7 +2622,7 @@ export string typeOfTy(C c, Ty t) {
       if (inner == typeNone()) { return typeNone(); }
       return inner + "[]";
     }
-    case Nullable(inner): {
+    Nullable(inner): {
       // The same hole as `Arr` above, and it was silent in the same way: `i32 zz = 1; zz? q = null;`
       // drew nothing at all while the reference said `undefined type 'zz'`. Found by asking what the
       // siblings of the `[]` case were rather than by a second report.
@@ -2634,7 +2634,7 @@ export string typeOfTy(C c, Ty t) {
     // A funcref spells itself the way the reference words it — `fn(i32) -> i32` — so two of them are
     // the same type exactly when their parameters and return agree, which is what the language means
     // by assignable here. There is no variance: `fn(bool) -> i32` does not hold a `fn(i32) -> i32`.
-    case Funcref(ret, params): {
+    Funcref(ret, params): {
       string out = "fn(";
       // A `void` argument erases its parameter — see the substituting speller above.
       i32 wrote = 0;
@@ -2671,7 +2671,7 @@ export string typeOfTy(C c, Ty t) {
  */
 void checkCharLiteral(C c, Expr e) {
   match (e.kind) {
-    case IntLit(tok): {
+    IntLit(tok): {
       string lit = tokenText(c, tok);
       if (lit.len() < 2 || lit[0] != "'") { return; }
       string inner = lit.slice(1, lit.len() - 1);
@@ -2685,7 +2685,7 @@ void checkCharLiteral(C c, Expr e) {
         c.report(errCharLiteral(), e.line, e.col);
       }
     }
-    else: { }
+    default: { }
   }
 }
 
@@ -2705,11 +2705,11 @@ void checkCharLiteral(C c, Expr e) {
  */
 i32 tokenOfExpr(Expr e) {
   return match (e.kind) {
-    case Ident(tok): tok,
-    case IntLit(tok): tok,
-    case FloatLit(tok): tok,
-    case StrLit(tok): tok,
-    else: -1
+    Ident(tok): tok,
+    IntLit(tok): tok,
+    FloatLit(tok): tok,
+    StrLit(tok): tok,
+    default: -1
   };
 }
 
@@ -2723,29 +2723,29 @@ i32 tokenOfExpr(Expr e) {
  */
 i32 lastTokenOfExpr(Expr e) {
   return match (e.kind) {
-    case Ident(tok): tok,
-    case IntLit(tok): tok,
-    case FloatLit(tok): tok,
-    case StrLit(tok): tok,
-    case Member(obj, nameTok): nameTok,
-    case Binary(op, left, right): lastTokenOfExpr(right),
-    case Unary(op, operand): lastTokenOfExpr(operand),
-    else: -1
+    Ident(tok): tok,
+    IntLit(tok): tok,
+    FloatLit(tok): tok,
+    StrLit(tok): tok,
+    Member(obj, nameTok): nameTok,
+    Binary(op, left, right): lastTokenOfExpr(right),
+    Unary(op, operand): lastTokenOfExpr(operand),
+    default: -1
   };
 }
 
 /** The first token of an expression, following the left edge down. */
 i32 firstTokenOfExpr(Expr e) {
   return match (e.kind) {
-    case Ident(tok): tok,
-    case IntLit(tok): tok,
-    case FloatLit(tok): tok,
-    case StrLit(tok): tok,
-    case Member(obj, nameTok): firstTokenOfExpr(obj),
-    case Binary(op, left, right): firstTokenOfExpr(left),
-    case Index(arr, index): firstTokenOfExpr(arr),
-    case Call(callee, args, callTargs): firstTokenOfExpr(callee),
-    else: -1
+    Ident(tok): tok,
+    IntLit(tok): tok,
+    FloatLit(tok): tok,
+    StrLit(tok): tok,
+    Member(obj, nameTok): firstTokenOfExpr(obj),
+    Binary(op, left, right): firstTokenOfExpr(left),
+    Index(arr, index): firstTokenOfExpr(arr),
+    Call(callee, args, callTargs): firstTokenOfExpr(callee),
+    default: -1
   };
 }
 
@@ -2754,18 +2754,18 @@ i32 firstTokenOfLvalue(Lvalue lv) {
   return match (lv.kind) {
     // No `else`: the four variants are all of them, and wacc refuses a dead arm — which is the
     // checker catching this file the moment it was written.
-    case LIdent(tok): tok,
-    case LField(base, nameTok): firstTokenOfLvalue(base),
-    case LIndex(base, index): firstTokenOfLvalue(base),
-    case LUnwrap(base): firstTokenOfLvalue(base)
+    LIdent(tok): tok,
+    LField(base, nameTok): firstTokenOfLvalue(base),
+    LIndex(base, index): firstTokenOfLvalue(base),
+    LUnwrap(base): firstTokenOfLvalue(base)
   };
 }
 
 i32 lastTokenOfLvalue(Lvalue lv) {
   return match (lv.kind) {
-    case LIdent(tok): tok,
-    case LField(base, nameTok): nameTok,
-    else: -1
+    LIdent(tok): tok,
+    LField(base, nameTok): nameTok,
+    default: -1
   };
 }
 
@@ -2827,8 +2827,8 @@ void reportExpr(C c, i32 code, Expr e, string note) {
  */
 string shiftLiteralHint(C c, Expr e) {
   return match (e.kind) {
-    case Binary(op, left, right): shiftHintFor(c, op, left),
-    else: ""
+    Binary(op, left, right): shiftHintFor(c, op, left),
+    default: ""
   };
 }
 
@@ -2875,10 +2875,10 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   // defined on u32"*. At the operator's token, which is where the reference points too.
   if (want == "u32" || want == "u64") {
     match (e.kind) {
-      case Unary(op, operand): {
+      Unary(op, operand): {
         if (tokenText(c, op) == "-") { c.reportTok(errOperandKind(), op, ""); return; }
       }
-      else: { }
+      default: { }
     }
   }
   // A range complaint names the **literal**, where a family mismatch names the whole expression:
@@ -2905,8 +2905,8 @@ bool isPlainLiteral(C c, Expr e) {
 /** The literal under any signs — `1.0e40` in `-1.0e40`, and the expression itself otherwise. */
 Expr innermostLiteral(Expr e) {
   match (e.kind) {
-    case Unary(op, operand): { return innermostLiteral(operand); }
-    else: { return e; }
+    Unary(op, operand): { return innermostLiteral(operand); }
+    default: { return e; }
   }
 }
 
@@ -2970,7 +2970,7 @@ bool isHexText(string t) {
 
 bool integerLiteralFits(C c, string want, Expr e, bool negated) {
   match (e.kind) {
-    case IntLit(tok): {
+    IntLit(tok): {
       string text = tokenText(c, tok);
       i64 v = parseInt(text);
       // **A hex literal names bits, not a magnitude.** `0xFFFFFFFF` is how an `i32` of all ones is
@@ -3017,10 +3017,10 @@ bool integerLiteralFits(C c, string want, Expr e, bool negated) {
       return true;
     }
     // The sign is a unary operator, and which sign it is decides the bound.
-    case Unary(op, operand): {
+    Unary(op, operand): {
       return integerLiteralFits(c, want, operand, tokenKind(c, op) == kMinus() ? !negated : negated);
     }
-    else: { return true; }
+    default: { return true; }
   }
 }
 
@@ -3050,15 +3050,15 @@ bool literalFits(C c, string want, Expr e) {
   if (lit == litInteger()) { return integerLiteralFits(c, base, e, false); }
   if (base != "f32" || lit != litFloat()) { return true; }
   match (e.kind) {
-    case FloatLit(tok): {
+    FloatLit(tok): {
       // f32's largest finite value plus half an ulp: anything above it rounds to infinity, and
       // anything at or below it rounds to something an `f32` can hold.
       return floatLiteralValue(c, tok) <= 3.4028235677973366e38;
     }
     // The sign is a unary operator and the magnitude is what the range is about, so this asks the
     // same question one node down. The reference agrees: it reports at the literal, not at the `-`.
-    case Unary(op, operand): { return literalFits(c, want, operand); }
-    else: { return true; }
+    Unary(op, operand): { return literalFits(c, want, operand); }
+    default: { return true; }
   }
 }
 
@@ -3079,7 +3079,7 @@ i32 litFamily(C c, Expr e) {
   i32 direct = litKindOf(e);
   if (direct != litNone()) { return direct; }
   match (e.kind) {
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       i32 k = tokenKind(c, op);
       if (k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
           k == kAndAnd() || k == kOrOr()) {
@@ -3098,7 +3098,7 @@ i32 litFamily(C c, Expr e) {
     // `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a non-null reference and the reach
     // sweep lost `Ternary-cond`. The callers walk the expression either way now, which is the half of
     // `issues/lang/0145` that had to come first.
-    case Ternary(tcond, tthen, tels): {
+    Ternary(tcond, tthen, tels): {
       i32 tf = litFamily(c, tthen);
       if (tf == litNone() || tf == litNull()) { return litNone(); }
       return tf == litFamily(c, tels) ? tf : litNone();
@@ -3109,7 +3109,7 @@ i32 litFamily(C c, Expr e) {
      * spec/spec/enums.md `[§enum-match-expr-4wnq7bk]`: the arms unify *"exactly as a ternary's two
      * branches are (see control.md), and by the same code"*. The arm above was that code and this one
      * was missing, so the identical program was refused written with `?:` and accepted written with
-     * `match` — `string s = b ? 1 : 2;` reported, `string s = match (e) { case A: 1, else: 2 };`
+     * `match` — `string s = b ? 1 : 2;` reported, `string s = match (e) { A: 1, default: 2 };`
      * silent, along with every other family: string arms in an `i32` slot, bool arms in an `i32` slot,
      * integer arms in an `f64` slot that `f64 d = 1;` refuses on its own.
      *
@@ -3119,13 +3119,13 @@ i32 litFamily(C c, Expr e) {
      * the literal path picking it up. `issues/lang/0243a`.
      *
      * **Mixed integer and float arms stay unanswered**, exactly as a ternary's do: `1` and `2.5` are
-     * different families, so this returns `litNone()` and `f64 d = match (e) { case A: 1, else: 2.5 }`
+     * different families, so this returns `litNone()` and `f64 d = match (e) { A: 1, default: 2.5 }`
      * behaves as it did. Whether that program is legal is a question the spec answers twice and
      * differently — `enums.md` has literal arms taking the expected type, `control.md:256` has a float
      * literal typing as `f64` "regardless of context" — and picking one is not this arm's business.
      * Filed as the decision in `issues/lang/0243a`.
      */
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       if (arms.len() == 0) { return litNone(); }
       i32 mf = litNone();
       for (i32 i = 0; i < arms.len(); i++) {
@@ -3137,26 +3137,26 @@ i32 litFamily(C c, Expr e) {
       }
       return mf;
     }
-    else: { return litNone(); }
+    default: { return litNone(); }
   }
 }
 
 /** The family a literal expression belongs to, or `litNone` when the expression is not one. */
 export i32 litKindOf(Expr e) {
   match (e.kind) {
-    case IntLit(tok): { return litInteger(); }
-    case FloatLit(tok): { return litFloat(); }
-    case StrLit(tok): { return litString(); }
-    case BoolLit(value): { return litBool(); }
-    case NullLit: { return litNull(); }
+    IntLit(tok): { return litInteger(); }
+    FloatLit(tok): { return litFloat(); }
+    StrLit(tok): { return litString(); }
+    BoolLit(value): { return litBool(); }
+    NullLit: { return litNull(); }
     // `-1.0e40` is a float literal with a sign in front, and every rule that asks this means that.
     // Left out, the whole literal path skipped a negated one — so `f32 x = -1.0e40;` went unchecked
     // while `f32 x = 1.0e40;` did not, which is the sort of hole that only shows up beside its twin.
-    case Unary(op, operand): {
+    Unary(op, operand): {
       i32 inner = litKindOf(operand);
       return inner == litInteger() || inner == litFloat() ? inner : litNone();
     }
-    else: { return litNone(); }
+    default: { return litNone(); }
   }
 }
 
@@ -3211,37 +3211,37 @@ export bool acceptsLiteral(string want, i32 lit) {
  */
 i32 lvalueStartLine(Lvalue lv) {
   match (lv.kind) {
-    case LField(base, nameTok): { return lvalueStartLine(base); }
-    case LIndex(base, index): { return lvalueStartLine(base); }
-    case LUnwrap(base): { return lvalueStartLine(base); }
-    else: { return lv.line; }
+    LField(base, nameTok): { return lvalueStartLine(base); }
+    LIndex(base, index): { return lvalueStartLine(base); }
+    LUnwrap(base): { return lvalueStartLine(base); }
+    default: { return lv.line; }
   }
 }
 
 i32 lvalueStartCol(Lvalue lv) {
   match (lv.kind) {
-    case LField(base, nameTok): { return lvalueStartCol(base); }
-    case LIndex(base, index): { return lvalueStartCol(base); }
-    case LUnwrap(base): { return lvalueStartCol(base); }
-    else: { return lv.col; }
+    LField(base, nameTok): { return lvalueStartCol(base); }
+    LIndex(base, index): { return lvalueStartCol(base); }
+    LUnwrap(base): { return lvalueStartCol(base); }
+    default: { return lv.col; }
   }
 }
 
 export string typeOfLvalue(C c, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): { return c.typeOfName(tokenText(c, tok)); }
-    case LField(base, nameTok): {
+    LIdent(tok): { return c.typeOfName(tokenText(c, tok)); }
+    LField(base, nameTok): {
       string owner = typeOfLvalue(c, base);
       if (owner == typeNone()) { return typeNone(); }
       return c.fieldType(owner, tokenText(c, nameTok));
     }
-    case LIndex(base, index): {
+    LIndex(base, index): {
       string arr = typeOfLvalue(c, base);
       if (!isArrayName(arr)) { return typeNone(); }
       return dropLast(arr, 2);
     }
 
-    case LUnwrap(base): {
+    LUnwrap(base): {
       string inner = withoutNull(typeOfLvalue(c, base));
       return inner == "" ? typeNone() : inner;
     }
@@ -3298,33 +3298,33 @@ string funcValueTypeWritten(C c, i32 at, Ty[] typeArgs) {
 /** The generic function a written instantiation names when it stands alone, or -1. */
 i32 genericFuncOfTypeName(C c, Ty qual) {
   match (qual.kind) {
-    case Named(tok, targs): {
+    Named(tok, targs): {
       i32 at = c.funcAt(tokenText(c, tok));
       return at >= 0 && c.funcGenerics[at] ? at : 0 - 1;
     }
-    else: { return 0 - 1; }
+    default: { return 0 - 1; }
   }
 }
 
 /** The type arguments a written instantiation carries. */
 Ty[] typeNameArgs(Ty qual) {
   match (qual.kind) {
-    case Named(tok, targs): { return targs; }
-    else: { return Ty[](); }
+    Named(tok, targs): { return targs; }
+    default: { return Ty[](); }
   }
 }
 
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
-    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
-    case Ident(tok): {
+    Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
+    Ident(tok): {
       string idName = tokenText(c, tok);
       string held = c.typeOfName(idName);
       // **A local or parameter wins, as it does everywhere: it is nearer** — and it wins even when its
       // own type cannot be named, which the condition here used to miss. Checked alone, a match
       // binding from an unresolved variant has no type, and this answered with a *module function* of
-      // the same name instead: `case Str(bytes): string.fromBytes(bytes)` in a file that also exports
+      // the same name instead: `Str(bytes): string.fromBytes(bytes)` in a file that also exports
       // `Fixture bytes(Core, Cli, …)` was reported as passing a funcref where `u8[]` belongs. Unknown
       // is the answer, and unknown is silence. `issues/lang/0145`'s family, in value position.
       // **Except an import's placeholder, which is not a binding.** It is in the table so the name
@@ -3336,7 +3336,7 @@ export string typeOfExpr(C c, Expr e) {
     }
     // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
     // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       string owner = typeOfExpr(c, obj);
       if (owner == typeNone()) {
         // A **static** method named without being called is a value: a funcref of its own signature.
@@ -3356,16 +3356,16 @@ export string typeOfExpr(C c, Expr e) {
     }
     // A cast is its target type, whichever of the four spellings it used. The four differ in what
     // they *permit* — see `checkCast` — and not in what they produce.
-    case Cast(op, operand, target): { return typeOfTy(c, target); }
+    Cast(op, operand, target): { return typeOfTy(c, target); }
     /**
      * A method call, typed by what the method says it returns.
      *
      * Read in the receiver's world, so `Vec<i32>.at()` declared `T at(…)` is an `i32`. A funcref call
      * has no name to look up and stays unknown, as it always did.
      */
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           // **A variant construction is a value, and had no type at all.** `E.A(1)` is an `A` — the
           // reference says so in as many words, *"expected i32, got A"* — and it reaches here as a
           // member call on a name that is an enum rather than a value, so `receiverType` answered
@@ -3373,7 +3373,7 @@ export string typeOfExpr(C c, Expr e) {
           // subject had no type, so exhaustiveness, a duplicated arm and a name no variant declares
           // all said nothing about the whole match. `spec/cases/0093`.
           match (obj.kind) {
-            case Ident(tok): {
+            Ident(tok): {
               string en = tokenText(c, tok);
               if (c.isEnum(en) && !c.isDeclaredName(en) &&
                   c.variantArityIn(en, tokenText(c, nameTok)) >= 0) {
@@ -3387,7 +3387,7 @@ export string typeOfExpr(C c, Expr e) {
                 if (bs != "") { return bs; }
               }
             }
-            else: { }
+            default: { }
           }
           string recvT = receiverType(c, obj);
           if (recvT == typeNone() || recvT == "") { return typeNone(); }
@@ -3432,11 +3432,11 @@ export string typeOfExpr(C c, Expr e) {
           return bindMethodLettersAuto(c, mi, recvT, callTargs, args,
                                        substituteType(c, recvT, c.methodReturns[mi]));
         }
-        else: { return typeNone(); }
+        default: { return typeNone(); }
       }
     }
     // `x is T` asks a question, so it answers a boolean whatever `x` and `T` are.
-    case Is(left, target, other, negated): { return "bool"; }
+    Is(left, target, other, negated): { return "bool"; }
     /**
      * A binary expression, which had no arm here at all — every one of them typed as unknown, so a
      * comparison used as a value, an arithmetic result returned, and an operand of an operand were
@@ -3446,7 +3446,7 @@ export string typeOfExpr(C c, Expr e) {
      * operands, taken from whichever side is not a literal: `x + 1` is an `i32` because `x` is, and
      * the literal takes its type from the other side rather than giving one.
      */
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       i32 bk = tokenKind(c, op);
       if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe()) {
         // **A comparison whose operands disagree has no type**, so whatever it sits in has nothing to
@@ -3521,11 +3521,11 @@ export string typeOfExpr(C c, Expr e) {
       if (bl != typeNone()) { return bl; }
       return br;
     }
-    case Unwrap(operand): {
+    Unwrap(operand): {
       string inner = withoutNull(typeOfExpr(c, operand));
       return inner == "" ? typeNone() : inner;
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       string a = typeOfExpr(c, arr);
       // **`s[i]` is a one-character string**, not a byte and not unknown — spec/spec/strings.md
       // §Indexing. The emitter's twin has said so for a while, in the same words; this side answered
@@ -3551,14 +3551,14 @@ export string typeOfExpr(C c, Expr e) {
     // `await p` has the type the ticket answers — `design/lang/0014` D3. Unknown when the operand is
     // not a ticket, which keeps this silent while `checkExpr` is the one that says so; a type made up
     // here would report the same fault a second time through whatever slot the value lands in.
-    case Await(operand): {
+    Await(operand): {
       string at = typeOfExpr(c, operand);
       if (!isPendingType(at)) { return typeNone(); }
       string[] aargs2 = genericArgs(at);
       if (aargs2.len() != 1) { return typeNone(); }
       return aargs2[0];
     }
-    case Unary(op, operand): {
+    Unary(op, operand): {
       i32 uk = tokenKind(c, op);
       if (uk == kBang()) { return "bool"; }
       string ut3 = typeOfExpr(c, operand);
@@ -3571,7 +3571,7 @@ export string typeOfExpr(C c, Expr e) {
     // Both branches or nothing. A conditional whose arms disagree has a type the reference works out
     // by unification, which this slice cannot do — and guessing one branch would be worse than
     // silence, because the guess is right half the time and wrong in a way nothing here would catch.
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       string t = typeOfExpr(c, then);
       string other = typeOfExpr(c, els);
       if (t == other) { return t; }
@@ -3613,14 +3613,14 @@ export string typeOfExpr(C c, Expr e) {
     // A *statement* arm has no value and a match containing one is not an expression, so an arm
     // without one ends the question. Unknown is contagious for the same reason it is in `Ternary`:
     // one arm this checker cannot type says nothing about whether the others agree with it.
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       if (arms.len() == 0) { return typeNone(); }
       string mt = "";
       for (i32 i = 0; i < arms.len(); i++) {
         if (arms[i].value is null) { return typeNone(); }
         // **A literal arm adapts and says nothing.** spec/spec/enums.md: the arms unify exactly as
         // a ternary's branches do, and *"an integer or float literal arm takes the type expected of
-        // the whole expression"*. So `f64 x = match (o) { case A: 1, case B: 2.5 }` is legal and the
+        // the whole expression"*. So `f64 x = match (o) { A: 1, B: 2.5 }` is legal and the
         // `1` is an `f64`, which is why a literal cannot be asked what it is here — reading one as
         // `i32` refused a program the spec runs.
         if (litFamily(c, arms[i].value!) != litNone()) { continue; }
@@ -3641,17 +3641,17 @@ export string typeOfExpr(C c, Expr e) {
     // `funcValueType` says why the bare name has none: the signature is written in letters, and a
     // letter is not a type any assignment can be checked against. Anything else here is a type where
     // a value belongs, which the checking walk refuses; this one says unknown and stays silent.
-    case TypeName(qual): {
+    TypeName(qual): {
       i32 gat = genericFuncOfTypeName(c, qual);
       return gat < 0 ? typeNone() : funcValueTypeWritten(c, gat, typeNameArgs(qual));
     }
     // A construction is either a struct being made or a function being called — the parser cannot
     // tell, so neither can this, and the name decides. A struct name gives the struct; a function
     // name gives what it returns; anything else is unknown.
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       string name = "";
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           name = tokenText(c, tok);
           if (typeArgs.len() > 0) {
             // **A generic function named with its type arguments is a call, not a type.**
@@ -3665,7 +3665,7 @@ export string typeOfExpr(C c, Expr e) {
             return typeOfTy(c, ctype);
           }
         }
-        else: { }
+        default: { }
       }
       if (name == "") { return typeNone(); }
       // `Box(1.0)` with no type arguments written is legal — the arguments are *inferred*, from the
@@ -3711,7 +3711,7 @@ export string typeOfExpr(C c, Expr e) {
     //
     // `assignable` was never the problem and neither was `nameableType`, which admits arrays. The rule
     // existed and could not see its input, which is the shape of every gap `issues/lang/0170a` found.
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       // **An element type here can only be a type**, so a binding standing in for one gives unknown
       // rather than a spelling. `zz[1]()` where `zz` is an `i32` local answered `zz[]` — a type not in
       // the program — and that travelled: into *expected i32, found zz[]* in a return, and into no
@@ -3735,7 +3735,7 @@ export string typeOfExpr(C c, Expr e) {
      *
      * `typeOfLvalue` is what `checkIncr` already asks, so the answer is the one the guard used.
      */
-    case Incr(target, op, prefix): {
+    Incr(target, op, prefix): {
       string it = typeOfLvalue(c, target);
       // **A packed element widens to `i32` here too**, exactly as reading one does in `case Index`
       // above — `a[0]++` *is* a read, and `spec/cases/0108` says what it reads: *"postfix `++`
@@ -3745,7 +3745,7 @@ export string typeOfExpr(C c, Expr e) {
       // woke the packed-position guard on a value that had never had a type to check.
       return isPackedName(it) ? "i32" : it;
     }
-    else: { return typeNone(); }
+    default: { return typeNone(); }
   }
 }
 
@@ -3781,22 +3781,22 @@ bool alwaysLeaves(Stmt[] body) {
 /** Whether one statement always leaves the function. */
 bool leaves(Stmt s) {
   match (s.kind) {
-    case Return(value): { return true; }
-    case Trap: { return true; }
-    case Block(body): { return alwaysLeaves(body); }
+    Return(value): { return true; }
+    Trap: { return true; }
+    Block(body): { return alwaysLeaves(body); }
     // Both arms, and there must be an arm to take: an `if` with no `else` falls through when the
     // condition is false.
-    case If(cond, then, els): {
+    If(cond, then, els): {
       return els.len() > 0 && alwaysLeaves(then) && alwaysLeaves(els);
     }
-    case While(cond, body): { return isTrueLiteral(cond) && !breaksOut(body); }
-    case DoWhile(body, cond): { return isTrueLiteral(cond) && !breaksOut(body); }
+    While(cond, body): { return isTrueLiteral(cond) && !breaksOut(body); }
+    DoWhile(body, cond): { return isTrueLiteral(cond) && !breaksOut(body); }
     // A `for` with no condition is the other spelling of `while (true)`.
-    case For(init, cond, update, body): { return (cond is null) && !breaksOut(body); }
+    For(init, cond, update, body): { return (cond is null) && !breaksOut(body); }
     // A `match` is exhaustive by construction — the language requires every variant — so it leaves
     // when every arm does. Modelling it was not optional: six functions in this very file are a
     // single `match` whose arms all return, and treating that as falling through reported all six.
-    case Match(subject, arms): {
+    Match(subject, arms): {
       if (arms.len() == 0) { return false; }
       for (i32 i = 0; i < arms.len(); i++) {
         if (!alwaysLeaves(arms[i].body)) { return false; }
@@ -3806,7 +3806,7 @@ bool leaves(Stmt s) {
     // A `switch` needs a `default` as well: without one, a subject matching no case falls straight
     // through. A `break` in a case leaves the switch and not the function, so `alwaysLeaves` on the
     // case body is exactly the right question.
-    case Switch(subject, cases): {
+    Switch(subject, cases): {
       bool hasDefault = false;
       for (i32 i = 0; i < cases.len(); i++) {
         if (cases[i].value is null) { hasDefault = true; }
@@ -3814,15 +3814,15 @@ bool leaves(Stmt s) {
       }
       return hasDefault;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
 /** `true`, written literally — the only condition this slice will call infinite. */
 bool isTrueLiteral(Expr e) {
   match (e.kind) {
-    case BoolLit(value): { return value; }
-    else: { return false; }
+    BoolLit(value): { return value; }
+    default: { return false; }
   }
 }
 
@@ -3842,16 +3842,16 @@ bool breaksOut(Stmt[] body) {
 
 bool breaksOutOf(Stmt s) {
   match (s.kind) {
-    case Break: { return true; }
-    case Block(body): { return breaksOut(body); }
-    case If(cond, then, els): { return breaksOut(then) || breaksOut(els); }
-    case Match(subject, arms): {
+    Break: { return true; }
+    Block(body): { return breaksOut(body); }
+    If(cond, then, els): { return breaksOut(then) || breaksOut(els); }
+    Match(subject, arms): {
       for (i32 i = 0; i < arms.len(); i++) {
         if (breaksOut(arms[i].body)) { return true; }
       }
       return false;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -3905,17 +3905,17 @@ bool breaksOutOf(Stmt s) {
  */
 string decimalLiteralText(C c, Expr e) {
   match (e.kind) {
-    case IntLit(tok): {
+    IntLit(tok): {
       string t = tokenText(c, tok);
       return isHexText(t) ? "" : t;
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
 i32 literalDigits(C c, Expr e) {
   match (e.kind) {
-    case IntLit(tok): {
+    IntLit(tok): {
       string t = tokenText(c, tok);
       i32 n = 0;
       for (i32 i = 0; i < t.len(); i++) {
@@ -3926,8 +3926,8 @@ i32 literalDigits(C c, Expr e) {
       }
       return n;
     }
-    case Unary(op, operand): { return literalDigits(c, operand); }
-    else: { return 0; }
+    Unary(op, operand): { return literalDigits(c, operand); }
+    default: { return 0; }
   }
 }
 
@@ -3970,7 +3970,7 @@ string naturalTypeOf(C c, Expr e) {
   // each side answers unknown on its own. Only where the two agree: `1 + x` is still the slot's
   // business, and this must not decide it.
   match (e.kind) {
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       // **A chain, not only a pair.** `"a" + "b" + "c"` has a *binary* on its left, so asking whether
       // each side is a literal stopped at the second `+` — and the string this repository actually
       // writes, a 78-digit constant split across two lines and then `.toBytes()`, is exactly that
@@ -3989,7 +3989,7 @@ string naturalTypeOf(C c, Expr e) {
       if (ln == typeNone() || rn == typeNone()) { return typeOfExpr(c, e); }
       return ln == rn ? ln : typeNone();
     }
-    else: { }
+    default: { }
   }
   i32 lk = litKindOf(e);
   if (lk == litInteger()) {
@@ -4187,10 +4187,10 @@ void checkExpr(C c, Expr e) {
     // times as it was asked. `checkExpr` walks each expression once, which is what makes it the
     // place a refusal belongs. The seam for implementing this is `c.expected` — already the
     // target-type channel a literal is checked through — plus a scope holding the parameters.
-    case Lambda(params, body, lamAsync): {
+    Lambda(params, body, lamAsync): {
       checkLambda(c, want, wantUnknown, e, params, body, lamAsync);
     }
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       checkExpr(c, left);
       checkExpr(c, right);
       i32 k = tokenKind(c, op);
@@ -4439,8 +4439,8 @@ void checkExpr(C c, Expr e) {
     // binder the language has must be known, because anything missed is a false alarm on working
     // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
     // functions, structs, enums, imports and the primitive type names are looked up where they live.
-    case Jsx(tagTok, closeTok, attrs, kids): { checkJsx(c, tagTok, closeTok, attrs, kids); }
-    case Ident(tok): {
+    Jsx(tagTok, closeTok, attrs, kids): { checkJsx(c, tagTok, closeTok, attrs, kids); }
+    Ident(tok): {
       string idn = tokenText(c, tok);
       if (!nameExists(c, idn)) {
         c.reportWith(errUndefinedName(), e.line, e.col, "no " + idn + " in scope");
@@ -4478,11 +4478,11 @@ void checkExpr(C c, Expr e) {
     //
     // Reported here and not in `typeOfExpr`, which answers `typeNone()` for this and says nothing:
     // one place decides, or a reader gets the contradiction of a diagnostic beside a type.
-    case TypeName(qual): {
+    TypeName(qual): {
       string base = "";
       match (qual.kind) {
-        case Named(tok, targs): { base = tokenText(c, tok); }
-        else: { }
+        Named(tok, targs): { base = tokenText(c, tok); }
+        default: { }
       }
       // **A generic function named with its type arguments is a value** — `design/lang/0011`
       // criterion 3. `fn<i32(i32)> g = id<i32>;` is how one is written, since there is no `&f`, and
@@ -4511,7 +4511,7 @@ void checkExpr(C c, Expr e) {
     }
     // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be
     // asked about. Both land on the `is`, which is this node's own position.
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       checkExpr(c, left);
       if (!(other is null) && isVariantConstruction(c, other!)) {
         c.report(errOperandKind(), e.line, e.col);
@@ -4584,7 +4584,7 @@ void checkExpr(C c, Expr e) {
       if (litKindOf(left) == litNull()) { c.report(errReferenceOp(), e.line, e.col); }
     }
     // `p!` on something that was never nullable: there is nothing to unwrap.
-    case Unwrap(operand): {
+    Unwrap(operand): {
       checkExpr(c, operand);
       // The same caution: unwrapping is refused only when the operand is a type this checker knows
       // is not nullable — rather than whenever it cannot see a `?`. What it knows is wider than the
@@ -4601,7 +4601,7 @@ void checkExpr(C c, Expr e) {
       // `issues/lang/0249a`.
       if (litKindOf(operand) == litNull()) { c.report(errNeedsNullable(), e.line, e.col); }
     }
-    case Await(operand): {
+    Await(operand): {
       checkExpr(c, operand);
       // **The declaration first.** `await` outside an `async` function is wrong wherever its operand
       // is a ticket or not, and saying so names the fix — the caller writes `async` — rather than
@@ -4620,7 +4620,7 @@ void checkExpr(C c, Expr e) {
         return;
       }
     }
-    case Unary(op, operand): {
+    Unary(op, operand): {
       checkExpr(c, operand);
       // `!` wants a boolean; `-` wants a number; `~` wants an integer. Three different demands on the
       // one node, all reported at the operator, and all of them silent on an unknown operand.
@@ -4646,17 +4646,17 @@ void checkExpr(C c, Expr e) {
     }
     // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
     // the same shape reached through a different node, which is the third time that has happened.
-    case Incr(target, op, prefix): { checkIncr(c, target, e.line, e.col); }
+    Incr(target, op, prefix): { checkIncr(c, target, e.line, e.col); }
     // A `match` used for its value. Its arms hold expressions rather than statements, so nothing that
     // walked the statement form reached them — found by the grid, not by a rule looking wrong.
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       checkExpr(c, subject);
       // An expression arm carries a value and no body — one `Arm` type serves both forms, as the
       // reference has it — so the value is the whole of what there is to walk here.
       //
       // The bindings are declared *here* rather than in `declareStmt`, because that walks statements
       // and this is an expression: a `match` used for its value can sit inside an initialiser or a
-      // return, where the declaration pass never goes. Three files said so — `case Some(v): v * 3`
+      // return, where the declaration pass never goes. Three files said so — `Some(v): v * 3`
       // reported `v` as undefined. Declaring them at the point of use is enough because an arm's
       // value is walked immediately afterwards, and leaving them in scope for the rest of the
       // function is over-permissive in the silent direction, which is the one to err in.
@@ -4667,7 +4667,7 @@ void checkExpr(C c, Expr e) {
         }
         checkBindingCollision(c, subject, arms[i]);
         // **An arm of an expression match narrows too.** Only the statement form did, so
-        // `match (s) { case Circle: s.radius, ... }` looked for `radius` on the un-narrowed subject
+        // `match (s) { Circle: s.radius, ... }` looked for `radius` on the un-narrowed subject
         // and reported a field that was there all along — the spec's own program for this clause.
         // The same const rule applies for the same reason: the arm is describing one value.
         string saved = armNarrowing(c, subject, arms[i]);
@@ -4683,7 +4683,7 @@ void checkExpr(C c, Expr e) {
     }
     // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       if (!(size is null)) {
         checkExpr(c, size!);
         // A length is a count, so it is an `i32` — at the size expression, which is the only thing
@@ -4735,8 +4735,8 @@ void checkExpr(C c, Expr e) {
     }
     // A cast's operand. `(p + q) as i64` reported nothing, because typing a cast as its target — the
     // right answer — meant never looking inside it.
-    case Cast(op, operand, target): { checkExpr(c, operand); checkCast(c, e, op, operand, target); }
-    case Ternary(cond, then, els): {
+    Cast(op, operand, target): { checkExpr(c, operand); checkCast(c, e, op, operand, target); }
+    Ternary(cond, then, els): {
       // **Both branches sit in the ternary's own slot.** `Box<i32> b = c ? Box(1) : Box(2);` needs
       // it: a bare `Box(…)` takes its type arguments from where it is going, and `c.expected` is
       // cleared by the first expression that reads it — so the second branch got nothing and the
@@ -4803,12 +4803,12 @@ void checkExpr(C c, Expr e) {
         }
       }
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       checkExpr(c, arr);
       checkExpr(c, index);
       checkIndex(c, e, arr, index);
     }
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       checkReceiver(c, obj);
       checkMember(c, e, obj, tokenText(c, nameTok));
     }
@@ -4816,11 +4816,11 @@ void checkExpr(C c, Expr e) {
     // construction — `Point(1, 2)` and `g(a)` are the same syntax — so it builds `Construct` with a
     // `Named` type for both and the resolver decides which later. A `case Call` never matches a
     // plain named call, which is why the first version of this reported nothing at all.
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       // Each argument is walked with the slot it is going into, which is what lets a generic
       // construction nested in one — `g(Box(1.0))` — infer from the parameter.
       match (ctype.kind) {
-        case Named(ctok, ctargs): {
+        Named(ctok, ctargs): {
           string cname = tokenText(c, ctok);
           for (i32 i = 0; i < args.len(); i++) {
             // **A generic function's name is not a type.** `zero<i32>()` and `Vec<i32>(…)` are the
@@ -4841,7 +4841,7 @@ void checkExpr(C c, Expr e) {
             c.expectedUnknown = false;
           }
         }
-        else: {
+        default: {
           // A constructed type that is not a plain name: nothing named a slot at all.
           for (i32 i = 0; i < args.len(); i++) {
             c.expectedUnknown = true;
@@ -4851,7 +4851,7 @@ void checkExpr(C c, Expr e) {
         }
       }
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           string name = tokenText(c, tok);
           if (c.isStruct(name)) {
             // A **bare generic** takes its type arguments from wherever it is going. With a target
@@ -4896,12 +4896,12 @@ void checkExpr(C c, Expr e) {
           }
           else { checkCallee(c, name, args, named, e); }
         }
-        else: { }
+        default: { }
       }
     }
     // A real `Call` is a method or a funcref. A method call is `Call(Member(receiver, name), args)`
     // and is checked; a funcref call has no name to look up and is not.
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       // **A variant construction's arguments have slots, and they are the payload's.** `Wrap.W(Box(5))`
       // puts a `Box<T>` in the first one, which is what a bare `Box(5)` needs to know which instance
       // it is — without it the construction was checked against no slot at all and refused as "not
@@ -4932,7 +4932,7 @@ void checkExpr(C c, Expr e) {
       // same reason.
       string methodInst = "";
       match (callee.kind) {
-        case Member(mobj, mnameTok): {
+        Member(mobj, mnameTok): {
           string mrecv = typeOfExpr(c, mobj);
           if (mrecv == typeNone()) { mrecv = staticOwnerName(c, mobj); }
           if (mrecv != "" && mrecv != typeNone()) {
@@ -4975,7 +4975,7 @@ void checkExpr(C c, Expr e) {
             }
           }
         }
-        else: { }
+        default: { }
       }
       i32 methodIx = methodOwner == "" ? -1 : c.methodAt(methodOwner, tokenText(c, calleeName(c, callee)));
       for (i32 i = 0; i < args.len(); i++) {
@@ -5001,7 +5001,7 @@ void checkExpr(C c, Expr e) {
         c.expectedUnknown = false;
       }
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           // The **object**, not the whole callee. Walking the callee as an expression would read
           // `p.inc()` as a field access to `inc` and call it a missing field, which is the method it
           // is about to check. The nullable rule still applies and is asked for separately, because
@@ -5010,7 +5010,7 @@ void checkExpr(C c, Expr e) {
           checkThroughNullable(c, e, obj);
           checkMethodCall(c, e, callee, obj, tokenText(c, nameTok), args, methodInst);
         }
-        else: {
+        default: {
           checkExpr(c, callee);
           // **`7()` is not a call.** A funcref is, a name that is a function is, and everything else
           // this checker can put a type to is *"type 'i32' is not callable"* — at the callee, which
@@ -5030,7 +5030,7 @@ void checkExpr(C c, Expr e) {
         }
       }
     }
-    else: { }
+    default: { }
   }
 }
 
@@ -5114,9 +5114,9 @@ void checkPackedNullable(C c, string t, Ty at) {
  */
 Ty baseTy(Ty t) {
   match (t.kind) {
-    case Arr(elem): { return baseTy(elem); }
-    case Nullable(inner): { return baseTy(inner); }
-    else: { return t; }
+    Arr(elem): { return baseTy(elem); }
+    Nullable(inner): { return baseTy(inner); }
+    default: { return t; }
   }
 }
 
@@ -5130,10 +5130,10 @@ Ty baseTy(Ty t) {
  */
 void checkLvalueExprs(C c, Lvalue lv) {
   match (lv.kind) {
-    case LIndex(base, index): { checkLvalueExprs(c, base); checkExpr(c, index); }
-    case LField(base, nameTok): { checkLvalueExprs(c, base); }
-    case LUnwrap(base): { checkLvalueExprs(c, base); }
-    else: { }
+    LIndex(base, index): { checkLvalueExprs(c, base); checkExpr(c, index); }
+    LField(base, nameTok): { checkLvalueExprs(c, base); }
+    LUnwrap(base): { checkLvalueExprs(c, base); }
+    default: { }
   }
 }
 
@@ -5528,8 +5528,8 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
 /** A call's method name token, or -1 when the callee is not a member access. */
 i32 calleeName(C c, Expr callee) {
   match (callee.kind) {
-    case Member(obj, nameTok): { return nameTok; }
-    else: { return -1; }
+    Member(obj, nameTok): { return nameTok; }
+    default: { return -1; }
   }
 }
 
@@ -5541,11 +5541,11 @@ i32 calleeName(C c, Expr callee) {
  */
 string staticOwnerName(C c, Expr obj) {
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = c.canon(c.renamed(tokenText(c, tok)));
       return c.isStruct(n) || c.isEnum(n) ? n : "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -5654,8 +5654,8 @@ bool startsWithFn(string t) {
  */
 string writtenTy(C c, Ty t) {
   match (t.kind) {
-    case Prim(tok): { return tokenText(c, tok); }
-    case Named(tok, typeArgs): {
+    Prim(tok): { return tokenText(c, tok); }
+    Named(tok, typeArgs): {
       string base = c.canon(c.renamed(tokenText(c, tok)));
       if (typeArgs.len() == 0) { return base; }
       string out = base + "<";
@@ -5665,8 +5665,8 @@ string writtenTy(C c, Ty t) {
       }
       return out + ">";
     }
-    case Arr(elem): { return writtenTy(c, elem) + "[]"; }
-    case Nullable(inner): { return writtenTy(c, inner) + "?"; }
+    Arr(elem): { return writtenTy(c, elem) + "[]"; }
+    Nullable(inner): { return writtenTy(c, inner) + "?"; }
     // **A funcref, in the same spelling `typeOfTy` produces.** There was no arm for one, so a
     // parameter written `fn<U(U, T)>` came back as the empty string — which reads as "no slot" and
     // told a perfectly good lambda that *"nothing here wants a function"*. It mattered from the day
@@ -5675,7 +5675,7 @@ string writtenTy(C c, Ty t) {
     //
     // `fn(P, Q) -> R` rather than the source's `fn<R(P, Q)>`, because every other producer of a
     // funcref type name in this file writes the first and `startsWithFn` looks for it.
-    case Funcref(ret, params): {
+    Funcref(ret, params): {
       string out = "fn(";
       for (i32 i = 0; i < params.len(); i++) {
         if (i > 0) { out = out + ", "; }
@@ -5695,8 +5695,8 @@ string writtenTy(C c, Ty t) {
  */
 i32 funcrefArityOfTy(C c, Ty t) {
   match (t.kind) {
-    case Funcref(ret, params): { return params.len(); }
-    else: { return 0 - 1; }
+    Funcref(ret, params): { return params.len(); }
+    default: { return 0 - 1; }
   }
 }
 
@@ -5744,19 +5744,19 @@ bool funcrefCall(C c, Expr e) {
     // `g(1)` where `g` is a local reaches here as a **`Construct`**, not a `Call`: `name(args)` is
     // ambiguous until something says whether `name` is a type, and the parser leaves that to the
     // checker. Both spellings are the same question here.
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       match (ctype.kind) {
-        case Named(tok, typeArgs): { return startsWithFn(c.typeOfName(tokenText(c, tok))); }
-        else: { return false; }
+        Named(tok, typeArgs): { return startsWithFn(c.typeOfName(tokenText(c, tok))); }
+        default: { return false; }
       }
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        case Ident(tok): { return startsWithFn(c.typeOfName(tokenText(c, tok))); }
-        else: { return false; }
+        Ident(tok): { return startsWithFn(c.typeOfName(tokenText(c, tok))); }
+        default: { return false; }
       }
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -5779,13 +5779,13 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   // only a caller does.
   Ty[] written = Ty[]();
   match (call.kind) {
-    case Construct(wtype, wargs, wnamed): {
+    Construct(wtype, wargs, wnamed): {
       match (wtype.kind) {
-        case Named(wtok, wtargs): { written = wtargs; }
-        else: { }
+        Named(wtok, wtargs): { written = wtargs; }
+        default: { }
       }
     }
-    else: { }
+    default: { }
   }
   if (written.len() > 0) {
     if (written.len() != n) {
@@ -6032,13 +6032,13 @@ void checkIndexType(C c, Lvalue lv, Expr index) {
  */
 void checkIndicesUnder(C c, Lvalue lv) {
   match (lv.kind) {
-    case LIndex(base, index): {
+    LIndex(base, index): {
       checkIndicesUnder(c, base);
       checkIndexType(c, lv, index);
     }
-    case LField(base, nameTok): { checkIndicesUnder(c, base); }
-    case LUnwrap(base): { checkIndicesUnder(c, base); }
-    else: { }
+    LField(base, nameTok): { checkIndicesUnder(c, base); }
+    LUnwrap(base): { checkIndicesUnder(c, base); }
+    default: { }
   }
 }
 
@@ -6053,7 +6053,7 @@ void checkIndicesUnder(C c, Lvalue lv) {
  */
 void checkWrite(C c, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): {
+    LIdent(tok): {
       // A write to a name nothing declares. Reached here rather than by the expression rule, because
       // an assignment's target is an `Lvalue` and not an `Expr` — the same rule, one node kind along,
       // which is the fourth time that distinction has hidden a case.
@@ -6067,7 +6067,7 @@ void checkWrite(C c, Lvalue lv) {
         c.reportWith(errConstVariable(), lv.line, lv.col, tokenText(c, tok) + " is const");
       }
     }
-    case LField(base, nameTok): {
+    LField(base, nameTok): {
       Lvalue root = rootOf(lv);
       if (undefinedRoot(c, root)) { c.report(errUndefinedName(), root.line, root.col); return; }
       // `a["s"].v = 7` and `a["s"].v--`: the index is in the path rather than at the top of it.
@@ -6106,7 +6106,7 @@ void checkWrite(C c, Lvalue lv) {
         reportLvalueSpan(c, errConstReference(), root, lv, constNote(c, root));
       }
     }
-    case LIndex(base, index): {
+    LIndex(base, index): {
       string baseT = typeOfLvalue(c, base);
       if (baseT != typeNone() && baseT != "" && !isArrayName(baseT) && baseT != "string") {
         c.report(errNotIndexable(), lv.line, lv.col);
@@ -6134,15 +6134,15 @@ void checkWrite(C c, Lvalue lv) {
         reportLvalueSpan(c, errConstReference(), r, lv, constNote(c, r));
       }
     }
-    case LUnwrap(base): { checkWrite(c, base); }
+    LUnwrap(base): { checkWrite(c, base); }
   }
 }
 
 /** Whether the root of a write path is a name nothing declares. */
 bool undefinedRoot(C c, Lvalue root) {
   match (root.kind) {
-    case LIdent(tok): { return !nameExists(c, tokenText(c, tok)); }
-    else: { return false; }
+    LIdent(tok): { return !nameExists(c, tokenText(c, tok)); }
+    default: { return false; }
   }
 }
 
@@ -6156,17 +6156,17 @@ bool undefinedRoot(C c, Lvalue root) {
 /** `` `xs` is const `` when the root of the path is a plain name, and nothing when it is not. */
 string constNote(C c, Lvalue root) {
   match (root.kind) {
-    case LIdent(tok): { return tokenText(c, tok) + " is const"; }
-    else: { return ""; }
+    LIdent(tok): { return tokenText(c, tok) + " is const"; }
+    default: { return ""; }
   }
 }
 
 Lvalue rootOf(Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): { return lv; }
-    case LField(base, nameTok): { return rootOf(base); }
-    case LIndex(base, index): { return rootOf(base); }
-    case LUnwrap(base): { return rootOf(base); }
+    LIdent(tok): { return lv; }
+    LField(base, nameTok): { return rootOf(base); }
+    LIndex(base, index): { return rootOf(base); }
+    LUnwrap(base): { return rootOf(base); }
   }
 }
 
@@ -6186,30 +6186,30 @@ Lvalue rootOf(Lvalue lv) {
  */
 bool constName(C c, Expr e) {
   match (e.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenText(c, tok);
       return c.isConstName(n) || c.isAliasOnlyName(n);
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
 /** Whether a write target is reached *through* something — a field or an element, not a name. */
 bool indirectLvalue(Lvalue lv) {
   match (lv.kind) {
-    case LField(base, nameTok): { return true; }
-    case LIndex(base, index): { return true; }
-    case LUnwrap(base): { return indirectLvalue(base); }
-    else: { return false; }
+    LField(base, nameTok): { return true; }
+    LIndex(base, index): { return true; }
+    LUnwrap(base): { return indirectLvalue(base); }
+    default: { return false; }
   }
 }
 
 bool constPath(C c, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): { return c.isConstName(tokenText(c, tok)); }
-    case LField(base, nameTok): { return constPath(c, base); }
-    case LIndex(base, index): { return constPath(c, base); }
-    case LUnwrap(base): { return constPath(c, base); }
+    LIdent(tok): { return c.isConstName(tokenText(c, tok)); }
+    LField(base, nameTok): { return constPath(c, base); }
+    LIndex(base, index): { return constPath(c, base); }
+    LUnwrap(base): { return constPath(c, base); }
   }
 }
 
@@ -6256,13 +6256,13 @@ void checkPackedLiteral(C c, string want, Expr e) {
  */
 string packedElementOf(C c, Expr e) {
   match (e.kind) {
-    case Index(arr, index): {
+    Index(arr, index): {
       string a = typeOfExpr(c, arr);
       if (!isArrayName(a)) { return ""; }
       string elem = dropLast(a, 2);
       return isPackedName(elem) ? elem : "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
   return "";
 }
@@ -6270,13 +6270,13 @@ string packedElementOf(C c, Expr e) {
 /** The same question for an assignment target, which is an lvalue rather than an expression. */
 string packedElementOfLvalue(C c, Lvalue lv) {
   match (lv.kind) {
-    case LIndex(arr, index): {
+    LIndex(arr, index): {
       string a = typeOfLvalue(c, arr);
       if (!isArrayName(a)) { return ""; }
       string elem = dropLast(a, 2);
       return isPackedName(elem) ? elem : "";
     }
-    else: { return ""; }
+    default: { return ""; }
   }
   return "";
 }
@@ -6310,12 +6310,12 @@ bool isByteName(string t) { return t == "u8" || t == "i8"; }
  */
 bool charLiteralAbove(C c, Expr e, i32 limit) {
   match (e.kind) {
-    case IntLit(tok): {
+    IntLit(tok): {
       string lit = tokenText(c, tok);
       if (lit.len() < 2 || lit[0] != "'") { return false; }
       return parseInt(lit) > (limit as i64);
     }
-    else: { return false; }
+    default: { return false; }
   }
   return false;
 }
@@ -6358,7 +6358,7 @@ void checkElement(C c, string want, Expr e) {
  */
 bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settledCount) {
   match (e.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenText(c, tok);
       if (!isModuleConst(c, prog, n)) { return false; }
       for (i32 i = 0; i < settledCount; i++) {
@@ -6366,12 +6366,12 @@ bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settle
       }
       return true;
     }
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       return readsUnsettledConst(c, prog, left, settled, settledCount)
           || readsUnsettledConst(c, prog, right, settled, settledCount);
     }
-    case Unary(op, operand): { return readsUnsettledConst(c, prog, operand, settled, settledCount); }
-    case Construct(ctype, args, named): {
+    Unary(op, operand): { return readsUnsettledConst(c, prog, operand, settled, settledCount); }
+    Construct(ctype, args, named): {
       for (i32 i = 0; i < args.len(); i++) {
         if (readsUnsettledConst(c, prog, args[i], settled, settledCount)) { return true; }
       }
@@ -6380,19 +6380,19 @@ bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settle
       }
       return false;
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       for (i32 i = 0; i < args.len(); i++) {
         if (readsUnsettledConst(c, prog, args[i], settled, settledCount)) { return true; }
       }
       return false;
     }
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       for (i32 i = 0; i < elements.len(); i++) {
         if (readsUnsettledConst(c, prog, elements[i], settled, settledCount)) { return true; }
       }
       return false;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -6400,10 +6400,10 @@ bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settle
 bool isModuleConst(C c, Program prog, string name) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         if (tokenText(c, nameTok) == name) { return true; }
       }
-      else: { }
+      default: { }
     }
   }
   return false;
@@ -6411,28 +6411,28 @@ bool isModuleConst(C c, Program prog, string name) {
 
 bool callsAFunction(C c, Expr e) {
   match (e.kind) {
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       match (ctype.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           if (c.funcAt(tokenText(c, tok)) >= 0) { return true; }
         }
-        else: { }
+        default: { }
       }
       for (i32 i = 0; i < args.len(); i++) {
         if (callsAFunction(c, args[i])) { return true; }
       }
       return false;
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       // **A variant construction is a value, not a call.** `const E X = E.A(7);` is a constant the
       // spec writes down — `variables.md` lists a struct, an enum variant, and anything built out of
       // them — and it parses as `Call(Member(E, A), …)` like everything else with parentheses. What
       // makes it a constant is that `struct.new` is a constant instruction; what made this rule
       // refuse it is that the shape looks like a call from the outside.
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           match (obj.kind) {
-            case Ident(tok): {
+            Ident(tok): {
               string en = tokenText(c, tok);
               if (c.isEnum(en) && c.variantArityIn(en, tokenText(c, nameTok)) >= 0) {
                 for (i32 i = 0; i < args.len(); i++) {
@@ -6441,16 +6441,16 @@ bool callsAFunction(C c, Expr e) {
                 return false;
               }
             }
-            else: { }
+            default: { }
           }
         }
-        else: { }
+        default: { }
       }
       return true;
     }
-    case Binary(op, left, right): { return callsAFunction(c, left) || callsAFunction(c, right); }
-    case Unary(op, operand): { return callsAFunction(c, operand); }
-    case ArrNew(elem, size, fill, elements): {
+    Binary(op, left, right): { return callsAFunction(c, left) || callsAFunction(c, right); }
+    Unary(op, operand): { return callsAFunction(c, operand); }
+    ArrNew(elem, size, fill, elements): {
       if (!(size is null)) {
         if (callsAFunction(c, size!)) { return true; }
       }
@@ -6462,7 +6462,7 @@ bool callsAFunction(C c, Expr e) {
       }
       return false;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -6497,7 +6497,7 @@ bool mutableRefName(C c, string t) {
  */
 bool freshValue(C c, Expr e) {
   match (e.kind) {
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       if (!mutableRefName(c, typeOfTy(c, elem))) { return true; }   // one copy per element
       for (i32 i = 0; i < elements.len(); i++) {
         if (!freshValue(c, elements[i])) { return false; }
@@ -6505,15 +6505,15 @@ bool freshValue(C c, Expr e) {
       if (fill is not null) { return freshValue(c, fill!); }
       return true;
     }
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       if (named.len() > 0) { return false; }
       // The same question as the two sites above: a generic function's name is not a type, and
       // asking would report one. It has no fields either, so there is nothing here to answer about.
       match (ctype.kind) {
-        case Named(ftok, ftargs): {
+        Named(ftok, ftargs): {
           if (ftargs.len() > 0 && nameIsGenericFunc(c, tokenText(c, ftok))) { return false; }
         }
-        else: { }
+        default: { }
       }
       string t = typeOfTy(c, ctype);
       i32 n = c.constructArity(t);
@@ -6523,7 +6523,7 @@ bool freshValue(C c, Expr e) {
       }
       return true;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -6536,30 +6536,30 @@ bool freshValue(C c, Expr e) {
 bool returnsOnlyFresh(C c, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
-      case Return(value): {
+      Return(value): {
         if (value is not null) {
           if (!freshValue(c, value!)) { return false; }
         }
       }
-      case If(cond, then, els): {
+      If(cond, then, els): {
         if (!returnsOnlyFresh(c, then)) { return false; }
         if (!returnsOnlyFresh(c, els)) { return false; }
       }
-      case While(wcond, wbody): { if (!returnsOnlyFresh(c, wbody)) { return false; } }
-      case For(init, fcond, update, fbody): { if (!returnsOnlyFresh(c, fbody)) { return false; } }
-      case DoWhile(dbody, dcond): { if (!returnsOnlyFresh(c, dbody)) { return false; } }
-      case Block(bbody): { if (!returnsOnlyFresh(c, bbody)) { return false; } }
-      case Switch(subject, cases): {
+      While(wcond, wbody): { if (!returnsOnlyFresh(c, wbody)) { return false; } }
+      For(init, fcond, update, fbody): { if (!returnsOnlyFresh(c, fbody)) { return false; } }
+      DoWhile(dbody, dcond): { if (!returnsOnlyFresh(c, dbody)) { return false; } }
+      Block(bbody): { if (!returnsOnlyFresh(c, bbody)) { return false; } }
+      Switch(subject, cases): {
         for (i32 k = 0; k < cases.len(); k++) {
           if (!returnsOnlyFresh(c, cases[k].body)) { return false; }
         }
       }
-      case Match(msubject, arms): {
+      Match(msubject, arms): {
         for (i32 k = 0; k < arms.len(); k++) {
           if (!returnsOnlyFresh(c, arms[k].body)) { return false; }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return true;
@@ -6586,31 +6586,31 @@ i64 switchCaseValue(C c, Expr e) {
     // Negation is its own expression, so `case -1:` is a `Neg` around an `IntLit` and reading the
     // literal alone would make it 1 — the same case as `case 1:`, which is a **wrong answer** and the
     // exact shape this function exists to get right.
-    case IntLit(tok): { v = parseInt(tokenText(c, tok)); }
-    case Unary(op, operand): {
+    IntLit(tok): { v = parseInt(tokenText(c, tok)); }
+    Unary(op, operand): {
       match (operand.kind) {
-        case IntLit(tok): { v = tokenText(c, op) == "-" ? 0 - parseInt(tokenText(c, tok)) : parseInt(tokenText(c, tok)); }
-        else: { }
+        IntLit(tok): { v = tokenText(c, op) == "-" ? 0 - parseInt(tokenText(c, tok)) : parseInt(tokenText(c, tok)); }
+        default: { }
       }
     }
-    else: { }
+    default: { }
   }
   return v & 4294967295;
 }
 
 bool constExpr(C c, Expr e) {
   match (e.kind) {
-    case Ident(tok): { return c.isConstName(tokenText(c, tok)); }
-    case Member(obj, nameTok): { return constExpr(c, obj); }
-    case Index(arr, index): { return constExpr(c, arr); }
-    case Unwrap(operand): { return constExpr(c, operand); }
+    Ident(tok): { return c.isConstName(tokenText(c, tok)); }
+    Member(obj, nameTok): { return constExpr(c, obj); }
+    Index(arr, index): { return constExpr(c, arr); }
+    Unwrap(operand): { return constExpr(c, operand); }
     // What a method hands back through a const receiver is itself const. `this.getInner().mutate()`
     // inside a `const this` method is refused, and the accessor is the whole point of the case: it
     // looks like a way to launder the constness and is not one. The receiver decides, not the return
     // type — a method called on something const returns something const.
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           if (!constExpr(c, obj)) { return false; }
           // …unless the method can only be handing back something it built out of copies, which
           // reaches nothing the receiver holds [issue 0060].
@@ -6618,10 +6618,10 @@ bool constExpr(C c, Expr e) {
           if (mi < 0) { return true; }
           return !returnsOnlyFresh(c, c.methodBodyAt(mi));
         }
-        else: { return false; }
+        default: { return false; }
       }
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -6672,7 +6672,7 @@ bool reachesStruct(C c, string from, string target, i32 depth) {
 
 /** How many fields a positional construction of this struct takes, parents included. */
 /**
- * What `case List(xs)` binds `xs` to: the variant's `b`th payload field.
+ * What `List(xs)` binds `xs` to: the variant's `b`th payload field.
  *
  * Declared as unknown until now, which is safe and silent — and silence is what `xs.len(1)` got,
  * along with every other question about a payload. A variant is a struct here and its payload is
@@ -6709,7 +6709,7 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   string subjOwner = enumOfSubject(c, subjCore, isVariantConstruction(c, subject));
   if (subjOwner == "" || !c.isEnum(subjOwner)) { return typeNone(); }
   // **The enum is what may be generic, not the variant.** `Opt<T> { Some(T v) }` registers `Some` as
-  // an ordinary struct whose field is written `T`, so binding `v` to it says a working `case Some(v):
+  // an ordinary struct whose field is written `T`, so binding `v` to it says a working `Some(v):
   // v` returns a `T` where an `i32` was declared. Six programs said so at once.
   //
   // And **only when one enum declares this variant**: the table is keyed by bare name, so `Ok` from
@@ -6751,7 +6751,7 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
  * `Opt<T> { Some(T v) }` records a field whose type is written `T`, and `T` is a *parameter*: an
  * enum's generic-ness cannot be asked of `isGeneric`, which reads the struct table and has no row for
  * an enum. Asking what the type is instead of who declared it answers both — a parameter is a name
- * nothing declares, and binding to it made a working `case Some(v): v` return the wrong type in six
+ * nothing declares, and binding to it made a working `Some(v): v` return the wrong type in six
  * programs.
  */
 bool nameable(C c, string t) {
@@ -6975,11 +6975,11 @@ string boundMethodType(C c, string recv, string name) {
 string staticMethodType(C c, Expr obj, string name) {
   string owner = "";
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenText(c, tok);
       if (c.typeOfName(n) == typeNone() && c.isStruct(n)) { owner = n; }
     }
-    else: { }
+    default: { }
   }
   if (owner == "" || c.isGeneric(owner)) { return typeNone(); }
   i32 at = c.methodAt(owner, name);
@@ -7041,7 +7041,7 @@ string builtinStaticReturn(string recv, string name) {
 
 string receiverType(C c, Expr obj) {
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenText(c, tok);
       string t = c.typeOfName(n);
       if (t != typeNone()) { return t; }
@@ -7051,7 +7051,7 @@ string receiverType(C c, Expr obj) {
     // **A literal receiver has the type of its own family**, which is the third place this checker
     // has needed that: `"abc".len()` is a `string`'s builtin however the string was written, and
     // asking `typeOfExpr` about a literal answers unknown by design.
-    else: { return naturalTypeOf(c, obj); }
+    default: { return naturalTypeOf(c, obj); }
   }
 }
 
@@ -7268,7 +7268,7 @@ string argumentSlot(C c, string name, string spelled, i32 i) {
  */
 void checkReceiver(C c, Expr obj) {
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenText(c, tok);
       // A local of that name shadows the type and is an ordinary value again.
       if (!c.isDeclaredName(n) && (c.isStruct(n) || c.isEnum(n) || isPrimitiveName(n) ||
@@ -7286,8 +7286,8 @@ void checkReceiver(C c, Expr obj) {
     // exempting the type written in it: `typeOfTy` reports an unknown name as it goes, and without
     // this call `Maybe<Typoo>.Just(4)` drew no diagnostic whatever — a worse answer than the false
     // alarm it replaced, and one nothing else in the file would have caught.
-    case TypeName(qual): { typeOfTy(c, qual); return; }
-    else: { }
+    TypeName(qual): { typeOfTy(c, qual); return; }
+    default: { }
   }
   checkExpr(c, obj);
 }
@@ -7319,7 +7319,7 @@ void checkMember(C c, Expr at, Expr obj, string name) {
   // silent. The variant table answers it directly, and answers it per enum: `Ok` belonging to some
   // other enum says nothing about this one, which is why the question is asked with both names.
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string en = tokenText(c, tok);
       if (c.isEnum(en) && c.typeOfName(en) == typeNone() && c.variantArityIn(en, name) < 0) {
         c.report(errNoVariant(), at.line, at.col);
@@ -7356,7 +7356,7 @@ void checkMember(C c, Expr at, Expr obj, string name) {
         return;
       }
     }
-    else: { }
+    default: { }
   }
   // **A literal has fields as much as any other value of its type**, which is to say none: `7.n` is
   // *"type 'i32' has no field 'n'"*. Asking `typeOfExpr` answered unknown, as it does for every
@@ -7409,13 +7409,13 @@ void checkMember(C c, Expr at, Expr obj, string name) {
   }
   // An enum's value is one of its variants and the checker does not know which, so a payload field is
   // not reachable through the enum type — only through a variant, which `is` narrowing produces.
-  // **Only when no variant has it.** A `case B:` arm makes `B`'s payload reachable through the
-  // subject's own name — `case B: return e.x;` is accepted by the reference — and this checker does
+  // **Only when no variant has it.** A `B:` arm makes `B`'s payload reachable through the
+  // subject's own name — `B: return e.x;` is accepted by the reference — and this checker does
   // not model that narrowing. Reporting every field on an enum therefore refused correct programs,
   // which is the one direction a subset checker may not be wrong in. A name no variant declares is
   // still wrong whichever arm you are in, and that is what is left.
   // A payload is reachable through the enum's own name **inside an arm that narrowed it**, which is
-  // where `case B: return e.x;` gets its meaning — and the arm walk below retypes the subject for
+  // where `B: return e.x;` gets its meaning — and the arm walk below retypes the subject for
   // exactly that reason. Outside one the enum has no such field, which the reference says too.
   if (c.isEnum(t)) { c.report(errNoSuchField(), at.line, at.col); return; }
   // A primitive has no fields at all. Its *statics* are reached through a type name rather than a
@@ -7468,8 +7468,8 @@ void checkIndex(C c, Expr at, Expr arr, Expr index) {
 /** Whether an expression is a bare identifier, which is the only receiver whose position is settled. */
 bool isPlainName(Expr e) {
   match (e.kind) {
-    case Ident(tok): { return true; }
-    else: { return false; }
+    Ident(tok): { return true; }
+    default: { return false; }
   }
 }
 
@@ -7559,22 +7559,22 @@ bool isIntegerType(string t) {
  * The variant a call is constructing — `Wrap.W(…)` answers `W` — or `""` for anything else.
  *
  * Named by the variant rather than the enum because that is what the field table is keyed by: a
- * variant is a struct whose fields are its payload, which is how `case W(b)` finds `b` a type.
+ * variant is a struct whose fields are its payload, which is how `W(b)` finds `b` a type.
  */
 string variantCalleeOwner(C c, Expr callee) {
   match (callee.kind) {
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       match (obj.kind) {
-        case Ident(tok): {
+        Ident(tok): {
           string en = tokenText(c, tok);
           string vn = tokenText(c, nameTok);
           if (c.isEnum(en) && c.variantArityIn(en, vn) >= 0) { return vn; }
           return "";
         }
-        else: { return ""; }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -7589,7 +7589,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   string recv = "";
   bool isStatic = false;
   match (obj.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string n = tokenText(c, tok);
       string ty = c.typeOfName(n);
       if (ty != typeNone()) {
@@ -7606,7 +7606,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
         return;
       }
     }
-    else: {
+    default: {
       // **The same answer `receiverType` gives**, which this had grown its own version of: a string
       // literal was special-cased here and a *concatenation* of two was not, so
       // `("aaa, " + "bbb").toBytes(1)` had no receiver and no complaint. A literal takes its type
@@ -7900,8 +7900,8 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     // `design/lang/0010` option C is what binds them.
     i32 wrote = 0;
     match (call.kind) {
-      case Call(callExpr, callArgs, writtenTargs): { wrote = writtenTargs.len(); }
-      else: { }
+      Call(callExpr, callArgs, writtenTargs): { wrote = writtenTargs.len(); }
+      default: { }
     }
     // **The arity is checkable without binding anything**, which is why the table holds the names
     // rather than a flag. `b.map<i64, i32>(f)` is wrong for every possible binding at once, and
@@ -8035,8 +8035,8 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     if (!isPlainName(obj)) {
       i32 dotTok = -1;
       match (callee.kind) {
-        case Member(mobj, mnameTok): { dotTok = mnameTok - 1; }
-        else: { }
+        Member(mobj, mnameTok): { dotTok = mnameTok - 1; }
+        default: { }
       }
       if (dotTok < 0) { return; }
       c.reportTok(isStatic ? errNoStaticMethod() : errNoMethod(), dotTok, "");
@@ -8282,7 +8282,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     }
     return;
   }
-  // `i31ref` is a reference that pairs with `i32`, and with nothing else: coming back out is
+  // `i31ref` is a reference that pairs with `i32`, and with nothing default: coming back out is
   // lossless, going in is lossy, and any other source has no conversion at all whichever spelling is
   // used. Handled here rather than in the numeric tables because it is not a primitive.
   if (to == "i31ref") {
@@ -8402,7 +8402,7 @@ void checkParams(C c, Param[] params) {
 /** Every name a statement declares, however deeply nested. */
 void declareStmt(C c, Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       // A local that **aliases** something const is const too. `Counter c = this; c.mutate();` inside
       // a `const this` method looks like a way to launder the constness and is not one — the local
       // and the receiver are the same object.
@@ -8431,16 +8431,16 @@ void declareStmt(C c, Stmt s) {
       // method, which is what ten of the spec's own linked-list programs do.
       if (!isConst && aliasesConst) { c.markAliasOnly(tokenText(c, nameTok)); }
       // **A `match` used as an initialiser binds names too**, and this walked only statements — so
-      // `i32 got = match (o) { case Some(v): v * 3, … };` left `v` undeclared, every arm typed as
+      // `i32 got = match (o) { Some(v): v * 3, … };` left `v` undeclared, every arm typed as
       // unknown, and the whole initialiser unknown with them. The statement form two arms down has
       // always done this; the expression form was simply never walked.
       declareMatchBindings(c, init);
     }
-    case Block(body): { declareScoped(c, body); }
-    case If(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
-    case While(cond, body): { declareScoped(c, body); }
-    case DoWhile(body, cond): { declareScoped(c, body); }
-    case For(init, cond, update, body): {
+    Block(body): { declareScoped(c, body); }
+    If(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
+    While(cond, body): { declareScoped(c, body); }
+    DoWhile(body, cond): { declareScoped(c, body); }
+    For(init, cond, update, body): {
       // **The body is the initialiser's scope too.** `for (i32 i = ...) { } i32 r = i;` is an error
       // because `i` belongs to the loop, and pushing the body before declaring the initialiser says
       // so without a second stack to keep in step with this one. `issues/lang/0122`.
@@ -8449,10 +8449,10 @@ void declareStmt(C c, Stmt s) {
       declareAll(c, body);
       c.popScope();
     }
-    case Switch(subject, cases): {
+    Switch(subject, cases): {
       for (i32 i = 0; i < cases.len(); i++) { declareScoped(c, cases[i].body); }
     }
-    case Match(subject, arms): {
+    Match(subject, arms): {
       for (i32 i = 0; i < arms.len(); i++) {
         // The arm's bindings are names too, and they scope to the arm. This slice does not track
         // that, so they are declared as *unknown* — which both silences them and, because a second
@@ -8470,7 +8470,7 @@ void declareStmt(C c, Stmt s) {
         c.popScope();
       }
     }
-    else: { }
+    default: { }
   }
 }
 
@@ -8489,14 +8489,14 @@ void declareStmt(C c, Stmt s) {
  */
 void declareMatchBindings(C c, Expr e) {
   match (e.kind) {
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
         }
       }
     }
-    else: { }
+    default: { }
   }
 }
 
@@ -8524,10 +8524,10 @@ void declareAll(C c, Stmt[] body) {
  */
 i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
   match (cond.kind) {
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       if (negated || (target is null) || n >= outNames.len()) { return n; }
       match (left.kind) {
-        case Ident(tok): {
+        Ident(tok): {
           string t = typeOfTy(c, target!);
           if (t == typeNone()) { return n; }
           // **`p is P` on a `P?` asks whether it is *there*, not what it is.** Recording it as a
@@ -8553,14 +8553,14 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
           outTypes[n] = t;
           return n + 1;
         }
-        else: { return n; }
+        default: { return n; }
       }
     }
-    case Binary(op, l, r): {
+    Binary(op, l, r): {
       if (tokenKind(c, op) != kAndAnd()) { return n; }
       return narrowingsOf(c, r, outNames, outTypes, narrowingsOf(c, l, outNames, outTypes, n));
     }
-    else: { return n; }
+    default: { return n; }
   }
 }
 
@@ -8576,47 +8576,47 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
 bool genericVariantConstruction(C c, Expr e) {
   match (e.kind) {
     // `Maybe.Just(4)` — a variant with a payload, which is a call.
-    case Call(callee, args, callTargs): { return genericEnumMember(c, callee); }
+    Call(callee, args, callTargs): { return genericEnumMember(c, callee); }
     // `Maybe.Absent` — one without, which is not.
-    case Member(obj, nameTok): { return genericEnumMember(c, e); }
-    else: { return false; }
+    Member(obj, nameTok): { return genericEnumMember(c, e); }
+    default: { return false; }
   }
 }
 
 /** Whether this is `E.Name` where `E` is a generic enum in scope. */
 bool genericEnumMember(C c, Expr e) {
   match (e.kind) {
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       match (obj.kind) {
-        case Ident(tok): {
+        Ident(tok): {
           string en = tokenText(c, tok);
           return c.isGenericEnum(en);
         }
-        else: { return false; }
+        default: { return false; }
       }
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
 bool isVariantConstruction(C c, Expr e) {
   match (e.kind) {
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       match (callee.kind) {
-        case Member(obj, nameTok): {
+        Member(obj, nameTok): {
           match (obj.kind) {
-            case Ident(tok): {
+            Ident(tok): {
               string en = tokenText(c, tok);
               return c.isEnum(en) && c.variantArityIn(en, tokenText(c, nameTok)) >= 0;
             }
-            else: { return false; }
+            default: { return false; }
           }
         }
-        case Ident(tok): { return c.isVariantName(tokenText(c, tok)); }
-        else: { return false; }
+        Ident(tok): { return c.isVariantName(tokenText(c, tok)); }
+        default: { return false; }
       }
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
@@ -8669,13 +8669,13 @@ void checkStmt(C c, Stmt s, Ty want) {
      * would report the literal cases that rule deliberately skips.
      */
     // `n++` writes as much as `n = n + 1` does.
-    case IncrStmt(target, op): { checkIncr(c, target, s.line, s.col); }
+    IncrStmt(target, op): { checkIncr(c, target, s.line, s.col); }
     // A bare expression — `p.set(1);` — was walked nowhere. Every expression rule reached only
-    // expressions that were part of something else: a return, an initialiser, a condition. A
+    // expressions that were part of something default: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied
     // to it at all, which is how the const-receiver check looked broken when it was merely unreached.
-    case ExprStmt(expr): { checkExpr(c, expr); }
-    case Assign(target, op, rhs): {
+    ExprStmt(expr): { checkExpr(c, expr); }
+    Assign(target, op, rhs): {
       c.expected = typeOfLvalue(c, target);
       checkExpr(c, rhs);
       // The same rule as an element of a literal, at the other way of writing one. `b[0] = 'é'`
@@ -8780,7 +8780,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
     }
     // The same question one position over: a declared type, and something that has to fit it.
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       string wantVar = typeOfTy(c, type);
       checkPackedNullable(c, wantVar, type);
       checkPackedHere(c, wantVar, type.line, type.col);
@@ -8826,7 +8826,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       // `const i32 a = 1; i32 a = 2; a = 3;` would be refused where the reference allows it.
       c.setType(tokenText(c, nameTok), wantVar);
     }
-    case Return(value): {
+    Return(value): {
       // Before the types: whether there should be a value here at all. Both directions are errors and
       // both name the `return` itself rather than what follows it — there is nothing to name in the
       // second case, which is presumably why the reference settled on the statement for both.
@@ -8924,8 +8924,8 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
     // else", and `Switch`/`Match` hold their bodies one level deeper, inside cases and arms.
-    case Block(body): { checkScoped(c, body, want); }
-    case If(cond, then, els): {
+    Block(body): { checkScoped(c, body, want); }
+    If(cond, then, els): {
       checkCond(c, cond);
       // `if (s is Circle) { s.radius }` — the guard is what makes the payload reachable, so the then
       // branch is walked with `s` retyped and the old type put back afterwards. Saved and restored
@@ -8960,7 +8960,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     // **A trap's message is what the host is told, so it is text.** Accepting a message at all meant
     // accepting any expression as one until this: `spec/cases/0043` is the message, `0045` is that it
     // has to be a string.
-    case Trap(value): {
+    Trap(value): {
       if (!(value is null)) {
         Expr msg = value!;
         c.expected = "string";
@@ -8978,27 +8978,27 @@ void checkStmt(C c, Stmt s, Ty want) {
         }
       }
     }
-    case Break: {
+    Break: {
       // A `break` leaves whichever of the two is innermost, so either will do.
       if (c.loopDepth == 0 && c.switchDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
     }
-    case Continue: {
+    Continue: {
       // A `continue` needs a *loop*: there is nothing in a switch to go round again.
       if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
     }
-    case While(cond, body): {
+    While(cond, body): {
       checkCond(c, cond);
       c.loopDepth = c.loopDepth + 1;
       checkScoped(c, body, want);
       c.loopDepth = c.loopDepth - 1;
     }
-    case DoWhile(body, cond): {
+    DoWhile(body, cond): {
       checkCond(c, cond);
       c.loopDepth = c.loopDepth + 1;
       checkScoped(c, body, want);
       c.loopDepth = c.loopDepth - 1;
     }
-    case For(init, cond, update, body): {
+    For(init, cond, update, body): {
       // The init and update are statements, and were declared but never checked — a `for` whose
       // initialiser is wrong said nothing. The reachability grid found it: `For` passed on its body
       // and failed on its init, which is exactly the shape of a walk that descends one field and not
@@ -9014,7 +9014,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.loopDepth = c.loopDepth - 1;
       c.popScope();
     }
-    case Switch(subject, cases): {
+    Switch(subject, cases): {
       checkExpr(c, subject);
       // A `switch` jumps on an integer, and a signed or unsigned 32-bit one at that. Reported at the
       // subject, which is the expression that cannot be switched on.
@@ -9089,10 +9089,10 @@ void checkStmt(C c, Stmt s, Ty want) {
       for (i32 i = 0; i < cases.len(); i++) { checkScoped(c, cases[i].body, want); }
       c.switchDepth = c.switchDepth - 1;
     }
-    case Match(subject, arms): {
+    Match(subject, arms): {
       checkArmVariants(c, subject, arms, s.line, s.col);
       for (i32 i = 0; i < arms.len(); i++) {
-        // **An arm narrows the subject**, exactly as `if (s is Circle)` does — `case Circle:` is the
+        // **An arm narrows the subject**, exactly as `if (s is Circle)` does — `Circle:` is the
         // same question asked by the other syntax, and `s.radius` inside it means the payload. The
         // subject has to be a plain name for this: narrowing `f().x` would mean claiming the second
         // call returns what the first did.
@@ -9110,7 +9110,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         restoreNarrowing(c, subject, saved);
       }
       // **A match arm is neither a loop nor a switch.** This bumped `loopDepth`, having been written
-      // from the switch above, so `case A: break;` and `case A: continue;` were both accepted — nine
+      // from the switch above, so `A: break;` and `A: continue;` were both accepted — nine
       // of the mutation sweep's missed diagnostics. An arm is a branch of an expression: there is
       // nothing to break out of and nothing to go round again.
     }
@@ -9127,8 +9127,8 @@ void checkStmt(C c, Stmt s, Ty want) {
 /**
  * The arms of an expression match all produce the one value, so their types have to agree.
  *
- * Compared only between arms this checker can name, and never against a literal: `case A: 0.0,
- * case B: 1` is an integer literal in a float's slot, which is the literal rule's business and not a
+ * Compared only between arms this checker can name, and never against a literal: `A: 0.0,
+ * B: 1` is an integer literal in a float's slot, which is the literal rule's business and not a
  * disagreement between arms. Two concrete types that cannot stand in for one another in either
  * direction are the case worth reporting, and the second one is where the mistake reads.
  */
@@ -9145,7 +9145,7 @@ void checkArmValueTypes(C c, Arm[] arms, i32 line, i32 col) {
     // an `f64`, and two arms both producing numbers are not the disagreement this is looking for.
     if (numericShape(vt) && numericShape(first)) { continue; }
     if (assignable(c, first, vt) || assignable(c, vt, first)) { continue; }
-    // **Both sides have to be a type this checker can vouch for.** `case Some(v): v * 3` in
+    // **Both sides have to be a type this checker can vouch for.** `Some(v): v * 3` in
     // `packages/std` has a payload whose type comes from the enum's instantiation, and what came back
     // was a name rather than a type — against `-1` that read as a disagreement and refused a working
     // file. Silence on anything else is the same rule the rest of this checker keeps.
@@ -9171,7 +9171,7 @@ void checkArmValueTypes(C c, Arm[] arms, i32 line, i32 col) {
  * What an arm's value is, as a type name — a literal answers with the type it naturally has.
  *
  * Skipping literals outright was the first version, on the grounds that a literal takes its type
- * from its slot. It does, but only among types that could hold it: `case Point: 0.0, else: "x"` is
+ * from its slot. It does, but only among types that could hold it: `Point: 0.0, default: "x"` is
  * the spec's own example of arms that disagree, and both of its arms are literals, so skipping them
  * skipped the case the rule exists for.
  */
@@ -9220,15 +9220,15 @@ bool concreteShape(string t) {
 /** The subject's name, when the subject is a plain name — `""` for anything else. */
 string subjectName(C c, Expr subject) {
   match (subject.kind) {
-    case Ident(tok): { return tokenText(c, tok); }
-    else: { return ""; }
+    Ident(tok): { return tokenText(c, tok); }
+    default: { return ""; }
   }
 }
 
 /**
  * A binding may not reuse the subject's name.
  *
- * `case Circle(s):` where the subject is also `s` would put two meanings on one name for the length
+ * `Circle(s):` where the subject is also `s` would put two meanings on one name for the length
  * of the arm — the payload and the value it came out of — and the language refuses rather than
  * choosing one.
  */
@@ -9237,7 +9237,7 @@ void checkBindingCollision(C c, Expr subject, Arm arm) {
   for (i32 b = 0; b < arm.bindingToks.len(); b++) {
     string bt = tokenText(c, arm.bindingToks[b]);
     // **`_` is a deliberate discard and may repeat.** It is the wildcard for a payload field nobody
-    // wants a name for, so `case Ok(_, _, _, _, _, _)` names nothing six times rather than one thing
+    // wants a name for, so `Ok(_, _, _, _, _, _)` names nothing six times rather than one thing
     // six times. Treating it as a name made the duplicate rule below report in 19 places across
     // `packages/http`, `packages/json` and their oracles — working files, caught by rung 3, which is
     // the corpus that exists for exactly this. `issues/lang/0239a`.
@@ -9247,7 +9247,7 @@ void checkBindingCollision(C c, Expr subject, Arm arm) {
       continue;
     }
     // **And against each other, which is the same rule with both names from the payload.**
-    // `case A(n, n)` compiled, and the *second* binding won: `A(7, 9)` answered 9. The reference
+    // `A(n, n)` compiled, and the *second* binding won: `A(7, 9)` answered 9. The reference
     // refuses it — *"duplicate binding 'n' in case 'A'"* — and silently choosing one of two meanings
     // is what the subject check above exists to prevent. Reported at the later binding, which is the
     // one to rename.
@@ -9270,7 +9270,7 @@ void checkBindingCollision(C c, Expr subject, Arm arm) {
 string armNarrowing(C c, Expr subject, Arm arm) {
   if (arm.variantTok < 0) { return ""; }
   match (subject.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       string nm = tokenText(c, tok);
       string was = c.typeOfName(nm);
       if (was == typeNone()) { return ""; }
@@ -9279,15 +9279,15 @@ string armNarrowing(C c, Expr subject, Arm arm) {
       c.setType(nm, variant);
       return was;
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
 void restoreNarrowing(C c, Expr subject, string was) {
   if (was == "") { return; }
   match (subject.kind) {
-    case Ident(tok): { c.setType(tokenText(c, tok), was); }
-    else: { }
+    Ident(tok): { c.setType(tokenText(c, tok), was); }
+    default: { }
   }
 }
 
@@ -9333,7 +9333,7 @@ void checkImportCollisions(C c, Program prog) {
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Import(pathTok, prefixTok, items): {
+      Import(pathTok, prefixTok, items): {
         for (i32 i = 0; i < items.len(); i++) {
           // **An item the parse did not finish has no alias, and `""` is not a name.** A failed import
           // — `import * as p from "./p.wac";`, which the parser refuses with *expected '{', found '*'* —
@@ -9363,7 +9363,7 @@ void checkImportCollisions(C c, Program prog) {
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -9371,22 +9371,22 @@ void checkImportCollisions(C c, Program prog) {
 /** The name a declaration introduces, or `""` — an import introduces one too, and is not one. */
 string declaredNameOf(C c, Decl d) {
   match (d.kind) {
-    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       return tokenText(c, nameTok);
     }
-    case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+    StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
       return tokenText(c, nameTok);
     }
-    case EnumDecl(nameTok, variants, exported, methods, typeParams): { return tokenText(c, nameTok); }
-    case ConstDecl(nameTok, type, init, exported): { return tokenText(c, nameTok); }
-    else: { return ""; }
+    EnumDecl(nameTok, variants, exported, methods, typeParams): { return tokenText(c, nameTok); }
+    ConstDecl(nameTok, type, init, exported): { return tokenText(c, nameTok); }
+    default: { return ""; }
   }
 }
 
 void checkDeclarationRules(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         for (i32 m = 0; m < methods.len(); m++) {
           string mn = tokenText(c, methods[m].nameTok);
           for (i32 v = 0; v < variants.len(); v++) {
@@ -9395,7 +9395,7 @@ void checkDeclarationRules(C c, Program prog) {
           }
         }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) { continue; }
         string owner = tokenText(c, nameTok);
         for (i32 f = 0; f < fields.len(); f++) {
@@ -9403,7 +9403,7 @@ void checkDeclarationRules(C c, Program prog) {
           c.report(errInfiniteGeneric(), fields[f].type.line, fields[f].type.col);
         }
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -9411,9 +9411,9 @@ void checkDeclarationRules(C c, Program prog) {
 /** Whether this written type is the struct itself with an argument that *contains* a parameter. */
 bool growsItself(C c, Ty t, string owner, i32[] typeParams) {
   match (t.kind) {
-    case Arr(elem): { return growsItself(c, elem, owner, typeParams); }
-    case Nullable(inner): { return growsItself(c, inner, owner, typeParams); }
-    case Named(tok, typeArgs): {
+    Arr(elem): { return growsItself(c, elem, owner, typeParams); }
+    Nullable(inner): { return growsItself(c, inner, owner, typeParams); }
+    Named(tok, typeArgs): {
       if (tokenText(c, tok) == owner) {
         for (i32 i = 0; i < typeArgs.len(); i++) {
           if (argumentGrows(c, typeArgs[i], typeParams)) { return true; }
@@ -9424,14 +9424,14 @@ bool growsItself(C c, Ty t, string owner, i32[] typeParams) {
       }
       return false;
     }
-    else: { return false; }
+    default: { return false; }
   }
 }
 
 /** Whether an argument mentions a type parameter without being one: `Box<T>` does, `T` does not. */
 bool argumentGrows(C c, Ty t, i32[] typeParams) {
   match (t.kind) {
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       string nm = tokenText(c, tok);
       for (i32 i = 0; i < typeParams.len(); i++) {
         if (tokenText(c, typeParams[i]) == nm) { return false; }
@@ -9441,16 +9441,16 @@ bool argumentGrows(C c, Ty t, i32[] typeParams) {
       }
       return false;
     }
-    case Arr(elem): { return mentionsParam(c, elem, typeParams); }
-    case Nullable(inner): { return argumentGrows(c, inner, typeParams); }
-    else: { return false; }
+    Arr(elem): { return mentionsParam(c, elem, typeParams); }
+    Nullable(inner): { return argumentGrows(c, inner, typeParams); }
+    default: { return false; }
   }
 }
 
 /** Whether a written type mentions one of these parameters anywhere inside it. */
 bool mentionsParam(C c, Ty t, i32[] typeParams) {
   match (t.kind) {
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       string nm = tokenText(c, tok);
       for (i32 i = 0; i < typeParams.len(); i++) {
         if (tokenText(c, typeParams[i]) == nm) { return true; }
@@ -9460,9 +9460,9 @@ bool mentionsParam(C c, Ty t, i32[] typeParams) {
       }
       return false;
     }
-    case Arr(elem): { return mentionsParam(c, elem, typeParams); }
-    case Nullable(inner): { return mentionsParam(c, inner, typeParams); }
-    else: { return false; }
+    Arr(elem): { return mentionsParam(c, elem, typeParams); }
+    Nullable(inner): { return mentionsParam(c, inner, typeParams); }
+    default: { return false; }
   }
 }
 
@@ -9503,10 +9503,10 @@ void checkDuplicates(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     string name = "";
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         name = tokenText(c, nameTok);
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         name = tokenText(c, nameTok);
         // A struct's members share one namespace: two fields, two methods, or one of each.
         string[] members = string[256]();
@@ -9541,7 +9541,7 @@ void checkDuplicates(C c, Program prog) {
           }
         }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         name = tokenText(c, nameTok);
         for (i32 v = 0; v < variants.len(); v++) {
           string vname = tokenText(c, variants[v].nameTok);
@@ -9589,8 +9589,8 @@ void checkDuplicates(C c, Program prog) {
           }
         }
       }
-      case ConstDecl(nameTok, type, init, exported): { name = tokenText(c, nameTok); }
-      else: { }
+      ConstDecl(nameTok, type, init, exported): { name = tokenText(c, nameTok); }
+      default: { }
     }
     if (name == "") { continue; }
     i32 seen = -1;
@@ -9631,13 +9631,13 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   // before it existed. `issues/lang/0157`.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Import(pathTok, prefixTok, items): {
+      Import(pathTok, prefixTok, items): {
         if (pathTok < 0) { continue; }
         string q = tokenText(c, pathTok);
         string bare = q.len() >= 2 ? q.slice(1, q.len() - 1) : "";
         if (bare != "" && !isBuiltinSpec(bare)) { c.addUnresolved(bare); }
       }
-      else: { }
+      default: { }
     }
   }
   checkModule(c, prog);
@@ -9721,12 +9721,12 @@ export void declareModule(C c, Program prog, string[] only) {
   // the way a `const P p` parameter is.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         c.declareConst(c.renamed(tokenText(c, nameTok)), typeOfTy(c, type), true);
         c.noteFuncArity(funcrefArityOfTy(c, type));
       }
-      else: { }
+      default: { }
     }
   }
   c.globalCount = c.nameCount;
@@ -9735,7 +9735,7 @@ export void declareModule(C c, Program prog, string[] only) {
   // further down. The same argument as collecting locals before walking a body, one scope up.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         string[] etps = string[typeParams.len()]();
         for (i32 i = 0; i < typeParams.len(); i++) { etps[i] = tokenText(c, typeParams[i]); }
@@ -9797,7 +9797,7 @@ export void declareModule(C c, Program prog, string[] only) {
                           methods[mi].body, ownParamNames(c, methods[mi].typeParams));
         }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         // Filtered on the name the declaring file wrote, declared under the name the importing
         // file gave it: `only` carries what was asked for, the rename carries what to call it.
         string name = tokenText(c, nameTok);
@@ -9852,12 +9852,12 @@ export void declareModule(C c, Program prog, string[] only) {
           c.activeParamCount = savedActive;
         }
       }
-      else: { }
+      default: { }
     }
   }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // A generic function's signature is written in terms of its own type parameters, which mean
         // nothing at a call site: `Box<T>` accepts every `Box<…>`, and `T` accepts everything. Its
         // arity is still worth having — that does not depend on the types — so the parameters are
@@ -9883,7 +9883,7 @@ export void declareModule(C c, Program prog, string[] only) {
         c.declareFunc(c.renamed(tokenText(c, nameTok)), fret, prims,
                       params.len(), ftps);
       }
-      else: { }
+      default: { }
     }
   }
 }
@@ -9902,7 +9902,7 @@ export void declareModule(C c, Program prog, string[] only) {
  * The enum a subject is a value of — `E` for an `E`, and `E` for an `E.A(1)`.
  *
  * A variant construction has the *variant's* own type, because a variant is registered as a struct
- * of its own: that is how `case A:` narrows and how a payload is found. So `match (E.A(1))` asked
+ * of its own: that is how `A:` narrows and how a payload is found. So `match (E.A(1))` asked
  * `isEnum` about `A` and was told no, and every rule keyed on that question — exhaustiveness, a
  * duplicated arm, a name no variant declares — said nothing at all about the whole match.
  * Ambiguity answers `""`: two enums declaring one variant name cannot happen in a file
@@ -9993,7 +9993,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   if (known == 0) { return; }
   // **Reported only for a name that is nobody's variant.** Belonging to *this* enum is the question
   // the reference answers, and answering it needs to know which file the subject's type came from —
-  // the provenance this checker does not keep, and the reason `case Match:` in `packages/ssh` was
+  // the provenance this checker does not keep, and the reason `Match:` in `packages/ssh` was
   // refused while being perfectly correct. A name no enum anywhere declares is wrong under every
   // reading, and that is the half worth reporting.
   for (i32 i = 0; i < arms.len(); i++) {
@@ -10007,7 +10007,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
     c.reportTok(errNoVariant(), arms[i].variantTok - 1, "");
   }
 
-  // **The names an arm binds, against the payload the variant has.** `case C(p, q)` for a variant with
+  // **The names an arm binds, against the payload the variant has.** `C(p, q)` for a variant with
   // one field bound a name to nothing; the whole category was uncaught. Non-zero and unequal, at the
   // `case` keyword, both of which are the reference's contract rather than a guess — binding *no*
   // names is how an arm ignores a payload, and it accepts that in silence.
@@ -10119,7 +10119,7 @@ bool wantedName(string[] only, string name) {
 void checkDeclaredTypeNames(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         setActiveParams(c, typeParams);
         // `struct R : Shape` with no `Shape` anywhere: a parent is a written type name like any
         // other, and every other position that takes one is already checked. Reported at the parent
@@ -10143,7 +10143,7 @@ void checkDeclaredTypeNames(C c, Program prog) {
         }
         c.activeParamCount = 0;
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         setActiveParams(c, typeParams);
         for (i32 v = 0; v < variants.len(); v++) {
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
@@ -10162,7 +10162,7 @@ void checkDeclaredTypeNames(C c, Program prog) {
         }
         c.activeParamCount = 0;
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         setActiveParams(c, typeParams);
         // A return type is the fourth position a type can be written in, and the packed rule is the
         // same in all of them — `spec/cases/0060`.
@@ -10176,8 +10176,8 @@ void checkDeclaredTypeNames(C c, Program prog) {
         for (i32 i = 0; i < params.len(); i++) { typeOfTy(c, params[i].type); }
         c.activeParamCount = 0;
       }
-      case ConstDecl(nameTok, type, init, exported): { typeOfTy(c, type); }
-      else: { }
+      ConstDecl(nameTok, type, init, exported): { typeOfTy(c, type); }
+      default: { }
     }
   }
 }
@@ -10281,7 +10281,7 @@ export void checkModule(C c, Program prog) {
   // imported is in scope for the whole file, so these sit with the module-level constants.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Import(pathTok, prefixTok, items): {
+      Import(pathTok, prefixTok, items): {
         // **There is no bare specifier any more** — `design/lang/0009` D5, completed 2026-08-19.
         // `core` was the one word an import could name without quotes, on the argument that it was
         // not a file; D4 made it a source tree whose other members are imported quoted, so the root
@@ -10355,7 +10355,7 @@ export void checkModule(C c, Program prog) {
           c.declare(tokenText(c, prefixTok), typeNone());
         }
       }
-      else: { }
+      default: { }
     }
   }
 
@@ -10384,7 +10384,7 @@ export void checkModule(C c, Program prog) {
   i32 settledCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         // **The initialiser is an expression, and nothing was walking it.** Every rule in this file
         // about literals, elements, defaults and names applied to a local's initialiser and to none
         // of these — `const E[] T = E[3]()` was silent where the same line inside a function was
@@ -10418,13 +10418,13 @@ export void checkModule(C c, Program prog) {
           settledCount = settledCount + 1;
         }
       }
-      else: { }
+      default: { }
     }
   }
 
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string owner = tokenText(c, nameTok);
         // `Box<T>`'s own parameters are in scope for its fields and for every method it declares —
         // `T v;` and `T get(const this)` are the template's, not names the file left undeclared.
@@ -10457,17 +10457,17 @@ export void checkModule(C c, Program prog) {
       // The same loop as a struct's, because the differences are all absences: an enum has no parent,
       // so `override` has nothing to be about, and its payload types are checked with the variants in
       // the declaration pass rather than here.
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         setActiveParams(c, typeParams);
         checkMethodBodies(c, tokenText(c, nameTok), "", methods);
         c.activeParamCount = 0;
       }
-      else: { }
+      default: { }
     }
   }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // **A generic function's body is checked**, with its type parameters left unknown.
         //
         // It was skipped entirely once, because answering questions about `T` produced wrong answers.
@@ -10512,7 +10512,7 @@ export void checkModule(C c, Program prog) {
         }
         c.activeParamCount = 0;
       }
-      else: { }
+      default: { }
     }
   }
 }

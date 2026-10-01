@@ -91,9 +91,9 @@ string describe(u8[] input) {
 /** `ok`, `bad` or `incomplete` — the same three words the oracle answers with. */
 string wacOutcome(Parsed p) {
   match (p) {
-    case Ok(_): { return "ok"; }
-    case Bad(_): { return "bad"; }
-    case Incomplete: { return "incomplete"; }
+    Ok(_): { return "ok"; }
+    Bad(_): { return "bad"; }
+    Incomplete: { return "incomplete"; }
   }
 }
 
@@ -124,18 +124,18 @@ void checkBytes(T t, Cli cli, u8[][] cases) {
     }
 
     match (want[i]) {
-      case Ok(method, target, version, rawHeaders, body, trailers): {
+      Ok(method, target, version, rawHeaders, body, trailers): {
         compareOk(t, label, got, method, target, version, rawHeaders, body);
       }
-      case Refused(code): {
+      Refused(code): {
         // The reason is not specified and the two will not agree on it. Acceptance is.
         t.isFalse(wacOutcome(got) == "ok", label + ": llhttp rejected (" + code + "), wac accepted");
       }
-      case Incomplete: {
+      Incomplete: {
         t.isFalse(wacOutcome(got) == "ok", label + ": llhttp wanted more bytes, wac accepted");
         t.isFalse(wacOutcome(got) == "bad", label + ": llhttp wanted more bytes, wac rejected");
       }
-      case Broken(why): { t.fail(label + ": " + why); }
+      Broken(why): { t.fail(label + ": " + why); }
     }
   }
 }
@@ -143,7 +143,7 @@ void checkBytes(T t, Cli cli, u8[][] cases) {
 void compareOk(T t, string label, Parsed got, string method, string target, string version,
                string[] rawHeaders, u8[] body) {
   match (got) {
-    case Ok(req): {
+    Ok(req): {
       t.eqStr(string.fromBytes(req.method), method, label + ": method");
       t.eqStr(string.fromBytes(req.target), target, label + ": target");
       t.eqStr("1." + itoa(req.minor), version, label + ": version");
@@ -160,7 +160,7 @@ void compareOk(T t, string label, Parsed got, string method, string target, stri
       t.isFalse(req.headers.count < pairs,
                 label + ": " + itoa(pairs - req.headers.count) + " headers missing");
     }
-    else: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
+    default: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
   }
 }
 
@@ -311,11 +311,11 @@ export string test_what_the_parser_consumed_is_where_the_next_message_starts() {
     "GET /2 HTTP/1.1\r\n\r\n");
   for (i32 i = 0; i < firsts.len(); i++) {
     match (parseRequest((firsts[i] + seconds[i]).toBytes(), MAX_BODY())) {
-      case Ok(req): {
+      Ok(req): {
         t.eqI32(req.consumed, firsts[i].len(),
                 describe(firsts[i].toBytes()) + ": consumed against the message's length");
       }
-      else: { t.fail(describe(firsts[i].toBytes()) + ": expected a parse"); }
+      default: { t.fail(describe(firsts[i].toBytes()) + ": expected a parse"); }
     }
   }
   return t.report();
@@ -324,8 +324,8 @@ export string test_what_the_parser_consumed_is_where_the_next_message_starts() {
 /** The code a refusal reported, or `-1` if it was not a refusal. */
 i32 codeOf(Parsed p) {
   match (p) {
-    case Bad(code): { return code; }
-    else: { return -1; }
+    Bad(code): { return code; }
+    default: { return -1; }
   }
 }
 

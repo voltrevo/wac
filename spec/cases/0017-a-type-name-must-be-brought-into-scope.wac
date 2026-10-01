@@ -5,4 +5,4 @@ export enum K { A, B }
 export K mk() { return K.A; }
 // ---- main.wac ----
 import { mk } from "./k.wac";
-export i32 f() { K k = mk(); return match (k) { case A: 1, case B: 2 }; }
+export i32 f() { K k = mk(); return match (k) { A: 1, B: 2 }; }

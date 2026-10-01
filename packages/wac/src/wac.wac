@@ -1351,7 +1351,7 @@ export i32 main(Core core, Cli cli) {
   // thirty-odd ways out of this function.
   //
   // It used to go beside the run, after `runTests` answered. That covered a first run and nothing
-  // else: a second run writes a fresh aggregate, hits the build cache and returns before reaching it,
+  // default: a second run writes a fresh aggregate, hits the build cache and returns before reaching it,
   // and a compile failure returns earlier still — so `.cache/` grew by one file per invocation, which
   // is the shape `issues/system/0136` is about. Reported as GitHub wac#27.
   //
@@ -1528,7 +1528,7 @@ export i32 main(Core core, Cli cli) {
   // was set in the shell would be a build whose output does not follow from its arguments.
   bool covered = hasFlag(cli, argc, "--coverage") || profileDir != "";
   // **`--trace` is the other instrumented build**, and it is the same three exports meaning something
-  // else: a journal of `(site, value)` in the order events happened rather than a count per point.
+  // default: a journal of `(site, value)` in the order events happened rather than a count per point.
   // `wac ctcompare` reads it. The two cannot be asked for together — they are one counter array, and a
   // build that tried to be both would answer whichever question was asked last.
   bool traced = hasFlag(cli, argc, "--trace");

@@ -6,14 +6,14 @@ import { Attr, Node } from "core";
 
 string render(Node n) {
   match (n) {
-    case Text(t): return t;
+    Text(t): { return t; }
     // A fragment is its children and nothing else — no tag of its own, which is the whole point.
-    case Fragment(kids): {
+    Fragment(kids): {
       string out = "";
       for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
       return out;
     }
-    case Element(tag, attrs, kids): {
+    Element(tag, attrs, kids): {
       string out = "<" + tag + ">";
       for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
       return out + "</" + tag + ">";

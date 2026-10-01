@@ -195,7 +195,7 @@ Decoded nothing() {
 export Decoded decodeProfile(string text) {
   JsonValue? root = parse(text.toBytes());
   if (root is null) { return nothing(); }
-  JsonObject obj = match (root!) { case Object(o): o, else: JsonObject.create() };
+  JsonObject obj = match (root!) { Object(o): o, default: JsonObject.create() };
   if (obj.len() == 0) { return nothing(); }
 
   JsonArray names = arrayAt(obj, "names");
@@ -264,15 +264,15 @@ JsonArray arrayAt(JsonObject o, string key) {
 }
 
 JsonArray asArray(JsonValue v) {
-  return match (v) { case Array(a): a, else: JsonArray.create() };
+  return match (v) { Array(a): a, default: JsonArray.create() };
 }
 
 string textOf(JsonValue v) {
-  return match (v) { case Str(b): string.fromBytes(b), else: "" };
+  return match (v) { Str(b): string.fromBytes(b), default: "" };
 }
 
 i32 numberOf(JsonValue v) {
-  return match (v) { case Number(f, _): f as~ i32, else: -1 };
+  return match (v) { Number(f, _): f as~ i32, default: -1 };
 }
 
 string[] splitOn(string s, string sep) {

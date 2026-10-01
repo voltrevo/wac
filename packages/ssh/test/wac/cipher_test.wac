@@ -24,9 +24,9 @@ string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
 i32 openCode(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
   Plain p = open(key, seq, src, at, end, maxPacket);
   match (p.status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 

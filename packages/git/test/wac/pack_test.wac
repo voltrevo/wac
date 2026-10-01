@@ -177,15 +177,15 @@ export string test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its
   T t = T.create();
   Packed f = packed(t, cli, "pack");
   match (openPack(f.packBytes(), f.idxBytes())) {
-    case Refused(why): { t.isTrue(false, "openPack refused: " + why); }
-    case Ready(p): {
+    Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    Ready(p): {
       PackIndex idx = p.idx;
       t.isTrue(idx.count >= 9,
                "at least nine objects, got " + itoa64(idx.count as i64));
       for (i32 i = 0; i < idx.count; i++) {
         match (objectAt(p, idx.offsets[i], 64)) {
-          case Absent(why): { t.isTrue(false, idx.hexAt(i) + " did not resolve: " + why); }
-          case Found(kind, data): {
+          Absent(why): { t.isTrue(false, idx.hexAt(i) + " did not resolve: " + why); }
+          Found(kind, data): {
             t.eqStr(nameOf(kindOfCode(kind), data), idx.hexAt(i),
                     "the object at offset " + itoa64(idx.offsets[i]) + " hashes to its own name");
           }
@@ -207,9 +207,9 @@ i32 deltasIn(Pack p, PackIndex idx) {
   i32 deltas = 0;
   for (i32 i = 0; i < idx.count; i++) {
     match (rawAt(p, idx.offsets[i])) {
-      case Whole(kind, data): { }
-      case Damaged(why): { }
-      else: { deltas = deltas + 1; }
+      Whole(kind, data): { }
+      Damaged(why): { }
+      default: { deltas = deltas + 1; }
     }
   }
   return deltas;
@@ -219,8 +219,8 @@ export string test_the_header_at_each_offset_says_what_verify_pack_says(Core cor
   T t = T.create();
   Packed f = packed(t, cli, "pack2");
   match (openPack(f.packBytes(), f.idxBytes())) {
-    case Refused(why): { t.isTrue(false, "openPack refused: " + why); }
-    case Ready(p): {
+    Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    Ready(p): {
       // `<name> <type> <size> <compressed> <offset> [<depth> <base>]`
       string[] all = splitLines(f.text(string[]("verify-pack", "-v", f.idxPath)));
       i32 rows = 0;
@@ -241,21 +241,21 @@ export string test_the_header_at_each_offset_says_what_verify_pack_says(Core cor
         i32 atOffset = -1;
         bool weSayDelta = false;
         match (rawAt(p, offset)) {
-          case Damaged(why): { t.isTrue(false, name + ": rawAt failed: " + why); }
-          case Whole(kind, data): {
+          Damaged(why): { t.isTrue(false, name + ": rawAt failed: " + why); }
+          Whole(kind, data): {
             atOffset = data.len();
             t.eqStr(kindWord(kind), type, name + "'s type");
           }
-          case FromOffset(base, delta): { atOffset = delta.len(); weSayDelta = true; }
-          case FromName(baseName, delta): { atOffset = delta.len(); weSayDelta = true; }
+          FromOffset(base, delta): { atOffset = delta.len(); weSayDelta = true; }
+          FromName(baseName, delta): { atOffset = delta.len(); weSayDelta = true; }
         }
         t.eqI64(atOffset as i64, size, name + ": the bytes at its offset");
         t.eqBool(weSayDelta, isDeltaRow, name + ": whether it is a delta");
 
         // And the other number: the reconstructed object, which for a delta is a different size.
         match (objectAt(p, offset, 64)) {
-          case Absent(why): { t.isTrue(false, name + " did not resolve: " + why); }
-          case Found(kind, data): {
+          Absent(why): { t.isTrue(false, name + " did not resolve: " + why); }
+          Found(kind, data): {
             t.eqI64(data.len() as i64, atoi64(f.text(string[]("cat-file", "-s", name))),
                     name + ": the reconstructed size");
             t.eqStr(kindWord(kind), f.text(string[]("cat-file", "-t", name)),
@@ -276,12 +276,12 @@ export string test_a_named_lookup_finds_an_object_through_the_index(Core core, C
   T t = T.create();
   Packed f = packed(t, cli, "pack3");
   match (openPack(f.packBytes(), f.idxBytes())) {
-    case Refused(why): { t.isTrue(false, "openPack refused: " + why); }
-    case Ready(p): {
+    Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    Ready(p): {
       string head = f.text(string[]("rev-parse", "HEAD"));
       match (objectNamed(p, decodedName(head))) {
-        case Absent(why): { t.isTrue(false, "HEAD not found in the pack: " + why); }
-        case Found(kind, data): {
+        Absent(why): { t.isTrue(false, "HEAD not found in the pack: " + why); }
+        Found(kind, data): {
           t.eqStr(kindWord(kind), "commit", "HEAD comes back as a commit");
           t.eqStr(trimmed(string.fromBytes(data)),
                   f.text(string[]("cat-file", "commit", head)),
@@ -291,8 +291,8 @@ export string test_a_named_lookup_finds_an_object_through_the_index(Core core, C
 
       // A name that is not there is absent rather than a wrong answer.
       match (objectNamed(p, u8[20]())) {
-        case Found(kind, data): { t.isTrue(false, "an all-zero name was found"); }
-        case Absent(why): { t.isTrue(true, why); }
+        Found(kind, data): { t.isTrue(false, "an all-zero name was found"); }
+        Absent(why): { t.isTrue(true, why); }
       }
     }
   }
@@ -317,8 +317,8 @@ i32 nibble(i32 c) {
 
 bool refused(Opened o) {
   match (o) {
-    case Refused(why): { return true; }
-    case Ready(p): { return false; }
+    Refused(why): { return true; }
+    Ready(p): { return false; }
   }
 }
 
@@ -352,8 +352,8 @@ export string test_a_pack_or_index_that_does_not_belong_is_refused(Core core, Cl
   t.isTrue(refused(openPack(packBytes, idxV1)), "a version-1 index is refused");
 
   match (parseIdx(u8[8]())) {
-    case Loaded(idx): { t.isTrue(false, "a truncated index was accepted"); }
-    case Rejected(why): { t.isTrue(true, why); }
+    Loaded(idx): { t.isTrue(false, "a truncated index was accepted"); }
+    Rejected(why): { t.isTrue(true, why); }
   }
 
   cli.remove(f.dir, true).wait();
@@ -396,12 +396,12 @@ export string test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote(Co
   u8[] packBytes = f.packBytes();
 
   match (indexPack(packBytes)) {
-    case Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
-    case Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
-    case Built(ours): {
+    Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
+    Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
+    Built(ours): {
       match (parseIdx(f.idxBytes())) {
-        case Rejected(why): { t.isTrue(false, "git's own index did not parse: " + why); }
-        case Loaded(g): {
+        Rejected(why): { t.isTrue(false, "git's own index did not parse: " + why); }
+        Loaded(g): {
           t.eqI32(ours.count, g.count, "the number of objects");
           for (i32 i = 0; i < g.count && i < ours.count; i++) {
             t.eqStr(ours.hexAt(i) + "@" + itoa64(ours.offsets[i]),
@@ -426,9 +426,9 @@ export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core c
   u8[] packBytes = f.packBytes();
 
   match (indexPack(packBytes)) {
-    case Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
-    case Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
-    case Built(idx): {
+    Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
+    Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
+    Built(idx): {
       // The pack's own trailing SHA-1 goes in the index's second-to-last field. It is not in
       // `PackIndex` because it identifies the file being described rather than anything in the table.
       u8[] checksum = u8[20]();
@@ -516,8 +516,8 @@ export string test_an_index_with_offsets_past_two_gigabytes_round_trips() {
   for (i32 i = 0; i < 20; i++) { checksum[i] = i + 1; }
 
   match (parseIdx(writeIdx(PackIndex(n, names, offs, crcs), checksum))) {
-    case Rejected(why): { t.isTrue(false, "the index we wrote did not read back: " + why); }
-    case Loaded(back): {
+    Rejected(why): { t.isTrue(false, "the index we wrote did not read back: " + why); }
+    Loaded(back): {
       t.eqI32(back.count, n, "the object count survived");
       for (i32 i = 0; i < n && i < back.count; i++) {
         t.eqI64(back.offsets[i], offs[i], "offset " + itoa64(i as i64));

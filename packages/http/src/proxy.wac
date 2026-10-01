@@ -175,37 +175,37 @@ export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string ho
   Buf all = Buf.create();
   while (true) {
     match (cli.recv(s.handle).wait()) {
-      case Data(bytes): { all.pushAll(bytes); }
-      case End: {
+      Data(bytes): { all.pushAll(bytes); }
+      End: {
         cli.closeSocket(s.handle);
         // Distinct from a refusal on purpose: nothing was said, so there is no status to report and the
         // cause is upstream of any policy the proxy has.
         return Tunnel(false, -1, u8[0](), "the proxy closed the connection before answering");
       }
-      case Failed(why): {
+      Failed(why): {
         cli.closeSocket(s.handle);
         return Tunnel(false, -1, u8[0](), "reading the proxy's reply failed: " + why);
       }
     }
     u8[] soFar = all.bytes();
     match (readReply(soFar)) {
-      case NeedMore: {
+      NeedMore: {
         if (all.len > replyCap()) {
           cli.closeSocket(s.handle);
           return Tunnel(false, -1, u8[0](), "the proxy sent " + itoa(all.len)
             + " bytes without finishing a reply");
         }
       }
-      case NotHttp(line): {
+      NotHttp(line): {
         cli.closeSocket(s.handle);
         return Tunnel(false, -1, u8[0](), "the proxy's reply is not HTTP: " + line);
       }
-      case Refused(line): {
+      Refused(line): {
         cli.closeSocket(s.handle);
         // The proxy's own line, verbatim. A 403 here is an allowlist, not a network.
         return Tunnel(false, -1, u8[0](), "the proxy refused " + authority + ": " + line);
       }
-      case Established(at): {
+      Established(at): {
         u8[] leftover = u8[soFar.len() - at]();
         for (i32 i = 0; i < leftover.len(); i++) { leftover[i] = soFar[at + i]; }
         return Tunnel(true, s.handle, leftover, "");

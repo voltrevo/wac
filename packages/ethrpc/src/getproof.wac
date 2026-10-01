@@ -130,7 +130,7 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
   }
   JsonValue storageProof = memberOf(got.result, "storageProof");
   match (storageProof) {
-    case Array(items): {
+    Array(items): {
       if (items.len() != slots.len()) {
         return failed("asked about " + itoa(slots.len()) + " slot(s) and got "
                       + itoa(items.len()) + " storage proofs");
@@ -151,7 +151,7 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
       }
       return Proof.many(true, root, accountNodes, out, "");
     }
-    else: { return failed("the answer has no storageProof array"); }
+    default: { return failed("the answer has no storageProof array"); }
   }
 }
 

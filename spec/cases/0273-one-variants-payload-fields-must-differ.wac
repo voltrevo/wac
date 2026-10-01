@@ -3,4 +3,4 @@
 // why: `enum E { A(i32 x, i32 x) }` is an error, exactly as a struct's fields must differ
 // from: spec/spec/enums.md, whose only checker was the reference's suite
 enum E { A(i32 x, i32 x) }
-export i32 f() { return match (E.A(1, 2)) { case A(p, q): p + q }; }
+export i32 f() { return match (E.A(1, 2)) { A(p, q): p + q }; }

@@ -3,6 +3,6 @@
 // from: the mutation sweep, packages/std/test/wac/option_test.wac
 enum Opt { None, Some(i32 v) }
 export i32 f(Opt o, i32 n) {
-  string got = match (o) { case None: n, case Some(v): n };
+  string got = match (o) { None: n, Some(v): n };
   return 0;
 }

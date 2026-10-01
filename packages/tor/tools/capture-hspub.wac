@@ -73,8 +73,8 @@ JsonObject generated(Core core, Cli cli) {
     trap;
   }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -82,8 +82,8 @@ JsonArray arrOf(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return JsonArray.create(); }
   match (v!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 

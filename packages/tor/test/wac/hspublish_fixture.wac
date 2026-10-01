@@ -30,8 +30,8 @@ export JsonArray controls(Cli cli) {
   JsonValue? cs = publishTop(cli).getStr("controls");
   if (cs is null) { trap; }
   match (cs!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
@@ -73,8 +73,8 @@ export JsonArray sequences(Cli cli) {
   JsonValue? ss = publishTop(cli).getStr("sequences");
   if (ss is null) { trap; }
   match (ss!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
@@ -84,11 +84,11 @@ export i32 sequenceCount(Cli cli) { return sequences(cli).len(); }
 export u8[] sequenceDocument(Cli cli, i32 si, i32 pos) {
   JsonObject s = objectOf(sequences(cli).get(si));
   match (arrayOf(s, "order").get(pos)) {
-    case Str(bytes): {
+    Str(bytes): {
       if (string.fromBytes(bytes) == "next") { return nextBytes(cli); }
       return descriptorBytes(cli);
     }
-    else: { trap; }
+    default: { trap; }
   }
 }
 
@@ -101,8 +101,8 @@ export u8[] sequenceStored(Cli cli, i32 si) {
   u8[] out = u8[each.len()]();
   for (i32 i = 0; i < each.len(); i++) {
     match (each.get(i)) {
-      case Bool(value): { out[i] = value ? 1 : 0; }
-      else: { trap; }
+      Bool(value): { out[i] = value ? 1 : 0; }
+      default: { trap; }
     }
   }
   return out;

@@ -5,6 +5,6 @@
 enum E { A(i32 k), B(string w) }
 export i32 f() {
   match (E.A(1)) {
-    case A(k): { return k; }
+    A(k): { return k; }
   }
 }

@@ -679,14 +679,14 @@ enum Step {
 // A payload-less variant is a VALUE, not a call: `Step.Stop`, never `Step.Stop()`.
 // Construction is qualified by the enum, like a static method.
 
-// As a STATEMENT, arms are `case Pattern:` followed by statements — the same
+// As a STATEMENT, arms are `Pattern:` followed by statements — the same
 // shape as `switch`, same implicit break, no fallthrough. Bindings are
 // positional, take their types from the declaration, and are scoped to the arm.
 export i32 advance(Step s) {
   match (s) {
-    case Stop: return 0;
-    case Go(n): return n;
-    case Turn(d): return d as~ i32;
+    Stop: { return 0; }
+    Go(n): { return n; }
+    Turn(d): { return d as~ i32; }
   }
 }
 
@@ -694,12 +694,12 @@ export i32 advance(Step s) {
 // Omit the parentheses to ignore every payload; name a binding `_` to ignore one.
 export string describe(Step s) {
   return match (s) {
-    case Stop: "stop",
-    case Go(_): "go",
-    case Turn: "turn"
+    Stop: "stop",
+    Go(_): "go",
+    Turn: "turn"
   };
 }
-// ERROR: match (s) { case Stop: 0, case Go(n): n }
+// ERROR: match (s) { Stop: 0, Go(n): n }
 //        // match does not cover 'Turn' — exhaustiveness is checked, and there
 //        // is no `default` to paper over a variant added later
 
@@ -714,7 +714,7 @@ enum Maybe<T> {
   Absent
 
   T orElse(const this, T fallback) {
-    return match (this) { case Just(v): v, case Absent: fallback };
+    return match (this) { Just(v): v, Absent: fallback };
   }
 }
 

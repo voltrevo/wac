@@ -49,8 +49,8 @@ JsonObject? memberObject(JsonValue v, string key) {
   JsonValue? found = member(v, key);
   if (found is null) { return null; }
   match (found!) {
-    case Object(members): { return members; }
-    else: { return null; }
+    Object(members): { return members; }
+    default: { return null; }
   }
 }
 
@@ -178,11 +178,11 @@ export string test_the_bootstrap_and_updates_are_minimal_config_sizes(Core core,
     if (theUpdates is null) { continue; }
     for (i32 j = 0; j < theUpdates!.len(); j++) {
       match (theUpdates!.at(j).value) {
-        case Str(bytes): {
+        Str(bytes): {
           t.eqI32(string.fromBytes(bytes).len() / 2, UPDATE,
                   name + "/" + theUpdates!.at(j).keyStr() + ": update size for minimal config");
         }
-        else: { t.fail(name + ": an update is not a hex string"); }
+        default: { t.fail(name + ": an update is not a hex string"); }
       }
     }
   }
@@ -232,8 +232,8 @@ export string test_the_minimal_descriptor_table_reproduces_the_vendored_objects_
   if ((theUpdates is null) || theUpdates!.len() == 0) { return t.report(); }
   i32 update = 0;
   match (theUpdates!.at(0).value) {
-    case Str(bytes): { update = string.fromBytes(bytes).len() / 2; }
-    else: { t.fail("an update is not a hex string"); }
+    Str(bytes): { update = string.fromBytes(bytes).len() / 2; }
+    default: { t.fail("an update is not a hex string"); }
   }
 
   i32[] minimal = beaconTypesMinimal();
@@ -272,13 +272,13 @@ export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_mini
     if (theUpdates is null) { continue; }
     for (i32 j = 0; j < theUpdates!.len(); j++) {
       match (theUpdates!.at(j).value) {
-        case Str(bytes): {
+        Str(bytes): {
           u8[]? r = hashTreeRoot(minimal, fields, TY_LIGHT_CLIENT_UPDATE(),
                                  decoded(string.fromBytes(bytes)));
           t.isTrue(!(r is null) && r!.len() == 32,
                    name + "/" + theUpdates!.at(j).keyStr() + ": the update was refused");
         }
-        else: { t.fail(name + ": an update is not a hex string"); }
+        default: { t.fail(name + ": an update is not a hex string"); }
       }
       n = n + 1;
     }
@@ -329,8 +329,8 @@ export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_o
       if (named is null) { continue; }
       u8[] update = u8[0]();
       match (named!) {
-        case Str(bytes): { update = decoded(string.fromBytes(bytes)); }
-        else: { continue; }
+        Str(bytes): { update = decoded(string.fromBytes(bytes)); }
+        default: { continue; }
       }
       JsonValue? checks = member(s, "checks");
       if (checks is null) { continue; }
@@ -372,8 +372,8 @@ export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_re
   if ((theUpdates is null) || theUpdates!.len() == 0) { return t.report(); }
   u8[] update = u8[0]();
   match (theUpdates!.at(0).value) {
-    case Str(bytes): { update = decoded(string.fromBytes(bytes)); }
-    else: { t.failNow("an update is not a hex string"); }
+    Str(bytes): { update = decoded(string.fromBytes(bytes)); }
+    default: { t.failNow("an update is not a hex string"); }
   }
 
   i32[] minimal = beaconTypesMinimal();

@@ -52,8 +52,8 @@ export i32 paddingBytes(u8[] packet) {
     Next f = next(p, at);
     if (f.size == 0) { return total; }
     match (f.frame) {
-      case Padding(count): { total = total + count; }
-      else: {}
+      Padding(count): { total = total + count; }
+      default: {}
     }
     at = at + f.size;
   }
@@ -74,8 +74,8 @@ export i32 closeCodeIn(u8[] payload) {
     Next f = next(payload, at);
     if (f.size == 0) { return -1; }
     match (f.frame) {
-      case ConnectionClose(code, reason): { return code as~ i32; }
-      else: {}
+      ConnectionClose(code, reason): { return code as~ i32; }
+      default: {}
     }
     at = at + f.size;
   }
@@ -89,8 +89,8 @@ export string closeReasonIn(u8[] payload) {
     Next f = next(payload, at);
     if (f.size == 0) { return ""; }
     match (f.frame) {
-      case ConnectionClose(code, reason): { return string.fromBytes(reason); }
-      else: {}
+      ConnectionClose(code, reason): { return string.fromBytes(reason); }
+      default: {}
     }
     at = at + f.size;
   }
@@ -105,12 +105,12 @@ export i32 kindsIn(u8[] payload) {
     Next f = next(payload, at);
     if (f.size == 0) { return seen; }
     match (f.frame) {
-      case Padding(count): { seen = seen | 1; }
-      case Ping: { seen = seen | 2; }
-      case Ack(largest, delay): { seen = seen | 4; }
-      case Crypto(off, data): { seen = seen | 8; }
-      case ConnectionClose(code, reason): { seen = seen | 16; }
-      else: {}
+      Padding(count): { seen = seen | 1; }
+      Ping: { seen = seen | 2; }
+      Ack(largest, delay): { seen = seen | 4; }
+      Crypto(off, data): { seen = seen | 8; }
+      ConnectionClose(code, reason): { seen = seen | 16; }
+      default: {}
     }
     at = at + f.size;
   }
@@ -165,29 +165,29 @@ export i32 kindAt(u8[] b, i32 at) { return kindAtIn(b, at, EPOCH_INITIAL()); }
 export i32 kindAtIn(u8[] b, i32 at, i32 epoch) {
   Next f = nextIn(b, at, epoch);
   match (f.frame) {
-    case Incomplete: { return -1; }
-    case Unknown(kind): { return -2; }
-    case NotPermitted(kind): { return -4; }
-    case Padding(count): { return 0x00; }
-    case Ping: { return 0x01; }
-    case Ack(largest, delay): { return 0x02; }
-    case ResetStream(id, code, finalSize): { return 0x04; }
-    case StopSending(id, code): { return 0x05; }
-    case Crypto(off, data): { return 0x06; }
-    case NewToken(token): { return 0x07; }
-    case Stream(id, offset, data, fin): { return fin ? 0x09 : 0x08; }
-    case MaxData(max): { return 0x10; }
-    case MaxStreamData(id, max): { return 0x11; }
-    case MaxStreams(uni, max): { return uni ? 0x13 : 0x12; }
-    case DataBlocked(atv): { return 0x14; }
-    case StreamDataBlocked(id, atv): { return 0x15; }
-    case StreamsBlocked(uni, atv): { return uni ? 0x17 : 0x16; }
-    case NewConnectionId(seq, retire, cid, token): { return 0x18; }
-    case RetireConnectionId(seq): { return 0x19; }
-    case PathChallenge(data): { return 0x1a; }
-    case PathResponse(data): { return 0x1b; }
-    case ConnectionClose(code, reason): { return 0x1c; }
-    case HandshakeDone: { return 0x1e; }
+    Incomplete: { return -1; }
+    Unknown(kind): { return -2; }
+    NotPermitted(kind): { return -4; }
+    Padding(count): { return 0x00; }
+    Ping: { return 0x01; }
+    Ack(largest, delay): { return 0x02; }
+    ResetStream(id, code, finalSize): { return 0x04; }
+    StopSending(id, code): { return 0x05; }
+    Crypto(off, data): { return 0x06; }
+    NewToken(token): { return 0x07; }
+    Stream(id, offset, data, fin): { return fin ? 0x09 : 0x08; }
+    MaxData(max): { return 0x10; }
+    MaxStreamData(id, max): { return 0x11; }
+    MaxStreams(uni, max): { return uni ? 0x13 : 0x12; }
+    DataBlocked(atv): { return 0x14; }
+    StreamDataBlocked(id, atv): { return 0x15; }
+    StreamsBlocked(uni, atv): { return uni ? 0x17 : 0x16; }
+    NewConnectionId(seq, retire, cid, token): { return 0x18; }
+    RetireConnectionId(seq): { return 0x19; }
+    PathChallenge(data): { return 0x1a; }
+    PathResponse(data): { return 0x1b; }
+    ConnectionClose(code, reason): { return 0x1c; }
+    HandshakeDone: { return 0x1e; }
   }
   return -3;
 }
@@ -198,29 +198,29 @@ export i32 sizeAtIn(u8[] b, i32 at, i32 epoch) { return nextIn(b, at, epoch).siz
 /** A STREAM frame's fields, so each one is read by something rather than merely carried. */
 export i64 streamId(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case Stream(id, offset, data, fin): { return id; }
-    else: {}
+    Stream(id, offset, data, fin): { return id; }
+    default: {}
   }
   return -1 as i64;
 }
 export i64 streamOffset(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case Stream(id, offset, data, fin): { return offset; }
-    else: {}
+    Stream(id, offset, data, fin): { return offset; }
+    default: {}
   }
   return -1 as i64;
 }
 export u8[] streamData(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case Stream(id, offset, data, fin): { return data; }
-    else: {}
+    Stream(id, offset, data, fin): { return data; }
+    default: {}
   }
   return u8[0]();
 }
 export bool streamFin(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case Stream(id, offset, data, fin): { return fin; }
-    else: {}
+    Stream(id, offset, data, fin): { return fin; }
+    default: {}
   }
   return false;
 }
@@ -228,22 +228,22 @@ export bool streamFin(u8[] b, i32 at) {
 /** A NEW_CONNECTION_ID's parts, for the same reason. */
 export u8[] newCid(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case NewConnectionId(seq, retire, cid, token): { return cid; }
-    else: {}
+    NewConnectionId(seq, retire, cid, token): { return cid; }
+    default: {}
   }
   return u8[0]();
 }
 export i64 newCidSeq(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case NewConnectionId(seq, retire, cid, token): { return seq; }
-    else: {}
+    NewConnectionId(seq, retire, cid, token): { return seq; }
+    default: {}
   }
   return -1 as i64;
 }
 export u8[] newCidToken(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case NewConnectionId(seq, retire, cid, token): { return token; }
-    else: {}
+    NewConnectionId(seq, retire, cid, token): { return token; }
+    default: {}
   }
   return u8[0]();
 }
@@ -251,15 +251,15 @@ export u8[] newCidToken(u8[] b, i32 at) {
 /** A MAX_STREAM_DATA's two numbers, and a MAX_STREAMS' kind. */
 export i64 maxStreamDataFor(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case MaxStreamData(id, max): { return max; }
-    else: {}
+    MaxStreamData(id, max): { return max; }
+    default: {}
   }
   return -1 as i64;
 }
 export bool maxStreamsIsUni(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
-    case MaxStreams(uni, max): { return uni; }
-    else: {}
+    MaxStreams(uni, max): { return uni; }
+    default: {}
   }
   return false;
 }
@@ -271,8 +271,8 @@ export i32 sizeAt(u8[] b, i32 at) { return next(b, at).size; }
 export i32 ackLargest(u8[] b, i32 at) {
   Next f = next(b, at);
   match (f.frame) {
-    case Ack(largest, delay): { return largest as~ i32; }
-    else: {}
+    Ack(largest, delay): { return largest as~ i32; }
+    default: {}
   }
   return -1;
 }
@@ -290,8 +290,8 @@ export string closeReason(u8[] b, i32 at) { return closeReasonAtIn(b, at, EPOCH_
 export string closeReasonAtIn(u8[] b, i32 at, i32 epoch) {
   Next f = nextIn(b, at, epoch);
   match (f.frame) {
-    case ConnectionClose(code, reason): { return string.fromBytes(reason); }
-    else: {}
+    ConnectionClose(code, reason): { return string.fromBytes(reason); }
+    default: {}
   }
   return "";
 }

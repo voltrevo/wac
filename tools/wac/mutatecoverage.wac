@@ -107,7 +107,7 @@ export Share shareOf(Core core, Cli cli, string binary, string work, string entr
 export Share shareFrom(string text, string entry) {
   JsonValue? root = parse(text.toBytes());
   if (root is null) { return none("not JSON"); }
-  JsonObject doc = match (root!) { case Object(o): o, else: JsonObject.create() };
+  JsonObject doc = match (root!) { Object(o): o, default: JsonObject.create() };
   if (doc.len() == 0) { return none("not a profile"); }
 
   string named = stringAt(doc, "entry");
@@ -126,7 +126,7 @@ export Share shareFrom(string text, string entry) {
   JsonValue? testsVal = doc.get("tests".toBytes());
   JsonObject tests = testsVal is null
     ? JsonObject.create()
-    : match (testsVal!) { case Object(o): o, else: JsonObject.create() };
+    : match (testsVal!) { Object(o): o, default: JsonObject.create() };
   if (tests.len() == 0) { return none("the run reached no test"); }
 
   string[] names = string[tests.len()](fill: "");
@@ -154,11 +154,11 @@ string stringAt(JsonObject o, string key) {
 }
 
 JsonArray asArray(JsonValue v) {
-  return match (v) { case Array(a): a, else: JsonArray.create() };
+  return match (v) { Array(a): a, default: JsonArray.create() };
 }
 
 string textOf(JsonValue v) {
-  return match (v) { case Str(b): string.fromBytes(b), else: "" };
+  return match (v) { Str(b): string.fromBytes(b), default: "" };
 }
 
 string joinArray(JsonArray a) {

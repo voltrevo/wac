@@ -61,9 +61,9 @@ struct BitReader {
         // `broken` — trapping here would turn a disk error into an "invalid archive", which is a
         // diagnosis of the wrong thing.
         match (this.source!()) {
-          case Data(bytes): { this.data = bytes; this.pos = 0; }
-          case End: { this.drained = true; return; }
-          case Failed(why): { this.drained = true; this.broken = why; return; }
+          Data(bytes): { this.data = bytes; this.pos = 0; }
+          End: { this.drained = true; return; }
+          Failed(why): { this.drained = true; this.broken = why; return; }
         }
       }
       this.bitBuf |= this.data[this.pos] << this.bitCount;
@@ -145,11 +145,11 @@ struct BitReader {
         // Running out here is a truncated block, not a legitimate end of stream.
         if ((this.source is null) || this.drained) { trap; }
         match (this.source!()) {
-          case Data(bytes): { this.data = bytes; this.pos = 0; }
+          Data(bytes): { this.data = bytes; this.pos = 0; }
           // Running out mid-block is a truncated archive; a failed read is a failed read. Both stop,
           // and `broken` is what tells them apart afterwards.
-          case End: { this.drained = true; trap; }
-          case Failed(why): { this.drained = true; this.broken = why; trap; }
+          End: { this.drained = true; trap; }
+          Failed(why): { this.drained = true; this.broken = why; trap; }
         }
       }
       i32 n = this.data.len() - this.pos;

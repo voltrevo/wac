@@ -27,10 +27,10 @@ export enum Kind {
 
   string word(const this) {
     return match (this) {
-      case Blob: "blob",
-      case Tree: "tree",
-      case Commit: "commit",
-      case Tag: "tag"
+      Blob: "blob",
+      Tree: "tree",
+      Commit: "commit",
+      Tag: "tag"
     };
   }
 }
@@ -109,8 +109,8 @@ export enum Object {
  */
 export Object readLoose(u8[] file) {
   match (zlibDecompress(file)) {
-    case Bad(why): return Object.Unreadable("not a zlib stream: " + why);
-    case Ok(raw): return parseFramed(raw);
+    Bad(why): { return Object.Unreadable("not a zlib stream: " + why); }
+    Ok(raw): { return parseFramed(raw); }
   }
 }
 

@@ -172,9 +172,9 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
 
     bool closed = false;
     match (cli.recv(handle).wait()) {
-      case Data(bytes): { buffered = concat(buffered, bytes); }
-      case End: { closed = true; }
-      case Failed(why): {
+      Data(bytes): { buffered = concat(buffered, bytes); }
+      End: { closed = true; }
+      Failed(why): {
         cli.closeSocket(handle);
         return Answer(false, 0, u8[0](), host + ": " + why);
       }
@@ -187,9 +187,9 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
   if (got.len() == 0) { return Answer(false, 0, u8[0](), host + " said nothing"); }
 
   match (parseResponse(got, (body.len() == 0 ? "GET" : "POST").toBytes(), true, 1 << 26)) {
-    case Incomplete: { return Answer(false, 0, u8[0](), "the response ended mid-message"); }
-    case Bad(code): { return Answer(false, 0, u8[0](), "unparseable response (" + itoa(code) + ")"); }
-    case Ok(res): { return Answer(true, res.status, res.body, ""); }
+    Incomplete: { return Answer(false, 0, u8[0](), "the response ended mid-message"); }
+    Bad(code): { return Answer(false, 0, u8[0](), "unparseable response (" + itoa(code) + ")"); }
+    Ok(res): { return Answer(true, res.status, res.body, ""); }
   }
 }
 

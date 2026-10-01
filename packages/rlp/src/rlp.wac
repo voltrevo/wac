@@ -62,24 +62,24 @@ export enum Item {
  */
 export u8[] bytesOf(Item it) {
   match (it) {
-    case Bytes(v): return v;
-    case List(_): trap;
+    Bytes(v): { return v; }
+    List(_): { trap; }
   }
 }
 
 /** The members of a list item. **Traps for a byte string** — `isList` first, and see `bytesOf` for why. */
 export Item[] itemsOf(Item it) {
   match (it) {
-    case Bytes(_): trap;
-    case List(xs): return xs;
+    Bytes(_): { trap; }
+    List(xs): { return xs; }
   }
 }
 
 /** Whether this item is a list. `Item` is an enum, so a caller may also match it directly. */
 export bool isList(Item it) {
   match (it) {
-    case Bytes(_): return false;
-    case List(_): return true;
+    Bytes(_): { return false; }
+    List(_): { return true; }
   }
 }
 
@@ -88,8 +88,8 @@ export bool isList(Item it) {
 /** `item`, encoded. The only encoding of it, since RLP is canonical. */
 export u8[] encode(Item item) {
   match (item) {
-    case Bytes(v): return encodeBytes(v);
-    case List(xs): {
+    Bytes(v): { return encodeBytes(v); }
+    List(xs): {
       // The payload first, because a list's prefix depends on the encoded length of everything in it.
       // Concatenating once at the end rather than growing a buffer per member keeps this O(n) in the
       // number of *bytes* rather than in the number of members squared.

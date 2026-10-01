@@ -1021,7 +1021,7 @@ void runBackground(Shell sh, AndOr list) {
   Vec<string> argv = Vec.create();
   bool simple = false;
   match (cmd.kind) {
-    case Plain: {
+    Plain: {
       // `cmd.words` is `for`'s list and `case`'s subject; a plain command's are in `cmd.simple`.
       simple = true;
       for (i32 i = 0; i < cmd.simple.words.len(); i++) {
@@ -1031,7 +1031,7 @@ void runBackground(Shell sh, AndOr list) {
       // its own streams — said rather than silently dropped, which is what ignoring it would be.
       if (cmd.simple.redirs.len() > 0 || cmd.redirs.len() > 0) { simple = false; }
     }
-    else: {}
+    default: {}
   }
   if (!simple || argv.len() == 0) {
     sh.err(("sh: `&` needs a simple command with no redirection: a compound one has no child to run "
@@ -1193,15 +1193,15 @@ void reapJob(Shell sh, i32 index) {
       if (!alive) { asking = false; }
     } else if (kind == 0) {
       match (outT.wait()) {
-        case Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(j.handle); }
-        case End: { reading = false; }
-        case Failed(why): { reading = false; }
+        Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(j.handle); }
+        End: { reading = false; }
+        Failed(why): { reading = false; }
       }
     } else {
       match (errT.wait()) {
-        case Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(j.errHandle); }
-        case End: { complaining = false; }
-        case Failed(why): { complaining = false; }
+        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(j.errHandle); }
+        End: { complaining = false; }
+        Failed(why): { complaining = false; }
       }
     }
     if (!reading && !complaining) { asking = false; }
@@ -1322,9 +1322,9 @@ void runAndOr(Shell sh, AndOr list) {
     if (unwinding(sh)) { return; }
     Item item = list.items.get(i);
     match (item.op) {
-      case First: {}
-      case And: { if (sh.status != 0) { continue; } }
-      case Or: { if (sh.status == 0) { continue; } }
+      First: {}
+      And: { if (sh.status != 0) { continue; } }
+      Or: { if (sh.status == 0) { continue; } }
     }
     runPipeline(sh, item.pipeline);
   }
@@ -1423,8 +1423,8 @@ bool canStream(Shell sh, Pipeline pipeline) {
     Command cmd = pipeline.stages.get(i);
     bool plain = false;
     match (cmd.kind) {
-      case Plain: { plain = true; }
-      else: {}
+      Plain: { plain = true; }
+      default: {}
     }
     if (!plain) { return false; }
     Simple simple = cmd.simple;
@@ -1446,8 +1446,8 @@ bool canStream(Shell sh, Pipeline pipeline) {
       if (only.fd != 1) { return false; }
       bool truncating = false;
       match (only.kind) {
-        case Out: { truncating = true; }
-        else: {}
+        Out: { truncating = true; }
+        default: {}
       }
       if (!truncating) { return false; }
     }
@@ -1457,8 +1457,8 @@ bool canStream(Shell sh, Pipeline pipeline) {
     Part only = first.parts.get(0);
     bool literal = false;
     match (only.kind) {
-      case Lit: { literal = true; }
-      else: {}
+      Lit: { literal = true; }
+      default: {}
     }
     if (!literal) { return false; }
     if (!spawnableName(sh, only.text)) { return false; }
@@ -1676,15 +1676,15 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
 
     if (isErr[which]) {
       match (errT.get(i).wait()) {
-        case Data(bytes): { sh.err(bytes); errT.set(i, sh.cli.recv(errH[i])); }
-        case End: { errOpen[i] = false; }
-        case Failed(why): { errOpen[i] = false; }
+        Data(bytes): { sh.err(bytes); errT.set(i, sh.cli.recv(errH[i])); }
+        End: { errOpen[i] = false; }
+        Failed(why): { errOpen[i] = false; }
       }
       continue;
     }
 
     match (outT.get(i).wait()) {
-      case Data(bytes): {
+      Data(bytes): {
         if (i + 1 < n) {
           // Downstream may have finished while this arrived, and then there is nowhere for these
           // bytes to go: stop this stage rather than buffering for a reader that will never come.
@@ -1708,14 +1708,14 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
           outT.set(i, sh.cli.recv(outH[i]));
         }
       }
-      case End: {
+      End: {
         outOpen[i] = false;
         // Its own input is over, so tell the next stage that *its* input is over too.
         if (i + 1 < n) { sh.cli.closeFeed(outH[i + 1]); }
         // And the stage before it has nowhere to write: stop it. `head -1` ends `seq` here.
         if (i > 0 && outOpen[i - 1]) { stopStage(sh, outH, errH, outOpen, errOpen, stopped, i - 1); }
       }
-      case Failed(why): {
+      Failed(why): {
         sh.err(("sh: " + why + "\n").toBytes());
         outOpen[i] = false;
       }
@@ -1960,16 +1960,16 @@ export bool isBuiltin(string name) {
  */
 u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   match (cmd.kind) {
-    case Plain: return runSimple(sh, cmd.simple, stdin, last, piped);
-    else: {}
+    Plain: { return runSimple(sh, cmd.simple, stdin, last, piped); }
+    default: {}
   }
 
   // A subshell always collects: its output is produced in a *child* shell's buffer, so there is
   // something to hand back even when this stage is last and would otherwise write as it goes.
   bool isSubshell = false;
   match (cmd.kind) {
-    case Subshell: { isSubshell = true; }
-    else: {}
+    Subshell: { isSubshell = true; }
+    default: {}
   }
   // Standard input belongs to the compound, not to each simple command inside it: that is what
   // makes `while read x; do …; done < file` advance through the file instead of restarting it.
@@ -1987,7 +1987,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   for (i32 i = 0; i < cmd.redirs.len(); i++) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
-      case In: {
+      In: {
         // The word the user wrote, kept beside the path it resolves to: the diagnostic names the
         // first and the read uses the second. Reporting the resolved one leaks an absolute *host*
         // path — `cat < nosuch` answered `sh: /tmp/…/nosuch:` — which is the same leak `> f/g` had,
@@ -2007,13 +2007,13 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         sh.heldInput = true;
         ownInput = true;
       }
-      case Here: {
+      Here: {
         sh.stdinBytes = hereBody(sh, r);
         sh.stdinPos = 0;
         sh.heldInput = true;
         ownInput = true;
       }
-      case HereString: {
+      HereString: {
         // The word, expanded now, with a newline: `cat <<< abc` writes four bytes. A word is a word —
         // quotes come off, `$x` expands — which is why this is `joinWord` rather than the here-document
         // path, whose body was fixed when the script was lexed.
@@ -2022,7 +2022,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         sh.heldInput = true;
         ownInput = true;
       }
-      else: {}
+      default: {}
     }
   }
 
@@ -2049,7 +2049,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   }
 
   match (cmd.kind) {
-    case If: {
+    If: {
       for (i32 i = 0; i < cmd.clauses.len(); i++) {
         Clause c = cmd.clauses.get(i);
         // A clause with no condition is the `else` branch, which always runs if it is reached.
@@ -2062,9 +2062,9 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         if (i == cmd.clauses.len() - 1) { sh.status = 0; }
       }
     }
-    case While: { runLoop(sh, cmd.clauses.get(0), false); }
-    case Until: { runLoop(sh, cmd.clauses.get(0), true); }
-    case For: {
+    While: { runLoop(sh, cmd.clauses.get(0), false); }
+    Until: { runLoop(sh, cmd.clauses.get(0), true); }
+    For: {
       sh.loops = sh.loops + 1;
       Vec<string> items = Vec.create();
       for (i32 i = 0; i < cmd.words.len(); i++) { expandInto(sh, cmd.words.get(i), items); }
@@ -2082,8 +2082,8 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       }
       sh.loops = sh.loops - 1;
     }
-    case Brace: { runList(sh, cmd.clauses.get(0).body); }
-    case Subshell: {
+    Brace: { runList(sh, cmd.clauses.get(0).body); }
+    Subshell: {
       // A copy, so assignments inside do not reach back out. Its output still belongs to us.
       Shell inner = sh.fork();
       runList(inner, cmd.clauses.get(0).body);
@@ -2091,7 +2091,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       sh.err(inner.errOut.bytes());
       sh.status = inner.exiting ? inner.exitCode : inner.status;
     }
-    case Case: {
+    Case: {
       string subject = joinWord(sh, cmd.words.get(0));
       // **`$?` is not cleared before an arm runs.** `false; case f in *) echo $?;; esac` prints 1 in
       // bash and printed 0 here, because the status was set to zero on the way in — so the first
@@ -2116,13 +2116,13 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       }
       if (!ran) { sh.status = 0; }
     }
-    case Function: {
+    Function: {
       // A definition runs nothing. Storing it is the whole effect.
       sh.defineFunc(cmd.varName,
                     cmd.clauses.get(0).body.get(0).items.get(0).pipeline.stages.get(0));
       sh.status = 0;
     }
-    else: {}
+    default: {}
   }
 
   if (ownInput) {
@@ -2169,8 +2169,8 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
 /** Whether a plan entry is still the stream it started as. */
 bool sameAsStart(Where w, i32 fd) {
   match (w) {
-    case Stream(f): { return f == fd; }
-    else: { return false; }
+    Stream(f): { return f == fd; }
+    default: { return false; }
   }
   return false;
 }
@@ -2286,7 +2286,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   for (i32 i = 0; i < cmd.redirs.len(); i++) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
-      case In: {
+      In: {
         // The word the user wrote, kept beside the path it resolves to: the diagnostic names the
         // first and the read uses the second. Reporting the resolved one leaks an absolute *host*
         // path — `cat < nosuch` answered `sh: /tmp/…/nosuch:` — which is the same leak `> f/g` had,
@@ -2302,18 +2302,18 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
         input = f.bytes;
         hasInput = true;
       }
-      case Here: {
+      Here: {
         input = hereBody(sh, r);
         hasInput = true;
       }
-      case HereString: {
+      HereString: {
         // The word with a newline on the end, expanded now — `cat <<< "$x"` is whatever `$x` is at this
         // moment. This is the *simple command's* copy of the rule; the compound one above holds the
         // same bytes in `stdinBytes` instead, because a compound reads them through the shell.
         input = (joinWord(sh, r.target) + "\n").toBytes();
         hasInput = true;
       }
-      else: {}
+      default: {}
     }
   }
 
@@ -2476,9 +2476,9 @@ Plan planRedirs(Shell sh, Vec<Redir> redirs) {
     Redir r = redirs.get(i);
     bool append = false;
     match (r.kind) {
-      case Append: { append = true; }
-      case Out: {}
-      case Dup: {
+      Append: { append = true; }
+      Out: {}
+      Dup: {
         string target = joinWord(sh, r.target);
         if (r.fd > 2 || (target != "1" && target != "2" && target != "-")) {
           // bash names the descriptor that does not exist, which is the one out of range — the source
@@ -2503,7 +2503,7 @@ Plan planRedirs(Shell sh, Vec<Redir> redirs) {
         if (r.fd == 1) { one = from; } else { two = from; }
         continue;
       }
-      else: { continue; }
+      default: { continue; }
     }
     if (r.fd > 2) {
       sh.err(("sh: redirecting fd " + itoa(r.fd) + " is not implemented\n").toBytes());
@@ -2520,8 +2520,8 @@ Plan planRedirs(Shell sh, Vec<Redir> redirs) {
 /** Whether this plan sends a stream to a file, which is what stops it going down a pipe. */
 bool toFile(Where w) {
   match (w) {
-    case File(given, path, append): { return true; }
-    else: { return false; }
+    File(given, path, append): { return true; }
+    default: { return false; }
   }
   return false;
 }
@@ -2537,12 +2537,12 @@ bool toFile(Where w) {
  */
 bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
   match (w) {
-    case Closed: { return true; }
-    case Stream(fd): {
+    Closed: { return true; }
+    Stream(fd): {
       if (fd == 2) { sh.err(data); return true; }
       return false;
     }
-    case File(given, path, append): {
+    File(given, path, append): {
       Buf both = Buf.create();
       if (append) {
         FileResult existing = sh.fs.readFile(path);
@@ -2592,7 +2592,7 @@ void redirsAlone(Shell sh, Simple cmd) {
   for (i32 i = 0; i < cmd.redirs.len(); i++) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
-      case In: {
+      In: {
         // The word the user wrote in the diagnostic and the resolved path for the read, which is the
         // rule the `In` case below keeps for the same reason: a sealed session's host path is not the
         // caller's business.
@@ -2604,7 +2604,7 @@ void redirsAlone(Shell sh, Simple cmd) {
           return;
         }
       }
-      else: {}
+      default: {}
     }
   }
   Plan p = planRedirs(sh, cmd.redirs);
@@ -2619,13 +2619,13 @@ void redirsAlone(Shell sh, Simple cmd) {
 /** Whether two plan entries name the same file, which is when one write has to carry both streams. */
 bool sameFile(Where a, Where b) {
   match (a) {
-    case File(ga, pa, aa): {
+    File(ga, pa, aa): {
       match (b) {
-        case File(gb, pb, ab): { return pa == pb; }
-        else: { return false; }
+        File(gb, pb, ab): { return pa == pb; }
+        default: { return false; }
       }
     }
-    else: { return false; }
+    default: { return false; }
   }
   return false;
 }
@@ -3444,7 +3444,7 @@ Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] 
  * What a *path* that cannot be run is, when it is one of the two things the filesystem can settle on
  * its own — with a zero status when it is not.
  *
- * A name with a slash is a path and nothing else: bash does not search for it, does not fall back to a
+ * A name with a slash is a path and nothing default: bash does not search for it, does not fall back to a
  * builtin of the same name, and answers about the path itself. This shell used to answer about it only
  * after trying to *run* it, so a directory and a missing file both arrived at the end of `dispatched`
  * as "command not found" and 127 — where bash says `Is a directory` and 126 for the first, and `No
@@ -3627,7 +3627,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
       if (!serveOn(fsC!, sh.fs)) { asking = false; }
     } else if (kind == 0) {
       match (outT.wait()) {
-        case Data(bytes): {
+        Data(bytes): {
           // **The cap, and it is the same one the other two routes have.** A pipeline this shell
           // could not stream runs its stages one at a time, so a stage's whole output lands here in
           // memory before the next one starts — and a producer that never ends grew this `Buf` until
@@ -3647,16 +3647,16 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
             outT = sh.cli.recv(child.handle);
           }
         }
-        case End: { reading = false; }
+        End: { reading = false; }
         // A child whose pipe failed is not a child that finished quietly. Reported as 126 below,
         // beside "could not execute", because both mean the shell cannot vouch for the output.
-        case Failed(why): { reading = false; broke = why; }
+        Failed(why): { reading = false; broke = why; }
       }
     } else {
       match (errT.wait()) {
-        case Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(child.errHandle); }
-        case End: { complaining = false; }
-        case Failed(why): { complaining = false; }
+        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(child.errHandle); }
+        End: { complaining = false; }
+        Failed(why): { complaining = false; }
       }
     }
     // Both streams closed means the child is finished, so it will ask nothing more. Waiting for the
@@ -4171,8 +4171,8 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
     // second time. `emitField` never sees a `~`, which is why this is here rather than there.
     if (i == 0 && !p.quoted) {
       match (p.kind) {
-        case Lit: { text = withHome(sh, text, true, false); }
-        else: {}
+        Lit: { text = withHome(sh, text, true, false); }
+        default: {}
       }
     }
 
@@ -4182,13 +4182,13 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
       continue;
     }
     match (p.kind) {
-      case Lit: {
+      Lit: {
         // Literal text never splits, whatever is in it — `echo a b` is two words because the
         // *lexer* split it, not because expansion did. It can still glob.
         appendMasked(field, mask, text, 0);
         started = true;
       }
-      else: {
+      default: {
         // An unquoted expansion splits on **`$IFS`**, and its pieces glob.
         string ifs = ifsOf(sh);
         u8[] b = text.toBytes();
@@ -4743,8 +4743,8 @@ string expandText(Shell sh, string text) {
   for (i32 i = 0; i < toks.len(); i++) {
     Token t = toks.get(i);
     match (t.kind) {
-      case Word: {}
-      else: continue;
+      Word: {}
+      default: { continue; }
     }
     string piece = "";
     for (i32 j = 0; j < t.parts.len(); j++) { piece = piece + expandPart(sh, t.parts.get(j)); }
@@ -4909,8 +4909,8 @@ bool isArithNameChar(i32 c) {
 
 string expandPart(Shell sh, Part p) {
   match (p.kind) {
-    case Lit: return p.text;
-    case Var: {
+    Lit: { return p.text; }
+    Var: {
       if (p.op == "") { return sh.lookUp(p.text); }
       if (p.op == "len") {
         // `${#@}` is how *many* parameters there are, not how long they are when joined — the one
@@ -4970,8 +4970,8 @@ string expandPart(Shell sh, Part p) {
       // `${#x:1}` came back as `0`. bash calls it a bad substitution and so do we.
       return badSubstitution(sh, "${" + p.text + p.op + p.arg + "}");
     }
-    case Arith: return expandArith(sh, p.text);
-    case Cmd: {
+    Arith: { return expandArith(sh, p.text); }
+    Cmd: {
       // A command substitution runs the text as a script and takes its standard output, with
       // trailing newlines removed — the removal is why `x=$(pwd)` does not end in a newline.
       Shell inner = Shell.capturing(sh.core, sh.cli);
@@ -5031,8 +5031,8 @@ string joinParts(Shell sh, Word word, bool colons) {
       match (p.kind) {
         // A tilde begins the value, or follows a colon in it. `s` is what has been built so far, so a
         // part starting after `PATH=/u:` is startable even though it is not the first part.
-        case Lit: { text = withHome(sh, text, i == 0 || (colons && endsWithColon(s)), colons); }
-        else: {}
+        Lit: { text = withHome(sh, text, i == 0 || (colons && endsWithColon(s)), colons); }
+        default: {}
       }
     }
     s = s + text;

@@ -576,9 +576,9 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
 /** The bytes of a host, for the `localhost` comparison. Non-names compare unequal. */
 u8[] hostBytes(Host h) {
   return match (h) {
-    case Named(name): name,
-    case Ipv4(address): u8[0](),
-    case Ipv6(pieces): u8[0](),
+    Named(name): name,
+    Ipv4(address): u8[0](),
+    Ipv6(pieces): u8[0](),
   };
 }
 

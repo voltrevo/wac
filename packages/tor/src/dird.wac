@@ -190,12 +190,12 @@ async void answer(Core core, Cli cli, Socket conn, Held held) {
     bool more = false;
     Read got = await cli.recv(conn.handle);
     match (got) {
-      case Data(bytes): {
+      Data(bytes): {
         pending.pushAll(bytes);
         more = true;
       }
-      case End: { }
-      case Failed(why): { core.warn("dird: the connection failed: " + why); }
+      End: { }
+      Failed(why): { core.warn("dird: the connection failed: " + why); }
     }
     if (!more) { cli.closeSocket(conn.handle); return; }
   }

@@ -471,35 +471,35 @@ TestExport[] testExportsIn(string manifest) {
   if (doc is null) { return TestExport[0](); }
   JsonObject root = JsonObject.create();
   match (doc!) {
-    case Object(o): { root = o; }
-    else: { return TestExport[0](); }
+    Object(o): { root = o; }
+    default: { return TestExport[0](); }
   }
   JsonValue? xs = root.getStr("exports");
   if (xs is null) { return TestExport[0](); }
   // No cap, for `testFilesIn`'s reason.
   Vec<TestExport> out = Vec.create();
   match (xs!) {
-    case Array(items): {
+    Array(items): {
       for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
-          case Object(e): {
+          Object(e): {
             JsonValue? nm = e.getStr("name");
             if (nm is null) { continue; }
             match (nm!) {
-              case Str(bytes): {
+              Str(bytes): {
                 string name = string.fromBytes(bytes);
                 if (name.len() > 4 && name.slice(0, 4) == "test") {
                   out.push(TestExport(name, namesCli(e), namesOracle(e)));
                 }
               }
-              else: { }
+              default: { }
             }
           }
-          else: { }
+          default: { }
         }
       }
     }
-    else: { }
+    default: { }
   }
   return out.toArray();
 }
@@ -542,18 +542,18 @@ bool namesOracle(JsonObject e) {
   JsonValue? ps = e.getStr("params");
   if (ps is null) { return false; }
   match (ps!) {
-    case Array(items): {
+    Array(items): {
       for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
-          case Str(bytes): {
+          Str(bytes): {
             string ty = string.fromBytes(bytes);
             if (ty != "Core" && ty != "Cli") { return true; }
           }
-          else: { }
+          default: { }
         }
       }
     }
-    else: { }
+    default: { }
   }
   return false;
 }
@@ -563,15 +563,15 @@ bool namesCli(JsonObject e) {
   JsonValue? ps = e.getStr("params");
   if (ps is null) { return false; }
   match (ps!) {
-    case Array(items): {
+    Array(items): {
       for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
-          case Str(bytes): { if (string.fromBytes(bytes) == "Cli") { return true; } }
-          else: { }
+          Str(bytes): { if (string.fromBytes(bytes) == "Cli") { return true; } }
+          default: { }
         }
       }
     }
-    else: { }
+    default: { }
   }
   return false;
 }

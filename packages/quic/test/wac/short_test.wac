@@ -104,8 +104,8 @@ i32 ackRoundTripLargest(i32 largest, i32 firstRange) {
   u8[] out = u8[ackFrameLength(largest as i64, 0 as i64, firstRange as i64)]();
   if (writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64) == 0) { return -1; }
   match (next(out, 0).frame) {
-    case Ack(l, d): { return l as~ i32; }
-    else: {}
+    Ack(l, d): { return l as~ i32; }
+    default: {}
   }
   return -1;
 }

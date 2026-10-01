@@ -10,7 +10,7 @@ enum Shape {
 
 export i32 f() {
   Circle c = Shape.Circle(2.5);
-  f64 a = match (c) { case Circle(r): r, case Point: 0.0, case Rect(w, h): w * h };
-  f64 b = match (Shape.Rect(3.0, 4.0)) { case Circle(r): r, case Point: 0.0, case Rect(w, h): w * h };
+  f64 a = match (c) { Circle(r): r, Point: 0.0, Rect(w, h): w * h };
+  f64 b = match (Shape.Rect(3.0, 4.0)) { Circle(r): r, Point: 0.0, Rect(w, h): w * h };
   return (a * 4.0 + b - 10.0) as~ i32;
 }

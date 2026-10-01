@@ -5,5 +5,5 @@ enum Option<T> { Some(T v), None }
 export i32 f() {
   Option<i32> a = Option.Some(1);
   Option<i32> b = Option.None;
-  return match (a) { case Some(v): v, case None: 0 };
+  return match (a) { Some(v): v, None: 0 };
 }

@@ -48,9 +48,9 @@ export Match lookUp(u8[] file, u8[] keyType, u8[] keyBlob) {
 
     match (checkLine(file, at, lineEnd, keyType, keyBlob)) {
       // A plain line wins outright; nothing later can take the permission away.
-      case Ok: return Match.Ok;
-      case Restricted: { best = Match.Restricted; }
-      else: {}
+      Ok: { return Match.Ok; }
+      Restricted: { best = Match.Restricted; }
+      default: {}
     }
     at = stop + 1;
   }

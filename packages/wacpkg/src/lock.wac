@@ -204,8 +204,8 @@ export Lock readLock(u8[] src) {
 
   JsonObject root = JsonObject.create();
   match (doc!) {
-    case Object(o): { root = o; }
-    else: { return lockFailed(L_NOT_OBJECT(), ""); }
+    Object(o): { root = o; }
+    default: { return lockFailed(L_NOT_OBJECT(), ""); }
   }
 
   JsonValue? importsVal = root.getStr("imports");
@@ -213,8 +213,8 @@ export Lock readLock(u8[] src) {
 
   JsonObject table = JsonObject.create();
   match (importsVal!) {
-    case Object(o): { table = o; }
-    else: { return lockFailed(L_IMPORTS_KIND(), "imports"); }
+    Object(o): { table = o; }
+    default: { return lockFailed(L_IMPORTS_KIND(), "imports"); }
   }
 
   LockEntry[] out = LockEntry[table.count]();
@@ -224,8 +224,8 @@ export Lock readLock(u8[] src) {
 
     JsonObject entry = JsonObject.create();
     match (mem.value) {
-      case Object(o): { entry = o; }
-      else: { return lockFailed(L_ENTRY_KIND(), name); }
+      Object(o): { entry = o; }
+      default: { return lockFailed(L_ENTRY_KIND(), name); }
     }
 
     string git = "";
@@ -237,23 +237,23 @@ export Lock readLock(u8[] src) {
     JsonValue? cv = entry.getStr("commit");
     if ((gv is null) || (rv is null) || (cv is null)) { return lockFailed(L_FIELD(), name); }
     match (gv!) {
-      case Str(b): { git = string.fromBytes(b); }
-      else: { return lockFailed(L_FIELD(), name); }
+      Str(b): { git = string.fromBytes(b); }
+      default: { return lockFailed(L_FIELD(), name); }
     }
     match (rv!) {
-      case Str(b): { ref = string.fromBytes(b); }
-      else: { return lockFailed(L_FIELD(), name); }
+      Str(b): { ref = string.fromBytes(b); }
+      default: { return lockFailed(L_FIELD(), name); }
     }
     match (cv!) {
-      case Str(b): { commit = string.fromBytes(b); }
-      else: { return lockFailed(L_FIELD(), name); }
+      Str(b): { commit = string.fromBytes(b); }
+      default: { return lockFailed(L_FIELD(), name); }
     }
 
     JsonValue? sv = entry.getStr("subdir");
     if (sv is not null) {
       match (sv!) {
-        case Str(b): { subdir = string.fromBytes(b); }
-        else: { return lockFailed(L_FIELD(), name); }
+        Str(b): { subdir = string.fromBytes(b); }
+        default: { return lockFailed(L_FIELD(), name); }
       }
     }
 

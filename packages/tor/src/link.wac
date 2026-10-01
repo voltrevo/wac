@@ -177,9 +177,9 @@ export bool pumpFor(Link l, i32 millis) {
   // one fact an operator needs.
   bool live = false;
   match (read.wait()) {
-    case Data(bytes): { live = feedLink(l, bytes); }
-    case End: { }
-    case Failed(why): { l.core.warn("tor: " + (l.peer == "" ? "the relay" : l.peer) + " connection failed: " + why); }
+    Data(bytes): { live = feedLink(l, bytes); }
+    End: { }
+    Failed(why): { l.core.warn("tor: " + (l.peer == "" ? "the relay" : l.peer) + " connection failed: " + why); }
   }
   return live;
 }

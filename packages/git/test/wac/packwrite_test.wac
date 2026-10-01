@@ -328,8 +328,8 @@ ThinFixture thinPack(T t, Cli cli, string name) {
                      wantRequest(wants, haves, "ofs-delta thin-pack", 0)).wait();
   t.eqStr(up.error, "", "git upload-pack could be started");
   match (findPack(up.stdout)) {
-    case Packfile(pack): { return ThinFixture(g, pack, true); }
-    else: {
+    Packfile(pack): { return ThinFixture(g, pack, true); }
+    default: {
       t.isTrue(false, "no pack in upload-pack's reply");
       return ThinFixture(g, u8[0](), false);
     }
@@ -347,9 +347,9 @@ export string test_a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_
   // here, and everything below would pass while testing an ordinary pack.
   Vec<u8[]> needed = Vec.create();
   match (indexPack(th.pack)) {
-    case Thin(bases): { needed = bases; }
-    case Built(idx): { t.isTrue(false, "the pack is not thin, so this proves nothing"); }
-    case Unindexable(why): { t.isTrue(false, "the pack is unusable: " + why); }
+    Thin(bases): { needed = bases; }
+    Built(idx): { t.isTrue(false, "the pack is not thin, so this proves nothing"); }
+    Unindexable(why): { t.isTrue(false, "the pack is unusable: " + why); }
   }
   t.isTrue(needed.len() >= 1, "a thin pack that needs nothing is not thin");
   if (needed.len() == 0) { return t.report(); }
@@ -384,10 +384,10 @@ export string test_a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_
 
   // And ours agrees it is no longer thin.
   match (indexPack(whole)) {
-    case Built(idx): {
+    Built(idx): {
       t.eqI32(idx.count, packCount(whole), "we index as many objects as the header claims");
     }
-    else: { t.isTrue(false, "we still call the completed pack thin or unusable"); }
+    default: { t.isTrue(false, "we still call the completed pack thin or unusable"); }
   }
 
   cli.remove(g.dir, true).wait();
@@ -407,14 +407,14 @@ Completion completeAgainst(u8[] pack, i32 baseKind, u8[] baseContent) {
   fs.mkdir("/git/objects", true);
   fs.writeFile("/git/HEAD", "ref: refs/heads/main\n".toBytes());
   match (openRepo(fs, "/git", "/work")) {
-    case NoRepo(why): { return Completion.Unusable("no repo: " + why); }
-    case Opened(repo): {
+    NoRepo(why): { return Completion.Unusable("no repo: " + why); }
+    Opened(repo): {
       // `baseKind` of zero means do not plant the base, which is how a caller reaches `Missing` on
       // purpose.
       if (baseKind != 0) {
         match (writeObject(repo, kindOfNumber(baseKind), baseContent)) {
-          case NotStored(why): { return Completion.Unusable("not stored: " + why); }
-          case Named(name): { }
+          NotStored(why): { return Completion.Unusable("not stored: " + why); }
+          Named(name): { }
         }
       }
       return completeThin(repo, pack);
@@ -432,8 +432,8 @@ export string test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_g
   // **The shape, asserted.** Without a missing base there is nothing to complete.
   Vec<u8[]> needed = Vec.create();
   match (indexPack(th.pack)) {
-    case Thin(bases): { needed = bases; }
-    else: { t.isTrue(false, "the pack is not thin; nothing below would mean anything"); }
+    Thin(bases): { needed = bases; }
+    default: { t.isTrue(false, "the pack is not thin; nothing below would mean anything"); }
   }
   t.eqI32(needed.len(), 1, "one missing base");
   if (needed.len() != 1) { return t.report(); }
@@ -445,21 +445,21 @@ export string test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_g
   // **`Missing` before `Complete`**, so the arm that reports a base we do not have is exercised too —
   // a completion that silently produced a pack without the base would otherwise look identical here.
   match (completeAgainst(th.pack, 0, u8[0]())) {
-    case Missing(why): {
+    Missing(why): {
       t.isTrue(contains(why, baseName),
                "an empty repository says which object it needs: " + why);
     }
-    case Complete(whole): { t.isTrue(false, "an empty repository completed the pack"); }
-    case Unusable(why): { t.isTrue(false, "an empty repository called the pack unusable: " + why); }
+    Complete(whole): { t.isTrue(false, "an empty repository completed the pack"); }
+    Unusable(why): { t.isTrue(false, "an empty repository called the pack unusable: " + why); }
   }
 
   // And with the base planted, the completion happens in the store: `readObject` out of it,
   // `completePack` on top.
   u8[] whole = u8[0]();
   match (completeAgainst(th.pack, kindNumber(baseKind), baseBody)) {
-    case Complete(pack): { whole = pack; }
-    case Missing(why): { t.isTrue(false, "the base was planted and it still said missing: " + why); }
-    case Unusable(why): { t.isTrue(false, "unusable: " + why); }
+    Complete(pack): { whole = pack; }
+    Missing(why): { t.isTrue(false, "the base was planted and it still said missing: " + why); }
+    Unusable(why): { t.isTrue(false, "unusable: " + why); }
   }
   t.isTrue(whole.len() > th.pack.len(),
            "the completed pack is longer than the thin one: " + itoa64(whole.len() as i64) +

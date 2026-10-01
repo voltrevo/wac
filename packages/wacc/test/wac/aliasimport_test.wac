@@ -153,7 +153,7 @@ export string test_the_emitter_builds_one_declaration_for_both_spellings(Core co
     string[]("/main.wac", "/lib.wac"),
     string[]("import { E } from \"/lib.wac\";\n" +
              "import { E as E2 } from \"/lib.wac\";\n" +
-             "i32 take(E2 e) { return match (e) { case A: 1, else: 0 }; }\n" +
+             "i32 take(E2 e) { return match (e) { A: 1, default: 0 }; }\n" +
              "export i32 run() { E e = E.A; return take(e); }\n", LIB()),
     "/main.wac");
   t.isTrue(mod.len() > 8, "no module: the emitter still refuses `issues/lang/0161`'s reproduction");

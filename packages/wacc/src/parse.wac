@@ -48,6 +48,12 @@ export i32 perrCtorBrace()   { return 27; }
 export i32 perrFnArray()     { return 28; }
 /** `fn<R(P)>`, the spelling a function type had before it was `fn<R(P)>`. */
 export i32 perrFnBracket()   { return 35; }
+/** `Some(v):` in a match — the arm head is the pattern alone. */
+export i32 perrCaseArm()     { return 36; }
+/** `default:` in a match — the catch-all arm is `default:`. */
+export i32 perrElseArm()     { return 37; }
+/** A statement `match` arm whose body is not a block. */
+export i32 perrArmBlock()    { return 38; }
 export i32 perrBareSpec()    { return 29; }
 /**
  * A keyword where a name belongs — `[§wac-keyword-name-8wnq4kp]`.
@@ -1081,8 +1087,8 @@ Expr parseIsExpr(P p) {
 /** The inner type of a nullable, or the type itself when it is not one. */
 Ty tyOfNullableInner(Ty t) {
   match (t.kind) {
-    case Nullable(inner): return inner;
-    else: return t;
+    Nullable(inner): { return inner; }
+    default: { return t; }
   }
 }
 
@@ -1256,7 +1262,7 @@ Expr parsePostfix(P p) {
       i32 nameTok = -1;
       nameTok = declName(p, perrFieldName(), "field name");
       // **A method may be called with its own type arguments** — `v.fold<i64>(0, f)`. The same rule
-      // as everywhere else: if what follows the name parses as a type argument list, it is one.
+      // as everywhere default: if what follows the name parses as a type argument list, it is one.
       // Nothing else in the language can appear between a member name and its `(`, so there is no
       // shape to be ambiguous with here — the trigger's cost is all in the *primary* position, where
       // a comparison could stand.
@@ -1454,7 +1460,7 @@ Expr parsePrimary(P p) {
   // **JSX.** `<` cannot begin an expression in wac otherwise — it is only ever infix — so seeing one
   // here is unambiguous and needs no lookahead. `design/lang/0004`.
   if (p.at1(kLt())) { return parseJsx(p); }
-  // `match (subject) { case P: value, … }` as an expression. The arm syntax is the statement's, so
+  // `match (subject) { P: value, … }` as an expression. The arm syntax is the statement's, so
   // there is one of it in the language; which form is being parsed is decided by *position* — this is
   // expression position — and nothing is ambiguous.
   if (p.at1(kMatch())) { return parseMatchExpr(p); }
@@ -1484,7 +1490,7 @@ Expr parsePrimary(P p) {
   if (p.at1(kFn())) {
     Ty t = parseType(p);
     match (t.kind) {
-      case Arr(elem): {
+      Arr(elem): {
         if (p.at1(kLparen())) {
           p.advance();
           Expr[] args = parseArgList(p);
@@ -1496,7 +1502,7 @@ Expr parsePrimary(P p) {
         p.fail(perrFnArray());
         return Expr(ExprKind.NullLit, line, col);
       }
-      else: {
+      default: {
         // `parseType` stops at `[2` and hands back the funcref, so the sized spelling lands here
         // rather than in the arm above [issue 0079].
         if (p.at1(kLbrack())) { return parseArrayCtorTail(p, t, line, col); }
@@ -1741,23 +1747,23 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
  */
 Lvalue? exprToLvalue(Expr e) {
   match (e.kind) {
-    case Ident(tok): return Lvalue(LvalueKind.LIdent(tok), e.line, e.col);
-    case Member(obj, nameTok): {
+    Ident(tok): { return Lvalue(LvalueKind.LIdent(tok), e.line, e.col); }
+    Member(obj, nameTok): {
       Lvalue? base = exprToLvalue(obj);
       if (base is null) { return null; }
       return Lvalue(LvalueKind.LField(base!, nameTok), e.line, e.col);
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       Lvalue? base = exprToLvalue(arr);
       if (base is null) { return null; }
       return Lvalue(LvalueKind.LIndex(base!, index), e.line, e.col);
     }
-    case Unwrap(operand): {
+    Unwrap(operand): {
       Lvalue? base = exprToLvalue(operand);
       if (base is null) { return null; }
       return Lvalue(LvalueKind.LUnwrap(base!), e.line, e.col);
     }
-    else: return null;
+    default: { return null; }
   }
 }
 
@@ -2074,17 +2080,51 @@ Stmt parseSwitchStmt(P p) {
   return Stmt(StmtKind.Switch(subject, cases.take()), line, col);
 }
 
-/** An arm body runs to the next `case`, `else` or the closing brace. */
-Stmt[] parseArmBody(P p) {
-  StmtList out = StmtList.create();
-  while (!p.at1(kCase()) && !p.at1(kElse()) && !p.at1(kRbrace()) && !p.at1(kEof())) {
-    out.push(parseStatement(p));
+/**
+ * The head of one `match` arm, up to and including its `:` — `Some(v):`, `None:`, `default:`.
+ *
+ * Answers the variant token (or -1), the `default` token (or -1) and the bindings. The two spellings this
+ * replaced, `Some(v):` and `default:`, are refused by name and then read as what they meant, so one
+ * slip does not cascade through the rest of the match.
+ */
+struct ArmHead {
+  i32 variantTok;
+  i32 defaultTok;
+  i32[] bindings;
+  bool ok;
+}
+
+ArmHead parseArmHead(P p) {
+  if (p.at1(kCase())) { p.fail(perrCaseArm()); p.advance(); }
+  if (p.at1(kElse()) || p.at1(kDefault())) {
+    if (p.at1(kElse())) { p.fail(perrElseArm()); }
+    i32 defaultTok = p.advance();
+    p.expect(kColon());
+    return ArmHead(-1, defaultTok, i32[0](), true);
   }
-  return out.take();
+  if (!p.at1(kIdent())) {
+    p.fail(perrExpected());
+    p.advance();
+    return ArmHead(-1, -1, i32[0](), false);
+  }
+  i32 variantTok = p.advance();
+  I32List bindings = I32List.create();
+  if (p.eat(kLparen())) {
+    if (!p.at1(kRparen())) {
+      while (true) {
+        if (p.at1(kRparen())) { break; }             // trailing comma
+        if (p.at1(kIdent())) { bindings.push(p.advance()); } else { p.fail(perrExpected()); }
+        if (!p.eat(kComma())) { break; }
+      }
+    }
+    p.expect(kRparen());
+  }
+  p.expect(kColon());
+  return ArmHead(variantTok, -1, bindings.take(), true);
 }
 
 /**
- * `match (x) { case A(v): expr, else: expr }` in expression position.
+ * `match (x) { A(v): expr, default: expr }` in expression position.
  *
  * The same grammar as the statement, with a value per arm instead of a body, and the arms
  * comma-separated because each one is an expression. Only the statement form existed here, which is
@@ -2102,32 +2142,9 @@ Expr parseMatchExpr(P p) {
 
   ArmList arms = ArmList.create();
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
-    if (p.at1(kElse())) {
-      // The token rather than the fact of it, as in the statement form below.
-      i32 elseTok = p.advance();
-      p.expect(kColon());
-      arms.push(Arm(-1, elseTok, i32[0](), Stmt[](), parseExpr(p)));
-    } else if (p.eat(kCase())) {
-      i32 variantTok = -1;
-      if (p.at1(kIdent())) { variantTok = p.advance(); } else { p.fail(perrExpected()); }
-      I32List bindings = I32List.create();
-      if (p.eat(kLparen())) {
-        if (!p.at1(kRparen())) {
-          while (true) {
-            if (p.at1(kRparen())) { break; }             // trailing comma
-            if (p.at1(kIdent())) { bindings.push(p.advance()); } else { p.fail(perrExpected()); }
-            if (!p.eat(kComma())) { break; }
-          }
-        }
-        p.expect(kRparen());
-      }
-      p.expect(kColon());
-      arms.push(Arm(variantTok, -1, bindings.take(), Stmt[](), parseExpr(p)));
-    } else {
-      p.fail(perrExpected());
-      p.advance();
-      continue;
-    }
+    ArmHead h = parseArmHead(p);
+    if (!h.ok) { continue; }
+    arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, Stmt[](), parseExpr(p)));
     // A trailing comma after the last arm is allowed, as in every other list.
     if (!p.eat(kComma())) { break; }
   }
@@ -2146,33 +2163,12 @@ Stmt parseMatchStmt(P p) {
 
   ArmList arms = ArmList.create();
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
-    if (p.at1(kElse())) {
-      // The token rather than the fact of it: an else arm's coverage point is at the `else`.
-      i32 elseTok = p.advance();
-      p.expect(kColon());
-      arms.push(Arm(-1, elseTok, i32[0](), parseArmBody(p), null));
-      continue;
-    }
-    if (!p.eat(kCase())) {
-      p.fail(perrExpected());
-      p.advance();
-      continue;
-    }
-    i32 variantTok = -1;
-    if (p.at1(kIdent())) { variantTok = p.advance(); } else { p.fail(perrExpected()); }
-    I32List bindings = I32List.create();
-    if (p.eat(kLparen())) {
-      if (!p.at1(kRparen())) {
-        while (true) {
-          if (p.at1(kRparen())) { break; }         // trailing comma
-          if (p.at1(kIdent())) { bindings.push(p.advance()); } else { p.fail(perrExpected()); }
-          if (!p.eat(kComma())) { break; }
-        }
-      }
-      p.expect(kRparen());
-    }
-    p.expect(kColon());
-    arms.push(Arm(variantTok, -1, bindings.take(), parseArmBody(p), null));
+    ArmHead h = parseArmHead(p);
+    if (!h.ok) { continue; }
+    // **A statement arm is a block.** Without the braces an arm's statements run to the next arm's head,
+    // which a reader has to find by scanning — and a pattern is not a keyword, so nothing marks it.
+    if (!p.at1(kLbrace())) { p.fail(perrArmBlock()); }
+    arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, Stmt[](parseStatement(p)), null));
   }
   p.expect(kRbrace());
   return Stmt(StmtKind.Match(subject, arms.take()), line, col);

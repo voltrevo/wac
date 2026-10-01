@@ -233,15 +233,15 @@ Stmt sSet(Ctx c, i32 nameTok, Expr v) {
  */
 Ty cloneTy(Ty t) {
   match (t.kind) {
-    case Prim(tok): { return Ty(TyKind.Prim(tok), t.line, t.col); }
-    case Named(tok, typeArgs): {
+    Prim(tok): { return Ty(TyKind.Prim(tok), t.line, t.col); }
+    Named(tok, typeArgs): {
       Ty[] args = Ty[typeArgs.len()](fill: t);
       for (i32 i = 0; i < typeArgs.len(); i++) { args[i] = cloneTy(typeArgs[i]); }
       return Ty(TyKind.Named(tok, args), t.line, t.col);
     }
-    case Arr(elem): { return Ty(TyKind.Arr(cloneTy(elem)), t.line, t.col); }
-    case Nullable(inner): { return Ty(TyKind.Nullable(cloneTy(inner)), t.line, t.col); }
-    case Funcref(ret, params): {
+    Arr(elem): { return Ty(TyKind.Arr(cloneTy(elem)), t.line, t.col); }
+    Nullable(inner): { return Ty(TyKind.Nullable(cloneTy(inner)), t.line, t.col); }
+    Funcref(ret, params): {
       Ty[] ps = Ty[params.len()](fill: t);
       for (i32 i = 0; i < params.len(); i++) { ps[i] = cloneTy(params[i]); }
       return Ty(TyKind.Funcref(cloneTy(ret), ps), t.line, t.col);
@@ -258,8 +258,8 @@ Ty cloneTy(Ty t) {
  */
 bool isVoidTy(Ctx c, Ty t) {
   match (t.kind) {
-    case Prim(tok): { return synthTextAt(c.src, c.lexed, tok) == "void"; }
-    else: { return false; }
+    Prim(tok): { return synthTextAt(c.src, c.lexed, tok) == "void"; }
+    default: { return false; }
   }
 }
 
@@ -330,39 +330,39 @@ Expr[] subExprs(Ctx c, Expr[] es) {
 /** `e` with every hoisted name replaced by its cell. Descends into lambdas: they capture the array. */
 Expr subExpr(Ctx c, Expr e) {
   match (e.kind) {
-    case Ident(tok): {
+    Ident(tok): {
       if (!isHoisted(c, tok)) { return e; }
       return eIx(c, e, eInt(c, 0));
     }
-    case Await(operand): { return Expr(ExprKind.Await(subExpr(c, operand)), e.line, e.col); }
-    case Unary(op, operand): {
+    Await(operand): { return Expr(ExprKind.Await(subExpr(c, operand)), e.line, e.col); }
+    Unary(op, operand): {
       return Expr(ExprKind.Unary(op, subExpr(c, operand)), e.line, e.col);
     }
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       return Expr(ExprKind.Binary(op, subExpr(c, left), subExpr(c, right)), e.line, e.col);
     }
-    case Cast(op, operand, target): {
+    Cast(op, operand, target): {
       return Expr(ExprKind.Cast(op, subExpr(c, operand), target), e.line, e.col);
     }
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       Expr? o = (other is null) ? null : subExpr(c, other!);
       return Expr(ExprKind.Is(subExpr(c, left), target, o, negated), e.line, e.col);
     }
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       return Expr(ExprKind.Ternary(subExpr(c, cond), subExpr(c, then), subExpr(c, els)),
                   e.line, e.col);
     }
-    case Call(callee, args, typeArgs): {
+    Call(callee, args, typeArgs): {
       return Expr(ExprKind.Call(subExpr(c, callee), subExprs(c, args), typeArgs), e.line, e.col);
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       return Expr(ExprKind.Index(subExpr(c, arr), subExpr(c, index)), e.line, e.col);
     }
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       return Expr(ExprKind.Member(subExpr(c, obj), nameTok), e.line, e.col);
     }
-    case Unwrap(operand): { return Expr(ExprKind.Unwrap(subExpr(c, operand)), e.line, e.col); }
-    case Construct(ctype, args, named): {
+    Unwrap(operand): { return Expr(ExprKind.Unwrap(subExpr(c, operand)), e.line, e.col); }
+    Construct(ctype, args, named): {
       NamedArg[] ns = NamedArg[named.len()](fill: named.len() > 0 ? named[0]
                                                                  : NamedArg(0 - 1, eNull(c)));
       for (i32 i = 0; i < named.len(); i++) {
@@ -370,21 +370,21 @@ Expr subExpr(Ctx c, Expr e) {
       }
       return Expr(ExprKind.Construct(ctype, subExprs(c, args), ns), e.line, e.col);
     }
-    case Incr(target, op, prefix): {
+    Incr(target, op, prefix): {
       return Expr(ExprKind.Incr(subLv(c, target), op, prefix), e.line, e.col);
     }
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       Expr? sz = (size is null) ? null : subExpr(c, size!);
       Expr? fl = (fill is null) ? null : subExpr(c, fill!);
       return Expr(ExprKind.ArrNew(elem, sz, fl, subExprs(c, elements)), e.line, e.col);
     }
     // **Inside, but as a lambda.** The names it captures are cells now, so the substitution goes in;
     // its `return`s are its own, so `inLambda` stops the finish rewrite at the boundary.
-    case Lambda(params, body, lamAsync): {
+    Lambda(params, body, lamAsync): {
       return Expr(ExprKind.Lambda(params, subBody(c, body, true, 0 - 1, 0 - 1), lamAsync),
                   e.line, e.col);
     }
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       Arm[] out = Arm[arms.len()](fill: arms.len() > 0 ? arms[0]
                                                        : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
       for (i32 i = 0; i < arms.len(); i++) {
@@ -396,7 +396,7 @@ Expr subExpr(Ctx c, Expr e) {
     }
     // Same reasoning as the `match` arms: an attribute's value and a child are expressions, and a
     // hoisted name can appear in either.
-    case Jsx(tagTok, closeTok, attrs, kids): {
+    Jsx(tagTok, closeTok, attrs, kids): {
       JsxAttr[] as2 = JsxAttr[attrs.len()](fill: attrs.len() > 0 ? attrs[0]
                                                                  : JsxAttr(0 - 1, eNull(c)));
       for (i32 i = 0; i < attrs.len(); i++) {
@@ -404,29 +404,29 @@ Expr subExpr(Ctx c, Expr e) {
       }
       return Expr(ExprKind.Jsx(tagTok, closeTok, as2, subExprs(c, kids)), e.line, e.col);
     }
-    case JsxText(startOff, endOff): { return e; }
-    case IntLit(tok): { return e; }
-    case FloatLit(tok): { return e; }
-    case StrLit(tok): { return e; }
-    case BoolLit(value): { return e; }
-    case NullLit: { return e; }
-    case TypeName(qualifier): { return e; }
+    JsxText(startOff, endOff): { return e; }
+    IntLit(tok): { return e; }
+    FloatLit(tok): { return e; }
+    StrLit(tok): { return e; }
+    BoolLit(value): { return e; }
+    NullLit: { return e; }
+    TypeName(qualifier): { return e; }
   }
 }
 
 Lvalue subLv(Ctx c, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): {
+    LIdent(tok): {
       if (!isHoisted(c, tok)) { return lv; }
       return Lvalue(LvalueKind.LIndex(lv, eInt(c, 0)), lv.line, lv.col);
     }
-    case LField(base, nameTok): {
+    LField(base, nameTok): {
       return Lvalue(LvalueKind.LField(subLv(c, base), nameTok), lv.line, lv.col);
     }
-    case LIndex(base, index): {
+    LIndex(base, index): {
       return Lvalue(LvalueKind.LIndex(subLv(c, base), subExpr(c, index)), lv.line, lv.col);
     }
-    case LUnwrap(base): { return Lvalue(LvalueKind.LUnwrap(subLv(c, base)), lv.line, lv.col); }
+    LUnwrap(base): { return Lvalue(LvalueKind.LUnwrap(subLv(c, base)), lv.line, lv.col); }
   }
 }
 
@@ -452,34 +452,34 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     // **A declaration of a hoisted local becomes an assignment to its cell**, because the cell was
     // declared in the enclosing function. Nothing else could work: a second declaration inside the
     // switch arm would be a different variable, scoped to the arm, forgotten on resume.
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       Expr v = subExpr(c, init);
       if (!inLambda && isHoisted(c, nameTok)) { return sCellSet(c, nameTok, v); }
       return Stmt(StmtKind.Var(type, nameTok, v, isConst), s.line, s.col);
     }
-    case Assign(target, op, rhs): {
+    Assign(target, op, rhs): {
       return Stmt(StmtKind.Assign(subLv(c, target), op, subExpr(c, rhs)), s.line, s.col);
     }
-    case IncrStmt(target, op): {
+    IncrStmt(target, op): {
       return Stmt(StmtKind.IncrStmt(subLv(c, target), op), s.line, s.col);
     }
-    case If(cond, then, els): {
+    If(cond, then, els): {
       return Stmt(StmtKind.If(subExpr(c, cond), subBody(c, then, inLambda, brkTo, contTo),
                               subBody(c, els, inLambda, brkTo, contTo)), s.line, s.col);
     }
-    case While(cond, body): {
+    While(cond, body): {
       return Stmt(StmtKind.While(subExpr(c, cond), subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
     }
-    case For(init, cond, update, body): {
+    For(init, cond, update, body): {
       Stmt? i2 = (init is null) ? null : subStmt(c, init!, inLambda, 0 - 1, 0 - 1);
       Expr? c2 = (cond is null) ? null : subExpr(c, cond!);
       Stmt? u2 = (update is null) ? null : subStmt(c, update!, inLambda, 0 - 1, 0 - 1);
       return Stmt(StmtKind.For(i2, c2, u2, subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
     }
-    case DoWhile(body, cond): {
+    DoWhile(body, cond): {
       return Stmt(StmtKind.DoWhile(subBody(c, body, inLambda, 0 - 1, 0 - 1), subExpr(c, cond)), s.line, s.col);
     }
-    case Switch(subject, cases): {
+    Switch(subject, cases): {
       Case[] cs = Case[cases.len()](fill: cases.len() > 0 ? cases[0]
                                                           : Case(null, Stmt[](), s.line, s.col));
       for (i32 i = 0; i < cases.len(); i++) {
@@ -489,23 +489,23 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
       return Stmt(StmtKind.Switch(subExpr(c, subject), cs), s.line, s.col);
     }
     // The one that is not a substitution. Outside a lambda a `return` leaves the *machine*.
-    case Return(value): {
+    Return(value): {
       Expr? v = (value is null) ? null : subExpr(c, value!);
       if (inLambda) { return Stmt(StmtKind.Return(v), s.line, s.col); }
       return sFinish(c, v);
     }
-    case Trap(value): {
+    Trap(value): {
       Expr? v = (value is null) ? null : subExpr(c, value!);
       return Stmt(StmtKind.Trap(v), s.line, s.col);
     }
-    case Block(body): { return sBlock(c, subBody(c, body, inLambda, brkTo, contTo)); }
-    case ExprStmt(expr): { return sExpr(c, subExpr(c, expr)); }
+    Block(body): { return sBlock(c, subBody(c, body, inLambda, brkTo, contTo)); }
+    ExprStmt(expr): { return sExpr(c, subExpr(c, expr)); }
     // **An arm's body is code.** Returning the `match` unchanged left every assignment inside an arm
     // writing to a name that had become a cell — silently, because the checker ran on the original
     // tree and the emitter was handed a write it could not mean. What it produced was an `echo` that
     // stayed empty and a server that sent nothing, with no diagnostic anywhere. `issues/lang/0005`
     // is the same lesson from the other direction: five AST walks were missing enum arms.
-    case Match(subject, arms): {
+    Match(subject, arms): {
       Arm[] out = Arm[arms.len()](fill: arms.len() > 0 ? arms[0]
                                                        : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
       for (i32 i = 0; i < arms.len(); i++) {
@@ -518,8 +518,8 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     // **A `break` whose loop is gone has to go somewhere.** After flattening there is no `while` for
     // it to leave — the only loop left is the dispatch, and breaking that would resume the machine at
     // whatever state happened to be set. So it becomes the transfer the loop's exit is.
-    case Break: { return brkTo < 0 ? s : sBlock(c, gotoS(c, brkTo)); }
-    case Continue: { return contTo < 0 ? s : sBlock(c, gotoS(c, contTo)); }
+    Break: { return brkTo < 0 ? s : sBlock(c, gotoS(c, brkTo)); }
+    Continue: { return contTo < 0 ? s : sBlock(c, gotoS(c, contTo)); }
   }
 }
 
@@ -528,8 +528,8 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
 
 Expr innerAwait(Ctx c, Expr e) {
   match (e.kind) {
-    case Await(operand): { return operand; }
-    else: { return e; }
+    Await(operand): { return operand; }
+    default: { return e; }
   }
 }
 
@@ -674,7 +674,7 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
   Ctx c = b.c;
   match (s.kind) {
     // `T x = await e;` — suspend, then bind from the slot and carry on.
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       i32 rest = lowAlloc(b);
       i32 k = b.slot[0];
       lowPut(b, rest, lowJoin(c, Stmt[1](fill: sCellSet(c, nameTok, eCell(c, tVal(c, k)))),
@@ -682,15 +682,15 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
       return lowerSuspend(b, subExpr(c, innerAwait(c, init)), type, rest);
     }
     // `return await e;` — suspend, then the answer *is* the machine's.
-    case Return(value): {
+    Return(value): {
       i32 rest = lowAlloc(b);
       i32 k = b.slot[0];
       lowPut(b, rest, Stmt[1](fill: sFinish(c, eCell(c, tVal(c, k)))));
       return lowerSuspend(b, subExpr(c, innerAwait(c, (value is null) ? eNull(c) : value!)),
                           cloneTy(b.ret), rest);
     }
-    case Block(body): { return lowerSeq(b, body, next); }
-    case If(cond, then, els): {
+    Block(body): { return lowerSeq(b, body, next); }
+    If(cond, then, els): {
       i32 tEntry = lowerSeq(b, then, next);
       i32 eEntry = els.len() > 0 ? lowerSeq(b, els, next) : next;
       i32 head = lowAlloc(b);
@@ -704,7 +704,7 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     // enters the body or leaves; the body's last act is to go back to the header. There is no jump
     // and none is needed — the dispatch is at the top of the `while`, so *every* state is reachable
     // from it, including one in the middle of what used to be a loop.
-    case While(cond, body): {
+    While(cond, body): {
       i32 head = lowAlloc(b);
       lowPush(b, next, head);
       i32 bodyEntry = lowerSeq(b, body, head);
@@ -715,7 +715,7 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
       lowPut(b, head, hd);
       return head;
     }
-    case For(init, cond, update, body): {
+    For(init, cond, update, body): {
       i32 head = lowAlloc(b);
       i32 step = lowAlloc(b);
       lowPush(b, next, step);
@@ -736,7 +736,7 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
       lowPut(b, entry, lowJoin(c, pre, gotoS(c, head)));
       return entry;
     }
-    else: {
+    default: {
       // Unreachable: the plan refuses every other shape holding a suspension, by name.
       i32 e = lowAlloc(b);
       lowPut(b, e, gotoS(c, next));
@@ -979,31 +979,31 @@ export struct Lowered {
  */
 Ty? slotTicketTy(u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
-    case Funcref(ret, params): {
+    Funcref(ret, params): {
       match (ret.kind) {
-        case Named(tok, typeArgs): {
+        Named(tok, typeArgs): {
           if (synthTextAt(src, lexed, tok) != "Pending") { return null; }
           if (typeArgs.len() != 1) { return null; }
           return typeArgs[0];
         }
-        else: { return null; }
+        default: { return null; }
       }
     }
-    else: { return null; }
+    default: { return null; }
   }
 }
 
 /** The `async` lambda `s` declares, or null — `fn<Pending<R>(…)> n = async (…) => { … };`. */
 Expr? asyncLambdaOf(u8[] src, Lexed lexed, Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       if (slotTicketTy(src, lexed, type) is null) { return null; }
       match (init.kind) {
-        case Lambda(params, body, isAsync): { return isAsync ? init : null; }
-        else: { return null; }
+        Lambda(params, body, isAsync): { return isAsync ? init : null; }
+        default: { return null; }
       }
     }
-    else: { return null; }
+    default: { return null; }
   }
 }
 
@@ -1011,17 +1011,17 @@ Expr? asyncLambdaOf(u8[] src, Lexed lexed, Stmt s) {
 bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         for (i32 i = 0; i < body.len(); i++) {
           Expr? lam = asyncLambdaOf(src, lexed, body[i]);
           if (lam is null) { continue; }
           match (lam!.kind) {
-            case Lambda(lps, lbody, la): { if (planBody(lbody).ok) { return true; } }
-            else: { }
+            Lambda(lps, lbody, la): { if (planBody(lbody).ok) { return true; } }
+            default: { }
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return false;
@@ -1032,7 +1032,7 @@ bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
  *
  * **One accessor rather than five copies of the same `match`.** `anyLowerable`, `slotsNeeded`,
  * `numsNeeded`, `argsNeeded` and `lowerProgram` all walk `prog.decls`, and every one of them was
- * written as a `case Func(…)` with `else: { }` — so a method was invisible to all five at once.
+ * written as a `Func(…)` with `default: { }` — so a method was invisible to all five at once.
  * `issues/lang/0301b` is explicit about why that matters: miss `anyLowerable` and nothing is lowered
  * at all, miss one of the sizes and the machine is built with too few cells. Neither says anything;
  * both produce a program that is wrong rather than refused.
@@ -1043,11 +1043,11 @@ bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
  */
 Method[] methodsOf(Decl d) {
   match (d.kind) {
-    case StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
+    StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
       return sMethods;
     }
-    case EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): { return eMethods; }
-    else: { return Method[](); }
+    EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): { return eMethods; }
+    default: { return Method[](); }
   }
 }
 
@@ -1066,27 +1066,27 @@ i32 argsNeeded(Program prog, u8[] src, Lexed lexed) {
         Expr? lamM = asyncLambdaOf(src, lexed, ms[m].body[i]);
         if (lamM is null) { continue; }
         match (lamM!.kind) {
-          case Lambda(mps, mbody, ma): {
+          Lambda(mps, mbody, ma): {
             if (planBody(mbody).ok && mps.len() > most) { most = mps.len(); }
           }
-          else: { }
+          default: { }
         }
       }
     }
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         for (i32 i = 0; i < body.len(); i++) {
           Expr? lam = asyncLambdaOf(src, lexed, body[i]);
           if (lam is null) { continue; }
           match (lam!.kind) {
-            case Lambda(lps, lbody, la): {
+            Lambda(lps, lbody, la): {
               if (planBody(lbody).ok && lps.len() > most) { most = lps.len(); }
             }
-            else: { }
+            default: { }
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return most;
@@ -1110,7 +1110,7 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
       if (wantM > most) { most = wantM; }
     }
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (isAsync && planBody(body).ok) {
           i32 want = statesNeeded(body);
           if (want > most) { most = want; }
@@ -1119,16 +1119,16 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
           Expr? lam = asyncLambdaOf(src, lexed, body[i]);
           if (lam is null) { continue; }
           match (lam!.kind) {
-            case Lambda(lps, lbody, la): {
+            Lambda(lps, lbody, la): {
               if (!planBody(lbody).ok) { continue; }
               i32 w = statesNeeded(lbody);
               if (w > most) { most = w; }
             }
-            else: { }
+            default: { }
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return most;
@@ -1145,7 +1145,7 @@ i32 slotsNeeded(Program prog, u8[] src, Lexed lexed) {
       if (pm.ok && planSuspends(pm) > most) { most = planSuspends(pm); }
     }
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (isAsync) {
           AsyncPlan p = planBody(body);
           if (p.ok && planSuspends(p) > most) { most = planSuspends(p); }
@@ -1154,15 +1154,15 @@ i32 slotsNeeded(Program prog, u8[] src, Lexed lexed) {
           Expr? lam = asyncLambdaOf(src, lexed, body[i]);
           if (lam is null) { continue; }
           match (lam!.kind) {
-            case Lambda(lps, lbody, la): {
+            Lambda(lps, lbody, la): {
               AsyncPlan q = planBody(lbody);
               if (q.ok && planSuspends(q) > most) { most = planSuspends(q); }
             }
-            else: { }
+            default: { }
           }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return most;
@@ -1176,10 +1176,10 @@ bool anyLowerable(Program prog) {
       if (ms[m].isAsync && planBody(ms[m].body).ok) { return true; }
     }
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (isAsync && planBody(body).ok) { return true; }
       }
-      else: { }
+      default: { }
     }
   }
   return false;
@@ -1198,11 +1198,11 @@ Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stm
   for (i32 i = 0; i < body.len(); i++) {
     out[i] = body[i];
     match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): {
+      Var(type, nameTok, init, isConst): {
         Ty? tick = slotTicketTy(src2, lexed2, type);
         if (tick is null) { continue; }
         match (init.kind) {
-          case Lambda(lps, lbody, la): {
+          Lambda(lps, lbody, la): {
             if (!la) { continue; }
             AsyncPlan plan = planBody(lbody);
             if (!plan.ok) { continue; }
@@ -1237,10 +1237,10 @@ Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stm
             Expr made = Expr(ExprKind.Lambda(ps2, full, false), init.line, init.col);
             out[i] = Stmt(StmtKind.Var(type, nameTok, made, isConst), body[i].line, body[i].col);
           }
-          else: { }
+          default: { }
         }
       }
-      else: { }
+      default: { }
     }
   }
   return out;
@@ -1325,7 +1325,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     out[d] = prog.decls[d];
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // **Lambdas first.** An `async` function's own machine substitutes its hoisted names into
         // everything its body contains, lambdas included — so a lambda lowered beforehand is
         // ordinary code by the time that walk reaches it, and its captures of the enclosing
@@ -1355,7 +1355,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
       // **A method is a `Func` in all but name** — `nameTok`, `returnType`, `params`, `body` —
       // and `this` is an ordinary parameter, so the machine that already survives a suspension
       // over parameters needs nothing new for a receiver. `issues/lang/0301b`.
-      case StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
+      StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
         if (sMethods.len() == 0) { continue; }
         out[d] = Decl(DeclKind.StructDecl(sName, sParent, sFields,
                                           loweredMethods(first, ups, args, src2, lexed2,
@@ -1363,7 +1363,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
                                           sExported, sConst, sTypeParams),
                       prog.decls[d].line, prog.decls[d].col);
       }
-      case EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
+      EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
         if (eMethods.len() == 0) { continue; }
         out[d] = Decl(DeclKind.EnumDecl(eName, eVariants, eExported,
                                         loweredMethods(first, ups, args, src2, lexed2,
@@ -1371,7 +1371,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
                                         eTypeParams),
                       prog.decls[d].line, prog.decls[d].col);
       }
-      else: { }
+      default: { }
     }
   }
   Ctx top = Ctx(first, ups, args, 1, 1, string[](), src2, lexed2, i32[1](fill: 1), bool[1]());

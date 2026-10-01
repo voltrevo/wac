@@ -38,30 +38,30 @@ struct Case {
 
 string memberText(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return ""; }
       match (found!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        case Number(value, raw): { return string.fromBytes(raw); }
-        else: { return ""; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        Number(value, raw): { return string.fromBytes(raw); }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
 JsonArray? memberArray(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return null; }
       match (found!) {
-        case Array(items): { return items; }
-        else: { return null; }
+        Array(items): { return items; }
+        default: { return null; }
       }
     }
-    else: { return null; }
+    default: { return null; }
   }
 }
 
@@ -85,8 +85,8 @@ Case[] cases(T t, Cli cli) {
     if (!(miller is null)) {
       for (i32 k = 0; k < miller!.len(); k++) {
         match (miller!.get(k)) {
-          case Str(bytes): { coeffs[k] = string.fromBytes(bytes); }
-          else: { }
+          Str(bytes): { coeffs[k] = string.fromBytes(bytes); }
+          default: { }
         }
       }
     }

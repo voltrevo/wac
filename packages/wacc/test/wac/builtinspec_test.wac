@@ -28,7 +28,7 @@ string[] paths() { return string[]("main.wac"); }
 /** A program that uses the root of the tree — `Read` is what bare `core` gets. */
 string[] rootUsing(string importLine) {
   return string[](importLine + "\nexport i32 main() { Read r = Read.End; " +
-                  "return match (r) { case End: 0, else: 1 }; }\n");
+                  "return match (r) { End: 0, default: 1 }; }\n");
 }
 
 /** A program that uses a sibling: its own module, reached by its own specifier. */
@@ -115,7 +115,7 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   string[] names = string[]("root_quoted.wac", "sibling.wac");
   string[] progs = string[](
     "import { Read } from \"core\";\n" +
-    "export i32 main() { Read r = Read.End; return match (r) { case End: 0, else: 1 }; }\n",
+    "export i32 main() { Read r = Read.End; return match (r) { End: 0, default: 1 }; }\n",
     "import { Option } from \"core/option.wac\";\n" +
     "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n");
   for (i32 i = 0; i < names.len(); i++) {

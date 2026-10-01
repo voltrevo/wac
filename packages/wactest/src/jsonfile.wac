@@ -25,15 +25,15 @@ export JsonObject jsonFile(Cli cli, string path) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
 export JsonObject objectOf(JsonValue v) {
   match (v) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -41,8 +41,8 @@ export string strOf(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { trap; }
   }
 }
 
@@ -50,8 +50,8 @@ export i32 numOf(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Number(value, raw): { return value as~ i32; }
-    else: { trap; }
+    Number(value, raw): { return value as~ i32; }
+    default: { trap; }
   }
 }
 
@@ -59,8 +59,8 @@ export i64 num64Of(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Number(value, raw): { return value as~ i64; }
-    else: { trap; }
+    Number(value, raw): { return value as~ i64; }
+    default: { trap; }
   }
 }
 
@@ -68,8 +68,8 @@ export bool boolOf(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Bool(value): { return value; }
-    else: { trap; }
+    Bool(value): { return value; }
+    default: { trap; }
   }
 }
 
@@ -77,7 +77,7 @@ export JsonArray arrayOf(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }

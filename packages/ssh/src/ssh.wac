@@ -49,21 +49,21 @@ export i32 main(Core core, Cli cli) {
   u8[] pass = (passphrase is null) ? u8[0]() : passphrase!.toBytes();
   PrivateKey key = readEd25519(keyFile.bytes, pass);
   match (key.error) {
-    case Ok: {}
-    case BadPassphrase: {
+    Ok: {}
+    BadPassphrase: {
       core.warn("ssh: " + o.identity + ": wrong or missing passphrase"
                 + ((passphrase is null) ? " — set SSH_PASSPHRASE" : ""));
       return 1;
     }
-    case NotEd25519: {
+    NotEd25519: {
       core.warn("ssh: " + o.identity + ": not an Ed25519 key, which is all this client knows");
       return 1;
     }
-    case Unsupported: {
+    Unsupported: {
       core.warn("ssh: " + o.identity + ": unsupported cipher or KDF");
       return 1;
     }
-    else: {
+    default: {
       core.warn("ssh: " + o.identity + ": not an OpenSSH private key");
       return 1;
     }
@@ -126,19 +126,19 @@ i32 checkHost(Core core, Cli cli, Options o, u8[] hostKey) {
   u8[] keyType = "ssh-ed25519".toBytes();
 
   match (lookUp(contents, o.host.toBytes(), o.port, keyType, hostKey)) {
-    case Match: { return 0; }
-    case Revoked: {
+    Match: { return 0; }
+    Revoked: {
       core.warn("ssh: the host key for " + name + " has been revoked");
       return 1;
     }
-    case Mismatch: {
+    Mismatch: {
       // The case the file exists to catch. Loud, and never folded into "unknown".
       core.warn("ssh: REMOTE HOST IDENTIFICATION HAS CHANGED for " + name);
       core.warn("ssh: someone may be listening, or the host may have been rebuilt.");
       core.warn("ssh: remove the old line from " + path + " if you are sure.");
       return 1;
     }
-    else: {
+    default: {
       string line = name + " ssh-ed25519 "
         + string.fromBytes(b64encode(hostKey, ALPHABET_STANDARD(), true));
       if (!o.addHost) {

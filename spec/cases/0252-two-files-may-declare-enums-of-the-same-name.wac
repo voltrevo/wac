@@ -4,10 +4,10 @@
 // from: spec/spec/enums.md, whose only checker was the reference's suite
 // ---- a.wac ----
 export enum Kind { Same, Other }
-export i32 fromA(Kind k) { return match (k) { case Same: 10, case Other: 0 }; }
+export i32 fromA(Kind k) { return match (k) { Same: 10, Other: 0 }; }
 // ---- b.wac ----
 export enum Kind { Same, Other }
-export i32 fromB(Kind k) { return match (k) { case Same: 2, case Other: 0 }; }
+export i32 fromB(Kind k) { return match (k) { Same: 2, Other: 0 }; }
 // ---- main.wac ----
 import { Kind as KA, fromA } from "./a.wac";
 import { Kind as KB, fromB } from "./b.wac";

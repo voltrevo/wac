@@ -155,8 +155,8 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
   GitIndex idx = GitIndex(empty, u8[0]());
   bool read = false;
   match (parseIndex(f.bytes)) {
-    case Unreadable(why): { t.isTrue(false, "git's index did not parse: " + why); }
-    case Present(index): { idx = index; read = true; }
+    Unreadable(why): { t.isTrue(false, "git's index did not parse: " + why); }
+    Present(index): { idx = index; read = true; }
   }
   if (!read) { return t.report(); }
 
@@ -203,10 +203,10 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
   u8[] short = writeIndex(idx);
   short[11] = short[11] - 1;              // one fewer entry than follows
   match (parseIndex(short)) {
-    case Present(index): {
+    Present(index): {
       t.isTrue(false, "an index whose checksum no longer matches was accepted");
     }
-    case Unreadable(why): { t.isTrue(true, why); }
+    Unreadable(why): { t.isTrue(true, why); }
   }
 
   cli.remove(g.dir, true).wait();
@@ -275,7 +275,7 @@ export string test_an_index_that_is_not_one_is_refused_rather_than_half_read() {
 
 bool unreadable(Staged s) {
   match (s) {
-    case Unreadable(why): { return true; }
-    case Present(index): { return false; }
+    Unreadable(why): { return true; }
+    Present(index): { return false; }
   }
 }

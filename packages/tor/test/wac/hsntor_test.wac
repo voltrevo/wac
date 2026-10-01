@@ -57,15 +57,15 @@ JsonArray vectorCases(Cli cli) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): {
+    Object(members): {
       JsonValue? cs = members.getStr("cases");
       if (cs is null) { trap; }
       match (cs!) {
-        case Array(items): { return items; }
-        else: { trap; }
+        Array(items): { return items; }
+        default: { trap; }
       }
     }
-    else: { trap; }
+    default: { trap; }
   }
 }
 
@@ -80,13 +80,13 @@ u8[] caseBytes(Cli cli, i32 i) {
     JsonValue? v = c.getStr(fields[k]);
     if (v is null) { trap; }
     match (v!) {
-      case Str(bytes): {
+      Str(bytes): {
         u8[] raw = decoded(string.fromBytes(bytes));
         // Every field is a 32-byte key or digest; a shorter one means the generator changed shape.
         if (raw.len() != 32) { trap; }
         out.copyFrom(raw, 0, k * 32, 32);
       }
-      else: { trap; }
+      default: { trap; }
     }
   }
   return out;

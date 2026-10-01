@@ -10,7 +10,7 @@ enum Shape {
 
 export f64 bad(Shape s) {
   match (s) {
-    case Point:     return 0.0;
-    case Circle(r): return r;
+    Point: { return 0.0; }
+    Circle(r): { return r; }
   }
 }

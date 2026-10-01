@@ -1230,9 +1230,9 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
       bool failed = false;
       u8[] payload = u8[0]();
       match (r) {
-        case Data(bytes): { payload = bytes; open = true; }
-        case End: { }
-        case Failed(why): {
+        Data(bytes): { payload = bytes; open = true; }
+        End: { }
+        Failed(why): {
           core.warn("relayd: [" + itoa(c.id) + "]  the stream failed: " + why);
           failed = true;
         }
@@ -1275,9 +1275,9 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
       Circ k = c.circs[slot]!;
       bool alive = false;
       match (r) {
-        case Data(bytes): { alive = feedLink(k.next, bytes); }
-        case End: { }
-        case Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the next hop failed: " + why); }
+        Data(bytes): { alive = feedLink(k.next, bytes); }
+        End: { }
+        Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the next hop failed: " + why); }
       }
       if (!alive) {
         core.warn("relayd: [" + itoa(c.id) + "]  the next hop closed the connection");
@@ -1313,15 +1313,15 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
     u8[] incoming = u8[0]();
     bool live = false;
     match (r) {
-      case Data(bytes): {
+      Data(bytes): {
         incoming = bytes;
         live = true;
       }
       // A connection ending was silent, which made "the peer went away" indistinguishable from
       // "nothing happened" in a log — and a circuit dying at the client with no line here is exactly
       // what issue 0089 looked like from the outside.
-      case End: { core.log("relayd: [" + itoa(c.id) + "]  the initiator closed the connection"); }
-      case Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the connection failed: " + why); }
+      End: { core.log("relayd: [" + itoa(c.id) + "]  the initiator closed the connection"); }
+      Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the connection failed: " + why); }
     }
     if (!live) {
       // The client is gone, so every circuit it built over this connection is too. `dropConn` in the

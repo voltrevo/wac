@@ -166,7 +166,7 @@ string[] WRONG() {
     // The same pair in a `match`, which `checkArmValueTypes` gates on the same `concreteShape`
     // and skipped for the same reason. The reference: *match arms have incompatible types: P and
     // i32*.
-    "struct P { i32 x; } enum E { A, B } export i32 f(E e, P p) { P r = match (e) { case A: p, else: 1 }; return r.x; }",
+    "struct P { i32 x; } enum E { A, B } export i32 f(E e, P p) { P r = match (e) { A: p, default: 1 }; return r.x; }",
     // The other kinds `literalNeverFits` names, so the widening is pinned as a family rather than
     // as the two cases that happened to be found: an array against an integer literal, and a
     // struct against a string one.
@@ -217,12 +217,12 @@ string[] WRONG() {
     // names the second `else`, the unreachable `else`, and the `match` keyword respectively, and they
     // are here so that the agreement is now a test rather than a measurement someone took once.
     "enum E { A, B }\n"
-      + "export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } else: { return 3; } }"
+      + "export i32 f(E e) { match (e) { A: { return 1; } default: { return 2; } default: { return 3; } }"
       + " return 0; }",
     "enum E { A, B }\n"
-      + "export i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } else: { return 3; } }"
+      + "export i32 f(E e) { match (e) { A: { return 1; } B: { return 2; } default: { return 3; } }"
       + " return 0; }",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } return 0; }",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } } return 0; }",
     // **A name reached through a struct rather than through a value.** `checkMember` had this rule
     // for enums — `E.nope` is a variant that is not there — and not for structs, so all three of
     // these were accepted by the checker and declined by the *emitter*, which is a refusal with no
@@ -292,7 +292,7 @@ string[] CLEAN() {
     // Without these two rows the widening above could refuse them and every other row would
     // still pass.
     "struct P { i32 x; } export i32 j(bool c, P p) { P? r = c ? p : null; return r is null ? 0 : r!.x; }",
-    "struct P { i32 x; } enum E { A, B } export i32 k(E e, P p) { P? r = match (e) { case A: p, else: null }; return r is null ? 0 : r!.x; }",
+    "struct P { i32 x; } enum E { A, B } export i32 k(E e, P p) { P? r = match (e) { A: p, default: null }; return r is null ? 0 : r!.x; }",
     // **The controls for the three rows above**, and the first is the one that matters: `is null` on a
     // *nullable* funcref is the ordinary way to ask whether one was supplied, which is why the rule was
     // written to skip funcrefs in the first place. A legal compound assignment and a widening cast are
@@ -1480,7 +1480,7 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
 /**
  * **A packed type in every position it can be written in.**
  *
- * `u8 i8 u16 i16` exist as array elements and struct fields and nowhere else: no slot is one byte
+ * `u8 i8 u16 i16` exist as array elements and struct fields and nowhere default: no slot is one byte
  * wide, so a packed value has no representation of its own to be held in. `checkParams` says exactly
  * that in a comment — "it exists as an array element and nowhere else" — and enforced it for
  * parameters only. A local, a return type and a cast target are the other three positions, and a grid
@@ -1684,8 +1684,8 @@ export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, C
     // A struct downcast narrows the same way.
     s + "export i32 f(Base b) { if (b is Sub) { return b.s; } return 0; }",
     // A `match` binds the payload by name and needs no narrowing at all.
-    e + "export f64 f(Shape s) { match (s) { case Circle(r): { return r; } " +
-        "case Point: { return 0.0; } } }",
+    e + "export f64 f(Shape s) { match (s) { Circle(r): { return r; } " +
+        "Point: { return 0.0; } } }",
     // The enum's own name is still usable for what it does have.
     e + "export Shape f() { return Shape.Circle(1.0); }"),
   "narrowing");
@@ -2233,10 +2233,10 @@ export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declar
     "export i32 fwd() { i32 later = 1; return later; }",
     "export i32 loopVar() { for (i32 i = 0; i < 2; i++) { } return 0; }",
     "enum E { A(i32 v), B } export i32 armStmt(E e) { " +
-    "match (e) { case A(v): { return v; } case B: { return 0; } } }",
+    "match (e) { A(v): { return v; } B: { return 0; } } }",
     // The match *expression* form, whose bindings the declaration pass never reaches.
     "enum E { A(i32 v), B } export i32 armExpr(E e) { " +
-    "return match (e) { case A(v): v * 3, case B: -1 }; }",
+    "return match (e) { A(v): v * 3, B: -1 }; }",
     // Names that are not variables: a function used as a value, a struct and an enum as receivers,
     // and the primitive type names, which appear in expression position for the builtin statics.
     "i32 g(i32 a) { return a; } export i32 callIt() { return g(1); }",

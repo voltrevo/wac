@@ -70,8 +70,8 @@ JsonArray recorded(Cli cli) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { return JsonArray.create(); }
   match (v!) {
-    case Array(items): { return items; }
-    else: { return JsonArray.create(); }
+    Array(items): { return items; }
+    default: { return JsonArray.create(); }
   }
 }
 

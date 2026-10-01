@@ -93,16 +93,16 @@ export Ad parseAdvertisement(u8[] b) {
   bool reading = true;
   while (reading) {
     match (readPkt(b, pos)) {
-      case Broken(why): return Ad.Garbled(why);
-      case Done: { reading = false; }
-      case Delim: { }
-      case ResponseEnd: { reading = false; }
-      case Flush: {
+      Broken(why): { return Ad.Garbled(why); }
+      Done: { reading = false; }
+      Delim: { }
+      ResponseEnd: { reading = false; }
+      Flush: {
         // The flush after the `# service=` line, or the end of the advertisement. If refs have been
         // read, this is the end; if not, it closed the preamble and the refs follow.
         if (refs.len() > 0) { reading = false; }
       }
-      case Line(payload): {
+      Line(payload): {
         if (payload.len() > 0 && payload[0] == '#') {
           // `# service=git-upload-pack\n` — the HTTP preamble. Not a ref.
           continue;
@@ -216,17 +216,17 @@ export Reply findPack(u8[] b) {
   while (looking) {
     i32 before = pos[0];
     match (readPkt(b, pos)) {
-      case Broken(why): {
+      Broken(why): {
         // Not a packet: the pack starts here. `PACK` is not valid hex, so this is the ordinary way out
         // rather than a failure.
         pos[0] = before;
         looking = false;
       }
-      case Done: return Reply.NoPack("the reply ended before a packfile");
-      case Flush: { }
-      case Delim: { }
-      case ResponseEnd: { }
-      case Line(payload): {
+      Done: { return Reply.NoPack("the reply ended before a packfile"); }
+      Flush: { }
+      Delim: { }
+      ResponseEnd: { }
+      Line(payload): {
         if (isNegotiation(payload)) { continue; }
         if (payload.len() > 3 && payload[0] == 'E' && payload[1] == 'R' && payload[2] == 'R') {
           return Reply.NoPack("the server said: " + slice(payload, 4, payload.len()));
@@ -300,12 +300,12 @@ export Vec<u8[]> shallowsIn(u8[] b) {
     i32 before = pos[0];
     match (readPkt(b, pos)) {
       // Not a packet: the pack starts here, so there are no more lines to read.
-      case Broken(why): { pos[0] = before; reading = false; }
-      case Done: { reading = false; }
-      case Flush: { }
-      case Delim: { }
-      case ResponseEnd: { }
-      case Line(payload): {
+      Broken(why): { pos[0] = before; reading = false; }
+      Done: { reading = false; }
+      Flush: { }
+      Delim: { }
+      ResponseEnd: { }
+      Line(payload): {
         if (payload.len() >= 48 && payload[0] == 's' && payload[1] == 'h' && payload[2] == 'a'
             && payload[3] == 'l' && payload[4] == 'l' && payload[5] == 'o' && payload[6] == 'w'
             && payload[7] == 32) {

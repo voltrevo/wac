@@ -11,7 +11,7 @@
 //
 // ## The checksum is not integrity protection
 //
-// Two bytes catch a typo and nothing else: an attacker who wants a valid-looking address simply
+// Two bytes catch a typo and nothing default: an attacker who wants a valid-looking address simply
 // generates keys until the checksum works, which costs nothing. What makes an address trustworthy is
 // that the *key* is in it, so the checksum's only job is to stop a mistyped address being attempted
 // as a network request. It is checked because rejecting early is free, not because it proves anything.

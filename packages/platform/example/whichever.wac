@@ -49,9 +49,9 @@ export i32 main(Core core, Cli cli) {
  */
 string said(Read r) {
   match (r) {
-    case Data(bytes): { return trim(bytes); }
-    case End: { return "(closed)"; }
-    case Failed(why): { return "(failed: " + why + ")"; }
+    Data(bytes): { return trim(bytes); }
+    End: { return "(closed)"; }
+    Failed(why): { return "(failed: " + why + ")"; }
   }
 }
 

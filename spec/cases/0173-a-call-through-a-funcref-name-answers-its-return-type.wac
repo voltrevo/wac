@@ -4,7 +4,7 @@
 enum R { Data(u8[] bytes), End }
 export i32 f(fn<R()> read) {
   match (read()) {
-    case Data(bytes): { return bytes.len(1); }
-    case End: { return 0; }
+    Data(bytes): { return bytes.len(1); }
+    End: { return 0; }
   }
 }

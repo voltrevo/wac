@@ -10,7 +10,7 @@ enum Shape {
 
 export f64 first(Shape[] shapes) {
   match (shapes[0]) {
-    case Circle: return shapes[0].radius;
-    else:        return 0.0;
+    Circle: { return shapes[0].radius; }
+    default: { return 0.0; }
   }
 }

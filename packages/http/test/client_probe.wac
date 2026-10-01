@@ -44,13 +44,13 @@ export u8[] buildRequest(u8[] method, u8[] target, u8[] host, u8[] headers, u8[]
 export u8[] parse(u8[] input, u8[] method, bool eof, i32 maxBody) {
   Buf out = Buf.create();
   match (parseResponse(input, method, eof, maxBody)) {
-    case Incomplete: { out.pushAll("incomplete".toBytes()); }
-    case Bad(code): {
+    Incomplete: { out.pushAll("incomplete".toBytes()); }
+    Bad(code): {
       out.pushAll("bad".toBytes());
       out.push(0);
       writeInt(out, code);
     }
-    case Ok(response): {
+    Ok(response): {
       out.pushAll("ok".toBytes());
       out.push(0);
       writeInt(out, response.status);

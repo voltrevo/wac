@@ -4,7 +4,7 @@
 // from: spec/spec/enums.md, whose only checker was the reference's suite
 enum E { A(i32 x), B }
 struct S { E e; }
-i32 got(E e) { return match (e) { case A(x): x, case B: 1 }; }
+i32 got(E e) { return match (e) { A(x): x, B: 1 }; }
 export i32 f() {
   E[] a = E[](E.A(1), E.B);
   E[] b = E[2](fill: E.B);

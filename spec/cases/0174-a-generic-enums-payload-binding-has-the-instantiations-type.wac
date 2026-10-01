@@ -4,7 +4,7 @@
 enum Opt<T> { None, Some(T v) }
 export i32 f(Opt<i32> o) {
   match (o) {
-    case Some(v): { string s = v; return 0; }
-    case None: { return 0; }
+    Some(v): { string s = v; return 0; }
+    None: { return 0; }
   }
 }

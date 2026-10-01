@@ -335,8 +335,8 @@ export struct Fs {
     Mount only = this.mounts.get(0);
     if (only.at != "") { return false; }
     match (only.backing) {
-      case Host(cli): { return true; }
-      else: { return false; }
+      Host(cli): { return true; }
+      default: { return false; }
     }
   }
 
@@ -355,11 +355,11 @@ export struct Fs {
   bool hasHostMount(const this) {
     for (i32 i = 0; i < this.mounts.len(); i++) {
       match (this.mounts.get(i).backing) {
-        case Host(cli): { return true; }
+        Host(cli): { return true; }
         // A remote mount's far end may well have one, and the child holding this one still cannot
         // reach it except by asking — which is the whole point. Answering true here would hand a
         // grandchild the grants its grandparent has.
-        else: {}
+        default: {}
       }
     }
     return false;
@@ -370,10 +370,10 @@ export struct Fs {
     i32 mi = this.mountOf(path);
     if (mi < 0) { return false; }
     match (this.mounts.get(mi).backing) {
-      case Host(cli): { return true; }
+      Host(cli): { return true; }
       // The parent knows: a child's own mount table says nothing about which disk the path is on.
-      case Remote(chan): { return remoteIsHostPath(chan, path); }
-      else: { return false; }
+      Remote(chan): { return remoteIsHostPath(chan, path); }
+      default: { return false; }
     }
   }
 
@@ -453,16 +453,16 @@ export struct Fs {
     match (this.mounts.get(mi).backing) {
       // A host mount streams the only way the capability offers: by redirecting this process's
       // output, which is what the shell was doing directly before this existed.
-      case Host(cli): { return cli.openOutput(full).wait(); }
+      Host(cli): { return cli.openOutput(full).wait(); }
       // The parent holds the cursor, because the parent holds the file. A child streaming a
       // redirection is the case `packages/sh` reaches on every `>` inside a spawned stage.
-      case Remote(chan): { return remoteOpenOut(chan, full); }
+      Remote(chan): { return remoteOpenOut(chan, full); }
       // **`> /dev/null` is a real destination and had no arm here.** The truncating `writeFile`
       // above is what decides whether this path may be written at all — `/dev/null` accepts and
       // keeps nothing, everything else synthesised is read-only and says so — so by the time this
       // runs the only synthesised file that can be open is `/dev/null`, and there is nothing to do.
-      case Synth(rand): { return Change.of(FAULT_NONE(), ""); }
-      else: { return Change.of(FAULT_NONE(), ""); }
+      Synth(rand): { return Change.of(FAULT_NONE(), ""); }
+      default: { return Change.of(FAULT_NONE(), ""); }
     }
     return Change.of(FAULT_NONE(), "");
   }
@@ -471,12 +471,12 @@ export struct Fs {
   bool writeOut(this, u8[] bytes) {
     if (this.outPath == "") { return false; }
     match (this.mounts.get(this.outMount).backing) {
-      case Host(cli): { return cli.write(bytes); }
-      case Remote(chan): { return remoteWriteOut(chan, bytes); }
+      Host(cli): { return cli.write(bytes); }
+      Remote(chan): { return remoteWriteOut(chan, bytes); }
       // Accepted and kept, which is the whole of what `/dev/null` is for — see `openOut` for why
       // that is the only synthesised file this can be.
-      case Synth(rand): { return true; }
-      else: {
+      Synth(rand): { return true; }
+      default: {
         i32 node = this.find(this.mounts.get(this.outMount), this.outPath);
         if (node < 0) { return false; }
         this.nodes.get(node).append(bytes, this.now);
@@ -494,10 +494,10 @@ export struct Fs {
     this.outMount = -1;
     match (this.mounts.get(mi).backing) {
       // `openOutput("")` is how a program says it has finished writing — see `platform.wac`.
-      case Host(cli): { return cli.openOutput("").wait(); }
-      case Remote(chan): { return remoteCloseOut(chan); }
-      case Synth(rand): { return Change.of(FAULT_NONE(), ""); }
-      else: { return Change.of(FAULT_NONE(), ""); }
+      Host(cli): { return cli.openOutput("").wait(); }
+      Remote(chan): { return remoteCloseOut(chan); }
+      Synth(rand): { return Change.of(FAULT_NONE(), ""); }
+      default: { return Change.of(FAULT_NONE(), ""); }
     }
     return Change.of(FAULT_NONE(), "");
   }
@@ -542,13 +542,13 @@ export struct Fs {
     if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      case Host(cli): { return cli.readFile(path).wait(); }
+      Host(cli): { return cli.readFile(path).wait(); }
       // An endless device has no "whole" to read. GNU's `cat /dev/zero` runs until something stops it,
       // which a `readFile` returning one array cannot do — so it refuses and says which read to use
       // instead, rather than inventing a length or hanging.
-      case Synth(rand): { return synthRead(this, m, path, rand, -1); }
-      case Remote(chan): { return remoteReadFile(chan, path); }
-      else: {}
+      Synth(rand): { return synthRead(this, m, path, rand, -1); }
+      Remote(chan): { return remoteReadFile(chan, path); }
+      default: {}
     }
     i32 node = this.find(m, path);
     if (node < 0) { return absentRead(node); }
@@ -580,12 +580,12 @@ export struct Fs {
     if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      case Synth(rand): { return synthRead(this, m, path, rand, n); }
+      Synth(rand): { return synthRead(this, m, path, rand, n); }
       // Asked rather than trimmed from a whole read, for the same reason the synthesised backing has
       // its own arm: `/dev/zero` has no whole, and `head -c 10 /dev/zero` in a spawned applet would
       // otherwise ask its parent for all of it.
-      case Remote(chan): { return remoteReadSome(chan, path, n); }
-      else: {}
+      Remote(chan): { return remoteReadSome(chan, path, n); }
+      default: {}
     }
     FileResult whole = this.readFile(path);
     if (!whole.ok || whole.bytes.len() <= n) { return whole; }
@@ -602,10 +602,10 @@ export struct Fs {
     if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, false, FAULT_NONE()); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      case Host(cli): { return cli.stat(path).wait(); }
-      case Synth(rand): { return synthStat(this, m, path); }
-      case Remote(chan): { return remoteStat(chan, path); }
-      else: {}
+      Host(cli): { return cli.stat(path).wait(); }
+      Synth(rand): { return synthStat(this, m, path); }
+      Remote(chan): { return remoteStat(chan, path); }
+      default: {}
     }
     i32 node = this.find(m, path);
     // Absence, not a fault: a memory tree can always answer, and "nothing here" is the answer — with
@@ -645,9 +645,9 @@ export struct Fs {
     i32 mi = this.mountOf(full);
     if (mi < 0) { return this.stat(path); }
     match (this.mounts.get(mi).backing) {
-      case Host(cli): { return cli.linkStat(full).wait(); }
-      case Remote(chan): { return remoteLinkStat(chan, full); }
-      else: { return this.stat(path); }
+      Host(cli): { return cli.linkStat(full).wait(); }
+      Remote(chan): { return remoteLinkStat(chan, full); }
+      default: { return this.stat(path); }
     }
     return this.stat(path);
   }
@@ -666,10 +666,10 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     string[]? own = null;
     match (m.backing) {
-      case Host(cli): { own = cli.readDir(path).wait(); }
-      case Synth(rand): { own = synthDir(this, m, path); }
-      case Remote(chan): { own = remoteReadDir(chan, path); }
-      else: {
+      Host(cli): { own = cli.readDir(path).wait(); }
+      Synth(rand): { own = synthDir(this, m, path); }
+      Remote(chan): { own = remoteReadDir(chan, path); }
+      default: {
         i32 node = this.find(m, path);
         // Null rather than empty for "not a directory" or "not there", which is what the capability
         // answers and what lets `ls` tell an empty directory from a missing one.
@@ -702,23 +702,23 @@ export struct Fs {
       // Neither of these checks anything here: the host does its own, and a remote mount's checks
       // belong to whoever holds the files. Doing it locally would ask the parent for a `stat` and
       // then ignore what it said in favour of a rule the parent is about to apply anyway.
-      case Host(cli): {}
-      case Remote(chan): {}
-      else: {
+      Host(cli): {}
+      Remote(chan): {}
+      default: {
         if (this.stat(path).isDir) { return Change.of(FAULT_IS_DIR(), "Is a directory"); }
       }
     }
     match (m.backing) {
-      case Host(cli): { return cli.writeFile(path, data).wait(); }
-      case Remote(chan): { return remoteWriteFile(chan, path, data); }
-      case Synth(rand): {
+      Host(cli): { return cli.writeFile(path, data).wait(); }
+      Remote(chan): { return remoteWriteFile(chan, path, data); }
+      Synth(rand): {
         // `/dev/null` accepts anything and keeps none of it, which is the whole of what it is for.
         // Every other synthesised file is read-only, and says so rather than appearing to have taken
         // the bytes — a write that vanishes silently is the failure `> /dev/zero` would otherwise be.
         if (synthKind(this, m, path) == SYNTH_NULL()) { return Change.of(FAULT_NONE(), ""); }
         return Change.of(FAULT_READ_ONLY(), "Read-only file system");
       }
-      else: {}
+      default: {}
     }
     i32 parent = this.find(m, parentOf(path));
     if (parent < 0) { return absentChange(parent); }
@@ -764,9 +764,9 @@ export struct Fs {
     // for one question. What `/dev` is, is a directory. Host mounts are left alone: the host answers
     // this correctly already, and asking it twice would cost a round trip to be told what it just said.
     match (m.backing) {
-      case Host(cli): {}
-      case Remote(chan): {}
-      else: {
+      Host(cli): {}
+      Remote(chan): {}
+      default: {
         if (this.stat(path).isDir) {
           // `-p` is the flag that means "and say nothing if it is already there", so an existing
           // directory is success under it and "file exists" without it. This answered neither for a
@@ -778,10 +778,10 @@ export struct Fs {
       }
     }
     match (m.backing) {
-      case Host(cli): { return cli.mkdir(path, parents).wait(); }
-      case Remote(chan): { return remoteMkdir(chan, path, parents); }
-      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
-      else: {}
+      Host(cli): { return cli.mkdir(path, parents).wait(); }
+      Remote(chan): { return remoteMkdir(chan, path, parents); }
+      Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      default: {}
     }
     if (parents) { return this.mkdirAll(m, path); }
     i32 parent = this.find(m, parentOf(path));
@@ -833,10 +833,10 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      case Host(cli): { return cli.remove(path, recursive).wait(); }
-      case Remote(chan): { return remoteRemove(chan, path, recursive); }
-      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
-      else: {}
+      Host(cli): { return cli.remove(path, recursive).wait(); }
+      Remote(chan): { return remoteRemove(chan, path, recursive); }
+      Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      default: {}
     }
     i32 parent = this.find(m, parentOf(path));
     if (parent < 0) { return absentChange(parent); }
@@ -888,12 +888,12 @@ export struct Fs {
       //
       // `setExecutable` below is still the narrower call and still what the git checkout uses: it
       // promises one bit, so it can keep promising it on a backing with no other bits to set.
-      case Host(cli): { return cli.chmod(path, mode).wait(); }
+      Host(cli): { return cli.chmod(path, mode).wait(); }
       // Asked, and therefore implemented wherever the parent's own mount implements it — a child
       // that `chmod`s a file in an image changes the same inode its parent would have changed.
-      case Remote(chan): { return remoteChmod(chan, path, mode); }
-      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
-      else: {}
+      Remote(chan): { return remoteChmod(chan, path, mode); }
+      Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      default: {}
     }
     i32 node = this.find(m, path);
     if (node < 0) { return absentChange(node); }
@@ -923,10 +923,10 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      case Host(cli): { return cli.setExecutable(path, on).wait(); }
-      case Remote(chan): { return remoteSetExecutable(chan, path, on); }
-      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
-      else: {}
+      Host(cli): { return cli.setExecutable(path, on).wait(); }
+      Remote(chan): { return remoteSetExecutable(chan, path, on); }
+      Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      default: {}
     }
     i32 node = this.find(m, path);
     if (node < 0) { return absentChange(node); }
@@ -945,10 +945,10 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chown on a host mount is not implemented"); }
-      case Remote(chan): { return remoteChown(chan, path, owner); }
-      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
-      else: {}
+      Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chown on a host mount is not implemented"); }
+      Remote(chan): { return remoteChown(chan, path, owner); }
+      Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      default: {}
     }
     i32 node = this.find(m, path);
     if (node < 0) { return absentChange(node); }
@@ -974,32 +974,32 @@ export struct Fs {
     // inside a spawned stage. A child has exactly one mount, so this is every rename it can attempt;
     // the cross-mount refusals below are about a filesystem with several, which a child does not have.
     match (fromMount.backing) {
-      case Remote(chan): {
+      Remote(chan): {
         match (toMount.backing) {
-          case Remote(chan2): { return remoteRename(chan, from, to); }
-          else: { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+          Remote(chan2): { return remoteRename(chan, from, to); }
+          default: { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
         }
       }
-      else: {}
+      default: {}
     }
     match (toMount.backing) {
-      case Remote(chan): { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
-      else: {}
+      Remote(chan): { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+      default: {}
     }
     match (fromMount.backing) {
-      case Host(cli): {
+      Host(cli): {
         // A rename across mounts is a copy and a delete, and no host does it for you. Not implemented
         // rather than half-done: it would need reading the whole file, which a `Change` cannot report.
         match (toMount.backing) {
-          case Host(cli2): { return cli.rename(from, to).wait(); }
-          else: { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+          Host(cli2): { return cli.rename(from, to).wait(); }
+          default: { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
         }
       }
-      else: {}
+      default: {}
     }
     match (toMount.backing) {
-      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
-      else: {}
+      Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+      default: {}
     }
     if (fromMount.at != toMount.at) {
       return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented");

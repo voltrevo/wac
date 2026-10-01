@@ -62,8 +62,8 @@ enum Shape { Dot(Point p), Line(Point a, Point b) }
 T id<T>(T v) { return v; }        // declared and skipped; calling one is refused by name
 i32 span(Shape s) {
   match (s) {
-    case Dot(p): { return p.x + p.y; }
-    case Line(a, b): { return (b.x - a.x) + (b.y - a.y); }
+    Dot(p): { return p.x + p.y; }
+    Line(a, b): { return (b.x - a.x) + (b.y - a.y); }
   }
   return 0;
 }

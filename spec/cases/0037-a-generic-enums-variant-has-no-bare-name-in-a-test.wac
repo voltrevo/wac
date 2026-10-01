@@ -3,6 +3,6 @@
 // from: specSingle's generic cluster
 enum Option<T> {
   Some(T v), None
-  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+  bool isSome(const this) { return match (this) { Some(_): true, None: false }; }
 }
 export i32 f() { Option<i32> a = Option.Some(1); return a is Some ? 1 : 0; }

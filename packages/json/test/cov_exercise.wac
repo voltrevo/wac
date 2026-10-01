@@ -128,34 +128,34 @@ i32 corpus(Core core, Cli cli) {
  */
 JsonObject? objectOf(JsonValue v) {
   match (v) {
-    case Object(o): { return o; }
-    case Null: { return null; }
-    case Bool(b): { return null; }
-    case Number(n, raw): { return null; }
-    case Str(t): { return null; }
-    case Array(a): { return null; }
+    Object(o): { return o; }
+    Null: { return null; }
+    Bool(b): { return null; }
+    Number(n, raw): { return null; }
+    Str(t): { return null; }
+    Array(a): { return null; }
   }
 }
 
 JsonArray? arrayOf(JsonValue v) {
   match (v) {
-    case Array(a): { return a; }
-    case Null: { return null; }
-    case Bool(b): { return null; }
-    case Number(n, raw): { return null; }
-    case Str(t): { return null; }
-    case Object(o): { return null; }
+    Array(a): { return a; }
+    Null: { return null; }
+    Bool(b): { return null; }
+    Number(n, raw): { return null; }
+    Str(t): { return null; }
+    Object(o): { return null; }
   }
 }
 
 u8[]? bytesOf(JsonValue v) {
   match (v) {
-    case Str(t): { return t; }
-    case Null: { return null; }
-    case Bool(b): { return null; }
-    case Number(n, raw): { return null; }
-    case Array(a): { return null; }
-    case Object(o): { return null; }
+    Str(t): { return t; }
+    Null: { return null; }
+    Bool(b): { return null; }
+    Number(n, raw): { return null; }
+    Array(a): { return null; }
+    Object(o): { return null; }
   }
 }
 

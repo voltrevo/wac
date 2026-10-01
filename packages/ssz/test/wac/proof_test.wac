@@ -70,8 +70,8 @@ Proof[] proofs(T t, Core core, Cli cli) {
       nodes = branch!.len();
       for (i32 j = 0; j < nodes; j++) {
         match (branch!.get(j)) {
-          case Str(bytes): { flat = flat + string.fromBytes(bytes); }
-          else: { t.fail("a branch node is not a string"); }
+          Str(bytes): { flat = flat + string.fromBytes(bytes); }
+          default: { t.fail("a branch node is not a string"); }
         }
       }
     }

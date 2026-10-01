@@ -7,11 +7,11 @@ enum Shape {
   Circle(f64 r),
 
   bool isFlat(const this) {
-    return match (this) { case Point: true, case Circle(_): false };
+    return match (this) { Point: true, Circle(_): false };
   }
 
   f64 area(const this) {
-    return match (this) { case Point: 0.0, case Circle(r): 3.0 * r * r };
+    return match (this) { Point: 0.0, Circle(r): 3.0 * r * r };
   }
 }
 

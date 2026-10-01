@@ -13,27 +13,27 @@ import { decode as hexDecode } from "../../codec/src/hex.wac";
 /** A member of a JSON object, or `Null` when it is absent or the value is not an object. */
 export JsonValue memberOf(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? m = members.getStr(key);
       return m is null ? JsonValue.Null : m!;
     }
-    else: { return JsonValue.Null; }
+    default: { return JsonValue.Null; }
   }
 }
 
 /** Whether a value is JSON `null` or absent — which for a header field is not the same as zero. */
 export bool isNull(JsonValue v) {
   match (v) {
-    case Null: { return true; }
-    else: { return false; }
+    Null: { return true; }
+    default: { return false; }
   }
 }
 
 /** A `Str`'s bytes, empty for anything else. */
 export u8[] stringOf(JsonValue v) {
   match (v) {
-    case Str(bytes): { return bytes; }
-    else: { return u8[0](); }
+    Str(bytes): { return bytes; }
+    default: { return u8[0](); }
   }
 }
 
@@ -54,12 +54,12 @@ export u8[] memberQuantity(JsonValue v, string key) {
 /** An array of hex strings, as byte arrays. DATA every time: this reads proof nodes. */
 export u8[][] hexArray(JsonValue v) {
   match (v) {
-    case Array(items): {
+    Array(items): {
       u8[][] out = u8[][items.len()](fill: u8[0]());
       for (i32 i = 0; i < items.len(); i++) { out[i] = fromHexData(stringOf(items.get(i))); }
       return out;
     }
-    else: { return u8[][0](fill: u8[0]()); }
+    default: { return u8[][0](fill: u8[0]()); }
   }
 }
 

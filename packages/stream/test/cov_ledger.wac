@@ -9,7 +9,7 @@
 // ## All four gaps were one variant the driver never produced
 //
 // This read 28 of 32, and the four uncovered points were two pairs of the same thing —
-// `case Failed(why)` in both `passthrough` and `upperCase`, and the `broke ? -2 : total` each returns
+// `Failed(why)` in both `passthrough` and `upperCase`, and the `broke ? -2 : total` each returns
 // because of it.
 //
 // `Read` has three variants and `cov_exercise.wac`'s `Feeder` only ever answered two. So **the failure

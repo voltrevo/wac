@@ -33,25 +33,25 @@ export enum ResponseOutcome {
 
 export string responseOutcomeOf(ResponseOutcome o) {
   match (o) {
-    case Ok(_, _, _, _): { return "ok"; }
-    case Refused(_): { return "error"; }
-    case Incomplete: { return "incomplete"; }
-    case Broken(_): { return "broken"; }
+    Ok(_, _, _, _): { return "ok"; }
+    Refused(_): { return "error"; }
+    Incomplete: { return "incomplete"; }
+    Broken(_): { return "broken"; }
   }
 }
 
 /** The named member as a whole number, and `missing` when it is absent or is not one. */
 i32 memberI32(JsonValue v, string key, i32 missing) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return missing; }
       match (found!) {
-        case Number(value, _): { return value as~ i32; }
-        else: { return missing; }
+        Number(value, _): { return value as~ i32; }
+        default: { return missing; }
       }
     }
-    else: { return missing; }
+    default: { return missing; }
   }
 }
 
@@ -90,8 +90,8 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
   }
   JsonArray items = JsonArray.create();
   match (doc!) {
-    case Array(a): { items = a; }
-    else: {
+    Array(a): { items = a; }
+    default: {
       return allResponsesBroken(t, cases.len(), "the response oracle's answer is not an array");
     }
   }
@@ -127,39 +127,39 @@ ResponseOutcome[] allResponsesBroken(T t, i32 n, string why) {
 
 string memberText(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return ""; }
       match (found!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        else: { return ""; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
 /** A member that is an array of strings, or an empty list. */
 string[] memberStrings(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return string[0](fill: ""); }
       match (found!) {
-        case Array(items): {
+        Array(items): {
           string[] out = string[items.len()](fill: "");
           for (i32 i = 0; i < items.len(); i++) {
             match (items.get(i)) {
-              case Str(bytes): { out[i] = string.fromBytes(bytes); }
-              else: { out[i] = ""; }
+              Str(bytes): { out[i] = string.fromBytes(bytes); }
+              default: { out[i] = ""; }
             }
           }
           return out;
         }
-        else: { return string[0](fill: ""); }
+        default: { return string[0](fill: ""); }
       }
     }
-    else: { return string[0](fill: ""); }
+    default: { return string[0](fill: ""); }
   }
 }
 

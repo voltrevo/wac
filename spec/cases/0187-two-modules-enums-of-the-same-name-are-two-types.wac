@@ -8,7 +8,7 @@
 // which is worth a case of its own precisely because "the same cause" was a prediction until it ran.
 // ---- ea.wac ----
 export enum E { A(i32 x), B }
-export i32 takesE(E e) { match (e) { case A(x): { return x; } case B: { return 0; } } }
+export i32 takesE(E e) { match (e) { A(x): { return x; } B: { return 0; } } }
 // ---- eb.wac ----
 export enum E { A(i32 x), B }
 export E makeE() { return E.A(7); }

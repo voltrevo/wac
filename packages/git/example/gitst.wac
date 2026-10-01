@@ -58,11 +58,11 @@ export i32 main(Core core, Cli cli) {
   string root = string.fromBytes(cli.arg(0).wait());
   Fs fs = Fs.onHost(cli, 0);
   match (openRepo(fs, root + "/.git", root)) {
-    case NoRepo(why): {
+    NoRepo(why): {
       core.warn("gitst: " + why);
       return 1;
     }
-    case Opened(repo): {
+    Opened(repo): {
       Vec<string> lines = statusOf(repo, excludesFileOf(core, cli, fs, root + "/.git"));
       for (i32 i = 0; i < lines.len(); i++) { core.log(lines.get(i)); }
       return 0;

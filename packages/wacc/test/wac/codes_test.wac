@@ -96,9 +96,9 @@ string[] checkSrc() {
     "export i32 f() { const i32 k = 1; k = 2; return k; }",
     "void g(i32 a) {} export i32 f() { g(); return 0; }",
     "struct S { i32 v; } export i32 f() { S s = S(1); return s.w; }",
-    "export i32 f(i32 n) { match (n) { else: { return 0; } } return 1; }",
+    "export i32 f(i32 n) { match (n) { default: { return 0; } } return 1; }",
     "enum E { A, C(i32 p) } export i32 f(E e) { " +
-    "return match (e) { case A: 0, case C(p, q): q }; }",
+    "return match (e) { A: 0, C(p, q): q }; }",
     "export i32 f() { i32 a = 65; u8[] b = u8[](a as u8); return b[0]; }",
     "export i32 f() { i32 n = 1; string s = n as string; return s.len(); }");
 }

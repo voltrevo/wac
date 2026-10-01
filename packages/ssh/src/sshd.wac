@@ -101,12 +101,12 @@ export i32 main(Core core, Cli cli) {
   }
   PrivateKey host = readEd25519(hostFile.bytes, u8[0]());
   match (host.error) {
-    case Ok: {}
-    case BadPassphrase: {
+    Ok: {}
+    BadPassphrase: {
       core.warn("sshd: " + o.hostKey + ": host keys must not be encrypted");
       return 1;
     }
-    else: {
+    default: {
       core.warn("sshd: " + o.hostKey + ": not an Ed25519 private key");
       return 1;
     }
@@ -295,18 +295,18 @@ u8[] handshake(Conn conn, PrivateKey host) {
   while (true) {
     Version v = scanVersion(conn.buf.data, 0, conn.buf.len);
     match (v.status) {
-      case Ok: {
+      Ok: {
         clientVersionLine = v.line;
         conn.buf.dropFront(v.used);
       }
-      case Incomplete: {
+      Incomplete: {
         if (!conn.fill()) {
           conn.fail("the connection closed during the version exchange");
           return u8[0]();
         }
         continue;
       }
-      else: {
+      default: {
         conn.fail("the client did not send a usable version line");
         return u8[0]();
       }
@@ -442,24 +442,24 @@ string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs
       FileResult theirs = fs.readFile(path);
       if (!theirs.ok) { continue; }
       match (lookUp(theirs.bytes, "ssh-ed25519".toBytes(), a.publicBlob)) {
-        case Ok: { named = true; who = users.get(u).name; }
-        else: {}
+        Ok: { named = true; who = users.get(u).name; }
+        default: {}
       }
     }
     if (!hasTable) {
       match (lookUp(allowed, "ssh-ed25519".toBytes(), a.publicBlob)) {
-        case Ok: { named = true; }
-        else: {}
+        Ok: { named = true; }
+        default: {}
       }
     } else if (!named) {
       // Said once per key rather than silently, because "publickey denied" from the client end looks
       // the same as a wrong key and an operator would otherwise have no way to tell.
       match (lookUp(allowed, "ssh-ed25519".toBytes(), a.publicBlob)) {
-        case Ok: {
+        Ok: {
           core.warn("sshd: a key from " + o.authorizedKeys + " names no user in this image — refused; "
                   + "put it in that user's ~/.ssh/authorized_keys instead (wac-mono 0126)");
         }
-        else: {}
+        default: {}
       }
     }
     // The signature is checked against bytes we rebuild, never against the client's account of
@@ -686,7 +686,7 @@ bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  * What a busy shell is handed so that it can ask this session whether a keystroke has arrived.
  *
  * The receiver behind `Shell.askInterrupt` — `keys.arrived` is a bound method reference, so this is
- * what rides inside the funcref. Everything the poll needs and nothing else: the connection to
+ * what rides inside the funcref. Everything the poll needs and nothing default: the connection to
  * read, the channel to echo on, and the *same* line discipline the session's own loop feeds, which
  * is what keeps type-ahead. A person who types `ls` while a command is running has typed `ls`, and
  * it must still be there at the next prompt.

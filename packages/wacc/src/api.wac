@@ -563,13 +563,13 @@ export string namesFiles(string[] paths, string[] sources, string entry) {
 bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (exported) {
           if (tokenTextOf(src, lexed, nameTok) == name) { return true; }
           for (i32 v = 0; v < variants.len(); v++) {
@@ -577,10 +577,10 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
           }
         }
       }
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
       }
-      else: { }
+      default: { }
     }
   }
   return false;
@@ -989,19 +989,19 @@ i32 declarationsIn(u8[] src, Lexed lexed, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     n = n + 8;
     match (prog.decls[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         n = n + fields.len() + methods.len() * 2 + typeParams.len();
         for (i32 m = 0; m < methods.len(); m++) { n = n + methods[m].params.len(); }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         n = n + variants.len() * 2 + methods.len() * 2 + typeParams.len();
         for (i32 v = 0; v < variants.len(); v++) { n = n + variants[v].fields.len(); }
         for (i32 m = 0; m < methods.len(); m++) { n = n + methods[m].params.len(); }
       }
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         n = n + params.len() + typeParams.len();
       }
-      else: { }
+      default: { }
     }
   }
   return n;
@@ -1013,20 +1013,20 @@ string corePath() { return " core"; }
 /** Every named type mentioned anywhere in a `Ty`, appended to `out` with `n[0]` as the count. */
 void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
   match (t.kind) {
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       if (n[0] < out.len()) {
         out[n[0]] = tokenTextOf(src, lx, tok);
         n[0] = n[0] + 1;
       }
       for (i32 i = 0; i < typeArgs.len(); i++) { tyNames(src, lx, typeArgs[i], out, n); }
     }
-    case Arr(elem): { tyNames(src, lx, elem, out, n); }
-    case Nullable(inner): { tyNames(src, lx, inner, out, n); }
-    case Funcref(ret, params): {
+    Arr(elem): { tyNames(src, lx, elem, out, n); }
+    Nullable(inner): { tyNames(src, lx, inner, out, n); }
+    Funcref(ret, params): {
       tyNames(src, lx, ret, out, n);
       for (i32 i = 0; i < params.len(); i++) { tyNames(src, lx, params[i], out, n); }
     }
-    else: { }
+    default: { }
   }
 }
 
@@ -1056,13 +1056,13 @@ bool typeDeclaredElsewhere(string[] paths, string[] sources, Lexed?[] lexes, Pro
     u8[] jsrc = sources[j].toBytes();
     for (i32 d = 0; d < jp.decls.len(); d++) {
       match (jp.decls[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (tokenTextOf(jsrc, jlx, nameTok) == name) { return true; }
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (tokenTextOf(jsrc, jlx, nameTok) == name) { return true; }
         }
-        else: { }
+        default: { }
       }
     }
   }
@@ -1109,15 +1109,15 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
   i32 mn = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         mine[mn] = tokenTextOf(src, lx, nameTok);
         mn = mn + 1;
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         mine[mn] = tokenTextOf(src, lx, nameTok);
         mn = mn + 1;
       }
-      else: { }
+      default: { }
     }
   }
 
@@ -1130,7 +1130,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
       string[] found = string[64](fill: "");
       i32[] seen = i32[1]();
       match (prog.decls[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           for (i32 i = 0; i < fields.len(); i++) { tyNames(src, lx, fields[i].type, found, seen); }
           for (i32 i = 0; i < methods.len(); i++) {
@@ -1140,7 +1140,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
             }
           }
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           for (i32 v = 0; v < variants.len(); v++) {
             for (i32 i = 0; i < variants[v].fields.len(); i++) {
@@ -1157,7 +1157,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
         // **A function's signature reaches as far as a field's does.** `export Pending<i32> later()`
         // hands the caller a type it never named, exactly as `Cli`'s fields do — this arm was
         // missing from the first version of the fix, and the silence it left was identical.
-        case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           tyNames(src, lx, returnType, found, seen);
           for (i32 p = 0; p < params.len(); p++) {
@@ -1165,11 +1165,11 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
           }
         }
         // A module-level `const`'s type, for the same reason and by the same reach.
-        case ConstDecl(nameTok, type, init, exported): {
+        ConstDecl(nameTok, type, init, exported): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           tyNames(src, lx, type, found, seen);
         }
-        else: { continue; }
+        default: { continue; }
       }
       for (i32 i = 0; i < seen[0]; i++) {
         if (!listHas(mine, mn, found[i])) { continue; }
@@ -1306,7 +1306,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
   i32 n = 0;
   for (i32 d = 0; d < eprog.decls.len(); d++) {
     match (eprog.decls[d].kind) {
-      case Import(pathTok, prefixTok, items): {
+      Import(pathTok, prefixTok, items): {
         // A bare `core` names the compiler's own file; everything else is a path beside this one.
         string quoted = tokenTextOf(esrc, elexed, pathTok);
         string target = pathTok < 0 || quoted.len() < 2
@@ -1372,7 +1372,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
           n = n + 1;
         }
       }
-      else: { }
+      default: { }
     }
   }
 
@@ -1459,13 +1459,13 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     for (i32 d = 0; d < iprog.decls.len(); d++) {
       string tname = "";
       match (iprog.decls[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           tname = tokenTextOf(isrc, ilexed, nameTok);
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           tname = tokenTextOf(isrc, ilexed, nameTok);
         }
-        else: { }
+        default: { }
       }
       if (tname == "") { continue; }
       // Asked for by name: the entry's own spelling wins, aliased or not, and renaming it here would
@@ -1494,7 +1494,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
       // closure and started reaching enums.
       for (i32 d = 0; d < iprog.decls.len(); d++) {
         match (iprog.decls[d].kind) {
-          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          EnumDecl(nameTok, variants, exported, methods, typeParams): {
             if (tokenTextOf(isrc, ilexed, nameTok) != reach[k]) { continue; }
             for (i32 v = 0; v < variants.len(); v++) {
               string vn = tokenTextOf(isrc, ilexed, variants[v].nameTok);
@@ -1502,7 +1502,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
               c.markUnnameable(c.renamed(vn));
             }
           }
-          else: { }
+          default: { }
         }
       }
     }
@@ -1600,7 +1600,7 @@ export string capReachFiles(string[] paths, string[] sources) {
       string declName = "";
       bool isType = false;
       match (prog.decls[d].kind) {
-        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           declName = tokenTextOf(src, lx, nameTok);
           isType = true;
           for (i32 f = 0; f < fields.len(); f++) {
@@ -1613,7 +1613,7 @@ export string capReachFiles(string[] paths, string[] sources) {
             holds = holds + tyNamesJoined(src, lx, methods[m].returnType);
           }
         }
-        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
           declName = tokenTextOf(src, lx, nameTok);
           isType = true;
           for (i32 v = 0; v < variants.len(); v++) {
@@ -1625,7 +1625,7 @@ export string capReachFiles(string[] paths, string[] sources) {
             holds = holds + tyNamesJoined(src, lx, methods[m].returnType);
           }
         }
-        else: { }
+        default: { }
       }
       if (isType) {
         if (tyCount >= maxTy) { overflowed = true; } else {
@@ -1686,7 +1686,7 @@ string tyNamesJoined(u8[] src, Lexed lx, Ty t) {
 string mentionedIn(u8[] src, Lexed lx, Program prog, i32 d) {
   string out = "";
   match (prog.decls[d].kind) {
-    case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+    StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
       for (i32 f = 0; f < fields.len(); f++) { out = out + tyNamesJoined(src, lx, fields[f].type); }
       for (i32 m = 0; m < methods.len(); m++) {
         out = out + tyNamesJoined(src, lx, methods[m].returnType);
@@ -1695,7 +1695,7 @@ string mentionedIn(u8[] src, Lexed lx, Program prog, i32 d) {
         }
       }
     }
-    case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+    EnumDecl(nameTok, variants, exported, methods, typeParams): {
       for (i32 v = 0; v < variants.len(); v++) {
         for (i32 f = 0; f < variants[v].fields.len(); f++) {
           out = out + tyNamesJoined(src, lx, variants[v].fields[f].type);
@@ -1708,11 +1708,11 @@ string mentionedIn(u8[] src, Lexed lx, Program prog, i32 d) {
         }
       }
     }
-    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       out = out + tyNamesJoined(src, lx, returnType);
       for (i32 p = 0; p < params.len(); p++) { out = out + tyNamesJoined(src, lx, params[p].type); }
     }
-    else: { }
+    default: { }
   }
   return out;
 }

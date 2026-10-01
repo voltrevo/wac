@@ -163,8 +163,8 @@ Git served(T t, Cli cli, string name) {
 /** The `Advertised` `git upload-pack --advertise-refs` produced, or a report and an empty one. */
 Advertised advertised(T t, Git g) {
   match (parseAdvertisement(g.advertisement())) {
-    case Said(ad): { return ad; }
-    case Garbled(why): {
+    Said(ad): { return ad; }
+    Garbled(why): {
       t.isTrue(false, "the advertisement did not parse: " + why);
       Vec<AdRef> empty = Vec.create();
       return Advertised(empty, "");
@@ -226,8 +226,8 @@ export string test_a_want_we_built_is_answered_with_a_packfile(Core core, Cli cl
   t.isTrue(reply.len() > 0, "git upload-pack answered something");
 
   match (findPack(reply)) {
-    case NoPack(why): { t.isTrue(false, "no pack in the reply: " + why); }
-    case Packfile(pack): {
+    NoPack(why): { t.isTrue(false, "no pack in the reply: " + why); }
+    Packfile(pack): {
       t.eqStr(string.fromBytes(pack).slice(0, 4), "PACK", "what we extracted begins PACK");
       // The object count in the pack header, against what git said it was sending. One commit over
       // two files in a subdirectory is a commit, a root tree, a sub tree and two blobs — five.
@@ -316,8 +316,8 @@ export string test_a_deepened_want_gets_a_shallow_pack(Core core, Cli cli) {
 
 i32 countIn(T t, u8[] reply, string what) {
   match (findPack(reply)) {
-    case Packfile(pack): { return packCount(pack); }
-    case NoPack(why): {
+    Packfile(pack): { return packCount(pack); }
+    NoPack(why): {
       t.isTrue(false, "no pack in " + what + ": " + why);
       return -1;
     }
@@ -337,13 +337,13 @@ export string test_pkt_line_framing_counts_its_own_header(Core core, Cli cli) {
   i32[] pos = i32[1]();
   u8[] stream = "0009hello0000000A0009world".toBytes();
   match (readPkt(stream, pos)) {
-    case Line(payload): { t.eqStr(string.fromBytes(payload), "hello", "the first line's payload"); }
-    else: { t.isTrue(false, "the first packet did not read as a line"); }
+    Line(payload): { t.eqStr(string.fromBytes(payload), "hello", "the first line's payload"); }
+    default: { t.isTrue(false, "the first packet did not read as a line"); }
   }
   t.eqI32(pos[0], 9, "the cursor advanced past the first packet");
   match (readPkt(stream, pos)) {
-    case Flush: { t.isTrue(true, "a flush follows"); }
-    else: { t.isTrue(false, "the second packet is not a flush"); }
+    Flush: { t.isTrue(true, "a flush follows"); }
+    default: { t.isTrue(false, "the second packet is not a flush"); }
   }
   t.eqI32(pos[0], 13, "and past the flush");
 
@@ -370,19 +370,19 @@ Pkt readAt(string s) {
 
 string shapeOf(Pkt p) {
   return match (p) {
-    case Line(payload): "Line",
-    case Flush: "Flush",
-    case Delim: "Delim",
-    case ResponseEnd: "ResponseEnd",
-    case Done: "Done",
-    case Broken(why): "Broken"
+    Line(payload): "Line",
+    Flush: "Flush",
+    Delim: "Delim",
+    ResponseEnd: "ResponseEnd",
+    Done: "Done",
+    Broken(why): "Broken"
   };
 }
 
 string payloadOf(Pkt p) {
   match (p) {
-    case Line(payload): { return string.fromBytes(payload); }
-    else: { return ""; }
+    Line(payload): { return string.fromBytes(payload); }
+    default: { return ""; }
   }
 }
 
@@ -404,8 +404,8 @@ export string test_a_reply_that_is_not_a_pack_says_why(Core core, Cli cli) {
 /** The reason a reply held no pack, or "" if it held one. */
 string whyNoPack(Reply r) {
   match (r) {
-    case NoPack(why): { return why; }
-    case Packfile(pack): { return ""; }
+    NoPack(why): { return why; }
+    Packfile(pack): { return ""; }
   }
 }
 
@@ -430,8 +430,8 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
   if (a.refs.len() == 0) { return t.report(); }
   u8[] fetched = u8[0]();
   match (findPack(g.uploadPack(wantRequest(one(a.refs.get(0).target), none(), "ofs-delta", 0)))) {
-    case Packfile(pack): { fetched = pack; }
-    case NoPack(why): {
+    Packfile(pack): { fetched = pack; }
+    NoPack(why): {
       t.isTrue(false, "no pack in the reply: " + why);
       return t.report();
     }
@@ -441,22 +441,22 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
   // so walking it means knowing where each object's compressed bytes stop, and only the inflater
   // knows that.
   match (indexPack(fetched)) {
-    case Unindexable(why): { t.isTrue(false, "could not index the fetched pack: " + why); }
-    case Thin(bases): { t.isTrue(false, "the fetched pack came back thin"); }
-    case Built(idx): {
+    Unindexable(why): { t.isTrue(false, "could not index the fetched pack: " + why); }
+    Thin(bases): { t.isTrue(false, "the fetched pack came back thin"); }
+    Built(idx): {
       Pack p = openIndexed(fetched, idx);
       i32 deltas = 0;
       for (i32 i = 0; i < idx.count; i++) {
         match (rawAt(p, idx.offsets[i])) {
-          case Whole(kind, data): { }
-          case Damaged(why): { }
-          else: { deltas = deltas + 1; }
+          Whole(kind, data): { }
+          Damaged(why): { }
+          default: { deltas = deltas + 1; }
         }
         match (objectAt(p, idx.offsets[i], 64)) {
-          case Absent(why): {
+          Absent(why): {
             t.isTrue(false, idx.hexAt(i) + " did not resolve through our own index");
           }
-          case Found(kind, data): {
+          Found(kind, data): {
             // The name we computed while indexing must be the hash of what reading it back produces.
             t.eqStr(nameOf(kindOfCode(kind), data), idx.hexAt(i),
                     "the object at " + itoa64(idx.offsets[i]) + " hashes to the name we indexed it " +
@@ -475,13 +475,13 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
 
       // The commit itself, read out of a pack that arrived over the wire.
       match (objectNamed(p, decodedName(g.text(string[]("rev-parse", "HEAD"))))) {
-        case Absent(why): { t.isTrue(false, "HEAD is not in the fetched pack: " + why); }
-        case Found(kind, data): {
+        Absent(why): { t.isTrue(false, "HEAD is not in the fetched pack: " + why); }
+        Found(kind, data): {
           match (parseCommit(data)) {
-            case Malformed(why): {
+            Malformed(why): {
               t.isTrue(false, "the commit from the fetched pack did not parse: " + why);
             }
-            case Understood(c): {
+            Understood(c): {
               t.eqStr(splitOn(c.message, "\n")[0], g.text(string[]("log", "-1", "--format=%s")),
                       "the commit we read has git's subject");
             }

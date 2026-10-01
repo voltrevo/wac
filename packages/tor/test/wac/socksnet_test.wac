@@ -161,9 +161,9 @@ Carried answered(Core core, Cli cli, i32 h, string request) {
       return Carried(false, "went quiet after " + itoa(all.len()) + " byte(s)", all);
     }
     match (p.wait()) {
-      case Data(got): { all = all + string.fromBytes(got); }
-      case End: { reading = false; }
-      case Failed(why): { reading = false; }
+      Data(got): { all = all + string.fromBytes(got); }
+      End: { reading = false; }
+      Failed(why): { reading = false; }
     }
   }
   cli.closeSocket(h);
@@ -214,9 +214,9 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
                             " byte(s) of the response", all);
     }
     match (p.wait()) {
-      case Data(got): { all = all + string.fromBytes(got); }
-      case End: { reading = false; }
-      case Failed(why): { reading = false; }
+      Data(got): { all = all + string.fromBytes(got); }
+      End: { reading = false; }
+      Failed(why): { reading = false; }
     }
   }
   cli.closeSocket(h);
@@ -236,15 +236,15 @@ u8[] readSome(Core core, Cli cli, i32 h, i32 want) {
     Pending<Read> p = cli.recv(h);
     if (core.waitAny(i32[](p.id), READ_MS) < 0) { p.cancel(); return got; }
     match (p.wait()) {
-      case Data(bytes): {
+      Data(bytes): {
         u8[] joined = u8[got.len() + bytes.len()](fill: 0);
         for (i32 i = 0; i < got.len(); i++) { joined[i] = got[i]; }
         for (i32 i = 0; i < bytes.len(); i++) { joined[got.len() + i] = bytes[i]; }
         got = joined;
         more = true;
       }
-      case End: { }
-      case Failed(why): { }
+      End: { }
+      Failed(why): { }
     }
     if (!more) { return got; }
   }

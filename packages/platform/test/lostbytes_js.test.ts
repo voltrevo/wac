@@ -52,9 +52,9 @@ export i32 main(Core core, Cli cli) {
   bool reading = true;
   while (reading) {
     match (cli.recv(kid.handle).wait()) {
-      case Data(b): { got = got + string.fromBytes(b); }
-      case End: { reading = false; }
-      case Failed(e): { reading = false; }
+      Data(b): { got = got + string.fromBytes(b); }
+      End: { reading = false; }
+      Failed(e): { reading = false; }
     }
   }
   core.log(got == "PAYLOAD" ? "VERDICT kept" : "VERDICT lost");

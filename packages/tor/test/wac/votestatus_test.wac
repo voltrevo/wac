@@ -25,15 +25,15 @@ JsonArray voteCases(Cli cli) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): {
+    Object(members): {
       JsonValue? cs = members.getStr("cases");
       if (cs is null) { trap; }
       match (cs!) {
-        case Array(items): { return items; }
-        else: { trap; }
+        Array(items): { return items; }
+        default: { trap; }
       }
     }
-    else: { trap; }
+    default: { trap; }
   }
 }
 
@@ -41,8 +41,8 @@ i32 caseCount(Cli cli) { return voteCases(cli).len(); }
 
 JsonObject caseAt(Cli cli, i32 i) {
   match (voteCases(cli).get(i)) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -50,8 +50,8 @@ u8[] strOf(Cli cli, i32 i, string key) {
   JsonValue? v = caseAt(cli, i).getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Str(bytes): { return bytes; }
-    else: { trap; }
+    Str(bytes): { return bytes; }
+    default: { trap; }
   }
 }
 
@@ -60,8 +60,8 @@ u8[] numOf(Cli cli, i32 i, string key) {
   JsonValue? v = caseAt(cli, i).getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Number(value, raw): { return itoa(value as~ i32).toBytes(); }
-    else: { trap; }
+    Number(value, raw): { return itoa(value as~ i32).toBytes(); }
+    default: { trap; }
   }
 }
 

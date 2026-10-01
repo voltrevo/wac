@@ -40,13 +40,13 @@ Node listOf(string[] items) {
 /** The tree as HTML. Nothing here knows JSX exists. */
 string render(Node n) {
   match (n) {
-    case Text(t): return t;
-    case Fragment(kids): {
+    Text(t): { return t; }
+    Fragment(kids): {
       string out = "";
       for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
       return out;
     }
-    case Element(tag, attrs, kids): {
+    Element(tag, attrs, kids): {
       string out = "<" + tag;
       for (i32 i = 0; i < attrs.len(); i++) {
         out = out + " " + attrs[i].name + "=\"" + attrs[i].value + "\"";

@@ -71,9 +71,9 @@ void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
   for (i32 guard = 0; guard < 100000; guard++) {
     bool more = false;
     match (cli.recv(handle).wait()) {
-      case Data(bytes): { raw.pushAll(bytes); more = true; }
-      case End: { }
-      case Failed(why): { core.warn("tlsserved: recv: " + why); }
+      Data(bytes): { raw.pushAll(bytes); more = true; }
+      End: { }
+      Failed(why): { core.warn("tlsserved: recv: " + why); }
     }
     if (!more) { break; }
 

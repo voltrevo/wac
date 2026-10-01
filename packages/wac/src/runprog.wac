@@ -119,15 +119,15 @@ export i32 declaredGrants(u8[] wasm) {
   if (doc is null) { return -1; }
   JsonObject root = JsonObject.create();
   match (doc!) {
-    case Object(o): { root = o; }
-    else: { return -1; }
+    Object(o): { root = o; }
+    default: { return -1; }
   }
   JsonValue? g = root.getStr("grants");
   if (g is null) { return 0; }
   JsonObject table = JsonObject.create();
   match (g!) {
-    case Object(o): { table = o; }
-    else: { return 0; }
+    Object(o): { table = o; }
+    default: { return 0; }
   }
   return (declared(table, "read") ? 1 : 0) | (declared(table, "write") ? 2 : 0)
        | (declared(table, "net") ? 4 : 0) | (declared(table, "env") ? 8 : 0)
@@ -139,8 +139,8 @@ bool declared(JsonObject table, string name) {
   JsonValue? v = table.getStr(name);
   if (v is null) { return false; }
   match (v!) {
-    case Bool(b): { return b; }
-    else: { return false; }
+    Bool(b): { return b; }
+    default: { return false; }
   }
 }
 

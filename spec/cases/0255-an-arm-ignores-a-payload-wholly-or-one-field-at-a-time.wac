@@ -10,9 +10,9 @@ enum Shape {
 
 bool isRound(Shape s) {
   match (s) {
-    case Circle:     return true;
-    case Rect(_, h): return h == 0.0;
-    case Point:      return false;
+    Circle: { return true; }
+    Rect(_, h): { return h == 0.0; }
+    Point: { return false; }
   }
 }
 export i32 f() { return isRound(Shape.Circle(1.0)) ? 1 : 0; }

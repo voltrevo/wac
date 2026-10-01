@@ -53,8 +53,8 @@ string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 /** The target `ref` has on the far end, or none — read from the advertisement bytes. */
 u8[] advertisedTarget(u8[] advertisement, string ref) {
   match (parseAdvertisement(advertisement)) {
-    case Garbled(why): { return u8[0](); }
-    case Said(ad): {
+    Garbled(why): { return u8[0](); }
+    Said(ad): {
       for (i32 i = 0; i < ad.refs.len(); i++) {
         if (ad.refs.get(i).name == ref) { return ad.refs.get(i).target; }
       }
@@ -84,11 +84,11 @@ export i32 main(Core core, Cli cli) {
   }
 
   match (openRepo(fs, gitDir, root)) {
-    case NoRepo(why): {
+    NoRepo(why): {
       core.warn("gitpull: " + why);
       return 1;
     }
-    case Opened(repo): {
+    Opened(repo): {
       if (verb == "request") {
         u8[] want = advertisedTarget(input.bytes, ref);
         if (want.len() == 0) {
@@ -98,11 +98,11 @@ export i32 main(Core core, Cli cli) {
         bool wantsOfs = false;
         bool wantsThin = false;
         match (parseAdvertisement(input.bytes)) {
-          case Garbled(why): {
+          Garbled(why): {
             core.warn("gitpull: the advertisement is not one: " + why);
             return 1;
           }
-          case Said(ad): {
+          Said(ad): {
             wantsOfs = offers(ad, "ofs-delta");
             wantsThin = offers(ad, "thin-pack");
           }
@@ -125,8 +125,8 @@ export i32 main(Core core, Cli cli) {
         Vec<u8[]> haves = Vec.create();
         if (!(mine is null)) {
           match (readObject(repo, mine!)) {
-            case Absent(why): { }
-            case Found(kind, data): { haves.push(mine!); }
+            Absent(why): { }
+            Found(kind, data): { haves.push(mine!); }
           }
         }
         if (haves.len() == 0) {
@@ -168,11 +168,11 @@ export i32 main(Core core, Cli cli) {
 
       u8[] pack = u8[0]();
       match (findPack(answer.bytes)) {
-        case NoPack(why): {
+        NoPack(why): {
           core.warn("gitpull: " + why);
           return 1;
         }
-        case Packfile(bytes): { pack = bytes; }
+        Packfile(bytes): { pack = bytes; }
       }
 
       // **The repair, and the branch this program exists for.** `Built` means the server sent whole
@@ -182,25 +182,25 @@ export i32 main(Core core, Cli cli) {
       u8[] whole = pack;
       i32 appended = 0;
       match (indexPack(pack)) {
-        case Unindexable(why): {
+        Unindexable(why): {
           core.warn("gitpull: the pack could not be indexed: " + why);
           return 1;
         }
-        case Built(idx): { }
-        case Thin(bases): {
+        Built(idx): { }
+        Thin(bases): {
           appended = bases.len();
           match (completeThin(repo, pack)) {
-            case Missing(why): {
+            Missing(why): {
               core.warn("gitpull: the thin pack wants an object this repository does not have: " + why);
               return 1;
             }
             // Damaged rather than thin — a different failure, and worth a different sentence: the
             // first says the conversation went wrong, this says the bytes did.
-            case Unusable(why): {
+            Unusable(why): {
               core.warn("gitpull: the pack is damaged: " + why);
               return 1;
             }
-            case Complete(fixed): { whole = fixed; }
+            Complete(fixed): { whole = fixed; }
           }
         }
       }
@@ -211,15 +211,15 @@ export i32 main(Core core, Cli cli) {
       for (i32 i = 0; i < 20; i++) { checksum[i] = whole[whole.len() - 20 + i]; }
       string stem = gitDir + "/objects/pack/pack-" + hexOf(checksum);
       match (indexPack(whole)) {
-        case Unindexable(why): {
+        Unindexable(why): {
           core.warn("gitpull: the completed pack could not be indexed: " + why);
           return 1;
         }
-        case Thin(bases): {
+        Thin(bases): {
           core.warn("gitpull: the pack is still thin after completion, wanting " + itoa(bases.len()));
           return 1;
         }
-        case Built(idx): {
+        Built(idx): {
           Change wrotePack = fs.writeFile(stem + ".pack", whole);
           if (!wrotePack.ok()) {
             core.warn("gitpull: cannot write the pack: " + wrotePack.message);

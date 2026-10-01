@@ -7,7 +7,7 @@ export struct Tree { i32 n; }
 export Tree mk() { return Tree(1); }
 // ---- kinds.wac ----
 export enum Kind { Blob, Tree }
-export i32 num(Kind k) { return match (k) { case Blob: 0, case Tree: 1 }; }
+export i32 num(Kind k) { return match (k) { Blob: 0, Tree: 1 }; }
 // ---- main.wac ----
 import { Tree, mk } from "./tree.wac";
 import { Kind, num } from "./kinds.wac";

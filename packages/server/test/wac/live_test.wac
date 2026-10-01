@@ -70,9 +70,9 @@ string readOnce(Core core, Cli cli, i32 handle, i32 millis) {
     return "<timeout>";
   }
   match (p.wait()) {
-    case Data(bytes): { return string.fromBytes(bytes); }
-    case End: { return ""; }
-    case Failed(why): { return "<failed: " + why + ">"; }
+    Data(bytes): { return string.fromBytes(bytes); }
+    End: { return ""; }
+    Failed(why): { return "<failed: " + why + ">"; }
   }
 }
 

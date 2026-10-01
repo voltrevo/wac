@@ -379,7 +379,7 @@ export Sources gather(Fs fs, Cli cli, string entry) {
     // `readFile` and resolved off the repository's own `std/` directory — the *identical* fault the
     // paragraph above records for `core/option.wac`, repeated within a day, in the function whose
     // comment describes it. Every test still passed, because they all run with the repository root
-    // as the working directory. From anywhere else: `wacc: cannot read std/platform.wac`.
+    // as the working directory. From anywhere default: `wacc: cannot read std/platform.wac`.
     if (builtin == "") { builtin = stdFile(path); }
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {

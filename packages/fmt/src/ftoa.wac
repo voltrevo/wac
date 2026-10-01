@@ -273,18 +273,18 @@ export void writeF64(Buf out, f64 x) { writeDecimal(out, decompose(x)); }
 /** Exhaustive over the four things a float can be. */
 void writeDecimal(Buf out, Decimal d) {
   match (d) {
-    case NaN: {
+    NaN: {
       out.pushAll(u8[]('N', 'a', 'N'));
     }
-    case Inf(neg): {
+    Inf(neg): {
       if (neg) { out.push('-'); }
       out.pushAll(u8[]('I', 'n', 'f', 'i', 'n', 'i', 't', 'y'));
     }
-    case Zero: {
+    Zero: {
       // Unsigned, matching String(-0) === "0".
       out.push('0');
     }
-    case Digits(digits, count, exp10, neg): {
+    Digits(digits, count, exp10, neg): {
       if (neg) { out.push('-'); }
       writeDigits(out, digits, count, exp10);
     }

@@ -54,7 +54,7 @@ Tok[] toks;`;
 const EX_L5 = `enum Option {
   Some(i32 v), None
   bool isSome(const this) {
-    return match (this) { case Some(_): true, case None: false };
+    return match (this) { Some(_): true, None: false };
   }
 }`;
 

@@ -75,9 +75,9 @@ const string PROGRAM =
   "  bool reading = true;\n" +
   "  while (reading) {\n" +
   "    match (cli.recv(kid.handle).wait()) {\n" +
-  "      case Data(b): { got = got + string.fromBytes(b); }\n" +
-  "      case End: { reading = false; }\n" +
-  "      case Failed(e): { reading = false; core.log(\"failed: \" + e); }\n" +
+  "      Data(b): { got = got + string.fromBytes(b); }\n" +
+  "      End: { reading = false; }\n" +
+  "      Failed(e): { reading = false; core.log(\"failed: \" + e); }\n" +
   "    }\n" +
   "  }\n" +
   "  core.log(got == \"PAYLOAD\" ? \"VERDICT kept\" : \"VERDICT lost \\\"\" + got + \"\\\"\");\n" +
@@ -118,9 +118,9 @@ const string STDIN_PROGRAM =
   "  bool reading = true;\n" +
   "  while (reading) {\n" +
   "    match (cli.recv(kid.handle).wait()) {\n" +
-  "      case Data(b): { got = got + string.fromBytes(b); }\n" +
-  "      case End: { reading = false; }\n" +
-  "      case Failed(e): { reading = false; }\n" +
+  "      Data(b): { got = got + string.fromBytes(b); }\n" +
+  "      End: { reading = false; }\n" +
+  "      Failed(e): { reading = false; }\n" +
   "    }\n" +
   "  }\n" +
   "  core.log(got == \"SAW:PAYLOAD\" ? \"VERDICT kept\" : \"VERDICT lost \\\"\" + got + \"\\\"\");\n" +
@@ -217,9 +217,9 @@ const string CONNECT_PROGRAM =
   "    return 1;\n" +
   "  }\n" +
   "  match (r.wait()) {\n" +
-  "    case End: { core.log(\"VERDICT kept — the abandoned connection was closed\"); }\n" +
-  "    case Data(b): { core.log(\"VERDICT odd — data on a connection nobody wrote to\"); }\n" +
-  "    case Failed(e): { core.log(\"VERDICT kept — the peer went away: \" + e); }\n" +
+  "    End: { core.log(\"VERDICT kept — the abandoned connection was closed\"); }\n" +
+  "    Data(b): { core.log(\"VERDICT odd — data on a connection nobody wrote to\"); }\n" +
+  "    Failed(e): { core.log(\"VERDICT kept — the peer went away: \" + e); }\n" +
   "  }\n" +
   "  return 0;\n" +
   "}\n";

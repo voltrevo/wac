@@ -183,7 +183,7 @@ bool eat(Arith a, string text) {
 }
 
 /**
- * `eat`, for an operator whose doubled form means something else: `|` against `||`, `&` against `&&`.
+ * `eat`, for an operator whose doubled form means something default: `|` against `||`, `&` against `&&`.
  *
  * The `<` and `>` pair need the same care and get it the other way round — `parseCompare` tries `<=`
  * and `>=` first and then refuses a `<` that is the start of `<<`, because the shift binds tighter and

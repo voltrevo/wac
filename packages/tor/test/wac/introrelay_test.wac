@@ -33,8 +33,8 @@ JsonObject jsonAt(Cli cli, string path) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -42,8 +42,8 @@ string strField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { trap; }
   }
 }
 
@@ -55,8 +55,8 @@ JsonObject introCase(Cli cli) {
   JsonValue? cs = top.getStr("cases");
   if (cs is null) { trap; }
   match (cs!) {
-    case Array(items): { return objectOf(items.get(0)); }
-    else: { trap; }
+    Array(items): { return objectOf(items.get(0)); }
+    default: { trap; }
   }
 }
 

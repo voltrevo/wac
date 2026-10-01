@@ -167,8 +167,8 @@ other index by index.
 ```wac
 Option<i32> found = m.get(k);
 match (found) {
-  case Some(v): return v;
-  case None:    return 0;
+  Some(v): { return v; }
+  None: { return 0; }
 }
 ```
 

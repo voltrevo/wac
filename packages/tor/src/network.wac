@@ -366,9 +366,9 @@ bool awaitMarker(Core core, Cli cli, Node?[] nodes, i32 live, string name, strin
     bool isErr = which == 1;
     bool alive = false;
     match ((isErr ? n.fromErr : n.fromOut).wait()) {
-      case Data(bytes): { n.said.pushAll(bytes); alive = true; }
-      case End: { }
-      case Failed(why): { core.warn("network: " + n.name + ": " + why); }
+      Data(bytes): { n.said.pushAll(bytes); alive = true; }
+      End: { }
+      Failed(why): { core.warn("network: " + n.name + ": " + why); }
     }
     if (isErr) { n.fromErr = cli.recv(n.errHandle); } else { n.fromOut = cli.recv(n.handle); }
     if (!alive) { continue; }
@@ -425,9 +425,9 @@ bool awaitReady(Core core, Cli cli, Node?[] nodes, i32 live, i32 readyTimeout) {
     bool isErr = which % 2 == 1;
     bool alive = false;
     match ((isErr ? hot.fromErr : hot.fromOut).wait()) {
-      case Data(bytes): { hot.said.pushAll(bytes); alive = true; }
-      case End: { }
-      case Failed(why): { core.warn("network: " + hot.name + ": " + why); }
+      Data(bytes): { hot.said.pushAll(bytes); alive = true; }
+      End: { }
+      Failed(why): { core.warn("network: " + hot.name + ": " + why); }
     }
     if (isErr) { hot.fromErr = cli.recv(hot.errHandle); } else { hot.fromOut = cli.recv(hot.handle); }
 
@@ -487,12 +487,12 @@ i32 runOnce(Core core, Cli cli, Directive d) {
       // at first — puts the child's progress in the middle of its own output, and a caller
       // redirecting stdout gets a document with commentary in it. A launcher that forwards two
       // streams has to forward them as two.
-      case Data(bytes): {
+      Data(bytes): {
         if (isErr) { cli.writeErr(bytes); } else { cli.write(bytes); }
         more = true;
       }
-      case End: { }
-      case Failed(why): { core.warn("network: " + d.name + ": " + why); }
+      End: { }
+      Failed(why): { core.warn("network: " + d.name + ": " + why); }
     }
     if (isErr) {
       errOpen = more;

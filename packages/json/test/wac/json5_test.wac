@@ -281,25 +281,25 @@ export string test_the_json5_tree_is_walkable_and_json_refuses_the_same_document
   if (doc is null) { return t.report(); }
 
   match (doc!) {
-    case Object(o): {
+    Object(o): {
       JsonValue? v = o.getStr("unquoted");
       t.isTrue(v is not null, "the unquoted key is not in the tree");
       if (v is not null) {
         match (v!) {
-          case Str(b): { t.eqStr(string.fromBytes(b), "single quoted", "the single-quoted value"); }
-          else: { t.isTrue(false, "the unquoted key's value is not a string"); }
+          Str(b): { t.eqStr(string.fromBytes(b), "single quoted", "the single-quoted value"); }
+          default: { t.isTrue(false, "the unquoted key's value is not a string"); }
         }
       }
       JsonValue? l = o.getStr("list");
       t.isTrue(l is not null, "the trailing-comma array is not in the tree");
       if (l is not null) {
         match (l!) {
-          case Array(a): { t.eqI32(a.len(), 3, "a trailing comma added an element"); }
-          else: { t.isTrue(false, "the list is not an array"); }
+          Array(a): { t.eqI32(a.len(), 3, "a trailing comma added an element"); }
+          default: { t.isTrue(false, "the list is not an array"); }
         }
       }
     }
-    else: { t.isTrue(false, "the document is not an object"); }
+    default: { t.isTrue(false, "the document is not an object"); }
   }
 
   // **And the strict parser refuses it**, which is the whole reason this is a second entry point:

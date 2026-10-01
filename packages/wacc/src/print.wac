@@ -207,7 +207,7 @@ i32 charLitValue(u8[] s, i32 start, i32 len) {
 
 void printTy(Pr w, Ty t) {
   match (t.kind) {
-    case Prim(tok): {
+    Prim(tok): {
       w.open("prim", t.line, t.col);
       w.sp();
       // No token means the parser substituted `i32` for a malformed type, which is
@@ -215,7 +215,7 @@ void printTy(Pr w, Ty t) {
       if (tok < 0) { w.s("i32"); } else { w.tok(tok); }
       w.close();
     }
-    case Named(tok, typeArgs): {
+    Named(tok, typeArgs): {
       w.open("named", t.line, t.col);
       w.sp();
       w.tok(tok);
@@ -229,19 +229,19 @@ void printTy(Pr w, Ty t) {
       w.out.push(')');
       w.close();
     }
-    case Arr(elem): {
+    Arr(elem): {
       w.open("arr", t.line, t.col);
       w.sp();
       printTy(w, elem);
       w.close();
     }
-    case Nullable(inner): {
+    Nullable(inner): {
       w.open("nullable", t.line, t.col);
       w.sp();
       printTy(w, inner);
       w.close();
     }
-    case Funcref(ret, params): {
+    Funcref(ret, params): {
       w.open("funcref", t.line, t.col);
       w.sp();
       printTy(w, ret);
@@ -259,47 +259,47 @@ void printTy(Pr w, Ty t) {
 
 void printExpr(Pr w, Expr e) {
   match (e.kind) {
-    case IntLit(tok): {
+    IntLit(tok): {
       w.open("int", e.line, e.col); w.sp(); w.intTok(tok); w.close();
     }
-    case FloatLit(tok): {
+    FloatLit(tok): {
       w.open("float", e.line, e.col); w.sp(); w.tok(tok); w.close();
     }
-    case StrLit(tok): {
+    StrLit(tok): {
       w.open("str", e.line, e.col); w.sp(); w.strTok(tok); w.close();
     }
-    case JsxText(startOff, endOff): {
+    JsxText(startOff, endOff): {
       w.open("jsxtext", e.line, e.col); w.close();
     }
-    case Jsx(tagTok, closeTok, attrs, kids): {
+    Jsx(tagTok, closeTok, attrs, kids): {
       w.open("jsx", e.line, e.col); w.sp(); w.tok(tagTok);
       for (i32 i = 0; i < kids.len(); i++) { w.sp(); printExpr(w, kids[i]); }
       w.close();
     }
-    case BoolLit(value): {
+    BoolLit(value): {
       w.open("bool", e.line, e.col);
       w.sp();
       w.s(value ? "true" : "false");
       w.close();
     }
-    case NullLit: {
+    NullLit: {
       w.open("null", e.line, e.col); w.close();
     }
-    case Ident(tok): {
+    Ident(tok): {
       w.open("ident", e.line, e.col); w.sp(); w.tok(tok); w.close();
     }
-    case Await(operand): {
+    Await(operand): {
       w.open("await", e.line, e.col);
       w.sp(); printExpr(w, operand);
       w.close();
     }
-    case Unary(op, operand): {
+    Unary(op, operand): {
       w.open("unary", e.line, e.col);
       w.sp(); w.tok(op);
       w.sp(); printExpr(w, operand);
       w.close();
     }
-    case Binary(op, left, right): {
+    Binary(op, left, right): {
       w.open("binary", e.line, e.col);
       // **An operator is spelled by its kind, not by the bytes under it.** For every operator
       // written in the file the two agree exactly; for the two `+` that an interpolation stands
@@ -311,14 +311,14 @@ void printExpr(Pr w, Expr e) {
       w.sp(); printExpr(w, right);
       w.close();
     }
-    case Cast(op, operand, target): {
+    Cast(op, operand, target): {
       w.open("cast", e.line, e.col);
       w.sp(); w.tok(op);
       w.sp(); printExpr(w, operand);
       w.sp(); printTy(w, target);
       w.close();
     }
-    case Is(left, target, other, negated): {
+    Is(left, target, other, negated): {
       w.open("is", e.line, e.col);
       w.sp(); w.s(negated ? "not" : "plain");
       w.sp(); printExpr(w, left);
@@ -331,14 +331,14 @@ void printExpr(Pr w, Expr e) {
       w.close();
     }
     // A `match` in expression position: an arm has a value where the statement's has a body.
-    case MatchExpr(subject, arms): {
+    MatchExpr(subject, arms): {
       w.open("matchexpr", e.line, e.col);
       w.sp(); printExpr(w, subject);
       w.s(" (");
       for (i32 i = 0; i < arms.len(); i++) {
         if (i > 0) { w.sp(); }
         w.s("(arm ");
-        if (arms[i].variantTok < 0) { w.s("else"); } else { w.tok(arms[i].variantTok); }
+        if (arms[i].variantTok < 0) { w.s("default"); } else { w.tok(arms[i].variantTok); }
         w.s(" (");
         for (i32 j = 0; j < arms[i].bindingToks.len(); j++) {
           if (j > 0) { w.sp(); }
@@ -351,14 +351,14 @@ void printExpr(Pr w, Expr e) {
       }
       w.s("))");
     }
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       w.open("ternary", e.line, e.col);
       w.sp(); printExpr(w, cond);
       w.sp(); printExpr(w, then);
       w.sp(); printExpr(w, els);
       w.close();
     }
-    case Call(callee, args, callTargs): {
+    Call(callee, args, callTargs): {
       w.open("call", e.line, e.col);
       w.sp(); printExpr(w, callee);
       // **Only when written**, so every call that names none prints exactly as it did before this
@@ -376,35 +376,35 @@ void printExpr(Pr w, Expr e) {
     // No return type and no name, because a lambda has neither: `design/lang/0002` takes the return
     // from the `fn<…>` it is checked against. An expression body prints as the `return` the parser
     // desugared it into, which is the shape the rest of the compiler sees.
-    case Lambda(params, body, lamAsync): {
+    Lambda(params, body, lamAsync): {
       w.open("lambda", e.line, e.col);
       printParams(w, params);
       printStmtList(w, body);
       w.close();
     }
-    case Index(arr, index): {
+    Index(arr, index): {
       w.open("index", e.line, e.col);
       w.sp(); printExpr(w, arr);
       w.sp(); printExpr(w, index);
       w.close();
     }
-    case Member(obj, nameTok): {
+    Member(obj, nameTok): {
       w.open("member", e.line, e.col);
       w.sp(); printExpr(w, obj);
       w.sp(); w.tok(nameTok);
       w.close();
     }
-    case Unwrap(operand): {
+    Unwrap(operand): {
       w.open("unwrap", e.line, e.col);
       w.sp(); printExpr(w, operand);
       w.close();
     }
-    case TypeName(qual): {
+    TypeName(qual): {
       w.open("typename", e.line, e.col);
       w.sp(); printTy(w, qual);
       w.close();
     }
-    case Construct(ctype, args, named): {
+    Construct(ctype, args, named): {
       w.open("construct", e.line, e.col);
       w.sp(); printTy(w, ctype);
       printExprList(w, args);
@@ -419,14 +419,14 @@ void printExpr(Pr w, Expr e) {
       }
       w.s("))");
     }
-    case Incr(target, op, prefix): {
+    Incr(target, op, prefix): {
       w.open("incr", e.line, e.col);
       w.sp(); w.tok(op);
       w.sp(); w.s(prefix ? "pre" : "post");
       w.sp(); printLvalue(w, target);
       w.close();
     }
-    case ArrNew(elem, size, fill, elements): {
+    ArrNew(elem, size, fill, elements): {
       w.open("arrnew", e.line, e.col);
       w.sp(); printTy(w, elem);
       w.sp();
@@ -452,22 +452,22 @@ void printExprList(Pr w, Expr[] items) {
 
 void printLvalue(Pr w, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): {
+    LIdent(tok): {
       w.open("lv-ident", lv.line, lv.col); w.sp(); w.tok(tok); w.close();
     }
-    case LField(base, nameTok): {
+    LField(base, nameTok): {
       w.open("lv-field", lv.line, lv.col);
       w.sp(); printLvalue(w, base);
       w.sp(); w.tok(nameTok);
       w.close();
     }
-    case LIndex(base, index): {
+    LIndex(base, index): {
       w.open("lv-index", lv.line, lv.col);
       w.sp(); printLvalue(w, base);
       w.sp(); printExpr(w, index);
       w.close();
     }
-    case LUnwrap(base): {
+    LUnwrap(base): {
       w.open("lv-unwrap", lv.line, lv.col);
       w.sp(); printLvalue(w, base);
       w.close();
@@ -479,7 +479,7 @@ void printLvalue(Pr w, Lvalue lv) {
 
 void printStmt(Pr w, Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): {
+    Var(type, nameTok, init, isConst): {
       w.open("var", s.line, s.col);
       w.sp(); w.s(isConst ? "const" : "let");
       w.sp(); printTy(w, type);
@@ -487,33 +487,33 @@ void printStmt(Pr w, Stmt s) {
       w.sp(); printExpr(w, init);
       w.close();
     }
-    case Assign(target, op, rhs): {
+    Assign(target, op, rhs): {
       w.open("assign", s.line, s.col);
       w.sp(); w.tok(op);
       w.sp(); printLvalue(w, target);
       w.sp(); printExpr(w, rhs);
       w.close();
     }
-    case IncrStmt(target, op): {
+    IncrStmt(target, op): {
       w.open("incr-stmt", s.line, s.col);
       w.sp(); w.tok(op);
       w.sp(); printLvalue(w, target);
       w.close();
     }
-    case If(cond, then, els): {
+    If(cond, then, els): {
       w.open("if", s.line, s.col);
       w.sp(); printExpr(w, cond);
       printStmtList(w, then);
       printStmtList(w, els);
       w.close();
     }
-    case While(cond, body): {
+    While(cond, body): {
       w.open("while", s.line, s.col);
       w.sp(); printExpr(w, cond);
       printStmtList(w, body);
       w.close();
     }
-    case For(init, cond, update, body): {
+    For(init, cond, update, body): {
       w.open("for", s.line, s.col);
       w.sp();
       if (init is null) { w.s("-"); } else { printStmt(w, init!); }
@@ -524,13 +524,13 @@ void printStmt(Pr w, Stmt s) {
       printStmtList(w, body);
       w.close();
     }
-    case DoWhile(body, cond): {
+    DoWhile(body, cond): {
       w.open("dowhile", s.line, s.col);
       printStmtList(w, body);
       w.sp(); printExpr(w, cond);
       w.close();
     }
-    case Switch(subject, cases): {
+    Switch(subject, cases): {
       w.open("switch", s.line, s.col);
       w.sp(); printExpr(w, subject);
       w.s(" (");
@@ -543,14 +543,14 @@ void printStmt(Pr w, Stmt s) {
       }
       w.s("))");
     }
-    case Match(subject, arms): {
+    Match(subject, arms): {
       w.open("match", s.line, s.col);
       w.sp(); printExpr(w, subject);
       w.s(" (");
       for (i32 i = 0; i < arms.len(); i++) {
         if (i > 0) { w.sp(); }
         w.s("(arm ");
-        if (arms[i].variantTok < 0) { w.s("else"); } else { w.tok(arms[i].variantTok); }
+        if (arms[i].variantTok < 0) { w.s("default"); } else { w.tok(arms[i].variantTok); }
         w.s(" (");
         for (i32 j = 0; j < arms[i].bindingToks.len(); j++) {
           if (j > 0) { w.sp(); }
@@ -562,26 +562,26 @@ void printStmt(Pr w, Stmt s) {
       }
       w.s("))");
     }
-    case Return(value): {
+    Return(value): {
       w.open("return", s.line, s.col);
       w.sp();
       if (value is null) { w.s("-"); } else { printExpr(w, value!); }
       w.close();
     }
-    case Break:    { w.open("break", s.line, s.col); w.close(); }
-    case Continue: { w.open("continue", s.line, s.col); w.close(); }
-    case Trap(value): {
+    Break:    { w.open("break", s.line, s.col); w.close(); }
+    Continue: { w.open("continue", s.line, s.col); w.close(); }
+    Trap(value): {
       w.open("trap", s.line, s.col);
       w.sp();
       if (value is null) { w.s("-"); } else { printExpr(w, value!); }
       w.close();
     }
-    case Block(body): {
+    Block(body): {
       w.open("block", s.line, s.col);
       printStmtList(w, body);
       w.close();
     }
-    case ExprStmt(expr): {
+    ExprStmt(expr): {
       w.open("expr", s.line, s.col);
       w.sp(); printExpr(w, expr);
       w.close();
@@ -631,7 +631,7 @@ void printParams(Pr w, Param[] params) {
 
 void printDecl(Pr w, Decl d) {
   match (d.kind) {
-    case Import(pathTok, prefixTok, items): {
+    Import(pathTok, prefixTok, items): {
       w.open("import", d.line, d.col);
       // A prefixed import has no path token, and the module *inside* the provider is the empty
       // string — `from core` names its only one. That is a value, not an absence, so it prints as
@@ -654,7 +654,7 @@ void printDecl(Pr w, Decl d) {
       }
       w.s("))");
     }
-    case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       w.open("func", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");
       // Printed because the round trip compares these trees, and a property neither side records is
@@ -669,7 +669,7 @@ void printDecl(Pr w, Decl d) {
       printStmtList(w, body);
       w.close();
     }
-    case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+    StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
       w.open("struct", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");
       w.sp(); w.s(isConst ? "const" : "mut");
@@ -706,7 +706,7 @@ void printDecl(Pr w, Decl d) {
     }
     // Methods are held by the AST and *not* printed, which is what the reference does too — an enum's
     // methods are compared through rung 3's diagnostics rather than here.
-    case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+    EnumDecl(nameTok, variants, exported, methods, typeParams): {
       w.open("enum", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");
       w.sp(); w.tok(nameTok);
@@ -721,7 +721,7 @@ void printDecl(Pr w, Decl d) {
       }
       w.s("))");
     }
-    case ConstDecl(nameTok, type, init, exported): {
+    ConstDecl(nameTok, type, init, exported): {
       w.open("const", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");
       w.sp(); w.tok(nameTok);

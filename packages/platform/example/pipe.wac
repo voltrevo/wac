@@ -106,22 +106,22 @@ void pump(Core core, Cli cli, i32 a, i32 b) {
     // to a broken pipe and reports success is the reason `Read` has three cases.
     if (from[got] == 0) {
       match (tIn.wait()) {
-        case Data(bytes): { cli.send(a, bytes).wait(); tIn = cli.recv(STDIN); }
-        case End: { cli.closeFeed(a); inLive = false; }
-        case Failed(why): { core.warn("pipe: input: " + why); cli.closeFeed(a); inLive = false; }
+        Data(bytes): { cli.send(a, bytes).wait(); tIn = cli.recv(STDIN); }
+        End: { cli.closeFeed(a); inLive = false; }
+        Failed(why): { core.warn("pipe: input: " + why); cli.closeFeed(a); inLive = false; }
       }
     } else if (from[got] == 1) {
       match (tA.wait()) {
-        case Data(bytes): { cli.send(b, bytes).wait(); tA = cli.recv(a); }
-        case End: { cli.closeFeed(b); aLive = false; }
-        case Failed(why): { core.warn("pipe: first stage: " + why); cli.closeFeed(b); aLive = false; }
+        Data(bytes): { cli.send(b, bytes).wait(); tA = cli.recv(a); }
+        End: { cli.closeFeed(b); aLive = false; }
+        Failed(why): { core.warn("pipe: first stage: " + why); cli.closeFeed(b); aLive = false; }
       }
     } else {
       bool over = false;
       match (tB.wait()) {
-        case Data(bytes): { cli.write(bytes); tB = cli.recv(b); }
-        case End: { over = true; }
-        case Failed(why): { core.warn("pipe: second stage: " + why); over = true; }
+        Data(bytes): { cli.write(bytes); tB = cli.recv(b); }
+        End: { over = true; }
+        Failed(why): { core.warn("pipe: second stage: " + why); over = true; }
       }
       if (over) { return; }
     }

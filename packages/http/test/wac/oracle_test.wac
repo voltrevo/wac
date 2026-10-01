@@ -43,8 +43,8 @@ import { Outcome, oracle, outcomeOf } from "./nodeoracle.wac";
 /** The target an accepted case reported, or `""`. */
 string targetOf(Outcome o) {
   match (o) {
-    case Ok(_, target, _, _, _, _): { return target; }
-    else: { return ""; }
+    Ok(_, target, _, _, _, _): { return target; }
+    default: { return ""; }
   }
 }
 

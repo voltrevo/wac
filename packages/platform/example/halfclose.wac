@@ -46,9 +46,9 @@ export i32 main(Core core, Cli cli) {
   bool reading = true;
   while (reading) {
     match (cli.recv(a.handle).wait()) {
-      case Data(b): { got = got + string.fromBytes(b); }
-      case End: { reading = false; }
-      case Failed(e): { core.warn("server recv: " + e); return 1; }
+      Data(b): { got = got + string.fromBytes(b); }
+      End: { reading = false; }
+      Failed(e): { core.warn("server recv: " + e); return 1; }
     }
   }
   core.log("server saw \"" + got + "\" then End");
@@ -60,9 +60,9 @@ export i32 main(Core core, Cli cli) {
   reading = true;
   while (reading) {
     match (cli.recv(c.handle).wait()) {
-      case Data(b): { back = back + string.fromBytes(b); }
-      case End: { reading = false; }
-      case Failed(e): { core.warn("client recv: " + e); return 1; }
+      Data(b): { back = back + string.fromBytes(b); }
+      End: { reading = false; }
+      Failed(e): { core.warn("client recv: " + e); return 1; }
     }
   }
   core.log("client read back \"" + back + "\"");

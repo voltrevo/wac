@@ -31,8 +31,8 @@ JsonObject blindTop(Cli cli) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -40,8 +40,8 @@ JsonArray blindCases(Cli cli) {
   JsonValue? cs = blindTop(cli).getStr("cases");
   if (cs is null) { trap; }
   match (cs!) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
@@ -51,15 +51,15 @@ string textOfObject(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { trap; }
   }
 }
 
 string fieldOf(Cli cli, i32 i, string key) {
   match (blindCases(cli).get(i)) {
-    case Object(members): { return textOfObject(members, key); }
-    else: { trap; }
+    Object(members): { return textOfObject(members, key); }
+    default: { trap; }
   }
 }
 

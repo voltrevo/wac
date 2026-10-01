@@ -56,20 +56,20 @@ void connection(Core core, Cli cli, Fs fs, i32 sock, string root, bool isolate) 
   u8[] buffered = u8[0]();
   while (true) {
     match (parseRequest(buffered, 1 << 20)) {
-      case Incomplete: {
+      Incomplete: {
         // A client that vanished mid-request and a socket that failed are both "this connection is
         // over", but only the second is worth a line in the log.
         match (cli.recv(sock).wait()) {
-          case Data(bytes): { buffered = concat(buffered, bytes); }
-          case End: { return; }
-          case Failed(why): { core.warn("httpd: " + why); return; }
+          Data(bytes): { buffered = concat(buffered, bytes); }
+          End: { return; }
+          Failed(why): { core.warn("httpd: " + why); return; }
         }
       }
-      case Bad(code): {
+      Bad(code): {
         cli.send(sock, writeResponse(Response.create(400), "GET".toBytes(), false)).wait();
         return;
       }
-      case Ok(req): {
+      Ok(req): {
         answer(core, cli, fs, sock, root, req, isolate);
         return;
       }

@@ -71,7 +71,7 @@ string[] statementSources() {
     "void f(i32 n) { switch (n) { case 1: { " + BAD + " } } }",
     "string f() { return \"x\"; } void g() { " + BAD + " }",
     "", "", "",
-    "enum E { A, B } void f(E e) { match (e) { case A: { " + BAD + " } case B: { } } }",
+    "enum E { A, B } void f(E e) { match (e) { A: { " + BAD + " } B: { } } }",
     "void f() { { " + BAD + " } }",
     "void g(i32 n) { } void f() { g(1); " + BAD + " }");
 }
@@ -136,8 +136,8 @@ string[] expressionSources() {
     "void f(i32 p, f64 q, B b, i32[] a) { bool r = a[" + SUB + "] > 0 && (b is C); }",
     "void f(i32 p, f64 q) { i32[] a = i32[2](" + SUB + ", 1); }",
     "void f(i32 p, f64 q) { i32[] a = i32[" + SUB + "](); }",
-    "enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { case A: " + SUB +
-    " case B: 0 }; }",
+    "enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { A: " + SUB +
+    " B: 0 }; }",
     "import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(" + SUB +
     ")}/>; } string itoa(i32 v) { return \"\"; }",
     "", "", "", "", "", "", "",

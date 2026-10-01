@@ -6,7 +6,7 @@ enum Kind {
   Tree
 
   string word(const this) {
-    return match (this) { case Blob: "blob", case Tree: "tree" };
+    return match (this) { Blob: "blob", Tree: "tree" };
   }
 }
 export i32 f() {

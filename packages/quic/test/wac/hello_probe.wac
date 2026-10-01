@@ -161,21 +161,21 @@ export i32 frameKinds(u8[] payload) {
       // `Unknown` and `Incomplete` both stop the walk, and only one of them is a surprise. The kind
       // is folded in so a test can say which frame this package cannot yet size.
       match (n.frame) {
-        case Unknown(kind): { return seen | (1 << 31); }
-        case NotPermitted(kind): { return seen | (1 << 27); }
-        else: { return seen | (1 << 30); }
+        Unknown(kind): { return seen | (1 << 31); }
+        NotPermitted(kind): { return seen | (1 << 27); }
+        default: { return seen | (1 << 30); }
       }
     }
     match (n.frame) {
-      case Padding(count): { seen = seen | (1 << 0); }
-      case Ping: { seen = seen | (1 << 1); }
-      case Ack(largest, delay): { seen = seen | (1 << 2); }
-      case Crypto(offset, data): { seen = seen | (1 << 6); }
-      case Stream(id, offset, data, fin): { seen = seen | (1 << 8); }
-      case NewConnectionId(seq, retire, cid, token): { seen = seen | (1 << 24); }
-      case HandshakeDone: { seen = seen | (1 << 29); }
-      case ConnectionClose(code, reason): { seen = seen | (1 << 28); }
-      else: {}
+      Padding(count): { seen = seen | (1 << 0); }
+      Ping: { seen = seen | (1 << 1); }
+      Ack(largest, delay): { seen = seen | (1 << 2); }
+      Crypto(offset, data): { seen = seen | (1 << 6); }
+      Stream(id, offset, data, fin): { seen = seen | (1 << 8); }
+      NewConnectionId(seq, retire, cid, token): { seen = seen | (1 << 24); }
+      HandshakeDone: { seen = seen | (1 << 29); }
+      ConnectionClose(code, reason): { seen = seen | (1 << 28); }
+      default: {}
     }
     at = at + n.size;
   }
@@ -196,8 +196,8 @@ export i32 firstNewCidShape(u8[] payload) {
     Next n = nextIn(payload, at, EPOCH_1RTT());
     if (n.size == 0) { return -1; }
     match (n.frame) {
-      case NewConnectionId(seq, retire, cid, token): { return cid.len() * 100 + token.len(); }
-      else: {}
+      NewConnectionId(seq, retire, cid, token): { return cid.len() * 100 + token.len(); }
+      default: {}
     }
     at = at + n.size;
   }
@@ -222,8 +222,8 @@ export i64 closeCodeIn(u8[] payload) {
     Next n = nextIn(payload, at, EPOCH_1RTT());
     if (n.size == 0) { return -1 as i64; }
     match (n.frame) {
-      case ConnectionClose(code, reason): { return code; }
-      else: {}
+      ConnectionClose(code, reason): { return code; }
+      default: {}
     }
     at = at + n.size;
   }

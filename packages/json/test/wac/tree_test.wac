@@ -32,12 +32,12 @@ const string ORACLE = "packages/json/test/oracle.ts";
 /** The variant's name, which is what the host-side test read as a `tag`. */
 string tagOf(JsonValue v) {
   match (v) {
-    case Null: { return "Null"; }
-    case Bool(_): { return "Bool"; }
-    case Number(_, _): { return "Number"; }
-    case Str(_): { return "Str"; }
-    case Array(_): { return "Array"; }
-    case Object(_): { return "Object"; }
+    Null: { return "Null"; }
+    Bool(_): { return "Bool"; }
+    Number(_, _): { return "Number"; }
+    Str(_): { return "Str"; }
+    Array(_): { return "Array"; }
+    Object(_): { return "Object"; }
   }
 }
 
@@ -64,36 +64,36 @@ export string test_a_document_that_is_not_json_parses_as_null() {
 
 bool boolOf(JsonValue v) {
   match (v) {
-    case Bool(value): { return value; }
-    else: { trap; }
+    Bool(value): { return value; }
+    default: { trap; }
   }
 }
 
 f64 numOf(JsonValue v) {
   match (v) {
-    case Number(value, _): { return value; }
-    else: { trap; }
+    Number(value, _): { return value; }
+    default: { trap; }
   }
 }
 
 string rawOf(JsonValue v) {
   match (v) {
-    case Number(_, raw): { return string.fromBytes(raw); }
-    else: { trap; }
+    Number(_, raw): { return string.fromBytes(raw); }
+    default: { trap; }
   }
 }
 
 string strOf(JsonValue v) {
   match (v) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { trap; }
   }
 }
 
 JsonArray arrayOf(JsonValue v) {
   match (v) {
-    case Array(items): { return items; }
-    else: { trap; }
+    Array(items): { return items; }
+    default: { trap; }
   }
 }
 
@@ -202,18 +202,18 @@ export string test_the_tree_walks_to_the_same_data_the_host_produces(Core core, 
  */
 string walk(JsonValue v) {
   match (v) {
-    case Null: { return "null"; }
-    case Bool(value): { return value ? "true" : "false"; }
-    case Number(value, _): { return jsNumber(value); }
-    case Str(bytes): { return quoted(bytes); }
-    case Array(items): {
+    Null: { return "null"; }
+    Bool(value): { return value ? "true" : "false"; }
+    Number(value, _): { return jsNumber(value); }
+    Str(bytes): { return quoted(bytes); }
+    Array(items): {
       string out = "[";
       for (i32 i = 0; i < items.len(); i++) {
         out = out + (i == 0 ? "" : ",") + walk(items.get(i));
       }
       return out + "]";
     }
-    case Object(members): {
+    Object(members): {
       // Last wins, which is what `JSON.parse` does with a duplicate key. The tree keeps both members,
       // which the test above asserts; this one is about agreeing with the host.
       string out = "{";

@@ -64,7 +64,7 @@ DirAction answer(u8[] response) { return DirAction(true, response, u8[0](), u8[0
  */
 export DirAction dirStep(u8[] pending, DirDocuments docs) {
   match (parseRequest(pending, MAX_BODY)) {
-    case Ok(request): {
+    Ok(request): {
       // A publish is the only request with a body, and the only one that changes anything. The
       // version comes out of the middle of the target rather than the path being matched whole,
       // because `/tor/hs/3/publish` and `/tor/hs/3/<z>` differ only after it and one is a POST.
@@ -85,10 +85,10 @@ export DirAction dirStep(u8[] pending, DirDocuments docs) {
       }
       return answer(dirResponse(request.target, docs));
     }
-    case Bad(code): {
+    Bad(code): {
       return answer("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".toBytes());
     }
-    case Incomplete: { return waiting(); }
+    Incomplete: { return waiting(); }
   }
   return waiting();
 }

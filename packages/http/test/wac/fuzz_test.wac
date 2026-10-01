@@ -176,15 +176,15 @@ struct Verdict {
 
 Verdict verdictOf(u8[] input) {
   match (parseRequest(input, MAX_BODY())) {
-    case Ok(req): {
+    Ok(req): {
       bool host = false;
       for (i32 i = 0; i < req.headers.count; i++) {
         if (lower(string.fromBytes(req.headers.names[i])) == "host") { host = true; }
       }
       return Verdict("ok", req.consumed, string.fromBytes(req.method), req.minor, host);
     }
-    case Bad(_): { return Verdict("bad", 0, "", -1, false); }
-    case Incomplete: { return Verdict("incomplete", 0, "", -1, false); }
+    Bad(_): { return Verdict("bad", 0, "", -1, false); }
+    Incomplete: { return Verdict("incomplete", 0, "", -1, false); }
   }
 }
 
@@ -248,10 +248,10 @@ void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
     string oracleOutcome = "";
     string oracleVersion = "";
     match (want[i]) {
-      case Ok(_, _, version, _, _, _): { oracleOutcome = "ok"; oracleVersion = version; }
-      case Refused(_): { oracleOutcome = "error"; }
-      case Incomplete: { oracleOutcome = "incomplete"; }
-      case Broken(why): { t.fail(describe(cases[i]) + ": " + why); continue; }
+      Ok(_, _, version, _, _, _): { oracleOutcome = "ok"; oracleVersion = version; }
+      Refused(_): { oracleOutcome = "error"; }
+      Incomplete: { oracleOutcome = "incomplete"; }
+      Broken(why): { t.fail(describe(cases[i]) + ": " + why); continue; }
     }
 
     // The oracle is a *server*: it reads the whole stream and reports the first thing that went

@@ -195,11 +195,11 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   string[] oids = string[0](fill: "");
   string caps = "agent=wac/0";
   match (parseAdvertisement(refs.body)) {
-    case Garbled(why2): {
+    Garbled(why2): {
       core.warn("wacfetch: " + map.name + ": the advertisement did not parse: " + why2);
       return "";
     }
-    case Said(ad) : {
+    Said(ad) : {
       names = string[ad.refs.len()](fill: "");
       oids = string[ad.refs.len()](fill: "");
       for (i32 i = 0; i < ad.refs.len(); i++) {
@@ -263,11 +263,11 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   }
   u8[] pack = u8[0]();
   match (findPack(packed.body)) {
-    case NoPack(why3): {
+    NoPack(why3): {
       core.warn("wacfetch: " + map.name + ": no pack in the reply: " + why3);
       return "";
     }
-    case Packfile(bytes): { pack = bytes; }
+    Packfile(bytes): { pack = bytes; }
   }
 
   // **The check that makes it trustworthy.** A pack is content-addressed, so one mis-parsed cannot
@@ -281,28 +281,28 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   if (!made.ok()) { core.warn("wacfetch: cannot make " + into + ": " + made.message); return ""; }
 
   match (indexPack(pack)) {
-    case Unindexable(why4): {
+    Unindexable(why4): {
       core.warn("wacfetch: " + map.name + ": the pack did not index: " + why4);
       return "";
     }
     // Not reachable while every request sends no `have` — a server with nothing to delta against
     // sends a complete pack. Answered rather than left to fall through, because the day this asks
     // for an incremental fetch it will be, and a thin pack is not a damaged one.
-    case Thin(bases): {
+    Thin(bases): {
       core.warn("wacfetch: " + map.name + ": a thin pack, wanting " + itoa(bases.len())
                 + " object(s) we did not ask about");
       return "";
     }
-    case Built(idx): {
+    Built(idx): {
       objects = idx.count;
       Pack p = openIndexed(pack, idx);
       match (objectNamed(p, want)) {
-        case Absent(why5): {
+        Absent(why5): {
           core.warn("wacfetch: " + map.name + ": the pack does not contain "
                     + hit.commit.slice(0, 12) + ": " + why5);
           return "";
         }
-        case Found(kind, data): {
+        Found(kind, data): {
           if (kind != 1) {
             core.warn("wacfetch: " + map.name + ": " + hit.commit.slice(0, 12)
                       + " came back as kind " + itoa(kind) + " rather than a commit");
@@ -315,11 +315,11 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
           // opened rather than indexing the same objects a second time.
           Parsed c = parseCommit(data);
           match (c) {
-            case Malformed(why6): {
+            Malformed(why6): {
               core.warn("wacfetch: " + map.name + ": unreadable commit: " + why6);
               return "";
             }
-            case Understood(commit): {
+            Understood(commit): {
               if (!writeTreeOut(core, cli, p, commit.tree, into)) { return ""; }
               core.log("  checked out " + commit.treeHex().slice(0, 8) + " -> " + into);
             }
@@ -362,15 +362,15 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
 bool writeTreeOut(Core core, Cli cli, Pack pk, u8[] treeHash, string into) {
   Got got = objectNamed(pk, treeHash);
   match (got) {
-    case Absent(why): {
+    Absent(why): {
       core.warn("wacfetch: a tree is missing from the pack: " + why);
       return false;
     }
-    case Found(kind, data): {
+    Found(kind, data): {
       Tree t = parseTree(data);
       match (t) {
-        case Bad(why): { core.warn("wacfetch: unreadable tree: " + why); return false; }
-        case Ok(entries): {
+        Bad(why): { core.warn("wacfetch: unreadable tree: " + why); return false; }
+        Ok(entries): {
           for (i32 i = 0; i < entries.len(); i++) {
             Entry e = entries.get(i);
             string at = into + "/" + e.name;
@@ -386,11 +386,11 @@ bool writeTreeOut(Core core, Cli cli, Pack pk, u8[] treeHash, string into) {
             }
             Got blob = objectNamed(pk, e.hash);
             match (blob) {
-              case Absent(why2): {
+              Absent(why2): {
                 core.warn("wacfetch: " + e.name + " is missing from the pack: " + why2);
                 return false;
               }
-              case Found(k2, bytes): {
+              Found(k2, bytes): {
                 Change wrote = cli.writeFile(at, bytes).wait();
                 if (!wrote.ok()) {
                   core.warn("wacfetch: cannot write " + at + ": " + wrote.message);

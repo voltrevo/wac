@@ -55,9 +55,9 @@ export i32 main(Core core, Cli cli) {
   bool reading = true;
   while (reading) {
     match (cli.recv(kid.handle).wait()) {
-      case Data(bytes): { cli.write(bytes); }
-      case End: { reading = false; }
-      case Failed(why): {
+      Data(bytes): { cli.write(bytes); }
+      End: { reading = false; }
+      Failed(why): {
         core.warn("twin: reading the child: " + why);
         return 1;
       }

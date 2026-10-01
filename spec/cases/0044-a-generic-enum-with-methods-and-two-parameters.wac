@@ -3,11 +3,11 @@
 // from: specSingle's known false alarms
 enum Option<T> {
   Some(T v), None
-  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+  T orElse(const this, T d) { return match (this) { Some(v): v, None: d }; }
 }
 enum Result<T, E> {
   Ok(T v), Err(E e)
-  bool isOk(const this) { return match (this) { case Ok(_): true, case Err(_): false }; }
+  bool isOk(const this) { return match (this) { Ok(_): true, Err(_): false }; }
 }
 export i32 f() {
   Option<i32> a = Option.Some(3);

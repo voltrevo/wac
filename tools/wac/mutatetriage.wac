@@ -108,7 +108,7 @@ export string signatureOf(string[] files, string[] hashes) {
  * rather than in `invalid`, and the run's uncompilable count stayed at zero while two mutants sat
  * outside both totals.
  *
- * The case, from `packages/rlp`: the guard operator removes the `trap` from `case List(_): trap;` in
+ * The case, from `packages/rlp`: the guard operator removes the `trap` from `List(_): trap;` in
  * a function returning `u8[]`, and the result parses perfectly. `not every path returns a value` is a
  * *checker* sentence, so it has to be a checker question — `dumpTypeErrorsFiles` over the graph
  * rather than a per-file parse, because the answer depends on the imports.

@@ -345,9 +345,9 @@ string[] sources() {
     // called, since taking the first arm's type is right for whichever arm happens to be first.
     "struct Base { i32 b; } struct Sub : Base { i32 s; } enum E { A, B } " +
       "export i32 f() { Sub s = Sub(3, 4); Base bb = Base(9); E e = E.B; " +
-      "Base w = match (e) { case A: s, else: bb }; return w.b; } " +
+      "Base w = match (e) { A: s, default: bb }; return w.b; } " +
       "export i32 g() { Sub s = Sub(3, 4); Base bb = Base(9); E e = E.A; " +
-      "Base w = match (e) { case A: s, else: bb }; return w.b; }",
+      "Base w = match (e) { A: s, default: bb }; return w.b; }",
     // **The rest of that family, both constructs and both orders.** The bug was *which arm came
     // first*: taking the first arm's type is right for whichever arm happens to be first, so a
     // one-order test passes on the broken compiler. spec/spec/enums.md makes a `match`'s arms unify
@@ -365,16 +365,16 @@ string[] sources() {
     // JS*. A `bool` does, and the arm is picked from it.
     "struct P { i32 x; } enum E { A, B } " +
       "export i32 f(bool c) { P a = P(7); P? b = null; E e = c ? E.A : E.B; " +
-      "P? r = match (e) { case A: a, else: b }; return r is null ? 0 : r!.x; } " +
+      "P? r = match (e) { A: a, default: b }; return r is null ? 0 : r!.x; } " +
       "export i32 g(bool c) { P a = P(7); P? b = null; E e = c ? E.A : E.B; " +
-      "P? r = match (e) { case A: b, else: a }; return r is null ? 0 : r!.x; }",
+      "P? r = match (e) { A: b, default: a }; return r is null ? 0 : r!.x; }",
     // **An `else` arm written *before* a `case`**, which the checker accepts and nothing ran. The
     // question is whether a leading `else` swallows the arm after it — a `br_table` is built from the
     // arms, and "the default is whichever one is spelled `else`" and "the default is the last arm" are
     // the same sentence until an `else` is not last. Both compilers answer 2 for `A` and 1 for `B`, so
     // it is the first: `case A` still wins its own variant. Found while walking the match rules for
     // positions; the ordering is not stated anywhere and the two agreeing is the whole evidence.
-    "enum E { A, B } i32 pick(E e) { match (e) { else: { return 1; } case A: { return 2; } } return 0; } " +
+    "enum E { A, B } i32 pick(E e) { match (e) { default: { return 1; } A: { return 2; } } return 0; } " +
       "export i32 f() { return pick(E.A); } export i32 g() { return pick(E.B); }");
 }
 

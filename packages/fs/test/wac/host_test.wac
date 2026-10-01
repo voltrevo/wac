@@ -5,7 +5,7 @@
 // even when its own tests pass. So `example/ops.wac` runs one script two ways — `ops mem` and
 // `ops host <dir>` — and this compares the two transcripts.
 //
-// The scripts are shared bytes and nothing else: one process holds the tree in memory, the other in
+// The scripts are shared bytes and nothing default: one process holds the tree in memory, the other in
 // `/tmp`, and neither knows about the other. That is the same arrangement `packages/wacc` uses to
 // compare two parsers, and it is why a divergence here means something.
 //

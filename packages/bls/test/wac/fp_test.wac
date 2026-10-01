@@ -37,8 +37,8 @@ import { member, memberArray } from "../../../wactest/src/fixtures.wac";
 
 string text(JsonValue v) {
   match (v) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { return ""; }
   }
 }
 
@@ -52,8 +52,8 @@ bool memberIsNull(JsonValue v, string key) {
   JsonValue? found = member(v, key);
   if (found is null) { return true; }
   match (found!) {
-    case Null: { return true; }
-    else: { return false; }
+    Null: { return true; }
+    default: { return false; }
   }
 }
 

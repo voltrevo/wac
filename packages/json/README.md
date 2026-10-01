@@ -43,8 +43,8 @@ What changed is the boundary. `JsonString.str()`, `JsonMember.keyStr()` and
 JsonObject o = ...;
 JsonValue? name = o.getStr("name");
 match (name!) {
-  case Str(bytes): return string.fromBytes(bytes);
-  else: trap;
+  Str(bytes): { return string.fromBytes(bytes); }
+  default: { trap; }
 }
 ```
 

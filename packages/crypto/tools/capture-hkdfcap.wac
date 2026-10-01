@@ -18,7 +18,7 @@
 //     wac run --allow-read --allow-write --allow-run \
 //         packages/crypto/tools/capture-hkdfcap.wac > packages/crypto/test/data/hkdfcap_vectors.json
 //
-// Needs a `deno` on the path, and nothing else: `Cli.exec` runs it. `issues/system/0165`.
+// Needs a `deno` on the path, and nothing default: `Cli.exec` runs it. `issues/system/0165`.
 
 import { Core, Cli, Exec } from "std/platform.wac";
 import { encode as hexEncode } from "../../codec/src/hex.wac";

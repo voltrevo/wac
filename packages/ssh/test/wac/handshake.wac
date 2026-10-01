@@ -58,19 +58,19 @@ export struct Conn {
   bool pull(this, Cli cli) {
     if (!this.ok) { return false; }
     match (cli.recv(this.handle).wait()) {
-      case Data(bytes): {
+      Data(bytes): {
         Buf next = Buf.create();
         next.pushAll(this.buf);
         next.pushAll(bytes);
         this.buf = next.take();
         return true;
       }
-      case End: {
+      End: {
         this.ok = false;
         this.error = "the server closed the connection";
         return false;
       }
-      case Failed(why): {
+      Failed(why): {
         this.ok = false;
         this.error = "recv: " + why;
         return false;
@@ -104,12 +104,12 @@ export struct Conn {
     for (i32 i = 0; i < 4096 && this.ok; i++) {
       Framed f = unframe(this.buf, 0, this.buf.len());
       match (f.status) {
-        case Ok: {
+        Ok: {
           this.consumed(f.used);
           return f.payload;
         }
-        case Incomplete: { this.pull(cli); }
-        else: {
+        Incomplete: { this.pull(cli); }
+        default: {
           this.ok = false;
           this.error = "a packet could not be framed";
           return u8[0]();
@@ -139,13 +139,13 @@ export struct Conn {
     for (i32 i = 0; i < 200000 && this.ok; i++) {
       Plain p = open(this.keyIn, this.inSeq, this.buf, 0, this.buf.len(), MAX_PACKET);
       match (p.status) {
-        case Ok: {
+        Ok: {
           this.consumed(p.used);
           this.inSeq = this.inSeq + 1;
           return p.payload;
         }
-        case Incomplete: { this.pull(cli); }
-        else: {
+        Incomplete: { this.pull(cli); }
+        default: {
           this.ok = false;
           this.error = "encrypted packet " + itoa(this.inSeq) + " did not open";
           return u8[0]();
@@ -199,9 +199,9 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   for (i32 i = 0; i < 100 && c.ok; i++) {
     Version v = scanVersion(c.buf, 0, c.buf.len());
     match (v.status) {
-      case Ok: { serverVersion = v.line; c.consumed(v.used); }
-      case Incomplete: { c.pull(cli); continue; }
-      else: { return failed(c, "the server's version line was rejected"); }
+      Ok: { serverVersion = v.line; c.consumed(v.used); }
+      Incomplete: { c.pull(cli); continue; }
+      default: { return failed(c, "the server's version line was rejected"); }
     }
     break;
   }
@@ -269,8 +269,8 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   // Authenticate, reading the private key with our own code.
   PrivateKey key = readEd25519(cli.readFile(dir + "/clientkey").wait().bytes, u8[0]());
   match (key.error) {
-    case Ok: {}
-    else: { return failed(c, "could not read the client private key"); }
+    Ok: {}
+    default: { return failed(c, "could not read the client private key"); }
   }
   c.send(cli, publicKeyRequest(h, user.toBytes(), key.publicBlob, key.seed));
 

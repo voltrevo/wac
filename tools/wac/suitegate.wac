@@ -245,8 +245,8 @@ string strField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return ""; }
   match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { return ""; }
   }
 }
 
@@ -255,8 +255,8 @@ i64 numField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return -1 as i64; }
   match (v!) {
-    case Number(value, raw): { return value as! i64; }
-    else: { return -1 as i64; }
+    Number(value, raw): { return value as! i64; }
+    default: { return -1 as i64; }
   }
 }
 
@@ -264,8 +264,8 @@ bool boolField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { return false; }
   match (v!) {
-    case Bool(value): { return value; }
-    else: { return false; }
+    Bool(value): { return value; }
+    default: { return false; }
   }
 }
 
@@ -284,13 +284,13 @@ Note readNote(Cli cli, string path) {
   JsonValue? v = parse(f.bytes);
   if (v is null) { return noNote(); }
   match (v!) {
-    case Object(members): {
+    Object(members): {
       i64 pid = numField(members, "pid");
       if (pid <= (0 as i64)) { return noNote(); }
       return Note(true, strField(members, "who"), strField(members, "label"), pid as! i32,
                   numField(members, "since"), boolField(members, "forced"));
     }
-    else: { return noNote(); }
+    default: { return noNote(); }
   }
 }
 

@@ -53,7 +53,7 @@ export Answer call(Cli cli, string host, i32 port, string method, string params)
   JsonValue? parsed = parse(f.response.body);
   if (parsed is null) { return bad(method + ": the node's answer is not JSON"); }
   match (parsed!) {
-    case Object(members): {
+    Object(members): {
       // An error member is the node refusing, and it is not the same as a transport failure: the request
       // arrived and was understood. Its message is the useful part and is passed through.
       JsonValue? err = members.get("error".toBytes());
@@ -62,30 +62,30 @@ export Answer call(Cli cli, string host, i32 port, string method, string params)
       if (result is null) { return bad(method + ": the answer has no result"); }
       return Answer.of(true, result!, "");
     }
-    else: { return bad(method + ": the answer is not a JSON object"); }
+    default: { return bad(method + ": the answer is not a JSON object"); }
   }
 }
 
 /** An error object's `message`, or its shape when it has none. */
 string describe(JsonValue err) {
   match (err) {
-    case Object(members): {
+    Object(members): {
       JsonValue? msg = members.get("message".toBytes());
       if (msg is null) { return "the node refused, with no message"; }
       match (msg!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        else: { return "the node refused, and its message is not a string"; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        default: { return "the node refused, and its message is not a string"; }
       }
     }
-    else: { return "the node refused"; }
+    default: { return "the node refused"; }
   }
 }
 
 /** A `Str` result's bytes — most `eth_` methods answer with a hex string. */
 export u8[] stringOf(JsonValue v) {
   match (v) {
-    case Str(bytes): { return bytes; }
-    else: { return u8[0](); }
+    Str(bytes): { return bytes; }
+    default: { return u8[0](); }
   }
 }
 

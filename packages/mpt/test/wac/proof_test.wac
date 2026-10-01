@@ -51,15 +51,15 @@ u8[] fixtureBytes(string s) {
 
 string memberText(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.getStr(key);
       if (found is null) { return ""; }
       match (found!) {
-        case Str(bytes): { return string.fromBytes(bytes); }
-        else: { return ""; }
+        Str(bytes): { return string.fromBytes(bytes); }
+        default: { return ""; }
       }
     }
-    else: { return ""; }
+    default: { return ""; }
   }
 }
 
@@ -72,8 +72,8 @@ Case[] cases(T t, Cli cli) {
   if (doc is null) { return none; }
   JsonObject top = JsonObject.create();
   match (doc!) {
-    case Object(members): { top = members; }
-    else: { t.fail("the fixtures are not an object"); return none; }
+    Object(members): { top = members; }
+    default: { t.fail("the fixtures are not an object"); return none; }
   }
   t.isTrue(top.len() >= 7, "only " + itoa(top.len()) + " fixtures — is the vendored file intact?");
 
@@ -83,23 +83,23 @@ Case[] cases(T t, Cli cli) {
     JsonValue f = top.at(i).value;
     JsonObject pairs = JsonObject.create();
     match (f) {
-      case Object(members): {
+      Object(members): {
         JsonValue? inValue = members.getStr("in");
         if (inValue is null) { t.fail(name + ": no `in`"); continue; }
         match (inValue!) {
-          case Object(kv): { pairs = kv; }
-          else: { t.fail(name + ": `in` is not an object"); continue; }
+          Object(kv): { pairs = kv; }
+          default: { t.fail(name + ": `in` is not an object"); continue; }
         }
       }
-      else: { t.fail(name + ": not an object"); continue; }
+      default: { t.fail(name + ": not an object"); continue; }
     }
     u8[][] keys = u8[][pairs.len()](fill: u8[0]());
     u8[][] values = u8[][pairs.len()](fill: u8[0]());
     for (i32 j = 0; j < pairs.len(); j++) {
       keys[j] = fixtureBytes(pairs.at(j).keyStr());
       match (pairs.at(j).value) {
-        case Str(bytes): { values[j] = fixtureBytes(string.fromBytes(bytes)); }
-        else: { t.fail(name + ": a value is not a string"); }
+        Str(bytes): { values[j] = fixtureBytes(string.fromBytes(bytes)); }
+        default: { t.fail(name + ": a value is not a string"); }
       }
     }
     out[i] = Case(name, keys, values, memberText(f, "root"));

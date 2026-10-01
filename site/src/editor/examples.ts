@@ -232,9 +232,9 @@ export string demo() {
 // and "failed". match is exhaustive, so this cannot forget the difference.
 export string describe(Read r) {
   match (r) {
-    case Data(bytes): return bytes.len() == 1 ? "read 1 byte" : "read some bytes";
-    case End:         return "finished";
-    case Failed(why): return "failed: " + why;
+    Data(bytes): return bytes.len() == 1 ? "read 1 byte" : "read some bytes";
+    End:         return "finished";
+    Failed(why): return "failed: " + why;
   }
 }
 `,
@@ -600,15 +600,15 @@ enum Shape {
 
   f64 area(const this) {
     return match (this) {
-      case Circle(r): 3.141592653589793 * r * r,
-      case Rect(w, h): w * h,
-      case Point: 0.0
+      Circle(r): 3.141592653589793 * r * r,
+      Rect(w, h): w * h,
+      Point: 0.0
     };
   }
 
   /** Payload-less variants are values, not calls: \`Shape.Point\`, never \`Shape.Point()\`. */
   bool isFlat(const this) {
-    return match (this) { case Point: true, case Circle(_): false, case Rect(_, _): false };
+    return match (this) { Point: true, Circle(_): false, Rect(_, _): false };
   }
 }
 
@@ -630,11 +630,11 @@ enum Option<T> {
   Some(T v), None
 
   T orElse(const this, T fallback) {
-    return match (this) { case Some(v): v, case None: fallback };
+    return match (this) { Some(v): v, None: fallback };
   }
 
   bool isSome(const this) {
-    return match (this) { case Some(_): true, case None: false };
+    return match (this) { Some(_): true, None: false };
   }
 }
 

@@ -50,8 +50,8 @@ export string test_a_match_on_an_imported_enum_says_nothing_about_a_local_same_n
   T t = T.create();
   string src = IMPORTED + LOCAL + "export i32 f(u8[] file) {\n" +
                "  match (unzip(file)) {\n" +
-               "    case Bad(why): { return 0; }\n" +
-               "    case Ok(raw): { return raw.len(); }\n" +
+               "    Bad(why): { return 0; }\n" +
+               "    Ok(raw): { return raw.len(); }\n" +
                "  }\n}\n";
   t.eqStr(codes(src), "", "refused a file whose subject is imported");
   return t.report();
@@ -67,10 +67,10 @@ export string test_the_arms_siblings_are_quiet_too_when_the_subject_is_imported(
     "a type test on an imported value",
     "a payload read through a narrowed import");
   string[] body = string[](
-    "export i32 f(u8[] b) { match (unzip(b)) { case Bad(w): { return 0; } case Ok(a, c): { return 1; } } }",
-    "export i32 f(u8[] b) { match (unzip(b)) { case Ok(raw): { return 1; } case Bad(w): { return 0; } } }",
+    "export i32 f(u8[] b) { match (unzip(b)) { Bad(w): { return 0; } Ok(a, c): { return 1; } } }",
+    "export i32 f(u8[] b) { match (unzip(b)) { Ok(raw): { return 1; } Bad(w): { return 0; } } }",
     "export i32 f(u8[] b) { return unzip(b) is Ok ? 1 : 0; }",
-    "export i32 f(u8[] b) { match (unzip(b)) { case Ok(raw): { return raw.len(); } case Bad(w): { return w.len(); } } }");
+    "export i32 f(u8[] b) { match (unzip(b)) { Ok(raw): { return raw.len(); } Bad(w): { return w.len(); } } }");
   string[] loud = string[what.len()](fill: "");
   i32 n = 0;
   for (i32 i = 0; i < body.len(); i++) {
@@ -91,7 +91,7 @@ export string test_a_local_enum_is_still_checked_so_the_rule_above_is_not_blanke
   // shape, with the same names.
   T t = T.create();
   string src = LOCAL + "export i32 f() {\n  match (Object.Ok(1, u8[0]())) {\n" +
-               "    case Ok(kind, content): { return kind; }\n  }\n}\n";
+               "    Ok(kind, content): { return kind; }\n  }\n}\n";
   t.isTrue(codes(src) != "",
            "a local match missing an arm was accepted — the checker is silent, not correct");
   return t.report();

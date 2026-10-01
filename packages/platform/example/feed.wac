@@ -64,9 +64,9 @@ export i32 main(Core core, Cli cli) {
   bool reading = true;
   while (reading) {
     match (cli.recv(kid.handle).wait()) {
-      case Data(bytes): { heard = heard + string.fromBytes(bytes); }
-      case End: { reading = false; }
-      case Failed(why): { core.warn("feed: reading the child failed: " + why); return 2; }
+      Data(bytes): { heard = heard + string.fromBytes(bytes); }
+      End: { reading = false; }
+      Failed(why): { core.warn("feed: reading the child failed: " + why); return 2; }
     }
   }
   say(cli, "the child heard what landed and nothing else", heard == "heard: kept\n");
@@ -103,9 +103,9 @@ bool flooded(Core core, Cli cli) {
   bool reading = true;
   while (reading) {
     match (cli.recv(kid.handle).wait()) {
-      case Data(bytes): { got = got + bytes.len(); tail = string.fromBytes(bytes); }
-      case End: { reading = false; }
-      case Failed(why): { core.warn("feed: reading the flood failed: " + why); return false; }
+      Data(bytes): { got = got + bytes.len(); tail = string.fromBytes(bytes); }
+      End: { reading = false; }
+      Failed(why): { core.warn("feed: reading the flood failed: " + why); return false; }
     }
   }
   say(cli, "a child that outruns its reader loses nothing", got == FLOOD_BYTES() + VERDICT_LEN());

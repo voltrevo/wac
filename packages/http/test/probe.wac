@@ -24,15 +24,15 @@ void writeInt(Buf out, i32 v) {
 export u8[] parse(u8[] input, i32 maxBody) {
   Buf out = Buf.create();
   match (parseRequest(input, maxBody)) {
-    case Incomplete: {
+    Incomplete: {
       out.pushAll("incomplete".toBytes());
     }
-    case Bad(code): {
+    Bad(code): {
       out.pushAll("bad".toBytes());
       out.push(0);
       writeInt(out, code);
     }
-    case Ok(request): {
+    Ok(request): {
       out.pushAll("ok".toBytes());
       out.push(0);
       out.pushAll(request.method);

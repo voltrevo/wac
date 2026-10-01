@@ -34,11 +34,11 @@ export i32 main(Core core, Cli cli) {
   Fs fs = Fs.onHost(cli, 0);
 
   match (openRepo(fs, root + "/.git", root)) {
-    case NoRepo(why): {
+    NoRepo(why): {
       core.warn("gitci: " + why);
       return 1;
     }
-    case Opened(repo): {
+    Opened(repo): {
       string branch = headRef(repo);
       if (branch == "") {
         // A detached HEAD has no branch to move, and moving `HEAD` itself is a different operation.
@@ -47,11 +47,11 @@ export i32 main(Core core, Cli cli) {
       }
       Vec<IndexEntry> index = Vec.create();
       match (writeWorkTree(repo, root, "", index)) {
-        case NotStored(why): {
+        NotStored(why): {
           core.warn("gitci: " + why);
           return 1;
         }
-        case Named(tree): {
+        Named(tree): {
           // **Who, from the config files git reads, and when, from the clock — the way git decides both.**
           //
           // This used to be a fixed identity and a fixed timestamp, and the comment here said the program
@@ -99,11 +99,11 @@ export i32 main(Core core, Cli cli) {
           }
           Who me = Who(who + " <" + mail + ">", when, zone);
           match (commitTree(repo, tree, branch, me, message, index)) {
-            case NotStored(why): {
+            NotStored(why): {
               core.warn("gitci: " + why);
               return 1;
             }
-            case Named(commit): {
+            Named(commit): {
               core.log(string.fromBytes(hexBytes(commit)));
               return 0;
             }

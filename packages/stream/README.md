@@ -27,9 +27,9 @@ host blocks instead, wac can stay an ordinary nested loop:
 export i32 upperCase(fn<Read()> read, fn<bool(u8[])> write) {
   while (true) {
     match (read()) {              // <- blocks in the host until an answer exists
-      case Data(bytes): { ... }
-      case End: { break; }
-      case Failed(why): { return 1; }
+      Data(bytes): { ... }
+      End: { break; }
+      Failed(why): { return 1; }
     }
   }
 }

@@ -59,15 +59,15 @@ JsonObject vectorsOf(Cli cli) {
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }
   match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
 JsonObject blindCase(Cli cli) {
   match (arrayOf(vectorsOf(cli), "cases").get(0)) {
-    case Object(members): { return members; }
-    else: { trap; }
+    Object(members): { return members; }
+    default: { trap; }
   }
 }
 
@@ -75,8 +75,8 @@ u8[] strBytes(Cli cli, string key) {
   JsonValue? v = blindCase(cli).getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Str(bytes): { return bytes; }
-    else: { trap; }
+    Str(bytes): { return bytes; }
+    default: { trap; }
   }
 }
 
@@ -84,8 +84,8 @@ i64 numField(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    case Number(value, raw): { return value as~ i64; }
-    else: { trap; }
+    Number(value, raw): { return value as~ i64; }
+    default: { trap; }
   }
 }
 
@@ -108,8 +108,8 @@ i32 listLen(Cli cli, string key) { return arrayOf(vectorsOf(cli), key).len(); }
 
 u8[] listAt(Cli cli, string key, i32 i) {
   match (arrayOf(vectorsOf(cli), key).get(i)) {
-    case Str(bytes): { return bytes; }
-    else: { trap; }
+    Str(bytes): { return bytes; }
+    default: { trap; }
   }
 }
 

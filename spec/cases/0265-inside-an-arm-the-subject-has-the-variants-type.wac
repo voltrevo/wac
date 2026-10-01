@@ -10,9 +10,9 @@ enum Shape {
 
 f64 widthOf(Shape s) {
   match (s) {
-    case Rect:   return s.width;
-    case Circle: return s.radius * 2.0;
-    case Point:  return 0.0;
+    Rect: { return s.width; }
+    Circle: { return s.radius * 2.0; }
+    Point: { return 0.0; }
   }
 }
 export i32 f() { return widthOf(Shape.Rect(3.0, 4.0)) as~ i32; }

@@ -194,12 +194,12 @@ export struct Feed {
       return this.remaining();
     }
     match (this.cli.readChunk()) {
-      case Data(bytes): { return bytes; }
-      case End: {
+      Data(bytes): { return bytes; }
+      End: {
         this.ended = true;
         return u8[0]();
       }
-      case Failed(why): {
+      Failed(why): {
         // A read that failed *ends* the input as far as a filter is concerned, and the reason is kept:
         // a program that reported success over a half-read file would be the worst of the three
         // possible answers.

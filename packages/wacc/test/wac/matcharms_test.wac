@@ -11,7 +11,7 @@
 //     element access out of bounds` and then a null dereference, naming `example/wacc.wac` rather than
 //     the program. The loop asked *whether* there was an `else`, so a second one was invisible and
 //     reached an emitter that indexed past the end of an array;
-//   - **`case A(n, n)`** — compiled, and the *second* binding silently won: `A(7, 9)` answered 9.
+//   - **`A(n, n)`** — compiled, and the *second* binding silently won: `A(7, 9)` answered 9.
 //
 // `issues/lang/0239a`. The rest of the table was already enforced, which is the reason to pin all nine
 // here rather than only the two: a cluster where two of nine were missing is one where the next
@@ -36,15 +36,15 @@ export string test_every_match_rule_the_reference_has_is_enforced() {
     "one variant cased twice", "an else that nothing reaches", "a match missing a variant",
     "a case binding one name twice", "a binding taking the subject's name");
   string[] src = string[](
-    "enum E { A, B }\nexport i32 f(E? e) { match (e) { case A: { return 1; } case B: { return 2; } } }\n",
-    "export i32 f(i32 x) { match (x) { case A: { return 1; } else: { return 2; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } else: { return 3; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case Nope: { return 1; } else: { return 2; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case A: { return 9; } else: { return 2; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } else: { return 3; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } }\n",
-    ENUM + "export i32 f(E e) { match (e) { case A(n, n): { return n; } else: { return 2; } } }\n",
-    "enum E { A(i32 x), B }\nexport i32 f(E e) { match (e) { case A(e): { return 1; } else: { return 2; } } }\n");
+    "enum E { A, B }\nexport i32 f(E? e) { match (e) { A: { return 1; } B: { return 2; } } }\n",
+    "export i32 f(i32 x) { match (x) { A: { return 1; } default: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } default: { return 2; } default: { return 3; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { Nope: { return 1; } default: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } A: { return 9; } default: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } B: { return 2; } default: { return 3; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { A(n, n): { return n; } default: { return 2; } } }\n",
+    "enum E { A(i32 x), B }\nexport i32 f(E e) { match (e) { A(e): { return 1; } default: { return 2; } } }\n");
   t.eqI32(name.len(), src.len(), "the name and program lists disagree in length");
   if (name.len() != src.len()) { return t.report(); }
   for (i32 i = 0; i < src.len(); i++) {
@@ -73,16 +73,16 @@ export string test_the_ordinary_matches_are_accepted() {
                            "arms that are not literals at all",
                            "a match expression as an argument");
   string[] src = string[](
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } } }\n",
-    ENUM + "export i32 f(E e) { match (e) { case A(p, q): { return p + q; } else: { return 2; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } } }\n",
-    ENUM + "export i32 f(E e) { match (e) { case A(_, _): { return 1; } else: { return 2; } } }\n",
-    ENUM + "export i32 f(E e) { match (e) { case A(_, y): { return y; } else: { return 2; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: 1, else: 2 }; return n; }\n",
-    "enum E { A, B }\nexport i32 f(E e) { string s = match (e) { case A: \"x\", else: \"y\" }; return s.len(); }\n",
-    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { case A: 1, else: 2.5 }; return d; }\n",
-    "enum E { A, B }\nexport i32 f(E e, i32 x, i32 y) { i32 n = match (e) { case A: x, else: y }; return n; }\n",
-    "enum E { A, B }\ni32 g(i32 v) { return v; }\nexport i32 f(E e) { return g(match (e) { case A: 1, else: 2 }); }\n");
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } default: { return 2; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { A(p, q): { return p + q; } default: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } B: { return 2; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { A(_, _): { return 1; } default: { return 2; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { A(_, y): { return y; } default: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { A: 1, default: 2 }; return n; }\n",
+    "enum E { A, B }\nexport i32 f(E e) { string s = match (e) { A: \"x\", default: \"y\" }; return s.len(); }\n",
+    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { A: 1, default: 2.5 }; return d; }\n",
+    "enum E { A, B }\nexport i32 f(E e, i32 x, i32 y) { i32 n = match (e) { A: x, default: y }; return n; }\n",
+    "enum E { A, B }\ni32 g(i32 v) { return v; }\nexport i32 f(E e) { return g(match (e) { A: 1, default: 2 }); }\n");
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused an ordinary match");
   }
@@ -109,17 +109,17 @@ export string test_the_ordinary_matches_are_accepted() {
 export string test_a_binding_repeated_three_times_reports_twice() {
   T t = T.create();
   string three = "enum F { A(i32 x, i32 y, i32 z), B }\n";
-  t.eqI32(diagsFor(three + "export i32 f(F e) { match (e) { case A(n, n, n): " +
-                   "{ return n; } else: { return 2; } } }\n"), 2, "a name bound three times");
-  t.eqI32(diagsFor(ENUM + "export i32 f(E e) { match (e) { case A(n, n): " +
-                   "{ return n; } else: { return 2; } } }\n"), 1, "a name bound twice");
+  t.eqI32(diagsFor(three + "export i32 f(F e) { match (e) { A(n, n, n): " +
+                   "{ return n; } default: { return 2; } } }\n"), 2, "a name bound three times");
+  t.eqI32(diagsFor(ENUM + "export i32 f(E e) { match (e) { A(n, n): " +
+                   "{ return n; } default: { return 2; } } }\n"), 1, "a name bound twice");
   return t.report();
 }
 
 export string test_two_else_arms_report_exactly_once() {
   T t = T.create();
-  string src = "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } " +
-               "else: { return 2; } else: { return 3; } } }\n";
+  string src = "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } " +
+               "default: { return 2; } default: { return 3; } } }\n";
   t.eqI32(diagsFor(src), 1, "two else arms");
   return t.report();
 }

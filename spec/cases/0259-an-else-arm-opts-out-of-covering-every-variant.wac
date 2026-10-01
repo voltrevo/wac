@@ -10,8 +10,8 @@ enum Shape {
 
 f64 radiusOr(Shape s, f64 fallback) {
   match (s) {
-    case Circle(r): return r;
-    else:           return fallback;
+    Circle(r): { return r; }
+    default: { return fallback; }
   }
 }
 export i32 f() { return (radiusOr(Shape.Point, 1.5) * 10.0) as~ i32; }

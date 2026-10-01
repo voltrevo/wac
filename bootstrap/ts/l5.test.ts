@@ -136,9 +136,9 @@ const programs: [string, string, number][] = [
     enum Shape { Circle(i32 r), Rect(i32 w, i32 h), Empty }
     i32 area(Shape s) {
       match (s) {
-        case Circle(r): { return 3 * r * r; }
-        case Rect(w, h): { return w * h; }
-        case Empty: { return 0; }
+        Circle(r): { return 3 * r * r; }
+        Rect(w, h): { return w * h; }
+        Empty: { return 0; }
       }
       return -1;
     }
@@ -151,10 +151,10 @@ const programs: [string, string, number][] = [
       Some(i32 v), None
 
       bool isSome(const this) {
-        return match (this) { case Some(_): true, case None: false };
+        return match (this) { Some(_): true, None: false };
       }
       i32 orElse(const this, i32 d) {
-        return match (this) { case Some(v): v, case None: d };
+        return match (this) { Some(v): v, None: d };
       }
     }
     export i32 main() {
@@ -320,7 +320,7 @@ const programs: [string, string, number][] = [
   ["a generic enum, with match", `
     enum Option<T> {
       Some(T v), None
-      T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+      T orElse(const this, T d) { return match (this) { Some(v): v, None: d }; }
     }
     i32 main() {
       Option<i32> a = Some(7);
@@ -355,7 +355,7 @@ const programs: [string, string, number][] = [
     struct P { i32 x; }
     enum Option<T> {
       Some(T v), None
-      T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+      T orElse(const this, T d) { return match (this) { Some(v): v, None: d }; }
     }
     i32 main() { Option<P> o = Some(P(6)); return o.orElse(P(0)).x; }`, 6],
 
@@ -414,8 +414,8 @@ const programs: [string, string, number][] = [
 
   ["else: as a match arm, statement and expression", `
     enum K { A(i32 v), B, C }
-    i32 f(K k) { match (k) { case A(v): { return v; } else: { return 9; } } return 0; }
-    i32 g(K k) { return match (k) { case A(v): v, else: 9 }; }
+    i32 f(K k) { match (k) { A(v): { return v; } default: { return 9; } } return 0; }
+    i32 g(K k) { return match (k) { A(v): v, default: 9 }; }
     i32 main() { return f(A(4)) * 1000 + f(B) * 100 + g(A(2)) * 10 + g(C); }`, 4929],
 
   // wasm's `struct.set` wants the reference before the value, and a compound write reads before it
@@ -527,7 +527,7 @@ const programs: [string, string, number][] = [
   ["a generic free function, declared and not called", `
     enum Option<T> { Some(T v), None }
     Option<U> mapOption<T, U>(Option<T> o, fn<U(T)> f) { return Option.None; }
-    i32 main() { Option<i32> a = Some(4); return match (a) { case Some(v): v, case None: 0 }; }`, 4],
+    i32 main() { Option<i32> a = Some(4); return match (a) { Some(v): v, None: 0 }; }`, 4],
 
   // **Three features that went in on a throwaway probe and were never pinned.** Each was checked
   // by hand against a scratch script, printed the right number, and was left with no test — so

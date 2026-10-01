@@ -50,37 +50,37 @@ import { Frame, Next, nextIn, EPOCH_1RTT, EPOCH_INITIAL } from "../../src/frame.
 /** Whether a `Next` is the `Incomplete` answer. */
 bool isIncomplete(Next n) {
   match (n.frame) {
-    case Incomplete: { return true; }
-    else: { return false; }
+    Incomplete: { return true; }
+    default: { return false; }
   }
 }
 
 /** A short name for what came back, so a failure says which wrong answer was given. */
 string named(Next n) {
   match (n.frame) {
-    case Incomplete: { return "Incomplete"; }
-    case Unknown(kind): { return "Unknown(" + itoa(kind as! i32) + ")"; }
-    case NotPermitted(kind): { return "NotPermitted(" + itoa(kind as! i32) + ")"; }
-    case Padding(count): { return "Padding(" + itoa(count) + ")"; }
-    case Ping: { return "Ping"; }
-    case Ack(largest, delay): { return "Ack"; }
-    case Crypto(offset, data): { return "Crypto"; }
-    case ConnectionClose(code, reason): { return "ConnectionClose"; }
-    case ResetStream(id, code, finalSize): { return "ResetStream"; }
-    case StopSending(id, code): { return "StopSending"; }
-    case NewToken(token): { return "NewToken"; }
-    case Stream(id, offset, data, fin): { return "Stream"; }
-    case MaxData(max): { return "MaxData"; }
-    case MaxStreamData(id, max): { return "MaxStreamData"; }
-    case MaxStreams(uni, max): { return "MaxStreams"; }
-    case DataBlocked(at): { return "DataBlocked"; }
-    case StreamDataBlocked(id, at): { return "StreamDataBlocked"; }
-    case StreamsBlocked(uni, at): { return "StreamsBlocked"; }
-    case NewConnectionId(seq, retire, cid, token): { return "NewConnectionId"; }
-    case RetireConnectionId(seq): { return "RetireConnectionId"; }
-    case PathChallenge(data): { return "PathChallenge"; }
-    case PathResponse(data): { return "PathResponse"; }
-    case HandshakeDone: { return "HandshakeDone"; }
+    Incomplete: { return "Incomplete"; }
+    Unknown(kind): { return "Unknown(" + itoa(kind as! i32) + ")"; }
+    NotPermitted(kind): { return "NotPermitted(" + itoa(kind as! i32) + ")"; }
+    Padding(count): { return "Padding(" + itoa(count) + ")"; }
+    Ping: { return "Ping"; }
+    Ack(largest, delay): { return "Ack"; }
+    Crypto(offset, data): { return "Crypto"; }
+    ConnectionClose(code, reason): { return "ConnectionClose"; }
+    ResetStream(id, code, finalSize): { return "ResetStream"; }
+    StopSending(id, code): { return "StopSending"; }
+    NewToken(token): { return "NewToken"; }
+    Stream(id, offset, data, fin): { return "Stream"; }
+    MaxData(max): { return "MaxData"; }
+    MaxStreamData(id, max): { return "MaxStreamData"; }
+    MaxStreams(uni, max): { return "MaxStreams"; }
+    DataBlocked(at): { return "DataBlocked"; }
+    StreamDataBlocked(id, at): { return "StreamDataBlocked"; }
+    StreamsBlocked(uni, at): { return "StreamsBlocked"; }
+    NewConnectionId(seq, retire, cid, token): { return "NewConnectionId"; }
+    RetireConnectionId(seq): { return "RetireConnectionId"; }
+    PathChallenge(data): { return "PathChallenge"; }
+    PathResponse(data): { return "PathResponse"; }
+    HandshakeDone: { return "HandshakeDone"; }
   }
 }
 

@@ -93,9 +93,9 @@ export i32 main(Core core, Cli cli) {
       // Consume it, exactly as a server on the far side of a relay's stream would. The read is
       // waited on rather than polled: the bytes are already there.
       match (cli.recv(server.handle).wait()) {
-        case Data(got): { }
-        case End: { core.warn("writeread: the peer's own read ended"); }
-        case Failed(why): { core.warn("writeread: the peer's read failed: " + why); }
+        Data(got): { }
+        End: { core.warn("writeread: the peer's own read ended"); }
+        Failed(why): { core.warn("writeread: the peer's read failed: " + why); }
       }
     }
     // After each send, ask whether the outstanding read has settled. Polling with a zero deadline is
@@ -105,17 +105,17 @@ export i32 main(Core core, Cli cli) {
       core.log("writeread: the read settled after " + itoa(sent) + " sends (" +
                itoa(sent * 498) + " bytes)");
       match (pending.wait()) {
-        case Data(bytes): {
+        Data(bytes): {
           core.log("writeread: VERDICT data — " + itoa(bytes.len()) +
                    " bytes, so the peer spoke after all");
           return 0;
         }
-        case End: {
+        End: {
           core.warn("writeread: VERDICT End — a write ended a read on the same handle, with the " +
                     "peer still connected. This is the platform, not the caller.");
           return 3;
         }
-        case Failed(why): {
+        Failed(why): {
           core.warn("writeread: VERDICT failed — " + why);
           return 4;
         }
@@ -128,15 +128,15 @@ export i32 main(Core core, Cli cli) {
   i32 late = core.waitAny(one, 1000);
   if (late >= 0) {
     match (pending.wait()) {
-      case Data(bytes): {
+      Data(bytes): {
         core.log("writeread: VERDICT data — " + itoa(bytes.len()) + " bytes, late");
         return 0;
       }
-      case End: {
+      End: {
         core.warn("writeread: VERDICT End, shortly after the writes — the platform, not the caller.");
         return 3;
       }
-      case Failed(why): {
+      Failed(why): {
         core.warn("writeread: VERDICT failed, late — " + why);
         return 4;
       }

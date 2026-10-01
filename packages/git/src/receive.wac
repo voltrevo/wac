@@ -75,8 +75,8 @@ export bool noRefsYet(const Advertised ad) {
  */
 export bool noRefsIn(u8[] advertisement) {
   match (parseAdvertisement(advertisement)) {
-    case Garbled(why): { return false; }
-    case Said(ad): { return noRefsYet(ad); }
+    Garbled(why): { return false; }
+    Said(ad): { return noRefsYet(ad); }
   }
 }
 
@@ -94,8 +94,8 @@ export bool noRefsIn(u8[] advertisement) {
  */
 export u8[] oldFor(u8[] advertisement, string ref) {
   match (parseAdvertisement(advertisement)) {
-    case Garbled(why): { return absentName(); }
-    case Said(ad) : {
+    Garbled(why): { return absentName(); }
+    Said(ad) : {
       if (noRefsYet(ad)) { return absentName(); }
       for (i32 i = 0; i < ad.refs.len(); i++) {
         if (ad.refs.get(i).name == ref) { return ad.refs.get(i).target; }
@@ -114,8 +114,8 @@ export u8[] oldFor(u8[] advertisement, string ref) {
 export Vec<u8[]> advertisedTargets(u8[] advertisement) {
   Vec<u8[]> out = Vec.create();
   match (parseAdvertisement(advertisement)) {
-    case Garbled(why): { return out; }
-    case Said(ad): {
+    Garbled(why): { return out; }
+    Said(ad): {
       if (noRefsYet(ad)) { return out; }
       for (i32 i = 0; i < ad.refs.len(); i++) { out.push(ad.refs.get(i).target); }
       return out;
@@ -210,12 +210,12 @@ export Report readReport(u8[] b) {
   bool reading = true;
   while (reading) {
     match (readPkt(b, pos)) {
-      case Broken(why): { return Report(false, "", refs, "the reply is not pkt-line: " + why); }
-      case Done: { reading = false; }
-      case Flush: { reading = false; }
-      case Delim: { }
-      case ResponseEnd: { reading = false; }
-      case Line(payload): {
+      Broken(why): { return Report(false, "", refs, "the reply is not pkt-line: " + why); }
+      Done: { reading = false; }
+      Flush: { reading = false; }
+      Delim: { }
+      ResponseEnd: { reading = false; }
+      Line(payload): {
         i32 to = endOf(payload);
         if (starts(payload, "unpack ")) {
           sawUnpack = true;

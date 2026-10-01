@@ -108,11 +108,11 @@ export string test_an_annotated_tags_fields_are_the_ones_git_prints(Core core, C
   Git g = tagged(t, cli, "tag");
   ParsedTag parsed = parseTag(g.raw(string[]("cat-file", "tag", "v1")));
   match (parsed) {
-    case Unreadable(why): {
+    Unreadable(why): {
       t.isTrue(false, "git's own tag did not parse: " + why);
       return t.report();
     }
-    case Annotated(tag): {
+    Annotated(tag): {
       // Each field against git's answer for the same tag, rather than against the string this test
       // passed to `git tag` — the point is that the bytes were read, not that they were remembered.
       t.eqStr(string.fromBytes(hexOf(tag.object)), g.text(string[]("rev-parse", "v1^{commit}")),
@@ -153,8 +153,8 @@ export string test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too
            "git fsck no longer calls a missing tagger a warning — it said: " + fsck);
 
   match (parseTag(g.raw(string[]("cat-file", "tag", sha)))) {
-    case Unreadable(why): { t.isTrue(false, "a tag without a tagger was refused: " + why); }
-    case Annotated(tag): {
+    Unreadable(why): { t.isTrue(false, "a tag without a tagger was refused: " + why); }
+    Annotated(tag): {
       t.eqStr(tag.name, "bare", "the tag name");
       t.eqStr(tag.message, "no tagger here\n", "the message");
     }
@@ -177,8 +177,8 @@ export string test_a_tag_object_that_is_not_one_says_which_part_is_missing() {
 
   for (i32 i = 0; i < what.len(); i++) {
     match (parseTag(text[i].toBytes())) {
-      case Annotated(tag): { t.isTrue(false, what[i] + ": parsed as a tag"); }
-      case Unreadable(why): {
+      Annotated(tag): { t.isTrue(false, what[i] + ": parsed as a tag"); }
+      Unreadable(why): {
         t.isTrue(contains(why, expect[i]),
                  what[i] + ": expected the reason to mention \"" + expect[i] + "\", got \"" +
                  why + "\"");

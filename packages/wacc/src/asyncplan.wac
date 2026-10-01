@@ -67,18 +67,18 @@ export i32 planSuspends(AsyncPlan p) { return p.suspendAt.len(); }
 /** Whether `e` contains an `await` anywhere inside it. */
 export bool awaitInExpr(Expr e) {
   match (e.kind) {
-    case Await(operand): { return true; }
-    case MatchExpr(subject, arms): {
+    Await(operand): { return true; }
+    MatchExpr(subject, arms): {
       if (awaitInExpr(subject)) { return true; }
       for (i32 i = 0; i < arms.len(); i++) {
         if (awaitInBody(arms[i].body)) { return true; }
       }
       return false;
     }
-    case IntLit(tok): { return false; }
-    case FloatLit(tok): { return false; }
-    case StrLit(tok): { return false; }
-    case Jsx(tagTok, closeTok, attrs, kids): {
+    IntLit(tok): { return false; }
+    FloatLit(tok): { return false; }
+    StrLit(tok): { return false; }
+    Jsx(tagTok, closeTok, attrs, kids): {
       for (i32 i = 0; i < attrs.len(); i++) {
         if (awaitInExpr(attrs[i].value)) { return true; }
       }
@@ -87,31 +87,31 @@ export bool awaitInExpr(Expr e) {
       }
       return false;
     }
-    case JsxText(startOff, endOff): { return false; }
-    case BoolLit(value): { return false; }
-    case NullLit: { return false; }
-    case Ident(tok): { return false; }
-    case Unary(op, operand): { return awaitInExpr(operand); }
-    case Binary(op, left, right): { return awaitInExpr(left) || awaitInExpr(right); }
-    case Cast(op, operand, target): { return awaitInExpr(operand); }
-    case Is(left, target, other, negated): {
+    JsxText(startOff, endOff): { return false; }
+    BoolLit(value): { return false; }
+    NullLit: { return false; }
+    Ident(tok): { return false; }
+    Unary(op, operand): { return awaitInExpr(operand); }
+    Binary(op, left, right): { return awaitInExpr(left) || awaitInExpr(right); }
+    Cast(op, operand, target): { return awaitInExpr(operand); }
+    Is(left, target, other, negated): {
       if (awaitInExpr(left)) { return true; }
       return (other is not null) && awaitInExpr(other!);
     }
-    case Ternary(cond, then, els): {
+    Ternary(cond, then, els): {
       return awaitInExpr(cond) || awaitInExpr(then) || awaitInExpr(els);
     }
-    case Call(callee, args, typeArgs): {
+    Call(callee, args, typeArgs): {
       if (awaitInExpr(callee)) { return true; }
       for (i32 i = 0; i < args.len(); i++) {
         if (awaitInExpr(args[i])) { return true; }
       }
       return false;
     }
-    case Index(arr, index): { return awaitInExpr(arr) || awaitInExpr(index); }
-    case Member(obj, nameTok): { return awaitInExpr(obj); }
-    case Unwrap(operand): { return awaitInExpr(operand); }
-    case Construct(ctype, args, named): {
+    Index(arr, index): { return awaitInExpr(arr) || awaitInExpr(index); }
+    Member(obj, nameTok): { return awaitInExpr(obj); }
+    Unwrap(operand): { return awaitInExpr(operand); }
+    Construct(ctype, args, named): {
       for (i32 i = 0; i < args.len(); i++) {
         if (awaitInExpr(args[i])) { return true; }
       }
@@ -120,9 +120,9 @@ export bool awaitInExpr(Expr e) {
       }
       return false;
     }
-    case TypeName(qualifier): { return false; }
-    case Incr(target, op, prefix): { return awaitInLvalue(target); }
-    case ArrNew(elem, size, fill, elements): {
+    TypeName(qualifier): { return false; }
+    Incr(target, op, prefix): { return awaitInLvalue(target); }
+    ArrNew(elem, size, fill, elements): {
       if ((size is not null) && awaitInExpr(size!)) { return true; }
       if ((fill is not null) && awaitInExpr(fill!)) { return true; }
       for (i32 i = 0; i < elements.len(); i++) {
@@ -133,37 +133,37 @@ export bool awaitInExpr(Expr e) {
     // **A lambda's body is not this function's.** An `await` in there is refused by the checker
     // already — code 211, `issues/lang/0294c` — so it cannot be a suspension of *this* machine and
     // must not be counted as one.
-    case Lambda(params, body, lamAsync): { return false; }
+    Lambda(params, body, lamAsync): { return false; }
   }
 }
 
 bool awaitInLvalue(Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): { return false; }
-    case LField(base, nameTok): { return awaitInLvalue(base); }
-    case LIndex(base, index): { return awaitInLvalue(base) || awaitInExpr(index); }
-    case LUnwrap(base): { return awaitInLvalue(base); }
+    LIdent(tok): { return false; }
+    LField(base, nameTok): { return awaitInLvalue(base); }
+    LIndex(base, index): { return awaitInLvalue(base) || awaitInExpr(index); }
+    LUnwrap(base): { return awaitInLvalue(base); }
   }
 }
 
 /** Whether `s` contains an `await` anywhere inside it. */
 export bool awaitInStmt(Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): { return awaitInExpr(init); }
-    case Assign(target, op, rhs): { return awaitInLvalue(target) || awaitInExpr(rhs); }
-    case IncrStmt(target, op): { return awaitInLvalue(target); }
-    case If(cond, then, els): {
+    Var(type, nameTok, init, isConst): { return awaitInExpr(init); }
+    Assign(target, op, rhs): { return awaitInLvalue(target) || awaitInExpr(rhs); }
+    IncrStmt(target, op): { return awaitInLvalue(target); }
+    If(cond, then, els): {
       return awaitInExpr(cond) || awaitInBody(then) || awaitInBody(els);
     }
-    case While(cond, body): { return awaitInExpr(cond) || awaitInBody(body); }
-    case For(init, cond, update, body): {
+    While(cond, body): { return awaitInExpr(cond) || awaitInBody(body); }
+    For(init, cond, update, body): {
       if ((init is not null) && awaitInStmt(init!)) { return true; }
       if ((cond is not null) && awaitInExpr(cond!)) { return true; }
       if ((update is not null) && awaitInStmt(update!)) { return true; }
       return awaitInBody(body);
     }
-    case DoWhile(body, cond): { return awaitInBody(body) || awaitInExpr(cond); }
-    case Switch(subject, cases): {
+    DoWhile(body, cond): { return awaitInBody(body) || awaitInExpr(cond); }
+    Switch(subject, cases): {
       if (awaitInExpr(subject)) { return true; }
       for (i32 i = 0; i < cases.len(); i++) {
         if (!(cases[i].value is null) && awaitInExpr(cases[i].value!)) { return true; }
@@ -171,19 +171,19 @@ export bool awaitInStmt(Stmt s) {
       }
       return false;
     }
-    case Return(value): { return (value is not null) && awaitInExpr(value!); }
-    case Break: { return false; }
-    case Continue: { return false; }
-    case Trap(value): { return (value is not null) && awaitInExpr(value!); }
-    case Match(subject, arms): {
+    Return(value): { return (value is not null) && awaitInExpr(value!); }
+    Break: { return false; }
+    Continue: { return false; }
+    Trap(value): { return (value is not null) && awaitInExpr(value!); }
+    Match(subject, arms): {
       if (awaitInExpr(subject)) { return true; }
       for (i32 i = 0; i < arms.len(); i++) {
         if (awaitInBody(arms[i].body)) { return true; }
       }
       return false;
     }
-    case Block(body): { return awaitInBody(body); }
-    case ExprStmt(expr): { return awaitInExpr(expr); }
+    Block(body): { return awaitInBody(body); }
+    ExprStmt(expr): { return awaitInExpr(expr); }
   }
 }
 
@@ -199,8 +199,8 @@ export bool awaitInBody(Stmt[] body) {
 
 bool isAwait(Expr e) {
   match (e.kind) {
-    case Await(operand): { return true; }
-    else: { return false; }
+    Await(operand): { return true; }
+    default: { return false; }
   }
 }
 
@@ -257,49 +257,49 @@ void walkPlan(Stmt[] body, Walked w) {
       // `return await e;` says the function's own return type. A bare `await e;` says neither,
       // which is why it is declined rather than counted. This rule lived in an `isSuspension`
       // nothing called as well as here, until 2026-09-01 — `tools/wac/deadexports.wac` found it.
-      case Var(type, nameTok, init, isConst): {
+      Var(type, nameTok, init, isConst): {
         if (w.h < w.hoist.len()) {
           w.hoist[w.h] = nameTok; w.hoistTy[w.h] = type; w.h = w.h + 1;
         }
         if (isAwait(init)) { w.n = w.n + 1; }
         else if (awaitInExpr(init)) { w.why = "an `await` nested inside a larger expression"; }
       }
-      case Return(value): {
+      Return(value): {
         if ((value is not null) && isAwait(value!)) { w.n = w.n + 1; }
         else if ((value is not null) && awaitInExpr(value!)) {
           w.why = "an `await` nested inside a larger expression";
         }
       }
-      case If(cond, then, els): {
+      If(cond, then, els): {
         if (awaitInExpr(cond)) { w.why = "an `await` in an `if` condition"; }
         walkPlan(then, w);
         walkPlan(els, w);
       }
-      case While(cond, body2): {
+      While(cond, body2): {
         if (awaitInExpr(cond)) { w.why = "an `await` in a `while` condition"; }
         walkPlan(body2, w);
       }
-      case For(init, cond, update, body2): {
+      For(init, cond, update, body2): {
         if ((init is not null) && awaitInStmt(init!)) { w.why = "an `await` in a `for` initialiser"; }
         // **The induction variable is hoisted like any other.** It is declared once and read after
         // every suspension in the body, so leaving it a plain local would reset it on resume — the
         // loop would run its first iteration for ever.
         if (init is not null) {
           match (init!.kind) {
-            case Var(type2, nameTok2, init2, isConst2): {
+            Var(type2, nameTok2, init2, isConst2): {
               if (w.h < w.hoist.len()) {
                 w.hoist[w.h] = nameTok2; w.hoistTy[w.h] = type2; w.h = w.h + 1;
               }
             }
-            else: { }
+            default: { }
           }
         }
         if ((cond is not null) && awaitInExpr(cond!)) { w.why = "an `await` in a `for` condition"; }
         if ((update is not null) && awaitInStmt(update!)) { w.why = "an `await` in a `for` update"; }
         walkPlan(body2, w);
       }
-      case Block(body2): { walkPlan(body2, w); }
-      else: {
+      Block(body2): { walkPlan(body2, w); }
+      default: {
         if (awaitInStmt(s)) { w.why = declineFor(s); }
       }
     }
@@ -316,18 +316,18 @@ void walkPlan(Stmt[] body, Walked w) {
  */
 string declineFor(Stmt s) {
   match (s.kind) {
-    case While(cond, body): { return "an `await` inside a `while`"; }
-    case For(init, cond, update, body): { return "an `await` inside a `for`"; }
-    case DoWhile(body, cond): { return "an `await` inside a `do`"; }
-    case If(cond, then, els): { return "an `await` inside an `if`"; }
-    case Switch(subject, cases): { return "an `await` inside a `switch`"; }
-    case Match(subject, arms): { return "an `await` inside a `match`"; }
-    case Block(body): { return "an `await` inside a nested block"; }
-    case Assign(target, op, rhs): { return "an `await` on the right of an assignment"; }
+    While(cond, body): { return "an `await` inside a `while`"; }
+    For(init, cond, update, body): { return "an `await` inside a `for`"; }
+    DoWhile(body, cond): { return "an `await` inside a `do`"; }
+    If(cond, then, els): { return "an `await` inside an `if`"; }
+    Switch(subject, cases): { return "an `await` inside a `switch`"; }
+    Match(subject, arms): { return "an `await` inside a `match`"; }
+    Block(body): { return "an `await` inside a nested block"; }
+    Assign(target, op, rhs): { return "an `await` on the right of an assignment"; }
     // Its value is thrown away, so nothing in the source says what the ticket answers — and the
     // machine needs that type to declare the slot it suspends into. `T x = await e;` for now.
-    case ExprStmt(expr): { return "an `await` whose value is discarded"; }
-    else: { return "an `await` nested inside a larger expression"; }
+    ExprStmt(expr): { return "an `await` whose value is discarded"; }
+    default: { return "an `await` nested inside a larger expression"; }
   }
 }
 
@@ -348,18 +348,18 @@ i32 planCountStmts(Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     n = n + 1;
     match (body[i].kind) {
-      case If(cond, then, els): { n = n + planCountStmts(then) + planCountStmts(els); }
-      case While(cond, b2): { n = n + planCountStmts(b2); }
-      case For(init, cond, update, b2): { n = n + planCountStmts(b2) + 2; }
-      case DoWhile(b2, cond): { n = n + planCountStmts(b2); }
-      case Block(b2): { n = n + planCountStmts(b2); }
-      case Switch(subject, cases): {
+      If(cond, then, els): { n = n + planCountStmts(then) + planCountStmts(els); }
+      While(cond, b2): { n = n + planCountStmts(b2); }
+      For(init, cond, update, b2): { n = n + planCountStmts(b2) + 2; }
+      DoWhile(b2, cond): { n = n + planCountStmts(b2); }
+      Block(b2): { n = n + planCountStmts(b2); }
+      Switch(subject, cases): {
         for (i32 j = 0; j < cases.len(); j++) { n = n + planCountStmts(cases[j].body); }
       }
-      case Match(subject, arms): {
+      Match(subject, arms): {
         for (i32 j = 0; j < arms.len(); j++) { n = n + planCountStmts(arms[j].body); }
       }
-      else: { }
+      default: { }
     }
   }
   return n;
@@ -369,8 +369,8 @@ i32 planCountStmts(Stmt[] body) {
 Ty planAnyTy(Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): { return type; }
-      else: { }
+      Var(type, nameTok, init, isConst): { return type; }
+      default: { }
     }
   }
   return Ty(TyKind.Prim(0 - 1), 1, 1);
@@ -381,7 +381,7 @@ export string describePlans(Program prog) {
   string out = "";
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!isAsync) { continue; }
         AsyncPlan p = planBody(body);
         if (!p.ok) {
@@ -391,7 +391,7 @@ export string describePlans(Program prog) {
                     + " hoist=" + planDecimal(p.hoist.len()) + "\n";
         }
       }
-      else: { }
+      default: { }
     }
   }
   return out;

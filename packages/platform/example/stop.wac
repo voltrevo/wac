@@ -39,9 +39,9 @@ export i32 main(Core core, Cli cli) {
 
   // Its first line, which is also the proof it reached the loop.
   match (cli.recv(kid.handle).wait()) {
-    case Data(bytes): { cli.write(("child said: " + string.fromBytes(bytes)).toBytes()); }
-    case End: { core.warn("stop: the child said nothing at all"); return 2; }
-    case Failed(why): { core.warn("stop: reading the child failed: " + why); return 2; }
+    Data(bytes): { cli.write(("child said: " + string.fromBytes(bytes)).toBytes()); }
+    End: { core.warn("stop: the child said nothing at all"); return 2; }
+    Failed(why): { core.warn("stop: reading the child failed: " + why); return 2; }
   }
 
   cli.closeSocket(kid.handle);

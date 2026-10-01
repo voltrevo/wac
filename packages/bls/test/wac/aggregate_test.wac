@@ -48,8 +48,8 @@ bool memberBool(JsonValue v, string key) {
   JsonValue? found = member(v, key);
   if (found is null) { return false; }
   match (found!) {
-    case Bool(value): { return value; }
-    else: { return false; }
+    Bool(value): { return value; }
+    default: { return false; }
   }
 }
 
@@ -58,17 +58,17 @@ u8[][] memberBytes(JsonValue v, string key) {
   JsonValue? found = member(v, key);
   if (found is null) { return u8[][0](fill: u8[0]()); }
   match (found!) {
-    case Array(items): {
+    Array(items): {
       u8[][] out = u8[][items.len()](fill: u8[0]());
       for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
-          case Str(bytes): { out[i] = un(string.fromBytes(bytes)); }
-          else: { }
+          Str(bytes): { out[i] = un(string.fromBytes(bytes)); }
+          default: { }
         }
       }
       return out;
     }
-    else: { return u8[][0](fill: u8[0]()); }
+    default: { return u8[][0](fill: u8[0]()); }
   }
 }
 
@@ -82,8 +82,8 @@ JsonObject? load(T t, Cli cli, string name) {
   t.isTrue(!(doc is null), path + " did not parse");
   if (doc is null) { return null; }
   match (doc!) {
-    case Object(members): { return members; }
-    else: { t.fail(path + " is not an object"); return null; }
+    Object(members): { return members; }
+    default: { t.fail(path + " is not an object"); return null; }
   }
 }
 

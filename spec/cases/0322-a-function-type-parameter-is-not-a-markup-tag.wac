@@ -14,6 +14,6 @@ i32 apply(fn<i32(i32)> g, i32 n) { return g(n); }
 export i32 f() {
   Op o = Op(twice);
   Backing b = Backing.Synth(twice);
-  i32 viaVariant = match (b) { case Memory: 0, case Synth(h): h(1) };
+  i32 viaVariant = match (b) { Memory: 0, Synth(h): h(1) };
   return apply(o.g, 10) + viaVariant + 20;
 }

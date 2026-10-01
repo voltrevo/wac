@@ -101,9 +101,9 @@ Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
     return Chunk(u8[0](), false, "the peer said nothing for " + itoa(millis) + "ms");
   }
   match (read.wait()) {
-    case Data(bytes): { return Chunk(bytes, true, ""); }
-    case End: { return Chunk(u8[0](), true, ""); }
-    case Failed(why): { return Chunk(u8[0](), false, "recv: " + why); }
+    Data(bytes): { return Chunk(bytes, true, ""); }
+    End: { return Chunk(u8[0](), true, ""); }
+    Failed(why): { return Chunk(u8[0](), false, "recv: " + why); }
   }
 }
 

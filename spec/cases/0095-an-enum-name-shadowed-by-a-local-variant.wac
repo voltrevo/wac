@@ -11,7 +11,7 @@ import { openIt } from "./a.wac";
 enum RepoAt { Opened(i32 at), Missing }
 export i32 f() {
   match (openIt(7)) {
-    case Ready(n): { return n; }
-    case Refused(why): { return 0; }
+    Ready(n): { return n; }
+    Refused(why): { return 0; }
   }
 }

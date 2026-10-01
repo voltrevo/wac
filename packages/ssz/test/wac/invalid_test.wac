@@ -289,12 +289,12 @@ export string test_every_invalid_ssz_generic_encoding_is_refused(Core core, Cli 
   t.isTrue(!(skipped is null), "the generator did not report its Progressive* exclusion");
   if (!(skipped is null)) {
     match (skipped!) {
-      case Number(value, _): {
+      Number(value, _): {
         t.eqI32(value as~ i32, 132,
                 "the generator's Progressive* exclusion — if that number moved, the exclusion " +
                 "needs re-reading rather than the constant updating");
       }
-      else: { t.fail("skippedProgressive is not a number"); }
+      default: { t.fail("skippedProgressive is not a number"); }
     }
   }
   return t.report();

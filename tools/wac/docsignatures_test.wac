@@ -160,7 +160,7 @@ void collect(Decls d, u8[] src) {
   Program prog = parseProgram(p);
   for (i32 i = 0; i < prog.decls.len(); i++) {
     match (prog.decls[i].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         string name = tokenTextOf(src, lexed, nameTok);
         addName(d, name);
         if (exported) {
@@ -168,14 +168,14 @@ void collect(Decls d, u8[] src) {
           if (h != "") { d.sigNames.push(name); d.sigText.push(h); }
         }
       }
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         addName(d, tokenTextOf(src, lexed, nameTok));
         // **Fields as well as methods**, because a capability is a funcref field: `outputError()` in
         // a README is a real thing spelled that way, and dropping fields would report it as missing.
         for (i32 k = 0; k < fields.len(); k++) { addName(d, tokenTextOf(src, lexed, fields[k].nameTok)); }
         for (i32 k = 0; k < methods.len(); k++) { addName(d, tokenTextOf(src, lexed, methods[k].nameTok)); }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
         addName(d, tokenTextOf(src, lexed, nameTok));
         for (i32 k = 0; k < variants.len(); k++) {
           addName(d, tokenTextOf(src, lexed, variants[k].nameTok));
@@ -185,10 +185,10 @@ void collect(Decls d, u8[] src) {
         }
         for (i32 k = 0; k < methods.len(); k++) { addName(d, tokenTextOf(src, lexed, methods[k].nameTok)); }
       }
-      case ConstDecl(nameTok, type, init, exported): {
+      ConstDecl(nameTok, type, init, exported): {
         addName(d, tokenTextOf(src, lexed, nameTok));
       }
-      else: { }
+      default: { }
     }
   }
 }

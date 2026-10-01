@@ -46,7 +46,7 @@ struct Feeder {
    * Reads to answer before failing, or -1 never to fail.
    *
    * **`Read.Failed` was the one variant this driver never produced**, and it left four points
-   * uncovered: `case Failed(why)` in both `passthrough` and `upperCase`, and the `broke ? -2` each
+   * uncovered: `Failed(why)` in both `passthrough` and `upperCase`, and the `broke ? -2` each
    * returns because of it. Not an unreachable branch — a driver that only ever answered `Data` and
    * `End`, so the failure path of a transform was measured by nothing. `issues/system/0205`.
    *

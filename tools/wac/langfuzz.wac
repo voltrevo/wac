@@ -706,7 +706,7 @@ export struct Gen {
           i32 variant = this.evVariant;
           i64 payload = this.evPayload;
           i64 known = variant == 0 ? kA : (variant == 1 ? payload : kC);
-          return Expr("match (ev) { case A: " + itoa64(kA) + ", case B(v): v, case C: "
+          return Expr("match (ev) { A: " + itoa64(kA) + ", B(v): v, C: "
                       + itoa64(kC) + " }", ty, (Env e) => known);
         }
         if (!this.inHelper && ty == TY_I32() && this.arr.len() > 0 && this.rng.intTop(4) == 0) {

@@ -483,8 +483,8 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
   t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
                         "import { Read } from \"core\";\n" +
                         "import { Stat } from \"std/platform.wac\";\n" +
-                        "export i32 two() { Read r = Read.End; match (r) { case End: return 2; " +
-                        "else: return 0; } }\n"),
+                        "export i32 two() { Read r = Read.End; match (r) { End: { return 2; } " +
+                        "default: { return 0; } } }\n"),
            "lib importing std/platform.wac and core's root");
   Exec std = wacc(cli, home, dir, "run", "src/main.wac");
   t.isTrue(std.ran(), "wac did not run — " + std.error);

@@ -10,7 +10,7 @@ enum Shape {
 
 export f64 collide(Shape s) {
   match (s) {
-    case Circle(s): return 1.0;
-    else:           return 0.0;
+    Circle(s): { return 1.0; }
+    default: { return 0.0; }
   }
 }

@@ -57,26 +57,26 @@ JsonValue fixture(Core core, Cli cli) {
 
 JsonValue member(JsonValue v, string key) {
   match (v) {
-    case Object(members): {
+    Object(members): {
       JsonValue? found = members.get(key.toBytes());
       if (found is null) { trap; }
       return found!;
     }
-    else: { trap; }
+    default: { trap; }
   }
 }
 
 JsonArray items(JsonValue v) {
   match (v) {
-    case Array(a): { return a; }
-    else: { trap; }
+    Array(a): { return a; }
+    default: { trap; }
   }
 }
 
 string text(JsonValue v) {
   match (v) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
+    Str(bytes): { return string.fromBytes(bytes); }
+    default: { trap; }
   }
 }
 

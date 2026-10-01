@@ -31,16 +31,16 @@ u8[] wire(string s) { return s.toBytes(); }
 /** The error code a request parse refused with, or -1 if it did not refuse. */
 i32 requestRefusal(string msg, i32 maxBody) {
   match (parseRequest(wire(msg), maxBody)) {
-    case Bad(code): { return code; }
-    else: { return -1; }
+    Bad(code): { return code; }
+    default: { return -1; }
   }
 }
 
 /** The error code a response parse refused with, or -1 if it did not refuse. */
 i32 responseRefusal(string msg, string method, bool eof, i32 maxBody) {
   match (parseResponse(wire(msg), method.toBytes(), eof, maxBody)) {
-    case Bad(code): { return code; }
-    else: { return -1; }
+    Bad(code): { return code; }
+    default: { return -1; }
   }
 }
 
@@ -120,7 +120,7 @@ export string test_a_message_with_more_headers_than_the_table_holds() {
   msg = msg + "\r\n";
 
   match (parseRequest(wire(msg), 4096)) {
-    case Ok(req): {
+    Ok(req): {
       t.eqI32(req.headers.len(), 21, "every header is present");
       // Read back by position, since a lost entry shows up as a shifted one rather than a missing one.
       for (i32 i = 0; i < 20; i++) {
@@ -130,8 +130,8 @@ export string test_a_message_with_more_headers_than_the_table_holds() {
                 "the value at position " + itoa(i + 1));
       }
     }
-    case Bad(code): { t.isTrue(false, "refused with " + itoa(code)); }
-    else: { t.isTrue(false, "the message was incomplete"); }
+    Bad(code): { t.isTrue(false, "refused with " + itoa(code)); }
+    default: { t.isTrue(false, "the message was incomplete"); }
   }
 
   // The same growth reached directly, so a parser that stopped at some header count of its own would
@@ -195,9 +195,9 @@ export string test_the_request_builder_produces_what_a_caller_asked_for() {
 /** The header value at `i` of a parsed response, or a marker naming what went wrong instead. */
 string responseHeader(string msg, string method, bool eof, i32 maxBody, string name) {
   match (parseResponse(wire(msg), method.toBytes(), eof, maxBody)) {
-    case Ok(res): { return string.fromBytes(res.headers.first(name)); }
-    case Bad(code): { return "(refused " + itoa(code) + ")"; }
-    else: { return "(incomplete)"; }
+    Ok(res): { return string.fromBytes(res.headers.first(name)); }
+    Bad(code): { return "(refused " + itoa(code) + ")"; }
+    default: { return "(incomplete)"; }
   }
 }
 
@@ -262,11 +262,11 @@ export string test_the_shapes_a_node_generated_corpus_does_not_contain() {
                          "GET", false, 1024, "X-Trail"),
           "v", "a trailer value is trimmed at both ends");
   match (parseRequest(wire("GET / HTTP/1.1\r\nHost: a\r\nX-Pad:   spaced   \r\n\r\n"), 1024)) {
-    case Ok(req): {
+    Ok(req): {
       t.eqStr(string.fromBytes(req.headers.first("X-Pad")), "spaced",
               "a request header value is trimmed at both ends");
     }
-    else: { t.isTrue(false, "a header with padding was not accepted"); }
+    default: { t.isTrue(false, "a header with padding was not accepted"); }
   }
 
   // An empty request target — two spaces where the target belongs.
@@ -288,13 +288,13 @@ export string test_the_shapes_a_node_generated_corpus_does_not_contain() {
   // had ever seen a space.
   match (parseRequest(wire("POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n" +
                            "5\r\nhello\r\n0\r\nX-Sum:   abc   \r\n\r\n"), 1024)) {
-    case Ok(req): {
+    Ok(req): {
       t.eqStr(string.fromBytes(req.headers.first("X-Sum")), "abc",
               "a request trailer value is trimmed at both ends");
       t.eqStr(string.fromBytes(req.body), "hello", "and the body is still the body");
     }
-    case Bad(code): { t.isTrue(false, "a padded request trailer was refused with " + itoa(code)); }
-    else: { t.isTrue(false, "a padded request trailer read as incomplete"); }
+    Bad(code): { t.isTrue(false, "a padded request trailer was refused with " + itoa(code)); }
+    default: { t.isTrue(false, "a padded request trailer read as incomplete"); }
   }
   return t.report();
 }

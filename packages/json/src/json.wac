@@ -91,7 +91,7 @@ export f64 parseNumberValue(u8[] src) {
   if (v is null) { return 0.0 / 0.0; }
   JsonValue val = v!;
   match (val) {
-    case Number(value, raw): return value;
-    else: return 0.0 / 0.0;
+    Number(value, raw): { return value; }
+    default: { return 0.0 / 0.0; }
   }
 }

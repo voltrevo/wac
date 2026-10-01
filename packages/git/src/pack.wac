@@ -107,8 +107,8 @@ export Opened openPack(u8[] pack, u8[] idxBytes) {
   i32 count = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
 
   match (parseIdx(idxBytes)) {
-    case Rejected(why): return Opened.Refused("index: " + why);
-    case Loaded(idx): {
+    Rejected(why): { return Opened.Refused("index: " + why); }
+    Loaded(idx): {
       // **The two files must agree about how many objects there are.** They are written together and
       // a mismatch means one of them belongs to a different pack — which otherwise shows up as
       // offsets that land in the middle of an object.
@@ -285,19 +285,19 @@ export u8[]? applyDelta(u8[] base, u8[] delta) {
 export Got objectAt(const Pack p, i64 off, i32 depth) {
   if (depth <= 0) { return Got.Absent("delta chain is longer than this reader will follow"); }
   match (rawAt(p, off)) {
-    case Damaged(why): return Got.Absent(why);
-    case Whole(kind, data): return Got.Found(kind, data);
-    case FromOffset(base, delta): {
+    Damaged(why): { return Got.Absent(why); }
+    Whole(kind, data): { return Got.Found(kind, data); }
+    FromOffset(base, delta): {
       match (objectAt(p, base, depth - 1)) {
-        case Absent(why): return Got.Absent(why);
-        case Found(kind, baseData): {
+        Absent(why): { return Got.Absent(why); }
+        Found(kind, baseData): {
           u8[]? made = applyDelta(baseData, delta);
           if (made is null) { return Got.Absent("a delta did not apply to its base"); }
           return Got.Found(kind, made!);
         }
       }
     }
-    case FromName(name, delta): {
+    FromName(name, delta): {
       i32 at = find(p.idx, name);
       if (at < 0) {
         // A pack fetched with `--thin` refers to objects the receiver already has, and this reader has
@@ -305,8 +305,8 @@ export Got objectAt(const Pack p, i64 off, i32 depth) {
         return Got.Absent("the base of a reference delta is not in this pack");
       }
       match (objectAt(p, p.idx.offsets[at], depth - 1)) {
-        case Absent(why): return Got.Absent(why);
-        case Found(kind, baseData): {
+        Absent(why): { return Got.Absent(why); }
+        Found(kind, baseData): {
           u8[]? made = applyDelta(baseData, delta);
           if (made is null) { return Got.Absent("a delta did not apply to its base"); }
           return Got.Found(kind, made!);

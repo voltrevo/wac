@@ -82,7 +82,7 @@ export struct NamedArg {
 
 export enum ExprKind {
   /**
-   * `match (x) { case A: 1, else: 2 }` in expression position.
+   * `match (x) { A: 1, default: 2 }` in expression position.
    *
    * The statement form is `StmtKind.Match`; this one has a value per arm rather than a body, which is
    * what `Arm.value` is for. `packages/std`'s `Option<T>` is written with it, and nothing here could
@@ -122,7 +122,7 @@ export enum ExprKind {
    * `await e` — `design/lang/0014`.
    *
    * **Its own variant rather than a `Unary` with `op == kAwait()`**, and the reason is which way
-   * the mistake falls. There are 23 `case Unary(` arms; a new operator flowing through them would
+   * the mistake falls. There are 23 `Unary(` arms; a new operator flowing through them would
    * be handled by whatever each already does with an operator it does not know, silently. A
    * variant makes every match that must care say so, and the ones that genuinely do not keep
    * their `else`.
@@ -257,7 +257,7 @@ export struct Case {
 }
 
 /**
- * One `case Pattern:` or `else:` arm of a `match`.
+ * One `Pattern:` or `default:` arm of a `match`.
  *
  * `variantTok` is -1 for the `else` arm. A binding of `_` is a discard and is kept as
  * the token so the printer can reproduce it.

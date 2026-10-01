@@ -108,14 +108,14 @@ void relay(Core core, Cli cli, i32 net, i32 kid) {
     if (kidSpoke) {
       bool over = false;
       match (fromKid.wait()) {
-        case Data(bytes): {
+        Data(bytes): {
           if (!cli.send(net, bytes).wait()) { return; }   // the client hung up
           fromKid = cli.recv(kid);
         }
-        case End: { over = true; }                       // the handler has finished
+        End: { over = true; }                       // the handler has finished
         // A handler whose pipe broke has not finished, and serving what it managed as though it had
         // is how a client gets half an answer with no indication.
-        case Failed(why): { core.warn("inetd: handler: " + why); over = true; }
+        Failed(why): { core.warn("inetd: handler: " + why); over = true; }
       }
       if (over) { return; }
       continue;
@@ -123,13 +123,13 @@ void relay(Core core, Cli cli, i32 net, i32 kid) {
 
     bool clientDone = false;
     match (fromNet.wait()) {
-      case Data(bytes): {
+      Data(bytes): {
         if (!cli.send(kid, bytes).wait()) { return; }
         fromNet = cli.recv(net);
       }
       // The client stopped talking. Tell the handler, and keep reading its answer.
-      case End: { clientDone = true; }
-      case Failed(why): { core.warn("inetd: client: " + why); clientDone = true; }
+      End: { clientDone = true; }
+      Failed(why): { core.warn("inetd: client: " + why); clientDone = true; }
     }
     if (clientDone) {
       cli.closeFeed(kid);

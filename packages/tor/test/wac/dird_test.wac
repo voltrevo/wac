@@ -81,9 +81,9 @@ Reply request(Core core, Cli cli, i32 port, u8[] bytes, i32 chunks) {
   bool reading = true;
   while (reading) {
     match (cli.recv(handle).wait()) {
-      case Data(got): { all = all + string.fromBytes(got); }
-      case End: { reading = false; }
-      case Failed(why): { reading = false; }
+      Data(got): { all = all + string.fromBytes(got); }
+      End: { reading = false; }
+      Failed(why): { reading = false; }
     }
   }
   cli.closeSocket(handle);
@@ -359,9 +359,9 @@ Reply servedWithin(Core core, Cli cli, i32 port, string target, i32 ms) {
     Pending<Read> p = cli.recv(handle);
     if (core.waitAny(i32[](p.id), ms) < 0) { cli.closeSocket(handle); return Reply(-2, ""); }
     match (p.wait()) {
-      case Data(got): { all = all + string.fromBytes(got); }
-      case End: { reading = false; }
-      case Failed(why): { reading = false; }
+      Data(got): { all = all + string.fromBytes(got); }
+      End: { reading = false; }
+      Failed(why): { reading = false; }
     }
   }
   cli.closeSocket(handle);

@@ -20,9 +20,9 @@ export u8[] sshClientVersionLine() { return clientVersionLine(); }
 export i32 sshScanStatus(u8[] buf) {
   Version v = scanVersion(buf, 0, buf.len());
   match (v.status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 export i32 sshScanUsed(u8[] buf) { return scanVersion(buf, 0, buf.len()).used; }
@@ -39,9 +39,9 @@ export u8[] sshFrame(u8[] payload, u8[] random, i32 block) { return frame(payloa
 export i32 sshUnframeStatus(u8[] buf) {
   Framed f = unframe(buf, 0, buf.len());
   match (f.status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 export i32 sshUnframeUsed(u8[] buf) { return unframe(buf, 0, buf.len()).used; }
@@ -115,17 +115,17 @@ export bool sshReadStringOk(u8[] buf) {
 
 export i32 sshUnframeStatusAt(u8[] buf, i32 at, i32 end) {
   match (unframe(buf, at, end).status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 
 export i32 sshScanStatusAt(u8[] buf, i32 at, i32 end) {
   match (scanVersion(buf, at, end).status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 
@@ -198,9 +198,9 @@ export i32 sshPeekLength(u8[] key, i32 seq, u8[] src, i32 at) { return peekLengt
 /** 0 = ok, 1 = incomplete, 2 = bad. */
 export i32 sshOpenStatus(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
   match (open(key, seq, src, at, end, maxPacket).status) {
-    case Ok: return 0;
-    case Incomplete: return 1;
-    else: return 2;
+    Ok: { return 0; }
+    Incomplete: { return 1; }
+    default: { return 2; }
   }
 }
 export u8[] sshOpenPayload(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
@@ -222,12 +222,12 @@ import { msgServiceAccept, msgUserAuthFailure, msgUserAuthSuccess, publicKeyRequ
 /** 0 ok, 1 not-openssh, 2 unsupported, 3 malformed, 4 bad passphrase, 5 not ed25519. */
 export i32 sshReadKeyStatus(u8[] pem, u8[] passphrase) {
   match (readEd25519(pem, passphrase).error) {
-    case Ok: return 0;
-    case NotOpenSsh: return 1;
-    case Unsupported: return 2;
-    case Malformed: return 3;
-    case BadPassphrase: return 4;
-    else: return 5;
+    Ok: { return 0; }
+    NotOpenSsh: { return 1; }
+    Unsupported: { return 2; }
+    Malformed: { return 3; }
+    BadPassphrase: { return 4; }
+    default: { return 5; }
   }
 }
 export u8[] sshReadKeySeed(u8[] pem, u8[] passphrase) { return readEd25519(pem, passphrase).seed; }
@@ -251,10 +251,10 @@ import { Verdict, lookUp } from "../../src/knownhosts.wac";
 /** 0 unknown, 1 match, 2 mismatch, 3 revoked. */
 export i32 sshKnownHost(u8[] file, u8[] host, i32 port, u8[] keyType, u8[] keyBlob) {
   match (lookUp(file, host, port, keyType, keyBlob)) {
-    case Unknown: return 0;
-    case Match: return 1;
-    case Mismatch: return 2;
-    else: return 3;
+    Unknown: { return 0; }
+    Match: { return 1; }
+    Mismatch: { return 2; }
+    default: { return 3; }
   }
 }
 
@@ -322,9 +322,9 @@ import { AuthRequest, authFailure, authSuccess, byApplication, channelClose as s
 /** 0 unknown, 1 ok, 2 restricted. */
 export i32 sshAuthorized(u8[] file, u8[] keyType, u8[] keyBlob) {
   match (authLookUp(file, keyType, keyBlob)) {
-    case Unknown: return 0;
-    case Ok: return 1;
-    else: return 2;
+    Unknown: { return 0; }
+    Ok: { return 1; }
+    default: { return 2; }
   }
 }
 

@@ -18,17 +18,17 @@ export void writeValue(Buf out, JsonValue v) {
   // than a case that silently falls through to `trap`, which is what the old
   // switch-on-tag did.
   match (v) {
-    case Null: {
+    Null: {
       out.pushAll(u8[]('n', 'u', 'l', 'l'));
     }
-    case Bool(value): {
+    Bool(value): {
       if (value) {
         out.pushAll(u8[]('t', 'r', 'u', 'e'));
       } else {
         out.pushAll(u8[]('f', 'a', 'l', 's', 'e'));
       }
     }
-    case Number(value, raw): {
+    Number(value, raw): {
       // A parsed number is written back exactly as it was read; one built by hand
       // has no span and is formatted to its shortest round-tripping decimal.
       if (raw.len() > 0) {
@@ -44,10 +44,10 @@ export void writeValue(Buf out, JsonValue v) {
         writeF64(out, value);
       }
     }
-    case Str(bytes): {
+    Str(bytes): {
       writeString(out, bytes);
     }
-    case Array(items): {
+    Array(items): {
       out.push('[');
       for (i32 i = 0; i < items.len(); i++) {
         if (i > 0) { out.push(','); }
@@ -55,7 +55,7 @@ export void writeValue(Buf out, JsonValue v) {
       }
       out.push(']');
     }
-    case Object(members): {
+    Object(members): {
       out.push('{');
       for (i32 i = 0; i < members.len(); i++) {
         if (i > 0) { out.push(','); }

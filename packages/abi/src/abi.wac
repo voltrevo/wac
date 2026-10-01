@@ -379,14 +379,14 @@ string check(Value v, i32[] schema, i32 s) {
   i32 t = schema[s];
   if (t == T_BYTES() || t == T_STRING()) {
     match (v) {
-      case Bytes(_): return "";
-      case Word(_): return "a bytes or string needs Bytes, and a Word was given";
-      case List(_): return "a bytes or string needs Bytes, and a List was given";
+      Bytes(_): { return ""; }
+      Word(_): { return "a bytes or string needs Bytes, and a Word was given"; }
+      List(_): { return "a bytes or string needs Bytes, and a List was given"; }
     }
   }
   if (t == T_ARRAY() || t == T_FIXED() || t == T_TUPLE()) {
     match (v) {
-      case List(xs): {
+      List(xs): {
         i32 elem = t == T_TUPLE() ? s + 2 : (t == T_FIXED() ? s + 2 : s + 1);
         if (t == T_TUPLE()) { return checkTuple(xs, schema, s + 2, schema[s + 1]); }
         if (t == T_FIXED() && xs.len() != schema[s + 1]) {
@@ -398,18 +398,18 @@ string check(Value v, i32[] schema, i32 s) {
         }
         return "";
       }
-      case Word(_): return "an array or tuple needs List, and a Word was given";
-      case Bytes(_): return "an array or tuple needs List, and Bytes were given";
+      Word(_): { return "an array or tuple needs List, and a Word was given"; }
+      Bytes(_): { return "an array or tuple needs List, and Bytes were given"; }
     }
   }
   // A static type: one word, and exactly one — a short `Word` padded silently would be a different value.
   match (v) {
-    case Word(b): {
+    Word(b): {
       if (b.len() != 32) { return "a static type is one 32-byte word, and this one is " + itoa(b.len()); }
       return "";
     }
-    case Bytes(_): return "a static type needs a Word, and Bytes were given";
-    case List(_): return "a static type needs a Word, and a List was given";
+    Bytes(_): { return "a static type needs a Word, and Bytes were given"; }
+    List(_): { return "a static type needs a Word, and a List was given"; }
   }
 }
 
@@ -534,26 +534,26 @@ u8[] wordOf(i32 v) {
 /** The 32 bytes of a `Word`, which is what every static type decodes to. */
 export u8[] wordOfValue(Value v) {
   match (v) {
-    case Word(b): return b;
-    case Bytes(_): return u8[32]();
-    case List(_): return u8[32]();
+    Word(b): { return b; }
+    Bytes(_): { return u8[32](); }
+    List(_): { return u8[32](); }
   }
 }
 
 /** The contents of a `Bytes`. */
 export u8[] bytesOfValue(Value v) {
   match (v) {
-    case Word(b): return b;
-    case Bytes(b): return b;
-    case List(_): return u8[0]();
+    Word(b): { return b; }
+    Bytes(b): { return b; }
+    List(_): { return u8[0](); }
   }
 }
 
 /** The members of a `List`. */
 export Value[] listOf(Value v) {
   match (v) {
-    case Word(_): return none();
-    case Bytes(_): return none();
-    case List(xs): return xs;
+    Word(_): { return none(); }
+    Bytes(_): { return none(); }
+    List(xs): { return xs; }
   }
 }

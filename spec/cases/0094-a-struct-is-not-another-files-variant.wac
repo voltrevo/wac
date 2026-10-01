@@ -8,7 +8,7 @@ export Kind kindOf(i32 n) { return n == 0 ? Kind.Word : Kind.Op; }
 // ---- parse.wac ----
 import { Kind, kindOf } from "./lex.wac";
 export struct Word { i32 n; }
-export i32 useWord(Word w) { return match (kindOf(0)) { case Word: w.n, case Op: 0 }; }
+export i32 useWord(Word w) { return match (kindOf(0)) { Word: w.n, Op: 0 }; }
 // ---- main.wac ----
 import { Word, useWord } from "./parse.wac";
 export i32 f() { Word w = Word(7); return useWord(w); }

@@ -339,6 +339,6 @@ exists because the function takes the array as an argument and cannot know where
 refusing is the answer there because a trap in a lockfile writer is not.
 
 This paragraph used to describe a second unreached point, `root.wac:1:1  case` in a file with no
-`match` in it — `issues/lang/0148`, an `else:` arm's coverage point charged to the entry module at
+`match` in it — `issues/lang/0148`, an `default:` arm's coverage point charged to the entry module at
 line 1, filed from this package and since fixed by somebody else, who found a conditionless loop
 with the same fault while they were there. The point is gone and so is the sentence.

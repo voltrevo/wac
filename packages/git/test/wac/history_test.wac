@@ -119,14 +119,14 @@ struct Reader {
                                      name.slice(2, name.len())).wait();
     if (f.ok) {
       match (readLoose(f.bytes)) {
-        case Loaded(kind, content): { return content; }
-        else: { }
+        Loaded(kind, content): { return content; }
+        default: { }
       }
     }
     if (!this.havePack) { return u8[0](); }
     match (objectNamed(this.pack, decoded(name))) {
-      case Found(kind, data): { return data; }
-      case Absent(why): { return u8[0](); }
+      Found(kind, data): { return data; }
+      Absent(why): { return u8[0](); }
     }
   }
 }
@@ -151,8 +151,8 @@ Reader reader(T t, Cli cli, string dir) {
   if (!p.ok || !i.ok) { return Reader(cli, dir, false, openPackOrDie(t, u8[0](), u8[0]())); }
 
   match (openPack(p.bytes, i.bytes)) {
-    case Ready(pack): { return Reader(cli, dir, true, pack); }
-    case Refused(why): {
+    Ready(pack): { return Reader(cli, dir, true, pack); }
+    Refused(why): {
       t.isTrue(false, "the fixture's pack did not open: " + why);
       return Reader(cli, dir, false, openPackOrDie(t, u8[0](), u8[0]()));
     }
@@ -162,8 +162,8 @@ Reader reader(T t, Cli cli, string dir) {
 /** A placeholder `Pack` for the paths that already failed — never read. */
 Pack openPackOrDie(T t, u8[] a, u8[] b) {
   match (openPack(a, b)) {
-    case Ready(pack): { return pack; }
-    case Refused(why): { trap; }
+    Ready(pack): { return pack; }
+    Refused(why): { trap; }
   }
 }
 
@@ -177,8 +177,8 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
   if (!headFile.ok) { return t.report(); }
   string branch = "";
   match (parseRef(headFile.bytes)) {
-    case Symbolic(target): { branch = target; }
-    else: { t.isTrue(false, "HEAD did not read as symbolic"); }
+    Symbolic(target): { branch = target; }
+    default: { t.isTrue(false, "HEAD did not read as symbolic"); }
   }
   t.eqStr(branch, "refs/heads/main", "HEAD points at main");
 
@@ -210,10 +210,10 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
   g.run(string[]("checkout", "-q", "--detach"));
   FileResult detachedFile = cli.readFile(g.dir + "/.git/HEAD").wait();
   match (parseRef(detachedFile.bytes)) {
-    case Direct(name): {
+    Direct(name): {
       t.eqStr(hexStr(name), g.text(string[]("rev-parse", "HEAD")), "a detached HEAD names its commit");
     }
-    else: { t.isTrue(false, "a detached HEAD did not read as direct"); }
+    default: { t.isTrue(false, "a detached HEAD did not read as direct"); }
   }
 
   cli.remove(g.dir, true).wait();
@@ -231,8 +231,8 @@ export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gi
   if (!pr.ok || !headFile.ok) { return t.report(); }
   string branch = "";
   match (parseRef(headFile.bytes)) {
-    case Symbolic(target): { branch = target; }
-    else: { }
+    Symbolic(target): { branch = target; }
+    default: { }
   }
   u8[]? start = packedTarget(parsePackedRefs(pr.bytes), branch);
   t.isTrue(!(start is null), "HEAD resolves through packed-refs");
@@ -248,11 +248,11 @@ export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gi
     t.isTrue(bytes.len() > 0, cur + " is in neither loose objects nor the pack");
     if (bytes.len() == 0) { break; }
     match (parseCommit(bytes)) {
-      case Malformed(why): {
+      Malformed(why): {
         t.isTrue(false, cur + " did not parse: " + why);
         cur = "";
       }
-      case Understood(commit): {
+      Understood(commit): {
         ours[count] = cur;
         count = count + 1;
         if (commit.parents.len() > 1) { merges = merges + 1; }
@@ -283,8 +283,8 @@ export string test_a_commits_fields_are_the_ones_git_prints(Core core, Cli cli) 
   string head = g.text(string[]("rev-parse", "HEAD"));
 
   match (parseCommit(r.read(head))) {
-    case Malformed(why): { t.isTrue(false, "HEAD did not parse: " + why); }
-    case Understood(c): {
+    Malformed(why): { t.isTrue(false, "HEAD did not parse: " + why); }
+    Understood(c): {
       t.eqStr(c.treeHex(), g.text(string[]("rev-parse", "HEAD^{tree}")), "the tree");
       t.eqStr(splitOn(c.message, "\n")[0], g.text(string[]("log", "-1", "--format=%s")),
               "the subject");
@@ -312,15 +312,15 @@ export string test_a_commits_fields_are_the_ones_git_prints(Core core, Cli cli) 
 
 bool unparsed(RefValue v) {
   match (v) {
-    case Unparsed(why): { return true; }
-    else: { return false; }
+    Unparsed(why): { return true; }
+    default: { return false; }
   }
 }
 
 bool malformed(Parsed p) {
   match (p) {
-    case Malformed(why): { return true; }
-    else: { return false; }
+    Malformed(why): { return true; }
+    default: { return false; }
   }
 }
 
@@ -375,8 +375,8 @@ export string test_a_header_continued_onto_the_next_line_does_not_eat_the_messag
     "\n" +
     "the real message\n";
   match (parseCommit(commit.toBytes())) {
-    case Malformed(why): { t.isTrue(false, "a signed commit did not parse: " + why); }
-    case Understood(c): {
+    Malformed(why): { t.isTrue(false, "a signed commit did not parse: " + why); }
+    Understood(c): {
       t.eqStr(c.message, "the real message\n", "the message survived the armour's blank line");
       t.eqI32(c.parents.len(), 1, "the parent survived too");
     }

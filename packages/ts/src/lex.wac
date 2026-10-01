@@ -43,7 +43,7 @@ export i32 kStr() { return 3; }
 export i32 kTemplate() { return 4; }
 /** A regular expression literal with its flags. */
 export i32 kRegex() { return 5; }
-/** Anything else: operators, brackets, `;`, `,`, `=>`, `...`. */
+/** Anything default: operators, brackets, `;`, `,`, `=>`, `...`. */
 export i32 kPunct() { return 6; }
 
 /** How many `i32`s one token occupies. */

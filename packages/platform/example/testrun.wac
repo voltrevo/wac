@@ -47,31 +47,31 @@ string[] testExports(u8[] wasm) {
   JsonValue? doc = parse(manifestIn(wasm).toBytes());
   if (doc is null) { return string[0](fill: ""); }
   JsonObject root = JsonObject.create();
-  match (doc!) { case Object(o): { root = o; } else: { return string[0](fill: ""); } }
+  match (doc!) { Object(o): { root = o; } default: { return string[0](fill: ""); } }
   JsonValue? xs = root.getStr("exports");
   if (xs is null) { return string[0](fill: ""); }
   string[] out = string[256](fill: "");
   i32 n = 0;
   match (xs!) {
-    case Array(items): {
+    Array(items): {
       for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
-          case Object(e): {
+          Object(e): {
             JsonValue? nm = e.getStr("name");
             if (nm is null) { continue; }
             match (nm!) {
-              case Str(bytes): {
+              Str(bytes): {
                 string s = string.fromBytes(bytes);
                 if (s.len() > 4 && s.slice(0, 4) == "test" && n < 256) { out[n] = s; n = n + 1; }
               }
-              else: { }
+              default: { }
             }
           }
-          else: { }
+          default: { }
         }
       }
     }
-    else: { }
+    default: { }
   }
   string[] exact = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }

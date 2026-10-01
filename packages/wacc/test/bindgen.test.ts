@@ -222,7 +222,7 @@ const TYPED = `struct Point { i32 x; i32 y;
 }
 enum Shape { Empty, Circle(f64 r), Named(string what) }
 export Point shift(Point p, i32 by) { return Point(p.x + by, p.y); }
-export f64 radius(Shape s) { return match (s) { case Circle(r): r, else: 0.0 }; }
+export f64 radius(Shape s) { return match (s) { Circle(r): r, default: 0.0 }; }
 export Shape circle(f64 r) { return Shape.Circle(r); }
 `;
 
