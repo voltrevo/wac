@@ -124,7 +124,6 @@ export string checkMessage(i32 code) {
   if (code == 26) { return "a packed type cannot be used in this position"; }
   if (code == 27) { return "a string's characters cannot be written to"; }
   if (code == 28) { return "this type has no default value"; }
-  if (code == 29) { return "a struct cannot hold a non-null field of its own type"; }
   if (code == 30) { return "this cast goes down the hierarchy and must be checked"; }
   if (code == 31) { return "there is no loop here to break out of or continue"; }
   if (code == 32) { return "wrong number of arguments"; }
@@ -158,6 +157,8 @@ export string checkMessage(i32 code) {
   if (code == 223) { return "these literals have no type: nothing here gives them one, and there is no default"; }
   if (code == 224) { return "a local is read where not every path has assigned it"; }
   if (code == 225) { return "a lambda uses a local that is not yet assigned"; }
+  if (code == 226) { return "a never function cannot return"; }
+  if (code == 227) { return "this variant's payload has no value, so the variant cannot be constructed"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -282,7 +283,6 @@ export string hintFor(i32 code) {
   if (code == 22) { return "check the parent declares it, with the same parameters"; }
   if (code == 26) { return "a packed type is an array's element type — a variable or parameter is `i32`"; }
   if (code == 28) { return "give one: `T[].filled(n, v)` — a reference has no zero to start from"; }
-  if (code == 29) { return "make the field nullable with `?` — a value of it has to end somewhere"; }
   if (code == 31) { return "a `break` inside a `switch` leaves the switch, and there is no loop here"; }
   if (code == 47) { return "only a function, a funcref or a method is callable"; }
   return "";

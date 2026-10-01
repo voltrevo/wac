@@ -197,7 +197,6 @@ string[] WRONG() {
     "struct P { i32 v; } export void f(const P p) { p.v = 1; }",
     "struct P { i32 v; } export i32 f() { return P.nope(); }",
     "export void f(string s) { s[0] = \"a\"; }",
-    "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
     "struct P { i32 v; i32 m(this) { return 1; } } export i32 f(P p) { i32 x = p.m; return x; }",
     // **Three rules that no generated program reaches**, added by walking the diagnostic codes rather
     // than the generator: of 84 codes the sweeps exercise 60, and a code this list never carries is a
@@ -2139,7 +2138,6 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "struct A { i32 a; } struct B : A { i32 b; } export void bad() { B x = B(1); }",
     // Nothing to default-construct from: a recursive struct, an enum, a struct containing one.
     "struct Node { i32 v; Node next; } export void bad() { Node n = Node(); }",
-    "struct Node { Node next; }",
     "enum E { A(i32 v), B } export i32 f() { E[] a = E[].defaulted(2); return a.len(); }",
     "enum E { A, B } struct S { E e; } export i32 f() { S s = S(); return 1; }",
     // A packed type where there is no slot for one.
@@ -2152,6 +2150,10 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "export void bad(Shape s) { Circle c = s as Circle; }"
   ],
   [
+    // An uninhabited struct is a valid type — spec/next ch11 — refused on sight until then, and a
+    // parameter of one is a signature nothing can call, which is legal too.
+    "struct Node { Node next; } export Node? none() { return null; }",
+    "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
     // `override` that is correct, and a method that hides nothing.
     "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
     "struct R : Shape { i32 w; override i32 name(const this) { return 2; } }",

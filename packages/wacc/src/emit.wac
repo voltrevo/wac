@@ -220,7 +220,7 @@ bool parentIsGeneric(Env env, Program prog, u8[] src, Lexed lexed, i32 parentTok
  * separately and whose failure to resolve is a real one.
  */
 bool isUnresolvedBareName(Env env, string t) {
-  if (t == "" || t == "void" || t == "string") { return false; }
+  if (t == "" || t == "void" || t == "never" || t == "string") { return false; }
   u8[] b = t.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
     i32 c = b[i];   // a packed element reads as i32 — spec/cases/0210
@@ -326,6 +326,11 @@ void writeValType(B out, Env env, string t) {
   // as insurance, because a tolerance nothing needs is a hole the next gap falls through silently:
   // `issues/lang/0170a`'s third item is that `""` and its relatives travel as if they were answers.
   // A bare unresolved name now falls to the refusal below and is named.
+  //
+  // **A slot of type `never` holds nothing, ever** — the payload of `Step<never, i32>.Waiting`, which no
+  // program can construct (spec/next ch11). It still has a place in the enum's layout, so it is given
+  // the cheapest storage there is; nothing will ever write to it or read from it.
+  if (t == "never") { out.byte(127); return; }
   if (!isWritableValType(t)) {
     // **And where**, because the type alone has repeatedly not been enough. `$cell$…` names a
     // captured local's storage, and knowing *which lambda* was being emitted is the difference
@@ -5636,8 +5641,10 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       writeValType(types, env, sigParamAt(sig, pi));
     }
     string r = sigReturn(sig);
-    types.u32leb(r == "void" ? 0 : 1);
-    if (r != "void") { writeValType(types, env, r); }
+    // `never` answers nothing, as `void` does: no value of it ever arrives (spec/next ch11).
+    bool none = r == "void" || r == "never";
+    types.u32leb(none ? 0 : 1);
+    if (!none) { writeValType(types, env, r); }
   }
 
   // **From the import count, like every other index.** This counter is the *export's* view of a
@@ -7054,6 +7061,15 @@ void emitMatches(B fb, u8[] src, Lexed lexed, Env env, Pattern pat, Expr subject
   fb.byte(32); fb.u32leb(tst);
 }
 
+/** Whether `e` is a call — the only expression whose type can be `never`. */
+bool isCallExpr(Expr e) {
+  match (e.kind) {
+    Call(callee, args, callTargs): { return true; }
+    Construct(ctype, args, named): { return true; }
+    default: { return false; }
+  }
+}
+
 /** Whether a written type is `T?`. */
 bool tyIsNullable(Ty t) {
   match (t.kind) {
@@ -7416,7 +7432,7 @@ void emitFrom(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from) {
  */
 void emitDeferred(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from, Stmt deferred) {
   i32 kind = env.scratchNamed("defer kind " + numText(env.depth), "i32");
-  bool valued = env.returnType != "void" && env.returnType != "";
+  bool valued = env.returnType != "void" && env.returnType != "" && env.returnType != "never";
   i32 val = valued ? env.scratchNamed("defer value " + numText(env.depth), env.returnType) : 0 - 1;
   fb.byte(65); fb.i32leb(0);                 // i32.const 0
   fb.byte(33); fb.u32leb(kind);              // local.set — no exit yet
@@ -7710,6 +7726,12 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       // The **function's** return type, which a `return` is the one statement that needs and the only
       // one that had no way to know: `return 1;` in an `i64` function is an `i64` constant, and
       // emitting it at the literal's own guess made seven corpus files invalid at once.
+      // `return forever();` in a `never` function: the call does not return, so nothing is left.
+      if (env.returnType == "never") {
+        if (!(value is null)) { emitExpr(fb, src, lexed, env, value!); }
+        fb.byte(0);                                          // unreachable
+        return;
+      }
       if (!(value is null)) { emitExprAt(fb, src, lexed, env, value!, env.returnType); }
       emitLeave(fb, env, !(value is null));
     }
@@ -7968,7 +7990,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       // `""` is *unknown* and `"void"` is *nothing* — two different answers that both mean "no value
       // to drop", and treating the second as a value dropped one that was never pushed.
       string st = typeOfE(src, lexed, env, e);
-      if (st != "" && st != "void") { fb.byte(26); }   // drop
+      if (st != "" && st != "void" && st != "never") { fb.byte(26); }   // drop
     }
   }
 }
@@ -8157,6 +8179,14 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  // **A call that does not return, where a value is wanted** — `return spin();` in an `i32` function.
+  // The call leaves nothing; `unreachable` after it makes the stack any type the slot asks for.
+  if (want != "" && want != "void" && want != "never" && isCallExpr(e)
+      && typeOfE(src, lexed, env, e) == "never") {
+    emitExpr(fb, src, lexed, env, e);
+    fb.byte(0);                                            // unreachable
+    return;
+  }
   // **An array literal is built at the slot's type** — `i32[] a = [1, 2]` makes an `i32[]` of numbers
   // that had no type of their own. With no array slot, its elements decide.
   match (e.kind) {
@@ -11581,7 +11611,7 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   // The **shared** signature type, registered in the pre-pass. Pooling them is not an optimisation
   // here: a private type per function is a different type from the one a `fn[...]` value declares,
   // however identical it looks.
-  bool returnsValue = ret != "void";
+  bool returnsValue = ret != "void" && ret != "never";
   string mine = emittedSigOf(env, src, lexed, ret, params, receiver);
   funcs.u32leb(env.sigType(mine));
   // **The wrapper that lets this function be the funcref inside a `fn[…]` pair** — `design/lang/0002`.
@@ -11715,7 +11745,8 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   fb.bytes(insns);
   // Every wac function that returns a value returns on all paths — the checker says so — so the
   // fall-through is unreachable rather than missing.
-  if (returnsValue) { fb.byte(0); }
+  // A `never` function does not reach its end either — the checker says so — so it ends the same way.
+  if (returnsValue || ret == "never") { fb.byte(0); }
   env.deferAt = savedDeferAt;
   fb.byte(11);    // `end`
   code.u32leb(fb.len);

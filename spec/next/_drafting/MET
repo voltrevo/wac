@@ -69,6 +69,14 @@ spec/next/2-types/10-nullability.md#1
 spec/next/2-types/10-nullability.md#3
 spec/next/2-types/10-nullability.md#4
 spec/next/2-types/10-nullability.md#6
+spec/next/2-types/11-never-and-uninhabited.md#1
+spec/next/2-types/11-never-and-uninhabited.md#2
+spec/next/2-types/11-never-and-uninhabited.md#3
+spec/next/2-types/11-never-and-uninhabited.md#4
+spec/next/2-types/11-never-and-uninhabited.md#5
+spec/next/2-types/11-never-and-uninhabited.md#6
+spec/next/2-types/11-never-and-uninhabited.md#7
+spec/next/2-types/11-never-and-uninhabited.md#8
 spec/next/2-types/11-never-and-uninhabited.md#9
 spec/next/2-types/12-structs.md#1
 spec/next/2-types/12-structs.md#2

@@ -81,12 +81,12 @@ export i32 main(Core core, Cli cli) {
   core.log("wacland: stage 3 slow " + itoa64(slow.wait()));
 
   // Stage 4. A deadline with nothing ready, which must come back rather than hang.
-  Pending<i64> never = core.sleepMillis(10000);
-  i32 late = core.waitAny([never.id], 30);
+  Pending<i64> sleeper = core.sleepMillis(10000);
+  i32 late = core.waitAny([sleeper.id], 30);
   core.log("wacland: stage 4 timeout " + itoa(late));
   // Cancelling says "discard the answer", not "stop trying" — so the sleep is still running and this
   // program is about to end anyway. Said here because the difference is the whole of what `cancel` is.
-  never.cancel();
+  sleeper.cancel();
 
   // Stage 5. **A child, and a wait over its exit *and* one of this program's own tickets.**
   //

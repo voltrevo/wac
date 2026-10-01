@@ -1,0 +1,15 @@
+// expect: answers f = 4
+// why: a variant whose payload is `never` has no values, so a `match` that omits it is exhaustive
+// from: uninhabited types (design/lang/0016), spec/next ch11 §wac-never-payload-uninhabited-c4j35nq
+enum Step<W, Y> { Waiting(W ticket), Yielded(Y value) }
+
+i32 value(Step<never, i32> s) {
+  match (s) {
+    Yielded(v): { return v; }
+  }
+}
+
+export i32 f() {
+  Step<never, i32> s = Step.Yielded(4);
+  return value(s);
+}

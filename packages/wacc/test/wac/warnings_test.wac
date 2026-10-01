@@ -125,10 +125,10 @@ export string test_a_type_test_between_types_that_share_no_ancestor_warns() {
 
 export string test_a_downcast_that_can_never_hold_warns_and_one_that_can_does_not() {
   T t = T.create();
-  string never = DECLS + "export i32 f(A x) { B b = x as! B; return b.b; }\n";
+  string unwarned = DECLS + "export i32 f(A x) { B b = x as! B; return b.b; }\n";
   string maybe = DECLS + "export i32 f(P p) { Q q = p as! Q; return q.m; }\n";
 
-  string[] warned = warningsIn(never);
+  string[] warned = warningsIn(unwarned);
   t.eqI32(warned.len(), 1, "expected one trap warning: " + messagesOf(warned));
   if (warned.len() == 1) {
     t.isTrue(wireField(warned[0], MESSAGE()).indexOf("always traps") >= 0,

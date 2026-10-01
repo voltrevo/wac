@@ -309,6 +309,24 @@ export i32 errUntypedLiteral() { return 223; }
 export i32 errReadUnassigned() { return 224; }
 /** `i32 k; fn<i32()> f = () => k;` — a lambda capturing a local not yet assigned. */
 export i32 errCaptureUnassigned() { return 225; }
+/** `never f() { return; }` — a `never` function completes normally. */
+export i32 errNeverReturns() { return 226; }
+/** `Step.Waiting(t)` where `Waiting`'s payload is `never` — a variant with no values. */
+export i32 errNeverVariant() { return 227; }
+
+/** Whether a variant of `world`'s enum carries a payload field of type `never`, after substitution. */
+bool variantUninhabited(C c, string world, string variant, i32 arity) {
+  string w = withoutNull(world) == "" ? world : withoutNull(world);
+  for (i32 i = 0; i < arity; i++) {
+    string ft = c.fieldTypeAtIndex(variant, i);
+    if (ft == "never") { return true; }
+    if (w != typeNone() && substituteType(c, w, ft) == "never") { return true; }
+  }
+  return false;
+}
+
+/** Whether `e` has type `never`: a call that does not return. */
+bool isNeverExpr(C c, Expr e) { return typeOfExpr(c, e) == "never"; }
 
 // ── Definite assignment — spec/next ch08 ─────────────────────────────────────────────────────────
 //
@@ -479,7 +497,12 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
       daAssignTarget(c, target, true, st);
       return st;
     }
-    ExprStmt(expr): { daExpr(c, expr, st); return st; }
+    ExprStmt(expr): {
+      daExpr(c, expr, st);
+      // A call that does not return reaches nothing after it.
+      if (isNeverExpr(c, expr)) { st.dead = true; }
+      return st;
+    }
     Return(value): {
       if (value is not null) { daExpr(c, value!, st); }
       st.dead = true;
@@ -948,8 +971,6 @@ export i32 errPackedPosition() { return 26; }
 export i32 errStringIndexWrite() { return 27; }
 /** A default construction of something that has no default value. */
 export i32 errNoDefault() { return 28; }
-/** A non-null field that refers back to its own struct. */
-export i32 errRecursiveField() { return 29; }
 /** `as` where the conversion is a downcast and may fail. */
 export i32 errDowncast() { return 30; }
 /** `break` or `continue` with nothing to leave. */
@@ -1499,6 +1520,8 @@ bool isReferenceName(C c, string t) {
 export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
+  // No value of `never` ever arrives, so one may stand where any type is wanted (spec/next ch11).
+  if (got == "never") { return true; }
   if (withoutNull(want) == got) { return true; }
   // A nullable source is a hatch **only when its base would fit**. `P?` into a `P` is the
   // nullable-into-non-null family and reports there; `P?` into an `i32` is an ordinary mismatch and
@@ -4496,27 +4519,30 @@ export string typeOfExpr(C c, Expr e) {
  * does not make it finite. That is why `breaksOut` stops descending at a loop or a switch and
  * `alwaysLeaves` does not.
  */
-bool alwaysLeaves(Stmt[] body) {
+bool alwaysLeaves(C c, Stmt[] body) {
   // **Any** statement, not the last one. An earlier `return` settles it just as well: everything
   // after it is unreachable, so the function still always leaves. Reading only the last statement
   // said otherwise for `{ return 1; i32 dead = 2; }`, which the reference accepts — a false alarm,
   // and the kind that only a corpus of *accepted* programs can find.
   for (i32 i = 0; i < body.len(); i++) {
-    if (leaves(body[i])) { return true; }
+    if (leaves(c, body[i])) { return true; }
   }
   return false;
 }
 
 /** Whether one statement always leaves the function. */
-bool leaves(Stmt s) {
+bool leaves(C c, Stmt s) {
   match (s.kind) {
     Return(value): { return true; }
     Trap: { return true; }
-    Block(body): { return alwaysLeaves(body); }
+    // A call that does not return ends the path as surely as a `return` (spec/next ch11).
+    ExprStmt(expr): { return isNeverExpr(c, expr); }
+    Var(type, nameTok, init, isConst): { return (init is not null) && isNeverExpr(c, init!); }
+    Block(body): { return alwaysLeaves(c, body); }
     // Both arms, and there must be an arm to take: an `if` with no `else` falls through when the
     // condition is false.
     If(cond, then, els): {
-      return els.len() > 0 && alwaysLeaves(then) && alwaysLeaves(els);
+      return els.len() > 0 && alwaysLeaves(c, then) && alwaysLeaves(c, els);
     }
     While(cond, body): { return isTrueLiteral(cond) && !breaksOut(body); }
     DoWhile(body, cond): { return isTrueLiteral(cond) && !breaksOut(body); }
@@ -4528,7 +4554,7 @@ bool leaves(Stmt s) {
     Match(subject, arms): {
       if (arms.len() == 0) { return false; }
       for (i32 i = 0; i < arms.len(); i++) {
-        if (!alwaysLeaves(arms[i].body)) { return false; }
+        if (!alwaysLeaves(c, arms[i].body)) { return false; }
       }
       return true;
     }
@@ -4539,7 +4565,7 @@ bool leaves(Stmt s) {
       bool hasDefault = false;
       for (i32 i = 0; i < cases.len(); i++) {
         if (cases[i].value is null) { hasDefault = true; }
-        if (!alwaysLeaves(cases[i].body)) { return false; }
+        if (!alwaysLeaves(c, cases[i].body)) { return false; }
       }
       return hasDefault;
     }
@@ -5907,6 +5933,11 @@ void checkPackedNullable(C c, string t, Ty at) {
     inner = dropLast(inner, 2);
   }
   string unwrapped = withoutNull(inner);
+  if (unwrapped == "void") {
+    Ty vbase = baseTy(at);
+    c.reportWith(errVoidType(), vbase.line, vbase.col, "void has no values, so it cannot be nullable");
+    return;
+  }
   if (unwrapped != "" && isPackedName(unwrapped)) {
     Ty base = baseTy(at);
     c.reportWith(errPackedNullable(), base.line, base.col, t + " has no room for the absent case");
@@ -6326,7 +6357,7 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   // **`bodyRet`, not `ret`**, or an `async void` lambda is told it owes a value: its slot is
   // `fn<Pending<void>()>`, and a `Pending<void>` is a value even though the body answers with
   // nothing. The rule is about what the body returns, so it asks what the body returns.
-  if (bodyRet != "" && returnsAValue(bodyRet) && !alwaysLeaves(body)) {
+  if (bodyRet != "" && returnsAValue(bodyRet) && !alwaysLeaves(c, body)) {
     c.report(errMissingReturn(), e.line, e.col);
   }
   c.popScope();
@@ -7488,6 +7519,8 @@ bool constExpr(C c, Expr e) {
 bool hasDefault(C c, string t, i32 depth) {
   if (t == typeNone() || t == "") { return true; }
   if (depth > 16) { return false; }
+  // A struct that needs itself to be built has no default — an uninhabited one (spec/next ch11).
+  if (c.isStruct(t) && !c.isGeneric(t) && depth == 0 && reachesStructThroughField(c, t)) { return false; }
   if (isNullableName(t) || isArrayName(t)) { return true; }
   // A funcref has no zero: there is no function to point at until something points it somewhere.
   if (startsWithFn(t)) { return false; }
@@ -7500,6 +7533,17 @@ bool hasDefault(C c, string t, i32 depth) {
   string parent = c.parentOf(t);
   if (parent != "") { return hasDefault(c, parent, depth + 1); }
   return true;
+}
+
+/** Whether one of `t`'s non-null fields reaches `t` again — an uninhabited struct. */
+bool reachesStructThroughField(C c, string t) {
+  for (i32 i = 0; i < c.fieldCount; i++) {
+    if (c.fieldOwners[i] != t) { continue; }
+    string ft = c.fieldTypes[i];
+    if (isNullableName(ft) || isArrayName(ft)) { continue; }
+    if (reachesStruct(c, ft, t, 1)) { return true; }
+  }
+  return false;
 }
 
 /** Whether `from`'s non-null fields can reach `target`, which is what makes a reference recursive. */
@@ -8545,6 +8589,13 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       string world = inst == "" ? recv : inst;
       for (i32 i = 0; i < args.len(); i++) {
         string vwant = substituteType(c, world, c.fieldTypeAtIndex(name, i));
+        // No value of `never` exists to carry, so the variant cannot be built at all
+        // (`§wac-never-variant-not-constructible-u5dxnv8`).
+        if (vwant == "never") {
+          c.reportWith(errNeverVariant(), call.line, call.col,
+                       recv + "." + name + " carries a never payload, which has no value");
+          return;
+        }
         if (vwant == typeNone() || vwant == "") { continue; }
         if (litFamily(c, args[i]) != litNone()) {
           reportLiteral(c, vwant, args[i], errFieldMismatch(), args[i].line, args[i].col);
@@ -9733,6 +9784,14 @@ void checkStmt(C c, Stmt s, Ty want) {
       string valueness = declared == "" && c.lambdaReturn == "" ? writtenTy(c, want) : declared;
       if (valueness == "void" && !(value is null)) {
         c.report(errReturnValueness(), s.line, s.col);
+        return;
+      }
+      // **A `never` function does not complete normally**, so nothing it returns can arrive — but
+      // `return forever();` is a call that does not return either, and is how such a function recurses
+      // (spec/next ch11 `§wac-never-cannot-return-eaffw52`).
+      if (valueness == "never") {
+        if ((value is null) || !isNeverExpr(c, value!)) { c.report(errNeverReturns(), s.line, s.col); }
+        if (value is not null) { checkExpr(c, value!); }
         return;
       }
       if ((value is null) && returnsAValue(valueness)) {
@@ -10958,6 +11017,10 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   i32 covered = 0;
   for (i32 k = 0; k < c.variantCount; k++) {
     if (c.variantOwners[k] != owner) { continue; }
+    // **A variant with a `never` payload has no values**, so a `match` need not name it
+    // (spec/next ch11 `§wac-never-payload-uninhabited-c4j35nq`) — `Step<never, i32, never>` is all
+    // `Yielded`. Asked of the payload as this subject instantiates it.
+    if (variantUninhabited(c, t, c.variantNames[k], c.variantArities[k])) { continue; }
     total = total + 1;
     for (i32 i = 0; i < seenCount; i++) {
       if (seen[i] == c.variantNames[k]) { covered = covered + 1; }
@@ -11186,8 +11249,9 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     // At the **return type**, where the reference puts it. A `Method` carries no position of its own —
     // unlike a `Decl`, which is why the top-level version reports at the declaration — and the return
     // type is the first thing a method has that does.
-    if (returnsAValue(typeOfTy(c, methods[mi].returnType)) && !alwaysLeaves(methods[mi].body)) {
-      c.report(errMissingReturn(), methods[mi].returnType.line, methods[mi].returnType.col);
+    if (returnsAValue(typeOfTy(c, methods[mi].returnType)) && !alwaysLeaves(c, methods[mi].body)) {
+      c.report(typeOfTy(c, methods[mi].returnType) == "never" ? errNeverReturns() : errMissingReturn(),
+               methods[mi].returnType.line, methods[mi].returnType.col);
     }
     c.activeParamCount = savedActive;
   }
@@ -11357,10 +11421,10 @@ export void checkModule(C c, Program prog) {
         // `Box<T>`'s own parameters are in scope for its fields and for every method it declares —
         // `T v;` and `T get(const this)` are the template's, not names the file left undeclared.
         setActiveParams(c, typeParams);
-        // A non-null field that reaches its own struct: `struct Node { Node next; }` cannot be built
-        // at all, because building one needs one first. Reported at the field's type, which is the
-        // only place it *can* be reported — a struct like this is refused on sight, with no
-        // construction anywhere in the file to hang the complaint on.
+        // **A non-null field that reaches its own struct is allowed** — spec/next ch11
+        // `§wac-uninhabited-valid-2f9cxmt`. `struct Node { Node next; }` has no finite value, and is
+        // still a type: it appears in nullable forms and signatures, and nothing can build one, since
+        // it has no default either (`hasDefault` says so). This was refused on sight until spec/next.
         for (i32 fi = 0; fi < fields.len(); fi++) {
           string ft = typeOfTy(c, fields[fi].type);
           // The same two rules a parameter has, in the other declaration position that takes a type.
@@ -11368,10 +11432,6 @@ export void checkModule(C c, Program prog) {
             c.report(errPackedPosition(), fields[fi].type.line, fields[fi].type.col);
           }
           if (ft == "void") { c.report(errVoidType(), fields[fi].type.line, fields[fi].type.col); }
-          if (isNullableName(ft) || isArrayName(ft) || !c.isStruct(ft)) { continue; }
-          if (reachesStruct(c, ft, owner, 0)) {
-            c.report(errRecursiveField(), fields[fi].type.line, fields[fi].type.col);
-          }
         }
         checkMethodBodies(c, owner, c.parentOf(owner), methods);
         c.activeParamCount = 0;
@@ -11436,8 +11496,9 @@ export void checkModule(C c, Program prog) {
         //
         // The type parameters stay in scope for this last question: it reads the return type again,
         // and `T max<T>(T a, T b)` clearing them first made `T` a name nobody had declared.
-        if (returnsAValue(typeOfTy(c, returnType)) && !alwaysLeaves(body)) {
-          c.report(errMissingReturn(), prog.decls[d].line, prog.decls[d].col);
+        if (returnsAValue(typeOfTy(c, returnType)) && !alwaysLeaves(c, body)) {
+          c.report(typeOfTy(c, returnType) == "never" ? errNeverReturns() : errMissingReturn(),
+                   prog.decls[d].line, prog.decls[d].col);
         }
         c.activeParamCount = 0;
       }

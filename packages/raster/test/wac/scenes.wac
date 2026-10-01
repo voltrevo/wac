@@ -429,7 +429,7 @@ export i32[] gridPressWithoutDrag(i32 cols, i32 rows, i32 col, i32 row) {
 export i32[] gridSelectionAbsent(i32 cols, i32 rows, i32[] cps) {
   Grid g = Grid.create(cols, rows, 0);
   g.write(cps);
-  i32 never = g.selectedText(0).len();
+  i32 unmoved = g.selectedText(0).len();
   i32 extendedWithoutBeginning = 0;
   g.selectTo(1, 0);                     // documented to do nothing when none was begun
   extendedWithoutBeginning = g.selectedText(0).len();
@@ -438,7 +438,7 @@ export i32[] gridSelectionAbsent(i32 cols, i32 rows, i32[] cps) {
   i32 withOne = g.selectedText(0).len();
   g.clearSelection();
   i32 afterClearing = g.selectedText(0).len();
-  return [never, extendedWithoutBeginning, withOne, afterClearing];
+  return [unmoved, extendedWithoutBeginning, withOne, afterClearing];
 }
 
 /** The selected text with an `up` offset outside the scrollback it has, both directions. */
