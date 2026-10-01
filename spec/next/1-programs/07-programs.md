@@ -54,6 +54,25 @@ wrote. An instantiation of one becomes a compiled export by being named, `export
 How an export crosses to a host language — what a `string` or an enum becomes in JavaScript — is
 [48](../8-tooling/48-bindgen.md)'s subject.
 
+## `main` matters only to a program
+
+To the language, `main` is an ordinary name. A function called `main` may take and return anything, and a module
+that exports one compiles like any other:
+
+```wac
+// expect: answers main("wac") = "hello, wac"
+// expect (wac build): refused
+export string main(string who) { return "hello, \{who}"; }
+```
+
+`[§wac-main-ordinary-pnxd9gt]` A function named `main` is an ordinary function. Its signature is constrained only when
+the module is built as a program.
+
+Building a program — `wac build`, `wac run`, `wac app`, or running a built module — means a host will start it by
+calling its exported `main`. Only then do the rules in the rest of this chapter apply: what `main` may be handed,
+what it may answer, and what the program exits with. `wac compile` makes a plain module, and its `main`, if it has
+one, is just an export.
+
 ## A program that asks for nothing
 
 ```wac
@@ -163,14 +182,16 @@ export Result<i32> main(Sys sys) {
 `Result.Ok(v)` exits as `v` would; answering `Result.Err(…)` exits 1.
 
 ```wac
-// expect: refused
+// expect: emits
+// expect (wac build): refused
 import { Sys } from "std";
 
-export string main(Sys sys) { return "hi"; }   // not a return type for main
+export string main(Sys sys) { return "hi"; }   // not a program's return type
 ```
 
-`[§wac-main-return-types-jtjuda4]` `main` returns `void`, `never`, `i32`, or a `Result` of `void` or
-`i32`, optionally `async`. Any other return type is refused.
+`[§wac-main-return-types-jtjuda4]` Building a program whose `main` returns anything but `void`, `never`, `i32`, or a
+`Result` of `void` or `i32`, optionally `async`, is refused. Compiled as a plain module, the same `main` is an
+ordinary export.
 
 Nothing in the language assumes a posix exit code. The host reads whatever `main` answered; a status
 is how the command-line host reports it.

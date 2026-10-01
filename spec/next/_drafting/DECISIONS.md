@@ -195,3 +195,4 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   private field lacking a default cannot be constructed, and its declaration is refused. A private method's name stays
   taken; `private virtual` refused. Reflection sees name and type, not value. Bindgen omits private members and `of`.
   Enums have no static methods (13 refuses them), so `private` there covers instance methods only.
+- **`main` is ordinary (operator):** its return-type and status rules apply only when building a program (`wac build`/`run`/`app`); `wac compile` and other modules treat it as any export.
