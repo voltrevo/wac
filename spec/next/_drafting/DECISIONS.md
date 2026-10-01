@@ -183,3 +183,15 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
 - **Revised (operator):** `export { ns.member }` is allowed and exports `member`, symmetric with
   `import { ns.member }`; `as` remains optional. Instantiations still need `as`. Retagged
   `wac-export-member-as` → `wac-export-member` (both new in this spec).
+- **Definite assignment (operator):** one flow-sensitive rule in 08. Paths intersect at joins; exits (`return`,
+  `trap`, `break`, `continue`, `never`) constrain nothing; conditions are not evaluated except `while (true)`/no-condition
+  `for`. A defaulted type's default fills in only where a read can reach the local unassigned, built as if at the
+  declaration; `Point p;` is legal for any `Point`. Lambdas capture only definitely assigned locals. Struct and tuple
+  locals are tracked part by part until first use; a `const` field may be assigned once before first use. Replaces
+  the eager `wac-struct-default-decl` (new in this spec, retagged).
+- **`private` (operator):** fields, methods and static members of structs, and methods of enums; visible only in the
+  declaring type's body. Positional construction outside a struct with a private field is refused; named construction
+  may omit, not name, a private field. Subtypes do not see parent private members; a subtype of a struct with a
+  private field lacking a default cannot be constructed, and its declaration is refused. A private method's name stays
+  taken; `private virtual` refused. Reflection sees name and type, not value. Bindgen omits private members and `of`.
+  Enums have no static methods (13 refuses them), so `private` there covers instance methods only.

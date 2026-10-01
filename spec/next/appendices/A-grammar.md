@@ -89,7 +89,7 @@ type_param     = name , [ "=" , type ] ;                                      (*
 
 struct_decl    = [ "const" ] , "struct" , name , [ type_params ] , [ ":" , type_name ] ,
                  "{" , { member } , "}" ;
-member         = field | method | "static" , type , name , "=" , expr , ";" ;
+member         = [ "private" ] , ( field | method | "static" , type , name , "=" , expr , ";" ) ;   (* 12 *)
 field          = [ "const" ] , type , member_name , [ "=" , expr ] , ";" ;    (* an initialiser is the
                                                                                  field's default: 12 *)
 method         = [ "virtual" | "override" ] , [ "async" ] , [ gen_head ] , ret_type , member_name ,
@@ -99,7 +99,7 @@ receiver       = [ "const" ] , "this" ;
 member_name    = name | "[" , name , "]" ;                                    (* a symbol-named member: 21 *)
 
 enum_decl      = "enum" , name , [ type_params ] , "{" ,
-                 [ variant , { "," , variant } , [ "," ] ] , { method } , "}" ;
+                 [ variant , { "," , variant } , [ "," ] ] , { [ "private" ] , method } , "}" ;
 variant        = name , [ "(" , [ params ] , ")" ] ;
 ```
 
@@ -303,7 +303,7 @@ Comments are `// …` to the end of a line and `/* … */`.
 ```
 as  as!  as~  as@  async  auto  await  break  case  const  continue  coroutine
 default  defer  do  else  enum  export  false  fn  for  gen  if  import  is
-match  matches  namespace  not  null  override  return  static  static_for
+match  matches  namespace  not  null  override  private  return  static  static_for
 static_if  static_match  static_trap  struct  switch  symbol  this  trap  true
 type  typeref  union  virtual  void  while  yield
 ```

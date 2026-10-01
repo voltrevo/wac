@@ -651,6 +651,37 @@ Two shapes are refused deliberately. An `override` would mean per-variant virtua
 different feature. A method with no receiver would be called `Shape.make()`, which is already how a
 variant is constructed, so that spelling has to keep meaning one thing.
 
+A method may be `private`, visible only inside the enum's body ([12](12-structs.md)):
+
+```wac
+// expect: answers rectLabel = "rect 12"
+export enum Shape {
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+
+  string label(const this) { return "\{this.kind()} \{this.area() as~ i32}"; }
+
+  private string kind(const this) {
+    return match (this) { Circle(r): "circle", Rect(w, h): "rect" };
+  }
+  private f64 area(const this) {
+    return match (this) { Circle(r): 3.14159 * r * r, Rect(w, h): w * h };
+  }
+}
+
+export string rectLabel() {
+  Shape s = Shape.Rect(3.0, 4.0);
+
+  // ERROR: 'area' is private to Shape
+  // f64 a = s.area();
+
+  return s.label();
+}
+```
+
+`[§wac-enum-private-method-dmg67n7]` A `private` enum method is visible only inside the enum's body. An enum's payload
+fields cannot be `private`: `match` binds them wherever the enum is matched.
+
 ## Across files
 
 ```wac

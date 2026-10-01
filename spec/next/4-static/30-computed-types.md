@@ -171,4 +171,5 @@ An alias may not reach itself through other aliases and nullable layers alone
   time — be stored in an ordinary local of a function that runs, or returned from one — is not decided.
 - **Fine-grained type reflection.** Beyond the operations listed above — which the language's own rules are
   written in — the reflection API (field names and types, method lists, and so on) is not decided. Any such
-  query demands the reflected declaration's completion ([29](29-static-dependencies.md)).
+  query demands the reflected declaration's completion ([29](29-static-dependencies.md)), and reports private fields
+  by name and type without giving access to their values ([12](../2-types/12-structs.md), `wac-private-reflection`).

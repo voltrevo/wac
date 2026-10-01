@@ -48,10 +48,16 @@ export static i32 LIMIT = 100 * PRIVATE;
 // ---- main.wac ----
 import { LIMIT } from "./limits.wac";
 
-// ERROR: limits.wac does not export 'PRIVATE'
-// import { PRIVATE } from "./limits.wac";
-
 export i32 limit() { return LIMIT; }
+```
+
+```wac
+// expect: refused
+// ---- limits.wac ----
+static i32 PRIVATE = 1;
+// ---- main.wac ----
+import { PRIVATE } from "./limits.wac";     // limits.wac does not export PRIVATE
+export i32 privateLimit() { return PRIVATE; }
 ```
 
 `[§wac-modconst-import-p7fm2wj]` An exported static declaration can be imported by name; one that is not

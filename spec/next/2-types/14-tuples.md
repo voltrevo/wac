@@ -203,6 +203,8 @@ Unwrapped<Ts> unwrapAll<Ts>(Ts t) {
 `[§wac-tuple-member-assign-once-cwgrkf2]` A tuple local declared without an initialiser has unassigned
 members; each must be assigned before the tuple is used.
 
+Members are tracked as a struct's fields are, by the one rule in [08](08-primitives.md) (`wac-assign-parts`).
+
 A tuple cannot be accumulated instead: an accumulator has one type, and a tuple built one member at a
 time has a different one at every step. Computed tuple types are
 [30](../4-static/30-computed-types.md)'s subject.

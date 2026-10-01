@@ -228,6 +228,10 @@ interface, and draw no warning.
 The warning does not change the output or the exit status. A generic the entry exports *and* instantiates by name draws no
 warning: its instantiations are the interface, and the template is there for wac importers.
 
+`[§wac-bind-private-7kpcy8t]` A private field has no accessor and is left out of `toObject()`, a private method is not
+bound, and a struct with a private field gets no `of`: JavaScript builds one through the struct's own static methods,
+as wac outside its body must.
+
 `[§wac-bind-static-6wnq3kv]` A method without a receiver binds as a static member of its class. It is how JavaScript builds a
 struct with an invariant, since a struct has no other constructor.
 

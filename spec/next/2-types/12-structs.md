@@ -159,8 +159,8 @@ struct Conn {
 }
 
 export i32 defaulted() {
-  Conn c;                                  // every field has a default, so Conn does
-  Conn d = Conn { };                       // the same, written as a construction
+  Conn c;                                  // read below unassigned: Conn's default
+  Conn d = Conn { };                       // the same value, written as a construction
   return c.retries + d.log.len();
 }
 ```
@@ -171,8 +171,8 @@ default exactly when every field has one.
 `[§wac-arr-field-default-k9wq3fm]` A field of array type defaults to an empty array, whatever the
 element type.
 
-`[§wac-struct-default-decl-th9q22u]` A local of a struct type that has a default is constructed from the
-defaults when declared without an initialiser; `T { }` constructs the same value.
+`[§wac-struct-default-read-n6vdh42]` A local of a struct type with a default, read where it may be unassigned, holds
+the value `T { }` constructs ([08](08-primitives.md), `wac-assign-default-on-demand`).
 
 Defaults nest. A field of struct type has a default when that struct does:
 
@@ -221,33 +221,60 @@ uses it.
 `[§wac-field-initialiser-no-this-tvimw93]` A field initialiser cannot refer to `this`, or to any other
 field of the object being constructed.
 
-A declaration of a struct without a default leaves the fields that have none unassigned. They must be
-written before the object is used:
+A struct local declared without an initialiser may also be built a field at a time. Until its first use, each
+field is tracked on its own; at the first use, every field must be assigned or have a default
+([08](08-primitives.md), `wac-assign-parts`):
 
 ```wac
 // expect: answers assignedLater = 7
+// expect: answers frozenPort(8080) = 8080
 struct Half {
   i32 retries = 3;
   i32 port;                                // no default
+}
+
+struct Fixed {
+  const i32 port;
 }
 
 i32 use(Half h) { return h.retries + h.port; }
 
 export i32 assignedLater() {
   Half h;
-  h.port = 4;                              // retries is already 3
-
-  // ERROR: 'g.port' is never assigned
-  // Half g;
-  // i32 bad = use(g);
-
+  h.port = 4;                              // retries takes its default at the first use
   return use(h);
+}
+
+export i32 neverAssigned() {
+  Half g;
+
+  // ERROR: 'g.port' is not assigned at g's first use, and has no default
+  // return use(g);
+
+  return 0;
+}
+
+export i32 frozenPort(i32 p) {
+  Fixed f;
+  f.port = p;                              // construction, not a write: f is not yet used
+
+  // ERROR: 'f.port' is const, and was assigned already
+  // f.port = p + 1;
+
+  i32 seen = f.port;                       // the first use
+
+  // ERROR: 'f.port' is const
+  // f.port = 1;
+
+  return seen;
 }
 ```
 
-`[§wac-struct-decl-pending-v69zid6]` Declaring a local of a struct type without an initialiser assigns the
-fields that have defaults and leaves the rest unassigned. Using the object before every field is
-assigned is refused.
+`[§wac-struct-decl-pending-rx5fvj2]` A struct local's fields may be assigned one at a time before its first use. At the
+first use, a field neither assigned nor defaulted is refused; a defaulted one takes its default.
+
+`[§wac-struct-const-field-init-u4dtpsm]` Before a struct local's first use, assigning a `const` field is construction:
+it is allowed once. After the first use, it is a write, and refused.
 
 A struct with a field of its own type that is not nullable has no default, since building one would
 never end — and it is still a valid type ([11](11-never-and-uninhabited.md)).
@@ -466,6 +493,141 @@ refused.
 
 One object answering two ways depending on which static type reached it is what shadowing would
 allow, and it is not allowed.
+
+## Private members
+
+`private` on a field, a method or a static member makes it visible only inside its struct's body — its methods,
+static methods and field initialisers. The rest of the module cannot name it, any more than another module can:
+
+```wac
+// expect: answers deposited(10, 20) = 30
+// expect: answers depositCount(10, 20) = 1
+export struct Account {
+  private i32 cents;
+  private i32 deposits = 0;
+
+  Account open(i32 cents) { return Account(cents, 0); }   // inside the body: every field is in reach
+
+  void deposit(this, i32 c) {
+    this.cents = this.cents + c;
+    this.tally();
+  }
+  i32 balance(const this) { return this.cents; }
+  i32 count(const this) { return this.deposits; }
+
+  private void tally(this) { this.deposits = this.deposits + 1; }
+}
+
+export i32 deposited(i32 a, i32 b) {
+  Account acct = Account.open(a);
+  acct.deposit(b);
+
+  // ERROR: 'cents' is private to Account
+  // acct.cents = 1000000;
+
+  // ERROR: 'cents' is private to Account
+  // i32 peek = acct.cents;
+
+  // ERROR: 'tally' is private to Account
+  // acct.tally();
+
+  return acct.balance();
+}
+
+export i32 depositCount(i32 a, i32 b) {
+  Account acct = Account.open(a);
+  acct.deposit(b);
+  return acct.count();
+}
+```
+
+`[§wac-private-member-dgsxduu]` A `private` field, method or static member is visible only inside the body of the
+struct that declares it. Naming it anywhere else is refused.
+
+### Construction from outside
+
+Construction sets fields, so it obeys the same boundary. Positional construction supplies every field, and is
+refused outside the body of a struct with any private field. Named construction outside may leave out a private
+field that has a default, and may not name one:
+
+```wac
+// expect: answers headroom = 5
+export struct Quota {
+  i32 limit;
+  private i32 used = 0;
+
+  i32 left(const this) { return this.limit - this.used; }
+}
+
+export struct Sealed {
+  private i32 secret;
+  Sealed make(i32 s) { return Sealed(s); }
+}
+
+export i32 headroom() {
+  Quota q = Quota { limit: 5 };            // used takes its default
+
+  // ERROR: 'used' is private to Quota
+  // Quota forged = Quota { limit: 5, used: -100 };
+
+  // ERROR: Quota has private fields — positional construction is for its own body
+  // Quota forged = Quota(5, -100);
+
+  // ERROR: 'secret' is private to Sealed and has no default — build one with Sealed.make
+  // Sealed s = Sealed { };
+
+  return q.left();
+}
+```
+
+`[§wac-private-construction-4zbaya5]` Outside its struct's body, positional construction of a struct with a private
+field is refused, and named construction may not name a private field. A private field without a default can
+therefore be set only by the struct's own code — which is how a struct guards an invariant.
+
+Building a local field by field ([08](08-primitives.md)) is construction too: outside the body, a private field
+cannot be assigned, so it must have a default to fill it at the local's first use.
+
+### Subtypes do not see a parent's private members
+
+```wac
+// expect: emits
+struct Account {
+  private i32 cents = 0;
+  i32 balance(const this) { return this.cents; }
+}
+
+export struct Savings : Account {
+  i32 rate;
+
+  i32 interest(const this) {
+    // ERROR: 'cents' is private to Account
+    // return this.cents * this.rate / 100;
+
+    return this.balance() * this.rate / 100;
+  }
+}
+```
+
+`[§wac-private-not-inherited-acpickk]` A subtype's body is not its parent's: a parent's private members are not visible
+in it. A subtype's methods reach them only through the parent's non-private methods.
+
+The subtype's own construction follows the rule above. Positional construction of `Savings` takes `Account`'s fields
+first (see Subtypes), so it is refused everywhere, `Savings`' own body included; named construction works when
+every private parent field has a default. A subtype of a struct with a private field that has no default cannot be
+constructed at all, and declaring it is refused.
+
+A private method keeps its name taken. A subtype may not declare a method with a parent's private method's name, as
+for any method that is not `virtual` (`wac-nonvirtual-final`), and `private virtual` is refused: an override in a
+subtype would need to see what it replaces.
+
+### Private members and static reflection
+
+Static evaluation that reflects on a struct's fields ([30](../4-static/30-computed-types.md)) sees a private field —
+its name and its type — so code computing a type from a struct's shape sees the whole shape. It cannot read or write
+the field's value through reflection outside the struct's body.
+
+`[§wac-private-reflection-jp3cgxs]` Static reflection reports a private field's name and type. Reading or writing a
+private field's value through reflection is subject to `private` exactly as a written field access is.
 
 ## Type tests and casts
 

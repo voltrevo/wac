@@ -316,5 +316,136 @@ array. A numeric type and `bool` have none.
 `[§wac-local-unassigned-txsix97]` A local declared without an initialiser, whose type has no default, is
 unassigned until it is written. Reading it before that is refused.
 
+## Definite assignment
+
+Whether a local is assigned is decided by the paths that reach each use of it. A local is **definitely
+assigned** at a point when every path from its declaration to that point assigns it:
+
+```wac
+// expect: answers sign(-5) = -1
+// expect: answers sign(0) = 0
+// expect: answers sign(3) = 1
+export i32 sign(i32 n) {
+  i32 s;
+  if (n < 0) { s = -1; } else if (n == 0) { s = 0; } else { s = 1; }
+  return s;                                // every path assigned s
+}
+
+export i32 onlySometimes(i32 n) {
+  i32 s;
+  if (n < 0) { s = -1; }
+
+  // ERROR: 's' may be read before it is assigned — not every path assigns it
+  // return s;
+
+  return 0;
+}
+```
+
+`[§wac-assign-every-path-r2q2iti]` A local is definitely assigned at a point when every path from its declaration to
+that point assigns it. Where paths join — after an `if`, a `switch`, a `match` or a ternary — it is assigned only if
+it is on every one of them.
+
+Conditions are not evaluated to prune paths, with the one exception [25](../3-expressions/25-control-flow.md)
+already makes: `while (true)` and a `for` with no condition leave only by `break`. A path that does not continue —
+it ends in `return`, `trap`, `break` or `continue`, or in an expression of type `never`
+([11](11-never-and-uninhabited.md)) — reaches nothing after it, and so constrains nothing:
+
+```wac
+// expect: answers checked(4) = 4
+// expect: traps checked(-1)
+// expect: answers firstOver([1, 5, 9], 4) = 5
+export i32 checked(i32 n) {
+  i32 v;
+  if (n >= 0) { v = n; } else { trap "negative"; }
+  return v;                                // the trapping path never gets here
+}
+
+export i32 firstOver(i32[] xs, i32 limit) {
+  i32 found;
+  i32 i = 0;
+  while (true) {
+    if (xs[i] > limit) { found = xs[i]; break; }   // the only way out assigns found
+    i++;
+  }
+  return found;
+}
+
+export i32 maybeOver(i32[] xs, i32 limit) {
+  i32 found;
+  for (i32 x in xs) {
+    if (x > limit) { found = x; break; }
+  }
+
+  // ERROR: 'found' may be read before it is assigned — the loop can end without assigning it
+  // return found;
+
+  return -1;
+}
+```
+
+`[§wac-assign-exits-4tnnmsb]` A path ending in `return`, `trap`, `break`, `continue` or a `never` expression does not
+reach the code after it. After a loop, a local is assigned if every path leaving the loop assigned it — each
+`break`, and the condition failing, which a loop with a condition can do before its body runs.
+
+### A default fills in only where it is needed
+
+A local whose type has a default need not be assigned before it is read. Where a read can reach it unassigned, it
+holds the default:
+
+```wac
+// expect: answers retries(true) = 7
+// expect: answers retries(false) = 3
+struct Conn {
+  i32 retries = 3;
+  i32[] log;
+}
+
+export i32 retries(bool configured) {
+  Conn c;
+  if (configured) { c = Conn { retries: 7 }; }
+  return c.retries;                        // assigned on one path; Conn's default on the other
+}
+```
+
+`[§wac-assign-default-on-demand-t2bh3qh]` A local of a type with a default that a read can reach unassigned holds the
+default there. A local of a type with none is refused at that read (`wac-local-unassigned`).
+
+The default is built as if at the declaration, once each time the declaration runs, and only when some read can
+reach the local unassigned. A local assigned on every path before it is read never has a default built — which is
+how `Point p;` stays legal for a `Point` with no default, as long as nothing reads it first.
+
+### A lambda captures only what is assigned
+
+A lambda captures by reference ([20](20-functions-and-funcrefs.md)), and the analysis cannot see when it will
+run. So a lambda may capture a local only where the local is definitely assigned:
+
+```wac
+// expect: answers capturedLater(5) = 5
+export i32 capturedLater(i32 n) {
+  i32 k;
+
+  // ERROR: 'k' is captured before it is assigned
+  // fn<i32()> early = () => k;
+
+  k = n;
+  fn<i32()> late = () => k;
+  return late();
+}
+```
+
+`[§wac-assign-capture-6tpr5ix]` A lambda that uses a local, to read or to write it, is refused where that local is not
+definitely assigned.
+
+### Struct and tuple locals are assigned part by part
+
+A struct or tuple local declared without an initialiser may have its fields or members assigned one at a time
+([12](12-structs.md), [14](14-tuples.md)). Until the local is first used as a whole — read, passed, returned, a
+method called on it, a field read from it, or captured — each part is tracked as a local of its own. At that first
+use every part must be definitely assigned, or have a default, which fills it there.
+
+`[§wac-assign-parts-usxj6ha]` Until its first use, a struct or tuple local's fields or members are tracked separately.
+At the first use, each must be definitely assigned or have a default; one with neither is refused.
+
 A struct has a default exactly when every field has one ([12](12-structs.md)), and an array of a type
 with no default cannot be created by defaulting its elements ([15](15-arrays.md)).
