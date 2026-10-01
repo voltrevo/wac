@@ -264,4 +264,6 @@ export i32 oneCircle() { return radius(Circle(5)); }   // one Circle
 reach the same module, under whatever names they import it by.
 
 A package's files cannot be reached by a relative path from outside it, nor can its files reach out of it
-by one ([02](02-modules-and-imports.md)): a package is entered through its name and its `exports` alone.
+by one. A project nested in another is imported by its directory, which resolves to its `exports` exactly as
+its name would ([02](02-modules-and-imports.md)): either way, a package is entered through its `exports`
+alone.

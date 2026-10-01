@@ -163,3 +163,8 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
 - **Relative imports stay inside the package boundary**, taken as the project: the target's nearest
   `wac.json5` must be the importer's own (two files with none count as the same). 02's `@/` example now
   spans projects through a dependency instead of `./vendored/`.
+- **Revised:** a nested project is imported by naming its directory (`"./vendored"`, `"@/vendored"`), which
+  resolves to its `exports` module; no `exports` is an error. Any other path into a nested project, including
+  into a project nested within it, is refused, as is a path out past the project root
+  (`wac-import-nested-project`, `wac-import-within-project`). "Project" is any directory with a `wac.json5`;
+  a "package" is a project with `exports` — so only a nested project that is a package can be imported.

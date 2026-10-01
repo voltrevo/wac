@@ -313,6 +313,7 @@ export i32 seven() { return three() + four(); }
 |---|---|
 | `"./x.wac"`, `"../x.wac"` | a file, relative to the importing file |
 | `"@/src/x.wac"` | a file, relative to the root of the importing file's project |
+| `"./vendored"`, `"@/vendored"` | a nested project, by its directory: the module it exports |
 | `"core"`, `"geometry"` | a package: its whole name, nothing appended |
 
 `[§wac-specifier-kinds-sgmw8y4]` A specifier is relative (`./`, `../`), rooted at the project
@@ -376,23 +377,81 @@ importing file. With none, it is refused — not treated as relative to some oth
 A project that uses only relative imports needs no manifest. An empty `wac.json5` is a valid one: its
 presence is all `@/` asks about.
 
-### A path stays inside its project
+### A nested project is imported by its directory
 
-A relative or `@/` specifier names a file in the importing file's own project. Another project — a package,
-or a directory with a `wac.json5` of its own — is reached by its package name and nothing else:
+A path names a file in the importing file's own project, or a project nested inside it. A nested project — a
+directory below this project's root that holds a `wac.json5` of its own — is imported by naming that
+directory, and the import resolves to the module its manifest `exports` ([04](04-packages.md)):
+
+```wac
+// expect: answers vendoredWidth = 21
+// ---- wac.json5 ----
+{}
+// ---- main.wac ----
+import { width } from "./vendored";          // vendored's exports module
+import { width as alsoWidth } from "@/vendored";
+export i32 vendoredWidth() { return width() + alsoWidth() * 20; }
+// ---- vendored/wac.json5 ----
+{ exports: "./src/lib.wac" }
+// ---- vendored/src/lib.wac ----
+import { one } from "@/src/one.wac";         // vendored's own root
+export i32 width() { return one(); }
+// ---- vendored/src/one.wac ----
+export i32 one() { return 1; }
+```
+
+`[§wac-import-nested-project-sd4s5n8]` A relative or `@/` specifier naming the directory of a nested project
+resolves to the module that project's manifest names as `exports`. A nested project whose manifest has no
+`exports` cannot be imported, and the diagnostic says so.
 
 ```wac
 // expect: refused
 // ---- wac.json5 ----
 {}
 // ---- main.wac ----
-import { width } from "./vendored/fmt.wac";   // vendored/ is a project of its own
+import { width } from "./vendored";          // vendored declares no exports
 export i32 vendoredWidth() { return width(); }
 // ---- vendored/wac.json5 ----
 {}
-// ---- vendored/fmt.wac ----
+// ---- vendored/lib.wac ----
 export i32 width() { return 1; }
 ```
+
+The directory is the only way in. A path to a file inside a nested project is refused, and so is a path to a
+project nested inside that one — it is reached through the project that contains it, if that project exports
+it:
+
+```wac
+// expect: refused
+// ---- wac.json5 ----
+{}
+// ---- main.wac ----
+import { width } from "./vendored/src/lib.wac";   // a file inside vendored
+export i32 vendoredWidth() { return width(); }
+// ---- vendored/wac.json5 ----
+{ exports: "./src/lib.wac" }
+// ---- vendored/src/lib.wac ----
+export i32 width() { return 1; }
+```
+
+```wac
+// expect: refused
+// ---- wac.json5 ----
+{}
+// ---- main.wac ----
+import { depth } from "./vendored/inner";    // a project inside vendored
+export i32 innerDepth() { return depth(); }
+// ---- vendored/wac.json5 ----
+{ exports: "./lib.wac" }
+// ---- vendored/lib.wac ----
+export { depth } from "./inner";             // vendored may import its own nested project
+// ---- vendored/inner/wac.json5 ----
+{ exports: "./lib.wac" }
+// ---- vendored/inner/lib.wac ----
+export i32 depth() { return 2; }
+```
+
+Nor may a path leave its project. A nested project's files cannot reach back into the project around it:
 
 ```wac
 // expect (wac build app/main.wac): refused
@@ -405,13 +464,17 @@ export i32 viaShared() { return shared(); }
 export i32 shared() { return 1; }
 ```
 
-`[§wac-import-within-project-vnqu28r]` A relative or `@/` specifier must resolve to a file whose nearest
-`wac.json5` is the importing file's own — or, for a file with none, to another file with none. A path into a
-nested project, or out past the project's root, is refused, and the diagnostic names the boundary it
-crosses.
+`[§wac-import-within-project-vnqu28r]` A relative or `@/` specifier must resolve to a file in the importing
+file's own project — one whose nearest `wac.json5` is the importer's, or, for a file with none, another file
+with none — or to the directory of a project nested directly in it. Any other path into a nested project, at
+any depth, or out past the project's root, is refused, and the diagnostic names the boundary it crosses.
 
-A package's files are its own to arrange: what it offers is its entry module ([04](04-packages.md)), and a
-path that reached past that would make every file in it part of its interface.
+A project's files are its own to arrange. What it offers is its `exports` module, whether it is reached as a
+dependency by name or as a nested project by path; a path that reached past that would make every file in it
+part of its interface.
+
+A nested project's own package-name imports resolve through its own manifest, as a dependency's do
+([04](04-packages.md)).
 
 ### A package is named whole
 
