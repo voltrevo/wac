@@ -4,6 +4,7 @@
 and a typed wrapper for every export. There is no separate `.wasm` to ship beside it.
 
 ```wac
+// expect: emits
 // ---- math.wac ----
 export i32 gcd(i32 a, i32 b) {
   while (b != 0) {
@@ -64,6 +65,7 @@ A generated name is the wac export's name, exactly.
 | `void` | `void` | |
 
 ```wac
+// expect: emits
 // ---- big.wac ----
 export i64 add64(i64 a, i64 b) { return a + b; }
 export u32 u32High() { return 0xFF000000; }
@@ -80,6 +82,7 @@ caller would see the value less `2**width`. Packed types are ordinary types ([08
 `i8`, `u16` and `i16` cross as parameters and results like any other number.
 
 ```wac
+// expect: emits
 // ---- greet.wac ----
 export string greet(string name) { return "hello, \{name}!"; }
 export i32 countBytes(string s) { return s.len(); }
@@ -102,6 +105,7 @@ export i32 countBytes(string s) { return s.len(); }
 | `bool[]` | `boolean[]` |
 
 ```wac
+// expect: emits
 // ---- sort.wac ----
 export i32[] bubbleSort(i32[] arr) {
   for (i32 i = 0; i < arr.len(); i++) {
@@ -135,6 +139,7 @@ There is no memory a JavaScript typed array and a GC array share, so a binding t
 copying twice and calling it sharing. A function handing back more than one array returns a struct holding them.
 
 ```wac
+// expect: emits
 // ---- bytes.wac ----
 export u8[] echoBytes(u8[] data) { return data; }
 ```
@@ -152,6 +157,7 @@ always a fresh copy, never a view.
 A struct crosses as an opaque reference wrapped in a generated class:
 
 ```wac
+// expect: emits
 // ---- point.wac ----
 export struct Point {
   i32 x;
@@ -190,6 +196,7 @@ A generic declaration has no single shape to bind, so bindgen binds instantiatio
 binds under that name; one reached only through a signature binds under a name spelled from its arguments:
 
 ```wac
+// expect: emits
 // ---- vecs.wac ----
 import { Vec } from "core";
 
@@ -301,6 +308,7 @@ deep([new Int32Array([1, 2])]);     // nested arrays nest
 A host function is passed in, never ambient:
 
 ```wac
+// expect: emits
 // ---- sum.wac ----
 export i32 fold(fn<i32(i32, i32)> f, i32[] xs) {
   i32 acc = 0;
@@ -338,6 +346,7 @@ higher((g) => g(21));        // wac hands a wac function to a host function
 ## What does not cross
 
 ```wac
+// expect: emits
 // ---- mixed.wac ----
 export i32 simple() { return 42; }
 export i32 firstOf(fn<i32(i32)>[] fs) { return fs[0](1); }

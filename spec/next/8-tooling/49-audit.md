@@ -21,6 +21,7 @@ value a `Sys` gave out ([44](../7-library/44-std.md)). A function not handed one
 *what can this dependency touch* is a property of declared types, and a file can be cleared without reading its bodies.
 
 ```wac
+// fragment — two files of the logger package
 // ---- logger/src/sink.wac ----
 import { Sys } from "std";
 

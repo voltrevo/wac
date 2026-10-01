@@ -1,0 +1,312 @@
+// The specification's examples, read as programs.
+//
+// `spec/next` is written so that its examples are the definition: a ` ```wac ` fence is a whole program,
+// its first lines say what happens to it, and every `// ERROR:` line beneath is a separate claim that
+// uncommenting it, and nothing else, makes the program refused. `spec/next/README.md` states the
+// conventions; this reads them, and nothing here is a second statement of them.
+//
+// This file only *reads*. Turning a fence into a verdict needs the compiler and the binary, and is
+// `specexamples_probe.wac`'s job.
+//
+// **A fence this cannot read is reported, never skipped.** An unreadable fence counted as met would
+// let a typo in an expectation pass as a language that agrees with the spec.
+
+import { Vec } from "core/vec.wac";
+import { startsWith, endsWith, trimmed, splitKeepingEmpty } from "../../../wactest/src/strings.wac";
+
+/** One thing a fence says must happen. */
+export struct Expectation {
+  /** `"emits"`, `"refused"`, `"answers"`, `"traps"`, `"exits"` or `"prints"`. */
+  string kind;
+  /** The export called by `answers` and `traps`. */
+  string call;
+  /** Its arguments, as written: wac literals. */
+  string[] args;
+  /** `answers`' value, or `exits`' status, as written. */
+  string value;
+  /** `prints`' lines. */
+  string[] lines;
+  /** For an expectation about one command — `(wac build)` — the command and its words; empty otherwise. */
+  string command;
+}
+
+/** A program variant: the fence as written, or with one `// ERROR:` block uncommented. */
+export struct Variant {
+  /** 0 for the fence as written; otherwise the line, in the markdown file, of the `// ERROR:` it tests. */
+  i32 errorLine;
+  /** The reason the `// ERROR:` line gives. Empty for the fence as written. */
+  string reason;
+  string[] paths;
+  string[] sources;
+}
+
+/** One fence. */
+export struct Fence {
+  /** The markdown file, relative to the repository. */
+  string doc;
+  /** The line of the opening ` ```wac `. */
+  i32 line;
+  bool fragment;
+  Expectation[] expects;
+  /** The fence as written, then one variant per `// ERROR:` block. */
+  Variant[] variants;
+  /** The file names, as the fence marks them, with `<dep>/` rewritten to `deps/dep/`. */
+  string entry;
+  /** Tags placed below the fence, before the next one. */
+  string[] tags;
+  /** Why this fence could not be read. Empty when it was. */
+  string error;
+}
+
+/** Every fence in one markdown document. */
+export Fence[] fencesIn(string doc, string text) {
+  string[] lines = splitKeepingEmpty(text);
+  Vec<Fence> out = Vec.create();
+  i32 i = 0;
+  while (i < lines.len()) {
+    if (trimmed(lines[i]) != "```wac") { i = i + 1; continue; }
+    i32 open = i;
+    i32 j = i + 1;
+    while (j < lines.len() && trimmed(lines[j]) != "```") { j = j + 1; }
+    string[] body = string[j - open - 1](fill: "");
+    for (i32 k = open + 1; k < j; k++) { body[k - open - 1] = lines[k]; }
+    // Tags belong to the fence above them, up to the next fence.
+    i32 next = j + 1;
+    while (next < lines.len() && !startsWith(trimmed(lines[next]), "```")) { next = next + 1; }
+    Vec<string> tags = Vec.create();
+    for (i32 k = j + 1; k < next; k++) { collectTags(lines[k], tags); }
+    out.push(readFence(doc, open + 1, body, tags.toArray()));
+    i = j + 1;
+  }
+  return out.toArray();
+}
+
+/** Tags written `[§name]` on one line. */
+void collectTags(string line, Vec<string> into) {
+  i32 at = 0;
+  while (true) {
+    i32 s = indexFrom(line, "[§", at);
+    if (s < 0) { return; }
+    i32 e = indexFrom(line, "]", s);
+    if (e < 0) { return; }
+    into.push(line.slice(s + 3, e));       // "§" is two bytes
+    at = e + 1;
+  }
+}
+
+Fence readFence(string doc, i32 line, string[] body, string[] tags) {
+  if (body.len() > 0 && startsWith(trimmed(body[0]), "// fragment")) {
+    return Fence(doc, line, true, Expectation[](), Variant[](), "", tags, "");
+  }
+  Vec<Expectation> expects = Vec.create();
+  string err = "";
+  i32 k = 0;
+  while (k < body.len() && startsWith(body[k], "// expect")) {
+    string e = body[k];
+    k = k + 1;
+    // `prints` takes the comment lines after it as its output.
+    Vec<string> printed = Vec.create();
+    if (e.indexOf(": prints") >= 0) {
+      while (k < body.len() && startsWith(body[k], "// ") && !startsWith(body[k], "// expect")
+             && !startsWith(body[k], "// ----")) {
+        printed.push(body[k].slice(3, body[k].len()));
+        k = k + 1;
+      }
+    }
+    Expectation? x = parseExpect(e, printed.toArray());
+    if (x is null) { err = "cannot read `" + e + "`"; } else { expects.push(x!); }
+  }
+  if (expects.len() == 0 && err == "") { err = "no `// expect:` line and not a fragment"; }
+
+  // The rest is the program: one file, or several marked `// ---- name ----`.
+  Vec<string> paths = Vec.create();
+  Vec<string> sources = Vec.create();
+  Vec<i32> starts = Vec.create();        // the markdown line each file's first line sits on
+  string cur = "";
+  string curPath = "main.wac";
+  i32 curStart = line + 1 + k;
+  bool marked = false;
+  for (i32 m = k; m < body.len(); m++) {
+    string l = body[m];
+    if (startsWith(l, "// ---- ") && endsWith(trimmed(l), " ----")) {
+      if (marked || trimmed(cur) != "") {
+        paths.push(curPath); sources.push(cur); starts.push(curStart);
+      }
+      string name = trimmed(l);
+      curPath = depPath(name.slice(8, name.len() - 5));
+      cur = "";
+      curStart = line + 1 + m + 1;
+      marked = true;
+      continue;
+    }
+    cur = cur + l + "\n";
+  }
+  paths.push(curPath); sources.push(cur); starts.push(curStart);
+
+  string entry = "main.wac";
+  if (paths.len() == 1) { entry = paths.get(0); }
+  for (i32 q = 0; q < expects.len(); q++) {
+    // `(wac build app/main.wac)` names the entry.
+    string c = expects.get(q).command;
+    string[] words = wordsOf(c);
+    for (i32 w = 2; w < words.len(); w++) {
+      if (endsWith(words[w], ".wac") && words[1] != "run") { entry = words[w]; }
+    }
+  }
+
+  string[] ps = paths.toArray();
+  string[] ss = sources.toArray();
+  Vec<Variant> variants = Vec.create();
+  variants.push(Variant(0, "", ps, ss));
+  for (i32 f = 0; f < ss.len(); f++) {
+    addErrorVariants(ps, ss, f, starts.get(f), variants);
+  }
+  return Fence(doc, line, false, expects.toArray(), variants.toArray(), entry, tags, err);
+}
+
+/** `<geometry>/src/lib.wac` as a path a compiler can hold: `deps/geometry/src/lib.wac`. */
+export string depPath(string p) {
+  if (startsWith(p, "<")) {
+    i32 e = p.indexOf(">");
+    if (e > 0) { return "deps/" + p.slice(1, e) + p.slice(e + 1, p.len()); }
+  }
+  return p;
+}
+
+/**
+ * One variant per `// ERROR:` block in file `f`: the block is the comment lines after it, at its
+ * indentation, up to a line that is not one; uncommenting means removing the `// ` after the
+ * indentation.
+ */
+void addErrorVariants(string[] paths, string[] sources, i32 f, i32 firstLine, Vec<Variant> into) {
+  string[] ls = splitKeepingEmpty(sources[f]);
+  for (i32 i = 0; i < ls.len(); i++) {
+    string t = trimmed(ls[i]);
+    if (!startsWith(t, "// ERROR")) { continue; }
+    string indent = ls[i].slice(0, ls[i].indexOf("//"));
+    string reason = trimmed(t.slice(8, t.len()));
+    if (startsWith(reason, ":")) { reason = trimmed(reason.slice(1, reason.len())); }
+    string[] changed = string[ls.len()](fill: "");
+    for (i32 j = 0; j < ls.len(); j++) { changed[j] = ls[j]; }
+    i32 j = i + 1;
+    while (j < ls.len() && startsWith(ls[j], indent + "// ") && !startsWith(trimmed(ls[j]), "// ERROR")) {
+      changed[j] = indent + ls[j].slice(indent.len() + 3, ls[j].len());
+      j = j + 1;
+    }
+    string text = "";
+    for (i32 k = 0; k < changed.len(); k++) {
+      text = text + changed[k];
+      if (k + 1 < changed.len()) { text = text + "\n"; }
+    }
+    string[] ss = string[sources.len()](fill: "");
+    for (i32 k = 0; k < sources.len(); k++) { ss[k] = k == f ? text : sources[k]; }
+    into.push(Variant(firstLine + i, reason, paths, ss));
+  }
+}
+
+/** `// expect: answers f(1, 2) = 3`, `// expect (wac build): refused`, … — or null. */
+export Expectation? parseExpect(string line, string[] printed) {
+  string rest = trimmed(line.slice(9, line.len()));      // after "// expect"
+  string command = "";
+  if (startsWith(rest, "(")) {
+    i32 e = rest.indexOf(")");
+    if (e < 0) { return null; }
+    command = rest.slice(1, e);
+    rest = trimmed(rest.slice(e + 1, rest.len()));
+  }
+  if (!startsWith(rest, ":")) { return null; }
+  rest = trimmed(rest.slice(1, rest.len()));
+  string[] none = string[]();
+  if (rest == "emits" || rest == "refused") { return Expectation(rest, "", none, "", none, command); }
+  if (rest == "prints") { return Expectation("prints", "", none, "", printed, command); }
+  if (startsWith(rest, "exits ")) {
+    return Expectation("exits", "", none, trimmed(rest.slice(6, rest.len())), none, command);
+  }
+  if (startsWith(rest, "traps ")) {
+    string c = trimmed(rest.slice(6, rest.len()));
+    return Expectation("traps", callName(c), callArgs(c), "", none, command);
+  }
+  if (startsWith(rest, "answers ")) {
+    string c = trimmed(rest.slice(8, rest.len()));
+    i32 eq = topLevelEquals(c);
+    if (eq < 0) { return null; }
+    string lhs = trimmed(c.slice(0, eq));
+    return Expectation("answers", callName(lhs), callArgs(lhs), trimmed(c.slice(eq + 1, c.len())), none,
+                       command);
+  }
+  return null;
+}
+
+/** The `=` separating a call from its answer: outside quotes and brackets. */
+i32 topLevelEquals(string s) {
+  i32 depth = 0;
+  bool quoted = false;
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (quoted) {
+      if (c == "\\") { i = i + 1; } else if (c == "\"") { quoted = false; }
+      continue;
+    }
+    if (c == "\"") { quoted = true; }
+    else if (c == "(" || c == "[") { depth = depth + 1; }
+    else if (c == ")" || c == "]") { depth = depth - 1; }
+    else if (c == "=" && depth == 0) { return i; }
+  }
+  return -1;
+}
+
+string callName(string c) {
+  i32 p = c.indexOf("(");
+  return trimmed(p < 0 ? c : c.slice(0, p));
+}
+
+/** The arguments in `f(a, [b, c], "d")`, split at top-level commas. */
+export string[] callArgs(string c) {
+  i32 p = c.indexOf("(");
+  if (p < 0) { return string[](); }
+  string inner = c.slice(p + 1, lastIndex(c, ")"));
+  Vec<string> out = Vec.create();
+  i32 depth = 0;
+  bool quoted = false;
+  i32 from = 0;
+  for (i32 i = 0; i < inner.len(); i++) {
+    string ch = inner.slice(i, i + 1);
+    if (quoted) {
+      if (ch == "\\") { i = i + 1; } else if (ch == "\"") { quoted = false; }
+      continue;
+    }
+    if (ch == "\"") { quoted = true; }
+    else if (ch == "(" || ch == "[") { depth = depth + 1; }
+    else if (ch == ")" || ch == "]") { depth = depth - 1; }
+    else if (ch == "," && depth == 0) { out.push(trimmed(inner.slice(from, i))); from = i + 1; }
+  }
+  string last = trimmed(inner.slice(from, inner.len()));
+  if (last != "" || out.len() > 0) { out.push(last); }
+  return out.toArray();
+}
+
+export string[] wordsOf(string s) {
+  Vec<string> out = Vec.create();
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != " ") { continue; }
+    if (i > from) { out.push(s.slice(from, i)); }
+    from = i + 1;
+  }
+  return out.toArray();
+}
+
+/** Where `needle` first occurs in `s` at or after `from`, or -1. */
+export i32 indexFrom(string s, string needle, i32 from) {
+  if (from >= s.len()) { return -1; }
+  i32 at = s.slice(from, s.len()).indexOf(needle);
+  return at < 0 ? -1 : at + from;
+}
+
+/** Where `needle` last occurs in `s`, or -1. */
+export i32 lastIndex(string s, string needle) {
+  i32 found = -1;
+  i32 at = indexFrom(s, needle, 0);
+  while (at >= 0) { found = at; at = indexFrom(s, needle, at + 1); }
+  return found;
+}

@@ -40,6 +40,7 @@ error: <message>
 ```
 
 ```wac
+// expect: refused
 // ---- err.wac ----
 export i32 bad(i32 x) {
   if (x) { return 1; }

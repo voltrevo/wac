@@ -396,7 +396,12 @@ export string bindgenDeclinedFilesIn(string[] paths, string[] sources, Res res, 
  */
 export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string entry,
                                     string wasmName, i32 grants) {
-  Res res = Res.empty();
+  return emitFilesSelfDescribingIn(paths, sources, Res.empty(), entry, wasmName, grants);
+}
+
+/** `emitFilesSelfDescribing` with project roots and mappings — what a caller holding manifests passes. */
+export u8[] emitFilesSelfDescribingIn(string[] paths, string[] sources, Res res, string entry,
+                                      string wasmName, i32 grants) {
   Built b = buildLinked(paths, sources, res, entry);
   string sep = describeSep();
   i32 first = b.described.indexOf(sep);
