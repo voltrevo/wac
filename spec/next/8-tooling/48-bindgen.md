@@ -210,6 +210,24 @@ function `N`. One reached only through another export's signature binds as `G_T�
 `[§wac-bind-generic-skipped-biz4394]` An exported generic declaration that is not instantiated by name is not bound, and is
 listed in `__bindgenSkipped` with the export list form that would bind it.
 
+A generic export is ordinary code — `export { Pair };` lets other wac modules import `Pair` — so bindgen does not refuse
+it. It says so where it will be read:
+
+```sh
+$ wac bindgen vecs.wac
+warning: Pair is exported but generic, so it is not in vecs.wac.ts
+  = help: export an instantiation by name: export { Pair<i32> as IntPair };
+vecs.wac.ts: 2 classes, 1 function
+```
+
+`[§wac-bind-generic-warns-cg9p295]` `wac bindgen` warns once for each generic declaration the entry module exports — whether
+by `export` on the declaration, an export list or a re-export — that has no instantiation exported by name, naming it and
+the export list form that would bind it. Generics exported only by other modules of the program are not the host's
+interface, and draw no warning.
+
+The warning does not change the output or the exit status. A generic the entry exports *and* instantiates by name draws no
+warning: its instantiations are the interface, and the template is there for wac importers.
+
 `[§wac-bind-static-6wnq3kv]` A method without a receiver binds as a static member of its class. It is how JavaScript builds a
 struct with an invariant, since a struct has no other constructor.
 

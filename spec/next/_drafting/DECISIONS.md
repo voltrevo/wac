@@ -177,3 +177,6 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   exported under several names; a name exported twice collides. Bindgen today silently skips exported generics
   (`collectBindStructs` drops anything with type parameters); 48 now lists them in `__bindgenSkipped` with the
   export-list form that would bind them.
+- **Generic exports are fine (operator):** `export { Box };` exports the generic; only bindgen leaves it out. `wac
+  bindgen` warns for each generic the entry exports with no instantiation exported by name (not for generics other
+  modules export). Taken: a generic that also has a named instantiation draws no warning.

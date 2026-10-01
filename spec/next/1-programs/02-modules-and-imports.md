@@ -380,6 +380,9 @@ export i32 boxedValue() {
 `T…` under `name`: a function that a host can call, or a type that importers name. `export { G<T…> };` without
 `as` is refused.
 
+The generic itself is exported by its plain name, like any other declaration — `export { Box };` makes `Box`
+importable, and importers instantiate it as they need. Only an instantiation needs a name of its own.
+
 The exported name is the instantiation itself, not a new declaration. An importer's `IntBox` and its own
 `Box<i32>` are one type ([19](../2-types/19-generics.md)). In the entry module, an exported function
 instantiation is an export of the compiled program under its given name ([07](07-programs.md)), and a type
