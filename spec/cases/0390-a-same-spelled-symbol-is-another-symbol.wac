@@ -1,0 +1,12 @@
+// expect: refused
+// why: an independent declaration with the same spelling is a different symbol, and names a different member
+// from: spec/next ch21 §wac-symbol-identity-anh5a8y
+// ---- names.wac ----
+export symbol describe;
+// ---- unrelated.wac ----
+export symbol describe;
+// ---- main.wac ----
+import { describe } from "./names.wac";
+import { describe as unrelated } from "./unrelated.wac";
+struct Point { string [describe](const this) { return "point"; } }
+export string f() { Point p = Point(); return p.[unrelated](); }

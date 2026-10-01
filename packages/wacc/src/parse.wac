@@ -26,7 +26,7 @@ import {
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
   kConst, kExport, kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
   kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate, kDefer, kMatches, kImport,
-  kOverride, kAssign, kQuestionDot,
+  kOverride, kAssign, kQuestionDot, kSymName,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq,
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
   kPlus, kMinus, kStar, kSlash, kPercent, kEq, kNe,
@@ -136,9 +136,33 @@ export struct P {
   /** How wide each error's token is, so a diagnostic can underline the whole of it. */
   i32[] errorWidths;
   i32 errorCount;
+  /**
+   * This file's renaming imports so far — `describe as sameName` records `sameName` and the token of
+   * `describe` — so a symbol selected by its alias can carry the declared spelling. See
+   * `symNameTok`.
+   */
+  string[] renameFrom;
+  i32[] renameName;
+  i32 renameCount;
 
   P create(u8[] src, Lexed lexed) {
-    return P(src, lexed, 0, i32[].filled(192, 0), string[].defaulted(64), i32[].filled(64, 0), 0);
+    return P(src, lexed, 0, i32[].filled(192, 0), string[].defaulted(64), i32[].filled(64, 0), 0,
+             string[].defaulted(16), i32[].filled(16, 0), 0);
+  }
+
+  /** Records `name as alias` from an import, growing the table as needed. */
+  void noteRename(this, i32 nameTok, i32 aliasTok) {
+    if (nameTok < 0 || aliasTok < 0 || nameTok == aliasTok) { return; }
+    if (this.renameCount >= this.renameFrom.len()) {
+      string[] f2 = string[].defaulted(this.renameFrom.len() * 2);
+      i32[] n2 = i32[].filled(this.renameFrom.len() * 2, 0);
+      for (i32 i = 0; i < this.renameCount; i++) { f2[i] = this.renameFrom[i]; n2[i] = this.renameName[i]; }
+      this.renameFrom = f2;
+      this.renameName = n2;
+    }
+    this.renameFrom[this.renameCount] = this.textOf(aliasTok);
+    this.renameName[this.renameCount] = nameTok;
+    this.renameCount = this.renameCount + 1;
   }
 
   // ── Token access ────────────────────────────────────────────────────────────
@@ -155,6 +179,50 @@ export struct P {
   i32 kindAt(const this, i32 offset) {
     return this.lx.tokens[this.idx(offset) * tokenStride()];
   }
+  /**
+   * A `kSymName` token standing for the identifier `t` — the name of a member written `[t]`.
+   *
+   * Appended after the end of the file, so nothing that walks the source sees it twice, with the
+   * identifier's own start, length and position: a diagnostic about the member points where the
+   * symbol is written. The token array is the lexer's, sized from the input, and grows here when a
+   * file full of symbol names outruns it.
+   */
+  i32 symNameTok(this, i32 t) {
+    i32 stride = tokenStride();
+    i32 at = this.lx.tokenCount + this.lx.synthCount;
+    if ((at + 1) * stride > this.lx.tokens.len()) {
+      i32[] bigger = i32[].filled((at + 1) * stride * 2, 0);
+      for (i32 i = 0; i < this.lx.tokens.len(); i++) { bigger[i] = this.lx.tokens[i]; }
+      this.lx.tokens = bigger;
+    }
+    for (i32 f = 0; f < stride; f++) { this.lx.tokens[at * stride + f] = this.lx.tokens[t * stride + f]; }
+    this.lx.tokens[at * stride] = kSymName();
+    // **An alias carries the declared spelling**, so the emitter — which resolves names by spelling —
+    // finds the member the declaring file named. The position stays the usage's; the checker reads the
+    // alias back from the identifier there, since an alias is what tells two symbols of one spelling
+    // apart.
+    string spelled = this.textOf(t);
+    for (i32 i = 0; i < this.renameCount; i++) {
+      if (this.renameFrom[i] != spelled) { continue; }
+      this.lx.tokens[at * stride + 1] = this.lx.tokens[this.renameName[i] * stride + 1];
+      this.lx.tokens[at * stride + 2] = this.lx.tokens[this.renameName[i] * stride + 2];
+    }
+    this.lx.synthCount = this.lx.synthCount + 1;
+    return at;
+  }
+
+  /**
+   * `[name]` where a member's name goes, as a `kSymName` token; -1 when the next token is not `[`.
+   * Only a plain identifier is a selector here — a qualified one comes with namespaces.
+   */
+  i32 symbolMemberName(this) {
+    if (!this.at1(kLbrack()) || this.kindAt(1) != kIdent() || this.kindAt(2) != kRbrack()) { return -1; }
+    this.advance();
+    i32 id = this.advance();
+    this.advance();
+    return this.symNameTok(id);
+  }
+
   /** Whether the next token starts exactly where this one ends — `??` rather than `? ?`. */
   bool adjacentNext(const this) {
     return this.startAt(0) + this.lenAt(0) == this.startAt(1);
@@ -1426,7 +1494,9 @@ Expr parsePostfix(P p) {
     if (p.at1(kDot())) {
       p.advance();
       i32 nameTok = -1;
-      nameTok = declName(p, perrFieldName(), "field name");
+      // `x.[s]` — the member a symbol names (ch21). Otherwise exactly the `.name` below.
+      nameTok = p.symbolMemberName();
+      if (nameTok < 0) { nameTok = declName(p, perrFieldName(), "field name"); }
       // **A method may be called with its own type arguments** — `v.fold<i64>(0, f)`. The same rule
       // as everywhere default: if what follows the name parses as a type argument list, it is one.
       // Nothing else in the language can appear between a member name and its `(`, so there is no
@@ -1802,8 +1872,10 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
   // `Type.method(...)`, or `Type.method` as a funcref.
   if (p.at1(kDot())) {
     p.advance();
-    i32 methodTok = -1;
-    if (p.at1(kIdent())) { methodTok = p.advance(); } else { p.fail(perrMethodName()); }
+    i32 methodTok = p.symbolMemberName();       // `Foo.[make]()`, `p.[size]` (ch21)
+    if (methodTok < 0) {
+      if (p.at1(kIdent())) { methodTok = p.advance(); } else { p.fail(perrMethodName()); }
+    }
     // **Carrying the type arguments, which this used to drop.** With none written the base stays an
     // `Ident`, so every existing `Type.method(…)` parses exactly as before; with some, it becomes a
     // `TypeName` and `Cell<i32>.of(3)` means what it says rather than `Cell.of(3)`.
@@ -1867,7 +1939,9 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
     if (!p.at1(kRbrace())) {
       while (true) {
         i32 fieldTok = -1;
-        fieldTok = declName(p, perrFieldName(), "field name");
+        // `[metadata]: 7` supplies a symbol-named field (ch21).
+        fieldTok = p.symbolMemberName();
+        if (fieldTok < 0) { fieldTok = declName(p, perrFieldName(), "field name"); }
         p.expect(kColon());
         named.push(NamedArg(fieldTok, parseExpr(p)));
         if (!p.eat(kComma())) { break; }
@@ -1963,8 +2037,8 @@ export Lvalue parseLvalue(P p) {
     i32 pCol = p.colAt(0);
     if (p.at1(kDot())) {
       p.advance();
-      i32 fieldTok = -1;
-      fieldTok = declName(p, perrFieldName(), "field name");
+      i32 fieldTok = p.symbolMemberName();       // `p.[metadata] = 7;` (ch21)
+      if (fieldTok < 0) { fieldTok = declName(p, perrFieldName(), "field name"); }
       lv = Lvalue(LvalueKind.LField(lv, fieldTok), pLine, pCol);
     } else if (p.at1(kLbrack())) {
       p.advance();
@@ -2496,6 +2570,7 @@ Decl parseImport(P p) {
       if (p.at1(kIdent())) { aliasTok = p.advance(); } else { p.fail(perrExpected()); }
     }
     items.push(ImportItem(nameTok, aliasTok));
+    p.noteRename(nameTok, aliasTok);
     if (!p.eat(kComma())) { break; }
     if (p.at1(kRbrace())) { break; }               // trailing comma
   }
@@ -2604,7 +2679,9 @@ Decl parseStructDecl(P p, bool exported) {
 
     Ty memberType = parseType(p);
     i32 memberTok = -1;
-    memberTok = declName(p, perrExpected(), "member name");
+    // `i32 [metadata];` and `string [describe](const this)` — a member named by a symbol (ch21).
+    memberTok = p.symbolMemberName();
+    if (memberTok < 0) { memberTok = declName(p, perrExpected(), "member name"); }
 
     if (p.at1(kSemi())) {
       p.advance();
@@ -2697,8 +2774,10 @@ Decl parseEnumDecl(P p, bool exported) {
       p.advance();
     }
     Ty returnType = parseType(p);
-    i32 mTok = -1;
-    if (p.at1(kIdent())) { mTok = p.advance(); } else { p.fail(perrMethodName()); }
+    i32 mTok = p.symbolMemberName();             // `string [toString](const this)` (ch21)
+    if (mTok < 0) {
+      if (p.at1(kIdent())) { mTok = p.advance(); } else { p.fail(perrMethodName()); }
+    }
     p.expect(kLparen());
     bool hasThis = false;
     bool thisConst = false;
@@ -2843,6 +2922,16 @@ export Program parseProgram(P p) {
     } else if (k == kEnum()) {
       if (exported) { p.advance(); }
       decls.push(parseEnumDecl(p, exported));
+    } else if (k == kIdent() && p.textAt(after) == "symbol" && p.kindAt(after + 1) == kIdent()
+               && p.kindAt(after + 2) == kSemi()) {
+      // `symbol describe;` — `symbol` is not a keyword, so the declaration is told by its shape.
+      if (exported) { p.advance(); }
+      i32 sline = p.lineAt(0);
+      i32 scol = p.colAt(0);
+      p.advance();
+      i32 symTok = p.advance();
+      p.expect(kSemi());
+      decls.push(Decl(DeclKind.SymbolDecl(symTok, exported), sline, scol));
     } else if (k == kStatic() || k == kConst() || moduleVarAhead(p, after)) {
       if (exported) { p.advance(); }
       decls.push(parseStaticDecl(p, exported));

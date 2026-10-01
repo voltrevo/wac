@@ -264,7 +264,9 @@ export i32 synthOffset(u8[] src, i32 ups, i32 states, i32 args, i32 which) {
 export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 args, i32 line, i32 col) {
   string[] w = synthWords(ups, states, args);
   i32 stride = tokenStride();
-  i32 have = lexed.tokenCount;
+  // **The parser's own appended tokens come along** — a `kSymName` is an index the AST already holds,
+  // so the words go after those rather than over them.
+  i32 have = lexed.tokenCount + lexed.synthCount;
   i32[] out = i32[].filled((have + w.len()) * stride, 0);
   for (i32 i = 0; i < have * stride; i++) { out[i] = lexed.tokens[i]; }
   for (i32 i = 0; i < w.len(); i++) {
@@ -282,7 +284,7 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 args, i
     out[at + 3] = line;
     out[at + 4] = col;
   }
-  return Lexed(out, have + w.len(), lexed.errors, lexed.errorCount, lexed.parsed);
+  return Lexed(out, have + w.len(), lexed.errors, lexed.errorCount, 0, lexed.parsed);
 }
 
 /**

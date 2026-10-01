@@ -40,7 +40,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
-  kLbrace, kQuestion,
+  kLbrace, kQuestion, kSymName,
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
@@ -335,6 +335,19 @@ string forInElemOf(C c, Expr iterable) {
 string forInVarType(C c, Ty? elemTy, Expr iterable) {
   if (!(elemTy is null)) { return typeOfTy(c, elemTy!); }
   return forInElemOf(c, iterable);
+}
+
+/**
+ * Whether a member name is usable: an ordinary name always is, and `[s]` when `s` is a symbol in
+ * scope. Reports the one that is not, at the symbol, as a name nothing declares — spec/next ch21.
+ */
+bool checkSymbolName(C c, i32 tok) {
+  if (tok < 0 || c.toks[tok * tokenStride()] != kSymName()) { return true; }
+  string spelled = symbolSpelling(c, tok, "");
+  string resolved = c.canon(c.renamed(spelled));
+  if (c.isSymbol(resolved)) { return true; }
+  c.reportTok(errUndefinedName(), tok, "no symbol '" + spelled + "' in scope");
+  return false;
 }
 
 /** Whether an expression is the literal `null`. */
@@ -832,6 +845,7 @@ void checkExportLists(C c, Program prog) {
       StructDecl(nameTok, parentTok, fields, methods, exported2, isConst, typeParams): { if (exported2) { name = tokenText(c, nameTok); } }
       EnumDecl(nameTok, variants, exported2, methods, typeParams): { if (exported2) { name = tokenText(c, nameTok); } }
       StaticDecl(nameTok, type, init, exported2): { if (exported2) { name = tokenText(c, nameTok); } }
+      SymbolDecl(nameTok, exported2): { if (exported2) { name = tokenText(c, nameTok); } }
       default: { }
     }
     if (name == "") { continue; }
@@ -880,6 +894,7 @@ bool seenAtTopLevel(C c, Program prog, string name) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): { if (tokenText(c, nameTok) == name) { return true; } }
       EnumDecl(nameTok, variants, exported, methods, typeParams): { if (tokenText(c, nameTok) == name) { return true; } }
       StaticDecl(nameTok, type, init, exported): { if (tokenText(c, nameTok) == name) { return true; } }
+      SymbolDecl(nameTok, exported): { if (tokenText(c, nameTok) == name) { return true; } }
       Import(pathTok, prefixTok, items): {
         for (i32 i = 0; i < items.len(); i++) {
           if (items[i].aliasTok >= 0 && tokenText(c, items[i].aliasTok) == name) { return true; }
@@ -2301,6 +2316,24 @@ export struct C {
   string bodyOf;
   /** Whether each field (by index, as `fieldNames`) has an initialiser — spec/next ch12. */
   bool[] fieldInits;
+  /** The symbols in scope, as this file spells them (renames applied) — spec/next ch21. */
+  string[] symbols;
+  i32 symbolCount;
+
+  void declareSymbol(this, string name) {
+    if (this.symbolCount >= this.symbols.len()) {
+      string[] more = string[].defaulted(this.symbols.len() * 2 + 8);
+      for (i32 i = 0; i < this.symbolCount; i++) { more[i] = this.symbols[i]; }
+      this.symbols = more;
+    }
+    this.symbols[this.symbolCount] = name;
+    this.symbolCount = this.symbolCount + 1;
+  }
+
+  bool isSymbol(const this, string name) {
+    for (i32 i = 0; i < this.symbolCount; i++) { if (this.symbols[i] == name) { return true; } }
+    return false;
+  }
 
   void notePrivate(this, string owner, string name) {
     if (this.privateCount >= this.privateKeys.len()) {
@@ -2381,7 +2414,7 @@ export struct C {
              string[].defaulted(decls), string[].defaulted(decls), 0,
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
-             string[](), 0, "", bool[].filled(decls, false));
+             string[](), 0, "", bool[].filled(decls, false), string[](), 0);
   }
 
   /**
@@ -3285,12 +3318,50 @@ i32 tokenLine(C c, i32 t) { return c.toks[t * tokenStride() + 3]; }
 
 
 /** A token's source text. Primitive type names are ordinary identifiers, so this is how they are read. */
+/**
+ * The symbol a `kSymName` token names, as this file spells it.
+ *
+ * The token's text is the *declared* spelling when the symbol was imported under an alias — which is
+ * what the emitter resolves by — and an alias is exactly what tells two symbols of one spelling
+ * apart here. So the alias is read back from the identifier the token was made from: the source
+ * tokens come first, in order, and the parser's appended ones after the end of the file, so the one
+ * at the same position is found by a search over the first part.
+ */
+string symbolSpelling(C c, i32 t, string fallback) {
+  i32 stride = tokenStride();
+  i32 first = t;
+  while (first > 0 && c.toks[(first - 1) * stride] == kSymName()) { first = first - 1; }
+  i32 line = c.toks[t * stride + 3];
+  i32 col = c.toks[t * stride + 4];
+  i32 lo = 0;
+  i32 hi = first - 1;
+  while (lo < hi) {
+    i32 mid = (lo + hi) / 2;
+    i32 l = c.toks[mid * stride + 3];
+    i32 k = c.toks[mid * stride + 4];
+    if (l < line || (l == line && k < col)) { lo = mid + 1; } else { hi = mid; }
+  }
+  if (lo < first && c.toks[lo * stride + 3] == line && c.toks[lo * stride + 4] == col) {
+    i32 start = c.toks[lo * stride + 1];
+    i32 len = c.toks[lo * stride + 2];
+    u8[] out = u8[].filled(len, 0);
+    for (i32 i = 0; i < len; i++) { out[i] = c.src[start + i]; }
+    return string.fromBytes(out);
+  }
+  return fallback;
+}
+
 string tokenText(C c, i32 t) {
   if (t < 0) { return ""; }
   i32 start = c.toks[t * tokenStride() + 1];
   i32 len = c.toks[t * tokenStride() + 2];
   u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = c.src[start + i]; }
+  // **A symbol-named member's name is `[key]`** (spec/next ch21), the symbol resolved the way any name
+  // in this file is: through the renames its importer gave it and the aliases it has itself.
+  if (c.toks[t * tokenStride()] == kSymName()) {
+    return "[" + c.canon(c.renamed(symbolSpelling(c, t, string.fromBytes(out)))) + "]";
+  }
   return string.fromBytes(out);
 }
 
@@ -5797,6 +5868,7 @@ void checkExpr(C c, Expr e) {
     SafeMember(obj, nameTok): { checkSafeMember(c, obj, nameTok); }
     Member(obj, nameTok): {
       checkReceiver(c, obj);
+      if (!checkSymbolName(c, nameTok)) { return; }
       checkMember(c, e, obj, tokenText(c, nameTok));
     }
     // `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct
@@ -10491,6 +10563,7 @@ string declaredNameOf(C c, Decl d) {
     }
     EnumDecl(nameTok, variants, exported, methods, typeParams): { return tokenText(c, nameTok); }
     StaticDecl(nameTok, type, init, exported): { return tokenText(c, nameTok); }
+    SymbolDecl(nameTok, exported): { return tokenText(c, nameTok); }
     default: { return ""; }
   }
 }
@@ -10705,6 +10778,7 @@ void checkDuplicates(C c, Program prog) {
         }
       }
       StaticDecl(nameTok, type, init, exported): { name = tokenText(c, nameTok); }
+      SymbolDecl(nameTok, exported): { name = tokenText(c, nameTok); }
       default: { }
     }
     if (name == "") { continue; }
@@ -10840,6 +10914,10 @@ export void declareModule(C c, Program prog, string[] only) {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         c.declareConst(c.renamed(tokenText(c, nameTok)), typeOfTy(c, type), true);
         c.noteFuncArity(funcrefArityOfTy(c, type));
+      }
+      SymbolDecl(nameTok, exported): {
+        if (!wantedName(only, tokenText(c, nameTok))) { continue; }
+        c.declareSymbol(c.renamed(tokenText(c, nameTok)));
       }
       default: { }
     }
@@ -11576,6 +11654,9 @@ export void checkModule(C c, Program prog) {
         // `§wac-uninhabited-valid-2f9cxmt`. `struct Node { Node next; }` has no finite value, and is
         // still a type: it appears in nullable forms and signatures, and nothing can build one, since
         // it has no default either (`hasDefault` says so). This was refused on sight until spec/next.
+        // A member named `[s]` needs `s` to be a symbol in scope (spec/next ch21).
+        for (i32 si = 0; si < fields.len(); si++) { checkSymbolName(c, fields[si].nameTok); }
+        for (i32 si = 0; si < methods.len(); si++) { checkSymbolName(c, methods[si].nameTok); }
         for (i32 fi = 0; fi < fields.len(); fi++) {
           string ft = typeOfTy(c, fields[fi].type);
           if (ft == "void") { c.report(errVoidType(), fields[fi].type.line, fields[fi].type.col); }

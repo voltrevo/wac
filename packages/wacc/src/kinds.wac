@@ -319,8 +319,15 @@ export i32 kMatches() { return 91; }
 /** `?.` — a member read through an absence. spec/next ch10. */
 export i32 kQuestionDot() { return 92; }
 
+/**
+ * A member named by a symbol — `[describe]` — as the parser records it: a token of its own after the
+ * end of the file, carrying the symbol identifier's position. Never produced by the lexer. Its text is
+ * the member's name, `[` and the symbol's key and `]`, which no identifier can spell. spec/next ch21.
+ */
+export i32 kSymName() { return 93; }
+
 /** How many kinds there are, for bounds checks and table sizing. */
-export i32 kindCount() { return 93; }
+export i32 kindCount() { return 94; }
 
 /**
  * How a token kind is spelled, for a diagnostic that has to name one.

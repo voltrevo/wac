@@ -468,6 +468,8 @@ export enum DeclKind {
            i32[] typeParams),
   /** `[export] static <type> <name> = <expr>;` at file scope. */
   StaticDecl(i32 nameTok, Ty type, Expr init, bool exported),
+  /** `[export] symbol name;` — a declared identity that can name a member. spec/next ch21. */
+  SymbolDecl(i32 nameTok, bool exported),
 }
 
 export struct Program {

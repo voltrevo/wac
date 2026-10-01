@@ -1,0 +1,12 @@
+// expect: answers f = true
+// why: an imported alias of a symbol is that symbol, so it selects the member the declared spelling names
+// from: spec/next ch21 §wac-symbol-identity-anh5a8y
+// ---- names.wac ----
+export symbol describe;
+// ---- main.wac ----
+import { describe, describe as sameName } from "./names.wac";
+struct Point { string [describe](const this) { return "point"; } }
+export bool f() {
+  Point p = Point();
+  return p.[sameName]() == p.[describe]();
+}

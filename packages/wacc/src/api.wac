@@ -612,6 +612,9 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
       StaticDecl(nameTok, type, init, exported): {
         if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
       }
+      SymbolDecl(nameTok, exported): {
+        if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
+      }
       default: { }
     }
   }

@@ -34,7 +34,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion,
+  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion, kSymName,
 } from "./kinds.wac";
 
 /**
@@ -4712,7 +4712,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   // for a single-file caller they are the only ones there are.
   Lexed lexed = lexeds.len() > 0 && (lexeds[0] is not null)
     ? lexeds[0]!
-    : Lexed(i32[](), 0, i32[](), 0, false);
+    : Lexed(i32[](), 0, i32[](), 0, 0, false);
   Program prog = progs.len() > 0 && (progs[0] is not null) ? progs[0]! : Program(Decl[]());
 
   Env env = envIn;
@@ -6355,7 +6355,13 @@ export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
   i32 len = lexed.tokens[t * tokenStride() + 2];
   u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
-  return string.fromBytes(out);
+  string text = string.fromBytes(out);
+  // **A symbol-named member's name is `[key]`** (spec/next ch21) — the brackets are what keep it apart
+  // from every name an identifier can spell. A token the linker already resolved carries them.
+  if (lexed.tokens[t * tokenStride()] == kSymName() && (len == 0 || src[start] != '[')) {
+    return "[" + text + "]";
+  }
+  return text;
 }
 
 /** A declared type's name, enough to tell `void` from a value. */
@@ -13521,6 +13527,8 @@ string blockedOf(Front f) {
       }
       // An export list declares nothing: the linker has already followed it to declarations.
       ExportList(pathTok, items): { }
+      // A symbol emits nothing: it is a name, and what it names is a member of some struct.
+      SymbolDecl(nameTok, exported): { }
       StaticDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);
         if (isArrayType(ct) || env.isStructName(ct)) {

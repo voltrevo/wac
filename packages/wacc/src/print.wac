@@ -672,6 +672,11 @@ void printParams(Pr w, Param[] params) {
 
 void printDecl(Pr w, Decl d) {
   match (d.kind) {
+    SymbolDecl(nameTok, exported): {
+      w.open(exported ? "export-symbol" : "symbol", d.line, d.col);
+      w.sp(); w.tok(nameTok);
+      w.close();
+    }
     Import(pathTok, prefixTok, items): {
       w.open("import", d.line, d.col);
       // A prefixed import has no path token, and the module *inside* the provider is the empty

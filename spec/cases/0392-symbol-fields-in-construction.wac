@@ -1,0 +1,10 @@
+// expect: answers f = 14
+// why: a symbol-named field is supplied in named construction as `[s]: value`, and positionally in declaration order
+// from: spec/next ch21 §wac-symbol-construction-uwbvysu
+symbol metadata;
+struct Point { i32 x; i32 y; i32 [metadata]; }
+export i32 f() {
+  Point p = Point { x: 3, y: 4, [metadata]: 7 };
+  Point q = Point(3, 4, 7);
+  return p.[metadata] + q.[metadata];
+}

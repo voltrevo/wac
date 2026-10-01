@@ -55,6 +55,8 @@ export struct Lexed {
   i32 tokenCount;      // tokens, not i32s
   i32[] errors;
   i32 errorCount;
+  /** `kSymName` tokens the parser appended after the end of the file — see `P.symNameTok`. */
+  i32 synthCount;
   /**
    * **Set once these tokens have been parsed, because parsing consumes them.**
    *
@@ -1193,7 +1195,7 @@ export Lexed lex(u8[] src) {
   Lexed out = Lexed(
     i32[].filled((n + 1) * tokenStride(), 0), 0,
     i32[].filled(maxErrors * errorStride(), 0), 0,
-    false
+    0, false
   );
   Lexer lx = Lexer(src, 0, 1, 1);
   Modes md = Modes(i32[].filled(modeDepth(src) * 3, 0), 0, mNormal());

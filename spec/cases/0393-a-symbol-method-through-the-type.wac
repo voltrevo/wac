@@ -1,0 +1,9 @@
+// expect: answers f = 7
+// why: a receiverless method named by a symbol is reached through the type as `T.[s]`
+// from: spec/next ch21 §wac-symbol-type-member-skxmsih
+symbol make;
+struct Foo {
+  i32 v;
+  Foo [make]() { return Foo(7); }
+}
+export i32 f() { Foo value = Foo.[make](); return value.v; }
