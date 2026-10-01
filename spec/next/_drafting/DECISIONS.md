@@ -168,3 +168,5 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   into a project nested within it, is refused, as is a path out past the project root
   (`wac-import-nested-project`, `wac-import-within-project`). "Project" is any directory with a `wac.json5`;
   a "package" is a project with `exports` — so only a nested project that is a package can be imported.
+- **Inline namespace visibility (operator's ruling, 03):** a member without `export` is visible only inside
+  the namespace block; an exported member of an unexported namespace is visible only within its module.

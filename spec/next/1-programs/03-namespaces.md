@@ -78,6 +78,52 @@ export i32 viaHelpers() { return helpers.good(); }
 `[§wac-namespace-private-ezix2ix]` A namespace declared without `export` is usable only in its own
 module.
 
+### `export` inside a namespace is its boundary
+
+A member without `export` belongs to the namespace block alone. The members around it name it by its bare
+name; the rest of the file cannot reach it, qualified or not:
+
+```wac
+// expect: answers viaHelpers = 7
+namespace helpers {
+  i32 base() { return 3; }                 // the block's own
+  export i32 good() { return base() + 4; }
+}
+
+export i32 viaHelpers() {
+  // ERROR: 'base' is not exported from namespace 'helpers'
+  // return helpers.base();
+
+  // ERROR: undefined name 'base'
+  // return base();
+
+  return helpers.good();
+}
+```
+
+`[§wac-namespace-member-private-q5zj9wx]` A member of an inline namespace declared without `export` is visible
+only inside the namespace's block, not to the rest of its module.
+
+`export` on a member exposes it only as far as the namespace itself reaches. In a namespace that is not
+exported, an exported member is visible to the rest of its module and no further:
+
+```wac
+// expect: refused
+// ---- lib.wac ----
+namespace helpers {                         // not exported; nothing in lib.wac uses it, so dropped
+  export i32 good() { return 7; }
+}
+// ---- main.wac ----
+import { helpers.good } from "./lib.wac";   // lib.wac does not export helpers
+export i32 seven() { return good(); }
+```
+
+`[§wac-namespace-member-bounded-zk3yv92]` A member exported from a namespace that is not itself exported is
+visible within its module only. No other module can import it, by the namespace or by a member path.
+
+Visibility composes outward: a member is visible from outside a module only when every namespace around it,
+and the member itself, is exported.
+
 ## Select the group or one member
 
 ```wac
@@ -238,9 +284,3 @@ implementation modules through the entry point.
 
 Reaching `geometry.origin` does not itself retain `geometry.unusedHelper`. Namespace containers are
 traversed during reachability, not retained wholesale.
-
-## Open
-
-- **Unexported members of an inline namespace.** `export` marks what a namespace exposes. Whether a
-  member without `export` is visible to the rest of its module, or only inside the namespace block,
-  is not decided.
