@@ -17,7 +17,7 @@ import { Stripped, strip } from "../../src/strip.wac";
 
 /** The bridge, in the order `wc -l` puts them: the biggest first, so a failure surfaces early. */
 string[] hostFiles() {
-  return string[](
+  return [
     "packages/platform/host/deno.ts",
     "packages/platform/host/provider.ts",
     "packages/platform/host/children.ts",
@@ -35,7 +35,7 @@ string[] hostFiles() {
     "packages/platform/host/ops.ts",
     "packages/platform/host/entropy.ts",
     "packages/platform/host/childWasm.ts"
-  );
+  ];
 }
 
 export string test_the_bridge_strips(Core core, Cli cli) {

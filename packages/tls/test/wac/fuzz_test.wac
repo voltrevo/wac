@@ -44,14 +44,14 @@ import { Rng64, rng, next, randomBytes } from "../../../wactest/src/rng64.wac";
  * client whose own keys were too would be exercising a different program.
  */
 u8[] entropy(Core core, i32 which) {
-  i32[] sizes = i32[](32, 32, 64, 32);
+  i32[] sizes = [32, 32, 64, 32];
   return core.randomBytes(sizes[which]).wait();
 }
 
 /** The certificates to mutate: a real leaf and its issuer, decoded by the client's own PEM reader. */
 Store fixtures(Core core, Cli cli) {
-  u8[] all = u8[0]();
-  string[] names = string[]("ec_leaf", "ec_ca");
+  u8[] all = u8[]();
+  string[] names = ["ec_leaf", "ec_ca"];
   for (i32 i = 0; i < names.len(); i++) {
     string path = "packages/tls/test/data/" + names[i] + ".pem";
     FileResult r = cli.readFile(path).wait();
@@ -59,7 +59,7 @@ Store fixtures(Core core, Cli cli) {
       core.warn("tls fuzz: cannot read " + path + " — " + r.error);
       trap;
     }
-    u8[] joined = u8[all.len() + r.bytes.len()]();
+    u8[] joined = u8[].filled(all.len() + r.bytes.len(), 0);
     joined.copyFrom(all, 0, 0, all.len());
     joined.copyFrom(r.bytes, 0, all.len(), r.bytes.len());
     all = joined;
@@ -92,7 +92,7 @@ export string test_record_framing_survives_arbitrary_bytes() {
   }
   t.isTrue(complete > 0, "some random buffers held a whole record");
 
-  u8[] head = u8[](22, 3, 3, 0xFF, 0xFF);
+  u8[] head = [22, 3, 3, 0xFF, 0xFF];
   t.eqI32(recordLength(head), 65535, "a header may claim more than ever arrived");
   return t.report();
 }
@@ -107,7 +107,7 @@ export string test_record_framing_at_every_truncation() {
   whole[3] = 1;      // 256 bytes of payload, so the record is 261
   whole[4] = 0;
   for (i32 cut = 0; cut <= 300; cut++) {
-    u8[] part = u8[cut]();
+    u8[] part = u8[].filled(cut, 0);
     for (i32 i = 0; i < cut; i++) { part[i] = whole[i]; }
     i32 n = recordLength(part);
     if (cut < 5) { t.eqI32(n, -1, "no header yet at " + itoa64(cut as i64)); }
@@ -156,13 +156,13 @@ export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cl
     //  on init too — it returns the same three-part blob as feed does, and
     // forgetting that fed the whole blob back in as state. The trap that produced was in
     // decodeConn and looked exactly like a client bug until the stack was read.
-    u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[0](), i32[0](),
+    u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[](), i32[](),
                             entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
     // Between one and four records of noise, sometimes with a plausible header so the
     // framing accepts them and the handshake parser gets a turn.
     for (i32 k = 0; k < 4; k++) {
       i32 bodyLen = next(r) % 300;
-      u8[] rec = u8[5 + bodyLen]();
+      u8[] rec = u8[].filled(5 + bodyLen, 0);
       rec[0] = (next(r) % 4) == 0 ? 22 : (next(r) & 0xFF);
       rec[1] = 3;
       rec[2] = (next(r) % 2) == 0 ? 3 : (next(r) & 0xFF);
@@ -180,7 +180,7 @@ export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cl
 /** The state out of a `[state][toSend][appData]` blob. */
 u8[] firstField(u8[] blob) {
   i32 n = (blob[0] << 24) | (blob[1] << 16) | (blob[2] << 8) | blob[3];
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = blob[4 + i]; }
   return out;
 }
@@ -214,19 +214,21 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(Core core, 
   // does, so it no longer reaches this. Removing the guard leaves it green; this test is
   // what notices.
   T t = T.create();
-  u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[0](), i32[0](),
+  u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[](), i32[](),
                           entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
 
   // Content type 126 is not one TLS defines, so the client gives up here.
-  state = firstField(tlsClientFeed(state, u8[](126, 3, 3, 0, 1, 9)));
+  state = firstField(tlsClientFeed(state, [126, 3, 3, 0, 1, 9] as u8[]));
   i32 code = tlsClientFailure(state);
   t.isTrue(code != 0, "an unknown content type fails the connection");
   t.eqI32(tlsClientPhase(state), 4, "and the connection is over");
 
   // Anything at all after that, including well-formed records.
-  u8[][] after = u8[][](u8[](22, 3, 3, 0, 1, 1),
-                        u8[](23, 3, 3, 0, 0),
-                        u8[](20, 3, 3, 0, 1, 1));
+  u8[][] after = [
+                        [22, 3, 3, 0, 1, 1] as u8[],
+                        [23, 3, 3, 0, 0] as u8[],
+                        [20, 3, 3, 0, 1, 1] as u8[]
+  ];
   for (i32 i = 0; i < after.len(); i++) {
     state = firstField(tlsClientFeed(state, after[i]));
     t.eqI32(tlsClientFailure(state), code, "the failure is unchanged, and nothing aborted");
@@ -239,7 +241,7 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(Core core, 
   // alert followed by any further record put both in the same `tlsClientFeed`, and the second one
   // fell through to a `trap`. Checking the phase between calls, which every caller here does, cannot
   // help when both records are inside one of them.
-  u8[] closing = firstField(tlsClientInit("example.com".toBytes(), u8[0](), i32[0](),
+  u8[] closing = firstField(tlsClientInit("example.com".toBytes(), u8[](), i32[](),
                           entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
   closing = firstField(tlsClientClose(closing));
   t.eqI32(tlsClientPhase(closing), 4, "a closed connection is in phase 4");
@@ -320,13 +322,13 @@ export string test_a_malformed_certificate_is_refused_on_its_own_terms(Core core
 }
 
 u8[] prefix(u8[] b, i32 n) {
-  u8[] o = u8[n]();
+  u8[] o = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { o[i] = b[i]; }
   return o;
 }
 
 u8[] copyOf(u8[] b) {
-  u8[] o = u8[b.len()]();
+  u8[] o = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
   return o;
 }

@@ -25,8 +25,10 @@ string ORACLE() { return ".cache/mutatewhy-oracle.ts"; }
  * their function.
  */
 string theirs(Core core, Cli cli, string transcript) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "--no-check", "--unstable-sloppy-imports",
-                                     ORACLE()), transcript.toBytes()).wait();
+  Exec r = cli.exec("deno", [
+                                     "run", "-A", "--no-check", "--unstable-sloppy-imports",
+                                     ORACLE()
+  ], transcript.toBytes()).wait();
   if (!r.ran() || r.status != 0) { return "oracle-failed"; }
   return string.fromBytes(r.stdout);
 }
@@ -111,14 +113,15 @@ export string test_it_agrees_with_the_typescript_it_replaces(Core core, Cli cli)
   string why = writeOracle(cli);
   t.eqStr(why, "", "the oracle program was written");
   if (why != "") { return t.report(); }
-  string[] cases = string[](
+  string[] cases = [
     "a new image is an empty world, not an error ... ok (2ms)\nFAILED | 2 passed | 1 failed\n",
     "   error: Uncaught TypeError: x\nok two ... ok\n",
     "error: this comes first\nFAILED | 1 failed\n",
     "ok   test_a ...\nFAIL test_b — 1 failed: nope\n",
     "8 files: 7 ok, 1 with failures in 3.3s\n",
     "something unrecognised\nand then this\n\n",
-    "");
+    ""
+  ];
   for (i32 i = 0; i < cases.len(); i++) {
     string got = quoted(firstFailureLine(cases[i]));
     string want = theirs(core, cli, cases[i]);

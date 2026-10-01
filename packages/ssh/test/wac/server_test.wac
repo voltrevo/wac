@@ -113,11 +113,11 @@ export string test_the_servers_messages_carry_the_fields_a_client_reads() {
   t.eqStr(string.fromBytes(okr.str()), "ssh-ed25519", "PK_OK type wrong");
 
   // The exec command comes out of a CHANNEL_REQUEST, and only from an `exec` one.
-  u8[] wantReply = u8[1]();
+  u8[] wantReply = u8[].filled(1, 0);
   wantReply[0] = 1;
-  u8[] exec = cat(u8[][](u8[](98), u32be(0), strOf("exec"), wantReply, strOf("uname -a")));
+  u8[] exec = cat([[98] as u8[], u32be(0), strOf("exec"), wantReply, strOf("uname -a")]);
   t.eqStr(string.fromBytes(execCommand(exec)), "uname -a", "the command did not parse");
-  u8[] pty = cat(u8[][](u8[](98), u32be(0), strOf("pty-req"), wantReply));
+  u8[] pty = cat([[98] as u8[], u32be(0), strOf("pty-req"), wantReply]);
   t.eqI32(execCommand(pty).len(), 0, "a pty request was read as exec");
 
   // The server offers what it can do and nothing else — advertising more would have the client
@@ -141,23 +141,27 @@ export string test_a_userauth_request_is_verified_against_bytes_we_rebuild() {
 
   // The same request under a different session id must not verify — that binding is the whole
   // reason a signature cannot be replayed to another server.
-  u8[] otherSession = u8[32]();
+  u8[] otherSession = u8[].filled(32, 0);
   otherSession.copyFrom(sessionId, 0, 0, 32);
   otherSession[0] = otherSession[0] ^ 1;
   t.isFalse(verifyAuth(parseAuthRequest(request), otherSession),
             "a signature verified under a different session id");
 
   // A probe carries no signature and must never be treated as authentication.
-  u8[] probe = cat(u8[][](u8[](50), str(user), strOf("ssh-connection"), strOf("publickey"),
-                          u8[1](), strOf("ssh-ed25519"), str(publicBlob)));
+  u8[] probe = cat([
+                          [50] as u8[], str(user), strOf("ssh-connection"), strOf("publickey"),
+                          u8[].filled(1, 0), strOf("ssh-ed25519"), str(publicBlob)
+  ]);
   AuthRequest p = parseAuthRequest(probe);
   t.isTrue(p.ok, "a probe did not parse");
   t.isFalse(p.hasSignature, "a probe claimed a signature");
   t.isFalse(verifyAuth(p, sessionId), "a probe was accepted as authentication");
 
   // Another method parses far enough to be named, so a server can say what it will not do.
-  u8[] password = cat(u8[][](u8[](50), str(user), strOf("ssh-connection"), strOf("password"),
-                             u8[1](), strOf("hunter2")));
+  u8[] password = cat([
+                             [50] as u8[], str(user), strOf("ssh-connection"), strOf("password"),
+                             u8[].filled(1, 0), strOf("hunter2")
+  ]);
   AuthRequest pw = parseAuthRequest(password);
   t.isTrue(pw.ok, "a password request did not parse");
   t.eqStr(string.fromBytes(pw.method), "password", "method name lost");
@@ -224,14 +228,14 @@ export string test_a_channel_open_is_read_for_its_number_whatever_the_number_is(
   // type string, which is the one message where it is not immediately after the byte — reading it
   // at a fixed offset is the mistake this function exists to avoid.
   T t = T.create();
-  i32[] numbers = i32[](0, 1, 7, 258, 0x7fffffff);
+  i32[] numbers = [0, 1, 7, 258, 0x7fffffff];
   for (i32 i = 0; i < numbers.len(); i++) {
     t.eqI32(readOpenChannel(channelOpen("session", numbers[i])), numbers[i],
             "session channel " + itoa(numbers[i]) + " read back wrong");
   }
 
   // Anything that is not a session is refused rather than served on a guessed channel.
-  string[] bad = string[]("x11", "direct-tcpip", "", "sessionx", "sessio");
+  string[] bad = ["x11", "direct-tcpip", "", "sessionx", "sessio"];
   for (i32 i = 0; i < bad.len(); i++) {
     t.eqI32(readOpenChannel(channelOpen(bad[i], 3)), -1,
             "channel type \"" + bad[i] + "\" was served");
@@ -254,5 +258,5 @@ export string test_a_channel_open_is_read_for_its_number_whatever_the_number_is(
 }
 
 u8[] channelOpen(string type, i32 channel) {
-  return cat(u8[][](u8[](90), strOf(type), u32be(channel), u32be(2 * 1024 * 1024), u32be(32768)));
+  return cat([[90] as u8[], strOf(type), u32be(channel), u32be(2 * 1024 * 1024), u32be(32768)]);
 }

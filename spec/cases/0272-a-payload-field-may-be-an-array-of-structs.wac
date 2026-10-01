@@ -5,7 +5,7 @@
 struct P { i32 v; }
 enum Holder { Some(P[] xs), None }
 export i32 f() {
-  P[] ps = P[](P(3), P(4));
+  P[] ps = [P(3), P(4)];
   match (Holder.Some(ps)) {
     Some(xs): { return xs[0].v + xs[1].v; }
     None: { return 0; }

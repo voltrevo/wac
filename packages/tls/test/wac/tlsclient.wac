@@ -43,7 +43,7 @@ export Store rootsFrom(Cli cli, string pemPath) {
 }
 
 /** No roots at all — for a caller checking the shape of the first flight rather than a peer. */
-export Store noRoots() { return Store(u8[0](), i32[0](), 0); }
+export Store noRoots() { return Store(u8[](), i32[](), 0); }
 
 /**
  * A P-256 private scalar: 32 random bytes, retried until they land in [1, n).
@@ -53,10 +53,12 @@ export Store noRoots() { return Store(u8[0](), i32[0](), 0); }
  * because "virtually never" is not "never" and a biased scalar is not a failure anything would report.
  */
 export u8[] p256Scalar(Core core) {
-  const u8[] N = u8[](0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
+  const u8[] N = [
+                      0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
                       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
                       0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84,
-                      0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51);
+                      0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51
+  ];
   for (i32 tries = 0; tries < 64; tries++) {
     u8[] k = core.randomBytes(32).wait();
     bool zero = true;
@@ -81,7 +83,7 @@ export ClientStep firstFlight(Core core, Cli cli, string sni, Store roots, i64 n
 /** The same, from fixed bytes, for a caller that wants the flight to be the same every run. */
 export ClientStep fixedFirstFlight(string sni, Store roots, u8[] seed) {
   return clientStep(tlsClientInit(sni.toBytes(), roots.der, roots.offsets, seed, seed,
-                                  u8[64](fill: 0), u8[32](fill: 0), 0 as i64));
+                                  u8[].filled(64, 0), u8[].filled(32, 0), 0 as i64));
 }
 
 /** One bounded read. Empty means end of stream, and `ok` says whether the wait itself held. */
@@ -93,17 +95,17 @@ struct Chunk {
 
 Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
   Pending<Read> read = cli.recv(handle);
-  if (core.waitAny(i32[](read.id), millis) < 0) {
+  if (core.waitAny([read.id], millis) < 0) {
     // Cancelling stops us waiting and does not stop the host's read, and a cancelled ticket keeps its
     // slot until the call underneath finishes. Closing the handle is what makes it finish.
     read.cancel();
     cli.closeSocket(handle);
-    return Chunk(u8[0](), false, "the peer said nothing for " + itoa(millis) + "ms");
+    return Chunk(u8[](), false, "the peer said nothing for " + itoa(millis) + "ms");
   }
   match (read.wait()) {
     Data(bytes): { return Chunk(bytes, true, ""); }
-    End: { return Chunk(u8[0](), true, ""); }
-    Failed(why): { return Chunk(u8[0](), false, "recv: " + why); }
+    End: { return Chunk(u8[](), true, ""); }
+    Failed(why): { return Chunk(u8[](), false, "recv: " + why); }
   }
 }
 
@@ -116,7 +118,7 @@ Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
 export Reply request(Core core, Cli cli, string host, i32 port, string sni, Store roots,
                      string req, i64 now) {
   Pending<Socket> dial = cli.connect(host, port);
-  if (core.waitAny(i32[](dial.id), READ_TIMEOUT_MS) < 0) {
+  if (core.waitAny([dial.id], READ_TIMEOUT_MS) < 0) {
     dial.cancel();
     return Reply(-1, "", host + ":" + itoa(port) + " did not answer the dial");
   }
@@ -154,7 +156,7 @@ export Reply request(Core core, Cli cli, string host, i32 port, string sni, Stor
     i32 ready = recordsReady(raw.bytes());
     if (ready == 0) { continue; }
     u8[] all = raw.bytes();
-    u8[] whole = u8[ready]();
+    u8[] whole = u8[].filled(ready, 0);
     for (i32 i = 0; i < ready; i++) { whole[i] = all[i]; }
     raw.dropFront(ready);
 

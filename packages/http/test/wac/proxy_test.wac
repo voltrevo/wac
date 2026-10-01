@@ -53,7 +53,7 @@ string lineOf(ProxyReply r) {
 
 export string test_a_proxy_variable_parses_the_way_http_proxy_is_actually_written() {
   T t = T.create();
-  string[] urls = string[](
+  string[] urls = [
     "http://gateway:3128",
     // What this container actually sets, checked against the real value rather than an invented one.
     "gateway:3128",
@@ -67,11 +67,14 @@ export string test_a_proxy_variable_parses_the_way_http_proxy_is_actually_writte
     "http://gateway:0",
     "http://gateway:99999",
     "http://gateway:xyz",
-    "http://:3128");
-  bool[] oks = bool[](true, true, true, true, true, true, false, false, false, false, false, false);
-  string[] hosts = string[]("gateway", "gateway", "gateway", "gateway", "gateway", "10.0.0.1",
-                            "", "", "", "", "", "");
-  i32[] ports = i32[](3128, 3128, 3128, 3128, 3128, 8080, 0, 0, 0, 0, 0, 0);
+    "http://:3128"
+  ];
+  bool[] oks = [true, true, true, true, true, true, false, false, false, false, false, false];
+  string[] hosts = [
+                            "gateway", "gateway", "gateway", "gateway", "gateway", "10.0.0.1",
+                            "", "", "", "", "", ""
+  ];
+  i32[] ports = [3128, 3128, 3128, 3128, 3128, 8080, 0, 0, 0, 0, 0, 0];
   for (i32 i = 0; i < urls.len(); i++) {
     ProxyAt got = parseProxy(urls[i]);
     t.eqBool(got.ok, oks[i], "\"" + urls[i] + "\": ok");
@@ -100,7 +103,7 @@ export string test_a_reply_is_complete_at_the_blank_line_and_not_before() {
   T t = T.create();
   t.eqStr(tagOf(readReply("HTTP/1.1 200 Connection established\r\n".toBytes())), "NeedMore",
           "a reply without its blank line was accepted");
-  t.eqStr(tagOf(readReply(u8[0]())), "NeedMore", "an empty read was not NeedMore");
+  t.eqStr(tagOf(readReply(u8[]())), "NeedMore", "an empty read was not NeedMore");
 
   string whole = "HTTP/1.1 200 Connection established\r\n\r\n";
   ProxyReply r = readReply(whole.toBytes());
@@ -115,8 +118,8 @@ export string test_bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_rep
   // `recv` hands over what arrived. These three are the start of a TLS record — the case that would be
   // lost by a reader that stopped caring after the blank line.
   string head = "HTTP/1.1 200 Connection established\r\n\r\n";
-  u8[] payload = u8[](0x16, 0x03, 0x03);
-  u8[] buf = u8[head.len() + payload.len()]();
+  u8[] payload = [0x16, 0x03, 0x03];
+  u8[] buf = u8[].filled(head.len() + payload.len(), 0);
   for (i32 i = 0; i < head.len(); i++) { buf[i] = head.toBytes()[i]; }
   for (i32 i = 0; i < payload.len(); i++) { buf[head.len() + i] = payload[i]; }
   // Assert the fixture really does carry payload past the blank line, or this proves nothing.
@@ -126,7 +129,7 @@ export string test_bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_rep
   t.eqStr(tagOf(r), "Established", "the coalesced reply");
   t.eqI32(startsAt(r), head.len(), "where the tunnel starts");
   if (startsAt(r) != head.len()) { return t.report(); }
-  u8[] leftover = u8[buf.len() - startsAt(r)]();
+  u8[] leftover = u8[].filled(buf.len() - startsAt(r), 0);
   for (i32 i = startsAt(r); i < buf.len(); i++) { leftover[i - startsAt(r)] = buf[i]; }
   t.eqBytes(leftover, payload, "the leftover is not the tunnel's first bytes");
   return t.report();

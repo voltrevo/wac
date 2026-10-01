@@ -28,8 +28,8 @@ export struct Graph {
 }
 
 export Graph graphOf(Cli cli, string entry) {
-  string[] paths = string[32](fill: "");
-  string[] sources = string[32](fill: "");
+  string[] paths = string[].filled(32, "");
+  string[] sources = string[].filled(32, "");
   i32 n = 0;
   paths[0] = entry;
   n = 1;
@@ -54,8 +54,8 @@ export Graph graphOf(Cli cli, string entry) {
       for (i32 k = 0; k < n; k++) { if (paths[k] == resolved) { seen = true; } }
       if (seen) { continue; }
       if (n == paths.len()) {
-        string[] p2 = string[paths.len() * 2](fill: "");
-        string[] s2 = string[sources.len() * 2](fill: "");
+        string[] p2 = string[].filled(paths.len() * 2, "");
+        string[] s2 = string[].filled(sources.len() * 2, "");
         for (i32 k = 0; k < n; k++) { p2[k] = paths[k]; s2[k] = sources[k]; }
         paths = p2;
         sources = s2;
@@ -64,8 +64,8 @@ export Graph graphOf(Cli cli, string entry) {
       n = n + 1;
     }
   }
-  string[] p = string[n](fill: "");
-  string[] s = string[n](fill: "");
+  string[] p = string[].filled(n, "");
+  string[] s = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { p[i] = paths[i]; s[i] = sources[i]; }
   return Graph(p, s, true, "");
 }

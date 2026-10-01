@@ -25,13 +25,13 @@ import { reapMatching } from "../../../../tools/wac/suitehouse.wac";
 void started(Cli cli, string script) {
   cli.writeFile(script, "sleep 120\n".toBytes()).wait();
   // `setsid` and detached, so it outlives the shell that starts it and this test can ask about it.
-  cli.execWith("/bin/sh", string[]("-c", "setsid /bin/sh " + script + " >/dev/null 2>&1 &"),
-               u8[0](), string[0](fill: ""), false, false).wait();
+  cli.execWith("/bin/sh", ["-c", "setsid /bin/sh " + script + " >/dev/null 2>&1 &"],
+               u8[](), string[].filled(0, ""), false, false).wait();
 }
 
 bool alive(Cli cli, string script) {
-  Exec r = cli.execWith("/bin/ps", string[]("-eo", "args", "--no-headers"), u8[0](),
-                        string[0](fill: ""), false, false).wait();
+  Exec r = cli.execWith("/bin/ps", ["-eo", "args", "--no-headers"], u8[](),
+                        string[].filled(0, ""), false, false).wait();
   return string.fromBytes(r.stdout).indexOf(script) >= 0;
 }
 

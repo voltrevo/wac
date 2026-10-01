@@ -36,20 +36,22 @@ const string SOURCE = "packages/tls/src/asn1.wac";
 
 /** The name of every OID constant, in declaration order. */
 string[] names() {
-  return string[](
+  return [
     "oidEd25519", "oidSubjectAltName", "oidBasicConstraints", "oidEcPublicKey", "oidPrime256v1",
     "oidSecp384r1", "oidEcdsaSha256", "oidEcdsaSha384", "oidRsaEncryption", "oidRsaPss",
     "oidRsaSha256", "oidRsaSha384", "oidRsaSha512", "oidKeyUsage", "oidExtKeyUsage",
-    "oidServerAuth", "oidAnyExtKeyUsage", "oidNameConstraints");
+    "oidServerAuth", "oidAnyExtKeyUsage", "oidNameConstraints"
+  ];
 }
 
 /** The bytes each one is, in the same order. */
 u8[][] values() {
-  return u8[][](
+  return [
     oidEd25519(), oidSubjectAltName(), oidBasicConstraints(), oidEcPublicKey(), oidPrime256v1(),
     oidSecp384r1(), oidEcdsaSha256(), oidEcdsaSha384(), oidRsaEncryption(), oidRsaPss(),
     oidRsaSha256(), oidRsaSha384(), oidRsaSha512(), oidKeyUsage(), oidExtKeyUsage(),
-    oidServerAuth(), oidAnyExtKeyUsage(), oidNameConstraints());
+    oidServerAuth(), oidAnyExtKeyUsage(), oidNameConstraints()
+  ];
 }
 
 /** Whether `text` contains `needle` at `at`. */
@@ -107,21 +109,23 @@ bool isDigit(string s, i32 at) {
  */
 u8[] opensslOid(T t, Cli cli, string dotted) {
   Exec r = cli.exec("openssl",
-                    string[]("asn1parse", "-genstr", "OID:" + dotted, "-noout", "-out",
-                             "/dev/stdout"),
-                    u8[0]()).wait();
+                    [
+                             "asn1parse", "-genstr", "OID:" + dotted, "-noout", "-out",
+                             "/dev/stdout"
+                    ],
+                    u8[]()).wait();
   t.eqStr(r.error, "", "openssl could not be started");
-  if (r.error != "") { return u8[0](); }
+  if (r.error != "") { return u8[](); }
   t.eqI32(r.status, 0,
           "openssl could not encode " + dotted + ": " + string.fromBytes(r.stderr));
-  if (r.status != 0) { return u8[0](); }
+  if (r.status != 0) { return u8[](); }
   u8[] b = r.stdout;
   t.isTrue(b.len() > 2 && b[0] == 0x06,
            "openssl produced an OBJECT IDENTIFIER for " + dotted);
-  if (b.len() <= 2 || b[0] != 0x06) { return u8[0](); }
+  if (b.len() <= 2 || b[0] != 0x06) { return u8[](); }
   t.eqI32(b[1], b.len() - 2, "the length encoding for " + dotted + " is short form");
 
-  u8[] out = u8[b.len() - 2]();
+  u8[] out = u8[].filled(b.len() - 2, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = b[2 + i]; }
   return out;
 }

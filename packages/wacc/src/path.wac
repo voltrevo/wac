@@ -181,7 +181,7 @@ export string normalisePath(string path) {
   string joined = path;
 
   // The parts that survive, as a stack: `.` drops, `..` pops what it can.
-  string[] parts = string[64](fill: "");
+  string[] parts = string[].filled(64, "");
   i32 n = 0;
   i32 start = 0;
   for (i32 i = 0; i <= joined.len(); i++) {
@@ -230,12 +230,12 @@ export struct Res {
 
   /** Nothing known — what every caller without a filesystem passes. */
   Res empty() {
-    return Res(string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), "");
+    return Res(string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""), "");
   }
 
   /** Just the roots, for a caller that has those and no mappings. */
   Res of(string[] roots) {
-    return Res(roots, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), "");
+    return Res(roots, string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""), "");
   }
 
   /** The project `path` sits in, or "" — keyed by position against the graph's `paths`. */

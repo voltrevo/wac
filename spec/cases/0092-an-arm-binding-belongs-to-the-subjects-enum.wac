@@ -4,7 +4,7 @@
 // from: issues/lang/0096, found writing packages/git
 // ---- a.wac ----
 export enum Unzipped { Ok(u8[] bytes), Bad(string why) }
-export Unzipped unzip(i32 n) { return Unzipped.Ok(u8[3](fill: 7)); }
+export Unzipped unzip(i32 n) { return Unzipped.Ok(u8[].filled(3, 7)); }
 // ---- main.wac ----
 import { Unzipped, unzip } from "./a.wac";
 enum Object { Ok(i32 kind, u8[] content), Bad(string why) }

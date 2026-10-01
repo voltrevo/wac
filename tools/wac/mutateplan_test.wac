@@ -19,10 +19,10 @@ string joined(string[] xs) {
 /** A profile knowing three lines of `a.wac`, where only two are reached by a test. */
 Profile sample() {
   return Profile(
-    string[]("a.wac:10", "a.wac:11", "a.wac:12"),
-    string[]("test_one test_two", "", "test_two"),
-    string[]("x_test.wac", "y_test.wac", "z_test.wac"),
-    i32[](50, 10, -1));
+    ["a.wac:10", "a.wac:11", "a.wac:12"],
+    ["test_one test_two", "", "test_two"],
+    ["x_test.wac", "y_test.wac", "z_test.wac"],
+    [50, 10, -1] as i32[]);
 }
 
 /**
@@ -34,7 +34,7 @@ Profile sample() {
  */
 export string test_one_unknown_line_does_not_discard_the_selection() {
   T t = T.create();
-  Selection got = selectTests(sample(), string[]("a.wac:10", "a.wac:99"));
+  Selection got = selectTests(sample(), ["a.wac:10", "a.wac:99"]);
   t.isTrue(got.narrowed, "a span with one unmodelled line still narrows");
   t.eqStr(joined(got.tests), "test_one test_two", "to the tests the known line names");
   return t.report();
@@ -52,12 +52,12 @@ export string test_one_unknown_line_does_not_discard_the_selection() {
 export string test_an_empty_answer_needs_every_line_accounted_for() {
   T t = T.create();
   // Line 11 is known and unhit; line 99 is unknown. Empty *and* incomplete — fall back.
-  Selection mixed = selectTests(sample(), string[]("a.wac:11", "a.wac:99"));
+  Selection mixed = selectTests(sample(), ["a.wac:11", "a.wac:99"]);
   t.isTrue(!mixed.narrowed,
            "a span that is known-but-unhit and also incomplete falls back rather than claiming unhit");
 
   // Every line known, and none hit: that empty answer is the real one.
-  Selection all = selectTests(sample(), string[]("a.wac:11"));
+  Selection all = selectTests(sample(), ["a.wac:11"]);
   t.isTrue(all.narrowed, "a fully accounted span does narrow");
   t.eqI32(all.tests.len(), 0, "and its empty answer means no test reaches it");
   return t.report();
@@ -65,9 +65,9 @@ export string test_an_empty_answer_needs_every_line_accounted_for() {
 
 export string test_a_span_the_profile_does_not_know_widens() {
   T t = T.create();
-  Selection got = selectTests(sample(), string[]("b.wac:1", "b.wac:2"));
+  Selection got = selectTests(sample(), ["b.wac:1", "b.wac:2"]);
   t.isTrue(!got.narrowed, "no known line at all is `cannot narrow`");
-  t.eqStr(planFor(sample(), string[]("b.wac:1")), "widen", "which the plan calls widen");
+  t.eqStr(planFor(sample(), ["b.wac:1"]), "widen", "which the plan calls widen");
   return t.report();
 }
 
@@ -81,9 +81,9 @@ export string test_a_span_the_profile_does_not_know_widens() {
  */
 export string test_the_three_plans() {
   T t = T.create();
-  t.eqStr(planFor(sample(), string[]("a.wac:10")), "narrow", "a line with tests narrows to them");
-  t.eqStr(planFor(sample(), string[]("a.wac:11")), "unhit", "a known line no test reaches is unhit");
-  t.eqStr(planFor(sample(), string[]("zz.wac:1")), "widen", "and an unknown line widens");
+  t.eqStr(planFor(sample(), ["a.wac:10"]), "narrow", "a line with tests narrows to them");
+  t.eqStr(planFor(sample(), ["a.wac:11"]), "unhit", "a known line no test reaches is unhit");
+  t.eqStr(planFor(sample(), ["zz.wac:1"]), "widen", "and an unknown line widens");
   return t.report();
 }
 
@@ -95,13 +95,13 @@ export string test_the_three_plans() {
  */
 export string test_the_cheap_files_run_first_and_the_unmeasured_one_last() {
   T t = T.create();
-  t.eqStr(joined(byCost(string[]("x_test.wac", "y_test.wac", "z_test.wac"), sample())),
+  t.eqStr(joined(byCost(["x_test.wac", "y_test.wac", "z_test.wac"], sample())),
           "y_test.wac x_test.wac z_test.wac",
           "10ms, then 50ms, then the one the profile never ran");
   // Equal costs keep their alphabetical order rather than depending on the sort's internals.
-  Profile flat = Profile(string[0](fill: ""), string[0](fill: ""),
-                         string[]("b.wac", "a.wac"), i32[](7, 7));
-  t.eqStr(joined(byCost(string[]("b.wac", "a.wac"), flat)), "a.wac b.wac",
+  Profile flat = Profile(string[].filled(0, ""), string[].filled(0, ""),
+                         ["b.wac", "a.wac"], [7, 7] as i32[]);
+  t.eqStr(joined(byCost(["b.wac", "a.wac"], flat)), "a.wac b.wac",
           "and equal costs fall back to the name");
   return t.report();
 }
@@ -115,12 +115,12 @@ export string test_the_cheap_files_run_first_and_the_unmeasured_one_last() {
  */
 export string test_the_filter_is_anchored_and_escaped() {
   T t = T.create();
-  t.eqStr(filterFor(string[]("test_a", "test_b")), "/^(?:test_a|test_b)$/",
+  t.eqStr(filterFor(["test_a", "test_b"]), "/^(?:test_a|test_b)$/",
           "alternation, anchored at both ends");
-  t.eqStr(filterFor(string[0](fill: "")), "", "and nothing to filter on is the empty answer");
-  t.eqStr(filterFor(string[]("test_a.b")), "/^(?:test_a\\.b)$/",
+  t.eqStr(filterFor(string[].filled(0, "")), "", "and nothing to filter on is the empty answer");
+  t.eqStr(filterFor(["test_a.b"]), "/^(?:test_a\\.b)$/",
           "a metacharacter in a name is escaped, or it would match more than the name");
-  t.eqStr(filterFor(string[]("a+b(c)")), "/^(?:a\\+b\\(c\\))$/",
+  t.eqStr(filterFor(["a+b(c)"]), "/^(?:a\\+b\\(c\\))$/",
           "and so are the rest of them");
   return t.report();
 }
@@ -152,11 +152,11 @@ export string test_a_span_names_every_line_it_touches() {
  */
 export string test_a_narrowed_run_gets_a_filter_and_the_right_files() {
   T t = T.create();
-  string[] names = string[]("test_one", "test_two");
-  string[] homes = string[]("x_test.wac", "y_test.wac");
+  string[] names = ["test_one", "test_two"];
+  string[] homes = ["x_test.wac", "y_test.wac"];
 
-  RunPlan r = runPlanFor(sample(), string[]("a.wac:10"), names, homes,
-                         string[]("packages/whole"));
+  RunPlan r = runPlanFor(sample(), ["a.wac:10"], names, homes,
+                         ["packages/whole"]);
   t.isTrue(r.narrowed, "the profile named the tests, so the scope narrows");
   t.eqStr(r.filter, "/^(?:test_one|test_two)$/", "and the filter is anchored to exactly those");
   t.eqStr(joined(r.dirs), "y_test.wac x_test.wac",
@@ -175,11 +175,11 @@ export string test_a_narrowed_run_gets_a_filter_and_the_right_files() {
  */
 export string test_one_unknown_home_widens_the_whole_run() {
   T t = T.create();
-  string[] names = string[]("test_one");          // test_two's home is missing
-  string[] homes = string[]("x_test.wac");
+  string[] names = ["test_one"];          // test_two's home is missing
+  string[] homes = ["x_test.wac"];
 
-  RunPlan r = runPlanFor(sample(), string[]("a.wac:10"), names, homes,
-                         string[]("packages/whole"));
+  RunPlan r = runPlanFor(sample(), ["a.wac:10"], names, homes,
+                         ["packages/whole"]);
   t.isTrue(!r.narrowed, "one test whose file is unknown sends the whole run wide");
   t.eqStr(r.filter, "", "with no filter, because a filter it cannot aim is worse than none");
   t.eqStr(joined(r.dirs), "packages/whole", "and the original scope");
@@ -189,16 +189,16 @@ export string test_one_unknown_home_widens_the_whole_run() {
 /** An unhit span runs everything and says so; an unknown one just runs everything. */
 export string test_the_two_kinds_of_widening_are_told_apart() {
   T t = T.create();
-  string[] names = string[]("test_one");
-  string[] homes = string[]("x_test.wac");
+  string[] names = ["test_one"];
+  string[] homes = ["x_test.wac"];
 
-  RunPlan unhit = runPlanFor(sample(), string[]("a.wac:11"), names, homes, string[]("scope"));
+  RunPlan unhit = runPlanFor(sample(), ["a.wac:11"], names, homes, ["scope"]);
   t.isTrue(!unhit.narrowed, "a line no test reaches does not narrow");
   t.isTrue(unhit.notCovered,
            "but it is marked, so a survivor can be reported as executing nothing rather than as "
              + "untested behaviour");
 
-  RunPlan unknown = runPlanFor(sample(), string[]("zz.wac:1"), names, homes, string[]("scope"));
+  RunPlan unknown = runPlanFor(sample(), ["zz.wac:1"], names, homes, ["scope"]);
   t.isTrue(!unknown.narrowed, "a line the profile does not know does not narrow either");
   t.isTrue(!unknown.notCovered,
            "and is not marked — the profile cannot say nothing reaches it, only that it cannot say");
@@ -219,7 +219,7 @@ export string test_the_two_kinds_of_widening_are_told_apart() {
  */
 export string test_denos_filter_spelling_is_not_the_binarys() {
   T t = T.create();
-  string deno = filterFor(string[]("test_one", "test_two"));
+  string deno = filterFor(["test_one", "test_two"]);
   t.isTrue(isDenoFilter(deno), "what filterFor builds is the regex spelling: " + deno);
   t.isTrue(!isDenoFilter("test_one"),
            "and a bare export name, which is what `wac test --filter` wants, is not");
@@ -227,8 +227,8 @@ export string test_denos_filter_spelling_is_not_the_binarys() {
   t.isTrue(!isDenoFilter("/"), "and a lone slash is not a delimited pattern");
 
   // The narrowed run is what makes not passing it affordable: the scope is already the files.
-  RunPlan r = runPlanFor(sample(), string[]("a.wac:10"), string[]("test_one", "test_two"),
-                         string[]("x_test.wac", "y_test.wac"), string[]("packages/whole"));
+  RunPlan r = runPlanFor(sample(), ["a.wac:10"], ["test_one", "test_two"],
+                         ["x_test.wac", "y_test.wac"], ["packages/whole"]);
   t.isTrue(isDenoFilter(r.filter), "a run plan carries the Deno spelling");
   t.eqI32(r.dirs.len(), 2,
           "and the files, which is how the binary path selects — by entry, not by filter");

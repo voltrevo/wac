@@ -67,12 +67,12 @@ const string PREFIX = "packages/regex/";
 
 /** What the tests need: a process to ask `node` and `/bin/grep`, and the environment to find them. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/regex/src/compile.wac", 58, "while (cap < want * 3) { cap = cap * 2; }", true,
+  return [
+        Pin("packages/regex/src/compile.wac", 58, "while (cap < want * 3) { cap = cap * 2; }", true,
         "**One doubling is always enough, by arithmetic.** `grow(want)` is called from three places: " +
         "twice as `grow(this.len + 1)`, and once as `grow(this.len + n)` from `copyRange`, where `n` " +
         "is the length of a block already in the buffer. Write `C` for `code.len()` and `L` for " +
@@ -189,7 +189,7 @@ Pin[] pins() {
         "`cov_exercise.wac` — a trap in `main` ends the run and the report then looks exactly like " +
         "the one before the change, which cost half an hour in `packages/bytes`. Worth doing; not " +
         "done here, and this entry is what says so rather than a silent 100%.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -197,7 +197,7 @@ export i32 main(Core core, Cli cli) {
 
   // No trap cases: not one of this package's 26 tests expects a trap, so every one of them is called
   // from the exercise's `main`.
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -205,5 +205,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

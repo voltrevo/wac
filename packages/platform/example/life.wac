@@ -141,9 +141,9 @@ export i32 page(Core core, Cli cli, Page page) {
   page.on("#go", "click").wait();
   page.on("#again", "click").wait();
 
-  u8[] cells = u8[W * H]();
-  u8[] next = u8[W * H]();
-  u8[] rgba = u8[W * SCALE * H * SCALE * 4]();
+  u8[] cells = u8[].filled(W * H, 0);
+  u8[] next = u8[].filled(W * H, 0);
+  u8[] rgba = u8[].filled(W * SCALE * H * SCALE * 4, 0);
   // Something to watch before anything is dropped: this page's own title, which is as arbitrary a
   // seed as any and makes the first frame non-empty.
   u8[] seed = "wac: life, seeded from whatever you give it".toBytes();
@@ -161,7 +161,7 @@ export i32 page(Core core, Cli cli, Page page) {
     // Three things to wait on and one call that waits on all of them — the same `waitAny` a relay
     // uses over two sockets. A frame timer is a ticket like any other, which is the argument for
     // events being tickets rather than callbacks.
-    i32 which = core.waitAny(i32[](ev.id, file.id, tick.id), -1);
+    i32 which = core.waitAny([ev.id, file.id, tick.id], -1);
     if (which < 0) { return 0; }
 
     if (which == 3) {

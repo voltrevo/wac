@@ -69,7 +69,7 @@ export string test_cell_framing_survives_truncation_at_every_offset() {
   u8[] whole = randomBytes(r, 514);
   whole[4] = 3;                                  // RELAY, a fixed-length command
   for (i32 cut = 0; cut <= 514; cut++) {
-    u8[] part = u8[cut]();
+    u8[] part = u8[].filled(cut, 0);
     for (i32 i = 0; i < cut; i++) { part[i] = whole[i]; }
     i32 size = cellSize(part, 0, ID_WIDE);
     t.isTrue(size == -1 || size <= cut, "truncated at " + itoa64(cut as i64));
@@ -112,7 +112,7 @@ export string test_the_variable_length_bodies() {
   for (i32 i = 0; i < 2000; i++) {
     u8[] b = randomBytes(r, next(r) % 300);
     certsCount(b);
-    negotiateVersion(b, i32[](3, 4, 5));
+    negotiateVersion(b, [3, 4, 5] as i32[]);
     if (b.len() >= 1) { endReason(padTo(b, 509)); }
   }
   return t.report();
@@ -140,7 +140,7 @@ export string test_a_consensus_shaped_document_with_wrong_fields() {
   // the ones that do — right keywords, wrong everything else.
   T t = T.create();
   Rng64 r = rng(6);
-  string[] shapes = string[](
+  string[] shapes = [
     "r \nm \ns \nw \n",
     "r a b c d e f g\nm\ns\nw Bandwidth=\n",
     "r a b c d e f g h\nw Bandwidth=99999999999999999999\n",
@@ -148,7 +148,8 @@ export string test_a_consensus_shaped_document_with_wrong_fields() {
     "r a b c d e -1 0\n",
     "network-status-version 3\nvalid-after \nfresh-until \nvalid-until \n",
     "valid-after 9999-99-99 99:99:99\nfresh-until 0000-00-00 00:00:00\nvalid-until x\n",
-    "p accept \np reject ,,,\np accept 1-\np accept -1\np accept 99999999-1\n");
+    "p accept \np reject ,,,\np accept 1-\np accept -1\np accept 99999999-1\n"
+  ];
   for (i32 i = 0; i < shapes.len(); i++) {
     u8[] doc = shapes[i].toBytes();
     parseConsensus(doc);
@@ -157,7 +158,7 @@ export string test_a_consensus_shaped_document_with_wrong_fields() {
     parsePolicy(shapes[i]);
     // And the same with a byte flipped at every position.
     for (i32 j = 0; j < doc.len(); j++) {
-      u8[] m = u8[doc.len()]();
+      u8[] m = u8[].filled(doc.len(), 0);
       for (i32 k = 0; k < doc.len(); k++) { m[k] = doc[k]; }
       m[j] = next(r) & 0xFF;
       parseConsensus(m);
@@ -175,10 +176,11 @@ export string test_http_responses_from_a_hostile_cache() {
     Response resp = splitResponse(randomBytes(r, next(r) % 200));
     isIdentity(resp);
   }
-  string[] shapes = string[](
+  string[] shapes = [
     "\r\n\r\n", "HTTP/1.0\r\n\r\n", "HTTP/1.0 \r\n\r\n", "HTTP/1.0 abc OK\r\n\r\n",
     "HTTP/1.0 99999999999999 OK\r\n\r\n", "HTTP/1.0 200\r\ncontent-encoding:\r\n\r\n",
-    "HTTP/1.0 200 OK\r\ncontent-encoding: ident\r\n\r\n", "\r\n\r\nbody only");
+    "HTTP/1.0 200 OK\r\ncontent-encoding: ident\r\n\r\n", "\r\n\r\nbody only"
+  ];
   for (i32 i = 0; i < shapes.len(); i++) {
     Response resp = splitResponse(shapes[i].toBytes());
     isIdentity(resp);
@@ -230,8 +232,8 @@ export string test_the_small_decoders() {
     //
     // Fuzzing a parser proves the parser survives. It says nothing about whether the parser's output
     // is acceptable to whatever the parser feeds, and that seam is where this one lived.
-    ntorClientFinish(u8[20](fill: 1), u8[32](fill: 2), u8[32](fill: 3), reply, 72);
-    ntorClientFinish(u8[20](fill: 1), u8[32](fill: 2), u8[32](fill: 3), ext, 72);
+    ntorClientFinish(u8[].filled(20, 1), u8[].filled(32, 2), u8[].filled(32, 3), reply, 72);
+    ntorClientFinish(u8[].filled(20, 1), u8[].filled(32, 2), u8[].filled(32, 3), ext, 72);
   }
   // Said out loud: without a single well-formed reply the onward calls only ever saw refusals, and
   // this test would pass against an `ntorClientFinish` that rejected everything.
@@ -242,7 +244,7 @@ export string test_the_small_decoders() {
 }
 
 u8[] padTo(u8[] b, i32 n) {
-  u8[] o = u8[n]();
+  u8[] o = u8[].filled(n, 0);
   for (i32 i = 0; i < b.len() && i < n; i++) { o[i] = b[i]; }
   return o;
 }
@@ -264,7 +266,7 @@ export string test_fuzz_socks_requests() {
   i32 parsed = 0;
   for (i32 iter = 0; iter < 4000; iter++) {
     i32 n = next(r) % 40;
-    u8[] req = u8[n]();
+    u8[] req = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { req[i] = next(r) % 256; }
     string out = targetOf(req);
     // `requestLength` reads fields `targetOf` has already bounds-checked, and is only ever
@@ -301,7 +303,7 @@ export string test_fuzz_socks_requests_arriving_in_pieces() {
   Rng64 r = rng(0x9AB1);
   for (i32 iter = 0; iter < 600; iter++) {
     i32 n = 8 + next(r) % 24;
-    u8[] req = u8[n]();
+    u8[] req = u8[].filled(n, 0);
     req[0] = 5;
     req[1] = 1;
     req[2] = 0;
@@ -311,7 +313,7 @@ export string test_fuzz_socks_requests_arriving_in_pieces() {
     string whole = targetOf(req);
     bool settled = false;
     for (i32 cut = 0; cut <= n; cut++) {
-      u8[] part = u8[cut]();
+      u8[] part = u8[].filled(cut, 0);
       for (i32 i = 0; i < cut; i++) { part[i] = req[i]; }
       string got = targetOf(part);
       if (got == "") { continue; }
@@ -330,7 +332,7 @@ export string test_fuzz_end_reason_mapping() {
   Rng64 r = rng(0xE9D);
   for (i32 iter = 0; iter < 2000; iter++) {
     i32 n = next(r) % 6;
-    u8[] body = u8[n]();
+    u8[] body = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { body[i] = next(r) % 256; }
     i32 code = replyForEndReason(body);
     // RFC 1928 defines 0 through 8. A code outside that is one no client can interpret.

@@ -25,9 +25,9 @@ import { MESSAGE, PHASE, bySeverity, messagesOf, wireField } from "./wire_probe.
 
 const string PATH = "/m.wac";
 
-string wireOf(string src) { return diagnoseGraph(string[](PATH), string[](src), PATH); }
+string wireOf(string src) { return diagnoseGraph([PATH], [src], PATH); }
 string renderedOf(string src) {
-  return diagnoseGraphRendered(string[](PATH), string[](src), PATH);
+  return diagnoseGraphRendered([PATH], [src], PATH);
 }
 string[] warningsIn(string src) { return bySeverity(wireOf(src), true); }
 string[] errorsIn(string src) { return bySeverity(wireOf(src), false); }
@@ -55,19 +55,21 @@ export string test_a_non_null_reference_tested_against_null_warns_and_still_comp
 export string test_and_the_shapes_that_look_the_same_and_are_not_warned_about() {
   // Each of these is a place the rule could fire wrongly, and each is legal.
   T t = T.create();
-  string[] what = string[](
+  string[] what = [
     "a nullable reference",
     // The type `T` stands for whatever a call site binds — nullable or not — so this checker cannot
     // know, and "cannot know" must not become "is never null".
     "a type parameter",
     // `x is T` and `x is y` are different questions from `x is null` and share the node.
-    "a type test");
-  string[] quiet = string[](
+    "a type test"
+  ];
+  string[] quiet = [
     "struct P { i32 n; }\nexport i32 f(P? p) { return p is null ? 1 : 0; }\n",
     "struct Slot<T> { T v;\n  bool empty(const this) { return this.v is null; }\n}\n" +
     "export i32 f() { return 0; }\n",
     "struct P { i32 n; }\nstruct Q : P { i32 m; }\n" +
-    "export i32 f(P p) { return p is Q ? 1 : 0; }\n");
+    "export i32 f(P p) { return p is Q ? 1 : 0; }\n"
+  ];
   for (i32 i = 0; i < what.len(); i++) {
     string[] warned = warningsIn(quiet[i]);
     t.eqI32(warned.len(), 0, what[i] + ": warned on legal code — " + messagesOf(warned));

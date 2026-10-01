@@ -51,8 +51,8 @@ export struct Diff {
  *
  */
 export Diff[] known() {
-  return Diff[](
-    Diff("seq 1 0 3; echo status=$?",
+  return [
+         Diff("seq 1 0 3; echo status=$?",
          "seq: invalid Zero increment value: '0'\nTry 'seq --help' for more information.",
          "seq: step must not be zero"),
     Diff("printf 'x\\n' | grep '[' ; echo status=$?",
@@ -108,5 +108,6 @@ export Diff[] known() {
          "sh: unexpected token"),
     Diff("[ ( -n x ) -a ( -z \"\" ) ]; echo $?",
          "sh: syntax error near unexpected token `-n'\nsh: `[ ( -n x ) -a ( -z \"\" ) ]; echo $?'",
-         "sh: unexpected token"));
+         "sh: unexpected token")
+  ];
 }

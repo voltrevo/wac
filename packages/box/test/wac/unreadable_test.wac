@@ -21,7 +21,7 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-unreadable"; }
 export string test_find_and_du_fail_on_a_subtree_they_cannot_enter(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
 
   t.isTrue(cli.mkdir(dir + "/shut", false).wait().ok(), "made the subdirectory");
   t.isTrue(cli.writeFile(dir + "/shut/inside", "x".toBytes()).wait().ok(), "and something in it");
@@ -66,7 +66,7 @@ export string test_find_and_du_fail_on_a_subtree_they_cannot_enter(Core core, Cl
 export string test_rm_f_forgives_absence_and_reports_a_refusal(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
   t.isTrue(cli.mkdir(dir + "/sub", false).wait().ok(), "made the subdirectory");
   t.isTrue(cli.writeFile(dir + "/sub/kept", "x".toBytes()).wait().ok(), "and a file in it");
 

@@ -128,7 +128,7 @@ i32 decodedIntroPoints(Cli cli, i32 i) {
 /** `innerPlainLen` then `middleLen`, big-endian, the shape `readI32` above reads. */
 u8[] lensBytes(Cli cli, i32 i) {
   JsonObject g = objectAt(generatedVariants(cli), i);
-  u8[] out = u8[8]();
+  u8[] out = u8[].filled(8, 0);
   putI32(out, 0, numberField(g, "innerPlainLen"));
   putI32(out, 4, numberField(g, "middleLen"));
   return out;
@@ -287,35 +287,35 @@ export string test_a_directory_would_accept_what_was_built(Core core, Cli cli) {
 export string test_what_cannot_be_built(Core core, Cli cli) {
   T t = T.create();
   IntroPoint[] ok = intros(1);
-  u8[][] clients = u8[][0]();
+  u8[][] clients = u8[][]();
 
-  t.eqI32(buildDescriptor(u8[31](), seed(2), ok, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
-                          seed(3), u8[16](), u8[16](), clients).error,
+  t.eqI32(buildDescriptor(u8[].filled(31, 0), seed(2), ok, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
+                          seed(3), u8[].filled(16, 0), u8[].filled(16, 0), clients).error,
           BUILD_BAD_IDENTITY, "an identity seed that is not 32 bytes");
-  t.eqI32(buildDescriptor(seed(1), u8[0](), ok, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
-                          seed(3), u8[16](), u8[16](), clients).error,
+  t.eqI32(buildDescriptor(seed(1), u8[](), ok, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
+                          seed(3), u8[].filled(16, 0), u8[].filled(16, 0), clients).error,
           BUILD_BAD_SIGNING, "a signing seed that is not a seed");
-  t.eqI32(buildDescriptor(seed(1), seed(2), IntroPoint[0](fill: ok[0]), PERIOD, PERIOD_LENGTH, 1,
-                          180, 500000, seed(3), u8[16](), u8[16](), clients).error,
+  t.eqI32(buildDescriptor(seed(1), seed(2), IntroPoint[].filled(0, ok[0]), PERIOD, PERIOD_LENGTH, 1,
+                          180, 500000, seed(3), u8[].filled(16, 0), u8[].filled(16, 0), clients).error,
           BUILD_NO_INTROS, "a descriptor with no introduction points reaches nobody");
 
   // An introduction point whose keys are the wrong size. Refused rather than padded: a 31-byte ntor
   // key is a caller that lost a byte, and building a document around it produces a service nobody
   // can reach, which is the failure that looks like a working publication.
-  IntroPoint[] bad = IntroPoint[1](fill: IntroPoint(ok[0].linkSpecifiers, u8[31](), seed(5),
+  IntroPoint[] bad = IntroPoint[].filled(1, IntroPoint(ok[0].linkSpecifiers, u8[].filled(31, 0), seed(5),
                                                     clampedSeed(6)));
   t.eqI32(buildDescriptor(seed(1), seed(2), bad, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
-                          seed(3), u8[16](), u8[16](), clients).error,
+                          seed(3), u8[].filled(16, 0), u8[].filled(16, 0), clients).error,
           BUILD_BAD_INTRO, "an ntor key of the wrong length");
-  IntroPoint[] noLs = IntroPoint[1](fill: IntroPoint(u8[0](), x25519Base(clampedSeed(4)), seed(5),
+  IntroPoint[] noLs = IntroPoint[].filled(1, IntroPoint(u8[](), x25519Base(clampedSeed(4)), seed(5),
                                                      clampedSeed(6)));
   t.eqI32(buildDescriptor(seed(1), seed(2), noLs, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
-                          seed(3), u8[16](), u8[16](), clients).error,
+                          seed(3), u8[].filled(16, 0), u8[].filled(16, 0), clients).error,
           BUILD_BAD_INTRO, "and an introduction point that says nowhere");
 
   // A refusal returns nothing at all, so a caller cannot publish a partial build by ignoring `error`.
-  Built refused = buildDescriptor(u8[31](), seed(2), ok, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
-                                  seed(3), u8[16](), u8[16](), clients);
+  Built refused = buildDescriptor(u8[].filled(31, 0), seed(2), ok, PERIOD, PERIOD_LENGTH, 1, 180, 500000,
+                                  seed(3), u8[].filled(16, 0), u8[].filled(16, 0), clients);
   t.eqI32(refused.document.len(), 0, "a refused build is not a short document");
   t.eqI32(refused.blindedKey.len(), 0, "and names nothing");
   return t.report();
@@ -325,7 +325,7 @@ export string test_what_cannot_be_built(Core core, Cli cli) {
 
 /** A deterministic seed, so a failure is reproducible. */
 u8[] seed(i32 role) {
-  u8[] s = u8[32]();
+  u8[] s = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { s[i] = (role * 61 + i * 17 + 13) & 0xFF; }
   return s;
 }
@@ -338,14 +338,14 @@ u8[] clampedSeed(i32 role) {
 }
 
 IntroPoint[] intros(i32 n) {
-  IntroPoint[] out = IntroPoint[n](fill: one(0));
+  IntroPoint[] out = IntroPoint[].filled(n, one(0));
   for (i32 i = 0; i < n; i++) { out[i] = one(i); }
   return out;
 }
 
 /** One introduction point with keys of its own — two sharing a key would be one, written twice. */
 IntroPoint one(i32 i) {
-  u8[] ls = u8[9]();
+  u8[] ls = u8[].filled(9, 0);
   ls[0] = 1; ls[1] = 0; ls[2] = 6;
   ls[3] = 127; ls[4] = 0; ls[5] = 0; ls[6] = 1;
   ls[7] = 0x23; ls[8] = (0x29 + i) & 0xFF;
@@ -353,11 +353,11 @@ IntroPoint one(i32 i) {
 }
 
 Built build(i32 introCount, i64 period) {
-  u8[][] clients = u8[][2]();
-  clients[0] = u8[40](fill: 1);
-  clients[1] = u8[40](fill: 2);
+  u8[][] clients = u8[][].defaulted(2);
+  clients[0] = u8[].filled(40, 1);
+  clients[1] = u8[].filled(40, 2);
   return buildDescriptor(seed(1), seed(2), intros(introCount), period, PERIOD_LENGTH, 7, 180,
-                         500000, seed(3), u8[16](fill: 9), u8[16](fill: 11), clients);
+                         500000, seed(3), u8[].filled(16, 9), u8[].filled(16, 11), clients);
 }
 
 i32 readI32(u8[] b, i32 at) {

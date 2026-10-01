@@ -285,6 +285,10 @@ export i32 errAwaitNotPending() { return 212; }
  * rather than the `await` inside it.
  */
 export i32 errAsyncLambdaSlot() { return 213; }
+/** `[1, 2]` with nothing saying what its elements are — `spec/next/2-types/15-arrays.md`. */
+export i32 errArrayLiteralType() { return 214; }
+/** An array literal where the slot wants something that is not an array. */
+export i32 errArrayLiteralSlot() { return 215; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -533,7 +537,7 @@ string genericBase(string t) {
   u8[] a = t.toBytes();
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] == 60) {
-      u8[] out = u8[i]();
+      u8[] out = u8[].filled(i, 0);
       for (i32 j = 0; j < i; j++) { out[j] = a[j]; }
       return string.fromBytes(out);
     }
@@ -549,7 +553,7 @@ string genericBase(string t) {
  */
 string[] genericArgs(string t) {
   string base = genericBase(t);
-  if (base == "") { return string[0](); }
+  if (base == "") { return string[](); }
   u8[] a = t.toBytes();
   i32 start = base.toBytes().len() + 1;
   i32 end = a.len() - 1;
@@ -560,7 +564,7 @@ string[] genericArgs(string t) {
     else if (a[i] == 62) { depth = depth - 1; }
     else if (a[i] == 44 && depth == 0) { n = n + 1; }
   }
-  string[] out = string[n]();
+  string[] out = string[].defaulted(n);
   i32 at = 0;
   i32 from = start;
   depth = 0;
@@ -574,7 +578,7 @@ string[] genericArgs(string t) {
     if (!cut) { continue; }
     i32 lo = from;
     while (lo < i && a[lo] == 32) { lo = lo + 1; }
-    u8[] piece = u8[i - lo]();
+    u8[] piece = u8[].filled(i - lo, 0);
     for (i32 j = 0; j < piece.len(); j++) { piece[j] = a[lo + j]; }
     out[at] = string.fromBytes(piece);
     at = at + 1;
@@ -628,8 +632,8 @@ string bindMethodLetters(C c, i32 methodIx, Ty[] targs, string t) {
   if (methodIx < 0 || targs.len() == 0 || methodIx >= c.methodTypeParams.len()) { return t; }
   string joined = c.methodTypeParams[methodIx];
   if (joined == "" || commaCount(joined) != targs.len()) { return t; }
-  string[] names = string[targs.len()]();
-  string[] bound = string[targs.len()]();
+  string[] names = string[].defaulted(targs.len());
+  string[] bound = string[].defaulted(targs.len());
   for (i32 i = 0; i < targs.len(); i++) {
     names[i] = commaAt(joined, i);
     bound[i] = typeOfTy(c, targs[i]);
@@ -651,9 +655,9 @@ string bindMethodLettersAuto(C c, i32 methodIx, string recv, Ty[] targs, Expr[] 
   string joined = c.methodTypeParams[methodIx];
   if (joined == "") { return t; }
   i32 n = commaCount(joined);
-  string[] names = string[n]();
-  string[] bound = string[n]();
-  bool[] clash = bool[n]();
+  string[] names = string[].defaulted(n);
+  string[] bound = string[].defaulted(n);
+  bool[] clash = bool[].filled(n, false);
   for (i32 i = 0; i < n; i++) { names[i] = commaAt(joined, i); }
   for (i32 i = 0; i < args.len() && i < c.methodParamCount[methodIx]; i++) {
     string decl = substituteType(c, recv, c.methodParamTypes[c.methodParamAt[methodIx] + i]);
@@ -695,14 +699,14 @@ string substituteType(C c, string owner, string written) {
   // payload kept its `T` and `Wrap.W(Box(5))` read as a field mismatch. The two tables answer the
   // same question about the same kind of name; only one of them was ever asked. `spec/cases/0046`.
   i32 ei = si >= 0 ? -1 : c.enumAt(template);
-  string[] params = string[0]();
+  string[] params = string[]();
   if (si >= 0) {
-    params = string[c.structParamCount[si]]();
+    params = string[].defaulted(c.structParamCount[si]);
     for (i32 i = 0; i < params.len(); i++) {
       params[i] = c.structParamNames[c.structParamAt[si] + i];
     }
   } else if (ei >= 0) {
-    params = string[c.enumParamCount[ei]]();
+    params = string[].defaulted(c.enumParamCount[ei]);
     for (i32 i = 0; i < params.len(); i++) {
       params[i] = c.enumParamNames[c.enumParamAt[ei] + i];
     }
@@ -783,7 +787,7 @@ string substituteType(C c, string owner, string written) {
 string dropLast(string s, i32 n) {
   u8[] a = s.toBytes();
   if (n > a.len()) { return ""; }
-  u8[] out = u8[a.len() - n]();
+  u8[] out = u8[].filled(a.len() - n, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
   return string.fromBytes(out);
 }
@@ -1474,6 +1478,46 @@ export struct C {
    * place with the types still agreeing.
    */
   bool inAsync;
+  /**
+   * The array type each array literal was checked at, by its position — `line * 65536 + col` — so that
+   * `typeOfExpr` can answer it.
+   *
+   * An array literal's type depends on its slot: `[b]` is an `i32[]` on its own and a `u8[]` passed to
+   * a `u8[]` parameter, and only `checkExpr` sees the slot. Every rule that then compares an argument,
+   * an initialiser or a return value against its slot asks `typeOfExpr`, after `checkExpr` has run, and
+   * this is what lets it hear the slot's answer rather than the elements' guess.
+   */
+  i32[] arrLitAt;
+  string[] arrLitTypes;
+  i32 arrLitCount;
+
+  /** The type the array literal at this position was checked at, or `typeNone()`. */
+  string arrLitSlot(const this, i32 line, i32 col) {
+    i32 key = line * 65536 + col;
+    for (i32 i = 0; i < this.arrLitCount; i++) {
+      if (this.arrLitAt[i] == key) { return this.arrLitTypes[i]; }
+    }
+    return typeNone();
+  }
+
+  /** Remember the array type a literal was checked at — growing the table, since literals are many. */
+  void noteArrLit(this, i32 line, i32 col, string t) {
+    i32 key = line * 65536 + col;
+    for (i32 i = 0; i < this.arrLitCount; i++) {
+      if (this.arrLitAt[i] == key) { this.arrLitTypes[i] = t; return; }
+    }
+    if (this.arrLitCount >= this.arrLitAt.len()) {
+      i32 grown = this.arrLitAt.len() * 2 + 16;
+      i32[] at = i32[].filled(grown, 0);
+      string[] ty = string[].defaulted(grown);
+      for (i32 i = 0; i < this.arrLitCount; i++) { at[i] = this.arrLitAt[i]; ty[i] = this.arrLitTypes[i]; }
+      this.arrLitAt = at;
+      this.arrLitTypes = ty;
+    }
+    this.arrLitAt[this.arrLitCount] = key;
+    this.arrLitTypes[this.arrLitCount] = t;
+    this.arrLitCount = this.arrLitCount + 1;
+  }
 
 
 
@@ -1490,31 +1534,32 @@ export struct C {
    * unit for a table that holds declarations — `issues/lang/0099`.
    */
   C create(u8[] src, i32[] toks, i32 locals, i32 decls) {
-    return C(src, toks, string[locals](), string[locals](), bool[locals](),
-             bool[locals](), bool[locals](), 0,
-             string[decls](), 0,
-             string[decls](), i32[decls](), i32[decls](), 0,
+    return C(src, toks, string[].defaulted(locals), string[].defaulted(locals), bool[].filled(locals, false),
+             bool[].filled(locals, false), bool[].filled(locals, false), 0,
+             string[].defaulted(decls), 0,
+             string[].defaulted(decls), i32[].filled(decls, 0), i32[].filled(decls, 0), 0,
              0,
-             string[decls](), string[decls](),
-             string[decls](), i32[decls](), i32[decls](), 0, bool[decls](), 0,
-             string[decls](), string[decls](), bool[decls](), bool[decls](),
-             string[decls](), string[decls](), i32[decls](), i32[decls](), 0, 0,
-             string[decls](), string[decls](), string[decls](), bool[decls](), 0,
-             string[decls](), string[decls](), i32[decls](), i32[decls](),
-             string[decls](), bool[decls](), string[decls](), i32[decls](),
-             i32[decls](), 0, 0, 0,
+             string[].defaulted(decls), string[].defaulted(decls),
+             string[].defaulted(decls), i32[].filled(decls, 0), i32[].filled(decls, 0), 0, bool[].filled(decls, false), 0,
+             string[].defaulted(decls), string[].defaulted(decls), bool[].filled(decls, false), bool[].filled(decls, false),
+             string[].defaulted(decls), string[].defaulted(decls), i32[].filled(decls, 0), i32[].filled(decls, 0), 0, 0,
+             string[].defaulted(decls), string[].defaulted(decls), string[].defaulted(decls), bool[].filled(decls, false), 0,
+             string[].defaulted(decls), string[].defaulted(decls), i32[].filled(decls, 0), i32[].filled(decls, 0),
+             string[].defaulted(decls), bool[].filled(decls, false), string[].defaulted(decls), i32[].filled(decls, 0),
+             i32[].filled(decls, 0), 0, 0, 0,
              0, "",
-             i32[decls * 3](), string[decls](), i32[decls](), i32[decls](), string[decls](), 0, false, false,
-             string[16](), 0, "",
-             string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
-             string[decls](), string[decls](), 0,
-             Stmt[][decls](fill: Stmt[]()),
-             string[decls](), 0,
-             i32[decls * 3](), 0,
-             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             string[decls](), i32[locals](fill: 0 - 1), 0,
-             string[decls](), string[decls](), 0,
-             string[decls](), 0, false);
+             i32[].filled(decls * 3, 0), string[].defaulted(decls), i32[].filled(decls, 0), i32[].filled(decls, 0), string[].defaulted(decls), 0, false, false,
+             string[].defaulted(16), 0, "",
+             string[].defaulted(decls), string[].defaulted(decls), i32[].filled(decls, 0), bool[].filled(decls, false), 0,
+             string[].defaulted(decls), string[].defaulted(decls), 0,
+             Stmt[][].filled(decls, Stmt[]()),
+             string[].defaulted(decls), 0,
+             i32[].filled(decls * 3, 0), 0,
+             Stmt[][].filled(locals, Stmt[]()), Stmt[][].filled(256, Stmt[]()), 0, Stmt[](), "", false,
+             string[].defaulted(decls), i32[].filled(locals, 0 - 1), 0,
+             string[].defaulted(decls), string[].defaulted(decls), 0,
+             string[].defaulted(decls), 0, false,
+             i32[](), string[](), 0);
   }
 
   /**
@@ -2422,7 +2467,7 @@ string tokenText(C c, i32 t) {
   if (t < 0) { return ""; }
   i32 start = c.toks[t * tokenStride() + 1];
   i32 len = c.toks[t * tokenStride() + 2];
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = c.src[start + i]; }
   return string.fromBytes(out);
 }
@@ -2784,7 +2829,7 @@ string sourceOfExpr(C c, Expr e) {
   i32 start = c.toks[a * tokenStride() + 1];
   i32 end = c.toks[b * tokenStride() + 1] + c.toks[b * tokenStride() + 2];
   if (end <= start || end > c.src.len()) { return ""; }
-  u8[] out = u8[end - start]();
+  u8[] out = u8[].filled(end - start, 0);
   for (i32 i = 0; i < end - start; i++) { out[i] = c.src[start + i]; }
   return string.fromBytes(out);
 }
@@ -2944,7 +2989,7 @@ Expr innermostLiteral(Expr e) {
  */
 bool decimalExceeds(string digits, string limit) {
   u8[] a = digits.toBytes();
-  u8[] out = u8[a.len()]();
+  u8[] out = u8[].filled(a.len(), 0);
   i32 n = 0;
   bool seenDigit = false;
   for (i32 i = 0; i < a.len(); i++) {
@@ -3280,8 +3325,8 @@ string funcValueType(C c, i32 at) {
 string funcValueTypeWritten(C c, i32 at, Ty[] typeArgs) {
   i32 n = c.funcTypeParamCount[at];
   if (typeArgs.len() != n) { return typeNone(); }
-  string[] names = string[n]();
-  string[] bound = string[n]();
+  string[] names = string[].defaulted(n);
+  string[] bound = string[].defaulted(n);
   for (i32 i = 0; i < n; i++) {
     names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
     bound[i] = typeOfTy(c, typeArgs[i]);
@@ -3703,9 +3748,9 @@ export string typeOfExpr(C c, Expr e) {
       if (c.funcGenerics[at]) { return genericCallReturn(c, at, args); }
       return c.funcReturns[at];
     }
-    // **An array construction has a type, and this had no arm for it.** `i32[0]()` answered unknown,
+    // **An array construction has a type, and this had no arm for it.** `i32[]()` answered unknown,
     // and unknown is what every caller skips — `if (got == typeNone()) { continue; }` — so *any array
-    // satisfied any slot*, including a slot that is not an array at all. `take(i32[0]())` where `take`
+    // satisfied any slot*, including a slot that is not an array at all. `take(i32[]())` where `take`
     // wants a struct passed the checker and produced a module the engine refused, blaming the compiler
     // for a plain type error (`issues/lang/0164a`).
     //
@@ -3722,6 +3767,11 @@ export string typeOfExpr(C c, Expr e) {
       string el = typeOfTy(c, elem);
       return el == "" || el == typeNone() ? typeNone() : el + "[]";
     }
+    // `[a, b]` has the type `checkExpr` gave it, which is the slot's when it had one — `[short + len]`
+    // returned from a `u8[]` function is a `u8[]`, and its elements alone would have said `i32[]`. A
+    // literal not walked yet is unknown rather than guessed: the comparisons that ask before the walk
+    // would otherwise refuse it against its own slot, and the walk checks every element against it.
+    ArrLit(elements): { return c.arrLitSlot(e.line, e.col); }
     /**
      * `x++` and `++x` are the type of what they increment — `spec/tour.wac`: *"`++`/`--` ARE
      * expressions, prefix and postfix, on i32/i64 lvalues. As in C, `i32 old = x++;`"*.
@@ -4681,7 +4731,7 @@ void checkExpr(C c, Expr e) {
       }
       checkArmValueTypes(c, arms, e.line, e.col);
     }
-    // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
+    // `[1, 2] as i32[]`, `[1.5] as i8[]`, `E[].filled(2, 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
     ArrNew(elem, size, fill, elements): {
       if (!(size is null)) {
@@ -4714,13 +4764,16 @@ void checkExpr(C c, Expr e) {
       }
       string want = elemWant;
       if (want == typeNone()) { return; }
-      // `E[2]()` with nothing to fill it asks every element for a default, and an enum has none.
+      // `E[].defaulted(2)` with nothing to fill it asks every element for a default, and an enum has none.
       //
       // **`E[]()` asks for nothing**, which is a different program: the listed form with no elements
       // is an empty array, and an array with no elements never builds one. `return Expr[]();` is a
       // line in this compiler's own parser, and it was reported the moment the checker could see
       // what `Expr` is — the rule needed a size before it needed a default.
-      if (!(size is null) && elements.len() == 0 && (fill is null) && !hasDefault(c, want, 0)) {
+      // **A number has no default**, and neither has a `bool`: `i32[].defaulted(n)` is refused, and
+      // `i32[].filled(n, 0)` says which zero was meant — `spec/next/2-types/08-primitives.md`.
+      if (!(size is null) && elements.len() == 0 && (fill is null)
+          && (!hasDefault(c, want, 0) || primWithoutDefault(want))) {
         c.report(errNoDefault(), e.line, e.col);
       }
       // **A literal, though, has to fit the element type**, which the widening below would hide.
@@ -4733,9 +4786,59 @@ void checkExpr(C c, Expr e) {
       for (i32 i = 0; i < elements.len(); i++) { checkElement(c, want, elements[i]); }
       if (!(fill is null)) { checkElement(c, want, fill!); }
     }
+    // `[a, b, c]`. The element type is the slot's when the slot is an array, and the elements' own
+    // otherwise; a literal with neither — `[]` alone, or only numbers — is refused, since nothing says
+    // which of the numeric types its elements are.
+    ArrLit(elements): {
+      string slot = isNullableName(want) ? withoutNull(want) : want;
+      string et = typeNone();
+      if (slot != typeNone() && slot != "anyref" && endsWith(slot, "[]")) {
+        et = slot.slice(0, slot.len() - 2);
+      } else if (slot != typeNone() && slot != "anyref" && !wantUnknown) {
+        c.reportWith(errArrayLiteralSlot(), e.line, e.col, expectedFound(want, "an array"));
+      } else if (!wantUnknown) {
+        string inferred = arrLitType(c, elements);
+        if (inferred == typeNone()) {
+          for (i32 i = 0; i < elements.len(); i++) { checkExpr(c, elements[i]); }
+          c.report(errArrayLiteralType(), e.line, e.col);
+          return;
+        }
+        et = inferred.slice(0, inferred.len() - 2);
+      }
+      for (i32 i = 0; i < elements.len(); i++) {
+        c.expected = et;
+        checkExpr(c, elements[i]);
+      }
+      if (et == typeNone()) {
+        // A slot this file cannot see — an imported callee's parameter. The elements say what they can.
+        string guessed = arrLitType(c, elements);
+        if (guessed != typeNone()) { c.noteArrLit(e.line, e.col, guessed); }
+        return;
+      }
+      c.noteArrLit(e.line, e.col, et + "[]");
+      for (i32 i = 0; i < elements.len(); i++) { checkPackedLiteral(c, et, elements[i]); }
+      string ew = isPackedName(et) ? "i32" : et;
+      for (i32 i = 0; i < elements.len(); i++) { checkElement(c, ew, elements[i]); }
+    }
     // A cast's operand. `(p + q) as i64` reported nothing, because typing a cast as its target — the
     // right answer — meant never looking inside it.
-    Cast(op, operand, target): { checkExpr(c, operand); checkCast(c, e, op, operand, target); }
+    //
+    // **`[a, b] as T[]` is not a conversion.** It gives the literal's elements the type `T` before the
+    // array is built, so the literal is checked against the target as a slot, and nothing is converted.
+    Cast(op, operand, target): {
+      bool literalTyped = false;
+      match (operand.kind) {
+        ArrLit(elements): { literalTyped = tokenText(c, op) == "as"; }
+        default: { }
+      }
+      if (literalTyped) {
+        c.expected = typeOfTy(c, target);
+        checkExpr(c, operand);
+      } else {
+        checkExpr(c, operand);
+        checkCast(c, e, op, operand, target);
+      }
+    }
     Ternary(cond, then, els): {
       // **Both branches sit in the ternary's own slot.** `Box<i32> b = c ? Box(1) : Box(2);` needs
       // it: a bare `Box(…)` takes its type arguments from where it is going, and `c.expected` is
@@ -4745,10 +4848,16 @@ void checkExpr(C c, Expr e) {
       // the whole mechanism — an expression gets the context it was given and cannot leak it sideways.
       string slot = want;
       checkExpr(c, cond);
+      // A slot this file cannot see stays unseen in both branches — `run(ok ? [a, f(b)] : [c])` with
+      // `run` imported — rather than becoming "nothing wanted", which an array literal reads as an
+      // instruction to infer its own type.
       c.expected = slot;
+      c.expectedUnknown = wantUnknown;
       checkExpr(c, then);
       c.expected = slot;
+      c.expectedUnknown = wantUnknown;
       checkExpr(c, els);
+      c.expectedUnknown = false;
       // The condition is the `if` rule in expression position, and lands on the condition itself.
       if (notBool(c, cond)) {
         reportExpr(c, errNotBool(), cond, expectedFound("bool", foundType(c, cond)));
@@ -4978,6 +5087,7 @@ void checkExpr(C c, Expr e) {
         default: { }
       }
       i32 methodIx = methodOwner == "" ? -1 : c.methodAt(methodOwner, tokenText(c, calleeName(c, callee)));
+      string builtinSlot = builtinStaticSlot(c, callee);
       for (i32 i = 0; i < args.len(); i++) {
         // **Whether this argument has a slot at all**, which is a different question from what the
         // slot is. Neither branch fires when the receiver is a type this file does not contain — an
@@ -4988,6 +5098,11 @@ void checkExpr(C c, Expr e) {
         if (payloadOwner != "") {
           string slot = c.fieldTypeAtIndex(payloadOwner, i);
           c.expected = ownerKnown ? substituteType(c, outerSlot, slot) : slot;
+          slotted = true;
+        } else if (builtinSlot != typeNone() && i == 0) {
+          // `string.fromBytes([cp])` — a builtin static's parameter is a slot like any other, and an
+          // array literal there takes its element type from it.
+          c.expected = builtinSlot;
           slotted = true;
         } else if (methodIx >= 0 && i < c.methodParamCount[methodIx]) {
           string mslot = c.methodParamTypes[c.methodParamAt[methodIx] + i];
@@ -5329,7 +5444,7 @@ string trimmed(string t, i32 from, i32 to) {
   i32 e = to;
   while (b < e && a[b] == 32) { b = b + 1; }
   while (e > b && a[e - 1] == 32) { e = e - 1; }
-  u8[] out = u8[e - b]();
+  u8[] out = u8[].filled(e - b, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = a[b + i]; }
   return string.fromBytes(out);
 }
@@ -5763,9 +5878,9 @@ bool funcrefCall(C c, Expr e) {
 void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   i32 n = c.funcTypeParamCount[at];
   if (n == 0) { return; }
-  string[] names = string[n]();
-  string[] bound = string[n]();
-  bool[] clashed = bool[n]();
+  string[] names = string[].defaulted(n);
+  string[] bound = string[].defaulted(n);
+  bool[] clashed = bool[].filled(n, false);
   for (i32 i = 0; i < n; i++) {
     names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
     bound[i] = "";
@@ -5849,7 +5964,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   // file keeps about a type it cannot name.
   if (c.activeParamCount > 0) { return; }
   // **An argument this checker cannot name is its own limit, not the program's.** `id(true ? x : 0)`,
-  // `id(s[1])` and `which(i32[2]())` are all inferrable and all answer `typeNone` here, and reporting
+  // `id(s[1])` and `which(i32[].filled(2, 0))` are all inferrable and all answer `typeNone` here, and reporting
   // them refused three of the spec's own programs. A `null` is the one argument that is genuinely
   // evident *and* nameless — it is not a value of anything, which is why the spec refuses `id(null)`
   // and why that case survives this guard.
@@ -6220,7 +6335,7 @@ bool constPath(C c, Lvalue lv) {
  * `design/lang/0013` step 4. A character literal is a *codepoint* and `u8` is a *byte*, and they
  * coincide only below 128:
  *
- *     u8[]('😀')[0]      0         codepoint 128512, truncated, no diagnostic
+ *     (['😀'] as u8[])[0]    0         codepoint 128512, truncated, no diagnostic
  *     'é' is 233,  "é".toBytes() is 195 169
  *     b[0] == 'é'       false     can never be true, and said nothing
  *
@@ -6229,7 +6344,7 @@ bool constPath(C c, Lvalue lv) {
  * zero non-ASCII character literals in the tree, so refusing them costs nothing today.
  *
  * **A plain integer literal is not this rule, and asking it to be was a mistake.** The first version
- * of this refused `u8[](300)` too, on the reasoning that nothing about a literal that cannot fit can
+ * of this refused `[300] as u8[]` too, on the reasoning that nothing about a literal that cannot fit can
  * be right. spec/spec/arrays.md settles it the other way, deliberately and with a tag:
  * `[§wac-arr-i8-lit-trunc-i9g6kol]` — *"the fixed-element form takes `i32` values too, and truncates
  * them the same way a write does, so a byte array can be written as a literal list"* — and
@@ -6330,7 +6445,7 @@ void checkElement(C c, string want, Expr e) {
   // **A nullable element is its own complaint, and this slot was not asking.** `assignable` answers
   // *true* for `P?` into `P` deliberately — see `nullableIntoNonNull`, which carries the reference's
   // own wording so that the two rules do not both fire at one position — so a slot that only asks
-  // `assignable` accepts a nullable silently. `P[] v = P[](a);` and `P[1](fill: a)` for a `P? a` both
+  // `assignable` accepts a nullable silently. `P[] v = [a];` and `P[].filled(1, a)` for a `P? a` both
   // checked clean while `P r = a;` beside them was reported. Both spellings come through here, which
   // is why one branch fixes two positions.
   if (nullableIntoNonNull(c, want, got)) {
@@ -6344,7 +6459,7 @@ void checkElement(C c, string want, Expr e) {
  * Whether an expression calls a function, which is what a module-level `const` may not do.
  *
  * A constant's value is computed before the program runs, so arithmetic on literals is fine and
- * `P(1)` is fine — a construction is a shape rather than a computation — while `n()` and `i32[n()]()`
+ * `P(1)` is fine — a construction is a shape rather than a computation — while `n()` and `i32[].filled(n(), 0)`
  * are not. Phrased as "does this contain a call" rather than "is this constant" on purpose: the
  * second is the larger claim and the first is the one the corpus actually distinguishes, so this
  * says nothing about anything else.
@@ -6387,6 +6502,12 @@ bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settle
       return false;
     }
     ArrNew(elem, size, fill, elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (readsUnsettledConst(c, prog, elements[i], settled, settledCount)) { return true; }
+      }
+      return false;
+    }
+    ArrLit(elements): {
       for (i32 i = 0; i < elements.len(); i++) {
         if (readsUnsettledConst(c, prog, elements[i], settled, settledCount)) { return true; }
       }
@@ -6450,6 +6571,12 @@ bool callsAFunction(C c, Expr e) {
     }
     Binary(op, left, right): { return callsAFunction(c, left) || callsAFunction(c, right); }
     Unary(op, operand): { return callsAFunction(c, operand); }
+    ArrLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (callsAFunction(c, elements[i])) { return true; }
+      }
+      return false;
+    }
     ArrNew(elem, size, fill, elements): {
       if (!(size is null)) {
         if (callsAFunction(c, size!)) { return true; }
@@ -6497,6 +6624,12 @@ bool mutableRefName(C c, string t) {
  */
 bool freshValue(C c, Expr e) {
   match (e.kind) {
+    ArrLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (!freshValue(c, elements[i])) { return false; }
+      }
+      return true;
+    }
     ArrNew(elem, size, fill, elements): {
       if (!mutableRefName(c, typeOfTy(c, elem))) { return true; }   // one copy per element
       for (i32 i = 0; i < elements.len(); i++) {
@@ -6626,7 +6759,7 @@ bool constExpr(C c, Expr e) {
 }
 
 /**
- * Whether a type can be produced out of nothing — `P p = P();` and `P[2]()` both ask this.
+ * Whether a type can be produced out of nothing — `P p = P();` and `P[].defaulted(2)` both ask this.
  *
  * Primitives have a zero, arrays and strings have an empty one, a nullable has null. A struct has a
  * default when every field does, so this recurses; an **enum has none at all**, even one whose every
@@ -6894,23 +7027,45 @@ bool descendsFrom(C c, string sub, string sup) {
  *
  * Returns whether the receiver was a builtin, which is what stops the struct rules from also looking.
  */
-bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, Expr[] args) {
-  string want = "";
+/** The parameter type of the builtin static `recv.name`, or empty when there is no such static. */
+string builtinParamType(string recv, string name) {
   if (recv == "f64" || recv == "f32") {
-    if (name != "toBits" && name != "fromBits") {
-      c.reportWith(errNoStaticMethod(), call.line, call.col, "no " + recv + "." + name);
-      return true;
+    if (name == "toBits") { return recv; }
+    if (name == "fromBits") { return recv == "f64" ? "u64" : "u32"; }
+    return "";
+  }
+  if (recv == "string") {
+    if (name == "fromBytes" || name == "isUtf8" || name == "toUtf8") { return "u8[]"; }
+    if (name == "fromCodepoint") { return "i32"; }
+  }
+  return "";
+}
+
+/** The slot a builtin static call gives its argument: `string.fromBytes(…)` gives `u8[]`. */
+string builtinStaticSlot(C c, Expr callee) {
+  match (callee.kind) {
+    Member(obj, nameTok): {
+      match (obj.kind) {
+        Ident(tok): {
+          string n = tokenText(c, tok);
+          // A local of that name is a value, which is what keeps a variable called `string` one.
+          if (c.typeOfName(n) != typeNone()) { return typeNone(); }
+          string t = builtinParamType(n, tokenText(c, nameTok));
+          return t == "" ? typeNone() : t;
+        }
+        default: { return typeNone(); }
+      }
     }
-    if (name == "toBits") { want = recv; }
-    else if (recv == "f64") { want = "u64"; }
-    else { want = "u32"; }
-  } else if (recv == "string") {
-    if (name == "fromBytes") { want = "u8[]"; }
-    // `fromBytes` does not validate — `[§wac-str-frombytes-utf8-m9fj2xr]`, deliberately — so these two
-    // are what a caller reaches for when it needs the answer that constructor does not give.
-    else if (name == "isUtf8" || name == "toUtf8") { want = "u8[]"; }
-    else if (name == "fromCodepoint") { want = "i32"; }
-    else {
+    default: { return typeNone(); }
+  }
+}
+
+bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, Expr[] args) {
+  // `fromBytes` does not validate — `[§wac-str-frombytes-utf8-m9fj2xr]`, deliberately — so `isUtf8`
+  // and `toUtf8` are what a caller reaches for when it needs the answer that constructor does not give.
+  string want = builtinParamType(recv, name);
+  if (recv == "f64" || recv == "f32" || recv == "string") {
+    if (want == "") {
       c.reportWith(errNoStaticMethod(), call.line, call.col, "no " + recv + "." + name);
       return true;
     }
@@ -7189,15 +7344,15 @@ string applyBindings(string written, string[] names, string[] bound) {
  */
 string genericCallReturn(C c, i32 at, Expr[] args) {
   i32 n = c.funcTypeParamCount[at];
-  string[] names = string[n]();
-  string[] bound = string[n]();
+  string[] names = string[].defaulted(n);
+  string[] bound = string[].defaulted(n);
   for (i32 i = 0; i < n; i++) {
     names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
     bound[i] = "";
   }
   i32 count = c.funcParamCount[at];
   if (args.len() != count) { return typeNone(); }
-  bool[] clashed = bool[n]();
+  bool[] clashed = bool[].filled(n, false);
   for (i32 i = 0; i < count; i++) {
     string got = litKindOf(args[i]) != litNone() ? typeNone() : typeOfExpr(c, args[i]);
     bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
@@ -7232,8 +7387,8 @@ bool nameIsGenericFunc(C c, string n) {
 string genericCallReturnWritten(C c, i32 at, Ty[] typeArgs) {
   i32 n = c.funcTypeParamCount[at];
   if (typeArgs.len() != n) { return typeNone(); }
-  string[] names = string[n]();
-  string[] bound = string[n]();
+  string[] names = string[].defaulted(n);
+  string[] bound = string[].defaulted(n);
   for (i32 i = 0; i < n; i++) {
     names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
     bound[i] = typeOfTy(c, typeArgs[i]);
@@ -7929,9 +8084,9 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     // parameter in the receiver's world first, so `fn<U(U, T)>` is matched as `fn<U(U, i32)>` and
     // only `U` is left to find.
     i32 want = commaCount(c.methodTypeParams[tpAt]);
-    string[] inames = string[want]();
-    string[] ibound = string[want]();
-    bool[] iclash = bool[want]();
+    string[] inames = string[].defaulted(want);
+    string[] ibound = string[].defaulted(want);
+    bool[] iclash = bool[].filled(want, false);
     for (i32 i = 0; i < want; i++) { inames[i] = commaAt(c.methodTypeParams[tpAt], i); }
     for (i32 i = 0; i < args.len() && i < c.methodParamCount[tpAt]; i++) {
       string decl = substituteType(c, recv, c.methodParamTypes[c.methodParamAt[tpAt] + i]);
@@ -8199,7 +8354,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // `issues/lang/0289b`. `errWrongCastOp` carries the help *"`as` converts without loss, `as!` checks
   // at runtime, `as~` takes the nearest value"*, and for a packed target all three are refused with
   // the same sentence: there is no conversion for any of them to spell. A reader follows the advice
-  // three times and learns nothing, one character away from `u8[](a)`, which is accepted. So this
+  // three times and learns nothing, one character away from `[a]`, which is accepted. So this
   // reports the rule instead — *a packed type cannot be used in this position* — which the compiler
   // already says when a packed type is asked for as a value, and which is the fact behind both.
   if (isPackedName(castFrom) || isPackedName(to)) {
@@ -8930,12 +9085,12 @@ void checkStmt(C c, Stmt s, Ty want) {
       // `if (s is Circle) { s.radius }` — the guard is what makes the payload reachable, so the then
       // branch is walked with `s` retyped and the old type put back afterwards. Saved and restored
       // rather than scoped, because this checker's names are one flat table per function.
-      string[] nNames = string[8]();
-      string[] nTypes = string[8]();
+      string[] nNames = string[].defaulted(8);
+      string[] nTypes = string[].defaulted(8);
       i32 nCount = narrowingsOf(c, cond, nNames, nTypes, 0);
-      string[] saved = string[nCount]();
-      bool[] savedConst = bool[nCount]();
-      bool[] savedAlias = bool[nCount]();
+      string[] saved = string[].defaulted(nCount);
+      bool[] savedConst = bool[].filled(nCount, false);
+      bool[] savedAlias = bool[].filled(nCount, false);
       for (i32 i = 0; i < nCount; i++) {
         saved[i] = c.typeOfName(nNames[i]);
         // **A narrowed name is const for the branch**, exactly as a match arm's subject is: writing
@@ -9329,7 +9484,7 @@ void restoreNarrowing(C c, Expr subject, string was) {
  * spec's own remedy is `import { foo as bar }`, and it is the later import that takes the rename.
  */
 void checkImportCollisions(C c, Program prog) {
-  string[] seen = string[256]();
+  string[] seen = string[].defaulted(256);
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
@@ -9488,17 +9643,17 @@ string lineText(i32 v) {
 }
 
 void checkDuplicates(C c, Program prog) {
-  string[] names = string[512]();
-  i32[] nameLines = i32[512]();
+  string[] names = string[].defaulted(512);
+  i32[] nameLines = i32[].filled(512, 0);
   i32 n = 0;
   // A variant is reachable as a bare name — `Circle(1.0)` with no `Shape.` in front of it — so two
   // enums declaring one leave the file with a name that means two things. Kept across the whole walk
   // rather than per enum, which is the only way the collision is visible at all. `spec/cases/0073`.
-  string[] variantNames = string[256]();
+  string[] variantNames = string[].defaulted(256);
   // Where each was declared, so a collision can name **both** places. A message that says only
   // "declared twice" at the second one leaves a reader searching for the first, which in a file with
   // an enum of twenty variants is the whole of the work. `issues/lang/0114`.
-  i32[] variantLines = i32[256]();
+  i32[] variantLines = i32[].filled(256, 0);
   i32 vn = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     string name = "";
@@ -9509,7 +9664,7 @@ void checkDuplicates(C c, Program prog) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         name = tokenText(c, nameTok);
         // A struct's members share one namespace: two fields, two methods, or one of each.
-        string[] members = string[256]();
+        string[] members = string[].defaulted(256);
         i32 m = 0;
         for (i32 f = 0; f < fields.len(); f++) {
           string fname = tokenText(c, fields[f].nameTok);
@@ -9570,7 +9725,7 @@ void checkDuplicates(C c, Program prog) {
         }
         // A variant's payload fields are named like a struct's, and collide like them.
         for (i32 v = 0; v < variants.len(); v++) {
-          string[] payload = string[64]();
+          string[] payload = string[].defaulted(64);
           i32 pn = 0;
           for (i32 f = 0; f < variants[v].fields.len(); f++) {
             string pname = tokenText(c, variants[v].fields[f].nameTok);
@@ -9646,21 +9801,21 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
 
 /** The `(code, line, col)` triples a finished check answers with. */
 export i32[] errorsOf(C c) {
-  i32[] out = i32[c.errorCount * 3]();
+  i32[] out = i32[].filled(c.errorCount * 3, 0);
   for (i32 i = 0; i < c.errorCount * 3; i++) { out[i] = c.errors[i]; }
   return out;
 }
 
 /** The warnings, in the same `(code, line, col)` shape and from their own table. */
 export i32[] warningsOf(C c) {
-  i32[] out = i32[c.warnCount * 3]();
+  i32[] out = i32[].filled(c.warnCount * 3, 0);
   for (i32 i = 0; i < c.warnCount * 3; i++) { out[i] = c.warnings[i]; }
   return out;
 }
 
 /** The operands of each diagnostic, in the same order — `""` where the site had none to give. */
 export string[] notesOf(C c) {
-  string[] out = string[c.errorCount]();
+  string[] out = string[].defaulted(c.errorCount);
   for (i32 i = 0; i < c.errorCount; i++) {
     out[i] = i < c.errorNotes.len() ? c.errorNotes[i] : "";
   }
@@ -9669,7 +9824,7 @@ export string[] notesOf(C c) {
 
 /** The hint written for each diagnostic, in the same order — empty where the code's own is right. */
 export string[] hintsOf(C c) {
-  string[] out = string[c.errorCount]();
+  string[] out = string[].defaulted(c.errorCount);
   for (i32 i = 0; i < c.errorCount; i++) {
     out[i] = i < c.errorHints.len() ? c.errorHints[i] : "";
   }
@@ -9678,7 +9833,7 @@ export string[] hintsOf(C c) {
 
 /** How wide each diagnostic is, in the same order — `0` where nothing measured one. */
 export i32[] widthsOf(C c) {
-  i32[] out = i32[c.errorCount]();
+  i32[] out = i32[].filled(c.errorCount, 0);
   for (i32 i = 0; i < c.errorCount; i++) {
     out[i] = i < c.errorWidths.len() ? c.errorWidths[i] : 0;
   }
@@ -9687,7 +9842,7 @@ export i32[] widthsOf(C c) {
 
 /** The first line to print for each diagnostic, in the same order — `0` for the caret's line alone. */
 export i32[] contextsOf(C c) {
-  i32[] out = i32[c.errorCount]();
+  i32[] out = i32[].filled(c.errorCount, 0);
   for (i32 i = 0; i < c.errorCount; i++) {
     out[i] = i < c.errorContexts.len() ? c.errorContexts[i] : 0;
   }
@@ -9737,7 +9892,7 @@ export void declareModule(C c, Program prog, string[] only) {
     match (prog.decls[d].kind) {
       EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
-        string[] etps = string[typeParams.len()]();
+        string[] etps = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < typeParams.len(); i++) { etps[i] = tokenText(c, typeParams[i]); }
         c.declareEnum(c.renamed(tokenText(c, nameTok)), etps);
         // Each variant is a type of its own, with its payload as fields. `s is Circle` narrows `s`
@@ -9755,7 +9910,7 @@ export void declareModule(C c, Program prog, string[] only) {
           // that has to keep working — skipping the registration entirely refused four working files
           // and `spec/tour.wac` itself. What it loses is the bare *type*: `spec/cases/0042`.
           bool bare = typeParams.len() == 0;
-          if (bare) { c.declareStruct(vname, "", string[0]()); }
+          if (bare) { c.declareStruct(vname, "", string[]()); }
           // **Under the name this file calls the enum**, which is `c.renamed` — the same wrapper
           // `declareEnum` seventeen lines above already uses. Without it an aliased import registered
           // the *enum* as `E2` and its variants as belonging to `E`, so `E2.A` was "no variant of that
@@ -9774,7 +9929,7 @@ export void declareModule(C c, Program prog, string[] only) {
         // narrowed out of it looks too.
         string ename = tokenText(c, nameTok);
         for (i32 mi = 0; mi < methods.len(); mi++) {
-          string[] emps = string[methods[mi].params.len()]();
+          string[] emps = string[].defaulted(methods[mi].params.len());
           for (i32 pi = 0; pi < methods[mi].params.len(); pi++) {
             emps[pi] = typeOfTy(c, methods[mi].params[pi].type);
           }
@@ -9803,7 +9958,7 @@ export void declareModule(C c, Program prog, string[] only) {
         string name = tokenText(c, nameTok);
         if (!wantedName(only, name)) { continue; }
         name = c.renamed(name);
-        string[] tps = string[typeParams.len()]();
+        string[] tps = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < typeParams.len(); i++) { tps[i] = tokenText(c, typeParams[i]); }
         c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), tps);
         // A generic struct's fields are not recorded. `struct Box<T> { T v; }` has a field whose
@@ -9838,7 +9993,7 @@ export void declareModule(C c, Program prog, string[] only) {
           // for the same reason, one level up: a generic's methods are recorded written because the
           // pass does not put the enum's letters in scope. `design/lang/0010` option C.
           bool ownLetters = methods[i].typeParams.len() > 0;
-          string[] mps = string[methods[i].params.len()]();
+          string[] mps = string[].defaulted(methods[i].params.len());
           for (i32 pi = 0; pi < methods[i].params.len(); pi++) {
             mps[pi] = ownLetters ? writtenTy(c, methods[i].params[pi].type)
                                  : typeOfTy(c, methods[i].params[pi].type);
@@ -9866,9 +10021,9 @@ export void declareModule(C c, Program prog, string[] only) {
         // against. An earlier version blanked them, which was right when nothing could bind them and
         // is now the thing standing between a generic call and its return type.
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
-        string[] prims = string[params.len()]();
+        string[] prims = string[].defaulted(params.len());
         for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
-        string[] ftps = string[typeParams.len()]();
+        string[] ftps = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < typeParams.len(); i++) { ftps[i] = tokenText(c, typeParams[i]); }
         // **D3, and it is one change here rather than one at every call.** `funcReturns` is the
         // signature a caller reads, so wrapping it is the whole of *the declaration states what the
@@ -10024,7 +10179,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
 
   // **The same variant twice.** One arm of the two can never run, and which one is not the point:
   // the second mention is the mistake, so that is where it is reported.
-  string[] seen = string[arms.len()]();
+  string[] seen = string[].defaulted(arms.len());
   i32 seenCount = 0;
   for (i32 i = 0; i < arms.len(); i++) {
     if (arms[i].variantTok <= 0) { continue; }
@@ -10359,7 +10514,7 @@ export void checkModule(C c, Program prog) {
     }
   }
 
-  declareModule(c, prog, string[0]());
+  declareModule(c, prog, string[]());
 
   // **Every declaration is in, so a name that resolves to nothing now resolves to nothing.** From
   // here a type name this file never brought into scope is an error rather than something unknown,
@@ -10380,15 +10535,15 @@ export void checkModule(C c, Program prog) {
   // one that already has a value. Reading itself is the same rule seen close up — `const i32 A = A +
   // 1` has nothing to read yet, and `A = B; B = A` has no order in which either could go first.
   // `spec/cases/0056` and `0057`.
-  string[] settled = string[256]();
+  string[] settled = string[].defaulted(256);
   i32 settledCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       ConstDecl(nameTok, type, init, exported): {
         // **The initialiser is an expression, and nothing was walking it.** Every rule in this file
         // about literals, elements, defaults and names applied to a local's initialiser and to none
-        // of these — `const E[] T = E[3]()` was silent where the same line inside a function was
-        // refused, and so was `i32[2](fill: "x")`. `spec/cases/0067` and `0068`.
+        // of these — `const E[] T = E[].defaulted(3)` was silent where the same line inside a function was
+        // refused, and so was `i32[].filled(2, "x")`. `spec/cases/0067` and `0068`.
         string constType = typeOfTy(c, type);
         // A constant is a value, and `void` is the absence of one. `spec/cases/0069`.
         //
@@ -10530,3 +10685,34 @@ string methodReturnFor(string written, bool isAsync) {
   return isAsync && written != "" ? "Pending<" + written + ">" : written;
 }
 
+/**
+ * `[a, b]`'s type from its elements alone: the first typed element's, which numbers adopt and a
+ * supertype absorbs, made nullable by a `null`. `typeNone()` when nothing in it has a type of its own —
+ * numbers and `null` take theirs from where they go — or when two elements share no type.
+ */
+string arrLitType(C c, Expr[] elements) {
+  string t = typeNone();
+  bool sawNull = false;
+  for (i32 i = 0; i < elements.len(); i++) {
+    Expr el = elements[i];
+    i32 lit = litFamily(c, el);
+    if (lit == litNull()) { sawNull = true; continue; }
+    if (lit == litInteger() || lit == litFloat()) { continue; }
+    // A string or bool literal is the one type it can be, and `typeOfExpr` leaves literals to the slot.
+    string et = lit == litString() ? "string" : lit == litBool() ? "bool" : typeOfExpr(c, el);
+    if (et == typeNone() || et == "") { return typeNone(); }
+    if (t == typeNone() || t == et) { t = et; continue; }
+    if (assignable(c, t, et)) { continue; }
+    if (assignable(c, et, t)) { t = et; continue; }
+    return typeNone();
+  }
+  if (t == typeNone()) { return typeNone(); }
+  if (sawNull && !isNullableName(t)) { t = t + "?"; }
+  return t + "[]";
+}
+
+/** A primitive with no default value: the numbers and `bool`. */
+bool primWithoutDefault(string t) {
+  return t == "i8" || t == "u8" || t == "i16" || t == "u16" || t == "i32" || t == "u32"
+      || t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool";
+}

@@ -18,7 +18,7 @@ export u8[] hexEnc(u8[] data) { return hexEncode(data); }
 export u8[] hexEncUpper(u8[] data) { return hexEncodeUpper(data); }
 export u8[] hexDec(u8[] text) {
   u8[]? r = hexDecode(text);
-  return r is null ? u8[0]() : r!;
+  return r is null ? u8[]() : r!;
 }
 export bool hexAccepts(u8[] text) { return !(hexDecode(text) is null); }
 
@@ -38,7 +38,7 @@ export u8[] b64Enc(u8[] data, bool url, bool pad) {
 }
 export u8[] b64Dec(u8[] text) {
   u8[]? r = b64Decode(text);
-  return r is null ? u8[0]() : r!;
+  return r is null ? u8[]() : r!;
 }
 export bool b64Accepts(u8[] text) { return !(b64Decode(text) is null); }
 
@@ -47,7 +47,7 @@ export u8[] b32Enc(u8[] data, bool hex, bool pad) {
 }
 export u8[] b32Dec(u8[] text, bool hex) {
   u8[]? r = b32Decode(text, hex ? B32_HEX() : B32_STANDARD());
-  return r is null ? u8[0]() : r!;
+  return r is null ? u8[]() : r!;
 }
 export bool b32Accepts(u8[] text, bool hex) {
   return !(b32Decode(text, hex ? B32_HEX() : B32_STANDARD()) is null);

@@ -44,7 +44,7 @@ u8[] scid() { return decoded("a1b2c3d4"); }
 
 /** Fixed randomness, so a failing run is the same failing run twice. */
 u8[] ramp(i32 n, i32 mul, i32 add) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
   return out;
 }
@@ -69,7 +69,7 @@ struct Identity {
 }
 
 bool openssl(Cli cli, string[] args) {
-  Exec r = cli.exec("openssl", args, u8[0]()).wait();
+  Exec r = cli.exec("openssl", args, u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
@@ -82,49 +82,55 @@ Identity identity(Cli cli, string name) {
   // both roles at once and rustls refused it: `CaUsedAsEndEntity`. A certificate with
   // `basicConstraints CA:TRUE` may sign others and may not be the end of a chain, and a client that
   // let one be both would accept any certificate any CA had ever issued as that CA's own identity.
-  if (!openssl(cli, string[]("req", "-x509", "-newkey", "rsa:2048", "-keyout", dir + "/ca.key",
+  if (!openssl(cli, [
+                             "req", "-x509", "-newkey", "rsa:2048", "-keyout", dir + "/ca.key",
                              "-out", dir + "/ca.pem", "-days", "1", "-nodes", "-subj",
                              "/CN=wac-quic-ca", "-addext",
-                             "basicConstraints=critical,CA:TRUE"))) {
-    return Identity(false, "openssl could not make a CA", dir, u8[0](), u8[0](), u8[0](), u8[0]());
+                             "basicConstraints=critical,CA:TRUE"
+  ])) {
+    return Identity(false, "openssl could not make a CA", dir, u8[](), u8[](), u8[](), u8[]());
   }
-  if (!openssl(cli, string[]("req", "-newkey", "rsa:2048", "-keyout", dir + "/leaf.key", "-out",
-                             dir + "/leaf.csr", "-nodes", "-subj", "/CN=wac.test"))) {
-    return Identity(false, "openssl could not make a leaf key", dir, u8[0](), u8[0](), u8[0](),
-                    u8[0]());
+  if (!openssl(cli, [
+                             "req", "-newkey", "rsa:2048", "-keyout", dir + "/leaf.key", "-out",
+                             dir + "/leaf.csr", "-nodes", "-subj", "/CN=wac.test"
+  ])) {
+    return Identity(false, "openssl could not make a leaf key", dir, u8[](), u8[](), u8[](),
+                    u8[]());
   }
   // The IP SAN is what lets the client dial an address.
   cli.writeFile(dir + "/ext.cnf",
                 ("subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\n").toBytes()).wait();
-  if (!openssl(cli, string[]("x509", "-req", "-in", dir + "/leaf.csr", "-CA", dir + "/ca.pem",
+  if (!openssl(cli, [
+                             "x509", "-req", "-in", dir + "/leaf.csr", "-CA", dir + "/ca.pem",
                              "-CAkey", dir + "/ca.key", "-CAcreateserial", "-out", dir + "/leaf.pem",
-                             "-days", "1", "-extfile", dir + "/ext.cnf"))) {
-    return Identity(false, "openssl could not sign the leaf", dir, u8[0](), u8[0](), u8[0](),
-                    u8[0]());
+                             "-days", "1", "-extfile", dir + "/ext.cnf"
+  ])) {
+    return Identity(false, "openssl could not sign the leaf", dir, u8[](), u8[](), u8[](),
+                    u8[]());
   }
 
-  Exec der = cli.exec("openssl", string[]("x509", "-in", dir + "/leaf.pem", "-outform", "DER"),
-                      u8[0]()).wait();
+  Exec der = cli.exec("openssl", ["x509", "-in", dir + "/leaf.pem", "-outform", "DER"],
+                      u8[]()).wait();
   if (!der.ran() || der.status != 0) {
-    return Identity(false, "openssl could not write DER", dir, u8[0](), u8[0](), u8[0](), u8[0]());
+    return Identity(false, "openssl could not write DER", dir, u8[](), u8[](), u8[](), u8[]());
   }
 
   // The modulus and private exponent, out of `openssl rsa -noout -text`. That is the route
   // `packages/tls`'s RSA interop test already takes: `crypto.subtle` will not import this key, and
   // parsing the DER with our own ASN.1 would put our code on both sides of a test whose whole
   // purpose is that it is not.
-  Exec text = cli.exec("openssl", string[]("rsa", "-in", dir + "/leaf.key", "-noout", "-text"),
-                       u8[0]()).wait();
+  Exec text = cli.exec("openssl", ["rsa", "-in", dir + "/leaf.key", "-noout", "-text"],
+                       u8[]()).wait();
   if (!text.ran() || text.status != 0) {
-    return Identity(false, "openssl could not print the key", dir, u8[0](), u8[0](), u8[0](),
-                    u8[0]());
+    return Identity(false, "openssl could not print the key", dir, u8[](), u8[](), u8[](),
+                    u8[]());
   }
   string said = string.fromBytes(text.stdout);
   u8[] n = fieldOf(said, "modulus:");
   u8[] d = fieldOf(said, "privateExponent:");
   if (n.len() == 0 || d.len() == 0) {
-    return Identity(false, "no modulus or privateExponent in the key", dir, u8[0](), u8[0](),
-                    u8[0](), u8[0]());
+    return Identity(false, "no modulus or privateExponent in the key", dir, u8[](), u8[](),
+                    u8[](), u8[]());
   }
   return Identity(true, "", dir, der.stdout, n, decoded("010001"), d);
 }
@@ -138,7 +144,7 @@ Identity identity(Cli cli, string name) {
  */
 u8[] fieldOf(string text, string name) {
   i32 at = text.indexOf(name);
-  if (at < 0) { return u8[0](); }
+  if (at < 0) { return u8[](); }
   string rest = text.slice(at + name.len(), text.len());
   Buf out = Buf.create();
   i32 nibble = -1;
@@ -153,7 +159,7 @@ u8[] fieldOf(string text, string name) {
   }
   u8[] bytes = out.take();
   if (bytes.len() > 1 && bytes[0] == 0) {
-    u8[] trimmed = u8[bytes.len() - 1]();
+    u8[] trimmed = u8[].filled(bytes.len() - 1, 0);
     trimmed.copyFrom(bytes, 1, 0, bytes.len() - 1);
     return trimmed;
   }
@@ -176,12 +182,12 @@ struct Got {
 
 Got receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny(i32[](p.id), ms) < 0) {
+  if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
-    return Got(false, u8[0](), "", 0);
+    return Got(false, u8[](), "", 0);
   }
   Datagram d = p.wait();
-  if (d.error != "") { return Got(false, u8[0](), "", 0); }
+  if (d.error != "") { return Got(false, u8[](), "", 0); }
   return Got(true, d.bytes, d.peer, d.port);
 }
 
@@ -268,7 +274,7 @@ export string test_and_a_real_client_opens_a_stream_on_it(Core core, Cli cli) {
   t.isTrue(client.ok(), "the client did not start — " + client.error);
   if (!client.ok()) { cli.closeSocket(sock.handle); return t.report(); }
 
-  u8[] first = u8[0]();
+  u8[] first = u8[]();
   string heard = "";
   i32 number = 0;
   string reply = "";
@@ -331,7 +337,7 @@ string upper(string s) {
   string out = "";
   for (i32 i = 0; i < s.len(); i++) {
     string c = s.slice(i, i + 1);
-    out = out + (c >= "a" && c <= "z" ? string.fromBytes(u8[](c.toBytes()[0] - 32)) : c);
+    out = out + (c >= "a" && c <= "z" ? string.fromBytes([c.toBytes()[0] - 32]) : c);
   }
   return out;
 }

@@ -51,8 +51,8 @@ string writeProgram(Cli cli, string dir, i32 n) {
 
 string checkIn(Cli cli, string dir) {
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check main.wac 2>&1"),
-    u8[0]()).wait();
+    ["-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check main.wac 2>&1"],
+    u8[]()).wait();
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }
 

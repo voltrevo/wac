@@ -75,7 +75,7 @@ export struct StorageProof {
 }
 
 /** The empty account, for an address the state trie does not have. */
-Account emptyAccount() { return Account.of(u8[0](), u8[0](), u8[0](), u8[0]()); }
+Account emptyAccount() { return Account.of(u8[](), u8[](), u8[](), u8[]()); }
 
 /**
  * The account at `address`, according to `stateRoot`.
@@ -140,27 +140,27 @@ export AccountProof accountAt(u8[] stateRoot, u8[] address, u8[][] nodes) {
  */
 export StorageProof storageAt(u8[] storageRoot, u8[] slot, u8[][] nodes) {
   if (slot.len() != 32) {
-    return StorageProof.of(false, false, u8[0](), "a storage slot key is 32 bytes");
+    return StorageProof.of(false, false, u8[](), "a storage slot key is 32 bytes");
   }
   Proved p = verify(storageRoot, keccak256(slot), nodes);
-  if (!p.ok) { return StorageProof.of(false, false, u8[0](), p.error); }
-  if (!p.present) { return StorageProof.of(true, false, u8[0](), ""); }
+  if (!p.ok) { return StorageProof.of(false, false, u8[](), p.error); }
+  if (!p.present) { return StorageProof.of(true, false, u8[](), ""); }
 
   Decoded d = decode(p.value);
   if (!d.ok) {
-    return StorageProof.of(false, false, u8[0](), "the slot's value is not RLP: " + d.error);
+    return StorageProof.of(false, false, u8[](), "the slot's value is not RLP: " + d.error);
   }
   if (isList(d.item)) {
-    return StorageProof.of(false, false, u8[0](), "a slot holds a byte string, not a list");
+    return StorageProof.of(false, false, u8[](), "a slot holds a byte string, not a list");
   }
   u8[] v = bytesOf(d.item);
   if (v.len() > 32) {
-    return StorageProof.of(false, false, u8[0](),
+    return StorageProof.of(false, false, u8[](),
       "a slot holds at most 32 bytes, and this one claims " + itoa(v.len()));
   }
   // A stored value is minimal — `0x00…01` would be a second encoding of 1, and the trie is canonical.
   if (v.len() > 0 && v[0] == 0) {
-    return StorageProof.of(false, false, u8[0](), "a slot's value has a leading zero byte");
+    return StorageProof.of(false, false, u8[](), "a slot's value has a leading zero byte");
   }
   return StorageProof.of(true, true, v, "");
 }
@@ -183,4 +183,4 @@ string fieldName(i32 i) {
 export u8[] emptyStorageRoot() { return emptyTrieRoot(); }
 
 /** `keccak256` of the empty string — the code hash of an account that is not a contract. */
-export u8[] emptyCodeHash() { return keccak256(u8[0]()); }
+export u8[] emptyCodeHash() { return keccak256(u8[]()); }

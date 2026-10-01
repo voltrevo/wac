@@ -28,7 +28,7 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-writepath"; }
  * test that now runs beside twenty others in one process.
  */
 u8[] pattern(i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + (i / 8192)) & 255; }
   return out;
 }
@@ -45,7 +45,7 @@ i32 firstDifference(u8[] a, u8[] b) {
 export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
 
   u8[] data = pattern(500003);
   t.isTrue(cli.writeFile(dir + "/src", data).wait().ok(), "wrote the source");
@@ -71,7 +71,7 @@ export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
 export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
   cli.writeFile(dir + "/src", "small\n".toBytes()).wait();
 
   t.eqI32(runCase(core, cli, dir, "cp absent never").status, 1, "a missing source fails");
@@ -91,7 +91,7 @@ export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, 
 export string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
 
   // `tee` is the first applet with two destinations at once, so both are asked.
   Ran r = runCase(core, cli, dir, "printf 'through\\n' | tee out");
@@ -126,7 +126,7 @@ export string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
   u8[] want = cli.readFile(source).wait().bytes;
   t.isTrue(want.len() > 0, "README.md is readable and not empty");
 
-  t.eqI32(runApplet(core, cli, dir, string[]("cp", source, dir + "/copy")).status, 0, "cp ran");
+  t.eqI32(runApplet(core, cli, dir, ["cp", source, dir + "/copy"]).status, 0, "cp ran");
   t.eqStr(differs(cli.readFile(dir + "/copy").wait().bytes, want), "", "cp copied it");
 
   string[]? listed = cli.readDir(dir).wait();

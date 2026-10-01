@@ -54,7 +54,7 @@ Ours ourServer(T t, Cli cli, Core core, string dir) {
   // executable to a fresh temporary name cannot be cached at all, because the output's base name is
   // in the manifest and two destinations are two artefacts. Measured: 2s cached against 8s not.
   string mod = builtProgram(cli, "packages/tls/test/wac/tlsserved.wac", "tlsserved",
-                            string[]("--allow-read", "--allow-net"));
+                            ["--allow-read", "--allow-net"]);
   if (mod == "") { return Ours(Daemon(-1, "", ""), -1, "tlsserved did not build"); }
   // Port 0, and the program says which it got — two agents running the suite cannot collide on it.
   // **The artefact finds its runtime on PATH**, with `command -v wac` — and `Cli.exec` passes no
@@ -105,7 +105,7 @@ export string test_client_talks_to_openssls_s_server(Core core, Cli cli) {
   if (!have(cli, "openssl")) { return t.report(); }
   string dir = freshScratch(t, cli, "ossl");
   Server s = startServer(core, cli, "openssl", DATA + "/leaf.pem", DATA + "/leaf.key",
-                         string[0](fill: ""), dir + "/log");
+                         string[].filled(0, ""), dir + "/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 
@@ -188,7 +188,7 @@ export string test_client_sends_a_client_hello_a_real_server_understands(Core co
   // flight parse at all? A malformed extension list fails the handshake with no useful signal, and
   // this at least says the failure is later than the hello.
   T t = T.create();
-  u8[] seed = u8[32](fill: 0);
+  u8[] seed = u8[].filled(32, 0);
   seed[31] = 7;
   ClientStep st = fixedFirstFlight("wac.test", noRoots(), seed);
   u8[] hello = st.toSend;
@@ -233,14 +233,14 @@ export string test_client_completes_a_handshake_against_an_ecdsa_p256_certificat
   // a different key type in the certificate, a different signature in CertificateVerify, and a
   // different DER shape — ECDSA signatures arrive wrapped in a SEQUENCE of two INTEGERs, which have to
   // be unwrapped and zero-padded back to 32.
-  return againstOpenSsl(core, cli, "ec", string[0](fill: ""), "ec");
+  return againstOpenSsl(core, cli, "ec", string[].filled(0, ""), "ec");
 }
 
 export string test_client_completes_a_handshake_against_an_rsa_2048_certificate(Core core, Cli cli) {
   // The other half of the web. RSA brings a third encoding quirk: the modulus is a DER INTEGER, which
   // is signed, so almost every modulus carries a leading zero byte that is not part of the key — and
   // using that length as the key size fails every signature.
-  return againstOpenSsl(core, cli, "rsa", string[0](fill: ""), "rsa");
+  return againstOpenSsl(core, cli, "rsa", string[].filled(0, ""), "rsa");
 }
 
 export string test_client_completes_a_handshake_when_only_p256_key_exchange_is_offered(
@@ -250,7 +250,7 @@ export string test_client_completes_a_handshake_when_only_p256_key_exchange_is_o
   // exercised: mutation testing replaced `groupP256`'s body with a constant and every test stayed
   // green. A wrong code point here is not a parse error, it is a HelloRetryRequest loop or a handshake
   // failure against the one group RFC 8446 §9.1 makes mandatory.
-  return againstOpenSsl(core, cli, "ec", string[]("-groups", "P-256"), "p256only");
+  return againstOpenSsl(core, cli, "ec", ["-groups", "P-256"], "p256only");
 }
 
 export string test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_server(
@@ -270,7 +270,7 @@ export string test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_
   }
   string dir = freshScratch(t, cli, "mlkem");
   Server s = startServer(core, cli, binary, DATA + "/ec_leaf.pem", DATA + "/ec_leaf.key",
-                         string[]("-groups", "X25519MLKEM768"), dir + "/log");
+                         ["-groups", "X25519MLKEM768"], dir + "/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 

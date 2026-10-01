@@ -101,32 +101,32 @@ struct Case {
 }
 
 Case caseOf(string name, string[] args, string stdin, string[] grants) {
-  return Case(name, args, stdin, grants, string[0](fill: ""), false, "", "");
+  return Case(name, args, stdin, grants, string[].filled(0, ""), false, "", "");
 }
 
-string[] none() { return string[0](fill: ""); }
+string[] none() { return string[].filled(0, ""); }
 
 Case[] cases() {
-  Case crowd = caseOf("crowd", string[]("4"), "", none());
+  Case crowd = caseOf("crowd", ["4"], "", none());
   crowd.maskBefore = "elapsed ";
   crowd.maskAfter = "ms";
 
-  Case writeread = caseOf("writeread", none(), "", string[]("--allow-net"));
+  Case writeread = caseOf("writeread", none(), "", ["--allow-net"]);
   writeread.port = true;
   // The port is the one thing that differs between two runs, by construction.
   writeread.maskBefore = "connected on port ";
   writeread.maskAfter = "";
 
-  Case overlap = caseOf("overlap", string[]("in.txt", "in.txt"), "", string[]("--allow-read"));
-  overlap.racy = string[]("one finished already", "both still running");
+  Case overlap = caseOf("overlap", ["in.txt", "in.txt"], "", ["--allow-read"]);
+  overlap.racy = ["one finished already", "both still running"];
 
-  return Case[](
+  return [
     caseOf("hexdump", none(), "a b c\nd e\n", none()),
     caseOf("wc", none(), "a b c\nd e\n", none()),
-    caseOf("roundtrip", string[]("hello"), "", string[]("--allow-read", "--allow-write")),
-    caseOf("probe", none(), "", string[]("--allow-read")),
+    caseOf("roundtrip", ["hello"], "", ["--allow-read", "--allow-write"]),
+    caseOf("probe", none(), "", ["--allow-read"]),
     caseOf("twin", none(), "", none()),
-    caseOf("inside", string[]("."), "", string[]("--allow-read", "--allow-write")),
+    caseOf("inside", ["."], "", ["--allow-read", "--allow-write"]),
     crowd,
     // **A child that only computes**, stopped by its parent, on both hosts. Nothing else here needs a
     // host to *terminate* anything: every other program writes, so ending its queues is enough to make
@@ -148,7 +148,7 @@ Case[] cases() {
     // pass in. `closeSend` was added on 2026-08-20 and this is its two-host comparison —
     // `conformance_test.wac` requires one for every opcode, which is how it came to exist on the
     // same day rather than being a gap somebody would notice later. `issues/system/0215`.
-    caseOf("halfclose", none(), "", string[]("--allow-net")),
+    caseOf("halfclose", none(), "", ["--allow-net"]),
     // **What `send` answers when the far end has stopped listening**, which is a bool the three
     // JavaScript hosts were not answering at all: `kid.in.push(...)` with the result discarded and the
     // promise unawaited, so a send after `closeFeed` claimed success and dropped the bytes (0121) and
@@ -160,7 +160,8 @@ Case[] cases() {
     // ssh, but only with the native host as the *server*. This is one program doing all three against
     // itself on loopback, so both hosts answer the same question.
     writeread,
-    overlap);
+    overlap
+  ];
 }
 
 /**
@@ -287,11 +288,11 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
     if (why != "") { continue; }
 
     // ── Run both hosts for all three cases at once: six programs in flight.
-    Pending<Exec>[] runs = Pending<Exec>[n * 2](fill: cli.exec("/bin/sh", string[]("-c", "true"),
-                                                               u8[0]()));
-    string[] dirsDeno = string[n](fill: "");
-    string[] dirsNative = string[n](fill: "");
-    i32[] ports = i32[n * 2](fill: 0);
+    Pending<Exec>[] runs = Pending<Exec>[].filled(n * 2, cli.exec("/bin/sh", ["-c", "true"],
+                                                               u8[]()));
+    string[] dirsDeno = string[].filled(n, "");
+    string[] dirsNative = string[].filled(n, "");
+    i32[] ports = i32[].filled(n * 2, 0);
     for (i32 i = 0; i < n; i++) {
       Case c = all[base + i];
       dirsDeno[i] = workspace(cli, tmp, c.name, "deno");
@@ -304,11 +305,11 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
       ports[i * 2] = hd.port;
       ports[i * 2 + 1] = hn.port;
 
-      string[] denoArgs = string[c.args.len() + (c.port ? 1 : 0)](fill: "");
+      string[] denoArgs = string[].filled(c.args.len() + (c.port ? 1 : 0), "");
       for (i32 k = 0; k < c.args.len(); k++) { denoArgs[k] = c.args[k]; }
       if (c.port) { denoArgs[c.args.len()] = itoa(hd.port); }
 
-      string[] nativeArgs = string[1 + c.args.len() + (c.port ? 1 : 0)](fill: "");
+      string[] nativeArgs = string[].filled(1 + c.args.len() + (c.port ? 1 : 0), "");
       nativeArgs[0] = tmp + "/" + c.name + ".wasm";
       for (i32 k = 0; k < c.args.len(); k++) { nativeArgs[1 + k] = c.args[k]; }
       if (c.port) { nativeArgs[1 + c.args.len()] = itoa(hn.port); }
@@ -316,11 +317,11 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
       hd.release(cli);
       hn.release(cli);
       runs[i * 2] = cli.exec("/bin/sh",
-        string[]("-c", lineFor(dirsDeno[i], tmp + "/" + c.name + "-deno", denoArgs)),
+        ["-c", lineFor(dirsDeno[i], tmp + "/" + c.name + "-deno", denoArgs)],
         c.stdin.toBytes());
       if (native != "") {
         runs[i * 2 + 1] = cli.exec("/bin/sh",
-          string[]("-c", lineFor(dirsNative[i], native, nativeArgs)), c.stdin.toBytes());
+          ["-c", lineFor(dirsNative[i], native, nativeArgs)], c.stdin.toBytes());
       }
     }
 

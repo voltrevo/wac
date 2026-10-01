@@ -35,9 +35,11 @@ string freshScratch(T t, Cli cli, string name) {
 /** Build `wc.wac`, optionally optimised, with coverage off however this run was started. */
 Exec build(Cli cli, string out, bool optimize) {
   return cli.exec("/bin/sh",
-    string[]("-c", "unset WAC_PROFILE; exec deno run -A packages/platform/build.ts '" + WC +
-             "' --allow-read " + (optimize ? "--optimize " : "") + "-o '" + out + "'"),
-    u8[0]()).wait();
+    [
+             "-c", "unset WAC_PROFILE; exec deno run -A packages/platform/build.ts '" + WC +
+             "' --allow-read " + (optimize ? "--optimize " : "") + "-o '" + out + "'"
+    ],
+    u8[]()).wait();
 }
 
 i64 sizeOf(Cli cli, string path) {
@@ -83,8 +85,8 @@ export string test_optimize_makes_a_smaller_artifact_that_answers_the_same(Core 
            " bytes is not a saving worth a flag");
 
   // **And it is still the program.** A build that emitted an empty module would pass the line above.
-  Exec rp = cli.exec(plain, string[]("README.md"), u8[0]()).wait();
-  Exec ro = cli.exec(opt, string[]("README.md"), u8[0]()).wait();
+  Exec rp = cli.exec(plain, ["README.md"], u8[]()).wait();
+  Exec ro = cli.exec(opt, ["README.md"], u8[]()).wait();
   t.isTrue(rp.ran() && rp.status == 0, "the plain program ran — " + string.fromBytes(rp.stderr));
   t.isTrue(ro.ran() && ro.status == 0, "the optimised program ran — " + string.fromBytes(ro.stderr));
   if (rp.ran() && ro.ran()) {
@@ -127,8 +129,10 @@ export string test_a_coverage_build_refuses_to_be_optimised(Core core, Cli cli) 
   T t = T.create();
   string dir = freshScratch(t, cli, "refusal");
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "WAC_PROFILE=1 exec deno run -A packages/platform/build.ts '" + WC +
-             "' --allow-read --optimize -o '" + dir + "/never'"), u8[0]()).wait();
+    [
+             "-c", "WAC_PROFILE=1 exec deno run -A packages/platform/build.ts '" + WC +
+             "' --allow-read --optimize -o '" + dir + "/never'"
+    ], u8[]()).wait();
   t.isTrue(r.ran(), "the build was attempted — " + r.error);
   if (r.ran()) {
     t.isTrue(r.status != 0, "it built anyway, which it must not");

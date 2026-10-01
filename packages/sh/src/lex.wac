@@ -764,14 +764,14 @@ bool escapableInDquote(i32 c) {
 }
 
 string charOf(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }
 
 string sliceOf(u8[] s, i32 from, i32 to) {
   if (to <= from) { return ""; }
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   out.copyFrom(s, from, 0, to - from);
   return string.fromBytes(out);
 }

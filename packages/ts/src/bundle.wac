@@ -68,7 +68,7 @@ export struct Import {
  */
 export Bundled bundle(string[] paths, u8[][] texts, string entry) {
   i32 at = indexOf(paths, entry);
-  if (at < 0) { return Bundled(u8[0](), "the entry " + entry + " is not in the file set"); }
+  if (at < 0) { return Bundled(u8[](), "the entry " + entry + " is not in the file set"); }
 
   Vec<i32> order = Vec.create();
   Vec<i32> state = Vec.create();
@@ -77,10 +77,10 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
   for (i32 i = 0; i < paths.len(); i++) { state.push(0); }
 
   string err = visit(paths, texts, at, order, state, backFrom, backTo);
-  if (err != "") { return Bundled(u8[0](), err); }
+  if (err != "") { return Bundled(u8[](), err); }
 
   string prefix = hygienicPrefix(texts);
-  string[] ns = string[paths.len()](fill: "");
+  string[] ns = string[].filled(paths.len(), "");
   for (i32 k = 0; k < order.len(); k++) { ns[order.get(k)] = prefix + itoa(k); }
 
   Vec<i32> out = Vec.create();
@@ -105,7 +105,7 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
     i32 m = order.get(k);
     string body = moduleBody(paths, texts, ns, m, backFrom, backTo);
     if (body.len() > 6 && body.slice(0, 6) == "ERROR:") {
-      return Bundled(u8[0](), body.slice(6, body.len()));
+      return Bundled(u8[](), body.slice(6, body.len()));
     }
     // **Top-level `await` needs an `async` IIFE, and only the entry may have one.** A module body
     // goes inside an arrow function, so `await runLauncher(…)` at the top of a file became an
@@ -117,7 +117,7 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
     // `$mN.name` a reader wrote would silently answer `undefined` — the wrong-answer shape again.
     bool tla = hasTopLevelAwait(texts[m]);
     if (tla && m != at) {
-      return Bundled(u8[0](), paths[m] + " uses `await` at the top level, and is imported by "
+      return Bundled(u8[](), paths[m] + " uses `await` at the top level, and is imported by "
                             + "something. Only the entry may do that: wrapping any other module "
                             + "would make what it exports a promise.");
     }
@@ -126,7 +126,7 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
     pushString(out, body);
     pushString(out, "\nreturn { " + exportList(texts[m]) + " };\n})();\n\n");
   }
-  u8[] bytes = u8[out.len()]();
+  u8[] bytes = u8[].filled(out.len(), 0);
   for (i32 i = 0; i < out.len(); i++) { bytes[i] = out.get(i); }
   return Bundled(bytes, "");
 }
@@ -327,7 +327,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
   }
   copyThrough(out, src, written, src.len());
 
-  u8[] b = u8[out.len()]();
+  u8[] b = u8[].filled(out.len(), 0);
   for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i); }
 
   // `import * as ns from "./x.ts"` becomes `const ns = $m3;` — the IIFE's return value *is* the
@@ -353,7 +353,7 @@ void writeOver(u8[] b, i32 at, string what) {
 
 /** The bytes `[from, to)` as a string. */
 string textOfRange(u8[] src, i32 from, i32 to) {
-  u8[] b = u8[to - from]();
+  u8[] b = u8[].filled(to - from, 0);
   for (i32 i = from; i < to; i++) { b[i - from] = src[i]; }
   return string.fromBytes(b);
 }

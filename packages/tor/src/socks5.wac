@@ -26,7 +26,7 @@ export i32 repBadAddress() { return 8; }
  * is all of them, for CONNECT — do not look.
  */
 export u8[] socksReply(i32 code) {
-  return u8[](0x05, code, 0x00, 0x01, 0, 0, 0, 0, 0, 0);
+  return [0x05, code, 0x00, 0x01, 0, 0, 0, 0, 0, 0] as u8[];
 }
 
 /**

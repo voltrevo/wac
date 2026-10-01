@@ -86,7 +86,7 @@ u8[] field(i32 ty, u8[] data, i32 f) { return fieldBytes(types(), beaconFields()
 
 u8[] rootOf(i32 ty, u8[] data, i32 f) {
   u8[]? r = fieldRoot(types(), beaconFields(), ty, data, f);
-  return (r is null) ? u8[0]() : r!;
+  return (r is null) ? u8[]() : r!;
 }
 
 /** Whether every byte is zero — how the spec's `== SyncCommittee()` and `== FinalityBranch()` read. */
@@ -201,7 +201,7 @@ export Store? initializeStore(u8[] trustedBlockRoot, u8[] bootstrap) {
                                      headerStateRoot(header))) {
     return null;
   }
-  return Store(header, committee, u8[0](), u8[0](), header, 0, 0);
+  return Store(header, committee, u8[](), u8[](), header, 0, 0);
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -269,7 +269,7 @@ export bool validateUpdate(Store store, u8[] update, i64 currentSlot, u8[] genes
   if (!isFinalityUpdate(update)) {
     if (!isZero(finalized)) { return false; }
   } else {
-    u8[] finalizedRoot = u8[32]();          // the genesis checkpoint root is the zero hash
+    u8[] finalizedRoot = u8[].filled(32, 0);          // the genesis checkpoint root is the zero hash
     if (finalizedSlot != 0) {
       finalizedRoot = headerBeaconRoot(finalized);
       if (finalizedRoot.len() != 32) { return false; }
@@ -310,11 +310,11 @@ export bool validateUpdate(Store store, u8[] update, i64 currentSlot, u8[] genes
   if (flat.len() != SYNC_COMMITTEE_SIZE_MINIMAL * 48) { return false; }
 
   i32 n = countBits(bits);
-  u8[][] participants = u8[][n]();
+  u8[][] participants = u8[][].defaulted(n);
   i32 at = 0;
   for (i32 i = 0; i < SYNC_COMMITTEE_SIZE_MINIMAL; i++) {
     if ((bits[i >> 3] & maskFor(i & 7)) != 0) {
-      u8[] pk = u8[48]();
+      u8[] pk = u8[].filled(48, 0);
       for (i32 b = 0; b < 48; b++) { pk[b] = flat[i * 48 + b]; }
       participants[at] = pk;
       at = at + 1;
@@ -329,7 +329,7 @@ export bool validateUpdate(Store store, u8[] update, i64 currentSlot, u8[] genes
 
 /** Altair's fork version under the minimal config. See `domain.wac` for why this is config-specific. */
 u8[] altairForkVersion() {
-  u8[] v = u8[4]();
+  u8[] v = u8[].filled(4, 0);
   v[0] = 0x01;
   v[3] = 0x01;
   return v;
@@ -462,7 +462,7 @@ export bool processUpdate(Store store, u8[] update, i64 currentSlot, u8[] genesi
       && (headerSlot(updateFinalizedHeader(update)) > headerSlot(store.finalizedHeader)
           || hasFinalizedNextCommittee)) {
     applyUpdate(store, update);
-    store.bestValidUpdate = u8[0]();
+    store.bestValidUpdate = u8[]();
   }
   return true;
 }
@@ -491,7 +491,7 @@ export void forceUpdate(Store store, i64 currentSlot) {
   } else {
     applyUpdate(store, best);
   }
-  store.bestValidUpdate = u8[0]();
+  store.bestValidUpdate = u8[]();
 }
 
 /** `applyUpdate`, with the update's attested header standing in for its finalized one. */

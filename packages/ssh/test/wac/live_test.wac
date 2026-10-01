@@ -49,7 +49,7 @@ string verdictName(Verdict v) {
 
 /** The account to authenticate. sshd runs as this user, so it is the only one it can accept. */
 string whoami(Cli cli) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "id -un"), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "id -un"], u8[]()).wait();
   string said = trimmed(string.fromBytes(r.stdout));
   return said == "" ? "claude" : said;
 }
@@ -111,7 +111,7 @@ export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_publ
   string entry = "[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 " + wantBlob + "\n";
   t.eqStr(verdictName(knownHost(entry.toBytes(), host, s.port, keyType, r.hostKeyBlob)), "match",
           "known_hosts did not recognise the host key");
-  t.eqStr(verdictName(knownHost(u8[0](), host, s.port, keyType, r.hostKeyBlob)), "unknown",
+  t.eqStr(verdictName(knownHost(u8[](), host, s.port, keyType, r.hostKeyBlob)), "unknown",
           "an empty known_hosts matched");
   // The same host and port with somebody else's key is the case the file exists to catch.
   t.eqStr(verdictName(knownHost(entry.toBytes(), host, s.port, keyType,
@@ -258,16 +258,18 @@ export string test_a_known_hosts_written_by_the_real_ssh_client_is_read_correctl
   // Let the real client connect — that is what writes the entry. Once with hashing and once
   // without, because `-F /dev/null` drops the system default and the two forms are parsed by
   // completely different code. Both are files OpenSSH actually produced.
-  string[] which = string[]("plain", "hashed");
-  string[] hashed = string[]("no", "yes");
-  u8[][] files = u8[][2](fill: u8[0]());
+  string[] which = ["plain", "hashed"];
+  string[] hashed = ["no", "yes"];
+  u8[][] files = u8[][].filled(2, u8[]());
   for (i32 i = 0; i < 2; i++) {
     string path = s.dir + "/known_hosts_" + which[i];
     Exec run = cli.exec("ssh",
-      string[]("-F", "/dev/null", "-i", s.dir + "/clientkey", "-p", itoa(s.port),
+      [
+               "-F", "/dev/null", "-i", s.dir + "/clientkey", "-p", itoa(s.port),
                "-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=" + path,
-               "-o", "HashKnownHosts=" + hashed[i], "-o", "BatchMode=yes", "127.0.0.1", "true"),
-      u8[0]()).wait();
+               "-o", "HashKnownHosts=" + hashed[i], "-o", "BatchMode=yes", "127.0.0.1", "true"
+      ],
+      u8[]()).wait();
     t.eqI32(run.status, 0, "ssh (" + which[i] + "): " + string.fromBytes(run.stderr));
     if (run.status != 0) {
       stopSshd(cli, s);
@@ -340,9 +342,11 @@ export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, C
   cli.writeFile(dir + "/sshd", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();
   cli.setExecutable(dir + "/sshd", true).wait();
 
-  cli.exec("/bin/sh", string[]("-c",
-    "setsid " + quoted(dir + "/sshd") + " -D -f " + quoted(config) + " >/dev/null 2>&1 </dev/null &"),
-    u8[0]()).wait();
+  cli.exec("/bin/sh", [
+    "-c",
+    "setsid " + quoted(dir + "/sshd") + " -D -f " + quoted(config) + " >/dev/null 2>&1 </dev/null &"
+  ],
+    u8[]()).wait();
 
   // Re-parenting is not instantaneous, so `ps` is the readiness check rather than a sleep.
   string selected = "";
@@ -351,8 +355,10 @@ export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, C
            "the reaper's pattern selected nothing of this shape — it would report a clean machine " +
            "whatever was abandoned. It chose: " + (selected == "" ? "(nothing)" : selected));
 
-  cli.exec("/bin/sh", string[]("-c",
-    "pkill -f " + quoted(dir + "/sshd -D -f") + " 2>/dev/null; true"), u8[0]()).wait();
+  cli.exec("/bin/sh", [
+    "-c",
+    "pkill -f " + quoted(dir + "/sshd -D -f") + " 2>/dev/null; true"
+  ], u8[]()).wait();
   cli.remove(dir, true).wait();
   return t.report();
 }

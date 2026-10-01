@@ -31,7 +31,7 @@ import { joined, splitKeepingEmpty } from "../../packages/wactest/src/strings.wa
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /** The root: what `import … from core;` gets. Both files, because wacc does have a JSX frontend. */
-string[] waccRoot() { return string[]("core/read.wac", "core/jsx.wac"); }
+string[] waccRoot() { return ["core/read.wac", "core/jsx.wac"]; }
 
 /**
  * The siblings: files in the tree that are named by path and are *not* part of the root.
@@ -39,8 +39,10 @@ string[] waccRoot() { return string[]("core/read.wac", "core/jsx.wac"); }
  * Each is its own module, so a sibling costs nothing until something imports it.
  */
 string[] siblings() {
-  return string[]("core/option.wac", "core/result.wac", "core/hash.wac", "core/map.wac",
-                  "core/vec.wac");
+  return [
+                  "core/option.wac", "core/result.wac", "core/hash.wac", "core/map.wac",
+                  "core/vec.wac"
+  ];
 }
 
 /**
@@ -61,7 +63,7 @@ string[] siblings() {
  * a `std` root. `"std"` is still reserved, so a project cannot define one and have it mean something
  * other than a built-in.
  */
-string[] std() { return string[]("std/platform.wac"); }
+string[] std() { return ["std/platform.wac"]; }
 
 /** The one file this writes. */
 string waccOut() { return "packages/wacc/src/coretext.wac"; }
@@ -84,7 +86,7 @@ struct Tree {
 
   /** The root's text, as `coreSource` embeds it. */
   string rootText(const this) {
-    string[] out = string[this.roots](fill: "");
+    string[] out = string[].filled(this.roots, "");
     for (i32 i = 0; i < this.roots; i++) { out[i] = this.texts[i]; }
     return joined(out, "\n");
   }
@@ -103,13 +105,13 @@ Tree readTree(Cli cli) {
   string[] root = waccRoot();
   string[] sib = siblings();
   string[] st = std();
-  string[] paths = string[root.len() + sib.len() + st.len()](fill: "");
+  string[] paths = string[].filled(root.len() + sib.len() + st.len(), "");
   i32 at = 0;
   for (i32 i = 0; i < root.len(); i++) { paths[at] = root[i]; at = at + 1; }
   for (i32 i = 0; i < sib.len(); i++) { paths[at] = sib[i]; at = at + 1; }
   for (i32 i = 0; i < st.len(); i++) { paths[at] = st[i]; at = at + 1; }
 
-  string[] texts = string[paths.len()](fill: "");
+  string[] texts = string[].filled(paths.len(), "");
   string why = "";
   for (i32 i = 0; i < paths.len(); i++) {
     FileResult f = cli.readFile(paths[i]).wait();
@@ -201,23 +203,23 @@ string asWac(string text) {
 /** Every line of `body` prefixed with two spaces — the arms of `coreFile` and `stdFile` are nested. */
 string indented(string body) {
   string[] ls = splitKeepingEmpty(body);
-  string[] out = string[ls.len()](fill: "");
+  string[] out = string[].filled(ls.len(), "");
   for (i32 i = 0; i < ls.len(); i++) { out[i] = "  " + ls[i]; }
   return joined(out, "\n");
 }
 
 /** One `if (path == "…") { … }` arm per file. */
 string arms(string[] paths, string[] texts) {
-  string[] out = string[paths.len()](fill: "");
+  string[] out = string[].filled(paths.len(), "");
   for (i32 i = 0; i < paths.len(); i++) {
     out[i] = "  if (path == " + quoted(paths[i]) + ") {\n" + indented(asWac(texts[i])) + "\n  }";
   }
   return joined(out, "\n");
 }
 
-/** `"a", "b"` — the body of a `string[](…)` literal. */
+/** `"a", "b"` — the body of a `[…]` literal. */
 string quotedList(string[] paths) {
-  string[] out = string[paths.len()](fill: "");
+  string[] out = string[].filled(paths.len(), "");
   for (i32 i = 0; i < paths.len(); i++) { out[i] = quoted(paths[i]); }
   return joined(out, ", ");
 }
@@ -229,12 +231,11 @@ string blk(string[] ls) { return joined(ls, "\n"); }
  * them. One list so this reads in the order the file is written.
  */
 string[] fixed() {
-  return string[](
+  return [
     // 0
-    blk(string[](
-      "// ")),
+    blk(["// "]),
     // 1
-    blk(string[](
+    blk([
       "",
       "//",
       "// wacc's embedding of `core`. `core/README.md` says why anything is in there; this file is only the",
@@ -242,9 +243,10 @@ string[] fixed() {
       "// one that is also in the seed.",
       "",
       "export string coreSource() {",
-      "")),
+      ""
+    ]),
     // 2
-    blk(string[](
+    blk([
       "",
       "}",
       "",
@@ -257,9 +259,10 @@ string[] fixed() {
       " * through to the filesystem and the second is this generator's bug.",
       " */",
       "export string coreFile(string path) {",
-      "")),
+      ""
+    ]),
     // 3
-    blk(string[](
+    blk([
       "",
       "  return \"\";",
       "}",
@@ -281,19 +284,21 @@ string[] fixed() {
       " * and `std` is nothing but capability. `\"\"` on a miss for the same reason as `coreFile`.",
       " */",
       "export string stdFile(string path) {",
-      "")),
+      ""
+    ]),
     // 4
-    blk(string[](
+    blk([
       "",
       "  return \"\";",
       "}",
       "",
       "/** Every `std` specifier, so a caller can reserve them without guessing the list. */",
       "export string[] stdFiles() {",
-      "  return string[](")),
+      "  return ["
+    ]),
     // 5
-    blk(string[](
-      ");",
+    blk([
+      "] as string[];",
       "}",
       "",
       "/**",
@@ -309,19 +314,23 @@ string[] fixed() {
       " */",
       "export bool isBuiltinSpec(string spec) {",
       "  if (spec == \"core\" || spec == \"std\") { return true; }",
-      "  return ")),
+      "  return "
+    ]),
     // 6
-    blk(string[](
+    blk([
       ";",
       "}",
       "",
       "/** Every sibling's specifier, so a caller can reserve them without guessing the list. */",
       "export string[] coreFiles() {",
-      "  return string[](")),
+      "  return ["
+    ]),
     // 7
-    blk(string[](
-      ");",
-      "}")),);
+    blk([
+      "] as string[];",
+      "}"
+    ])
+  ];
 }
 
 /** The whole of `packages/wacc/src/coretext.wac`. */
@@ -338,15 +347,15 @@ string waccFile(Tree tree) {
   string s = f[0] + "Generated by `wac task gen:core` from " + joined(tree.paths, ", ")
            + ". Do not edit.";
 
-  string[] sibTexts = string[sib.len()](fill: "");
+  string[] sibTexts = string[].filled(sib.len(), "");
   for (i32 i = 0; i < sib.len(); i++) { sibTexts[i] = tree.sibText(i); }
-  string[] stdTexts = string[st.len()](fill: "");
+  string[] stdTexts = string[].filled(st.len(), "");
   for (i32 i = 0; i < st.len(); i++) { stdTexts[i] = tree.stdText(i); }
 
-  string[] both = string[sib.len() + st.len()](fill: "");
+  string[] both = string[].filled(sib.len() + st.len(), "");
   for (i32 i = 0; i < sib.len(); i++) { both[i] = sib[i]; }
   for (i32 i = 0; i < st.len(); i++) { both[sib.len() + i] = st[i]; }
-  string[] tests = string[both.len()](fill: "");
+  string[] tests = string[].filled(both.len(), "");
   for (i32 i = 0; i < both.len(); i++) { tests[i] = "spec == " + quoted(both[i]); }
 
   s = s + f[1] + asWac(tree.rootText());

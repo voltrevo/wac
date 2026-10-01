@@ -54,8 +54,8 @@ string lastField(string line) {
 
 export string test_more_files_than_the_linkers_tables_used_to_hold(Core core, Cli cli) {
   T t = T.create();
-  string[] paths = string[N + 1](fill: "");
-  string[] sources = string[N + 1](fill: "");
+  string[] paths = string[].filled(N + 1, "");
+  string[] sources = string[].filled(N + 1, "");
   for (i32 i = 0; i < N; i++) {
     paths[i] = "/many/f" + itoa(i) + ".wac";
     // A branch, so each file contributes a coverage point that has to be attributed to it.
@@ -95,14 +95,14 @@ export string test_more_files_than_the_linkers_tables_used_to_hold(Core core, Cl
   // nothing fails `r.ok` below. So nothing is unchecked; what is skipped is being told the same thing
   // twice, the second time slowly.
   u8[] wasm = emitFilesSelfDescribing(paths, sources, ENTRY, "manyfiles.wasm", 0);
-  Ran r = runModule(cli, wasm, scratchDir(cli), "manyfiles.wasm", string[0](fill: ""));
+  Ran r = runModule(cli, wasm, scratchDir(cli), "manyfiles.wasm", string[].filled(0, ""));
   t.isTrue(r.ok, "it built and ran — " + r.error);
   if (!r.ok) { return t.report(); }
   t.eqI32(r.status, 7, "total() is not " + itoa(want) + " — stderr: " + r.stderr);
 
   // What was actually broken: which file each counter belongs to.
   string[] rows = splitLines(covTableFiles(paths, sources, ENTRY));
-  string[] named = string[rows.len()](fill: "");
+  string[] named = string[].filled(rows.len(), "");
   i32 nNamed = 0;
   for (i32 i = 0; i < rows.len(); i++) {
     string file = lastField(rows[i]);
@@ -145,8 +145,8 @@ export string test_past_the_queue_the_refusal_names_the_limit(Core core, Cli cli
   // One more than the queue holds. The queue is one entry per file *to visit*, so an entry importing
   // n files queues n + 1.
   i32 n = 1024;
-  string[] paths = string[n + 1](fill: "");
-  string[] sources = string[n + 1](fill: "");
+  string[] paths = string[].filled(n + 1, "");
+  string[] sources = string[].filled(n + 1, "");
   string entry = "";
   for (i32 i = 0; i < n; i++) {
     paths[i] = "/f" + itoa(i) + ".wac";
@@ -170,8 +170,8 @@ export string test_past_the_queue_the_refusal_names_the_limit(Core core, Cli cli
 export string test_and_inside_the_queue_it_links(Core core, Cli cli) {
   T t = T.create();
   i32 n = 200;
-  string[] paths = string[n + 1](fill: "");
-  string[] sources = string[n + 1](fill: "");
+  string[] paths = string[].filled(n + 1, "");
+  string[] sources = string[].filled(n + 1, "");
   string entry = "";
   for (i32 i = 0; i < n; i++) {
     paths[i] = "/f" + itoa(i) + ".wac";

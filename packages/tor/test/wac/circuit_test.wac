@@ -16,14 +16,14 @@ import { encodeFixed, cmdRelay, cmdDestroy, cellPayload, ID_WIDE} from "../../sr
 import { HOP_KEY_MATERIAL, NTOR_KEY_MATERIAL } from "../../src/relay.wac";
 
 u8[] material(i32 seed) {
-  u8[] m = u8[72]();
+  u8[] m = u8[].filled(72, 0);
   for (i32 i = 0; i < 72; i++) { m[i] = (i * 61 + seed * 17) & 0xFF; }
   return m;
 }
 
 /** The same material as the other end of the circuit sees it. */
 u8[] swapped(u8[] m) {
-  u8[] out = u8[72]();
+  u8[] out = u8[].filled(72, 0);
   for (i32 i = 0; i < 20; i++) { out[i] = m[20 + i]; }
   for (i32 i = 0; i < 20; i++) { out[20 + i] = m[i]; }
   for (i32 i = 0; i < 16; i++) { out[40 + i] = m[56 + i]; }
@@ -32,7 +32,7 @@ u8[] swapped(u8[] m) {
 }
 
 u8[] fill(i32 n, i32 seed) {
-  u8[] o = u8[n]();
+  u8[] o = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { o[i] = (i * 37 + seed) & 0xFF; }
   return o;
 }
@@ -55,7 +55,7 @@ export string test_a_stream_carries_data_both_ways() {
   t.isTrue(relayRecognized(relay, body), "the relay recognises the BEGIN");
   t.eqI32(relayStreamOf(body), sid, "on our stream");
 
-  Received r = c.receive(fromRelay(relay, 7, relayConnected(), sid, u8[0]()));
+  Received r = c.receive(fromRelay(relay, 7, relayConnected(), sid, u8[]()));
   t.eqI32(r.kind, gotConnected(), "and answers CONNECTED");
 
   u8[] payload = fill(400, 3);
@@ -64,7 +64,7 @@ export string test_a_stream_carries_data_both_ways() {
   t.eqBytes(d.data, payload, "which arrives intact");
   t.eqI32(d.streamId, sid, "on the right stream");
 
-  Received e = c.receive(fromRelay(relay, 7, relayEnd(), sid, u8[](6)));
+  Received e = c.receive(fromRelay(relay, 7, relayEnd(), sid, [6] as u8[]));
   t.eqI32(e.kind, gotEnd(), "and the far end closes it");
   return t.report();
 }
@@ -104,7 +104,7 @@ export string test_a_cell_no_hop_recognises_kills_the_circuit() {
   // to. Reporting it as dead is the only honest answer.
   T t = T.create();
   Circuit c = Circuit.create(3, material(5));
-  u8[] junk = u8[509]();
+  u8[] junk = u8[].filled(509, 0);
   for (i32 i = 0; i < 509; i++) { junk[i] = (i * 11 + 5) & 0xFF; }
   Received r = c.receive(encodeFixed(3, cmdRelay(), junk));
   t.eqI32(r.kind, gotBroken(), "an unrecognised cell is fatal, not skippable");
@@ -114,7 +114,7 @@ export string test_a_cell_no_hop_recognises_kills_the_circuit() {
 export string test_a_destroy_is_reported_rather_than_decrypted() {
   T t = T.create();
   Circuit c = Circuit.create(3, material(6));
-  Received r = c.receive(encodeFixed(3, cmdDestroy(), u8[](1)));
+  Received r = c.receive(encodeFixed(3, cmdDestroy(), [1] as u8[]));
   t.eqI32(r.kind, gotDestroyed(), "DESTROY is not a relay cell");
   t.eqI32(r.data[0], 1, "and carries its reason");
   return t.report();
@@ -135,7 +135,7 @@ export string test_a_sendme_arrives_after_a_hundred_data_cells() {
   // sending the hundredth cell. Recording it here is what makes this a check rather than a
   // count — tor validates this field and tears the circuit down when it is wrong, which was
   // confirmed against a real relay before this test existed.
-  u8[] expected = u8[0]();
+  u8[] expected = u8[]();
   for (i32 i = 0; i < 120; i++) {
     Received r = c.receive(fromRelay(relay, 4, relayData(), sid, fill(10, i)));
     t.eqI32(r.kind, gotData(), "cell " + itoa64(i as i64) + " is data");
@@ -152,7 +152,7 @@ export string test_a_sendme_arrives_after_a_hundred_data_cells() {
         u8[] payload = relayPayload(body);
         t.eqI32(payload.len(), 23, "a version 1 body");
         t.eqI32(payload[0], 1, "version 1");
-        u8[] carried = u8[20]();
+        u8[] carried = u8[].filled(20, 0);
         for (i32 j = 0; j < 20; j++) { carried[j] = payload[3 + j]; }
         t.eqBytes(carried, expected,
                   "and it names the digest as of the cell that triggered it, not the next");
@@ -194,7 +194,7 @@ export string test_a_hop_cannot_crash_us_with_a_bad_length_field() {
   Hop relay = Hop.create(swapped(m));
 
   // A body the relay digests correctly, carrying a length no body could hold.
-  u8[] body = u8[509]();
+  u8[] body = u8[].filled(509, 0);
   body[0] = relayData();
   body[3] = 0;
   body[4] = 1;
@@ -217,7 +217,7 @@ bool lengthAccepted(i32 len) {
   u8[] m = material(42);
   Circuit c = Circuit.create(12, m);
   Hop relay = Hop.create(swapped(m));
-  u8[] body = u8[509]();
+  u8[] body = u8[].filled(509, 0);
   body[0] = relayData();
   body[4] = 1;
   body[9] = (len >> 8) & 0xFF;
@@ -278,19 +278,19 @@ export string test_the_circuit_nonce_follows_the_last_hop() {
 }
 
 u8[] khMaterial(i32 role) {
-  u8[] out = u8[92]();
+  u8[] out = u8[].filled(92, 0);
   for (i32 i = 0; i < 92; i++) { out[i] = (role * 71 + i * 13 + 5) & 0xFF; }
   return out;
 }
 
 u8[] khShortMaterial(i32 role) {
-  u8[] out = u8[72]();
+  u8[] out = u8[].filled(72, 0);
   for (i32 i = 0; i < 72; i++) { out[i] = (role * 71 + i * 13 + 5) & 0xFF; }
   return out;
 }
 
 u8[] khTail(u8[] m) {
-  u8[] out = u8[20]();
+  u8[] out = u8[].filled(20, 0);
   for (i32 i = 0; i < 20; i++) { out[i] = m[72 + i]; }
   return out;
 }

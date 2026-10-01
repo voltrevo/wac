@@ -46,7 +46,7 @@ string proxyOf(Cli cli) {
 }
 
 string[] wacArgs(string[] args) {
-  string[] argv = string[args.len() + 5](fill: "");
+  string[] argv = string[].filled(args.len() + 5, "");
   argv[0] = "run";
   argv[1] = "--allow-net";
   argv[2] = "--allow-env";
@@ -58,7 +58,7 @@ string[] wacArgs(string[] args) {
 
 Exec runTunnel(Cli cli, string proxy, string[] args) {
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  return withEnv(cli, string[]("HTTP_PROXY"), string[](proxy), wac, wacArgs(args));
+  return withEnv(cli, ["HTTP_PROXY"], [proxy], wac, wacArgs(args));
 }
 
 export string test_a_connect_tunnel_opens_through_the_real_proxy(Core core, Cli cli) {
@@ -68,7 +68,7 @@ export string test_a_connect_tunnel_opens_through_the_real_proxy(Core core, Cli 
     core.warn("http tunnel test: skipped — HTTP_PROXY is not set");
     return t.report();
   }
-  Exec r = runTunnel(cli, proxy, string[]("github.com", "443"));
+  Exec r = runTunnel(cli, proxy, ["github.com", "443"]);
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "tunnel failed: " + err);
   string out = trimmedEnd(string.fromBytes(r.stdout));
@@ -92,7 +92,7 @@ export string test_a_host_the_proxy_will_not_open_comes_back_in_the_proxys_own_w
   // Not on any allowlist, and not a name that resolves. Either way Squid answers with a status rather
   // than dropping the connection, and the point is that its line survives to the caller — a refusal
   // is a line in a config file on the host, not a fault in the network.
-  Exec r = runTunnel(cli, proxy, string[]("not-a-real-host.invalid", "443"));
+  Exec r = runTunnel(cli, proxy, ["not-a-real-host.invalid", "443"]);
   string out = trimmedEnd(string.fromBytes(r.stdout));
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 1, "expected a refusal, got \"" + out + "\"");
@@ -114,8 +114,8 @@ export string test_without_a_proxy_variable_it_says_that_rather_than_dialling_so
     return t.report();
   }
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  Exec r = withoutEnv(cli, string[]("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"),
-                      wac, wacArgs(string[]("github.com", "443")));
+  Exec r = withoutEnv(cli, ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"],
+                      wac, wacArgs(["github.com", "443"]));
   t.eqI32(r.status, 1, "expected 1: " + string.fromBytes(r.stdout));
   t.isTrue(string.fromBytes(r.stderr).indexOf("HTTP_PROXY is not set") >= 0,
            "it said \"" + trimmedEnd(string.fromBytes(r.stderr)) + "\"");

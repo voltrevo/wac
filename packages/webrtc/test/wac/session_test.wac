@@ -27,20 +27,20 @@ const string THEIR_UFRAG = "peerUF";
 const string THEIR_PWD = "peer-password-0123456";
 
 u8[] filled(i32 n, i32 v) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = v; }
   return out;
 }
 
 /** A distinct id per call site, so two checks in one test are not the same message. */
 u8[] tid(i32 seed) {
-  u8[] out = u8[12]();
+  u8[] out = u8[].filled(12, 0);
   for (i32 i = 0; i < 12; i++) { out[i] = (i * 17 + seed * 31 + 5) & 0xFF; }
   return out;
 }
 
 Session session() {
-  return sessionFor(filled(64, 9), filled(32, 1), u8[12](), filled(32, 2), filled(32, 3),
+  return sessionFor(filled(64, 9), filled(32, 1), u8[].filled(12, 0), filled(32, 2), filled(32, 3),
                     filled(16, 4), OUR_UFRAG, OUR_PWD, THEIR_UFRAG, THEIR_PWD, "AA:BB");
 }
 
@@ -68,7 +68,7 @@ export string test_a_connectivity_check_is_answered_and_the_answer_carries_the_s
   // the peer nothing. That is why `receive` takes it: only the caller holds a socket.
   T t = T.create();
   Session s = session();
-  u8[][] out = sessionReceive(s, peerCheck(1), u8[](192, 168, 3, 7), 51234, 0);
+  u8[][] out = sessionReceive(s, peerCheck(1), [192, 168, 3, 7] as u8[], 51234, 0);
   t.eqI32(out.len(), 1, "one response");
   t.eqI32(sessionChecks(s), 1, "and it counted as a check answered");
   if (out.len() != 1) { return t.report(); }
@@ -85,8 +85,8 @@ export string test_a_check_that_does_not_authenticate_is_not_answered_at_all() {
   T t = T.create();
   Session s = session();
   u8[] forged = check(tid(2), OUR_UFRAG, THEIR_UFRAG, "not-our-password".toBytes(),
-                      priorityOf(hostPref(), 65535, 1), true, u8[8](), false);
-  t.eqI32(sessionReceive(s, forged, u8[](127, 0, 0, 1), 1, 0).len(), 0, "no response");
+                      priorityOf(hostPref(), 65535, 1), true, u8[].filled(8, 0), false);
+  t.eqI32(sessionReceive(s, forged, [127, 0, 0, 1] as u8[], 1, 0).len(), 0, "no response");
   t.eqI32(sessionChecks(s), 0, "and it did not count");
   return t.report();
 }
@@ -98,12 +98,12 @@ export string test_dispatch_is_by_the_first_byte_which_is_how_stun_and_dtls_shar
   // worth surviving. STUN is 0x00 or 0x01; a DTLS record is 20 to 63.
   T t = T.create();
   Session s = session();
-  t.eqI32(sessionReceive(s, u8[0](), u8[4](), 0, 0).len(), 0, "an empty datagram is nothing");
-  t.eqI32(sessionReceive(s, u8[](200, 1, 2, 3), u8[4](), 0, 0).len(), 0,
+  t.eqI32(sessionReceive(s, u8[](), u8[].filled(4, 0), 0, 0).len(), 0, "an empty datagram is nothing");
+  t.eqI32(sessionReceive(s, [200, 1, 2, 3] as u8[], u8[].filled(4, 0), 0, 0).len(), 0,
           "and 200 is neither STUN nor DTLS — very likely SRTP, which we do not carry");
   // A DTLS record that is not a handshake we can act on yet: it reaches the DTLS layer and produces
   // nothing, rather than being mistaken for a malformed check.
-  t.eqI32(sessionReceive(s, u8[](23, 254, 253, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0), u8[4](), 0, 0).len(), 0,
+  t.eqI32(sessionReceive(s, [23, 254, 253, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0] as u8[], u8[].filled(4, 0), 0, 0).len(), 0,
           "application data before any keys exist");
   t.eqI32(sessionChecks(s), 0, "none of that was a connectivity check");
   t.isFalse(sessionOpen(s), "and no channel opened");

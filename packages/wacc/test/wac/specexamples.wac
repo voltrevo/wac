@@ -74,7 +74,7 @@ export ExFence[] exampleFences(string doc, string text) {
     i32 open = i;
     i32 j = i + 1;
     while (j < lines.len() && trimmed(lines[j]) != "```") { j = j + 1; }
-    string[] body = string[j - open - 1](fill: "");
+    string[] body = string[].filled(j - open - 1, "");
     for (i32 k = open + 1; k < j; k++) { body[k - open - 1] = lines[k]; }
     // Tags belong to the fence above them, up to the next fence.
     i32 next = j + 1;
@@ -192,7 +192,7 @@ void addErrorVariants(string[] paths, string[] sources, i32 f, i32 firstLine, Ve
     string indent = ls[i].slice(0, ls[i].indexOf("//"));
     string reason = trimmed(t.slice(8, t.len()));
     if (startsWith(reason, ":")) { reason = trimmed(reason.slice(1, reason.len())); }
-    string[] changed = string[ls.len()](fill: "");
+    string[] changed = string[].filled(ls.len(), "");
     for (i32 j = 0; j < ls.len(); j++) { changed[j] = ls[j]; }
     i32 j = i + 1;
     while (j < ls.len() && startsWith(ls[j], indent + "// ") && !startsWith(trimmed(ls[j]), "// ERROR")) {
@@ -204,7 +204,7 @@ void addErrorVariants(string[] paths, string[] sources, i32 f, i32 firstLine, Ve
       text = text + changed[k];
       if (k + 1 < changed.len()) { text = text + "\n"; }
     }
-    string[] ss = string[sources.len()](fill: "");
+    string[] ss = string[].filled(sources.len(), "");
     for (i32 k = 0; k < sources.len(); k++) { ss[k] = k == f ? text : sources[k]; }
     into.push(ExVariant(firstLine + i, reason, paths, ss));
   }
@@ -417,7 +417,7 @@ string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] paths,
     string[] words = wordsOfCmd(x.command);
     for (i32 w = 3; w < words.len(); w++) { argv.push(words[w]); }
   }
-  Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac", argv.toArray(), u8[0]()).wait();
+  Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac", argv.toArray(), u8[]()).wait();
   if (!r.ran()) { return "the binary did not run: " + r.error; }
   string out = string.fromBytes(r.stdout);
   string err = string.fromBytes(r.stderr);
@@ -514,7 +514,7 @@ string unescape(string s) {
       if (d == "n") { out = out + "\n"; }
       else if (d == "t") { out = out + "\t"; }
       else if (d == "r") { out = out + "\r"; }
-      else if (d == "0") { out = out + string.fromBytes(u8[](0)); }
+      else if (d == "0") { out = out + string.fromBytes([0] as u8[]); }
       else if (d == "u" && i + 1 < s.len() && s.slice(i + 1, i + 2) == "{") {
         i32 close = exIndexFrom(s, "}", i);
         out = out + codepointText(s.slice(i + 2, close));
@@ -537,14 +537,18 @@ string codepointText(string hex) {
     if (d < 0) { d = "0123456789ABCDEF".indexOf(c); }
     cp = cp * 16 + d;
   }
-  if (cp < 0x80) { return string.fromBytes(u8[](cp)); }
-  if (cp < 0x800) { return string.fromBytes(u8[]((0xC0 | (cp >> 6)), (0x80 | (cp & 0x3F)))); }
+  if (cp < 0x80) { return string.fromBytes([cp]); }
+  if (cp < 0x800) { return string.fromBytes([(0xC0 | (cp >> 6)), (0x80 | (cp & 0x3F))]); }
   if (cp < 0x10000) {
-    return string.fromBytes(u8[]((0xE0 | (cp >> 12)), (0x80 | ((cp >> 6) & 0x3F)),
-                                 (0x80 | (cp & 0x3F))));
+    return string.fromBytes([
+                                 (0xE0 | (cp >> 12)), (0x80 | ((cp >> 6) & 0x3F)),
+                                 (0x80 | (cp & 0x3F))
+    ]);
   }
-  return string.fromBytes(u8[]((0xF0 | (cp >> 18)), (0x80 | ((cp >> 12) & 0x3F)),
-                               (0x80 | ((cp >> 6) & 0x3F)), (0x80 | (cp & 0x3F))));
+  return string.fromBytes([
+                               (0xF0 | (cp >> 18)), (0x80 | ((cp >> 12) & 0x3F)),
+                               (0x80 | ((cp >> 6) & 0x3F)), (0x80 | (cp & 0x3F))
+  ]);
 }
 
 string hexToDecimal(string t) {
@@ -597,7 +601,7 @@ Res resolutionFor(string[] paths, string[] sources) {
   }
   string[] wp = wacOnly(paths, paths);
   string[] ws = wacOnly(paths, sources);
-  string[] roots = string[wp.len()](fill: "");
+  string[] roots = string[].filled(wp.len(), "");
   Vec<string> from = Vec.create();
   Vec<string> spec = Vec.create();
   Vec<string> to = Vec.create();

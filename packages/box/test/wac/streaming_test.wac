@@ -71,15 +71,15 @@ export string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cl
   string path = dir + "/spanning.txt";
   t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
 
-  t.eqStr(cols(runApplet(core, cli, dir, string[]("wc", path)).out),
-          cols(realOut(cli, "wc", string[](path))), "wc across chunks");
+  t.eqStr(cols(runApplet(core, cli, dir, ["wc", path]).out),
+          cols(realOut(cli, "wc", [path])), "wc across chunks");
 
-  t.eqStr(runApplet(core, cli, dir, string[]("strings", path)).out,
-          realOut(cli, "strings", string[]("-n4", path)), "strings across chunks");
+  t.eqStr(runApplet(core, cli, dir, ["strings", path]).out,
+          realOut(cli, "strings", ["-n4", path]), "strings across chunks");
 
   // Two hex characters a byte, and a newline. A framing error is the only thing that can go wrong in a
   // per-byte applet, and a length is what catches it.
-  t.eqI32(runApplet(core, cli, dir, string[]("hex", path)).out.len(), text.len() * 2 + 1,
+  t.eqI32(runApplet(core, cli, dir, ["hex", path]).out.len(), text.len() * 2 + 1,
           "hex is two characters a byte");
 
   cli.remove(dir, true).wait();
@@ -102,13 +102,13 @@ export string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli)
   // NUL, 200,000 'A's, NUL: the terminators are what make it a *run* to `strings` rather than the
   // whole file, so the boundaries it reports are the ones under test.
   i32 width = 200000;
-  u8[] run = u8[width + 2](fill: 0x41);
+  u8[] run = u8[].filled(width + 2, 0x41);
   run[0] = 0x00;
   run[width + 1] = 0x00;
   t.isTrue(cli.writeFile(path, run).wait().ok(), "wrote the spanning run");
 
-  t.eqStr(runApplet(core, cli, dir, string[]("strings", path)).out,
-          realOut(cli, "strings", string[]("-n4", path)),
+  t.eqStr(runApplet(core, cli, dir, ["strings", path]).out,
+          realOut(cli, "strings", ["-n4", path]),
           "a 200K run spanning three chunks is one string");
 
   cli.remove(dir, true).wait();
@@ -134,7 +134,7 @@ export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
     want.push(c >= 0x61 && c <= 0x7a ? c - 32 : c);
   }
 
-  Ran got = runAppletIn(core, cli, dir, string[]("tr", "a-z", "A-Z"), text);
+  Ran got = runAppletIn(core, cli, dir, ["tr", "a-z", "A-Z"], text);
   t.eqI32(got.status, 0, "tr ran: " + got.err);
   t.eqStr(got.out, want.toStr(), "tr across chunks");
 
@@ -160,7 +160,7 @@ export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
   string path = dir + "/crc.txt";
   t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
 
-  u32[] table = u32[256]();
+  u32[] table = u32[].filled(256, 0);
   for (i32 n = 0; n < 256; n++) {
     u32 c = n as@ u32;
     for (i32 k = 0; k < 8; k++) {
@@ -181,7 +181,7 @@ export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
     want = want + "0123456789abcdef".slice(nib, nib + 1);
   }
 
-  Ran got = runApplet(core, cli, dir, string[]("crc32", path));
+  Ran got = runApplet(core, cli, dir, ["crc32", path]);
   i32 sp = got.out.indexOf(" ");
   t.eqStr(sp < 0 ? got.out : got.out.slice(0, sp), want, "crc32 across chunks: " + got.out);
 

@@ -50,7 +50,7 @@ i32 popcount(u32 v) {
 export string test_i32_hash_is_injective_over_a_sample() {
   T t = T.create();
   i32 N = 1024;
-  i32[] hs = i32[N]();
+  i32[] hs = i32[].filled(N, 0);
   for (i32 i = 0; i < N; i++) { hs[i] = hashI32(i); }
   // The finaliser is a bijection on 32 bits, so this is exact rather than a bound: any collision at all
   // among a thousand consecutive keys means the mixing has stopped being one-to-one.
@@ -64,7 +64,7 @@ export string test_aligned_keys_spread_across_buckets() {
   // identity hash keeps every one of these in the same 16 buckets of a 1024-slot table.
   i32 N = 1024;
   i32 MASK = 1023;
-  i32[] low = i32[N]();
+  i32[] low = i32[].filled(N, 0);
   for (i32 i = 0; i < N; i++) { low[i] = hashI32(i * 64) & MASK; }
   i32 spread = distinctCount(low);
   // A perfectly random map of 1024 keys into 1024 buckets fills about 647 of them; the identity hash
@@ -103,8 +103,8 @@ export string test_i32_hash_avalanches() {
 export string test_i64_hash_is_injective_and_spreads() {
   T t = T.create();
   i32 N = 1024;
-  i32[] hs = i32[N]();
-  i32[] low = i32[N]();
+  i32[] hs = i32[].filled(N, 0);
+  i32[] low = i32[].filled(N, 0);
   for (i32 i = 0; i < N; i++) {
     // Values above 2^32, so this exercises the fold rather than the low half alone: a 64-bit hash that
     // dropped its high word would pass every test built from small numbers.
@@ -124,9 +124,9 @@ export string test_byte_hash_separates_near_neighbours() {
   // FNV-1a is not a mixer, so avalanche is the wrong question — what a table needs from it is that keys
   // differing in one byte, or in length, do not land together.
   i32 N = 512;
-  i32[] hs = i32[N]();
+  i32[] hs = i32[].filled(N, 0);
   for (i32 i = 0; i < N; i++) {
-    u8[] k = u8[4]();
+    u8[] k = u8[].filled(4, 0);
     k[0] = 'k';
     k[1] = '0' + (i / 100);
     k[2] = '0' + ((i / 10) % 10);
@@ -146,14 +146,14 @@ string itoa(i32 v) {
   if (v == 0) { return "0"; }
   bool neg = v < 0;
   i32 x = neg ? -v : v;
-  u8[] buf = u8[12]();
+  u8[] buf = u8[].filled(12, 0);
   i32 n = 0;
   while (x > 0) {
     buf[n] = '0' + (x % 10);
     n++;
     x = x / 10;
   }
-  u8[] out = u8[n + (neg ? 1 : 0)]();
+  u8[] out = u8[].filled(n + (neg ? 1 : 0), 0);
   if (neg) { out[0] = '-'; }
   for (i32 i = 0; i < n; i++) { out[(neg ? 1 : 0) + i] = buf[n - 1 - i]; }
   return string.fromBytes(out);

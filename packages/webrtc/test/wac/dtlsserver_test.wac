@@ -39,7 +39,7 @@ const i32 X25519 = 0x001D;
 const i32 ECDSA_SHA256 = 0x0403;
 
 u8[] ramp(i32 n, i32 mul, i32 add) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
   return out;
 }
@@ -49,7 +49,7 @@ u8[] serverScalar() { return ramp(32, 13, 2); }
 /** A fixed ECDSA nonce. Fine here and catastrophic in a program — see the note where it is used. */
 u8[] sigK() { return ramp(32, 17, 29); }
 u8[] cookie() {
-  u8[] c = u8[8]();
+  u8[] c = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) { c[i] = 9 - i; }
   return c;
 }
@@ -66,14 +66,14 @@ u8[] slice(u8[] b, i32 at, i32 end) {
   i32 from = at < 0 ? 0 : at;
   i32 to = end > b.len() ? b.len() : end;
   if (to < from) { to = from; }
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   out.copyFrom(b, from, 0, to - from);
   return out;
 }
 
 /** A plaintext record header around a fragment. */
 u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
-  u8[] out = u8[13 + fragment.len()]();
+  u8[] out = u8[].filled(13 + fragment.len(), 0);
   out[0] = kind;
   out[1] = 0xFE;
   out[2] = 0xFD;
@@ -96,21 +96,25 @@ struct Identity {
 
 Identity identity(Cli cli) {
   Exec der = cli.exec("openssl",
-                      string[]("x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-outform",
-                               "der"), u8[0]()).wait();
+                      [
+                               "x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-outform",
+                               "der"
+                      ], u8[]()).wait();
   if (!der.ran() || der.status != 0) {
-    return Identity(false, "openssl x509: " + string.fromBytes(der.stderr), u8[0](), u8[0]());
+    return Identity(false, "openssl x509: " + string.fromBytes(der.stderr), u8[](), u8[]());
   }
   Exec key = cli.exec("openssl",
-                      string[]("pkey", "-in", "packages/tls/test/data/ec_leaf.key", "-text",
-                               "-noout"), u8[0]()).wait();
+                      [
+                               "pkey", "-in", "packages/tls/test/data/ec_leaf.key", "-text",
+                               "-noout"
+                      ], u8[]()).wait();
   if (!key.ran() || key.status != 0) {
-    return Identity(false, "openssl pkey: " + string.fromBytes(key.stderr), u8[0](), u8[0]());
+    return Identity(false, "openssl pkey: " + string.fromBytes(key.stderr), u8[](), u8[]());
   }
   // The `priv:` block, which is the scalar as colon-separated hex over several lines.
   string text = string.fromBytes(key.stdout);
   i32 start = text.indexOf("priv:");
-  if (start < 0) { return Identity(false, "no priv: block in the key", u8[0](), u8[0]()); }
+  if (start < 0) { return Identity(false, "no priv: block in the key", u8[](), u8[]()); }
   string rest = text.slice(start + 5, text.len());
   i32 stop = rest.indexOf("pub:");
   string block = stop < 0 ? rest : rest.slice(0, stop);
@@ -145,12 +149,12 @@ struct Got {
 /** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
 Got receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny(i32[](p.id), ms) < 0) {
+  if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
-    return Got(false, u8[0](), "", 0);
+    return Got(false, u8[](), "", 0);
   }
   Datagram d = p.wait();
-  if (d.error != "") { return Got(false, u8[0](), "", 0); }
+  if (d.error != "") { return Got(false, u8[](), "", 0); }
   return Got(true, d.bytes, d.peer, d.port);
 }
 
@@ -204,7 +208,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   // `sigK` is a fixed nonce, which is safe *here* because the key is a test fixture and the message
   // differs every run. In a program a repeated ECDSA nonce with two different messages publishes the
   // private key, which is why this is a constant in a test and must never become one anywhere else.
-  u8[] signed = cat(u8[][](clientRandom, serverRandom(), params));
+  u8[] signed = cat([clientRandom, serverRandom(), params]);
   u8[] signature = signEcdsaDer(me.priv, signed, sigK());
   t.isTrue(signature.len() > 0, "the ECDSA nonce produced a usable signature");
   if (signature.len() > 0) {
@@ -233,9 +237,9 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 4, doneMsg)).wait();
 
   // ── Their ClientKeyExchange, ChangeCipherSpec and Finished ───────────────────
-  u8[] clientKey = u8[0]();
-  u8[] ckeMsg = u8[0]();
-  u8[] finishedData = u8[0]();
+  u8[] clientKey = u8[]();
+  u8[] ckeMsg = u8[]();
+  u8[] finishedData = u8[]();
   i32 finishedAt = -1;
   bool sawCcs = false;
   for (i32 round = 0; round < 6 && finishedAt < 0; round++) {
@@ -286,7 +290,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   u8[] clientIv = slice(block, 32, 36);
   u8[] serverIv = slice(block, 36, 40);
 
-  u8[] transcript = cat(u8[][](clientHelloMsg, shMsg, certMsg, skeMsg, doneMsg, ckeMsg));
+  u8[] transcript = cat([clientHelloMsg, shMsg, certMsg, skeMsg, doneMsg, ckeMsg]);
   u8[] theirFinished = openedAt(finishedData, finishedAt, clientWriteKey, clientIv);
   t.isTrue(theirFinished.len() > 0,
            "their Finished did not authenticate under the keys we derived — the master secret, the " +
@@ -300,8 +304,8 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
           "their verify_data is what our transcript computes — so both ends hashed the same handshake");
 
   // ── Our ChangeCipherSpec and Finished ────────────────────────────────────────
-  u8[] ourFinished = finishedMessage(master, cat(u8[][](transcript, theirFinished)), 5, false);
-  u8[] one = u8[1]();
+  u8[] ourFinished = finishedMessage(master, cat([transcript, theirFinished]), 5, false);
+  u8[] one = u8[].filled(1, 0);
   one[0] = 1;
   cli.sendTo(sock.handle, first.peer, first.port, recordOf(20, 0, 5, one)).wait();
   cli.sendTo(sock.handle, first.peer, first.port,
@@ -341,7 +345,7 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
   if (!client.ok) { cli.closeSocket(sock.handle); return t.report(); }
 
   i32 dropped = 0;
-  string[] sequences = string[16](fill: "");
+  string[] sequences = string[].filled(16, "");
   i32 seen = 0;
   for (i32 round = 0; round < 24 && !peerEstablished(peer); round++) {
     Got got = receiveWithin(core, cli, sock, 6000);

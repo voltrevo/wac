@@ -56,10 +56,10 @@ bool memberBool(JsonValue v, string key) {
 /** A member that is an array of `0x…` strings, as bytes. Empty when absent. */
 u8[][] memberBytes(JsonValue v, string key) {
   JsonValue? found = member(v, key);
-  if (found is null) { return u8[][0](fill: u8[0]()); }
+  if (found is null) { return u8[][].filled(0, u8[]()); }
   match (found!) {
     Array(items): {
-      u8[][] out = u8[][items.len()](fill: u8[0]());
+      u8[][] out = u8[][].filled(items.len(), u8[]());
       for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
           Str(bytes): { out[i] = un(string.fromBytes(bytes)); }
@@ -68,7 +68,7 @@ u8[][] memberBytes(JsonValue v, string key) {
       }
       return out;
     }
-    default: { return u8[][0](fill: u8[0]()); }
+    default: { return u8[][].filled(0, u8[]()); }
   }
 }
 
@@ -87,7 +87,7 @@ JsonObject? load(T t, Cli cli, string name) {
   }
 }
 
-u8[] noEntropy() { return u8[0](); }
+u8[] noEntropy() { return u8[](); }
 
 /** Whether `name` contains `needle`. */
 bool contains(string name, string needle) {
@@ -197,7 +197,7 @@ export string test_the_batch_weights_are_what_reject_a_forged_set(Core core, Cli
   // Sanity: the members really are distinct signatures on distinct messages.
   t.isFalse(hex(msgs[0]) == hex(msgs[1]), "messages 0 and 1 are identical");
 
-  u8[][] swapped = u8[][sigs.len()](fill: u8[0]());
+  u8[][] swapped = u8[][].filled(sigs.len(), u8[]());
   for (i32 i = 0; i < sigs.len(); i++) { swapped[i] = sigs[i]; }
   swapped[0] = sigs[1];
   swapped[1] = sigs[0];
@@ -212,7 +212,7 @@ export string test_entropy_changes_the_weights_but_not_the_verdict(Core core, Cl
   T t = T.create();
   JsonObject? cases = load(t, cli, "eth_batch_verify");
   if (cases is null) { return t.report(); }
-  u8[][] entropies = u8[][](u8[](1), u8[](0xff, 0x00, 0x7a), u8[0]());
+  u8[][] entropies = [[1] as u8[], [0xff, 0x00, 0x7a] as u8[], u8[]()];
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
@@ -234,13 +234,13 @@ export string test_aggregation_refuses_an_empty_list_and_a_bad_member_and_round_
   T t = T.create();
   JsonObject? cases = load(t, cli, "eth_fast_aggregate_verify");
   if (cases is null) { return t.report(); }
-  t.eqI32(blsAggregate(u8[][0](fill: u8[0]())).len(), 0,
+  t.eqI32(blsAggregate(u8[][].filled(0, u8[]())).len(), 0,
           "aggregating nothing produced a signature");
-  t.eqI32(blsAggregate(u8[][](u8[96]())).len(), 0,
+  t.eqI32(blsAggregate([u8[].filled(96, 0)]).len(), 0,
           "aggregating an all-zero (non-canonical) signature produced one");
 
   // Aggregating one valid signature must give that signature back: a sum with the identity.
-  u8[] sig = u8[0]();
+  u8[] sig = u8[]();
   for (i32 i = 0; i < cases!.len() && sig.len() == 0; i++) {
     JsonValue c = cases!.at(i).value;
     JsonValue? input = member(c, "input");
@@ -249,15 +249,15 @@ export string test_aggregation_refuses_an_empty_list_and_a_bad_member_and_round_
   }
   t.isTrue(sig.len() > 0, "no valid fixture");
   if (sig.len() == 0) { return t.report(); }
-  t.eqStr(hex(blsAggregate(u8[][](sig))), hex(sig), "aggregating one signature changed it");
+  t.eqStr(hex(blsAggregate([sig])), hex(sig), "aggregating one signature changed it");
   return t.report();
 }
 
 /** A copy of `list` with the first byte of entry `at` flipped. */
 u8[][] flipped(u8[][] list, i32 at) {
-  u8[][] out = u8[][list.len()](fill: u8[0]());
+  u8[][] out = u8[][].filled(list.len(), u8[]());
   for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
-  u8[] one = u8[list[at].len()]();
+  u8[] one = u8[].filled(list[at].len(), 0);
   for (i32 i = 0; i < one.len(); i++) { one[i] = list[at][i]; }
   one[0] = one[0] ^ 1;
   out[at] = one;
@@ -298,16 +298,19 @@ export string test_a_batch_weight_depends_on_the_whole_batch_not_just_its_positi
 
   // Every input to the transcript must move it. A flipped bit in any of the three lists, or in the
   // entropy, or a different index.
-  string[] what = string[]("a public key", "a later public key", "a message", "a signature",
-                           "a later signature", "the entropy", "the term index");
-  string[] moved = string[](
+  string[] what = [
+                           "a public key", "a later public key", "a message", "a signature",
+                           "a later signature", "the entropy", "the term index"
+  ];
+  string[] moved = [
     weight(flipped(pks, 0), msgs, sigs, noEntropy(), 0),
     weight(flipped(pks, 1), msgs, sigs, noEntropy(), 0),
     weight(pks, flipped(msgs, 0), sigs, noEntropy(), 0),
     weight(pks, msgs, flipped(sigs, 0), noEntropy(), 0),
     weight(pks, msgs, flipped(sigs, 1), noEntropy(), 0),
-    weight(pks, msgs, sigs, u8[](7), 0),
-    weight(pks, msgs, sigs, noEntropy(), 1));
+    weight(pks, msgs, sigs, [7] as u8[], 0),
+    weight(pks, msgs, sigs, noEntropy(), 1)
+  ];
   for (i32 i = 0; i < what.len(); i++) {
     t.isFalse(moved[i] == base,
               "changing " + what[i] + " left the weight unchanged — the batch is not bound into " +

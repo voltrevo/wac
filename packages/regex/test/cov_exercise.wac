@@ -51,14 +51,15 @@ import {
 
 
 string[] subjects() {
-  return string[](
+  return [
     "", "a", "b", "ab", "ba", "aa", "abc", "abcabc", "aaa", "aaaa", "xay", "xaby",
     "a b", "  ", "a1b2", "123", "abc123", "_x_", "A", "aA", "\n", "a\nb", "-", "]", "[",
-    "aaaaaaaaaa", "abababab", "cba", "cab", "xyz");
+    "aaaaaaaaaa", "abababab", "cba", "cab", "xyz"
+  ];
 }
 
 string[] patterns() {
-  return string[](
+  return [
     "a", "abc", "", ".", "..", "a.c", ".*", "^a", "a$", "^a$", "^$", "^", "$", "^abc$",
     "[abc]", "[^abc]", "[a-c]", "[^a-c]", "[a-cx-z]", "[-a]", "[a-]", "[]]", "[^]]", "[]",
     "[0-9]", "[a-zA-Z]", "[\\n]", "[\\t]", "[.]", "[*]", "[a\\-c]", "[abc]+", "[^a]*",
@@ -76,26 +77,29 @@ string[] patterns() {
     // reached it by luck out of 3,000 generated patterns and this port did not — two branches,
     // found by diffing the uncovered lists. Written down rather than left to the generator,
     // because a branch reached by chance is one a reordered corpus loses again.
-    "[ab][cd][ef][gh][ij][kl][mn][op][qr]");
+    "[ab][cd][ef][gh][ij][kl][mn][op][qr]"
+  ];
 }
 
 /** Patterns the compiler must refuse, which is the only way to reach the failure paths. */
 string[] refused() {
-  return string[](
+  return [
     "(?=a)", "(?!a)", "(?<=a)", "(?<name>a)", "\\1", "(a)\\1", "*a", "+a", "?a", "(a", "a)",
     "[a", "[z-a]", "a{2,1}", "\\", "[\\D]", "[\\W]", "[\\S]", "^?", "$*", "\\b+", "[\\",
     // `"a{" + "9".repeat(4) + "}"` — a repeat count too large to be one.
-    "a{9999}", "(a){500}{500}");
+    "a{9999}", "(a){500}{500}"
+  ];
 }
 
 string[] atoms() {
-  return string[](
+  return [
     "a", "b", "c", ".", "\\d", "\\w", "\\s", "[ab]", "[^a]", "[a-c]", "x", "1", "_",
-    "(a)", "(a|b)", "(?:ab)", "\\.", "^", "$", "\\b");
+    "(a)", "(a|b)", "(?:ab)", "\\.", "^", "$", "\\b"
+  ];
 }
 
 string[] quants() {
-  return string[]("", "", "", "*", "+", "?", "*?", "+?", "??", "{2}", "{1,2}", "{0,2}", "{2,}");
+  return ["", "", "", "*", "+", "?", "*?", "+?", "??", "{2}", "{1,2}", "{0,2}", "{2,}"];
 }
 
 /**
@@ -161,8 +165,8 @@ export i32 main(Core core, Cli cli) {
   // step budget is a count of instructions, this is the *depth* the pattern asks for. Nothing called
   // `execBudget` at all before `issues/system/0205` — the probe exported it and every caller above
   // takes the default — so all three refusals were measured by nothing.
-  i32[] budgets = i32[](1, 2, 3, 4, 8, 16, 64);
-  string[] deep = string[]("(a|a|aa)+b", "(a*)*b", "((a)|(b))*c", "a?a?a?a?aaaa", "(a|b|c|d|e)+z");
+  i32[] budgets = [1, 2, 3, 4, 8, 16, 64];
+  string[] deep = ["(a|a|aa)+b", "(a*)*b", "((a)|(b))*c", "a?a?a?a?aaaa", "(a|b|c|d|e)+z"];
   for (i32 i = 0; i < deep.len(); i++) {
     for (i32 b = 0; b < budgets.len(); b++) {
       seen = seen + execBudget(deep[i].toBytes(), "aaaaaaaaab".toBytes(), 0, budgets[b]).len();
@@ -180,7 +184,7 @@ export i32 main(Core core, Cli cli) {
   // Both entry points get every pattern because a bracket expression means the same thing in both
   // dialects and the *operators* are what differ, so running one and not the other would leave half
   // of `basic.wac`'s translation table unreached.
-  string[] dp = string[](
+  string[] dp = [
     // The six characters whose spelling is inverted between the dialects, both ways round.
     "a|b", "a\\|b", "a+", "a\\+", "a?", "a\\?", "a{2}", "a\\{2\\}",
     "(a)", "\\(a\\)", "\\(ab\\)*", "a*", "*a", "^*a", "\\(*a\\)",
@@ -193,11 +197,13 @@ export i32 main(Core core, Cli cli) {
     "[^[:digit:]]", "[[:alpha:][:digit:]]", "[[:digit:]abc]", "[a-c[:space:]]",
     "[]]", "[a-]", "[-a]", "[.a.]", "[=a=]", "[[:foo:]]", "[[:alpha:]", "[a",
     // GNU's backslash anchors, which are the only thing the engine itself learnt.
-    "\\<a", "a\\>", "\\<abc\\>", "\\`a", "a\\'", "\\`abc\\'", "\\<", "\\>", "x\\<y");
-  string[] ds = string[](
+    "\\<a", "a\\>", "\\<abc\\>", "\\`a", "a\\'", "\\`abc\\'", "\\<", "\\>", "x\\<y"
+  ];
+  string[] ds = [
     "", "a", "b", "ab", "abc", "a|b", "a+b", "a?b", "a{2}", "aa", "aab",
     "(a)", "*a", "a.b", "axb", "a\\b", "abab", "ac", "]a", "aaa", "A", "1", " ", "\t",
-    "a b", "-a-", "_a", "x<y", "x`y", "a'");
+    "a b", "-a-", "_a", "x<y", "x`y", "a'"
+  ];
   for (i32 i = 0; i < dp.len(); i++) {
     u8[] pb = dp[i].toBytes();
     // What a basic pattern translates to, which is the table `basic.wac` is.
@@ -209,8 +215,10 @@ export i32 main(Core core, Cli cli) {
   }
 
   // The refusal paths, which are where a dialect says whose problem a pattern is.
-  string[] why = string[]("\\(a", "a\\)", "[a", "[z-a]", "a\\{2,1\\}", "\\", "(?=a)", "\\1",
-                          "[[:foo:]]");
+  string[] why = [
+                          "\\(a", "a\\)", "[a", "[z-a]", "a\\{2,1\\}", "\\", "(?=a)", "\\1",
+                          "[[:foo:]]"
+  ];
   for (i32 i = 0; i < why.len(); i++) {
     u8[] pb = why[i].toBytes();
     seen = seen + whyBasic(pb).len() + whyExtended(pb).len();

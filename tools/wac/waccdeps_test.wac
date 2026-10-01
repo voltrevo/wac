@@ -64,7 +64,7 @@ bool startsWith(string s, string p) {
  * recorded as the spec itself rather than as a path, because nothing needs to read it.
  */
 string[] graphOf(T t, Cli cli, string entry, i32 cap) {
-  string[] paths = string[cap](fill: "");
+  string[] paths = string[].filled(cap, "");
   i32 n = 1;
   paths[0] = entry;
   for (i32 i = 0; i < n; i++) {
@@ -88,7 +88,7 @@ string[] graphOf(T t, Cli cli, string entry, i32 cap) {
       n = n + 1;
     }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = paths[i]; }
   return out;
 }
@@ -98,7 +98,7 @@ export string test_the_compilers_graph_is_inside_its_own_package(Core core, Cli 
   string[] g = graphOf(t, cli, "packages/wacc/src/api.wac", 256);
   // **Sanctioned, with the reason.** `print.wac` renders the AST and needs a byte buffer; `Buf` is
   // inside the reference's subset, which is why the bootstrap has always worked with it here.
-  string[] allowed = string[]("packages/bytes/src/buf.wac");
+  string[] allowed = ["packages/bytes/src/buf.wac"];
   string outside = "";
   i32 count = 0;
   for (i32 i = 0; i < g.len(); i++) {

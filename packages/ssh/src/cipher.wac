@@ -62,7 +62,7 @@ export i32 aeadPaddingFor(i32 n, i32 block) {
  * so the upper half is always zero in practice.
  */
 u8[] nonceFor(i32 seq) {
-  u8[] nonce = u8[12]();
+  u8[] nonce = u8[].filled(12, 0);
   nonce[8] = (seq >>> 24) & 255;
   nonce[9] = (seq >>> 16) & 255;
   nonce[10] = (seq >>> 8) & 255;
@@ -72,14 +72,14 @@ u8[] nonceFor(i32 seq) {
 
 /** K_2 — the first half. Encrypts the payload and keys the MAC. */
 u8[] payloadKey(u8[] key) {
-  u8[] k = u8[32]();
+  u8[] k = u8[].filled(32, 0);
   k.copyFrom(key, 0, 0, 32);
   return k;
 }
 
 /** K_1 — the second half. Encrypts the length field and nothing else. */
 u8[] lengthKey(u8[] key) {
-  u8[] k = u8[32]();
+  u8[] k = u8[].filled(32, 0);
   k.copyFrom(key, 32, 0, 32);
   return k;
 }
@@ -93,7 +93,7 @@ u8[] lengthKey(u8[] key) {
  */
 u8[] macKey(u8[] key, i32 seq) {
   u8[] block = chachaBlock(payloadKey(key), 0 as! u32, nonceFor(seq));
-  u8[] k = u8[32]();
+  u8[] k = u8[].filled(32, 0);
   k.copyFrom(block, 0, 0, 32);
   return k;
 }
@@ -132,7 +132,7 @@ export u8[] sealBody(u8[] key, i32 seq, u8[] body) {
   u8[] nonce = nonceFor(seq);
   i32 packetLength = body.len();
 
-  u8[] lengthPlain = u8[4]();
+  u8[] lengthPlain = u8[].filled(4, 0);
   lengthPlain[0] = (packetLength >>> 24) & 255;
   lengthPlain[1] = (packetLength >>> 16) & 255;
   lengthPlain[2] = (packetLength >>> 8) & 255;
@@ -159,7 +159,7 @@ export u8[] sealBody(u8[] key, i32 seq, u8[] body) {
 export i32 peekLength(u8[] key, i32 seq, u8[] src, i32 at) {
   if (key.len() != keyLength()) { trap; }
   if (at < 0 || at + 4 > src.len()) { return -1; }
-  u8[] first = u8[4]();
+  u8[] first = u8[].filled(4, 0);
   first.copyFrom(src, at, 0, 4);
   u8[] plain = chacha20(lengthKey(key), 0 as! u32, nonceFor(seq), first);
   return (plain[0] << 24) | (plain[1] << 16) | (plain[2] << 8) | plain[3];
@@ -188,17 +188,17 @@ export struct Plain {
  */
 export Plain open(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
   if (key.len() != keyLength()) { trap; }
-  if (at < 0 || end > src.len() || at > end) { return Plain(Opened.Bad, u8[0](), 0); }
-  if (end - at < 4) { return Plain(Opened.Incomplete, u8[0](), 0); }
+  if (at < 0 || end > src.len() || at > end) { return Plain(Opened.Bad, u8[](), 0); }
+  if (end - at < 4) { return Plain(Opened.Incomplete, u8[](), 0); }
 
   i32 packetLength = peekLength(key, seq, src, at);
   // Bounded before it is used for anything. The value is attacker-chosen and unauthenticated at
   // this point; a packet must at least carry its padding-length byte and four bytes of padding.
-  if (packetLength < 5 || packetLength > maxPacket) { return Plain(Opened.Bad, u8[0](), 0); }
+  if (packetLength < 5 || packetLength > maxPacket) { return Plain(Opened.Bad, u8[](), 0); }
   i32 total = 4 + packetLength + tagLength();
-  if (end - at < total) { return Plain(Opened.Incomplete, u8[0](), 0); }
+  if (end - at < total) { return Plain(Opened.Incomplete, u8[](), 0); }
 
-  u8[] authenticated = u8[4 + packetLength]();
+  u8[] authenticated = u8[].filled(4 + packetLength, 0);
   authenticated.copyFrom(src, at, 0, 4 + packetLength);
   u8[] want = poly1305(macKey(key, seq), authenticated);
 
@@ -206,16 +206,16 @@ export Plain open(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
   for (i32 i = 0; i < tagLength(); i++) {
     diff = diff | (want[i] ^ src[at + 4 + packetLength + i]);
   }
-  if (diff != 0) { return Plain(Opened.Bad, u8[0](), 0); }
+  if (diff != 0) { return Plain(Opened.Bad, u8[](), 0); }
 
-  u8[] encBody = u8[packetLength]();
+  u8[] encBody = u8[].filled(packetLength, 0);
   encBody.copyFrom(src, at + 4, 0, packetLength);
   u8[] body = chacha20(payloadKey(key), 1 as! u32, nonceFor(seq), encBody);
 
   i32 padLength = body[0];
-  if (padLength < 4 || padLength + 1 > packetLength) { return Plain(Opened.Bad, u8[0](), 0); }
+  if (padLength < 4 || padLength + 1 > packetLength) { return Plain(Opened.Bad, u8[](), 0); }
   i32 payloadLength = packetLength - padLength - 1;
-  u8[] payload = u8[payloadLength]();
+  u8[] payload = u8[].filled(payloadLength, 0);
   payload.copyFrom(body, 1, 0, payloadLength);
   return Plain(Opened.Ok, payload, total);
 }

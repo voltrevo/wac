@@ -148,7 +148,7 @@ string headerText(u8[] src, Lexed lexed, i32 nameTok) {
   if (tokenTextOf(src, lexed, back) != "export") { return ""; }
   i32 from = lexed.tokens[back * tokenStride() + 1];
   i32 to = lexed.tokens[close * tokenStride() + 1] + lexed.tokens[close * tokenStride() + 2];
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < to - from; i++) { out[i] = src[from + i]; }
   return norm(string.fromBytes(out));
 }
@@ -227,7 +227,7 @@ Decls declarations(Core core, Cli cli) {
 /** Every package's `README.md` that git tracks. */
 string[] readmes(Core core, Cli cli) {
   string[] all = tracked(core, cli);
-  string[] hit = string[256](fill: "");
+  string[] hit = string[].filled(256, "");
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
     string p = all[i];
@@ -236,7 +236,7 @@ string[] readmes(Core core, Cli cli) {
     if (pkgOf(p) == "" || contains(p.slice(9, p.len() - 10), "/")) { continue; }
     if (n < hit.len()) { hit[n] = p; n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = hit[i]; }
   return out;
 }
@@ -307,7 +307,7 @@ bool isKeyword(string name) {
 
 /** Every ```wac fence body in `text`. */
 string[] wacFences(string text) {
-  string[] out = string[64](fill: "");
+  string[] out = string[].filled(64, "");
   i32 n = 0;
   i32 at = 0;
   while (at < text.len() && n < out.len()) {
@@ -320,7 +320,7 @@ string[] wacFences(string text) {
     n = n + 1;
     at = open + rel2 + 3;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

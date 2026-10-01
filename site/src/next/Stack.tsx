@@ -16,7 +16,7 @@ import { c, font, space } from "./tokens";
 
 const EX_WC = `// packages/platform/example/wc.wac — a complete application, with no TypeScript beside it
 export i32 main(Core core, Cli cli) {
-  u8[] data = u8[0]();
+  u8[] data = u8[].filled(0, 0);
   if (cli.argCount().wait() < 1) {
     data = cli.readStdin().wait();
   } else {
@@ -75,13 +75,13 @@ u8[] xy = x25519(ephemeralPriv, serverEph);
 u8[] xb = x25519(ephemeralPriv, onionKey);
 // A small-order Y or B makes the shared value all zero for every scalar, so an
 // attacker needs no private key at all. tor-spec says abort; nothing to salvage.
-if (allZero(xy) || allZero(xb)) { return u8[0](); }
+if (allZero(xy) || allZero(xb)) { return u8[].filled(0, 0); }
 
 // Constant time, because a caller may retry and a timing difference here leaks
 // which byte of AUTH was wrong.
 i32 diff = 0;
 for (i32 i = 0; i < 32; i++) { diff = diff | (expected[i] ^ auth[i]); }
-if (diff != 0) { return u8[0](); }`;
+if (diff != 0) { return u8[].filled(0, 0); }`;
 
 const EX_NETWORK = `network: all 4 nodes are up
 consensus verified: 1 of 1 authorities signed

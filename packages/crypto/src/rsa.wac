@@ -43,7 +43,7 @@ Big addSmall(Big a, i32 v) { return add(a, Big.fromU64(v as! u64)); }
 
 /** Big-endian bytes of `a`, left-padded to `len`. Traps if it does not fit. */
 export u8[] toBytes(Big a, i32 len) {
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   Big cur = a;
   Big base = Big.fromU64(256);
   for (i32 i = len - 1; i >= 0; i--) {
@@ -98,16 +98,22 @@ export Big modPow(Big base, Big exp, Big m) {
  */
 u8[] digestInfoPrefix(i32 hashLen) {
   if (hashLen == 32) {
-    return u8[](0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
-                0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20);
+    return [
+                0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+                0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20
+    ] as u8[];
   }
   if (hashLen == 48) {
-    return u8[](0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
-                0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30);
+    return [
+                0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+                0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30
+    ] as u8[];
   }
   if (hashLen == 64) {
-    return u8[](0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
-                0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40);
+    return [
+                0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+                0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40
+    ] as u8[];
   }
   trap;
 }
@@ -180,11 +186,11 @@ export bool rsaVerifyPkcs1(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen) {
  * every byte required rather than sought.
  */
 export u8[] rsaRecoverPkcs1(u8[] n, u8[] e, u8[] sig) {
-  if (sig.len() != n.len()) { return u8[0](); }
+  if (sig.len() != n.len()) { return u8[](); }
   Big modulus = fromBytes(n);
-  if (isZero(modulus)) { return u8[0](); }
+  if (isZero(modulus)) { return u8[](); }
   Big s = fromBytes(sig);
-  if (cmp(s, modulus) >= 0) { return u8[0](); }
+  if (cmp(s, modulus) >= 0) { return u8[](); }
 
   u8[] em = toBytes(modPow(s, fromBytes(e), modulus), n.len());
   // **Two bytes before reading two bytes.** `em` is as long as the modulus, and a one-byte modulus
@@ -193,19 +199,19 @@ export u8[] rsaRecoverPkcs1(u8[] n, u8[] e, u8[] sig) {
   // evaluation continues to `em[1]` and traps, from a function whose contract is that malformed
   // input comes back empty. GitHub issue 15. A real modulus is hundreds of bytes; the point is that
   // "real" is not something this can assume about an argument.
-  if (em.len() < 2) { return u8[0](); }
-  if (em[0] != 0x00 || em[1] != 0x01) { return u8[0](); }
+  if (em.len() < 2) { return u8[](); }
+  if (em[0] != 0x00 || em[1] != 0x01) { return u8[](); }
 
   // Walk the 0xFF run to its terminator. Anything other than 0xFF or the single 0x00 that
   // ends it is malformed, so the loop rejects rather than stopping early and hoping.
   i32 at = 2;
   while (at < em.len() && em[at] == 0xFF) { at++; }
-  if (at >= em.len()) { return u8[0](); }
-  if (em[at] != 0x00) { return u8[0](); }
-  if (at - 2 < 8) { return u8[0](); }
+  if (at >= em.len()) { return u8[](); }
+  if (em[at] != 0x00) { return u8[](); }
+  if (at - 2 < 8) { return u8[](); }
   at++;
 
-  u8[] out = u8[em.len() - at]();
+  u8[] out = u8[].filled(em.len() - at, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = em[at + i]; }
   return out;
 }
@@ -216,11 +222,11 @@ export u8[] rsaRecoverPkcs1(u8[] n, u8[] e, u8[] sig) {
  * A counter-mode hash: H(seed || 0), H(seed || 1), ... truncated to the length wanted.
  */
 u8[] mgf1(u8[] seed, i32 length, i32 hashLen) {
-  u8[] out = u8[length]();
+  u8[] out = u8[].filled(length, 0);
   i32 at = 0;
   i32 counter = 0;
   while (at < length) {
-    u8[] input = u8[seed.len() + 4]();
+    u8[] input = u8[].filled(seed.len() + 4, 0);
     for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
     input[seed.len()] = (counter >> 24) & 0xFF;
     input[seed.len() + 1] = (counter >> 16) & 0xFF;
@@ -270,9 +276,9 @@ export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 sa
   if (em[emLen - 1] != 0xBC) { return false; }
 
   i32 dbLen = emLen - hashLen - 1;
-  u8[] maskedDb = u8[dbLen]();
+  u8[] maskedDb = u8[].filled(dbLen, 0);
   for (i32 i = 0; i < dbLen; i++) { maskedDb[i] = em[i]; }
-  u8[] hSeed = u8[hashLen]();
+  u8[] hSeed = u8[].filled(hashLen, 0);
   for (i32 i = 0; i < hashLen; i++) { hSeed[i] = em[dbLen + i]; }
 
   // The unused leading bits of the first byte must be zero. Skipping this lets a
@@ -281,7 +287,7 @@ export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 sa
   if (unusedBits > 0 && (maskedDb[0] >> (8 - unusedBits)) != 0) { return false; }
 
   u8[] dbMask = mgf1(hSeed, dbLen, hashLen);
-  u8[] db = u8[dbLen]();
+  u8[] db = u8[].filled(dbLen, 0);
   for (i32 i = 0; i < dbLen; i++) { db[i] = maskedDb[i] ^ dbMask[i]; }
   if (unusedBits > 0) { db[0] = db[0] & (0xFF >> unusedBits); }
 
@@ -292,14 +298,14 @@ export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 sa
   diff = diff | (db[zeroEnd] ^ 0x01);
   if (diff != 0) { return false; }
 
-  u8[] salt = u8[saltLen]();
+  u8[] salt = u8[].filled(saltLen, 0);
   for (i32 i = 0; i < saltLen; i++) { salt[i] = db[zeroEnd + 1 + i]; }
 
   // H' = Hash(00 00 00 00 00 00 00 00 || mHash || salt), and the eight zero bytes are
   // not decoration: they are what stops a PSS signature being reinterpreted as a
   // signature over a different structure.
   u8[] mHash = digest(msg, hashLen);
-  u8[] mPrime = u8[8 + hashLen + saltLen]();
+  u8[] mPrime = u8[].filled(8 + hashLen + saltLen, 0);
   for (i32 i = 0; i < hashLen; i++) { mPrime[8 + i] = mHash[i]; }
   for (i32 i = 0; i < saltLen; i++) { mPrime[8 + hashLen + i] = salt[i]; }
   u8[] hPrime = digest(mPrime, hashLen);
@@ -367,8 +373,8 @@ export Big modPowSecret(Big base, Big exp, Big m, i32 bits) {
 u8[] padPkcs1(u8[] payload, i32 emLen) {
   // Eight 0xFF bytes minimum, plus the two leading bytes and the separator. Below that the padding
   // stops being padding, and PKCS#1 says so rather than leaving it to taste.
-  if (emLen < payload.len() + 11) { return u8[0](); }
-  u8[] em = u8[emLen]();
+  if (emLen < payload.len() + 11) { return u8[](); }
+  u8[] em = u8[].filled(emLen, 0);
   em[0] = 0x00;
   em[1] = 0x01;
   i32 padEnd = emLen - payload.len() - 1;
@@ -380,11 +386,11 @@ u8[] padPkcs1(u8[] payload, i32 emLen) {
 
 /** `s = EM^d mod n`, big-endian and left-padded to the modulus's width. Empty if `em` is empty. */
 u8[] rawSign(u8[] n, u8[] d, u8[] em) {
-  if (em.len() == 0) { return u8[0](); }
+  if (em.len() == 0) { return u8[](); }
   Big modulus = fromBytes(n);
-  if (isZero(modulus)) { return u8[0](); }
+  if (isZero(modulus)) { return u8[](); }
   Big m = fromBytes(em);
-  if (cmp(m, modulus) >= 0) { return u8[0](); }
+  if (cmp(m, modulus) >= 0) { return u8[](); }
   return toBytes(modPowSecret(m, fromBytes(d), modulus, bitLen(modulus)), n.len());
 }
 
@@ -400,7 +406,7 @@ u8[] rawSign(u8[] n, u8[] d, u8[] em) {
 export u8[] rsaSignPkcs1(u8[] n, u8[] d, u8[] msg, i32 hashLen) {
   u8[] prefix = digestInfoPrefix(hashLen);
   u8[] h = digest(msg, hashLen);
-  u8[] t = u8[prefix.len() + hashLen]();
+  u8[] t = u8[].filled(prefix.len() + hashLen, 0);
   for (i32 i = 0; i < prefix.len(); i++) { t[i] = prefix[i]; }
   for (i32 i = 0; i < hashLen; i++) { t[prefix.len() + i] = h[i]; }
   return rawSign(n, d, padPkcs1(t, n.len()));
@@ -441,7 +447,7 @@ export u8[] rsaSignRawPkcs1(u8[] n, u8[] d, u8[] payload) {
  */
 export u8[] rsaSignPss(u8[] n, u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
   Big modulus = fromBytes(n);
-  if (isZero(modulus)) { return u8[0](); }
+  if (isZero(modulus)) { return u8[](); }
 
   // emBits is one *less* than the modulus bit length, so the encoded value is always numerically
   // below the modulus without a comparison. That off-by-one is the whole reason PSS has a
@@ -449,25 +455,25 @@ export u8[] rsaSignPss(u8[] n, u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
   i32 emBits = bitLen(modulus) - 1;
   i32 emLen = (emBits + 7) / 8;
   i32 saltLen = salt.len();
-  if (emLen < hashLen + saltLen + 2) { return u8[0](); }
+  if (emLen < hashLen + saltLen + 2) { return u8[](); }
 
   // M' = eight zero bytes || mHash || salt. The zeros are not padding: they are what stops a PSS
   // signature being reinterpreted as a signature over some other structure that happens to start
   // with a hash.
   u8[] mHash = digest(msg, hashLen);
-  u8[] mPrime = u8[8 + hashLen + saltLen]();
+  u8[] mPrime = u8[].filled(8 + hashLen + saltLen, 0);
   for (i32 i = 0; i < hashLen; i++) { mPrime[8 + i] = mHash[i]; }
   for (i32 i = 0; i < saltLen; i++) { mPrime[8 + hashLen + i] = salt[i]; }
   u8[] h = digest(mPrime, hashLen);
 
   // DB = zeros || 0x01 || salt, masked by MGF1 over H.
   i32 dbLen = emLen - hashLen - 1;
-  u8[] db = u8[dbLen]();
+  u8[] db = u8[].filled(dbLen, 0);
   db[dbLen - saltLen - 1] = 0x01;
   for (i32 i = 0; i < saltLen; i++) { db[dbLen - saltLen + i] = salt[i]; }
   u8[] dbMask = mgf1(h, dbLen, hashLen);
 
-  u8[] em = u8[emLen]();
+  u8[] em = u8[].filled(emLen, 0);
   for (i32 i = 0; i < dbLen; i++) { em[i] = db[i] ^ dbMask[i]; }
   for (i32 i = 0; i < hashLen; i++) { em[dbLen + i] = h[i]; }
   em[emLen - 1] = 0xBC;
@@ -481,7 +487,7 @@ export u8[] rsaSignPss(u8[] n, u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
   // A modulus whose top byte is zero makes emLen one short of the modulus length; `rawSign` wants a
   // block it can turn into an integer, and a leading zero is what an integer does not mind.
   if (emLen < n.len()) {
-    u8[] padded = u8[n.len()]();
+    u8[] padded = u8[].filled(n.len(), 0);
     for (i32 i = 0; i < emLen; i++) { padded[n.len() - emLen + i] = em[i]; }
     return rawSign(n, d, padded);
   }

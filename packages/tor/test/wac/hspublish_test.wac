@@ -65,10 +65,10 @@ export string test_the_fetch_name_is_the_one_the_directory_chose(Core core, Cli 
           "our fetch path ends at the name tor filed the descriptor under");
 
   // And it is derived, not copied: another key gives another name.
-  u8[] other = u8[32](fill: 7);
+  u8[] other = u8[].filled(32, 7);
   t.isTrue(descriptorPath(other) != descriptorPath(blindedKeyBytes(cli)),
            "a different blinded key is a different name");
-  t.eqStr(descriptorPath(u8[31]()), "", "a key that is not 32 bytes names nothing");
+  t.eqStr(descriptorPath(u8[].filled(31, 0)), "", "a key that is not 32 bytes names nothing");
   t.eqStr(publishPath(), "/tor/hs/3/publish", "and publication has no key in it at all");
   return t.report();
 }
@@ -97,7 +97,7 @@ export string test_the_upload_is_shaped_like_tors(Core core, Cli cli) {
   t.eqI32(req.len() - blank - 4, desc.len(), "nothing follows the descriptor");
   t.eqBytes(slice(req, blank + 4, req.len()), desc, "and the body is the descriptor verbatim");
 
-  t.eqI32(find(hsPublishRequest(u8[0](), "x:1"), "Content-Length: 0\r\n") > 0 ? 1 : 0, 1,
+  t.eqI32(find(hsPublishRequest(u8[](), "x:1"), "Content-Length: 0\r\n") > 0 ? 1 : 0, 1,
           "an empty body still counts itself");
   return t.report();
 }
@@ -142,12 +142,12 @@ export string test_a_publish_target_is_recognised(Core core, Cli cli) {
 export string test_what_was_stored_is_what_is_served(Core core, Cli cli) {
   T t = T.create();
   u8[] desc = descriptorBytes(cli);
-  u8[][] descs = u8[][1]();
+  u8[][] descs = u8[][].defaulted(1);
   descs[0] = desc;
-  u8[][] keys = u8[][1]();
+  u8[][] keys = u8[][].defaulted(1);
   keys[0] = blindedKeyBytes(cli);
-  DirDocuments docs = DirDocuments(u8[0](), u8[0](), u8[0](), u8[0](), u8[][0](), u8[0](), u8[0](),
-                                   u8[][0](), descs, keys);
+  DirDocuments docs = DirDocuments(u8[](), u8[](), u8[](), u8[](), u8[][](), u8[](), u8[](),
+                                   u8[][](), descs, keys);
 
   string path = descriptorPath(blindedKeyBytes(cli));
   t.eqI32(dirRoute(path.toBytes(), docs).status, 200, "the descriptor is there under its own name");
@@ -157,8 +157,8 @@ export string test_what_was_stored_is_what_is_served(Core core, Cli cli) {
           404, "another key is not this descriptor");
   t.eqI32(dirRoute("/tor/hs/3/".toBytes(), docs).status, 404, "and no key is nothing");
 
-  DirDocuments empty = DirDocuments(u8[0](), u8[0](), u8[0](), u8[0](), u8[][0](), u8[0](), u8[0](),
-                                    u8[][0](), u8[][0](), u8[][0]());
+  DirDocuments empty = DirDocuments(u8[](), u8[](), u8[](), u8[](), u8[][](), u8[](), u8[](),
+                                    u8[][](), u8[][](), u8[][]());
   t.eqI32(dirRoute(path.toBytes(), empty).status, 404,
           "a directory holding nothing says so rather than serving an empty body");
   return t.report();
@@ -207,7 +207,7 @@ string itoa(i32 v) {
   string out = "";
   i32 x = v;
   while (x > 0) {
-    u8[] d = u8[1]();
+    u8[] d = u8[].filled(1, 0);
     d[0] = 48 + (x % 10);
     out = string.fromBytes(d) + out;
     x = x / 10;

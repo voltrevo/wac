@@ -59,7 +59,7 @@ const string PROBE = "packages/platform/test/wac/loadprobe.wac";
 
 /** The module whose exports get called, built once by the `wac` binary. */
 string loadee(Cli cli) {
-  return builtProgram(cli, "packages/platform/test/wac/loadee.wac", "loadee", string[0](fill: ""));
+  return builtProgram(cli, "packages/platform/test/wac/loadee.wac", "loadee", string[].filled(0, ""));
 }
 
 /** One line per call, in `loadprobe.wac`'s order. Compared verbatim, so a shape cannot move quietly. */
@@ -84,7 +84,7 @@ struct Ran {
 }
 
 Ran run(Cli cli, string bin, string[] args) {
-  Exec r = cli.exec(bin, args, u8[0]()).wait();
+  Exec r = cli.exec(bin, args, u8[]()).wait();
   if (!r.ran()) { return Ran(-1, "", "did not run — " + r.error); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
@@ -143,18 +143,18 @@ export string test_all_four_hosts_load_one_module_and_answer_the_same(Core core,
   t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
   if (!cli.stat(mod).wait().isFile) { return t.report(); }
 
-  string[] grants = string[]("--allow-read");
+  string[] grants = ["--allow-read"];
   string deno = builtByDeno(cli, PROBE, "loadprobe-deno", grants, "deno", false);
   string node = builtByDeno(cli, PROBE, "loadprobe-node", grants, "node", false);
   t.isTrue(cli.stat(deno).wait().isFile, "the Deno probe built");
   t.isTrue(cli.stat(node).wait().isFile, "the Node probe built");
   if (!cli.stat(deno).wait().isFile || !cli.stat(node).wait().isFile) { return t.report(); }
 
-  Ran d = run(cli, deno, string[](mod));
+  Ran d = run(cli, deno, [mod]);
   t.eqI32(d.code, 0, "the Deno probe ran: " + d.err);
   t.eqStr(d.out, expected(), "Deno: " + d.err);
 
-  Ran n = run(cli, "node", string[](node, mod));
+  Ran n = run(cli, "node", [node, mod]);
   t.eqI32(n.code, 0, "the Node probe ran: " + n.err);
   // **Against Deno's, not only against the expectation.** The two share `provider.ts` — one
   // implementation, two runtimes — so this row is what would catch a difference in the *runtime*
@@ -170,10 +170,10 @@ export string test_all_four_hosts_load_one_module_and_answer_the_same(Core core,
     core.warn("   skipping the wasmtime column: " + why);
     return t.report();
   }
-  string probe = builtProgram(cli, PROBE, "loadprobe-native", string[]("--allow-read"));
+  string probe = builtProgram(cli, PROBE, "loadprobe-native", ["--allow-read"]);
   t.isTrue(cli.stat(probe).wait().isFile, "the native probe module built");
   if (!cli.stat(probe).wait().isFile) { return t.report(); }
-  Ran w = run(cli, nativeHost(cli), string[](probe, mod));
+  Ran w = run(cli, nativeHost(cli), [probe, mod]);
   t.eqI32(w.code, 0, "the wasmtime probe ran: " + w.err);
   t.eqStr(w.out, d.out, "wacland said the same as Deno");
   return t.report();

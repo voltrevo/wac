@@ -60,7 +60,7 @@ export struct ReplayCache {
   i32 capacity;
 
   ReplayCache create(i64 horizon, i32 capacity) {
-    return ReplayCache(u8[][capacity](), i64[capacity](), 0, horizon, capacity);
+    return ReplayCache(u8[][].defaulted(capacity), i64[].filled(capacity, 0), 0, horizon, capacity);
   }
 }
 

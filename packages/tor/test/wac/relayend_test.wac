@@ -2,8 +2,8 @@
 //
 // **Two halves that had never been introduced.** `relayd.wac` ends a stream by writing a one-byte
 // reason; `socks5.wac`'s `replyForEndReason` turns that byte into the reply a client shows a person.
-// Both were tested — and `socks5_test.wac` tested its half against **hand-made bytes**, `u8[](3)` and
-// `u8[](8)`, so nothing anywhere compared what the producer sends with what the consumer understands.
+// Both were tested — and `socks5_test.wac` tested its half against **hand-made bytes**, `[3] as u8[]` and
+// `[8] as u8[]`, so nothing anywhere compared what the producer sends with what the consumer understands.
 //
 // `issues/system/0255c` is what that hid: `endReason()` is `REASON_DONE` and *five of the seven*
 // places that ended a stream were failures. A client whose connection was refused was told its
@@ -89,10 +89,12 @@ export string test_our_own_limits_are_named_even_though_socks_collapses_them() {
 /** Every reason we can send renders as a name, so a log never shows a bare number. */
 export string test_every_reason_we_send_has_a_name() {
   T t = T.create();
-  u8[][] ours = u8[][](endReason(), endMisc(), endResourceLimit(), endProtocol(), endNotDirectory(),
+  u8[][] ours = [
+                       endReason(), endMisc(), endResourceLimit(), endProtocol(), endNotDirectory(),
                        endForFault(FAULT_REFUSED()), endForFault(FAULT_UNREACHABLE()),
                        endForFault(FAULT_TIMED_OUT()), endForFault(FAULT_NOT_GRANTED()),
-                       endForFault(FAULT_NONE()));
+                       endForFault(FAULT_NONE())
+  ];
   for (i32 i = 0; i < ours.len(); i++) {
     t.eqBool(ours[i].len() == 1, true, "a RELAY_END body is one byte");
     string name = endReasonName(ours[i]);

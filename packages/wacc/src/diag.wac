@@ -72,6 +72,9 @@ export string parseMessage(i32 code) {
   if (code == 36) { return "a match arm is written without case"; }
   if (code == 37) { return "the catch-all arm of a match is default"; }
   if (code == 38) { return "a match arm in statement position is a block"; }
+  if (code == 39) { return "an array's length is not part of its type"; }
+  if (code == 40) { return "an array with elements is written [a, b]"; }
+  if (code == 41) { return "an array type's factories are filled and defaulted"; }
   if (code == 33) { return "type arguments, and a value cannot follow them — parenthesise to compare"; }
   return "the parser refused this";
 }
@@ -140,6 +143,8 @@ export string checkMessage(i32 code) {
   if (code == 210) { return "the compiler's copy of that built-in does not export this name"; }
   if (code == 211) { return "`await` outside an `async` function"; }
   if (code == 212) { return "this cannot be awaited"; }
+  if (code == 214) { return "this array literal has no element type"; }
+  if (code == 215) { return "an array literal is not a value of this type"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -235,6 +240,7 @@ export string hintFor(i32 code) {
   if (code == 210) { return "`core/` and `std/` are carried inside the compiler — run `wac task gen:core` if you have edited one"; }
   if (code == 211) { return "declare the function `async`, or `.wait()` the ticket — which blocks"; }
   if (code == 212) { return "`await` takes a `Pending<T>`, which is what every capability hands back"; }
+  if (code == 214) { return "give it one: a typed slot, a typed element, or `[…] as T[]`"; }
   // Added where the help is real. A hint that only restates the message is worse than none: it
   // costs a line of everybody's terminal and teaches nothing, and the percentage it moves is a
   // measurement of itself.
@@ -255,7 +261,7 @@ export string hintFor(i32 code) {
   // rather than guessed at — `waccx.test.ts` reports the percentage and holds a floor under it.
   if (code == 22) { return "check the parent declares it, with the same parameters"; }
   if (code == 26) { return "a packed type is an array's element type — a variable or parameter is `i32`"; }
-  if (code == 28) { return "give one: `T[n](fill: v)` — a reference has no zero to start from"; }
+  if (code == 28) { return "give one: `T[].filled(n, v)` — a reference has no zero to start from"; }
   if (code == 29) { return "make the field nullable with `?` — a value of it has to end somewhere"; }
   if (code == 31) { return "a `break` inside a `switch` leaves the switch, and there is no loop here"; }
   if (code == 47) { return "only a function, a funcref or a method is callable"; }
@@ -275,6 +281,9 @@ export string parseHintFor(i32 code) {
   if (code == 36) { return "the pattern alone: `Some(v): …`"; }
   if (code == 37) { return "write `default:`"; }
   if (code == 38) { return "put the arm's statements in braces: `Some(v): { … }`"; }
+  if (code == 39) { return "write `T[].filled(n, value)`, or `T[].defaulted(n)` where `T` has a default"; }
+  if (code == 40) { return "the elements in brackets, `[a, b]` — or `[a, b] as T[]` to give them a type"; }
+  if (code == 41) { return "`T[].filled(n, value)` or `T[].defaulted(n)`"; }
   if (code == 25) { return "a field is `type name;` — the name comes after the type"; }
   // No hint for 30: the annotation already names the keyword and the position, and this file's rule
   // is that a hint with nothing to add is filler.
@@ -301,7 +310,7 @@ export string displayTypes(string s) {
 string wireFnTypes(string s) {
   if (s.indexOf("fn[") < 0) { return s; }
   string out = "";
-  bool[] isFn = bool[s.len() + 1](fill: false);
+  bool[] isFn = bool[].filled(s.len() + 1, false);
   i32 depth = 0;
   i32 i = 0;
   while (i < s.len()) {

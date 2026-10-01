@@ -17,8 +17,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { hashInto, namehash, dnsEncode, resolverCall, addrCall } from "../../src/ens.wac";
 import { ownerSlot, resolverSlot } from "../../src/registry.wac";
 
-u8[] short() { return u8[31](); }
-u8[] long() { return u8[40](); }
+u8[] short() { return u8[].filled(31, 0); }
+u8[] long() { return u8[].filled(40, 0); }
 u8[] node() { return namehash("foo.eth".toBytes()); }
 
 export string test_traps_hashing_into_a_short_node() { hashInto(short(), node()); return ""; }
@@ -36,7 +36,7 @@ export string test_traps_on_a_long_node_in_resolver_slot() { resolverSlot(long()
 
 /** A label of 256 bytes has no wire form: the length prefix is one byte. */
 export string test_traps_on_a_dns_label_of_256_bytes() {
-  u8[] name = u8[256]();
+  u8[] name = u8[].filled(256, 0);
   for (i32 i = 0; i < name.len(); i++) { name[i] = 'a'; }
   dnsEncode(name);
   return "";
@@ -49,7 +49,7 @@ export string test_traps_on_a_dns_label_of_256_bytes() {
  */
 export string test_the_limit_and_the_ordinary_calls_do_not_trap() {
   T t = T.create();
-  u8[] longest = u8[255]();
+  u8[] longest = u8[].filled(255, 0);
   for (i32 i = 0; i < longest.len(); i++) { longest[i] = 'a'; }
   t.eqI32(dnsEncode(longest).len(), 257, "a 255-byte label is the longest there is");
 

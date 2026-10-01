@@ -6,7 +6,7 @@ import { Pending } from "std/platform.wac";
 
 /** A ticket that is already answered — see `0305` for why it is built this way. */
 Pending<i32> ready(i32 v) {
-  i32[] cell = i32[1](fill: v);
+  i32[] cell = i32[].filled(1, v);
   fn<i32(i32)> r = (i32 id) => cell[0];
   fn<bool(i32)> s = (i32 id) => true;
   fn<void(i32)> d = (i32 id) => { };
@@ -14,7 +14,7 @@ Pending<i32> ready(i32 v) {
 }
 
 export i32 answer() {
-  i32[] base = i32[1](fill: 10);
+  i32[] base = i32[].filled(1, 10);
 
   // Two things cross the suspension here, and they are stored differently underneath: `base` is
   // **captured** from the enclosing function, and `n` is the lambda's own **parameter**. A top-level

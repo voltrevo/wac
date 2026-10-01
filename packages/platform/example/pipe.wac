@@ -72,7 +72,7 @@ export i32 main(Core core, Cli cli) {
  * reports that it cannot, which is how this example first failed.
  */
 string[] argv(string s) {
-  return s == "" ? string[]() : string[](s);
+  return s == "" ? string[]() : [s];
 }
 
 /**
@@ -92,8 +92,8 @@ void pump(Core core, Cli cli, i32 a, i32 b) {
     // The waited-on set shrinks as sources end, so the index `waitAny` returns means
     // different things at different times — hence the parallel list of what each one is.
     i32 n = (inLive ? 1 : 0) + (aLive ? 1 : 0) + 1;
-    i32[] ids = i32[n](fill: 0);
-    i32[] from = i32[n](fill: 0);
+    i32[] ids = i32[].filled(n, 0);
+    i32[] from = i32[].filled(n, 0);
     i32 k = 0;
     if (inLive) { ids[k] = tIn.id; from[k] = 0; k++; }
     if (aLive) { ids[k] = tA.id; from[k] = 1; k++; }

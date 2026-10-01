@@ -24,7 +24,7 @@ import { agentDir } from "../../../wactest/src/host.wac";
 
 /** Every rule worth getting wrong, in one file. */
 string configText() {
-  string[] lines = string[](
+  string[] lines = [
     "# a comment, and the next line is the other kind",
     "; semicolon",
     "",
@@ -59,7 +59,8 @@ string configText() {
     "[user]",
     // The same name again: the last one wins.
     "\temail = later@example.com",
-    "");
+    ""
+  ];
   string out = "";
   for (i32 i = 0; i < lines.len(); i++) {
     out = i == 0 ? lines[i] : out + "\n" + lines[i];
@@ -71,7 +72,7 @@ string configText() {
 string[] lines(string text) {
   i32 n = 0;
   for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n + 1](fill: "");
+  string[] out = string[].filled(n + 1, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= text.len(); i++) {
@@ -81,7 +82,7 @@ string[] lines(string text) {
     at = i + 1;
   }
   if (count > 0 && out[count - 1] == "") { count = count - 1; }
-  string[] trimmed = string[count](fill: "");
+  string[] trimmed = string[].filled(count, "");
   for (i32 i = 0; i < count; i++) { trimmed[i] = out[i]; }
   return trimmed;
 }
@@ -118,7 +119,7 @@ export string test_every_setting_is_the_one_git_config_list_reports_in_order(Cor
   t.isTrue(wrote.ok(), "the config file was written: " + wrote.message);
   if (!wrote.ok()) { return t.report(); }
 
-  Exec r = cli.exec("git", string[]("config", "--list", "--file", path), u8[0]()).wait();
+  Exec r = cli.exec("git", ["config", "--list", "--file", path], u8[]()).wait();
   t.eqStr(r.error, "", "git could not be started");
   if (r.error != "") { return t.report(); }
   t.eqI32(r.status, 0, "git config refused the file: " + string.fromBytes(r.stderr));
@@ -143,7 +144,7 @@ export string test_every_setting_is_the_one_git_config_list_reports_in_order(Cor
           "the repeated name is not repeated in git's own listing, so last-wins is untested");
 
   Vec<Setting> settings = parseConfig(configText().toBytes());
-  string[] ours = string[settings.len()](fill: "");
+  string[] ours = string[].filled(settings.len(), "");
   for (i32 i = 0; i < settings.len(); i++) {
     Setting s = settings.get(i);
     ours[i] = s.valued ? s.name + "=" + s.value : s.name;

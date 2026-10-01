@@ -13,9 +13,7 @@ Fs disk = Fs.onHost(cli, now);     // the real one, by asking
 A package of [wac](../../README.md) — see the root README for layout and how to run things. All
 commands run from the repo root.
 
-## Why
-
-[design/0001](../../design/system/0001-a-self-contained-system.md) step 1, filed as
+## [design/0001](../../design/system/0001-a-self-contained-system.md) step 1, filed as
 [0067](../../issues/system/closed/0067-no-filesystem-of-our-own-so-a-session-cannot-be-sealed-off-from-the-host.md).
 **The state it was filed against**, which this package exists to have ended: every filesystem capability a
 program had was the *host's*, so `packages/ssh`'s demo handed each session the real disk of whatever ran

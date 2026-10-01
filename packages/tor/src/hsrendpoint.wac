@@ -52,7 +52,7 @@ export struct RendPoint {
   u8[] ed25519Id;    // 32 bytes, or empty — optional, and the one worth checking
 }
 
-RendPoint rejected(i32 error) { return RendPoint(error, u8[0](), 0, u8[0](), u8[0]()); }
+RendPoint rejected(i32 error) { return RendPoint(error, u8[](), 0, u8[](), u8[]()); }
 
 /**
  * Resolve the rendezvous point a client named.
@@ -71,10 +71,10 @@ export RendPoint rendezvousPoint(u8[] linkSpecifiers, bool allowPrivate) {
   if (!linkSpecifiersValid(linkSpecifiers)) { return rejected(REND_MALFORMED); }
   i32 n = linkSpecifiers[0];
 
-  u8[] address = u8[0]();
+  u8[] address = u8[]();
   i32 port = 0;
-  u8[] legacyId = u8[0]();
-  u8[] ed25519Id = u8[0]();
+  u8[] legacyId = u8[]();
+  u8[] ed25519Id = u8[]();
 
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
@@ -128,8 +128,8 @@ export bool addressIsAllowed(u8[] a) {
 }
 
 u8[] sub(u8[] b, i32 from, i32 to) {
-  if (from < 0 || to > b.len() || to < from) { return u8[0](); }
-  u8[] out = u8[to - from]();
+  if (from < 0 || to > b.len() || to < from) { return u8[](); }
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
   return out;
 }

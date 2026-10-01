@@ -54,6 +54,12 @@ export i32 perrCaseArm()     { return 36; }
 export i32 perrElseArm()     { return 37; }
 /** A statement `match` arm whose body is not a block. */
 export i32 perrArmBlock()    { return 38; }
+/** `T[].defaulted(5)` or `T[].filled(n, v)` — a size in an array type's brackets. */
+export i32 perrSizedArray()  { return 39; }
+/** `[a, b]` — a typed constructor with elements. */
+export i32 perrArrayElems()  { return 40; }
+/** `T[].other(…)` — an array type has two factories. */
+export i32 perrArrayFactory() { return 41; }
 export i32 perrBareSpec()    { return 29; }
 /**
  * A keyword where a name belongs — `[§wac-keyword-name-8wnq4kp]`.
@@ -128,7 +134,7 @@ export struct P {
   i32 errorCount;
 
   P create(u8[] src, Lexed lexed) {
-    return P(src, lexed, 0, i32[192](), string[64](), i32[64](), 0);
+    return P(src, lexed, 0, i32[].filled(192, 0), string[].defaulted(64), i32[].filled(64, 0), 0);
   }
 
   // ── Token access ────────────────────────────────────────────────────────────
@@ -244,7 +250,7 @@ export struct P {
     i32 start = this.lx.tokens[t * tokenStride() + 1];
     i32 len = this.lx.tokens[t * tokenStride() + 2];
     if (len <= 0) { return kindName(this.lx.tokens[t * tokenStride()]); }
-    u8[] out = u8[len]();
+    u8[] out = u8[].filled(len, 0);
     for (i32 i = 0; i < len; i++) { out[i] = this.src[start + i]; }
     return string.fromBytes(out);
   }
@@ -338,11 +344,11 @@ struct ExprList {
   Expr?[] items;
   i32 n;
 
-  ExprList create() { return ExprList(Expr?[4](), 0); }
+  ExprList create() { return ExprList(Expr?[].defaulted(4), 0); }
 
   void push(this, Expr e) {
     if (this.n == this.items.len()) {
-      Expr?[] next = Expr?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Expr?[] next = Expr?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -351,11 +357,11 @@ struct ExprList {
   }
 
   Expr[] take(const this) {
-    // `Expr[n]()` would need `Expr` to have a default value, and anything reachable from an
+    // `Expr[].defaulted(n)` would need `Expr` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Expr[](); }
-    Expr[] out = Expr[this.n](fill: this.items[0]!);
+    Expr[] out = Expr[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -366,11 +372,11 @@ struct JsxAttrList {
   JsxAttr?[] items;
   i32 n;
 
-  JsxAttrList create() { return JsxAttrList(JsxAttr?[4](), 0); }
+  JsxAttrList create() { return JsxAttrList(JsxAttr?[].defaulted(4), 0); }
 
   void push(this, JsxAttr a) {
     if (this.n == this.items.len()) {
-      JsxAttr?[] next = JsxAttr?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      JsxAttr?[] next = JsxAttr?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -380,7 +386,7 @@ struct JsxAttrList {
 
   JsxAttr[] take(const this) {
     if (this.n == 0) { return JsxAttr[](); }
-    JsxAttr[] out = JsxAttr[this.n](fill: this.items[0]!);
+    JsxAttr[] out = JsxAttr[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -390,11 +396,11 @@ struct TyList {
   Ty?[] items;
   i32 n;
 
-  TyList create() { return TyList(Ty?[4](), 0); }
+  TyList create() { return TyList(Ty?[].defaulted(4), 0); }
 
   void push(this, Ty t) {
     if (this.n == this.items.len()) {
-      Ty?[] next = Ty?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Ty?[] next = Ty?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -403,11 +409,11 @@ struct TyList {
   }
 
   Ty[] take(const this) {
-    // `Ty[n]()` would need `Ty` to have a default value, and anything reachable from an
+    // `Ty[].defaulted(n)` would need `Ty` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Ty[](); }
-    Ty[] out = Ty[this.n](fill: this.items[0]!);
+    Ty[] out = Ty[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -417,11 +423,11 @@ struct NamedArgList {
   NamedArg?[] items;
   i32 n;
 
-  NamedArgList create() { return NamedArgList(NamedArg?[4](), 0); }
+  NamedArgList create() { return NamedArgList(NamedArg?[].defaulted(4), 0); }
 
   void push(this, NamedArg a) {
     if (this.n == this.items.len()) {
-      NamedArg?[] next = NamedArg?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      NamedArg?[] next = NamedArg?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -430,11 +436,11 @@ struct NamedArgList {
   }
 
   NamedArg[] take(const this) {
-    // `NamedArg[n]()` would need `NamedArg` to have a default value, and anything reachable from an
+    // `NamedArg[].defaulted(n)` would need `NamedArg` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return NamedArg[](); }
-    NamedArg[] out = NamedArg[this.n](fill: this.items[0]!);
+    NamedArg[] out = NamedArg[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -444,11 +450,11 @@ struct StmtList {
   Stmt?[] items;
   i32 n;
 
-  StmtList create() { return StmtList(Stmt?[4](), 0); }
+  StmtList create() { return StmtList(Stmt?[].defaulted(4), 0); }
 
   void push(this, Stmt v) {
     if (this.n == this.items.len()) {
-      Stmt?[] next = Stmt?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Stmt?[] next = Stmt?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -457,11 +463,11 @@ struct StmtList {
   }
 
   Stmt[] take(const this) {
-    // `Stmt[n]()` would need `Stmt` to have a default value, and anything reachable from an
+    // `Stmt[].defaulted(n)` would need `Stmt` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Stmt[](); }
-    Stmt[] out = Stmt[this.n](fill: this.items[0]!);
+    Stmt[] out = Stmt[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -470,11 +476,11 @@ struct CaseList {
   Case?[] items;
   i32 n;
 
-  CaseList create() { return CaseList(Case?[4](), 0); }
+  CaseList create() { return CaseList(Case?[].defaulted(4), 0); }
 
   void push(this, Case v) {
     if (this.n == this.items.len()) {
-      Case?[] next = Case?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Case?[] next = Case?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -483,11 +489,11 @@ struct CaseList {
   }
 
   Case[] take(const this) {
-    // `Case[n]()` would need `Case` to have a default value, and anything reachable from an
+    // `Case[].defaulted(n)` would need `Case` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Case[](); }
-    Case[] out = Case[this.n](fill: this.items[0]!);
+    Case[] out = Case[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -496,11 +502,11 @@ struct ArmList {
   Arm?[] items;
   i32 n;
 
-  ArmList create() { return ArmList(Arm?[4](), 0); }
+  ArmList create() { return ArmList(Arm?[].defaulted(4), 0); }
 
   void push(this, Arm v) {
     if (this.n == this.items.len()) {
-      Arm?[] next = Arm?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Arm?[] next = Arm?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -509,11 +515,11 @@ struct ArmList {
   }
 
   Arm[] take(const this) {
-    // `Arm[n]()` would need `Arm` to have a default value, and anything reachable from an
+    // `Arm[].defaulted(n)` would need `Arm` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Arm[](); }
-    Arm[] out = Arm[this.n](fill: this.items[0]!);
+    Arm[] out = Arm[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -522,11 +528,11 @@ struct ParamList {
   Param?[] items;
   i32 n;
 
-  ParamList create() { return ParamList(Param?[4](), 0); }
+  ParamList create() { return ParamList(Param?[].defaulted(4), 0); }
 
   void push(this, Param v) {
     if (this.n == this.items.len()) {
-      Param?[] next = Param?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Param?[] next = Param?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -535,11 +541,11 @@ struct ParamList {
   }
 
   Param[] take(const this) {
-    // `Param[n]()` would need `Param` to have a default value, and anything reachable from an
+    // `Param[].defaulted(n)` would need `Param` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Param[](); }
-    Param[] out = Param[this.n](fill: this.items[0]!);
+    Param[] out = Param[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -548,11 +554,11 @@ struct FieldList {
   Field?[] items;
   i32 n;
 
-  FieldList create() { return FieldList(Field?[4](), 0); }
+  FieldList create() { return FieldList(Field?[].defaulted(4), 0); }
 
   void push(this, Field v) {
     if (this.n == this.items.len()) {
-      Field?[] next = Field?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Field?[] next = Field?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -561,11 +567,11 @@ struct FieldList {
   }
 
   Field[] take(const this) {
-    // `Field[n]()` would need `Field` to have a default value, and anything reachable from an
+    // `Field[].defaulted(n)` would need `Field` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Field[](); }
-    Field[] out = Field[this.n](fill: this.items[0]!);
+    Field[] out = Field[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -574,11 +580,11 @@ struct MethodList {
   Method?[] items;
   i32 n;
 
-  MethodList create() { return MethodList(Method?[4](), 0); }
+  MethodList create() { return MethodList(Method?[].defaulted(4), 0); }
 
   void push(this, Method v) {
     if (this.n == this.items.len()) {
-      Method?[] next = Method?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Method?[] next = Method?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -587,11 +593,11 @@ struct MethodList {
   }
 
   Method[] take(const this) {
-    // `Method[n]()` would need `Method` to have a default value, and anything reachable from an
+    // `Method[].defaulted(n)` would need `Method` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Method[](); }
-    Method[] out = Method[this.n](fill: this.items[0]!);
+    Method[] out = Method[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -600,11 +606,11 @@ struct VariantList {
   Variant?[] items;
   i32 n;
 
-  VariantList create() { return VariantList(Variant?[4](), 0); }
+  VariantList create() { return VariantList(Variant?[].defaulted(4), 0); }
 
   void push(this, Variant v) {
     if (this.n == this.items.len()) {
-      Variant?[] next = Variant?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Variant?[] next = Variant?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -613,11 +619,11 @@ struct VariantList {
   }
 
   Variant[] take(const this) {
-    // `Variant[n]()` would need `Variant` to have a default value, and anything reachable from an
+    // `Variant[].defaulted(n)` would need `Variant` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Variant[](); }
-    Variant[] out = Variant[this.n](fill: this.items[0]!);
+    Variant[] out = Variant[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -626,11 +632,11 @@ struct ImportItemList {
   ImportItem?[] items;
   i32 n;
 
-  ImportItemList create() { return ImportItemList(ImportItem?[4](), 0); }
+  ImportItemList create() { return ImportItemList(ImportItem?[].defaulted(4), 0); }
 
   void push(this, ImportItem v) {
     if (this.n == this.items.len()) {
-      ImportItem?[] next = ImportItem?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      ImportItem?[] next = ImportItem?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -639,11 +645,11 @@ struct ImportItemList {
   }
 
   ImportItem[] take(const this) {
-    // `ImportItem[n]()` would need `ImportItem` to have a default value, and anything reachable from an
+    // `ImportItem[].defaulted(n)` would need `ImportItem` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return ImportItem[](); }
-    ImportItem[] out = ImportItem[this.n](fill: this.items[0]!);
+    ImportItem[] out = ImportItem[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -652,11 +658,11 @@ struct DeclList {
   Decl?[] items;
   i32 n;
 
-  DeclList create() { return DeclList(Decl?[4](), 0); }
+  DeclList create() { return DeclList(Decl?[].defaulted(4), 0); }
 
   void push(this, Decl v) {
     if (this.n == this.items.len()) {
-      Decl?[] next = Decl?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      Decl?[] next = Decl?[].defaulted(this.items.len() == 0 ? 4 : this.items.len() * 2);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -665,11 +671,11 @@ struct DeclList {
   }
 
   Decl[] take(const this) {
-    // `Decl[n]()` would need `Decl` to have a default value, and anything reachable from an
+    // `Decl[].defaulted(n)` would need `Decl` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Decl[](); }
-    Decl[] out = Decl[this.n](fill: this.items[0]!);
+    Decl[] out = Decl[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -679,11 +685,11 @@ struct I32List {
   i32[] items;
   i32 n;
 
-  I32List create() { return I32List(i32[4](), 0); }
+  I32List create() { return I32List(i32[].filled(4, 0), 0); }
 
   void push(this, i32 v) {
     if (this.n == this.items.len()) {
-      i32[] next = i32[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      i32[] next = i32[].filled(this.items.len() == 0 ? 4 : this.items.len() * 2, 0);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -692,7 +698,7 @@ struct I32List {
   }
 
   i32[] take(const this) {
-    i32[] out = i32[this.n]();
+    i32[] out = i32[].filled(this.n, 0);
     for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
     return out;
   }
@@ -1311,38 +1317,45 @@ Expr parsePostfix(P p) {
 }
 
 /**
- * The tail of an array construction, from the `[` that opens it.
+ * What follows an array type in an expression: `T[]()`, `T[].filled(count, value)` or
+ * `T[].defaulted(count)` — `spec/next/2-types/15-arrays.md`.
  *
- * `T[](a, b)` is the fixed literal and `T[N]()` / `T[N](fill: v)` the sized form. Shared because a
- * funcref element type arrives by another road — `parseType` eats the brackets of `fn<R(P)>`
- * itself — and only the fixed literal was reachable that way [issue 0079].
+ * All three are `ArrNew`: the empty constructor has no size, `filled` a size and a fill, and `defaulted` a
+ * size alone, which is what asks every element for its default.
  */
-Expr parseArrayCtorTail(P p, Ty elem, i32 line, i32 col) {
-  p.advance();                       // the construction `[`
-  if (!p.at1(kRbrack())) {
-    Expr size = parseExpr(p);        // `T[N]()` or `T[N](fill: v)`
-    p.expect(kRbrack());
-    p.expect(kLparen());
-    Expr? fill = null;
+Expr parseArrayFactory(P p, Ty elem, i32 line, i32 col) {
+  if (p.eat(kLparen())) {
+    // `[a, b]` is how an array with elements used to be written. It is `[a, b]` now, and only the
+    // empty constructor keeps this spelling.
     if (!p.at1(kRparen())) {
-      if (p.at1(kIdent()) && spanIsFill(p.src, p.startAt(0), p.lenAt(0))
-          && p.kindAt(1) == kColon()) {
-        p.advance();
-        p.advance();
-        fill = parseExpr(p);
-      } else {
-        p.fail(perrExpected());
-      }
+      p.fail(perrArrayElems());
+      parseArgList(p);
     }
     p.expect(kRparen());
-    Expr[] empty = Expr[]();
-    return Expr(ExprKind.ArrNew(elem, size, fill, empty), line, col);
+    return Expr(ExprKind.ArrNew(elem, null, null, Expr[]()), line, col);
   }
-  p.advance();                       // `]`
-  p.expect(kLparen());
-  Expr[] args = parseArgList(p);
-  p.expect(kRparen());
-  return Expr(ExprKind.ArrNew(elem, null, null, args), line, col);
+  if (p.eat(kDot())) {
+    bool filled = p.at1(kIdent()) && p.textAt(0) == "filled";
+    bool defaulted = p.at1(kIdent()) && p.textAt(0) == "defaulted";
+    if (!filled && !defaulted) {
+      p.fail(perrArrayFactory());
+      return Expr(ExprKind.NullLit, line, col);
+    }
+    p.advance();
+    p.expect(kLparen());
+    Expr[] args = parseArgList(p);
+    p.expect(kRparen());
+    if (filled && args.len() == 2) {
+      return Expr(ExprKind.ArrNew(elem, args[0], args[1], Expr[]()), line, col);
+    }
+    if (defaulted && args.len() == 1) {
+      return Expr(ExprKind.ArrNew(elem, args[0], null, Expr[]()), line, col);
+    }
+    p.fail(perrArrayFactory());
+    return Expr(ExprKind.NullLit, line, col);
+  }
+  p.fail(perrExpected());
+  return Expr(ExprKind.NullLit, line, col);
 }
 
 Expr[] parseArgList(P p) {
@@ -1468,6 +1481,18 @@ Expr parsePrimary(P p) {
   // `this` is an identifier expression, as in the reference.
   if (p.at1(kThis()))  { return Expr(ExprKind.Ident(p.advance()), line, col); }
 
+  // `[a, b, c]` — an array literal. A `[` cannot begin an expression otherwise: an index is postfix.
+  if (p.at1(kLbrack())) {
+    p.advance();
+    ExprList elems = ExprList.create();
+    while (!p.at1(kRbrack()) && !p.at1(kEof())) {
+      elems.push(parseExpr(p));
+      if (!p.eat(kComma())) { break; }
+    }
+    p.expect(kRbrack());
+    return Expr(ExprKind.ArrLit(elems.take()), line, col);
+  }
+
   // A lambda, before grouping — `(` opens both, and only what follows the matching `)` tells them
   // apart. `design/lang/0002` tier two.
   if (p.at1(kLparen()) && atLambdaFrom(p, 0)) { return parseLambda(p); }
@@ -1486,27 +1511,15 @@ Expr parsePrimary(P p) {
     return e;
   }
 
-  // `fn<R(P)>[](args)` — an array of funcrefs.
+  // `fn<R(P)>[]()` and `fn<R(P)>[].filled(n, f)` — an array of funcrefs. `parseType` reads the `[]` as
+  // part of the type, so what arrives is the array type and its element is the funcref.
   if (p.at1(kFn())) {
     Ty t = parseType(p);
     match (t.kind) {
-      Arr(elem): {
-        if (p.at1(kLparen())) {
-          p.advance();
-          Expr[] args = parseArgList(p);
-          p.expect(kRparen());
-          return Expr(ExprKind.ArrNew(elem, null, null, args), line, col);
-        }
-        // `fn<R(P)>[][2](fill: v)` — the element is the whole array type, not its element.
-        if (p.at1(kLbrack())) { return parseArrayCtorTail(p, t, line, col); }
-        p.fail(perrFnArray());
-        return Expr(ExprKind.NullLit, line, col);
-      }
+      Arr(elem): { return parseArrayFactory(p, elem, line, col); }
       default: {
-        // `parseType` stops at `[2` and hands back the funcref, so the sized spelling lands here
-        // rather than in the arm above [issue 0079].
-        if (p.at1(kLbrack())) { return parseArrayCtorTail(p, t, line, col); }
-        p.fail(perrFnArray());
+        if (p.at1(kLbrack())) { p.fail(perrSizedArray()); }
+        else { p.fail(perrFnArray()); }
         return Expr(ExprKind.NullLit, line, col);
       }
     }
@@ -1528,7 +1541,7 @@ Expr parsePrimary(P p) {
 /**
  * Does a construction or static call start here?
  *
- * The subtle case is `T[...]`: `Node[5]()` constructs, `arr[i]` indexes, and
+ * The subtle case is `T[...]`: `Node[].defaulted(5)` constructs, `arr[i]` indexes, and
  * `arr[i](5)` indexes then calls. Distinguishing them needs a scan to the matching
  * bracket and a look at what follows, which is what the reference does.
  */
@@ -1538,7 +1551,7 @@ bool looksLikeConstructionOrCall(P p) {
 
   if (identIsPrim(p, 0)) {
     // A primitive name is only ever construction with `(` or `[` — and with `?[`, which is an array of
-    // *nullable* primitives: `i32?[3]()` is the same shape as `Node?[3]()`, and only the named case was
+    // *nullable* primitives: `i32?[].defaulted(3)` is the same shape as `Node?[].defaulted(3)`, and only the named case was
     // accepted here. The reference grew that third arm and this port did not, so the two disagreed about
     // a program neither the corpus nor the synthetic cases contained. wac-mono 0005 found it by asking
     // why the `anyref` guard below could not be killed.
@@ -1548,7 +1561,7 @@ bool looksLikeConstructionOrCall(P p) {
 
   if (next == kDot() || next == kLparen() || next == kLbrace()) { return true; }
 
-  // `Vec<i32>(…)`, `Vec<i32>[0]()`, `MapEntry<K, V>?[8]()` — skip the argument list and ask what
+  // `Vec<i32>(…)`, `Vec<i32>[]()`, `MapEntry<K, V>?[].defaulted(8)` — skip the argument list and ask what
   // follows it. `?` belongs in that set as much as `[`: an array of nullable instantiations is how a
   // hash table spells an empty slot.
   //
@@ -1588,11 +1601,13 @@ bool looksLikeConstructionOrCall(P p) {
         lastWasBracketPair = false;
       } else { break; }
     }
-    // A fixed literal with a named element type: `S[](S(1), S(2))`. The final `[]` pair
-    // is the construction bracket, so the scan lands on `(` with no size bracket to
-    // find. An empty `[]` cannot be an index, so there is no ambiguity.
-    if (lastWasBracketPair && p.kindAt(j) == kLparen()) { return true; }
+    // `S[]()`, `S[].filled(n, v)` and `S[].defaulted(n)`. The final `[]` pair names the array; an empty
+    // `[]` cannot be an index, so there is no ambiguity.
+    if (lastWasBracketPair && (p.kindAt(j) == kLparen() || p.kindAt(j) == kDot())) { return true; }
     if (p.kindAt(j) != kLbrack()) { return false; }
+    // `zz[1]()` is an index followed by a call — the funcref in an array, `issues/lang/0265c` — and only
+    // a suffix before the brackets, `T?[n]()` or `T[][n]()`, makes it a type that cannot be an index.
+    if (j == 1) { return false; }
     j++;
     i32 depth = 1;
     while (depth > 0 && p.kindAt(j) != kEof()) {
@@ -1600,30 +1615,16 @@ bool looksLikeConstructionOrCall(P p) {
       else if (p.kindAt(j) == kRbrack()) { depth--; }
       j++;
     }
-    // `T[N](fill: v)` gives every element a value. A call cannot take a named argument,
-    // so this is unambiguous where a bare `T[N](v)` would collide with `arr[i](5)`.
-    if (p.kindAt(j) == kLparen() && p.kindAt(j + 1) == kIdent()
-        && spanIsFill(p.src, p.startAt(j + 1), p.lenAt(j + 1))
-        && p.kindAt(j + 2) == kColon()) {
-      return true;
-    }
-    // `T[N]()` constructs only when the parentheses are empty; `arr[i](5)` is an
-    // index followed by a call.
+    // `T?[N]()` was a sized construction, and is claimed here only so that it is refused by name.
     return p.kindAt(j) == kLparen() && p.kindAt(j + 1) == kRparen();
   }
   return false;
 }
 
-/** Is this identifier span exactly `fill`? */
-bool spanIsFill(u8[] s, i32 start, i32 len) {
-  if (len != 4) { return false; }
-  return s[start] == 'f' && s[start + 1] == 'i' && s[start + 2] == 'l' && s[start + 3] == 'l';
-}
-
 Expr parseConstructionOrCall(P p, i32 line, i32 col) {
   bool prim = identIsPrim(p, 0);
   i32 nameTok = p.advance();
-  // `Vec<i32>(…)`, `MapEntry<K, V>?[8]()` — the one place type arguments appear in something that
+  // `Vec<i32>(…)`, `MapEntry<K, V>?[].defaulted(8)` — the one place type arguments appear in something that
   // reads like an expression, and unambiguous because what follows is a construction rather than an
   // operand. A primitive never takes them: `i32 < n` is a comparison.
   //
@@ -1659,8 +1660,8 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
     return member;
   }
 
-  // Array construction. The element type may carry its own suffixes:
-  // `i32[][3]()`, `Node?[5]()`, and its own type arguments: `MapEntry<K, V>?[8]()`.
+  // An array construction. The element type may carry its own suffixes — `i32[][].filled(n, [])`,
+  // `Node?[].defaulted(5)` — and its own type arguments: `MapEntry<K, V>?[].defaulted(8)`.
   if (p.at1(kLbrack()) || p.at1(kQuestion())) {
     Ty elem = prim ? tyPrim(nameTok, line, col) : tyNamed(nameTok, nameArgs, line, col);
     if (p.at1(kQuestion())) {
@@ -1668,13 +1669,29 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
       p.advance();
       elem = tyNullable(elem, nLine, nCol);
     }
-    while (p.at1(kLbrack()) && p.at2(kRbrack(), 1) && !p.at2(kLparen(), 2)) {
+    // Every `[]` but the last is part of the element type; the last names the array being built.
+    while (p.at1(kLbrack()) && p.at2(kRbrack(), 1)
+           && p.kindAt(2) == kLbrack() && p.kindAt(3) == kRbrack()) {
       i32 aLine = p.lineAt(0); i32 aCol = p.colAt(0);
       p.advance();
       p.advance();
       elem = tyArr(elem, aLine, aCol);
     }
-    return parseArrayCtorTail(p, elem, line, col);
+    if (p.at1(kLbrack()) && !p.at2(kRbrack(), 1)) {
+      // `T[].defaulted(5)` — the length is not part of an array's type, so it cannot be written in one.
+      p.fail(perrSizedArray());
+      p.advance();
+      parseExpr(p);
+      p.expect(kRbrack());
+      if (p.eat(kLparen())) {
+        while (!p.at1(kRparen()) && !p.at1(kEof())) { p.advance(); }
+        p.expect(kRparen());
+      }
+      return Expr(ExprKind.NullLit, line, col);
+    }
+    p.expect(kLbrack());
+    p.expect(kRbrack());
+    return parseArrayFactory(p, elem, line, col);
   }
 
   // `Type { field: value, ... }` — named construction.
@@ -2100,12 +2117,12 @@ ArmHead parseArmHead(P p) {
     if (p.at1(kElse())) { p.fail(perrElseArm()); }
     i32 defaultTok = p.advance();
     p.expect(kColon());
-    return ArmHead(-1, defaultTok, i32[0](), true);
+    return ArmHead(-1, defaultTok, i32[](), true);
   }
   if (!p.at1(kIdent())) {
     p.fail(perrExpected());
     p.advance();
-    return ArmHead(-1, -1, i32[0](), false);
+    return ArmHead(-1, -1, i32[](), false);
   }
   i32 variantTok = p.advance();
   I32List bindings = I32List.create();
@@ -2168,7 +2185,7 @@ Stmt parseMatchStmt(P p) {
     // **A statement arm is a block.** Without the braces an arm's statements run to the next arm's head,
     // which a reader has to find by scanning — and a pattern is not a keyword, so nothing marks it.
     if (!p.at1(kLbrace())) { p.fail(perrArmBlock()); }
-    arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, Stmt[](parseStatement(p)), null));
+    arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, [parseStatement(p)] as Stmt[], null));
   }
   p.expect(kRbrace());
   return Stmt(StmtKind.Match(subject, arms.take()), line, col);
@@ -2454,7 +2471,7 @@ Decl parseEnumDecl(P p, bool exported) {
     // so one is refused until that ambiguity is decided deliberately.
     if (!hasThis) { p.fail(perrEnumMethodThis()); }
     methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
-                        i32[0](), false));
+                        i32[](), false));
   }
 
   p.expect(kRbrace());

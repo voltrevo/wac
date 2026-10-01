@@ -28,7 +28,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
   u8[] flags = a.flags.toBytes();
   for (i32 i = 0; i < flags.len(); i++) {
     if (!known(flags[i])) {
-      core.warn(a.name + ": invalid option -- '" + string.fromBytes(u8[1](fill: flags[i])) + "'");
+      core.warn(a.name + ": invalid option -- '" + string.fromBytes(u8[].filled(1, flags[i])) + "'");
       core.warn("Try '" + a.name + " --help' for more information.");
       return 1;
     }
@@ -71,7 +71,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
   TrSet s1 = parseSet(a.name, a.rest[0].toBytes(), -1);
   if (!s1.ok) { core.warn(trimmed(s1.error)); return 1; }
   // Set2 is parsed knowing set1's length, which is what `[x*]` pads out to.
-  TrSet s2 = sets == 2 ? parseSet(a.name, a.rest[1].toBytes(), s1.bytes.len()) : TrSet(true, u8[0](), "");
+  TrSet s2 = sets == 2 ? parseSet(a.name, a.rest[1].toBytes(), s1.bytes.len()) : TrSet(true, u8[](), "");
   if (!s2.ok) { core.warn(trimmed(s2.error)); return 1; }
 
   u8[] from = comp ? complementOf(s1.bytes) : s1.bytes;
@@ -82,13 +82,13 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
   }
   // `-t`: the pairs stop where set2 does, rather than set2's last byte standing in for the rest.
   if (trunc && to.len() < from.len()) {
-    u8[] cut = u8[to.len()]();
+    u8[] cut = u8[].filled(to.len(), 0);
     cut.copyFrom(from, 0, 0, to.len());
     from = cut;
   }
 
-  u8[] deleted = u8[256](fill: 0);
-  u8[] map = u8[256](fill: 0);
+  u8[] deleted = u8[].filled(256, 0);
+  u8[] map = u8[].filled(256, 0);
   for (i32 i = 0; i < 256; i++) { map[i] = i; }
   if (del) {
     for (i32 i = 0; i < from.len(); i++) { deleted[from[i]] = 1; }
@@ -101,7 +101,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
 
   // **`-s` squeezes the last set given**, which is set2 when there is one and set1 when there is not —
   // and it squeezes what comes *out*, so `tr -s 'ab' 'x'` collapses the x's the translation produced.
-  u8[] squeezed = u8[256](fill: 0);
+  u8[] squeezed = u8[].filled(256, 0);
   if (squeeze) {
     // **The last set given**, whichever flags are on: with two operands that is set2, and `-ds` is the
     // case that makes the rule visible — GNU deletes SET1 and *then* squeezes SET2, so `tr -ds a b` on
@@ -121,7 +121,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
     if (!got.ok) { return 1; }
     if (!got.more) { return 0; }
     u8[] chunk = got.bytes;
-    u8[] out = u8[chunk.len()]();
+    u8[] out = u8[].filled(chunk.len(), 0);
     i32 at = 0;
     for (i32 i = 0; i < chunk.len(); i++) {
       i32 c = chunk[i];
@@ -133,7 +133,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
       out[at] = v;
       at++;
     }
-    u8[] send = u8[at]();
+    u8[] send = u8[].filled(at, 0);
     send.copyFrom(out, 0, 0, at);
     if (!cli.write(send)) { return 0; }
   }

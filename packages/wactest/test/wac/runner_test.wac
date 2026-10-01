@@ -30,7 +30,7 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
 Exec runTest(Cli cli, string path) {
-  return cli.exec(binary(cli), string[]("test", path), u8[0]()).wait();
+  return cli.exec(binary(cli), ["test", path], u8[]()).wait();
 }
 
 export string test_discovery_finds_every_test_export_and_runs_it(Core core, Cli cli) {

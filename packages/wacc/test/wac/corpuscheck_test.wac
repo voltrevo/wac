@@ -64,7 +64,7 @@ import { Corpus, loadCorpus } from "./corpus_probe.wac";
 /** The `path\tline\tcol\tphase\tmessage\t…\tseverity` rows of a wire, warnings dropped. */
 string[] errorRows(string wire) {
   string[] lines = splitLines(wire);
-  string[] out = string[lines.len()](fill: "");
+  string[] out = string[].filled(lines.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     if (lines[i].len() == 0) { continue; }
@@ -76,7 +76,7 @@ string[] errorRows(string wire) {
     out[n] = lines[i];
     n = n + 1;
   }
-  string[] r = string[n](fill: "");
+  string[] r = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { r[i] = out[i]; }
   return r;
 }
@@ -118,8 +118,8 @@ export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core c
   // The `/`-prefixed keys the TypeScript used, so a relative import resolves against them, plus the
   // control above.
   i32 n = c.paths.len();
-  string[] keys = string[n + 1](fill: "");
-  string[] sources = string[n + 1](fill: "");
+  string[] keys = string[].filled(n + 1, "");
+  string[] sources = string[].filled(n + 1, "");
   for (i32 i = 0; i < n; i++) { keys[i] = "/" + c.paths[i]; sources[i] = c.sources[i]; }
   keys[n] = CANARY;
   sources[n] = "import { itoa } from \"./itoa.wac\";\n" +
@@ -134,7 +134,7 @@ export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core c
   string[] rows = errorRows(diagnoseGraph(keys, sources, keys[0]));
 
   bool sawCanary = false;
-  string[] reported = string[64](fill: "");
+  string[] reported = string[].filled(64, "");
   i32 nReported = 0;
   for (i32 i = 0; i < rows.len(); i++) {
     string file = fileOf(rows[i]);
@@ -154,7 +154,7 @@ export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core c
            "the control was reported — a wrong argument type against an imported signature, so the "
            + "closures resolved and this sweep can see across files");
 
-  string[] named = string[nReported](fill: "");
+  string[] named = string[].filled(nReported, "");
   for (i32 i = 0; i < nReported; i++) { named[i] = reported[i]; }
   t.eqI32(nReported, 0,
           "the checker reported " + itoa(nReported) + " working file(s): " + joined(named, "; "));

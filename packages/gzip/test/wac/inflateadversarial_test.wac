@@ -151,7 +151,7 @@ export string test_traps_a_stored_length_that_runs_off_the_end() {
   b.bits(1, 1);
   b.bits(0, 2);             // BFINAL=1, BTYPE=00
   // LEN=255, only 1 byte follows.
-  inflate(withBytes(b, u8[](0xFF, 0x00, 0x00, 0xFF, 0x41)));
+  inflate(withBytes(b, [0xFF, 0x00, 0x00, 0xFF, 0x41] as u8[]));
   return "a stored LEN past the end of input was accepted";
 }
 
@@ -166,7 +166,7 @@ u8[] truncatedTo(i32 keep) {
   b.litLenSymbol(256);
   u8[] full = b.done();
   if (keep >= full.len()) { trap; }   // the caller has miscounted, not the decoder
-  u8[] out = u8[keep]();
+  u8[] out = u8[].filled(keep, 0);
   for (i32 i = 0; i < keep; i++) { out[i] = full[i]; }
   return out;
 }

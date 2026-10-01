@@ -101,7 +101,7 @@ export struct Session {
     // Spawned rather than called, which is what makes an applet a real program here — see
     // `shrun.wac`, and wac-mono 0116 for what it can see.
     sh.externalSpawnable = true;
-    return Session(sh, "", Vec.fromArray(string[HISTORY()](fill: "")), 0, 0);
+    return Session(sh, "", Vec.fromArray(string[].filled(HISTORY(), "")), 0, 0);
   }
 
   string prompt(const this) { return this.sh.cwd + " $"; }

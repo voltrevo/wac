@@ -36,11 +36,11 @@ string runProbe(Cli cli, string source, string[] flags) {
   string path = dir + "/probe_test.wac";
   Change wrote = cli.writeFile(path, source.toBytes()).wait();
   if (!wrote.ok()) { return "could not write " + path; }
-  string[] args = string[flags.len() + 2](fill: "");
+  string[] args = string[].filled(flags.len() + 2, "");
   args[0] = "test";
   for (i32 i = 0; i < flags.len(); i++) { args[i + 1] = flags[i]; }
   args[flags.len() + 1] = path;
-  Exec r = cli.exec(binary(cli), args, u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), args, u8[]()).wait();
   cli.remove(path, false).wait();
   if (!r.ran()) { return "the binary would not start: " + r.error; }
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
@@ -59,7 +59,7 @@ export string test_an_engine_trap_says_trapped_and_invents_nothing(Core core, Cl
   T t = T.create();
   string out = runProbe(cli,
     "export string test_bounds() {\n" +
-    "  i32[] xs = i32[2](fill: 0);\n" +
+    "  i32[] xs = i32[].filled(2, 0);\n" +
     "  i32 n = xs[5];\n" +
     "  return n == 0 ? \"\" : \"unreachable\";\n" +
     "}\n",

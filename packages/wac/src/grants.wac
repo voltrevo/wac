@@ -155,7 +155,7 @@ Pending<u8[]?> noEnv(string name) {
 }
 
 Pending<FileResult> noReadFile(string path) {
-  return ready(FileResult.of(false, u8[0](), DENIED, FAULT_NOT_GRANTED()));
+  return ready(FileResult.of(false, u8[](), DENIED, FAULT_NOT_GRANTED()));
 }
 Pending<Stat> noStat(string path) {
   // `exists: false` with a fault set, which `Stat.sound()` reads as "the question could not be
@@ -207,7 +207,7 @@ Pending<Read> noRecv(i32 handle) {
 }
 Pending<bool> noSend(i32 handle, u8[] bytes) { return ready(false); }
 Pending<Datagram> noReceiveFrom(i32 handle) {
-  return ready(Datagram.of(u8[0](), "", 0, DENIED));
+  return ready(Datagram.of(u8[](), "", 0, DENIED));
 }
 Pending<bool> noSendTo(i32 handle, string host, i32 port, u8[] bytes) { return ready(false); }
 
@@ -227,7 +227,7 @@ Pending<Child> noSpawn(u8[] path, u8[][] args, i32 stdio, string cwd, i32 inheri
 }
 Pending<Exec> noExec(string path, string[] args, u8[] stdin, string[] env, bool clearEnv,
                      bool inherit, string cwd) {
-  return ready(Exec.of(0, u8[0](), u8[0](), DENIED));
+  return ready(Exec.of(0, u8[](), u8[](), DENIED));
 }
 
 /**

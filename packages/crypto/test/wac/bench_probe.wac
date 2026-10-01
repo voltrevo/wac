@@ -10,7 +10,7 @@ import { chacha20 } from "../../src/chacha20.wac";
 u8[] message(i32 n) {
   // Not zeroes: a compressing hash does not care, but a reader comparing these numbers against another
   // implementation might, and a constant input invites the question.
-  u8[] m = u8[n]();
+  u8[] m = u8[].filled(n, 0);
   i32 x = 1;
   for (i32 i = 0; i < n; i++) { x = (x * 1103515245 + 12345) & 0x7FFFFFFF; m[i] = x >> 16; }
   return m;
@@ -25,7 +25,7 @@ u8[] message(i32 n) {
  */
 export u8[] benchBuild(i32 n) {
   u8[] m = message(n);
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   out.copyFrom(m, 0, 0, 32);
   return out;
 }
@@ -37,11 +37,11 @@ export u8[] benchSha3(i32 n) { return sha3_256(message(n)); }
 
 /** ChaCha20 over `n` bytes. The 32 bytes returned are the tail, so nothing can be elided. */
 export u8[] benchChacha(i32 n) {
-  u8[] key = u8[32]();
+  u8[] key = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { key[i] = i; }
-  u8[] nonce = u8[12]();
+  u8[] nonce = u8[].filled(12, 0);
   u8[] ct = chacha20(key, 1, nonce, message(n));
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   out.copyFrom(ct, ct.len() - 32, 0, 32);
   return out;
 }

@@ -48,7 +48,7 @@ const string PREFIX = "packages/zstd/";
  * content, an RLE block, treeless literals — so it runs a program and reads the cached answers. Not a
  * widening of what *this* may do: these are what the exercise is compiled with.
  */
-string[] grants() { return string[]("--allow-read", "--allow-write", "--allow-run"); }
+string[] grants() { return ["--allow-read", "--allow-write", "--allow-run"]; }
 
 /**
  * Every export `covdump` calls after `main`, and how many cases each holds.
@@ -64,7 +64,7 @@ string[] grants() { return string[]("--allow-read", "--allow-write", "--allow-ru
  * is a silently narrower sweep, which is why the counts here are generous rather than exact.
  */
 string[] cases() {
-  return string[](
+  return [
     // Real frames, damaged and truncated, buffered and streamed. The largest thing here and the
     // reason `covdump` grew a sweep.
     "damage:2000",
@@ -87,11 +87,12 @@ string[] cases() {
     "fseEnc:230",
     // A sink that stops listening, and a hash asked for a range outside its input.
     "refused:6",
-    "hashBound:7");
+    "hashBound:7"
+  ];
 }
 
 Pin[] pins() {
-  return Pin[](
+  return [
     // ── Guards no input reaches ──────────────────────────────────────────────
     Pin("packages/zstd/src/fse.wac", 144, "if (remaining < 0) { trap; }", true,
         "The wire form bounds each count by what is left: the field is masked to 2*threshold-1 and " +
@@ -197,7 +198,8 @@ Pin[] pins() {
         "at every byte, and none of the cuts lands inside a skip: the skips are the optional header " +
         "fields and a stored section's bytes, and a cut inside either is refused by the block or " +
         "header bounds a step earlier. Reaching it wants a frame declaring an optional field longer " +
-        "than the frame — buildable, and not built."));
+        "than the frame — buildable, and not built.")
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -210,5 +212,5 @@ export i32 main(Core core, Cli cli) {
   // union this driver's reach with another's — `issues/system/0241b`.
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
-  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

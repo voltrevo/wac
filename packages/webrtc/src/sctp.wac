@@ -83,9 +83,9 @@ export i32 chunkSize(u8[] b, i32 at) {
 
 /** Parse the chunk at `at`. Its value excludes the four-byte header and any padding. */
 export Chunk parseChunk(u8[] b, i32 at) {
-  if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[0]()); }
+  if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[]()); }
   i32 len = (b[at + 2] << 8) | b[at + 3];
-  u8[] v = u8[len - 4]();
+  u8[] v = u8[].filled(len - 4, 0);
   for (i32 i = 0; i < v.len(); i++) { v[i] = b[at + 4 + i]; }
   return Chunk(true, b[at], b[at + 1], v);
 }
@@ -93,7 +93,7 @@ export Chunk parseChunk(u8[] b, i32 at) {
 /** A chunk with its header, padded to a multiple of four. */
 export u8[] chunk(i32 kind, i32 flags, u8[] value) {
   i32 len = 4 + value.len();
-  u8[] out = u8[(len + 3) & ~3]();
+  u8[] out = u8[].filled((len + 3) & ~3, 0);
   out[0] = kind;
   out[1] = flags;
   out[2] = (len >> 8) & 0xFF;
@@ -120,7 +120,7 @@ export i32 chunksAt() { return 12; }
  * about SCTP rather than specific about WebRTC.
  */
 export u8[] packet(i32 sourcePort, i32 destPort, i32 tag, u8[] chunks) {
-  u8[] out = u8[12 + chunks.len()]();
+  u8[] out = u8[].filled(12 + chunks.len(), 0);
   out[0] = (sourcePort >> 8) & 0xFF;
   out[1] = sourcePort & 0xFF;
   out[2] = (destPort >> 8) & 0xFF;
@@ -145,7 +145,7 @@ export u8[] packet(i32 sourcePort, i32 destPort, i32 tag, u8[] chunks) {
 /** Whether a packet's checksum is the one its bytes imply. */
 export bool checksumOk(u8[] b) {
   if (b.len() < 12) { return false; }
-  u8[] copy = u8[b.len()]();
+  u8[] copy = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { copy[i] = b[i]; }
   copy[8] = 0; copy[9] = 0; copy[10] = 0; copy[11] = 0;
   i32 c = crc32c(copy);
@@ -163,7 +163,7 @@ export bool checksumOk(u8[] b) {
  */
 export u8[] initValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i32 initialTsn,
                       u8[] params) {
-  u8[] out = u8[16 + params.len()]();
+  u8[] out = u8[].filled(16 + params.len(), 0);
   out[0] = (initiateTag >> 24) & 0xFF;
   out[1] = (initiateTag >> 16) & 0xFF;
   out[2] = (initiateTag >> 8) & 0xFF;
@@ -196,7 +196,7 @@ export u8[] initValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i3
 export u8[] initAckValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i32 initialTsn,
                          u8[] cookie) {
   i32 paramLen = 4 + cookie.len();
-  u8[] param = u8[(paramLen + 3) & ~3]();
+  u8[] param = u8[].filled((paramLen + 3) & ~3, 0);
   param[0] = 0x00; param[1] = 0x07;              // state cookie
   param[2] = (paramLen >> 8) & 0xFF;
   param[3] = paramLen & 0xFF;
@@ -256,7 +256,7 @@ export i32 ppidBinaryEmpty() { return 57; }
 
 /** A DATA chunk's value: TSN, stream id, stream sequence, protocol identifier, then the payload. */
 export u8[] dataValue(i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] payload) {
-  u8[] out = u8[12 + payload.len()]();
+  u8[] out = u8[].filled(12 + payload.len(), 0);
   out[0] = (tsn >> 24) & 0xFF;
   out[1] = (tsn >> 16) & 0xFF;
   out[2] = (tsn >> 8) & 0xFF;
@@ -293,8 +293,8 @@ export i32 dataPpid(u8[] value) {
 
 /** Its payload, which is everything after the twelve-byte prologue. */
 export u8[] dataPayload(u8[] value) {
-  if (value.len() < 12) { return u8[0](); }
-  u8[] out = u8[value.len() - 12]();
+  if (value.len() < 12) { return u8[](); }
+  u8[] out = u8[].filled(value.len() - 12, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = value[12 + i]; }
   return out;
 }
@@ -340,7 +340,7 @@ export i32 chunkFlagsAt(u8[] b, i32 index) {
 /** The value of chunk `index`, or empty. */
 export u8[] chunkValueAt(u8[] b, i32 index) {
   i32 at = chunkOffset(b, index);
-  return at < 0 ? u8[0]() : parseChunk(b, at).value;
+  return at < 0 ? u8[]() : parseChunk(b, at).value;
 }
 
 /**
@@ -351,7 +351,7 @@ export u8[] chunkValueAt(u8[] b, i32 index) {
  * with nothing out of order sends; `sackValueGaps` carries the exceptions.
  */
 export u8[] sackValue(i32 cumulativeTsn, i32 window) {
-  return sackValueGaps(cumulativeTsn, window, i32[0](), i32[0](), 0);
+  return sackValueGaps(cumulativeTsn, window, i32[](), i32[](), 0);
 }
 
 /**
@@ -363,7 +363,7 @@ export u8[] sackValue(i32 cumulativeTsn, i32 window) {
  * bytes each is enough, and reporting them turns one loss into one retransmission.
  */
 export u8[] sackValueGaps(i32 cumulativeTsn, i32 window, i32[] starts, i32[] ends, i32 runs) {
-  u8[] out = u8[12 + runs * 4]();
+  u8[] out = u8[].filled(12 + runs * 4, 0);
   out[0] = (cumulativeTsn >> 24) & 0xFF;
   out[1] = (cumulativeTsn >> 16) & 0xFF;
   out[2] = (cumulativeTsn >> 8) & 0xFF;
@@ -586,18 +586,18 @@ export struct Association {
   i32 heldCount;
 
   Association of(i32 ourTag, i32 initialTsn, i32 window) {
-    return Association(ourTag, 0, initialTsn, i32[16](), 0, 0, window, false,
-                       i32[64](), u8[][64](), 0, i64[64](), i32[64](),
+    return Association(ourTag, 0, initialTsn, i32[].filled(16, 0), 0, 0, window, false,
+                       i32[].filled(64, 0), u8[][].defaulted(64), 0, i64[].filled(64, 0), i32[].filled(64, 0),
                        -1 as i64, 0 as i64,
                        // 4,380 bytes or four MTUs, whichever is smaller but at least two — RFC
                        // 4960's initial window, which is a few packets rather than one so that a
                        // short exchange does not spend a round trip per chunk.
                        4380, 65536, 0, 1200,
-                       u8[][64](fill: u8[0]()), 0,
-                       u8[][16](fill: u8[0]()), i32[16](),
-                       i32[16](), i32[16](), i32[64](), 0, i32[64](), 0, 0, 0, 0,
-                       i32[64](), i32[64](), i32[64](),
-                       u8[][64](fill: u8[0]()), 0);
+                       u8[][].filled(64, u8[]()), 0,
+                       u8[][].filled(16, u8[]()), i32[].filled(16, 0),
+                       i32[].filled(16, 0), i32[].filled(16, 0), i32[].filled(64, 0), 0, i32[].filled(64, 0), 0, 0, 0, 0,
+                       i32[].filled(64, 0), i32[].filled(64, 0), i32[].filled(64, 0),
+                       u8[][].filled(64, u8[]()), 0);
   }
 
   /** The next stream sequence for `stream`, advancing it. */
@@ -665,8 +665,8 @@ export struct Association {
    * runs go out in ascending order because that is what a sender's gap-detection walk assumes.
    */
   u8[] sack(const this) {
-    i32[] starts = i32[this.seenCount]();
-    i32[] ends = i32[this.seenCount]();
+    i32[] starts = i32[].filled(this.seenCount, 0);
+    i32[] ends = i32[].filled(this.seenCount, 0);
     i32 runs = 0;
     i32 from = this.cumulativeTsn + 1;
     // Each pass finds the lowest unclaimed TSN, then extends over its successors.
@@ -794,7 +794,7 @@ export struct Association {
       room = room - this.queued[n].len();
       n = n + 1;
     }
-    u8[][] out = u8[][n]();
+    u8[][] out = u8[][].defaulted(n);
     for (i32 i = 0; i < n; i++) {
       out[i] = this.queued[i];
       this.track(tsnOfPacket(this.queued[i]), this.queued[i], now);
@@ -823,7 +823,7 @@ export struct Association {
   u8[][] receive(this, u8[] pkt, u8[] cookie, i64 now) {
     if (!checksumOk(pkt)) { return u8[][](); }
     i32 at = chunksAt();
-    u8[][] out = u8[][0]();
+    u8[][] out = u8[][]();
     while (chunkSize(pkt, at) > 0) {
       Chunk c = parseChunk(pkt, at);
       if (c.kind == chunkInit()) {
@@ -853,7 +853,7 @@ export struct Association {
         // any cookie at all, which is honest for a peer that keeps its association in memory anyway.
         this.established = true;
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
-                                       chunk(chunkCookieAck(), 0, u8[0]())));
+                                       chunk(chunkCookieAck(), 0, u8[]())));
       } else if (c.kind == chunkSack()) {
         // **Cumulative: everything up to and including it is delivered.** Gap blocks would say more
         // and are not read — a sender that ignores them resends a little that arrived, which is
@@ -917,12 +917,12 @@ export struct Association {
         // carries; we answer and stop sending, and it closes when our ack reaches it.
         this.shuttingDown = 1;
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
-                                       chunk(chunkShutdownAck(), 0, u8[0]())));
+                                       chunk(chunkShutdownAck(), 0, u8[]())));
       } else if (c.kind == chunkShutdownAck()) {
         this.shuttingDown = 1;
         this.shutDown = 1;
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
-                                       chunk(chunkShutdownComplete(), 0, u8[0]())));
+                                       chunk(chunkShutdownComplete(), 0, u8[]())));
       } else if (c.kind == chunkShutdownComplete()) {
         this.shuttingDown = 1;
         this.shutDown = 1;
@@ -940,7 +940,7 @@ export struct Association {
 
   /** A DATA chunk carrying `payload` on `stream`, with both counters advanced, kept until acked. */
   u8[] send(this, i32 stream, i32 ppid, u8[] payload, i64 now) {
-    if (this.shuttingDown != 0) { return u8[0](); }
+    if (this.shuttingDown != 0) { return u8[](); }
     i32 tsn = this.takeTsn();
     u8[] pkt = packet(5000, 5000, this.theirTag,
                       chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
@@ -974,7 +974,7 @@ export struct Association {
       if (now - this.flightSentAt[i] >= backoff(rto, this.flightTries[i])) { n = n + 1; }
     }
     if (n > 0) { this.timedOut(); }
-    u8[][] out = u8[][n]();
+    u8[][] out = u8[][].defaulted(n);
     i32 at = 0;
     for (i32 i = 0; i < this.flightCount; i++) {
       if (now - this.flightSentAt[i] >= backoff(rto, this.flightTries[i])) {
@@ -997,20 +997,20 @@ export struct Association {
    * pieces, which is why they are separate counters.
    */
   u8[][] sendLarge(this, i32 stream, i32 ppid, u8[] payload, i32 maxChunk, i64 now) {
-    if (this.shuttingDown != 0) { return u8[][0](); }
+    if (this.shuttingDown != 0) { return u8[][](); }
     if (payload.len() <= maxChunk) {
-      u8[][] one = u8[][1]();
+      u8[][] one = u8[][].defaulted(1);
       one[0] = this.send(stream, ppid, payload, now);
       return one;
     }
     i32 pieces = (payload.len() + maxChunk - 1) / maxChunk;
     i32 ssn = this.takeSsn(stream);
-    u8[][] out = u8[][pieces]();
+    u8[][] out = u8[][].defaulted(pieces);
     for (i32 i = 0; i < pieces; i++) {
       i32 from = i * maxChunk;
       i32 n = payload.len() - from;
       if (n > maxChunk) { n = maxChunk; }
-      u8[] part = u8[n]();
+      u8[] part = u8[].filled(n, 0);
       for (i32 j = 0; j < n; j++) { part[j] = payload[from + j]; }
       i32 flags = 0;
       if (i == 0) { flags = flags | dataFlagBegin(); }
@@ -1042,48 +1042,48 @@ export struct Association {
     // A begin resets the stream to expect this TSN, discarding whatever a peer that gave up
     // mid-message left behind.
     if ((flags & dataFlagBegin()) != 0) {
-      this.partial[stream] = u8[0]();
+      this.partial[stream] = u8[]();
       this.expectTsn[stream] = tsn;
       this.assembling[stream] = 1;
     }
-    if (this.assembling[stream] == 0) { return u8[0](); }  // a middle with no begin: nothing to join
+    if (this.assembling[stream] == 0) { return u8[](); }  // a middle with no begin: nothing to join
     // **A piece we already consumed is a duplicate, not an early arrival.** The peer resends what
     // our SACK did not cover, so a piece taken out of the hold list comes back; holding it again
     // would leave an entry nothing ever drains, and the list would fill with them.
-    if (tsnBefore(tsn, this.expectTsn[stream])) { return u8[0](); }
+    if (tsnBefore(tsn, this.expectTsn[stream])) { return u8[](); }
     if (tsn != this.expectTsn[stream]) {
       this.hold(stream, flags, piece, tsn);
-      return u8[0]();
+      return u8[]();
     }
     u8[] done = this.append(stream, flags, piece);
     if (done.len() > 0) { return done; }
     // Whatever was waiting for this one can go in now, and so can whatever was waiting for that.
     while (true) {
       i32 at = this.heldAt(stream, this.expectTsn[stream]);
-      if (at < 0) { return u8[0](); }
+      if (at < 0) { return u8[](); }
       i32 f = this.heldFlags[at];
       u8[] p = this.heldPiece[at];
       this.dropHeld(at);
       u8[] whole = this.append(stream, f, p);
       if (whole.len() > 0) { return whole; }
     }
-    return u8[0]();
+    return u8[]();
   }
 
   /** Join one in-order piece on, and answer the message if this was its end. */
   u8[] append(this, i32 stream, i32 flags, u8[] piece) {
     u8[] have = this.partial[stream];
-    u8[] both = u8[have.len() + piece.len()]();
+    u8[] both = u8[].filled(have.len() + piece.len(), 0);
     for (i32 i = 0; i < have.len(); i++) { both[i] = have[i]; }
     for (i32 i = 0; i < piece.len(); i++) { both[have.len() + i] = piece[i]; }
     this.expectTsn[stream] = this.expectTsn[stream] + 1;
     if ((flags & dataFlagEnd()) != 0) {
-      this.partial[stream] = u8[0]();
+      this.partial[stream] = u8[]();
       this.assembling[stream] = 0;
       return both;
     }
     this.partial[stream] = both;
-    return u8[0]();
+    return u8[]();
   }
 
   /** Keep a piece that arrived early. A duplicate replaces rather than doubling. */
@@ -1129,7 +1129,7 @@ export struct Association {
    * retransmissions, as `Peer` does for DTLS.
    */
   u8[][] resend(const this) {
-    u8[][] out = u8[][this.flightCount]();
+    u8[][] out = u8[][].defaulted(this.flightCount);
     for (i32 i = 0; i < this.flightCount; i++) { out[i] = this.flightPacket[i]; }
     return out;
   }
@@ -1162,7 +1162,7 @@ export struct Association {
    */
   u8[] shutdown(this) {
     this.shuttingDown = 1;
-    u8[] body = u8[4]();
+    u8[] body = u8[].filled(4, 0);
     body[0] = (this.cumulativeTsn >> 24) & 0xFF;
     body[1] = (this.cumulativeTsn >> 16) & 0xFF;
     body[2] = (this.cumulativeTsn >> 8) & 0xFF;
@@ -1185,7 +1185,7 @@ export struct Association {
 
 /** Grow a list of packets by one. */
 u8[][] appendPacket(u8[][] list, u8[] one) {
-  u8[][] out = u8[][list.len() + 1]();
+  u8[][] out = u8[][].defaulted(list.len() + 1);
   for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
   out[list.len()] = one;
   return out;
@@ -1210,7 +1210,7 @@ export u8[] dcepOpenMessage(i32 channelType, i32 priority, i32 reliability, stri
                             string protocol) {
   u8[] lab = label.toBytes();
   u8[] pro = protocol.toBytes();
-  u8[] out = u8[12 + lab.len() + pro.len()]();
+  u8[] out = u8[].filled(12 + lab.len() + pro.len(), 0);
   out[0] = dcepOpen();
   out[1] = channelType;
   out[2] = (priority >> 8) & 0xFF;
@@ -1230,7 +1230,7 @@ export u8[] dcepOpenMessage(i32 channelType, i32 priority, i32 reliability, stri
 
 /** A DATA_CHANNEL_ACK, which is one byte and says the channel is open. */
 export u8[] dcepAckMessage() {
-  u8[] out = u8[1]();
+  u8[] out = u8[].filled(1, 0);
   out[0] = dcepAck();
   return out;
 }
@@ -1240,7 +1240,7 @@ export string dcepLabel(u8[] msg) {
   if (msg.len() < 12 || msg[0] != dcepOpen()) { return ""; }
   i32 n = (msg[8] << 8) | msg[9];
   if (12 + n > msg.len()) { return ""; }
-  u8[] lab = u8[n]();
+  u8[] lab = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { lab[i] = msg[12 + i]; }
   return string.fromBytes(lab);
 }
@@ -1251,15 +1251,15 @@ export u8[] stateCookie(u8[] value) {
   while (at + 4 <= value.len()) {
     i32 kind = (value[at] << 8) | value[at + 1];
     i32 len = (value[at + 2] << 8) | value[at + 3];
-    if (len < 4 || at + len > value.len()) { return u8[0](); }
+    if (len < 4 || at + len > value.len()) { return u8[](); }
     if (kind == 7) {
-      u8[] c = u8[len - 4]();
+      u8[] c = u8[].filled(len - 4, 0);
       for (i32 i = 0; i < c.len(); i++) { c[i] = value[at + 4 + i]; }
       return c;
     }
     at = at + ((len + 3) & ~3);
   }
-  return u8[0]();
+  return u8[]();
 }
 
 /**

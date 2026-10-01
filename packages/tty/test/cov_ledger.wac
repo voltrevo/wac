@@ -36,12 +36,12 @@ const string PREFIX = "packages/tty/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/tty/src/line.wac", 236, "u8[] drawn = this.echo ? render(b) : u8[0]();", true,
+  return [
+        Pin("packages/tty/src/line.wac", 236, "u8[] drawn = this.echo ? render(b) : u8[]();", true,
         "**`cbreak` is the only caller and it never echoes.** `feedByte` is reached from `feed` when " +
         "`this.canonical` is false, which only `Line.cbreak()` produces — and that constructor is " +
         "`Line(Buf.create(), false, false, false)`, echo off. The three constructors are the whole " +
@@ -51,12 +51,12 @@ Pin[] pins() {
         "because `feedByte` reads `this.echo` rather than assuming its caller: a fourth constructor is " +
         "one line, and the arm is what makes it correct on the day somebody adds it. The `else` is " +
         "covered, which is the mode as it exists.")
-  );
+  ];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/tty/example/ttycat.wac", "main", "decl", true,
+  return [
+         Rule("packages/tty/example/ttycat.wac", "main", "decl", true,
          "**An example's `main` is run as a program, and this driver imports it as a module.** " +
          "`ttycat.wac` is what the pty tests build and execute — `line_test.wac` imports `ttycatBytes` " +
          "from it, which is the part that is a function — and `main` reads stdin, picks a mode from " +
@@ -67,13 +67,13 @@ Rule[] rules() {
          "recorded` runs this program against a real pty in every mode, which is what the ternary " +
          "exists for. What cannot see it is *this measurement*, which is a different statement — the " +
          "same one `packages/raster`'s ledger makes about its two-host test.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

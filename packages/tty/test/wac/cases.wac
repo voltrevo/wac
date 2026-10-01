@@ -24,14 +24,14 @@ export u8[] t(string s) { return s.toBytes(); }
 
 /** One byte, as a sequence, so a case reads as text with the key in the middle of it. */
 export u8[] k(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return one;
 }
 
 /** `a` then `b`, so a case can be written as text around the byte it is about. */
 export u8[] join(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -46,7 +46,7 @@ export string show(u8[] b) {
   string out = "\"";
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] >= 32 && b[i] < 127 && b[i] != '"') {
-      u8[] one = u8[1]();
+      u8[] one = u8[].filled(1, 0);
       one[0] = b[i];
       out = out + string.fromBytes(one);
     } else {
@@ -66,7 +66,7 @@ export bool sameBytes(u8[] a, u8[] b) {
 
 /** Every editing rule this module claims, as a byte sequence somebody could type. */
 export u8[][] typed() {
-  u8[][] out = u8[][44](fill: u8[0]());
+  u8[][] out = u8[][].filled(44, u8[]());
   out[0] = t("abc\n");
   out[1] = t("\n");
   out[2] = t("abc\r");                                            // carriage return is a newline
@@ -95,16 +95,16 @@ export u8[][] typed() {
   out[25] = j3(t("ab"), k(8), t("c\n"));                          // control-h is not erase
   out[26] = j3(t("a"), k(0x1B), t("b\n"));                        // escape is a control character
   out[27] = j3(t("a"), k(0), t("b\n"));                           // so is NUL
-  out[28] = j3(t("a"), u8[](0xC3, 0xA9), t("b\n"));               // bytes over 127 pass through
+  out[28] = j3(t("a"), [0xC3, 0xA9] as u8[], t("b\n"));               // bytes over 127 pass through
   out[29] = j4(t("a"), k(LNEXT), k(3), t("b\n"));                 // literal next
   // A character is not a byte, and erase works on bytes: `é` is two of them, and one DEL leaves the
   // first behind — on the screen *and* in the line. That is what this pty does, in both `iutf8`
   // modes, measured rather than assumed, and it is why `columns` is a function of a byte.
-  out[30] = j4(t("a"), u8[](0xC3, 0xA9), k(DEL), t("z\n"));
-  out[31] = j4(t("a"), u8[](0xE2, 0x82, 0xAC), k(DEL), t("z\n"));
-  out[32] = j4(t("a"), u8[](0xF0, 0x9F, 0x92, 0xA9), k(DEL), t("z\n"));
-  out[33] = j5(t("a"), u8[](0xC3, 0xA9), t("b"), k(KILL), t("z\n"));
-  out[34] = j5(t("x a"), u8[](0xC3, 0xA9), t("b"), k(WERASE), t("z\n"));
+  out[30] = j4(t("a"), [0xC3, 0xA9] as u8[], k(DEL), t("z\n"));
+  out[31] = j4(t("a"), [0xE2, 0x82, 0xAC] as u8[], k(DEL), t("z\n"));
+  out[32] = j4(t("a"), [0xF0, 0x9F, 0x92, 0xA9] as u8[], k(DEL), t("z\n"));
+  out[33] = j5(t("a"), [0xC3, 0xA9] as u8[], t("b"), k(KILL), t("z\n"));
+  out[34] = j5(t("x a"), [0xC3, 0xA9] as u8[], t("b"), k(WERASE), t("z\n"));
   // **`^R` reprints the line**, and it was being delivered as a `\x12` in the middle of one. It is
   // what you reach for when a program's output has scribbled over what you were editing, and no case
   // here had asked about it — which is how a rule the kernel has and this module did not went unseen.
@@ -126,7 +126,7 @@ export u8[][] typed() {
 }
 
 export string[] typedNames() {
-  return string[](
+  return [
     "plain", "empty", "carriage return is a newline", "erase one", "erase nothing",
     "erase past the start", "erase a control character", "kill the line", "kill nothing",
     "kill a line with a control character in it", "word erase",
@@ -141,12 +141,13 @@ export string[] typedNames() {
     "kill a line with a multi-byte character in it", "word erase over one", "reprint",
     "reprint an edited line", "reprint an empty line", "a literal DEL is a caret pair",
     "erasing a literal DEL takes two columns", "two plain letters", "a lone control character",
-    "two words", "leading spaces");
+    "two words", "leading spaces"
+  ];
 }
 
 /** The cases each *mode* is measured on: nine `typed()` also has, plus two about the modes. */
 export u8[][] modeCases() {
-  u8[][] out = u8[][11](fill: u8[0]());
+  u8[][] out = u8[][].filled(11, u8[]());
   out[0] = t("abc\n");                                        // plain
   out[1] = j3(t("ab"), k(DEL), t("c\n"));                     // erase one
   out[2] = j3(t("abc"), k(KILL), t("xy\n"));                  // kill the line
@@ -155,7 +156,7 @@ export u8[][] modeCases() {
   out[5] = j3(t("abc"), k(REPRINT), t("\n"));                 // reprint
   out[6] = j4(t("ab"), k(LNEXT), k(DEL), t("\n"));            // a literal DEL
   out[7] = j3(t("abc"), j4(k(DEL), k(DEL), k(DEL), k(DEL)), t("z\n"));
-  out[8] = j3(t("a"), u8[](0xC3, 0xA9), t("b\n"));            // a two-byte character
+  out[8] = j3(t("a"), [0xC3, 0xA9] as u8[], t("b\n"));            // a two-byte character
   // Two the modes disagree about most sharply, because they are about the *difference*: `^U` is a
   // kill in two modes and a byte in the third, and `^R` is a redraw in one, a byte in the other two.
   out[9] = j3(t("abc"), k(KILL), t("xy\n"));
@@ -164,14 +165,16 @@ export u8[][] modeCases() {
 }
 
 export string[] modeCaseNames() {
-  return string[]("plain", "erase one", "kill the line", "word erase",
+  return [
+                  "plain", "erase one", "kill the line", "word erase",
                   "a control character is a caret pair", "reprint", "a literal DEL",
                   "erase past the start", "a two-byte character",
-                  "kill in canonical, a byte in cbreak", "word erase, which cbreak does not do");
+                  "kill in canonical, a byte in cbreak", "word erase, which cbreak does not do"
+  ];
 }
 
 /** Only the nine `typed()` shares; the last two are about the modes rather than the rules. */
 export const i32 SHARED = 9;
 
 /** The modes, in the order the vectors record them. */
-export string[] modes() { return string[]("canonical", "noecho", "cbreak"); }
+export string[] modes() { return ["canonical", "noecho", "cbreak"]; }

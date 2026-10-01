@@ -45,7 +45,7 @@ export struct Reader {
   u8[] take(this, i32 n) {
     if (n < 0) { trap; }
     if (this.pos + n > this.end) { trap; }
-    u8[] out = u8[n]();
+    u8[] out = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { out[i] = this.buf[this.pos + i]; }
     this.pos += n;
     return out;
@@ -69,13 +69,13 @@ export struct Writer {
   u8[] buf;
   i32 len;
 
-  Writer create() { return Writer(u8[64](), 0); }
+  Writer create() { return Writer(u8[].filled(64, 0), 0); }
 
   void reserve(this, i32 extra) {
     if (this.len + extra <= this.buf.len()) { return; }
     i32 want = this.buf.len() * 2;
     while (want < this.len + extra) { want = want * 2; }
-    u8[] bigger = u8[want]();
+    u8[] bigger = u8[].filled(want, 0);
     for (i32 i = 0; i < this.len; i++) { bigger[i] = this.buf[i]; }
     this.buf = bigger;
   }
@@ -114,7 +114,7 @@ export struct Writer {
   }
 
   u8[] take(const this) {
-    u8[] out = u8[this.len]();
+    u8[] out = u8[].filled(this.len, 0);
     for (i32 i = 0; i < this.len; i++) { out[i] = this.buf[i]; }
     return out;
   }

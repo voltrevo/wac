@@ -54,7 +54,7 @@ import { check } from "../../../wactest/src/oracle.wac";
 const string ORACLE = "packages/crypto/test/oracle.mjs";
 
 Answers askRsa(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "node", string[](ORACLE), lines, what);
+  return ask(t, cli, "node", [ORACLE], lines, what);
 }
 
 /** The `n` and `e` of a `rsakey` answer, and the payload of the single-value answers. */
@@ -63,7 +63,7 @@ u8[] exponentOf(string line) { return decoded(word(line, 2)); }
 u8[] valueOf(string line) { return decoded(word(line, 1)); }
 
 u8[] fill(i32 n, i32 seed) {
-  u8[] o = u8[n]();
+  u8[] o = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { o[i] = (i * 31 + seed * 7 + 5) & 0xFF; }
   return o;
 }
@@ -77,8 +77,8 @@ struct Key {
 
 export string test_pkcs1_signatures_from_the_host(Core core, Cli cli) {
   T t = T.create();
-  i32[] bits = i32[](2048, 3072);
-  i32[] hashes = i32[](32, 48, 64);
+  i32[] bits = [2048, 3072];
+  i32[] hashes = [32, 48, 64];
   // One batch: the key, then the three signatures made with it, then the next key. The oracle is
   // stateful in line order, so the interleaving is the point rather than a compromise.
   Lines lines = Lines.create();
@@ -131,9 +131,9 @@ export string test_pkcs1_refuses_a_block_that_is_not_exact(Core core, Cli cli) {
   t.isFalse(rsaVerifyPkcs1(k.n, k.e, "a different message".toBytes(), sig, 32),
             "a different message is refused");
   // Every part of the signature: the top, the padding, the digest.
-  i32[] spots = i32[](0, 1, 100, 200, 250, 255);
+  i32[] spots = [0, 1, 100, 200, 250, 255];
   for (i32 i = 0; i < spots.len(); i++) {
-    u8[] bad = u8[sig.len()]();
+    u8[] bad = u8[].filled(sig.len(), 0);
     for (i32 j = 0; j < sig.len(); j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     t.isFalse(rsaVerifyPkcs1(k.n, k.e, msg, bad, 32),
@@ -150,7 +150,7 @@ export string test_pss_at_every_salt_length(Core core, Cli cli) {
   // against a verifier told the same length.
   T t = T.create();
   u8[] msg = "PSS is randomised".toBytes();
-  i32[] salts = i32[](0, 20, 32);
+  i32[] salts = [0, 20, 32];
   Lines lines = Lines.create();
   lines.add("rsakeygen 2048");
   for (i32 s = 0; s < salts.len(); s++) {
@@ -191,9 +191,9 @@ export string test_pss_refuses_tampering(Core core, Cli cli) {
   u8[] sig = valueOf(a.lines[1]);
   t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, 32), "the genuine signature verifies");
 
-  i32[] spots = i32[](0, 1, 128, 254, 255);
+  i32[] spots = [0, 1, 128, 254, 255];
   for (i32 i = 0; i < spots.len(); i++) {
-    u8[] bad = u8[sig.len()]();
+    u8[] bad = u8[].filled(sig.len(), 0);
     for (i32 j = 0; j < sig.len(); j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     t.isFalse(rsaVerifyPss(k.n, k.e, msg, bad, 32, 32),
@@ -217,8 +217,8 @@ export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Core core,
   // modular exponentiation all at once — and unlike "each side accepts the other", it cannot be
   // satisfied by our signer and our verifier being wrong together.
   T t = T.create();
-  i32[] bits = i32[](2048, 3072);
-  i32[] hashes = i32[](32, 48, 64);
+  i32[] bits = [2048, 3072];
+  i32[] hashes = [32, 48, 64];
   Lines lines = Lines.create();
   for (i32 b = 0; b < bits.len(); b++) {
     lines.add("rsakeygen " + itoa64(bits[b] as i64));
@@ -341,12 +341,14 @@ export string test_a_forged_block_that_is_wrong_in_one_place_is_refused(Core cor
 
   // The correct block, assembled here rather than taken from `rsaSignPkcs1`, so a bug shared with
   // the signer cannot make every case below vacuous.
-  u8[] prefix = u8[](0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
-                     0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20);
+  u8[] prefix = [
+                     0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+                     0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20
+  ];
   u8[] h = sha256(msg);
   i32 tLen = prefix.len() + 32;
 
-  u8[] good = u8[emLen]();
+  u8[] good = u8[].filled(emLen, 0);
   good[1] = 0x01;
   i32 padEnd = emLen - tLen - 1;
   for (i32 i = 2; i < padEnd; i++) { good[i] = 0xFF; }
@@ -405,7 +407,7 @@ u8[] signBlock(u8[] n, u8[] d, u8[] em) {
 }
 
 u8[] copyOf(u8[] src) {
-  u8[] o = u8[src.len()]();
+  u8[] o = u8[].filled(src.len(), 0);
   for (i32 i = 0; i < src.len(); i++) { o[i] = src[i]; }
   return o;
 }
@@ -437,11 +439,11 @@ export string test_our_pss_signatures_verify_elsewhere(Core core, Cli cli) {
   u8[] tinyD = valueOf(keys.lines[3]);
   u8[] msg = "a signature nobody here produced the verifier for".toBytes();
 
-  i32[] salts = i32[](0, 20, 32);
+  i32[] salts = [0, 20, 32];
   Lines judged = Lines.create();
   judged.add("rsapub " + hex(k.n) + " " + hex(k.e));
   for (i32 s = 0; s < salts.len(); s++) {
-    u8[] salt = u8[salts[s]]();
+    u8[] salt = u8[].filled(salts[s], 0);
     for (i32 i = 0; i < salt.len(); i++) { salt[i] = (i * 47 + 13) & 0xFF; }
     u8[] sig = rsaSignPss(k.n, d, msg, 32, salt);
     t.eqI32(sig.len(), k.n.len(), "a signature the width of the modulus");
@@ -456,8 +458,8 @@ export string test_our_pss_signatures_verify_elsewhere(Core core, Cli cli) {
 
   // The salt reaches the signature: two different salts must give two different signatures, or the
   // parameter is being ignored and every signature over one message is the same bytes.
-  u8[] saltA = u8[32](fill: 1);
-  u8[] saltB = u8[32](fill: 2);
+  u8[] saltA = u8[].filled(32, 1);
+  u8[] saltB = u8[].filled(32, 2);
   u8[] sigA = rsaSignPss(k.n, d, msg, 32, saltA);
   u8[] sigB = rsaSignPss(k.n, d, msg, 32, saltB);
   // Branchless, and not for speed: `if (sigA[i] != sigB[i])` has an *equal* side whose coverage is a
@@ -471,7 +473,7 @@ export string test_our_pss_signatures_verify_elsewhere(Core core, Cli cli) {
   // A key with no room for the encoding is an error rather than a short signature. 32-byte hash plus
   // a 32-byte salt plus two needs 66 bytes; a 512-bit modulus has 64. Its key was fetched in the
   // first batch above, because selecting it there would have changed which key the verdicts used.
-  t.eqI32(rsaSignPss(tiny.n, tinyD, msg, 32, u8[32]()).len(), 0,
+  t.eqI32(rsaSignPss(tiny.n, tinyD, msg, 32, u8[].filled(32, 0)).len(), 0,
           "a 512-bit key cannot hold a 32-byte hash and a 32-byte salt");
   return t.report();
 }
@@ -494,34 +496,34 @@ export string test_signing_refuses_moduli_it_cannot_use() {
   // `padPkcs1`: a modulus too small to hold the payload plus eleven bytes of padding, which is
   // PKCS#1's minimum rather than a preference. The empty block then reaches `rawSign`'s first
   // guard, so one input covers both.
-  u8[] tiny = u8[16]();
+  u8[] tiny = u8[].filled(16, 0);
   tiny[0] = 0xC0;
-  u8[] d = u8[16]();
+  u8[] d = u8[].filled(16, 0);
   d[15] = 3;
-  t.eqI32(rsaSignRawPkcs1(tiny, d, u8[10]()).len(), 0, "a payload that will not fit is refused");
+  t.eqI32(rsaSignRawPkcs1(tiny, d, u8[].filled(10, 0)).len(), 0, "a payload that will not fit is refused");
 
   // `rawSign`: a zero modulus. The padding fits, so this reaches the exponentiation guard rather
   // than the length one — which is the distinction the two checks exist to make.
-  u8[] zero = u8[32]();
-  t.eqI32(rsaSignRawPkcs1(zero, d, u8[4]()).len(), 0, "a zero modulus is refused when signing");
+  u8[] zero = u8[].filled(32, 0);
+  t.eqI32(rsaSignRawPkcs1(zero, d, u8[].filled(4, 0)).len(), 0, "a zero modulus is refused when signing");
   t.eqI32(rsaSignPkcs1(zero, d, "m".toBytes(), 32).len(), 0, "and through the hashing signer");
-  t.eqI32(rsaSignPss(zero, d, "m".toBytes(), 32, u8[0]()).len(), 0, "and through PSS");
+  t.eqI32(rsaSignPss(zero, d, "m".toBytes(), 32, u8[]()).len(), 0, "and through PSS");
 
   // `rawSign`: a padded block that is numerically at or above the modulus. `em` begins 0x00 0x01
   // 0xFF…, so this needs a modulus that is tiny for its width — three, in thirty-two bytes.
-  u8[] three = u8[32]();
+  u8[] three = u8[].filled(32, 0);
   three[31] = 3;
-  t.eqI32(rsaSignRawPkcs1(three, d, u8[4]()).len(), 0, "a block at or above the modulus is refused");
+  t.eqI32(rsaSignRawPkcs1(three, d, u8[].filled(4, 0)).len(), 0, "a block at or above the modulus is refused");
 
   // `rsaSignPss`: `emLen` is derived from the modulus's *bit* length, so a leading zero byte makes
   // the encoded message shorter than the modulus and the result has to be left-padded. Real keys
   // never take this path, because a generated modulus has its top bit set.
-  u8[] shortTop = u8[64]();
+  u8[] shortTop = u8[].filled(64, 0);
   shortTop[1] = 0x7F;
   for (i32 i = 2; i < 64; i++) { shortTop[i] = 0xFF; }
-  u8[] dd = u8[64]();
+  u8[] dd = u8[].filled(64, 0);
   dd[63] = 3;
-  t.isTrue(rsaSignPss(shortTop, dd, "m".toBytes(), 32, u8[0]()).len() == 64,
+  t.isTrue(rsaSignPss(shortTop, dd, "m".toBytes(), 32, u8[]()).len() == 64,
            "a modulus with a zero top byte still signs to its full width");
 
   return t.report();
@@ -535,35 +537,35 @@ export string test_signing_refuses_moduli_it_cannot_use() {
  */
 export string test_recovering_refuses_malformed_blocks() {
   T t = T.create();
-  u8[] n = u8[32]();
+  u8[] n = u8[].filled(32, 0);
   n[0] = 0xC0;
-  u8[] e = u8[3]();
+  u8[] e = u8[].filled(3, 0);
   e[0] = 1; e[2] = 1;                                    // 65537
 
-  t.eqI32(rsaRecoverPkcs1(n, e, u8[31]()).len(), 0, "a signature of the wrong length is refused");
-  t.eqI32(rsaRecoverPkcs1(u8[32](), e, u8[32]()).len(), 0, "a zero modulus is refused");
+  t.eqI32(rsaRecoverPkcs1(n, e, u8[].filled(31, 0)).len(), 0, "a signature of the wrong length is refused");
+  t.eqI32(rsaRecoverPkcs1(u8[].filled(32, 0), e, u8[].filled(32, 0)).len(), 0, "a zero modulus is refused");
   // s = n exactly, which is the boundary of "below the modulus" rather than a value beyond it.
   t.eqI32(rsaRecoverPkcs1(n, e, n).len(), 0, "a signature at the modulus is refused");
   // A block that exponentiates to something that is not 0x00 0x01: e = 1 makes the recovery the
   // identity, so the signature *is* the block and every remaining check can be aimed at directly.
-  u8[] one = u8[3]();
+  u8[] one = u8[].filled(3, 0);
   one[2] = 1;
-  u8[] em = u8[32]();
+  u8[] em = u8[].filled(32, 0);
   em[1] = 0x02;
   t.eqI32(rsaRecoverPkcs1(n, one, em).len(), 0, "a block that is not type 1 is refused");
   // All 0xFF after the header: the run walks off the end without ever meeting its terminator.
-  u8[] runs = u8[32]();
+  u8[] runs = u8[].filled(32, 0);
   runs[1] = 0x01;
   for (i32 i = 2; i < 32; i++) { runs[i] = 0xFF; }
   t.eqI32(rsaRecoverPkcs1(n, one, runs).len(), 0, "padding with no terminator is refused");
   // A byte that is neither 0xFF nor the 0x00 that ends the run.
-  u8[] stray = u8[32]();
+  u8[] stray = u8[].filled(32, 0);
   stray[1] = 0x01;
   for (i32 i = 2; i < 20; i++) { stray[i] = 0xFF; }
   stray[20] = 0x7E;
   t.eqI32(rsaRecoverPkcs1(n, one, stray).len(), 0, "a stray byte in the padding is refused");
   // Fewer than eight 0xFF bytes before the terminator, which PKCS#1 forbids outright.
-  u8[] shortPad = u8[32]();
+  u8[] shortPad = u8[].filled(32, 0);
   shortPad[1] = 0x01;
   for (i32 i = 2; i < 6; i++) { shortPad[i] = 0xFF; }
   t.eqI32(rsaRecoverPkcs1(n, one, shortPad).len(), 0, "fewer than eight padding bytes is refused");
@@ -590,14 +592,14 @@ export string test_pss_refuses_a_signature_with_bits_above_embits() {
 
   // 40 bytes with the top bit set: 320 bits, so `emBits` is 319 and one bit of the first byte is
   // unused. A shorter modulus cannot hold a 32-byte hash plus two.
-  u8[] n = u8[40]();
+  u8[] n = u8[].filled(40, 0);
   for (i32 i = 0; i < 40; i++) { n[i] = 0xFF; }
-  u8[] e = u8[1]();
+  u8[] e = u8[].filled(1, 0);
   e[0] = 1;
   u8[] msg = "malleable".toBytes();
 
   // The encoded message, ending in the trailer PSS requires so the check before this one passes.
-  u8[] em = u8[40]();
+  u8[] em = u8[].filled(40, 0);
   em[39] = 0xBC;
 
   // With that one bit clear the signature is refused later, for the ordinary reason: the recovered
@@ -632,7 +634,7 @@ struct ModCase {
 
 export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli) {
   T t = T.create();
-  ModCase[] cases = ModCase[](
+  ModCase[] cases = [
     ModCase("…3", "…5", "…7", "the textbook case"),
     ModCase("…2", "…10001", "…ca1", "a small RSA-shaped exponent"),
     ModCase("…0", "…10001", "…ca1", "a zero base"),
@@ -648,7 +650,8 @@ export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli)
     // list survives a square-and-multiply loop that walks the exponent's bits the wrong way round.
     // Found by planting exactly that fault and watching nothing fail.
     ModCase("…7", "…6", "…d", "6 is 110, so the bit order is finally observable"),
-    ModCase("…5", "…64", "…3b9aca07", "and 100 is 1100100"));
+    ModCase("…5", "…64", "…3b9aca07", "and 100 is 1100100")
+  ];
 
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) {
@@ -658,7 +661,7 @@ export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli)
     u8[] got = toBytes(modPow(fromBytes(b), fromBytes(e), fromBytes(m)), 32);
     lines.add("modexp " + hex(b) + " " + hex(e) + " " + hex(m) + " " + hex(got));
   }
-  check(t, cli, "node", string[](ORACLE), lines, "nine modular exponentiations");
+  check(t, cli, "node", [ORACLE], lines, "nine modular exponentiations");
   return t.report();
 }
 
@@ -714,9 +717,9 @@ u8[] testPublicExponent() { return decoded("010001"); }
  */
 export string test_pss_refuses_a_key_too_small_for_the_encoding() {
   T t = T.create();
-  u8[] small = u8[64]();
+  u8[] small = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { small[i] = 0xFF; }
-  u8[] salt = u8[32]();
+  u8[] salt = u8[].filled(32, 0);
   t.eqI32(rsaSignPss(small, small, "anything".toBytes(), 32, salt).len(), 0,
           "a 64-byte modulus cannot hold 32 + 32 + 2 and the sign must refuse");
   return t.report();
@@ -736,7 +739,7 @@ export string test_a_pss_signature_we_made_verifies_here() {
   u8[] e = testPublicExponent();
   u8[] d = testPrivateExponent();
   u8[] msg = "the message that was signed".toBytes();
-  u8[] salt = u8[32]();
+  u8[] salt = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { salt[i] = (i * 7 + 3) & 0xFF; }
 
   u8[] sig = rsaSignPss(n, d, msg, 32, salt);
@@ -797,11 +800,11 @@ export string test_a_pkcs1_signature_recovers_the_payload_it_carried() {
  */
 export string test_a_one_byte_modulus_recovers_nothing(Core core, Cli cli) {
   T t = T.create();
-  t.eqI32(rsaRecoverPkcs1(u8[](3), u8[](1), u8[](0)).len(), 0,
+  t.eqI32(rsaRecoverPkcs1([3] as u8[], [1] as u8[], [0] as u8[]).len(), 0,
           "a one-byte modulus should recover nothing");
   // Two bytes is the smallest that reaches the padding walk, and it has no room for the 0x00 0x01
   // prefix plus eight 0xFF bytes, so it is also empty — by the rules rather than by a bound.
-  t.eqI32(rsaRecoverPkcs1(u8[](3, 3), u8[](1), u8[](0, 0)).len(), 0,
+  t.eqI32(rsaRecoverPkcs1([3, 3] as u8[], [1] as u8[], [0, 0] as u8[]).len(), 0,
           "a two-byte modulus should recover nothing");
   return t.report();
 }

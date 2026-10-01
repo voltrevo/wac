@@ -16,7 +16,7 @@ export i32 paste(Core core, Cli cli, Fs fs, Args a) {
   // else with a `usage:` line of its own invention — so `paste` in a pipeline, which is how the real one
   // is most often used, was a usage error. GNU pastes as many columns as it is given operands.
   i32 files = a.rest.len() == 0 ? 1 : a.rest.len();
-  u8[][][] columns = u8[][][files](fill: u8[][0]());
+  u8[][][] columns = u8[][][].filled(files, u8[][]());
   i32 rows = 0;
   for (i32 f = 0; f < files; f++) {
     Input in = readInput(core, cli, fs, a, f);
@@ -27,13 +27,13 @@ export i32 paste(Core core, Cli cli, Fs fs, Args a) {
 
   // The longest file decides the line count; the shorter ones contribute empty strings, which is what
   // the real one does rather than stopping early.
-  u8[][] out = u8[][rows](fill: u8[0]());
-  u8[] tab = u8[1](fill: '\t');
+  u8[][] out = u8[][].filled(rows, u8[]());
+  u8[] tab = u8[].filled(1, '\t');
   for (i32 i = 0; i < rows; i++) {
-    u8[] line = u8[0]();
+    u8[] line = u8[]();
     for (i32 f = 0; f < files; f++) {
       if (f > 0) { line = concat(line, tab); }
-      line = concat(line, i < columns[f].len() ? columns[f][i] : u8[0]());
+      line = concat(line, i < columns[f].len() ? columns[f][i] : u8[]());
     }
     out[i] = line;
   }

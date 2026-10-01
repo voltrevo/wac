@@ -129,8 +129,8 @@ string driverFor(string[] paths, string[] sources) {
                   "  ss[" + itoa(i) + "] = src" + itoa(i) + "();\n").toBytes());
   }
   string filled = string.fromBytes(fill.take());
-  string decl = "  string[] ps = string[" + itoa(paths.len()) + "]();\n" +
-                "  string[] ss = string[" + itoa(paths.len()) + "]();\n";
+  string decl = "  string[] ps = string[].defaulted(" + itoa(paths.len()) + ");\n" +
+                "  string[] ss = string[].defaulted(" + itoa(paths.len()) + ");\n";
 
   out.pushAll(("u8[] whole() {\n" + decl + filled +
                "  return emitFiles(ps, ss, " + literalOf(ENTRY) + ");\n}\n\n" +
@@ -183,7 +183,7 @@ string stageAKey(Cli cli, u8[] driver) {
   Stat bin = cli.stat(cli.cwd().wait() + "/native/v8/target/release/wac").wait();
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
   // The rungs and the JavaScript that drives them: what wac-L5 is built out of.
-  string[] dirs = string[]("bootstrap/boot", "bootstrap/js", "bootstrap/drivers");
+  string[] dirs = ["bootstrap/boot", "bootstrap/js", "bootstrap/drivers"];
   for (i32 d = 0; d < dirs.len(); d++) {
     string[]? names = cli.readDir(dirs[d]).wait();
     if (names is null) { return ""; }
@@ -213,13 +213,13 @@ string stageAKey(Cli cli, u8[] driver) {
  */
 i32[] cachedStageA(Cli cli, string key, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  if (key == "") { return i32[want](); }
+  if (key == "") { return i32[].filled(want, 0); }
   FileResult f = cli.readFile(STAGE_A).wait();
-  if (!f.ok) { return i32[want](); }
+  if (!f.ok) { return i32[].filled(want, 0); }
   string[] lines = splitLines(string.fromBytes(f.bytes));
-  if (lines.len() < want + 1) { return i32[want](); }
-  if (trimmed(lines[0]) != key) { return i32[want](); }
-  i32[] out = i32[want]();
+  if (lines.len() < want + 1) { return i32[].filled(want, 0); }
+  if (trimmed(lines[0]) != key) { return i32[].filled(want, 0); }
+  i32[] out = i32[].filled(want, 0);
   for (i32 i = 0; i < want; i++) { out[i] = atoi(trimmed(lines[i + 1])); }
   okOut[0] = 1;
   return out;
@@ -241,11 +241,11 @@ void writeStageA(Cli cli, string key, i32[] said) {
  */
 i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/ladderRun.ts", DRIVER, exports),
-                    u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return i32[want](); }
+  Exec r = cli.exec("deno", ["run", "-A", "harness/ladderRun.ts", DRIVER, exports],
+                    u8[]()).wait();
+  if (!r.ran() || r.status != 0) { return i32[].filled(want, 0); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  i32[] out = i32[want]();
+  i32[] out = i32[].filled(want, 0);
   i32 n = 0;
   for (i32 i = 0; i < lines.len() && n < want; i++) {
     if (trimmed(lines[i]).len() == 0) { continue; }
@@ -275,19 +275,19 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
   // **`/`-prefixed keys**, because `resolved` always answers with a leading slash — it was written
   // for `corpuscheck_test.wac`, whose map is keyed that way. Passing plain corpus paths resolves
   // every import to a key that is not in the table, and the closure comes back as the entry alone.
-  string[] keys = string[c.paths.len()](fill: "");
+  string[] keys = string[].filled(c.paths.len(), "");
   for (i32 i = 0; i < c.paths.len(); i++) { keys[i] = "/" + c.paths[i]; }
   i32[] near = closureOf(keys, c.sources, entryAt);
   t.isTrue(near.len() >= 8, "only " + itoa(near.len()) + " sources in wacc's closure");
   if (near.len() < 8) { return t.report(); }
 
-  string[] cp = string[near.len()](fill: "");
-  string[] cs = string[near.len()](fill: "");
+  string[] cp = string[].filled(near.len(), "");
+  string[] cs = string[].filled(near.len(), "");
   for (i32 i = 0; i < near.len(); i++) { cp[i] = c.paths[near[i]]; cs[i] = c.sources[near[i]]; }
 
   // The driver joins the map wacc compiles from, and the disk, where the reference looks.
-  string[] paths = string[near.len() + 1](fill: "");
-  string[] sources = string[near.len() + 1](fill: "");
+  string[] paths = string[].filled(near.len() + 1, "");
+  string[] sources = string[].filled(near.len() + 1, "");
   for (i32 i = 0; i < near.len(); i++) { paths[i] = cp[i]; sources[i] = cs[i]; }
   paths[near.len()] = DRIVER;
 
@@ -301,7 +301,7 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
 
   // **The canaries, before the comparison.** A stage that declined the whole compiler would emit an
   // eight-byte header, and two eight-byte headers agree about nothing at all.
-  i32[] ok = i32[1]();
+  i32[] ok = i32[].filled(1, 0);
   string key = stageAKey(cli, driver.toBytes());
   i32[] said = cachedStageA(cli, key, 3, ok);
   if (ok[0] != 1) {
@@ -320,7 +320,7 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
 
   sources[near.len()] = driver;
   u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "selfhost.wasm", 0);
-  Ran r = runModule(cli, wasm, dir, "selfhost.wasm", string[]("fold"));
+  Ran r = runModule(cli, wasm, dir, "selfhost.wasm", ["fold"]);
   cli.remove(DRIVER, false).wait();
   if (!r.ok || wasRejected(r) || r.trapped) {
     t.fail("stage B did not run — " + (r.ok ? r.stderr : r.error));

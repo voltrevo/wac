@@ -122,6 +122,12 @@ export bool awaitInExpr(Expr e) {
     }
     TypeName(qualifier): { return false; }
     Incr(target, op, prefix): { return awaitInLvalue(target); }
+    ArrLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (awaitInExpr(elements[i])) { return true; }
+      }
+      return false;
+    }
     ArrNew(elem, size, fill, elements): {
       if ((size is not null) && awaitInExpr(size!)) { return true; }
       if ((fill is not null) && awaitInExpr(fill!)) { return true; }
@@ -213,14 +219,14 @@ bool isAwait(Expr e) {
  * cheap direction is the safe one here.
  */
 export AsyncPlan planBody(Stmt[] body) {
-  if (body.len() == 0) { return AsyncPlan(true, "", i32[0](), i32[0](), Ty[]()); }
-  Walked w = Walked(i32[256](), 0, i32[256](), Ty[256](fill: planAnyTy(body)), 0, "");
+  if (body.len() == 0) { return AsyncPlan(true, "", i32[](), i32[](), Ty[]()); }
+  Walked w = Walked(i32[].filled(256, 0), 0, i32[].filled(256, 0), Ty[].filled(256, planAnyTy(body)), 0, "");
   walkPlan(body, w);
-  if (w.why != "") { return AsyncPlan(false, w.why, i32[0](), i32[0](), Ty[]()); }
-  i32[] outAt = i32[w.n]();
+  if (w.why != "") { return AsyncPlan(false, w.why, i32[](), i32[](), Ty[]()); }
+  i32[] outAt = i32[].filled(w.n, 0);
   for (i32 i = 0; i < w.n; i++) { outAt[i] = i; }
-  i32[] outH = i32[w.h]();
-  Ty[] outT = Ty[w.h](fill: planAnyTy(body));
+  i32[] outH = i32[].filled(w.h, 0);
+  Ty[] outT = Ty[].filled(w.h, planAnyTy(body));
   for (i32 i = 0; i < w.h; i++) { outH[i] = w.hoist[i]; outT[i] = w.hoistTy[i]; }
   return AsyncPlan(true, "", outAt, outH, outT);
 }

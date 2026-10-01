@@ -17,8 +17,8 @@ import { Tampered, sweepTampering } from "./certtamper.wac";
 
 /** The same two fixtures `fuzz_test.wac` uses: a real leaf and its issuer. */
 Store fixtures(Core core, Cli cli) {
-  u8[] all = u8[0]();
-  string[] names = string[]("ec_leaf", "ec_ca");
+  u8[] all = u8[]();
+  string[] names = ["ec_leaf", "ec_ca"];
   for (i32 i = 0; i < names.len(); i++) {
     string path = "packages/tls/test/data/" + names[i] + ".pem";
     FileResult r = cli.readFile(path).wait();
@@ -26,7 +26,7 @@ Store fixtures(Core core, Cli cli) {
       core.warn("cert tamper: cannot read " + path + " — " + r.error);
       trap;
     }
-    u8[] joined = u8[all.len() + r.bytes.len()]();
+    u8[] joined = u8[].filled(all.len() + r.bytes.len(), 0);
     joined.copyFrom(all, 0, 0, all.len());
     joined.copyFrom(r.bytes, 0, all.len(), r.bytes.len());
     all = joined;

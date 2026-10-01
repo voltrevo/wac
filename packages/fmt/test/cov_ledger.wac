@@ -71,12 +71,12 @@ const string PREFIX = "packages/fmt/";
 
 /** What the tests need: a process to ask the host's own `Number`, and the environment to find it. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/fmt/src/atof.wac", 203, "if (c != '0') { p.sticky = true; }", false,
+  return [
+        Pin("packages/fmt/src/atof.wac", 203, "if (c != '0') { p.sticky = true; }", false,
         "**More significant digits than the buffer holds — the whole `else` is unreached.** " +
         "`MAX_DIGITS` digits are stored and the rest are dropped, and this arm plus the one below it " +
         "are what dropping *means*: remember that something non-zero was thrown away, and count the " +
@@ -179,14 +179,14 @@ Pin[] pins() {
         "it is `while (m > 0)`, which writes nothing for zero, and a general small-integer writer " +
         "that emitted the empty string for zero would be wrong for the next caller rather than for " +
         "this one.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No trap cases: none of the 24 tests wired into the exercise expects a trap.
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -194,5 +194,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

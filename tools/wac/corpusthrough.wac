@@ -76,14 +76,16 @@ struct Run {
  */
 string[] childEnv(Cli cli, string dir) {
   u8[]? path = cli.env("PATH").wait();
-  return string[]("LC_ALL=C.UTF-8",
+  return [
+                  "LC_ALL=C.UTF-8",
                   "PATH=" + (path is null ? "/usr/bin:/bin" : string.fromBytes(path!)),
-                  "HOME=" + dir);
+                  "HOME=" + dir
+  ];
 }
 
 /** One script, on one shell, in `dir`, with a bound on how long it may take. */
 Run runOne(Cli cli, string cmd, string script, string dir, string[] env) {
-  Exec r = cli.execWithIn("timeout", string[](seconds(), cmd, "-c", script), u8[0](),
+  Exec r = cli.execWithIn("timeout", [seconds(), cmd, "-c", script], u8[](),
                           env, true, false, dir).wait();
   if (!r.ran()) { return Run("", 0 - 1, false); }
   return Run(string.fromBytes(r.stdout), r.status, r.status == KILLED);
@@ -97,8 +99,10 @@ Run runOne(Cli cli, string cmd, string script, string dir, string[] env) {
  * lookaround, which this needs none of.
  */
 string[] programs() {
-  return string[]("tr", "cat", "seq", "sort", "uniq", "grep", "nl", "rev", "wc", "head", "tail",
-                  "printf");
+  return [
+                  "tr", "cat", "seq", "sort", "uniq", "grep", "nl", "rev", "wc", "head", "tail",
+                  "printf"
+  ];
 }
 
 string about(string script) {
@@ -106,7 +110,7 @@ string about(string script) {
   for (i32 i = 0; i < names.len(); i++) {
     Program? p = compile(("(^|[|;\\s])" + names[i] + "($|[\\s|;])").toBytes());
     if (p is null) { continue; }
-    i32[] caps = i32[slotCount(p!)]();
+    i32[] caps = i32[].filled(slotCount(p!), 0);
     if (search(p!, script.toBytes(), 0, caps, 1000000) != NO_MATCH()) { return names[i]; }
   }
   return "(the shell itself)";

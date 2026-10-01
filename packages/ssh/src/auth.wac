@@ -38,8 +38,10 @@ export i32 msgServiceAccept() { return 6; }
 
 /** SSH_MSG_SERVICE_REQUEST for the authentication service. */
 export u8[] serviceRequest() {
-  const u8[] USERAUTH = u8[](0x73, 0x73, 0x68, 0x2d, 0x75, 0x73, 0x65,
-                             0x72, 0x61, 0x75, 0x74, 0x68);              // "ssh-userauth"
+  const u8[] USERAUTH = [
+                             0x73, 0x73, 0x68, 0x2d, 0x75, 0x73, 0x65,
+                             0x72, 0x61, 0x75, 0x74, 0x68              // "ssh-userauth"
+  ];
   Writer w = Writer.create();
   w.byte(msgServiceRequest());
   w.str(USERAUTH);
@@ -48,12 +50,18 @@ export u8[] serviceRequest() {
 
 /** The fields shared by the request and the thing that gets signed. */
 void common(Writer w, u8[] user, u8[] publicBlob) {
-  const u8[] CONNECTION = u8[](0x73, 0x73, 0x68, 0x2d, 0x63, 0x6f, 0x6e,
-                               0x6e, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e);  // "ssh-connection"
-  const u8[] PUBLICKEY = u8[](0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x6b,
-                              0x65, 0x79);                                 // "publickey"
-  const u8[] ED25519 = u8[](0x73, 0x73, 0x68, 0x2d, 0x65, 0x64, 0x32,
-                            0x35, 0x35, 0x31, 0x39);                       // "ssh-ed25519"
+  const u8[] CONNECTION = [
+                               0x73, 0x73, 0x68, 0x2d, 0x63, 0x6f, 0x6e,
+                               0x6e, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e  // "ssh-connection"
+  ];
+  const u8[] PUBLICKEY = [
+                              0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x6b,
+                              0x65, 0x79                                 // "publickey"
+  ];
+  const u8[] ED25519 = [
+                            0x73, 0x73, 0x68, 0x2d, 0x65, 0x64, 0x32,
+                            0x35, 0x35, 0x31, 0x39                       // "ssh-ed25519"
+  ];
   w.byte(msgUserAuthRequest());
   w.str(user);
   w.str(CONNECTION);
@@ -86,8 +94,10 @@ export u8[] signedData(u8[] sessionId, u8[] user, u8[] publicBlob) {
  */
 export u8[] publicKeyRequest(u8[] sessionId, u8[] user, u8[] publicBlob, u8[] seed) {
   if (seed.len() != 32) { trap; }
-  const u8[] ED25519 = u8[](0x73, 0x73, 0x68, 0x2d, 0x65, 0x64, 0x32,
-                            0x35, 0x35, 0x31, 0x39);                       // "ssh-ed25519"
+  const u8[] ED25519 = [
+                            0x73, 0x73, 0x68, 0x2d, 0x65, 0x64, 0x32,
+                            0x35, 0x35, 0x31, 0x39                       // "ssh-ed25519"
+  ];
   u8[] signature = ed25519Sign(seed, signedData(sessionId, user, publicBlob));
 
   // The signature goes on the wire as a blob naming its own algorithm, like the key does.

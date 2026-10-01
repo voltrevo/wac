@@ -29,10 +29,11 @@ import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { closureOf } from "./source_probe.wac";
 
 string[] entries() {
-  return string[](
+  return [
     "packages/zstd/src/frame.wac",      // small, no boundary machinery
     "packages/json/src/json.wac",       // structs and enums crossing
-    "packages/box/example/boxsh.wac");  // callbacks, out-refs, many `Pending<T>` — issue 0106's program
+    "packages/box/example/boxsh.wac"  // callbacks, out-refs, many `Pending<T>` — issue 0106's program
+  ];
 }
 
 export string test_describefiles_agrees_with_the_two_calls_it_replaced(Core core, Cli cli) {
@@ -53,8 +54,8 @@ export string test_describefiles_agrees_with_the_two_calls_it_replaced(Core core
     for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == want[e]) { have = true; } }
     if (!have) { extra = extra + 1; }
   }
-  string[] paths = string[c.paths.len() + extra](fill: "");
-  string[] sources = string[c.paths.len() + extra](fill: "");
+  string[] paths = string[].filled(c.paths.len() + extra, "");
+  string[] sources = string[].filled(c.paths.len() + extra, "");
   for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
   i32 at2 = c.paths.len();
   for (i32 e = 0; e < want.len(); e++) {

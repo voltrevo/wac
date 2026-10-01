@@ -137,7 +137,7 @@ export struct Pr {
         if (e == 'u') {
           i32 cp = unicodeEscapeValue(this.src, escAt, end);
           if (cp >= 0) {
-            u8[] enc = u8[4]();
+            u8[] enc = u8[].filled(4, 0);
             i32 got = utf8Into(enc, 0, cp);
             for (i32 k = 0; k < got; k++) { this.escByte(enc[k]); }
             i = unicodeEscapeEnd(this.src, escAt, end);
@@ -424,6 +424,11 @@ void printExpr(Pr w, Expr e) {
       w.sp(); w.tok(op);
       w.sp(); w.s(prefix ? "pre" : "post");
       w.sp(); printLvalue(w, target);
+      w.close();
+    }
+    ArrLit(elements): {
+      w.open("arrlit", e.line, e.col);
+      printExprList(w, elements);
       w.close();
     }
     ArrNew(elem, size, fill, elements): {

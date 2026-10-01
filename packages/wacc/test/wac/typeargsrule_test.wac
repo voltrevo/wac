@@ -28,7 +28,7 @@ import { diagnoseFilesRendered, emit } from "../../src/api.wac";
 
 /** One source through the checker, rendered the way a user sees it. */
 string said(string src) {
-  return diagnoseFilesRendered(string[]("m.wac"), string[](src), "m.wac");
+  return diagnoseFilesRendered(["m.wac"], [src], "m.wac");
 }
 
 /**
@@ -87,14 +87,14 @@ export string test_a_double_comparison_is_refused_and_the_message_names_the_esca
 export string test_a_comparison_against_a_call_is_still_a_comparison() {
   T t = T.create();
   string clean = said("i32 g(bool x, bool y) { return x && y ? 1 : 0; }\n" +
-                      "export i32 main() { i32 count = 1; i32[] list = i32[3]();\n" +
+                      "export i32 main() { i32 count = 1; i32[] list = i32[].filled(3, 0);\n" +
                       "  return g(count < list.len(), count > 0); }");
   t.isTrue(!contains(clean, "error"),
            "a comparison whose operand is a call is untouched by the rule — got " + clean);
 
   // **And the ill-typed spelling is refused**, which is the other half: a test that only asserted
   // the good program would pass against a rule that had gone back to accepting `bool > i32`.
-  string bad = said("export i32 main() { i32 count = 1; i32[] list = i32[3]();\n" +
+  string bad = said("export i32 main() { i32 count = 1; i32[] list = i32[].filled(3, 0);\n" +
                     "  return count < list.len() > 0 ? 1 : 0; }");
   t.isTrue(contains(bad, "error"),
            "a bool compared against an integer literal is still refused — got " + bad);
@@ -242,7 +242,7 @@ export string test_a_written_method_type_argument_gives_an_inline_lambda_its_tar
                "  }\n" +
                "}\n" +
                "export i32 f() {\n" +
-               "  i32[] xs = i32[3](fill: 4);\n" +
+               "  i32[] xs = i32[].filled(3, 4);\n" +
                "  Vec<i32> v = Vec<i32>(xs, 3);\n" +
                "  return v.fold<i32>(0, (i32 acc, i32 x) => acc + x);\n" +
                "}";

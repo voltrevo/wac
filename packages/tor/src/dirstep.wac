@@ -49,8 +49,8 @@ export struct DirAction {
   i32 refusedFor;     // why a publish was refused, or PUB_OK — for a log, not for the reply
 }
 
-DirAction waiting() { return DirAction(false, u8[0](), u8[0](), u8[0](), PUB_OK); }
-DirAction answer(u8[] response) { return DirAction(true, response, u8[0](), u8[0](), PUB_OK); }
+DirAction waiting() { return DirAction(false, u8[](), u8[](), u8[](), PUB_OK); }
+DirAction answer(u8[] response) { return DirAction(true, response, u8[](), u8[](), PUB_OK); }
 
 /**
  * The reply to `pending`, or "not yet".
@@ -71,14 +71,14 @@ export DirAction dirStep(u8[] pending, DirDocuments docs) {
       if (equal(request.method, "POST".toBytes()) && hsPublishVersion(request.target) == 3) {
         Checked checked = checkForPublication(request.body, 0);
         if (checked.reason != PUB_OK) {
-          return DirAction(true, hsPublishResponseBytes(false), u8[0](), u8[0](), checked.reason);
+          return DirAction(true, hsPublishResponseBytes(false), u8[](), u8[](), checked.reason);
         }
         // Strictly greater, matching tor: re-uploading an unchanged descriptor is refused, and so
         // is an older one arriving late. A service increments the counter on every publication, so
         // the only way to hit this is a replay or a service that has lost track of its own state.
         i64 held = heldRevision(docs, checked.blindedKey);
         if (held >= 0 && held >= checked.revision) {
-          return DirAction(true, hsPublishResponseBytes(false), u8[0](), u8[0](), PUB_NOT_NEWER);
+          return DirAction(true, hsPublishResponseBytes(false), u8[](), u8[](), PUB_NOT_NEWER);
         }
         return DirAction(true, hsPublishResponseBytes(true), request.body, checked.blindedKey,
                          PUB_OK);
@@ -110,8 +110,8 @@ export DirDocuments filed(DirDocuments docs, u8[] descriptor, u8[] blindedKey, i
   }
   i32 n = docs.hsDescriptors.len();
   if (n >= max) { return docs; }
-  u8[][] descs = u8[][n + 1]();
-  u8[][] keys = u8[][n + 1]();
+  u8[][] descs = u8[][].defaulted(n + 1);
+  u8[][] keys = u8[][].defaulted(n + 1);
   for (i32 i = 0; i < n; i++) {
     descs[i] = docs.hsDescriptors[i];
     keys[i] = docs.hsBlindedKeys[i];

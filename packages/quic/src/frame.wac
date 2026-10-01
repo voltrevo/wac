@@ -152,8 +152,8 @@ Next stop(Frame f) { return Next(f, 0); }
 
 /** Copy `n` bytes from `at`, or empty when they are not all there. */
 u8[] slice(u8[] b, i32 at, i32 n) {
-  if (n < 0 || at < 0 || at + n > b.len()) { return u8[0](); }
-  u8[] out = u8[n]();
+  if (n < 0 || at < 0 || at + n > b.len()) { return u8[](); }
+  u8[] out = u8[].filled(n, 0);
   out.copyFrom(b, at, 0, n);
   return out;
 }
@@ -460,11 +460,11 @@ export Reassembly cryptoStream(u8[] payload) {
 
   i64 room = payload.len() as i64;
   if (end <= (0 as i64) || end > room) {
-    return Reassembly(u8[0](), end == (0 as i64), complete);
+    return Reassembly(u8[](), end == (0 as i64), complete);
   }
   i32 size = end as~ i32;
-  u8[] out = u8[size]();
-  bool[] have = bool[size]();
+  u8[] out = u8[].filled(size, 0);
+  bool[] have = bool[].filled(size, false);
 
   at = 0;
   while (at < payload.len()) {
@@ -579,11 +579,11 @@ export StreamData streamFrames(u8[] payload, i64 streamId) {
     }
     at = at + n.size;
   }
-  if (end <= (0 as i64)) { return StreamData(u8[0](), fin, fin); }
+  if (end <= (0 as i64)) { return StreamData(u8[](), fin, fin); }
 
   i32 size = end as~ i32;
-  u8[] out = u8[size]();
-  bool[] have = bool[size]();
+  u8[] out = u8[].filled(size, 0);
+  bool[] have = bool[].filled(size, false);
   at = 0;
   while (at < payload.len()) {
     Next n = nextIn(payload, at, EPOCH_1RTT());
@@ -603,7 +603,7 @@ export StreamData streamFrames(u8[] payload, i64 streamId) {
     at = at + n.size;
   }
   for (i32 i = 0; i < size; i++) {
-    if (!have[i]) { return StreamData(u8[0](), false, fin); }
+    if (!have[i]) { return StreamData(u8[](), false, fin); }
   }
   return StreamData(out, true, fin);
 }

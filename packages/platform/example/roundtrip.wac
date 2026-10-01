@@ -87,10 +87,10 @@ bool contains(string[] names, string want) {
 string itoa(i32 n) {
   if (n == 0) { return "0"; }
   i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[12](fill: 0);
+  u8[] digits = u8[].filled(12, 0);
   i32 at = 12;
   while (v > 0) { at--; digits[at] = '0' + (v % 10); v = v / 10; }
-  u8[] used = u8[12 - at](fill: 0);
+  u8[] used = u8[].filled(12 - at, 0);
   used.copyFrom(digits, at, 0, 12 - at);
   return (n < 0 ? "-" : "") + string.fromBytes(used);
 }

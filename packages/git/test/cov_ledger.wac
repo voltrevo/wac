@@ -39,12 +39,12 @@ const string PREFIX = "packages/git/";
 
 /** A network for the live fetch, a process to build the examples, and a temp dir to work in. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/git/src/repo.wac", "", "line", false,
+  return [
+         Rule("packages/git/src/repo.wac", "", "line", false,
          "**The repository layer — 1,018 lines, 362 branch points, 19 of them reachable from " +
          "here — and it is tested by seven tests that build a CLI and run it.** \n" +
          "`checkout_test.wac`, `commit_test.wac`, `clone_test.wac`, `push_test.wac`, " +
@@ -182,17 +182,17 @@ Rule[] rules() {
     Rule("packages/git/src/zlib.wac", "zlibDecompress", "decl", false,
          "`zlibDecompress`'s remaining arms — the branches a well-formed input does not take. " +
          "See the `return` rule over this file for the corpus that shapes them.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[0](fill: Pin("", 0, "", true, ""));
+  return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

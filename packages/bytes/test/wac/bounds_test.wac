@@ -18,7 +18,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../src/buf.wac";
 import { slice, clamped, equal } from "../../src/slice.wac";
 
-u8[] five() { return u8[]('a', 'b', 'c', 'd', 'e'); }
+u8[] five() { return ['a', 'b', 'c', 'd', 'e'] as u8[]; }
 
 export string test_traps_getting_past_the_end() {
   Buf b = Buf.create();
@@ -44,21 +44,21 @@ export string test_traps_getting_at_capacity_not_length() {
 
 export string test_traps_pushing_repeat_before_the_start() {
   Buf b = Buf.create();
-  b.pushAll(u8[]('a', 'b'));
+  b.pushAll(['a', 'b'] as u8[]);
   b.pushRepeat(0 - 1, 1);
   return "";
 }
 
 export string test_traps_pushing_repeat_past_the_end() {
   Buf b = Buf.create();
-  b.pushAll(u8[]('a', 'b'));
+  b.pushAll(['a', 'b'] as u8[]);
   b.pushRepeat(2, 1);
   return "";
 }
 
 export string test_traps_pushing_a_negative_repeat_count() {
   Buf b = Buf.create();
-  b.pushAll(u8[]('a', 'b'));
+  b.pushAll(['a', 'b'] as u8[]);
   b.pushRepeat(0, 0 - 1);
   return "";
 }
@@ -176,10 +176,10 @@ export string test_traps_repeating_from_a_negative_index() {
  */
 export string test_equal_compares_length_before_content() {
   T t = T.create();
-  t.isTrue(equal(u8[](1, 2, 3), u8[](1, 2, 3)), "the same bytes are equal");
-  t.isFalse(equal(u8[](1, 2, 3), u8[](1, 2)), "a different length is not equal, whatever the prefix");
-  t.isFalse(equal(u8[](1, 2, 3), u8[](1, 9, 3)), "one differing byte in the middle is not equal");
-  t.isFalse(equal(u8[](1, 2, 3), u8[](1, 2, 9)), "and the last byte counts — the loop runs to the end");
-  t.isTrue(equal(u8[0](), u8[0]()), "empty equals empty, which this function promises on purpose");
+  t.isTrue(equal([1, 2, 3] as u8[], [1, 2, 3] as u8[]), "the same bytes are equal");
+  t.isFalse(equal([1, 2, 3] as u8[], [1, 2] as u8[]), "a different length is not equal, whatever the prefix");
+  t.isFalse(equal([1, 2, 3] as u8[], [1, 9, 3] as u8[]), "one differing byte in the middle is not equal");
+  t.isFalse(equal([1, 2, 3] as u8[], [1, 2, 9] as u8[]), "and the last byte counts — the loop runs to the end");
+  t.isTrue(equal(u8[](), u8[]()), "empty equals empty, which this function promises on purpose");
   return t.report();
 }

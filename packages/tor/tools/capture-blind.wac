@@ -56,7 +56,7 @@ string probePath(Cli cli) {
  * the byte that would make a blinded key wrong once in two.
  */
 u8[] clampFactor(u8[] b) {
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = b[i]; }
   out[0] = out[0] & 248;
   out[31] = out[31] & 63;
@@ -95,11 +95,13 @@ export i32 main(Core core, Cli cli) {
   }
 
   Exec built = cli.exec("gcc",
-    string[]("-O1", "-o", probe, probeSrc,
+    [
+             "-O1", "-o", probe, probeSrc,
              "-I" + root, "-I" + root + "/src", "-I" + root + "/src/ext",
              "-I" + root + "/src/ext/trunnel",
              root + "/libtor.a",
-             "-lssl", "-lcrypto", "-lz", "-lm", "-levent", "-lpthread"), u8[0]()).wait();
+             "-lssl", "-lcrypto", "-lz", "-lm", "-levent", "-lpthread"
+    ], u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     core.warn("capture-blind: compiling the probe failed:\n" +
               (built.ran() ? string.fromBytes(built.stderr) : built.error));
@@ -112,7 +114,7 @@ export i32 main(Core core, Cli cli) {
     u8[] seed = sha256(("wac-mono blind vector " + itoa(i) + " seed").toBytes());
     u8[] factor = clampFactor(sha3_256(("wac-mono blind vector " + itoa(i) + " factor").toBytes()));
 
-    Exec r = cli.exec(probe, string[](hex(seed), hex(factor)), u8[0]()).wait();
+    Exec r = cli.exec(probe, [hex(seed), hex(factor)], u8[]()).wait();
     string said = r.ran() ? string.fromBytes(r.stdout) : "";
     if (!r.ran() || r.status != 0 || said.indexOf("OK") < 0) {
       core.warn("capture-blind: tor would not blind the key:\n" + said + "\n" +

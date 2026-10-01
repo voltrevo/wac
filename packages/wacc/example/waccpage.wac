@@ -106,7 +106,7 @@ string wasmName(u8[] b, i32[] at) {
 Vec<string> importsOf(u8[] wasm) {
   Vec<string> names = Vec.create();
   // 8 bytes of magic and version, then a sequence of sections.
-  i32[] at = i32[1]();
+  i32[] at = i32[].filled(1, 0);
   at[0] = 8;
   while (at[0] < wasm.len()) {
     i32 id = wasm[at[0]];
@@ -215,7 +215,7 @@ export i32 page(Core core, Cli cli, Page page) {
   compile(core, page, SAMPLE, "sample.wac");
 
   while (true) {
-    i32 which = core.waitAny(i32[](ev.id, file.id), -1);
+    i32 which = core.waitAny([ev.id, file.id], -1);
     if (which < 0) { return 0; }
 
     if (which == 1) {
@@ -267,8 +267,8 @@ void compile(Core core, Page page, string text, string name) {
   page.setText("inlen", itoa(text.toBytes().len())).wait();
   page.setText("why", "").wait();
 
-  string[] paths = string[1]();
-  string[] sources = string[1]();
+  string[] paths = string[].defaulted(1);
+  string[] sources = string[].defaulted(1);
   paths[0] = name;
   sources[0] = text;
 

@@ -48,7 +48,7 @@ export string test_an_openssh_private_key_reads_encrypted_or_not(Core core, Cli 
   FileResult plain = cli.readFile(dir + "/k").wait();
   t.isTrue(plain.ok, "the generated key could not be read — " + plain.error);
   if (!plain.ok) { return t.report(); }
-  PrivateKey key = readEd25519(plain.bytes, u8[0]());
+  PrivateKey key = readEd25519(plain.bytes, u8[]());
   t.eqStr(errorName(key.error), "ok", "an unencrypted key did not read");
   t.eqI32(key.seed.len(), 32, "the seed is not 32 bytes");
 
@@ -58,8 +58,8 @@ export string test_an_openssh_private_key_reads_encrypted_or_not(Core core, Cli 
   t.isTrue(copyPreserving(cli, dir + "/k", dir + "/enc"), "the key could not be copied");
   string pass = "a passphrase with spaces";
   Exec rekey = cli.exec("ssh-keygen",
-                        string[]("-p", "-f", dir + "/enc", "-P", "", "-N", pass, "-q", "-a", "8"),
-                        u8[0]()).wait();
+                        ["-p", "-f", dir + "/enc", "-P", "", "-N", pass, "-q", "-a", "8"],
+                        u8[]()).wait();
   t.eqI32(rekey.status, 0, "ssh-keygen -p: " + string.fromBytes(rekey.stderr));
   if (rekey.status != 0) { return t.report(); }
 
@@ -93,11 +93,12 @@ export string test_an_openssh_private_key_reads_encrypted_or_not(Core core, Cli 
 
 export string test_a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread() {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "",
     "-----BEGIN OPENSSH PRIVATE KEY-----\n-----END OPENSSH PRIVATE KEY-----\n",
     "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\n",
-    "not base64 at all ~~~\n");
+    "not base64 at all ~~~\n"
+  ];
   for (i32 i = 0; i < cases.len(); i++) {
     t.eqStr(statusOf(cases[i].toBytes(), ""), "not-openssh",
             "\"" + cases[i].slice(0, cases[i].len() < 30 ? cases[i].len() : 30) + "\"");
@@ -141,7 +142,7 @@ export string test_a_key_whose_two_public_halves_disagree_is_refused(Core core, 
   Buf mangled = Buf.create();
   mangled.pushBytes(raw, 0, pubAt);
   mangled.pushAll(u32be(8));                      // claims 8 bytes…
-  mangled.pushAll(u8[8]());                       // …and supplies 8, so the rest still parses
+  mangled.pushAll(u8[].filled(8, 0));                       // …and supplies 8, so the rest still parses
   mangled.pushBytes(raw, pubAt + 4 + pubLen, raw.len() - (pubAt + 4 + pubLen));
 
   string bad = "-----BEGIN OPENSSH PRIVATE KEY-----\n" +

@@ -15,7 +15,7 @@
  * all of it in practice and none of it in a hand-written test.
  */
 /** The escape byte itself: wac has no `\x` escape, so it is built rather than spelled. */
-string esc() { u8[] e = u8[1](fill: 27); return string.fromBytes(e); }
+string esc() { u8[] e = u8[].filled(1, 27); return string.fromBytes(e); }
 
 string stripAnsi(string s) {
   string out = "";
@@ -132,7 +132,7 @@ string[] linesOf(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     if (s.slice(i, i + 1) == "\n") { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 from = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -157,7 +157,7 @@ string[] linesOf(string s) {
  */
 export string firstFailureLine(string out) {
   string[] raw = linesOf(out);
-  string[] lines = string[raw.len()](fill: "");
+  string[] lines = string[].filled(raw.len(), "");
   for (i32 i = 0; i < raw.len(); i++) {
     lines[i] = stripAnsi(raw[i]);
   }

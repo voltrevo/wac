@@ -45,12 +45,12 @@ const string PREFIX = "packages/webrtc/";
 
 /** Datagram sockets for the live tests, a process for aiortc and coturn, and the vendored captures. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/webrtc/src/session.wac", "struct Session", "struct", false,
+  return [
+         Rule("packages/webrtc/src/session.wac", "struct Session", "struct", false,
          "**The file whose exercise is a browser.** `Session` joins seven hundred lines of ordering — " +
          "which datagram is a STUN check and which is DTLS, where an application record sits inside a " +
          "datagram, that an SCTP packet holds several chunks, that DCEP's open must be answered " +
@@ -173,12 +173,12 @@ Rule[] rules() {
     Rule("packages/webrtc/src/dtlskeys.wac", "nonce", "decl", false,
          "The explicit-nonce path for a record whose fixed and explicit parts do not add to twelve " +
          "bytes. Both callers construct the parts themselves.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/webrtc/src/sctp.wac", 208, "export i32 initWindow(u8[] value) {", false,
+  return [
+        Pin("packages/webrtc/src/sctp.wac", 208, "export i32 initWindow(u8[] value) {", false,
         "**An uncovered entry.** The advertised receive window out of an INIT — the peer telling us " +
         "how much it will accept before an acknowledgement. Nothing reads it, which means nothing " +
         "here does receiver-side flow control, which is a gap in the implementation rather than in " +
@@ -219,7 +219,7 @@ Pin[] pins() {
         "The application-data record type. Every application record in this package goes through " +
         "`Session`, whose exercise is the browser test — so the constant is read at run time and not " +
         "here. Same reason as `session.wac`'s DCEP constants."),
-    Pin("packages/webrtc/src/sctp.wac", 86, "if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[0]()); }", false,
+    Pin("packages/webrtc/src/sctp.wac", 86, "if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[]()); }", false,
         "A chunk header too short to hold its own length. The entry to every SCTP walk, and the one " +
         "malformation the corpus does not contain."),
     Pin("packages/webrtc/src/sctp.wac", 1272, "return t > (60000 as i64) ? (60000 as i64) : t;", false,
@@ -249,13 +249,13 @@ Pin[] pins() {
         "already asked `looksLikeStun`, so this is defence in depth — and cheap to keep, since the " +
         "alternative is an accessor that trusts its caller about the one thing the caller got from a " +
         "socket.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

@@ -41,7 +41,7 @@ import { cellAt, cells } from "../../wacc/src/manifest.wac";
 export string[] importable(Cli cli, string[] walked) {
   string cwd = cli.cwd().wait();
   string prefix = cwd + "/";
-  string[] out = string[walked.len()](fill: "");
+  string[] out = string[].filled(walked.len(), "");
   for (i32 i = 0; i < walked.len(); i++) {
     string p = walked[i];
     if (p.len() > 0 && p.slice(0, 1) != "/") { out[i] = p; continue; }
@@ -49,7 +49,7 @@ export string[] importable(Cli cli, string[] walked) {
       out[i] = p.slice(prefix.len(), p.len());
       continue;
     }
-    return string[0]();
+    return string[]();
   }
   return out;
 }
@@ -114,7 +114,7 @@ i32 ownPid(Cli cli) {
  */
 export string[] beside(string dir, string[] walked) {
   string prefix = dir + "/";
-  string[] out = string[walked.len()](fill: "");
+  string[] out = string[].filled(walked.len(), "");
   for (i32 i = 0; i < walked.len(); i++) {
     string p = walked[i];
     out[i] = p.len() > prefix.len() && p.slice(0, prefix.len()) == prefix
@@ -446,7 +446,7 @@ void walkTests(Fs fs, string dir, Vec<string> out) {
 
 /** `names`, sorted — an insertion sort, because a directory is small and this runs per level. */
 string[] sortedNames(string[] names) {
-  string[] out = string[names.len()](fill: "");
+  string[] out = string[].filled(names.len(), "");
   for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
@@ -468,14 +468,14 @@ string[] sortedNames(string[] names) {
  */
 TestExport[] testExportsIn(string manifest) {
   JsonValue? doc = parse(manifest.toBytes());
-  if (doc is null) { return TestExport[0](); }
+  if (doc is null) { return TestExport[](); }
   JsonObject root = JsonObject.create();
   match (doc!) {
     Object(o): { root = o; }
-    default: { return TestExport[0](); }
+    default: { return TestExport[](); }
   }
   JsonValue? xs = root.getStr("exports");
-  if (xs is null) { return TestExport[0](); }
+  if (xs is null) { return TestExport[](); }
   // No cap, for `testFilesIn`'s reason.
   Vec<TestExport> out = Vec.create();
   match (xs!) {
@@ -626,9 +626,9 @@ export string flagValue(Cli cli, i32 argc, string flag) {
  */
 void sayCoverage(Core core, string table, i32[] hit, string[] only) {
   string[] lines = splitLines(table);
-  string[] names = string[lines.len()](fill: "");
-  i32[] total = i32[lines.len()]();
-  i32[] taken = i32[lines.len()]();
+  string[] names = string[].filled(lines.len(), "");
+  i32[] total = i32[].filled(lines.len(), 0);
+  i32[] taken = i32[].filled(lines.len(), 0);
   i32 files = 0;
   i32 points = 0;
   i32 reached = 0;
@@ -664,7 +664,7 @@ void sayCoverage(Core core, string table, i32[] hit, string[] only) {
 string[] splitLines(string text) {
   i32 n = 1;
   for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 k = 0;
   for (i32 i = 0; i <= text.len(); i++) {
@@ -686,10 +686,10 @@ string[] splitLines(string text) {
  * rather than a preference.
  */
 string[] tableLines(string table) {
-  string[] rows = string[0](fill: "");
+  string[] rows = string[].filled(0, "");
   i32 n = 0;
   for (i32 i = 0; i < table.len(); i++) { if (table.slice(i, i + 1) == "\n") { n++; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 row = 0;
   while (at < table.len() && row < n) {
@@ -697,7 +697,7 @@ string[] tableLines(string table) {
     while (nl < table.len() && table.slice(nl, nl + 1) != "\n") { nl++; }
     string line = table.slice(at, nl);
     // columns, tab-separated: 0 index, 1 line, 2 col, 3 kind, 4 file
-    string[] c = string[5](fill: "");
+    string[] c = string[].filled(5, "");
     i32 col = 0;
     i32 from = 0;
     for (i32 i = 0; i <= line.len(); i++) {
@@ -723,14 +723,14 @@ string[] tableLines(string table) {
  * language does not have yet.
  */
 string[] uniqLines(string[] lines) {
-  string[] out = string[lines.len()](fill: "");
+  string[] out = string[].filled(lines.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     bool seen = false;
     for (i32 j = 0; j < n; j++) { if (out[j] == lines[i]) { seen = true; break; } }
     if (!seen) { out[n] = lines[i]; n++; }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -738,8 +738,8 @@ string[] uniqLines(string[] lines) {
 /** Every counter's value, read through the module's own `__cov_len` and `__cov_get`. */
 i32[] countersOf(Cli cli, i32 handle) {
   CallResult n = cli.call(handle, "__cov_len", 0);
-  if (n.status != 0 || n.value <= 0) { return i32[0](); }
-  i32[] out = i32[n.value]();
+  if (n.status != 0 || n.value <= 0) { return i32[](); }
+  i32[] out = i32[].filled(n.value, 0);
   for (i32 i = 0; i < n.value; i++) {
     CallResult one = cli.call(handle, "__cov_get", i);
     out[i] = one.status == 0 ? one.value : 0;
@@ -846,7 +846,7 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
   i32 ungrantedCount = 0;
   // **Only when asked**, because a snapshot is a host call per counter and there are thousands: the
   // profile is for `tools/mutate.ts` and costs nothing when nobody set `WAC_PROFILE`.
-  string[] lineOf = profiling ? tableLines(covTable) : string[0](fill: "");
+  string[] lineOf = profiling ? tableLines(covTable) : string[].filled(0, "");
   string profileTests = "";
   i32 profileN = 0;
   string profileSkipped = "";
@@ -888,7 +888,7 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
     // call per test on the JavaScript hosts. The suite passes that flag and is where the host calls
     // would add up — 2,700 of them for a figure nobody reads.
     i64 began = loud ? core.monotonicNanos().wait() : 0 as i64;
-    i32[] before = profiling ? countersOf(cli, handle) : i32[0]();
+    i32[] before = profiling ? countersOf(cli, handle) : i32[]();
     CallResult c = cli.call(handle, t.name, 0);
     if (profiling) {
       i32[] after = countersOf(cli, handle);
@@ -1030,7 +1030,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
                 + "empty for a pass");
       return 1;
     }
-    i32[] all = i32[names.len()]();
+    i32[] all = i32[].filled(names.len(), 0);
     for (i32 i = 0; i < names.len(); i++) { all[i] = i; }
     i64 began = core.monotonicNanos().wait();
     Tally t = runNamed(core, cli, m.handle, names, all, names.len(), grants, filter, loud,
@@ -1038,7 +1038,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     // **Read before the handle goes.** The counters live in the module, so `unload` is the end of
     // them — and an unloaded handle answers "no such export" rather than failing, so this would have
     // reported a run of nothing as a coverage of zero.
-    i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[0]();
+    i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[]();
     cli.unload(m.handle);
     if (t.ungrantedCount > 0) {
       core.log(itoa(t.ungrantedCount) + " test(s) want a capability this run was not granted: "
@@ -1054,7 +1054,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
       return 1;
     }
     sayTally(core, t, began);
-    if (covTable != "") { sayCoverage(core, covTable, hit, string[0]()); }
+    if (covTable != "") { sayCoverage(core, covTable, hit, string[]()); }
     writeProfile(core, cli, profileDir, entry, t, uniqLines(tableLines(covTable)));
     return t.failed == 0 ? 0 : 3;
   }
@@ -1070,7 +1070,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // `ok` above, so without this a run that skipped seventeen of them would report nothing but `13 ok`.
   i32 ungrantedTests = 0;
   // **Column-aligned**, which needs every name before the first line can be printed.
-  string[] failingFiles = string[files.len()](fill: "");
+  string[] failingFiles = string[].filled(files.len(), "");
   i32 failingN = 0;
   i32 code = 0;
   // **One document for the walk, not one per file**, because the module is one: the aggregate carries
@@ -1083,7 +1083,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // command used to print is `getrusage` and not something a wac program is offered.
   i64 runBegan = core.monotonicNanos().wait();
   for (i32 f = 0; f < files.len(); f++) {
-    i32[] mine = i32[names.len()]();
+    i32[] mine = i32[].filled(names.len(), 0);
     i32 count = 0;
     for (i32 i = 0; i < names.len(); i++) {
       if (fileOfWrapper(names[i].name) == f) { mine[count] = i; count = count + 1; }
@@ -1154,7 +1154,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // command keeps producing: the flag was accepted, the run happened, and no report was printed —
   // where the native command answers with the table. One aggregate module means one counter array for
   // the whole walk, so this is the same two calls the single-file branch makes.
-  i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[0]();
+  i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[]();
   cli.unload(m.handle);
   // **Nothing matched anywhere is a mistake, not a clean walk.** Per file the message says which file
   // the filter emptied; across the whole walk it says the pattern found nothing at all, and exits

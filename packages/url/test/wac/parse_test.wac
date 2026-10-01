@@ -37,7 +37,7 @@ const string ORACLE = "packages/url/test/batchOracle.ts";
 
 /** The oracle spawns Node, so it needs `--allow-run` of its own. */
 void ask(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "deno", string[]("run", "--no-check", "--allow-run", ORACLE), lines, what);
+  check(t, cli, "deno", ["run", "--no-check", "--allow-run", ORACLE], lines, what);
 }
 
 /** What this package answers, in `probe.wac`'s own NUL-separated form. */
@@ -58,13 +58,13 @@ string href(string input, string base) {
 
 /** One byte as a string, for the control characters a wac literal has no escape for. */
 string oneByte(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }
 
 u8[] sliceOf(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
   return out;
 }
@@ -82,20 +82,20 @@ bool accepted(string input, string base) {
  * beside it, not from whichever runtime happens to agree.
  */
 string[] divergentInputs() {
-  return string[]("file:///c|/x", "file:////a", "file://\\\\a", "\\d", "..");
+  return ["file:///c|/x", "file:////a", "file://\\\\a", "\\d", ".."];
 }
 
 string[] divergentBases() {
-  return string[]("", "", "", "foo://host/p", "foo://host/p");
+  return ["", "", "", "foo://host/p", "foo://host/p"];
 }
 
 string[] divergentWanted() {
-  return string[]("file:///c:/x", "file:////a", "file:////a", "foo://host/\\d", "foo://host/");
+  return ["file:///c:/x", "file:////a", "file:////a", "foo://host/\\d", "foo://host/"];
 }
 
 string[] divergentWhy() {
-  return string[](
-    "path state: scheme is file, path is empty and buffer is a Windows drive letter, so the " +
+  return [
+      "path state: scheme is file, path is empty and buffer is a Windows drive letter, so the " +
       "second code point becomes ':'",
     "file host state consumes the third slash as an empty host; the fourth starts an empty first " +
       "segment",
@@ -103,7 +103,8 @@ string[] divergentWhy() {
     "a backslash is only a segment separator when the scheme is special, and it is not in the " +
       "path percent-encode set",
     "path state, double-dot: shorten, then append the empty string because c is not '/' — so the " +
-      "path is [\"\"], which serializes as '/'");
+      "path is [\"\"], which serializes as '/'"
+  ];
 }
 
 /** Whether this (input, base) is one of the five held out of the bulk comparisons. */
@@ -133,109 +134,120 @@ void checkAll(T t, Cli cli, string[] inputs, string base, string what) {
 
 export string test_absolute_urls_with_every_component(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "http://example.com/", "https://example.com:8443/a/b?c=d#e", "http://user@example.com/",
     "http://user:pw@example.com/", "http://:pw@example.com/", "http://example.com",
     "http://example.com?q", "http://example.com#f", "http://example.com/?#",
-    "ws://h/", "wss://h/", "ftp://h/"), "", "absolute URLs");
+    "ws://h/", "wss://h/", "ftp://h/"
+  ], "", "absolute URLs");
   return t.report();
 }
 
 export string test_scheme_handling(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "HTTP://example.com/", "HtTpS://Example.COM/", "http://example.com:80/",
     "https://example.com:443/", "ftp://example.com:21/", "ws://example.com:80/",
     "wss://example.com:443/", "http://example.com:8080/", "http://example.com:0/",
     "http://example.com:65535/",
     // Non-special schemes take neither the slash handling nor a default port.
     "foo://example.com/", "foo:/path", "foo:path", "foo:", "mailto:a@b.c",
-    "data:text/plain,hello", "javascript:alert(1)", "a+b-c.d://h/"), "", "scheme handling");
+    "data:text/plain,hello", "javascript:alert(1)", "a+b-c.d://h/"
+  ], "", "scheme handling");
   return t.report();
 }
 
 export string test_ports_that_are_not_ports(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "http://h:65536/", "http://h:99999999/", "http://h:abc/", "http://h:/", "http://h:-1/",
-    "http://h: 80/"), "", "ports that are not ports");
+    "http://h: 80/"
+  ], "", "ports that are not ports");
   return t.report();
 }
 
 export string test_path_normalisation(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "http://h/a/b/../c", "http://h/a/b/./c", "http://h/../../..", "http://h/a/..",
     "http://h/a/../", "http://h/.", "http://h/./", "http://h//a//b//", "http://h/a/%2e/b",
     "http://h/a/%2E%2e/b", "http://h/a/.%2e/b", "http://h\\a\\b", "http://h/a\\b",
     // A backslash is only a slash for a special scheme.
-    "foo://h/a\\b", "foo://h/a/../b"), "", "path normalisation");
+    "foo://h/a\\b", "foo://h/a/../b"
+  ], "", "path normalisation");
   return t.report();
 }
 
 export string test_percent_encoding_by_component(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "http://h/ \"<>`{}", "http://h/?\" <>#", "http://h/?a'b", "foo://h/?a'b",
     "http://h/#\" <>`", "http://h/%41%42", "http://h/%zz", "http://h/%", "http://h/%a",
     "http://user na:me@h/", "http://h/a?b#c d", "http://h/" + oneByte(1) + oneByte(0x1F),
     // Multi-byte UTF-8 in each component that allows it.
-    "http://h/café", "http://h/?café", "http://h/#café", "http://h/日本", "http://h/😀"),
+    "http://h/café", "http://h/?café", "http://h/#café", "http://h/日本", "http://h/😀"
+  ],
     "", "percent-encoding");
   return t.report();
 }
 
 export string test_hosts_ipv4_in_all_its_spellings(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "http://127.0.0.1/", "http://127.1/", "http://127.0.1/", "http://2130706433/",
     "http://0x7f.1/", "http://0x7f000001/", "http://0177.0.0.1/", "http://0300.0250.0.1/",
     "http://1.2.3.4./", "http://0/", "http://0x/", "http://256.1.1.1/", "http://1.2.3.4.5/",
-    "http://999999999999/", "http://0x100000000/", "http://1.2.3.09/", "http://1.2.3.0x/"),
+    "http://999999999999/", "http://0x100000000/", "http://1.2.3.09/", "http://1.2.3.0x/"
+  ],
     "", "IPv4");
   return t.report();
 }
 
 export string test_hosts_ipv6(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "http://[::1]/", "http://[::]/", "http://[1:2:3:4:5:6:7:8]/", "http://[1::8]/",
     "http://[::ffff:127.0.0.1]/", "http://[0:0:0:0:0:0:0:1]/", "http://[2001:db8::1]:8080/",
     "http://[1:2:3:4:5:6:7:8:9]/", "http://[1::2::3]/", "http://[::1", "http://[]/",
-    "http://[:]/", "http://[1:2:3:4:5:6:7]/", "http://[::ffff:999.1.1.1]/"), "", "IPv6");
+    "http://[:]/", "http://[1:2:3:4:5:6:7]/", "http://[::ffff:999.1.1.1]/"
+  ], "", "IPv6");
   return t.report();
 }
 
 export string test_hosts_names_empty_and_forbidden_bytes(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "http://example.com/", "http://EXAMPLE.COM/", "http://sub.domain.example.com/",
     "http://h%65llo/", "http:///", "http://:80/", "http://a b/", "http://a#b/", "http://a<b/",
     "http://a|b/", "http://a%2fb/", "foo://a b/", "foo://a%20b/", "http://.../",
-    "http://a..b/"), "", "host names");
+    "http://a..b/"
+  ], "", "host names");
   return t.report();
 }
 
 export string test_file_urls(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "file:///a/b", "file://localhost/a", "file://LOCALHOST/a", "file://host/a", "file:///",
     "file://", "file:", "file:/a", "file:a", "file:///c:/x", "file:///c|/x", "file://c:/x",
-    "file:///C:/", "file:///c:", "file:////a", "file:///a/../b", "file://\\\\a"), "", "file URLs");
+    "file:///C:/", "file:///c:", "file:////a", "file:///a/../b", "file://\\\\a"
+  ], "", "file URLs");
   return t.report();
 }
 
 string[] relativeRefs() {
-  return string[](
+  return [
     "", "d", "/d", "//other.com/d", "../d", "../../d", "../../../d", "./d", "?q2", "#f2", "?",
-    "#", "http://absolute.example/x", "//h", "\\d", "a:b", ".", "..");
+    "#", "http://absolute.example/x", "//h", "\\d", "a:b", ".", ".."
+  ];
 }
 
 export string test_relative_resolution_against_a_base(Core core, Cli cli) {
   T t = T.create();
-  string[] bases = string[](
+  string[] bases = [
     "http://example.com/a/b/c?q#f", "http://example.com/", "https://user:pw@host:8080/p/q",
-    "file:///a/b/c", "foo://host/p", "foo:opaque");
+    "file:///a/b/c", "foo://host/p", "foo:opaque"
+  ];
   for (i32 i = 0; i < bases.len(); i++) {
     checkAll(t, cli, relativeRefs(), bases[i], "against \"" + bases[i] + "\"");
   }
@@ -251,7 +263,7 @@ export string test_relative_resolution_against_a_base(Core core, Cli cli) {
  */
 export string test_edges_the_main_groups_miss(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     // A path with no host that starts with an empty segment, which the serializer has to protect
     // with `/.` or it would re-parse as an authority.
     "foo:/.//x", "foo:/..//x", "web+demo:/.//not-a-host/",
@@ -276,10 +288,11 @@ export string test_edges_the_main_groups_miss(Core core, Cli cli) {
     "file:///c:", "file:///c|", "file:///C:", "file:///c:/", "file:///c:?q", "file:///c:#f",
     // A file URL whose host is an address rather than a name, which is what makes the `localhost`
     // comparison look at a host it cannot compare as bytes.
-    "file://1.2.3.4/x", "file://[::1]/x", "file://localhost/x", "file://LOCALHOST/x"),
+    "file://1.2.3.4/x", "file://[::1]/x", "file://localhost/x", "file://LOCALHOST/x"
+  ],
     "", "coverage edges");
-  string[] bases = string[]("file:///c:/a/b", "file:///c:", "file://h/c:/x");
-  string[] refs = string[]("..", "/x", "x", "../..", "d:/y", "/d:/y");
+  string[] bases = ["file:///c:/a/b", "file:///c:", "file://h/c:/x"];
+  string[] refs = ["..", "/x", "x", "../..", "d:/y", "/d:/y"];
   for (i32 i = 0; i < bases.len(); i++) {
     checkAll(t, cli, refs, bases[i], "drive letters against \"" + bases[i] + "\"");
   }
@@ -288,17 +301,19 @@ export string test_edges_the_main_groups_miss(Core core, Cli cli) {
 
 export string test_whitespace_and_control_bytes_are_stripped(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "  http://h/  ", "\thttp://h/", "ht\ntp://h/", "http://h/a\tb", "http://h/a\rb",
-    oneByte(0) + "http://h/", "http://h/ "), "", "whitespace");
+    oneByte(0) + "http://h/", "http://h/ "
+  ], "", "whitespace");
   return t.report();
 }
 
 export string test_inputs_that_must_be_rejected(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "", "   ", "http", "://h/", "http:", "1http://h/", "http://", "http://:@/", "//h/",
-    "/a/b", "a/b"), "", "rejections");
+    "/a/b", "a/b"
+  ], "", "rejections");
   return t.report();
 }
 
@@ -311,7 +326,7 @@ export string test_inputs_that_must_be_rejected(Core core, Cli cli) {
  */
 export string test_a_non_ascii_domain_is_rejected_rather_than_mapped(Core core, Cli cli) {
   T t = T.create();
-  string[] cases = string[]("http://café.com/", "http://日本.jp/");
+  string[] cases = ["http://café.com/", "http://日本.jp/"];
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) {
     t.isFalse(accepted(cases[i], ""),
@@ -323,7 +338,7 @@ export string test_a_non_ascii_domain_is_rejected_rather_than_mapped(Core core, 
   }
   ask(t, cli, lines, "IDNA, which must still be a divergence");
   // An already-punycoded domain is ASCII, so it needs no mapping and must agree.
-  checkAll(t, cli, string[]("http://xn--caf-dma.com/"), "", "an already-punycoded domain");
+  checkAll(t, cli, ["http://xn--caf-dma.com/"], "", "an already-punycoded domain");
   return t.report();
 }
 
@@ -346,13 +361,13 @@ export string test_a_non_ascii_domain_is_rejected_rather_than_mapped(Core core, 
 export string test_a_reference_resolves_against_an_opaque_path_only_with_a_hash() {
   T t = T.create();
   string base = "foo:opaque";
-  string[] bad = string[]("/a", "a", "?q", "//h/x", "/a#f", "a#f", "?q#f", "", ".");
+  string[] bad = ["/a", "a", "?q", "//h/x", "/a#f", "a#f", "?q#f", "", "."];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(accepted(bad[i], base),
               "\"" + bad[i] + "\" was accepted against " + base + ", and should not be");
   }
-  string[] good = string[]("#f", "#", "#a#b");
-  string[] wanted = string[]("foo:opaque#f", "foo:opaque#", "foo:opaque#a#b");
+  string[] good = ["#f", "#", "#a#b"];
+  string[] wanted = ["foo:opaque#f", "foo:opaque#", "foo:opaque#a#b"];
   for (i32 i = 0; i < good.len(); i++) {
     t.eqStr(href(good[i], base), wanted[i], "\"" + good[i] + "\" against " + base);
   }

@@ -31,7 +31,7 @@ import { sha1 } from "../../crypto/src/sha1.wac";
 
 /** A deterministic 32-byte seed. Distinct per role, so no two keys are the same key. */
 u8[] seedFor(i32 role) {
-  u8[] s = u8[32]();
+  u8[] s = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { s[i] = (role * 61 + i * 7 + 3) & 0xFF; }
   return s;
 }
@@ -186,7 +186,7 @@ export i32 main(Core core, Cli cli) {
       // relays is described by listing them. With none, the one generated here stands in.
       i32 extra = cli.argCount().wait() - 5;
       i32 count = extra > 0 ? extra : 1;
-      RelayOpinion[] relays = RelayOpinion[count]();
+      RelayOpinion[] relays = RelayOpinion[].defaulted(count);
       for (i32 ri = 0; ri < count; ri++) {
         u8[] subject = desc;
         if (extra > 0) {
@@ -244,7 +244,7 @@ export i32 main(Core core, Cli cli) {
       // consensus records about each vote it was computed from.
       if (cli.argCount().wait() >= 4) {
         string consOut = string.fromBytes(cli.arg(3).wait());
-        ConsensusVoter[] voters = ConsensusVoter[1]();
+        ConsensusVoter[] voters = ConsensusVoter[].defaulted(1);
         voters[0] = ConsensusVoter("wacauth", rsaFingerprint(ak.identityN, ak.identityE),
                                    "127.0.0.1", "127.0.0.1", 7000, 5000, "agent-b@wac-mono",
                                    sha1(vote));
@@ -421,7 +421,7 @@ const string WEIGHTS =
  * the consensus skips it, so the two documents cannot come to disagree about who is in the network.
  */
 u8[] allMicrodescriptors(RelayOpinion[] relays) {
-  u8[][] descriptors = u8[][relays.len()]();
+  u8[][] descriptors = u8[][].defaulted(relays.len());
   for (i32 i = 0; i < relays.len(); i++) { descriptors[i] = relays[i].descriptor; }
   u8[][] order = sortedDescriptors(descriptors);
   Buf out = Buf.create();

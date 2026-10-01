@@ -15,7 +15,7 @@ import { FAULT_NONE, FAULT_NOT_FOUND, FAULT_DENIED, FAULT_EXISTS, FAULT_NOT_EMPT
          faultWords } from "std/platform.wac";
 
 export i32[] codes() {
-  i32[] out = i32[18]();
+  i32[] out = i32[].filled(18, 0);
   out[0] = FAULT_NONE();
   out[1] = FAULT_NOT_FOUND();
   out[2] = FAULT_DENIED();

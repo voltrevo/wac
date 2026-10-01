@@ -21,9 +21,9 @@ string WRONG() { return "dddddddddddddddddddddddddddddddddddddddd"; }
 LockEntry[] updated(string manifestSrc, string lockSrc, string[] resolved) {
   Manifest m = readManifest(manifestSrc.toBytes());
   Lock l = readLock(lockSrc.toBytes());
-  if (!m.ok || !l.ok) { return LockEntry[0](); }
+  if (!m.ok || !l.ok) { return LockEntry[](); }
   LockEntry[] next = applyPlan(m, l, plan(m, l), resolved);
-  return next.len() == m.imports.len() ? next : LockEntry[0]();
+  return next.len() == m.imports.len() ? next : LockEntry[]();
 }
 
 i32 entryNamed(LockEntry[] es, string name) {
@@ -38,7 +38,7 @@ export string test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had
   LockEntry[] out = updated(
     "{ imports: { 'bits/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }",
     "{ imports: { 'bits/': { git: 'g1', ref: 'main', commit: '" + OLD() + "' } } }",
-    string[](WRONG(), FRESH()));
+    [WRONG(), FRESH()]);
   t.eqI32(out.len(), 2, "both mappings are written");
   if (out.len() != 2) { return t.report(); }
   i32 std = entryNamed(out, "bits/");
@@ -57,7 +57,7 @@ export string test_a_changed_input_takes_the_new_commit_and_the_new_inputs() {
   LockEntry[] out = updated(
     "{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }",
     "{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + OLD() + "' } } }",
-    string[](FRESH()));
+    [FRESH()]);
   t.eqI32(out.len(), 1, "it is written");
   if (out.len() != 1) { return t.report(); }
   t.eqStr(out[0].commit, FRESH(), "the commit moves");
@@ -74,7 +74,7 @@ export string test_an_entry_whose_mapping_is_gone_does_not_survive_the_write() {
       + "  'kept': { git: 'g', ref: 'r', commit: '" + OLD() + "' },\n"
       + "  'gone': { git: 'g', ref: 'r', commit: '" + OTHER() + "' },\n"
       + "} }",
-    string[](WRONG()));
+    [WRONG()]);
   t.eqI32(out.len(), 1, "only the mapping still in the manifest is written");
   t.eqI32(entryNamed(out, "gone"), -1, "the orphan is not written back");
   if (out.len() == 1) { t.eqStr(out[0].commit, OLD(), "kept keeps its commit"); }
@@ -98,7 +98,7 @@ export string test_nothing_to_do_writes_the_same_bytes_it_read() {
   Lock read = readLock(lockText.toBytes());
   t.isTrue(read.ok, "the lock reads");
   if (!read.ok) { return t.report(); }
-  LockEntry[] out = updated(manifest, lockText, string[](WRONG(), WRONG()));
+  LockEntry[] out = updated(manifest, lockText, [WRONG(), WRONG()]);
   t.eqI32(out.len(), 2, "both are written");
   if (out.len() != 2) { return t.report(); }
   t.eqBytes(writeLock(out), writeLock(read.entries), "a no-op update does not rewrite the file");
@@ -110,19 +110,20 @@ export string test_a_missing_commit_is_a_refusal_not_a_partial_lock() {
   string manifest = "{ imports: { 'a': { git: 'g', ref: 'r' }, 'b': { git: 'g', ref: 'r' } } }";
   // A lock is a claim about every mapping. Writing one that silently un-pinned whatever the caller
   // failed to resolve would be worse than writing nothing.
-  string[] labels = string[]("one missing", "not a sha", "abbreviated", "too few", "too many");
-  string[][] cases = string[][](
-    string[](FRESH(), ""),
-    string[](FRESH(), "nope"),
-    string[](FRESH(), FRESH().slice(0, 12)),
-    string[](FRESH()),
-    string[](FRESH(), FRESH(), FRESH()));
+  string[] labels = ["one missing", "not a sha", "abbreviated", "too few", "too many"];
+  string[][] cases = [
+    [FRESH(), ""],
+    [FRESH(), "nope"],
+    [FRESH(), FRESH().slice(0, 12)],
+    [FRESH()],
+    [FRESH(), FRESH(), FRESH()]
+  ];
   for (i32 i = 0; i < labels.len(); i++) {
     t.eqI32(updated(manifest, "{}", cases[i]).len(), 0, labels[i] + " writes no lock at all");
   }
   // And the canary: the same call with both commits present must succeed, or the five above prove
   // nothing about the check and only that the call fails.
-  t.eqI32(updated(manifest, "{}", string[](FRESH(), OTHER())).len(), 2,
+  t.eqI32(updated(manifest, "{}", [FRESH(), OTHER()]).len(), 2,
           "the well-formed case still writes");
   return t.report();
 }

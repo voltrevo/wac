@@ -64,7 +64,7 @@ string binary(Cli cli) { return root(cli) + "/native/v8/target/release/wac"; }
  * which for 32 is the 16-byte key written twice, as the TypeScript's `KEYS32` was.
  */
 i32[] keyOf(i32 which, i32 len) {
-  i32[] out = i32[len]();
+  i32[] out = i32[].filled(len, 0);
   for (i32 i = 0; i < len; i++) {
     i32 j = i % 16;
     if (which == 0) { out[i] = 0; }
@@ -77,15 +77,15 @@ i32[] keyOf(i32 which, i32 len) {
 
 /** `0, 1, 2, …` — the block the keyed routines are given, which is not a secret. */
 i32[] block16() {
-  i32[] out = i32[16]();
+  i32[] out = i32[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { out[i] = i; }
   return out;
 }
 
 string literal(i32[] v) {
-  string out = "u8[](";
+  string out = "[";
   for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + itoa(v[i]); }
-  return out + ")";
+  return out + "] as u8[]";
 }
 
 /**
@@ -148,8 +148,8 @@ string builtDriver(T t, Cli cli, string dir, string label, string tag, string pr
   t.isTrue(writeIfDifferent(cli, entry, program.toBytes()), tag + ": writing the driver");
   string mod = builtProgram(cli, entry, "ct-" + label + "-" + tag,
                             slots > 0
-                              ? string[]("--trace", "--trace-slots", itoa(slots), "--quiet")
-                              : string[]("--trace", "--quiet"));
+                              ? ["--trace", "--trace-slots", itoa(slots), "--quiet"]
+                              : ["--trace", "--quiet"]);
   if (!cli.stat(mod).wait().exists) {
     t.fail(tag + ": the traced build produced nothing — see " + mod);
     return "";
@@ -160,9 +160,9 @@ string builtDriver(T t, Cli cli, string dir, string label, string tag, string pr
 
 /** `wac ctcompare`, started. Every comparison of one routine is against the same first module. */
 Pending<Exec> submitCompare(Cli cli, string a, string b, bool all) {
-  string[] argv = all ? string[]("ctcompare", "--all", a + ".wasm", b + ".wasm")
-                      : string[]("ctcompare", a + ".wasm", b + ".wasm");
-  return cli.exec(binary(cli), argv, u8[0]());
+  string[] argv = all ? ["ctcompare", "--all", a + ".wasm", b + ".wasm"]
+                      : ["ctcompare", a + ".wasm", b + ".wasm"];
+  return cli.exec(binary(cli), argv, u8[]());
 }
 
 /** Its whole answer, trimmed. */
@@ -220,8 +220,10 @@ string siteAt(Cli cli, string stem, i32 site) {
  * `wac build` processes, and no order between them.
  */
 string[] pair(T t, Cli cli, string dir, string label, string progA, string progB) {
-  return string[](builtDriver(t, cli, dir, label, "a", progA, 0),
-                  builtDriver(t, cli, dir, label, "b", progB, 0));
+  return [
+                  builtDriver(t, cli, dir, label, "a", progA, 0),
+                  builtDriver(t, cli, dir, label, "b", progB, 0)
+  ];
 }
 
 /**
@@ -238,7 +240,7 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
   // **Kept, not rebuilt.** Four drivers a routine, each the same bytes as last time unless the routine
   // or the secrets changed — so this is four cache hits in the ordinary case. The *comparisons* below
   // are what still run every time, and they are what this test is about.
-  string[] stems = string[n](fill: "");
+  string[] stems = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) {
     stems[i] = builtDriver(t, cli, dir, label, "k" + itoa(i),
                            driver(t, cli, dir, name, src, body, keyOf(which[i], len)), slots);
@@ -246,7 +248,7 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
   if (stems[0] == "") { return; }
 
   // The comparisons are all against `stems[0]`, so they wait for the builds and then run together too.
-  Pending<Exec>[] cmps = Pending<Exec>[n]();
+  Pending<Exec>[] cmps = Pending<Exec>[].defaulted(n);
   for (i32 i = 1; i < n; i++) {
     if (stems[i] == "") { continue; }
     cmps[i] = submitCompare(cli, stems[0], stems[i], false);
@@ -270,21 +272,21 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
 export string test_sha256_does_not_vary_with_its_inputs_content(Core core, Cli cli) {
   T t = T.create();
   noSecretDependence(t, cli, "sha256", "packages/crypto/src/sha256.wac", "sha256",
-                     "sha256($KEY)", i32[](0, 1, 2, 3), 16, 0);
+                     "sha256($KEY)", [0, 1, 2, 3] as i32[], 16, 0);
   return t.report();
 }
 
 export string test_chacha20s_block_function_does_not_vary_with_the_key(Core core, Cli cli) {
   T t = T.create();
   noSecretDependence(t, cli, "chacha", "packages/crypto/src/chacha20.wac", "chachaBlock",
-                     "chachaBlock($KEY, 1, u8[12](fill: 1))", i32[](0, 1, 2, 3), 32, 0);
+                     "chachaBlock($KEY, 1, u8[].filled(12, 1))", [0, 1, 2, 3] as i32[], 32, 0);
   return t.report();
 }
 
 export string test_poly1305_does_not_vary_with_the_key(Core core, Cli cli) {
   T t = T.create();
   noSecretDependence(t, cli, "poly1305", "packages/crypto/src/poly1305.wac", "poly1305",
-                     "poly1305($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 32, 0);
+                     "poly1305($KEY, " + literal(block16()) + ")", [0, 1, 2, 3] as i32[], 32, 0);
   return t.report();
 }
 
@@ -294,7 +296,7 @@ export string test_x25519s_ladder_does_not_vary_with_the_scalar(Core core, Cli c
   // had it: each is a compile and a run of the ladder.
   T t = T.create();
   noSecretDependence(t, cli, "x25519", "packages/crypto/src/x25519.wac", "x25519Base",
-                     "x25519Base($KEY)", i32[](0, 1), 32, 0);
+                     "x25519Base($KEY)", [0, 1] as i32[], 32, 0);
   return t.report();
 }
 
@@ -311,7 +313,7 @@ export string test_ed25519_signing_does_not_vary_with_the_secret_key(Core core, 
   // than agreeing, which is the whole reason that answer is not a pass.
   T t = T.create();
   noSecretDependence(t, cli, "ed25519", "packages/crypto/src/ed25519.wac", "ed25519Sign",
-                     "ed25519Sign($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 32,
+                     "ed25519Sign($KEY, " + literal(block16()) + ")", [0, 1, 2, 3] as i32[], 32,
                      16777216);
   return t.report();
 }
@@ -343,7 +345,7 @@ export string test_p256_public_key_does_not_vary_with_the_private_key(Core core,
   // the secrets here have to be valid keys as well as different.
   T t = T.create();
   noSecretDependence(t, cli, "p256", "packages/crypto/src/p256.wac", "p256PublicKey",
-                     "p256PublicKey($KEY)", i32[](2, 3), 32, 16777216);
+                     "p256PublicKey($KEY)", [2, 3] as i32[], 32, 16777216);
   return t.report();
 }
 
@@ -362,7 +364,7 @@ export string test_the_scalar_multiply_mod_the_order_does_not_vary_with_its_oper
   // range condition to satisfy, so zero is a legal input and is the extreme worth having.
   T t = T.create();
   noSecretDependence(t, cli, "scmul", "packages/crypto/test/wac/p256_probe.wac", "scalarMulOrder",
-                     "scalarMulOrder($KEY)", i32[](0, 1, 2, 3), 32, 0);
+                     "scalarMulOrder($KEY)", [0, 1, 2, 3] as i32[], 32, 0);
   return t.report();
 }
 
@@ -382,8 +384,8 @@ export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_w
   string dir = scratchDir(cli, "mlkem");
   const string SRC = "packages/crypto/test/wac/mlkem_probe.wac";
   string[] ab = pair(t, cli, dir, "kemDecapsFlip",
-                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", i32[](0)),
-                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", i32[](255)));
+                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", [0] as i32[]),
+                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", [255] as i32[]));
   string a = ab[0];
   string b = ab[1];
   if (a == "" || b == "") { return t.report(); }
@@ -415,7 +417,7 @@ export string test_ghash_does_not_vary_with_the_authentication_key(Core core, Cl
   // of the two halves of GCM no longer branches on its key.
   T t = T.create();
   noSecretDependence(t, cli, "ghash", "packages/crypto/src/ghash.wac", "ghash",
-                     "ghash($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 16, 0);
+                     "ghash($KEY, " + literal(block16()) + ")", [0, 1, 2, 3] as i32[], 16, 0);
   return t.report();
 }
 
@@ -461,7 +463,7 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
   // because past one the journals are not aligned. `xtime` masks now, there is no split, and the
   // trace reports exactly these five sites and no others: the leak is the S-box and nothing else,
   // which is a stronger claim than the one the split allowed.
-  i32[] lines = i32[](129, 130, 131, 132, 165);
+  i32[] lines = [129, 130, 131, 132, 165];
   for (i32 i = 0; i < lines.len(); i++) {
     string want = "index@packages/crypto/src/aes.wac:" + itoa(lines[i]);
     t.isTrue(contains(found, want),

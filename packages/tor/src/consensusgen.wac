@@ -109,7 +109,7 @@ u8[] consensusFlavoured(
 ) {
   u8[] identityFp = rsaFingerprint(signer.identityN, signer.identityE);
   u8[] signingFp = rsaFingerprint(signer.signingN, signer.signingE);
-  if (identityFp.len() != 20 || signingFp.len() != 20) { return u8[0](); }
+  if (identityFp.len() != 20 || signingFp.len() != 20) { return u8[](); }
 
   Buf d = Buf.create();
   d.pushAll(microdesc ? "network-status-version 3 microdesc\n".toBytes()
@@ -133,7 +133,7 @@ u8[] consensusFlavoured(
 
   for (i32 i = 0; i < voters.len(); i++) {
     ConsensusVoter v = voters[i];
-    if (v.identityDigest.len() != 20 || v.voteDigest.len() != 20) { return u8[0](); }
+    if (v.identityDigest.len() != 20 || v.voteDigest.len() != 20) { return u8[](); }
     d.pushAll(("dir-source " + v.nickname + " " + plainFingerprint(v.identityDigest) + " " +
                v.address + " " + v.ip + " " + itoa(v.dirPort) + " " + itoa(v.orPort) +
                "\n").toBytes());
@@ -141,13 +141,13 @@ u8[] consensusFlavoured(
     d.pushAll(("vote-digest " + plainFingerprint(v.voteDigest) + "\n").toBytes());
   }
 
-  u8[][] descriptors = u8[][relays.len()]();
+  u8[][] descriptors = u8[][].defaulted(relays.len());
   for (i32 i = 0; i < relays.len(); i++) { descriptors[i] = relays[i].descriptor; }
   u8[][] order = sortedDescriptors(descriptors);
   for (i32 i = 0; i < order.len(); i++) {
     RelayOpinion r = opinionFor(relays, order[i]);
     u8[] line = microdesc ? routerStatusLineMicrodesc(order[i]) : routerStatusLine(order[i]);
-    if (line.len() == 0) { return u8[0](); }
+    if (line.len() == 0) { return u8[](); }
 
     if (microdesc) {
       u8[] md = microdescriptor(order[i], r.exitPolicy);
@@ -178,10 +178,10 @@ u8[] consensusFlavoured(
 
   d.pushAll(signatureKeywordText());
   u8[] digest = voteSignatureDigest(d.bytes());
-  if (digest.len() != 20) { return u8[0](); }
+  if (digest.len() != 20) { return u8[](); }
   d.pushAll((plainFingerprint(identityFp) + " " + plainFingerprint(signingFp) + "\n").toBytes());
   u8[] sig = rsaSignRawPkcs1(signer.signingN, signer.signingD, digest);
-  if (sig.len() == 0) { return u8[0](); }
+  if (sig.len() == 0) { return u8[](); }
   d.pushAll(pemBlock("SIGNATURE", sig));
 
   return d.bytes();

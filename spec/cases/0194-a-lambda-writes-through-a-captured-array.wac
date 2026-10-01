@@ -19,7 +19,7 @@
 // value and reported success, which is the case this file exists to keep failing loudly.
 
 export i32 f() {
-  u8[] buf = u8[](0, 0);
+  u8[] buf = [0, 0];
   i32 at = 0;
 
   // A sink, as a capability's `write` would be: it appends to storage it captured.
@@ -32,8 +32,8 @@ export i32 f() {
     return true;
   };
 
-  sink(u8[](40));
-  sink(u8[](2));
+  sink([40] as u8[]);
+  sink([2] as u8[]);
 
   // Written from the enclosing side, through the same cell — the array `buf` names is one array.
   i32 total = 0;

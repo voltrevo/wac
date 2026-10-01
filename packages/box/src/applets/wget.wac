@@ -26,7 +26,7 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
   // Collected through the same substitute capability the shell uses to run an applet in process:
   // `fetch` writes with `cli.write` and neither knows nor needs to know where that goes. Built either
   // way and used only on the collected route — a `Frame` nobody writes to is two empty buffers.
-  Frame f = Frame.of(string[](a.name), u8[0](), "", false);
+  Frame f = Frame.of([a.name], u8[](), "", false);
   if (streaming) {
     Change opened = cli.openOutput(out).wait();
     if (!opened.ok()) { core.warn(a.name + ": " + out + ": " + reasonOf(opened)); return 1; }

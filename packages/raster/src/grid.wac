@@ -82,7 +82,7 @@ export struct Grid {
     i32 c = cols < 1 ? 1 : cols;
     i32 r = rows < 1 ? 1 : rows;
     i32 m = scrollbackMax < 0 ? 0 : scrollbackMax;
-    return Grid(c, r, i32[c * r](), 0, 0, i32[0](), 0, m, -1, -1, false);
+    return Grid(c, r, i32[].filled(c * r, 0), 0, 0, i32[](), 0, m, -1, -1, false);
   }
 
   /** Begin a selection at a viewport cell, discarding any previous one. */
@@ -128,7 +128,7 @@ export struct Grid {
    * terminal does: a line is 80 cells wide and the text on it is not.
    */
   i32[] selectedText(const this, i32 up) {
-    if (this.selAnchor < 0 || this.selHead < 0) { return i32[0](); }
+    if (this.selAnchor < 0 || this.selHead < 0) { return i32[](); }
     i32 lo = this.selAnchor < this.selHead ? this.selAnchor : this.selHead;
     i32 hi = this.selAnchor < this.selHead ? this.selHead : this.selAnchor;
     i32 back = up < 0 ? 0 : (up > this.scrollbackRows ? this.scrollbackRows : up);
@@ -136,7 +136,7 @@ export struct Grid {
     // cheaper than repeatedly copying into a bigger one.
     i32 n = 0;
     for (i32 pass = 0; pass < 2; pass++) {
-      i32[] out = pass == 0 ? i32[0]() : i32[n]();
+      i32[] out = pass == 0 ? i32[]() : i32[].filled(n, 0);
       i32 at = 0;
       for (i32 r = lo / this.cols; r <= hi / this.cols && r < this.rows; r++) {
         i32 c0 = r == lo / this.cols ? lo % this.cols : 0;
@@ -160,7 +160,7 @@ export struct Grid {
       }
       if (pass == 0) { n = at; } else { return out; }
     }
-    return i32[0]();
+    return i32[]();
   }
 
   /** The code point showing at a viewport cell when the viewport is `back` lines up. */
@@ -192,7 +192,7 @@ export struct Grid {
       i32 keep = this.scrollbackRows < this.scrollbackMax
         ? this.scrollbackRows + 1
         : this.scrollbackMax;
-      i32[] next = i32[keep * this.cols]();
+      i32[] next = i32[].filled(keep * this.cols, 0);
       // Where the old lines start, so a full buffer drops its first.
       i32 from = this.scrollbackRows + 1 - keep;
       for (i32 line = 0; line < keep - 1; line++) {

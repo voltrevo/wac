@@ -38,12 +38,12 @@ bool isTagChar(string c) {
 string tagAt(u8[] b, i32 at) {
   i32 end = at;
   while (end < b.len()) {
-    string c = string.fromBytes(u8[](b[end]));
+    string c = string.fromBytes([b[end]]);
     if (!isTagChar(c)) { break; }
     end = end + 1;
   }
   if (end == at) { return ""; }
-  u8[] out = u8[end - at]();
+  u8[] out = u8[].filled(end - at, 0);
   for (i32 i = 0; i < end - at; i++) { out[i] = b[at + i]; }
   return string.fromBytes(out);
 }

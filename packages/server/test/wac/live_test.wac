@@ -14,7 +14,7 @@
 // tested. Those are wac's own sockets now; the two client cases stay in their own runtimes, because
 // being someone else's implementation is the whole of what they contribute.
 //
-// **Every read is bounded.** `core.waitAny(i32[](p.id), ms)` is the shape `example/patience.wac`
+// **Every read is bounded.** `core.waitAny([p.id], ms)` is the shape `example/patience.wac`
 // exists to demonstrate: a server that never answers has to fail this file rather than hang it, and
 // a hung test on a shared machine is a worse outcome than a red one. Waiting longer means waiting on
 // the *same* ticket again — two `recv`s on one socket and the byte order is anyone's guess.
@@ -65,7 +65,7 @@ Server startServer(T t, Core core, Cli cli, string name, string flags) {
  */
 string readOnce(Core core, Cli cli, i32 handle, i32 millis) {
   Pending<Read> p = cli.recv(handle);
-  if (core.waitAny(i32[](p.id), millis) < 0) {
+  if (core.waitAny([p.id], millis) < 0) {
     p.cancel();
     return "<timeout>";
   }
@@ -137,14 +137,14 @@ string exchange(Core core, Cli cli, i32 port, string request, i32 want) {
 
 /** `fetchclient.ts`, whose lines are `<status>\t<body>`. */
 Exec fetchGet(Cli cli, i32 port, string[] paths) {
-  string[] argv = string[5 + paths.len()](fill: "");
+  string[] argv = string[].filled(5 + paths.len(), "");
   argv[0] = "run";
   argv[1] = "-A";
   argv[2] = FETCH;
   argv[3] = "http://127.0.0.1:" + itoa(port);
   argv[4] = "get";
   for (i32 i = 0; i < paths.len(); i++) { argv[5 + i] = paths[i]; }
-  return cli.exec("deno", argv, u8[0]()).wait();
+  return cli.exec("deno", argv, u8[]()).wait();
 }
 
 /** The two halves of one `fetchclient.ts` line. */
@@ -167,19 +167,21 @@ export string test_fetch_is_satisfied_by_every_route(Core core, Cli cli) {
   Server s = startServer(t, core, cli, "fetch", "");
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
-  string[] paths = string[](
+  string[] paths = [
     "/",
     "/echo?a=1&b=hello+world",
     "/b64/aGVsbG8gd29ybGQ",
     "/match/(%5Cw%2B)%40(%5Cw%2B)/mail%20a%40b",
-    "/nope");
-  string[] status = string[]("200", "200", "200", "200", "404");
-  string[] body = string[](
+    "/nope"
+  ];
+  string[] status = ["200", "200", "200", "200", "404"];
+  string[] body = [
     "wac http server\\n",
     "{\"a\":\"1\",\"b\":\"hello world\"}",
     "hello world",
     "{\"matched\":true,\"groups\":[\"a@b\",\"a\",\"b\"],\"start\":5}",
-    "no route\\n");
+    "no route\\n"
+  ];
 
   Exec r = fetchGet(cli, s.port, paths);
   t.isTrue(r.ran() && r.status == 0, "the fetch client ran — " + string.fromBytes(r.stderr));
@@ -194,8 +196,10 @@ export string test_fetch_is_satisfied_by_every_route(Core core, Cli cli) {
 
   // A POST with a body, which is the path that exercises Content-Length in both directions.
   Exec p = cli.exec("deno",
-    string[]("run", "-A", FETCH, "http://127.0.0.1:" + itoa(s.port), "post", "/json",
-             "{\"b\":1,\"a\":[1,2]}"), u8[0]()).wait();
+    [
+             "run", "-A", FETCH, "http://127.0.0.1:" + itoa(s.port), "post", "/json",
+             "{\"b\":1,\"a\":[1,2]}"
+    ], u8[]()).wait();
   t.isTrue(p.ran() && p.status == 0, "the POST ran — " + string.fromBytes(p.stderr));
   if (p.ran() && p.status == 0) {
     string[] got = splitLines(string.fromBytes(p.stdout));
@@ -206,7 +210,7 @@ export string test_fetch_is_satisfied_by_every_route(Core core, Cli cli) {
   // And that the reported time is a time, **parsed back by the platform rather than by us** — which
   // is why the client does the parsing and answers with the skew.
   Exec time = cli.exec("deno",
-    string[]("run", "-A", FETCH, "http://127.0.0.1:" + itoa(s.port), "time"), u8[0]()).wait();
+    ["run", "-A", FETCH, "http://127.0.0.1:" + itoa(s.port), "time"], u8[]()).wait();
   t.isTrue(time.ran() && time.status == 0,
            "/time was a time — " + string.fromBytes(time.stderr) + string.fromBytes(time.stdout));
   if (time.ran() && time.status == 0) {
@@ -225,7 +229,7 @@ export string test_nodes_http_client_is_satisfied_too(Core core, Cli cli) {
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
   Exec r = cli.exec("node",
-    string[](NODE, itoa(s.port), "/", "/time", "/echo?a=1", "/nope"), u8[0]()).wait();
+    [NODE, itoa(s.port), "/", "/time", "/echo?a=1", "/nope"], u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0, "the node client ran — " + string.fromBytes(r.stderr));
   if (r.ran() && r.status == 0) {
     string[] got = splitLines(string.fromBytes(r.stdout));
@@ -356,7 +360,7 @@ export string test_a_client_that_disappears_mid_request_does_not_take_the_server
   }
 
   // The next request proves the server is still there.
-  Exec r = fetchGet(cli, s.port, string[]("/"));
+  Exec r = fetchGet(cli, s.port, ["/"]);
   t.isTrue(r.ran() && r.status == 0, "the fetch client ran — " + string.fromBytes(r.stderr));
   if (r.ran() && r.status == 0) {
     string[] got = splitLines(string.fromBytes(r.stdout));
@@ -400,7 +404,7 @@ export string test_a_silent_client_is_dropped_rather_than_held_forever(Core core
   }
 
   // The server is still serving.
-  Exec r = fetchGet(cli, s.port, string[]("/"));
+  Exec r = fetchGet(cli, s.port, ["/"]);
   if (r.ran() && r.status == 0) {
     string[] got = splitLines(string.fromBytes(r.stdout));
     t.isTrue(got.len() > 0 && statusPart(got[0]) == "200",

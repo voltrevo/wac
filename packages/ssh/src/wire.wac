@@ -128,10 +128,10 @@ export struct Reader {
     i32 n = this.u32();
     if (n < 0) {
       this.ok = false;
-      return u8[0]();
+      return u8[]();
     }
-    if (!this.need(n)) { return u8[0](); }
-    u8[] out = u8[n]();
+    if (!this.need(n)) { return u8[](); }
+    u8[] out = u8[].filled(n, 0);
     out.copyFrom(this.src, this.pos, 0, n);
     this.pos += n;
     return out;

@@ -24,13 +24,13 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Reader, Writer } from "../../src/wire.wac";
 
-u8[] bytes3(i32 a, i32 b, i32 c) { u8[] o = u8[3](); o[0] = a; o[1] = b; o[2] = c; return o; }
+u8[] bytes3(i32 a, i32 b, i32 c) { u8[] o = u8[].filled(3, 0); o[0] = a; o[1] = b; o[2] = c; return o; }
 
 export string test_fixed_width_reads_are_big_endian() {
   // Every length and code point in TLS is big-endian, and a reader that assembled them
   // the other way round would still round-trip against a writer that did the same.
   T t = T.create();
-  u8[] four = u8[4]();
+  u8[] four = u8[].filled(4, 0);
   four[0] = 0x12; four[1] = 0x34; four[2] = 0x56; four[3] = 0x78;
   t.eqI32(Reader.create(four).u16(), 0x1234, "u16");
   t.eqI32(Reader.create(four).u24(), 0x123456, "u24");
@@ -59,7 +59,7 @@ export string test_expect_end_measures_what_is_left() {
 export string test_sub_readers_cannot_see_past_their_vector() {
   // The boundary that stops a length inside one extension reaching into the next.
   T t = T.create();
-  u8[] buf = u8[5]();
+  u8[] buf = u8[].filled(5, 0);
   buf[0] = 2; buf[1] = 0xAA; buf[2] = 0xBB; buf[3] = 0xCC; buf[4] = 0xDD;
   Reader outer = Reader.create(buf);
   Reader inner = outer.sub8();
@@ -78,7 +78,7 @@ export string test_the_writer_round_trips_through_the_reader() {
   // every length, which no table of examples does.
   T t = T.create();
   for (i32 n = 0; n < 300; n++) {
-    u8[] payload = u8[n]();
+    u8[] payload = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { payload[i] = (i * 31 + n) & 0xFF; }
     Writer w = Writer.create();
     w.vec16(payload);
@@ -88,7 +88,7 @@ export string test_the_writer_round_trips_through_the_reader() {
   }
   // vec8 has a byte of prefix and the same obligation.
   for (i32 n = 0; n < 256; n++) {
-    u8[] payload = u8[n]();
+    u8[] payload = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { payload[i] = (i * 17 + 5) & 0xFF; }
     Writer w = Writer.create();
     w.vec8(payload);
@@ -117,27 +117,27 @@ export string test_the_writer_grows_without_losing_anything() {
 // before the loop rather than inside it gets `u8` right and the wider reads wrong.
 
 export string test_traps_reading_u8_past_the_end() {
-  Reader.create(u8[0]()).u8();
+  Reader.create(u8[]()).u8();
   return "";
 }
 
 export string test_traps_reading_u16_past_the_end() {
-  Reader.create(u8[1]()).u16();
+  Reader.create(u8[].filled(1, 0)).u16();
   return "";
 }
 
 export string test_traps_reading_u24_past_the_end() {
-  Reader.create(u8[2]()).u24();
+  Reader.create(u8[].filled(2, 0)).u24();
   return "";
 }
 
 export string test_traps_reading_u32_past_the_end() {
-  Reader.create(u8[3]()).u32();
+  Reader.create(u8[].filled(3, 0)).u32();
   return "";
 }
 
 export string test_traps_taking_more_than_is_there() {
-  Reader.create(u8[](1, 2, 3, 4)).take(5);
+  Reader.create([1, 2, 3, 4] as u8[]).take(5);
   return "";
 }
 
@@ -148,17 +148,17 @@ export string test_traps_taking_more_than_is_there() {
  * check rather than falling out of the bound.
  */
 export string test_traps_taking_a_negative_length() {
-  Reader.create(u8[](1, 2, 3, 4)).take(-1);
+  Reader.create([1, 2, 3, 4] as u8[]).take(-1);
   return "";
 }
 
 export string test_traps_slicing_more_than_is_there() {
-  Reader.create(u8[](1, 2, 3, 4)).slice(5);
+  Reader.create([1, 2, 3, 4] as u8[]).slice(5);
   return "";
 }
 
 export string test_traps_slicing_a_negative_length() {
-  Reader.create(u8[](1, 2, 3, 4)).slice(-1);
+  Reader.create([1, 2, 3, 4] as u8[]).slice(-1);
   return "";
 }
 
@@ -166,27 +166,27 @@ export string test_traps_slicing_a_negative_length() {
 // there are two" is the ordinary hostile input rather than an edge case.
 
 export string test_traps_when_a_vec8_length_overruns_the_buffer() {
-  Reader.create(u8[](200, 0xAA)).vec8();
+  Reader.create([200, 0xAA] as u8[]).vec8();
   return "";
 }
 
 export string test_traps_when_a_vec16_length_overruns_the_buffer() {
-  Reader.create(u8[](0xFF, 0xFF, 0xAA)).vec16();
+  Reader.create([0xFF, 0xFF, 0xAA] as u8[]).vec16();
   return "";
 }
 
 export string test_traps_when_a_vec24_length_overruns_the_buffer() {
-  Reader.create(u8[](0xFF, 0xFF, 0xFF, 0xAA)).vec24();
+  Reader.create([0xFF, 0xFF, 0xFF, 0xAA] as u8[]).vec24();
   return "";
 }
 
 export string test_traps_when_a_sub8_length_overruns_the_buffer() {
-  Reader.create(u8[](9, 0xAA)).sub8();
+  Reader.create([9, 0xAA] as u8[]).sub8();
   return "";
 }
 
 export string test_traps_when_a_sub16_length_overruns_the_buffer() {
-  Reader.create(u8[](0, 9, 0xAA)).sub16();
+  Reader.create([0, 9, 0xAA] as u8[]).sub16();
   return "";
 }
 
@@ -197,12 +197,12 @@ export string test_traps_when_a_sub16_length_overruns_the_buffer() {
  * no longer identifies what was sent.
  */
 export string test_traps_on_a_trailing_byte() {
-  Reader.create(u8[](1)).expectEnd();
+  Reader.create([1] as u8[]).expectEnd();
   return "";
 }
 
 export string test_traps_on_a_byte_left_over_after_a_take() {
-  Reader r = Reader.create(u8[](1, 2, 3));
+  Reader r = Reader.create([1, 2, 3] as u8[]);
   r.take(2);
   r.expectEnd();
   return "";
@@ -212,12 +212,12 @@ export string test_traps_on_a_byte_left_over_after_a_take() {
 // would produce a message that parses as something shorter.
 
 export string test_traps_writing_a_vec8_of_256_bytes() {
-  Writer.create().vec8(u8[256]());
+  Writer.create().vec8(u8[].filled(256, 0));
   return "";
 }
 
 export string test_traps_writing_a_vec16_of_65536_bytes() {
-  Writer.create().vec16(u8[65536]());
+  Writer.create().vec16(u8[].filled(65536, 0));
   return "";
 }
 

@@ -23,7 +23,7 @@ u8[] normalizeKey(u8[] key) {
  * this repo's tests and every known_hosts salt — and silently disagrees for longer ones.
  */
 u8[] normalizeKeyWith(u8[] key, bool useSha1) {
-  u8[] k = u8[blockSize()]();
+  u8[] k = u8[].filled(blockSize(), 0);
   // A key longer than the block is hashed first — otherwise two different long
   // keys sharing a prefix would authenticate identically.
   u8[] src = key.len() > blockSize() ? (useSha1 ? sha1(key) : sha256(key)) : key;
@@ -36,13 +36,13 @@ export u8[] hmacSha256(u8[] key, u8[] msg) {
   u8[] k = normalizeKey(key);
   i32 bs = blockSize();
 
-  u8[] inner = u8[bs + msg.len()]();
+  u8[] inner = u8[].filled(bs + msg.len(), 0);
   for (i32 i = 0; i < bs; i++) { inner[i] = k[i] ^ 0x36; }
   for (i32 i = 0; i < msg.len(); i++) { inner[bs + i] = msg[i]; }
 
   u8[] innerHash = sha256(inner);
 
-  u8[] outer = u8[bs + 32]();
+  u8[] outer = u8[].filled(bs + 32, 0);
   for (i32 i = 0; i < bs; i++) { outer[i] = k[i] ^ 0x5c; }
   for (i32 i = 0; i < 32; i++) { outer[bs + i] = innerHash[i]; }
 
@@ -68,13 +68,13 @@ export u8[] hmacSha1(u8[] key, u8[] msg) {
   u8[] k = normalizeKeyWith(key, true);
   i32 bs = blockSize();
 
-  u8[] inner = u8[bs + msg.len()]();
+  u8[] inner = u8[].filled(bs + msg.len(), 0);
   for (i32 i = 0; i < bs; i++) { inner[i] = k[i] ^ 0x36; }
   for (i32 i = 0; i < msg.len(); i++) { inner[bs + i] = msg[i]; }
 
   u8[] innerHash = sha1(inner);
 
-  u8[] outer = u8[bs + 20]();
+  u8[] outer = u8[].filled(bs + 20, 0);
   for (i32 i = 0; i < bs; i++) { outer[i] = k[i] ^ 0x5c; }
   for (i32 i = 0; i < 20; i++) { outer[bs + i] = innerHash[i]; }
 

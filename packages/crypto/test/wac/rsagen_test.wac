@@ -43,12 +43,13 @@ u8[] privateKeyPem(RsaKey k) {
   Big dQ = modPow(d, one, sub(q, one));
   Big qInv = modInverse(modPow(q, one, p), p);
 
-  u8[] body = derConcat(u8[][](
+  u8[] body = derConcat([
     derIntegerSmall(0),
     derInteger(k.modulus), derInteger(k.publicExponent), derInteger(k.privateExponent),
     derInteger(k.p), derInteger(k.q),
     derInteger(toBytes(dP, k.p.len())), derInteger(toBytes(dQ, k.q.len())),
-    derInteger(toBytes(qInv, k.p.len()))));
+    derInteger(toBytes(qInv, k.p.len()))
+  ]);
 
   string b64 = string.fromBytes(encode(derSequence(body), ALPHABET_STANDARD(), true));
   string pem = "-----BEGIN RSA PRIVATE KEY-----\n";
@@ -69,7 +70,7 @@ bool contains(string text, string needle) {
 
 export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Core core, Cli cli) {
   T t = T.create();
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 13 + 7) & 0xFF; }
 
   RsaKey k = generateRsaKey(1024, seed);
@@ -87,7 +88,7 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Core core
 
   // The one that matters and that only the host can answer: are p and q actually prime, and is d
   // actually the inverse? `openssl rsa -check` tests exactly that.
-  Exec r = cli.exec("openssl", string[]("rsa", "-check", "-noout", "-text"),
+  Exec r = cli.exec("openssl", ["rsa", "-check", "-noout", "-text"],
                     privateKeyPem(k)).wait();
   t.eqStr(r.error, "", "openssl could not be started");
   string out = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
@@ -113,7 +114,7 @@ export string test_the_same_seed_gives_the_same_key(Core core, Cli cli) {
   // Deterministic from the seed, which is what makes this testable at all — and what makes the seed
   // the whole of the key's secrecy. Both halves are worth an assertion.
   T t = T.create();
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 5 + 1) & 0xFF; }
 
   RsaKey a = generateRsaKey(512, seed);
@@ -122,14 +123,14 @@ export string test_the_same_seed_gives_the_same_key(Core core, Cli cli) {
   t.isTrue(equal(a.modulus, b.modulus), "the same seed gives the same modulus");
   t.isTrue(equal(a.privateExponent, b.privateExponent), "and the same private exponent");
 
-  u8[] other = u8[32]();
+  u8[] other = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { other[i] = seed[i]; }
   other[31] = (other[31] ^ 1);
   RsaKey c = generateRsaKey(512, other);
   t.isTrue(c.ok, "a different seed also generates");
   t.isFalse(equal(c.modulus, a.modulus), "and gives a different key — one bit of seed is enough");
 
-  t.isFalse(generateRsaKey(512, u8[31]()).ok, "a 31-byte seed is refused");
+  t.isFalse(generateRsaKey(512, u8[].filled(31, 0)).ok, "a 31-byte seed is refused");
   t.isFalse(generateRsaKey(511, seed).ok, "an odd bit length is refused");
   t.isFalse(generateRsaKey(256, seed).ok, "and anything below 512");
   return t.report();
@@ -139,15 +140,15 @@ export string test_miller_rabin_knows_primes_from_composites(Core core, Cli cli)
   // Known answers, since there is no external oracle for a predicate. The composites are chosen to
   // be the ones a weak test gets wrong.
   T t = T.create();
-  u8[][] bases = u8[][8]();
+  u8[][] bases = u8[][].defaulted(8);
   for (i32 i = 0; i < 8; i++) {
-    u8[] b = u8[8]();
+    u8[] b = u8[].filled(8, 0);
     b[7] = (i * 7 + 2) & 0xFF;
     b[6] = (i * 3 + 1) & 0xFF;
     bases[i] = b;
   }
 
-  i64[] primes = i64[](2, 3, 5, 7, 11, 13, 97, 101, 7919, 65537, 1000003, 2147483647);
+  i64[] primes = [2, 3, 5, 7, 11, 13, 97, 101, 7919, 65537, 1000003, 2147483647];
   for (i32 i = 0; i < primes.len(); i++) {
     t.isTrue(millerRabin(small(primes[i]), bases),
              itoa64(primes[i]) + " is prime");
@@ -155,13 +156,13 @@ export string test_miller_rabin_knows_primes_from_composites(Core core, Cli cli)
 
   // 561, 1105, 1729, 2465 are Carmichael numbers: composite, and Fermat's test calls them prime for
   // every base coprime to them. Miller-Rabin is not fooled, and that is the reason to use it.
-  i64[] carmichael = i64[](561, 1105, 1729, 2465, 2821, 6601, 8911);
+  i64[] carmichael = [561, 1105, 1729, 2465, 2821, 6601, 8911];
   for (i32 i = 0; i < carmichael.len(); i++) {
     t.isFalse(millerRabin(small(carmichael[i]), bases),
               itoa64(carmichael[i]) + " is a Carmichael number, and composite");
   }
 
-  i64[] composites = i64[](1, 4, 9, 15, 21, 25, 91, 100, 7917, 65535, 1000001);
+  i64[] composites = [1, 4, 9, 15, 21, 25, 91, 100, 7917, 65535, 1000001];
   for (i32 i = 0; i < composites.len(); i++) {
     t.isFalse(millerRabin(small(composites[i]), bases),
               itoa64(composites[i]) + " is composite");
@@ -215,7 +216,7 @@ export string test_a_prime_is_rejected_when_e_has_no_inverse(Core core, Cli cli)
   Big three = small(3);
   i32 checked = 0;
   for (i32 i = 0; i < 6; i++) {
-    u8[] seed = u8[32]();
+    u8[] seed = u8[].filled(32, 0);
     for (i32 j = 0; j < 32; j++) { seed[j] = (j * 17 + i * 31 + 3) & 0xFF; }
     Big p = suitablePrime(96, seed, 100000, three);
     if (isZero(p)) { continue; }
@@ -227,7 +228,7 @@ export string test_a_prime_is_rejected_when_e_has_no_inverse(Core core, Cli cli)
 
   // And with the usual exponent the search still succeeds — the rejection is not so aggressive that
   // it starves.
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 j = 0; j < 32; j++) { seed[j] = (j * 11 + 5) & 0xFF; }
   t.isFalse(isZero(suitablePrime(96, seed, 200000, small(PUBLIC_EXPONENT))),
             "and 65537 finds a prime too");

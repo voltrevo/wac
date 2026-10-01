@@ -38,7 +38,7 @@ import { Change, Cli, Core, Exec } from "std/platform.wac";
 Exec wacc(Cli cli, string dir, string cmd, string[] args) {
   string line = "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd;
   for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
-  return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
 }
 
 /** `deno run -A harness/<tool>.ts <args…>`, from the repository root. */
@@ -71,7 +71,7 @@ export string test_a_std_specifier_resolves_out_of_the_compiler(Core core, Cli c
                "import { Cli, Core } from \"std/platform.wac\";\n" +
                "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
 
-  Exec w = wacc(cli, dir, "run", string[]("main.wac"));
+  Exec w = wacc(cli, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "wacc answered " + itoa(w.status) + ", want 7 — " +
@@ -98,7 +98,7 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core
   t.isTrue(put(cli, dir + "/std/platform.wac",
                "export i32 decoy() { return 999; }\n"), "wrote the decoy");
 
-  Exec w = wacc(cli, dir, "run", string[]("main.wac"));
+  Exec w = wacc(cli, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "a std/ directory beside the entry won: wacc answered " + itoa(w.status) +
@@ -120,7 +120,7 @@ export string test_a_bare_std_names_the_file_to_write_instead(Core core, Cli cli
                "import { Core } from \"std\";\n" +
                "export i32 main(Core core) { return 1; }\n"), "wrote main");
 
-  Exec w = wacc(cli, dir, "run", string[]("main.wac"));
+  Exec w = wacc(cli, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string said = string.fromBytes(w.stderr);

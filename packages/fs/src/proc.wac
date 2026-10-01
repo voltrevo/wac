@@ -85,11 +85,12 @@ export i32 SIGTERM() { return 15; }
  * `kill -l` numbers and does not name, and which nothing here has any use for.
  */
 export string[] SIGNALS() {
-  return string[](
+  return [
     "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE",
     "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT",
     "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU",
-    "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS");
+    "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS"
+  ];
 }
 
 /** The number for a name, with or without its `SIG`, or 0 for one this system has never heard of. */
@@ -290,7 +291,7 @@ export struct Procs {
 
   /** Every pid, in the order started — which is ascending, since pids are never reused. */
   i32[] pids(const this) {
-    i32[] out = i32[this.rows.len()](fill: 0);
+    i32[] out = i32[].filled(this.rows.len(), 0);
     for (i32 i = 0; i < this.rows.len(); i++) { out[i] = this.rows.get(i).pid; }
     return out;
   }

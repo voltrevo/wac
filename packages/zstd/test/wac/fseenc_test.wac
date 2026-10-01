@@ -57,7 +57,7 @@ u8[] encode(i32[] symbols, i32 maxSymbol, i32 log, i32[] norm) {
   BitOut head = BitOut.create();
   writeDescription(head, norm, maxSymbol, log);
   u8[] desc = head.flush();
-  u8[] out = u8[desc.len() + stream.len()]();
+  u8[] out = u8[].filled(desc.len() + stream.len(), 0);
   for (i32 i = 0; i < desc.len(); i++) { out[i] = desc[i]; }
   for (i32 i = 0; i < stream.len(); i++) { out[desc.len() + i] = stream[i]; }
   return out;
@@ -74,7 +74,7 @@ Decoded decode(u8[] blob, i32 count, i32 maxSymbol, i32 maxLog) {
   FseTable t = readTable(blob, 0, maxSymbol, maxLog);
   BackBits b = BackBits.create(blob, t.bytesUsed, blob.len() - t.bytesUsed);
   i32 state = initState(b, t);
-  i32[] out = i32[count]();
+  i32[] out = i32[].filled(count, 0);
   for (i32 i = 0; i < count; i++) {
     out[i] = symbolAt(t, state);
     if (i < count - 1) { state = nextState(t, state, b); }
@@ -84,7 +84,7 @@ Decoded decode(u8[] blob, i32 count, i32 maxSymbol, i32 maxLog) {
 
 /** Counts of each symbol in `symbols`. */
 i32[] countsOf(i32[] symbols, i32 maxSymbol) {
-  i32[] c = i32[maxSymbol + 1]();
+  i32[] c = i32[].filled(maxSymbol + 1, 0);
   for (i32 i = 0; i < symbols.len(); i++) { c[symbols[i]] = c[symbols[i]] + 1; }
   return c;
 }
@@ -110,19 +110,19 @@ void roundTrip(T t, string what, i32[] symbols, i32 maxSymbol, i32 maxLog) {
 
 /** `n` symbols from `f(i)`, which is how each corpus below is spelled. */
 i32[] alternating(i32 n) {
-  i32[] out = i32[n]();
+  i32[] out = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = i % 2; }
   return out;
 }
 
 export string test_what_the_encoder_writes_the_decoder_reads_back() {
   T t = T.create();
-  i32[] oneSymbol = i32[300](fill: 3);
-  i32[] skewed = i32[500]();
+  i32[] oneSymbol = i32[].filled(300, 3);
+  i32[] skewed = i32[].filled(500, 0);
   for (i32 i = 0; i < 500; i++) { skewed[i] = i % 17 == 0 ? 7 : 1; }
-  i32[] everySymbol = i32[512]();
+  i32[] everySymbol = i32[].filled(512, 0);
   for (i32 i = 0; i < 512; i++) { everySymbol[i] = i % 16; }
-  i32[] longTail = i32[900]();
+  i32[] longTail = i32[].filled(900, 0);
   for (i32 i = 0; i < 900; i++) { longTail[i] = i % 31 == 0 ? 20 + (i % 11) : 0; }
 
   roundTrip(t, "two symbols alternating", alternating(200), 1, 9);
@@ -141,14 +141,14 @@ export string test_fuzz_random_symbol_streams_of_random_shapes() {
     i32 n = 20 + rng.upto(2000);
     // A skewed alphabet rather than a flat one: real symbol streams are skewed, and skew is what
     // makes the state transitions vary in width.
-    i32[] weights = i32[maxSymbol + 1]();
+    i32[] weights = i32[].filled(maxSymbol + 1, 0);
     i32 poolSize = 0;
     for (i32 s = 0; s <= maxSymbol; s++) {
       weights[s] = rng.upto(10) == 0 ? 0 : 1 + rng.upto(1 << rng.upto(8));
       poolSize = poolSize + weights[s];
     }
     if (poolSize == 0) { continue; }
-    i32[] pool = i32[poolSize]();
+    i32[] pool = i32[].filled(poolSize, 0);
     i32 at = 0;
     for (i32 s = 0; s <= maxSymbol; s++) {
       for (i32 k = 0; k < weights[s]; k++) {
@@ -156,7 +156,7 @@ export string test_fuzz_random_symbol_streams_of_random_shapes() {
         at = at + 1;
       }
     }
-    i32[] symbols = i32[n]();
+    i32[] symbols = i32[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { symbols[i] = pool[rng.upto(poolSize)]; }
     roundTrip(t, "trial " + itoa(trial) + " (maxSymbol " + itoa(maxSymbol) + ", " + itoa(n) +
                  " symbols)", symbols, maxSymbol, 9);
@@ -170,20 +170,27 @@ export string test_descriptions_round_trip_including_counts_the_normaliser_never
   // -1 — "occurs, but less often than one slot" — and the predefined distributions use it
   // heavily. A writer that could not express those could not describe the format's own tables,
   // so it is checked against them directly rather than against its own output.
-  string[] names = string[]("literal lengths", "offsets", "match lengths", "with a long gap",
-                            "rare between used");
-  i32[][] cases = i32[][](
-    i32[](4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
-          2, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1, -1),
-    i32[](1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-          -1, -1, -1, -1, -1),
-    i32[](1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  string[] names = [
+                            "literal lengths", "offsets", "match lengths", "with a long gap",
+                            "rare between used"
+  ];
+  i32[][] cases = [
+          [4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
+          2, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1, -1] as i32[],
+    [
+          1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+          -1, -1, -1, -1, -1
+    ] as i32[],
+    [
+          1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1,
-          -1, -1, -1, -1, -1),
+          -1, -1, -1, -1, -1
+    ] as i32[],
     // And a run of unused symbols, so the repeat field is written more than once.
-    i32[](32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32),
-    i32[](30, -1, 16, -1, 16));
-  i32[] logs = i32[](6, 5, 6, 6, 6);
+    [32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32] as i32[],
+    [30, -1, 16, -1, 16] as i32[]
+  ];
+  i32[] logs = [6, 5, 6, 6, 6];
 
   for (i32 c = 0; c < cases.len(); c++) {
     i32[] norm = cases[c];

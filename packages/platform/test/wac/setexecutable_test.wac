@@ -35,9 +35,11 @@ const string PROBE = "packages/platform/test/wac/setexecutable_probe.wac";
 
 /** Build for the Deno host, as `runtimes_test.wac` does. */
 bool buildDeno(T t, Cli cli, string out) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "packages/platform/build.ts", PROBE,
-                                     "--target", "deno", "--allow-read", "--allow-write", "-o", out),
-                    u8[0]()).wait();
+  Exec r = cli.exec("deno", [
+                                     "run", "-A", "packages/platform/build.ts", PROBE,
+                                     "--target", "deno", "--allow-read", "--allow-write", "-o", out
+  ],
+                    u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
            "the probe built for deno — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   return r.ran() && r.status == 0;
@@ -51,8 +53,8 @@ bool buildDeno(T t, Cli cli, string out) {
  */
 bool buildNative(T t, Cli cli, string out) {
   Exec r = cli.exec(wacBinary(cli),
-                    string[]("app", PROBE, "-o", out, "--allow-read", "--allow-write"),
-                    u8[0]()).wait();
+                    ["app", PROBE, "-o", out, "--allow-read", "--allow-write"],
+                    u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
            "the probe built for native — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   return r.ran() && r.status == 0;
@@ -60,7 +62,7 @@ bool buildNative(T t, Cli cli, string out) {
 
 /** `stat -c %a`, because `Stat` carries no mode — the gap `runtimes_test.wac` notes for `cd` too. */
 string modeOf(Cli cli, string path) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "stat -c %a " + path), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "stat -c %a " + path], u8[]()).wait();
   if (!r.ran()) { return "(stat did not run: " + r.error + ")"; }
   string out = string.fromBytes(r.stdout);
   i32 nl = out.indexOf("\n");
@@ -84,9 +86,11 @@ i32 runProbe(Cli cli, string app, string file, string mode, string start) {
   for (i32 i = 0; i < bin.len(); i++) { if (bin.slice(i, i + 1) == "/") { cut = i; } }
   string dir = cut <= 0 ? "." : bin.slice(0, cut);
   Exec r = cli.exec("/bin/sh",
-      string[]("-c", "printf x > " + file + " && chmod " + start + " " + file
-               + " && PATH=" + dir + ":$PATH " + app + " " + file + " " + mode),
-      u8[0]()).wait();
+      [
+               "-c", "printf x > " + file + " && chmod " + start + " " + file
+               + " && PATH=" + dir + ":$PATH " + app + " " + file + " " + mode
+      ],
+      u8[]()).wait();
   return r.ran() ? r.status : 0 - 1;
 }
 

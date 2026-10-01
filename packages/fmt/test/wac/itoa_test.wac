@@ -57,7 +57,7 @@ export string test_itoa_writes_the_sign_and_the_extremes() {
 
   // The three agree wherever their ranges do, which is the check that catches one of them being
   // rewritten and the others left behind — three implementations of one idea live in this file.
-  i32[] shared = i32[](0, 1, 9, 10, 99, 100, 12345, 2147483647);
+  i32[] shared = [0, 1, 9, 10, 99, 100, 12345, 2147483647];
   for (i32 i = 0; i < shared.len(); i++) {
     t.eqStr(itoa(shared[i]), itoa64(shared[i] as i64),
             "itoa and itoa64 disagree about " + itoa(shared[i]));
@@ -109,7 +109,7 @@ export string test_atoi_reads_the_sign_and_stops_at_the_first_non_digit() {
   t.eqI32(atoi("--5"), 0, "a second sign is not a digit, so the answer is what came before it");
 
   // And the round trip, over the range where it is defined.
-  i32[] round = i32[](0, 1, -1, 9, -9, 10, -10, 99999, -99999, 2147483647, -2147483647);
+  i32[] round = [0, 1, -1, 9, -9, 10, -10, 99999, -99999, 2147483647, -2147483647];
   for (i32 i = 0; i < round.len(); i++) {
     t.eqI32(atoi(itoa(round[i])), round[i], "atoi(itoa(" + itoa(round[i]) + ")) is not itself");
   }

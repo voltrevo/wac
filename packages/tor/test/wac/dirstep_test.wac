@@ -59,8 +59,8 @@ export string test_the_sequences_can_show_the_rule(Core core, Cli cli) {
 }
 
 DirDocuments empty() {
-  return DirDocuments(u8[0](), u8[0](), u8[0](), u8[0](), u8[][0](), u8[0](), u8[0](), u8[][0](),
-                      u8[][0](), u8[][0]());
+  return DirDocuments(u8[](), u8[](), u8[](), u8[](), u8[][](), u8[](), u8[](), u8[][](),
+                      u8[][](), u8[][]());
 }
 
 /**
@@ -157,15 +157,15 @@ export string test_republishing_replaces(Core core, Cli cli) {
   DirDocuments twice = filed(one, desc, key, 4);
   t.eqI32(twice.hsDescriptors.len(), 1, "and the second replaces it rather than joining it");
 
-  u8[] otherKey = u8[32](fill: 9);
+  u8[] otherKey = u8[].filled(32, 9);
   t.eqI32(filed(twice, desc, otherKey, 4).hsDescriptors.len(), 2, "another service is another entry");
 
   // The cap is a cap: a directory with no bound would hold whatever it was sent.
-  DirDocuments full = filed(filed(twice, desc, u8[32](fill: 1), 2), desc, u8[32](fill: 2), 2);
+  DirDocuments full = filed(filed(twice, desc, u8[].filled(32, 1), 2), desc, u8[].filled(32, 2), 2);
   t.eqI32(full.hsDescriptors.len(), 2, "and the store stops at its limit");
 
-  t.eqI32(filed(empty(), desc, u8[31](), 4).hsDescriptors.len(), 0, "a name that is not a key files nothing");
-  t.eqI32(filed(empty(), u8[0](), key, 4).hsDescriptors.len(), 0, "and nothing files nothing");
+  t.eqI32(filed(empty(), desc, u8[].filled(31, 0), 4).hsDescriptors.len(), 0, "a name that is not a key files nothing");
+  t.eqI32(filed(empty(), u8[](), key, 4).hsDescriptors.len(), 0, "and nothing files nothing");
   return t.report();
 }
 
@@ -227,7 +227,7 @@ export string test_a_second_upload_follows_tors_rule(Core core, Cli cli) {
 export string test_another_services_revision_does_not_block_this_one(Core core, Cli cli) {
   T t = T.create();
   // Another service, further along: revision 43 under a name that is not ours.
-  DirDocuments docs = filed(empty(), nextBytes(cli), u8[32](fill: 5), 4);
+  DirDocuments docs = filed(empty(), nextBytes(cli), u8[].filled(32, 5), 4);
   t.eqI32(docs.hsDescriptors.len(), 1, "the other service is held");
 
   DirAction a = dirStep(publishRequest(descriptorBytes(cli)), docs);
@@ -254,7 +254,7 @@ u8[] publishRequest(u8[] body) {
   string head = "POST /tor/hs/3/publish HTTP/1.0\r\nHost: 127.0.0.1:9001\r\n" +
                 "Content-Length: " + itoa(body.len()) + "\r\n\r\n";
   u8[] h = head.toBytes();
-  u8[] out = u8[h.len() + body.len()]();
+  u8[] out = u8[].filled(h.len() + body.len(), 0);
   for (i32 i = 0; i < h.len(); i++) { out[i] = h[i]; }
   for (i32 i = 0; i < body.len(); i++) { out[h.len() + i] = body[i]; }
   return out;

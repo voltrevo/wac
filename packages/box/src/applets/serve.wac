@@ -43,7 +43,7 @@ export i32 serve(Core core, Cli cli, Fs fs, Args a) {
 
 /** One connection, to its end: read, answer, repeat while it wants to be kept alive. */
 void connection(Core core, Cli cli, i32 sock) {
-  u8[] buffered = u8[0]();
+  u8[] buffered = u8[]();
   while (true) {
     Served s = handle(buffered, core.nowMillis().wait());
     if (!s.ready) {

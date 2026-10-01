@@ -49,8 +49,10 @@ import { Change, Cli, Core, Exec } from "std/platform.wac";
 /** `wac build <file> -o <stem>` inside the fixture. */
 Exec build(Cli cli, string dir, string name) {
   return cli.exec("/bin/sh",
-                  string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) +
-                                 " build " + name + " -o out"), u8[0]()).wait();
+                  [
+                                 "-c", "cd " + dir + " && exec " + binaryPath(cli) +
+                                 " build " + name + " -o out"
+                  ], u8[]()).wait();
 }
 
 /**

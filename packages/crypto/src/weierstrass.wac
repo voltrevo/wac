@@ -177,7 +177,7 @@ export u8[] jacToAffine(Curve c, Jac p) {
   i64[] zi3 = fpMul(zi2, zi);
   u8[] x = fpToBytes(fpMul(p.x, zi2));
   u8[] y = fpToBytes(fpMul(p.y, zi3));
-  u8[] out = u8[2 * len]();
+  u8[] out = u8[].filled(2 * len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = x[i]; out[len + i] = y[i]; }
   return out;
 }
@@ -201,8 +201,8 @@ bool onCurve(Curve c, i64[] x, i64[] y) {
 export Jac curveDecode(Curve c, u8[] s) {
   if (!curveDecodes(c, s)) { trap; }
   i32 len = byteLen(c);
-  u8[] xb = u8[len]();
-  u8[] yb = u8[len]();
+  u8[] xb = u8[].filled(len, 0);
+  u8[] yb = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { xb[i] = s[1 + i]; yb[i] = s[1 + len + i]; }
   return jacFromAffine(c, fpFromBytes(xb), fpFromBytes(yb));
 }
@@ -228,8 +228,8 @@ export bool curveDecodes(Curve c, u8[] s) {
   i32 len = byteLen(c);
   if (s.len() != 1 + 2 * len) { return false; }
   if (s[0] != 4) { return false; }
-  u8[] xb = u8[len]();
-  u8[] yb = u8[len]();
+  u8[] xb = u8[].filled(len, 0);
+  u8[] yb = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { xb[i] = s[1 + i]; yb[i] = s[1 + len + i]; }
   if (!fpInRange(xb)) { return false; }
   if (!fpInRange(yb)) { return false; }
@@ -242,7 +242,7 @@ export bool curveDecodes(Curve c, u8[] s) {
 /** Encode a point uncompressed: 0x04 ++ x ++ y. */
 export u8[] curveEncode(Curve c, Jac p) {
   u8[] xy = jacToAffine(c, p);
-  u8[] out = u8[1 + xy.len()]();
+  u8[] out = u8[].filled(1 + xy.len(), 0);
   out[0] = 4;
   for (i32 i = 0; i < xy.len(); i++) { out[1 + i] = xy[i]; }
   return out;
@@ -316,7 +316,7 @@ export u8[] curveEcdh(Curve c, u8[] priv, u8[] peerPublic) {
   Jac shared = jacMul(c, priv, curveDecode(c, peerPublic));
   if (jacIsInfinity(shared)) { trap; }
   u8[] xy = jacToAffine(c, shared);
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = xy[i]; }
   return out;
 }
@@ -333,7 +333,7 @@ export u8[] curveEcdh(Curve c, u8[] priv, u8[] peerPublic) {
  * a curve like P-521.
  */
 i64[] digestScalar(ScOrder o, i32 len, u8[] digest) {
-  u8[] e = u8[len]();
+  u8[] e = u8[].filled(len, 0);
   if (digest.len() >= len) {
     for (i32 i = 0; i < len; i++) { e[i] = digest[i]; }
   } else {
@@ -354,8 +354,8 @@ i64[] digestScalar(ScOrder o, i32 len, u8[] digest) {
 export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
   i32 len = byteLen(c);
   if (sig.len() != 2 * len) { return false; }
-  u8[] r = u8[len]();
-  u8[] s = u8[len]();
+  u8[] r = u8[].filled(len, 0);
+  u8[] s = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { r[i] = sig[i]; s[i] = sig[len + i]; }
   if (isZeroBE(r) || cmpBE(r, c.order) >= 0) { return false; }
   if (isZeroBE(s) || cmpBE(s, c.order) >= 0) { return false; }
@@ -380,7 +380,7 @@ export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
   if (jacIsInfinity(point)) { return false; }
 
   u8[] xy = jacToAffine(c, point);
-  u8[] x = u8[len]();
+  u8[] x = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { x[i] = xy[i]; }
   return cmpBE(scnToBytes(scnReduce(o, scnFromBytes(x))), r) == 0;
 }
@@ -396,17 +396,17 @@ export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
 export u8[] ecdsaSign(Curve c, u8[] priv, u8[] digest, u8[] k) {
   i32 len = byteLen(c);
   if (priv.len() != len || k.len() != len) { trap; }
-  if (isZeroBE(k) || cmpBE(k, c.order) >= 0) { return u8[0](); }
+  if (isZeroBE(k) || cmpBE(k, c.order) >= 0) { return u8[](); }
 
   ScOrder o = scOrder(c.order);
   Jac point = jacMul(c, k, curveBase(c));
-  if (jacIsInfinity(point)) { return u8[0](); }
+  if (jacIsInfinity(point)) { return u8[](); }
   u8[] xy = jacToAffine(c, point);
-  u8[] rx = u8[len]();
+  u8[] rx = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { rx[i] = xy[i]; }
   i64[] rN = scnReduce(o, scnFromBytes(rx));
   u8[] r = scnToBytes(rN);
-  if (scnIsZero(rN)) { return u8[0](); }
+  if (scnIsZero(rN)) { return u8[](); }
 
   // `s = (e + r*priv) / k`, every multiply in Montgomery form so that the form cancels: a product
   // of two values in it is in it, and only the answer leaves. `priv` is reduced rather than
@@ -417,9 +417,9 @@ export u8[] ecdsaSign(Curve c, u8[] priv, u8[] digest, u8[] k) {
   i64[] rp = scnMont(o, scnEnter(o, rN), scnEnter(o, scnReduce(o, scnFromBytes(priv))));
   i64[] sN = scnLeave(o, scnMont(o, kInv, scnAdd(o, scnEnter(o, e), rp)));
   u8[] s = scnToBytes(sN);
-  if (scnIsZero(sN)) { return u8[0](); }
+  if (scnIsZero(sN)) { return u8[](); }
 
-  u8[] out = u8[2 * len]();
+  u8[] out = u8[].filled(2 * len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = r[i]; out[len + i] = s[i]; }
   return out;
 }

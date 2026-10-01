@@ -45,7 +45,7 @@ export struct IntroPoints {
   i32 capacity;
 
   IntroPoints create(i32 capacity) {
-    return IntroPoints(u8[][capacity](), i32[capacity](), i32[capacity](), 0, capacity);
+    return IntroPoints(u8[][].defaulted(capacity), i32[].filled(capacity, 0), i32[].filled(capacity, 0), 0, capacity);
   }
 }
 
@@ -61,9 +61,9 @@ export bool suitableForEstablishIntro(bool circuitEndsHere) { return circuitEnds
 export u8[] establishIntro(
   IntroPoints m, u8[] cell, u8[] circuitKH, i32 connId, i32 circId, bool circuitEndsHere
 ) {
-  if (!suitableForEstablishIntro(circuitEndsHere)) { return u8[0](); }
+  if (!suitableForEstablishIntro(circuitEndsHere)) { return u8[](); }
   EstablishedIntro got = parseEstablishIntro(cell, circuitKH);
-  if (!got.ok) { return u8[0](); }
+  if (!got.ok) { return u8[](); }
 
   i32 at = indexOfKey(m, got.authKey);
   if (at >= 0) {
@@ -71,7 +71,7 @@ export u8[] establishIntro(
     m.circIds[at] = circId;
     return got.authKey;
   }
-  if (m.count >= m.capacity) { return u8[0](); }
+  if (m.count >= m.capacity) { return u8[](); }
   m.authKeys[m.count] = got.authKey;
   m.connIds[m.count] = connId;
   m.circIds[m.count] = circId;
@@ -134,7 +134,7 @@ export Introduced introduce1(IntroPoints m, u8[] cell, bool firstOnThisCircuit) 
 
 /** The two-byte body of an INTRODUCE_ACK: a status, big-endian, and no extensions. */
 export u8[] introduceAckBody(i32 status) {
-  u8[] out = u8[3]();
+  u8[] out = u8[].filled(3, 0);
   out[0] = (status >> 8) & 0xFF;
   out[1] = status & 0xFF;
   out[2] = 0;      // N_EXTENSIONS

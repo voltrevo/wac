@@ -56,7 +56,7 @@ import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The same, on the real disk: `Shell.create` builds `Fs.onHost`, and the frame's cwd is where it lands. */
 Ran runHost(Core core, Cli cli, string cwd, string script) {
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), cwd, false);
+  Frame f = Frame.of(["sh", "-c", script], u8[](), cwd, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
@@ -76,14 +76,14 @@ Ran runHost(Core core, Cli cli, string cwd, string script) {
  * seeded by `seedImage` first, and every boot here parses real image bytes.
  */
 Fs imageFs(Core core, Cli cli, string path) {
-  Booted booted = boot(core, cli, path, Vec.fromArray(string[]("imaged")), Vec.fromArray(boxNames()));
+  Booted booted = boot(core, cli, path, Vec.fromArray(["imaged"]), Vec.fromArray(boxNames()));
   return booted.fs;
 }
 
 /** Write an empty world to `path`, so the boots that follow are reads of a file rather than of nothing. */
 bool seedImage(Core core, Cli cli, string path) {
   Fs fs = Fs.inMemory(0);
-  mountSystem(fs, core.randomBytes, Vec.fromArray(string[]("imaged")), Vec.fromArray(boxNames()));
+  mountSystem(fs, core.randomBytes, Vec.fromArray(["imaged"]), Vec.fromArray(boxNames()));
   return save(core, cli, "backings", path, fs);
 }
 

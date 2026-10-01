@@ -43,7 +43,7 @@ export struct Url {
   u8[]? fragment;
 
   Url create() {
-    return Url(u8[0](), u8[0](), u8[0](), null, -1, Vec.create(), u8[0](), false, null, null);
+    return Url(u8[](), u8[](), u8[](), null, -1, Vec.create(), u8[](), false, null, null);
   }
 }
 
@@ -82,7 +82,7 @@ bool isAsciiAlnum(i32 c) { return isAsciiAlpha(c) || isAsciiDigit(c); }
 bool isSlash(i32 c, bool special) { return c == '/' || (special && c == '\\'); }
 
 u8[] lowerAscii(u8[] s) {
-  u8[] out = u8[s.len()]();
+  u8[] out = u8[].filled(s.len(), 0);
   for (i32 i = 0; i < s.len(); i++) {
     i32 c = s[i];
     out[i] = c >= 'A' && c <= 'Z' ? c + 32 : c;
@@ -222,7 +222,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           pointer++;
         } else {
           url.hasOpaquePath = true;
-          url.opaquePath = u8[0]();
+          url.opaquePath = u8[]();
           state = S_OPAQUE_PATH();
         }
       } else {
@@ -240,7 +240,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         url.hasOpaquePath = true;
         url.opaquePath = base!.opaquePath;
         url.query = base!.query;
-        url.fragment = u8[0]();
+        url.fragment = u8[]();
         state = S_FRAGMENT();
       } else if (!eqStr(base!.scheme, "file")) {
         state = S_RELATIVE();
@@ -279,10 +279,10 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         url.path = copyPath(base!.path);
         url.query = base!.query;
         if (c == '?') {
-          url.query = u8[0]();
+          url.query = u8[]();
           state = S_QUERY();
         } else if (c == '#') {
-          url.fragment = u8[0]();
+          url.fragment = u8[]();
           state = S_FRAGMENT();
         } else if (!eof) {
           url.query = null;
@@ -345,9 +345,9 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           Buf target = inPass ? pass : user;
           if (b == '%' || b == 0) {
             // `%` reaches here already encoded when it came from the re-encode above.
-            encodeInto(target, u8[](b), SET_USERINFO());
+            encodeInto(target, [b], SET_USERINFO());
           } else {
-            encodeInto(target, u8[](b), SET_USERINFO());
+            encodeInto(target, [b], SET_USERINFO());
           }
         }
         Buf u2 = Buf.create();
@@ -412,7 +412,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
 
     } else if (state == S_FILE()) {
       url.scheme = "file".toBytes();
-      url.host = Host.Named(u8[0]());
+      url.host = Host.Named(u8[]());
       if (c == '/' || c == '\\') {
         state = S_FILE_SLASH();
       } else if ((base is not null) && eqStr(base!.scheme, "file")) {
@@ -420,10 +420,10 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         url.path = copyPath(base!.path);
         url.query = base!.query;
         if (c == '?') {
-          url.query = u8[0]();
+          url.query = u8[]();
           state = S_QUERY();
         } else if (c == '#') {
-          url.fragment = u8[0]();
+          url.fragment = u8[]();
           state = S_FRAGMENT();
         } else if (!eof) {
           url.query = null;
@@ -466,7 +466,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           state = S_PATH();
         } else if (buffered.len() == 0) {
           buffer.take();
-          url.host = Host.Named(u8[0]());
+          url.host = Host.Named(u8[]());
           state = S_PATH_START();
         } else {
           buffer.take();
@@ -475,7 +475,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           // Written as an `if` rather than a ternary: `cond ? T : T?` takes the non-nullable
           // arm's type as the result and emits invalid wasm — wac/issues/0048.
           Host? chosen = hr.host;
-          if (eqStr(hostBytes(hr.host!), "localhost")) { chosen = Host.Named(u8[0]()); }
+          if (eqStr(hostBytes(hr.host!), "localhost")) { chosen = Host.Named(u8[]()); }
           url.host = chosen;
           state = S_PATH_START();
         }
@@ -488,10 +488,10 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         state = S_PATH();
         if (c != '/' && c != '\\') { continue; }
       } else if (c == '?') {
-        url.query = u8[0]();
+        url.query = u8[]();
         state = S_QUERY();
       } else if (c == '#') {
-        url.fragment = u8[0]();
+        url.fragment = u8[]();
         state = S_FRAGMENT();
       } else if (!eof) {
         state = S_PATH();
@@ -506,16 +506,16 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         if (isDoubleDot(segment)) {
           shortenPath(url);
           if (c != '/' && !(isSpecial(url.scheme) && c == '\\')) {
-            url.path.push(u8[0]());
+            url.path.push(u8[]());
           }
         } else if (isSingleDot(segment)) {
           if (c != '/' && !(isSpecial(url.scheme) && c == '\\')) {
-            url.path.push(u8[0]());
+            url.path.push(u8[]());
           }
         } else {
           if (eqStr(url.scheme, "file") && url.path.len() == 0 && isWindowsDrive(segment)) {
             // `|` normalises to `:` so the drive letter has one spelling.
-            u8[] fixed = u8[2]();
+            u8[] fixed = u8[].filled(2, 0);
             fixed[0] = segment[0];
             fixed[1] = ':';
             segment = fixed;
@@ -523,40 +523,40 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           url.path.push(segment);
         }
         if (c == '?') {
-          url.query = u8[0]();
+          url.query = u8[]();
           state = S_QUERY();
         } else if (c == '#') {
-          url.fragment = u8[0]();
+          url.fragment = u8[]();
           state = S_FRAGMENT();
         }
       } else {
-        encodeInto(buffer, u8[](c), SET_PATH());
+        encodeInto(buffer, [c], SET_PATH());
       }
 
     } else if (state == S_OPAQUE_PATH()) {
       if (c == '?') {
         url.opaquePath = buffer.take();
-        url.query = u8[0]();
+        url.query = u8[]();
         state = S_QUERY();
       } else if (c == '#') {
         url.opaquePath = buffer.take();
-        url.fragment = u8[0]();
+        url.fragment = u8[]();
         state = S_FRAGMENT();
       } else if (eof) {
         url.opaquePath = buffer.take();
       } else {
-        encodeInto(buffer, u8[](c), SET_C0());
+        encodeInto(buffer, [c], SET_C0());
       }
 
     } else if (state == S_QUERY()) {
       if (eof || c == '#') {
         url.query = buffer.take();
         if (c == '#') {
-          url.fragment = u8[0]();
+          url.fragment = u8[]();
           state = S_FRAGMENT();
         }
       } else {
-        encodeInto(buffer, u8[](c),
+        encodeInto(buffer, [c],
                    isSpecial(url.scheme) ? SET_SPECIAL_QUERY() : SET_QUERY());
       }
 
@@ -564,7 +564,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
       if (eof) {
         url.fragment = buffer.take();
       } else {
-        encodeInto(buffer, u8[](c), SET_FRAGMENT());
+        encodeInto(buffer, [c], SET_FRAGMENT());
       }
     }
 
@@ -577,8 +577,8 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
 u8[] hostBytes(Host h) {
   return match (h) {
     Named(name): name,
-    Ipv4(address): u8[0](),
-    Ipv6(pieces): u8[0](),
+    Ipv4(address): u8[](),
+    Ipv6(pieces): u8[](),
   };
 }
 
@@ -592,7 +592,7 @@ Vec<u8[]> copyPath(Vec<u8[]> p) {
 
 void writeDecimal(Buf out, i32 v) {
   if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[6]();
+  u8[] tmp = u8[].filled(6, 0);
   i32 n = 0;
   i32 x = v;
   while (x > 0) { tmp[n] = 48 + (x % 10); x = x / 10; n++; }
@@ -657,7 +657,7 @@ export u8[] pathname(Url url) {
 }
 
 export u8[] hostname(Url url) {
-  if (url.host is null) { return u8[0](); }
+  if (url.host is null) { return u8[](); }
   Buf out = Buf.create();
   writeHost(out, url.host!);
   return out.take();

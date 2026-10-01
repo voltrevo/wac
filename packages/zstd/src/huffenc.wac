@@ -43,15 +43,15 @@ i32 maxDirectSymbol() { return 128; }
  */
 i32[] codeLengths(i32[] counts, i32 maxSymbol, i32 limit) {
   i32 n = maxSymbol + 1;
-  i32[] lengths = i32[n]();
+  i32[] lengths = i32[].filled(n, 0);
   i32 floor = 1;
 
   while (true) {
     // Leaves for the symbols that occur, weighted by the floored count.
-    i32[] weight = i32[2 * n]();
-    i32[] left = i32[2 * n]();
-    i32[] right = i32[2 * n]();
-    i32[] leafOf = i32[2 * n]();
+    i32[] weight = i32[].filled(2 * n, 0);
+    i32[] left = i32[].filled(2 * n, 0);
+    i32[] right = i32[].filled(2 * n, 0);
+    i32[] leafOf = i32[].filled(2 * n, 0);
     i32 nodes = 0;
     for (i32 s = 0; s < n; s++) {
       if (counts[s] == 0) { continue; }
@@ -65,7 +65,7 @@ i32[] codeLengths(i32[] counts, i32 maxSymbol, i32 limit) {
     }
     if (nodes < 2) { trap; }             // one symbol is an RLE section, not a Huffman code
 
-    bool[] active = bool[2 * n]();
+    bool[] active = bool[].filled(2 * n, false);
     for (i32 i = 0; i < nodes; i++) {
       active[i] = true;
     }
@@ -93,7 +93,7 @@ i32[] codeLengths(i32[] counts, i32 maxSymbol, i32 limit) {
 
     // Depths, by walking down from the root.
     i32 root = count - 1;
-    i32[] depth = i32[count]();
+    i32[] depth = i32[].filled(count, 0);
     i32 deepest = 0;
     // Nodes are created in increasing order, so a parent always has a higher index than its
     // children — walking down from the top visits every parent before its children.
@@ -143,15 +143,15 @@ HuffEnc build(i32[] counts, i32 maxSymbol) {
     if (counts[s] > 0) { top = s; }
   }
 
-  i32[] weights = i32[maxSymbol + 1]();
-  i32[] nbBits = i32[maxSymbol + 1]();
-  i32[] code = i32[maxSymbol + 1]();
+  i32[] weights = i32[].filled(maxSymbol + 1, 0);
+  i32[] nbBits = i32[].filled(maxSymbol + 1, 0);
+  i32[] code = i32[].filled(maxSymbol + 1, 0);
   for (i32 s = 0; s <= maxSymbol; s++) {
     if (lengths[s] > 0) { weights[s] = maxBits + 1 - lengths[s]; }
   }
 
   // Where each weight class starts, in the decoder's table.
-  i32[] start = i32[maxCodeLength() + 2]();
+  i32[] start = i32[].filled(maxCodeLength() + 2, 0);
   for (i32 s = 0; s <= maxSymbol; s++) {
     start[weights[s]]++;
   }
@@ -230,7 +230,7 @@ export bool describable(i32[] counts, i32 maxSymbol) {
  * rather than a ratio win.
  */
 export u8[] compressLiterals(u8[] data, i32[] counts, i32 maxSymbol) {
-  if (!describable(counts, maxSymbol)) { return u8[0](); }
+  if (!describable(counts, maxSymbol)) { return u8[](); }
   HuffEnc h = build(counts, maxSymbol);
 
   Buf tree = Buf.create();

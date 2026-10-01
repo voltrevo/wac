@@ -55,7 +55,7 @@ export i32 maxPlaintext() { return 16384; }
  * still works, so the mistake survives any test that seals one record.
  */
 u8[] recordNonce(u8[] iv, i64 seq) {
-  u8[] nonce = u8[12]();
+  u8[] nonce = u8[].filled(12, 0);
   for (i32 i = 0; i < 12; i++) { nonce[i] = iv[i]; }
   for (i32 i = 0; i < 8; i++) {
     i32 shift = (7 - i) * 8;
@@ -66,7 +66,7 @@ u8[] recordNonce(u8[] iv, i64 seq) {
 
 /** The five-byte header, which is also the AEAD's additional data. */
 u8[] header(i32 sealedLen) {
-  u8[] h = u8[5]();
+  u8[] h = u8[].filled(5, 0);
   h[0] = 23;          // always application_data on the wire
   h[1] = 3; h[2] = 3; // legacy_record_version, frozen at TLS 1.2 for middleboxes
   h[3] = (sealedLen >> 8) & 0xFF;
@@ -87,7 +87,7 @@ export u8[] recordSeal(i32 suite, u8[] key, u8[] iv, i64 seq, i32 contentType,
   if (content.len() > maxPlaintext()) { trap; }
   if (padLen < 0) { trap; }
 
-  u8[] inner = u8[content.len() + 1 + padLen]();
+  u8[] inner = u8[].filled(content.len() + 1 + padLen, 0);
   for (i32 i = 0; i < content.len(); i++) { inner[i] = content[i]; }
   inner[content.len()] = contentType;
   // The padding is already zero.
@@ -97,8 +97,8 @@ export u8[] recordSeal(i32 suite, u8[] key, u8[] iv, i64 seq, i32 contentType,
   u8[] hdr = header(inner.len() + 16);
   u8[] nonce = recordNonce(iv, seq);
 
-  u8[] ct = u8[0]();
-  u8[] tag = u8[0]();
+  u8[] ct = u8[]();
+  u8[] tag = u8[]();
   if (suite == 0x1301) {
     ct = gcmEncrypt(key, nonce, inner);
     tag = gcmTag(key, nonce, hdr, ct);
@@ -109,7 +109,7 @@ export u8[] recordSeal(i32 suite, u8[] key, u8[] iv, i64 seq, i32 contentType,
     trap;
   }
 
-  u8[] out = u8[5 + ct.len() + 16]();
+  u8[] out = u8[].filled(5 + ct.len() + 16, 0);
   for (i32 i = 0; i < 5; i++) { out[i] = hdr[i]; }
   for (i32 i = 0; i < ct.len(); i++) { out[5 + i] = ct[i]; }
   for (i32 i = 0; i < 16; i++) { out[5 + ct.len() + i] = tag[i]; }
@@ -191,12 +191,12 @@ export u8[]? recordTryOpen(i32 suite, u8[] key, u8[] iv, i64 seq, u8[] record) {
   // legitimate, and admitting one is how a peer makes us allocate on demand.
   if (sealedLen > maxPlaintext() + 256) { return null; }
 
-  u8[] hdr = u8[5]();
+  u8[] hdr = u8[].filled(5, 0);
   for (i32 i = 0; i < 5; i++) { hdr[i] = record[i]; }
   i32 ctLen = sealedLen - 16;
-  u8[] ct = u8[ctLen]();
+  u8[] ct = u8[].filled(ctLen, 0);
   for (i32 i = 0; i < ctLen; i++) { ct[i] = record[5 + i]; }
-  u8[] tag = u8[16]();
+  u8[] tag = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { tag[i] = record[5 + ctLen + i]; }
 
   u8[] nonce = recordNonce(iv, seq);
@@ -260,7 +260,7 @@ export u8[] recordContent(u8[] inner) {
     if (inner[i] != 0) { end = i; i = -1; }
   }
   if (end < 0) { trap; }
-  u8[] out = u8[end]();
+  u8[] out = u8[].filled(end, 0);
   for (i32 i = 0; i < end; i++) { out[i] = inner[i]; }
   return out;
 }
@@ -286,7 +286,7 @@ export i32 alertNoApplicationProtocol() { return 120; }
  * sent, and sending `warning` on a fatal condition would be a lie a peer might act on.
  */
 export u8[] alertBody(i32 description) {
-  u8[] a = u8[2]();
+  u8[] a = u8[].filled(2, 0);
   a[0] = description == 0 ? 1 : 2;   // close_notify is a warning; everything else fatal
   a[1] = description;
   return a;
@@ -302,7 +302,7 @@ export u8[] alertBody(i32 description) {
  */
 export u8[] plaintextAlert(i32 description) {
   u8[] body = alertBody(description);
-  u8[] rec = u8[7]();
+  u8[] rec = u8[].filled(7, 0);
   rec[0] = 21;
   rec[1] = 3; rec[2] = 3;
   rec[3] = 0; rec[4] = 2;

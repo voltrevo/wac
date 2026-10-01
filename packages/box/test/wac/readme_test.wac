@@ -91,8 +91,10 @@ export string test_the_count_is_written_as_a_digit(Core core, Cli cli) {
   // **Searched from the phrase, not from the word.** Looking up each spelling and checking its first
   // occurrence would miss a second one further down — and "sixty" is an ordinary English word that may
   // appear anywhere. Every "entry points" is found instead, and what precedes it is what must be a digit.
-  string[] spellings = string[]("forty", "fifty", "sixty", "seventy", "eighty", "ninety",
-                                "twenty", "thirty", "hundred");
+  string[] spellings = [
+                                "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+                                "twenty", "thirty", "hundred"
+  ];
   i32 found = 0;
   i32 at = 0;
   for (i32 guard = 0; guard < 64; guard++) {

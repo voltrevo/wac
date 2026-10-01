@@ -39,12 +39,12 @@ const string PREFIX = "packages/sh/";
  * no process and opens no socket — every `cd`, `ls` and `mkdir` in the script list is answered by the
  * fake. An exercise that needed grants would be one whose coverage depended on the machine it ran on.
  */
-string[] grants() { return string[0](fill: ""); }
+string[] grants() { return string[].filled(0, ""); }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can union this

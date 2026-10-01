@@ -112,7 +112,7 @@ const RELATIONAL: Record<string, string[]> = {
  * Which tokens can precede an integer literal that is safe to perturb.
  *
  * A literal in an array-size or index position is as interesting as any other, but a
- * literal that is part of a *declaration* of a fixed-size table — `u8[256]()` paired
+ * literal that is part of a *declaration* of a fixed-size table — `u8[].filled(256, 0)` paired
  * with a loop bound — produces a mutant that fails to compile or traps everywhere,
  * which is noise rather than signal. There is no cheap syntactic test for that, so
  * this does not try; TCE and the INVALID outcome absorb the ones that do not build.
@@ -222,7 +222,7 @@ const LITERAL_PER_SHAPE = 3;
  * A key identifying "the same kind of literal, in the same place, in the same function".
  *
  * The literal operator's cost is dominated by code that repeats one statement: a constant table
- * (`v[0] = 0x...; v[1] = 0x...;` twelve times, or `u8[](0x63, 0x7c, ...)` two hundred and fifty-six
+ * (`v[0] = 0x...; v[1] = 0x...;` twelve times, or `[0x63, 0x7c, ...] as u8[]` two hundred and fifty-six
  * times) and unrolled arithmetic (`acc = t3 + 0x1eabfffe * m + carry;` a hundred and forty-four
  * times). Bumping the third entry of a table and bumping the fourth are not two experiments; they
  * are one experiment run twice, and the answer is the same both times because the same assertions
@@ -273,7 +273,7 @@ export function generate(
   // function, or for module-level code the `const` being initialised.
   //
   // The `const` half is not a detail. The largest tables in the repo are module-level
-  // `const u8[] SBOX = u8[](...)` initialisers, which are outside every function span; keying them
+  // `const u8[] SBOX = [...]` initialisers, which are outside every function span; keying them
   // all to one empty scope put `unicode/src/tables.wac`'s six separate tables into a single class
   // of 8758 members and sampled three literals for the lot. Six tables are six questions.
   const scope = new Array<string>(tokens.length).fill("");

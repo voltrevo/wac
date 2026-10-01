@@ -46,7 +46,7 @@ const i64 NOW = 1754500000000;
 const string FIXTURE = "packages/fs/test/fixtures/image-v1.wacimg";
 
 string oneByte(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }
@@ -75,8 +75,8 @@ string describe(Fs fs, string[] mounts) {
   string out = "";
   for (i32 m = 0; m < mounts.len(); m++) {
     out = out + "mount " + mounts[m] + "\n";
-    string[] paths = string[4096](fill: "");
-    i32[] n = i32[1]();
+    string[] paths = string[].filled(4096, "");
+    i32[] n = i32[].filled(1, 0);
     walk(fs, mounts[m] == "/" ? "" : mounts[m], paths, n);
     for (i32 i = 0; i < n[0]; i++) {
       Stat st = fs.stat(paths[i]);
@@ -113,8 +113,10 @@ struct Rng {
 string[] names() {
   string forty = "";
   for (i32 i = 0; i < 40; i++) { forty = forty + "z"; }
-  return string[]("a", "b c", "-x", ".hidden", "ünïcode", forty, "1", "d",
-                  oneByte(0xFF), "c" + oneByte(0xC3), oneByte(0x01) + "ctl");
+  return [
+                  "a", "b c", "-x", ".hidden", "ünïcode", forty, "1", "d",
+                  oneByte(0xFF), "c" + oneByte(0xC3), oneByte(0x01) + "ctl"
+  ];
 }
 
 struct Built {
@@ -126,13 +128,13 @@ struct Built {
 Built build(i32 seed) {
   Rng rng = Rng(seed * 2654435761 + 12345);
   Fs fs = Fs.inMemory(NOW);
-  string[] mounts = seed % 3 == 0 ? string[]("/", "/mnt") : string[]("/");
+  string[] mounts = seed % 3 == 0 ? ["/", "/mnt"] : ["/"];
   // A second mount some of the time, because an image carries every memory mount and a test with one
   // mount cannot tell "writes the mounts" from "writes the first mount".
   if (mounts.len() == 2) { fs.mountMemory("/mnt"); }
 
   string[] ns = names();
-  string[] dirs = string[64](fill: "");
+  string[] dirs = string[].filled(64, "");
   i32 dirCount = 0;
   for (i32 i = 0; i < mounts.len(); i++) {
     dirs[dirCount] = mounts[i] == "/" ? "" : mounts[i];
@@ -149,20 +151,20 @@ Built build(i32 seed) {
       }
     } else {
       i32 len = rng.upto(200);
-      u8[] data = u8[len]();
+      u8[] data = u8[].filled(len, 0);
       for (i32 j = 0; j < len; j++) { data[j] = rng.upto(256); }
       fs.writeFile(path, data);
       // Modes and owners are the whole argument for a format of ours rather than tar, so vary them.
       if (rng.upto(2) == 0) { fs.chmod(path, rng.upto(512)); }
       if (rng.upto(3) == 0) {
-        string[] owners = string[]("root", "claude", "nobody");
+        string[] owners = ["root", "claude", "nobody"];
         fs.chown(path, owners[rng.upto(owners.len())]);
       }
     }
   }
   // An empty file and an empty directory: the two zero-length cases a length-prefixed format gets
   // wrong.
-  fs.writeFile("/empty", u8[0]());
+  fs.writeFile("/empty", u8[]());
   fs.mkdir("/emptydir", false);
   return Built(fs, mounts);
 }
@@ -204,13 +206,14 @@ export string test_writing_what_was_read_gives_the_same_bytes() {
 export string test_a_name_that_is_not_text_survives_an_image() {
   T t = T.create();
   Fs fs = Fs.inMemory(NOW);
-  string[] awkward = string[](
+  string[] awkward = [
     "/" + oneByte(0xFF),
     "/lone" + oneByte(0xC3),
     "/" + oneByte(0x01) + oneByte(0x02),
-    "/" + oneByte(0xED) + oneByte(0xA0) + oneByte(0x80));   // a surrogate, which UTF-8 forbids
+    "/" + oneByte(0xED) + oneByte(0xA0) + oneByte(0x80)   // a surrogate, which UTF-8 forbids
+  ];
   for (i32 i = 0; i < awkward.len(); i++) {
-    t.eqI32(fs.writeFile(awkward[i], u8[](i)).fault, 0, "a byte name writes");
+    t.eqI32(fs.writeFile(awkward[i], [i]).fault, 0, "a byte name writes");
   }
   Written w = write(fs);
   Loaded loaded = read(w.bytes, NOW);
@@ -250,14 +253,16 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
 
   string stem = work + "/saveimage";
   Exec built = cli.exec(binary(cli),
-                        string[]("build", "packages/fs/example/saveimage.wac", "-o", stem,
-                                 "--allow-read", "--allow-write"), u8[0]()).wait();
+                        [
+                                 "build", "packages/fs/example/saveimage.wac", "-o", stem,
+                                 "--allow-read", "--allow-write"
+                        ], u8[]()).wait();
   t.isTrue(built.ran() && built.status == 0,
            "saveimage builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
   if (!built.ran() || built.status != 0) { return t.report(); }
 
   string out = work + "/out.wacimg";
-  Exec run = cli.exec(binary(cli), string[](stem + ".wasm", work, out), u8[0]()).wait();
+  Exec run = cli.exec(binary(cli), [stem + ".wasm", work, out], u8[]()).wait();
   t.isTrue(run.ran() && run.status == 0,
            "saveimage runs: " + (run.ran() ? string.fromBytes(run.stderr) : run.error));
   if (!run.ran() || run.status != 0) { return t.report(); }
@@ -283,7 +288,7 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
   // filesystem began with one at the root and every path is under the root. An image of `/home` alone
   // reaches it, and the answer has to come from the mount table rather than from a lookup that
   // happens to fail inside somebody else's tree.
-  string[] outside = string[]("/elsewhere", "/etc/passwd", "/on-the-host");
+  string[] outside = ["/elsewhere", "/etc/passwd", "/on-the-host"];
   for (i32 i = 0; i < outside.len(); i++) {
     string p = outside[i];
     FileResult r = loaded.fs.readFile(p);
@@ -291,7 +296,7 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
     t.isTrue(r.error.indexOf("no such file") >= 0, p + ": " + r.error);
     t.isFalse(loaded.fs.stat(p).exists, p + " claims to exist");
     t.isTrue(loaded.fs.readDir(p) is null, p + " listed as a directory");
-    t.neI32(loaded.fs.writeFile(p, u8[1]()).fault, 0, p + " accepted a write");
+    t.neI32(loaded.fs.writeFile(p, u8[].filled(1, 0)).fault, 0, p + " accepted a write");
     t.neI32(loaded.fs.mkdir(p, false).fault, 0, p + " accepted a mkdir");
     t.neI32(loaded.fs.remove(p, false).fault, 0, p + " accepted a remove");
     t.neI32(loaded.fs.chmod(p, 448).fault, 0, p + " accepted a chmod");
@@ -332,11 +337,13 @@ i32 countOf(string s, string needle) {
 export string test_a_damaged_image_says_what_is_wrong() {
   T t = T.create();
   u8[] good = write(build(7).fs).bytes;
-  string[] names = string[]("empty", "not an image", "a future version", "truncated",
-                            "one byte flipped in the middle");
-  string[] reasons = string[]("too short", "magic", "version", "checksum", "damaged");
-  u8[][] cases = u8[][5](fill: u8[0]());
-  cases[0] = u8[0]();
+  string[] names = [
+                            "empty", "not an image", "a future version", "truncated",
+                            "one byte flipped in the middle"
+  ];
+  string[] reasons = ["too short", "magic", "version", "checksum", "damaged"];
+  u8[][] cases = u8[][].filled(5, u8[]());
+  cases[0] = u8[]();
   cases[1] = "hello there, not an image at all".toBytes();
   cases[2] = copyOf(good);
   cases[2][7] = 99;
@@ -354,13 +361,13 @@ export string test_a_damaged_image_says_what_is_wrong() {
 }
 
 u8[] copyOf(u8[] b) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
   return out;
 }
 
 u8[] prefixOf(u8[] b, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
   return out;
 }
@@ -397,7 +404,7 @@ export string test_a_flipped_byte_is_caught_wherever_it_is() {
 export string test_removed_nodes_are_not_written() {
   T t = T.create();
   Fs fs = Fs.inMemory(NOW);
-  u8[] big = u8[4000](fill: 0x41);
+  u8[] big = u8[].filled(4000, 0x41);
   for (i32 i = 0; i < 20; i++) { fs.writeFile("/f" + itoa(i), big); }
   i32 full = write(fs).bytes.len();
   for (i32 i = 0; i < 20; i++) { fs.remove("/f" + itoa(i), false); }
@@ -415,7 +422,7 @@ export string test_dump_shows_the_metadata_that_is_the_reason_for_our_own_format
   fs.chmod("/home/notes", 384);    // 0600
   fs.chown("/home/notes", "claude");
   string text = dump(write(fs).bytes);
-  string[] wanted = string[]("mount /", "0600", "claude", "notes", "5 bytes", "d 0755");
+  string[] wanted = ["mount /", "0600", "claude", "notes", "5 bytes", "d 0755"];
   for (i32 i = 0; i < wanted.len(); i++) {
     t.isTrue(text.indexOf(wanted[i]) >= 0, "dump did not mention " + wanted[i] + ":\n" + text);
   }
@@ -445,11 +452,12 @@ export string test_the_fixture_image_still_loads(Core core, Cli cli) {
   t.isTrue(got.ok, "the committed fixture no longer loads: " + got.error);
   if (!got.ok) { return t.report(); }
 
-  string[] paths = string[]("/greeting", "/home/claude/notes", "/mnt/data");
-  string[] texts = string[](
+  string[] paths = ["/greeting", "/home/claude/notes", "/mnt/data"];
+  string[] texts = [
     "hello from 2026-08-07\n",
     "an image outlives the session that wrote it\n",
-    "a second memory mount, so the format carries more than one\n");
+    "a second memory mount, so the format carries more than one\n"
+  ];
   for (i32 i = 0; i < paths.len(); i++) {
     FileResult r = got.fs.readFile(paths[i]);
     t.isTrue(r.ok, paths[i] + ": " + r.error);
@@ -481,18 +489,20 @@ export string test_the_fixture_image_still_loads(Core core, Cli cli) {
 export string test_an_image_whose_checksum_is_right_and_body_is_wrong() {
   T t = T.create();
   string[] lines = splitLines(trimmed(imageBadOps()));
-  string[] what = string[](
+  string[] what = [
     "no mount name", "no node", "bad kind", "node cut short", "length past the end",
     "negative length", "entry cut short",
     // A directory that stops before saying how many entries it has, and one whose entry name arrives
     // and whose child does not. Both are refused for the same reason as the rest, which is the point:
     // the reader's answer to a body it cannot finish does not depend on how far it got.
-    "no entry count", "child cut short", "mount name length", "entry name cut short", "trailing");
-  string[] reason = string[](
+    "no entry count", "child cut short", "mount name length", "entry name cut short", "trailing"
+  ];
+  string[] reason = [
     "ends inside a mount point", "ends inside a node", "neither a file nor a directory",
     "ends inside a node", "ends inside a node", "above two gigabytes", "ends inside a node",
     "ends inside a node", "ends inside a node", "above two gigabytes", "ends inside a node",
-    "trailing bytes");
+    "trailing bytes"
+  ];
   t.eqI32(lines.len(), what.len(), "one line per case");
   if (lines.len() != what.len()) { return t.report(); }
   for (i32 i = 0; i < what.len(); i++) {
@@ -504,7 +514,7 @@ export string test_an_image_whose_checksum_is_right_and_body_is_wrong() {
 }
 
 string[] splitLines(string s) {
-  string[] out = string[64](fill: "");
+  string[] out = string[].filled(64, "");
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= s.len() && n < out.len(); i++) {
@@ -512,7 +522,7 @@ string[] splitLines(string s) {
     if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
     from = i + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

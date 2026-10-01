@@ -15,11 +15,11 @@ u8[][] unpack(u8[] packed) {
     at = at + 4 + n;
     count++;
   }
-  u8[][] out = u8[][count](fill: u8[0]());
+  u8[][] out = u8[][].filled(count, u8[]());
   at = 0;
   for (i32 i = 0; i < count; i++) {
     i32 n = packed[at] | (packed[at + 1] << 8) | (packed[at + 2] << 16) | (packed[at + 3] << 24);
-    u8[] node = u8[n]();
+    u8[] node = u8[].filled(n, 0);
     for (i32 j = 0; j < n; j++) { node[j] = packed[at + 4 + j]; }
     out[i] = node;
     at = at + 4 + n;
@@ -30,7 +30,7 @@ u8[][] unpack(u8[] packed) {
 u8[] flatten(Resolved r) {
   u8[] err = r.error.toBytes();
   i32 n = r.present ? 20 : 0;
-  u8[] out = u8[2 + n + err.len()]();
+  u8[] out = u8[].filled(2 + n + err.len(), 0);
   out[0] = r.ok ? 1 : 0;
   out[1] = r.present ? 1 : 0;
   for (i32 i = 0; i < n; i++) { out[2 + i] = r.address[i]; }

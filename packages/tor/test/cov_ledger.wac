@@ -57,12 +57,12 @@ const string PREFIX = "packages/tor/";
 
 /** Sockets to relays and to C tor, a process to start it, and the vendored directory documents. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/tor/src/relayd.wac", "", "line", false,
+  return [
+         Rule("packages/tor/src/relayd.wac", "", "line", false,
          "**The relay daemon, and the largest unmeasured thing in the repository: 1,890 lines of " +
          "which one point is reachable from here.** `relayd.wac` is a *program* — `wac run … " +
          "relayd.wac -- <dir>` — and `entries_test.wac`, `network_tor_test.wac`, " +
@@ -338,17 +338,17 @@ Rule[] rules() {
          "a *mutual* family declaration is — and the real consensus is full of them, but the " +
          "fixtures are not. The one point in this package accounted for individually rather than " +
          "by family.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[0](fill: Pin("", 0, "", true, ""));
+  return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

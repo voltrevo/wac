@@ -30,16 +30,16 @@ struct Ran {
 
 Ran run(Cli cli, string how) {
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  Exec r = cli.exec(wac, string[]("run", ENTRY, "--", how), u8[0]()).wait();
+  Exec r = cli.exec(wac, ["run", ENTRY, "--", how], u8[]()).wait();
   if (!r.ran()) { return Ran(false, -1, "", "the wac binary did not run — " + r.error); }
   return Ran(true, r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
 
 string[] splitLines(string s) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -47,7 +47,7 @@ string[] splitLines(string s) {
     if (i > at) { out[count] = s.slice(at, i); count = count + 1; }
     at = i + 1;
   }
-  string[] exact = string[count](fill: "");
+  string[] exact = string[].filled(count, "");
   for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -59,7 +59,7 @@ string joinedWith(string[] all, string sep) {
 }
 
 string[] sorted(string[] all) {
-  string[] out = string[all.len()](fill: "");
+  string[] out = string[].filled(all.len(), "");
   for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
@@ -91,7 +91,7 @@ export string test_then_returns_now_and_the_continuations_run_inside_drain(Core 
   t.eqI32(lines.len(), 4, r.out);
   if (lines.len() != 4) { return t.report(); }
   t.eqStr(lines[0], "scheduled 2, ran 0", r.out);
-  t.eqStr(joinedWith(sorted(string[](lines[1], lines[2])), " "), "first second", r.out);
+  t.eqStr(joinedWith(sorted([lines[1], lines[2]]), " "), "first second", r.out);
   t.eqStr(lines[3], "drained 2, ran 2", r.out);
   return t.report();
 }
@@ -130,7 +130,7 @@ export string test_a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest(Core
   t.eqI32(lines.len(), 5, r.out);
   if (lines.len() != 5) { return t.report(); }
   t.eqStr(lines[0], "scheduled 2, ran 0", r.out);
-  t.eqStr(joinedWith(sorted(string[](lines[1], lines[2])), " "), "first second", r.out);
+  t.eqStr(joinedWith(sorted([lines[1], lines[2]]), " "), "first second", r.out);
   t.eqStr(lines[3], "budget ran 2, left 1", r.out);
   t.eqStr(lines[4], "abandoned 1", r.out);
   // And it came back on time. The bound is what is being tested, so the assertion is that it *ended* —
@@ -165,7 +165,7 @@ export string test_a_continuation_on_an_ordinary_capabilitys_ticket(Core core, C
   // claim.** `randomBytes` is answered by the host at once while the two timers are 1ms and 2ms out —
   // and `then` is followed by a `core.log`, which is itself a round trip, so whether the timers have
   // settled before the drain starts depends on how loaded the box is. Both orders are correct.
-  string[] middle = string[](lines[1], lines[2], lines[3], lines[4]);
+  string[] middle = [lines[1], lines[2], lines[3], lines[4]];
   t.eqStr(joinedWith(sorted(middle), ","),
           "and a Cli ticket, linked by its capability,first,random 8,second", r.out);
   return t.report();
@@ -208,9 +208,9 @@ export string test_waitany_answers_the_first_ready_ticket_in_the_callers_list(Co
   // race. Without this the 1ms timer's completion is what is being measured.
   core.sleepMillis(60).wait();
 
-  i32 asWritten = core.waitAny(i32[](first.id, second.id), 0);
+  i32 asWritten = core.waitAny([first.id, second.id], 0);
   t.eqI32(asWritten, 0, "with both ready, the list's first entry");
-  i32 reversed = core.waitAny(i32[](second.id, first.id), 0);
+  i32 reversed = core.waitAny([second.id, first.id], 0);
   t.eqI32(reversed, 0, "and with the list reversed, still its first entry — so position decides, "
       + "not which finished first");
 

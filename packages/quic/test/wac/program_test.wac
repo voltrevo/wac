@@ -43,7 +43,7 @@ const string ENTRY = "packages/quic/example/handshake.wac";
 
 /** `example/handshake.wac`, built once with the grant it needs. */
 string handshakeModule(Cli cli) {
-  return builtProgram(cli, ENTRY, "quic-handshake", string[]("--allow-net", "--quiet"));
+  return builtProgram(cli, ENTRY, "quic-handshake", ["--allow-net", "--quiet"]);
 }
 
 /** What the program and the server each said. */
@@ -75,13 +75,13 @@ Ran against(T t, Cli cli, string name, string program, string[] argsBefore) {
   // and quinn serves its one certificate whatever SNI arrives — so passing `example.com` here still
   // completes the handshake. Measured, by doing it. `handshake_test.wac` is where the name is
   // actually adjudicated, against `identityVerifies`.
-  string[] args = string[argsBefore.len() + 3](fill: "");
+  string[] args = string[].filled(argsBefore.len() + 3, "");
   for (i32 i = 0; i < argsBefore.len(); i++) { args[i] = argsBefore[i]; }
   args[argsBefore.len()] = "127.0.0.1";
   args[argsBefore.len() + 1] = itoa(s.port);
   args[argsBefore.len() + 2] = "localhost";
 
-  Exec r = cli.exec(program, args, u8[0]()).wait();
+  Exec r = cli.exec(program, args, u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 
   // `accept()` resolves on a task of its own, so give the server a turn before reading the flag.
@@ -122,10 +122,10 @@ export string test_a_wac_program_completes_a_quic_handshake_on_its_own_socket(Co
   // building and running are two things and the repository has a command for each. The v8 case below
   // has always worked this way, so the two halves now differ only in the host.
   T t = T.create();
-  string built = builtByDeno(cli, ENTRY, "quic-handshake-deno", string[]("--allow-net"), "deno", false);
+  string built = builtByDeno(cli, ENTRY, "quic-handshake-deno", ["--allow-net"], "deno", false);
   t.isTrue(built != "", "the Deno build of " + ENTRY + " failed");
   if (built == "") { return t.report(); }
-  assertHandshook(t, against(t, cli, "prog-deno", built, string[0](fill: "")), "deno");
+  assertHandshook(t, against(t, cli, "prog-deno", built, string[].filled(0, "")), "deno");
   return t.report();
 }
 
@@ -136,7 +136,7 @@ export string test_and_on_the_host_with_no_javascript_in_it(Core core, Cli cli) 
   // Built rather than `wac run`: the same program, compiled once instead of per run — see
   // `wactest/src/built.wac`. The grants go into its manifest, so the module is launched with none.
   assertHandshook(t, against(t, cli, "prog-v8", wacBinary(cli),
-                             string[](handshakeModule(cli))),
+                             [handshakeModule(cli)]),
                   "wacv8");
   return t.report();
 }
@@ -155,7 +155,7 @@ export string test_a_fresh_key_every_run(Core core, Cli cli) {
   t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
   if (sock.handle < 0) { return t.report(); }
 
-  string[] seen = string[2](fill: "");
+  string[] seen = string[].filled(2, "");
   for (i32 i = 0; i < 2; i++) {
     // Nothing answers, so the program will never finish — that is fine and expected. What is wanted
     // is the first datagram, which it sends before anyone has said anything back. It is a daemon

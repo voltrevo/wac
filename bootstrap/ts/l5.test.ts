@@ -123,14 +123,14 @@ const programs: [string, string, number][] = [
 
   ["an array, sized and indexed", `
     i32 main() {
-      i32[] xs = i32[4]();
+      i32[] xs = i32[].filled(4, 0);
       xs[0] = 10;
       xs[2] = 5;
       return xs[0] + xs[2] + xs.len();
     }`, 19],
 
   ["an array literal, whose length is how many arguments it has", `
-    i32 main() { i32[] xs = i32[](7, 8, 9); return xs.len() * 100 + xs[2]; }`, 309],
+    i32 main() { i32[] xs = [7, 8, 9] as i32[]; return xs.len() * 100 + xs[2]; }`, 309],
 
   ["an enum with wac's comma-separated variants, and match as a statement", `
     enum Shape { Circle(i32 r), Rect(i32 w, i32 h), Empty }
@@ -171,8 +171,8 @@ const programs: [string, string, number][] = [
       return sum;
     }
     i32 main() {
-      Node[] none = Node[0]();
-      Node[] two = Node[2]();
+      Node[] none = Node[].defaulted(0);
+      Node[] two = Node[].defaulted(2);
       two[0] = Node(2, none);
       two[1] = Node(4, none);
       return total(Node(1, two));
@@ -188,7 +188,7 @@ const programs: [string, string, number][] = [
     }`, 69],
 
   ["a byte array", `
-    i32 main() { u8[] b = u8[3](); b[0] = 200; b[1] = 7; return b[0] + b[1] + b.len(); }`, 210],
+    i32 main() { u8[] b = u8[].filled(3, 0); b[0] = 200; b[1] = 7; return b[0] + b[1] + b.len(); }`, 210],
 
   ["a reference global", `
     struct P { i32 v; }
@@ -232,10 +232,10 @@ const programs: [string, string, number][] = [
   // Packed storage: wasm has i8 and i16 as element types and no others, and reading one widens —
   // signed or unsigned according to the wac type, which is the whole reason both exist.
   ["a packed i16 element reads signed", `
-    i32 main() { i16[] xs = i16[2](); xs[0] = -300; return xs[0]; }`, -300],
+    i32 main() { i16[] xs = i16[].filled(2, 0); xs[0] = -300; return xs[0]; }`, -300],
 
   ["a packed u16 element reads unsigned", `
-    i32 main() { u16[] xs = u16[2](); xs[0] = 65535; return xs[0]; }`, 65535],
+    i32 main() { u16[] xs = u16[].filled(2, 0); xs[0] = 65535; return xs[0]; }`, 65535],
   // --- stage 3b: strings
   //
   // `string` is a GC array of bytes — the same array type a `u8[]` is — so `.len()` and `[i]` work
@@ -312,7 +312,7 @@ const programs: [string, string, number][] = [
       T get(const this, i32 i) { return this.data[i]; }
     }
     i32 main() {
-      Vec<i32> v = Vec(i32[8](), 0);
+      Vec<i32> v = Vec(i32[].filled(8, 0), 0);
       v.push(4); v.push(9);
       return v.get(0) * 10 + v.get(1);
     }`, 49],
@@ -338,9 +338,9 @@ const programs: [string, string, number][] = [
       T get(const this, i32 i) { return this.data[i]; }
     }
     i32 main() {
-      Vec<i32> inner = Vec(i32[4](), 0);
+      Vec<i32> inner = Vec(i32[].filled(4, 0), 0);
       inner.push(42);
-      Vec<Vec<i32>> outer = Vec(Vec<i32>[4](), 0);
+      Vec<Vec<i32>> outer = Vec(Vec<i32>[].defaulted(4), 0);
       outer.push(inner);
       return outer.get(0).get(0);
     }`, 42],
@@ -426,7 +426,7 @@ const programs: [string, string, number][] = [
       C c = C(5);
       c.bump(); c.bump();
       c.n += 3;
-      i32[] xs = i32[2]();
+      i32[] xs = i32[].filled(2, 0);
       xs[0] = 5; xs[0] += 3; xs[0]++;
       return c.n * 100 + xs[0];
     }`, 1009],
@@ -470,9 +470,9 @@ const programs: [string, string, number][] = [
   ["? and [] in either order", `
     struct E { i32 v; }
     i32 main() {
-      E?[] xs = E?[3]();
+      E?[] xs = E?[].defaulted(3);
       xs[0] = E(7);
-      E[]? ys = E[2]();
+      E[]? ys = E[].defaulted(2);
       ys[0] = E(4);
       return (xs[1] is null ? 1 : 0) * 100 + xs[0].v * 10 + ys[0].v;
     }`, 174],
@@ -583,15 +583,15 @@ const programs: [string, string, number][] = [
   // different order from the method's arguments — which is the part worth pinning.
   ["copyFrom moves a range", `
     i32 main() {
-      u8[] a = u8[](1, 2, 3, 4);
-      u8[] b = u8[6]();
+      u8[] a = [1, 2, 3, 4] as u8[];
+      u8[] b = u8[].filled(6, 0);
       b.copyFrom(a, 1, 3, 3);
       return b[3] * 100 + b[5] * 10 + b[0];
     }`, 240],
 
   ["fill takes a range, not a count", `
     i32 main() {
-      u8[] a = u8[5]();
+      u8[] a = u8[].filled(5, 0);
       a.fill(7, 1, 4);
       return a[0] * 1000 + a[1] * 100 + a[3] * 10 + a[4];
     }`, 770],

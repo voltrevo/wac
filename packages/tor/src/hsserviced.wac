@@ -136,7 +136,7 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
 
-  IntroPoint[] points = IntroPoint[1](fill: IntroPoint(
+  IntroPoint[] points = IntroPoint[].filled(1, IntroPoint(
     linkSpecifiersFor(net, introRelay), net.relays[introRelay].ntorOnionKey, authSeed, encSecret));
 
   Publication[] plan = servicePlan(net.consensus, net.relays, blindedKeysFor(identityPublic, period),
@@ -262,7 +262,7 @@ bool serveOne(Core core, Cli cli, Network net, Introduction answer) {
       // A BEGIN on a rendezvous circuit names `:port` and no host — the service *is* the far end, so
       // there is nowhere else to connect to and nothing to look up. CONNECTED carries no address for
       // the same reason.
-      sendCells(rend.link, rend.circ.sendToEnd(relayConnected(), got.streamId, u8[0]()));
+      sendCells(rend.link, rend.circ.sendToEnd(relayConnected(), got.streamId, u8[]()));
       u8[] page = greeting();
       u8[][] parts = chunkRequest(page);
       for (i32 i = 0; i < parts.len(); i++) {
@@ -286,7 +286,7 @@ u8[] greeting() {
 
 /** REASON_DONE, the one-byte body of a RELAY_END that is not an error. */
 u8[] endDone() {
-  u8[] out = u8[1]();
+  u8[] out = u8[].filled(1, 0);
   out[0] = 6;
   return out;
 }
@@ -321,7 +321,7 @@ i32 uploadTo(Core core, Cli cli, Network net, Publication where, Built built) {
 
 /** The blinded key for each of the two periods a service publishes for. */
 u8[][] blindedKeysFor(u8[] identityPublic, i64[] period) {
-  u8[][] out = u8[][2]();
+  u8[][] out = u8[][].defaulted(2);
   out[0] = blindedPublicKey(identityPublic, period[0], period[1]);
   out[1] = blindedPublicKey(identityPublic, period[0] + 1, period[1]);
   return out;
@@ -329,7 +329,7 @@ u8[][] blindedKeysFor(u8[] identityPublic, i64[] period) {
 
 /** Sixteen decoy client-auth entries, so using client authorisation is not visible from outside. */
 u8[][] decoyClients(Core core) {
-  u8[][] out = u8[][16]();
+  u8[][] out = u8[][].defaulted(16);
   for (i32 i = 0; i < 16; i++) { out[i] = core.randomBytes(40).wait(); }
   return out;
 }
@@ -346,8 +346,8 @@ u8[] linkSpecifiersFor(Network net, i32 i) {
   u8[] v4 = ipv4Bytes(net.relays[i].address);
   u8[] id = net.relays[i].identity;
   u8[] ed = net.relays[i].ed25519Identity;
-  if (v4.len() != 4 || id.len() != 20 || ed.len() != 32) { return u8[0](); }
-  u8[] out = u8[1 + 8 + 22 + 34]();
+  if (v4.len() != 4 || id.len() != 20 || ed.len() != 32) { return u8[](); }
+  u8[] out = u8[].filled(1 + 8 + 22 + 34, 0);
   out[0] = 3;
   out[1] = 0; out[2] = 6;
   for (i32 k = 0; k < 4; k++) { out[3 + k] = v4[k]; }
@@ -361,36 +361,36 @@ u8[] linkSpecifiersFor(Network net, i32 i) {
 }
 
 u8[] ipv4Bytes(string address) {
-  u8[] out = u8[4]();
+  u8[] out = u8[].filled(4, 0);
   i32 part = 0;
   i32 value = 0;
   u8[] a = address.toBytes();
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] == '.') {
-      if (part >= 3) { return u8[0](); }
+      if (part >= 3) { return u8[](); }
       out[part] = value;
       part = part + 1;
       value = 0;
     } else if (a[i] >= '0' && a[i] <= '9') {
       value = value * 10 + (a[i] - '0');
-      if (value > 255) { return u8[0](); }
+      if (value > 255) { return u8[](); }
     } else {
-      return u8[0]();
+      return u8[]();
     }
   }
-  if (part != 3) { return u8[0](); }
+  if (part != 3) { return u8[](); }
   out[3] = value;
   return out;
 }
 
 u8[] firstBytes(u8[] b, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
   return out;
 }
 
 u8[] clamp(u8[] s) {
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = s[i]; }
   out[0] = out[0] & 248;
   out[31] = (out[31] & 127) | 64;

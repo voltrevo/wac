@@ -50,12 +50,13 @@ export string test_itoa64_and_utoa64_agree_with_bigint(Core core, Cli cli) {
   Lines lines = Lines.create();
 
   // The boundaries: every digit-count change, the 32-bit edge, and both ends of each reading.
-  u64[] named = u64[](
+  u64[] named = [
     0, 1, 9, 10, 99, 100,
     0xFFFFFFFF, 0x100000000,
     0x7FFFFFFFFFFFFFFF,   // the largest signed, and 9223372036854775807 unsigned
     0x8000000000000000,   // the smallest signed, and 9223372036854775808 unsigned
-    0xFFFFFFFFFFFFFFFF);  // -1 signed, and the largest unsigned
+    0xFFFFFFFFFFFFFFFF  // -1 signed, and the largest unsigned
+  ];
   for (i32 i = 0; i < named.len(); i++) { both(lines, named[i]); }
 
   // Random 64-bit patterns, read both ways. The same LCG the host-side version used, so the corpus

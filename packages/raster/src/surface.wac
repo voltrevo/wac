@@ -54,7 +54,7 @@ export struct Surface {
   Surface create(i32 w, i32 h) {
     i32 cw = w < 0 ? 0 : w;
     i32 ch = h < 0 ? 0 : h;
-    return Surface(cw, ch, u8[cw * ch * 4](), 0, 0, -1, -1);
+    return Surface(cw, ch, u8[].filled(cw * ch * 4, 0), 0, 0, -1, -1);
   }
 
   /** Whether anything has been drawn since the damage was last cleared. */
@@ -185,8 +185,8 @@ export struct Surface {
     i32 y0 = y < 0 ? 0 : y;
     i32 x1 = x + w > this.width ? this.width : x + w;
     i32 y1 = y + h > this.height ? this.height : y + h;
-    if (x0 >= x1 || y0 >= y1) { return u8[0](); }
-    u8[] out = u8[(x1 - x0) * (y1 - y0) * 4]();
+    if (x0 >= x1 || y0 >= y1) { return u8[](); }
+    u8[] out = u8[].filled((x1 - x0) * (y1 - y0) * 4, 0);
     i32 at = 0;
     for (i32 py = y0; py < y1; py++) {
       i32 row = py * this.width * 4;
@@ -211,7 +211,7 @@ export struct Surface {
    * bottom and a blit's width is not.
    */
   u8[] damagedPixels(const this) {
-    if (!this.damaged()) { return u8[0](); }
+    if (!this.damaged()) { return u8[](); }
     return this.region(this.dx0, this.dy0, this.dx1 - this.dx0 + 1, this.dy1 - this.dy0 + 1);
   }
 

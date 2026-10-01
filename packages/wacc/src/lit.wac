@@ -112,8 +112,8 @@ void bigSub(i32[] a, i32 na, i32[] b, i32 nb) {
  * arithmetic, and the one rounding that happens is the one the specification names.
  */
 f64 decimalToF64(u8[] digits, i32 count, i32 exp10) {
-  i32[] num = i32[400]();
-  i32[] den = i32[400]();
+  i32[] num = i32[].filled(400, 0);
+  i32[] den = i32[].filled(400, 0);
   num[0] = 0;
   den[0] = 1;
   i32 nn = 1;
@@ -211,7 +211,7 @@ f64 decimalToF64(u8[] digits, i32 count, i32 exp10) {
  */
 export f64 floatLit(string s) {
   u8[] a = s.toBytes();
-  u8[] digits = u8[a.len() + 1]();
+  u8[] digits = u8[].filled(a.len() + 1, 0);
   i32 count = 0;
   i32 frac = 0;
   i32 i = 0;

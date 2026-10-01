@@ -126,7 +126,7 @@ export string test_an_unreadable_image_is_refused_rather_than_overwritten(Core c
   t.isTrue(good.len() > 0, "no image to damage");
   if (good.len() == 0) { return t.report(); }
 
-  u8[] damaged = u8[good.len()]();
+  u8[] damaged = u8[].filled(good.len(), 0);
   for (i32 i = 0; i < good.len(); i++) { damaged[i] = good[i]; }
   i32 at = good.len() / 2;
   damaged[at] = damaged[at] ^ 0xff;

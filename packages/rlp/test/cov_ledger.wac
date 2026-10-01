@@ -33,18 +33,18 @@ const string PREFIX = "packages/rlp/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/rlp/src/rlp.wac", 134, "if (len < 0) { trap; }", true,
+  return [
+        Pin("packages/rlp/src/rlp.wac", 134, "if (len < 0) { trap; }", true,
         "**Both callers pass a length they just measured.** `header` is called at `:102` with the " +
         "summed size of an encoded list and at `:119` with `v.len()`, and neither can be negative — an " +
         "array's length is not, and the sum of non-negative sizes is not until it overflows, which is " +
         "`issues/system/0005`'s territory rather than this line's.\n" +
         "         Kept as a trap rather than a clamp because of what the alternative writes: a negative " +
-        "length reaching `u8[](short + len)` produces a *prefix byte* below the base, which is a " +
+        "length reaching `[short + len]` produces a *prefix byte* below the base, which is a " +
         "different, valid RLP tag. The failure would be a well-formed encoding of the wrong thing."),
     Pin("packages/rlp/src/rlp.wac", 205, "if (c.error != \"\") { return empty; }", true,
         "**Every caller checks first.** The list loop at `:261` reads `c.error` immediately after each " +
@@ -56,13 +56,13 @@ Pin[] pins() {
         "cursor wherever it stopped* — safe to compose. `packages/mpt`'s `step` carries the identical " +
         "guard for the identical reason, and both are pinned; a decoder whose second failure " +
         "overwrote its first would name the last thing examined rather than the thing that was wrong.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[]("trapCase:5"));
+  Measured m = measure(core, cli, EXERCISE, grants(), ["trapCase:5"]);
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -70,5 +70,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

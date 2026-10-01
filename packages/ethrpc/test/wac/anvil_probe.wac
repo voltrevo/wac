@@ -103,12 +103,12 @@ export string castPath(Cli cli) {
  * to notice rather than compare against "".
  */
 export string castRpc(Cli cli, i32 port, string[] args) {
-  string[] argv = string[args.len() + 3](fill: "");
+  string[] argv = string[].filled(args.len() + 3, "");
   argv[0] = "rpc";
   argv[1] = "--rpc-url";
   argv[2] = "http://127.0.0.1:" + itoa(port);
   for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
-  Exec r = cli.exec(castPath(cli), argv, u8[0]()).wait();
+  Exec r = cli.exec(castPath(cli), argv, u8[]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
   string out = string.fromBytes(r.stdout);
   i32 n = out.len();
@@ -123,7 +123,7 @@ export string castRpc(Cli cli, i32 port, string[] args) {
 
 /** `cast args…` with no node involved — namehash, index, and the other pure computations. */
 export string castRun(Cli cli, string[] args) {
-  Exec r = cli.exec(castPath(cli), args, u8[0]()).wait();
+  Exec r = cli.exec(castPath(cli), args, u8[]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
   string out = string.fromBytes(r.stdout);
   i32 n = out.len();
@@ -144,8 +144,10 @@ export string castRun(Cli cli, string[] args) {
  * most likely this repository's own, which is the parser several of these programs depend on.
  */
 export string blockHash(Cli cli, i32 port) {
-  return castRun(cli, string[]("block", "latest", "-f", "hash",
-                               "--rpc-url", "http://127.0.0.1:" + itoa(port)));
+  return castRun(cli, [
+                               "block", "latest", "-f", "hash",
+                               "--rpc-url", "http://127.0.0.1:" + itoa(port)
+  ]);
 }
 
 /**
@@ -156,7 +158,7 @@ export string blockHash(Cli cli, i32 port) {
  * itself. `cast to-dec` is the separate implementation.
  */
 export string toDec(Cli cli, string hex) {
-  Exec r = cli.exec(castPath(cli), string[]("to-dec", hex), u8[0]()).wait();
+  Exec r = cli.exec(castPath(cli), ["to-dec", hex], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
   string out = string.fromBytes(r.stdout);
   i32 n = out.len();
@@ -167,11 +169,11 @@ export string toDec(Cli cli, string hex) {
 /** `wac run --allow-net <entry> -- args…`, which replaces the host-side `appRunner`. */
 export Exec runExample(Cli cli, string entry, string[] args) {
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  string[] argv = string[args.len() + 4](fill: "");
+  string[] argv = string[].filled(args.len() + 4, "");
   argv[0] = "run";
   argv[1] = "--allow-net";
   argv[2] = entry;
   argv[3] = "--";
   for (i32 i = 0; i < args.len(); i++) { argv[4 + i] = args[i]; }
-  return cli.exec(wac, argv, u8[0]()).wait();
+  return cli.exec(wac, argv, u8[]()).wait();
 }

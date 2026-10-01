@@ -39,10 +39,10 @@ string why(u8[] input) {
 export string test_the_accessors_answer_for_the_variant_they_are_for() {
   T t = T.create();
 
-  Item bytes = Item.Bytes(u8[](1, 2, 3));
-  Item[] two = Item[2](fill: Item.Bytes(u8[0]()));
-  two[0] = Item.Bytes(u8[](9));
-  two[1] = Item.Bytes(u8[](8, 7));
+  Item bytes = Item.Bytes([1, 2, 3] as u8[]);
+  Item[] two = Item[].filled(2, Item.Bytes(u8[]()));
+  two[0] = Item.Bytes([9] as u8[]);
+  two[1] = Item.Bytes([8, 7] as u8[]);
   Item list = Item.List(two);
 
   t.isFalse(isList(bytes), "a byte string called itself a list");
@@ -58,11 +58,11 @@ export string test_the_accessors_answer_for_the_variant_they_are_for() {
 
   // An empty list and an empty string are different things that both hold nothing, which is the
   // distinction `isList` exists to make: `0xC0` and `0x80` are one byte each and not the same byte.
-  t.isTrue(isList(Item.List(Item[0](fill: bytes))), "an empty list is still a list");
-  t.eqI32(itemsOf(Item.List(Item[0](fill: bytes))).len(), 0, "an empty list has items");
-  t.eqI32(bytesOf(Item.Bytes(u8[0]())).len(), 0, "an empty string has bytes");
-  t.eqI32(encode(Item.List(Item[0](fill: bytes)))[0], 0xC0, "an empty list is not 0xC0");
-  t.eqI32(encode(Item.Bytes(u8[0]()))[0], 0x80, "an empty string is not 0x80");
+  t.isTrue(isList(Item.List(Item[].filled(0, bytes))), "an empty list is still a list");
+  t.eqI32(itemsOf(Item.List(Item[].filled(0, bytes))).len(), 0, "an empty list has items");
+  t.eqI32(bytesOf(Item.Bytes(u8[]())).len(), 0, "an empty string has bytes");
+  t.eqI32(encode(Item.List(Item[].filled(0, bytes)))[0], 0xC0, "an empty list is not 0xC0");
+  t.eqI32(encode(Item.Bytes(u8[]()))[0], 0x80, "an empty string is not 0x80");
   return t.report();
 }
 
@@ -78,18 +78,18 @@ export string test_a_length_prefix_must_be_canonical_and_must_fit() {
   T t = T.create();
 
   // The well-formed twin: a 56-byte string, which is the first length that needs the long form.
-  u8[] long56 = u8[58]();
+  u8[] long56 = u8[].filled(58, 0);
   long56[0] = 0xB8;
   long56[1] = 56;
   t.eqStr(why(long56), "", "the shortest legitimate long form was refused");
 
   // A prefix that says one length byte follows, and nothing does.
-  t.isTrue(why(u8[](0xB8)).len() > 0, "a truncated length prefix was accepted");
-  t.isTrue(why(u8[](0xB8)).indexOf("past the end") >= 0,
-           "the message does not say what ran out: " + why(u8[](0xB8)));
+  t.isTrue(why([0xB8] as u8[]).len() > 0, "a truncated length prefix was accepted");
+  t.isTrue(why([0xB8] as u8[]).indexOf("past the end") >= 0,
+           "the message does not say what ran out: " + why([0xB8] as u8[]));
 
   // A leading zero in the length: 0x00 0x38 is 56 written in two bytes instead of one.
-  u8[] leadingZero = u8[60]();
+  u8[] leadingZero = u8[].filled(60, 0);
   leadingZero[0] = 0xB9;
   leadingZero[1] = 0;
   leadingZero[2] = 56;
@@ -97,17 +97,17 @@ export string test_a_length_prefix_must_be_canonical_and_must_fit() {
            "a length with a leading zero was accepted: " + why(leadingZero));
 
   // A length below 56, written long: `0xB8 0x01 'a'` is `'a'`, which is one byte on its own.
-  t.isTrue(why(u8[](0xB8, 1, 0x61)).indexOf("short form") >= 0,
-           "a long form that fits the short one was accepted: " + why(u8[](0xB8, 1, 0x61)));
+  t.isTrue(why([0xB8, 1, 0x61] as u8[]).indexOf("short form") >= 0,
+           "a long form that fits the short one was accepted: " + why([0xB8, 1, 0x61] as u8[]));
 
   // **Four bytes of length can spell four gigabytes and an i32 cannot hold it.** The alternative to
   // refusing is a negative length read as a short item, which is how a decoder is talked into reading
   // backwards.
-  string big = why(u8[](0xBB, 0xFF, 0xFF, 0xFF, 0xFF));
+  string big = why([0xBB, 0xFF, 0xFF, 0xFF, 0xFF] as u8[]);
   t.isTrue(big.indexOf("32-bit") >= 0, "a four-gigabyte length was accepted: " + big);
 
   // And more than four bytes of length, refused before the arithmetic rather than after it.
-  string wider = why(u8[](0xBF, 1, 0, 0, 0, 0, 0, 0, 0));
+  string wider = why([0xBF, 1, 0, 0, 0, 0, 0, 0, 0] as u8[]);
   t.isTrue(wider.indexOf("32-bit") >= 0, "an eight-byte length was accepted: " + wider);
   return t.report();
 }
@@ -124,20 +124,20 @@ export string test_a_lists_members_must_end_exactly_where_it_says() {
   T t = T.create();
 
   // The well-formed twin: a two-byte list holding two one-byte strings.
-  t.eqStr(why(u8[](0xC2, 0x61, 0x62)), "", "a well-formed list was refused");
+  t.eqStr(why([0xC2, 0x61, 0x62] as u8[]), "", "a well-formed list was refused");
 
   // A member that runs past the list's declared end: the list says two bytes and its first member
   // claims three.
-  string over = why(u8[](0xC2, 0x83, 0x61, 0x62, 0x63));
+  string over = why([0xC2, 0x83, 0x61, 0x62, 0x63] as u8[]);
   t.isTrue(over.len() > 0, "a list whose member overruns its length was accepted");
 
   // A first member that is malformed, in a list with more bytes after it — so the decoder is asked for
   // a second item with the error already recorded. What that guards is the *first* message surviving:
   // a later item overwriting it would name the last thing examined rather than the thing wrong.
-  string after = why(u8[](0xC4, 0xB8, 0x00, 0x61, 0x62));
+  string after = why([0xC4, 0xB8, 0x00, 0x61, 0x62] as u8[]);
   t.isTrue(after.len() > 0, "a list whose first member is malformed was accepted");
 
   // Trailing bytes after a complete item are not part of it and are not ignored.
-  t.isTrue(why(u8[](0x61, 0x62)).len() > 0, "a trailing byte after a complete item was accepted");
+  t.isTrue(why([0x61, 0x62] as u8[]).len() > 0, "a trailing byte after a complete item was accepted");
   return t.report();
 }

@@ -1,0 +1,11 @@
+// expect: answers f = 57
+// why: `a[0]()` indexes an array of funcrefs and calls the result — the length is not written in brackets, so nothing else can be meant
+// from: issues/lang/0265c — both compilers read `a[0]()` as constructing an array of the type `a` while `T[n]()` was a construction
+i32 five() { return 5; }
+i32 twice(i32 n) { return n * 2; }
+
+export i32 f() {
+  fn<i32()>[] a = [five];
+  fn<i32(i32)>[] b = [twice];
+  return a[0]() * 10 + b[0](1) + a[0]();
+}

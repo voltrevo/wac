@@ -23,7 +23,7 @@ export u8[] baseEncoded() { return p256Reencode(p256ScalarBase(oneScalar())); }
 export u8[] scalarBase(u8[] k) { return p256ScalarBase(k); }
 export u8[] reencode(u8[] pt) { return p256Reencode(pt); }
 
-u8[] oneScalar() { u8[] k = u8[32](); k[31] = 1; return k; }
+u8[] oneScalar() { u8[] k = u8[].filled(32, 0); k[31] = 1; return k; }
 
 // P-384 verification.
 import { p384Verify, p384VerifyDigest, p384Order } from "../../src/p384.wac";
@@ -60,30 +60,30 @@ import { ScOrder, scOrder, scnFromBytes, scnToBytes, scnMont, scnEnter, scnLeave
  */
 export u8[] scalarMulOrder(u8[] b) {
   ScOrder o = scOrder(p256Order());
-  i64[] x = scnEnter(o, scnReduce(o, scnFromBytes(u8[32](fill: 3))));
+  i64[] x = scnEnter(o, scnReduce(o, scnFromBytes(u8[].filled(32, 3))));
   i64[] y = scnEnter(o, scnReduce(o, scnFromBytes(b)));
   return scnToBytes(scnLeave(o, scnMont(o, x, y)));
 }
 
 export i32 compareSharingAPrefix() {
-  u8[] a = u8[4]();
-  u8[] b = u8[4]();
+  u8[] a = u8[].filled(4, 0);
+  u8[] b = u8[].filled(4, 0);
   a[0] = 0xFF; b[0] = 0xFF;      // equal here: the loop must carry on
   a[1] = 0x01; b[1] = 0x02;      // and decide here
   return cmpBE(a, b);
 }
 
 export i32 compareGreater() {
-  u8[] a = u8[4]();
-  u8[] b = u8[4]();
+  u8[] a = u8[].filled(4, 0);
+  u8[] b = u8[].filled(4, 0);
   a[0] = 0xFF; b[0] = 0xFF;      // equal here too
   a[1] = 0x09; b[1] = 0x02;      // and the *other* side of the decision
   return cmpBE(a, b);
 }
 
 export i32 compareEqual() {
-  u8[] a = u8[4]();
-  u8[] b = u8[4]();
+  u8[] a = u8[].filled(4, 0);
+  u8[] b = u8[].filled(4, 0);
   a[0] = 0xAB; b[0] = 0xAB;
   a[3] = 0x07; b[3] = 0x07;
   return cmpBE(a, b);             // every byte equal: the loop runs to the end

@@ -57,14 +57,16 @@ Said run(T t, Cli cli, string name, string entry, u8[] stdin) {
   t.isTrue(whyDir1 == "", whyDir1);
   string app = dir + "/app";
   Exec built = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", entry,
-             "--allow-read", "--allow-write", "-o", app), u8[0]()).wait();
+    [
+             "run", "-A", "packages/platform/build.ts", entry,
+             "--allow-read", "--allow-write", "-o", app
+    ], u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     cli.remove(dir, true).wait();
     return Said("", "", -1, false,
                 entry + " did not build — " + string.fromBytes(built.stderr));
   }
-  Exec r = cli.exec(app, string[](dir), stdin).wait();
+  Exec r = cli.exec(app, [dir], stdin).wait();
   Said said = Said(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
                    r.ran(), r.error);
   cli.remove(dir, true).wait();
@@ -74,8 +76,8 @@ Said run(T t, Cli cli, string name, string entry, u8[] stdin) {
 export string test_a_substitute_capability_answers_exactly_as_the_host_frame_does(
     Core core, Cli cli) {
   T t = T.create();
-  Said host = run(t, cli, "host", HOST, u8[0]());
-  Said value = run(t, cli, "value", VALUE, u8[0]());
+  Said host = run(t, cli, "host", HOST, u8[]());
+  Said value = run(t, cli, "value", VALUE, u8[]());
   t.isTrue(host.ran, "the host-frame program ran — " + host.error);
   t.isTrue(value.ran, "the substitute-frame program ran — " + value.error);
   if (!host.ran || !value.ran) { return t.report(); }
@@ -123,7 +125,7 @@ Said runOnBinary(Cli cli, string name, string entry) {
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
-    string[]("run", "--allow-read", "--allow-write", entry, "--", dir), u8[0]()).wait();
+    ["run", "--allow-read", "--allow-write", entry, "--", dir], u8[]()).wait();
   Said said = Said(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
                    r.ran(), r.error);
   cli.remove(dir, true).wait();
@@ -172,7 +174,7 @@ export string test_a_withheld_capability_answers_as_a_host_does(Core core, Cli c
   string path = dir + "/subject";
   t.isTrue(cli.writeFile(path, "alpha\n".toBytes()).wait().ok(), "wrote the subject");
 
-  Frame f = Frame.of(string[]("probe"), u8[0](), dir, false);
+  Frame f = Frame.of(["probe"], u8[](), dir, false);
 
   // Read: granted reads, withheld refuses with the host's sentence and the fault that names the
   // category — `FAULT_NOT_GRANTED`, not `FAULT_DENIED`. Nothing denied anything; the program was never

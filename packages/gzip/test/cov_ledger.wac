@@ -43,8 +43,8 @@ const string PREFIX = "packages/gzip/src/";
  * that blurred the two would let a gap sit among the exemptions.
  */
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/gzip/src/inflate.wac", 136, "while (left > 0 && this.bitCount >= 8) {", true,
+  return [
+        Pin("packages/gzip/src/inflate.wac", 136, "while (left > 0 && this.bitCount >= 8) {", true,
         "copyBytes is only ever called straight after alignByte and two readBits(16). alignByte " +
         "leaves a multiple of 8 bits, fill only ever adds whole bytes, and skip removes exactly 16 " +
         "— so the bit buffer is empty by the time this runs, and this loop drains nothing. Kept " +
@@ -67,7 +67,8 @@ Pin[] pins() {
         "dynamic one carries a code-length table before any of that, so both are further from the " +
         "boundary still. The guard stays because it is a statement about `take()` rather than about " +
         "deflate — a caller that flushed twice in one iteration would need it — and because writing " +
-        "an empty chunk is a thing to avoid rather than to rely on. issues/lang/0112."));
+        "an empty chunk is a thing to avoid rather than to rely on. issues/lang/0112.")
+  ];
 }
 
 /**
@@ -78,7 +79,7 @@ Pin[] pins() {
  * then the same rules again down the streaming path, which is a different set of branches.
  */
 string[] refusals() {
-  return string[](
+  return [
     "trap_the_magic_is_wrong",
     "trap_the_compression_method_is_not_deflate",
     "trap_a_buffer_too_short_to_be_a_member",
@@ -114,7 +115,8 @@ string[] refusals() {
     "trap_a_source_that_fails_inside_the_header",
     "trap_a_stored_member_cut_mid_copy",
     "trap_a_stored_member_whose_source_fails_mid_copy",
-    "trap_a_stored_member_cut_just_before_its_trailer");
+    "trap_a_stored_member_cut_just_before_its_trailer"
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -123,12 +125,12 @@ export i32 main(Core core, Cli cli) {
   // No grants: the exercise reads no files and spawns nothing, so it is compiled with nothing. A
   // driver given capabilities it does not need is a driver whose exercises could quietly start using
   // them.
-  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), refusals());
+  Measured m = measure(core, cli, EXERCISE, string[].filled(0, ""), refusals());
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
   // union this driver's reach with another's — `issues/system/0241b`.
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
-  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

@@ -49,7 +49,7 @@ Case[] load(Core core, Cli cli) {
     trap;
   }
   string[] names = sorted(entries!);
-  Case[] out = Case[names.len()](fill: Case("", u8[0](), ""));
+  Case[] out = Case[].filled(names.len(), Case("", u8[](), ""));
   i32 n = 0;
   for (i32 i = 0; i < names.len(); i++) {
     if (!endsWith(names[i], ".json")) { continue; }
@@ -63,13 +63,13 @@ Case[] load(Core core, Cli cli) {
                   prefix == "y_" ? "accept" : (prefix == "n_" ? "reject" : "either"));
     n = n + 1;
   }
-  Case[] exact = Case[n](fill: Case("", u8[0](), ""));
+  Case[] exact = Case[].filled(n, Case("", u8[](), ""));
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
 
 string[] sorted(string[] names) {
-  string[] out = string[names.len()](fill: "");
+  string[] out = string[].filled(names.len(), "");
   for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
@@ -165,7 +165,7 @@ export string test_implementation_defined_documents_terminate(Core core, Cli cli
   Case[] cases = load(core, cli);
   i32 accepted = 0;
   i32 seen = 0;
-  i32[] byCode = i32[16]();
+  i32[] byCode = i32[].filled(16, 0);
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "either") { continue; }
     seen = seen + 1;

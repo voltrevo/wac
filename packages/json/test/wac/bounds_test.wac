@@ -37,7 +37,7 @@ JsonArray oneItem() {
 
 JsonObject oneMember() {
   JsonObject o = JsonObject.create();
-  o.push(u8[]('k'), numberOf(1.0));
+  o.push(['k'] as u8[], numberOf(1.0));
   return o;
 }
 

@@ -43,12 +43,12 @@ AuthorityKeys keysFrom(JsonObject v) {
 /** The PEM body between `label`'s BEGIN and END lines, decoded — or empty. */
 u8[] blockAfter(u8[] doc, string keyword, string label) {
   i32 at = indexOfLine(doc, keyword + "\n");
-  if (at < 0) { return u8[0](); }
+  if (at < 0) { return u8[](); }
   i32 begin = indexOfFrom(doc, "-----BEGIN " + label + "-----\n", at);
-  if (begin < 0) { return u8[0](); }
+  if (begin < 0) { return u8[](); }
   i32 bodyAt = begin + ("-----BEGIN " + label + "-----\n").toBytes().len();
   i32 end = indexOfFrom(doc, "-----END " + label + "-----\n", bodyAt);
-  if (end < 0) { return u8[0](); }
+  if (end < 0) { return u8[](); }
   return base64Of(doc, bodyAt, end);
 }
 
@@ -75,15 +75,15 @@ i32 indexOfFrom(u8[] doc, string s, i32 from) {
 
 /** The base64 between two offsets, newlines dropped, decoded. */
 u8[] base64Of(u8[] doc, i32 from, i32 to) {
-  u8[] packed = u8[to - from]();
+  u8[] packed = u8[].filled(to - from, 0);
   i32 n = 0;
   for (i32 i = from; i < to; i++) {
     if (doc[i] != 10) { packed[n] = doc[i]; n = n + 1; }
   }
-  u8[] text = u8[n]();
+  u8[] text = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { text[i] = packed[i]; }
   u8[]? decoded = b64decode(text);
-  return decoded is null ? u8[0]() : decoded!;
+  return decoded is null ? u8[]() : decoded!;
 }
 
 export string test_the_certificate_tor_accepted_is_reproduced(Core core, Cli cli) {
@@ -125,7 +125,7 @@ export string test_each_signature_was_made_by_the_key_that_should_have_made_it(C
             hex(crosscert));
   lines.add("rsarecover " + strOf(v, "identityN") + " " + strOf(v, "identityE") + " " +
             hex(certification));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the two recovered payloads");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "the two recovered payloads");
   if (!a.ok) { return t.report(); }
 
   t.eqBytes(decoded(word(a.lines[0], 1)), fingerprint,

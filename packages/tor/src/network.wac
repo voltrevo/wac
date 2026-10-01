@@ -193,7 +193,7 @@ export i32 main(Core core, Cli cli) {
   // made a consensus for them to serve. Starting it early and letting it retry would work and would be
   // the same mistake `wait` exists to avoid — it turns a missing stage into a slow one, and the
   // launcher's whole claim is that each stage was seen to happen.
-  Node?[] nodes = Node?[nodeCount]();
+  Node?[] nodes = Node?[].defaulted(nodeCount);
   i32 live = 0;
   i32 pending = 0;                 // nodes started in this stage, not yet waited on
   i32 stage = 0;
@@ -233,7 +233,7 @@ export i32 main(Core core, Cli cli) {
     ranSomething = true;
     // The arguments are resolved here rather than at parse time because the values do not exist until
     // the nodes are up: a relay's port is chosen by the operating system when it binds.
-    u8[][] args = u8[][plan[i]!.args.len()]();
+    u8[][] args = u8[][].defaulted(plan[i]!.args.len());
     bool resolved = true;
     for (i32 a = 0; a < args.len(); a++) {
       Substituted one = substituted(plan[i]!.args[a], nodes, live);
@@ -353,7 +353,7 @@ bool awaitMarker(Core core, Cli cli, Node?[] nodes, i32 live, string name, strin
   }
 
   while (true) {
-    i32[] ids = i32[2]();
+    i32[] ids = i32[].filled(2, 0);
     ids[0] = n.fromOut.id;
     ids[1] = n.fromErr.id;
     i32 which = core.waitAny(ids, timeout);
@@ -398,8 +398,8 @@ bool awaitReady(Core core, Cli cli, Node?[] nodes, i32 live, i32 readyTimeout) {
     // and its output would only accumulate.
     i32 n = 0;
     for (i32 i = 0; i < live; i++) { if (!nodes[i]!.up) { n = n + 2; } }
-    i32[] ids = i32[n]();
-    i32[] owner = i32[n]();
+    i32[] ids = i32[].filled(n, 0);
+    i32[] owner = i32[].filled(n, 0);
     i32 at = 0;
     for (i32 i = 0; i < live; i++) {
       if (nodes[i]!.up) { continue; }
@@ -469,7 +469,7 @@ i32 runOnce(Core core, Cli cli, Directive d) {
   bool errOpen = true;
   while (outOpen || errOpen) {
     i32 n = (outOpen ? 1 : 0) + (errOpen ? 1 : 0);
-    i32[] ids = i32[n]();
+    i32[] ids = i32[].filled(n, 0);
     i32 at = 0;
     if (outOpen) { ids[at] = fromOut.id; at = at + 1; }
     if (errOpen) { ids[at] = fromErr.id; at = at + 1; }
@@ -527,7 +527,7 @@ Directive?[] parsePlan(u8[] text) {
   i32 count = 0;
   for (i32 i = 0; i < lines.len(); i++) { if (isDirective(lines[i])) { count = count + 1; } }
 
-  Directive?[] out = Directive?[count]();
+  Directive?[] out = Directive?[].defaulted(count);
   i32 at = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     if (!isDirective(lines[i])) { continue; }
@@ -537,9 +537,9 @@ Directive?[] parsePlan(u8[] text) {
     string kind = string.fromBytes(head[0]);
     string name = head.len() > 1 ? string.fromBytes(head[1]) : kind;
     string ready = fields.len() > 1 ? string.fromBytes(trim(fields[1])) : "";
-    u8[][] words = fields.len() > 2 ? splitSpaces(trim(fields[2])) : u8[][0]();
+    u8[][] words = fields.len() > 2 ? splitSpaces(trim(fields[2])) : u8[][]();
     string bundle = words.len() > 0 ? string.fromBytes(words[0]) : "";
-    u8[][] args = u8[][words.len() > 0 ? words.len() - 1 : 0]();
+    u8[][] args = u8[][].defaulted(words.len() > 0 ? words.len() - 1 : 0);
     for (i32 j = 1; j < words.len(); j++) { args[j - 1] = words[j]; }
     i32 which = kind == "node" ? KIND_NODE : (kind == "wait" ? KIND_WAIT : KIND_RUN);
     out[at] = Directive(which, name, ready, bundle, args);
@@ -610,7 +610,7 @@ string afterMarker(u8[] said, string marker) {
     // same thing. A capture with a stray space in it becomes an argument with a stray space in it.
     while (from < to && said[from] == 32) { from = from + 1; }
     while (to > from && said[to - 1] == 32) { to = to - 1; }
-    u8[] out = u8[to - from]();
+    u8[] out = u8[].filled(to - from, 0);
     for (i32 k = from; k < to; k++) { out[k - from] = said[k]; }
     return string.fromBytes(out);
   }
@@ -647,12 +647,12 @@ Substituted substituted(u8[] arg, Node?[] nodes, i32 live) {
       if (arg[j] == 123 || arg[j] == 32) { break; }
     }
     if (close < 0 || close == i + 1) { out.push(arg[i]); i = i + 1; continue; }
-    u8[] name = u8[close - i - 1]();
+    u8[] name = u8[].filled(close - i - 1, 0);
     for (i32 k = i + 1; k < close; k++) { name[k - i - 1] = arg[k]; }
     string want = string.fromBytes(name);
     i32 at = -1;
     for (i32 n = 0; n < live; n++) { if (nodes[n]!.name == want) { at = n; break; } }
-    if (at < 0) { return Substituted(u8[0](), false, want); }
+    if (at < 0) { return Substituted(u8[](), false, want); }
     out.pushAll(nodes[at]!.capture.toBytes());
     i = close + 1;
   }
@@ -676,7 +676,7 @@ u8[][] splitLines(u8[] text) { return splitOn(text, 10); }
 u8[][] splitOn(u8[] s, i32 sep) {
   i32 count = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s[i] == sep) { count = count + 1; } }
-  u8[][] out = u8[][count]();
+  u8[][] out = u8[][].defaulted(count);
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -699,7 +699,7 @@ u8[][] splitSpaces(u8[] s) {
     count = count + 1;
     while (i < s.len() && s[i] != 32 && s[i] != 9) { i = i + 1; }
   }
-  u8[][] out = u8[][count]();
+  u8[][] out = u8[][].defaulted(count);
   i32 n = 0;
   i = 0;
   while (i < s.len()) {
@@ -722,7 +722,7 @@ u8[] trim(u8[] s) {
 }
 
 u8[] sub(u8[] s, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
   return out;
 }

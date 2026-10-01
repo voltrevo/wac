@@ -23,8 +23,8 @@ string LIB() { return "export enum E { A, B }\n"; }
 
 /** How many type errors this pair of files produces. */
 i32 errs(string main) {
-  return dumpTypeErrorsFiles(string[]("/main.wac", "/lib.wac"),
-                             string[](main, LIB()), "/main.wac").len();
+  return dumpTypeErrorsFiles(["/main.wac", "/lib.wac"],
+                             [main, LIB()], "/main.wac").len();
 }
 
 export string test_a_variant_is_reachable_through_an_aliased_enum(Core core, Cli cli) {
@@ -99,17 +99,21 @@ export string test_neither_spelling_is_exempt_from_checking(Core core, Cli cli) 
   t.isTrue(errs(both + "export i32 f() { E2 e = E2.Nope; return 1; }\n") > 0,
            "`E2.Nope` is accepted");
 
-  string[] wrongArity = string[]("import { add, add as plus } from \"/lib.wac\";\n" +
+  string[] wrongArity = [
+                         "import { add, add as plus } from \"/lib.wac\";\n" +
                          "export i32 f() { return add(1); }\n",
-                         "export i32 add(i32 a, i32 b) { return a + b; }\n");
-  i32 plainArity = dumpTypeErrorsFiles(string[]("/main.wac", "/lib.wac"), wrongArity, "/main.wac").len();
+                         "export i32 add(i32 a, i32 b) { return a + b; }\n"
+  ];
+  i32 plainArity = dumpTypeErrorsFiles(["/main.wac", "/lib.wac"], wrongArity, "/main.wac").len();
   t.isTrue(plainArity > 0, "a wrong arity through the plain spelling is accepted — " +
                            itoa(plainArity) + " diagnostic ints");
 
-  string[] ok = string[]("import { add, add as plus } from \"/lib.wac\";\n" +
+  string[] ok = [
+                         "import { add, add as plus } from \"/lib.wac\";\n" +
                          "export i32 f() { return add(1, 2) + plus(3, 4); }\n",
-                         "export i32 add(i32 a, i32 b) { return a + b; }\n");
-  i32 fine = dumpTypeErrorsFiles(string[]("/main.wac", "/lib.wac"), ok, "/main.wac").len();
+                         "export i32 add(i32 a, i32 b) { return a + b; }\n"
+  ];
+  i32 fine = dumpTypeErrorsFiles(["/main.wac", "/lib.wac"], ok, "/main.wac").len();
   t.eqI32(fine, 0, "correct calls through both spellings are refused — " + itoa(fine) +
                    " diagnostic ints");
   return t.report();
@@ -124,11 +128,13 @@ export string test_the_shapes_that_are_not_this_are_still_accepted(Core core, Cl
           0, "a single alias");
   // One name from two *different* modules is `issues/lang/0128`, not this, and must stay two types.
   i32 twoModules = dumpTypeErrorsFiles(
-    string[]("/main.wac", "/a.wac", "/b.wac"),
-    string[]("import { E } from \"/a.wac\";\nimport { E as E2 } from \"/b.wac\";\n" +
+    ["/main.wac", "/a.wac", "/b.wac"],
+    [
+             "import { E } from \"/a.wac\";\nimport { E as E2 } from \"/b.wac\";\n" +
              "i32 take(E2 e) { return 1; }\n" +
              "export i32 f() { E e = E.A; return take(e); }\n",
-             "export enum E { A, B }\n", "export enum E { A, B }\n"), "/main.wac").len();
+             "export enum E { A, B }\n", "export enum E { A, B }\n"
+    ], "/main.wac").len();
   t.isTrue(twoModules > 0,
            "two modules' same-named enums collapsed into one — that would undo issues/lang/0128");
   return t.report();
@@ -150,11 +156,13 @@ export string test_the_shapes_that_are_not_this_are_still_accepted(Core core, Cl
 export string test_the_emitter_builds_one_declaration_for_both_spellings(Core core, Cli cli) {
   T t = T.create();
   u8[] mod = emitFilesChecked(
-    string[]("/main.wac", "/lib.wac"),
-    string[]("import { E } from \"/lib.wac\";\n" +
+    ["/main.wac", "/lib.wac"],
+    [
+             "import { E } from \"/lib.wac\";\n" +
              "import { E as E2 } from \"/lib.wac\";\n" +
              "i32 take(E2 e) { return match (e) { A: 1, default: 0 }; }\n" +
-             "export i32 run() { E e = E.A; return take(e); }\n", LIB()),
+             "export i32 run() { E e = E.A; return take(e); }\n", LIB()
+    ],
     "/main.wac");
   t.isTrue(mod.len() > 8, "no module: the emitter still refuses `issues/lang/0161`'s reproduction");
   // A wasm module, so what came back is a module rather than an empty answer read as success.

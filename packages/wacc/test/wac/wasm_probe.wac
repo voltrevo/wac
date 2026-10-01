@@ -46,7 +46,7 @@ export i32 leb(u8[] b, i32[] pos) {
  * that filtered by kind first could not see that collision at all.
  */
 export string[] allExportNames(u8[] b) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
@@ -56,11 +56,11 @@ export string[] allExportNames(u8[] b) {
     if (id == 7) { at = pos[0]; }
     pos[0] = pos[0] + size;
   }
-  if (at < 0) { return string[0](fill: ""); }
+  if (at < 0) { return string[].filled(0, ""); }
 
   pos[0] = at;
   i32 n = leb(b, pos);
-  string[] names = string[n](fill: "");
+  string[] names = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) {
     i32 len = leb(b, pos);
     names[i] = string.fromBytes(slice(b, pos[0], pos[0] + len));
@@ -84,7 +84,7 @@ export string[] allExportNames(u8[] b) {
  * the right answer, not a parse failure.
  */
 export Exports exportedFunctions(u8[] b) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;                       // past the magic and the version
   i32 at = -1;
   while (pos[0] < b.len()) {
@@ -94,12 +94,12 @@ export Exports exportedFunctions(u8[] b) {
     if (id == 7) { at = pos[0]; }
     pos[0] = pos[0] + size;
   }
-  if (at < 0) { return Exports(string[0](fill: ""), i32[0]()); }
+  if (at < 0) { return Exports(string[].filled(0, ""), i32[]()); }
 
   pos[0] = at;
   i32 n = leb(b, pos);
-  string[] names = string[n](fill: "");
-  i32[] indices = i32[n]();
+  string[] names = string[].filled(n, "");
+  i32[] indices = i32[].filled(n, 0);
   i32 k = 0;
   for (i32 i = 0; i < n; i++) {
     i32 len = leb(b, pos);
@@ -113,8 +113,8 @@ export Exports exportedFunctions(u8[] b) {
     indices[k] = idx;
     k = k + 1;
   }
-  string[] outN = string[k](fill: "");
-  i32[] outI = i32[k]();
+  string[] outN = string[].filled(k, "");
+  i32[] outI = i32[].filled(k, 0);
   for (i32 i = 0; i < k; i++) { outN[i] = names[i]; outI[i] = indices[i]; }
   return Exports(outN, outI);
 }
@@ -127,7 +127,7 @@ export Exports exportedFunctions(u8[] b) {
  * function index. Nothing to subtract when there is no import section.
  */
 export i32 importedFunctions(u8[] b) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
@@ -157,7 +157,7 @@ export i32 importedFunctions(u8[] b) {
 
 /** How many functions a module has at all: the imported ones, then its own (section 3). */
 export i32 declaredFunctions(u8[] b) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   i32 own = 0;
   while (pos[0] < b.len()) {
@@ -185,7 +185,7 @@ export struct Names {
  * would misread the first module to gain local names, so the id is checked rather than the position.
  */
 export Names nameSection(u8[] b) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   i32 at = -1;
   i32 secEnd = 0;
@@ -203,15 +203,15 @@ export Names nameSection(u8[] b) {
     }
     pos[0] = end;
   }
-  if (at < 0) { return Names(i32[0](), string[0](fill: "")); }
+  if (at < 0) { return Names(i32[](), string[].filled(0, "")); }
 
   // Counted first, then filled — so the arrays are the size of what is there rather than a guess,
   // and a module with more names than a fixed cap is not silently truncated.
-  i32[] idxs = i32[0]();
-  string[] strs = string[0](fill: "");
+  i32[] idxs = i32[]();
+  string[] strs = string[].filled(0, "");
   i32 total = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    i32[] p2 = i32[1]();
+    i32[] p2 = i32[].filled(1, 0);
     p2[0] = at;
     i32 seen = 0;
     while (p2[0] < secEnd) {
@@ -236,8 +236,8 @@ export Names nameSection(u8[] b) {
     }
     if (pass == 0) {
       total = seen;
-      idxs = i32[total]();
-      strs = string[total](fill: "");
+      idxs = i32[].filled(total, 0);
+      strs = string[].filled(total, "");
     }
   }
   return Names(idxs, strs);
@@ -281,7 +281,7 @@ void skipValType(u8[] b, i32[] pos) {
 
 /** Where a section's body starts, or -1. The last one of an id wins, as it does for `exportedFunctions`. */
 i32 sectionAt(u8[] b, i32 want) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
@@ -296,21 +296,21 @@ i32 sectionAt(u8[] b, i32 want) {
 
 export Arities exportArities(u8[] b) {
   if (b.len() <= 8) {
-    return Arities(string[0](fill: ""), i32[0](), false, "the emitter declined this program");
+    return Arities(string[].filled(0, ""), i32[](), false, "the emitter declined this program");
   }
   i32 typesAt = sectionAt(b, 1);
   i32 funcsAt = sectionAt(b, 3);
   if (typesAt < 0 || funcsAt < 0) {
-    return Arities(string[0](fill: ""), i32[0](), false, "no type or function section");
+    return Arities(string[].filled(0, ""), i32[](), false, "no type or function section");
   }
 
   // Type index to parameter count, -1 for a type that is not a function.
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = typesAt;
   leb(b, pos);                       // one rec group
   pos[0] = pos[0] + 1;               // 0x4E, the group itself
   i32 typeCount = leb(b, pos);
-  i32[] params = i32[typeCount]();
+  i32[] params = i32[].filled(typeCount, 0);
   for (i32 i = 0; i < typeCount; i++) {
     i32 tag = b[pos[0]];
     pos[0] = pos[0] + 1;
@@ -338,14 +338,14 @@ export Arities exportArities(u8[] b) {
       for (i32 k = 0; k < rc; k++) { skipValType(b, pos); }
       params[i] = pc;
     } else {
-      return Arities(string[0](fill: ""), i32[0](), false,
+      return Arities(string[].filled(0, ""), i32[](), false,
                      "unknown type tag " + itoa(tag) + " at entry " + itoa(i));
     }
   }
 
   pos[0] = funcsAt;
   i32 funcCount = leb(b, pos);
-  i32[] funcTypes = i32[funcCount]();
+  i32[] funcTypes = i32[].filled(funcCount, 0);
   for (i32 i = 0; i < funcCount; i++) { funcTypes[i] = leb(b, pos); }
 
   // An index from the export section counts the imports first, so its position in the function
@@ -353,8 +353,8 @@ export Arities exportArities(u8[] b) {
   // what makes the reader right about one that does.
   i32 imported = importedFunctions(b);
   Exports ex = exportedFunctions(b);
-  string[] names = string[ex.names.len()](fill: "");
-  i32[] arity = i32[ex.names.len()]();
+  string[] names = string[].filled(ex.names.len(), "");
+  i32[] arity = i32[].filled(ex.names.len(), 0);
   i32 n = 0;
   for (i32 i = 0; i < ex.names.len(); i++) {
     i32 own = ex.indices[i] - imported;
@@ -365,8 +365,8 @@ export Arities exportArities(u8[] b) {
     arity[n] = params[ti];
     n = n + 1;
   }
-  string[] outN = string[n](fill: "");
-  i32[] outA = i32[n]();
+  string[] outN = string[].filled(n, "");
+  i32[] outA = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { outN[i] = names[i]; outA[i] = arity[i]; }
   return Arities(outN, outA, true, "");
 }

@@ -91,7 +91,7 @@ bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string 
   cli.writeFile(dir + "/b", b.toBytes()).wait();
 
   Ran mine = runCase(core, cli, dir, "diff a b");
-  Exec real = cli.exec("diff", string[]("-u", dir + "/a", dir + "/b"), u8[0]()).wait();
+  Exec real = cli.exec("diff", ["-u", dir + "/a", dir + "/b"], u8[]()).wait();
   if (!real.ran()) {
     t.isTrue(false, "the real diff would not start: " + real.error);
     return false;
@@ -106,7 +106,7 @@ bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string 
 export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
 
   // **A floor first.** Every comparison below is `eqStr` against the real tool, and two empty strings
   // are equal — so a `diff` that printed nothing at all, or a `body` that filtered everything, would
@@ -147,7 +147,7 @@ export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli c
 export string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
 
   cli.writeFile(dir + "/withnl", "x\ny\n".toBytes()).wait();
   cli.writeFile(dir + "/nonl", "x\ny".toBytes()).wait();
@@ -157,7 +157,7 @@ export string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
   t.isTrue(near.out.indexOf("No newline at end of file") >= 0, near.out);
 
   // GNU agrees about the status, which is the part a script reads.
-  Exec real = cli.exec("diff", string[](dir + "/withnl", dir + "/nonl"), u8[0]()).wait();
+  Exec real = cli.exec("diff", [dir + "/withnl", dir + "/nonl"], u8[]()).wait();
   t.isTrue(real.ran(), "the real diff ran");
   t.eqI32(real.status, 1, "and so does GNU diff");
 

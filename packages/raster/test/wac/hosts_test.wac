@@ -64,15 +64,15 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   cli.remove(dir + "/native.ppm", false).wait();
 
   // One build, both hosts. `--allow-write` because the program writes the image it is asked for.
-  Exec built = cli.exec(wac, string[]("build", ENTRY, "-o", stem, "--allow-write", "--quiet"),
-                        u8[0]()).wait();
+  Exec built = cli.exec(wac, ["build", ENTRY, "-o", stem, "--allow-write", "--quiet"],
+                        u8[]()).wait();
   t.isTrue(built.ran(), "the wac binary ran — " + built.error);
   t.eqI32(built.status, 0, "wac build failed: " + string.fromBytes(built.stderr));
   if (!built.ran() || built.status != 0) { return t.report(); }
 
   // The v8 half, which runs whether or not cargo is here.
   string jsOut = dir + "/js.ppm";
-  Exec ran = cli.exec(wac, string[](stem + ".wasm", jsOut), u8[0]()).wait();
+  Exec ran = cli.exec(wac, [stem + ".wasm", jsOut], u8[]()).wait();
   t.eqI32(ran.status, 0, "the JavaScript half failed: " + string.fromBytes(ran.stderr));
   if (ran.status != 0) { return t.report(); }
 
@@ -92,7 +92,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   // And that it drew something: an image of one colour would compare equal across hosts and be wrong
   // on both.
   i32 distinct = 0;
-  i32[] seen = i32[8](fill: -1);
+  i32[] seen = i32[].filled(8, -1);
   for (i32 i = header.len(); i + 2 < a.len() && distinct <= 4; i = i + 3) {
     i32 colour = (a[i] << 16) | (a[i + 1] << 8) | a[i + 2];
     bool known = false;
@@ -119,7 +119,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
 
   string nativeOut = dir + "/native.ppm";
   Exec nran = cli.exec(cwd + "/native/target/release/wac",
-                       string[](stem + ".wasm", nativeOut), u8[0]()).wait();
+                       [stem + ".wasm", nativeOut], u8[]()).wait();
   t.isTrue(nran.ran(), "the native host ran — " + nran.error);
   t.eqI32(nran.status, 0, "the native half failed: " + string.fromBytes(nran.stderr));
   if (!nran.ran() || nran.status != 0) { return t.report(); }
@@ -152,7 +152,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
 /** `bytes/src/slice.wac`'s `slice`, kept local so this file imports one package fewer. */
 u8[] sliceOf(u8[] s, i32 from, i32 to) {
   i32 n = to - from;
-  u8[] out = u8[n](fill: 0);
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = s[from + i]; }
   return out;
 }

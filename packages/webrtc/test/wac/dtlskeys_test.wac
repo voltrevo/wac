@@ -47,23 +47,23 @@ export string test_our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_bloc
   // the schedule actually asks for — a master secret and a key block. A PRF that dropped or repeated
   // a byte at the seam would agree at 32 and nowhere else.
   T t = T.create();
-  string[] secrets = string[](
+  string[] secrets = [
     "01020304",
     "0102030405060708090a0b0c0d0e0f10",
     "ff",
     "ff",
     "00112233445566778899aabbccddeeff",
-    "00112233445566778899aabbccddeeff");
-  string[] labels = string[](
-    "test label", "master secret", "key expansion", "key expansion", "client finished", "");
-  string[] seeds = string[]("05060708", "aabbccdd", "", "", "1234", "00");
-  i32[] ns = i32[](40, 48, 32, 33, 12, 96);
+    "00112233445566778899aabbccddeeff"
+  ];
+  string[] labels = ["test label", "master secret", "key expansion", "key expansion", "client finished", ""];
+  string[] seeds = ["05060708", "aabbccdd", "", "", "1234", "00"];
+  i32[] ns = [40, 48, 32, 33, 12, 96];
 
   Lines lines = Lines.create();
   for (i32 i = 0; i < secrets.len(); i++) {
     lines.add(prfLine(secrets[i], labels[i], seeds[i], ns[i]));
   }
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "six PRF cases");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "six PRF cases");
   if (!a.ok) { return t.report(); }
   t.eqI32(a.lines.len(), secrets.len(), "an answer per case");
   if (a.lines.len() != secrets.len()) { return t.report(); }
@@ -81,8 +81,8 @@ export string test_the_master_secret_and_the_key_block_with_their_labels_and_the
     Core core, Cli cli) {
   T t = T.create();
   u8[] pms = decoded("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
-  u8[] cr = u8[32]();
-  u8[] sr = u8[32]();
+  u8[] cr = u8[].filled(32, 0);
+  u8[] sr = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { cr[i] = i; sr[i] = 255 - i; }
 
   u8[] m = master(pms, cr, sr);
@@ -96,7 +96,7 @@ export string test_the_master_secret_and_the_key_block_with_their_labels_and_the
   lines.add(prfLine(hex(m), "key expansion", hex(joined(sr, cr)), 40));
   lines.add(prfLine(hex(m), "key expansion", hex(joined(cr, sr)), 40));
   lines.add("sha256 " + hex("transcript".toBytes()));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the schedule");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "the schedule");
   if (!a.ok || a.lines.len() != 4) { return t.report(); }
 
   t.eqStr(hex(m), word(a.lines[0], 1), "client random then server random");
@@ -117,7 +117,7 @@ export string test_the_master_secret_and_the_key_block_with_their_labels_and_the
 
   Lines second = Lines.create();
   second.add(prfLine(hex(m), "client finished", word(a.lines[3], 1), 12));
-  Answers v = ask(t, cli, "node", string[](ORACLE), second, "verify_data");
+  Answers v = ask(t, cli, "node", [ORACLE], second, "verify_data");
   if (!v.ok || v.lines.len() != 1) { return t.report(); }
   t.eqStr(hex(f), word(v.lines[0], 1), "over the SHA-256 of the transcript, not the transcript");
   return t.report();
@@ -151,7 +151,7 @@ export string test_a_sealed_record_is_what_aes_gcm_opens_with_the_nonce_and_aad_
   Lines lines = Lines.create();
   lines.add("gcmopen " + hex(key) + " " + hex(joined(iv, explicit)) + " " + hex(aad) + " " +
             hex(slice(fragment, 8, fragment.len())));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "one sealed record");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "one sealed record");
   if (!a.ok || a.lines.len() != 1) { return t.report(); }
   t.eqStr(string.fromBytes(decoded(word(a.lines[0], 1))), "the finished message, more or less",
           "an independent AES-GCM opened it with the four fixed bytes followed by the eight " +

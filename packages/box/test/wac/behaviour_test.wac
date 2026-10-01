@@ -91,12 +91,14 @@ export string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
       return t.report();
     }
     Exec want = cli.exec("env",
-                         string[]("-i",
+                         [
+                                  "-i",
                                   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                                   "LC_ALL=C", "HOME=" + dir,
                                   "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
-                                  "bash", dir, list[i]),
-                         u8[0]()).wait();
+                                  "bash", dir, list[i]
+                         ],
+                         u8[]()).wait();
     if (!want.ran()) {
       // No bash here is not a failure of the applets: say so and stop, rather than passing quietly.
       t.isTrue(checked > 0, "bash would not start: " + want.error);

@@ -20,7 +20,7 @@ export i32 main(Core core, Cli cli) {
   Pending<FileResult> first = cli.readFile(a);
   Pending<FileResult> second = cli.readFile(b);
 
-  i32[] both = i32[2]();
+  i32[] both = i32[].filled(2, 0);
   both[0] = first.id;
   both[1] = second.id;
   i32 which = core.waitAny(both, 5000);

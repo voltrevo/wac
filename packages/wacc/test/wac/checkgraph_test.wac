@@ -36,7 +36,7 @@ const string FINE = "export i32 helper() { return 1; }\n";
 const string PRIVATE =
   "i32 twice(i32 n) { return n * 2; }\nexport i32 helper() { return twice(21); }\n";
 
-string[] paths() { return string[]("/t/m.wac", "/t/lib.wac"); }
+string[] paths() { return ["/t/m.wac", "/t/lib.wac"]; }
 
 string joinedWith(string[] all, string sep) {
   string out = "";
@@ -46,7 +46,7 @@ string joinedWith(string[] all, string sep) {
 
 export string test_a_type_error_in_an_imported_file_is_reported_and_named_against_that_file() {
   T t = T.create();
-  string[] got = wireLines(diagnoseGraph(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), [MAIN, BROKEN], "/t/m.wac"));
   t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
   if (got.len() != 1) { return t.report(); }
   t.eqStr(wireField(got[0], 0), "/t/lib.wac", "blamed the wrong file");
@@ -59,7 +59,7 @@ export string test_and_the_entry_only_walk_is_why_it_was_silent() {
   // Not a preference — the record of what this changed. `diagnoseFiles` is still what a build calls,
   // and this says exactly what that costs the caller.
   T t = T.create();
-  string[] got = wireLines(diagnoseFiles(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
+  string[] got = wireLines(diagnoseFiles(paths(), [MAIN, BROKEN], "/t/m.wac"));
   t.eqI32(got.len(), 0, "diagnoseFiles now reports imports too: " + joinedWith(got, " | "));
   return t.report();
 }
@@ -68,10 +68,10 @@ export string test_a_correct_graph_stays_silent_private_declarations_and_all() {
   // The canary. A walk that checked imported files without giving them their own scope would report
   // `twice` as unresolved here — a false alarm on correct code, which is worse than the silence.
   T t = T.create();
-  string[] what = string[]("a plain export", "a private helper");
-  string[] libs = string[](FINE, PRIVATE);
+  string[] what = ["a plain export", "a private helper"];
+  string[] libs = [FINE, PRIVATE];
   for (i32 i = 0; i < what.len(); i++) {
-    string[] got = wireLines(diagnoseGraph(paths(), string[](MAIN, libs[i]), "/t/m.wac"));
+    string[] got = wireLines(diagnoseGraph(paths(), [MAIN, libs[i]], "/t/m.wac"));
     t.eqI32(got.len(), 0, what[i] + ": correct code was refused — " + joinedWith(got, " | "));
   }
   return t.report();
@@ -114,7 +114,7 @@ export string test_a_generic_reached_through_an_imported_fields_type_has_its_met
   // `!` on an `i32`. Silent before this: `wait` was a method of a struct nobody had declared, so the
   // operand arrived untyped and the rule had nothing to refuse.
   T t = T.create();
-  string[] got = wireLines(diagnoseGraph(paths(), string[](REACHES, CAP), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), [REACHES, CAP], "/t/m.wac"));
   t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
   if (got.len() != 1) { return t.report(); }
   t.eqStr(wireField(got[0], 0), "/t/m.wac", "blamed the wrong file rather than the entry that wrote '!'");
@@ -128,7 +128,7 @@ export string test_but_reaching_a_type_is_not_importing_it() {
   // says `undefined type 'Pending'` here, and a fix that made reachable types nameable would agree
   // with the buggy compiler instead — trading a missing diagnostic for a missing diagnostic.
   T t = T.create();
-  string[] got = wireLines(diagnoseGraph(paths(), string[](NAMES, CAP), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), [NAMES, CAP], "/t/m.wac"));
   i32 undefinedType = 0;
   for (i32 i = 0; i < got.len(); i++) {
     if (wireField(got[i], 4).indexOf("undefined type") >= 0) { undefinedType = undefinedType + 1; }
@@ -157,7 +157,7 @@ const string TAKES =
 
 export string test_a_generic_reached_through_an_imported_functions_return_type_has_its_methods() {
   T t = T.create();
-  string[] got = wireLines(diagnoseGraph(paths(), string[](CALLS, RETURNS), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), [CALLS, RETURNS], "/t/m.wac"));
   t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
   if (got.len() != 1) { return t.report(); }
   t.isTrue(wireField(got[0], 4).indexOf("operand") >= 0, "the wrong rule: " + wireField(got[0], 4));
@@ -168,7 +168,7 @@ export string test_and_through_a_parameter_type_which_is_the_same_reach_the_othe
   // `give` takes a `Pending<i32>` and is handed a literal. Untyped, the parameter matched anything.
   T t = T.create();
   string accepts = RETURNS + "export i32 give(Pending<i32> p) { return p.wait(); }\n";
-  string[] got = wireLines(diagnoseGraph(paths(), string[](TAKES, accepts), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), [TAKES, accepts], "/t/m.wac"));
   t.isTrue(got.len() > 0, "passing an i32 where a Pending<i32> goes was accepted");
   return t.report();
 }
@@ -199,17 +199,17 @@ const string CALLS_REL =
 const string CALLS_PROJ =
   "import { one } from \"@/src/lib.wac\";\nexport i32 main() { return one(1, 2); }\n";
 
-string[] projPaths() { return string[]("/p/app/m.wac", "/p/src/lib.wac"); }
+string[] projPaths() { return ["/p/app/m.wac", "/p/src/lib.wac"]; }
 
 export string test_a_project_import_is_checked_the_way_a_relative_one_is() {
   T t = T.create();
   // Both files sit in the project `/p`, which is what a reader hands over as the roots — parallel to
   // `paths`, so index 0 is the entry's and index 1 the imported file's.
-  Res res = Res.of(string[]("/p", "/p"));
-  string[] specs = string[]("a relative import", "a `@/` import");
-  string[] entries = string[](CALLS_REL, CALLS_PROJ);
+  Res res = Res.of(["/p", "/p"]);
+  string[] specs = ["a relative import", "a `@/` import"];
+  string[] entries = [CALLS_REL, CALLS_PROJ];
   for (i32 i = 0; i < specs.len(); i++) {
-    string[] got = wireLines(diagnoseGraphIn(projPaths(), string[](entries[i], ARITY), res, "/p/app/m.wac"));
+    string[] got = wireLines(diagnoseGraphIn(projPaths(), [entries[i], ARITY], res, "/p/app/m.wac"));
     t.eqI32(got.len(), 1, specs[i] + ": expected one diagnostic, got " + itoa(got.len())
         + " — " + joinedWith(got, " | "));
     if (got.len() != 1) { continue; }
@@ -225,9 +225,9 @@ export string test_and_a_project_graph_that_is_correct_stays_silent() {
   // about a call that is right. Without this, "reports a diagnostic" and "reports one per file it
   // suddenly reached" look the same.
   T t = T.create();
-  Res res = Res.of(string[]("/p", "/p"));
+  Res res = Res.of(["/p", "/p"]);
   string good = "import { one } from \"@/src/lib.wac\";\nexport i32 main() { return one(1); }\n";
-  string[] got = wireLines(diagnoseGraphIn(projPaths(), string[](good, ARITY), res, "/p/app/m.wac"));
+  string[] got = wireLines(diagnoseGraphIn(projPaths(), [good, ARITY], res, "/p/app/m.wac"));
   t.eqI32(got.len(), 0, "correct code through `@/` was refused — " + joinedWith(got, " | "));
   return t.report();
 }
@@ -245,11 +245,11 @@ export string test_and_a_project_graph_that_is_correct_stays_silent() {
 // test that fills one of them can only prove something about that one.
 export string test_the_res_a_project_on_disk_produces_resolves_too() {
   T t = T.create();
-  string[] keys = string[]("app/m.wac", "src/lib.wac");
+  string[] keys = ["app/m.wac", "src/lib.wac"];
   // Relative keys, absolute root, and the base they are measured from — what `gather` builds.
-  Res res = Res(string[]("/abs/p", "/abs/p"),
-                string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), "/abs/p");
-  string[] got = wireLines(diagnoseGraphIn(keys, string[](CALLS_PROJ, ARITY), res, "app/m.wac"));
+  Res res = Res(["/abs/p", "/abs/p"],
+                string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""), "/abs/p");
+  string[] got = wireLines(diagnoseGraphIn(keys, [CALLS_PROJ, ARITY], res, "app/m.wac"));
   t.eqI32(got.len(), 1, "expected one diagnostic, got " + itoa(got.len()) + " — "
       + joinedWith(got, " | "));
   if (got.len() != 1) { return t.report(); }

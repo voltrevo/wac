@@ -24,12 +24,12 @@ const string PREFIX = "packages/lightclient/";
 
 /** What the tests need: the vendored fixtures on disk, and a process for the live ones. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/lightclient/src/store.wac", "validateUpdate", "decl", false,
+  return [
+         Rule("packages/lightclient/src/store.wac", "validateUpdate", "decl", false,
          "**Twenty refusal arms, and the function is the package's entire reason to exist.** A " +
          "light client believes a sync committee because a supermajority of the previous one signed " +
          "for it, and `validateUpdate` is where each of those conditions is checked.\n" +
@@ -98,17 +98,17 @@ Rule[] rules() {
     Rule("packages/lightclient/src/store.wac", "processUpdate", "decl", false,
          "Replacing the stored best update with a better one, which needs a client already " +
          "holding a candidate for the same period — see `isBetterUpdate`.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[0](fill: Pin("", 0, "", true, ""));
+  return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

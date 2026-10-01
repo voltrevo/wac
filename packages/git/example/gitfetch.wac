@@ -63,7 +63,7 @@ export i32 main(Core core, Cli cli) {
 
   // What the server has.
   Answer refs = request(core, cli, store, r.host,
-    r.path + "/info/refs?service=git-upload-pack", u8[0](), "");
+    r.path + "/info/refs?service=git-upload-pack", u8[](), "");
   if (!refs.ok) {
     core.warn("gitfetch: " + refs.error);
     return 1;
@@ -72,7 +72,7 @@ export i32 main(Core core, Cli cli) {
     core.warn("gitfetch: " + r.host + " answered " + itoa(refs.status) + " for the advertisement");
     return 1;
   }
-  u8[] head = u8[0]();
+  u8[] head = u8[]();
   string caps = "";
   match (parseAdvertisement(refs.body)) {
     Garbled(why): {
@@ -111,7 +111,7 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
 
-  u8[] pack = u8[0]();
+  u8[] pack = u8[]();
   match (findPack(packed.body)) {
     NoPack(why): {
       core.warn("gitfetch: " + why);

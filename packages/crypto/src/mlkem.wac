@@ -85,10 +85,10 @@ i32 mod(i32 a) {
  * product is wrong, with no intermediate value that looks obviously broken.
  */
 i32[] zetas() {
-  i32[] pow = i32[128]();
+  i32[] pow = i32[].filled(128, 0);
   pow[0] = 1;
   for (i32 i = 1; i < 128; i++) { pow[i] = mod(pow[i - 1] * 17); }
-  i32[] z = i32[128]();
+  i32[] z = i32[].filled(128, 0);
   for (i32 i = 0; i < 128; i++) {
     i32 rev = 0;
     for (i32 b = 0; b < 7; b++) { rev = rev | (((i >> b) & 1) << (6 - b)); }
@@ -147,7 +147,7 @@ void invNtt(i32[] f, i32[] z) {
  * invites, and it produces a key exchange where both sides derive different secrets.
  */
 i32[] multiplyNtt(i32[] a, i32[] b, i32[] z) {
-  i32[] c = i32[n()]();
+  i32[] c = i32[].filled(n(), 0);
   for (i32 i = 0; i < 128; i++) {
     i32 g = z[64 + i / 2];
     // zeta^(2 BitRev7(i) + 1) alternates sign with i's low bit.
@@ -181,13 +181,13 @@ void polyAdd(i32[] a, i32[] b) {
  * about one in six, n() coefficients need around 850 bytes on average.
  */
 i32[] sampleNtt(u8[] seed, i32 i, i32 j) {
-  u8[] input = u8[34]();
+  u8[] input = u8[].filled(34, 0);
   for (i32 t = 0; t < 32; t++) { input[t] = seed[t]; }
   input[32] = i;
   input[33] = j;
   u8[] stream = shake128(input, 1344);   // eight blocks; overwhelmingly enough
 
-  i32[] a = i32[n()]();
+  i32[] a = i32[].filled(n(), 0);
   i32 count = 0;
   i32 at = 0;
   while (count < n()) {
@@ -212,7 +212,7 @@ i32[] sampleNtt(u8[] seed, i32 i, i32 j) {
  * rests on: too small and the lattice problem is easy, too large and decryption fails.
  */
 i32[] samplePolyCbd(u8[] bytes, i32 eta) {
-  i32[] f = i32[n()]();
+  i32[] f = i32[].filled(n(), 0);
   for (i32 i = 0; i < n(); i++) {
     i32 x = 0;
     i32 y = 0;
@@ -229,7 +229,7 @@ i32[] samplePolyCbd(u8[] bytes, i32 eta) {
 
 /** PRF(eta, s, b) = SHAKE256(s || b, 64 * eta). */
 u8[] prf(u8[] s, i32 b, i32 eta) {
-  u8[] input = u8[33]();
+  u8[] input = u8[].filled(33, 0);
   for (i32 i = 0; i < 32; i++) { input[i] = s[i]; }
   input[32] = b;
   return shake256(input, 64 * eta);
@@ -239,7 +239,7 @@ u8[] prf(u8[] s, i32 b, i32 eta) {
 
 /** Pack n() d-bit values into 32*d bytes, little-endian across the stream. */
 u8[] byteEncode(i32[] f, i32 d) {
-  u8[] out = u8[32 * d]();
+  u8[] out = u8[].filled(32 * d, 0);
   i32 bitPos = 0;
   for (i32 i = 0; i < n(); i++) {
     for (i32 b = 0; b < d; b++) {
@@ -262,7 +262,7 @@ u8[] byteEncode(i32[] f, i32 d) {
  * and what the out-of-range test caught.
  */
 i32[] byteDecode(u8[] bytes, i32 at, i32 d) {
-  i32[] f = i32[n()]();
+  i32[] f = i32[].filled(n(), 0);
   i32 bitPos = at * 8;
   for (i32 i = 0; i < n(); i++) {
     i32 v = 0;
@@ -310,19 +310,19 @@ void decompressPoly(i32[] f, i32 d) {
  * smaller than the matrix it stands for.
  */
 u8[] pkeKeyGen(u8[] d) {
-  u8[] input = u8[33]();
+  u8[] input = u8[].filled(33, 0);
   for (i32 i = 0; i < 32; i++) { input[i] = d[i]; }
   input[32] = 3;                            // the rank, mixed in per FIPS 203
   u8[] g = sha3_512(input);
-  u8[] rho = u8[32]();
-  u8[] sigma = u8[32]();
+  u8[] rho = u8[].filled(32, 0);
+  u8[] sigma = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { rho[i] = g[i]; sigma[i] = g[32 + i]; }
 
   i32[] z = zetas();
 
   // s and e, each k small polynomials, then both transformed.
-  i32[][] s = i32[][kk()]();
-  i32[][] e = i32[][kk()]();
+  i32[][] s = i32[][].defaulted(kk());
+  i32[][] e = i32[][].defaulted(kk());
   i32 counter = 0;
   for (i32 i = 0; i < kk(); i++) {
     s[i] = samplePolyCbd(prf(sigma, counter, eta1()), eta1());
@@ -335,9 +335,9 @@ u8[] pkeKeyGen(u8[] d) {
   for (i32 i = 0; i < kk(); i++) { ntt(s[i], z); ntt(e[i], z); }
 
   // t = A o s + e, with A generated on the fly.
-  i32[][] t = i32[][kk()]();
+  i32[][] t = i32[][].defaulted(kk());
   for (i32 i = 0; i < kk(); i++) {
-    i32[] acc = i32[n()]();
+    i32[] acc = i32[].filled(n(), 0);
     for (i32 j = 0; j < kk(); j++) {
       // A[i][j] is sampled from (rho, j, i) — the indices are transposed relative to
       // how the matrix is written, and swapping them yields a key that works only
@@ -349,7 +349,7 @@ u8[] pkeKeyGen(u8[] d) {
     t[i] = acc;
   }
 
-  u8[] out = u8[ekSize() + 1152]();
+  u8[] out = u8[].filled(ekSize() + 1152, 0);
   for (i32 i = 0; i < kk(); i++) {
     u8[] enc = byteEncode(t[i], 12);
     for (i32 b = 0; b < 384; b++) { out[i * 384 + b] = enc[b]; }
@@ -365,19 +365,19 @@ u8[] pkeKeyGen(u8[] d) {
 /** K-PKE encryption. FIPS 203 Algorithm 14. Returns the ctSize()-byte ciphertext. */
 u8[] pkeEncrypt(u8[] ek, u8[] m, u8[] rand) {
   i32[] z = zetas();
-  u8[] rho = u8[32]();
+  u8[] rho = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { rho[i] = ek[1152 + i]; }
 
-  i32[][] t = i32[][kk()]();
+  i32[][] t = i32[][].defaulted(kk());
   for (i32 i = 0; i < kk(); i++) { t[i] = byteDecode(ek, i * 384, 12); }
 
-  i32[][] r = i32[][kk()]();
+  i32[][] r = i32[][].defaulted(kk());
   i32 counter = 0;
   for (i32 i = 0; i < kk(); i++) {
     r[i] = samplePolyCbd(prf(rand, counter, eta1()), eta1());
     counter++;
   }
-  i32[][] e1 = i32[][kk()]();
+  i32[][] e1 = i32[][].defaulted(kk());
   for (i32 i = 0; i < kk(); i++) {
     e1[i] = samplePolyCbd(prf(rand, counter, eta2()), eta2());
     counter++;
@@ -388,9 +388,9 @@ u8[] pkeEncrypt(u8[] ek, u8[] m, u8[] rand) {
 
   // u = invNTT(A^T o r) + e1. The transpose is the difference from key generation and
   // is the whole reason both sides land on the same secret.
-  i32[][] u = i32[][kk()]();
+  i32[][] u = i32[][].defaulted(kk());
   for (i32 i = 0; i < kk(); i++) {
-    i32[] acc = i32[n()]();
+    i32[] acc = i32[].filled(n(), 0);
     for (i32 j = 0; j < kk(); j++) {
       i32[] aji = sampleNtt(rho, i, j);
       polyAdd(acc, multiplyNtt(aji, r[j], z));
@@ -401,7 +401,7 @@ u8[] pkeEncrypt(u8[] ek, u8[] m, u8[] rand) {
   }
 
   // v = invNTT(t^T o r) + e2 + Decompress(m, 1)
-  i32[] v = i32[n()]();
+  i32[] v = i32[].filled(n(), 0);
   for (i32 j = 0; j < kk(); j++) { polyAdd(v, multiplyNtt(t[j], r[j], z)); }
   invNtt(v, z);
   polyAdd(v, e2);
@@ -409,7 +409,7 @@ u8[] pkeEncrypt(u8[] ek, u8[] m, u8[] rand) {
   decompressPoly(mu, 1);
   polyAdd(v, mu);
 
-  u8[] out = u8[ctSize()]();
+  u8[] out = u8[].filled(ctSize(), 0);
   for (i32 i = 0; i < kk(); i++) {
     compressPoly(u[i], du());
     u8[] enc = byteEncode(u[i], du());
@@ -424,7 +424,7 @@ u8[] pkeEncrypt(u8[] ek, u8[] m, u8[] rand) {
 /** K-PKE decryption. FIPS 203 Algorithm 15. Returns the 32-byte message. */
 u8[] pkeDecrypt(u8[] dkPke, u8[] ct) {
   i32[] z = zetas();
-  i32[][] u = i32[][kk()]();
+  i32[][] u = i32[][].defaulted(kk());
   for (i32 i = 0; i < kk(); i++) {
     u[i] = byteDecode(ct, i * 320, du());
     decompressPoly(u[i], du());
@@ -433,7 +433,7 @@ u8[] pkeDecrypt(u8[] dkPke, u8[] ct) {
   i32[] v = byteDecode(ct, 960, dv());
   decompressPoly(v, dv());
 
-  i32[] w = i32[n()]();
+  i32[] w = i32[].filled(n(), 0);
   for (i32 i = 0; i < kk(); i++) {
     i32[] si = byteDecode(dkPke, i * 384, 12);
     polyAdd(w, multiplyNtt(si, u[i], z));
@@ -455,22 +455,22 @@ u8[] pkeDecrypt(u8[] dkPke, u8[] ct) {
  */
 export u8[] mlkemKeyGen(u8[] seed) {
   if (seed.len() != 64) { trap; }
-  u8[] d = u8[32]();
-  u8[] zz = u8[32]();
+  u8[] d = u8[].filled(32, 0);
+  u8[] zz = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { d[i] = seed[i]; zz[i] = seed[32 + i]; }
 
   u8[] pke = pkeKeyGen(d);
-  u8[] ek = u8[ekSize()]();
+  u8[] ek = u8[].filled(ekSize(), 0);
   for (i32 i = 0; i < ekSize(); i++) { ek[i] = pke[i]; }
 
-  u8[] dk = u8[dkSize()]();
+  u8[] dk = u8[].filled(dkSize(), 0);
   for (i32 i = 0; i < 1152; i++) { dk[i] = pke[ekSize() + i]; }
   for (i32 i = 0; i < ekSize(); i++) { dk[1152 + i] = ek[i]; }
   u8[] h = sha3_256(ek);
   for (i32 i = 0; i < 32; i++) { dk[2336 + i] = h[i]; }
   for (i32 i = 0; i < 32; i++) { dk[2368 + i] = zz[i]; }
 
-  u8[] out = u8[ekSize() + dkSize()]();
+  u8[] out = u8[].filled(ekSize() + dkSize(), 0);
   for (i32 i = 0; i < ekSize(); i++) { out[i] = ek[i]; }
   for (i32 i = 0; i < dkSize(); i++) { out[ekSize() + i] = dk[i]; }
   return out;
@@ -521,15 +521,15 @@ export u8[] mlkemEncaps(u8[] ek, u8[] m) {
   if (!mlkemEkValid(ek)) { trap; }
 
   u8[] h = sha3_256(ek);
-  u8[] gIn = u8[64]();
+  u8[] gIn = u8[].filled(64, 0);
   for (i32 i = 0; i < 32; i++) { gIn[i] = m[i]; gIn[32 + i] = h[i]; }
   u8[] g = sha3_512(gIn);
-  u8[] key = u8[32]();
-  u8[] r = u8[32]();
+  u8[] key = u8[].filled(32, 0);
+  u8[] r = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { key[i] = g[i]; r[i] = g[32 + i]; }
 
   u8[] ct = pkeEncrypt(ek, m, r);
-  u8[] out = u8[32 + ctSize()]();
+  u8[] out = u8[].filled(32 + ctSize(), 0);
   for (i32 i = 0; i < 32; i++) { out[i] = key[i]; }
   for (i32 i = 0; i < ctSize(); i++) { out[32 + i] = ct[i]; }
   return out;
@@ -548,25 +548,25 @@ export u8[] mlkemDecaps(u8[] dk, u8[] ct) {
   if (dk.len() != dkSize()) { trap; }
   if (ct.len() != ctSize()) { trap; }
 
-  u8[] dkPke = u8[1152]();
+  u8[] dkPke = u8[].filled(1152, 0);
   for (i32 i = 0; i < 1152; i++) { dkPke[i] = dk[i]; }
-  u8[] ek = u8[ekSize()]();
+  u8[] ek = u8[].filled(ekSize(), 0);
   for (i32 i = 0; i < ekSize(); i++) { ek[i] = dk[1152 + i]; }
-  u8[] h = u8[32]();
+  u8[] h = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { h[i] = dk[2336 + i]; }
-  u8[] zz = u8[32]();
+  u8[] zz = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { zz[i] = dk[2368 + i]; }
 
   u8[] mPrime = pkeDecrypt(dkPke, ct);
-  u8[] gIn = u8[64]();
+  u8[] gIn = u8[].filled(64, 0);
   for (i32 i = 0; i < 32; i++) { gIn[i] = mPrime[i]; gIn[32 + i] = h[i]; }
   u8[] g = sha3_512(gIn);
-  u8[] kPrime = u8[32]();
-  u8[] rPrime = u8[32]();
+  u8[] kPrime = u8[].filled(32, 0);
+  u8[] rPrime = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { kPrime[i] = g[i]; rPrime[i] = g[32 + i]; }
 
   // The implicit rejection key, from z and the ciphertext.
-  u8[] jIn = u8[32 + ctSize()]();
+  u8[] jIn = u8[].filled(32 + ctSize(), 0);
   for (i32 i = 0; i < 32; i++) { jIn[i] = zz[i]; }
   for (i32 i = 0; i < ctSize(); i++) { jIn[32 + i] = ct[i]; }
   u8[] kBar = shake256(jIn, 32);
@@ -582,7 +582,7 @@ export u8[] mlkemDecaps(u8[] dk, u8[] ct) {
   // otherwise, from `diff | -diff` having its sign bit set exactly when `diff` is non-zero.
   // `issues/system/0226`.
   i32 mask = ((diff | (0 - diff)) >> 31) & 255;
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = (kPrime[i] ^ (mask & (kPrime[i] ^ kBar[i]))) & 255; }
   return out;
 }

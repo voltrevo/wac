@@ -147,7 +147,7 @@ Manifest manifestOf(Cli cli, string manifestPath, string name) {
 export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifestPath) {
   Manifest want = manifestOf(cli, manifestPath, name);
   if (!want.found) {
-    return Fixture(false, u8[0](),
+    return Fixture(false, u8[](),
                    pkg + ": no fixture set named " + name + " in " + manifestPath);
   }
 
@@ -168,15 +168,17 @@ export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifes
   }
 
   Exec built = cli.exec("python3",
-                        string[]("packages/" + pkg + "/tools/vendor.py", name, "--commit",
-                                 want.commit, "--stdout"), u8[0]()).wait();
+                        [
+                                 "packages/" + pkg + "/tools/vendor.py", name, "--commit",
+                                 want.commit, "--stdout"
+                        ], u8[]()).wait();
   if (!built.ran()) {
-    return Fixture(false, u8[0](),
+    return Fixture(false, u8[](),
                    "fixtures: cannot run the generator for " + pkg + "/" + name + ": " +
                    built.error + "\n  " + want.rebuild);
   }
   if (built.status != 0) {
-    return Fixture(false, u8[0](),
+    return Fixture(false, u8[](),
                    "fixtures: " + pkg + "/" + name + " could not be produced.\n" +
                    "  source: " + want.source + " @ " + want.commit.slice(0, 12) + "\n" +
                    "  " + want.rebuild + "\n" +
@@ -186,7 +188,7 @@ export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifes
   }
   string got = lowerHex(sha256(built.stdout));
   if (got != want.sha256) {
-    return Fixture(false, u8[0](),
+    return Fixture(false, u8[](),
                    "fixtures: " + pkg + "/" + name + " does not match the manifest.\n" +
                    "  expected " + want.sha256 + "\n  produced " + got + "\n" +
                    "  The generator, the upstream data at " + want.commit.slice(0, 12) +
@@ -219,7 +221,7 @@ export Loaded json(Core core, Cli cli, string pkg, string name, string manifestP
 
 /** The last `n` lines of a generator's stderr, which is where its own message is. */
 string lastLines(string s, i32 n) {
-  string[] all = string[256](fill: "");
+  string[] all = string[].filled(256, "");
   i32 count = 0;
   i32 from = 0;
   for (i32 i = 0; i <= s.len() && count < all.len(); i++) {

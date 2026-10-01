@@ -16,7 +16,7 @@ export i32 uuid(Core core, Cli cli, Fs fs, Args a) {
     u8[] r = core.randomBytes(16).wait();
     r[6] = (r[6] & 0x0F) | 0x40;    // version 4
     r[8] = (r[8] & 0x3F) | 0x80;    // variant 1
-    u8[] out = u8[36](fill: '-');
+    u8[] out = u8[].filled(36, '-');
     i32 at = 0;
     for (i32 i = 0; i < 16; i++) {
       // The dashes are already in place; step over them rather than tracking two indices.

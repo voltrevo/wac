@@ -43,14 +43,14 @@ const i32 P256 = 256;
 const i32 P384 = 384;
 
 u8[] fill(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 41 + seed * 7 + 13) & 0xFF; }
   // Keep it well inside the group order: the top byte cleared is enough for both curves.
   out[0] = out[0] & 0x7F;
   return out;
 }
 u8[] cat(u8[] a, u8[] b) {
-  u8[] o = u8[a.len() + b.len()]();
+  u8[] o = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
@@ -71,7 +71,7 @@ export string test_the_group_orders() {
 const string ORACLE = "packages/crypto/test/oracle.mjs";
 
 Answers askEc(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "node", string[](ORACLE), lines, what);
+  return ask(t, cli, "node", [ORACLE], lines, what);
 }
 
 /** The scalar and point of an `ecgen`/`ecgensign` answer. */
@@ -109,7 +109,7 @@ export string test_we_verify_the_hosts_signatures(Core core, Cli cli) {
     u8[] msg = fill(20 + i, i);
     t.isTrue(p256Verify(pub, msg, sig), "P-256 accepts the host's signature " + itoa64(i as i64));
 
-    u8[] bad = u8[64]();
+    u8[] bad = u8[].filled(64, 0);
     for (i32 j = 0; j < 64; j++) { bad[j] = sig[j]; }
     bad[i % 64] = bad[i % 64] ^ 1;
     t.isFalse(p256Verify(pub, msg, bad), "and refuses it altered " + itoa64(i as i64));
@@ -159,7 +159,7 @@ export string test_p384_verifies_the_hosts_signatures(Core core, Cli cli) {
     t.eqI32(sig.len(), 96, "P-384 signature is 96 bytes");
     t.isTrue(p384Verify(pub, msg, sig), "P-384 accepts the host's signature " + itoa64(i as i64));
 
-    u8[] bad = u8[96]();
+    u8[] bad = u8[].filled(96, 0);
     for (i32 j = 0; j < 96; j++) { bad[j] = sig[j]; }
     bad[(i * 7) % 96] = bad[(i * 7) % 96] ^ 1;
     t.isFalse(p384Verify(pub, msg, bad), "and refuses it altered " + itoa64(i as i64));
@@ -195,27 +195,27 @@ export string test_signatures_outside_the_group_order_are_refused() {
   t.isTrue(p256Verify(pub, msg, sig), "the genuine signature verifies");
 
   u8[] n = p256Order();
-  u8[] zeroR = u8[64]();
+  u8[] zeroR = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { zeroR[i] = sig[i]; }
   for (i32 i = 0; i < 32; i++) { zeroR[i] = 0; }
   t.isFalse(p256Verify(pub, msg, zeroR), "r = 0 is refused");
 
-  u8[] zeroS = u8[64]();
+  u8[] zeroS = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { zeroS[i] = sig[i]; }
   for (i32 i = 32; i < 64; i++) { zeroS[i] = 0; }
   t.isFalse(p256Verify(pub, msg, zeroS), "s = 0 is refused");
 
-  u8[] rAtN = u8[64]();
+  u8[] rAtN = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { rAtN[i] = sig[i]; }
   for (i32 i = 0; i < 32; i++) { rAtN[i] = n[i]; }
   t.isFalse(p256Verify(pub, msg, rAtN), "r = n is refused");
 
-  u8[] sAtN = u8[64]();
+  u8[] sAtN = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { sAtN[i] = sig[i]; }
   for (i32 i = 0; i < 32; i++) { sAtN[32 + i] = n[i]; }
   t.isFalse(p256Verify(pub, msg, sAtN), "s = n is refused");
 
-  t.isFalse(p256Verify(pub, msg, u8[63]()), "a 63-byte signature is refused");
+  t.isFalse(p256Verify(pub, msg, u8[].filled(63, 0)), "a 63-byte signature is refused");
   return t.report();
 }
 
@@ -237,7 +237,7 @@ struct FieldRng {
   i64 s;
   FieldRng create(i64 seed) { return FieldRng(seed); }
   u8[] bytes(this, i32 n) {
-    u8[] o = u8[n]();
+    u8[] o = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) {
       this.s = (this.s * 6364136223846793005 + 1442695040888963407);
       o[i] = ((this.s >> 33) & 255) as! i32;
@@ -254,8 +254,8 @@ struct FieldRng {
  * so the same list serves both widths.
  */
 u8[][] fieldCorpus(i32 width, string[] edges) {
-  i32[] bits = i32[](32, 64, 96, 128, 160, 192, 224, 255);
-  u8[][] out = u8[][3 + edges.len() + bits.len() * 2 + 60]();
+  i32[] bits = [32, 64, 96, 128, 160, 192, 224, 255];
+  u8[][] out = u8[][].defaulted(3 + edges.len() + bits.len() * 2 + 60);
   i32 at = 0;
 
   // Zero, one, two, then p-1, p-2 and (p-1)/2 — the caller passes those, because they are the one
@@ -266,7 +266,7 @@ u8[][] fieldCorpus(i32 width, string[] edges) {
   // reference has no way to agree with, and the first attempt at this file was six failures for
   // exactly that reason. `fpInRange` is the function that says whether bytes off the wire qualify,
   // and it is tested by the refusals rather than here.
-  out[at] = u8[width](); at = at + 1;
+  out[at] = u8[].filled(width, 0); at = at + 1;
   out[at] = oneAt(width, 0); at = at + 1;
   out[at] = oneAt(width, 1); at = at + 1;
   for (i32 i = 0; i < edges.len(); i++) { out[at] = decodedHex(edges[i]); at = at + 1; }
@@ -289,23 +289,25 @@ u8[][] fieldCorpus(i32 width, string[] edges) {
 /** p-1, p-2 and (p-1)/2 for each curve, which have no short form. */
 string[] edgesFor(string curve) {
   if (curve == "p256") {
-    return string[](
+    return [
       "ffffffff00000001000000000000000000000000fffffffffffffffffffffffe",
       "ffffffff00000001000000000000000000000000fffffffffffffffffffffffd",
-      "7fffffff800000008000000000000000000000007fffffffffffffffffffffff");
+      "7fffffff800000008000000000000000000000007fffffffffffffffffffffff"
+    ];
   }
-  return string[](
-    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
+  return [
+      "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
       "ffffffff0000000000000000fffffffe",
     "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
       "ffffffff0000000000000000fffffffd",
     "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" +
-      "7fffffff80000000000000007fffffff");
+      "7fffffff80000000000000007fffffff"
+  ];
 }
 
 /** `1 << bit`, big-endian in `width` bytes. */
 u8[] powerOfTwo(i32 width, i32 bit) {
-  u8[] o = u8[width]();
+  u8[] o = u8[].filled(width, 0);
   i32 idx = width - 1 - bit / 8;
   if (idx >= 0) { o[idx] = 1 << (bit % 8); }
   return o;
@@ -313,7 +315,7 @@ u8[] powerOfTwo(i32 width, i32 bit) {
 
 /** `(1 << bit) - 1`, which is where a reduction that is off by one word shows up. */
 u8[] powerOfTwoLess(i32 width, i32 bit) {
-  u8[] o = u8[width]();
+  u8[] o = u8[].filled(width, 0);
   for (i32 b = 0; b < bit; b++) {
     i32 idx = width - 1 - b / 8;
     if (idx >= 0) { o[idx] = o[idx] | (1 << (b % 8)); }
@@ -322,7 +324,7 @@ u8[] powerOfTwoLess(i32 width, i32 bit) {
 }
 
 u8[] oneAt(i32 width, i32 v) {
-  u8[] o = u8[width]();
+  u8[] o = u8[].filled(width, 0);
   o[width - 1] = v + 1;
   return o;
 }
@@ -333,8 +335,8 @@ void claimFp(Lines lines, string curve, string what, u8[] a, u8[] b, u8[] got) {
 
 export string test_the_fields_agree_with_bigint(Core core, Cli cli) {
   T t = T.create();
-  string[] curves = string[]("p256", "p384");
-  i32[] widths = i32[](32, 48);
+  string[] curves = ["p256", "p384"];
+  i32[] widths = [32, 48];
   Lines lines = Lines.create();
   for (i32 c = 0; c < curves.len(); c++) {
     u8[][] all = fieldCorpus(widths[c], edgesFor(curves[c]));
@@ -349,20 +351,20 @@ export string test_the_fields_agree_with_bigint(Core core, Cli cli) {
       claimFp(lines, curves[c], "neg", a, b, fpToBytes(fpNeg(fpFromBytes(a))));
     }
   }
-  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "both fields over the corpus");
+  check(t, cli, "node", [CRYPTO_ORACLE], lines, "both fields over the corpus");
   return t.report();
 }
 
 export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core core, Cli cli) {
   T t = T.create();
-  string[] curves = string[]("p256", "p384");
-  i32[] widths = i32[](32, 48);
+  string[] curves = ["p256", "p384"];
+  i32[] widths = [32, 48];
   Lines lines = Lines.create();
   for (i32 c = 0; c < curves.len(); c++) {
     u8[][] all = fieldCorpus(widths[c], edgesFor(curves[c]));
     for (i32 i = 0; i < 25 && i < all.len(); i++) {
       i64[] a = fpFromBytes(all[i]);
-      claimFp(lines, curves[c], "inv", all[i], u8[0](), fpToBytes(fpInvert(a)));
+      claimFp(lines, curves[c], "inv", all[i], u8[](), fpToBytes(fpInvert(a)));
 
       // The defining property, checked here rather than through the exponent — this catches an
       // inversion that agreed with a wrong reference.
@@ -372,7 +374,7 @@ export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core c
       }
     }
   }
-  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "inversion in both fields");
+  check(t, cli, "node", [CRYPTO_ORACLE], lines, "inversion in both fields");
   return t.report();
 }
 
@@ -424,8 +426,8 @@ export string test_the_exceptional_cases_in_the_p256_addition_law() {
   u8[] negG = p256ScalarBase(nMinusOne);
   t.eqStr(hex(negG).slice(2, 66), hex(g).slice(2, 66), "(n-1)G has G's x");
 
-  u8[] gy = u8[32]();
-  u8[] ny = u8[32]();
+  u8[] gy = u8[].filled(32, 0);
+  u8[] ny = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { gy[i] = g[33 + i]; ny[i] = negG[33 + i]; }
   t.isTrue(fpIsZero(fpAdd(fpFromBytes(gy), fpFromBytes(ny))),
            "(n-1)G is -G: the y coordinates sum to p");
@@ -441,7 +443,7 @@ export string test_a_p384_signature_is_rejected_under_the_wrong_key(Core core, C
   Lines lines = Lines.create();
   lines.add("ecgensign 384 " + hex(msg));
   lines.add("ecgensign 384 " + hex(msg));
-  Answers a = ask(t, cli, "node", string[](CRYPTO_ORACLE), lines, "two P-384 keys and signatures");
+  Answers a = ask(t, cli, "node", [CRYPTO_ORACLE], lines, "two P-384 keys and signatures");
   if (!a.ok) { return t.report(); }
 
   u8[] pointA = decodedHex(word(a.lines[0], 2));
@@ -460,7 +462,7 @@ export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, 
   u8[] msg = "a short digest under a long curve".toBytes();
   Lines lines = Lines.create();
   lines.add("ecgensign 384 " + hex(msg) + " sha256");
-  Answers a = ask(t, cli, "node", string[](CRYPTO_ORACLE), lines, "a SHA-256 signature on P-384");
+  Answers a = ask(t, cli, "node", [CRYPTO_ORACLE], lines, "a SHA-256 signature on P-384");
   if (!a.ok) { return t.report(); }
   t.isTrue(p384VerifyDigest(decodedHex(word(a.lines[0], 2)), sha256(msg),
                             decodedHex(word(a.lines[0], 3))),
@@ -481,33 +483,33 @@ export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, 
  */
 export string test_a_malformed_public_key_is_false_not_a_trap(Core core, Cli cli) {
   T t = T.create();
-  u8[] sig = u8[64]();
+  u8[] sig = u8[].filled(64, 0);
   sig[31] = 1;
   sig[63] = 1;
-  u8[] noPrefix = u8[65]();          // right length, no 0x04
-  u8[] digest = u8[32]();
+  u8[] noPrefix = u8[].filled(65, 0);          // right length, no 0x04
+  u8[] digest = u8[].filled(32, 0);
 
-  t.isFalse(p256Verify(noPrefix, u8[0](), sig), "p256Verify trapped on a prefixless key");
+  t.isFalse(p256Verify(noPrefix, u8[](), sig), "p256Verify trapped on a prefixless key");
   t.isFalse(p256VerifyDigest(noPrefix, digest, sig), "p256VerifyDigest trapped on it");
 
-  u8[] sig384 = u8[96]();
+  u8[] sig384 = u8[].filled(96, 0);
   sig384[47] = 1;
   sig384[95] = 1;
-  u8[] noPrefix384 = u8[97]();
-  t.isFalse(p384Verify(noPrefix384, u8[0](), sig384), "p384Verify trapped on a prefixless key");
-  t.isFalse(p384VerifyDigest(noPrefix384, u8[48](), sig384), "p384VerifyDigest trapped on it");
+  u8[] noPrefix384 = u8[].filled(97, 0);
+  t.isFalse(p384Verify(noPrefix384, u8[](), sig384), "p384Verify trapped on a prefixless key");
+  t.isFalse(p384VerifyDigest(noPrefix384, u8[].filled(48, 0), sig384), "p384VerifyDigest trapped on it");
 
   // And the shapes either side of the length, which took a different route in: too short and too
   // long were both refused by the length check before, and must still be.
-  t.isFalse(p256Verify(u8[64](), u8[0](), sig), "a 64-byte key");
-  t.isFalse(p256Verify(u8[66](), u8[0](), sig), "a 66-byte key");
+  t.isFalse(p256Verify(u8[].filled(64, 0), u8[](), sig), "a 64-byte key");
+  t.isFalse(p256Verify(u8[].filled(66, 0), u8[](), sig), "a 66-byte key");
 
   // The canary: a real key and a real signature over a real message still verify.
-  u8[] priv = u8[32]();
+  u8[] priv = u8[].filled(32, 0);
   priv[31] = 9;
   u8[] pub = p256PublicKey(priv);
   u8[] msg = "malformed keys".toBytes();
-  u8[] k = u8[32]();
+  u8[] k = u8[].filled(32, 0);
   k[31] = 7;
   u8[] good = p256Sign(priv, msg, k);
   t.isTrue(good.len() == 64 && p256Verify(pub, msg, good),
@@ -537,41 +539,41 @@ export string test_a_point_is_recognised_as_on_the_curve_or_not() {
 
   // Real points, from this file's own generator.
   for (i32 k = 1; k < 6; k++) {
-    u8[] pub = p256PublicKey(u8[32](fill: k));
+    u8[] pub = p256PublicKey(u8[].filled(32, k));
     t.eqI32(pub.len(), 65, "a public key is not 65 uncompressed bytes");
     t.isTrue(p256Decodes(pub), "a point this package generated was not recognised, k = " + itoa64(k as i64));
   }
 
-  u8[] good = p256PublicKey(u8[32](fill: 0x11));
+  u8[] good = p256PublicKey(u8[].filled(32, 0x11));
 
   // One bit of y: the coordinates are a field element pair that no longer satisfies y² = x³ − 3x + b.
-  u8[] offCurve = u8[65]();
+  u8[] offCurve = u8[].filled(65, 0);
   for (i32 i = 0; i < 65; i++) { offCurve[i] = good[i]; }
   offCurve[64] = offCurve[64] ^ 0x01;
   t.isFalse(p256Decodes(offCurve), "a point one bit off the curve was recognised");
 
   // One bit of x, which moves it just as far off.
-  u8[] offX = u8[65]();
+  u8[] offX = u8[].filled(65, 0);
   for (i32 i = 0; i < 65; i++) { offX[i] = good[i]; }
   offX[32] = offX[32] ^ 0x01;
   t.isFalse(p256Decodes(offX), "a point with x moved one bit was recognised");
 
   // The uncompressed prefix and nothing else — the shape a hostile peer sends because it costs
   // nothing to construct.
-  t.isFalse(p256Decodes(u8[65](fill: 0x04)), "sixty-five bytes of 0x04 were recognised as a point");
-  t.isFalse(p256Decodes(u8[65]()), "sixty-five zero bytes were recognised as a point");
+  t.isFalse(p256Decodes(u8[].filled(65, 0x04)), "sixty-five bytes of 0x04 were recognised as a point");
+  t.isFalse(p256Decodes(u8[].filled(65, 0)), "sixty-five zero bytes were recognised as a point");
 
   // Wrong widths, and the compressed form this decoder does not accept.
-  t.isFalse(p256Decodes(u8[0]()), "an empty array was recognised as a point");
-  t.isFalse(p256Decodes(u8[64](fill: 0x04)), "a 64-byte value was recognised as a point");
-  t.isFalse(p256Decodes(u8[66](fill: 0x04)), "a 66-byte value was recognised as a point");
-  u8[] compressed = u8[33]();
+  t.isFalse(p256Decodes(u8[]()), "an empty array was recognised as a point");
+  t.isFalse(p256Decodes(u8[].filled(64, 0x04)), "a 64-byte value was recognised as a point");
+  t.isFalse(p256Decodes(u8[].filled(66, 0x04)), "a 66-byte value was recognised as a point");
+  u8[] compressed = u8[].filled(33, 0);
   compressed[0] = 0x02;
   for (i32 i = 0; i < 32; i++) { compressed[1 + i] = good[1 + i]; }
   t.isFalse(p256Decodes(compressed), "a compressed point was recognised by an uncompressed decoder");
 
   // A valid point with the wrong prefix byte: the coordinates are right and the encoding is not.
-  u8[] badPrefix = u8[65]();
+  u8[] badPrefix = u8[].filled(65, 0);
   for (i32 i = 0; i < 65; i++) { badPrefix[i] = good[i]; }
   badPrefix[0] = 0x05;
   t.isFalse(p256Decodes(badPrefix), "a point tagged 0x05 was recognised");
@@ -580,7 +582,7 @@ export string test_a_point_is_recognised_as_on_the_curve_or_not() {
   // will not trap on. Only the accepting direction is checkable here — calling `p256Ecdh` on a point
   // it refuses would end the run — which is the asymmetry the trap creates and the reason the
   // question had to exist separately.
-  u8[] secret = p256Ecdh(u8[32](fill: 0x22), good);
+  u8[] secret = p256Ecdh(u8[].filled(32, 0x22), good);
   t.eqI32(secret.len(), 32, "ECDH over a point p256Decodes accepted did not produce a secret");
   return t.report();
 }

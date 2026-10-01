@@ -22,18 +22,18 @@ import { denoIgnoreRoots } from "../runTests.wac";
 /** The string entries of `deno.json`'s top-level `exclude` array. */
 string[] excludeOf(string text) {
   i32 at = text.indexOf("\"exclude\"");
-  if (at < 0) { return string[0](fill: ""); }
+  if (at < 0) { return string[].filled(0, ""); }
   string rest = text.slice(at, text.len());
   i32 open = rest.indexOf("[");
   i32 close = rest.indexOf("]");
-  if (open < 0 || close < 0 || close < open) { return string[0](fill: ""); }
+  if (open < 0 || close < 0 || close < open) { return string[].filled(0, ""); }
   string body = rest.slice(open + 1, close);
 
   i32 n = 0;
   for (i32 i = 0; i < body.len(); i++) {
     if (body.slice(i, i + 1) == "\"") { n = n + 1; }
   }
-  string[] out = string[n / 2](fill: "");
+  string[] out = string[].filled(n / 2, "");
   i32 kept = 0;
   i32 from = -1;
   for (i32 i = 0; i < body.len(); i++) {

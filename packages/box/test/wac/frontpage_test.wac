@@ -60,7 +60,7 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  * silently accepting it is how this check would stop meaning anything.
  */
 string[] quotedStrings(string text) {
-  string[] out = string[128](fill: "");
+  string[] out = string[].filled(128, "");
   i32 n = 0;
   u8[] b = text.toBytes();
   bool inside = false;
@@ -73,7 +73,7 @@ string[] quotedStrings(string text) {
     out[n] = unescapeTs(text.slice(start, i));
     n = n + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -94,7 +94,7 @@ string unescapeTs(string s) {
 }
 
 string oneChar(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }
@@ -119,7 +119,7 @@ string[] transcript(Core core, Cli cli) {
 
 /** The commands `term.wac` runs before it hands the keyboard over. */
 string[] opening(Core core, Cli cli) {
-  string block = between(read(core, cli, TERM), "string[] opening = string[](", "\n  );");
+  string block = between(read(core, cli, TERM), "string[] opening = [", "];");
   if (block == "") { trap; }
   return quotedStrings(block);
 }
@@ -171,8 +171,8 @@ export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core c
   string stem = work + "/boxsh";
 
   Exec built = cli.exec(binary(cli),
-                        string[]("build", SHELL, "-o", stem, "--allow-read", "--allow-write"),
-                        u8[0]()).wait();
+                        ["build", SHELL, "-o", stem, "--allow-read", "--allow-write"],
+                        u8[]()).wait();
   t.isTrue(built.ran() && built.status == 0,
            "the shell builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
   if (!built.ran() || built.status != 0) { return t.report(); }
@@ -180,7 +180,7 @@ export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core c
   for (i32 i = 0; i + 1 < rows.len(); i = i + 2) {
     string command = rows[i];
     string expected = rows[i + 1];
-    Exec r = cli.exec(binary(cli), string[](stem + ".wasm", "-c", command), u8[0]()).wait();
+    Exec r = cli.exec(binary(cli), [stem + ".wasm", "-c", command], u8[]()).wait();
     t.isTrue(r.ran(), command + ": the shell would not start — " + r.error);
     if (!r.ran()) { continue; }
     t.eqStr(trimTrailingNewlines(string.fromBytes(r.stdout)), expected,

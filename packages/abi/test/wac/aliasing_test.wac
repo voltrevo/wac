@@ -31,7 +31,7 @@ import { T_UINT, T_BOOL, T_BYTES, T_ARRAY, T_FIXED, unhex } from "./descriptor.w
 
 /** A 32-byte big-endian word holding `v`. */
 u8[] word(i32 v) {
-  u8[] w = u8[32]();
+  u8[] w = u8[].filled(32, 0);
   w[28] = (v >> 24) & 0xFF;
   w[29] = (v >> 16) & 0xFF;
   w[30] = (v >> 8) & 0xFF;
@@ -48,7 +48,7 @@ u8[] word(i32 v) {
  * the offset it was expecting. That was this file's first draft, and the control caught it.
  */
 u8[] argument(u8[][] words) {
-  u8[][] all = u8[][words.len() + 1](fill: u8[0]());
+  u8[][] all = u8[][].filled(words.len() + 1, u8[]());
   all[0] = word(32);
   for (i32 i = 0; i < words.len(); i++) { all[i + 1] = words[i]; }
   return joinWords(all);
@@ -58,7 +58,7 @@ u8[] argument(u8[][] words) {
 u8[] joinWords(u8[][] words) {
   i32 n = 0;
   for (i32 i = 0; i < words.len(); i++) { n = n + words[i].len(); }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < words.len(); i++) {
     for (i32 k = 0; k < words[i].len(); k++) { out[at + k] = words[i][k]; }
@@ -82,7 +82,7 @@ string why(u8[] data, i32[] schema) {
  */
 export string test_a_bool_is_a_padded_zero_or_one_and_nothing_else() {
   T t = T.create();
-  i32[] schema = i32[](T_BOOL);
+  i32[] schema = [T_BOOL];
 
   // The two legitimate spellings.
   t.eqStr(why(word(0), schema), "", "a padded false was refused");
@@ -121,11 +121,11 @@ export string test_a_bool_is_a_padded_zero_or_one_and_nothing_else() {
 export string test_an_element_offset_cannot_point_into_the_head_or_past_the_end() {
   T t = T.create();
   // `string[]` — a dynamic array of dynamic elements, which is the shape that has a head of offsets.
-  i32[] schema = i32[](T_ARRAY, 6);          // array of string
+  i32[] schema = [T_ARRAY, 6];          // array of string
 
   // A well-formed two-element array: count, two offsets, then the two elements. The offsets are
   // relative to the start of the head, so the first element sits at 64 — two offset words in.
-  u8[][] good = u8[][7](fill: u8[0]());
+  u8[][] good = u8[][].filled(7, u8[]());
   good[0] = word(2);                          // count
   good[1] = word(64);                         // offset of element 0
   good[2] = word(128);                        // offset of element 1
@@ -137,7 +137,7 @@ export string test_an_element_offset_cannot_point_into_the_head_or_past_the_end(
   t.eqStr(why(ok, schema), "", "the well-formed array was refused, so the negatives prove nothing");
 
   // **Element 1 aimed back into the head.** Offset 0 is element 0's own offset word.
-  u8[][] alias = u8[][7](fill: u8[0]());
+  u8[][] alias = u8[][].filled(7, u8[]());
   for (i32 i = 0; i < 7; i++) { alias[i] = good[i]; }
   alias[2] = word(0);
   string back = why(argument(alias), schema);
@@ -145,14 +145,14 @@ export string test_an_element_offset_cannot_point_into_the_head_or_past_the_end(
   t.isTrue(back.indexOf("back into") >= 0, "the message does not say where it points: " + back);
 
   // An offset just below the head's length is the boundary — 32 is inside a two-word head.
-  u8[][] edge = u8[][7](fill: u8[0]());
+  u8[][] edge = u8[][].filled(7, u8[]());
   for (i32 i = 0; i < 7; i++) { edge[i] = good[i]; }
   edge[2] = word(32);
   t.isTrue(why(argument(edge), schema).len() > 0,
            "an element offset inside the head was accepted at the boundary");
 
   // And one aimed past the end of the array.
-  u8[][] far = u8[][7](fill: u8[0]());
+  u8[][] far = u8[][].filled(7, u8[]());
   for (i32 i = 0; i < 7; i++) { far[i] = good[i]; }
   far[2] = word(4096);
   string out = why(argument(far), schema);
@@ -171,24 +171,24 @@ export string test_an_element_offset_cannot_point_into_the_head_or_past_the_end(
  */
 export string test_a_word_that_cannot_be_an_index_is_refused_rather_than_wrapped() {
   T t = T.create();
-  i32[] schema = i32[](T_ARRAY, 1);          // array of uint
+  i32[] schema = [T_ARRAY, 1];          // array of uint
 
   // A count that is a full word of ones.
-  u8[] huge = u8[32](fill: 0xFF);
-  string big = why(argument(u8[][](huge)), schema);
+  u8[] huge = u8[].filled(32, 0xFF);
+  string big = why(argument([huge]), schema);
   t.isTrue(big.len() > 0, "a 2^256 element count was accepted");
 
   // A count that fits a word and not an i32: 2^31 exactly.
-  u8[] justOver = u8[32]();
+  u8[] justOver = u8[].filled(32, 0);
   justOver[28] = 0x80;
-  t.isTrue(why(argument(u8[][](justOver)), schema).len() > 0, "a count of 2^31 was accepted");
+  t.isTrue(why(argument([justOver]), schema).len() > 0, "a count of 2^31 was accepted");
 
   // A count that is fine and data that is not there: two elements promised, none supplied.
-  t.isTrue(why(argument(u8[][](word(2))), schema).len() > 0,
+  t.isTrue(why(argument([word(2)]), schema).len() > 0,
            "an array whose elements are missing was accepted");
 
   // And the well-formed twin, so the three above are about the numbers rather than the schema.
-  u8[][] one = u8[][2](fill: u8[0]());
+  u8[][] one = u8[][].filled(2, u8[]());
   one[0] = word(1);
   one[1] = word(7);
   t.eqStr(why(argument(one), schema), "", "a one-element array of uint was refused");
@@ -212,9 +212,9 @@ export string test_a_word_that_cannot_be_an_index_is_refused_rather_than_wrapped
  */
 export string test_an_accessor_asked_for_the_wrong_variant_answers_an_empty_default() {
   T t = T.create();
-  Value word = Value.Word(u8[32](fill: 7));
-  Value bytes = Value.Bytes(u8[](1, 2, 3));
-  Value list = Value.List(Value[1](fill: word));
+  Value word = Value.Word(u8[].filled(32, 7));
+  Value bytes = Value.Bytes([1, 2, 3] as u8[]);
+  Value list = Value.List(Value[].filled(1, word));
 
   // Each accessor for the variant it is for.
   t.eqI32(wordOfValue(word)[0], 7, "wordOfValue did not answer the word");
@@ -234,7 +234,7 @@ export string test_an_accessor_asked_for_the_wrong_variant_answers_an_empty_defa
 
 /** The message `encode` refused a value with, or "" when it accepted it. */
 string refusal(Value v, i32[] schema) {
-  Value[] one = Value[1](fill: v);
+  Value[] one = Value[].filled(1, v);
   Encoded e = encode(one, schema);
   return e.ok ? "" : e.error;
 }
@@ -252,39 +252,39 @@ string refusal(Value v, i32[] schema) {
  */
 export string test_encoding_a_value_of_the_wrong_shape_says_which_and_where() {
   T t = T.create();
-  Value word = Value.Word(u8[32]());
-  Value bytes = Value.Bytes(u8[](1, 2, 3));
-  Value list1 = Value.List(Value[1](fill: word));
+  Value word = Value.Word(u8[].filled(32, 0));
+  Value bytes = Value.Bytes([1, 2, 3] as u8[]);
+  Value list1 = Value.List(Value[].filled(1, word));
 
   // **Every message names the argument first** — `member 0:` — which the exact-match version of this
   // test did not expect and which is the more useful half: a caller with six arguments needs to know
   // which one, and the type-and-variant sentence alone would not say.
-  string w = refusal(word, i32[](T_BYTES));
+  string w = refusal(word, [T_BYTES]);
   t.isTrue(w.indexOf("member 0: ") == 0, "the refusal does not name the argument: " + w);
   t.isTrue(w.indexOf("a bytes or string needs Bytes, and a Word was given") > 0,
            "the Word message drifted: " + w);
-  t.isTrue(refusal(list1, i32[](T_BYTES)).indexOf("and a List was given") > 0,
+  t.isTrue(refusal(list1, [T_BYTES]).indexOf("and a List was given") > 0,
            "the List message drifted");
-  t.eqStr(refusal(bytes, i32[](T_BYTES)), "", "a bytes given Bytes was refused");
+  t.eqStr(refusal(bytes, [T_BYTES]), "", "a bytes given Bytes was refused");
 
   // An array given the two things it is not.
-  t.isTrue(refusal(word, i32[](T_ARRAY, T_UINT)).indexOf("needs List, and a Word was given") > 0,
+  t.isTrue(refusal(word, [T_ARRAY, T_UINT]).indexOf("needs List, and a Word was given") > 0,
            "the array-Word message drifted");
-  t.isTrue(refusal(bytes, i32[](T_ARRAY, T_UINT)).indexOf("needs List, and Bytes were given") > 0,
+  t.isTrue(refusal(bytes, [T_ARRAY, T_UINT]).indexOf("needs List, and Bytes were given") > 0,
            "the array-Bytes message drifted");
 
   // **A fixed array of the wrong length**, which is the one mismatch that is about a number rather
   // than a variant: the schema says how many and the tree has a different count.
-  Value three = Value.List(Value[3](fill: word));
-  string wrong = refusal(three, i32[](T_FIXED, 2, T_UINT));
+  Value three = Value.List(Value[].filled(3, word));
+  string wrong = refusal(three, [T_FIXED, 2, T_UINT] as i32[]);
   t.isTrue(wrong.indexOf("was given 3 elements") >= 0,
            "a fixed[2] given three elements did not say so: " + wrong);
-  t.eqStr(refusal(Value.List(Value[2](fill: word)), i32[](T_FIXED, 2, T_UINT)), "",
+  t.eqStr(refusal(Value.List(Value[].filled(2, word)), [T_FIXED, 2, T_UINT] as i32[]), "",
           "a fixed[2] given two elements was refused");
 
   // And a bad element *inside* an array, which must name its index.
-  Value inner = Value.List(Value[2](fill: bytes));
-  string el = refusal(inner, i32[](T_ARRAY, T_UINT));
+  Value inner = Value.List(Value[].filled(2, bytes));
+  string el = refusal(inner, [T_ARRAY, T_UINT]);
   t.isTrue(el.indexOf("element 0") >= 0, "a bad element did not name its index: " + el);
   return t.report();
 }

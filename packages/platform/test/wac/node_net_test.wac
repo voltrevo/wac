@@ -32,7 +32,7 @@ import { freshDir } from "../../../wactest/src/host.wac";
 string root(Cli cli) { return cli.cwd().wait(); }
 
 bool haveNode(Cli cli) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "command -v node >/dev/null"), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "command -v node >/dev/null"], u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
@@ -45,8 +45,10 @@ string freshScratch(T t, Cli cli, string name) {
 
 string build(Cli cli, string out, string target) {
   Exec r = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/greet.wac",
-             "--allow-net", "--target", target, "-o", out), u8[0]()).wait();
+    [
+             "run", "-A", "packages/platform/build.ts", "packages/platform/example/greet.wac",
+             "--allow-net", "--target", target, "-o", out
+    ], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     return "greet.wac for " + target + " did not build: " + string.fromBytes(r.stderr);
   }
@@ -97,9 +99,11 @@ Server start(Cli cli, string dir, string name, string prog, string[] args) {
   // `packages/wactest/src/daemon.wac`. It does not need to: that file uses `exec` inside the braces,
   // so its `$!` is already the program's, and its own header says why.
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "( " + line + " & child=$!; echo $child > " + quoted(pidfile) +
+    [
+                   "-c", "( " + line + " & child=$!; echo $child > " + quoted(pidfile) +
                    "; wait $child; echo EXIT=$? > " + quoted(status) + " ) >" + quoted(log) +
-                   " 2>&1 & echo $!"), u8[0]()).wait();
+                   " 2>&1 & echo $!"
+    ], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     return Server(-1, log, status, pidfile,
                   "the shell did not start it — " + string.fromBytes(r.stderr));
@@ -200,15 +204,15 @@ bool kill(Core core, Cli cli, Server s) {
   if (s.pid <= 0) { return true; }
   i32 child = childPid(core, cli, s);
   if (child > 0) {
-    cli.exec("/bin/sh", string[]("-c", "kill -9 " + itoa(child) + " 2>/dev/null; true"),
-             u8[0]()).wait();
+    cli.exec("/bin/sh", ["-c", "kill -9 " + itoa(child) + " 2>/dev/null; true"],
+             u8[]()).wait();
   }
-  cli.exec("/bin/sh", string[]("-c", "kill -9 " + itoa(s.pid) + " 2>/dev/null; true"), u8[0]()).wait();
+  cli.exec("/bin/sh", ["-c", "kill -9 " + itoa(s.pid) + " 2>/dev/null; true"], u8[]()).wait();
   if (child <= 0) { return false; }
   // `kill -0` asks whether the pid exists without touching it; a reaped child answers no.
   for (i32 tries = 0; tries < 200; tries++) {
-    Exec alive = cli.exec("/bin/sh", string[]("-c", "kill -0 " + itoa(child) + " 2>/dev/null"),
-                          u8[0]()).wait();
+    Exec alive = cli.exec("/bin/sh", ["-c", "kill -0 " + itoa(child) + " 2>/dev/null"],
+                          u8[]()).wait();
     if (!alive.ran() || alive.status != 0) { return true; }
     core.sleepMillis(10).wait();
   }
@@ -256,8 +260,8 @@ export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_c
 
   // Loopback, so the peer is knowable: whatever address the client comes from is the one the server
   // must report, and on loopback that is `127.0.0.1` on both runtimes.
-  Greeted onDeno = greet(core, cli, dir, "deno", denoOut, string[]("127.0.0.1", "0"));
-  Greeted onNode = greet(core, cli, dir, "node", "node", string[](nodeOut, "127.0.0.1", "0"));
+  Greeted onDeno = greet(core, cli, dir, "deno", denoOut, ["127.0.0.1", "0"]);
+  Greeted onNode = greet(core, cli, dir, "node", "node", [nodeOut, "127.0.0.1", "0"]);
   t.eqStr(onDeno.error, "", "the Deno server ran");
   t.eqStr(onNode.error, "", "the Node server ran");
 
@@ -300,7 +304,7 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     held.release(cli);
 
     Server s = start(cli, dir, "bind" + itoa(attempt), "node",
-                     string[](nodeOut, "127.0.0.1", itoa(port)));
+                     [nodeOut, "127.0.0.1", itoa(port)]);
     t.eqStr(s.error, "", "node started");
     if (s.error != "") { break; }
     i32 got = waitForPort(core, cli, s, 30000);
@@ -316,7 +320,7 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
       break;
     }
 
-    Exec ss = cli.exec("ss", string[]("-ltn"), u8[0]()).wait();
+    Exec ss = cli.exec("ss", ["-ltn"], u8[]()).wait();
     t.isTrue(ss.ran(), "ss ran — " + ss.error);
     string table = string.fromBytes(ss.stdout);
     string line = "";
@@ -344,7 +348,7 @@ string[] linesOf(string text) {
   u8[] b = text.toBytes();
   i32 count = 1;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { count = count + 1; } }
-  string[] out = string[count](fill: "");
+  string[] out = string[].filled(count, "");
   i32 n = 0;
   i32 at = 0;
   for (i32 i = 0; i < b.len(); i++) {

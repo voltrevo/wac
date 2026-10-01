@@ -120,7 +120,7 @@ export struct Rule {
 export string[] linesOf(string s) {
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   string cur = "";
   for (i32 i = 0; i < s.len(); i++) {
@@ -155,7 +155,7 @@ export string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/rel
 
 /** The tab-separated fields of a row, padded to `want`. */
 export string[] fields(string row, i32 want) {
-  string[] out = string[want](fill: "");
+  string[] out = string[].filled(want, "");
   i32 n = 0;
   string cur = "";
   for (i32 i = 0; i <= row.len(); i++) {
@@ -251,7 +251,7 @@ export struct Measured {
  * this rather than a name per byte — spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`.
  */
 export Measured measure(Core core, Cli cli, string entry, string[] grants, string[] exports) {
-  Measured none = Measured(Point[1](fill: Point(0, "", 0, 0, "")), 0, i32[1]());
+  Measured none = Measured(Point[].filled(1, Point(0, "", 0, 0, "")), 0, i32[].filled(1, 0));
 
   // **A directory per exercise, because `wac task coverage:all` runs four of these at once.**
   //
@@ -265,7 +265,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   cli.mkdir(dir, true).wait();
   string stem = dir + "/prog";
 
-  string[] build = string[6 + grants.len()](fill: "");
+  string[] build = string[].filled(6 + grants.len(), "");
   build[0] = "build";
   build[1] = entry;
   build[2] = "--coverage";
@@ -273,7 +273,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   build[3 + grants.len()] = "-o";
   build[4 + grants.len()] = stem;
   build[5 + grants.len()] = "--quiet";
-  Exec built = cli.exec(binary(cli), build, u8[0]()).wait();
+  Exec built = cli.exec(binary(cli), build, u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     core.warn("error: " + entry + " did not build — " + execReason(built));
     cli.remove(dir, true).wait();
@@ -286,11 +286,11 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
     cli.remove(dir, true).wait();
     return none;
   }
-  string[] dump = string[2 + exports.len()](fill: "");
+  string[] dump = string[].filled(2 + exports.len(), "");
   dump[0] = "covdump";
   dump[1] = stem + ".wasm";
   for (i32 i = 0; i < exports.len(); i++) { dump[2 + i] = exports[i]; }
-  Exec dumped = cli.exec(binary(cli), dump, u8[0]()).wait();
+  Exec dumped = cli.exec(binary(cli), dump, u8[]()).wait();
   if (!dumped.ran() || dumped.status != 0) {
     core.warn("error: covdump — " + execReason(dumped));
     cli.remove(dir, true).wait();
@@ -310,7 +310,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
     string[] f = fields(dumpRows[i], 2);
     if (numberOf(f[0]) == nCounts && isCount(f[1])) { nCounts = nCounts + 1; }
   }
-  i32[] counts = i32[nCounts > 0 ? nCounts : 1]();
+  i32[] counts = i32[].filled(nCounts > 0 ? nCounts : 1, 0);
   i32 at = 0;
   for (i32 i = 0; i < dumpRows.len() && at < nCounts; i++) {
     string[] f = fields(dumpRows[i], 2);
@@ -319,7 +319,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
 
   // `index\tline\tcol\tkind\tfile` per counter, in counter order.
   string[] rows = linesOf(string.fromBytes(table.bytes));
-  Point[] points = Point[rows.len()](fill: Point(0, "", 0, 0, ""));
+  Point[] points = Point[].filled(rows.len(), Point(0, "", 0, 0, ""));
   i32 nPoints = 0;
   for (i32 i = 0; i < rows.len(); i++) {
     if (rows[i].len() == 0) { continue; }
@@ -460,11 +460,11 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
 
   // Per file, and the skipped ones named. The skip list walks the raw points, because a test file that
   // contributes nothing but duplicates still has to be named.
-  string[] files = string[nMerged > 0 ? nMerged : 1](fill: "");
-  i32[] fileN = i32[nMerged > 0 ? nMerged : 1]();
-  i32[] fileC = i32[nMerged > 0 ? nMerged : 1]();
+  string[] files = string[].filled(nMerged > 0 ? nMerged : 1, "");
+  i32[] fileN = i32[].filled(nMerged > 0 ? nMerged : 1, 0);
+  i32[] fileC = i32[].filled(nMerged > 0 ? nMerged : 1, 0);
   i32 nFiles = 0;
-  string[] skipped = string[nPoints > 0 ? nPoints : 1](fill: "");
+  string[] skipped = string[].filled(nPoints > 0 ? nPoints : 1, "");
   i32 nSkipped = 0;
   i32 total = 0;
   i32 covered = 0;
@@ -487,7 +487,7 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
 
   core.log("| file | points | covered | % |");
   core.log("|---|---:|---:|---:|");
-  string[] order = string[nFiles](fill: "");
+  string[] order = string[].filled(nFiles, "");
   for (i32 i = 0; i < nFiles; i++) { order[i] = files[i]; }
   sortStrings(order, nFiles);
   for (i32 i = 0; i < nFiles; i++) {
@@ -511,7 +511,7 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
   i32 nMissed = total - covered;
   if (nMissed > 0) {
     // Sorted by file then line, which is the order somebody reads them in.
-    string[] missed = string[nMissed](fill: "");
+    string[] missed = string[].filled(nMissed, "");
     i32 m = 0;
     for (i32 i = 0; i < nMerged; i++) {
       Merged p = merged[i];
@@ -578,9 +578,9 @@ export i32 mergePoints(Point[] points, i32 nPoints, i32[] counts, string prefix,
   for (i32 i = 0; i < nPoints; i++) {
     if (points[i].line > maxLine) { maxLine = points[i].line; }
   }
-  i32[] head = i32[maxLine + 2]();
+  i32[] head = i32[].filled(maxLine + 2, 0);
   for (i32 i = 0; i < head.len(); i++) { head[i] = -1; }
-  i32[] next = i32[nPoints > 0 ? nPoints : 1]();
+  i32[] next = i32[].filled(nPoints > 0 ? nPoints : 1, 0);
 
   i32 n = 0;
   for (i32 i = 0; i < nPoints; i++) {
@@ -611,7 +611,7 @@ export i32 mergePoints(Point[] points, i32 nPoints, i32[] counts, string prefix,
 
 /** Room for a merge of `nPoints`, which cannot need more entries than there are points. */
 export Merged[] mergeRoom(i32 nPoints) {
-  return Merged[nPoints > 0 ? nPoints : 1](fill: Merged("", 0, 0, "", false));
+  return Merged[].filled(nPoints > 0 ? nPoints : 1, Merged("", 0, 0, "", false));
 }
 
 /**
@@ -659,7 +659,7 @@ bool startsShallow(string l) {
 bool opensDecl(string l) {
   if (!startsShallow(l)) { return false; }
   string t = trimmed(l);
-  string[] keywords = string[]("if", "for", "while", "match", "else", "case", "}", "/", "*");
+  string[] keywords = ["if", "for", "while", "match", "else", "case", "}", "/", "*"];
   for (i32 i = 0; i < keywords.len(); i++) {
     if (startsWith(t, keywords[i])) { return false; }
   }
@@ -812,8 +812,8 @@ bool isProgramDir(string path) {
 }
 
 void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, string prefix) {
-  string[] all = sourceFiles(core, cli, string[](".wac"), string[0](fill: ""));
-  string[] missing = string[all.len() > 0 ? all.len() : 1](fill: "");
+  string[] all = sourceFiles(core, cli, [".wac"], string[].filled(0, ""));
+  string[] missing = string[].filled(all.len() > 0 ? all.len() : 1, "");
   i32 nMissing = 0;
   i32 seen = 0;
   for (i32 i = 0; i < all.len(); i++) {
@@ -861,14 +861,14 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
                     Pin[] pins, Rule[] rules) {
   bool failed = false;
   nameFilesWithNoPoints(core, cli, points, nPoints, prefix);
-  string[] uncovered = string[nPoints > 0 ? nPoints : 1](fill: "");
+  string[] uncovered = string[].filled(nPoints > 0 ? nPoints : 1, "");
   i32 nUncovered = uncoveredLines(points, nPoints, counts, prefix, uncovered);
   // **Which points have been spoken for, as a set.** A point named by a pin *and* matched by a rule was
   // counted twice in the driver this generalises, so its ratchet reported fewer unaccounted points than
   // it then listed — 8 against 22 — and would have gone green with fourteen branches nobody had spoken
   // for. Counting what is spoken for rather than how many times it was spoken for is the same
   // distinction the report itself draws between points and mentions.
-  bool[] spoken = bool[nUncovered > 0 ? nUncovered : 1](fill: false);
+  bool[] spoken = bool[].filled(nUncovered > 0 ? nUncovered : 1, false);
 
   for (i32 i = 0; i < pins.len(); i++) {
     Pin u = pins[i];
@@ -939,7 +939,7 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
   // condition applied to all of them at once would make the shared suite red for everyone over
   // something that is untidy rather than wrong. What it costs to leave as a report is that it can be
   // ignored; what it costs to make it fail is everybody else's afternoon.
-  i32[] claims = i32[nUncovered > 0 ? nUncovered : 1]();
+  i32[] claims = i32[].filled(nUncovered > 0 ? nUncovered : 1, 0);
   for (i32 r = 0; r < rules.len(); r++) {
     FileResult csrc = cli.readFile(rules[r].file).wait();
     if (!csrc.ok) { continue; }
@@ -990,7 +990,7 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
 
   // What is uncovered and unspoken for. Named rather than counted, because a count is a number
   // somebody learns to ignore and a list is a thing to go and look at.
-  string[] unexpected = string[nUncovered > 0 ? nUncovered : 1](fill: "");
+  string[] unexpected = string[].filled(nUncovered > 0 ? nUncovered : 1, "");
   i32 nUnexpected = 0;
   for (i32 i = 0; i < nUncovered; i++) {
     if (!spoken[i]) { unexpected[nUnexpected] = uncovered[i]; nUnexpected = nUnexpected + 1; }

@@ -19,14 +19,14 @@ import { itoa64 } from "../../../wactest/src/itoa64.wac";
 
 /** `n` one-function files, plus an entry importing all of them — the issue's program. */
 string[] pathsFor(i32 n) {
-  string[] out = string[n + 1](fill: "");
+  string[] out = string[].filled(n + 1, "");
   for (i32 i = 0; i < n; i++) { out[i] = "/f" + itoa(i) + ".wac"; }
   out[n] = "/main.wac";
   return out;
 }
 
 string[] sourcesFor(i32 n) {
-  string[] out = string[n + 1](fill: "");
+  string[] out = string[].filled(n + 1, "");
   for (i32 i = 0; i < n; i++) {
     out[i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
   }
@@ -47,7 +47,7 @@ export string test_the_curve(Core core, Cli cli) {
   T t = T.create();
   // Stepped finely across the reported wall, so a step and a curve look different. Kept under 600
   // because the issue's own figure there is twenty seconds and this runs on a shared machine.
-  i32[] sizes = i32[](1020, 1024, 1200);
+  i32[] sizes = [1020, 1024, 1200];
   string rows = "";
   for (i32 s = 0; s < sizes.len(); s++) {
     i32 n = sizes[s];

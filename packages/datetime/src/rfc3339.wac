@@ -49,7 +49,7 @@ i32 digits(u8[] s, i32 at, i32 n) {
  *
  * The grammar, with the separator case-insensitive as §5.6 allows:
  *
- *     YYYY-MM-DD ("T"|"t"|" ") HH:MM:SS [ "." 1*DIGIT ] ( "Z" | "z" | ("+"|"-") HH:MM )
+ *     YYYY-MM-DD ("T"|"t"|" ") HH:MM:[ "." 1*DIGIT ] ( "Z" | "z" | ("+"|"-") HH:MM )
  *
  * A fractional part of any length is accepted and truncated to milliseconds — truncated, not
  * rounded, because rounding can move a timestamp into the next second and the RFC gives no

@@ -75,7 +75,7 @@ struct At {
 export Stripped strip(u8[] src) {
   Lexed l = lex(src);
   if (l.error != "") {
-    return Stripped(u8[0](), l.error, 0, 0);
+    return Stripped(u8[](), l.error, 0, 0);
   }
 
   // The blanking plan: byte offsets to erase, applied at the end. Collected rather than applied as
@@ -335,7 +335,7 @@ export Stripped strip(u8[] src) {
     i = i + 1;
   }
 
-  if (err != "") { return Stripped(u8[0](), err, errLine, errCol); }
+  if (err != "") { return Stripped(u8[](), err, errLine, errCol); }
   return Stripped(blank(src, cutFrom, cutTo), "", 0, 0);
 }
 
@@ -353,7 +353,7 @@ i32 endOf(Lexed l, i32 i) { return startAt(l, i) + lenAt(l, i); }
  * would move every position after it — which is the one thing D1 exists to prevent.
  */
 u8[] blank(u8[] src, Vec<i32> from, Vec<i32> to) {
-  u8[] out = u8[src.len()]();
+  u8[] out = u8[].filled(src.len(), 0);
   for (i32 i = 0; i < src.len(); i++) { out[i] = src[i]; }
   for (i32 r = 0; r < from.len(); r++) {
     i32 a = from.get(r);

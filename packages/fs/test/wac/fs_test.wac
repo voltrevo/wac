@@ -164,7 +164,7 @@ export string test_names_are_bytes() {
   Fs fs = Fs.inMemory(1000);
   // A name a UTF-8 decoder would replace. Inside the filesystem it is four bytes and stays four bytes:
   // this is the property a host cannot offer today — wac-mono 0065 — and the reason it is tested here.
-  u8[] odd = u8[4](fill: 0);
+  u8[] odd = u8[].filled(4, 0);
   odd[0] = 'x';
   odd[1] = 0xff;
   odd[2] = 0xfe;
@@ -348,7 +348,7 @@ export string test_the_remote_wire_survives_a_round_trip() {
   t.eqI32(read.fault, FAULT_NONE(), "and carry no fault");
 
   Buf b = Buf.create();
-  encodeFileResult(b, FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()));
+  encodeFileResult(b, FileResult.of(false, u8[](), "no such file or directory", FAULT_NOT_FOUND()));
   FileResult missing = decodeFileResult(readerOver(b.take()));
   t.isTrue(!missing.ok, "a failed read stays failed");
   t.eqI32(missing.fault, FAULT_NOT_FOUND(), "with its category");
@@ -374,7 +374,7 @@ export string test_the_remote_wire_survives_a_round_trip() {
   // empty array for "a directory with nothing in it" — an encoding that lost the difference would
   // make `ls` of a file print nothing instead of complaining.
   Buf e = Buf.create();
-  string[] names = string[2](fill: "");
+  string[] names = string[].filled(2, "");
   names[0] = "bin"; names[1] = "etc";
   encodeNames(e, names);
   string[]? listed = decodeNames(readerOver(e.take()));
@@ -387,7 +387,7 @@ export string test_the_remote_wire_survives_a_round_trip() {
   t.isTrue(decodeNames(readerOver(f.take())) is null, "and a null crosses as a null");
 
   Buf g = Buf.create();
-  string[] none = string[0](fill: "");
+  string[] none = string[].filled(0, "");
   encodeNames(g, none);
   string[]? empty = decodeNames(readerOver(g.take()));
   t.isTrue(!(empty is null) && empty!.len() == 0, "an empty directory is not a null");
@@ -396,7 +396,7 @@ export string test_the_remote_wire_survives_a_round_trip() {
   // every one of these lands in when the far end has gone. All four, because each has its own way of
   // saying nothing: a fault, an empty result, and a null that is not the null meaning "not a
   // directory".
-  Reader dead = Reader(u8[0](), 0, 0, true, "the parent went away");
+  Reader dead = Reader(u8[](), 0, 0, true, "the parent went away");
   t.eqI32(decodeChange(dead).fault, FAULT_OTHER(), "a broken channel is a fault, not a silence");
   t.eqI32(decodeStat(dead).fault, FAULT_OTHER(), "a stat from a dead channel is a fault");
   t.isTrue(!decodeFileResult(dead).ok, "and a read is not ok");
@@ -446,7 +446,7 @@ export string test_the_first_fault_is_the_one_that_is_kept() {
 
   // Four bytes with the top bit set: read as a signed `i32` this is negative, which `i32()` refuses
   // as a length. A fresh reader records that refusal.
-  u8[] huge = u8[4]();
+  u8[] huge = u8[].filled(4, 0);
   huge[0] = 0; huge[1] = 0; huge[2] = 0; huge[3] = 128;
   Reader fresh = Reader(huge, huge.len(), 0, false, "");
   t.eqI32(fresh.u32(), 0, "a negative length reads as zero");

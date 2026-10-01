@@ -30,7 +30,7 @@ import { Buf } from "../../../bytes/src/buf.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 
 Exec git(Cli cli, string where, string[] args, u8[] stdin) {
-  string[] full = string[args.len() + 6](fill: "");
+  string[] full = string[].filled(args.len() + 6, "");
   full[0] = "-C";
   full[1] = where;
   full[2] = "-c";
@@ -42,7 +42,7 @@ Exec git(Cli cli, string where, string[] args, u8[] stdin) {
 }
 
 string gitText(Cli cli, string where, string[] args) {
-  return trimmed(string.fromBytes(git(cli, where, args, u8[0]()).stdout));
+  return trimmed(string.fromBytes(git(cli, where, args, u8[]()).stdout));
 }
 
 string trimmed(string s) {
@@ -96,7 +96,7 @@ i32 objectsIn(string note) {
 
 /** `git receive-pack <dir>` with nothing on stdin: the advertisement. */
 u8[] advertise(Cli cli, string target) {
-  return cli.exec("git", string[]("receive-pack", target), u8[0]()).wait().stdout;
+  return cli.exec("git", ["receive-pack", target], u8[]()).wait().stdout;
 }
 
 /** What one push produced: the request, the note, and the report the server sent back. */
@@ -109,18 +109,20 @@ struct Pushed {
 Pushed pushWith(T t, Cli cli, string src, string target, string advFile, i32 advLen) {
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec made = cli.exec(wac,
-                       string[](builtProgram(cli, "packages/git/example/gitpush.wac", "gitpush",
-                                              string[]("--allow-read", "--allow-write", "--quiet")),
-                                src, advFile, "refs/heads/main"),
-                       u8[0]()).wait();
+                       [
+                                              builtProgram(cli, "packages/git/example/gitpush.wac", "gitpush",
+                                              ["--allow-read", "--allow-write", "--quiet"]),
+                                src, advFile, "refs/heads/main"
+                       ],
+                       u8[]()).wait();
   string note = trimmed(string.fromBytes(made.stderr));
   t.eqI32(made.status, 0, "gitpush exited zero: " + note);
   Vec<RefReport> empty = Vec.create();
   if (made.status != 0) { return Pushed(false, note, Report(false, "", empty, "gitpush failed")); }
 
-  Exec said = cli.exec("git", string[]("receive-pack", target), made.stdout).wait();
+  Exec said = cli.exec("git", ["receive-pack", target], made.stdout).wait();
   // The reply repeats the advertisement before the report, so the report begins after it.
-  u8[] tail = u8[said.stdout.len() - advLen]();
+  u8[] tail = u8[].filled(said.stdout.len() - advLen, 0);
   for (i32 i = 0; i < tail.len(); i++) { tail[i] = said.stdout[advLen + i]; }
   Report report = readReport(tail);
   t.eqStr(report.garbled, "", "the report parsed");
@@ -142,21 +144,21 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
 
   // `-b main` so the bare repository's HEAD names the branch being pushed; otherwise `git fsck` adds
   // a notice about an unborn `master`, which is noise rather than a finding.
-  cli.exec("git", string[]("init", "-q", "--bare", "-b", "main", target), u8[0]()).wait();
-  git(cli, src, string[]("init", "-q", "-b", "main"), u8[0]());
+  cli.exec("git", ["init", "-q", "--bare", "-b", "main", target], u8[]()).wait();
+  git(cli, src, ["init", "-q", "-b", "main"], u8[]());
   string whyDir2 = madeDir(cli, src + "/sub");
   t.isTrue(whyDir2 == "", whyDir2);
   cli.writeFile(src + "/a.txt", "one\n".toBytes()).wait();
   cli.writeFile(src + "/sub/b.txt", "two\n".toBytes()).wait();
-  git(cli, src, string[]("add", "-A"), u8[0]());
-  git(cli, src, string[]("commit", "-qm", "one"), u8[0]());
+  git(cli, src, ["add", "-A"], u8[]());
+  git(cli, src, ["commit", "-qm", "one"], u8[]());
   cli.writeFile(src + "/a.txt", "two\n".toBytes()).wait();
-  git(cli, src, string[]("add", "-A"), u8[0]());
-  git(cli, src, string[]("commit", "-qm", "two"), u8[0]());
-  string tip = gitText(cli, src, string[]("rev-parse", "HEAD"));
+  git(cli, src, ["add", "-A"], u8[]());
+  git(cli, src, ["commit", "-qm", "two"], u8[]());
+  string tip = gitText(cli, src, ["rev-parse", "HEAD"]);
 
   // What git says has to travel, so the walk below is compared against it rather than trusted.
-  i32 wanted = countLines(gitText(cli, src, string[]("rev-list", "--objects", "HEAD")));
+  i32 wanted = countLines(gitText(cli, src, ["rev-list", "--objects", "HEAD"]));
   t.isTrue(wanted >= 7,
            "the fixture carries " + itoa64(wanted as i64) + " objects, enough for two commits");
 
@@ -186,14 +188,14 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
     t.eqStr(first.report.refs.get(0).name, "refs/heads/main", "the report names the ref we pushed");
     t.isTrue(first.report.refs.get(0).ok, "the server accepted it: " + first.report.refs.get(0).why);
   }
-  t.eqStr(gitText(cli, target, string[]("rev-parse", "refs/heads/main")), tip,
+  t.eqStr(gitText(cli, target, ["rev-parse", "refs/heads/main"]), tip,
           "the target's ref is the commit we pushed");
 
   // ── A second push onto the ref we just created: a fast-forward ──
   cli.writeFile(src + "/a.txt", "three\n".toBytes()).wait();
-  git(cli, src, string[]("add", "-A"), u8[0]());
-  git(cli, src, string[]("commit", "-qm", "three"), u8[0]());
-  string tip2 = gitText(cli, src, string[]("rev-parse", "HEAD"));
+  git(cli, src, ["add", "-A"], u8[]());
+  git(cli, src, ["commit", "-qm", "three"], u8[]());
+  string tip2 = gitText(cli, src, ["rev-parse", "HEAD"]);
   t.isTrue(tip2 != tip, "the second commit moved HEAD");
 
   // A **fresh** advertisement, which now names the ref — so the old value is its current target
@@ -211,8 +213,8 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // **What the second push should carry, and what it did.** `receive-pack` has no `have` exchange, so
   // this is a local computation from the advertisement — and `git rev-list --objects <new> --not
   // <old>` is the same set, which is why it is the oracle rather than a plausibility check.
-  i32 needed = countLines(gitText(cli, src, string[]("rev-list", "--objects", tip2, "--not", tip)));
-  i32 everything = countLines(gitText(cli, src, string[]("rev-list", "--objects", tip2)));
+  i32 needed = countLines(gitText(cli, src, ["rev-list", "--objects", tip2, "--not", tip]));
+  i32 everything = countLines(gitText(cli, src, ["rev-list", "--objects", tip2]));
   t.eqI32(objectsIn(ff.note), needed, "the fast-forward sent what git says is missing");
   // The shape: the exclusion has to have *excluded* something, or this passes while a push that
   // re-sends an entire history looks correct.
@@ -223,7 +225,7 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   if (ff.report.refs.len() == 1) {
     t.isTrue(ff.report.refs.get(0).ok, "the fast-forward was accepted: " + ff.report.refs.get(0).why);
   }
-  t.eqStr(gitText(cli, target, string[]("rev-parse", "refs/heads/main")), tip2,
+  t.eqStr(gitText(cli, target, ["rev-parse", "refs/heads/main"]), tip2,
           "the ref moved to the second commit");
 
   // ── The same push again with a STALE advertisement, which must be refused ──
@@ -233,11 +235,11 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // shape of the refusal is the point: the pack unpacks *fine* and the ref is still rejected, which a
   // client that checked only "did the push work" would read as success.
   string emptyRepo = dir + "/empty.git";
-  cli.exec("git", string[]("init", "-q", "--bare", "-b", "main", emptyRepo), u8[0]()).wait();
+  cli.exec("git", ["init", "-q", "--bare", "-b", "main", emptyRepo], u8[]()).wait();
   u8[] staleAdv = advertise(cli, emptyRepo);
   cli.writeFile(src + "/a.txt", "four\n".toBytes()).wait();
-  git(cli, src, string[]("add", "-A"), u8[0]());
-  git(cli, src, string[]("commit", "-qm", "four"), u8[0]());
+  git(cli, src, ["add", "-A"], u8[]());
+  git(cli, src, ["commit", "-qm", "four"], u8[]());
   cli.writeFile(dir + "/stale.bin", staleAdv).wait();
   Pushed stale = pushWith(t, cli, src, target, dir + "/stale.bin", staleAdv.len());
   if (stale.ok) {
@@ -248,13 +250,13 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
                 "a push built from a stale advertisement is refused, so the old value is checked");
       t.isTrue(stale.report.refs.get(0).why != "", "the refusal carried a reason");
     }
-    t.eqStr(gitText(cli, target, string[]("rev-parse", "refs/heads/main")), tip2,
+    t.eqStr(gitText(cli, target, ["rev-parse", "refs/heads/main"]), tip2,
             "the refused push left the ref where it was");
   }
 
-  t.eqI32(git(cli, target, string[]("fsck"), u8[0]()).status, 0,
+  t.eqI32(git(cli, target, ["fsck"], u8[]()).status, 0,
           "git fsck on the pushed repository");
-  t.eqStr(gitText(cli, target, string[]("log", "--format=%s", "refs/heads/main")),
+  t.eqStr(gitText(cli, target, ["log", "--format=%s", "refs/heads/main"]),
           "three\ntwo\none", "the history arrived in order");
 
   cli.remove(dir, true).wait();
@@ -271,7 +273,7 @@ u8[] reply(string[] lines) {
 
 export string test_a_report_of_a_refused_ref_keeps_the_servers_own_words() {
   T t = T.create();
-  Report r = readReport(reply(string[]("unpack ok\n", "ng refs/heads/main non-fast-forward\n")));
+  Report r = readReport(reply(["unpack ok\n", "ng refs/heads/main non-fast-forward\n"]));
   t.eqStr(r.garbled, "", "the reply parsed");
   t.isTrue(r.unpacked, "unpack ok was read");
   t.eqI32(r.refs.len(), 1, "one ref");
@@ -286,7 +288,7 @@ export string test_a_report_of_a_refused_ref_keeps_the_servers_own_words() {
 
 export string test_a_pack_the_server_cannot_read_is_reported_as_such() {
   T t = T.create();
-  Report r = readReport(reply(string[]("unpack index-pack failed\n")));
+  Report r = readReport(reply(["unpack index-pack failed\n"]));
   t.isFalse(r.unpacked, "a failed unpack was not read as a success");
   t.eqStr(r.unpackWhy, "index-pack failed", "and it says why");
   return t.report();

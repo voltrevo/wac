@@ -165,7 +165,7 @@ string reason(string text) {
 export string test_an_image_does_not_answer_permission_denied_for_a_path_nothing_refused(Core core,
                                                                                          Cli cli) {
   T t = T.create();
-  string[] scripts = string[]("mkdir /f/g", "echo y > /f/g", "mv /d /f/g");
+  string[] scripts = ["mkdir /f/g", "echo y > /f/g", "mv /d /f/g"];
   for (i32 i = 0; i < scripts.len(); i++) {
     Ran r = runSealed(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; " + scripts[i]);
     t.isTrue(r.err.indexOf("Permission denied") < 0, scripts[i] + ": " + show(r.err));

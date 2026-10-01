@@ -16,7 +16,7 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
 
 /** Run it and answer stdout and stderr together — a usage line goes to stderr. */
 string say(Cli cli, string[] args) {
-  Exec r = cli.exec(binary(cli), args, u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), args, u8[]()).wait();
   if (!r.ran()) { return "the binary would not start: " + r.error; }
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }
@@ -65,7 +65,7 @@ bool namesCommand(string usage, string cmd) {
 export string test_the_usage_names_every_command(Core core, Cli cli) {
   T t = T.create();
   string out = say(cli, string[]());
-  string[] always = string[]("check", "compile", "build", "bindgen", "run", "test", "sh", "update");
+  string[] always = ["check", "compile", "build", "bindgen", "run", "test", "sh", "update"];
   for (i32 i = 0; i < always.len(); i++) {
     t.isTrue(namesCommand(out, always[i]),
              "the usage does not name `" + always[i] + "` — if this build has a stale seed, " +
@@ -103,9 +103,9 @@ export string test_the_usage_names_the_flags_that_matter(Core core, Cli cli) {
 /** Each of the compiler's four commands answers, rather than being a word in a usage string. */
 export string test_every_command_in_the_usage_is_answered(Core core, Cli cli) {
   T t = T.create();
-  string[] commands = string[]("check", "compile", "build", "bindgen");
+  string[] commands = ["check", "compile", "build", "bindgen"];
   for (i32 i = 0; i < commands.len(); i++) {
-    string out = say(cli, string[](commands[i], "no-such-file.wac"));
+    string out = say(cli, [commands[i], "no-such-file.wac"]);
     t.isTrue(!holds(out, "unknown command"),
              "`wac " + commands[i] + "` is in the usage and is not a command: " + out);
   }
@@ -116,7 +116,7 @@ string[] splitLines(string s) {
   u8[] b = s.toBytes();
   i32 n = 1;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 start = 0;
   for (i32 i = 0; i <= b.len(); i++) {

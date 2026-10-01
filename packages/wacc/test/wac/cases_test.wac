@@ -126,7 +126,7 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
         u8[] wasm = emitFilesSelfDescribing(c.paths, c.sources, c.entry, "case.wasm", 0);
         // Named per case rather than one well-known path: ninety modules through one filename works and
         // names nothing when the ninetieth is the one that failed.
-        Ran r = runModule(cli, wasm, dir, "case" + itoa(i) + ".wasm", string[](c.expect.call));
+        Ran r = runModule(cli, wasm, dir, "case" + itoa(i) + ".wasm", [c.expect.call]);
         if (!r.ok) {
           ok = false;
           why = "did not run — " + r.error;

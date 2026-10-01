@@ -13,7 +13,7 @@ import { Bundled, bundle } from "../../src/bundle.wac";
 import { Stripped, strip } from "../../src/strip.wac";
 
 string[] bridge() {
-  return string[](
+  return [
     "packages/platform/host/deno.ts", "packages/platform/host/provider.ts",
     "packages/platform/host/children.ts", "packages/platform/host/call.ts",
     "packages/platform/host/marshal.ts", "packages/platform/host/faults.ts",
@@ -23,13 +23,13 @@ string[] bridge() {
     "packages/platform/host/driver.ts", "packages/platform/host/childLife.ts",
     "packages/platform/host/ops.ts", "packages/platform/host/entropy.ts",
     "packages/platform/host/childWasm.ts"
-  );
+  ];
 }
 
 export string test_the_bridge_flattens(Core core, Cli cli) {
   T t = T.create();
   string[] paths = bridge();
-  u8[][] texts = u8[][paths.len()](fill: u8[0]());
+  u8[][] texts = u8[][].filled(paths.len(), u8[]());
   for (i32 i = 0; i < paths.len(); i++) {
     FileResult f = cli.readFile(paths[i]).wait();
     if (!f.ok) { t.isTrue(false, "cannot read " + paths[i]); return t.report(); }
@@ -56,8 +56,8 @@ export string test_two_modules_that_both_declare_a_name() {
   T t = T.create();
   // The case that used to be refused. Each module is its own scope, so `EMPTY` in one is not the
   // `EMPTY` in the other, and neither source name is touched.
-  string[] paths = string[]("a.ts", "b.ts");
-  u8[][] texts = u8[][2](fill: u8[0]());
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
   texts[0] = "import { empties } from \"./b.ts\";\nconst EMPTY = \"a\";\nexport const keys = Object.keys(empties());\n".toBytes();
   texts[1] = "const EMPTY = 1;\nexport function empties() { return { EMPTY }; }\n".toBytes();
   Bundled b = bundle(paths, texts, "a.ts");
@@ -73,8 +73,8 @@ export string test_two_modules_that_both_declare_a_name() {
 
 export string test_an_imported_name_is_read_through_its_module() {
   T t = T.create();
-  string[] paths = string[]("a.ts", "b.ts");
-  u8[][] texts = u8[][2](fill: u8[0]());
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
   texts[0] = "import { base as b } from \"./b.ts\";\nexport const go = () => b() + 1;\n".toBytes();
   texts[1] = "export function base() { return 1; }\n".toBytes();
   Bundled r = bundle(paths, texts, "a.ts");
@@ -89,8 +89,8 @@ export string test_an_imported_name_is_read_through_its_module() {
 export string test_a_cycle_is_allowed_when_nothing_static_crosses_it() {
   T t = T.create();
   // Mutually recursive modules, each using the other only inside a function.
-  string[] paths = string[]("a.ts", "b.ts");
-  u8[][] texts = u8[][2](fill: u8[0]());
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
   texts[0] = "import { fromB } from \"./b.ts\";\nexport function fromA() { return \"A\"; }\nexport const go = () => fromB();\n".toBytes();
   texts[1] = "import { fromA } from \"./a.ts\";\nexport function fromB() { return fromA() + \"B\"; }\n".toBytes();
   Bundled r = bundle(paths, texts, "a.ts");
@@ -101,8 +101,8 @@ export string test_a_cycle_is_allowed_when_nothing_static_crosses_it() {
 export string test_a_static_use_across_a_cycle_is_named() {
   T t = T.create();
   // The same cycle, but one module *evaluates* the other's export while initialising.
-  string[] paths = string[]("a.ts", "b.ts");
-  u8[][] texts = u8[][2](fill: u8[0]());
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
   texts[0] = "import { fromB } from \"./b.ts\";\nexport function fromA() { return \"A\"; }\nexport const eager = fromB();\n".toBytes();
   texts[1] = "import { fromA } from \"./a.ts\";\nexport function fromB() { return fromA() + \"B\"; }\n".toBytes();
   Bundled r = bundle(paths, texts, "a.ts");
@@ -115,8 +115,8 @@ export string test_a_static_use_across_a_cycle_is_named() {
 
 export string test_dependencies_come_first() {
   T t = T.create();
-  string[] paths = string[]("a.ts", "b.ts");
-  u8[][] texts = u8[][2](fill: u8[0]());
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
   texts[0] = "import { base } from \"./b.ts\";\nconst top = base + 1;\n".toBytes();
   texts[1] = "export const base = 1;\n".toBytes();
   Bundled b = bundle(paths, texts, "a.ts");
@@ -132,8 +132,8 @@ export string test_a_namespace_import_binds_the_module_itself() {
   T t = T.create();
   // **The easiest form under this design, and the hardest one for a bundler that renames.** An
   // IIFE's return value already *is* the namespace object, so there is nothing to construct.
-  string[] paths = string[]("a.ts", "b.ts");
-  u8[][] texts = u8[][2](fill: u8[0]());
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
   texts[0] = "import * as lib from \"./b.ts\";\nexport const go = () => lib.base();\n".toBytes();
   texts[1] = "export function base() { return 1; }\n".toBytes();
   Bundled r = bundle(paths, texts, "a.ts");
@@ -149,8 +149,8 @@ export string test_an_external_import_is_hoisted_not_bundled() {
   T t = T.create();
   // `node:worker_threads` is the runtime's to resolve, not the file set's — and an ESM `import`
   // must be top-level, so it cannot stay inside the IIFE it was written in.
-  string[] paths = string[]("a.ts", "b.ts");
-  u8[][] texts = u8[][2](fill: u8[0]());
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
   texts[0] = "import * as wt from \"node:worker_threads\";\nimport { base } from \"./b.ts\";\nexport const go = () => wt.isMainThread && base();\n".toBytes();
   texts[1] = "export function base() { return 1; }\n".toBytes();
   Bundled r = bundle(paths, texts, "a.ts");
@@ -173,8 +173,8 @@ export string test_a_relative_import_not_in_the_set_is_refused() {
   //
   // It hid a stripper bug for an afternoon: erasing `as lib from "./m.js"` deleted the specifier, so
   // the import walk never queued the file, and this said nothing about the module that was missing.
-  string[] paths = string[]("a.ts");
-  u8[][] texts = u8[][1](fill: u8[0]());
+  string[] paths = ["a.ts"];
+  u8[][] texts = u8[][].filled(1, u8[]());
   texts[0] = "import * as lib from \"./gone.ts\";\nexport const go = () => lib.base();\n".toBytes();
   Bundled r = bundle(paths, texts, "a.ts");
   t.isTrue(r.error != "", "an import of a file that was not supplied is refused");
@@ -182,7 +182,7 @@ export string test_a_relative_import_not_in_the_set_is_refused() {
 
   // The named form takes the same route, and used to be the worse of the two: `ns[-1]` is a trap
   // rather than a wrong answer, so this one failed loudly *somewhere* — just not here.
-  u8[][] named = u8[][1](fill: u8[0]());
+  u8[][] named = u8[][].filled(1, u8[]());
   named[0] = "import { base } from \"./gone.ts\";\nexport const go = () => base();\n".toBytes();
   Bundled r2 = bundle(paths, named, "a.ts");
   t.isTrue(r2.error != "", "and so is a named import of it");

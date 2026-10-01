@@ -23,7 +23,7 @@ export string dirOf(string path) {
 /** `/a/b` + `../c.wac` → `/a/c.wac`. A `..` that climbs past the root is dropped, as it is in JS. */
 export string resolved(string dir, string rel) {
   string joinedPath = dir + "/" + rel;
-  string[] parts = string[64](fill: "");
+  string[] parts = string[].filled(64, "");
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= joinedPath.len(); i++) {
@@ -71,9 +71,9 @@ export i32 indexOfPath(string[] paths, string path) {
  * that way and its guard fired when `Vec` moved, which is the guard doing its job.
  */
 export i32[] closureOf(string[] keys, string[] sources, i32 entry) {
-  i32[] found = i32[CLOSURE_CAP]();
+  i32[] found = i32[].filled(CLOSURE_CAP, 0);
   i32 n = 0;
-  i32[] queue = i32[CLOSURE_CAP]();
+  i32[] queue = i32[].filled(CLOSURE_CAP, 0);
   i32 head = 0;
   i32 tail = 0;
   queue[tail] = entry;
@@ -104,7 +104,7 @@ export i32[] closureOf(string[] keys, string[] sources, i32 entry) {
       tail = tail + 1;
     }
   }
-  i32[] out = i32[n]();
+  i32[] out = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
   return out;
 }

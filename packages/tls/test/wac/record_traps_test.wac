@@ -18,7 +18,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { recordSeal, recordOpen, recordContent, maxPlaintext } from "../../src/record.wac";
 
 u8[] bytes(i32 n) {
-  u8[] b = u8[n]();
+  u8[] b = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { b[i] = (i * 5 + 1) & 0xFF; }
   return b;
 }
@@ -28,7 +28,7 @@ u8[] iv() { return bytes(12); }
 
 /** A record header saying `len`, followed by `have` bytes of body. */
 u8[] record(i32 len, i32 have) {
-  u8[] r = u8[5 + have]();
+  u8[] r = u8[].filled(5 + have, 0);
   r[0] = 23; r[1] = 3; r[2] = 3;
   r[3] = (len >> 8) & 0xFF;
   r[4] = len & 0xFF;
@@ -38,7 +38,7 @@ u8[] record(i32 len, i32 have) {
 
 /** A header saying `len` with a body of exactly that many bytes — the honest shape, wrong size. */
 void openWith(i32 len) {
-  u8[] r = u8[5 + len]();
+  u8[] r = u8[].filled(5 + len, 0);
   r[0] = 23; r[1] = 3; r[2] = 3;
   r[3] = (len >> 8) & 0xFF;
   r[4] = len & 0xFF;
@@ -92,7 +92,7 @@ export string test_traps_sealing_more_content_than_the_limit() {
 
 /** An inner plaintext that is padding all the way down has no content type to find. */
 export string test_traps_on_inner_content_that_is_all_padding() {
-  recordContent(u8[8]());
+  recordContent(u8[].filled(8, 0));
   return "";
 }
 

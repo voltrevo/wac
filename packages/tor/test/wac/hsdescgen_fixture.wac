@@ -59,7 +59,7 @@ export const i32 DECOY_CLIENTS = 16;
 
 /** The `i`-th decoy client the generator writes: forty bytes of `(i * 97 + j * 11 + 3) & 0xff`. */
 export u8[] decoyClient(i32 i) {
-  u8[] c = u8[40]();
+  u8[] c = u8[].filled(40, 0);
   for (i32 j = 0; j < 40; j++) { c[j] = (i * 97 + j * 11 + 3) & 255; }
   return c;
 }

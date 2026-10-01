@@ -41,7 +41,7 @@ struct Git {
   string dir;
 
   Exec run(const this, string[] args, u8[] stdin) {
-    string[] full = string[args.len() + 6](fill: "");
+    string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
     full[2] = "-c";
@@ -54,14 +54,14 @@ struct Git {
 
   /** stdout with trailing whitespace removed, which is what a one-line answer wants. */
   string text(const this, string[] args) {
-    return trimmed(string.fromBytes(this.run(args, u8[0]()).stdout));
+    return trimmed(string.fromBytes(this.run(args, u8[]()).stdout));
   }
 
-  u8[] raw(const this, string[] args) { return this.run(args, u8[0]()).stdout; }
+  u8[] raw(const this, string[] args) { return this.run(args, u8[]()).stdout; }
 
   /** stdout and stderr together — `git fsck` prints its findings on stderr. */
   string both(const this, string[] args) {
-    Exec r = this.run(args, u8[0]());
+    Exec r = this.run(args, u8[]());
     return trimmed(string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
   }
 }
@@ -91,14 +91,14 @@ Git tagged(T t, Cli cli, string name) {
   Git g = Git(cli, dir);
   if (!made.ok()) { return g; }
 
-  g.run(string[]("init", "-q", "-b", "main"), u8[0]());
+  g.run(["init", "-q", "-b", "main"], u8[]());
   cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
-  g.run(string[]("add", "-A"), u8[0]());
-  Exec c = g.run(string[]("commit", "-qm", "root commit"), u8[0]());
+  g.run(["add", "-A"], u8[]());
+  Exec c = g.run(["commit", "-qm", "root commit"], u8[]());
   t.eqI32(c.status, 0, "git commit: " + string.fromBytes(c.stderr));
   // A message with a blank line in it, because the body is everything after the first empty line
   // and a parser that stopped at the first one would pass on a one-line message.
-  Exec tg = g.run(string[]("tag", "-a", "v1", "-m", "release one\n\nwith a body\n"), u8[0]());
+  Exec tg = g.run(["tag", "-a", "v1", "-m", "release one\n\nwith a body\n"], u8[]());
   t.eqI32(tg.status, 0, "git tag -a: " + string.fromBytes(tg.stderr));
   return g;
 }
@@ -106,7 +106,7 @@ Git tagged(T t, Cli cli, string name) {
 export string test_an_annotated_tags_fields_are_the_ones_git_prints(Core core, Cli cli) {
   T t = T.create();
   Git g = tagged(t, cli, "tag");
-  ParsedTag parsed = parseTag(g.raw(string[]("cat-file", "tag", "v1")));
+  ParsedTag parsed = parseTag(g.raw(["cat-file", "tag", "v1"]));
   match (parsed) {
     Unreadable(why): {
       t.isTrue(false, "git's own tag did not parse: " + why);
@@ -115,12 +115,12 @@ export string test_an_annotated_tags_fields_are_the_ones_git_prints(Core core, C
     Annotated(tag): {
       // Each field against git's answer for the same tag, rather than against the string this test
       // passed to `git tag` — the point is that the bytes were read, not that they were remembered.
-      t.eqStr(string.fromBytes(hexOf(tag.object)), g.text(string[]("rev-parse", "v1^{commit}")),
+      t.eqStr(string.fromBytes(hexOf(tag.object)), g.text(["rev-parse", "v1^{commit}"]),
               "the object it points at");
       t.eqStr(tag.kindWord, "commit", "the kind of that object");
       t.eqStr(tag.name, "v1", "the tag name");
       t.eqStr(trimmed(tag.message),
-              g.text(string[]("for-each-ref", "--format=%(contents)", "refs/tags/v1")),
+              g.text(["for-each-ref", "--format=%(contents)", "refs/tags/v1"]),
               "the message");
       // The body survived the blank line rather than being cut at it.
       t.isTrue(contains(tag.message, "with a body"), "the body is missing: " + tag.message);
@@ -134,25 +134,25 @@ export string test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too
     Core core, Cli cli) {
   T t = T.create();
   Git g = tagged(t, cli, "tag2");
-  string commit = g.text(string[]("rev-parse", "HEAD"));
+  string commit = g.text(["rev-parse", "HEAD"]);
 
   // `--literally` because git refuses to *create* this shape — see the header. What is being tested
   // is that we read what git reads, so the object has to get into the store somehow and `cat-file`
   // has to be the thing that hands it over.
   string body = "object " + commit + "\ntype commit\ntag bare\n\nno tagger here\n";
   string sha = trimmed(string.fromBytes(
-    g.run(string[]("hash-object", "-t", "tag", "--literally", "-w", "--stdin"),
+    g.run(["hash-object", "-t", "tag", "--literally", "-w", "--stdin"],
           body.toBytes()).stdout));
   t.eqI32(sha.len(), 40, "git stored the object: " + sha);
   if (sha.len() != 40) { return t.report(); }
 
   // git's own verdict on it, which is the reason this parser is lenient: a warning, not an error.
   // If a future git promotes it, this line is where that shows up.
-  string fsck = g.both(string[]("fsck", "--tags"));
+  string fsck = g.both(["fsck", "--tags"]);
   t.isTrue(contains(fsck, "warning in tag") && contains(fsck, "missingTaggerEntry"),
            "git fsck no longer calls a missing tagger a warning — it said: " + fsck);
 
-  match (parseTag(g.raw(string[]("cat-file", "tag", sha)))) {
+  match (parseTag(g.raw(["cat-file", "tag", sha]))) {
     Unreadable(why): { t.isTrue(false, "a tag without a tagger was refused: " + why); }
     Annotated(tag): {
       t.eqStr(tag.name, "bare", "the tag name");
@@ -165,15 +165,15 @@ export string test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too
 
 export string test_a_tag_object_that_is_not_one_says_which_part_is_missing() {
   T t = T.create();
-  string[] what = string[](
-    "no blank line", "no object", "no type", "a short object", "a header with no space");
-  string[] text = string[](
+  string[] what = ["no blank line", "no object", "no type", "a short object", "a header with no space"];
+  string[] text = [
     "object 0000000000000000000000000000000000000000\ntype commit\n",
     "type commit\ntag v1\n\nm\n",
     "object 0000000000000000000000000000000000000000\ntag v1\n\nm\n",
     "object beef\ntype commit\n\nm\n",
-    "object 0000000000000000000000000000000000000000\nnonsense\n\nm\n");
-  string[] expect = string[]("terminated", "no object", "no type", "forty hex", "no space");
+    "object 0000000000000000000000000000000000000000\nnonsense\n\nm\n"
+  ];
+  string[] expect = ["terminated", "no object", "no type", "forty hex", "no space"];
 
   for (i32 i = 0; i < what.len(); i++) {
     match (parseTag(text[i].toBytes())) {

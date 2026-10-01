@@ -38,11 +38,11 @@ import { Client, handshakeAt } from "../../src/client.wac";
 import { isLong, nextPacketAt, parseLong } from "../../src/packet.wac";
 
 Client someone() {
-  u8[] s = u8[32]();
+  u8[] s = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
-  u8[] r = u8[32]();
+  u8[] r = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
-  return Client.of(s, r, u8[8](), u8[4](), "localhost");
+  return Client.of(s, r, u8[].filled(8, 0), u8[].filled(4, 0), "localhost");
 }
 
 /**
@@ -55,34 +55,34 @@ Client someone() {
 i32 count() { return 12; }
 
 u8[] datagram(i32 n) {
-  if (n == 0) { return u8[0](); }
-  if (n == 1) { u8[] d = u8[1](); d[0] = 0xC0; return d; }          // a long header and nothing else
-  if (n == 2) { u8[] d = u8[1](); d[0] = 0x40; return d; }          // a short header and nothing else
-  if (n == 3) { return u8[1](); }                                    // one zero byte: neither form
+  if (n == 0) { return u8[](); }
+  if (n == 1) { u8[] d = u8[].filled(1, 0); d[0] = 0xC0; return d; }          // a long header and nothing else
+  if (n == 2) { u8[] d = u8[].filled(1, 0); d[0] = 0x40; return d; }          // a short header and nothing else
+  if (n == 3) { return u8[].filled(1, 0); }                                    // one zero byte: neither form
   if (n == 4) {                                                      // long header, version cut short
-    u8[] d = u8[3](); d[0] = 0xC0; d[1] = 0x00; d[2] = 0x00; return d;
+    u8[] d = u8[].filled(3, 0); d[0] = 0xC0; d[1] = 0x00; d[2] = 0x00; return d;
   }
   if (n == 5) {                                                      // version 1, no dcid length
-    u8[] d = u8[5](); d[0] = 0xC0; d[3] = 0x00; d[4] = 0x01; return d;
+    u8[] d = u8[].filled(5, 0); d[0] = 0xC0; d[3] = 0x00; d[4] = 0x01; return d;
   }
   if (n == 6) {                                                      // a dcid length past the end
-    u8[] d = u8[6](); d[0] = 0xC0; d[4] = 0x01; d[5] = 0xFF; return d;
+    u8[] d = u8[].filled(6, 0); d[0] = 0xC0; d[4] = 0x01; d[5] = 0xFF; return d;
   }
   if (n == 7) {                                                      // dcid present, scid missing
-    u8[] d = u8[10](); d[0] = 0xC0; d[4] = 0x01; d[5] = 0x04; return d;
+    u8[] d = u8[].filled(10, 0); d[0] = 0xC0; d[4] = 0x01; d[5] = 0x04; return d;
   }
   if (n == 8) {                                                      // a token length past the end
-    u8[] d = u8[12](); d[0] = 0xC0; d[4] = 0x01; d[5] = 0x00; d[6] = 0x00; d[7] = 0x7F; return d;
+    u8[] d = u8[].filled(12, 0); d[0] = 0xC0; d[4] = 0x01; d[5] = 0x00; d[6] = 0x00; d[7] = 0x7F; return d;
   }
   if (n == 9) {                                                      // a length varint past the end
-    u8[] d = u8[14](); d[0] = 0xC0; d[4] = 0x01; d[7] = 0x7F; d[8] = 0xFF; return d;
+    u8[] d = u8[].filled(14, 0); d[0] = 0xC0; d[4] = 0x01; d[7] = 0x7F; d[8] = 0xFF; return d;
   }
   if (n == 10) {                                                     // every byte set
-    return u8[64](fill: 0xFF);
+    return u8[].filled(64, 0xFF);
   }
   // A packet-shaped datagram of the right size whose contents are noise, so the header parses far
   // enough to reach the AEAD and the AEAD is the thing that says no.
-  u8[] d = u8[128]();
+  u8[] d = u8[].filled(128, 0);
   for (i32 i = 0; i < 128; i++) { d[i] = (i * 37 + 11) & 255; }
   d[0] = 0xC0; d[1] = 0x00; d[2] = 0x00; d[3] = 0x00; d[4] = 0x01; d[5] = 0x08;
   return d;
@@ -121,8 +121,8 @@ export string test_the_packet_reader_answers_for_a_datagram_that_is_not_one() {
   }
 
   // The empty datagram specifically, which is the one the ledger's pin is about.
-  t.isFalse(isLong(u8[0](), 0), "isLong read the first byte of a datagram with no bytes");
-  t.eqI32(nextPacketAt(u8[0](), 0, true), 0, "an empty datagram named a next packet");
+  t.isFalse(isLong(u8[](), 0), "isLong read the first byte of a datagram with no bytes");
+  t.eqI32(nextPacketAt(u8[](), 0, true), 0, "an empty datagram named a next packet");
   return t.report();
 }
 

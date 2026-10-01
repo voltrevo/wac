@@ -55,15 +55,17 @@ const string PREFIX = "packages/json/";
 
 /** The four bounds checks that expect a trap, each its own export so the trap is caught per case. */
 string[] cases() {
-  return string[]("trap_when_an_array_index_is_past_the_end",
+  return [
+                  "trap_when_an_array_index_is_past_the_end",
                   "trap_when_an_array_index_is_negative",
                   "trap_when_an_object_index_is_past_the_end",
-                  "trap_when_an_object_index_is_negative");
+                  "trap_when_an_object_index_is_negative"
+  ];
 }
 
 /** What the tests need: a process to ask Node and `npm:json5`, and the corpora on disk. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -77,6 +79,6 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
-                 Pin[0](fill: Pin("", 0, "", true, "")),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Pin[].filled(0, Pin("", 0, "", true, "")),
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

@@ -45,12 +45,12 @@ const string PREFIX = "packages/mpt/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/mpt/src/proof.wac", 167, "if (w.error != \"\") { return; }", true,
+  return [
+        Pin("packages/mpt/src/proof.wac", 167, "if (w.error != \"\") { return; }", true,
         "**Every caller checks first, which is what this guard is for.** `verify` reads `w.error` " +
         "immediately before and immediately after each `step` at `:113` and `:115` and returns on " +
         "either, so a walk that has failed never reaches another node. The two recursive calls at " +
@@ -64,13 +64,13 @@ Pin[] pins() {
         "written without the check would overwrite the first fault with the last, and a refusal would " +
         "name the last node examined rather than the one that was wrong — which is the difference " +
         "between a message that finds the bad node and one that does not.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -78,5 +78,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

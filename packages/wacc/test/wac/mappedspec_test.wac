@@ -42,9 +42,9 @@ bool put(Cli cli, string path, string text) { return putFile(cli, path, text) ==
 
 /** `wac <cmd> …` with `$WAC_HOME` pointed at the fixture's cache. */
 Exec wacc(Cli cli, string home, string dir, string cmd, string entry) {
-  return withEnv(cli, string[]("WAC_HOME"), string[](home),
+  return withEnv(cli, ["WAC_HOME"], [home],
                  "/bin/sh",
-                 string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd + " " + entry));
+                 ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd + " " + entry]);
 }
 
 /** A project that maps `dep/` at `subdir: "src"`, with the manifest written but no lock yet. */
@@ -349,9 +349,9 @@ export string test_update_caches_where_the_compiler_looks(Core core, Cli cli) {
 
   // Neither variable set, so there is no cache root to derive. Empty rather than absent is the
   // spelling `withEnv` can express, and `wac_home` treats them the same for exactly this reason.
-  Exec r = withEnv(cli, string[]("WAC_HOME", "HOME"), string[]("", ""),
+  Exec r = withEnv(cli, ["WAC_HOME", "HOME"], ["", ""],
                    "/bin/sh",
-                   string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"));
+                   ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"]);
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -399,7 +399,7 @@ export string test_a_mapped_subdir_cannot_import_outside_itself(Core core, Cli c
   t.isTrue(checkoutFile(cli, home, COMMIT, "src/inside.wac",
                         "export i32 good() { return 2; }\n"), "a file inside it");
 
-  string[] escapes = string[]("@/outside/bad.wac", "../outside/bad.wac");
+  string[] escapes = ["@/outside/bad.wac", "../outside/bad.wac"];
   for (i32 i = 0; i < escapes.len(); i++) {
     t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
                           "import { bad } from \"" + escapes[i] + "\";\n" +

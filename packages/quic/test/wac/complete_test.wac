@@ -45,11 +45,11 @@ struct Result {
  */
 Result exchange(T t, Core core, Cli cli, string name, string spoil) {
   Server s = startServer(cli, name, false);
-  if (!s.ok) { return Result(false, s.error, false, u8[0](), u8[0]()); }
+  if (!s.ok) { return Result(false, s.error, false, u8[](), u8[]()); }
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     stopServer(cli, s);
-    return Result(false, "our socket did not bind — " + sock.error, false, u8[0](), u8[0]());
+    return Result(false, "our socket did not bind — " + sock.error, false, u8[](), u8[]());
   }
 
   cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), "localhost")).wait();
@@ -57,7 +57,7 @@ Result exchange(T t, Core core, Cli cli, string name, string spoil) {
   if (first.len() == 0) {
     cli.closeSocket(sock.handle);
     stopServer(cli, s);
-    return Result(false, "the server did not answer our first flight", false, u8[0](), u8[0]());
+    return Result(false, "the server did not answer our first flight", false, u8[](), u8[]());
   }
 
   u8[] finished = clientFinishedPacket(first, dcid(), scid(), "localhost");
@@ -88,7 +88,7 @@ Result exchange(T t, Core core, Cli cli, string name, string spoil) {
 /** The same packet, addressed to `to` instead of the id the server chose. */
 u8[] readdressed(u8[] packet, i32 oldLen, u8[] to) {
   i32 tailAt = 6 + oldLen;
-  u8[] out = u8[6 + to.len() + (packet.len() - tailAt)]();
+  u8[] out = u8[].filled(6 + to.len() + (packet.len() - tailAt), 0);
   out.copyFrom(packet, 0, 0, 5);
   out[5] = to.len() & 255;
   out.copyFrom(to, 0, 6, to.len());
@@ -97,7 +97,7 @@ u8[] readdressed(u8[] packet, i32 oldLen, u8[] to) {
 }
 
 u8[] copyOf(u8[] b) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   out.copyFrom(b, 0, 0, b.len());
   return out;
 }

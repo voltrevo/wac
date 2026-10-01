@@ -36,7 +36,7 @@ import {
  * function that looks like it only reads.
  */
 u8[] clamp(u8[] k) {
-  u8[] e = u8[32]();
+  u8[] e = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { e[i] = k[i]; }
   e[0] = e[0] & 248;
   e[31] = e[31] & 127;
@@ -98,7 +98,7 @@ export u8[] x25519(u8[] scalar, u8[] u) {
 
 /** The base point, u = 9. */
 u8[] basePoint() {
-  u8[] u = u8[32]();
+  u8[] u = u8[].filled(32, 0);
   u[0] = 9;
   return u;
 }
@@ -124,7 +124,7 @@ export u8[] x25519Base(u8[] scalar) { return x25519(scalar, basePoint()); }
  * all. A rule implemented three times and missing from the fourth place is the shape this repository
  * treats as one copy too many.
  *
- * `null` rather than an empty array so a caller cannot use the result by accident: `u8[0]()` is a
+ * `null` rather than an empty array so a caller cannot use the result by accident: `u8[]()` is a
  * value that concatenates and hashes quite happily.
  */
 export u8[]? x25519Shared(u8[] scalar, u8[] peer) {

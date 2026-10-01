@@ -23,18 +23,22 @@ import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { coreFile, coreFiles, isBuiltinSpec, stdFile, stdFiles } from "../../src/coretext.wac";
 
 /** Only the entry. Whatever the tree contributes has to come from inside the compiler. */
-string[] paths() { return string[]("main.wac"); }
+string[] paths() { return ["main.wac"]; }
 
 /** A program that uses the root of the tree — `Read` is what bare `core` gets. */
 string[] rootUsing(string importLine) {
-  return string[](importLine + "\nexport i32 main() { Read r = Read.End; " +
-                  "return match (r) { End: 0, default: 1 }; }\n");
+  return [
+                  importLine + "\nexport i32 main() { Read r = Read.End; " +
+                  "return match (r) { End: 0, default: 1 }; }\n"
+  ];
 }
 
 /** A program that uses a sibling: its own module, reached by its own specifier. */
 string[] siblingUsing(string importLine) {
-  return string[](importLine + "\nexport i32 main() { Option<i32> o = Option.Some(7); " +
-                  "return o.orElse(0); }\n");
+  return [
+                  importLine + "\nexport i32 main() { Option<i32> o = Option.Some(7); " +
+                  "return o.orElse(0); }\n"
+  ];
 }
 
 /** Blocked-or-emitted-nothing, as one sentence, so a case can report either. */
@@ -49,14 +53,14 @@ export string test_the_root_is_reachable_by_every_spelling() {
   // The bare form is the one in use today, and it is here as the canary: if it fails, the file map
   // or the program is wrong and the quoted cases below say nothing.
   T t = T.create();
-  string[] lines = string[]("import { Read } from core;", "import { Read } from \"core\";");
-  string[] wrong = string[lines.len()](fill: "");
+  string[] lines = ["import { Read } from core;", "import { Read } from \"core\";"];
+  string[] wrong = string[].filled(lines.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     string why = refusal(rootUsing(lines[i]));
     if (why != "") { wrong[n] = lines[i] + " -> " + why; n = n + 1; }
   }
-  string[] said = string[n](fill: "");
+  string[] said = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { said[i] = wrong[i]; }
   t.eqI32(n, 0, "spelling(s) of the root did not resolve: " + joined(said, "; "));
   return t.report();
@@ -86,8 +90,8 @@ export string test_a_name_the_tree_does_not_have_is_still_refused() {
 /** `wac check <entry>` run with the working directory somewhere the repository is not. */
 Exec checkFrom(Cli cli, string dir, string entry) {
   return cli.exec("/bin/sh",
-                  string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " check " + entry),
-                  u8[0]()).wait();
+                  ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " check " + entry],
+                  u8[]()).wait();
 }
 
 export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli) {
@@ -112,12 +116,13 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   // now. The case did not disappear — it moved to `test_a_bare_specifier_is_refused_the_same_way_by
   // _both_compilers` below, where it asserts the refusal instead. Deleting it here and not adding it
   // there would have turned a rule into an untested one at the moment it started being enforced.
-  string[] names = string[]("root_quoted.wac", "sibling.wac");
-  string[] progs = string[](
+  string[] names = ["root_quoted.wac", "sibling.wac"];
+  string[] progs = [
     "import { Read } from \"core\";\n" +
     "export i32 main() { Read r = Read.End; return match (r) { End: 0, default: 1 }; }\n",
     "import { Option } from \"core/option.wac\";\n" +
-    "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n");
+    "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n"
+  ];
   for (i32 i = 0; i < names.len(); i++) {
     Change w = cli.writeFile(dir + "/" + names[i], progs[i].toBytes()).wait();
     t.isTrue(w.ok(), "could not write " + names[i] + " — " + w.message);
@@ -245,8 +250,10 @@ export string test_the_cheap_builtin_test_agrees_with_the_files_served() {
   // **The other direction, which is what a list can get wrong.** A name the fetchers do not serve must
   // not be called a built-in — otherwise the resolver reserves a specifier nothing can supply, which is
   // a module the graph reads and the linker cannot find.
-  string[] near = string[]("core/nope.wac", "std/nope.wac", "./core/option.wac", "option.wac",
-                           "core/option", "std/platform.wac.bak");
+  string[] near = [
+                           "core/nope.wac", "std/nope.wac", "./core/option.wac", "option.wac",
+                           "core/option", "std/platform.wac.bak"
+  ];
   for (i32 i = 0; i < near.len(); i++) {
     t.isTrue(!isBuiltinSpec(near[i]), near[i] + " is not served and is called a built-in");
     t.isTrue(coreFile(near[i]) == "" && stdFile(near[i]) == "",
@@ -278,7 +285,7 @@ export string test_a_builtin_prefix_that_names_no_builtin_lists_the_ones_there_a
       ("import { x } from \"core/nope.wac\";\nexport i32 main() { return x(); }\n").toBytes()).wait();
   t.isTrue(w.ok(), "wrote the program — " + w.message);
 
-  Exec r = cli.exec(binaryPath(cli), string[]("check", dir + "/m.wac"), u8[0]()).wait();
+  Exec r = cli.exec(binaryPath(cli), ["check", dir + "/m.wac"], u8[]()).wait();
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);

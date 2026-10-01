@@ -84,10 +84,12 @@ export string test_day_numbers_and_weekdays_agree_with_date_over_four_centuries(
 export string test_the_far_past_and_far_future(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] years = i32[](-271820, -100000, -4713, -1, 0, 1, 100, 1000, 1969, 1970, 1971, 2100,
-                      100000, 275759);
-  i32[] months = i32[](1, 2, 3, 12);
-  i32[] days = i32[](1, 28, 1, 31);
+  i32[] years = [
+                      -271820, -100000, -4713, -1, 0, 1, 100, 1000, 1969, 1970, 1971, 2100,
+                      100000, 275759
+  ];
+  i32[] months = [1, 2, 3, 12];
+  i32[] days = [1, 28, 1, 31];
   for (i32 i = 0; i < years.len(); i++) {
     for (i32 k = 0; k < months.len(); k++) {
       i32 y = years[i];
@@ -122,11 +124,11 @@ export string test_leap_years_and_month_lengths(Core core, Cli cli) {
 export string test_day_of_year_agrees_with_date(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] years = i32[](1900, 1970, 1999, 2000, 2001, 2020, 2024, 2100);
+  i32[] years = [1900, 1970, 1999, 2000, 2001, 2020, 2024, 2100];
   for (i32 i = 0; i < years.len(); i++) {
     i32 y = years[i];
     for (i32 m = 1; m <= 12; m++) {
-      i32[] ds = i32[](1, 15, daysInMonth(y, m));
+      i32[] ds = [1, 15, daysInMonth(y, m)];
       for (i32 k = 0; k < ds.len(); k++) {
         lines.add("yday " + itoa(y) + " " + itoa(m) + " " + itoa(ds[k]) + " " +
                   itoa(dayOfYear(y, m, ds[k])));
@@ -139,16 +141,16 @@ export string test_day_of_year_agrees_with_date(Core core, Cli cli) {
 
 export string test_invalid_dates_are_rejected() {
   T t = T.create();
-  i32[] badY = i32[](2020, 2020, 2020, 2020, 2020, 2019, 1900, 2020, 2020, 2020, 2020);
-  i32[] badM = i32[](0, 13, 1, 1, 2, 2, 2, 4, 6, 9, 11);
-  i32[] badD = i32[](1, 1, 0, 32, 30, 29, 29, 31, 31, 31, 31);
+  i32[] badY = [2020, 2020, 2020, 2020, 2020, 2019, 1900, 2020, 2020, 2020, 2020];
+  i32[] badM = [0, 13, 1, 1, 2, 2, 2, 4, 6, 9, 11];
+  i32[] badD = [1, 1, 0, 32, 30, 29, 29, 31, 31, 31, 31];
   for (i32 i = 0; i < badY.len(); i++) {
     t.isFalse(isValidDate(badY[i], badM[i], badD[i]),
               itoa(badY[i]) + "-" + itoa(badM[i]) + "-" + itoa(badD[i]) + " was accepted");
   }
-  i32[] okY = i32[](2020, 2000, 1900, 2020, 2020);
-  i32[] okM = i32[](2, 2, 2, 1, 4);
-  i32[] okD = i32[](29, 29, 28, 31, 30);
+  i32[] okY = [2020, 2000, 1900, 2020, 2020];
+  i32[] okM = [2, 2, 2, 1, 4];
+  i32[] okD = [29, 29, 28, 31, 30];
   for (i32 i = 0; i < okY.len(); i++) {
     t.isTrue(isValidDate(okY[i], okM[i], okD[i]),
              itoa(okY[i]) + "-" + itoa(okM[i]) + "-" + itoa(okD[i]) + " was rejected");
@@ -166,7 +168,7 @@ i64 spreadMillis(Rng rng) {
 export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i64[] fixed = i64[](0, 1, -1, 999, 1000, -1000, -999);
+  i64[] fixed = [0, 1, -1, 999, 1000, -1000, -999];
   for (i32 i = 0; i < fixed.len(); i++) {
     lines.add("fmt " + itoa64(fixed[i]) + " " + string.fromBytes(format(fixed[i])));
   }
@@ -185,12 +187,14 @@ export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
   // reach here — it covers about 1963 to 1976 — so a four-digit year that silently took the value
   // modulo ten thousand passed for as long as it existed: year 10000 printed `0000`.
   // GitHub wac-mono#1.
-  i64[] wide = i64[](253402300800000,     // +010000-01-01, the first year that needs the expanded form
+  i64[] wide = [
+                     253402300800000,     // +010000-01-01, the first year that needs the expanded form
                      253402300799999,     // and the last that does not
                      -62167219200000,     // 0000-01-01
                      -62167219200001,     // -000001-12-31, one millisecond before year zero
                      8640000000000000,    // +275760-09-13, the largest instant Date supports
-                     -8640000000000000);  // -271821-04-20, the smallest
+                     -8640000000000000  // -271821-04-20, the smallest
+  ];
   for (i32 i = 0; i < wide.len(); i++) {
     lines.add("fmt " + itoa64(wide[i]) + " " + string.fromBytes(format(wide[i])));
   }
@@ -199,7 +203,7 @@ export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
 }
 
 string[] wellFormedStamps() {
-  return string[](
+  return [
     "1970-01-01T00:00:00Z",
     "1970-01-01T00:00:00.000Z",
     "2020-02-29T12:34:56Z",
@@ -216,7 +220,8 @@ string[] wellFormedStamps() {
     "2100-12-31T23:59:59Z",
     "2020-06-15t10:00:00z",
     "2020-01-01T00:00:00+23:59",
-    "2020-01-01T00:00:00-23:59");
+    "2020-01-01T00:00:00-23:59"
+  ];
 }
 
 export string test_parse_matches_date_parse(Core core, Cli cli) {
@@ -247,9 +252,11 @@ export string test_minus_zero_zero_is_an_unknown_offset() {
   T t = T.create();
   Parsed unknown = parse("2020-06-15T10:00:00-00:00".toBytes());
   t.isTrue(unknown.ok && !unknown.offsetKnown, "-00:00 is the unknown-offset spelling");
-  string[] asserting = string[]("2020-06-15T10:00:00Z", "2020-06-15T10:00:00z",
+  string[] asserting = [
+                                "2020-06-15T10:00:00Z", "2020-06-15T10:00:00z",
                                 "2020-06-15T10:00:00+00:00", "2020-06-15T10:00:00+05:30",
-                                "2020-06-15T10:00:00-05:00");
+                                "2020-06-15T10:00:00-05:00"
+  ];
   for (i32 i = 0; i < asserting.len(); i++) {
     Parsed p = parse(asserting[i].toBytes());
     t.isTrue(p.ok && p.offsetKnown, asserting[i] + " asserts an offset");
@@ -259,8 +266,10 @@ export string test_minus_zero_zero_is_an_unknown_offset() {
   // And the instant is the same for all three zero spellings, which is the half `Date` can confirm —
   // and which the `parse` test above already puts to it for two of the three.
   i64 at = parse("2020-06-15T10:00:00Z".toBytes()).millis;
-  string[] zeros = string[]("2020-06-15T10:00:00Z", "2020-06-15T10:00:00+00:00",
-                            "2020-06-15T10:00:00-00:00");
+  string[] zeros = [
+                            "2020-06-15T10:00:00Z", "2020-06-15T10:00:00+00:00",
+                            "2020-06-15T10:00:00-00:00"
+  ];
   for (i32 i = 0; i < zeros.len(); i++) {
     Parsed p = parse(zeros[i].toBytes());
     t.eqI64(p.millis, at, zeros[i] + " is the same instant");
@@ -277,10 +286,12 @@ export string test_minus_zero_zero_is_an_unknown_offset() {
  */
 export string test_the_offset_is_kept() {
   T t = T.create();
-  string[] stamps = string[]("2020-01-01T00:00:00Z", "2020-01-01T00:00:00+00:00",
+  string[] stamps = [
+                             "2020-01-01T00:00:00Z", "2020-01-01T00:00:00+00:00",
                              "2020-01-01T00:00:00+05:30", "2020-01-01T00:00:00-08:00",
-                             "2020-01-01T00:00:00-00:30");
-  i32[] mins = i32[](0, 0, 330, -480, -30);
+                             "2020-01-01T00:00:00-00:30"
+  ];
+  i32[] mins = [0, 0, 330, -480, -30];
   for (i32 i = 0; i < stamps.len(); i++) {
     t.eqI32(parse(stamps[i].toBytes()).offsetMin, mins[i], stamps[i]);
   }
@@ -289,7 +300,7 @@ export string test_the_offset_is_kept() {
 
 export string test_malformed_timestamps_are_rejected() {
   T t = T.create();
-  string[] bad = string[](
+  string[] bad = [
     "", "2020", "2020-01", "2020-01-01", "2020-01-01T00:00", "2020-01-01T00:00:00",
     "2020-1-01T00:00:00Z", "2020-01-1T00:00:00Z", "20-01-01T00:00:00Z",
     "2020/01/01T00:00:00Z", "2020-01-01X00:00:00Z", "2020-01-01T00-00-00Z",
@@ -302,7 +313,8 @@ export string test_malformed_timestamps_are_rejected() {
     "2020-01-01T00:00:00Zx", "2020-01-01T00:00:00.5", "2020-01-01T00:00:00.5+",
     // A non-digit in each numeric field in turn, since each has its own rejection.
     "2020-0x-01T00:00:00Z", "2020-01-0xT00:00:00Z", "2020-01-01T00:0x:00Z",
-    "2020-01-01T00:00:0xZ", "2020-01-01T00:00:00+00:0x", "2020-01-01T00:00:00+0x:00");
+    "2020-01-01T00:00:0xZ", "2020-01-01T00:00:00+00:0x", "2020-01-01T00:00:00+0x:00"
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(parse(bad[i].toBytes()).ok, "accepted \"" + bad[i] + "\"");
   }
@@ -321,7 +333,7 @@ export string test_malformed_timestamps_are_rejected() {
 export string test_a_leap_second_is_rejected(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  string[] leapSeconds = string[]("2016-12-31T23:59:60Z", "2015-06-30T23:59:60Z");
+  string[] leapSeconds = ["2016-12-31T23:59:60Z", "2015-06-30T23:59:60Z"];
   for (i32 i = 0; i < leapSeconds.len(); i++) {
     t.isFalse(parse(leapSeconds[i].toBytes()).ok,
               leapSeconds[i] + " was accepted, so leap seconds may now be supported");

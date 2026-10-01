@@ -55,7 +55,7 @@ struct Case {
  * key written twice, which is what `ct.ts`'s `KEYS32` was.
  */
 i32[] keyOf(i32 which, i32 len) {
-  i32[] out = i32[len]();
+  i32[] out = i32[].filled(len, 0);
   for (i32 i = 0; i < len; i++) {
     i32 j = i % 16;
     if (which == 0) { out[i] = 0; }
@@ -67,15 +67,15 @@ i32[] keyOf(i32 which, i32 len) {
 }
 
 string literal(i32[] v) {
-  string out = "u8[](";
+  string out = "[";
   for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + itoa(v[i]); }
-  return out + ")";
+  return out + "] as u8[]";
 }
 
 /** `0, 1, 2, …` — the public input, which is not a secret. */
-string block16() { i32[] b = i32[16](); for (i32 i = 0; i < 16; i++) { b[i] = i; } return literal(b); }
+string block16() { i32[] b = i32[].filled(16, 0); for (i32 i = 0; i < 16; i++) { b[i] = i; } return literal(b); }
 
-i32[] all4() { return i32[](0, 1, 2, 3); }
+i32[] all4() { return [0, 1, 2, 3] as i32[]; }
 
 /**
  * A fixed 1024-bit modulus and base for the `modPowSecret` row.
@@ -86,7 +86,7 @@ i32[] all4() { return i32[](0, 1, 2, 3); }
  * key in a tool that prints its inputs.
  */
 string rsaModulus() {
-  i32[] n = i32[128]();
+  i32[] n = i32[].filled(128, 0);
   n[0] = 0xC5;
   for (i32 i = 1; i < 127; i++) { n[i] = (i * 31 + 7) & 255; }
   n[127] = 0x8F;
@@ -94,27 +94,27 @@ string rsaModulus() {
 }
 
 string rsaBase() {
-  i32[] b = i32[128]();
+  i32[] b = i32[].filled(128, 0);
   b[0] = 2;
   return literal(b);
 }
 
 Case[] cases() {
-  return Case[](
+  return [
     Case("sha256", "packages/crypto/src/sha256.wac", "sha256($KEY)", 16, all4()),
     Case("chachaBlock", "packages/crypto/src/chacha20.wac",
-         "chachaBlock($KEY, 1, u8[12](fill: 1))", 32, all4()),
+         "chachaBlock($KEY, 1, u8[].filled(12, 1))", 32, all4()),
     Case("poly1305", "packages/crypto/src/poly1305.wac",
          "poly1305($KEY, " + block16() + ")", 32, all4()),
     // Two scalars only: 1.8M events per run, and the point is made without four of them.
-    Case("x25519Base", "packages/crypto/src/x25519.wac", "x25519Base($KEY)", 32, i32[](0, 1)),
+    Case("x25519Base", "packages/crypto/src/x25519.wac", "x25519Base($KEY)", 32, [0, 1] as i32[]),
     // **The signing row `x25519Base` was standing in for and could not stand in for.** A ladder
     // being uniform is a result about a ladder; signing is a different scalar, a different reduction
     // and a different secret, and `ed25519Sign` parted at `ed25519.wac:334` — `scReduce`'s compare —
     // for as long as this table had a key-exchange row and no signing one. `issues/system/0225`, and
     // the same omission as `p256Sign`'s in `issues/system/0224`.
     Case("ed25519Sign", "packages/crypto/src/ed25519.wac",
-         "ed25519Sign($KEY, " + block16() + ")", 32, i32[](0, 1)),
+         "ed25519Sign($KEY, " + block16() + ")", 32, [0, 1] as i32[]),
     Case("ghash", "packages/crypto/src/ghash.wac", "ghash($KEY, " + block16() + ")", 16, all4()),
     Case("aesExpandKey", "packages/crypto/src/aes.wac", "aesExpandKey($KEY)", 16, all4()),
     Case("aesEncrypt", "packages/crypto/src/aes.wac",
@@ -123,7 +123,7 @@ Case[] cases() {
     // `~2,000,000` with a tilde — a hand-written figure in a generated table, which is the exact
     // failure this file exists to prevent. Not the all-zero key: `curvePublicKey` traps on a scalar of
     // zero or one past the group order, so the secrets have to be valid keys as well as different.
-    Case("p256PublicKey", "packages/crypto/src/p256.wac", "p256PublicKey($KEY)", 32, i32[](2, 3)),
+    Case("p256PublicKey", "packages/crypto/src/p256.wac", "p256PublicKey($KEY)", 32, [2, 3] as i32[]),
     // **Signing was the routine most worth measuring and the one not measured**, which is how a
     // second leak of exactly the fixed shape sat in `scMul` while `p256PublicKey` went green. A
     // public key exposes the private key to a side channel; a signature exposes the *nonce*, and a
@@ -134,7 +134,7 @@ Case[] cases() {
     // of a public key and by far the most expensive row, because `scInvert` is Fermat over
     // byte-at-a-time `scMul`.
     Case("p256Sign", "packages/crypto/src/p256.wac",
-         "p256Sign($KEY, u8[32](fill: 0), u8[32](fill: 9))", 32, i32[](2, 3)),
+         "p256Sign($KEY, u8[].filled(32, 0), u8[].filled(32, 9))", 32, [2, 3] as i32[]),
     // One round and two passwords: a single bcrypt hash is already 129 key expansions, so the event
     // count dwarfs everything above and a third password would say nothing more.
     //
@@ -155,7 +155,7 @@ Case[] cases() {
     // one — a `Case` here is one `$KEY` and a fixed public input, so it varies the secret and cannot
     // ask that. `test/wac/constanttime_test.wac` asks it.
     Case("kemDecapsSecret", "packages/crypto/test/wac/mlkem_probe.wac", "kemDecapsSecret($KEY)", 64,
-         i32[](0, 1)),
+         [0, 1] as i32[]),
     // **RSA had no row, and it is the one routine here whose own header says at length that it is not
     // constant-time.** So "we did not measure it" and "it is fine" looked identical for exactly the
     // case this table exists to keep apart — the same argument the `bcryptPbkdf` row below is made
@@ -170,9 +170,10 @@ Case[] cases() {
     // question: a private exponent must not change the work. It does — and the row names
     // `packages/bignum`'s `trim`, which is more use than "not constant-time".
     Case("modExpSecret", "packages/crypto/test/wac/rsa_probe.wac",
-         "modExpSecret(" + rsaBase() + ", $KEY, " + rsaModulus() + ")", 128, i32[](2, 3)),
+         "modExpSecret(" + rsaBase() + ", $KEY, " + rsaModulus() + ")", 128, [2, 3] as i32[]),
     Case("bcryptPbkdf", "packages/crypto/src/bcryptpbkdf.wac",
-         "bcryptPbkdf($KEY, " + block16() + ", 32, 1)", 16, i32[](0, 1)));
+         "bcryptPbkdf($KEY, " + block16() + ", 32, 1)", 16, [0, 1] as i32[])
+  ] as Case[];
 }
 
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
@@ -216,7 +217,7 @@ bool startsWith(string s, string p) {
 string[] linesOf(string s) {
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   string cur = "";
   for (i32 i = 0; i < s.len(); i++) {
@@ -250,10 +251,12 @@ string build(Core core, Cli cli, Case c, i32 which, i32 slots, string tag) {
   if (!wrote.ok()) { core.warn("ct: cannot write " + entry + " — " + wrote.message); return ""; }
 
   string[] argv = slots > 0
-    ? string[]("build", entry, "--trace", "--trace-slots", itoa(slots), "-o", dir + "/" + tag,
-               "--quiet")
-    : string[]("build", entry, "--trace", "-o", dir + "/" + tag, "--quiet");
-  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+    ? [
+               "build", entry, "--trace", "--trace-slots", itoa(slots), "-o", dir + "/" + tag,
+               "--quiet"
+    ]
+    : ["build", entry, "--trace", "-o", dir + "/" + tag, "--quiet"];
+  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("ct: " + c.name + " did not build — " + execReason(r));
     return "";
@@ -274,7 +277,7 @@ string replaceKey(string call, string lit) {
 struct TraceStat { i32 events; i32 wanted; i32 slots; bool ok; }
 
 TraceStat statOf(Core core, Cli cli, string stem) {
-  Exec r = cli.exec(binary(cli), string[]("tracestat", stem + ".wasm"), u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), ["tracestat", stem + ".wasm"], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("ct: tracestat — " + execReason(r));
     return TraceStat(0, 0, 0, false);
@@ -338,8 +341,8 @@ export i32 main(Core core, Cli cli) {
       continue;
     }
 
-    string[] sites = string[64](fill: "");
-    string[] kinds = string[64](fill: "");
+    string[] sites = string[].filled(64, "");
+    string[] kinds = string[].filled(64, "");
     i32 nSites = 0;
     bool stopped = false;
     string splitAt = "";
@@ -347,8 +350,8 @@ export i32 main(Core core, Cli cli) {
       string other = build(core, cli, c, c.keys[k], slots, "other");
       if (other == "") { return 1; }
       Exec r = cli.exec(binary(cli),
-                        string[]("ctcompare", "--all", base + ".wasm", other + ".wasm"),
-                        u8[0]()).wait();
+                        ["ctcompare", "--all", base + ".wasm", other + ".wasm"],
+                        u8[]()).wait();
       if (!r.ran() || r.status != 0) {
         core.warn("ct: ctcompare — " + execReason(r));
         return 1;

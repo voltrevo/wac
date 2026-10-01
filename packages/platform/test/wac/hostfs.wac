@@ -65,7 +65,7 @@ export Pending<Exec> submit(Cli cli, i32 seconds, string cwd, string home, strin
   string line = "cd " + quoted(cwd) + " && exec timeout " + itoa(seconds) + " " +
                 envLine(cli, home) + " " + quoted(prog);
   for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
-  return cli.exec("/bin/sh", string[]("-c", line), stdin);
+  return cli.exec("/bin/sh", ["-c", line], stdin);
 }
 
 export Ran collect(Pending<Exec> p) {
@@ -172,10 +172,10 @@ export Ran[] denoBatch(Cli cli, i32 seconds, string entry, string[] grants, stri
   string line = "exec timeout " + itoa(seconds) + " deno run -A harness/appRunMany.ts " +
                 quoted(entry);
   for (i32 i = 0; i < grants.len(); i++) { line = line + " " + quoted(grants[i]); }
-  Exec r = cli.exec("/bin/sh", string[]("-c", line), body.toBytes()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", line], body.toBytes()).wait();
 
-  Ran[] out = Ran[cwds.len()](fill: Ran(0, "", "", false));
-  string[] lines = r.ran() ? splitLines(string.fromBytes(r.stdout)) : string[0](fill: "");
+  Ran[] out = Ran[].filled(cwds.len(), Ran(0, "", "", false));
+  string[] lines = r.ran() ? splitLines(string.fromBytes(r.stdout)) : string[].filled(0, "");
   i32 at = 0;
   for (i32 i = 0; i < lines.len() && at < out.len(); i++) {
     if (lines[i].len() < 4 || lines[i].slice(0, 4) != "ran ") { continue; }
@@ -207,7 +207,7 @@ string[] envStrings(Cli cli, string home) {
   string path = "/usr/bin:/bin";
   u8[]? p = cli.env("PATH").wait();
   if (p is not null) { path = string.fromBytes(p!); }
-  return string[]("LC_ALL=C", "PATH=" + path, "HOME=" + home);
+  return ["LC_ALL=C", "PATH=" + path, "HOME=" + home];
 }
 
 /**
@@ -223,7 +223,7 @@ string[] envStrings(Cli cli, string home) {
  */
 u8[] joinedNul(string[] parts) {
   Buf b = Buf.create();
-  u8[] zero = u8[1]();
+  u8[] zero = u8[].filled(1, 0);
   for (i32 i = 0; i < parts.len(); i++) {
     if (i > 0) { b.pushAll(zero); }
     b.pushAll(parts[i].toBytes());
@@ -253,25 +253,25 @@ export string root(Cli cli) { return cli.cwd().wait(); }
 
 export string buildOne(Cli cli, bool native, string entry, string out, string[] grants) {
   if (native) {
-    string[] args = string[4 + grants.len()](fill: "");
+    string[] args = string[].filled(4 + grants.len(), "");
     args[0] = "build";
     args[1] = entry;
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
       return "wac build " + out + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
     }
     return "";
   }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
-  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  string[] head = ["run", "-A", "packages/platform/build.ts", entry];
+  string[] args = string[].filled(head.len() + grants.len() + 2, "");
   for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) { return "build.ts " + out + ": " + string.fromBytes(r.stderr); }
   return "";
 }
@@ -304,8 +304,8 @@ export Built builds(Cli cli) {
                   dir + "/sealed-deno", dir + "/sealed.wasm",
                   dir + "/granted-deno", dir + "/granted.wasm",
                   dir + "/open-deno", dir + "/open.wasm");
-  string[] none = string[0](fill: "");
-  string[] rwe = string[]("--allow-read", "--allow-write", "--allow-env");
+  string[] none = string[].filled(0, "");
+  string[] rwe = ["--allow-read", "--allow-write", "--allow-env"];
   string why = "";
   i64 sealedNewest = newestFor(cli, SEALED);
   i64 openNewest = newestFor(cli, OPEN);
@@ -330,19 +330,19 @@ export Built builds(Cli cli) {
  * and this does not.
  */
 export Ran[] denoAll(Cli cli, string tmp, string[] grants, string[] scripts) {
-  string[] cwds = string[scripts.len()](fill: tmp);
-  string[][] argv = string[][scripts.len()](fill: string[0](fill: ""));
-  u8[][] stdins = u8[][scripts.len()](fill: u8[0]());
-  for (i32 i = 0; i < scripts.len(); i++) { argv[i] = string[]("-c", scripts[i]); }
+  string[] cwds = string[].filled(scripts.len(), tmp);
+  string[][] argv = string[][].filled(scripts.len(), string[].filled(0, ""));
+  u8[][] stdins = u8[][].filled(scripts.len(), u8[]());
+  for (i32 i = 0; i < scripts.len(); i++) { argv[i] = ["-c", scripts[i]]; }
   return denoBatch(cli, DEFAULT_SECONDS * 2, SEALED, grants, tmp, cwds, argv, stdins);
 }
 
 export Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string script) {
-  string[] args = string[pre.len() + 2](fill: "");
+  string[] args = string[].filled(pre.len() + 2, "");
   for (i32 i = 0; i < pre.len(); i++) { args[i] = pre[i]; }
   args[pre.len()] = "-c";
   args[pre.len() + 1] = script;
-  return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[0](), () => { });
+  return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[](), () => { });
 }
 
 /** How the two answers differ, or empty when they do not. */

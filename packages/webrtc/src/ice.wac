@@ -114,9 +114,9 @@ export string checkUsername(string peerUfrag, string ourUfrag) {
 export u8[] checkFor(u8[] tid, string peerUfrag, string ourUfrag, u8[] peerPassword,
                      i64 priority, bool controlling, u8[] tiebreaker, bool useCandidate) {
   i32 n = 3 + (useCandidate ? 1 : 0);
-  Attr[] attrs = Attr[n](fill: Attr(0, u8[0]()));
+  Attr[] attrs = Attr[].filled(n, Attr(0, u8[]()));
   attrs[0] = Attr(attrUsername(), checkUsername(peerUfrag, ourUfrag).toBytes());
-  u8[] pri = u8[4]();
+  u8[] pri = u8[].filled(4, 0);
   pri[0] = ((priority >> (24 as i64)) & (255 as i64)) as~ i32;
   pri[1] = ((priority >> (16 as i64)) & (255 as i64)) as~ i32;
   pri[2] = ((priority >> (8 as i64)) & (255 as i64)) as~ i32;
@@ -127,7 +127,7 @@ export u8[] checkFor(u8[] tid, string peerUfrag, string ourUfrag, u8[] peerPassw
   // unsigned and this file has no reason to interpret it.
   attrs[2] = Attr(controlling ? attrIceControlling() : attrIceControlled(), tiebreaker);
   // USE-CANDIDATE has no value at all — its presence is the whole message.
-  if (useCandidate) { attrs[3] = Attr(attrUseCandidate(), u8[0]()); }
+  if (useCandidate) { attrs[3] = Attr(attrUseCandidate(), u8[]()); }
   return withFingerprint(withIntegrity(encode(bindingRequest(), tid, attrs), peerPassword));
 }
 
@@ -170,7 +170,7 @@ export u8[] roleTiebreaker(u8[] msg, bool controlling) {
  * teaches the peer nothing.
  */
 export u8[] successFor(u8[] tid, u8[] ourPassword, i32 family, u8[] peerIp, i32 peerPort) {
-  Attr[] attrs = Attr[1](fill: Attr(0, u8[0]()));
+  Attr[] attrs = Attr[].filled(1, Attr(0, u8[]()));
   attrs[0] = Attr(attrXorMappedAddress(), xorMappedValue(family, peerPort, peerIp, tid));
   return withFingerprint(withIntegrity(encode(bindingSuccess(), tid, attrs), ourPassword));
 }
@@ -202,7 +202,7 @@ export struct Consent {
   u8[] pending;
 
   Consent of(i64 interval, i64 timeout, i64 now) {
-    return Consent(now, now + interval, interval, timeout, u8[0]());
+    return Consent(now, now + interval, interval, timeout, u8[]());
   }
 
   /** Whether a check is due. */
@@ -234,7 +234,7 @@ export struct Consent {
     }
     if (!integrityOk(msg, password)) { return false; }
     this.lastResponse = now;
-    this.pending = u8[0]();
+    this.pending = u8[]();
     return true;
   }
 

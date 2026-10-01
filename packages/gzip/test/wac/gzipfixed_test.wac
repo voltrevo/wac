@@ -14,7 +14,7 @@ import { gzipFixed } from "../../src/gzip.wac";
 import { External, gunzip, roundTrip } from "./external.wac";
 
 u8[] ramp(i32 n, i32 from) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (from + i) & 0xFF; }
   return out;
 }
@@ -27,8 +27,8 @@ u8[] repeated(string s, i32 times) {
 
 export string test_gunzip_round_trips(Core core, Cli cli) {
   T t = T.create();
-  t.eqStr(roundTrip(cli, gzipFixed(u8[0]()), "empty", u8[0]()), "", "an empty input");
-  u8[] one = u8[1]();
+  t.eqStr(roundTrip(cli, gzipFixed(u8[]()), "empty", u8[]()), "", "an empty input");
+  u8[] one = u8[].filled(1, 0);
   one[0] = 42;
   t.eqStr(roundTrip(cli, gzipFixed(one), "one byte", one), "", "one byte");
   u8[] hw = "hello world".toBytes();
@@ -50,12 +50,12 @@ export string test_bytes_on_both_sides_of_the_nine_bit_boundary(Core core, Cli c
   t.eqStr(roundTrip(cli, gzipFixed(low), "0..143", low), "", "the 8-bit codes");
   u8[] high = ramp(112, 144);
   t.eqStr(roundTrip(cli, gzipFixed(high), "144..255", high), "", "the 9-bit codes");
-  u8[] alt = u8[200]();
+  u8[] alt = u8[].filled(200, 0);
   for (i32 i = 0; i < alt.len(); i++) { alt[i] = i % 2 != 0 ? 144 : 143; }
   t.eqStr(roundTrip(cli, gzipFixed(alt), "alternating 143/144", alt), "", "alternating across it");
-  u8[] ones = u8[300](fill: 0xFF);
+  u8[] ones = u8[].filled(300, 0xFF);
   t.eqStr(roundTrip(cli, gzipFixed(ones), "all 0xFF", ones), "", "all high");
-  u8[] zeros = u8[300]();
+  u8[] zeros = u8[].filled(300, 0);
   t.eqStr(roundTrip(cli, gzipFixed(zeros), "all 0x00", zeros), "", "all low");
   return t.report();
 }
@@ -78,7 +78,7 @@ export string test_longer_text_and_binary_payloads(Core core, Cli cli) {
   t.eqStr(roundTrip(cli, gzipFixed(text), "repeated text", text), "", "text that compresses well");
 
   // A linear congruential ramp, so the input is incompressible and every literal is exercised.
-  u8[] random = u8[30000]();
+  u8[] random = u8[].filled(30000, 0);
   i32 s = 24680;
   for (i32 i = 0; i < random.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;

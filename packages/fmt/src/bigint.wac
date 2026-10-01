@@ -28,7 +28,7 @@ export struct FixedBig {
   u32[] limbs;
   i32 n;
 
-  FixedBig zero() { return FixedBig(u32[LIMBS()](), 0); }
+  FixedBig zero() { return FixedBig(u32[].filled(LIMBS(), 0), 0); }
 
   /**
    * A bignum with room for `limbs` limbs.
@@ -37,7 +37,7 @@ export struct FixedBig {
    * 800-digit decimal against a double's exact value reaches ~3900 bits, where
    * shortest-formatting never passes ~1030.
    */
-  FixedBig withLimbs(i32 limbs) { return FixedBig(u32[limbs](), 0); }
+  FixedBig withLimbs(i32 limbs) { return FixedBig(u32[].filled(limbs, 0), 0); }
 
   FixedBig fromU64(u64 v) {
     FixedBig b = FixedBig.zero();

@@ -81,7 +81,7 @@ export string[] candidateRoots(string fromPath, string boundary) {
   // What the walk genuinely cannot see is `..`. `dirOf("../a.wac")` is `..`, and stepping up from
   // there lands on `.` — so a file that climbed out of the project would be reported as inside it.
   // `..` and an ordinary directory name look the same to a walk, so this one case is a check.
-  if (dir == ".." || startsWith(dir, "../")) { return string[0](fill: ""); }
+  if (dir == ".." || startsWith(dir, "../")) { return string[].filled(0, ""); }
 
   // Count first: an array is sized where it is made, and the walk is cheap enough to do twice.
   //
@@ -99,9 +99,9 @@ export string[] candidateRoots(string fromPath, string boundary) {
     if (up == at) { break; }
     at = up;
   }
-  if (!reached) { return string[0](fill: ""); }
+  if (!reached) { return string[].filled(0, ""); }
 
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   at = dir;
   for (i32 i = 0; i < n; i++) {
     out[i] = at;

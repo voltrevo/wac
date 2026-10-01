@@ -30,11 +30,13 @@ import { wireField, wireLines, MESSAGE, ANNOTATION, HINT, SPAN } from "./wire_pr
 
 /** The first diagnostic for `src`, as its nine wire fields — empty strings when there is none. */
 string[] firstDiagnostic(string src) {
-  string wire = diagnoseFiles(string[]("err.wac"), string[](src), "err.wac");
+  string wire = diagnoseFiles(["err.wac"], [src], "err.wac");
   string[] lines = wireLines(wire);
-  if (lines.len() == 0) { return string[0](fill: ""); }
-  return string[](wireField(lines[0], MESSAGE()), wireField(lines[0], ANNOTATION()),
-                  wireField(lines[0], HINT()), wireField(lines[0], SPAN()));
+  if (lines.len() == 0) { return string[].filled(0, ""); }
+  return [
+                  wireField(lines[0], MESSAGE()), wireField(lines[0], ANNOTATION()),
+                  wireField(lines[0], HINT()), wireField(lines[0], SPAN())
+  ];
 }
 
 /**
@@ -276,10 +278,11 @@ bool contains(string haystack, string needle) {
  */
 export string test_a_keyword_in_a_name_position_names_the_keyword() {
   T t = T.create();
-  string[] what = string[](
+  string[] what = [
     "parameter name", "variable name", "struct name", "function name",
-    "member name", "enum name", "member name", "type parameter name", "field name");
-  string[] src = string[](
+    "member name", "enum name", "member name", "type parameter name", "field name"
+  ];
+  string[] src = [
     "export i32 go(i32 match) { return 1; }\n",
     "export i32 f() { i32 match = 1; return match; }\n",
     "struct match { i32 x; }\n",
@@ -290,7 +293,8 @@ export string test_a_keyword_in_a_name_position_names_the_keyword() {
     "enum match { A, B }\n",
     "struct P { i32 v; i32 match(this) { return 1; } }\n",
     "struct P<match> { match v; }\n",
-    "struct P { i32 v; }\nexport i32 f(P p) { p.match = 1; return p.v; }\n");
+    "struct P { i32 v; }\nexport i32 f(P p) { p.match = 1; return p.v; }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     string[] d = firstDiagnostic(src[i]);
     t.isTrue(d.len() == 4, what[i] + ": wacc reported nothing for a keyword there");
@@ -445,7 +449,7 @@ export string test_current_wording_and_count_for_a_bad_struct_member() {
   t.eqStr(d[0], "expected a type", "the message wacc uses today — spec: `expected field or method declaration`");
   t.eqStr(d[1], "found '='", "the annotation wacc uses today — spec: `expected type name`");
   // The cascade, which the spec's single-diagnostic block does not describe.
-  string wire = diagnoseFiles(string[]("err.wac"), string[](src), "err.wac");
+  string wire = diagnoseFiles(["err.wac"], [src], "err.wac");
   t.eqI32(wireLines(wire).len(), 3, "the number of diagnostics one bad struct member produces");
   return t.report();
 }
@@ -470,11 +474,12 @@ export string test_current_wording_and_count_for_a_bad_struct_member() {
  */
 export string test_arithmetic_on_a_reference_is_refused() {
   T t = T.create();
-  string[] refused = string[](
+  string[] refused = [
       "struct S { i32 v; }\nexport i32 f() { S a = S(1); S b = S(2); S c = a + b; return 0; }",
-      "export i32 f() { i32[] a = i32[](1); i32[] b = i32[](2); i32[] c = a - b; return 0; }",
-      "export i32 f(anyref a, anyref b) { anyref c = a % b; return 0; }");
-  string[] why = string[]("`S + S`", "`i32[] - i32[]`", "`anyref % anyref`");
+      "export i32 f() { i32[] a = [1]; i32[] b = [2]; i32[] c = a - b; return 0; }",
+      "export i32 f(anyref a, anyref b) { anyref c = a % b; return 0; }"
+  ];
+  string[] why = ["`S + S`", "`i32[] - i32[]`", "`anyref % anyref`"];
   for (i32 i = 0; i < refused.len(); i++) {
     string[] d = firstDiagnostic(refused[i]);
     t.isTrue(d.len() == 4, why[i] + " compiled — arithmetic on a reference is accepted again, which "

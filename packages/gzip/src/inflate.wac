@@ -46,7 +46,7 @@ struct BitReader {
 
   /** A reader fed by `source`, which says whether it ended or broke. */
   BitReader streaming(fn<Read()> source) {
-    return BitReader(u8[0](), 0, 0, 0, source, false, "");
+    return BitReader(u8[](), 0, 0, 0, source, false, "");
   }
 
   /** Pull bytes in until at least `need` bits are buffered, or input runs out. */
@@ -213,12 +213,12 @@ struct Window {
     i32 cap = hint;
     if (cap < 64) { cap = 64; }
     // A limit nothing can reach, so `push` needs no test for whether a sink exists.
-    return Window(u8[cap](), 0, 0, 0x7FFFFFFF, null, u32[0](), 0);
+    return Window(u8[].filled(cap, 0), 0, 0, 0x7FFFFFFF, null, u32[](), 0);
   }
 
   /** A window that hands its front to `sink` as it fills, and keeps only what it must. */
   Window streaming(fn<bool(u8[])> sink) {
-    return Window(u8[flushAt()](), 0, 0, flushAt(), sink, crcTable8(), crc32Start());
+    return Window(u8[].filled(flushAt(), 0), 0, 0, flushAt(), sink, crcTable8(), crc32Start());
   }
 
   /** Total bytes ever written, which is also the next absolute position. */
@@ -273,7 +273,7 @@ struct Window {
   void grow(this) {
     // `create` never starts below 64, so doubling cannot land under it.
     i32 cap = this.data.len() * 2;
-    u8[] bigger = u8[cap]();
+    u8[] bigger = u8[].filled(cap, 0);
     bigger.copyFrom(this.data, 0, 0, this.len);
     this.data = bigger;
   }
@@ -296,7 +296,7 @@ struct Window {
     // `keep`, so there is always something to hand over.
     i32 keep = windowSize() + maxMatch();
     i32 n = this.len - keep;
-    u8[] out = u8[n]();
+    u8[] out = u8[].filled(n, 0);
     out.copyFrom(this.data, 0, 0, n);
     this.crc = crc32Update(this.crcTable, this.crc, out);
     this.sink!(out);
@@ -311,7 +311,7 @@ struct Window {
   void finish(this) {
     if (this.sink is null) { return; }
     if (this.len == 0) { return; }
-    u8[] out = u8[this.len]();
+    u8[] out = u8[].filled(this.len, 0);
     out.copyFrom(this.data, 0, 0, this.len);
     this.crc = crc32Update(this.crcTable, this.crc, out);
     this.sink!(out);
@@ -330,15 +330,15 @@ struct Window {
   u8[] take(this) {
     if (this.len == this.data.len()) {
       u8[] out = this.data;
-      this.data = u8[0]();
+      this.data = u8[]();
       this.len = 0;
       return out;
     }
-    u8[] out = u8[this.len]();
+    u8[] out = u8[].filled(this.len, 0);
     for (i32 i = 0; i < this.len; i++) {
       out[i] = this.data[i];
     }
-    this.data = u8[0]();
+    this.data = u8[]();
     this.len = 0;
     return out;
   }
@@ -380,19 +380,19 @@ struct Decoder {
   i32[] fast;     // 1 << rootBits() entries
 
   Decoder build(i32[] lengths, i32 n) {
-    i32[] count = i32[maxBits() + 1]();
+    i32[] count = i32[].filled(maxBits() + 1, 0);
     for (i32 i = 0; i < n; i++) {
       count[lengths[i]]++;
     }
     count[0] = 0;   // unused symbols are not codes
 
     // Offset of each length's first symbol in the sorted table.
-    i32[] offs = i32[maxBits() + 2]();
+    i32[] offs = i32[].filled(maxBits() + 2, 0);
     for (i32 len = 1; len <= maxBits(); len++) {
       offs[len + 1] = offs[len] + count[len];
     }
 
-    i32[] symbol = i32[n]();
+    i32[] symbol = i32[].filled(n, 0);
     for (i32 i = 0; i < n; i++) {
       if (lengths[i] > 0) {
         symbol[offs[lengths[i] + 1 - 1]] = i;
@@ -404,7 +404,7 @@ struct Decoder {
     // short code claims. A code of length L owns all indices congruent to its
     // reversal modulo 2^L, because the bits above L are not part of it.
     i32 size = 1 << rootBits();
-    i32[] fast = i32[size]();
+    i32[] fast = i32[].filled(size, 0);
     i32 code = 0;
     i32 next = 0;
     for (i32 len = 1; len <= maxBits(); len++) {
@@ -468,7 +468,7 @@ struct Decoder {
 
 /** The fixed literal/length code lengths, RFC 1951 section 3.2.6. */
 i32[] fixedLitLengths() {
-  i32[] lengths = i32[288]();
+  i32[] lengths = i32[].filled(288, 0);
   for (i32 i = 0; i <= 143; i++)   { lengths[i] = 8; }
   for (i32 i = 144; i <= 255; i++) { lengths[i] = 9; }
   for (i32 i = 256; i <= 279; i++) { lengths[i] = 7; }
@@ -477,7 +477,7 @@ i32[] fixedLitLengths() {
 }
 
 i32[] fixedDistLengths() {
-  i32[] lengths = i32[30]();
+  i32[] lengths = i32[].filled(30, 0);
   for (i32 i = 0; i < 30; i++) {
     lengths[i] = 5;
   }
@@ -486,7 +486,7 @@ i32[] fixedDistLengths() {
 
 // The code-length code order from RFC 1951 §3.2.7. A module-level constant, so
 // it is built once at instantiation rather than on every call.
-const i32[] CL_ORDER = i32[](16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+const i32[] CL_ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
 /**
  * Read a dynamic block's two code tables. Returns the literal/length lengths
@@ -501,7 +501,7 @@ i32[] readDynamicLengths(BitReader br, i32[] outSplit) {
 
   // The code-length code, sent in a fixed permuted order.
   i32[] order = CL_ORDER;
-  i32[] clLengths = i32[19]();
+  i32[] clLengths = i32[].filled(19, 0);
   for (i32 i = 0; i < hclen; i++) {
     clLengths[order[i]] = br.readBits(3);
   }
@@ -509,7 +509,7 @@ i32[] readDynamicLengths(BitReader br, i32[] outSplit) {
 
   // Both tables arrive as one run-length encoded sequence.
   i32 total = hlit + hdist;
-  i32[] lengths = i32[total]();
+  i32[] lengths = i32[].filled(total, 0);
   i32 i = 0;
   while (i < total) {
     i32 sym = cl.decode(br);
@@ -631,16 +631,16 @@ void inflateInto(BitReader br, Window out) {
         Decoder.build(fixedLitLengths(), 288),
         Decoder.build(fixedDistLengths(), 30));
     } else if (btype == 2) {
-      i32[] split = i32[2]();
+      i32[] split = i32[].filled(2, 0);
       i32[] lengths = readDynamicLengths(br, split);
       i32 hlit = split[0];
       i32 hdist = split[1];
 
-      i32[] litLengths = i32[hlit]();
+      i32[] litLengths = i32[].filled(hlit, 0);
       for (i32 i = 0; i < hlit; i++) {
         litLengths[i] = lengths[i];
       }
-      i32[] distLengths = i32[hdist]();
+      i32[] distLengths = i32[].filled(hdist, 0);
       for (i32 i = 0; i < hdist; i++) {
         distLengths[i] = lengths[hlit + i];
       }

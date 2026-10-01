@@ -60,36 +60,36 @@ u8[] field(i32 ty, u8[] data, i32 f) {
 
 u8[] rootOfField(i32 ty, u8[] data, i32 f) {
   u8[]? r = fieldRoot(beaconTypesMinimal(), beaconFields(), ty, data, f);
-  return (r is null) ? u8[0]() : r!;
+  return (r is null) ? u8[]() : r!;
 }
 
 u8[] forkDigest(u8[] version, u8[] gvr) {
   u8[]? d = computeForkDigest(version, gvr);
-  return (d is null) ? u8[0]() : d!;
+  return (d is null) ? u8[]() : d!;
 }
 
 u8[] domainOf(u8[] version, u8[] gvr) {
   u8[]? d = computeDomain(domainSyncCommittee(), version, gvr);
-  return (d is null) ? u8[0]() : d!;
+  return (d is null) ? u8[]() : d!;
 }
 
 u8[] signingRootOf(u8[] headerRoot, u8[] version, u8[] gvr) {
   u8[]? r = syncCommitteeSigningRoot(headerRoot, version, gvr);
-  return (r is null) ? u8[0]() : r!;
+  return (r is null) ? u8[]() : r!;
 }
 
 u8[] forkDataRoot(u8[] version, u8[] gvr) {
   u8[]? r = computeForkDataRoot(version, gvr);
-  return (r is null) ? u8[0]() : r!;
+  return (r is null) ? u8[]() : r!;
 }
 
 /** The 48-byte pubkeys packed into a `SyncCommittee`'s pubkey vector. */
 u8[][] pubkeysOf(u8[] committee) {
   u8[] flat = field(TY_SYNC_COMMITTEE(), committee, COMMITTEE_PUBKEYS());
   i32 n = flat.len() / 48;
-  u8[][] out = u8[][n](fill: u8[0]());
+  u8[][] out = u8[][].filled(n, u8[]());
   for (i32 i = 0; i < n; i++) {
-    u8[] key = u8[48]();
+    u8[] key = u8[].filled(48, 0);
     for (i32 k = 0; k < 48; k++) { key[k] = flat[i * 48 + k]; }
     out[i] = key;
   }
@@ -102,7 +102,7 @@ u8[][] participants(u8[][] keys, u8[] bits) {
   for (i32 i = 0; i < keys.len(); i++) {
     if ((bits[i / 8] & (1 << (i % 8))) != 0) { n = n + 1; }
   }
-  u8[][] out = u8[][n](fill: u8[0]());
+  u8[][] out = u8[][].filled(n, u8[]());
   i32 at = 0;
   for (i32 i = 0; i < keys.len(); i++) {
     if ((bits[i / 8] & (1 << (i % 8))) != 0) {
@@ -237,7 +237,7 @@ export string test_every_real_sync_committee_signature_verifies(Core core, Cli c
                                            BOOTSTRAP_CURRENT_COMMITTEE()));
     t.eqI32(bootstrapKeys.len(), 32, name + ": pubkeys, expected 32 for minimal config");
     // Sixteen updates across four cases, so a committee list this size can never overflow.
-    u8[][][] supplied = u8[][][32](fill: u8[][0](fill: u8[0]()));
+    u8[][][] supplied = u8[][][].filled(32, u8[][].filled(0, u8[]()));
     i32 nSupplied = 0;
 
     for (i32 j = 0; j < steps!.len(); j++) {
@@ -307,7 +307,7 @@ export string test_the_signing_root_is_what_makes_the_signature_context_specific
   if ((meta is null) || (steps is null) || (updates is null)) { return t.report(); }
   u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
 
-  u8[] upd = u8[0]();
+  u8[] upd = u8[]();
   for (i32 j = 0; j < steps!.len() && upd.len() == 0; j++) {
     JsonValue step = steps!.get(j);
     if (memberText(step, "kind") == "process_update") {
@@ -351,7 +351,7 @@ export string test_the_signing_root_is_what_makes_the_signature_context_specific
 }
 
 u8[] slice(u8[] a, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = from; i < to; i++) { out[i - from] = a[i]; }
   return out;
 }

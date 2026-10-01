@@ -19,13 +19,13 @@ export void writeValue(Buf out, JsonValue v) {
   // switch-on-tag did.
   match (v) {
     Null: {
-      out.pushAll(u8[]('n', 'u', 'l', 'l'));
+      out.pushAll(['n', 'u', 'l', 'l'] as u8[]);
     }
     Bool(value): {
       if (value) {
-        out.pushAll(u8[]('t', 'r', 'u', 'e'));
+        out.pushAll(['t', 'r', 'u', 'e'] as u8[]);
       } else {
-        out.pushAll(u8[]('f', 'a', 'l', 's', 'e'));
+        out.pushAll(['f', 'a', 'l', 's', 'e'] as u8[]);
       }
     }
     Number(value, raw): {
@@ -39,7 +39,7 @@ export void writeValue(Buf out, JsonValue v) {
         // JavaScript ones — `NaN`, `Infinity` — so a hand-built tree serialised to text this
         // package's own parser rejects. `JSON.stringify` writes `null` for them, and being judged
         // against `JSON.stringify` is the claim this file makes, so it writes `null` too.
-        out.pushAll(u8[]('n', 'u', 'l', 'l'));
+        out.pushAll(['n', 'u', 'l', 'l'] as u8[]);
       } else {
         writeF64(out, value);
       }
@@ -79,7 +79,7 @@ export void writeValue(Buf out, JsonValue v) {
  *
  * **Not every `u8[]` is text.** A parsed string was UTF-8 by the time it got here, but
  * `JsonValue.Str` takes raw bytes, so a hand-built one may hold anything — and every byte at or
- * above space used to be copied through unchanged. `Str(u8[](0xFF))` therefore produced output that
+ * above space used to be copied through unchanged. `Str([0xFF] as u8[])` therefore produced output that
  * this package's own parser rejects, which is the one thing a serialiser must not do. Each
  * ill-formed byte becomes U+FFFD, matching what `Buf.pushCodepoint` does with a non-scalar.
  *
@@ -92,7 +92,7 @@ export void writeString(Buf out, u8[] bytes) {
   for (i32 i = 0; i < bytes.len(); i++) {
     i32 width = sequenceLen(bytes, i);
     if (width == 0) {
-      out.pushAll(u8[](0xEF, 0xBF, 0xBD));       // U+FFFD, for one ill-formed byte
+      out.pushAll([0xEF, 0xBF, 0xBD] as u8[]);       // U+FFFD, for one ill-formed byte
       continue;
     }
     if (width > 1) {

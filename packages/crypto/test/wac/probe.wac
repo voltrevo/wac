@@ -45,7 +45,7 @@ export u8[] sha1Streamed(u8[] m, i32 cut) {
   Sha1 s = Sha1.create();
   for (i32 i = 0; i < m.len(); i = i + cut) {
     i32 n = i + cut <= m.len() ? cut : m.len() - i;
-    u8[] piece = u8[n]();
+    u8[] piece = u8[].filled(n, 0);
     piece.copyFrom(m, i, 0, n);
     s.update(piece);
     u8[] mid = s.peek();
@@ -59,12 +59,12 @@ export u8[] sha1Streamed(u8[] m, i32 cut) {
 /** Hash `m` in two halves with the state saved and restored in between. */
 export u8[] sha1Restored(u8[] m, i32 at) {
   Sha1 s = Sha1.create();
-  u8[] a = u8[at]();
+  u8[] a = u8[].filled(at, 0);
   a.copyFrom(m, 0, 0, at);
   s.update(a);
   Sha1 back = Sha1.loadState(s.saveState());
   i32 n = m.len() - at;
-  u8[] b = u8[n]();
+  u8[] b = u8[].filled(n, 0);
   b.copyFrom(m, at, 0, n);
   back.update(b);
   return back.finish();
@@ -80,16 +80,16 @@ export u8[] gcmEncrypt(u8[] k, u8[] iv, u8[] p) { return gcmEncImpl(k, iv, p); }
 export u8[] gcmTag(u8[] k, u8[] iv, u8[] a, u8[] c) { return gcmTagImpl(k, iv, a, c); }
 export u8[] gcmDecrypt(u8[] k, u8[] iv, u8[] a, u8[] c, u8[] t) { return gcmDecImpl(k, iv, a, c, t); }
 
-export u8[] gcmInc32(u8[] c) { u8[] o = u8[16](); for (i32 i = 0; i < 16; i++) { o[i] = c[i]; } incImpl(o); return o; }
+export u8[] gcmInc32(u8[] c) { u8[] o = u8[].filled(16, 0); for (i32 i = 0; i < 16; i++) { o[i] = c[i]; } incImpl(o); return o; }
 
 // layout.wac's conversions, so they can be checked against the host's DataView
 // rather than only indirectly through the primitives that use them.
 export u32 leWord32(u8[] b, i32 i) { return leWord32Impl(b, i); }
 export u32 beWord32(u8[] b, i32 i) { return beWord32Impl(b, i); }
 export u64 beWord64(u8[] b, i32 i) { return beWord64Impl(b, i); }
-export u8[] storeLE32(u32 v) { u8[] o = u8[4](); storeLE32Impl(v, o, 0); return o; }
-export u8[] storeBE32(u32 v) { u8[] o = u8[4](); storeBE32Impl(v, o, 0); return o; }
-export u8[] storeBE64(u64 v) { u8[] o = u8[8](); storeBE64Impl(v, o, 0); return o; }
+export u8[] storeLE32(u32 v) { u8[] o = u8[].filled(4, 0); storeLE32Impl(v, o, 0); return o; }
+export u8[] storeBE32(u32 v) { u8[] o = u8[].filled(4, 0); storeBE32Impl(v, o, 0); return o; }
+export u8[] storeBE64(u64 v) { u8[] o = u8[].filled(8, 0); storeBE64Impl(v, o, 0); return o; }
 export i32 padTo16(i32 n) { return padTo16Impl(n); }
 
 
@@ -115,10 +115,10 @@ export bool ctEqualN(u8[] a, u8[] b, i32 n) { return ctEqualNImpl(a, b, n); }
  */
 export u8[] ctrStreamed(u8[] key, u8[] iv, u8[] data, i32 cut) {
   CtrStream s = CtrStream.create(key, iv);
-  u8[] out = u8[data.len()]();
+  u8[] out = u8[].filled(data.len(), 0);
   for (i32 i = 0; i < data.len(); i = i + cut) {
     i32 n = i + cut <= data.len() ? cut : data.len() - i;
-    u8[] piece = u8[n]();
+    u8[] piece = u8[].filled(n, 0);
     piece.copyFrom(data, i, 0, n);
     u8[] got = s.apply(piece);
     out.copyFrom(got, 0, i, n);
@@ -133,15 +133,15 @@ export u8[] ctrStreamed(u8[] key, u8[] iv, u8[] data, i32 cut) {
  */
 export u8[] ctrResumed(u8[] key, u8[] iv, u8[] data, i32 at) {
   CtrStream s = CtrStream.create(key, iv);
-  u8[] out = u8[data.len()]();
-  u8[] head = u8[at]();
+  u8[] out = u8[].filled(data.len(), 0);
+  u8[] head = u8[].filled(at, 0);
   head.copyFrom(data, 0, 0, at);
   u8[] a = s.apply(head);
   out.copyFrom(a, 0, 0, at);
 
   CtrStream back = CtrStream.resume(s.key, s.ctr, s.block, s.used);
   i32 n = data.len() - at;
-  u8[] tail = u8[n]();
+  u8[] tail = u8[].filled(n, 0);
   tail.copyFrom(data, at, 0, n);
   u8[] b = back.apply(tail);
   out.copyFrom(b, 0, at, n);
@@ -159,7 +159,7 @@ export u8[] sha256Streamed(u8[] m, i32 cut) {
   Sha256 s = Sha256.create();
   for (i32 i = 0; i < m.len(); i = i + cut) {
     i32 n = i + cut <= m.len() ? cut : m.len() - i;
-    u8[] piece = u8[n]();
+    u8[] piece = u8[].filled(n, 0);
     piece.copyFrom(m, i, 0, n);
     s.update(piece);
   }
@@ -170,7 +170,7 @@ export u8[] sha512Streamed(u8[] m, i32 cut) {
   Sha512 s = Sha512.create();
   for (i32 i = 0; i < m.len(); i = i + cut) {
     i32 n = i + cut <= m.len() ? cut : m.len() - i;
-    u8[] piece = u8[n]();
+    u8[] piece = u8[].filled(n, 0);
     piece.copyFrom(m, i, 0, n);
     s.update(piece);
   }
@@ -178,7 +178,7 @@ export u8[] sha512Streamed(u8[] m, i32 cut) {
 }
 
 /** A saved SHA-1 state of the wrong size, which `loadState` refuses rather than reading short. */
-export u8[] sha1LoadBad(i32 len) { return Sha1.loadState(u8[len]()).finish(); }
+export u8[] sha1LoadBad(i32 len) { return Sha1.loadState(u8[].filled(len, 0)).finish(); }
 
 /** An IV that is not sixteen bytes, which a counter mode cannot start from. */
-export u8[] ctrBadIv(u8[] key, i32 ivLen) { return CtrStream.create(key, u8[ivLen]()).apply(u8[1]()); }
+export u8[] ctrBadIv(u8[] key, i32 ivLen) { return CtrStream.create(key, u8[].filled(ivLen, 0)).apply(u8[].filled(1, 0)); }

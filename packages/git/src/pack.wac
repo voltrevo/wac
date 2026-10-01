@@ -116,7 +116,7 @@ export Opened openPack(u8[] pack, u8[] idxBytes) {
         return Opened.Refused("the pack holds " + itoa(count) + " objects and the index describes " +
           itoa(idx.count));
       }
-      i64[] sorted = i64[idx.count]();
+      i64[] sorted = i64[].filled(idx.count, 0);
       for (i32 i = 0; i < idx.count; i++) { sorted[i] = idx.offsets[i]; }
       sortOffsets(sorted);
       return Opened.Ready(Pack(pack, idx, sorted));
@@ -132,7 +132,7 @@ export Opened openPack(u8[] pack, u8[] idxBytes) {
  * a fetch: index it, then open it with what you got.
  */
 export Pack openIndexed(u8[] pack, PackIndex idx) {
-  i64[] sorted = i64[idx.count]();
+  i64[] sorted = i64[].filled(idx.count, 0);
   for (i32 i = 0; i < idx.count; i++) { sorted[i] = idx.offsets[i]; }
   sortOffsets(sorted);
   return Pack(pack, idx, sorted);
@@ -168,7 +168,7 @@ export Raw rawAt(const Pack p, i64 off) {
   if (kind == 0 || kind == 5) { return Raw.Damaged("object type " + itoa(kind) + " is not defined"); }
 
   i64 base = 0;
-  u8[] baseName = u8[0]();
+  u8[] baseName = u8[]();
   if (kind == 6) {
     i32 c = p.bytes[at];
     at = at + 1;
@@ -185,7 +185,7 @@ export Raw rawAt(const Pack p, i64 off) {
     if (base < 12) { return Raw.Damaged("a delta points before the first object"); }
   } else if (kind == 7) {
     if (at + 20 > p.bytes.len()) { return Raw.Damaged("a base name runs off the end"); }
-    baseName = u8[20]();
+    baseName = u8[].filled(20, 0);
     for (i32 k = 0; k < 20; k++) { baseName[k] = p.bytes[at + k]; }
     at = at + 20;
   }
@@ -199,7 +199,7 @@ export Raw rawAt(const Pack p, i64 off) {
   i32 from = at + 2;
   i32 upto = (end as~ i32) - 4;
   if (upto <= from) { return Raw.Damaged("compressed data is too short to be a zlib stream"); }
-  u8[] slice = u8[upto - from]();
+  u8[] slice = u8[].filled(upto - from, 0);
   for (i32 i = 0; i < slice.len(); i++) { slice[i] = p.bytes[from + i]; }
   u8[] data = inflate(slice);
 
@@ -238,7 +238,7 @@ i32 deltaSize(u8[] d, i32[] pos) {
  * what a truncated stream of zeroes looks like.
  */
 export u8[]? applyDelta(u8[] base, u8[] delta) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   i32 wantBase = deltaSize(delta, pos);
   i32 wantOut = deltaSize(delta, pos);
   if (wantBase != base.len()) { return null; }
@@ -361,9 +361,9 @@ export Indexed indexPack(u8[] pack) {
   i32 count = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
   if (count < 0 || count > 10000000) { return Indexed.Unindexable("implausible object count"); }
 
-  i64[] offsets = i64[count]();
-  i32[] kinds = i32[count]();
-  i64[] bases = i64[count]();        // for kind 6: the base's offset
+  i64[] offsets = i64[].filled(count, 0);
+  i32[] kinds = i32[].filled(count, 0);
+  i64[] bases = i64[].filled(count, 0);        // for kind 6: the base's offset
   Vec<u8[]> payloads = Vec.create(); // inflated bytes: the object, or the delta
   Vec<u8[]> baseNames = Vec.create();// for kind 7: the base's name, else empty
 
@@ -387,7 +387,7 @@ export Indexed indexPack(u8[] pack) {
     if (kind == 0 || kind == 5) { return Indexed.Unindexable("object type " + itoa(kind) + " is not defined"); }
 
     i64 base = 0;
-    u8[] refName = u8[0]();
+    u8[] refName = u8[]();
     if (kind == 6) {
       i32 c = pack[at];
       at = at + 1;
@@ -401,7 +401,7 @@ export Indexed indexPack(u8[] pack) {
       base = here - ofs;
     } else if (kind == 7) {
       if (at + 20 > stop) { return Indexed.Unindexable("a base name runs off the end"); }
-      refName = u8[20]();
+      refName = u8[].filled(20, 0);
       for (i32 k = 0; k < 20; k++) { refName[k] = pack[at + k]; }
       at = at + 20;
     }
@@ -427,7 +427,7 @@ export Indexed indexPack(u8[] pack) {
   // in pack order here rather than sorted — sorting happens at the end, once every name is known.
   Vec<u8[]> resolved = Vec.create();
   Vec<i32> resolvedKind = Vec.create();
-  for (i32 i = 0; i < count; i++) { resolved.push(u8[0]()); resolvedKind.push(0); }
+  for (i32 i = 0; i < count; i++) { resolved.push(u8[]()); resolvedKind.push(0); }
   Buf names = Buf.create();
   Vec<u8[]> need = Vec.create();
   for (i32 i = 0; i < count; i++) {
@@ -461,26 +461,26 @@ export Indexed indexPack(u8[] pack) {
   // being true the moment `writeIdx` put it in a file git verifies.
   //
   // Pack order is what makes the ends knowable, which is the same reason the offsets are unsorted here.
-  u32[] crcByWalk = u32[count]();
+  u32[] crcByWalk = u32[].filled(count, 0);
   i64 lastEnd = (pack.len() - 20) as i64;
   for (i32 i = 0; i < count; i++) {
     i64 from = offsets[i];
     i64 to = i + 1 < count ? offsets[i + 1] : lastEnd;
     i32 span = (to - from) as~ i32;
     i32 at2 = from as~ i32;
-    u8[] seg = u8[span]();
+    u8[] seg = u8[].filled(span, 0);
     for (i32 k = 0; k < span; k++) { seg[k] = pack[at2 + k]; }
     crcByWalk[i] = crc32(seg);
   }
 
   // The index wants names ascending, with each offset carried along.
-  i32[] order = i32[count]();
+  i32[] order = i32[].filled(count, 0);
   for (i32 i = 0; i < count; i++) { order[i] = i; }
   sortByName(order, names.bytes());
 
-  u8[] sortedNames = u8[count * 20]();
-  i64[] sortedOffsets = i64[count]();
-  u32[] crcs = u32[count]();
+  u8[] sortedNames = u8[].filled(count * 20, 0);
+  i64[] sortedOffsets = i64[].filled(count, 0);
+  u32[] crcs = u32[].filled(count, 0);
   u8[] raw = names.bytes();
   for (i32 i = 0; i < count; i++) {
     i32 from = order[i];

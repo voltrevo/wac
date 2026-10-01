@@ -165,9 +165,9 @@ export string test_a_layer_round_trips_and_is_shaped_right(Core core, Cli cli) {
   T t = T.create();
   u8[] plain = "create2-formats 2\nintroduction-point AQAGAX8AAAEjKQ\n".toBytes();
   u8[] secret = blindPublic(cli);
-  u8[] subcred = u8[32]();
+  u8[] subcred = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { subcred[i] = (i * 5 + 1) & 0xFF; }
-  u8[] salt = u8[SALT_LEN]();
+  u8[] salt = u8[].filled(SALT_LEN, 0);
   for (i32 i = 0; i < SALT_LEN; i++) { salt[i] = (i * 13 + 2) & 0xFF; }
 
   u8[] blob = encryptLayer(plain, secret, subcred, 42, salt, superencryptedConstant());
@@ -189,7 +189,7 @@ export string test_a_layer_round_trips_and_is_shaped_right(Core core, Cli cli) {
   t.eqI32(decryptLayer(flipAt(blob, 0), secret, subcred, 42, superencryptedConstant()).len(), 0,
           "and so does a flipped salt byte, which changes the keys");
 
-  t.eqI32(encryptLayer(plain, secret, subcred, 42, u8[15](), superencryptedConstant()).len(), 0,
+  t.eqI32(encryptLayer(plain, secret, subcred, 42, u8[].filled(15, 0), superencryptedConstant()).len(), 0,
           "a fifteen-byte salt is not a salt");
   return t.report();
 }
@@ -204,8 +204,8 @@ export string test_bad_inputs_make_no_descriptor(Core core, Cli cli) {
   u8[] sup = superencrypted(cli);
   u8[] seed = signSeed(cli);
 
-  t.eqI32(descriptorDocument(180, u8[0](), 42, sup, seed).len(), 0, "no certificate, no descriptor");
-  t.eqI32(descriptorDocument(180, certBytes, 42, sup, u8[0]()).len(), 0, "no signing key, no descriptor");
+  t.eqI32(descriptorDocument(180, u8[](), 42, sup, seed).len(), 0, "no certificate, no descriptor");
+  t.eqI32(descriptorDocument(180, certBytes, 42, sup, u8[]()).len(), 0, "no signing key, no descriptor");
   t.eqI32(descriptorDocument(0, certBytes, 42, sup, seed).len(), 0, "a zero lifetime is not a lifetime");
   t.eqI32(descriptorDocument(-1, certBytes, 42, sup, seed).len(), 0, "nor a negative one");
   t.eqI32(signedSpanOf("no signature line here\n".toBytes()).len(), 0,
@@ -224,7 +224,7 @@ export string test_bad_inputs_make_no_descriptor(Core core, Cli cli) {
 export string test_the_middle_layer_tor_decrypted_is_reproduced(Core core, Cli cli) {
   T t = T.create();
   i32 n = DECOY_CLIENTS;
-  u8[][] clients = u8[][n]();
+  u8[][] clients = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { clients[i] = decoyClient(i); }
 
   u8[] plain = superencryptedPlaintext(ephemeral(cli), clients,
@@ -242,11 +242,11 @@ export string test_the_middle_layer_tor_decrypted_is_reproduced(Core core, Cli c
   // A plaintext *over* one block, because everything above passes for a padding that rounds the
   // wrong way: under 10000 bytes, rounding down gives zero and a guard turns zero back into one
   // block, so up and down agree. A planted "round down" fault survived until this case existed.
-  u8[] big = u8[SUPERENC_PAD_MULTIPLE + 1]();
+  u8[] big = u8[].filled(SUPERENC_PAD_MULTIPLE + 1, 0);
   for (i32 i = 0; i < big.len(); i++) { big[i] = 65; }
   t.eqI32(padToBlock(big).len(), SUPERENC_PAD_MULTIPLE * 2,
           "one byte over a block pads to two blocks, not down to one");
-  u8[] exact = u8[SUPERENC_PAD_MULTIPLE]();
+  u8[] exact = u8[].filled(SUPERENC_PAD_MULTIPLE, 0);
   for (i32 i = 0; i < exact.len(); i++) { exact[i] = 66; }
   t.eqI32(padToBlock(exact).len(), SUPERENC_PAD_MULTIPLE,
           "an exact block is left alone rather than grown");
@@ -263,7 +263,7 @@ export string test_the_middle_layer_tor_decrypted_is_reproduced(Core core, Cli c
 export string test_the_decoy_clients_are_written(Core core, Cli cli) {
   T t = T.create();
   i32 n = DECOY_CLIENTS;
-  u8[][] clients = u8[][n]();
+  u8[][] clients = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { clients[i] = decoyClient(i); }
   u8[] plain = superencryptedPlaintext(ephemeral(cli), clients,
                                        inner(cli));
@@ -272,16 +272,16 @@ export string test_the_decoy_clients_are_written(Core core, Cli cli) {
 
   // A layer with no clients is refused rather than written: the token rule wants at least one, and a
   // descriptor whose shape says "nobody is authorised" is the leak the decoys exist to prevent.
-  t.eqI32(superencryptedPlaintext(ephemeral(cli), u8[][0](),
+  t.eqI32(superencryptedPlaintext(ephemeral(cli), u8[][](),
                                   inner(cli)).len(), 0,
           "no clients at all is refused");
   // A client of the wrong size would produce fields tor cannot parse.
-  u8[][] wrong = u8[][1]();
-  wrong[0] = u8[39]();
+  u8[][] wrong = u8[][].defaulted(1);
+  wrong[0] = u8[].filled(39, 0);
   t.eqI32(superencryptedPlaintext(ephemeral(cli), wrong,
                                   inner(cli)).len(), 0,
           "a thirty-nine byte client is not one");
-  t.eqI32(superencryptedPlaintext(u8[31](), clients, inner(cli)).len(), 0,
+  t.eqI32(superencryptedPlaintext(u8[].filled(31, 0), clients, inner(cli)).len(), 0,
           "and a thirty-one byte ephemeral key is not a key");
   return t.report();
 }
@@ -309,7 +309,7 @@ export string test_the_inner_layer_tor_read_is_reproduced(Core core, Cli cli) {
   t.eqI32(countOf(section, "\nenc-key-cert\n"), 1, "exactly one enc-key-cert");
   t.eqI32(countOf(section, "ED25519 CERT"), 4, "two certificates, each with a begin and an end");
 
-  u8[][] intros = u8[][1]();
+  u8[][] intros = u8[][].defaulted(1);
   intros[0] = section;
   u8[] plain = encryptedPlaintext(intros);
   t.isTrue(startsWith(plain, "create2-formats 2\n"),
@@ -329,7 +329,7 @@ export string test_the_inner_layer_tor_read_is_reproduced(Core core, Cli cli) {
 
   // No introduction points is refused rather than written: a descriptor with none is useless, and
   // tor would report exactly the `intro_points: 0` that a broken one does.
-  t.eqI32(encryptedPlaintext(u8[][0]()).len(), 0, "a descriptor with no introduction points is not one");
+  t.eqI32(encryptedPlaintext(u8[][]()).len(), 0, "a descriptor with no introduction points is not one");
   return t.report();
 }
 
@@ -342,11 +342,11 @@ export string test_a_bad_introduction_point_is_refused(Core core, Cli cli) {
   u8[] a = authCert(cli);
   u8[] e = encCert(cli);
 
-  t.eqI32(introPointSection(u8[0](), ntor, a, enc, e).len(), 0, "no link specifiers, no section");
-  t.eqI32(introPointSection(ls, u8[31](), a, enc, e).len(), 0, "a 31-byte onion key is not one");
-  t.eqI32(introPointSection(ls, ntor, u8[0](), enc, e).len(), 0, "no auth certificate, no section");
-  t.eqI32(introPointSection(ls, ntor, a, u8[31](), e).len(), 0, "a 31-byte encryption key is not one");
-  t.eqI32(introPointSection(ls, ntor, a, enc, u8[0]()).len(), 0, "no cross certificate, no section");
+  t.eqI32(introPointSection(u8[](), ntor, a, enc, e).len(), 0, "no link specifiers, no section");
+  t.eqI32(introPointSection(ls, u8[].filled(31, 0), a, enc, e).len(), 0, "a 31-byte onion key is not one");
+  t.eqI32(introPointSection(ls, ntor, u8[](), enc, e).len(), 0, "no auth certificate, no section");
+  t.eqI32(introPointSection(ls, ntor, a, u8[].filled(31, 0), e).len(), 0, "a 31-byte encryption key is not one");
+  t.eqI32(introPointSection(ls, ntor, a, enc, u8[]()).len(), 0, "no cross certificate, no section");
   return t.report();
 }
 
@@ -437,7 +437,7 @@ i32 countOf(u8[] s, string needle) {
 /** The 64 bytes on the `signature ` line, decoded. */
 u8[] signatureOf(u8[] doc) {
   u8[] span = signedSpanOf(doc);
-  if (span.len() == 0) { return u8[0](); }
+  if (span.len() == 0) { return u8[](); }
   i32 from = span.len() + "signature ".toBytes().len();
   i32 end = from;
   while (end < doc.len() && doc[end] != 10) { end = end + 1; }
@@ -448,7 +448,7 @@ u8[] signatureOf(u8[] doc) {
 u8[] b64Decode(u8[] text) {
   i32 bits = 0;
   i32 acc = 0;
-  u8[] out = u8[text.len() * 3 / 4]();
+  u8[] out = u8[].filled(text.len() * 3 / 4, 0);
   i32 n = 0;
   for (i32 i = 0; i < text.len(); i++) {
     i32 c = text[i];
@@ -467,19 +467,19 @@ u8[] b64Decode(u8[] text) {
       n = n + 1;
     }
   }
-  u8[] exact = u8[n]();
+  u8[] exact = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
 
 u8[] sub(u8[] s, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
   return out;
 }
 
 u8[] flipAt(u8[] b, i32 i) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 j = 0; j < b.len(); j++) { out[j] = b[j]; }
   out[i] = out[i] ^ 1;
   return out;

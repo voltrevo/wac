@@ -66,7 +66,7 @@ struct Sink {
 
   bool write(this, u8[] b) {
     if (this.n >= this.parts.len()) { trap; }
-    u8[] copy = u8[b.len()]();
+    u8[] copy = u8[].filled(b.len(), 0);
     for (i32 i = 0; i < b.len(); i++) { copy[i] = b[i]; }
     this.parts[this.n] = copy;
     this.n = this.n + 1;
@@ -76,7 +76,7 @@ struct Sink {
   u8[] joined(const this) {
     i32 total = 0;
     for (i32 i = 0; i < this.n; i++) { total = total + this.parts[i].len(); }
-    u8[] out = u8[total]();
+    u8[] out = u8[].filled(total, 0);
     i32 o = 0;
     for (i32 i = 0; i < this.n; i++) {
       u8[] p = this.parts[i];
@@ -95,16 +95,16 @@ struct Sink {
   }
 }
 
-Sink emptySink() { return Sink(u8[][4096](fill: u8[0]()), 0); }
+Sink emptySink() { return Sink(u8[][].filled(4096, u8[]()), 0); }
 
 /** `gz` cut into `chunk`-byte pieces, the last one short. */
 u8[][] cutInto(u8[] gz, i32 chunk) {
   i32 n = (gz.len() + chunk - 1) / chunk;
-  u8[][] out = u8[][n](fill: u8[0]());
+  u8[][] out = u8[][].filled(n, u8[]());
   for (i32 i = 0; i < n; i++) {
     i32 from = i * chunk;
     i32 to = from + chunk < gz.len() ? from + chunk : gz.len();
-    u8[] piece = u8[to - from]();
+    u8[] piece = u8[].filled(to - from, 0);
     for (i32 k = 0; k < piece.len(); k++) { piece[k] = gz[from + k]; }
     out[i] = piece;
   }
@@ -112,7 +112,7 @@ u8[][] cutInto(u8[] gz, i32 chunk) {
 }
 
 u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
   return out;
 }
@@ -149,7 +149,7 @@ bool same(u8[] a, u8[] b) { return firstDifference(a, b) == -1; }
  */
 u8[] repeated(string s, i32 times) {
   u8[] one = s.toBytes();
-  u8[] out = u8[one.len() * times]();
+  u8[] out = u8[].filled(one.len() * times, 0);
   i32 at = 0;
   for (i32 i = 0; i < times; i++) {
     for (i32 k = 0; k < one.len(); k++) { out[at + k] = one[k]; }
@@ -160,7 +160,7 @@ u8[] repeated(string s, i32 times) {
 
 /** Bytes with no structure to find, so a compressor has to fall back to storing them. */
 u8[] noise(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 s = seed;
   for (i32 i = 0; i < n; i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
@@ -178,7 +178,7 @@ export string test_streamed_output_equals_the_whole_buffer_decode_at_every_chunk
   if (!made.ok()) { return t.report(); }
   u8[] want = gunzipBytes(made.bytes);
 
-  i32[] chunks = i32[](1, 2, 3, 5, 7, 13, 64, 511, 4096, 1 << 20);
+  i32[] chunks = [1, 2, 3, 5, 7, 13, 64, 511, 4096, 1 << 20];
   for (i32 i = 0; i < chunks.len(); i++) {
     u8[] got = streamed(made.bytes, chunks[i]);
     t.isTrue(same(got, want),
@@ -203,7 +203,7 @@ export string test_a_chunk_boundary_at_every_single_byte(Core core, Cli cli) {
   u8[] want = gunzipBytes(gz);
 
   for (i32 cut = 1; cut < gz.len(); cut++) {
-    u8[][] two = u8[][2](fill: u8[0]());
+    u8[][] two = u8[][].filled(2, u8[]());
     two[0] = slice(gz, 0, cut);
     two[1] = slice(gz, cut, gz.len());
     t.isTrue(same(streamedFrom(two).joined(), want),
@@ -228,7 +228,7 @@ export string test_output_larger_than_the_window_flush(Core core, Cli cli) {
   u8[] want = gunzipBytes(made.bytes);
   t.isTrue(want.len() >= 1 << 17, "input reaches a flush: " + itoa(want.len()) + " bytes");
 
-  i32[] chunks = i32[](1024, 1 << 20);
+  i32[] chunks = [1024, 1 << 20];
   for (i32 i = 0; i < chunks.len(); i++) {
     Sink sink = streamedFrom(cutInto(made.bytes, chunks[i]));
     t.isTrue(same(sink.joined(), want),
@@ -258,7 +258,7 @@ export string test_incompressible_data_larger_than_the_flush(Core core, Cli cli)
   if (!made.ok()) { return t.report(); }
   t.isTrue(same(gunzipBytes(made.bytes), rnd), "the buffer decode agrees");
 
-  i32[] chunks = i32[](777, 1 << 20);
+  i32[] chunks = [777, 1 << 20];
   for (i32 i = 0; i < chunks.len(); i++) {
     u8[] got = streamed(made.bytes, chunks[i]);
     t.isTrue(same(got, rnd),
@@ -282,7 +282,7 @@ export string test_header_extras_are_skipped_not_mistaken_for_data(Core core, Cl
   u8[] gz = made.bytes;
   t.isTrue(gz.len() > 3 && (gz[3] & 8) != 0, "python set FNAME; otherwise the test is vacuous");
 
-  i32[] chunks = i32[](1, 3, 1 << 20);
+  i32[] chunks = [1, 3, 1 << 20];
   for (i32 i = 0; i < chunks.len(); i++) {
     t.isTrue(same(streamed(gz, chunks[i]), data), "FNAME member at chunk " + itoa(chunks[i]));
   }
@@ -397,12 +397,12 @@ i32 storedFloor(i32 n) {
 }
 
 string[] corpusNames() {
-  return string[]("empty", "one byte", "prose", "multi-block", "incompressible");
+  return ["empty", "one byte", "prose", "multi-block", "incompressible"];
 }
 
 u8[][] corpus() {
-  u8[][] out = u8[][5](fill: u8[0]());
-  out[0] = u8[0]();
+  u8[][] out = u8[][].filled(5, u8[]());
+  out[0] = u8[]();
   out[1] = "x".toBytes();
   out[2] = repeated("the quick brown fox jumps over the lazy dog. ", 50);
   // Bigger than one chunk, so several blocks, and repetitive enough that matches want to reach
@@ -416,7 +416,7 @@ export string test_gunzip_accepts_what_gzipstream_produces_at_every_chunk_size(C
   T t = T.create();
   string[] names = corpusNames();
   u8[][] data = corpus();
-  i32[] chunks = i32[](1, 997, 1 << 16, 1 << 22);
+  i32[] chunks = [1, 997, 1 << 16, 1 << 22];
   for (i32 i = 0; i < data.len(); i++) {
     for (i32 k = 0; k < chunks.len(); k++) {
       // Chunk 1 over 300 KB is 300000 spawns' worth of work in the reader; skip the two biggest
@@ -444,7 +444,7 @@ export string test_it_never_expands_past_a_stored_member() {
   T t = T.create();
   string[] names = corpusNames();
   u8[][] data = corpus();
-  i32[] chunks = i32[](1 << 16, 1 << 22);
+  i32[] chunks = [1 << 16, 1 << 22];
   for (i32 i = 0; i < data.len(); i++) {
     for (i32 k = 0; k < chunks.len(); k++) {
       i32 got = compressed(data[i], chunks[k]).len();
@@ -472,7 +472,7 @@ export string test_matches_still_reach_across_a_block_boundary(Core core, Cli cl
   // test used to run on could not see that: a thirty-seven byte period is re-learned in the first
   // forty bytes of every block, and deleting the history entirely cost 3% — inside the tolerance.
   u8[] unit = noise(20000, 12345);
-  u8[] data = u8[unit.len() * 40]();
+  u8[] data = u8[].filled(unit.len() * 40, 0);
   for (i32 r = 0; r < 40; r++) {
     for (i32 i = 0; i < unit.len(); i++) { data[r * unit.len() + i] = unit[i]; }
   }

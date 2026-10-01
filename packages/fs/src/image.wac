@@ -136,7 +136,7 @@ export Written write(Fs fs) {
   }
   out.pushU32(crc32(out.bytes()));
 
-  string[] names = string[skipped.len()](fill: "");
+  string[] names = string[].filled(skipped.len(), "");
   for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }
   return Written(out.take(), names);
 }
@@ -163,7 +163,7 @@ export Loaded read(u8[] data, i64 now) {
 
   // Before anything is believed: the checksum covers everything but its own four bytes.
   i32 end = data.len() - 4;
-  u8[] body = u8[end]();
+  u8[] body = u8[].filled(end, 0);
   body.copyFrom(data, 0, 0, end);
   u32 want = (data[end] | (data[end + 1] << 8) | (data[end + 2] << 16) | (data[end + 3] << 24)) as@ u32;
   if (crc32(body) != want) { return failed("the checksum does not match: the image is damaged"); }

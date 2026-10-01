@@ -126,7 +126,7 @@ ADD = """
  * overflow the array — but it can exceed p, and at most once.
  */
 export u32[] montAdd(u32[] a, u32[] b) {
-  u32[] out = u32[12]();
+  u32[] out = u32[].filled(12, 0);
   u64 carry = 0;
   u64 s = 0;
 %s
@@ -138,7 +138,7 @@ export u32[] montAdd(u32[] a, u32[] b) {
 SUB = """
 /** `(a - b) mod p`. On underflow, add p back — the same as working modulo 2^384 and correcting. */
 export u32[] montSub(u32[] a, u32[] b) {
-  u32[] out = u32[12]();
+  u32[] out = u32[].filled(12, 0);
   i64 borrow = 0;
   i64 d = 0;
 %s
@@ -220,7 +220,7 @@ def emit():
         body.append("  t%d = hi & 0xFFFFFFFF;" % (N - 1))
         body.append("  t%d = spill + (hi >> 32);" % N)
     body.append("")
-    body.append("  u32[] out = u32[12]();")
+    body.append("  u32[] out = u32[].filled(12, 0);")
     body += ["  out[%d] = (t%d & 0xFFFFFFFF) as@ u32;" % (j, j) for j in range(N)]
     body.append("  if (t%d != 0 || atLeastP(out)) { subPInPlace(out); }" % N)
     body.append("  return out;")

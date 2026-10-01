@@ -11,7 +11,7 @@
 import { Cli, Core, FileResult, Stat } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
-  u8[] data = u8[0]();
+  u8[] data = u8[]();
 
   if (cli.argCount().wait() < 1) {
     data = cli.readStdin().wait();
@@ -45,15 +45,17 @@ export i32 main(Core core, Cli cli) {
   return 0;
 }
 
-const u8[] HEX = u8[]('0', '1', '2', '3', '4', '5', '6', '7',
-                      '8', '9', 'a', 'b', 'c', 'd', 'e', 'f');
+const u8[] HEX = [
+                      '0', '1', '2', '3', '4', '5', '6', '7',
+                      '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+];
 
 /** `xxd`-style: an offset, sixteen bytes in hex, then the printable ones. */
 u8[] dump(u8[] data) {
   i32 rows = (data.len() + 15) / 16;
   // 8 offset + 2 space + 16*3 hex + 1 space + 16 chars + 1 newline
   i32 width = 8 + 2 + 48 + 1 + 16 + 1;
-  u8[] out = u8[rows * width](fill: ' ');
+  u8[] out = u8[].filled(rows * width, ' ');
   for (i32 r = 0; r < rows; r++) {
     i32 at = r * width;
     i32 base = r * 16;

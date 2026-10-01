@@ -66,7 +66,7 @@ export struct Bits {
 
   void push(this, i32 v) {
     if (this.n == this.bytes.len()) {
-      u8[] bigger = u8[this.bytes.len() * 2 + 16]();
+      u8[] bigger = u8[].filled(this.bytes.len() * 2 + 16, 0);
       for (i32 i = 0; i < this.n; i++) { bigger[i] = this.bytes[i]; }
       this.bytes = bigger;
     }
@@ -80,12 +80,12 @@ export struct Bits {
       this.buf = 0;
       this.count = 0;
     }
-    u8[] out = u8[this.n]();
+    u8[] out = u8[].filled(this.n, 0);
     for (i32 i = 0; i < this.n; i++) { out[i] = this.bytes[i]; }
     return out;
   }
 
-  Bits create() { return Bits(u8[64](), 0, 0, 0); }
+  Bits create() { return Bits(u8[].filled(64, 0), 0, 0, 0); }
 }
 
 /** BFINAL=1, BTYPE=01 (fixed Huffman). */
@@ -96,7 +96,7 @@ export Bits storedBlock() { return Bits.create().bits(1, 1).bits(0, 2); }
 
 /** The code-length code order from RFC 1951 §3.2.7 — must match inflate's CL_ORDER. */
 export i32[] clOrder() {
-  return i32[](16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+  return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15] as i32[];
 }
 
 /** One symbol's canonical code, or `len == 0` when the symbol has none. */
@@ -119,17 +119,17 @@ export Code[] canonical(i32[] lengths) {
   for (i32 i = 0; i < lengths.len(); i++) {
     if (lengths[i] > maxLen) { maxLen = lengths[i]; }
   }
-  i32[] countByLen = i32[maxLen + 1]();
+  i32[] countByLen = i32[].filled(maxLen + 1, 0);
   for (i32 i = 0; i < lengths.len(); i++) {
     if (lengths[i] > 0) { countByLen[lengths[i]] = countByLen[lengths[i]] + 1; }
   }
-  i32[] next = i32[maxLen + 2]();
+  i32[] next = i32[].filled(maxLen + 2, 0);
   i32 code = 0;
   for (i32 l = 1; l <= maxLen; l++) {
     code = (code + countByLen[l - 1]) << 1;
     next[l] = code;
   }
-  Code[] out = Code[lengths.len()](fill: Code(0, 0));
+  Code[] out = Code[].filled(lengths.len(), Code(0, 0));
   // Within one length, codes go to symbols in increasing symbol order.
   for (i32 sym = 0; sym < lengths.len(); sym++) {
     i32 len = lengths[sym];
@@ -215,7 +215,7 @@ export Bits dynamic(i32 hlit, i32 hdist, i32[] clLengths, ClOp[] ops) {
  * 11..138 zeros at a time.
  */
 export ClOp[] fillZeros(i32 n) {
-  ClOp[] out = ClOp[n + 2](fill: ClOp(0, 0));
+  ClOp[] out = ClOp[].filled(n + 2, ClOp(0, 0));
   i32 count = 0;
   i32 left = n;
   while (left >= 11) {
@@ -229,14 +229,14 @@ export ClOp[] fillZeros(i32 n) {
     count = count + 1;
     left = left - 1;
   }
-  ClOp[] exact = ClOp[count](fill: ClOp(0, 0));
+  ClOp[] exact = ClOp[].filled(count, ClOp(0, 0));
   for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
   return exact;
 }
 
 /** `a` then `b`, because a sequence is built from several of these. */
 export ClOp[] then(ClOp[] a, ClOp[] b) {
-  ClOp[] out = ClOp[a.len() + b.len()](fill: ClOp(0, 0));
+  ClOp[] out = ClOp[].filled(a.len() + b.len(), ClOp(0, 0));
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -244,13 +244,13 @@ export ClOp[] then(ClOp[] a, ClOp[] b) {
 
 /** One op, as a sequence, so `then` composes without a special case. */
 export ClOp[] one(i32 sym, i32 extra) {
-  ClOp[] out = ClOp[1](fill: ClOp(sym, extra));
+  ClOp[] out = ClOp[].filled(1, ClOp(sym, extra));
   return out;
 }
 
 /** A 19-entry code-length code with the named symbols given the named lengths. */
 export i32[] clCode(i32[] syms, i32[] lens) {
-  i32[] out = i32[19]();
+  i32[] out = i32[].filled(19, 0);
   for (i32 i = 0; i < syms.len(); i++) { out[syms[i]] = lens[i]; }
   return out;
 }
@@ -258,7 +258,7 @@ export i32[] clCode(i32[] syms, i32[] lens) {
 /** `bytes` appended to what `b` has written, once `b` is flushed to a byte boundary. */
 export u8[] withBytes(Bits b, u8[] bytes) {
   u8[] head = b.done();
-  u8[] out = u8[head.len() + bytes.len()]();
+  u8[] out = u8[].filled(head.len() + bytes.len(), 0);
   for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
   for (i32 i = 0; i < bytes.len(); i++) { out[head.len() + i] = bytes[i]; }
   return out;

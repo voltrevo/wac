@@ -155,7 +155,7 @@ export Object parseFramed(u8[] raw) {
     return Object.Unreadable("header says " + itoa(want) + " bytes and " + itoa(have) + " follow");
   }
 
-  u8[] content = u8[have]();
+  u8[] content = u8[].filled(have, 0);
   for (i32 i = 0; i < have; i++) { content[i] = raw[nul + 1 + i]; }
   return Object.Loaded(kind!, content);
 }

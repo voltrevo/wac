@@ -70,7 +70,7 @@ string build(Cli cli, string entry, string out, string[] grants, string target, 
   return "";
 }
 
-string[] none() { return string[0](fill: ""); }
+string[] none() { return string[].filled(0, ""); }
 
 struct Ran {
   i32 code;
@@ -79,7 +79,7 @@ struct Ran {
 }
 
 Ran run(Cli cli, string bin, string[] args) {
-  Exec r = cli.exec(bin, args, u8[0]()).wait();
+  Exec r = cli.exec(bin, args, u8[]()).wait();
   if (!r.ran()) { return Ran(-1, "", "did not run — " + r.error); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
@@ -106,7 +106,7 @@ export string test_a_wac_program_runs_another_wac_program_as_a_worker(Core core,
   string child = dir + "/wc.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
-                     string[]("--allow-read"), "deno", false) +
+                     ["--allow-read"], "deno", false) +
                build(cli, "packages/platform/example/wc.wac", child, none(), "deno", true);
   t.eqStr(why, "", "the two programs built");
   if (why != "") { return t.report(); }
@@ -118,7 +118,7 @@ export string test_a_wac_program_runs_another_wac_program_as_a_worker(Core core,
   t.isFalse(f.ok && string.fromBytes(f.bytes).slice(0, 2) == "#!",
             "a worker bundle must not look runnable");
 
-  Ran r = run(cli, runner, string[](child, "one two three"));
+  Ran r = run(cli, runner, [child, "one two three"]);
   t.eqI32(r.code, 0, r.err);
   // The child counted what the parent sent it, and its output came back through the handle rather
   // than to the terminal — which is the whole of the plumbing being right.
@@ -139,12 +139,12 @@ export string test_a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_p
   string bad = dir + "/bad.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
-                     string[]("--allow-read"), "deno", false);
+                     ["--allow-read"], "deno", false);
   t.eqStr(why, "", "the runner built");
   if (why != "") { return t.report(); }
   cli.writeFile(bad, ("this is not javascript {{{\n").toBytes()).wait();
 
-  Ran r = run(cli, runner, string[](bad, "anything"));
+  Ran r = run(cli, runner, [bad, "anything"]);
   // 1, because that is what `runner.wac` returns for a child it could not start. The point is that
   // the *program* decided it: before this, the process died with 1 and nothing of its own.
   t.eqI32(r.code, 1, r.err);
@@ -195,7 +195,7 @@ export string test_a_program_runs_itself_with_no_file_to_read_and_nothing_to_fin
   why = build(cli, "packages/platform/example/twin.wac", nodeTwin, none(), "node", false);
   t.eqStr(why, "", "the Node twin built");
   if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran n = run(cli, "node", string[](nodeTwin));
+  Ran n = run(cli, "node", [nodeTwin]);
   t.eqI32(n.code, 0, n.err);
   t.eqStr(n.out, r.out, "byte for byte what Deno said");
   cli.remove(dir, true).wait();
@@ -213,12 +213,12 @@ export string test_node_spawns_the_same_way_from_the_same_code(Core core, Cli cl
   string child = dir + "/wc.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
-                     string[]("--allow-read"), "node", false) +
+                     ["--allow-read"], "node", false) +
                build(cli, "packages/platform/example/wc.wac", child, none(), "node", true);
   t.eqStr(why, "", "the two Node programs built");
   if (why != "") { return t.report(); }
 
-  Ran r = run(cli, "node", string[](runner, child, "one two three"));
+  Ran r = run(cli, "node", [runner, child, "one two three"]);
   t.eqI32(r.code, 0, r.err);
   // `wc` of "one two three\n" — one line, three words, fourteen bytes — counted by a child worker
   // whose output came back through its handle.
@@ -227,7 +227,7 @@ export string test_node_spawns_the_same_way_from_the_same_code(Core core, Cli cl
   // And a source that is not a program is a failed child here too, with a reason and no crash.
   string bad = dir + "/bad";
   cli.writeFile(bad, ("this is not javascript {{{\n").toBytes()).wait();
-  Ran badRun = run(cli, "node", string[](runner, bad, "anything"));
+  Ran badRun = run(cli, "node", [runner, bad, "anything"]);
   t.eqI32(badRun.code, 1, badRun.err);
   t.isTrue(contains(badRun.err, "runner: "), badRun.err);
   cli.remove(dir, true).wait();
@@ -251,7 +251,7 @@ export string test_a_built_program_spawns_a_wasm_module_and_grants_it_the_same_w
   string dir = freshScratch(t, cli, "wasmchild");
   string runner = dir + "/runner";
   string why = build(cli, "packages/platform/example/runner.wac", runner,
-                     string[]("--allow-read"), "deno", false);
+                     ["--allow-read"], "deno", false);
   t.eqStr(why, "", "the runner built");
   if (why != "") { return t.report(); }
 
@@ -261,11 +261,11 @@ export string test_a_built_program_spawns_a_wasm_module_and_grants_it_the_same_w
   t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
   if (!cli.stat(mod).wait().isFile) { cli.remove(dir, true).wait(); return t.report(); }
 
-  Ran denied = run(cli, runner, string[](mod, ""));
+  Ran denied = run(cli, runner, [mod, ""]);
   t.eqI32(denied.code, 0, denied.err);
   t.eqStr(trimmed(denied.out), "read=denied net=denied", denied.out + denied.err);
 
-  Ran granted = run(cli, runner, string[](mod, "", "read"));
+  Ran granted = run(cli, runner, [mod, "", "read"]);
   t.eqI32(granted.code, 0, granted.err);
   t.eqStr(trimmed(granted.out), "read=ok net=denied", granted.out + granted.err);
   cli.remove(dir, true).wait();
@@ -282,7 +282,7 @@ export string test_node_spawns_a_wasm_module_from_the_same_module(Core core, Cli
   string dir = freshScratch(t, cli, "wasmchild-node");
   string runner = dir + "/runner";
   string why = build(cli, "packages/platform/example/runner.wac", runner,
-                     string[]("--allow-read"), "node", false);
+                     ["--allow-read"], "node", false);
   t.eqStr(why, "", "the Node runner built");
   if (why != "") { return t.report(); }
 
@@ -290,11 +290,11 @@ export string test_node_spawns_a_wasm_module_from_the_same_module(Core core, Cli
   t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
   if (!cli.stat(mod).wait().isFile) { cli.remove(dir, true).wait(); return t.report(); }
 
-  Ran denied = run(cli, "node", string[](runner, mod, ""));
+  Ran denied = run(cli, "node", [runner, mod, ""]);
   t.eqI32(denied.code, 0, denied.err);
   t.eqStr(trimmed(denied.out), "read=denied net=denied", denied.out + denied.err);
 
-  Ran granted = run(cli, "node", string[](runner, mod, "", "read"));
+  Ran granted = run(cli, "node", [runner, mod, "", "read"]);
   t.eqI32(granted.code, 0, granted.err);
   t.eqStr(trimmed(granted.out), "read=ok net=denied", granted.out + granted.err);
   cli.remove(dir, true).wait();
@@ -320,16 +320,16 @@ export string test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way(C
   // One runner and one probe, built once and handed to every host — the same bytes, so a difference
   // in the answer is a difference in the host.
   string runner = builtProgram(cli, "packages/platform/example/runner.wac", "spawn-runner-wasm",
-                               string[]("--allow-read"));
+                               ["--allow-read"]);
   string mod = builtProgram(cli, "packages/platform/example/probe.wac", "spawn-probe-wasm", none());
   t.isTrue(cli.stat(runner).wait().isFile, "the runner module built: " + runner);
   t.isTrue(cli.stat(mod).wait().isFile, "the probe module built: " + mod);
   if (!cli.stat(runner).wait().isFile || !cli.stat(mod).wait().isFile) { return t.report(); }
 
-  Ran v8Denied = run(cli, wac, string[](runner, mod, ""));
+  Ran v8Denied = run(cli, wac, [runner, mod, ""]);
   t.eqI32(v8Denied.code, 0, v8Denied.err);
   t.eqStr(trimmed(v8Denied.out), "read=denied net=denied", v8Denied.out + v8Denied.err);
-  Ran v8Granted = run(cli, wac, string[](runner, mod, "", "read"));
+  Ran v8Granted = run(cli, wac, [runner, mod, "", "read"]);
   t.eqI32(v8Granted.code, 0, v8Granted.err);
   t.eqStr(trimmed(v8Granted.out), "read=ok net=denied", v8Granted.out + v8Granted.err);
 
@@ -342,10 +342,10 @@ export string test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way(C
     return t.report();
   }
   string wacland = nativeHost(cli);
-  Ran wlDenied = run(cli, wacland, string[](runner, mod, ""));
+  Ran wlDenied = run(cli, wacland, [runner, mod, ""]);
   t.eqI32(wlDenied.code, 0, wlDenied.err);
   t.eqStr(trimmed(wlDenied.out), "read=denied net=denied", wlDenied.out + wlDenied.err);
-  Ran wlGranted = run(cli, wacland, string[](runner, mod, "", "read"));
+  Ran wlGranted = run(cli, wacland, [runner, mod, "", "read"]);
   t.eqI32(wlGranted.code, 0, wlGranted.err);
   t.eqStr(trimmed(wlGranted.out), "read=ok net=denied", wlGranted.out + wlGranted.err);
   return t.report();
@@ -366,11 +366,11 @@ export string test_a_child_is_granted_nothing_even_by_a_parent_that_has_it(Core 
   string child = dir + "/probe.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
-                     string[]("--allow-read"), "deno", false) +
+                     ["--allow-read"], "deno", false) +
                build(cli, "packages/platform/example/probe.wac", direct,
-                     string[]("--allow-read", "--allow-net"), "deno", false) +
+                     ["--allow-read", "--allow-net"], "deno", false) +
                build(cli, "packages/platform/example/probe.wac", child,
-                     string[]("--allow-read", "--allow-net"), "deno", true);
+                     ["--allow-read", "--allow-net"], "deno", true);
   t.eqStr(why, "", "the three programs built");
   if (why != "") { return t.report(); }
 
@@ -383,7 +383,7 @@ export string test_a_child_is_granted_nothing_even_by_a_parent_that_has_it(Core 
 
   // The same program, as a child of a parent that *does* have the filesystem. Its own build grants are
   // irrelevant: the world it is given decides, and it is given nothing.
-  Ran spawned = run(cli, runner, string[](child, ""));
+  Ran spawned = run(cli, runner, [child, ""]);
   t.eqI32(spawned.code, 0, spawned.err);
   t.eqStr(trimmed(spawned.out), "read=denied net=denied", spawned.out + spawned.err);
   cli.remove(dir, true).wait();
@@ -407,27 +407,27 @@ export string test_a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_
   string child = dir + "/probe.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", readOnly,
-                     string[]("--allow-read"), "deno", false) +
+                     ["--allow-read"], "deno", false) +
                build(cli, "packages/platform/example/runner.wac", readNet,
-                     string[]("--allow-read", "--allow-net"), "deno", false) +
+                     ["--allow-read", "--allow-net"], "deno", false) +
                build(cli, "packages/platform/example/probe.wac", child, none(), "deno", true);
   t.eqStr(why, "", "the three programs built");
   if (why != "") { return t.report(); }
 
   // Grants are opt-in, not inherited: a parent with both, passing nothing, hands over nothing.
-  Ran a = run(cli, readNet, string[](child, "", ""));
+  Ran a = run(cli, readNet, [child, "", ""]);
   t.eqI32(a.code, 0, a.err);
   t.eqStr(trimmed(a.out), "read=denied net=denied", a.err);
   // A subset, from a parent that has it. `failed` rather than `ok` for the network because nothing is
   // listening on port 1 — which is the probe distinguishing "denied" from "tried".
-  Ran b = run(cli, readOnly, string[](child, "", "read"));
+  Ran b = run(cli, readOnly, [child, "", "read"]);
   t.eqI32(b.code, 0, b.err);
   t.eqStr(trimmed(b.out), "read=ok net=denied", b.err);
-  Ran c = run(cli, readNet, string[](child, "", "read,net"));
+  Ran c = run(cli, readNet, [child, "", "read,net"]);
   t.eqI32(c.code, 0, c.err);
   t.eqStr(trimmed(c.out), "read=ok net=failed", c.err);
   // The ceiling. Same request as the line above, from a parent without the network.
-  Ran d = run(cli, readOnly, string[](child, "", "read,net"));
+  Ran d = run(cli, readOnly, [child, "", "read,net"]);
   t.eqI32(d.code, 0, d.err);
   t.eqStr(trimmed(d.out), "read=ok net=denied", d.err);
   cli.remove(dir, true).wait();
@@ -454,7 +454,7 @@ export string test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_faile
   // a program built without the grant cannot call at all. The grant is the *process's*, not the wac
   // program's — `runner.wac` never asks for an environment variable.
   string why = build(cli, "packages/platform/example/runner.wac", runner,
-                     string[]("--allow-read", "--allow-env"), "deno", false) +
+                     ["--allow-read", "--allow-env"], "deno", false) +
                build(cli, "packages/platform/example/wc.wac", real, none(), "deno", true);
   t.eqStr(why, "", "the runner and a real bundle built");
   if (why != "") { return t.report(); }
@@ -478,8 +478,10 @@ export string test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_faile
   // where every command is a spawned worker missed it once in 722 differential scripts and reported a
   // program that speaks the protocol as one that does not.
   Exec e = cli.exec("/bin/sh",
-    string[]("-c", "exec env -i WAC_LOAD_GRACE_MS=1000 \"PATH=$PATH\" " +
-                   quoted(runner) + " " + quoted(mute) + " anything"), u8[0]()).wait();
+    [
+                   "-c", "exec env -i WAC_LOAD_GRACE_MS=1000 \"PATH=$PATH\" " +
+                   quoted(runner) + " " + quoted(mute) + " anything"
+    ], u8[]()).wait();
   i64 took = core.nowMillis().wait() - started;
   string err = e.ran() ? string.fromBytes(e.stderr) : e.error;
 

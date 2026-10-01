@@ -37,8 +37,8 @@ export i32 nc(Core core, Cli cli, Fs fs, Args a) {
 
   while (true) {
     i32 which = userDone
-      ? core.waitAny(i32[](fromPeer.id), -1)
-      : core.waitAny(i32[](fromPeer.id, fromUser.id), -1);
+      ? core.waitAny([fromPeer.id], -1)
+      : core.waitAny([fromPeer.id, fromUser.id], -1);
     if (which < 0) { break; }
 
     if (which == 0) {

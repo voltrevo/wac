@@ -72,7 +72,7 @@ export function generate(): Cell[] {
     add("method", `export void f(${a} a) { a.nosuch(); }`);
     add("len", `export void f(${a} a) { a.len(); }`);
     add("switch", `export void f(${a} a) { switch (a) { default: { } } }`);
-    add("arrsize", `export void f(${a} a) { i32[] v = i32[a](); }`);
+    add("arrsize", `export void f(${a} a) { i32[] v = i32[].filled(a, 0); }`);
     add("param", `export void f(${a} a) { }`);
     add("field", `struct Q { ${a} v; } export void f() { }`);
     add("default", `struct Q { ${a} v; } export void f() { Q q = Q(); }`);
@@ -104,7 +104,7 @@ export function generate(): Cell[] {
     add("ok-unwrap", `export ${a} f(${a}? a) { return a!; }`);
     add("ok-isnull", `export bool f(${a}? a) { return a is null; }`);
     add("ok-nullfield", `struct W { ${a}? v; } export void f() { W w = W(); }`);
-    add("ok-arrfill", `export void f(${a} a) { ${a}[] v = ${a}[2](fill: a); }`);
+    add("ok-arrfill", `export void f(${a} a) { ${a}[] v = ${a}[].filled(2, a); }`);
     add("ok-arrlit", `export void f(${a} a) { ${a}[] v = ${a}[](a, a); }`);
     add("ok-block", `export void f(${a} a, bool c) { if (c) { ${a} v = a; } else { ${a} w = a; } }`);
     add("ok-loop", `export void f(${a} a) { for (i32 i = 0; i < 2; i++) { ${a} v = a; } }`);

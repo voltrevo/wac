@@ -10,7 +10,7 @@ i32 helper() { return 3; }
 enum E {
   A(i32 v), B,
   i32 sum(const this) {
-    Q[] qs = Q[2](fill: Q(helper()));
+    Q[] qs = Q[].filled(2, Q(helper()));
     i32 base = match (this) { A(v): v, B: 0 };
     return base + qs[0].v + qs[1].v;
   }

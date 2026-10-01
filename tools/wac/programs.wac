@@ -78,7 +78,7 @@ bool hasSuffix(string s, string suffix) {
  * things a person can run.
  */
 export Program[] findPrograms(Cli cli) {
-  Program[] out = Program[512](fill: Program("", 0, "", ""));
+  Program[] out = Program[].filled(512, Program("", 0, "", ""));
   i32 n = 0;
   string[]? pkgs = cli.readDir("packages").wait();
   if (pkgs is null) { trap; }
@@ -106,16 +106,16 @@ export Program[] findPrograms(Cli cli) {
       }
     }
   }
-  Program[] exact = Program[n](fill: Program("", 0, "", ""));
+  Program[] exact = Program[].filled(n, Program("", 0, "", ""));
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return byPath(exact);
 }
 
 /** Every file under `dir`, recursively, repository-relative. */
 string[] walk(Cli cli, string dir) {
-  string[] out = string[4096](fill: "");
+  string[] out = string[].filled(4096, "");
   i32 n = 0;
-  string[] stack = string[1024](fill: "");
+  string[] stack = string[].filled(1024, "");
   i32 top = 0;
   stack[top] = dir;
   top = 1;
@@ -135,14 +135,14 @@ string[] walk(Cli cli, string dir) {
       if (n < out.len()) { out[n] = path; n = n + 1; }
     }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
 
 /** Insertion sort by name — the corpus is a few dozen, and a stable order keeps output diffable. */
 string[] sorted(string[] names) {
-  string[] out = string[names.len()](fill: "");
+  string[] out = string[].filled(names.len(), "");
   for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
@@ -155,7 +155,7 @@ string[] sorted(string[] names) {
 
 /** The same, by path, so the map does not shuffle between runs. */
 export Program[] byPath(Program[] ps) {
-  Program[] out = Program[ps.len()](fill: Program("", 0, "", ""));
+  Program[] out = Program[].filled(ps.len(), Program("", 0, "", ""));
   for (i32 i = 0; i < ps.len(); i++) { out[i] = ps[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     Program v = out[i];

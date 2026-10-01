@@ -28,7 +28,7 @@ import {
 /** A tag, a DER length, and a body. */
 export u8[] derTlv(i32 tag, u8[] body) {
   u8[] length = derLength(body.len());
-  u8[] out = u8[1 + length.len() + body.len()]();
+  u8[] out = u8[].filled(1 + length.len() + body.len(), 0);
   out[0] = tag;
   for (i32 i = 0; i < length.len(); i++) { out[1 + i] = length[i]; }
   for (i32 i = 0; i < body.len(); i++) { out[1 + length.len() + i] = body[i]; }
@@ -44,7 +44,7 @@ export u8[] derTlv(i32 tag, u8[] body) {
  */
 export u8[] derLength(i32 n) {
   if (n < 128) {
-    u8[] out = u8[1]();
+    u8[] out = u8[].filled(1, 0);
     out[0] = n;
     return out;
   }
@@ -55,7 +55,7 @@ export u8[] derLength(i32 n) {
     bytes = bytes + 1;
     v = v / 256;
   }
-  u8[] out = u8[1 + bytes]();
+  u8[] out = u8[].filled(1 + bytes, 0);
   out[0] = 0x80 | bytes;
   for (i32 i = 0; i < bytes; i++) {
     out[1 + i] = (n / powOf256(bytes - 1 - i)) % 256;
@@ -83,10 +83,10 @@ export u8[] derInteger(u8[] magnitude) {
   i32 n = magnitude.len() - from;
   if (n == 0) {
     // Zero is a single zero byte, not an empty one.
-    u8[] zero = u8[1]();
+    u8[] zero = u8[].filled(1, 0);
     return derTlv(tagInteger(), zero);
   }
-  u8[] body = u8[n + (needsPad ? 1 : 0)]();
+  u8[] body = u8[].filled(n + (needsPad ? 1 : 0), 0);
   i32 at = needsPad ? 1 : 0;
   for (i32 i = 0; i < n; i++) { body[at + i] = magnitude[from + i]; }
   return derTlv(tagInteger(), body);
@@ -94,8 +94,8 @@ export u8[] derInteger(u8[] magnitude) {
 
 /** A small non-negative INTEGER, for versions and serial numbers that fit in a word. */
 export u8[] derIntegerSmall(i64 value) {
-  if (value < 0) { return u8[0](); }
-  u8[] big = u8[8]();
+  if (value < 0) { return u8[](); }
+  u8[] big = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
     big[i] = ((value >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
   }
@@ -104,7 +104,7 @@ export u8[] derIntegerSmall(i64 value) {
 
 /** A BIT STRING with no unused bits — the only kind anything here needs. */
 export u8[] derBitString(u8[] bits) {
-  u8[] body = u8[1 + bits.len()]();
+  u8[] body = u8[].filled(1 + bits.len(), 0);
   body[0] = 0;                        // unused bits
   for (i32 i = 0; i < bits.len(); i++) { body[1 + i] = bits[i]; }
   return derTlv(tagBitString(), body);
@@ -130,9 +130,9 @@ export u8[] derPrintableString(string s) { return derTlv(0x13, s.toBytes()); }
  */
 export u8[] derUtcTime(i64 secondsSinceEpoch) {
   i64[] p = civilFrom(secondsSinceEpoch);
-  if (p[0] < 1950 || p[0] > 2049) { return u8[0](); }
+  if (p[0] < 1950 || p[0] > 2049) { return u8[](); }
   i64 yy = p[0] % 100;
-  u8[] text = u8[13]();
+  u8[] text = u8[].filled(13, 0);
   put2(text, 0, yy);
   put2(text, 2, p[1]);
   put2(text, 4, p[2]);
@@ -146,8 +146,8 @@ export u8[] derUtcTime(i64 secondsSinceEpoch) {
 /** A GeneralizedTime, `YYYYMMDDHHMMSSZ`, for 2050 and later. */
 export u8[] derGeneralizedTime(i64 secondsSinceEpoch) {
   i64[] p = civilFrom(secondsSinceEpoch);
-  if (p[0] < 0 || p[0] > 9999) { return u8[0](); }
-  u8[] text = u8[15]();
+  if (p[0] < 0 || p[0] > 9999) { return u8[](); }
+  u8[] text = u8[].filled(15, 0);
   put2(text, 0, p[0] / 100);
   put2(text, 2, p[0] % 100);
   put2(text, 4, p[1]);
@@ -199,14 +199,14 @@ export i64[] civilFrom(i64 seconds) {
   i64 d = doy - (153 * mp + 2) / 5 + 1;
   i64 m = mp + (mp < 10 ? 3 : -9);
   if (m <= 2) { y = y + 1; }
-  return i64[](y, m, d, rem / 3600, (rem / 60) % 60, rem % 60);
+  return [y, m, d, rem / 3600, (rem / 60) % 60, rem % 60];
 }
 
 /** Several encoded values, one after another — a SEQUENCE's body before it is wrapped. */
 export u8[] derConcat(u8[][] parts) {
   i32 n = 0;
   for (i32 i = 0; i < parts.len(); i++) { n = n + parts[i].len(); }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < parts.len(); i++) {
     for (i32 j = 0; j < parts[i].len(); j++) { out[at + j] = parts[i][j]; }

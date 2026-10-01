@@ -30,10 +30,10 @@ export string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, C
   string target = dir + "/inplace";
 
   t.isTrue(cli.writeFile(target, "delta\nalpha\ncharlie\nbravo\n".toBytes()).wait().ok(), "wrote it");
-  Ran sorted = runApplet(core, cli, dir, string[]("sort", target));
+  Ran sorted = runApplet(core, cli, dir, ["sort", target]);
   t.eqI32(sorted.status, 0, "sort ran: " + sorted.err);
 
-  Ran soak = runAppletIn(core, cli, dir, string[]("sponge", target), sorted.outBytes);
+  Ran soak = runAppletIn(core, cli, dir, ["sponge", target], sorted.outBytes);
   t.eqI32(soak.status, 0, "sponge ran: " + soak.err);
   t.eqStr(string.fromBytes(cli.readFile(target).wait().bytes), "alpha\nbravo\ncharlie\ndelta\n",
           "sorted in place");
@@ -67,10 +67,10 @@ export string test_zstd_round_trips(Core core, Cli cli) {
   u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
-  Ran squeezed = runAppletIn(core, cli, dir, string[]("zstd"), raw);
+  Ran squeezed = runAppletIn(core, cli, dir, ["zstd"], raw);
   t.eqI32(squeezed.status, 0, "zstd ran: " + squeezed.err);
   t.isTrue(squeezed.outBytes.len() < raw.len(), "zstd did not compress");
-  t.eqStr(differs(runAppletIn(core, cli, dir, string[]("unzstd"), squeezed.outBytes).outBytes, raw), "",
+  t.eqStr(differs(runAppletIn(core, cli, dir, ["unzstd"], squeezed.outBytes).outBytes, raw), "",
           "zstd round trip");
 
   cli.remove(dir, true).wait();
@@ -89,19 +89,19 @@ export string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli c
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
 
-  Ran canon = runAppletIn(core, cli, dir, string[]("json", "-c"),
+  Ran canon = runAppletIn(core, cli, dir, ["json", "-c"],
                           "{\"b\":1,\"a\":[2, 3 ],\"c\":\"x\"}".toBytes());
   t.eqStr(trimEnd(canon.out), "{\"b\":1,\"a\":[2,3],\"c\":\"x\"}", "canonical output");
 
-  Ran spaced = runAppletIn(core, cli, dir, string[]("json", "-c"),
+  Ran spaced = runAppletIn(core, cli, dir, ["json", "-c"],
                            "{ \"b\" : 1 , \"a\" : [ 2 , 3 ] , \"c\" : \"x\" }".toBytes());
   t.eqStr(spaced.out, canon.out, "two spellings canonicalise the same");
 
-  Ran valid = runAppletIn(core, cli, dir, string[]("json"), "[1,2,3]".toBytes());
+  Ran valid = runAppletIn(core, cli, dir, ["json"], "[1,2,3]".toBytes());
   t.eqI32(valid.status, 0, "a valid document is 0");
   t.eqI32(valid.outBytes.len(), 0, "a validator says nothing");
 
-  Ran bad = runAppletIn(core, cli, dir, string[]("json"), "{\"a\":}".toBytes());
+  Ran bad = runAppletIn(core, cli, dir, ["json"], "{\"a\":}".toBytes());
   t.eqI32(bad.status, 1, "an invalid document is 1");
   t.isTrue(bad.err.indexOf("invalid JSON at byte") >= 0, bad.err);
 
@@ -120,12 +120,12 @@ export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli)
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string[] fmt = string[]("-u", "+%Y-%m-%dT%H:%M");
-  string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
+  string[] fmt = ["-u", "+%Y-%m-%dT%H:%M"];
+  string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
   t.isTrue(cli.writeFile(dir + "/sized", "12345".toBytes()).wait().ok(), "wrote five bytes");
 
-  Ran st = runApplet(core, cli, dir, string[]("stat", dir + "/sized", dir));
-  string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
+  Ran st = runApplet(core, cli, dir, ["stat", dir + "/sized", dir]);
+  string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
   t.eqI32(st.status, 0, "stat ran: " + st.err);
   string[] rows = splitOn(trimEnd(st.out), "\n");
   t.eqI32(rows.len(), 2, "two operands, two rows: " + st.out);
@@ -143,7 +143,7 @@ export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli)
              "the file was written now: " + when + " between " + before + " and " + after);
   }
 
-  t.eqI32(runApplet(core, cli, dir, string[]("stat", dir + "/absent")).status, 1,
+  t.eqI32(runApplet(core, cli, dir, ["stat", dir + "/absent"]).status, 1,
           "a missing path is an error");
 
   cli.remove(dir, true).wait();
@@ -173,7 +173,7 @@ export string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
 
-  string[] ids = splitOn(trimEnd(runApplet(core, cli, dir, string[]("uuid", "-20")).out), "\n");
+  string[] ids = splitOn(trimEnd(runApplet(core, cli, dir, ["uuid", "-20"]).out), "\n");
   t.eqI32(ids.len(), 20, "twenty asked for");
 
   for (i32 i = 0; i < ids.len(); i++) {
@@ -213,7 +213,7 @@ export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli 
   string path = dir + "/lines";
   t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote 200 lines");
 
-  string first = trimEnd(runApplet(core, cli, dir, string[]("shuf", path)).out);
+  string first = trimEnd(runApplet(core, cli, dir, ["shuf", path]).out);
   string[] shuffled = splitOn(first, "\n");
   t.eqI32(shuffled.len(), 200, "a permutation has the same length");
 
@@ -226,11 +226,11 @@ export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli 
   }
   t.eqI32(seen, 200, "the same lines, each exactly once");
 
-  t.eqI32(splitOn(trimEnd(runApplet(core, cli, dir, string[]("shuf", "-5", path)).out), "\n").len(), 5,
+  t.eqI32(splitOn(trimEnd(runApplet(core, cli, dir, ["shuf", "-5", path]).out), "\n").len(), 5,
           "and -5 is a sample of five");
 
-  string again = trimEnd(runApplet(core, cli, dir, string[]("shuf", path)).out);
-  string third = trimEnd(runApplet(core, cli, dir, string[]("shuf", path)).out);
+  string again = trimEnd(runApplet(core, cli, dir, ["shuf", path]).out);
+  string third = trimEnd(runApplet(core, cli, dir, ["shuf", path]).out);
   t.isTrue(first != again || first != third || again != third,
            "three shuffles of the same input gave one order: the draw is not random");
 
@@ -248,9 +248,9 @@ export string test_paste_agrees_with_the_real_one(Core core, Cli cli) {
   t.isTrue(cli.writeFile(p1, "a\nb\n".toBytes()).wait().ok(), "wrote p1");
   t.isTrue(cli.writeFile(p2, "1\n2\n3\n".toBytes()).wait().ok(), "wrote p2 — one line longer");
 
-  Exec theirs = cli.exec("paste", string[](p1, p2), u8[0]()).wait();
+  Exec theirs = cli.exec("paste", [p1, p2], u8[]()).wait();
   t.isTrue(theirs.error == "", "there is a real paste: " + theirs.error);
-  t.eqStr(runApplet(core, cli, dir, string[]("paste", p1, p2)).out,
+  t.eqStr(runApplet(core, cli, dir, ["paste", p1, p2]).out,
           string.fromBytes(theirs.stdout), "paste over files of different lengths");
 
   cli.remove(dir, true).wait();

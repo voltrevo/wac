@@ -49,9 +49,9 @@ export struct Conn {
   Conn dial(Cli cli, string host, i32 port) {
     Socket s = cli.connect(host, port).wait();
     if (s.handle < 0) {
-      return Conn(-1, u8[0](), 0, 0, u8[0](), u8[0](), false, "connect: " + s.error);
+      return Conn(-1, u8[](), 0, 0, u8[](), u8[](), false, "connect: " + s.error);
     }
-    return Conn(s.handle, u8[0](), 0, 0, u8[0](), u8[0](), true, "");
+    return Conn(s.handle, u8[](), 0, 0, u8[](), u8[](), true, "");
   }
 
   /** Pull once, appending to the buffer. False once nothing more can arrive. */
@@ -112,12 +112,12 @@ export struct Conn {
         default: {
           this.ok = false;
           this.error = "a packet could not be framed";
-          return u8[0]();
+          return u8[]();
         }
       }
     }
     if (this.ok) { this.ok = false; this.error = "no plaintext packet arrived"; }
-    return u8[0]();
+    return u8[]();
   }
 
   /** Frame and send one plaintext packet. */
@@ -148,12 +148,12 @@ export struct Conn {
         default: {
           this.ok = false;
           this.error = "encrypted packet " + itoa(this.inSeq) + " did not open";
-          return u8[0]();
+          return u8[]();
         }
       }
     }
     if (this.ok) { this.ok = false; this.error = "no encrypted packet arrived"; }
-    return u8[0]();
+    return u8[]();
   }
 }
 
@@ -179,8 +179,8 @@ export struct Session {
 }
 
 Session failed(Conn c, string why) {
-  return Session(false, why, c, u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](),
-                 u8[0](), u8[0](), false);
+  return Session(false, why, c, u8[](), u8[](), u8[](), u8[](), u8[](), u8[](), u8[](),
+                 u8[](), u8[](), false);
 }
 
 /**
@@ -195,7 +195,7 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
 
   // Our version line goes first; SSH does not wait for the peer's.
   c.write(cli, clientVersionLine());
-  u8[] serverVersion = u8[0]();
+  u8[] serverVersion = u8[]();
   for (i32 i = 0; i < 100 && c.ok; i++) {
     Version v = scanVersion(c.buf, 0, c.buf.len());
     match (v.status) {
@@ -237,7 +237,7 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   }
 
   // NEWKEYS. Both sides advertised strict KEX, so the sequence numbers reset to zero here.
-  u8[] newKeys = u8[1]();
+  u8[] newKeys = u8[].filled(1, 0);
   newKeys[0] = 21;
   c.sendPlain(cli, newKeys);
   u8[] theirNewKeys = c.nextPlain(cli);
@@ -267,7 +267,7 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   if (!accepted) { return failed(c, "never received SSH_MSG_SERVICE_ACCEPT"); }
 
   // Authenticate, reading the private key with our own code.
-  PrivateKey key = readEd25519(cli.readFile(dir + "/clientkey").wait().bytes, u8[0]());
+  PrivateKey key = readEd25519(cli.readFile(dir + "/clientkey").wait().bytes, u8[]());
   match (key.error) {
     Ok: {}
     default: { return failed(c, "could not read the client private key"); }

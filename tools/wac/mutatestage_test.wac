@@ -26,7 +26,7 @@ string write(Cli cli, string path, string text) {
  * root file that a test reads.
  */
 string makeFixture(Cli cli) {
-  cli.exec("bash", string[]("-c", "rm -rf '" + ROOT() + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + ROOT() + "'"], u8[]()).wait();
   string why = write(cli, ROOT() + "/pkg/src/a.wac", "export i32 a() { return 1; }\n");
   if (why != "") { return why; }
   why = write(cli, ROOT() + "/pkg/target/huge.bin", "build output nothing here reads\n");
@@ -55,9 +55,9 @@ export string test_a_staged_tree_has_the_source_and_not_the_build_output(Core co
 
   string root = cli.cwd().wait() + "/" + ROOT();
   string dest = cli.cwd().wait() + "/" + ROOT() + "-staged";
-  cli.exec("bash", string[]("-c", "rm -rf '" + dest + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + dest + "'"], u8[]()).wait();
 
-  string failed = stageInto(cli, root, dest, string[]("pkg", "tools"), string[]("README.md"), "");
+  string failed = stageInto(cli, root, dest, ["pkg", "tools"], ["README.md"], "");
   t.eqStr(failed, "", "staging succeeded");
   if (failed != "") { return t.report(); }
 
@@ -69,7 +69,7 @@ export string test_a_staged_tree_has_the_source_and_not_the_build_output(Core co
   t.isTrue(!exists(cli, dest + "/pkg/target/huge.bin"),
            "and target/ did not — that is what the tar exclusion is for");
 
-  cli.exec("bash", string[]("-c", "rm -rf '" + dest + "' '" + root + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + dest + "' '" + root + "'"], u8[]()).wait();
   return t.report();
 }
 

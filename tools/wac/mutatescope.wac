@@ -17,7 +17,7 @@ bool holds(string[] xs, string want) {
 
 /** Insertion sort — the lists here are package names, tens of them at most. */
 string[] sorted(string[] xs) {
-  string[] out = string[xs.len()](fill: "");
+  string[] out = string[].filled(xs.len(), "");
   for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string k = out[i];
@@ -46,14 +46,14 @@ export string[] testDirsFor(string[] own, string[] all) {
   for (i32 i = 0; i < all.len(); i++) {
     if (!holds(own, all[i])) { restCount = restCount + 1; }
   }
-  string[] rest = string[restCount](fill: "");
+  string[] rest = string[].filled(restCount, "");
   i32 r = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (!holds(own, all[i])) { rest[r] = all[i]; r = r + 1; }
   }
   string[] restSorted = sorted(rest);
 
-  string[] out = string[ownSorted.len() + restSorted.len()](fill: "");
+  string[] out = string[].filled(ownSorted.len() + restSorted.len(), "");
   for (i32 i = 0; i < ownSorted.len(); i++) { out[i] = "packages/" + ownSorted[i]; }
   for (i32 i = 0; i < restSorted.len(); i++) {
     out[ownSorted.len() + i] = "packages/" + restSorted[i];
@@ -83,7 +83,7 @@ export bool isBlindScope(string[] own, string[] hostless) {
 
 /** The packages a mutant edits, sorted and without repeats. */
 export string[] packagesOf(Mutant m) {
-  string[] seen = string[m.edits.len()](fill: "");
+  string[] seen = string[].filled(m.edits.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < m.edits.len(); i++) {
     string file = m.edits[i].file;
@@ -95,7 +95,7 @@ export string[] packagesOf(Mutant m) {
     if (pkg == "") { continue; }
     if (!holds(seen, pkg)) { seen[n] = pkg; n = n + 1; }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = seen[i]; }
   return sorted(exact);
 }
@@ -118,7 +118,7 @@ export struct Applied {
 }
 
 export Applied applyEdits(string[] paths, string[] texts, Mutant m) {
-  string[] out = string[texts.len()](fill: "");
+  string[] out = string[].filled(texts.len(), "");
   for (i32 i = 0; i < texts.len(); i++) { out[i] = texts[i]; }
 
   for (i32 f = 0; f < paths.len(); f++) {
@@ -178,7 +178,7 @@ export string[] scopeFor(Mutant m, string[] hostless,
   string[] own = packagesOf(m);
   if (isBlindScope(own, hostless)) { return testDirsFor(own, own); }
 
-  string[] all = string[own.len() + dependentFiles.len() * 8](fill: "");
+  string[] all = string[].filled(own.len() + dependentFiles.len() * 8, "");
   i32 n = 0;
   for (i32 i = 0; i < own.len(); i++) {
     if (!holds(all, own[i])) { all[n] = own[i]; n = n + 1; }
@@ -205,7 +205,7 @@ export string[] scopeFor(Mutant m, string[] hostless,
       if (!have && n < all.len()) { all[n] = pkg; n = n + 1; }
     }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = all[i]; }
   return testDirsFor(own, exact);
 }

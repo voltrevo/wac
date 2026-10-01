@@ -49,7 +49,7 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
  * question to answer first is not "may I add it" but "did I mean to create it at the root at all".
  */
 string[] expected() {
-  return string[](
+  return [
     ".gitignore",
     "CLAUDE.md",         // the instructions every agent reads
     "bootstrap.sh",      // builds wac from source and installs it; the first command in a clone
@@ -62,7 +62,7 @@ string[] expected() {
     "deno.json",
     "deno.lock",
     "tasks.json5"       // the named commands; `wac task` reads it, and `deno.json` held them until 2026-08-27
-  );
+  ];
 }
 
 bool has(string[] xs, string x) {

@@ -139,7 +139,7 @@ export i64 unzstdStream(fn<Read()> read, fn<bool(u8[])> write) {
     if (!p.need(1)) { trap; }
     i32 n = headerLength(p.held.data[p.pos]);
     if (!p.need(n)) { trap; }
-    u8[] head = u8[n]();
+    u8[] head = u8[].filled(n, 0);
     head.copyFrom(p.held.data, p.pos, 0, n);
     p.pos = p.pos + n;
     p.compact();
@@ -215,7 +215,7 @@ i64 decodeFrame(Pull p, FrameHeader h, fn<bool(u8[])> write) {
 /** Send `n` bytes from the front of `out`, hashing them on the way past. */
 bool flush(Buf out, i32 n, Xxh64 sum, fn<bool(u8[])> write) {
   if (n <= 0) { return true; }
-  u8[] piece = u8[n]();
+  u8[] piece = u8[].filled(n, 0);
   piece.copyFrom(out.data, 0, 0, n);
   sum.update(piece, 0, n);
   out.dropFront(n);

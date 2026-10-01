@@ -60,7 +60,7 @@ import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
  * now, and they stay because two files are enough to make the point cheaply — `selfHostEmit` is the
  * one that puts the entire compiler through.
  */
-string[] targets() { return string[]("packages/wacc/src/kinds.wac", "packages/wacc/src/ast.wac"); }
+string[] targets() { return ["packages/wacc/src/kinds.wac", "packages/wacc/src/ast.wac"]; }
 
 const string DRIVER = ".cache/_fixdrive.wac";
 
@@ -107,11 +107,11 @@ string driverFor(string text) {
  */
 i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/ladderRun.ts", DRIVER, exports),
-                    u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return i32[want](); }
+  Exec r = cli.exec("deno", ["run", "-A", "harness/ladderRun.ts", DRIVER, exports],
+                    u8[]()).wait();
+  if (!r.ran() || r.status != 0) { return i32[].filled(want, 0); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  i32[] out = i32[want]();
+  i32[] out = i32[].filled(want, 0);
   i32 n = 0;
   for (i32 i = 0; i < lines.len() && n < want; i++) {
     if (trimmed(lines[i]).len() == 0) { continue; }
@@ -131,7 +131,7 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
 
   string dir = scratchDir(cli);
   string[] want = targets();
-  i32[] ok = i32[1]();
+  i32[] ok = i32[].filled(1, 0);
 
   for (i32 k = 0; k < want.len(); k++) {
     i32 at = -1;
@@ -140,8 +140,8 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
     if (at < 0) { continue; }
 
     // The driver joins the map wacc compiles from, and the disk, where the reference looks.
-    string[] paths = string[c.paths.len() + 1](fill: "");
-    string[] sources = string[c.paths.len() + 1](fill: "");
+    string[] paths = string[].filled(c.paths.len() + 1, "");
+    string[] sources = string[].filled(c.paths.len() + 1, "");
     for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
     paths[c.paths.len()] = DRIVER;
 
@@ -162,7 +162,7 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
 
     sources[c.paths.len()] = driverFor(c.sources[at]);
     u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "fix.wasm", 0);
-    Ran r = runModule(cli, wasm, dir, "fixdrive.wasm", string[]("fold"));
+    Ran r = runModule(cli, wasm, dir, "fixdrive.wasm", ["fold"]);
     if (!r.ok || wasRejected(r) || r.trapped) {
       t.fail("stage B for " + want[k] + " did not run — " + (r.ok ? r.stderr : r.error));
       continue;

@@ -38,17 +38,19 @@ Exec askBash(Cli cli, string dir, string script) {
   // 1: …` in the expectations where every other route says `bash: …`. The outer shell enters the
   // directory and `exec`s the inner one *by name*, which is what the differential's `bash -c` gave.
   return cli.exec("env",
-                  string[]("-i",
+                  [
+                           "-i",
                            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                            "LC_ALL=C.UTF-8", "HOME=" + dir,
                            "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
-                           "bash", dir, script),
-                  u8[0]()).wait();
+                           "bash", dir, script
+                  ],
+                  u8[]()).wait();
 }
 
 /** The first line of `<program> --version`, or "(absent)". */
 string versionOf(Cli cli, string program, string flag) {
-  Exec r = cli.exec(program, string[](flag), u8[0]()).wait();
+  Exec r = cli.exec(program, [flag], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return "(absent)"; }
   string all = string.fromBytes(r.stdout);
   i32 nl = all.indexOf("\n");

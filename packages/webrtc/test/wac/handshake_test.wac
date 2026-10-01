@@ -37,7 +37,7 @@ import { Dtls, startServer, stopServer, waitForBind } from "./openssl.wac";
 
 /** Fixed inputs, so a failing run and the one before it print the same bytes. */
 u8[] ramp(i32 n, i32 mul, i32 add) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
   return out;
 }
@@ -53,14 +53,14 @@ u8[] cat(u8[][] parts) {
 u8[] slice(u8[] b, i32 at, i32 end) {
   i32 from = at < 0 ? 0 : at;
   i32 to = end > b.len() ? b.len() : end;
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   out.copyFrom(b, from, 0, to - from);
   return out;
 }
 
 /** A plaintext record header around a fragment — the epoch-0 case, with nothing to seal. */
 u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
-  u8[] out = u8[13 + fragment.len()]();
+  u8[] out = u8[].filled(13 + fragment.len(), 0);
   out[0] = kind;
   out[1] = 0xFE;
   out[2] = 0xFD;
@@ -76,19 +76,21 @@ u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
 /** The next datagram, or empty. The deadline is on the wait — `issues/system/0206`. */
 u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny(i32[](p.id), ms) < 0) {
+  if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
-    return u8[0]();
+    return u8[]();
   }
   Datagram d = p.wait();
-  return d.error == "" ? d.bytes : u8[0]();
+  return d.error == "" ? d.bytes : u8[]();
 }
 
 /** OpenSSL's own fingerprint of the file it is serving — the oracle for ours. */
 string opensslFingerprint(Cli cli) {
   Exec r = cli.exec("openssl",
-                    string[]("x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-noout",
-                             "-fingerprint", "-sha256"), u8[0]()).wait();
+                    [
+                             "x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-noout",
+                             "-fingerprint", "-sha256"
+                    ], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
   string said = string.fromBytes(r.stdout);
   i32 eq = said.indexOf("=");
@@ -97,7 +99,7 @@ string opensslFingerprint(Cli cli) {
   for (i32 i = eq + 1; i < said.len(); i++) {
     string c = said.slice(i, i + 1);
     if (c == ":" || c == "\n" || c == "\r" || c == " ") { continue; }
-    out = out + (c >= "A" && c <= "F" ? string.fromBytes(u8[](c.toBytes()[0] + 32)) : c);
+    out = out + (c >= "A" && c <= "F" ? string.fromBytes([c.toBytes()[0] + 32]) : c);
   }
   return out;
 }
@@ -125,7 +127,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   }
 
   // ── Flight 1: the cookie exchange ────────────────────────────────────────────
-  cli.sendTo(sock.handle, "127.0.0.1", srv.port, hello(RANDOM, u8[0](), 0, 0)).wait();
+  cli.sendTo(sock.handle, "127.0.0.1", srv.port, hello(RANDOM, u8[](), 0, 0)).wait();
   u8[] verify = receiveWithin(core, cli, sock, 5000);
   t.isTrue(verify.len() > 0, "no HelloVerifyRequest — " + srv.said(cli));
   if (verify.len() == 0) { done(cli, sock, srv); return t.report(); }
@@ -150,10 +152,10 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   // offset zero and the full length — so the pieces are gathered and re-headed rather than
   // concatenated as they arrived.
   i32 SLOTS = 16;
-  i32[] kindOfSeq = i32[SLOTS](fill: -1);
-  i32[] haveOfSeq = i32[SLOTS](fill: 0);
-  u8[][] bodyOfSeq = u8[][SLOTS](fill: u8[0]());
-  i32[] order = i32[SLOTS](fill: -1);
+  i32[] kindOfSeq = i32[].filled(SLOTS, -1);
+  i32[] haveOfSeq = i32[].filled(SLOTS, 0);
+  u8[][] bodyOfSeq = u8[][].filled(SLOTS, u8[]());
+  i32[] order = i32[].filled(SLOTS, -1);
   i32 seen = 0;
   bool sawDone = false;
 
@@ -183,7 +185,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
       if (kind >= 0 && seq >= 0 && seq < SLOTS) {
         if (kindOfSeq[seq] < 0) {
           kindOfSeq[seq] = kind;
-          bodyOfSeq[seq] = u8[total]();
+          bodyOfSeq[seq] = u8[].filled(total, 0);
           order[seen] = seq;
           seen = seen + 1;
         }
@@ -202,16 +204,16 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
             "message_seq " + itoa(seq) + " (type " + itoa(kindOfSeq[seq]) + ") was incomplete");
   }
 
-  u8[][] serverMessages = u8[][seen](fill: u8[0]());
+  u8[][] serverMessages = u8[][].filled(seen, u8[]());
   for (i32 i = 0; i < seen; i++) {
     i32 seq = order[i];
     serverMessages[i] = reheaded(kindOfSeq[seq], seq, bodyOfSeq[seq]);
   }
 
-  u8[] serverRandom = u8[0]();
-  u8[] serverKey = u8[0]();
-  u8[] certBody = u8[0]();
-  u8[] skeBody = u8[0]();
+  u8[] serverRandom = u8[]();
+  u8[] serverKey = u8[]();
+  u8[] certBody = u8[]();
+  u8[] skeBody = u8[]();
   i32 curve = -1;
   for (i32 i = 0; i < seen; i++) {
     i32 seq = order[i];
@@ -267,7 +269,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   u8[] ourKey = ourPublic(curve, SCALAR);
   u8[] pms = preMaster(curve, SCALAR, serverKey);
   t.eqI32(pms.len(), 32, "the pre-master secret is thirty-two bytes");
-  t.neI32(hexOf(pms) == hexOf(u8[32]()) ? 1 : 0, 1,
+  t.neI32(hexOf(pms) == hexOf(u8[].filled(32, 0)) ? 1 : 0, 1,
           "an all-zero shared secret means the peer's point was rejected, not that it agreed");
 
   u8[] master = masterFrom(pms, RANDOM, serverRandom);
@@ -279,7 +281,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   u8[] serverIv = slice(block, 36, 40);
 
   u8[] cke = ckeMessage(ourKey, 2);
-  u8[][] transcriptParts = u8[][seen + 2](fill: u8[0]());
+  u8[][] transcriptParts = u8[][].filled(seen + 2, u8[]());
   transcriptParts[0] = clientHelloMsg;
   for (i32 i = 0; i < seen; i++) { transcriptParts[1 + i] = serverMessages[i]; }
   transcriptParts[seen + 1] = cke;
@@ -290,11 +292,13 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
 
   // Three records, and they may go in one datagram — which is what OpenSSL does and what a peer
   // expects. Epoch 0 for the first two; the Finished is the first thing under the new keys.
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = 1;
   cli.sendTo(sock.handle, "127.0.0.1", srv.port,
-             cat(u8[][](recordOf(22, 0, 2, cke), recordOf(20, 0, 3, one),
-                        sealedRecord(clientKey, clientIv, 1, 0, 22, finished)))).wait();
+             cat([
+                        recordOf(22, 0, 2, cke), recordOf(20, 0, 3, one),
+                        sealedRecord(clientKey, clientIv, 1, 0, 22, finished)
+             ])).wait();
 
   // ── Flight 4: the server's ChangeCipherSpec and Finished ─────────────────────
   u8[] answer = receiveWithin(core, cli, sock, 6000);
@@ -308,7 +312,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
           "2/51 is decrypt_error — the verify_data, which means the transcript");
 
   // Walk its flight: a ChangeCipherSpec in the clear, then a Finished under its own keys.
-  u8[] serverFinished = u8[0]();
+  u8[] serverFinished = u8[]();
   bool sawCcs = false;
   i32 at = 0;
   for (i32 guard = 0; guard < 64; guard++) {
@@ -330,7 +334,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   // first half proves it believed us, this proves we believe it.
   if (serverFinished.len() > 0) {
     t.eqI32(serverFinished[0], 20, "a Finished message");
-    u8[] want = finishedMessage(master, cat(u8[][](transcript, finished)), 0, false);
+    u8[] want = finishedMessage(master, cat([transcript, finished]), 0, false);
     t.eqStr(hexOf(slice(serverFinished, 12, serverFinished.len())),
             hexOf(slice(want, 12, want.len())),
             "the server's verify_data is what our own schedule computes for it");

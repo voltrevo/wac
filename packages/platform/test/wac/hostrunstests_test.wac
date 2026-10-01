@@ -39,8 +39,8 @@ export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Core core
   }
 
   Exec r = cli.exec(nativeHost(cli),
-                    string[]("test", "--allow-read", "--allow-write", "--allow-run", SUBJECT()),
-                    u8[0]()).wait();
+                    ["test", "--allow-read", "--allow-write", "--allow-run", SUBJECT()],
+                    u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isTrue(r.ran(), "the wasmtime host ran at all");
   if (!r.ran()) { return t.report(); }

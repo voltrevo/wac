@@ -31,11 +31,12 @@ const string ENUM = "enum E { A(i32 x, i32 y), B }\n";
 /** The nine rules, each as the smallest program that breaks it. */
 export string test_every_match_rule_the_reference_has_is_enforced() {
   T t = T.create();
-  string[] name = string[](
+  string[] name = [
     "a nullable subject", "a non-enum subject", "two else arms", "a case naming no variant",
     "one variant cased twice", "an else that nothing reaches", "a match missing a variant",
-    "a case binding one name twice", "a binding taking the subject's name");
-  string[] src = string[](
+    "a case binding one name twice", "a binding taking the subject's name"
+  ];
+  string[] src = [
     "enum E { A, B }\nexport i32 f(E? e) { match (e) { A: { return 1; } B: { return 2; } } }\n",
     "export i32 f(i32 x) { match (x) { A: { return 1; } default: { return 2; } } }\n",
     "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } default: { return 2; } default: { return 3; } } }\n",
@@ -44,7 +45,8 @@ export string test_every_match_rule_the_reference_has_is_enforced() {
     "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } B: { return 2; } default: { return 3; } } }\n",
     "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } } }\n",
     ENUM + "export i32 f(E e) { match (e) { A(n, n): { return n; } default: { return 2; } } }\n",
-    "enum E { A(i32 x), B }\nexport i32 f(E e) { match (e) { A(e): { return 1; } default: { return 2; } } }\n");
+    "enum E { A(i32 x), B }\nexport i32 f(E e) { match (e) { A(e): { return 1; } default: { return 2; } } }\n"
+  ];
   t.eqI32(name.len(), src.len(), "the name and program lists disagree in length");
   if (name.len() != src.len()) { return t.report(); }
   for (i32 i = 0; i < src.len(); i++) {
@@ -62,7 +64,8 @@ export string test_every_match_rule_the_reference_has_is_enforced() {
  */
 export string test_the_ordinary_matches_are_accepted() {
   T t = T.create();
-  string[] name = string[]("one else arm", "two distinct bindings", "exhaustive with no else",
+  string[] name = [
+                           "one else arm", "two distinct bindings", "exhaustive with no else",
                            "two discards", "a discard beside a name",
                            // The other side of `illtyped_test`'s a27–a31. Making an all-literal match
                            // answer with its arms' literal family is what refuses those five, and the
@@ -71,8 +74,9 @@ export string test_the_ordinary_matches_are_accepted() {
                            "integer arms into an i32", "string arms into a string",
                            "an integer arm and a float arm, which the slot decides",
                            "arms that are not literals at all",
-                           "a match expression as an argument");
-  string[] src = string[](
+                           "a match expression as an argument"
+  ];
+  string[] src = [
     "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } default: { return 2; } } }\n",
     ENUM + "export i32 f(E e) { match (e) { A(p, q): { return p + q; } default: { return 2; } } }\n",
     "enum E { A, B }\nexport i32 f(E e) { match (e) { A: { return 1; } B: { return 2; } } }\n",
@@ -82,7 +86,8 @@ export string test_the_ordinary_matches_are_accepted() {
     "enum E { A, B }\nexport i32 f(E e) { string s = match (e) { A: \"x\", default: \"y\" }; return s.len(); }\n",
     "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { A: 1, default: 2.5 }; return d; }\n",
     "enum E { A, B }\nexport i32 f(E e, i32 x, i32 y) { i32 n = match (e) { A: x, default: y }; return n; }\n",
-    "enum E { A, B }\ni32 g(i32 v) { return v; }\nexport i32 f(E e) { return g(match (e) { A: 1, default: 2 }); }\n");
+    "enum E { A, B }\ni32 g(i32 v) { return v; }\nexport i32 f(E e) { return g(match (e) { A: 1, default: 2 }); }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused an ordinary match");
   }

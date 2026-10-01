@@ -52,7 +52,7 @@ export const i32 HSDIR_SPREAD_STORE_DEFAULT = 4;
 
 /** A big-endian u64, which is how every field of both indices is written. */
 u8[] u64be(i64 v) {
-  u8[] b = u8[8]();
+  u8[] b = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
     b[i] = ((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
   }
@@ -70,9 +70,9 @@ void put(u8[] dst, i32 at, u8[] src) {
  * last two the other way round.
  */
 export u8[] hsServiceIndex(u8[] blindedKey, i32 replica, i64 periodLength, i64 periodNum) {
-  if (blindedKey.len() != 32) { return u8[0](); }
+  if (blindedKey.len() != 32) { return u8[](); }
   u8[] tag = "store-at-idx".toBytes();
-  u8[] buf = u8[tag.len() + 32 + 24]();
+  u8[] buf = u8[].filled(tag.len() + 32 + 24, 0);
   i32 at = 0;
   put(buf, at, tag);        at = at + tag.len();
   put(buf, at, blindedKey); at = at + 32;
@@ -93,9 +93,9 @@ export u8[] hsServiceIndex(u8[] blindedKey, i32 replica, i64 periodLength, i64 p
  * Note the field order: **period number, period length** — the reverse of `hsServiceIndex`'s.
  */
 export u8[] hsRelayIndex(u8[] ed25519Identity, u8[] sharedRandom, i64 periodNum, i64 periodLength) {
-  if (ed25519Identity.len() != 32) { return u8[0](); }
+  if (ed25519Identity.len() != 32) { return u8[](); }
   u8[] tag = "node-idx".toBytes();
-  u8[] buf = u8[tag.len() + 32 + sharedRandom.len() + 16]();
+  u8[] buf = u8[].filled(tag.len() + 32 + sharedRandom.len() + 16, 0);
   i32 at = 0;
   put(buf, at, tag);              at = at + tag.len();
   put(buf, at, ed25519Identity);  at = at + 32;
@@ -116,7 +116,7 @@ export u8[] hsRelayIndex(u8[] ed25519Identity, u8[] sharedRandom, i64 periodNum,
  */
 export u8[] disasterSrv(i64 periodLength, i64 periodNum) {
   u8[] tag = "shared-random-disaster".toBytes();
-  u8[] buf = u8[tag.len() + 16]();
+  u8[] buf = u8[].filled(tag.len() + 16, 0);
   put(buf, 0, tag);
   put(buf, tag.len(), u64be(periodLength));
   put(buf, tag.len() + 8, u64be(periodNum));
@@ -153,12 +153,12 @@ export i32[] responsibleHsdirs(
   i64 periodLength, i64 periodNum
 ) {
   i32 n = relayIndices.len();
-  if (n == 0 || replicas <= 0 || spread <= 0) { return i32[0](); }
+  if (n == 0 || replicas <= 0 || spread <= 0) { return i32[](); }
 
   // A permutation of 0..n-1 ordered by ring position, by insertion sort — n is the number of HSDirs
   // in the consensus, which is thousands on the real network and a dozen here, and this runs once
   // per descriptor fetch rather than per cell.
-  i32[] order = i32[n]();
+  i32[] order = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { order[i] = i; }
   for (i32 i = 1; i < n; i++) {
     i32 key = order[i];
@@ -171,13 +171,13 @@ export i32[] responsibleHsdirs(
   }
 
   i32 want = replicas * spread;
-  i32[] chosen = i32[want]();
-  bool[] taken = bool[n]();
+  i32[] chosen = i32[].filled(want, 0);
+  bool[] taken = bool[].filled(n, false);
   i32 count = 0;
 
   for (i32 replica = 1; replica <= replicas; replica++) {
     u8[] target = hsServiceIndex(blindedKey, replica, periodLength, periodNum);
-    if (target.len() != 32) { return i32[0](); }
+    if (target.len() != 32) { return i32[](); }
 
     // The first ring position at or after `target`; `n` if there is none, which the modulo below
     // turns into 0 — the wrap.
@@ -207,7 +207,7 @@ export i32[] responsibleHsdirs(
   }
 
   if (count == want) { return chosen; }
-  i32[] out = i32[count]();
+  i32[] out = i32[].filled(count, 0);
   for (i32 i = 0; i < count; i++) { out[i] = chosen[i]; }
   return out;
 }
@@ -235,15 +235,15 @@ export i32[] hsdirsForDescriptor(
   i32 replicas, i32 spread
 ) {
   i32[] candidates = hsdirCandidates(relays);
-  if (candidates.len() == 0) { return i32[0](); }
+  if (candidates.len() == 0) { return i32[](); }
 
-  u8[][] indices = u8[][candidates.len()]();
+  u8[][] indices = u8[][].defaulted(candidates.len());
   for (i32 i = 0; i < candidates.len(); i++) {
     indices[i] = hsRelayIndex(relays[candidates[i]].ed25519Identity, sharedRandom,
                               periodNum, periodLength);
   }
   i32[] picked = responsibleHsdirs(blindedKey, indices, replicas, spread, periodLength, periodNum);
-  i32[] out = i32[picked.len()]();
+  i32[] out = i32[].filled(picked.len(), 0);
   for (i32 i = 0; i < picked.len(); i++) { out[i] = candidates[picked[i]]; }
   return out;
 }
@@ -254,7 +254,7 @@ export i32[] hsdirCandidates(Relay[] relays) {
   for (i32 i = 0; i < relays.len(); i++) {
     if (isHsdir(relays[i])) { n = n + 1; }
   }
-  i32[] out = i32[n]();
+  i32[] out = i32[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < relays.len(); i++) {
     if (isHsdir(relays[i])) {
@@ -308,19 +308,19 @@ export string publishPath() { return "/tor/hs/3/publish"; }
 export u8[] consensusSharedRandom(u8[] consensus, bool current) {
   string field = current ? "shared-rand-current-value" : "shared-rand-previous-value";
   i32 at = findFrom(consensus, "\n" + field + " ", 0);
-  if (at < 0) { return u8[0](); }
+  if (at < 0) { return u8[](); }
   i32 from = at + field.len() + 2;
   // The line is `<field> SP NUM_REVEALS SP VALUE`, so skip the reveal count.
   while (from < consensus.len() && consensus[from] != ' ' && consensus[from] != '\n') { from++; }
-  if (from >= consensus.len() || consensus[from] != ' ') { return u8[0](); }
+  if (from >= consensus.len() || consensus[from] != ' ') { return u8[](); }
   from++;
   i32 end = from;
   while (end < consensus.len() && consensus[end] != '\n' && consensus[end] != '\r') { end++; }
-  u8[] value = u8[end - from]();
+  u8[] value = u8[].filled(end - from, 0);
   for (i32 i = 0; i < value.len(); i++) { value[i] = consensus[from + i]; }
   u8[]? decoded = b64decode(value);
-  if (decoded is null) { return u8[0](); }
-  return (decoded!.len() == 32) ? decoded! : u8[0]();
+  if (decoded is null) { return u8[](); }
+  return (decoded!.len() == 32) ? decoded! : u8[]();
 }
 
 /**
@@ -334,11 +334,11 @@ export u8[] consensusSharedRandom(u8[] consensus, bool current) {
 export i64[] consensusTimePeriod(u8[] consensus, bool testingNetwork, i64 hsdirInterval) {
   i64 validAfter = timeOf(consensus, "valid-after");
   i64 freshUntil = timeOf(consensus, "fresh-until");
-  if (validAfter < 0 || freshUntil <= validAfter) { return i64[](-1, -1); }
+  if (validAfter < 0 || freshUntil <= validAfter) { return [-1, -1] as i64[]; }
   i64 voting = freshUntil - validAfter;
   i64 length = timePeriodLength(testingNetwork, voting, hsdirInterval);
   i64 num = timePeriodNum(validAfter, length, rotationOffsetMinutes(voting));
-  return i64[](num, length);
+  return [num, length];
 }
 
 // ── What a *service* publishes for, which is not what a client fetches for ────
@@ -412,7 +412,7 @@ export bool betweenTimePeriodAndSrv(u8[] consensus, bool testingNetwork, i64 hsd
  */
 export StorePeriod[] serviceStorePeriods(u8[] consensus, bool testingNetwork, i64 hsdirInterval) {
   i64[] now = consensusTimePeriod(consensus, testingNetwork, hsdirInterval);
-  if (now[0] < 0) { return StorePeriod[0](fill: StorePeriod(0, 0, false)); }
+  if (now[0] < 0) { return StorePeriod[].filled(0, StorePeriod(0, 0, false)); }
   i64 current = now[0];
   i64 length = now[1];
 
@@ -425,7 +425,7 @@ export StorePeriod[] serviceStorePeriods(u8[] consensus, bool testingNetwork, i6
   // The SRV assignment is fixed and does not follow the predicate: the older descriptor always uses
   // the previous shared random value and the newer one the current value. tor says so in one line
   // and it is the kind of line that reads like a comment rather than a rule.
-  StorePeriod[] out = StorePeriod[2](fill: StorePeriod(first, length, false));
+  StorePeriod[] out = StorePeriod[].filled(2, StorePeriod(first, length, false));
   out[1] = StorePeriod(first + 1, length, true);
   return out;
 }
@@ -464,10 +464,10 @@ export Publication[] servicePlan(
 ) {
   StorePeriod[] periods = serviceStorePeriods(consensus, testingNetwork, hsdirInterval);
   if (periods.len() != 2 || blindedKeys.len() != 2) {
-    return Publication[0](fill: Publication(0, 0, false, u8[0](), i32[0]()));
+    return Publication[].filled(0, Publication(0, 0, false, u8[](), i32[]()));
   }
 
-  Publication[] out = Publication[2](fill: Publication(0, 0, false, u8[0](), i32[0]()));
+  Publication[] out = Publication[].filled(2, Publication(0, 0, false, u8[](), i32[]()));
   for (i32 i = 0; i < 2; i++) {
     StorePeriod sp = periods[i];
     // The consensus's value if it carries one, and the disaster SRV if it does not. rend-spec-v3

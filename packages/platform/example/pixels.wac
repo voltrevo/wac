@@ -155,7 +155,7 @@ string pad3(i32 v) {
 
 /** Fill a buffer and hand it over. One call, whatever is in the buffer. */
 void draw(Page page, i32 spanX, i32 centreX, i32 centreY) {
-  u8[] rgba = u8[W * H * 4](fill: 0);
+  u8[] rgba = u8[].filled(W * H * 4, 0);
   for (i32 py = 0; py < H; py++) {
     for (i32 px = 0; px < W; px++) {
       i32 n = escapes(px, py, spanX, centreX, centreY);
@@ -201,7 +201,7 @@ i32 escapes(i32 px, i32 py, i32 spanX, i32 centreX, i32 centreY) {
 u8[] ppm(i32 spanX, i32 centreX, i32 centreY) {
   string head = "P6\n" + itoa(W) + " " + itoa(H) + "\n255\n";
   u8[] h = head.toBytes();
-  u8[] out = u8[h.len() + W * H * 3](fill: 0);
+  u8[] out = u8[].filled(h.len() + W * H * 3, 0);
   out.copyFrom(h, 0, 0, h.len());
   i32 at = h.len();
   for (i32 py = 0; py < H; py++) {
@@ -223,10 +223,10 @@ string itoa(i32 v) {
   // these copies had it too.
   if (v == -2147483648) { return "-2147483648"; }
   i32 x = v < 0 ? 0 - v : v;
-  u8[] digits = u8[12](fill: 0);
+  u8[] digits = u8[].filled(12, 0);
   i32 at = 12;
   while (x > 0) { at--; digits[at] = '0' + (x % 10); x = x / 10; }
-  u8[] used = u8[12 - at](fill: 0);
+  u8[] used = u8[].filled(12 - at, 0);
   used.copyFrom(digits, at, 0, 12 - at);
   return (v < 0 ? "-" : "") + string.fromBytes(used);
 }

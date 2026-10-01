@@ -221,7 +221,7 @@ import { describe } from "./util/report.wac";
 // type — both name core's. Two identical copies would be two types, and with no
 // closures in the language there is nothing you could write to convert between them.
 export string demo() {
-  return describe(Read.Data(u8[](1, 2, 3)))
+  return describe(Read.Data([1, 2, 3] as u8[]))
     + " | " + describe(Read.End)
     + " | " + describe(Read.Failed("disk went away"));
 }
@@ -340,7 +340,7 @@ f64 totalArea(Shape[] shapes) {
 }
 
 export f64 run(f64 rectWidth, f64 rectHeight, f64 circleRadius) {
-  Shape[] shapes = Shape[2]();
+  Shape[] shapes = Shape[].defaulted(2);
   shapes[0] = Rect(0.0, 0.0, rectWidth, rectHeight);
   shapes[1] = Circle(0.0, 0.0, circleRadius);
   return totalArea(shapes);
@@ -500,7 +500,7 @@ export i32 testPop() {
   i32 cap;
 
   Buffer create(i32 cap) {
-    return Buffer(i8[cap](), 0, cap);
+    return Buffer(i8[].filled(cap, 0), 0, cap);
   }
 
   i32 get(const this, i32 idx) {
@@ -517,7 +517,7 @@ export i32 testPop() {
     if (this.len == this.cap) {
       i32 newCap = this.cap * 2;
       if (newCap == 0) { newCap = 8; }
-      i8[] next = i8[newCap]();
+      i8[] next = i8[].filled(newCap, 0);
       for (i32 i = 0; i < this.len; i++) {
         next[i] = this.data[i];
       }
@@ -581,7 +581,7 @@ export i32 sumArray(i32[] arr) {
 }
 
 export i32 run() {
-  i32[] arr = i32[](10, 20, 30, 40, 50);
+  i32[] arr = [10, 20, 30, 40, 50];
   return sumArray(arr);
 }
 `,
@@ -647,7 +647,7 @@ Option<i32> find(i32[] xs, i32 want) {
 }
 
 export i32 indexOf(i32 want) {
-  i32[] xs = i32[](4, 8, 15, 16, 23, 42);
+  i32[] xs = [4, 8, 15, 16, 23, 42];
   Option<i32> at = find(xs, want);
   return at.orElse(-1);
 }
@@ -667,11 +667,11 @@ struct Stack<T> {
   i32 n;
 
   /** The type argument comes from what you assign it to: \`Stack<i32> s = Stack.create(...)\`. */
-  Stack<T> create(T zero) { return Stack<T>(T[4](fill: zero), 0); }
+  Stack<T> create(T zero) { return Stack<T>(T[].filled(4, zero), 0); }
 
   void push(this, T v) {
     if (this.n == this.items.len()) {
-      T[] bigger = T[this.items.len() * 2](fill: v);
+      T[] bigger = T[].filled(this.items.len() * 2, v);
       for (i32 i = 0; i < this.n; i++) { bigger[i] = this.items[i]; }
       this.items = bigger;
     }
@@ -734,7 +734,7 @@ export i32 countVowels(string s) {
 /** And back again: bytes to a string, in reverse. */
 export string reverse(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()](fill: 0);
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[b.len() - 1 - i]; }
   return string.fromBytes(out);
 }
@@ -810,11 +810,11 @@ i32 larger(i32 a, i32 b) { return a > b ? a : b; }
 
 /** The same fold, two different functions, chosen at the call site. */
 export i32 sumOf(i32 a, i32 b, i32 c) {
-  return fold(add, i32[](a, b, c));
+  return fold(add, [a, b, c]);
 }
 
 export i32 maxOf(i32 a, i32 b, i32 c) {
-  return fold(larger, i32[](a, b, c));
+  return fold(larger, [a, b, c]);
 }
 `,
     },

@@ -25,7 +25,7 @@ import { gzipStored, gzipFixed, gzipDynamic, gzipBest } from "../../src/gzip.wac
 import { External, pythonGzip, pythonZlib, firstDifference } from "./external.wac";
 
 u8[] prng(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 s = seed;
   for (i32 i = 0; i < n; i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
@@ -41,24 +41,26 @@ u8[] repeated(string s, i32 times) {
 }
 
 string[] sampleNames() {
-  return string[]("empty", "one byte", "hello world", "all 256 values", "5000 zeros", "prose",
-                  "incompressible", "structured");
+  return [
+                  "empty", "one byte", "hello world", "all 256 values", "5000 zeros", "prose",
+                  "incompressible", "structured"
+  ];
 }
 
 u8[][] samples() {
-  u8[][] out = u8[][8](fill: u8[0]());
-  out[0] = u8[0]();
-  u8[] one = u8[1]();
+  u8[][] out = u8[][].filled(8, u8[]());
+  out[0] = u8[]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = 7;
   out[1] = one;
   out[2] = "hello world".toBytes();
-  u8[] all = u8[256]();
+  u8[] all = u8[].filled(256, 0);
   for (i32 i = 0; i < 256; i++) { all[i] = i; }
   out[3] = all;
-  out[4] = u8[5000]();
+  out[4] = u8[].filled(5000, 0);
   out[5] = repeated("DEFLATE is a lossless compressed data format. ", 200);
   out[6] = prng(20000, 4242);
-  u8[] structured = u8[60000]();
+  u8[] structured = u8[].filled(60000, 0);
   for (i32 i = 0; i < structured.len(); i++) { structured[i] = (i % 251) & 0xFF; }
   out[7] = structured;
   return out;
@@ -76,7 +78,7 @@ export string test_python_gzip_output_levels_zero_through_nine(Core core, Cli cl
   T t = T.create();
   string[] names = sampleNames();
   u8[][] data = samples();
-  i32[] levels = i32[](0, 1, 2, 6, 9);
+  i32[] levels = [0, 1, 2, 6, 9];
   for (i32 i = 0; i < data.len(); i++) {
     for (i32 k = 0; k < levels.len(); k++) {
       External gz = pythonGzip(cli, data[i], levels[k]);
@@ -108,7 +110,7 @@ export string test_gzip_cli_output_including_the_fname_header_field(Core core, C
   Change wrote = cli.writeFile(path, data).wait();
   t.isTrue(wrote.ok(), "the payload writes: " + wrote.message);
   if (wrote.ok()) {
-    Exec r = cli.exec("gzip", string[]("-9", path), u8[0]()).wait();
+    Exec r = cli.exec("gzip", ["-9", path], u8[]()).wait();
     t.isTrue(r.ran() && r.status == 0,
              "gzip ran: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
     if (r.ran() && r.status == 0) {
@@ -154,9 +156,9 @@ export string test_round_trips_this_compressors_own_output() {
  */
 export string test_overlapping_matches_decode_byte_by_byte() {
   T t = T.create();
-  i32[] lengths = i32[](3, 4, 258, 259, 1000, 5000);
+  i32[] lengths = [3, 4, 258, 259, 1000, 5000];
   for (i32 i = 0; i < lengths.len(); i++) {
-    u8[] data = u8[lengths[i]](fill: 0x7E);
+    u8[] data = u8[].filled(lengths[i], 0x7E);
     t.eqStr(sameBytes(gunzipBytes(gzipFixed(data)), data), "",
             itoa(lengths[i]) + " identical bytes");
   }
@@ -193,19 +195,19 @@ export string test_raw_deflate_streams_without_the_gzip_wrapper(Core core, Cli c
 u8[] good() { return gzipBest(repeated("corruption tests ", 50)); }
 
 u8[] withByteXor(u8[] gz, i32 at, i32 mask) {
-  u8[] out = u8[gz.len()]();
+  u8[] out = u8[].filled(gz.len(), 0);
   for (i32 i = 0; i < gz.len(); i++) { out[i] = gz[i]; }
   out[at] = out[at] ^ mask;
   return out;
 }
 
 export string test_traps_empty_input() {
-  gunzipBytes(u8[0]());
+  gunzipBytes(u8[]());
   return "empty input was accepted";
 }
 
 export string test_traps_input_too_short_for_a_header() {
-  gunzipBytes(u8[](0x1F, 0x8B, 8));
+  gunzipBytes([0x1F, 0x8B, 8] as u8[]);
   return "a three-byte stream was accepted";
 }
 
@@ -223,7 +225,7 @@ export string test_traps_bad_compression_method() {
 
 export string test_traps_truncated_body() {
   u8[] gz = good();
-  u8[] cut = u8[gz.len() - 20]();
+  u8[] cut = u8[].filled(gz.len() - 20, 0);
   for (i32 i = 0; i < cut.len(); i++) { cut[i] = gz[i]; }
   gunzipBytes(cut);
   return "a truncated stream was accepted";
@@ -309,7 +311,7 @@ export string test_traps_scrambled_body() {
 export string test_traps_multi_member_streams() {
   u8[] a = gzipBest("first member".toBytes());
   u8[] b = gzipBest("second member".toBytes());
-  u8[] both = u8[a.len() + b.len()]();
+  u8[] both = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { both[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { both[a.len() + i] = b[i]; }
   gunzipBytes(both);
@@ -324,13 +326,13 @@ export string test_traps_multi_member_streams() {
  */
 export string test_multi_block_streams_from_a_large_input(Core core, Cli cli) {
   T t = T.create();
-  u8[] data = u8[400000]();
+  u8[] data = u8[].filled(400000, 0);
   i32 s = 88;
   for (i32 i = 0; i < data.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
     data[i] = i % 1013 == 0 ? (s >> 16) & 0xFF : (i % 131) & 0xFF;
   }
-  i32[] levels = i32[](1, 6, 9);
+  i32[] levels = [1, 6, 9];
   for (i32 k = 0; k < levels.len(); k++) {
     External gz = pythonGzip(cli, data, levels[k]);
     t.isTrue(gz.ok(), "level " + itoa(levels[k]) + ": " + gz.error);

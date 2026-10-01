@@ -87,8 +87,10 @@ string buildProgram(T t, Cli cli) {
   Stat have = cli.stat(wasm).wait();
   if (have.exists && have.modifiedMillis > newestInput(cli)) { return wasm; }
   Exec r = cli.exec(wacBinary(cli),
-                    string[]("build", SOURCE, "-o", stem, "--allow-read", "--allow-write",
-                             "--quiet"), u8[0]()).wait();
+                    [
+                             "build", SOURCE, "-o", stem, "--allow-read", "--allow-write",
+                             "--quiet"
+                    ], u8[]()).wait();
   t.isTrue(r.ran(), "the wac binary ran — " + r.error);
   t.eqI32(r.status, 0, "building " + SOURCE + " — " + string.fromBytes(r.stderr));
   return r.ran() && r.status == 0 ? wasm : "";
@@ -96,10 +98,10 @@ string buildProgram(T t, Cli cli) {
 
 /** Run the built program with `args`. */
 Exec runProgram(Cli cli, string program, string[] args) {
-  string[] argv = string[args.len() + 1](fill: "");
+  string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = program;
   for (i32 i = 0; i < args.len(); i++) { argv[1 + i] = args[i]; }
-  return cli.exec(wacBinary(cli), argv, u8[0]()).wait();
+  return cli.exec(wacBinary(cli), argv, u8[]()).wait();
 }
 
 /** The import graph of `entry`, walked the way the program walks it. */
@@ -113,7 +115,7 @@ export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
 
   string entry = "packages/json/src/json.wac";
   string out = dir + "/out.wasm";
-  Exec r = runProgram(cli, program, string[]("compile", entry, out));
+  Exec r = runProgram(cli, program, ["compile", entry, out]);
   t.eqI32(r.status, 0, "compile failed: " + string.fromBytes(r.stderr) +
                        string.fromBytes(r.stdout));
   if (r.status != 0) { return t.report(); }
@@ -154,7 +156,7 @@ export string test_it_names_the_file_it_cannot_read(Core core, Cli cli) {
   cli.writeFile(dir + "/main.wac",
                 ("import { x } from \"./gone.wac\";\nexport i32 f() { return x; }\n").toBytes())
      .wait();
-  Exec r = runProgram(cli, program, string[]("check", dir + "/main.wac"));
+  Exec r = runProgram(cli, program, ["check", dir + "/main.wac"]);
   t.isTrue(r.status != 0, "a missing import compiled");
   t.isTrue(string.fromBytes(r.stderr).indexOf("gone.wac") >= 0,
            "did not name the file: " + string.fromBytes(r.stderr));
@@ -169,7 +171,7 @@ export string test_check_refuses_a_program_the_checker_refuses_and_says_where(Co
   if (program == "") { return t.report(); }
 
   cli.writeFile(dir + "/bad.wac", "export i32 f() { return \"no\"; }\n".toBytes()).wait();
-  Exec r = runProgram(cli, program, string[]("check", dir + "/bad.wac"));
+  Exec r = runProgram(cli, program, ["check", dir + "/bad.wac"]);
   t.isTrue(r.status != 0, "a type error passed the check");
   t.isTrue(string.fromBytes(r.stderr).indexOf("bad.wac") >= 0,
            "no file in the diagnostic: " + string.fromBytes(r.stderr));
@@ -209,17 +211,17 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
      "export i32 pair(fn<i32(i32, i32)> g, i32 a, i32 b) { return g(a, b); }\n" +
      "export i32 nilary(fn<i32()> h) { return h(); }\n").toBytes()).wait();
 
-  Exec js = runProgram(cli, program, string[]("bindgen", dir + "/m.wac", "--js"));
+  Exec js = runProgram(cli, program, ["bindgen", dir + "/m.wac", "--js"]);
   t.eqI32(js.status, 0, "bindgen failed: " + string.fromBytes(js.stderr) +
                         string.fromBytes(js.stdout));
   if (js.status != 0) { return t.report(); }
 
-  Exec ran = cli.exec("deno", string[]("run", "-A", GLUERUN, dir + "/m.gen.js"), u8[0]()).wait();
+  Exec ran = cli.exec("deno", ["run", "-A", GLUERUN, dir + "/m.gen.js"], u8[]()).wait();
   t.isTrue(ran.ran(), "deno ran — " + ran.error);
   t.eqI32(ran.status, 0, "the glue did not answer: " + string.fromBytes(ran.stderr));
 
   // TypeScript by default, which is the other half of the same generator.
-  Exec ts = runProgram(cli, program, string[]("bindgen", dir + "/m.wac"));
+  Exec ts = runProgram(cli, program, ["bindgen", dir + "/m.wac"]);
   t.eqI32(ts.status, 0, "bindgen --ts failed: " + string.fromBytes(ts.stderr));
   FileResult text = cli.readFile(dir + "/m.gen.ts").wait();
   t.isTrue(text.ok, "the TypeScript glue was written — " + text.error);

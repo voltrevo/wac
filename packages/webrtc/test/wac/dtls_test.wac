@@ -32,7 +32,7 @@ import { selfSignedP256 } from "../../../tls/src/x509gen.wac";
 
 /** A fixed ClientHello random, so a failing run prints the same bytes as the last one. */
 u8[] random32() {
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = (i * 7 + 3) & 255; }
   return out;
 }
@@ -48,12 +48,12 @@ u8[] exchange(Core core, Cli cli, Socket sock, i32 port, u8[] msg, i32 ms) {
 /** The next datagram, or empty. The deadline is on the wait — `issues/system/0206`. */
 u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny(i32[](p.id), ms) < 0) {
+  if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
-    return u8[0]();
+    return u8[]();
   }
   Datagram d = p.wait();
-  return d.error == "" ? d.bytes : u8[0]();
+  return d.error == "" ? d.bytes : u8[]();
 }
 
 /**
@@ -103,7 +103,7 @@ void release(Cli cli, Bench b) {
 u8[] firstVerify(T t, Core core, Cli cli, Bench b, u8[] first) {
   if (!waitForBind(cli, b.server, 200)) {
     t.fail("openssl never bound " + itoa(b.server.port) + " — " + b.server.said(cli));
-    return u8[0]();
+    return u8[]();
   }
   return exchange(core, cli, b.sock, b.server.port, first, 5000);
 }
@@ -115,7 +115,7 @@ export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Cor
 
   // **The first hello, with no cookie.** A server that allocated state for this would be an
   // amplifier; DTLS's answer is to send back a cookie and remember nothing.
-  u8[] first = hello(random32(), u8[0](), 0, 0);
+  u8[] first = hello(random32(), u8[](), 0, 0);
   t.eqI32(kindAt(first, 0), kHandshake(), "our first record is a handshake record");
   t.eqI32(handshakeKindAt(first, 0), hClientHello(), "and a ClientHello");
   t.eqStr(hexOf(slice(first, 0, 3)), "16fefd", "a handshake record, DTLS 1.2");
@@ -205,7 +205,7 @@ export string test_a_clienthello_with_a_wrong_cookie_is_refused(Core core, Cli c
   Bench b = bench(t, cli, "dtls-badcookie");
   if (!b.ok) { return t.report(); }
 
-  u8[] verify = firstVerify(t, core, cli, b, hello(random32(), u8[0](), 0, 0));
+  u8[] verify = firstVerify(t, core, cli, b, hello(random32(), u8[](), 0, 0));
   t.isTrue(verify.len() > 0, "no HelloVerifyRequest — " + b.server.said(cli));
   if (verify.len() == 0) { release(cli, b); return t.report(); }
 
@@ -228,7 +228,7 @@ export string test_a_clienthello_with_a_wrong_cookie_is_refused(Core core, Cli c
 
 export string test_the_framing_round_trips_and_says_when_a_record_is_not_whole() {
   T t = T.create();
-  u8[] three = u8[3]();
+  u8[] three = u8[].filled(3, 0);
   three[0] = 1; three[1] = 2; three[2] = 3;
   u8[] h = hello(random32(), three, 5, 0x0102030405);
   t.eqI32(kindAt(h, 0), 22, "a handshake record");
@@ -255,10 +255,11 @@ export string test_the_abandoned_server_pattern_discriminates(Core core, Cli cli
   t.isTrue(wouldReap(cli,
     "openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:20001 -cert x.pem -key x.key"),
     "the pattern does not match one of ours");
-  string[] others = string[](
+  string[] others = [
     "openssl s_server -tls1_3 -accept 127.0.0.1:4433 -cert x.pem -key x.key",
     "openssl s_client -dtls1_2 -connect 127.0.0.1:20001",
-    "/usr/sbin/sshd -D");
+    "/usr/sbin/sshd -D"
+  ];
   for (i32 i = 0; i < others.len(); i++) {
     t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not: " + others[i]);
   }
@@ -266,7 +267,7 @@ export string test_the_abandoned_server_pattern_discriminates(Core core, Cli cli
 }
 
 u8[] slice(u8[] b, i32 at, i32 end) {
-  u8[] out = u8[end - at]();
+  u8[] out = u8[].filled(end - at, 0);
   out.copyFrom(b, at, 0, end - at);
   return out;
 }
@@ -275,7 +276,7 @@ u8[] slice(u8[] b, i32 at, i32 end) {
 
 /** Deterministic filler, so a failure reproduces. */
 u8[] ramp2(i32 n, i32 mul, i32 add) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
   return out;
 }
@@ -320,11 +321,11 @@ export string test_a_clientkeyexchange_of_the_wrong_width_is_refused() {
   t.isTrue(flight.len() > 0, "the peer did not answer a ClientHello carrying its own cookie");
 
   // Every width a peer could name for its public key, including the two the wire makes easiest.
-  i32[] widths = i32[](0, 1, 31, 33, 64, 255);
+  i32[] widths = [0, 1, 31, 33, 64, 255];
   for (i32 i = 0; i < widths.len(); i++) {
     Peer p = freshPeer();
     peerReceive(p, inDtlsRecord(1, 0, dtlsClientHello(ramp2(32, 7, 3), ramp2(8, 1, 2))));
-    u8[] body = u8[1 + widths[i]]();
+    u8[] body = u8[].filled(1 + widths[i], 0);
     body[0] = widths[i];
     for (i32 k = 0; k < widths[i]; k++) { body[1 + k] = 0xB0 + (k & 15); }
     // Reaching the next line is the assertion: a trap kills the test.
@@ -337,7 +338,7 @@ export string test_a_clientkeyexchange_of_the_wrong_width_is_refused() {
   // is not thirty-two either, so this was the refusal path that aborted.
   Peer over = freshPeer();
   peerReceive(over, inDtlsRecord(1, 0, dtlsClientHello(ramp2(32, 7, 3), ramp2(8, 1, 2))));
-  u8[] lying = u8[5]();
+  u8[] lying = u8[].filled(5, 0);
   lying[0] = 200;
   peerReceive(over, inDtlsRecord(16, 1, lying));
   t.isFalse(peerEstablished(over), "a ClientKeyExchange claiming 200 bytes in five established");

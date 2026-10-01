@@ -50,10 +50,12 @@ export bool isSource(string name) {
  */
 export string copyTree(Cli cli, string root, string dir, string dest) {
   Exec r = cli.exec("bash",
-                    string[]("-c",
+                    [
+                             "-c",
                              "cd '" + root + "' && tar -c --exclude=target --exclude=node_modules"
-                             + " -f - '" + dir + "' | tar -x -f - -C '" + dest + "'"),
-                    u8[0]()).wait();
+                             + " -f - '" + dir + "' | tar -x -f - -C '" + dest + "'"
+                    ],
+                    u8[]()).wait();
   if (!r.ran()) { return "copy " + dir + ": the shell did not run"; }
   if (r.status != 0) { return "copy " + dir + " failed: " + string.fromBytes(r.stderr); }
   return "";
@@ -78,8 +80,8 @@ export string linkBinary(Cli cli, string root, string dest, string bin) {
   string dir = cut < 0 ? dest : dest + "/" + bin.slice(0, cut);
   cli.mkdir(dir, true).wait();
   Exec r = cli.exec("bash",
-                    string[]("-c", "ln -sfn '" + root + "/" + bin + "' '" + dest + "/" + bin + "'"),
-                    u8[0]()).wait();
+                    ["-c", "ln -sfn '" + root + "/" + bin + "' '" + dest + "/" + bin + "'"],
+                    u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     return "linking the binary failed: " + string.fromBytes(r.stderr);
   }
@@ -137,12 +139,12 @@ export string stageInto(Cli cli, string root, string dest, string[] dirs, string
  * that the two are not the same thing.
  */
 export string stagedFrom(Cli cli, string clock) {
-  Exec head = cli.exec("git", string[]("rev-parse", "--short", "HEAD"), u8[0]()).wait();
+  Exec head = cli.exec("git", ["rev-parse", "--short", "HEAD"], u8[]()).wait();
   if (!head.ran() || head.status != 0) { return "an unknown revision"; }
   string rev = trimmed(string.fromBytes(head.stdout));
   if (rev == "") { return "an unknown revision"; }
 
-  Exec status = cli.exec("git", string[]("status", "--porcelain"), u8[0]()).wait();
+  Exec status = cli.exec("git", ["status", "--porcelain"], u8[]()).wait();
   i32 dirty = 0;
   if (status.ran() && status.status == 0) {
     string lines = string.fromBytes(status.stdout);

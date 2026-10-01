@@ -24,21 +24,21 @@ import { differs, splitOn, trimEnd } from "./replay.wac";
 export string test_differs_can_disagree(Core core, Cli cli) {
   T t = T.create();
 
-  t.eqStr(differs(u8[](1, 2, 3), u8[](1, 2, 3)), "", "equal arrays agree");
-  t.eqStr(differs(u8[0](), u8[0]()), "", "and two empty ones do too");
+  t.eqStr(differs([1, 2, 3] as u8[], [1, 2, 3] as u8[]), "", "equal arrays agree");
+  t.eqStr(differs(u8[](), u8[]()), "", "and two empty ones do too");
 
   // A changed byte, a changed length in each direction, and a difference at the very last index —
   // the one a loop that stops early cannot see.
-  t.isTrue(differs(u8[](1, 2, 3), u8[](1, 9, 3)) != "", "a changed byte is a difference");
-  t.isTrue(differs(u8[](1, 2, 3), u8[](1, 2, 4)) != "", "including one in the last position");
-  t.isTrue(differs(u8[](1, 2), u8[](1, 2, 3)) != "", "a shorter answer is a difference");
-  t.isTrue(differs(u8[](1, 2, 3), u8[](1, 2)) != "", "and a longer one");
-  t.isTrue(differs(u8[0](), u8[](1)) != "", "and empty against non-empty");
+  t.isTrue(differs([1, 2, 3] as u8[], [1, 9, 3] as u8[]) != "", "a changed byte is a difference");
+  t.isTrue(differs([1, 2, 3] as u8[], [1, 2, 4] as u8[]) != "", "including one in the last position");
+  t.isTrue(differs([1, 2] as u8[], [1, 2, 3] as u8[]) != "", "a shorter answer is a difference");
+  t.isTrue(differs([1, 2, 3] as u8[], [1, 2] as u8[]) != "", "and a longer one");
+  t.isTrue(differs(u8[](), [1] as u8[]) != "", "and empty against non-empty");
 
   // The message names where, because these compare hundreds of kilobytes and "they differ" is not
   // something anybody can act on.
-  t.eqStr(differs(u8[](7, 8), u8[](7, 9)), "byte 1 is 8 want 9", "it says which byte");
-  t.eqStr(differs(u8[](7), u8[](7, 9)), "length 1 want 2", "and which length");
+  t.eqStr(differs([7, 8] as u8[], [7, 9] as u8[]), "byte 1 is 8 want 9", "it says which byte");
+  t.eqStr(differs([7] as u8[], [7, 9] as u8[]), "length 1 want 2", "and which length");
 
   return t.report();
 }

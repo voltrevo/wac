@@ -49,15 +49,15 @@ export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_
   // Mine once first. At block zero anvil serves proofs against a state whose root is not the one block
   // zero declares, so the root check refuses — correctly, and it is the check earning its keep on the
   // first thing that ran into it. A real chain is never at genesis when someone asks it a question.
-  castRpc(cli, node.port, string[]("evm_mine"));
+  castRpc(cli, node.port, ["evm_mine"]);
 
-  string asked = castRpc(cli, node.port, string[]("eth_getBalance", FUNDED, "latest"));
+  string asked = castRpc(cli, node.port, ["eth_getBalance", FUNDED, "latest"]);
   t.isTrue(asked.len() > 2, "the node answered eth_getBalance: \"" + asked + "\"");
   string want = toDec(cli, asked);
   t.isTrue(want.len() > 0, "cast converted " + asked + " to decimal");
   if (want.len() == 0) { stopAnvil(cli, node); return t.report(); }
 
-  Exec got = runExample(cli, ENTRY, string[](FUNDED, "127.0.0.1", itoa(node.port)));
+  Exec got = runExample(cli, ENTRY, [FUNDED, "127.0.0.1", itoa(node.port)]);
   t.eqI32(got.status, 0, "exit " + itoa(got.status) + ": " + string.fromBytes(got.stderr));
   string out = string.fromBytes(got.stdout);
   t.eqStr(firstLine(out), want + " wei", "the proved balance");
@@ -65,18 +65,20 @@ export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_
 
   // A balance set to something that is not round, so a conversion that dropped digits shows.
   string odd = "0x00000000000000000000000000000000000000aa";
-  castRpc(cli, node.port, string[]("anvil_setBalance", odd, "0x1234567890abcdef"));
-  castRpc(cli, node.port, string[]("evm_mine"));
+  castRpc(cli, node.port, ["anvil_setBalance", odd, "0x1234567890abcdef"]);
+  castRpc(cli, node.port, ["evm_mine"]);
   string oddWant = toDec(cli, "0x1234567890abcdef");
-  Exec oddGot = runExample(cli, ENTRY, string[](odd, "127.0.0.1", itoa(node.port)));
+  Exec oddGot = runExample(cli, ENTRY, [odd, "127.0.0.1", itoa(node.port)]);
   t.eqStr(firstLine(string.fromBytes(oddGot.stdout)), oddWant + " wei",
           "a balance that is not round");
 
   // An address nothing has ever touched is *absent* from the state trie, which is a proof that it
   // holds nothing — not the same as a zero that was written, and the output says which.
   Exec nobody = runExample(cli, ENTRY,
-                           string[]("0x00000000000000000000000000000000deadbeef", "127.0.0.1",
-                                    itoa(node.port)));
+                           [
+                                    "0x00000000000000000000000000000000deadbeef", "127.0.0.1",
+                                    itoa(node.port)
+                           ]);
   t.eqI32(nobody.status, 0, "exit " + itoa(nobody.status) + ": " + string.fromBytes(nobody.stderr));
   t.isTrue(string.fromBytes(nobody.stdout).indexOf("not in the state trie") >= 0,
            "an absent account is not reported as absent: " + string.fromBytes(nobody.stdout));

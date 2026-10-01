@@ -128,7 +128,7 @@ async i32 countReadable(Cli cli, string[] paths, i32 stopAt) {
 
 export string test_a_for_loop_suspends_once_per_iteration(Core core, Cli cli) {
   T t = T.create();
-  string[] ps = string[]("README.md", "MERGE.md", "CLAUDE.md");
+  string[] ps = ["README.md", "MERGE.md", "CLAUDE.md"];
   i32 want = 0;
   for (i32 i = 0; i < ps.len(); i++) {
     i32 one = sizeOf(cli, ps[i]);
@@ -146,7 +146,7 @@ export string test_a_return_from_inside_the_loop_leaves_the_machine(Core core, C
   T t = T.create();
   // Not `break` — a `return` from inside a flattened loop has to leave the *machine*, and the loop's
   // exit state is not where it goes.
-  t.eqI32(sumOf(cli, string[]("README.md", "no-such-file-here.md", "CLAUDE.md")).wait(), 0 - 1,
+  t.eqI32(sumOf(cli, ["README.md", "no-such-file-here.md", "CLAUDE.md"]).wait(), 0 - 1,
           "it stopped at the failure");
   return t.report();
 }
@@ -155,7 +155,7 @@ export string test_break_and_continue_survive_the_flattening(Core core, Cli cli)
   T t = T.create();
   // After flattening there is no `while` left for these to leave — the only loop is the dispatch,
   // and breaking *that* would resume the machine at whatever state was set. Both become transfers.
-  string[] ps = string[]("no-such-file-here.md", "README.md", "MERGE.md");
+  string[] ps = ["no-such-file-here.md", "README.md", "MERGE.md"];
   t.eqI32(countReadable(cli, ps, 1).wait(), 1,
           "`continue` skipped the missing file and `break` stopped at the first readable one");
   t.eqI32(countReadable(cli, ps, 1000000000).wait(), 2,
@@ -166,8 +166,8 @@ export string test_break_and_continue_survive_the_flattening(Core core, Cli cli)
 export string test_two_loops_in_flight_keep_their_own_counters(Core core, Cli cli) {
   T t = T.create();
   // Two machines over the same function, both mid-loop. Each iteration's state lives in the call.
-  Pending<i32> a = sumOf(cli, string[]("README.md"));
-  Pending<i32> b = sumOf(cli, string[]("MERGE.md", "CLAUDE.md"));
+  Pending<i32> a = sumOf(cli, ["README.md"]);
+  Pending<i32> b = sumOf(cli, ["MERGE.md", "CLAUDE.md"]);
   t.eqI32(a.wait(), sizeOf(cli, "README.md"), "the one-file loop");
   t.eqI32(b.wait(), sizeOf(cli, "MERGE.md") + sizeOf(cli, "CLAUDE.md"), "and the two-file loop");
   return t.report();
@@ -193,7 +193,7 @@ async i32 ticks(Core core, i32 n, i32[] log, i32 me) {
 export string test_drain_alone_finishes_a_machine(Core core, Cli cli) {
   T t = T.create();
   // `[§wac-async-drain-7cvj4bn]` — registered, so the scheduler alone can finish it.
-  i32[] log = i32[1]();
+  i32[] log = i32[].filled(1, 0);
   Pending<i32> p = ticks(core, 2, log, 1);
   t.isFalse(p.isDone(), "eager stopped at the first await");
   t.eqI32(core.drain(), 2, "two suspensions, two continuations");
@@ -228,7 +228,7 @@ export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
   i32 interleaved = 0;
   string seen = "";
   for (i32 trial = 0; trial < 5; trial++) {
-    i32[] log = i32[1]();
+    i32[] log = i32[].filled(1, 0);
     Pending<i32> a1 = ticks(core, 2, log, 1);
     Pending<i32> b1 = ticks(core, 2, log, 2);
     core.drain();
@@ -241,7 +241,7 @@ export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
            ", and 1122 or 2211 is one finishing before the other started. Never interleaving is "
            + "`issues/lang/0302b`");
 
-  i32[] log = i32[1]();
+  i32[] log = i32[].filled(1, 0);
   Pending<i32> a = ticks(core, 2, log, 1);
   Pending<i32> b = ticks(core, 2, log, 2);
   core.drain();
@@ -253,7 +253,7 @@ export string test_a_wait_takes_the_continuation_back(Core core, Cli cli) {
   T t = T.create();
   // `[§wac-async-once-3jhw8qk]`. Registered *and* waited on. Without the detach the body would run twice — once where the wait
   // drove it and once when `run` dispatched the continuation still sitting in the scheduler.
-  i32[] log = i32[1]();
+  i32[] log = i32[].filled(1, 0);
   Pending<i32> p = ticks(core, 1, log, 7);
   t.eqI32(p.wait(), 1, "waiting drove it");
   t.eqI32(log[0], 7, "the body ran once, not twice");
@@ -293,10 +293,10 @@ async void bump(Core core, i32[] log) {
 
 export string test_an_async_void_function_has_a_ticket_with_no_answer(Core core, Cli cli) {
   T t = T.create();
-  // Every other return type gets a cell to keep the answer in; `void[1]()` is not a thing, so this
+  // Every other return type gets a cell to keep the answer in; `void[].defaulted(1)` is not a thing, so this
   // machine has none — and `Pending<void>`'s resolver takes no value and returns none. That is what
   // `void` being a usable type argument was for.
-  i32[] log = i32[1]();
+  i32[] log = i32[].filled(1, 0);
   Pending<void> p = bump(core, log);
   t.eqI32(log[0], 0, "suspended before doing its work");
   t.eqI32(core.drain(), 1, "the drain ran its one continuation");

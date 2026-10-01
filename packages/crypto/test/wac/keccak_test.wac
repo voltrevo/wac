@@ -33,7 +33,7 @@ const i32 SHA3_512 = 1;
 const i32 SHAKE128 = 2;
 const i32 SHAKE256 = 3;
 u8[] fill(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed) & 0xFF; }
   return out;
 }
@@ -49,9 +49,9 @@ export string test_the_permutation_of_an_all_zero_state() {
   // 128 bits is not a thing that happens, and the rest was removed rather than adjusted
   // to whatever the implementation produced.
   T t = T.create();
-  u64[] state = u64[25]();
+  u64[] state = u64[].filled(25, 0);
   keccakF(state);
-  u8[] first = u8[16]();
+  u8[] first = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) {
     first[i] = ((state[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32;
   }
@@ -69,19 +69,21 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
  * `shake128` and `shake256` built in. `issues/system/0161`.
  */
 void checkKeccak(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", string[](ORACLE), lines, what);
+  check(t, cli, "node", [ORACLE], lines, what);
 }
 
 export string test_sha3_agrees_with_the_host(Core core, Cli cli) {
   // Every rate boundary from both sides, plus the empty input and a multi-block one.
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] rates = i32[](136, 72);
-  i32[] bits = i32[](256, 512);
+  i32[] rates = [136, 72];
+  i32[] bits = [256, 512];
   for (i32 a = 0; a < rates.len(); a++) {
     i32 rate = rates[a];
-    i32[] lens = i32[](0, 1, 2, rate - 2, rate - 1, rate, rate + 1,
-                       2 * rate - 1, 2 * rate, 2 * rate + 1, 500);
+    i32[] lens = [
+                       0, 1, 2, rate - 2, rate - 1, rate, rate + 1,
+                       2 * rate - 1, 2 * rate, 2 * rate + 1, 500
+    ];
     for (i32 li = 0; li < lens.len(); li++) {
       u8[] m = fill(lens[li], lens[li]);
       u8[] got = bits[a] == 256 ? sha3_256(m) : sha3_512(m);
@@ -99,12 +101,12 @@ export string test_shake_agrees_with_the_host(Core core, Cli cli) {
   // skipped whenever OpenSSL 3.5 was missing.
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] rates = i32[](168, 136);
-  i32[] bits = i32[](128, 256);
+  i32[] rates = [168, 136];
+  i32[] bits = [128, 256];
   for (i32 a = 0; a < rates.len(); a++) {
     i32 rate = rates[a];
-    i32[] inLens = i32[](0, 1, rate - 1, rate, rate + 1, 300);
-    i32[] outLens = i32[](1, 31, 32, rate - 1, rate, rate + 1, 2 * rate, 400);
+    i32[] inLens = [0, 1, rate - 1, rate, rate + 1, 300];
+    i32[] outLens = [1, 31, 32, rate - 1, rate, rate + 1, 2 * rate, 400];
     for (i32 i = 0; i < inLens.len(); i++) {
       for (i32 o = 0; o < outLens.len(); o++) {
         u8[] m = fill(inLens[i], inLens[i]);
@@ -128,7 +130,7 @@ export string test_a_longer_squeeze_extends_a_shorter_one() {
   u8[] m = fill(50, 3);
   u8[] long128 = shake128(m, 512);
   u8[] long256 = shake256(m, 512);
-  i32[] lens = i32[](1, 17, 136, 137, 168, 169, 336, 511);
+  i32[] lens = [1, 17, 136, 137, 168, 169, 336, 511];
   for (i32 i = 0; i < lens.len(); i++) {
     i32 n = lens[i];
     u8[] a = shake128(m, n);
@@ -151,7 +153,7 @@ export string test_the_domain_separation_actually_separates() {
   // SHA3-256 of the same input — the collapse domain separation exists to prevent, and
   // one no comparison against a single algorithm would notice.
   T t = T.create();
-  i32[] lens = i32[](0, 1, 135, 136, 200);
+  i32[] lens = [0, 1, 135, 136, 200];
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = fill(lens[i], 9);
     t.isFalse(equal(sha3_256(m), shake256(m, 32)),
@@ -170,19 +172,19 @@ export string test_keccak256_matches_the_published_vectors() {
   T t = T.create();
 
   // KECCAK_EMPTY — the code hash of an account with no code.
-  t.eqBytes(keccak256(u8[0]()),
+  t.eqBytes(keccak256(u8[]()),
             decoded("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
             "keccak256 of the empty string");
 
   // The root of an empty Merkle-Patricia trie, which is keccak256 of RLP's empty string: one byte, 0x80.
-  t.eqBytes(keccak256(u8[](0x80)),
+  t.eqBytes(keccak256([0x80] as u8[]),
             decoded("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
             "keccak256 of the single byte 0x80 — the empty trie root");
 
   // ERC-20's `transfer` selector: the first four bytes of the keccak256 of the signature, over 25 bytes
   // of input, which is a partial block with the padding well inside it.
   u8[] sig = keccak256("transfer(address,uint256)".toBytes());
-  u8[] selector = u8[4]();
+  u8[] selector = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { selector[i] = sig[i]; }
   t.eqBytes(selector, decoded("a9059cbb"), "the ERC-20 transfer selector");
 
@@ -195,7 +197,7 @@ export string test_keccak256_is_not_sha3_256() {
   // are asserted, because "they differ" is also satisfied by a keccak256 that is broken in some third
   // way, and the vectors above are what say which of the two this is.
   T t = T.create();
-  i32[] lens = i32[](0, 1, 135, 136, 137, 272);
+  i32[] lens = [0, 1, 135, 136, 137, 272];
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = fill(lens[i], 5);
     u8[] k = keccak256(m);
@@ -214,10 +216,10 @@ export string test_the_running_sha3_agrees_with_the_one_shot() {
   // boundary — the rate is 136 bytes and an off-by-one in the buffering shows up only at a multiple
   // of it.
   T t = T.create();
-  i32[] lengths = i32[](0, 1, 135, 136, 137, 271, 272, 273, 500, 1000);
+  i32[] lengths = [0, 1, 135, 136, 137, 271, 272, 273, 500, 1000];
   for (i32 k = 0; k < lengths.len(); k++) {
     i32 n = lengths[k];
-    u8[] msg = u8[n]();
+    u8[] msg = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { msg[i] = (i * 31 + 7) & 0xFF; }
     Sha3_256 h = Sha3_256.create();
     h.update(msg);
@@ -226,15 +228,15 @@ export string test_the_running_sha3_agrees_with_the_one_shot() {
   }
 
   // Fed in pieces, at every split of a message that crosses two blocks.
-  u8[] msg = u8[300]();
+  u8[] msg = u8[].filled(300, 0);
   for (i32 i = 0; i < 300; i++) { msg[i] = (i * 13 + 5) & 0xFF; }
   u8[] want = sha3_256(msg);
   i32 wrong = 0;
   for (i32 split = 0; split <= 300; split += 7) {
     Sha3_256 h = Sha3_256.create();
-    u8[] a = u8[split]();
+    u8[] a = u8[].filled(split, 0);
     for (i32 i = 0; i < split; i++) { a[i] = msg[i]; }
-    u8[] b = u8[300 - split]();
+    u8[] b = u8[].filled(300 - split, 0);
     for (i32 i = 0; i < 300 - split; i++) { b[i] = msg[split + i]; }
     h.update(a);
     h.update(b);
@@ -250,7 +252,7 @@ export string test_peeking_does_not_end_the_hash() {
   T t = T.create();
   u8[] first = "the first part".toBytes();
   u8[] second = "and the second".toBytes();
-  u8[] both = u8[first.len() + second.len()]();
+  u8[] both = u8[].filled(first.len() + second.len(), 0);
   for (i32 i = 0; i < first.len(); i++) { both[i] = first[i]; }
   for (i32 i = 0; i < second.len(); i++) { both[first.len() + i] = second[i]; }
 
@@ -296,7 +298,7 @@ export string test_a_clone_is_independent_of_the_hash_it_came_from() {
   t.isTrue(sameBytes(h.peek(), sha3_256(shared)),
            "absorbing into the clone changed the original: the copy shares its sponge");
 
-  u8[] both = u8[shared.len() + mine.len()]();
+  u8[] both = u8[].filled(shared.len() + mine.len(), 0);
   for (i32 i = 0; i < shared.len(); i++) { both[i] = shared[i]; }
   for (i32 i = 0; i < mine.len(); i++) { both[shared.len() + i] = mine[i]; }
   t.isTrue(sameBytes(copy.peek(), sha3_256(both)),

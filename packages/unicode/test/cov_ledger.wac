@@ -49,12 +49,12 @@ const string PREFIX = "packages/unicode/";
 
 /** What the exercise's tests need: a process to ask, files to read, and the environment to find them. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/unicode/src/utf8.wac", 45, "if (need == 1 && code < 0x80)", true,
+  return [
+        Pin("packages/unicode/src/utf8.wac", 45, "if (need == 1 && code < 0x80)", true,
         "**The over-long two-byte check, and an earlier line already made it impossible.** " +
         "`decode` refuses `b0 < 0xC2` up front — its comment says \"a continuation byte, or an " +
         "over-long C0/C1\" — so a two-byte sequence that gets this far has `b0 >= 0xC2`, which " +
@@ -74,13 +74,14 @@ Pin[] pins() {
         "caller sizes `out`\", and a caller sizing it from `encodedLength` has already been told 0.\n" +
         "         Kept as the defensive arm it is: writing nothing and returning 0 is the right " +
         "answer for a code point that encodes to nothing, and the alternative is three arms that " +
-        "silently do not run."));
+        "silently do not run.")
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -88,5 +89,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

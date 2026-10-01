@@ -28,12 +28,12 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 u8[] rep(i32 byte, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = byte; }
   return out;
 }
 u8[] fill(i32 n, i32 a, i32 b) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
   return out;
 }
@@ -92,7 +92,7 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
  * `issues/system/0161`.
  */
 void checkHmac(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", string[](ORACLE), lines, what);
+  check(t, cli, "node", [ORACLE], lines, what);
 }
 
 void claimHmac(Lines lines, u8[] key, u8[] data, u8[] mac) {
@@ -106,14 +106,14 @@ export string test_the_key_length_boundaries(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
   u8[] msg = "the message does not matter here".toBytes();
-  i32[] keyLens = i32[](0, 1, 32, 63, 64, 65, 100, 131, 200);
+  i32[] keyLens = [0, 1, 32, 63, 64, 65, 100, 131, 200];
   for (i32 i = 0; i < keyLens.len(); i++) {
     u8[] key = fill(keyLens[i], 7, 3);
     claimHmac(lines, key, msg, hmacSha256(key, msg));
   }
   // And message lengths across the same boundary, since the message is hashed inside.
   u8[] key = fill(32, 11, 1);
-  i32[] msgLens = i32[](0, 1, 55, 56, 63, 64, 65, 119, 120, 200);
+  i32[] msgLens = [0, 1, 55, 56, 63, 64, 65, 119, 120, 200];
   for (i32 i = 0; i < msgLens.len(); i++) {
     u8[] m = fill(msgLens[i], 13, 5);
     claimHmac(lines, key, m, hmacSha256(key, m));
@@ -138,7 +138,7 @@ export string test_rfc_5869_hkdf_vectors() {
 
   // A.3, an empty salt and empty info — the case where an implementation that treats an
   // absent salt as absent rather than as a block of zeros diverges.
-  t.eqBytes(hkdf(u8[0](), rep(0x0b, 22), u8[0](), 42),
+  t.eqBytes(hkdf(u8[](), rep(0x0b, 22), u8[](), 42),
             decoded("8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d" +
                   "9d201395faa4b61a96c8"),
             "A.3, empty salt and info");
@@ -161,22 +161,22 @@ export string test_expand_chains_across_blocks(Core core, Cli cli) {
   u8[] prk = hkdfExtract(salt, ikm);
   claimHmac(lines, salt, ikm, prk);                 // extract is HMAC(salt, ikm)
 
-  i32[] lens = i32[](1, 31, 32, 33, 63, 64, 65, 200);
+  i32[] lens = [1, 31, 32, 33, 63, 64, 65, 200];
   for (i32 li = 0; li < lens.len(); li++) {
     i32 len = lens[li];
     u8[] out = hkdf(salt, ikm, info, len);
     t.eqI32(out.len(), len, "expand to " + itoa64(len as i64) + " bytes");
     if (out.len() != len) { continue; }
-    u8[] prev = u8[0]();
+    u8[] prev = u8[]();
     i32 done = 0;
     i32 n = 1;
     while (done < len) {
-      u8[] input = u8[prev.len() + info.len() + 1]();
+      u8[] input = u8[].filled(prev.len() + info.len() + 1, 0);
       for (i32 i = 0; i < prev.len(); i++) { input[i] = prev[i]; }
       for (i32 i = 0; i < info.len(); i++) { input[prev.len() + i] = info[i]; }
       input[input.len() - 1] = n;
       i32 take = len - done < 32 ? len - done : 32;
-      u8[] block = u8[take]();
+      u8[] block = u8[].filled(take, 0);
       for (i32 i = 0; i < take; i++) { block[i] = out[done + i]; }
       claimHmac(lines, prk, input, block);
       prev = block;                                 // truncated only on the final block
@@ -258,7 +258,7 @@ export string test_the_255_block_cap_matches_webcrypto(Core core, Cli cli) {
  * returning short is the choice `hkdf.wac` made, and this is where it is pinned.
  */
 export string test_traps_past_the_255_block_cap(Core core, Cli cli) {
-  hkdf(u8[16](fill: 0x0C), u8[32](), "cap".toBytes(), 255 * 32 + 1);
+  hkdf(u8[].filled(16, 0x0C), u8[].filled(32, 0), "cap".toBytes(), 255 * 32 + 1);
   return "FAIL: 8161 bytes was accepted, but only 255 blocks can be derived";
 }
 

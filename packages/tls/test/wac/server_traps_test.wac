@@ -20,7 +20,7 @@ import { tlsServerInit, tlsServerFeed, tlsServerClose, tlsPhase, phaseFailed }
   from "../../src/server.wac";
 
 u8[] bytes(i32 n) {
-  u8[] b = u8[n]();
+  u8[] b = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { b[i] = (i * 11 + 3) & 0xFF; }
   return b;
 }
@@ -37,38 +37,38 @@ u8[] fresh() { return tlsServerInit(bytes(64), bytes(32), bytes(32), bytes(32));
  */
 u8[] stateOf(u8[] answer) {
   i32 n = (answer[0] << 24) | (answer[1] << 16) | (answer[2] << 8) | answer[3];
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   out.copyFrom(answer, 4, 0, n);
   return out;
 }
 
 /** Fewer than five bytes cannot be a record header. */
 export string test_traps_on_a_short_record_header() {
-  tlsServerFeed(fresh(), u8[](22, 3, 3, 0));
+  tlsServerFeed(fresh(), [22, 3, 3, 0] as u8[]);
   return "";
 }
 
 /** A length reaching past the end of what the caller handed over. */
 export string test_traps_on_a_length_past_the_end() {
-  tlsServerFeed(fresh(), u8[](22, 3, 3, 0x10, 0x00, 1, 2, 3));
+  tlsServerFeed(fresh(), [22, 3, 3, 0x10, 0x00, 1, 2, 3] as u8[]);
   return "";
 }
 
 /** Not a handshake record, before a handshake has started. */
 export string test_traps_on_the_wrong_record_type_at_the_start() {
-  tlsServerFeed(fresh(), u8[](23, 3, 3, 0, 1, 9));
+  tlsServerFeed(fresh(), [23, 3, 3, 0, 1, 9] as u8[]);
   return "";
 }
 
 /** A handshake record whose message length does not match the record's. */
 export string test_traps_on_a_message_length_mismatch() {
-  tlsServerFeed(fresh(), u8[](22, 3, 3, 0, 4, 1, 0, 0, 16));
+  tlsServerFeed(fresh(), [22, 3, 3, 0, 4, 1, 0, 0, 16] as u8[]);
   return "";
 }
 
 /** A handshake message that is not a ClientHello. */
 export string test_traps_on_a_first_message_that_is_not_a_client_hello() {
-  tlsServerFeed(fresh(), u8[](22, 3, 3, 0, 4, 20, 0, 0, 0));
+  tlsServerFeed(fresh(), [22, 3, 3, 0, 4, 20, 0, 0, 0] as u8[]);
   return "";
 }
 
@@ -86,8 +86,8 @@ export string test_traps_on_a_first_message_that_is_not_a_client_hello() {
 export string test_a_closed_connection_takes_no_more_and_a_fresh_one_starts() {
   T t = T.create();
   u8[] closed = stateOf(tlsServerClose(fresh()));
-  u8[] after = stateOf(tlsServerFeed(closed, u8[](22, 3, 3, 0, 1, 1)));
-  u8[] again = stateOf(tlsServerFeed(after, u8[](23, 3, 3, 0, 0)));
+  u8[] after = stateOf(tlsServerFeed(closed, [22, 3, 3, 0, 1, 1] as u8[]));
+  u8[] again = stateOf(tlsServerFeed(after, [23, 3, 3, 0, 0] as u8[]));
   t.eqI32(tlsPhase(again), phaseFailed(), "a closed server stays closed and keeps answering");
   t.neI32(tlsPhase(fresh()), phaseFailed(), "and a fresh connection still starts");
   return t.report();

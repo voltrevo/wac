@@ -53,7 +53,7 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
   }
   head = head + "\r\n";
 
-  u8[] out = u8[head.toBytes().len() + body.len()]();
+  u8[] out = u8[].filled(head.toBytes().len() + body.len(), 0);
   u8[] headBytes = head.toBytes();
   out.copyFrom(headBytes, 0, 0, headBytes.len());
   out.copyFrom(body, 0, headBytes.len(), body.len());
@@ -63,7 +63,7 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
     return failed(host + ": cannot send the request");
   }
 
-  u8[] all = u8[0]();
+  u8[] all = u8[]();
   bool reading = true;
   string why = "";
   while (reading) {
@@ -87,7 +87,7 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
 
 /** A GET, which is what most callers want. */
 export Fetched get(Cli cli, string host, i32 port, string path) {
-  return request(cli, "GET".toBytes(), host, port, path, u8[0](), "");
+  return request(cli, "GET".toBytes(), host, port, path, u8[](), "");
 }
 
 /** A POST with a body — `packages/ethrpc` is the caller this exists for. */
@@ -104,11 +104,11 @@ Fetched failed(string why) {
   // even be left out of a named construction. `Incoming? body` would say what this comment says.
   // The shape that says it properly is `Fetched` being an enum of two arms rather than a struct with
   // an `ok` flag, which is a change to the type every caller matches on.
-  return Fetched.of(false, Incoming(0, 1, u8[0](), Headers.create(), u8[0](), 0, false), why);
+  return Fetched.of(false, Incoming(0, 1, u8[](), Headers.create(), u8[](), 0, false), why);
 }
 
 u8[] append(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   out.copyFrom(a, 0, 0, a.len());
   out.copyFrom(b, 0, a.len(), b.len());
   return out;

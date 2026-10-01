@@ -58,11 +58,11 @@ export string manifestIn(u8[] wasm) {
       i32 len = ulebAt(wasm, p);
       p = p + ulebWidth(wasm, p);
       if (p + len <= end) {
-        u8[] name = u8[len]();
+        u8[] name = u8[].filled(len, 0);
         for (i32 k = 0; k < len; k++) { name[k] = wasm[p + k]; }
         if (string.fromBytes(name) == "wac.manifest") {
           i32 from = p + len;
-          u8[] body = u8[end - from]();
+          u8[] body = u8[].filled(end - from, 0);
           for (i32 k = 0; k < end - from; k++) { body[k] = wasm[from + k]; }
           return string.fromBytes(body);
         }
@@ -117,7 +117,7 @@ export string hollowWhy(u8[] wasm, i32 promised) {
 }
 
 export string[] bindExportsOf(u8[] wasm) {
-  string[] out = string[4096](fill: "");
+  string[] out = string[].filled(4096, "");
   i32 n = 0;
   if (wasm.len() < 8) { return exactlyN(out, 0); }
   i32 at = 8;
@@ -136,7 +136,7 @@ export string[] bindExportsOf(u8[] wasm) {
       for (i32 i = 0; i < count; i++) {
         i32 len = ulebAt(wasm, p);
         p = p + ulebWidth(wasm, p);
-        u8[] name = u8[len]();
+        u8[] name = u8[].filled(len, 0);
         for (i32 k = 0; k < len; k++) { name[k] = wasm[p + k]; }
         p = p + len;
         p = p + 1;                        // the kind byte
@@ -155,7 +155,7 @@ export string[] bindExportsOf(u8[] wasm) {
 }
 
 string[] exactlyN(string[] xs, i32 n) {
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = xs[i]; }
   return out;
 }
@@ -191,7 +191,7 @@ i32 ulebWidth(u8[] bytes, i32 at) {
  * split turns `index:Map<u8[],i32>` into a field of type `Map<u8[]` and a second called `i32>`.
  */
 export string[] splitTop(string text, string sep) {
-  string[] out = string[countOf(text, sep) + 1](fill: "");
+  string[] out = string[].filled(countOf(text, sep) + 1, "");
   i32 n = 0;
   i32 depth = 0;
   string cur = "";
@@ -232,7 +232,7 @@ i32 countOf(string text, string sep) {
 }
 
 string[] splitOn(string text, string sep) {
-  string[] out = string[countOf(text, sep) + 1](fill: "");
+  string[] out = string[].filled(countOf(text, sep) + 1, "");
   i32 n = 0;
   string cur = "";
   for (i32 i = 0; i < text.len(); i++) {
@@ -336,7 +336,7 @@ string callbacksJson(string wire) {
     out = out + pad(3) + "\"field\": " + quoted("cb" + index) + ",\n";
     out = out + pad(3) + "\"helper\": " + quoted("$bind$fnref_" + index) + ",\n";
     out = out + pad(3) + "\"type\": " + quoted(cellAt(c, 4)) + ",\n";
-    out = out + pad(3) + "\"params\": " + jsonStrings(params == "" ? string[0](fill: "")
+    out = out + pad(3) + "\"params\": " + jsonStrings(params == "" ? string[].filled(0, "")
                                                      : splitTop(params, ","), 3) + ",\n";
     out = out + pad(3) + "\"ret\": " + quoted(orVoid(cellAt(c, 2))) + ",\n";
     out = out + pad(3) + "\"slots\": 16\n";
@@ -373,10 +373,10 @@ string structsJson(string wire) {
   // Two passes rather than a growing list of structs: one to render each type, one to render the
   // aliases against the text already produced. The rendering needs the owner's methods, which arrive
   // on later lines, so the walk collects per type first.
-  string[] names = string[512](fill: "");
-  string[] binds = string[512](fill: "");
-  string[] kinds = string[512](fill: "");
-  string[] payloads = string[512](fill: "");
+  string[] names = string[].filled(512, "");
+  string[] binds = string[].filled(512, "");
+  string[] kinds = string[].filled(512, "");
+  string[] payloads = string[].filled(512, "");
   i32 count = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     string[] c = cells(lines[i]);
@@ -458,7 +458,7 @@ string methodsJson(string bind, string[] lines) {
     out = out + pad(4) + "{\n";
     out = out + pad(5) + "\"name\": " + quoted(cellAt(c, 2)) + ",\n";
     out = out + pad(5) + "\"isStatic\": " + (hasThis ? "false" : "true") + ",\n";
-    out = out + pad(5) + "\"params\": " + jsonStrings(params == "" ? string[0](fill: "")
+    out = out + pad(5) + "\"params\": " + jsonStrings(params == "" ? string[].filled(0, "")
                                                      : splitTop(params, ","), 5) + ",\n";
     out = out + pad(5) + "\"ret\": " + quoted(orVoid(cellAt(c, 4))) + ",\n";
     out = out + pad(5) + "\"export\": "
@@ -519,7 +519,7 @@ string exportsJson(string sigs) {
     if (n > 0) { out = out + ",\n"; }
     out = out + pad(2) + "{\n";
     out = out + pad(3) + "\"name\": " + quoted(name) + ",\n";
-    out = out + pad(3) + "\"params\": " + jsonStrings(params == "" ? string[0](fill: "")
+    out = out + pad(3) + "\"params\": " + jsonStrings(params == "" ? string[].filled(0, "")
                                                      : splitTop(params, ","), 3) + ",\n";
     out = out + pad(3) + "\"ret\": " + quoted(orVoid(cellAt(c, 1))) + "\n";
     out = out + pad(2) + "}";
@@ -542,7 +542,7 @@ export u8[] withManifestSection(u8[] wasm, string manifest) {
   u8[] nameLen = uleb(name.len());
   i32 payload = nameLen.len() + name.len() + body.len();
   u8[] size = uleb(payload);
-  u8[] out = u8[wasm.len() + 1 + size.len() + payload]();
+  u8[] out = u8[].filled(wasm.len() + 1 + size.len() + payload, 0);
   i32 at = 0;
   for (i32 i = 0; i < wasm.len(); i++) { out[at + i] = wasm[i]; }
   at = at + wasm.len();
@@ -560,7 +560,7 @@ export u8[] withManifestSection(u8[] wasm, string manifest) {
 
 /** The format's own integer encoding, which is the only reason this needs any code at all. */
 u8[] uleb(i32 n) {
-  u8[] buf = u8[5]();
+  u8[] buf = u8[].filled(5, 0);
   i32 len = 0;
   i32 v = n;
   bool more = true;
@@ -572,7 +572,7 @@ u8[] uleb(i32 n) {
     len = len + 1;
     more = v != 0;
   }
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = buf[i]; }
   return out;
 }

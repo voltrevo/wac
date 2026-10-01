@@ -48,11 +48,11 @@ import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { Proved, verify } from "../../src/proof.wac";
 import { AccountProof, StorageProof, accountAt, storageAt } from "../../src/account.wac";
 
-u8[] empty() { return u8[0](); }
+u8[] empty() { return u8[](); }
 
 /** A byte string as nibbles, high first — the path a trie walks. */
 u8[] nibbles(u8[] b) {
-  u8[] out = u8[b.len() * 2]();
+  u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i * 2] = (b[i] >> 4) & 0xF;
     out[i * 2 + 1] = b[i] & 0xF;
@@ -69,7 +69,7 @@ u8[] nibbles(u8[] b) {
 u8[] hp(u8[] path, bool terminal) {
   i32 flag = (terminal ? 2 : 0) + (path.len() % 2);
   bool odd = path.len() % 2 == 1;
-  u8[] out = u8[1 + (path.len() + (odd ? 1 : 0)) / 2]();
+  u8[] out = u8[].filled(1 + (path.len() + (odd ? 1 : 0)) / 2, 0);
   out[0] = (flag << 4) | (odd ? path[0] : 0);
   i32 from = odd ? 1 : 0;
   for (i32 i = from; i + 1 < path.len() + 1 && i < path.len(); i = i + 2) {
@@ -78,11 +78,11 @@ u8[] hp(u8[] path, bool terminal) {
   return out;
 }
 
-u8[] key() { return u8[](0xAB, 0xCD); }
+u8[] key() { return [0xAB, 0xCD] as u8[]; }
 
 /** A one-node trie: the root is a leaf holding the whole key. */
 u8[] leafNode(Item value) {
-  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  Item[] pair = Item[].filled(2, Item.Bytes(empty()));
   pair[0] = Item.Bytes(hp(nibbles(key()), true));
   pair[1] = value;
   return encode(Item.List(pair));
@@ -90,7 +90,7 @@ u8[] leafNode(Item value) {
 
 /** A seventeen-item branch with `child` in slot `at` and everything else empty. */
 Item branchSlot(Item child, i32 at) {
-  Item[] items = Item[17](fill: Item.Bytes(empty()));
+  Item[] items = Item[].filled(17, Item.Bytes(empty()));
   items[at] = child;
   return Item.List(items);
 }
@@ -109,7 +109,7 @@ struct Trie {
 Trie branchTrie(Item terminal) {
   u8[] nibs = nibbles(key());
   u8[] last = encode(branchSlot(terminal, 16));
-  u8[][] built = u8[][nibs.len() + 1](fill: empty());
+  u8[][] built = u8[][].filled(nibs.len() + 1, empty());
   built[nibs.len()] = last;
   u8[] ref = keccak256(last);
   for (i32 i = nibs.len() - 1; i >= 0; i--) {
@@ -121,19 +121,19 @@ Trie branchTrie(Item terminal) {
 }
 
 u8[][] one(u8[] node) {
-  u8[][] out = u8[][1](fill: empty());
+  u8[][] out = u8[][].filled(1, empty());
   out[0] = node;
   return out;
 }
 
 export string test_a_leaf_whose_value_is_a_list_is_refused() {
   T t = T.create();
-  u8[] good = leafNode(Item.Bytes(u8[](1, 2, 3)));
+  u8[] good = leafNode(Item.Bytes([1, 2, 3] as u8[]));
   Proved wellFormed = verify(keccak256(good), key(), one(good));
   t.isTrue(wellFormed.ok, "the well-formed twin should verify — " + wellFormed.error);
   t.isTrue(wellFormed.present, "and the key is present in it");
 
-  u8[] bad = leafNode(Item.List(Item[0](fill: Item.Bytes(empty()))));
+  u8[] bad = leafNode(Item.List(Item[].filled(0, Item.Bytes(empty()))));
   Proved got = verify(keccak256(bad), key(), one(bad));
   t.isFalse(got.ok, "accepted, present=" + (got.present ? "true" : "false"));
   t.isTrue(got.error.indexOf("leaf") >= 0, "the message does not say where: " + got.error);
@@ -142,12 +142,12 @@ export string test_a_leaf_whose_value_is_a_list_is_refused() {
 
 export string test_a_branch_terminal_that_is_a_list_is_refused() {
   T t = T.create();
-  Trie good = branchTrie(Item.Bytes(u8[](7)));
+  Trie good = branchTrie(Item.Bytes([7] as u8[]));
   Proved wellFormed = verify(good.root, key(), good.nodes);
   t.isTrue(wellFormed.ok, "the well-formed twin should verify — " + wellFormed.error);
   t.isTrue(wellFormed.present, "the branch holds a value at the key");
 
-  Trie bad = branchTrie(Item.List(Item[0](fill: Item.Bytes(empty()))));
+  Trie bad = branchTrie(Item.List(Item[].filled(0, Item.Bytes(empty()))));
   Proved got = verify(bad.root, key(), bad.nodes);
   t.isFalse(got.ok, "accepted, present=" + (got.present ? "true" : "false"));
   t.isTrue(got.error.indexOf("branch") >= 0, "the message does not say where: " + got.error);
@@ -163,9 +163,9 @@ export string test_a_branch_terminal_that_is_a_list_is_refused() {
  */
 export string test_a_hex_prefix_header_that_is_a_list_is_refused() {
   T t = T.create();
-  Item[] pair = Item[2](fill: Item.Bytes(empty()));
-  pair[0] = Item.List(Item[0](fill: Item.Bytes(empty())));
-  pair[1] = Item.Bytes(u8[](1));
+  Item[] pair = Item[].filled(2, Item.Bytes(empty()));
+  pair[0] = Item.List(Item[].filled(0, Item.Bytes(empty())));
+  pair[1] = Item.Bytes([1] as u8[]);
   u8[] bad = encode(Item.List(pair));
   Proved got = verify(keccak256(bad), key(), one(bad));
   t.isFalse(got.ok, "accepted");
@@ -176,20 +176,20 @@ export string test_a_hex_prefix_header_that_is_a_list_is_refused() {
 // ── Accounts ──────────────────────────────────────────────────────────────────
 
 u8[] address() {
-  u8[] a = u8[20]();
+  u8[] a = u8[].filled(20, 0);
   a[19] = 9;
   return a;
 }
 
 /** An account whose `at`th field is a list instead of a byte string; -1 for the well-formed one. */
 Trie accountTrie(i32 at) {
-  Item[] fields = Item[4](fill: Item.Bytes(empty()));
-  fields[0] = Item.Bytes(u8[](3));                              // nonce
-  fields[1] = Item.Bytes(u8[](0x10));                           // balance
+  Item[] fields = Item[].filled(4, Item.Bytes(empty()));
+  fields[0] = Item.Bytes([3] as u8[]);                              // nonce
+  fields[1] = Item.Bytes([0x10] as u8[]);                           // balance
   fields[2] = Item.Bytes(keccak256(encode(Item.Bytes(empty())))); // an account with no storage
   fields[3] = Item.Bytes(keccak256(empty()));                   // ...and no code
-  if (at >= 0) { fields[at] = Item.List(Item[0](fill: Item.Bytes(empty()))); }
-  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  if (at >= 0) { fields[at] = Item.List(Item[].filled(0, Item.Bytes(empty()))); }
+  Item[] pair = Item[].filled(2, Item.Bytes(empty()));
   pair[0] = Item.Bytes(hp(nibbles(keccak256(address())), true));
   pair[1] = Item.Bytes(encode(Item.List(fields)));
   u8[] node = encode(Item.List(pair));
@@ -203,7 +203,7 @@ export string test_an_account_field_that_is_a_list_is_refused() {
   t.isTrue(wellFormed.ok, "the well-formed account should verify — " + wellFormed.error);
   t.isTrue(wellFormed.present, "and it is in the trie");
 
-  string[] names = string[]("nonce", "balance", "storage root", "code hash");
+  string[] names = ["nonce", "balance", "storage root", "code hash"];
   for (i32 at = 0; at < names.len(); at++) {
     Trie bad = accountTrie(at);
     AccountProof got = accountAt(bad.root, address(), bad.nodes);
@@ -228,13 +228,13 @@ export string test_an_account_field_that_is_a_list_is_refused() {
 export string test_absence_from_an_empty_trie_is_proved_by_no_nodes() {
   T t = T.create();
   u8[] root = keccak256(encode(Item.Bytes(empty())));
-  u8[][] keys = u8[][4](fill: empty());
+  u8[][] keys = u8[][].filled(4, empty());
   keys[0] = empty();
   keys[1] = "a key".toBytes();
-  keys[2] = u8[](0);
-  keys[3] = u8[32](fill: 0xFF);
+  keys[2] = [0] as u8[];
+  keys[3] = u8[].filled(32, 0xFF);
   for (i32 i = 0; i < keys.len(); i++) {
-    Proved got = verify(root, keys[i], u8[][0](fill: empty()));
+    Proved got = verify(root, keys[i], u8[][].filled(0, empty()));
     t.isTrue(got.ok, "key " + itoa(i) + ": " + got.error);
     t.isFalse(got.present, "key " + itoa(i) + ": nothing is present in an empty trie");
   }
@@ -249,18 +249,20 @@ export string test_absence_from_an_empty_trie_is_proved_by_no_nodes() {
  */
 export string test_no_nodes_against_any_other_root_proves_nothing() {
   T t = T.create();
-  u8[] populated = keccak256(leafNode(Item.Bytes(u8[](1))));
-  u8[] zeroes = u8[32]();
+  u8[] populated = keccak256(leafNode(Item.Bytes([1] as u8[])));
+  u8[] zeroes = u8[].filled(32, 0);
   u8[] nearlyEmpty = keccak256(encode(Item.Bytes(empty())));
   nearlyEmpty[31] = nearlyEmpty[31] ^ 1;
-  u8[][] roots = u8[][3](fill: empty());
+  u8[][] roots = u8[][].filled(3, empty());
   roots[0] = populated;
   roots[1] = zeroes;
   roots[2] = nearlyEmpty;
-  string[] names = string[]("a populated trie's root", "all zeroes",
-                            "the empty trie root with one byte changed");
+  string[] names = [
+                            "a populated trie's root", "all zeroes",
+                            "the empty trie root with one byte changed"
+  ];
   for (i32 i = 0; i < roots.len(); i++) {
-    t.isFalse(verify(roots[i], key(), u8[][0](fill: empty())).ok,
+    t.isFalse(verify(roots[i], key(), u8[][].filled(0, empty())).ok,
               names[i] + ": accepted an empty proof");
   }
   return t.report();
@@ -281,9 +283,9 @@ export string test_a_slot_of_an_account_with_no_storage_is_absent() {
   t.eqBytes(acct.account.storageRoot, keccak256(encode(Item.Bytes(empty()))),
             "this account has no storage");
 
-  u8[] slot = u8[32]();
+  u8[] slot = u8[].filled(32, 0);
   slot[31] = 7;
-  StorageProof got = storageAt(acct.account.storageRoot, slot, u8[][0](fill: empty()));
+  StorageProof got = storageAt(acct.account.storageRoot, slot, u8[][].filled(0, empty()));
   t.isTrue(got.ok, "the empty storage should answer — " + got.error);
   t.isFalse(got.present, "the slot is unset");
   t.eqI32(got.value.len(), 0, "and has no value");
@@ -292,9 +294,9 @@ export string test_a_slot_of_an_account_with_no_storage_is_absent() {
 
 /** A leaf whose hex-prefix header is written by the caller, so a hostile one can be built. */
 u8[] leafWithHeader(u8[] header) {
-  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  Item[] pair = Item[].filled(2, Item.Bytes(empty()));
   pair[0] = Item.Bytes(header);
-  pair[1] = Item.Bytes(u8[](1, 2, 3));
+  pair[1] = Item.Bytes([1, 2, 3] as u8[]);
   return encode(Item.List(pair));
 }
 
@@ -355,20 +357,20 @@ export string test_a_hex_prefix_header_must_be_canonical_not_merely_parseable() 
  */
 export string test_a_root_and_a_node_reference_are_thirty_two_bytes() {
   T t = T.create();
-  u8[] good = leafNode(Item.Bytes(u8[](1, 2, 3)));
+  u8[] good = leafNode(Item.Bytes([1, 2, 3] as u8[]));
   u8[] root = keccak256(good);
 
   t.isTrue(verify(root, key(), one(good)).ok, "the well-formed proof should verify");
 
-  Proved short = verify(u8[31](), key(), one(good));
+  Proved short = verify(u8[].filled(31, 0), key(), one(good));
   t.isFalse(short.ok, "a 31-byte root was accepted");
   t.isTrue(short.error.indexOf("32 bytes") >= 0, "the message does not say so: " + short.error);
   t.isFalse(verify(empty(), key(), one(good)).ok, "an empty root was accepted");
-  t.isFalse(verify(u8[33](), key(), one(good)).ok, "a 33-byte root was accepted");
+  t.isFalse(verify(u8[].filled(33, 0), key(), one(good)).ok, "a 33-byte root was accepted");
 
   // A branch whose child reference is neither an inline node nor a 32-byte hash.
-  Item[] branch = Item[17](fill: Item.Bytes(empty()));
-  branch[10] = Item.Bytes(u8[31]());                 // the nibble `a` of `0xAB`
+  Item[] branch = Item[].filled(17, Item.Bytes(empty()));
+  branch[10] = Item.Bytes(u8[].filled(31, 0));                 // the nibble `a` of `0xAB`
   u8[] node = encode(Item.List(branch));
   Proved r = verify(keccak256(node), key(), one(node));
   t.isFalse(r.ok, "a 31-byte node reference was accepted as a hash");
@@ -384,21 +386,21 @@ export string test_a_root_and_a_node_reference_are_thirty_two_bytes() {
  */
 export string test_a_node_that_is_not_an_rlp_list_is_refused() {
   T t = T.create();
-  u8[] good = leafNode(Item.Bytes(u8[](1, 2, 3)));
+  u8[] good = leafNode(Item.Bytes([1, 2, 3] as u8[]));
   t.isTrue(verify(keccak256(good), key(), one(good)).ok, "the well-formed proof should verify");
 
   // 0xC1 announces a one-byte list and no bytes follow it, so the decode cannot complete.
-  u8[] truncated = u8[](0xC1);
+  u8[] truncated = [0xC1];
   Proved d = verify(keccak256(truncated), key(), one(truncated));
   t.isFalse(d.ok, "a node whose RLP does not decode was accepted");
 
   // Valid RLP, and a byte string rather than a list.
-  u8[] notList = encode(Item.Bytes(u8[](1, 2, 3)));
+  u8[] notList = encode(Item.Bytes([1, 2, 3] as u8[]));
   Proved n = verify(keccak256(notList), key(), one(notList));
   t.isFalse(n.ok, "a node that decodes to a byte string was accepted as a trie node");
 
   // A list of the wrong width: neither 2 nor 17.
-  Item[] three = Item[3](fill: Item.Bytes(empty()));
+  Item[] three = Item[].filled(3, Item.Bytes(empty()));
   u8[] wide = encode(Item.List(three));
   Proved w = verify(keccak256(wide), key(), one(wide));
   t.isFalse(w.ok, "a three-item list was accepted as a trie node");
@@ -407,7 +409,7 @@ export string test_a_node_that_is_not_an_rlp_list_is_refused() {
 
 /** A one-node trie whose leaf holds `value` under `k`, so a caller can choose both. */
 u8[] leafFor(u8[] k, Item value) {
-  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  Item[] pair = Item[].filled(2, Item.Bytes(empty()));
   pair[0] = Item.Bytes(hp(nibbles(k), true));
   pair[1] = value;
   return encode(Item.List(pair));
@@ -427,29 +429,29 @@ u8[] leafFor(u8[] k, Item value) {
  */
 export string test_a_proved_value_that_is_not_rlp_is_refused_after_the_proof_verifies() {
   T t = T.create();
-  u8[] address = u8[20]();
+  u8[] address = u8[].filled(20, 0);
   address[19] = 7;
-  u8[] slot = u8[32]();
+  u8[] slot = u8[].filled(32, 0);
   slot[31] = 3;
 
   // An account leaf carrying undecodable bytes, under the right key, with a matching root: the proof
   // itself is sound and only the payload is wrong.
-  u8[] acct = leafFor(keccak256(address), Item.Bytes(u8[](0xC1)));
+  u8[] acct = leafFor(keccak256(address), Item.Bytes([0xC1] as u8[]));
   AccountProof a = accountAt(keccak256(acct), address, one(acct));
   t.isFalse(a.ok, "an account whose bytes are not RLP was accepted");
   t.isTrue(a.error.indexOf("not RLP") >= 0, "the message does not say what failed: " + a.error);
 
   // The same for a storage slot.
-  u8[] st = leafFor(keccak256(slot), Item.Bytes(u8[](0xC1)));
+  u8[] st = leafFor(keccak256(slot), Item.Bytes([0xC1] as u8[]));
   StorageProof sp = storageAt(keccak256(st), slot, one(st));
   t.isFalse(sp.ok, "a slot whose bytes are not RLP was accepted");
 
   // And the well-formed twins, so the refusals above are about the payload rather than the proof.
-  Item[] four = Item[4](fill: Item.Bytes(empty()));
-  four[0] = Item.Bytes(u8[](1));
-  four[1] = Item.Bytes(u8[](2));
-  four[2] = Item.Bytes(u8[32]());
-  four[3] = Item.Bytes(u8[32]());
+  Item[] four = Item[].filled(4, Item.Bytes(empty()));
+  four[0] = Item.Bytes([1] as u8[]);
+  four[1] = Item.Bytes([2] as u8[]);
+  four[2] = Item.Bytes(u8[].filled(32, 0));
+  four[3] = Item.Bytes(u8[].filled(32, 0));
   // **The account is stored as bytes, not as a nested list.** A leaf's value is a byte string, and
   // what it holds is the RLP *encoding* of the account — so the encode is explicit here. Writing
   // `Item.List(four)` gets "a leaf's value is a byte string, and this one is a list", which is the
@@ -471,9 +473,9 @@ export string test_a_proved_value_that_is_not_rlp_is_refused_after_the_proof_ver
  */
 export string test_a_later_node_cannot_overwrite_the_first_refusal() {
   T t = T.create();
-  u8[][] two = u8[][2](fill: empty());
-  two[0] = encode(Item.Bytes(u8[](1, 2, 3)));        // a byte string, not a list
-  two[1] = leafNode(Item.Bytes(u8[](4, 5, 6)));      // a perfectly good leaf, arriving too late
+  u8[][] two = u8[][].filled(2, empty());
+  two[0] = encode(Item.Bytes([1, 2, 3] as u8[]));        // a byte string, not a list
+  two[1] = leafNode(Item.Bytes([4, 5, 6] as u8[]));      // a perfectly good leaf, arriving too late
 
   Proved p = verify(keccak256(two[0]), key(), two);
   t.isFalse(p.ok, "a proof whose first node is not a list was accepted");

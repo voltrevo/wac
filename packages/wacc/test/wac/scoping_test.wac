@@ -33,19 +33,20 @@ import { Core, Cli } from "std/platform.wac";
 import { diagnoseFiles, emitFiles } from "../../src/api.wac";
 import { Ran, runEmitted, scratchDir } from "./artifacts_probe.wac";
 
-string[] paths() { return string[]("/t/a.wac", "/t/b.wac", "/t/c.wac", "/t/main.wac"); }
+string[] paths() { return ["/t/a.wac", "/t/b.wac", "/t/c.wac", "/t/main.wac"]; }
 
 string[] sources() {
-  return string[](
+  return [
     "export bool write(u8[] b) { return b.len() > 0; }\n",
     "export bool write(i32 n) { return n > 0; }\n",
-    "export i32 pump(fn<bool(u8[])> write) { return write(u8[1]()) ? 1 : 0; }\n",
+    "export i32 pump(fn<bool(u8[])> write) { return write(u8[].filled(1, 0)) ? 1 : 0; }\n",
     // `main` rather than `run`, so the module can be run rather than only inspected — see the
     // header. Everything the test is about is above this line.
     "import { write } from \"./a.wac\";\n" +
     "import { write as writeN } from \"./b.wac\";\n" +
     "import { pump } from \"./c.wac\";\n" +
-    "export i32 main() { return pump(write) + (writeN(1) ? 1 : 0); }\n");
+    "export i32 main() { return pump(write) + (writeN(1) ? 1 : 0); }\n"
+  ];
 }
 
 export string test_a_parameter_named_like_two_files_functions_does_not_make_the_module_ambiguous(
@@ -69,7 +70,7 @@ export string test_a_parameter_named_like_two_files_functions_does_not_make_the_
   // than inspected, because the wrong resolution produces a module that compiles and answers wrongly
   // as easily as one that does not compile at all.
   string dir = scratchDir(cli);
-  Ran r = runEmitted(cli, paths(), sources(), entry, dir, "scoping.wasm", 0, string[0](fill: ""));
+  Ran r = runEmitted(cli, paths(), sources(), entry, dir, "scoping.wasm", 0, string[].filled(0, ""));
   t.isTrue(r.ok, "the module did not run — " + r.error);
   if (!r.ok) { return t.report(); }
   t.isTrue(!r.trapped, "the module trapped rather than answering — " + r.stderr);

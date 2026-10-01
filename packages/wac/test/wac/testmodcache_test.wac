@@ -66,9 +66,11 @@ i32 entriesIn(Cli cli, string dir) {
  */
 i32 runWith(Cli cli, string dir) {
   Exec r = cli.execWith(wacBinary(cli),
-      string[]("test", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
-               SUBJECT),
-      u8[0](), string[]("WAC_HOME=" + dir), false, false).wait();
+      [
+               "test", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               SUBJECT
+      ],
+      u8[](), ["WAC_HOME=" + dir], false, false).wait();
   return r.ran() ? r.status : 0 - 1;
 }
 

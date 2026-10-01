@@ -89,7 +89,7 @@ export struct Server {
    */
   Server of(u8[] certDer, u8[] rsaN, u8[] rsaE, u8[] rsaD, u8[] scalar, u8[] random, u8[] scid,
             u8[] datagram) {
-    u8[] empty = u8[0]();
+    u8[] empty = u8[]();
     u8[] s = clamped(scalar);
 
     if (!parseLong(datagram, 0, true).ok) {
@@ -106,7 +106,7 @@ export struct Server {
     }
 
     // Our ServerHello answers in the group the client offered, with our own share.
-    u8[] sh = serverHello(random, u8[0](), suiteAes128Gcm(), groupX25519(), x25519Base(s));
+    u8[] sh = serverHello(random, u8[](), suiteAes128Gcm(), groupX25519(), x25519Base(s));
     return Server(certDer, rsaN, rsaE, rsaD, s, sh, ch, dcid, cscid, scid);
   }
 
@@ -142,12 +142,12 @@ export struct Server {
     // `streamBytes`, `streamFinished`, `streamPacket` and `handshakeDone` all reach the empty answer
     // from this one. `packages/ssh` is the model the rest of this repository follows — trap on the
     // caller's own values, return a value for every byte a peer sent.
-    if (!this.ok()) { return u8[0](); }
+    if (!this.ok()) { return u8[](); }
     u8[] tagged = parseClientHello(messageBody(this.clientHello), suiteAes128Gcm()).keyShare;
-    if (tagged.len() != 34) { return u8[0](); }
+    if (tagged.len() != 34) { return u8[](); }
     i32 group = (tagged[0] << 8) | tagged[1];
-    if (group != groupX25519()) { return u8[0](); }
-    u8[] key = u8[32]();
+    if (group != groupX25519()) { return u8[](); }
+    u8[] key = u8[].filled(32, 0);
     for (i32 i = 0; i < 32; i++) { key[i] = tagged[2 + i]; }
     return key;
   }
@@ -155,12 +155,12 @@ export struct Server {
   /** The Diffie-Hellman shared secret: our scalar against the client's share. */
   u8[] shared(const this) {
     u8[] theirs = this.clientShare();
-    if (theirs.len() != 32) { return u8[0](); }
+    if (theirs.len() != 32) { return u8[](); }
     // **A small-order point makes this all zeros for every scalar**, so a client sending one would
     // hand the session's keys to anyone watching. Empty is already this function's failure answer.
     // RFC 7748 §6; `packages/tor` and `packages/ssh` have carried the rule and this did not.
     u8[]? dh = x25519Shared(this.scalar, theirs);
-    return dh is null ? u8[0]() : dh!;
+    return dh is null ? u8[]() : dh!;
   }
 
   /** The transcript through the ServerHello, where the handshake keys are taken. */
@@ -193,7 +193,7 @@ export struct Server {
     // is a worse error than the one above.
     u8[] proto = "h3".toBytes();
     i32 alpnLen = 2 + 2 + 2 + 1 + proto.len();
-    u8[] alpn = u8[alpnLen]();
+    u8[] alpn = u8[].filled(alpnLen, 0);
     alpn[0] = (extAlpn() >> 8) & 0xFF;
     alpn[1] = extAlpn() & 0xFF;
     // The extension body is a list, which is itself length-prefixed, whose entries are length-
@@ -208,7 +208,7 @@ export struct Server {
     for (i32 i = 0; i < proto.len(); i++) { alpn[7 + i] = proto[i]; }
 
     i32 total = ext.len() + alpn.len();
-    u8[] body = u8[2 + total]();
+    u8[] body = u8[].filled(2 + total, 0);
     body[0] = (total >> 8) & 0xFF;
     body[1] = total & 0xFF;
     for (i32 i = 0; i < alpn.len(); i++) { body[2 + i] = alpn[i]; }
@@ -224,7 +224,7 @@ export struct Server {
    */
   u8[] handshakeMessages(const this) {
     u8[] dhe = this.shared();
-    if (dhe.len() == 0) { return u8[0](); }
+    if (dhe.len() == 0) { return u8[](); }
 
     u8[] ee = this.extensions();
     u8[] cert = certificate(this.certDer);
@@ -238,7 +238,7 @@ export struct Server {
     // signature — and what it must not be is repeated under one key, which the transcript hash makes
     // impossible since a server signs once per connection.
     u8[] sig = rsaSignPss(this.rsaN, this.rsaD, toSign, 32, sha256(soFar));
-    if (sig.len() == 0) { return u8[0](); }
+    if (sig.len() == 0) { return u8[](); }
     u8[] cv = certificateVerify(sigRsaPssSha256(), sig);
 
     u8[] withCv = joined(soFar, cv);
@@ -256,33 +256,33 @@ export struct Server {
    * saying nothing is what RFC 9000 requires rather than an error to the sender.
    */
   u8[] flight(const this) {
-    if (!this.ok()) { return u8[0](); }
+    if (!this.ok()) { return u8[](); }
     u8[] dhe = this.shared();
-    if (dhe.len() == 0) { return u8[0](); }
+    if (dhe.len() == 0) { return u8[](); }
     u8[] rest = this.handshakeMessages();
-    if (rest.len() == 0) { return u8[0](); }
+    if (rest.len() == 0) { return u8[](); }
 
     // The Initial: an ACK for the client's packet 0, then the ServerHello in a CRYPTO frame. The ACK
     // is not optional — a client that is never acknowledged retransmits its whole 1200-byte flight.
     i32 ackLen = ackFrameLength(0 as i64, 0 as i64, 0 as i64);
     i32 chunk = 1 + 1 + encodedLength(this.hello.len() as i64) + this.hello.len();
-    u8[] initialFrames = u8[ackLen + chunk]();
-    if (writeAck(initialFrames, 0, 0 as i64, 0 as i64, 0 as i64) == 0) { return u8[0](); }
-    if (writeCrypto(initialFrames, ackLen, 0 as i64, this.hello) == 0) { return u8[0](); }
+    u8[] initialFrames = u8[].filled(ackLen + chunk, 0);
+    if (writeAck(initialFrames, 0, 0 as i64, 0 as i64, 0 as i64) == 0) { return u8[](); }
+    if (writeCrypto(initialFrames, ackLen, 0 as i64, this.hello) == 0) { return u8[](); }
     // Sealed under keys derived from the id the *client* invented, which is what both sides can
     // derive before anything is agreed — and `true` for the server's direction.
     u8[] initial = sealLong(TYPE_INITIAL(), this.clientScid, this.scid, initialFrames, 0 as i64,
                             initialKeys(this.clientDcid, true), 0);
-    if (initial.len() == 0) { return u8[0](); }
+    if (initial.len() == 0) { return u8[](); }
 
     // The Handshake packet, under keys that depend on the Diffie-Hellman.
     i32 restLen = 1 + 1 + encodedLength(rest.len() as i64) + rest.len();
-    u8[] handshakeFrames = u8[restLen]();
-    if (writeCrypto(handshakeFrames, 0, 0 as i64, rest) == 0) { return u8[0](); }
+    u8[] handshakeFrames = u8[].filled(restLen, 0);
+    if (writeCrypto(handshakeFrames, 0, 0 as i64, rest) == 0) { return u8[](); }
     InitialKeys hs = handshakeKeys(dhe, this.throughServerHello(), true);
     u8[] handshake = sealLong(TYPE_HANDSHAKE(), this.clientScid, this.scid, handshakeFrames,
                               0 as i64, hs, 0);
-    if (handshake.len() == 0) { return u8[0](); }
+    if (handshake.len() == 0) { return u8[](); }
 
     return joined(initial, handshake);
   }
@@ -295,7 +295,7 @@ export struct Server {
   /** 1-RTT keys for one direction. `isServer` is the sender's side, as everywhere else. */
   InitialKeys applicationKeysFor(const this, bool isServer) {
     u8[] dhe = this.shared();
-    if (dhe.len() == 0) { return InitialKeys(u8[0](), u8[0](), u8[0]()); }
+    if (dhe.len() == 0) { return InitialKeys(u8[](), u8[](), u8[]()); }
     return applicationKeys(dhe, transcriptOf(this.throughFinished()), isServer);
   }
 
@@ -309,16 +309,16 @@ export struct Server {
    */
   u8[] openApplication(const this, u8[] packet) {
     InitialKeys keys = this.applicationKeysFor(false);
-    if (keys.key.len() == 0) { return u8[0](); }
+    if (keys.key.len() == 0) { return u8[](); }
     return openShort(packet, 0, keys, this.scid.len(), true);
   }
 
   /** The bytes a client sent on one stream, out of one 1-RTT packet. Reassembled by offset. */
   u8[] streamBytes(const this, u8[] packet, i64 streamId) {
     u8[] payload = this.openApplication(packet);
-    if (payload.len() == 0) { return u8[0](); }
+    if (payload.len() == 0) { return u8[](); }
     StreamData s = streamFrames(payload, streamId);
-    return s.whole ? s.data : u8[0]();
+    return s.whole ? s.data : u8[]();
   }
 
   /** Whether that packet ended the stream. */
@@ -337,9 +337,9 @@ export struct Server {
    */
   u8[] streamPacket(const this, i64 streamId, i64 offset, u8[] data, bool fin, i64 number) {
     InitialKeys keys = this.applicationKeysFor(true);
-    if (keys.key.len() == 0) { return u8[0](); }
-    u8[] frames = u8[streamFrameLength(streamId, offset, data.len())]();
-    if (writeStream(frames, 0, streamId, offset, data, fin) == 0) { return u8[0](); }
+    if (keys.key.len() == 0) { return u8[](); }
+    u8[] frames = u8[].filled(streamFrameLength(streamId, offset, data.len()), 0);
+    if (writeStream(frames, 0, streamId, offset, data, fin) == 0) { return u8[](); }
     return sealShort(this.clientScid, frames, number, keys, 0);
   }
 
@@ -353,8 +353,8 @@ export struct Server {
    */
   u8[] handshakeDone(const this, i64 number) {
     InitialKeys keys = this.applicationKeysFor(true);
-    if (keys.key.len() == 0) { return u8[0](); }
-    u8[] frames = u8[1]();
+    if (keys.key.len() == 0) { return u8[](); }
+    u8[] frames = u8[].filled(1, 0);
     frames[0] = 0x1e;
     return sealShort(this.clientScid, frames, number, keys, 0);
   }

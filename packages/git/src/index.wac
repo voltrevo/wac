@@ -103,7 +103,7 @@ export Staged parseIndex(u8[] b) {
   // **The trailing SHA-1 covers everything before it**, and checking it is the only integrity this
   // format offers. A truncated index otherwise reads as a shorter one.
   i32 bodyLen = b.len() - 20;
-  u8[] body = u8[bodyLen]();
+  u8[] body = u8[].filled(bodyLen, 0);
   for (i32 i = 0; i < bodyLen; i++) { body[i] = b[i]; }
   u8[] want = sha1(body);
   for (i32 i = 0; i < 20; i++) {
@@ -116,7 +116,7 @@ export Staged parseIndex(u8[] b) {
     if (at + 62 > bodyLen) { return Staged.Unreadable("an entry runs past the end"); }
     i32 mode = be32at(b, at + 24);
     i32 size = be32at(b, at + 36);
-    u8[] name = u8[20]();
+    u8[] name = u8[].filled(20, 0);
     for (i32 k = 0; k < 20; k++) { name[k] = b[at + 40 + k]; }
     i32 flags = (b[at + 60] << 8) | b[at + 61];
     i32 nameLen = flags & 0x0fff;

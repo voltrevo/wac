@@ -18,7 +18,7 @@ import { diagnoseGraph } from "../../src/api.wac";
 const string ENTRY = "main.wac";
 
 string diagnose(string src) {
-  return diagnoseGraph(string[](ENTRY), string[](src), ENTRY);
+  return diagnoseGraph([ENTRY], [src], ENTRY);
 }
 
 /** A stand-in for the real ticket, since `diagnoseGraph` resolves no built-ins. */

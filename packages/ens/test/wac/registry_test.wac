@@ -105,7 +105,7 @@ u8[] unhex(string s) {
   string body = s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s;
   u8[] d = body.toBytes();
   if (d.len() % 2 != 0) { trap; }
-  u8[] out = u8[d.len() / 2]();
+  u8[] out = u8[].filled(d.len() / 2, 0);
   for (i32 i = 0; i < out.len(); i++) {
     out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]);
   }
@@ -123,7 +123,7 @@ string hex(u8[] b) {
 
 string lower(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i] = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + 32 : b[i];
   }
@@ -133,7 +133,7 @@ string lower(string s) {
 /** A JSON array of hex strings, as the node list a proof is. */
 u8[][] nodes(JsonValue v) {
   JsonArray a = items(v);
-  u8[][] out = u8[][a.len()](fill: u8[0]());
+  u8[][] out = u8[][].filled(a.len(), u8[]());
   for (i32 i = 0; i < a.len(); i++) { out[i] = unhex(text(a.get(i))); }
   return out;
 }
@@ -260,11 +260,11 @@ export string test_the_composition_refuses_what_a_liar_would_send(Core core, Cli
                        nodes(member(member(c, "resolverProof"), "proof")));
   t.isFalse(b.ok && b.present, "the slot above answered " + hex(b.address));
   // An empty storage proof against a storage root that is not the empty trie's.
-  Resolved d = ownerOf(stateRoot, registry, name.toBytes(), account, u8[][0](fill: u8[0]()));
+  Resolved d = ownerOf(stateRoot, registry, name.toBytes(), account, u8[][].filled(0, u8[]()));
   t.isFalse(d.ok && d.present, "no storage proof at all answered " + hex(d.address));
 
   // And a state root that is not the one these proofs were taken against.
-  u8[] wrongRoot = u8[stateRoot.len()]();
+  u8[] wrongRoot = u8[].filled(stateRoot.len(), 0);
   for (i32 i = 0; i < stateRoot.len(); i++) { wrongRoot[i] = stateRoot[i]; }
   wrongRoot[31] = wrongRoot[31] ^ 1;
   Resolved e = ownerOf(wrongRoot, registry, name.toBytes(), account,

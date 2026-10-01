@@ -360,9 +360,7 @@ execute" on a loaded machine.
 because a shell reports 127 for "no such command" and the program's own code for "ran and failed",
 and one integer cannot say both.
 
-## Over SSH
-
-[`packages/ssh`](../ssh/README.md)'s server runs its commands through this, so a shell script sent
+## Over [`packages/ssh`](../ssh/README.md)'s server runs its commands through this, so a shell script sent
 over a channel behaves like one:
 
 ```sh

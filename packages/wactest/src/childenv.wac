@@ -49,7 +49,7 @@ export string commandLine(string prog, string[] args) {
 /** `names[i]=values[i]` as the `NAME=value` strings `Cli.execWith` takes. */
 string[] pairs(string[] names, string[] values) {
   i32 n = names.len() < values.len() ? names.len() : values.len();
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = names[i] + "=" + values[i]; }
   return out;
 }
@@ -61,12 +61,12 @@ string[] pairs(string[] names, string[] values) {
  * line, so a value containing a space, a quote or a `$` arrives as it was written.
  */
 export Exec withEnv(Cli cli, string[] names, string[] values, string prog, string[] args) {
-  return cli.execWith(prog, args, u8[0](), pairs(names, values), false, false).wait();
+  return cli.execWith(prog, args, u8[](), pairs(names, values), false, false).wait();
 }
 
 /** The common case: a fixture `HOME`, so `~` resolves somewhere the test built. */
 export Exec withHome(Cli cli, string home, string prog, string[] args) {
-  return withEnv(cli, string[]("HOME"), string[](home), prog, args);
+  return withEnv(cli, ["HOME"], [home], prog, args);
 }
 
 /**
@@ -84,7 +84,7 @@ export Exec withHome(Cli cli, string home, string prog, string[] args) {
  * -i` removes it and then nothing can be found by name.
  */
 export Exec onlyEnv(Cli cli, string[] names, string[] values, string prog, string[] args) {
-  return cli.execWith(prog, args, u8[0](), pairs(names, values), true, false).wait();
+  return cli.execWith(prog, args, u8[](), pairs(names, values), true, false).wait();
 }
 
 /**
@@ -119,6 +119,6 @@ export string onlyEnvLine(string[] names, string[] values, string prog, string[]
 export Exec withoutEnv(Cli cli, string[] names, string prog, string[] args) {
   string line = "unset";
   for (i32 i = 0; i < names.len(); i++) { line = line + " " + names[i]; }
-  return cli.exec("/bin/sh", string[]("-c", line + "; " + commandLine(prog, args)),
-                  u8[0]()).wait();
+  return cli.exec("/bin/sh", ["-c", line + "; " + commandLine(prog, args)],
+                  u8[]()).wait();
 }

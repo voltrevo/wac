@@ -57,7 +57,7 @@ struct Reply {
 
 string lower(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
   }
@@ -98,15 +98,15 @@ i32 statusOf(string line) {
 Reply parseReply(u8[] bytes) {
   string raw = string.fromBytes(bytes);
   i32 split = indexOf(raw, "\r\n\r\n", 0);
-  if (split < 0) { return Reply(-1, string[0](fill: ""), string[0](fill: ""), 0, "", raw); }
+  if (split < 0) { return Reply(-1, string[].filled(0, ""), string[].filled(0, ""), 0, "", raw); }
   string head = raw.slice(0, split);
 
   i32 lines = 1;
   for (i32 i = 0; i + 2 <= head.len(); i++) {
     if (head.slice(i, i + 2) == "\r\n") { lines = lines + 1; }
   }
-  string[] names = string[lines](fill: "");
-  string[] values = string[lines](fill: "");
+  string[] names = string[].filled(lines, "");
+  string[] values = string[].filled(lines, "");
   i32 count = 0;
   i32 status = -1;
   i32 from = 0;
@@ -143,7 +143,7 @@ Answer get(T t, string request) {
   Served s = serve(request.toBytes(), NOW());
   t.isTrue(s.ready, "the server wanted more bytes for \"" + request + "\"");
   if (!s.ready) {
-    return Answer(false, Reply(-1, string[0](fill: ""), string[0](fill: ""), 0, "", ""), 0, false);
+    return Answer(false, Reply(-1, string[].filled(0, ""), string[].filled(0, ""), 0, "", ""), 0, false);
   }
   return Answer(true, parseReply(s.response), s.consumed, s.keepAlive);
 }
@@ -152,21 +152,23 @@ Answer get(T t, string request) {
 
 export string test_every_route_answers() {
   T t = T.create();
-  string[] requests = string[](
+  string[] requests = [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /time HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /echo?a=1&b=hello+world HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /echo HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /b64/aGVsbG8 HTTP/1.1\r\nHost: a\r\n\r\n",
-    "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n");
-  i32[] statuses = i32[](200, 200, 200, 200, 200, 404);
-  string[] bodies = string[](
+    "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n"
+  ];
+  i32[] statuses = [200, 200, 200, 200, 200, 404];
+  string[] bodies = [
     "wac http server\n",
     "{\"now\":\"2020-06-15T10:00:00.000Z\"}",
     "{\"a\":\"1\",\"b\":\"hello world\"}",
     "{}",
     "hello",
-    "no route\n");
+    "no route\n"
+  ];
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
@@ -198,14 +200,15 @@ export string test_the_routes_go_through_the_packages_they_claim_to() {
 
 export string test_bad_input_to_a_route_is_a_400_not_a_crash() {
   T t = T.create();
-  string[] requests = string[](
+  string[] requests = [
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 4\r\n\r\n{bad",
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 9\r\n\r\n{\"a\":1} x",
     "GET /b64/!!!! HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /match/(%3F%3Da)/x HTTP/1.1\r\nHost: a\r\n\r\n",
     "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n",
-    "GET /json HTTP/1.1\r\nHost: a\r\n\r\n");
-  i32[] statuses = i32[](400, 400, 400, 400, 405, 405);
+    "GET /json HTTP/1.1\r\nHost: a\r\n\r\n"
+  ];
+  i32[] statuses = [400, 400, 400, 400, 405, 405];
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
@@ -241,7 +244,7 @@ export string test_consumed_is_exactly_one_message_so_pipelining_works() {
 
   // The remainder is the second request, untouched, and answers on its own.
   u8[] all = (first + second).toBytes();
-  u8[] rest = u8[all.len() - both.consumed]();
+  u8[] rest = u8[].filled(all.len() - both.consumed, 0);
   for (i32 i = both.consumed; i < all.len(); i++) { rest[i - both.consumed] = all[i]; }
   Served tail = serve(rest, NOW());
   t.isTrue(tail.ready, "the second request did not parse");
@@ -273,15 +276,16 @@ export string test_an_incomplete_request_is_not_an_error() {
 
 export string test_keep_alive_follows_the_version_and_the_connection_field() {
   T t = T.create();
-  string[] requests = string[](
+  string[] requests = [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: a\r\nConnection: CLOSE\r\n\r\n",
     // 1.0 is the other way round: closed unless the client asks. Getting this backwards leaves a
     // 1.0 client waiting for a response it has already been sent.
     "GET / HTTP/1.0\r\n\r\n",
-    "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
-  bool[] wants = bool[](true, false, false, false, true);
+    "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+  ];
+  bool[] wants = [true, false, false, false, true];
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
@@ -298,12 +302,13 @@ export string test_a_malformed_request_is_answered_and_the_connection_closed() {
   // Once the framing is in doubt the byte stream is no longer a sequence of messages, so
   // continuing on it is the smuggling condition. The answer is 400 and goodbye, whatever the
   // client asked for.
-  string[] requests = string[](
+  string[] requests = [
     "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
     "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
     "GET / HTTP/1.1\r\nHost : a\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: a\r\nX: 1\r\n 2\r\n\r\n",
-    "GET / HTTP/2.0\r\n\r\n");
+    "GET / HTTP/2.0\r\n\r\n"
+  ];
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
@@ -325,11 +330,12 @@ export string test_responses_are_well_formed_for_our_own_parser() {
   T t = T.create();
   // The server's output should be parseable, and the framing headers should be there exactly
   // once — a response with two Content-Lengths is the same bug as a request with two.
-  string[] requests = string[](
+  string[] requests = [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n",
-    "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n");
+    "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n"
+  ];
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
@@ -352,12 +358,15 @@ export string test_the_status_line_carries_its_reason_phrase() {
   // throws the rest away. The phrase is decoration — a client reads the code — but "HTTP/1.1
   // 404 " is a malformed status line, not a terse one, and RFC 9112 requires the space and
   // the phrase even when the phrase is empty.
-  string[] requests = string[](
+  string[] requests = [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n",
-    "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n\r\n");
-  string[] wants = string[]("HTTP/1.1 200 OK\r\n", "HTTP/1.1 404 Not Found\r\n",
-                            "HTTP/1.1 405 Method Not Allowed\r\n");
+    "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n\r\n"
+  ];
+  string[] wants = [
+                            "HTTP/1.1 200 OK\r\n", "HTTP/1.1 404 Not Found\r\n",
+                            "HTTP/1.1 405 Method Not Allowed\r\n"
+  ];
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }

@@ -65,7 +65,7 @@ export const string ESTABLISH_INTRO_SIG_PREFIX = "Tor establish-intro cell v1";
  * circuit, and the service learns only that the circuit died.
  */
 export u8[] establishIntroCell(u8[] authPublic, u8[] authSeed, u8[] circuitKH) {
-  if (authPublic.len() != 32 || authSeed.len() != 32 || circuitKH.len() == 0) { return u8[0](); }
+  if (authPublic.len() != 32 || authSeed.len() != 32 || circuitKH.len() == 0) { return u8[](); }
 
   Buf b = Buf.create();
   b.push(AUTH_KEY_TYPE_ED25519);
@@ -79,13 +79,13 @@ export u8[] establishIntroCell(u8[] authPublic, u8[] authSeed, u8[] circuitKH) {
   // `end_mac_fields` is here.
   u8[] macSpan = b.bytes();
   u8[] mac = hsMac(circuitKH, macSpan);
-  if (mac.len() != 32) { return u8[0](); }
+  if (mac.len() != 32) { return u8[](); }
   b.pushAll(mac);
 
   // `end_sig_fields` is here — after the MAC, before `sig_len`. See the header.
   u8[] sigSpan = b.bytes();
   u8[] sig = ed25519Sign(authSeed, prefixed(sigSpan));
-  if (sig.len() != 64) { return u8[0](); }
+  if (sig.len() != 64) { return u8[](); }
 
   b.push(0);
   b.push(64);
@@ -106,12 +106,12 @@ export u8[] establishIntroCell(u8[] authPublic, u8[] authSeed, u8[] circuitKH) {
  * skipped these would look up a key it read from the wrong offset.
  */
 export u8[] introduceAuthKey(u8[] cell) {
-  if (cell.len() < 55) { return u8[0](); }
+  if (cell.len() < 55) { return u8[](); }
   for (i32 i = 0; i < 20; i++) {
-    if (cell[i] != 0) { return u8[0](); }
+    if (cell[i] != 0) { return u8[](); }
   }
-  if (cell[20] != AUTH_KEY_TYPE_ED25519) { return u8[0](); }
-  if (cell[21] != 0 || cell[22] != 32) { return u8[0](); }
+  if (cell[20] != AUTH_KEY_TYPE_ED25519) { return u8[](); }
+  if (cell[21] != 0 || cell[22] != 32) { return u8[](); }
   return sub(cell, 23, 55);
 }
 
@@ -144,33 +144,33 @@ export struct EstablishedIntro {
  * two, and a cell that fails it was not sent by the party we are talking to.
  */
 export EstablishedIntro parseEstablishIntro(u8[] cell, u8[] circuitKH) {
-  if (circuitKH.len() == 0) { return EstablishedIntro(false, u8[0]()); }
+  if (circuitKH.len() == 0) { return EstablishedIntro(false, u8[]()); }
   // AUTH_KEY_TYPE[1] AUTH_KEY_LEN[2] AUTH_KEY[32] N_EXT[1] ... MAC[32] SIG_LEN[2] SIG[64]
-  if (cell.len() < 1 + 2 + 32 + 1 + 32 + 2 + 64) { return EstablishedIntro(false, u8[0]()); }
-  if (cell[0] != AUTH_KEY_TYPE_ED25519) { return EstablishedIntro(false, u8[0]()); }
-  if (cell[1] != 0 || cell[2] != 32) { return EstablishedIntro(false, u8[0]()); }
+  if (cell.len() < 1 + 2 + 32 + 1 + 32 + 2 + 64) { return EstablishedIntro(false, u8[]()); }
+  if (cell[0] != AUTH_KEY_TYPE_ED25519) { return EstablishedIntro(false, u8[]()); }
+  if (cell[1] != 0 || cell[2] != 32) { return EstablishedIntro(false, u8[]()); }
   u8[] authKey = sub(cell, 3, 35);
 
   u8[] macSpan = macSpanOf(cell);
   u8[] sigSpan = sigSpanOf(cell);
-  if (macSpan.len() == 0 || sigSpan.len() == 0) { return EstablishedIntro(false, u8[0]()); }
+  if (macSpan.len() == 0 || sigSpan.len() == 0) { return EstablishedIntro(false, u8[]()); }
 
   // The MAC sits immediately after the span it covers.
   i32 macAt = macSpan.len();
-  if (macAt + 32 > cell.len()) { return EstablishedIntro(false, u8[0]()); }
+  if (macAt + 32 > cell.len()) { return EstablishedIntro(false, u8[]()); }
   if (!ctEqual(hsMac(circuitKH, macSpan), sub(cell, macAt, macAt + 32))) {
-    return EstablishedIntro(false, u8[0]());
+    return EstablishedIntro(false, u8[]());
   }
 
   // Then SIG_LEN and the signature. The length is read rather than assumed: a cell claiming a shorter
   // signature and padding the rest would otherwise verify against bytes nobody signed.
   i32 sigLenAt = sigSpan.len();
-  if (sigLenAt + 2 > cell.len()) { return EstablishedIntro(false, u8[0]()); }
+  if (sigLenAt + 2 > cell.len()) { return EstablishedIntro(false, u8[]()); }
   i32 sigLen = (cell[sigLenAt] * 256) + cell[sigLenAt + 1];
-  if (sigLen != 64 || sigLenAt + 2 + 64 > cell.len()) { return EstablishedIntro(false, u8[0]()); }
+  if (sigLen != 64 || sigLenAt + 2 + 64 > cell.len()) { return EstablishedIntro(false, u8[]()); }
   u8[] sig = sub(cell, sigLenAt + 2, sigLenAt + 2 + 64);
 
-  if (!ed25519Verify(authKey, prefixed(sigSpan), sig)) { return EstablishedIntro(false, u8[0]()); }
+  if (!ed25519Verify(authKey, prefixed(sigSpan), sig)) { return EstablishedIntro(false, u8[]()); }
   return EstablishedIntro(true, authKey);
 }
 
@@ -190,13 +190,13 @@ export u8[] prefixed(u8[] span) {
  */
 export u8[] macSpanOf(u8[] cell) {
   i32 end = macEnd(cell);
-  return end < 0 ? u8[0]() : head(cell, end);
+  return end < 0 ? u8[]() : head(cell, end);
 }
 
 /** The span the signature covers — the MAC span plus the 32-byte MAC. */
 export u8[] sigSpanOf(u8[] cell) {
   i32 end = macEnd(cell);
-  if (end < 0 || end + 32 > cell.len()) { return u8[0](); }
+  if (end < 0 || end + 32 > cell.len()) { return u8[](); }
   return head(cell, end + 32);
 }
 
@@ -224,7 +224,7 @@ i32 macEnd(u8[] cell) {
 }
 
 u8[] head(u8[] s, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = s[i]; }
   return out;
 }
@@ -249,7 +249,7 @@ export struct Introduce2 {
 }
 
 Introduce2 noIntroduce2() {
-  return Introduce2(false, u8[0](), u8[0](), u8[0](), u8[0](), u8[0]());
+  return Introduce2(false, u8[](), u8[](), u8[](), u8[](), u8[]());
 }
 
 /**
@@ -277,7 +277,7 @@ export i32 encryptedSectionFrom(u8[] cell) {
 /** The ENCRYPTED section itself — what the replay cache remembers. Empty if the header is bad. */
 export u8[] encryptedSectionOf(u8[] cell) {
   i32 at = encryptedSectionFrom(cell);
-  if (at < 0 || at + 32 + 32 > cell.len()) { return u8[0](); }
+  if (at < 0 || at + 32 + 32 > cell.len()) { return u8[](); }
   return sub(cell, at, cell.len());
 }
 
@@ -358,7 +358,7 @@ export Introduce2 parseIntroduce2(
   u8[] want = hsMac(macKey, sub(cell, 0, macFrom));
   if (!ctEqual(want, sub(cell, macFrom, cell.len()))) { return noIntroduce2(); }
 
-  u8[] plain = aesCtr(encKey, u8[16](), sub(cell, dataFrom, macFrom));
+  u8[] plain = aesCtr(encKey, u8[].filled(16, 0), sub(cell, dataFrom, macFrom));
   return parseIntroducePlaintext(plain, authKey, clientPublic);
 }
 
@@ -416,7 +416,7 @@ Introduce2 parseIntroducePlaintext(u8[] plain, u8[] authKey, u8[] clientPublic) 
  * and never learns which service it joined.
  */
 export u8[] rendezvous1Cell(u8[] rendCookie, u8[] handshakeInfo) {
-  if (rendCookie.len() != 20 || handshakeInfo.len() != 64) { return u8[0](); }
+  if (rendCookie.len() != 20 || handshakeInfo.len() != 64) { return u8[](); }
   Buf b = Buf.create();
   b.pushAll(rendCookie);
   b.pushAll(handshakeInfo);
@@ -432,7 +432,7 @@ export u8[] rendezvous1Cell(u8[] rendCookie, u8[] handshakeInfo) {
  */
 
 u8[] sub(u8[] s, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
   return out;
 }

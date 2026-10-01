@@ -60,8 +60,8 @@ export struct Session {
  * against the fingerprints the caller chose, which is what makes asking a stranger fine.
  */
 export Network bootstrap(Core core, Cli cli, u8[] seedBytes, u8[] authBytes, bool sameSubnetOk) {
-  Network bad = Network(false, Relay[0](), i64[0](), Families(i32[0](), i32[0]()), sameSubnetOk,
-                        u8[0]());
+  Network bad = Network(false, Relay[](), i64[](), Families(i32[](), i32[]()), sameSubnetOk,
+                        u8[]());
 
   string[] seedLines = lines(seedBytes);
   if (seedLines.len() == 0) { core.warn("tor: the seed file is empty"); return bad; }
@@ -86,7 +86,7 @@ export Network bootstrap(Core core, Cli cli, u8[] seedBytes, u8[] authBytes, boo
     return bad;
   }
 
-  Circuit boot = Circuit.create(0x80000001, u8[72]());
+  Circuit boot = Circuit.create(0x80000001, u8[].filled(72, 0));
   u8[] keys = createCircuit(l, boot, seedIdentity, seedOnionKey, core.randomBytes(32).wait());
   if (keys.len() == 0) {
     core.warn("tor: the seed relay did not authenticate");
@@ -140,16 +140,16 @@ export Network bootstrap(Core core, Cli cli, u8[] seedBytes, u8[] authBytes, boo
  * circuit that may not be able to carry the stream.
  */
 export Session buildCircuit(Core core, Cli cli, Network n, i32 port, i32 circId) {
-  Session bad = Session(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false),
-                        Circuit.create(circId, u8[72]()), "");
+  Session bad = Session(false, Link(core, cli, "", -1, u8[](), u8[](), true, u8[](), false),
+                        Circuit.create(circId, u8[].filled(72, 0)), "");
 
-  i32 exit = pick(n.relays, n.weights, n.families, positionExit(), i32[0](), port,
+  i32 exit = pick(n.relays, n.weights, n.families, positionExit(), i32[](), port,
                   n.sameSubnetOk, randomI64(core));
   if (exit < 0) { core.warn("tor: no usable exit"); return bad; }
-  i32 guard = pick(n.relays, n.weights, n.families, positionGuard(), i32[](exit), 0,
+  i32 guard = pick(n.relays, n.weights, n.families, positionGuard(), [exit], 0,
                    n.sameSubnetOk, randomI64(core));
   if (guard < 0) { core.warn("tor: no usable guard"); return bad; }
-  i32 middle = pick(n.relays, n.weights, n.families, positionMiddle(), i32[](exit, guard), 0,
+  i32 middle = pick(n.relays, n.weights, n.families, positionMiddle(), [exit, guard], 0,
                     n.sameSubnetOk, randomI64(core));
   if (middle < 0) { core.warn("tor: no usable middle relay"); return bad; }
 
@@ -164,7 +164,7 @@ export Session buildCircuit(Core core, Cli cli, Network n, i32 port, i32 circId)
     cli.closeSocket(l.sock);
     return bad;
   }
-  u8[] gk = createCircuit(l, Circuit.create(circId, u8[72]()),
+  u8[] gk = createCircuit(l, Circuit.create(circId, u8[].filled(72, 0)),
                           n.relays[guard].identity, n.relays[guard].ntorOnionKey,
                           core.randomBytes(32).wait());
   if (gk.len() == 0) {
@@ -197,16 +197,16 @@ export Session buildCircuit(Core core, Cli cli, Network n, i32 port, i32 circId)
  * single-hop descriptor request outright (`connection_dir_is_anonymous`, 503), and would be right to.
  */
 export Session buildCircuitTo(Core core, Cli cli, Network n, i32 target, i32 circId) {
-  Session bad = Session(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false),
-                        Circuit.create(circId, u8[72]()), "");
+  Session bad = Session(false, Link(core, cli, "", -1, u8[](), u8[](), true, u8[](), false),
+                        Circuit.create(circId, u8[].filled(72, 0)), "");
   if (target < 0 || target >= n.relays.len()) {
     core.warn("tor: no such relay to build to");
     return bad;
   }
-  i32 guard = pick(n.relays, n.weights, n.families, positionGuard(), i32[](target), 0,
+  i32 guard = pick(n.relays, n.weights, n.families, positionGuard(), [target], 0,
                    n.sameSubnetOk, randomI64(core));
   if (guard < 0) { core.warn("tor: no usable guard"); return bad; }
-  i32 middle = pick(n.relays, n.weights, n.families, positionMiddle(), i32[](target, guard), 0,
+  i32 middle = pick(n.relays, n.weights, n.families, positionMiddle(), [target, guard], 0,
                     n.sameSubnetOk, randomI64(core));
   if (middle < 0) { core.warn("tor: no usable middle relay"); return bad; }
 
@@ -221,7 +221,7 @@ export Session buildCircuitTo(Core core, Cli cli, Network n, i32 target, i32 cir
     cli.closeSocket(l.sock);
     return bad;
   }
-  u8[] gk = createCircuit(l, Circuit.create(circId, u8[72]()),
+  u8[] gk = createCircuit(l, Circuit.create(circId, u8[].filled(72, 0)),
                           n.relays[guard].identity, n.relays[guard].ntorOnionKey,
                           core.randomBytes(32).wait());
   if (gk.len() == 0) {
@@ -284,7 +284,7 @@ export i32 circuitFailed() { return -1; }
 const i32 GUARD_TRIES = 8;
 
 export Guard connectGuard(Core core, Cli cli, Network n) {
-  Guard bad = Guard(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false), -1, "");
+  Guard bad = Guard(false, Link(core, cli, "", -1, u8[](), u8[](), true, u8[](), false), -1, "");
 
   // A guard through which no circuit can ever be built is not a guard. The exit is chosen
   // excluding the guard, so a relay that is the only usable exit leaves nothing to exit
@@ -296,7 +296,7 @@ export Guard connectGuard(Core core, Cli cli, Network n) {
   // exit, which is the argument for checking rather than assuming.
   i32 g = -1;
   for (i32 attempt = 0; attempt < GUARD_TRIES && g < 0; attempt++) {
-    i32 cand = pick(n.relays, n.weights, n.families, positionGuard(), i32[0](), 0,
+    i32 cand = pick(n.relays, n.weights, n.families, positionGuard(), i32[](), 0,
                     n.sameSubnetOk, randomI64(core));
     if (cand < 0) { break; }
     bool anotherExitExists = false;
@@ -331,16 +331,16 @@ export Guard connectGuard(Core core, Cli cli, Network n) {
  * first thing they ask for, and there is nothing to be done about it by then.
  */
 export Building startCircuit(Core core, Network n, Guard g, i32 port, i32 circId) {
-  Building bad = Building(circId, Circuit.create(circId, u8[72]()), port, -1, -1, -1,
-                          u8[0](), "");
+  Building bad = Building(circId, Circuit.create(circId, u8[].filled(72, 0)), port, -1, -1, -1,
+                          u8[](), "");
 
-  i32 exit = pick(n.relays, n.weights, n.families, positionExit(), i32[](g.index), port,
+  i32 exit = pick(n.relays, n.weights, n.families, positionExit(), [g.index], port,
                   n.sameSubnetOk, randomI64(core));
   if (exit < 0) {
     core.warn("tor: no exit will carry port " + itoa(port));
     return bad;
   }
-  i32 middle = pick(n.relays, n.weights, n.families, positionMiddle(), i32[](g.index, exit), 0,
+  i32 middle = pick(n.relays, n.weights, n.families, positionMiddle(), [g.index, exit], 0,
                     n.sameSubnetOk, randomI64(core));
   if (middle < 0) { core.warn("tor: no usable middle relay"); return bad; }
 
@@ -348,7 +348,7 @@ export Building startCircuit(Core core, Network n, Guard g, i32 port, i32 circId
   sendCells(g.link, encodeCreate2(circId, handshakeNtor(),
                                   ntorClientRequest(n.relays[g.index].identity,
                                                     n.relays[g.index].ntorOnionKey, eph)));
-  return Building(circId, Circuit.create(circId, u8[72]()), port, 0, middle, exit, eph,
+  return Building(circId, Circuit.create(circId, u8[].filled(72, 0)), port, 0, middle, exit, eph,
                   g.nickname + " -> " + n.relays[middle].nickname + " -> " +
                   n.relays[exit].nickname);
 }
@@ -441,13 +441,13 @@ export struct Awaited {
 export Awaited awaitCommand(Core core, Link l, Circuit c, i32 command) {
   while (!l.dead) {
     u8[] cell = nextCell(l);
-    if (cell.len() == 0) { return Awaited(false, u8[0]()); }
+    if (cell.len() == 0) { return Awaited(false, u8[]()); }
     Received got = c.receive(cell);
     if (got.toSend.len() > 0) { sendCells(l, got.toSend); }
-    if (got.kind == gotDestroyed() || got.kind == gotBroken()) { return Awaited(false, u8[0]()); }
+    if (got.kind == gotDestroyed() || got.kind == gotBroken()) { return Awaited(false, u8[]()); }
     if (got.command == command) { return Awaited(true, got.data); }
   }
-  return Awaited(false, u8[0]());
+  return Awaited(false, u8[]());
 }
 
 /** The index of the relay with this ed25519 identity, or -1. */

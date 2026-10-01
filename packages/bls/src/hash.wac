@@ -43,18 +43,18 @@ const i32 L = 64;
  * 255 bytes — both of which the RFC declares out of range rather than something to truncate.
  */
 export u8[] expandMessageXmd(u8[] msg, u8[] dst, i32 len) {
-  if (dst.len() > 255) { return u8[0](); }
+  if (dst.len() > 255) { return u8[](); }
   i32 ell = (len + SHA256_OUT - 1) / SHA256_OUT;
-  if (ell > 255 || len <= 0) { return u8[0](); }
+  if (ell > 255 || len <= 0) { return u8[](); }
 
   // DST_prime = DST || I2OSP(len(DST), 1)
-  u8[] dstPrime = u8[dst.len() + 1]();
+  u8[] dstPrime = u8[].filled(dst.len() + 1, 0);
   for (i32 i = 0; i < dst.len(); i++) { dstPrime[i] = dst[i]; }
   dstPrime[dst.len()] = dst.len();
 
   // msg_prime = Z_pad || msg || I2OSP(len, 2) || I2OSP(0, 1) || DST_prime
   i32 n = SHA256_BLOCK + msg.len() + 2 + 1 + dstPrime.len();
-  u8[] msgPrime = u8[n]();
+  u8[] msgPrime = u8[].filled(n, 0);
   i32 at = SHA256_BLOCK;                       // Z_pad is already zero
   for (i32 i = 0; i < msg.len(); i++) { msgPrime[at + i] = msg[i]; }
   at += msg.len();
@@ -68,18 +68,18 @@ export u8[] expandMessageXmd(u8[] msg, u8[] dst, i32 len) {
   u8[] b0 = sha256(msgPrime);
 
   // b_1 = H(b_0 || I2OSP(1, 1) || DST_prime)
-  u8[] first = u8[SHA256_OUT + 1 + dstPrime.len()]();
+  u8[] first = u8[].filled(SHA256_OUT + 1 + dstPrime.len(), 0);
   for (i32 i = 0; i < SHA256_OUT; i++) { first[i] = b0[i]; }
   first[SHA256_OUT] = 1;
   for (i32 i = 0; i < dstPrime.len(); i++) { first[SHA256_OUT + 1 + i] = dstPrime[i]; }
   u8[] bi = sha256(first);
 
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   i32 written = 0;
   for (i32 i = 0; i < SHA256_OUT && written < len; i++) { out[written] = bi[i]; written++; }
 
   for (i32 round = 2; round <= ell; round++) {
-    u8[] block = u8[SHA256_OUT + 1 + dstPrime.len()]();
+    u8[] block = u8[].filled(SHA256_OUT + 1 + dstPrime.len(), 0);
     for (i32 i = 0; i < SHA256_OUT; i++) { block[i] = b0[i] ^ bi[i]; }
     block[SHA256_OUT] = round;
     for (i32 i = 0; i < dstPrime.len(); i++) { block[SHA256_OUT + 1 + i] = dstPrime[i]; }
@@ -97,11 +97,11 @@ export u8[] expandMessageXmd(u8[] msg, u8[] dst, i32 len) {
  */
 export Fp2[] hashToFieldFp2(u8[] msg, u8[] dst) {
   u8[] uniform = expandMessageXmd(msg, dst, 2 * 2 * L);
-  Fp2[] out = Fp2[2]();
+  Fp2[] out = Fp2[].defaulted(2);
   if (uniform.len() == 0) { return out; }
   for (i32 i = 0; i < 2; i++) {
-    u8[] c0 = u8[L]();
-    u8[] c1 = u8[L]();
+    u8[] c0 = u8[].filled(L, 0);
+    u8[] c1 = u8[].filled(L, 0);
     for (i32 k = 0; k < L; k++) {
       c0[k] = uniform[L * (2 * i) + k];
       c1[k] = uniform[L * (2 * i + 1) + k];

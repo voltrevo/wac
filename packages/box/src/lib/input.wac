@@ -132,26 +132,26 @@ export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
   // is the process's own stream, which no `Fs` is involved in.
   if (path == "") {
     Change opened = cli.openInput(path).wait();
-    if (opened.ok()) { return Input(true, u8[0](), label, Feed.fromStdin(cli)); }
+    if (opened.ok()) { return Input(true, u8[](), label, Feed.fromStdin(cli)); }
     core.warn(cannotOpen(a.name, path, reasonOf(opened)));
-    return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
+    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
   }
   // A file on the host streams, because it can and because a large one should not be held whole. A file
   // anywhere else is read whole and served from memory — which is where it already was.
   if (fs.isHostPath(path)) {
     Change opened = cli.openInput(path).wait();
-    if (opened.ok()) { return Input(true, u8[0](), label, Feed.fromStdin(cli)); }
+    if (opened.ok()) { return Input(true, u8[](), label, Feed.fromStdin(cli)); }
     // The same translation the whole-file path does, which is the point of the `Change`: `cat missing`
     // now says what `cat` says instead of the host's sentence about `open '/tmp/x'`.
     core.warn(cannotOpen(a.name, path, reasonOf(opened)));
-    return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
+    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
   }
   FileResult f = cap < 0 ? fs.readFile(path) : fs.readSome(path, cap);
   if (!f.ok) {
     core.warn(cannotOpen(a.name, path, readReason(f)));
-    return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
+    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
   }
-  return Input(true, u8[0](), label, Feed.of(cli, f.bytes));
+  return Input(true, u8[](), label, Feed.of(cli, f.bytes));
 }
 
 
@@ -168,7 +168,7 @@ export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
 export Input readAll(Core core, Cli cli, Fs fs, Args a, i32 n) {
   i32 files = operandCount(a, n);
   if (files <= 1) { return readInput(core, cli, fs, a, n); }
-  u8[][] parts = u8[][files](fill: u8[0]());
+  u8[][] parts = u8[][].filled(files, u8[]());
   i32 total = 0;
   for (i32 i = 0; i < files; i++) {
     Input one = readInput(core, cli, fs, a, n + i);
@@ -176,7 +176,7 @@ export Input readAll(Core core, Cli cli, Fs fs, Args a, i32 n) {
     parts[i] = one.bytes;
     total = total + one.bytes.len();
   }
-  u8[] all = u8[total]();
+  u8[] all = u8[].filled(total, 0);
   i32 at = 0;
   for (i32 i = 0; i < files; i++) {
     all.copyFrom(parts[i], 0, at, parts[i].len());
@@ -197,7 +197,7 @@ export Input readInput(Core core, Cli cli, Fs fs, Args a, i32 n) {
     // or directory (os error 2): readfile '/tmp/x'" is one runtime's spelling of four words, and it
     // differed by runtime. `FileResult.fault` is what makes the translation possible — wac-mono 0062.
     core.warn(cannotOpen(a.name, path, readReason(f)));
-    return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
+    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
   }
   return Input(true, f.bytes, label, Feed.of(cli, f.bytes));
 }
@@ -229,9 +229,9 @@ export Chunk nextChunk(Core core, Cli cli, Feed fed, Args a, string label) {
   // one place the three states collapse to two. Asking afterwards is how they come apart again.
   if (fed.why != "") {
     core.warn(readFailed(a.name, label, fed.why));
-    return Chunk(false, false, u8[0]());
+    return Chunk(false, false, u8[]());
   }
-  return Chunk(true, false, u8[0]());
+  return Chunk(true, false, u8[]());
 }
 
 /**
@@ -301,7 +301,7 @@ export Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Fee
       Input in = openStream(core, cli, fs, a, at, -1);
       if (in.ok) { here = in.fed; break; }
       failed = true;
-      if (files <= at + 1) { return Span(false, false, u8[0](), at, fed, true); }
+      if (files <= at + 1) { return Span(false, false, u8[](), at, fed, true); }
       at = at + 1;
     }
   }
@@ -310,7 +310,7 @@ export Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Fee
   // `cat a somedir b` prints `a`, complains, and prints `b`. It used to end the run here, which lost `b`
   // for the same reason and with the same invisibility as the open case.
   if (!got.ok) {
-    if (files <= at + 1) { return Span(false, false, u8[0](), at, here, true); }
+    if (files <= at + 1) { return Span(false, false, u8[](), at, here, true); }
     Span next = nextSpan(core, cli, fs, a, at + 1, false, here);
     return Span(next.ok, next.more, next.bytes, next.at, next.fed, true);
   }
@@ -320,7 +320,7 @@ export Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Fee
     Span next = nextSpan(core, cli, fs, a, at + 1, false, here);
     return Span(next.ok, next.more, next.bytes, next.at, next.fed, next.failed || failed);
   }
-  return Span(true, false, u8[0](), at, here, failed);
+  return Span(true, false, u8[](), at, here, failed);
 }
 
 /**
@@ -392,7 +392,7 @@ export struct Reader {
     }
     // Every one of them was refused, and each has already said so. An empty feed rather than standard
     // input: there is nothing left to read, and reading anything would be inventing an operand.
-    return Reader(true, false, true, operandCount(a, 0), Lines.create(), Feed.of(cli, u8[0]()), out);
+    return Reader(true, false, true, operandCount(a, 0), Lines.create(), Feed.of(cli, u8[]()), out);
   }
 
   /**

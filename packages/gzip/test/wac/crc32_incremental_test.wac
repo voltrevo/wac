@@ -27,7 +27,7 @@ u32 chunked(u8[] d, i32 step) {
   while (i < d.len()) {
     i32 n = step;
     if (i + n > d.len()) { n = d.len() - i; }
-    u8[] part = u8[n]();
+    u8[] part = u8[].filled(n, 0);
     for (i32 k = 0; k < n; k++) { part[k] = d[i + k]; }
     c = crc32Update(t, c, part);
     i += n;
@@ -37,7 +37,7 @@ u32 chunked(u8[] d, i32 step) {
 
 /** `(i * 37 + 11) & 0xff`, the same filling the host-side version used. */
 u8[] filled(i32 n) {
-  u8[] d = u8[n]();
+  u8[] d = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { d[i] = (i * 37 + 11) & 0xff; }
   return d;
 }
@@ -46,10 +46,10 @@ export string test_folding_in_pieces_equals_one_pass_over_the_whole() {
   T t = T.create();
   // The 8-way loop consumes eight bytes at a time with a byte-at-a-time tail, so the sizes that
   // matter are the ones either side of eight and the ones that leave an odd remainder.
-  i32[] sizes = i32[11]();
+  i32[] sizes = i32[].filled(11, 0);
   sizes[0] = 0; sizes[1] = 1; sizes[2] = 7; sizes[3] = 8; sizes[4] = 9; sizes[5] = 15;
   sizes[6] = 16; sizes[7] = 17; sizes[8] = 100; sizes[9] = 1000; sizes[10] = 4096;
-  i32[] steps = i32[9]();
+  i32[] steps = i32[].filled(9, 0);
   steps[0] = 1; steps[1] = 2; steps[2] = 3; steps[3] = 7; steps[4] = 8; steps[5] = 9;
   steps[6] = 64; steps[7] = 1000; steps[8] = 1048576;
 
@@ -66,7 +66,7 @@ export string test_folding_in_pieces_equals_one_pass_over_the_whole() {
 
 export string test_the_empty_input_is_the_empty_checksum_either_way() {
   T t = T.create();
-  u8[] empty = u8[0]();
+  u8[] empty = u8[]();
   t.eqU32(chunked(empty, 1), crc32(empty), "empty input, folded against whole");
   t.eqU32(crc32(empty), 0, "CRC of nothing");
   return t.report();

@@ -8,7 +8,7 @@
 // from: design/lang/0011
 i32 g(bool x, bool y) { return x && y ? 1 : 0; }
 export i32 f() {
-  i32[] list = i32[3]();
+  i32[] list = i32[].filled(3, 0);
   i32 count = 1;
   return g(count < list.len(), count > 0);
 }

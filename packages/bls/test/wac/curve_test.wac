@@ -50,7 +50,7 @@ u8[] mulGeneratorOf(i32 g, u32[] k) {
 
 /** A small scalar as the eight little-endian words the probe takes. */
 u32[] scalar(i32 k) {
-  u32[] out = u32[8](fill: 0 as@ u32);
+  u32[] out = u32[].filled(8, 0 as@ u32);
   out[0] = k as@ u32;
   return out;
 }
@@ -135,7 +135,7 @@ JsonArray? memberArray(JsonValue v, string key) {
 }
 
 Vectors vectors(T t, Cli cli, i32 g) {
-  Vectors none = Vectors(false, Good[0](fill: Good("", "", "")), Bad[0](fill: Bad("", "")));
+  Vectors none = Vectors(false, Good[].filled(0, Good("", "", "")), Bad[].filled(0, Bad("", "")));
   string path = "packages/bls/test/" + (g == G1() ? "g1.json" : "g2.json");
   FileResult f = cli.readFile(path).wait();
   t.isTrue(f.ok, path + " could not be read: " + f.error);
@@ -149,12 +149,12 @@ Vectors vectors(T t, Cli cli, i32 g) {
   t.isTrue(!(goods is null) && !(bads is null), path + " has no `good` or `bad`");
   if ((goods is null) || (bads is null)) { return none; }
 
-  Good[] good = Good[goods!.len()](fill: Good("", "", ""));
+  Good[] good = Good[].filled(goods!.len(), Good("", "", ""));
   for (i32 i = 0; i < goods!.len(); i++) {
     JsonValue c = goods!.get(i);
     good[i] = Good(memberText(c, "hex"), coordinate(c, "x"), coordinate(c, "y"));
   }
-  Bad[] bad = Bad[bads!.len()](fill: Bad("", ""));
+  Bad[] bad = Bad[].filled(bads!.len(), Bad("", ""));
   for (i32 i = 0; i < bads!.len(); i++) {
     JsonValue c = bads!.get(i);
     bad[i] = Bad(memberText(c, "why"), memberText(c, "hex"));
@@ -207,7 +207,7 @@ export string test_every_malformed_encoding_is_refused_and_refused_as_malformed(
   // Status 1 means the *encoding* was rejected, which is the correct answer for all of these — a
   // point that decodes and then fails the curve check would be status 2, and that would mean the
   // encoding reader let something through it should have caught.
-  i32[][] lengths = i32[][](i32[](0, 47, 49, 96), i32[](0, 48, 95, 97, 192));
+  i32[][] lengths = [[0, 47, 49, 96] as i32[], [0, 48, 95, 97, 192] as i32[]];
   for (i32 g = 0; g < 2; g++) {
     Vectors v = vectors(t, cli, g);
     if (!v.ok) { continue; }
@@ -219,7 +219,7 @@ export string test_every_malformed_encoding_is_refused_and_refused_as_malformed(
     }
     // Wrong lengths too, since the caller controls those.
     for (i32 i = 0; i < lengths[g].len(); i++) {
-      t.isFalse(statusOf(g, u8[lengths[g][i]]()) == 0,
+      t.isFalse(statusOf(g, u8[].filled(lengths[g][i], 0)) == 0,
                 groupName(g) + ": a " + itoa(lengths[g][i]) + "-byte input was accepted");
     }
   }

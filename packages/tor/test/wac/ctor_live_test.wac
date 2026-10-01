@@ -108,7 +108,7 @@ struct Net {
   Daemon[] relays;
 }
 
-Net failed(string why) { return Net(false, why, "", "", "", Daemon[0](fill: Daemon(-1, "", ""))); }
+Net failed(string why) { return Net(false, why, "", "", "", Daemon[].filled(0, Daemon(-1, "", ""))); }
 
 const string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
                     " -M v.consensus.micro -m v.consensus.mds";
@@ -135,9 +135,9 @@ string relaysSaid(Cli cli, Daemon[] relays) {
  */
 Net standUpNetwork(Core core, Cli cli, string dir) {
   string relayd = builtProgram(cli, "packages/tor/src/relayd.wac", "ctorrelayd",
-                               string[]("--allow-read", "--allow-write", "--allow-net"));
+                               ["--allow-read", "--allow-write", "--allow-net"]);
   string gendesc = builtProgram(cli, "packages/tor/src/gendesc.wac", "ctorgendesc",
-                                string[]("--allow-read", "--allow-write"));
+                                ["--allow-read", "--allow-write"]);
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
 
   // Distinct random seeds, so no two relays derive the same identity — and random rather than fixed,
@@ -146,7 +146,7 @@ Net standUpNetwork(Core core, Cli cli, string dir) {
     cli.writeFile(dir + "/s" + itoa(n), core.randomBytes(32).wait()).wait();
   }
 
-  Daemon[] relays = Daemon[3](fill: Daemon(-1, "", ""));
+  Daemon[] relays = Daemon[].filled(3, Daemon(-1, "", ""));
   for (i32 n = 1; n <= 3; n++) {
     string extra = n == 1 ? "--seedline seed.txt " : "";
     string line = quoted(wac) + " " + quoted(relayd) +
@@ -165,8 +165,10 @@ Net standUpNetwork(Core core, Cli cli, string dir) {
   }
 
   Exec vote = cli.exec("/bin/sh",
-    string[]("-c", "cd " + quoted(dir) + " && exec " + quoted(wac) + " " + quoted(gendesc) +
-                   " keys.json cert vote v - r1.desc r2.desc r3.desc"), u8[0]()).wait();
+    [
+                   "-c", "cd " + quoted(dir) + " && exec " + quoted(wac) + " " + quoted(gendesc) +
+                   " keys.json cert vote v - r1.desc r2.desc r3.desc"
+    ], u8[]()).wait();
   if (!vote.ran() || vote.status != 0) {
     return failed("gendesc failed: " + string.fromBytes(vote.stderr) +
                   string.fromBytes(vote.stdout));
@@ -200,7 +202,7 @@ Net standUpNetwork(Core core, Cli cli, string dir) {
 
 /** Whitespace-separated fields, which is what `seed.txt` is. */
 string[] words(string text) {
-  string[] out = string[8](fill: "");
+  string[] out = string[].filled(8, "");
   i32 n = 0;
   string cur = "";
   for (i32 i = 0; i <= text.len(); i++) {
@@ -212,7 +214,7 @@ string[] words(string text) {
       cur = cur + c;
     }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -285,8 +287,8 @@ export string test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays(
   t.isTrue(net.ok, net.why);
   if (!net.ok) { stopAll(cli, net.relays); return t.report(); }
 
-  string[] failure = string[1](fill: "");
-  Daemon tor = startTor(core, cli, dir, net, string[]("SocksPort 0"), "Bootstrapped 100%", failure);
+  string[] failure = string[].filled(1, "");
+  Daemon tor = startTor(core, cli, dir, net, ["SocksPort 0"], "Bootstrapped 100%", failure);
   t.eqStr(failure[0], "", "tor bootstrapped");
   string log = torLog(cli, dir);
 
@@ -294,12 +296,13 @@ export string test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays(
     // **Bootstrapping is not one event**, and which stages it passed is the interesting part. A tor
     // that reached 100% from a *cached* consensus would prove nothing, which is why the DataDirectory
     // is fresh per run — every one of these had to come off our wire.
-    string[] stages = string[](
+    string[] stages = [
       "Bootstrapped 30% (loading_status): Loading networkstatus consensus",
       "Bootstrapped 40% (loading_keys): Loading authority key certs",
       "Bootstrapped 50% (loading_descriptors): Loading relay descriptors",
       "Bootstrapped 75% (enough_dirinfo)",
-      "Bootstrapped 100% (done)");
+      "Bootstrapped 100% (done)"
+    ];
     for (i32 i = 0; i < stages.len(); i++) {
       t.isTrue(contains(log, stages[i]),
                "tor logged \"" + stages[i] + "\"\n" + tail(log, 25));
@@ -379,16 +382,18 @@ export string test_a_c_tor_carries_a_stream_through_our_relays_both_directions(C
 
   // `TestingTorNetwork` sets `ClientRejectInternalAddresses 0`, which is what makes a loopback target
   // reachable through a circuit at all — on a real network a client refuses one, correctly.
-  string[] failure = string[1](fill: "");
-  Daemon tor = startTor(core, cli, dir, net, string[]("SocksPort " + itoa(socksPort)),
+  string[] failure = string[].filled(1, "");
+  Daemon tor = startTor(core, cli, dir, net, ["SocksPort " + itoa(socksPort)],
                         "Bootstrapped 100%", failure);
   t.eqStr(failure[0], "", "tor bootstrapped");
 
   if (failure[0] == "") {
-    Exec got = withoutEnv(cli, string[]("no_proxy", "NO_PROXY", "http_proxy", "HTTP_PROXY"),
-      "curl", string[]("--silent", "--show-error", "--max-time", "60", "--noproxy", "",
+    Exec got = withoutEnv(cli, ["no_proxy", "NO_PROXY", "http_proxy", "HTTP_PROXY"],
+      "curl", [
+                       "--silent", "--show-error", "--max-time", "60", "--noproxy", "",
                        "--socks5-hostname", "127.0.0.1:" + itoa(socksPort),
-                       "http://127.0.0.1:" + itoa(targetPort) + "/body.txt"));
+                       "http://127.0.0.1:" + itoa(targetPort) + "/body.txt"
+      ]);
     t.eqI32(got.status, 0, "curl through tor: " + string.fromBytes(got.stderr) +
                            "\n--- tor.log ---\n" + tail(torLog(cli, dir), 25));
 

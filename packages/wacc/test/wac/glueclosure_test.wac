@@ -29,7 +29,7 @@ const string ENTRY = "/t/main.wac";
 const string SOURCE = "export struct Runner {\n" +
                       "  fn<i32(u8[][])> run;\n" +
                       "}\n" +
-                      "export i32 drive(Runner r) { return r.run(u8[][](u8[1](), u8[2]())); }\n";
+                      "export i32 drive(Runner r) { return r.run([u8[].filled(1, 0), u8[].filled(2, 0)]); }\n";
 
 bool isIdent(i32 c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
@@ -59,8 +59,8 @@ export string test_every_helper_the_glue_calls_is_one_the_glue_defines() {
   if (!a.ok) { return t.report(); }
 
   u8[] b = a.glue.toBytes();
-  string[] defined = string[64](fill: "");
-  string[] called = string[64](fill: "");
+  string[] defined = string[].filled(64, "");
+  string[] called = string[].filled(64, "");
   i32 nDefined = 0;
   i32 nCalled = 0;
 
@@ -89,14 +89,14 @@ export string test_every_helper_the_glue_calls_is_one_the_glue_defines() {
                         itoa(nCalled));
   t.isTrue(nDefined > 0, "and declares at least one name, " + itoa(nDefined) + " of them");
 
-  string[] missing = string[nCalled](fill: "");
+  string[] missing = string[].filled(nCalled, "");
   i32 nMissing = 0;
   for (i32 i = 0; i < nCalled; i++) {
     if (has(defined, called[i])) { continue; }
     missing[nMissing] = called[i];
     nMissing = nMissing + 1;
   }
-  string[] named = string[nMissing](fill: "");
+  string[] named = string[].filled(nMissing, "");
   for (i32 i = 0; i < nMissing; i++) { named[i] = missing[i]; }
   t.eqI32(nMissing, 0,
           "the glue calls " + joined(named, ", ") + " and defines " +

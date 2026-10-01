@@ -69,7 +69,7 @@ export enum Verdict {
  * `--filter` matches by **substring**, as Deno's plain filter does.
  */
 export string[] wacTestArgs(string entry, string filter) {
-  return filter == "" ? string[]("test", entry) : string[]("test", "--filter", filter, entry);
+  return filter == "" ? ["test", entry] : ["test", "--filter", filter, entry];
 }
 
 export Verdict classify(i32 code) {
@@ -146,17 +146,17 @@ export string[][] splitHalves(string[] runDirs, string[] hostlessPackages,
                               string[] nativeRunnableDirs) {
   i32 wacs = 0;
   for (i32 i = 0; i < runDirs.len(); i++) {
-    if (isWacRun(string[](runDirs[i]), hostlessPackages, nativeRunnableDirs)) { wacs = wacs + 1; }
+    if (isWacRun([runDirs[i]], hostlessPackages, nativeRunnableDirs)) { wacs = wacs + 1; }
   }
   i32 denos = runDirs.len() - wacs;
-  if (wacs == 0 || denos == 0) { return string[][](runDirs); }
+  if (wacs == 0 || denos == 0) { return [runDirs]; }
 
-  string[] wac = string[wacs](fill: "");
-  string[] deno = string[denos](fill: "");
+  string[] wac = string[].filled(wacs, "");
+  string[] deno = string[].filled(denos, "");
   i32 w = 0;
   i32 d = 0;
   for (i32 i = 0; i < runDirs.len(); i++) {
-    if (isWacRun(string[](runDirs[i]), hostlessPackages, nativeRunnableDirs)) {
+    if (isWacRun([runDirs[i]], hostlessPackages, nativeRunnableDirs)) {
       wac[w] = runDirs[i];
       w = w + 1;
     } else {
@@ -164,7 +164,7 @@ export string[][] splitHalves(string[] runDirs, string[] hostlessPackages,
       d = d + 1;
     }
   }
-  return string[][](wac, deno);
+  return [wac, deno];
 }
 
 /**

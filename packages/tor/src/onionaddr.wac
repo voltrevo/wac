@@ -39,14 +39,14 @@ u8[] checksumPrefix() { return ".onion checksum".toBytes(); }
  * wrong-length key has a bug, and producing a plausible address from it would hide that.
  */
 export u8[] addressChecksum(u8[] pubkey) {
-  if (pubkey.len() != ED25519_PUBKEY_LEN) { return u8[0](); }
+  if (pubkey.len() != ED25519_PUBKEY_LEN) { return u8[](); }
   u8[] pre = checksumPrefix();
-  u8[] buf = u8[pre.len() + ED25519_PUBKEY_LEN + 1]();
+  u8[] buf = u8[].filled(pre.len() + ED25519_PUBKEY_LEN + 1, 0);
   for (i32 i = 0; i < pre.len(); i++) { buf[i] = pre[i]; }
   for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { buf[pre.len() + i] = pubkey[i]; }
   buf[pre.len() + ED25519_PUBKEY_LEN] = VERSION;
   u8[] h = sha3_256(buf);
-  u8[] out = u8[2]();
+  u8[] out = u8[].filled(2, 0);
   out[0] = h[0];
   out[1] = h[1];
   return out;
@@ -60,14 +60,14 @@ export u8[] addressChecksum(u8[] pubkey) {
  */
 export u8[] onionAddress(u8[] pubkey) {
   u8[] ck = addressChecksum(pubkey);
-  if (ck.len() != 2) { return u8[0](); }
-  u8[] raw = u8[ED25519_PUBKEY_LEN + 3]();
+  if (ck.len() != 2) { return u8[](); }
+  u8[] raw = u8[].filled(ED25519_PUBKEY_LEN + 3, 0);
   for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { raw[i] = pubkey[i]; }
   raw[ED25519_PUBKEY_LEN] = ck[0];
   raw[ED25519_PUBKEY_LEN + 1] = ck[1];
   raw[ED25519_PUBKEY_LEN + 2] = VERSION;
   u8[] upper = b32encode(raw, ALPHABET_STANDARD(), false);
-  u8[] out = u8[upper.len()]();
+  u8[] out = u8[].filled(upper.len(), 0);
   for (i32 i = 0; i < upper.len(); i++) {
     i32 c = upper[i];
     out[i] = (c >= 65 && c <= 90) ? (c + 32) : c;
@@ -89,23 +89,23 @@ export u8[] onionAddress(u8[] pubkey) {
  */
 export u8[] onionPubkey(u8[] address) {
   u8[] a = stripSuffix(address);
-  if (a.len() != ONION_ADDRESS_LEN) { return u8[0](); }
-  u8[] upper = u8[a.len()]();
+  if (a.len() != ONION_ADDRESS_LEN) { return u8[](); }
+  u8[] upper = u8[].filled(a.len(), 0);
   for (i32 i = 0; i < a.len(); i++) {
     i32 c = a[i];
     upper[i] = (c >= 97 && c <= 122) ? (c - 32) : c;
   }
   u8[]? raw = b32decode(upper, ALPHABET_STANDARD());
-  if (raw is null) { return u8[0](); }
-  if (raw!.len() != ED25519_PUBKEY_LEN + 3) { return u8[0](); }
-  if (raw![ED25519_PUBKEY_LEN + 2] != VERSION) { return u8[0](); }
+  if (raw is null) { return u8[](); }
+  if (raw!.len() != ED25519_PUBKEY_LEN + 3) { return u8[](); }
+  if (raw![ED25519_PUBKEY_LEN + 2] != VERSION) { return u8[](); }
 
-  u8[] pubkey = u8[ED25519_PUBKEY_LEN]();
+  u8[] pubkey = u8[].filled(ED25519_PUBKEY_LEN, 0);
   for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { pubkey[i] = raw![i]; }
   u8[] want = addressChecksum(pubkey);
-  if (want.len() != 2) { return u8[0](); }
+  if (want.len() != 2) { return u8[](); }
   if (raw![ED25519_PUBKEY_LEN] != want[0] || raw![ED25519_PUBKEY_LEN + 1] != want[1]) {
-    return u8[0]();
+    return u8[]();
   }
   return pubkey;
 }
@@ -120,7 +120,7 @@ u8[] stripSuffix(u8[] address) {
     i32 lower = (c >= 65 && c <= 90) ? (c + 32) : c;
     if (lower != suffix[i]) { return address; }
   }
-  u8[] out = u8[at]();
+  u8[] out = u8[].filled(at, 0);
   for (i32 i = 0; i < at; i++) { out[i] = address[i]; }
   return out;
 }

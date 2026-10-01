@@ -64,7 +64,7 @@ string caseProgram(string expr) {
 
 /** Every overflow, written as it is called. */
 string[] overflows() {
-  return string[](
+  return [
     "addI32(2147483647, 1)",
     "subI32(-2147483648, 1)",
     "mulI32(2147483647, 2)",
@@ -79,7 +79,8 @@ string[] overflows() {
     // `MIN * -1` overflows and must trap rather than divide — the guard the reference writes twice,
     // once for each operand order.
     "mulI64(-9223372036854775808, -1) as~ i32",
-    "mulI64(-1, -9223372036854775808) as~ i32");
+    "mulI64(-1, -9223372036854775808) as~ i32"
+  ];
 }
 
 /**
@@ -126,15 +127,15 @@ string foldProgram(i32 shift) {
 
 /** Emit `source` with or without the flag, run it, and say what happened. */
 Ran runWith(Cli cli, string source, bool flagOn, string dir, string name) {
-  string[] paths = string[](ENTRY);
-  string[] sources = string[](source);
+  string[] paths = [ENTRY];
+  string[] sources = [source];
   u8[] wasm = flagOn ? emitFilesChecked(paths, sources, ENTRY) : emitFiles(paths, sources, ENTRY);
   // **A module the binary will run carries its own manifest.** `emitFilesSelfDescribing` is the
   // usual way to that, and there is no checked spelling of it — so the manifest is put on by hand,
   // the same call it makes. Without one the binary answers "carries no wac.manifest section" and
   // exits 1, which is neither a trap nor an answer and reads like both.
   return runModule(cli, withManifestSection(wasm, manifestFiles(wasm, paths, sources, ENTRY, name, 0)),
-                   dir, name, string[0](fill: ""));
+                   dir, name, string[].filled(0, ""));
 }
 
 export string test_checked_arithmetic_traps_exactly_where_the_value_does_not_fit(
@@ -142,7 +143,7 @@ export string test_checked_arithmetic_traps_exactly_where_the_value_does_not_fit
   T t = T.create();
   string dir = scratchDir(cli);
   string[] cases = overflows();
-  string[] wrong = string[cases.len() * 2](fill: "");
+  string[] wrong = string[].filled(cases.len() * 2, "");
   i32 nWrong = 0;
 
   for (i32 i = 0; i < cases.len(); i++) {
@@ -164,7 +165,7 @@ export string test_checked_arithmetic_traps_exactly_where_the_value_does_not_fit
     }
   }
 
-  string[] said = string[nWrong](fill: "");
+  string[] said = string[].filled(nWrong, "");
   for (i32 i = 0; i < nWrong; i++) { said[i] = wrong[i]; }
   t.eqI32(nWrong, 0, itoa(nWrong) + " disagreement(s): " + joined(said, "; "));
   return t.report();
@@ -175,7 +176,7 @@ export string test_the_in_range_answers_are_the_same_either_way(Core core, Cli c
   // over all nineteen says so in eight runs instead of a hundred and fifty.
   T t = T.create();
   string dir = scratchDir(cli);
-  i32[] shifts = i32[](0, 8, 16, 24);
+  i32[] shifts = [0, 8, 16, 24];
   i32 off = 0;
   i32 on = 0;
   bool ran = true;
@@ -243,13 +244,14 @@ export string test_the_flag_adds_code_and_the_emitter_is_deterministic(Core core
 
   // Chosen for arithmetic: an integer formatter, a hash, a byte buffer and a varint codec. Each is
   // a whole closure, so this is four real builds rather than four files.
-  string[] entries = string[](
+  string[] entries = [
     "packages/fmt/src/itoa.wac",
     "packages/crypto/src/sha256.wac",
     "packages/bytes/src/buf.wac",
-    "packages/quic/src/varint.wac");
+    "packages/quic/src/varint.wac"
+  ];
 
-  string[] differ = string[16](fill: "");
+  string[] differ = string[].filled(16, "");
   i32 nDiffer = 0;
   i32 compared = 0;
   for (i32 i = 0; i < entries.len(); i++) {
@@ -283,7 +285,7 @@ export string test_the_flag_adds_code_and_the_emitter_is_deterministic(Core core
   }
 
   t.eqI32(compared, entries.len(), "every named entry was built");
-  string[] said = string[nDiffer](fill: "");
+  string[] said = string[].filled(nDiffer, "");
   for (i32 i = 0; i < nDiffer; i++) { said[i] = differ[i]; }
   t.eqI32(nDiffer, 0, itoa(nDiffer) + " module(s) differ: " + joined(said, "; "));
   return t.report();

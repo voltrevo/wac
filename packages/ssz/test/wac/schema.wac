@@ -33,7 +33,7 @@ export struct Schema {
   i32 nk;
 
   Schema create() {
-    return Schema(i32[1024](), 0, i32[256](), 0, string[256](fill: ""), i32[256](), 0);
+    return Schema(i32[].filled(1024, 0), 0, i32[].filled(256, 0), 0, string[].filled(256, ""), i32[].filled(256, 0), 0);
   }
 
   i32 add(this, i32 kind, i32 param, i32 child, i32 count) {
@@ -80,13 +80,13 @@ export struct Schema {
 
   /** The types, trimmed to what was built — what `hashTreeRoot` is handed. */
   i32[] t(const this) {
-    i32[] out = i32[this.nt]();
+    i32[] out = i32[].filled(this.nt, 0);
     for (i32 i = 0; i < this.nt; i++) { out[i] = this.types[i]; }
     return out;
   }
 
   i32[] f(const this) {
-    i32[] out = i32[this.nf]();
+    i32[] out = i32[].filled(this.nf, 0);
     for (i32 i = 0; i < this.nf; i++) { out[i] = this.fields[i]; }
     return out;
   }

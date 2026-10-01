@@ -73,8 +73,8 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
         if (unread(core, out, a, fed, f)) { status = 1; }
         continue;
       }
-      u8[][] held = u8[][want](fill: u8[0]());
-      bool[] ended = bool[want](fill: true);
+      u8[][] held = u8[][].filled(want, u8[]());
+      bool[] ended = bool[].filled(want, true);
       i32 seen = 0;
       while (true) {
         Line l = nextLine(s, fed);
@@ -131,7 +131,7 @@ bool headBytes(Sink out, Feed fed, i32 want, bool allButLast) {
       if (chunk.len() == 0) { return true; }
       i32 take = chunk.len();
       if (sent + take > want) { take = want - sent; }
-      u8[] piece = u8[take]();
+      u8[] piece = u8[].filled(take, 0);
       piece.copyFrom(chunk, 0, 0, take);
       if (!emitTo(out, piece, false)) { return false; }
       sent = sent + take;
@@ -141,7 +141,7 @@ bool headBytes(Sink out, Feed fed, i32 want, bool allButLast) {
   u8[] all = fed.rest();
   i32 upTo = all.len() - want;
   if (upTo < 0) { upTo = 0; }
-  u8[] head = u8[upTo]();
+  u8[] head = u8[].filled(upTo, 0);
   head.copyFrom(all, 0, 0, upTo);
   return emitTo(out, head, false);
 }

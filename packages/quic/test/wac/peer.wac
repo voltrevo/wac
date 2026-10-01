@@ -39,7 +39,7 @@ export string readIfPresent(Cli cli, string path) {
 }
 
 /** A short sleep. Polling for a file is a `stat`, so the loops around here sleep rather than spin. */
-export void pause(Cli cli) { cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait(); }
+export void pause(Cli cli) { cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait(); }
 
 /**
  * Start one and wait for it to publish its port.
@@ -77,12 +77,12 @@ export void stopServer(Cli cli, Server s) {
 /** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
 export u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny(i32[](p.id), ms) < 0) {
+  if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
-    return u8[0]();
+    return u8[]();
   }
   Datagram d = p.wait();
-  return d.error == "" ? d.bytes : u8[0]();
+  return d.error == "" ? d.bytes : u8[]();
 }
 
 /**
@@ -97,13 +97,13 @@ export u8[] ask(T t, Core core, Cli cli, string name, u8[] datagram, i32 ms) {
   if (!s.ok) {
     t.fail(s.error);
     stopServer(cli, s);
-    return u8[0]();
+    return u8[]();
   }
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     t.fail("our socket did not bind — " + sock.error);
     stopServer(cli, s);
-    return u8[0]();
+    return u8[]();
   }
   cli.sendTo(sock.handle, "127.0.0.1", s.port, datagram).wait();
   u8[] got = receiveWithin(core, cli, sock, ms);
@@ -122,7 +122,7 @@ export u8[] handshake(Core core, Cli cli, Socket sock, Server s, u8[] dcid, u8[]
                       string name) {
   cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid, scid, name)).wait();
   u8[] reply = receiveWithin(core, cli, sock, 5000);
-  if (reply.len() == 0) { return u8[0](); }
+  if (reply.len() == 0) { return u8[](); }
   cli.sendTo(sock.handle, "127.0.0.1", s.port, clientFinishedPacket(reply, dcid, scid, name)).wait();
   return reply;
 }

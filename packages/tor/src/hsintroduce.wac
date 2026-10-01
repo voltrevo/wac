@@ -66,8 +66,8 @@ export struct Introduction {
 }
 
 Introduction refused(i32 error) {
-  return Introduction(error, RendPoint(error, u8[0](), 0, u8[0](), u8[0]()), u8[0](), u8[0](),
-                      u8[0]());
+  return Introduction(error, RendPoint(error, u8[](), 0, u8[](), u8[]()), u8[](), u8[](),
+                      u8[]());
 }
 
 /**
@@ -104,7 +104,7 @@ export Introduction handleIntroduce2(
   // 4. Where the client wants to meet.
   RendPoint where = rendezvousPoint(intro.linkSpecifiers, allowPrivate);
   if (where.error != REND_OK) {
-    return Introduction(INTRO2_BAD_RENDEZVOUS, where, u8[0](), u8[0](), intro.clientPublic);
+    return Introduction(INTRO2_BAD_RENDEZVOUS, where, u8[](), u8[](), intro.clientPublic);
   }
 
   // 5. The handshake. `serviceRendezvousKeys` returns AUTH then the key seed; RENDEZVOUS1 carries our
@@ -112,7 +112,7 @@ export Introduction handleIntroduce2(
   u8[] keys = serviceRendezvousKeys(introAuthKey, introEncSecret, serviceEphemeralSecret,
                                     intro.clientPublic);
   if (keys.len() != 64) { return refused(INTRO2_NO_KEYS); }
-  u8[] handshake = u8[64]();
+  u8[] handshake = u8[].filled(64, 0);
   u8[] ephemeralPublic = x25519Base(serviceEphemeralSecret);
   for (i32 i = 0; i < 32; i++) { handshake[i] = ephemeralPublic[i]; }
   for (i32 i = 0; i < 32; i++) { handshake[32 + i] = keys[i]; }
@@ -120,7 +120,7 @@ export Introduction handleIntroduce2(
   u8[] cellOut = rendezvous1Cell(intro.rendCookie, handshake);
   if (cellOut.len() == 0) { return refused(INTRO2_NO_KEYS); }
 
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = keys[32 + i]; }
   return Introduction(INTRO2_OK, where, cellOut, seed, intro.clientPublic);
 }

@@ -55,7 +55,7 @@ struct Rng {
   i64 s;
   Rng create(i64 seed) { return Rng(seed); }
   u8[] bytes(this) {
-    u8[] o = u8[32]();
+    u8[] o = u8[].filled(32, 0);
     for (i32 i = 0; i < 32; i++) {
       this.s = (this.s * 6364136223846793005 + 1442695040888963407);
       o[i] = ((this.s >> 33) & 255) as! i32;
@@ -71,7 +71,7 @@ bool eq(i64[] a, i64[] b) { return feEquals(a, b) == 1; }
 export string test_the_anchors_that_name_this_field() {
   // Without these, everything below holds in any ring. With them, it is this one.
   T t = T.create();
-  u8[] pMinus1 = u8[32]();
+  u8[] pMinus1 = u8[].filled(32, 0);
   pMinus1[0] = 0xEC;                                  // 2^255 - 20
   for (i32 i = 1; i < 31; i++) { pMinus1[i] = 0xFF; }
   pMinus1[31] = 0x7F;
@@ -80,12 +80,12 @@ export string test_the_anchors_that_name_this_field() {
 
   // The same fact from the decoding side: an encoding of p itself must reduce to zero,
   // and one more than p to one. A field modulo 2^255-18 fails the second.
-  u8[] pBytes = u8[32]();
+  u8[] pBytes = u8[].filled(32, 0);
   pBytes[0] = 0xED;                                   // 2^255 - 19
   for (i32 i = 1; i < 31; i++) { pBytes[i] = 0xFF; }
   pBytes[31] = 0x7F;
   t.isTrue(feIsZero(feFromBytes(pBytes)) == 1, "p encodes as zero");
-  u8[] pPlus1 = u8[32]();
+  u8[] pPlus1 = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { pPlus1[i] = pBytes[i]; }
   pPlus1[0] = 0xEE;                                   // 2^255 - 18
   t.isTrue(eq(feFromBytes(pPlus1), feOne()), "p + 1 encodes as one");
@@ -140,7 +140,7 @@ export string test_the_small_multiply_matches_repeated_addition() {
   // it is the reference — no host needed, and it covers every multiplier that exists.
   T t = T.create();
   Rng r = Rng.create(747796405);
-  i64[] multipliers = i64[](1, 2, 3, 4, 8, 19, 121665, 121666);
+  i64[] multipliers = [1, 2, 3, 4, 8, 19, 121665, 121666];
   for (i32 i = 0; i < 12; i++) {
     i64[] a = r.elem();
     for (i32 m = 0; m < multipliers.len(); m++) {
@@ -164,18 +164,18 @@ export string test_encoding_round_trips_and_canonicalises() {
   // The encoder must emit the canonical representative, so two encodings of the same
   // value converge. This is the property a lazily-reduced implementation fails, and it
   // matters on the wire: a peer that accepts both has two names for one key.
-  u8[] p = u8[32]();
+  u8[] p = u8[].filled(32, 0);
   p[0] = 0xED;
   for (i32 i = 1; i < 31; i++) { p[i] = 0xFF; }
   p[31] = 0x7F;
-  t.eqBytes(feToBytes(feFromBytes(p)), u8[32](), "p re-encodes as zero, not as p");
+  t.eqBytes(feToBytes(feFromBytes(p)), u8[].filled(32, 0), "p re-encodes as zero, not as p");
 
   // The values just below the modulus, which are where canonicalisation actually has
   // work to do. Random elements are nowhere near p, so a reduction that is one carry
   // pass short is right for all of them — that mutation survived this file until these
   // lines were added, and the BigInt differential it replaced caught it immediately.
   for (i32 k = 1; k <= 40; k++) {
-    u8[] near = u8[32]();
+    u8[] near = u8[].filled(32, 0);
     near[0] = (0xED - k) & 0xFF;
     for (i32 i = 1; i < 31; i++) { near[i] = 0xFF; }
     near[31] = 0x7F;
@@ -183,14 +183,14 @@ export string test_encoding_round_trips_and_canonicalises() {
               "p - " + itoa64(k as i64) + " is already canonical");
   }
   // And sums that land just past p, so the carry has to wrap rather than merely settle.
-  u8[] pm1 = u8[32]();
+  u8[] pm1 = u8[].filled(32, 0);
   pm1[0] = 0xEC;
   for (i32 i = 1; i < 31; i++) { pm1[i] = 0xFF; }
   pm1[31] = 0x7F;
   i64[] top = feFromBytes(pm1);
   for (i32 k = 1; k <= 20; k++) {
     i64[] sum = feAdd(top, feMulSmall(feOne(), k as i64));
-    u8[] want = u8[32]();
+    u8[] want = u8[].filled(32, 0);
     want[0] = (k - 1) & 0xFF;                    // (p-1) + k == k-1 (mod p)
     t.eqBytes(feToBytes(sum), want,
               "(p-1) + " + itoa64(k as i64) + " wraps to " + itoa64((k - 1) as i64));
@@ -217,7 +217,7 @@ export string test_a_negative_representation_encodes_as_its_positive_residue() {
   // p - k, little-endian, for the k below.
   for (i32 k = 1; k <= 20; k++) {
     i64[] below = feSub(feZero(), feMulSmall(feOne(), k as i64));
-    u8[] want = u8[32]();
+    u8[] want = u8[].filled(32, 0);
     want[0] = (0xED - k) & 0xFF;
     for (i32 i = 1; i < 31; i++) { want[i] = 0xFF; }
     want[31] = 0x7F;
@@ -226,7 +226,7 @@ export string test_a_negative_representation_encodes_as_its_positive_residue() {
   // Twice negative, so the fold has to add p on a representation that is already below zero — one
   // `feSub` leaves limb 9 negative and the second takes it further.
   i64[] twice = feSub(feSub(feZero(), feOne()), feOne());
-  u8[] wantTwice = u8[32]();
+  u8[] wantTwice = u8[].filled(32, 0);
   wantTwice[0] = 0xEB;
   for (i32 i = 1; i < 31; i++) { wantTwice[i] = 0xFF; }
   wantTwice[31] = 0x7F;
@@ -258,7 +258,7 @@ export string test_a_negative_representation_encodes_as_its_positive_residue() {
  * the raw encoding becomes `...0400...` where the multiplied one stays `...0800...`.
  */
 i64[] needsTheCarries() {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   h[0] = 7;
   for (i32 i = 1; i < 9; i++) {
     h[i] = (1 as i64 << (((i % 2) == 0 ? 26 : 25) as i64)) - 1;
@@ -298,7 +298,7 @@ export string test_conditional_swap_is_conditional() {
 }
 
 i64[] feCopyOf(i64[] a) {
-  i64[] o = i64[10]();
+  i64[] o = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { o[i] = a[i]; }
   return o;
 }
@@ -320,7 +320,7 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
  * deterministic spread from a fixed seed, so a failure reproduces exactly.
  */
 u8[][] corpus() {
-  string[] named = string[](
+  string[] named = [
     "0", "1", "2", "13", "12", "14",
     // p-1, p-2, p-19 and (p-1)/2, written out because they have no short form.
     "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec",
@@ -337,9 +337,10 @@ u8[][] corpus() {
     // face value: p itself, p+1, p+18 and 2^255-1.
     "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed",
     "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffee",
-    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  ];
 
-  u8[][] out = u8[][named.len() + 250]();
+  u8[][] out = u8[][].defaulted(named.len() + 250);
   for (i32 i = 0; i < named.len(); i++) { out[i] = littleEndian(named[i]); }
   Rng rng = Rng.create(0x2545F491);
   for (i32 i = 0; i < 250; i++) { out[named.len() + i] = rng.bytes(); }
@@ -351,7 +352,7 @@ u8[] littleEndian(string h) {
   string padded = h;
   while (padded.len() < 64) { padded = "0" + padded; }
   u8[] be = decoded(padded);
-  u8[] le = u8[32]();
+  u8[] le = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { le[i] = be[31 - i]; }
   return le;
 }
@@ -365,7 +366,7 @@ export string test_encoding_round_trips_and_reduces_a_non_canonical_input(Core c
   u8[][] all = corpus();
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
-    claimF25(lines, "round", all[i], u8[0](), feToBytes(feFromBytes(all[i])));
+    claimF25(lines, "round", all[i], u8[](), feToBytes(feFromBytes(all[i])));
   }
 
   // Bit 255 must be ignored, per RFC 7748 §5: "implementations MUST mask the most significant bit".
@@ -375,9 +376,9 @@ export string test_encoding_round_trips_and_reduces_a_non_canonical_input(Core c
     u8[] withTopBit = littleEndian(i == 0 ? "0" : i == 1 ? "1" : i == 2 ? "3039" :
                                    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec");
     withTopBit[31] = withTopBit[31] | 0x80;
-    claimF25(lines, "round", withTopBit, u8[0](), feToBytes(feFromBytes(withTopBit)));
+    claimF25(lines, "round", withTopBit, u8[](), feToBytes(feFromBytes(withTopBit)));
   }
-  check(t, cli, "node", string[](ORACLE), lines, "every encoding round trip");
+  check(t, cli, "node", [ORACLE], lines, "every encoding round trip");
   return t.report();
 }
 
@@ -391,9 +392,9 @@ export string test_add_sub_mul_and_square_agree_with_bigint(Core core, Cli cli) 
     claimF25(lines, "add", a, b, feToBytes(feAdd(feFromBytes(a), feFromBytes(b))));
     claimF25(lines, "sub", a, b, feToBytes(feSub(feFromBytes(a), feFromBytes(b))));
     claimF25(lines, "mul", a, b, feToBytes(feMul(feFromBytes(a), feFromBytes(b))));
-    claimF25(lines, "sqr", a, u8[0](), feToBytes(feSquare(feFromBytes(a))));
+    claimF25(lines, "sqr", a, u8[](), feToBytes(feSquare(feFromBytes(a))));
   }
-  check(t, cli, "node", string[](ORACLE), lines, "add, sub, mul and square over the corpus");
+  check(t, cli, "node", [ORACLE], lines, "add, sub, mul and square over the corpus");
   return t.report();
 }
 
@@ -404,15 +405,15 @@ export string test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses(
   // input, which at least fails loudly.
   T t = T.create();
   u8[][] all = corpus();
-  i64[] mults = i64[](0, 1, 2, 121665, 121666, 0xFFFF, 0xFFFFFF);
+  i64[] mults = [0, 1, 2, 121665, 121666, 0xFFFF, 0xFFFFFF];
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
     for (i32 k = 0; k < mults.len(); k++) {
-      claimF25(lines, itoa64(mults[k]), all[i], u8[0](),
+      claimF25(lines, itoa64(mults[k]), all[i], u8[](),
                feToBytes(feMulSmall(feFromBytes(all[i]), mults[k])));
     }
   }
-  check(t, cli, "node", string[](ORACLE), lines, "the small multiply at seven multipliers");
+  check(t, cli, "node", [ORACLE], lines, "the small multiply at seven multipliers");
   return t.report();
 }
 
@@ -421,9 +422,9 @@ export string test_inversion_agrees_with_bigint_including_zero(Core core, Cli cl
   u8[][] all = corpus();
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
-    claimF25(lines, "inv", all[i], u8[0](), feToBytes(feInvert(feFromBytes(all[i]))));
+    claimF25(lines, "inv", all[i], u8[](), feToBytes(feInvert(feFromBytes(all[i]))));
   }
-  check(t, cli, "node", string[](ORACLE), lines, "inversion over the corpus");
+  check(t, cli, "node", [ORACLE], lines, "inversion over the corpus");
 
   // The defining property, checked here rather than through the exponent: `a * (1/a)` is 1. This
   // catches an inversion that agreed with a wrong reference.

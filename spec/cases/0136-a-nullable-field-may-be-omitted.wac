@@ -40,12 +40,12 @@ export i32 run() {
   if (a.sizes is not null) { return 3; }
 
   // Written, they are what was written — omission is the only thing that changed.
-  Opts b = Opts { name: "b", title: "t", sizes: i32[](1, 2) };
+  Opts b = Opts { name: "b", title: "t", sizes: [1, 2] as i32[] };
   if (b.title! != "t") { return 4; }
   if (b.sizes!.len() != 2) { return 5; }
 
   // Order is still free, and a field may be omitted from the middle.
-  Opts c = Opts { sizes: i32[](7), name: "c" };
+  Opts c = Opts { sizes: [7] as i32[], name: "c" };
   if (c.name != "c") { return 6; }
   if (c.title is not null) { return 9; }
   if (c.sizes!.len() != 1) { return 10; }

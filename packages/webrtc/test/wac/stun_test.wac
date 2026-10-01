@@ -207,7 +207,7 @@ export string test_aioice_parses_what_we_build_attribute_for_attribute(Core core
   Lines lines = Lines.create();
   // Method 1 is Binding, class 0 is request.
   lines.add("parse " + hexOf(req) + " 1 0 " + TID + " wac-webrtc");
-  check(t, cli, "python3", string[](ORACLE), lines, "aioice parsing ours");
+  check(t, cli, "python3", [ORACLE], lines, "aioice parsing ours");
   return t.report();
 }
 
@@ -215,7 +215,7 @@ export string test_and_we_parse_what_aioice_builds(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
   lines.add("build " + TID);
-  Answers a = ask(t, cli, "python3", string[](ORACLE), lines, "aioice building a response");
+  Answers a = ask(t, cli, "python3", [ORACLE], lines, "aioice building a response");
   if (!a.ok || a.lines.len() < 1) { return t.report(); }
 
   u8[] msg = decoded(word(a.lines[0], 1));
@@ -236,7 +236,7 @@ export string test_an_address_survives_our_own_encode_and_decode() {
   // 0x2112 is the constant, so a port equal to it, and one that is its complement, are the two
   // places a sign or a mask error shows up.
   T t = T.create();
-  i32[] ports = i32[](0, 1, 0x2112, 0xDEED, 3478, 65535);
+  i32[] ports = [0, 1, 0x2112, 0xDEED, 3478, 65535];
   for (i32 i = 0; i < ports.len(); i++) {
     i32[] got = roundTripAddress(1, ports[i], decoded("c0000211"), tid());
     t.eqI32(got[1], ports[i], "port " + itoa(ports[i]));
@@ -266,7 +266,7 @@ export string test_message_integrity_aioice_verifies_ours_and_we_verify_aioices(
   Lines lines = Lines.create();
   lines.add("sign " + TID + " " + hexOf(key));
   lines.add("verify " + hexOf(signed) + " " + hexOf(key) + " wac");
-  Answers a = ask(t, cli, "python3", string[](ORACLE), lines, "aioice and MESSAGE-INTEGRITY");
+  Answers a = ask(t, cli, "python3", [ORACLE], lines, "aioice and MESSAGE-INTEGRITY");
   if (!a.ok || a.lines.len() < 1) { return t.report(); }
 
   u8[] built = decoded(word(a.lines[0], 1));
@@ -313,7 +313,7 @@ export string test_fingerprint_aioice_agrees_with_our_crc(Core core, Cli cli) {
   // with — and one it rejects raises, which the oracle turns into a `FAIL`.
   Lines lines = Lines.create();
   lines.add("fingerprint " + hexOf(msg));
-  check(t, cli, "python3", string[](ORACLE), lines, "aioice and FINGERPRINT");
+  check(t, cli, "python3", [ORACLE], lines, "aioice and FINGERPRINT");
 
   u8[] tampered = copyOf(msg);
   tampered[20] = tampered[20] ^ 0x40;
@@ -327,7 +327,7 @@ export string test_what_is_not_stun_is_refused_rather_than_read() {
   T t = T.create();
   t.isFalse(looksStun(decoded("16fefd0000000000000000")), "a DTLS record starts at 0x16");
   t.isFalse(looksStun(decoded("80c8000600000000")), "an RTCP packet starts at 0x80");
-  t.isFalse(looksStun(u8[0]()), "nothing at all");
+  t.isFalse(looksStun(u8[]()), "nothing at all");
   t.isFalse(looksStun(decoded("00010000deadbeef0102030405060708090a0b0c")),
             "the two zero bits without the cookie is not enough");
 
@@ -408,14 +408,14 @@ struct Exchange {
 Exchange exchange(Core core, Cli cli, i32 port, u8[] msg) {
   for (i32 attempt = 0; attempt < 20; attempt++) {
     Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
-    if (s.handle < 0) { return Exchange(false, "bindDatagram: " + s.error, u8[0](), -1); }
+    if (s.handle < 0) { return Exchange(false, "bindDatagram: " + s.error, u8[](), -1); }
     i32 from = s.port;
     if (!cli.sendTo(s.handle, "127.0.0.1", port, msg).wait()) {
       cli.closeSocket(s.handle);
       continue;
     }
     Pending<Datagram> p = cli.receiveFrom(s.handle);
-    if (core.waitAny(i32[](p.id), 1500) < 0) {
+    if (core.waitAny([p.id], 1500) < 0) {
       p.drop(p.id);
       cli.closeSocket(s.handle);
       continue;
@@ -424,7 +424,7 @@ Exchange exchange(Core core, Cli cli, i32 port, u8[] msg) {
     cli.closeSocket(s.handle);
     if (d.error == "" && d.bytes.len() > 0) { return Exchange(true, "", d.bytes, from); }
   }
-  return Exchange(false, "no answer in twenty attempts of a second and a half", u8[0](), -1);
+  return Exchange(false, "no answer in twenty attempts of a second and a half", u8[](), -1);
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────
@@ -456,7 +456,7 @@ string grouped(i32[] a) {
 }
 
 u8[] slice(u8[] b, i32 at, i32 end) {
-  u8[] out = u8[end - at]();
+  u8[] out = u8[].filled(end - at, 0);
   out.copyFrom(b, at, 0, end - at);
   return out;
 }

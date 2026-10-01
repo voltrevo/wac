@@ -51,7 +51,7 @@ i32 scanCode(u8[] buf) {
 export string test_mpint_is_minimal_and_signed() {
   // RFC 4251 §5 gives these exact encodings, which is why they are the ones checked.
   T t = T.create();
-  string[] input = string[](
+  string[] input = [
     "",                      // zero is an empty string, not one byte
     "00",                    // leading zeroes are stripped to nothing
     // RFC 4251 §5's own example. It writes the value as `9a378f9b2e332a7`, an odd number of hex
@@ -60,21 +60,23 @@ export string test_mpint_is_minimal_and_signed() {
     "80",                    // high bit set, so a zero byte is added
     "ff",
     "7f",                    // high bit clear, no padding
-    "0000ff00");             // strip, then pad
-  string[] want = string[](
+    "0000ff00"             // strip, then pad
+  ];
+  string[] want = [
     "00000000",
     "00000000",
     "0000000809a378f9b2e332a7",
     "000000020080",
     "0000000200ff",
     "000000017f",
-    "0000000300ff00");
+    "0000000300ff00"
+  ];
 
   for (i32 i = 0; i < input.len(); i++) {
     // An odd-length literal would silently lose its last digit to the pairing below, and the
     // resulting test would still look like it was checking the RFC's value.
     t.eqI32(input[i].len() % 2, 0, "test vector " + input[i] + " is not whole bytes");
-    u8[] magnitude = u8[input[i].len() / 2]();
+    u8[] magnitude = u8[].filled(input[i].len() / 2, 0);
     for (i32 k = 0; k < magnitude.len(); k++) {
       magnitude[k] = digit(input[i], k * 2) * 16 + digit(input[i], k * 2 + 1);
     }
@@ -94,7 +96,7 @@ i32 digit(string s, i32 at) {
 
 export string test_a_string_carries_arbitrary_binary_including_nuls() {
   T t = T.create();
-  u8[] payload = u8[6]();
+  u8[] payload = u8[].filled(6, 0);
   payload[0] = 0; payload[1] = 1; payload[2] = 0;
   payload[3] = 255; payload[4] = 0x2c; payload[5] = 0;
 
@@ -113,7 +115,7 @@ export string test_a_string_carries_arbitrary_binary_including_nuls() {
 export string test_a_truncated_or_oversized_string_is_refused_not_guessed_at() {
   T t = T.create();
   // Claims 8 bytes, supplies 3.
-  u8[] short = u8[7]();
+  u8[] short = u8[].filled(7, 0);
   short[3] = 8; short[4] = 1; short[5] = 2; short[6] = 3;
   Reader a = Reader.over(short);
   a.str();
@@ -121,13 +123,13 @@ export string test_a_truncated_or_oversized_string_is_refused_not_guessed_at() {
 
   // Claims 2^31 bytes: the length is negative once read into an i32, which must be rejected
   // rather than wrapped into a small read.
-  u8[] huge = u8[7]();
+  u8[] huge = u8[].filled(7, 0);
   huge[0] = 0x80; huge[4] = 1; huge[5] = 2; huge[6] = 3;
   Reader b = Reader.over(huge);
   b.str();
   t.isFalse(b.ok, "a string claiming 2^31 bytes was accepted");
 
-  u8[] good = u8[7]();
+  u8[] good = u8[].filled(7, 0);
   good[3] = 3; good[4] = 1; good[5] = 2; good[6] = 3;
   Reader c = Reader.over(good);
   c.str();
@@ -137,7 +139,7 @@ export string test_a_truncated_or_oversized_string_is_refused_not_guessed_at() {
 
 export string test_padding_keeps_the_whole_packet_aligned_including_the_length_field() {
   T t = T.create();
-  i32[] blocks = i32[](8, 16);
+  i32[] blocks = [8, 16];
   for (i32 bi = 0; bi < blocks.len(); bi++) {
     i32 block = blocks[bi];
     for (i32 n = 0; n < 64; n++) {
@@ -156,7 +158,7 @@ export string test_padding_keeps_the_whole_packet_aligned_including_the_length_f
 export string test_a_framed_packet_unframes_to_what_went_in() {
   T t = T.create();
   i32 block = minBlock();
-  i32[] sizes = i32[](0, 1, 7, 8, 9, 100, 1000);
+  i32[] sizes = [0, 1, 7, 8, 9, 100, 1000];
   for (i32 i = 0; i < sizes.len(); i++) {
     i32 n = sizes[i];
     u8[] payload = ramp(n, 31, 0);
@@ -178,22 +180,22 @@ export string test_a_framed_packet_unframes_to_what_went_in() {
 export string test_a_packet_that_cannot_be_one_is_malformed_rather_than_trusted() {
   T t = T.create();
   // padding_length below the minimum of 4.
-  u8[] shortPad = u8[16]();
+  u8[] shortPad = u8[].filled(16, 0);
   shortPad[3] = 12; shortPad[4] = 3;
   t.eqI32(unframeCode(shortPad), 2, "padding under 4 bytes was accepted");
 
   // packet_length longer than anything anyone must accept.
-  u8[] oversized = u8[8]();
+  u8[] oversized = u8[].filled(8, 0);
   oversized[1] = 1; oversized[4] = 8;
   t.eqI32(unframeCode(oversized), 2, "an oversized packet length was accepted");
 
   // padding_length larger than the packet, so the payload length goes negative.
-  u8[] padTooLong = u8[10]();
+  u8[] padTooLong = u8[].filled(10, 0);
   padTooLong[3] = 6; padTooLong[4] = 200;
   t.eqI32(unframeCode(padTooLong), 2, "padding longer than the packet was accepted");
 
   // A length with the top bit set arrives negative in an i32.
-  u8[] negative = u8[8]();
+  u8[] negative = u8[].filled(8, 0);
   negative[0] = 0x80; negative[4] = 8;
   t.eqI32(unframeCode(negative), 2, "a packet length of 2^31 was accepted");
   return t.report();
@@ -233,7 +235,7 @@ export string test_the_version_scanner_skips_a_banner_and_keeps_the_line_ending_
 export string test_negotiation_takes_the_clients_preference_not_the_servers() {
   T t = T.create();
   // Server offers both, in the opposite order to ours. Ours must win.
-  u8[] serverPayload = serverKexInit(string[](
+  u8[] serverPayload = serverKexInit([
     "curve25519-sha256@libssh.org,curve25519-sha256",   // reversed relative to ours
     "ssh-ed25519",
     "chacha20-poly1305@openssh.com",
@@ -243,7 +245,8 @@ export string test_negotiation_takes_the_clients_preference_not_the_servers() {
     "none",
     "none",
     "",
-    ""));
+    ""
+  ]);
 
   t.isTrue(decode(serverPayload) is not null, "hand-built KEXINIT did not parse");
   Proposal ours = clientProposal();
@@ -254,7 +257,7 @@ export string test_negotiation_takes_the_clients_preference_not_the_servers() {
 
 export string test_no_overlap_is_an_empty_answer_rather_than_a_default() {
   T t = T.create();
-  string[] lists = string[10](fill: "");
+  string[] lists = string[].filled(10, "");
   lists[0] = "diffie-hellman-group1-sha1";     // nothing we offer
   for (i32 i = 1; i < 10; i++) { lists[i] = i < 3 ? "none" : ""; }
   u8[] payload = serverKexInit(lists);
@@ -276,12 +279,12 @@ export string test_no_overlap_is_an_empty_answer_rather_than_a_default() {
  * first_kex_packet_follows boolean and a reserved uint32.
  */
 u8[] serverKexInit(string[] lists) {
-  u8[][] parts = u8[][lists.len() + 3](fill: u8[0]());
-  u8[] head = u8[17]();
+  u8[][] parts = u8[][].filled(lists.len() + 3, u8[]());
+  u8[] head = u8[].filled(17, 0);
   head[0] = 20;                              // SSH_MSG_KEXINIT, cookie left as zeroes
   parts[0] = head;
   for (i32 i = 0; i < lists.len(); i++) { parts[1 + i] = strOf(lists[i]); }
-  parts[lists.len() + 1] = u8[1]();          // first_kex_packet_follows
-  parts[lists.len() + 2] = u8[4]();          // reserved
+  parts[lists.len() + 1] = u8[].filled(1, 0);          // first_kex_packet_follows
+  parts[lists.len() + 2] = u8[].filled(4, 0);          // reserved
   return cat(parts);
 }

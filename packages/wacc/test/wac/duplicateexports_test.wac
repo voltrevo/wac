@@ -35,11 +35,11 @@ import { madeDir } from "../../../wactest/src/host.wac";
 
 /** Two files, one name, both with a `u32` method — and both crossing the bind boundary. */
 string[] fixturePaths() {
-  return string[]("/t/one.wac", "/t/two.wac", "/t/main.wac");
+  return ["/t/one.wac", "/t/two.wac", "/t/main.wac"];
 }
 
 string[] fixtureSources() {
-  return string[](
+  return [
     "export struct Reader {\n" +
     "  i32 at;\n" +
     "  i32 u32(this) { this.at = this.at + 1; return this.at; }\n" +
@@ -60,7 +60,8 @@ string[] fixtureSources() {
     "import { Reader as ReaderTwo, openTwo } from \"./two.wac\";\n" +
     "export ReaderOne one() { return openOne(); }\n" +
     "export ReaderTwo two() { return openTwo(); }\n" +
-    "export i32 run() { return openOne().u32() + openTwo().u32(); }\n");
+    "export i32 run() { return openOne().u32() + openTwo().u32(); }\n"
+  ];
 }
 
 bool startsWith(string s, string prefix) {
@@ -96,7 +97,7 @@ export string test_two_files_declaring_one_struct_name_export_their_helpers_once
   t.eqI32(wrote.fault, 0, "wrote the module");
   if (wrote.fault != 0) { return t.report(); }
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  Exec v = cli.exec(wac, string[]("validate", path), u8[0]()).wait();
+  Exec v = cli.exec(wac, ["validate", path], u8[]()).wait();
   t.isTrue(v.ran(), "wac validate ran — " + v.error);
   t.eqI32(v.status, 0, "the module was rejected: " + string.fromBytes(v.stdout) +
                        string.fromBytes(v.stderr));
@@ -111,13 +112,13 @@ export string test_two_files_declaring_one_struct_name_export_their_helpers_once
 
   // And the helpers are distinct: one per struct, not one name shared by two.
   i32 readers = 0;
-  string[] found = string[names.len()](fill: "");
+  string[] found = string[].filled(names.len(), "");
   for (i32 i = 0; i < names.len(); i++) {
     if (!startsWith(names[i], "$bind$m_") || !endsWith(names[i], "_u32")) { continue; }
     found[readers] = names[i];
     readers = readers + 1;
   }
-  string[] exact = string[readers](fill: "");
+  string[] exact = string[].filled(readers, "");
   for (i32 i = 0; i < readers; i++) { exact[i] = found[i]; }
   t.eqI32(readers, 2, "expected a u32 helper for each Reader, got " + joinedWith(exact, ", "));
 

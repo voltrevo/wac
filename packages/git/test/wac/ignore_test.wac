@@ -47,7 +47,7 @@ string askAs(Case c) { return c.isDir ? c.path + "/" : c.path; }
 
 /** The `.gitignore` every case in the first test is judged against. */
 string ignoreFile() {
-  string[] rules = string[](
+  string[] rules = [
     "# a comment, and the blank line under it",
     "",
     "build",                    // any depth, file or directory
@@ -62,7 +62,8 @@ string ignoreFile() {
     "sp[abc]ce",                // a character class
     "q?ery",                    // a single character, never a separator
     "dist",
-    "!dist/keep.txt");          // a negation inside an ignored directory: git does not look in there
+    "!dist/keep.txt"          // a negation inside an ignored directory: git does not look in there
+  ];
   string out = "";
   for (i32 i = 0; i < rules.len(); i++) { out = out + rules[i] + "\n"; }
   return out;
@@ -78,10 +79,11 @@ string ignoreFile() {
  * wrong, because the question was being asked without a trailing slash.
  */
 Case[] cases() {
-  string[] names = string[](
+  string[] names = [
     "build", "logs", "doc", "vendor", "dist", "a", "b", "z", "deep", "keep.o", "x.o",
-    "root-only.txt", "space", "spzce", "query", "qery", "other", "keep.txt", "sub", "x.md", "file");
-  Case[] out = Case[names.len() * (2 + 10 * 4)](fill: Case("", false));
+    "root-only.txt", "space", "spzce", "query", "qery", "other", "keep.txt", "sub", "x.md", "file"
+  ];
+  Case[] out = Case[].filled(names.len() * (2 + 10 * 4), Case("", false));
   i32 at = 0;
   for (i32 i = 0; i < names.len(); i++) {
     out[at] = Case(names[i], false); at = at + 1;
@@ -102,7 +104,7 @@ bool makeRepo(T t, Cli cli, string dir) {
   Change made = cli.mkdir(dir, true).wait();
   t.isTrue(made.ok(), "a working directory: " + made.message);
   if (!made.ok()) { return false; }
-  Exec init = cli.exec("git", string[]("init", "-q", dir), u8[0]()).wait();
+  Exec init = cli.exec("git", ["init", "-q", dir], u8[]()).wait();
   t.eqStr(init.error, "", "git could not be started");
   t.eqI32(init.status, 0, "git init: " + string.fromBytes(init.stderr));
   return init.error == "" && init.status == 0;
@@ -126,12 +128,12 @@ string[] gitIgnores(T t, Cli cli, string dir, Case[] all) {
     question.push(0);
   }
   Exec r = cli.exec("git",
-                    string[]("-C", dir, "check-ignore", "--no-index", "-z", "--stdin"),
+                    ["-C", dir, "check-ignore", "--no-index", "-z", "--stdin"],
                     question.take()).wait();
   t.eqStr(r.error, "", "git could not be started");
   t.isTrue(r.status == 0 || r.status == 1,
            "git check-ignore failed: " + string.fromBytes(r.stderr));
-  if (r.error != "" || (r.status != 0 && r.status != 1)) { return string[0](fill: ""); }
+  if (r.error != "" || (r.status != 0 && r.status != 1)) { return string[].filled(0, ""); }
   return splitNul(r.stdout);
 }
 
@@ -139,20 +141,20 @@ string[] gitIgnores(T t, Cli cli, string dir, Case[] all) {
 string[] splitNul(u8[] b) {
   i32 n = 0;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == 0) { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] != 0) { continue; }
     if (i > at) {
-      u8[] rec = u8[i - at]();
+      u8[] rec = u8[].filled(i - at, 0);
       for (i32 j = 0; j < rec.len(); j++) { rec[j] = b[at + j]; }
       out[count] = string.fromBytes(rec);
       count = count + 1;
     }
     at = i + 1;
   }
-  string[] trimmed = string[count](fill: "");
+  string[] trimmed = string[].filled(count, "");
   for (i32 i = 0; i < count; i++) { trimmed[i] = out[i]; }
   return trimmed;
 }
@@ -231,11 +233,12 @@ export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli 
   string whyDir2 = madeDir(cli, dir + "/other");
   t.isTrue(whyDir2 == "", whyDir2);
 
-  Case[] all = Case[](
+  Case[] all = [
     Case("a.log", false), Case("sub/a.log", false), Case("sub/keep.log", false),
     Case("other/keep.log", false), Case("local", false), Case("sub/local", false),
     Case("sub/deeper/local", false), Case("other/local", false), Case("build", true),
-    Case("sub/build", true), Case("sub/ordinary.txt", false), Case("ordinary.txt", false));
+    Case("sub/build", true), Case("sub/ordinary.txt", false), Case("ordinary.txt", false)
+  ];
   string[] theirs = gitIgnores(t, cli, dir, all);
 
   // **The shape, asserted in git's own answer**: the nested negation has to actually bring a file

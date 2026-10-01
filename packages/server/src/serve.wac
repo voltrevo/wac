@@ -58,7 +58,7 @@ u8[] bare(i32 status, u8[] method, bool keepAlive) {
 export Served serve(u8[] input, i64 nowMillis) {
   match (parseRequest(input, MAX_BODY())) {
     Incomplete: {
-      return Served(false, u8[0](), 0, true);
+      return Served(false, u8[](), 0, true);
     }
     Bad(code): {
       // A malformed request means the byte stream can no longer be trusted to be a sequence of

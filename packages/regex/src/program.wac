@@ -93,7 +93,7 @@ i32 START() { return 64; }
 i32[] grown(i32[] a, i32 budget) {
   i32 want = a.len() * 2;
   if (want > budget) { want = budget; }
-  i32[] next = i32[want]();
+  i32[] next = i32[].filled(want, 0);
   next.copyFrom(a, 0, 0, a.len());
   return next;
 }
@@ -105,16 +105,16 @@ export i32 runAt(Program p, u8[] input, i32 at, i32[] caps, i32 budget) {
   // million, `search` calls this once per *start position*, and a seven-byte line therefore allocated
   // and zeroed 160 MB to match one literal character: 7.3 ms a line, where GNU grep does a
   // two-thousand line file in two. Issue 0040.
-  i32[] stackPc = i32[START()]();
-  i32[] stackSp = i32[START()]();
-  i32[] stackUndo = i32[START()]();
+  i32[] stackPc = i32[].filled(START(), 0);
+  i32[] stackSp = i32[].filled(START(), 0);
+  i32[] stackUndo = i32[].filled(START(), 0);
   i32 sp32 = 0;
 
-  i32[] undoSlot = i32[START()]();
-  i32[] undoVal = i32[START()]();
+  i32[] undoSlot = i32[].filled(START(), 0);
+  i32[] undoVal = i32[].filled(START(), 0);
   i32 undoLen = 0;
 
-  i32[] marks = i32[p.loops > 0 ? p.loops : 1]();
+  i32[] marks = i32[].filled(p.loops > 0 ? p.loops : 1, 0);
   for (i32 i = 0; i < marks.len(); i++) { marks[i] = -1; }
 
   i32 pc = 0;

@@ -35,7 +35,7 @@ export string test_a_void_ticket_is_made_waited_on_and_continued(Core core, Cli 
   Pending<void> done = core.delay(1).map<void>((i64 at) => { });
 
   // The continuation takes **no** argument, which is the erasure this file is about.
-  i32[] ran = i32[1](fill: 0);
+  i32[] ran = i32[].filled(1, 0);
   done.then(() => { ran[0] = ran[0] + 1; });
   t.eqI32(ran[0], 0, "`then` returns before its continuation runs");
 
@@ -67,7 +67,7 @@ export string test_a_void_argument_erases_the_parameter_it_stood_in_for(Core cor
              + "  b.on((i32 x) => { });\n"
              + "  return 0;\n"
              + "}\n";
-  string out = diagnoseGraph(string[](ENTRY), string[](src), ENTRY);
+  string out = diagnoseGraph([ENTRY], [src], ENTRY);
   t.isTrue(contains(out, "expected fn<void()>"),
            "the target offered should have no parameter — got \"" + out + "\"");
   t.isFalse(contains(out, "fn<void(void)>"),

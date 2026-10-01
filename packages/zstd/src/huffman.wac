@@ -58,7 +58,7 @@ export HuffTable readTable(u8[] src, i32 at) {
   if (at >= src.len()) { trap; }
   i32 header = src[at];
 
-  i32[] weights = i32[256]();
+  i32[] weights = i32[].filled(256, 0);
   i32 count = 0;
   i32 used = 1;
 
@@ -82,7 +82,7 @@ export HuffTable readTable(u8[] src, i32 at) {
     // anything is decoded — which is what lets the weights be read without knowing how many.
     if (header == 0) { trap; }
     if (at + 1 + header > src.len()) { trap; }
-    u8[] blob = u8[header]();
+    u8[] blob = u8[].filled(header, 0);
     blob.copyFrom(src, at + 1, 0, header);
     // 255 weights at most, so a stream that decodes to more stops on the array bound inside
     // `decompress` rather than being counted and rejected here.
@@ -128,7 +128,7 @@ HuffTable build(i32[] weights, i32 count) {
   // Where each weight class starts. A class's block is as wide as its symbols need together,
   // and the classes run from weight 1 upwards — longest codes first, which is what makes the
   // resulting code canonical.
-  i32[] rank = i32[maxTableLog() + 2]();
+  i32[] rank = i32[].filled(maxTableLog() + 2, 0);
   for (i32 i = 0; i < symbols; i++) {
     rank[weights[i]]++;
   }
@@ -140,8 +140,8 @@ HuffTable build(i32[] weights, i32 count) {
   }
 
   i32 size = 1 << maxBits;
-  i32[] symbol = i32[size]();
-  i32[] nbBits = i32[size]();
+  i32[] symbol = i32[].filled(size, 0);
+  i32[] nbBits = i32[].filled(size, 0);
   for (i32 i = 0; i < symbols; i++) {
     i32 w = weights[i];
     if (w == 0) { continue; }                 // does not occur, and takes no space

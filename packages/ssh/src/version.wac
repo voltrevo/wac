@@ -23,9 +23,10 @@ export u8[] clientVersion() {
   Buf b = Buf.create();
   // "SSH-2.0-wac_0.1", spelled as bytes because it goes on the wire and into a hash, and a
   // string literal would invite an encoding question that does not exist here.
-  const u8[] V = u8[](
+  const u8[] V = [
     0x53, 0x53, 0x48, 0x2d, 0x32, 0x2e, 0x30, 0x2d,      // SSH-2.0-
-    0x77, 0x61, 0x63, 0x5f, 0x30, 0x2e, 0x31);           // wac_0.1
+    0x77, 0x61, 0x63, 0x5f, 0x30, 0x2e, 0x31           // wac_0.1
+  ];
   b.pushAll(V);
   return b.take();
 }
@@ -66,7 +67,7 @@ i32 maxLine() { return 255; }
  * is right either way.
  */
 export Version scanVersion(u8[] src, i32 at, i32 end) {
-  if (at < 0 || end > src.len() || at > end) { return Version(Found.Bad, u8[0](), 0); }
+  if (at < 0 || end > src.len() || at > end) { return Version(Found.Bad, u8[](), 0); }
 
   i32 lineStart = at;
   // No `trap;` after this loop, though it never falls through and one would compile.
@@ -84,10 +85,10 @@ export Version scanVersion(u8[] src, i32 at, i32 end) {
     }
     if (nl < 0) {
       // No complete line. A run this long that is still not a line never will be one.
-      if (end - lineStart >= maxLine()) { return Version(Found.Bad, u8[0](), 0); }
-      return Version(Found.Incomplete, u8[0](), 0);
+      if (end - lineStart >= maxLine()) { return Version(Found.Bad, u8[](), 0); }
+      return Version(Found.Incomplete, u8[](), 0);
     }
-    if (nl - lineStart >= maxLine()) { return Version(Found.Bad, u8[0](), 0); }
+    if (nl - lineStart >= maxLine()) { return Version(Found.Bad, u8[](), 0); }
 
     i32 stop = nl;
     if (stop > lineStart && src[stop - 1] == 13) { stop--; }      // drop the CR
@@ -98,7 +99,7 @@ export Version scanVersion(u8[] src, i32 at, i32 end) {
                   && src[lineStart + 2] == 0x48 && src[lineStart + 3] == 0x2d;
     if (isVersion) {
       i32 n = stop - lineStart;
-      u8[] line = u8[n]();
+      u8[] line = u8[].filled(n, 0);
       line.copyFrom(src, lineStart, 0, n);
       return Version(Found.Ok, line, nl + 1 - at);
     }
@@ -113,8 +114,8 @@ export Version scanVersion(u8[] src, i32 at, i32 end) {
  * to do 2, which is the same thing for our purposes.
  */
 export bool speaksV2(u8[] line) {
-  const u8[] V20 = u8[](0x53, 0x53, 0x48, 0x2d, 0x32, 0x2e, 0x30, 0x2d);
-  const u8[] V199 = u8[](0x53, 0x53, 0x48, 0x2d, 0x31, 0x2e, 0x39, 0x39, 0x2d);
+  const u8[] V20 = [0x53, 0x53, 0x48, 0x2d, 0x32, 0x2e, 0x30, 0x2d];
+  const u8[] V199 = [0x53, 0x53, 0x48, 0x2d, 0x31, 0x2e, 0x39, 0x39, 0x2d];
   return startsWith(line, V20) || startsWith(line, V199);
 }
 

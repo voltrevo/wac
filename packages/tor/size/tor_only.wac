@@ -28,6 +28,6 @@ export u8[] e1(u8[] d, bool s) { return signedDigest(d, s); }
 export u8[] e2(u8[] d) { return keyFingerprint(d); }
 export bool e3(u8[] d, bool s, u8[] k, u8[] g) { return verifyDocumentSignature(d, s, k, g); }
 // `Relay[]` does not marshal; an empty list keeps the code reachable to be measured.
-export i32 f1(i32 p, i64[] w) { return weightedBandwidths(Relay[0](), p, w).len(); }
-export i32 f2(i64[] w, i32[] c, i32[] s, i32[] o, bool m, i64 r) { return choose(Relay[0](), w, c, s, o, m, r); }
+export i32 f1(i32 p, i64[] w) { return weightedBandwidths(Relay[](), p, w).len(); }
+export i32 f2(i64[] w, i32[] c, i32[] s, i32[] o, bool m, i64 r) { return choose(Relay[](), w, c, s, o, m, r); }
 export bool f3(bool a, i32[] r, i32 p) { return portPermitted(a, r, p); }

@@ -13,13 +13,13 @@ export struct Headers {
   u8[][] values;
   i32 count;
 
-  Headers create() { return Headers(u8[][0](), u8[][0](), 0); }
+  Headers create() { return Headers(u8[][](), u8[][](), 0); }
 
   void push(this, u8[] name, u8[] value) {
     if (this.count == this.names.len()) {
       i32 next = this.names.len() == 0 ? 8 : this.names.len() * 2;
-      u8[][] n = u8[][next]();
-      u8[][] v = u8[][next]();
+      u8[][] n = u8[][].defaulted(next);
+      u8[][] v = u8[][].defaulted(next);
       for (i32 i = 0; i < this.count; i++) { n[i] = this.names[i]; v[i] = this.values[i]; }
       this.names = n;
       this.values = v;
@@ -49,7 +49,7 @@ export struct Headers {
     for (i32 i = 0; i < this.count; i++) {
       if (eqFold(this.names[i], want)) { return this.values[i]; }
     }
-    return u8[0]();
+    return u8[]();
   }
 }
 

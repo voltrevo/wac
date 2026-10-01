@@ -27,24 +27,26 @@ import { Relay, ExitPolicy } from "../../src/directory.wac";
 Relay mk(string name, string addr, i32 bw, string[] flags) {
   // The ed25519 identity is empty: path selection never uses it, and only the HSDir hash ring
   // does. A relay here is deliberately not placeable on that ring.
-  return Relay(name, u8[20](), addr, 9001, flags, "", bw, u8[32](), u8[0](), null, string[0]());
+  return Relay(name, u8[].filled(20, 0), addr, 9001, flags, "", bw, u8[].filled(32, 0), u8[](), null, string[]());
 }
 
-string[] noFlags() { return string[]("Running", "Valid"); }
-string[] guardFlags() { return string[]("Running", "Valid", "Guard"); }
-string[] exitFlags() { return string[]("Running", "Valid", "Exit"); }
-string[] bothFlags() { return string[]("Running", "Valid", "Guard", "Exit"); }
+string[] noFlags() { return ["Running", "Valid"]; }
+string[] guardFlags() { return ["Running", "Valid", "Guard"]; }
+string[] exitFlags() { return ["Running", "Valid", "Exit"]; }
+string[] bothFlags() { return ["Running", "Valid", "Guard", "Exit"]; }
 
 /** Wgg Wgd Wge Wgm | Wmg Wmd Wme Wmm | Weg Wed Wee Wem */
 i64[] weights() {
-  return i64[](10000, 3333, 0, 10000,
+  return [
+               10000, 3333, 0, 10000,
                0, 3333, 0, 10000,
-               3333, 3333, 10000, 10000);
+               3333, 3333, 10000, 10000
+  ] as i64[];
 }
 
-i32[] noPath() { return i32[0](); }
+i32[] noPath() { return i32[](); }
 i32[] emptyFamilyStart(i32 n) {
-  i32[] s = i32[n + 1]();
+  i32[] s = i32[].filled(n + 1, 0);
   return s;   // every start is 0, so nobody has any family
 }
 
@@ -52,8 +54,8 @@ export string test_the_distribution_is_exactly_proportional() {
   // Every value in [0, total) fed through, counting where each lands. Not a sample — the
   // whole space, so the counts must be the weights and not merely close to them.
   T t = T.create();
-  i64[] w = i64[](3, 0, 7, 1, 9);
-  i32[] hits = i32[5]();
+  i64[] w = [3, 0, 7, 1, 9];
+  i32[] hits = i32[].filled(5, 0);
   for (i64 r = 0; r < 20; r++) {
     i32 i = weightedChoice(w, r);
     hits[i]++;
@@ -71,7 +73,7 @@ export string test_a_zero_weight_relay_is_never_returned() {
   // weight, so a chooser that could still return a zero-weighted index would ignore every
   // flag check, every family and every subnet rule at once.
   T t = T.create();
-  i64[] w = i64[](0, 5, 0, 0, 11, 0);
+  i64[] w = [0, 5, 0, 0, 11, 0];
   for (i64 r = 0; r < 16; r++) {
     i32 i = weightedChoice(w, r);
     t.isTrue(w[i] > 0, "index " + itoa64(i as i64) + " has a non-zero weight");
@@ -81,11 +83,11 @@ export string test_a_zero_weight_relay_is_never_returned() {
 
 export string test_no_eligible_relay_is_reported_not_papered_over() {
   T t = T.create();
-  t.eqI32(weightedChoice(i64[](0, 0, 0), 5), -1, "all zero weights gives -1");
-  t.eqI32(weightedChoice(i64[0](), 0), -1, "so does an empty candidate list");
+  t.eqI32(weightedChoice([0, 0, 0] as i64[], 5), -1, "all zero weights gives -1");
+  t.eqI32(weightedChoice(i64[](), 0), -1, "so does an empty candidate list");
   // And -1 rather than 0: returning the first relay would look like a working client that
   // always picks the same first hop.
-  t.eqI32(weightedChoice(i64[](0, 0, 4), 0), 2, "the one non-zero entry is found");
+  t.eqI32(weightedChoice([0, 0, 4] as i64[], 0), 2, "the one non-zero entry is found");
   return t.report();
 }
 
@@ -122,9 +124,11 @@ export string test_weighting_survives_a_bandwidth_that_overflows_32_bits() {
   // product wraps negative, `weightedChoice` traps on it, and before that the biggest relays
   // would simply stop being chosen — a bias toward small relays with nothing in the logs.
   T t = T.create();
-  Relay[] r = Relay[](mk("a", "10.0.0.1", 1000000, guardFlags()),
+  Relay[] r = [
+                      mk("a", "10.0.0.1", 1000000, guardFlags()),
                       mk("b", "20.0.0.1", 500000, guardFlags()),
-                      mk("c", "30.0.0.1", 1, guardFlags()));
+                      mk("c", "30.0.0.1", 1, guardFlags())
+  ];
   i64[] out = weightedBandwidths(r, positionGuard(), weights());
   t.eqI64(out[0], 1000000, "a million times 10000 over 10000");
   t.eqI64(out[1], 500000, "and half of it");
@@ -137,8 +141,10 @@ export string test_weighting_survives_a_bandwidth_that_overflows_32_bits() {
 export string test_weighting_scales_by_the_position() {
   T t = T.create();
   // Relay 0 has both flags, relay 1 has neither.
-  Relay[] r = Relay[](mk("both", "10.0.0.1", 100, bothFlags()),
-                      mk("plain", "20.0.0.1", 100, noFlags()));
+  Relay[] r = [
+                      mk("both", "10.0.0.1", 100, bothFlags()),
+                      mk("plain", "20.0.0.1", 100, noFlags())
+  ];
   i64[] atGuard = weightedBandwidths(r, positionGuard(), weights());
   t.eqI64(atGuard[0], 33, "a guard+exit relay is discounted at the guard position");
   t.eqI64(atGuard[1], 100, "a plain relay is not");
@@ -158,45 +164,51 @@ export string test_two_relays_in_one_slash_sixteen_cannot_share_a_path() {
   t.isTrue(!sameSubnet16("10.1.2.3", "not an address"), "an unreadable address shares nothing");
 
   // Three relays: 0 and 1 share a /16, 2 does not.
-  Relay[] r = Relay[](mk("a", "10.1.0.1", 100, noFlags()),
+  Relay[] r = [
+                      mk("a", "10.1.0.1", 100, noFlags()),
                       mk("b", "10.1.0.2", 100, noFlags()),
-                      mk("c", "10.2.0.1", 100, noFlags()));
+                      mk("c", "10.2.0.1", 100, noFlags())
+  ];
   i32[] fs = emptyFamilyStart(3);
-  i32[] fo = i32[0]();
-  t.isTrue(!pathAllows(r, i32[](0), 1, fs, fo, false), "1 cannot join a path with 0");
-  t.isTrue(pathAllows(r, i32[](0), 2, fs, fo, false), "2 can");
-  t.isTrue(pathAllows(r, i32[](0), 1, fs, fo, true), "unless the rule is waived");
+  i32[] fo = i32[]();
+  t.isTrue(!pathAllows(r, [0] as i32[], 1, fs, fo, false), "1 cannot join a path with 0");
+  t.isTrue(pathAllows(r, [0] as i32[], 2, fs, fo, false), "2 can");
+  t.isTrue(pathAllows(r, [0] as i32[], 1, fs, fo, true), "unless the rule is waived");
   return t.report();
 }
 
 export string test_a_relay_cannot_appear_twice_in_one_path() {
   T t = T.create();
-  Relay[] r = Relay[](mk("a", "10.1.0.1", 100, noFlags()),
+  Relay[] r = [
+                      mk("a", "10.1.0.1", 100, noFlags()),
                       mk("b", "20.1.0.2", 100, noFlags()),
-                      mk("c", "30.2.0.1", 100, noFlags()));
+                      mk("c", "30.2.0.1", 100, noFlags())
+  ];
   i32[] fs = emptyFamilyStart(3);
-  i32[] fo = i32[0]();
-  t.isTrue(!pathAllows(r, i32[](1), 1, fs, fo, false), "the same relay is refused");
-  t.isTrue(!pathAllows(r, i32[](0, 1), 1, fs, fo, true), "even with every rule waived");
-  t.isTrue(pathAllows(r, i32[](0, 1), 2, fs, fo, false), "a third relay is fine");
+  i32[] fo = i32[]();
+  t.isTrue(!pathAllows(r, [1] as i32[], 1, fs, fo, false), "the same relay is refused");
+  t.isTrue(!pathAllows(r, [0, 1] as i32[], 1, fs, fo, true), "even with every rule waived");
+  t.isTrue(pathAllows(r, [0, 1] as i32[], 2, fs, fo, false), "a third relay is fine");
   return t.report();
 }
 
 export string test_family_members_cannot_share_a_path() {
   T t = T.create();
   // Four relays on distinct /16s. 0 and 2 are family; 1 and 3 are unrelated.
-  Relay[] r = Relay[](mk("a", "10.0.0.1", 100, noFlags()), mk("b", "20.0.0.1", 100, noFlags()),
-                      mk("c", "30.0.0.1", 100, noFlags()), mk("d", "40.0.0.1", 100, noFlags()));
+  Relay[] r = [
+                      mk("a", "10.0.0.1", 100, noFlags()), mk("b", "20.0.0.1", 100, noFlags()),
+                      mk("c", "30.0.0.1", 100, noFlags()), mk("d", "40.0.0.1", 100, noFlags())
+  ];
   // Flattened adjacency: relay 0 -> [2], relay 2 -> [0], others empty.
-  i32[] fs = i32[](0, 1, 1, 2, 2);
-  i32[] fo = i32[](2, 0);
+  i32[] fs = [0, 1, 1, 2, 2];
+  i32[] fo = [2, 0];
 
-  t.isTrue(!pathAllows(r, i32[](0), 2, fs, fo, false), "2 cannot join a path with 0");
-  t.isTrue(!pathAllows(r, i32[](2), 0, fs, fo, false), "and 0 cannot join one with 2");
-  t.isTrue(pathAllows(r, i32[](0), 1, fs, fo, false), "an unrelated relay can");
-  t.isTrue(pathAllows(r, i32[](1), 3, fs, fo, false), "and so can two unrelated ones");
+  t.isTrue(!pathAllows(r, [0] as i32[], 2, fs, fo, false), "2 cannot join a path with 0");
+  t.isTrue(!pathAllows(r, [2] as i32[], 0, fs, fo, false), "and 0 cannot join one with 2");
+  t.isTrue(pathAllows(r, [0] as i32[], 1, fs, fo, false), "an unrelated relay can");
+  t.isTrue(pathAllows(r, [1] as i32[], 3, fs, fo, false), "and so can two unrelated ones");
   // Family is not waived by allowSameSubnet — that flag is about addresses only.
-  t.isTrue(!pathAllows(r, i32[](0), 2, fs, fo, true),
+  t.isTrue(!pathAllows(r, [0] as i32[], 2, fs, fo, true),
            "waiving the subnet rule does not waive the family rule");
   return t.report();
 }
@@ -211,25 +223,27 @@ export string test_a_one_sided_family_entry_still_excludes() {
   // that fault was the only way to find out. The same shape as the relay tests' symmetric
   // oracle, and the same lesson.
   T t = T.create();
-  Relay[] r = Relay[](mk("a", "10.0.0.1", 100, noFlags()), mk("b", "20.0.0.1", 100, noFlags()),
-                      mk("c", "30.0.0.1", 100, noFlags()));
+  Relay[] r = [
+                      mk("a", "10.0.0.1", 100, noFlags()), mk("b", "20.0.0.1", 100, noFlags()),
+                      mk("c", "30.0.0.1", 100, noFlags())
+  ];
   // Relay 0 lists relay 2. Relay 2 lists nobody.
-  i32[] forward = i32[](0, 1, 1, 1);
-  i32[] fo = i32[](2);
-  t.isTrue(!pathAllows(r, i32[](2), 0, forward, fo, false),
+  i32[] forward = [0, 1, 1, 1];
+  i32[] fo = [2];
+  t.isTrue(!pathAllows(r, [2] as i32[], 0, forward, fo, false),
            "the relay that made the claim is excluded from a path holding its target");
-  t.isTrue(!pathAllows(r, i32[](0), 2, forward, fo, false),
+  t.isTrue(!pathAllows(r, [0] as i32[], 2, forward, fo, false),
            "and the target is excluded from a path holding the claimant");
 
   // The mirror image: relay 2 lists relay 0, relay 0 lists nobody.
-  i32[] backward = i32[](0, 0, 0, 1);
-  i32[] bo = i32[](0);
-  t.isTrue(!pathAllows(r, i32[](0), 2, backward, bo, false), "and the same the other way");
-  t.isTrue(!pathAllows(r, i32[](2), 0, backward, bo, false), "in both orders");
+  i32[] backward = [0, 0, 0, 1];
+  i32[] bo = [0];
+  t.isTrue(!pathAllows(r, [0] as i32[], 2, backward, bo, false), "and the same the other way");
+  t.isTrue(!pathAllows(r, [2] as i32[], 0, backward, bo, false), "in both orders");
 
   // An unrelated relay is still fine under either.
-  t.isTrue(pathAllows(r, i32[](0), 1, forward, fo, false), "relay 1 is unaffected");
-  t.isTrue(pathAllows(r, i32[](2), 1, backward, bo, false), "under either adjacency");
+  t.isTrue(pathAllows(r, [0] as i32[], 1, forward, fo, false), "relay 1 is unaffected");
+  t.isTrue(pathAllows(r, [2] as i32[], 1, backward, bo, false), "under either adjacency");
   return t.report();
 }
 
@@ -238,14 +252,16 @@ export string test_choose_excludes_what_the_path_forbids() {
   // allowed, and `choose` must apply both. Sweeping every random value proves the excluded
   // relay is unreachable rather than merely unlikely.
   T t = T.create();
-  Relay[] r = Relay[](mk("a", "10.0.0.1", 100, noFlags()), mk("b", "10.0.0.2", 100, noFlags()),
-                      mk("c", "30.0.0.1", 100, noFlags()));
+  Relay[] r = [
+                      mk("a", "10.0.0.1", 100, noFlags()), mk("b", "10.0.0.2", 100, noFlags()),
+                      mk("c", "30.0.0.1", 100, noFlags())
+  ];
   i32[] fs = emptyFamilyStart(3);
-  i32[] fo = i32[0]();
-  i64[] weighted = i64[](100, 100, 100);
+  i32[] fo = i32[]();
+  i64[] weighted = [100, 100, 100];
 
   // With relay 0 already in the path, relay 1 shares its /16 and must never come back.
-  i32[] chosen = i32[](0);
+  i32[] chosen = [0];
   i32 sawOne = 0;
   i32 sawTwo = 0;
   for (i64 rnd = 0; rnd < 300; rnd++) {
@@ -270,13 +286,13 @@ export string test_a_fully_constrained_position_reports_no_candidate() {
   // The case a client must not paper over. If every relay is excluded there is no path, and
   // the honest answer is -1 — not a retry with the rules relaxed.
   T t = T.create();
-  Relay[] r = Relay[](mk("a", "10.0.0.1", 50, noFlags()), mk("b", "10.0.0.2", 50, noFlags()));
+  Relay[] r = [mk("a", "10.0.0.1", 50, noFlags()), mk("b", "10.0.0.2", 50, noFlags())];
   i32[] fs = emptyFamilyStart(2);
-  i32[] fo = i32[0]();
-  i64[] weighted = i64[](50, 50);
-  t.eqI32(choose(r, weighted, i32[](0), fs, fo, false, 7), -1,
+  i32[] fo = i32[]();
+  i64[] weighted = [50, 50];
+  t.eqI32(choose(r, weighted, [0] as i32[], fs, fo, false, 7), -1,
           "only relay left shares the /16, so there is no candidate");
-  t.eqI32(choose(r, weighted, i32[](0), fs, fo, true, 7), 1,
+  t.eqI32(choose(r, weighted, [0] as i32[], fs, fo, true, 7), 1,
           "and waiving the rule finds it");
   return t.report();
 }
@@ -286,7 +302,7 @@ export string test_a_fully_constrained_position_reports_no_candidate() {
 export string test_an_accept_policy_permits_only_what_it_lists() {
   T t = T.create();
   // accept 80,443,8000-8100
-  i32[] r = i32[](80, 80, 443, 443, 8000, 8100);
+  i32[] r = [80, 80, 443, 443, 8000, 8100];
   t.isTrue(portPermitted(true, r, 80), "80 is listed");
   t.isTrue(portPermitted(true, r, 443), "443 is listed");
   t.isTrue(portPermitted(true, r, 8000), "the low end of a range is inclusive");
@@ -305,7 +321,7 @@ export string test_a_reject_policy_permits_everything_it_does_not_list() {
   // polarity backwards sends traffic to precisely the exits that will refuse it — and that
   // looks like a flaky network, not a bug, since the client just retries elsewhere.
   T t = T.create();
-  i32[] r = i32[](80, 80, 443, 443, 8000, 8100);
+  i32[] r = [80, 80, 443, 443, 8000, 8100];
   for (i32 p = 1; p < 9000; p += 7) {
     t.isTrue(portPermitted(true, r, p) != portPermitted(false, r, p),
              "accept and reject disagree at every port, including " + itoa64(p as i64));
@@ -317,10 +333,10 @@ export string test_a_reject_policy_permits_everything_it_does_not_list() {
 
 export string test_the_degenerate_policies_are_the_right_way_round() {
   T t = T.create();
-  i32[] none = i32[0]();
+  i32[] none = i32[]();
   t.isTrue(!portPermitted(true, none, 80), "accept nothing permits nothing");
   t.isTrue(portPermitted(false, none, 80), "reject nothing permits everything");
-  i32[] all = i32[](1, 65535);
+  i32[] all = [1, 65535];
   t.isTrue(portPermitted(true, all, 1), "accept 1-65535 permits the first port");
   t.isTrue(portPermitted(true, all, 65535), "and the last");
   t.isTrue(!portPermitted(false, all, 443), "reject 1-65535 permits nothing");
@@ -358,10 +374,10 @@ export string test_a_family_claim_counts_only_when_mutual() {
   Relay a = mk("alpha", "10.0.0.1", 100, noFlags());
   Relay b = mk("beta", "20.0.0.1", 100, noFlags());
   Relay c = mk("gamma", "30.0.0.1", 100, noFlags());
-  a.family = string[]("beta");
-  b.family = string[]("alpha");
-  c.family = string[]("alpha");        // unrequited
-  Relay[] r = Relay[](a, b, c);
+  a.family = ["beta"];
+  b.family = ["alpha"];
+  c.family = ["alpha"];        // unrequited
+  Relay[] r = [a, b, c];
 
   Families f = resolveFamilies(r);
   t.eqI32(f.start[1] - f.start[0], 1, "alpha has one family member");
@@ -378,9 +394,9 @@ export string test_a_family_named_by_fingerprint_resolves() {
   for (i32 i = 0; i < 20; i++) { a.identity[i] = i; }
   for (i32 i = 0; i < 20; i++) { b.identity[i] = 100 + i; }
   // A consensus writes `$FINGERPRINT`, sometimes with `=name` or `~name` after it.
-  a.family = string[]("$" + hexOf(b.identity) + "=beta");
-  b.family = string[]("$" + hexOf(a.identity));
-  Relay[] r = Relay[](a, b);
+  a.family = ["$" + hexOf(b.identity) + "=beta"];
+  b.family = ["$" + hexOf(a.identity)];
+  Relay[] r = [a, b];
 
   Families f = resolveFamilies(r);
   t.eqI32(f.start[1] - f.start[0], 1, "alpha's family resolved by fingerprint");
@@ -394,7 +410,7 @@ export string test_a_relay_must_be_usable_and_right_for_the_position() {
   Relay guard = mk("g", "10.0.0.1", 100, guardFlags());
   Relay plain = mk("m", "20.0.0.1", 100, noFlags());
   Relay exit = mk("e", "30.0.0.1", 100, exitFlags());
-  exit.exitPolicy = ExitPolicy(true, i32[](80, 80));
+  exit.exitPolicy = ExitPolicy(true, [80, 80] as i32[]);
 
   t.isTrue(eligible(guard, positionGuard(), 0), "a Guard relay at the guard position");
   t.isTrue(!eligible(plain, positionGuard(), 0), "and a plain one is not");
@@ -408,10 +424,10 @@ export string test_a_relay_must_be_usable_and_right_for_the_position() {
            "an Exit flag with no summary carries nothing — a missing p line is reject-all");
   t.isTrue(eligible(noPolicy, positionExit(), 0), "though it can still carry a directory circuit");
 
-  Relay dead = mk("d", "50.0.0.1", 100, string[]("Guard"));
+  Relay dead = mk("d", "50.0.0.1", 100, ["Guard"]);
   t.isTrue(!eligible(dead, positionGuard(), 0), "Running and Valid are required");
   Relay keyless = mk("k", "60.0.0.1", 100, guardFlags());
-  keyless.ntorOnionKey = u8[0]();
+  keyless.ntorOnionKey = u8[]();
   t.isTrue(!eligible(keyless, positionGuard(), 0),
            "and a relay with no onion key cannot be handshaked with, whatever its flags say");
   return t.report();
@@ -422,16 +438,16 @@ export string test_pick_respects_flags_policy_and_the_path() {
   Relay g = mk("g", "10.0.0.1", 100, guardFlags());
   Relay m = mk("m", "20.0.0.1", 100, noFlags());
   Relay e = mk("e", "30.0.0.1", 100, exitFlags());
-  e.exitPolicy = ExitPolicy(true, i32[](443, 443));
-  Relay[] r = Relay[](g, m, e);
+  e.exitPolicy = ExitPolicy(true, [443, 443] as i32[]);
+  Relay[] r = [g, m, e];
   Families f = resolveFamilies(r);
   i64[] w = parseWeights("network-status-version 3\n".toBytes());
 
   for (i64 rnd = 0; rnd < 40; rnd++) {
-    t.eqI32(pick(r, w, f, positionGuard(), i32[0](), 0, false, rnd), 0, "only one guard");
-    t.eqI32(pick(r, w, f, positionExit(), i32[0](), 443, false, rnd), 2, "only one exit for 443");
-    t.eqI32(pick(r, w, f, positionExit(), i32[0](), 22, false, rnd), -1, "and none for 22");
-    t.eqI32(pick(r, w, f, positionMiddle(), i32[](0, 2), 0, false, rnd), 1,
+    t.eqI32(pick(r, w, f, positionGuard(), i32[](), 0, false, rnd), 0, "only one guard");
+    t.eqI32(pick(r, w, f, positionExit(), i32[](), 443, false, rnd), 2, "only one exit for 443");
+    t.eqI32(pick(r, w, f, positionExit(), i32[](), 22, false, rnd), -1, "and none for 22");
+    t.eqI32(pick(r, w, f, positionMiddle(), [0, 2] as i32[], 0, false, rnd), 1,
             "the middle is whatever is left");
   }
   return t.report();
@@ -439,7 +455,7 @@ export string test_pick_respects_flags_policy_and_the_path() {
 
 string hexOf(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();
-  u8[] out = u8[b.len() * 2]();
+  u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i * 2] = digits[(b[i] >> 4) & 15];
     out[i * 2 + 1] = digits[b[i] & 15];
@@ -487,48 +503,48 @@ export string test_wge_is_zero_because_nobody_publishes_it() {
  * check ran, logged nothing, and protected nothing.
  */
 Relay withPolicy(string name, string[] flags, bool isAccept, i32[] ranges) {
-  return Relay(name, u8[20](), "10.0.0.1", 9001, flags, "", 1000, u8[32](), u8[0](),
-               ExitPolicy(isAccept, ranges), string[0]());
+  return Relay(name, u8[].filled(20, 0), "10.0.0.1", 9001, flags, "", 1000, u8[].filled(32, 0), u8[](),
+               ExitPolicy(isAccept, ranges), string[]());
 }
 
 export string test_exits_anything_is_not_eligible_with_port_zero() {
   T t = T.create();
 
-  Relay rejectAll = withPolicy("rejects", exitFlags(), false, i32[](1, 65535));
+  Relay rejectAll = withPolicy("rejects", exitFlags(), false, [1, 65535] as i32[]);
   t.isTrue(eligible(rejectAll, positionExit(), 0),
            "port 0 passes a reject-all relay — no stream is planned, so no policy is read");
   t.isFalse(exitsAnything(rejectAll),
             "but it exits nothing, which is the question a guard check must ask");
 
-  Relay web = withPolicy("web", exitFlags(), true, i32[](80, 80, 443, 443));
+  Relay web = withPolicy("web", exitFlags(), true, [80, 80, 443, 443] as i32[]);
   t.isTrue(exitsAnything(web), "an accept list with ranges exits something");
   t.isTrue(eligible(web, positionExit(), 443), "and 443 is in it");
   t.isFalse(eligible(web, positionExit(), 25), "and 25 is not");
 
-  Relay acceptNothing = withPolicy("empty", exitFlags(), true, i32[0]());
+  Relay acceptNothing = withPolicy("empty", exitFlags(), true, i32[]());
   t.isFalse(exitsAnything(acceptNothing), "an accept list with no ranges accepts nothing");
 
   // The reject cases. Something is permitted unless the ranges cover all of 1-65535, and the
   // gaps can only start at 1 or just past some range's end.
-  Relay rejectMost = withPolicy("most", exitFlags(), false, i32[](1, 442, 444, 65535));
+  Relay rejectMost = withPolicy("most", exitFlags(), false, [1, 442, 444, 65535] as i32[]);
   t.isTrue(exitsAnything(rejectMost), "443 is the one port left, and it counts");
   t.isTrue(eligible(rejectMost, positionExit(), 443), "and it is the port that gets through");
 
-  Relay rejectTail = withPolicy("tail", exitFlags(), false, i32[](2, 65535));
+  Relay rejectTail = withPolicy("tail", exitFlags(), false, [2, 65535] as i32[]);
   t.isTrue(exitsAnything(rejectTail), "port 1 is uncovered");
 
-  Relay rejectSplit = withPolicy("split", exitFlags(), false, i32[](1, 100, 101, 65535));
+  Relay rejectSplit = withPolicy("split", exitFlags(), false, [1, 100, 101, 65535] as i32[]);
   t.isFalse(exitsAnything(rejectSplit), "two ranges that abut still cover everything");
 
-  Relay noSummary = Relay("none", u8[20](), "10.0.0.1", 9001, exitFlags(), "", 1000,
-                          u8[32](), u8[0](), null, string[0]());
+  Relay noSummary = Relay("none", u8[].filled(20, 0), "10.0.0.1", 9001, exitFlags(), "", 1000,
+                          u8[].filled(32, 0), u8[](), null, string[]());
   t.isFalse(exitsAnything(noSummary), "a missing summary is a reject-all, not 'no policy'");
 
-  Relay notAnExit = withPolicy("plain", noFlags(), true, i32[](1, 65535));
+  Relay notAnExit = withPolicy("plain", noFlags(), true, [1, 65535] as i32[]);
   t.isFalse(exitsAnything(notAnExit), "no Exit flag, whatever the policy says");
 
-  Relay bad = withPolicy("bad", string[]("Running", "Valid", "Exit", "BadExit"),
-                         true, i32[](1, 65535));
+  Relay bad = withPolicy("bad", ["Running", "Valid", "Exit", "BadExit"],
+                         true, [1, 65535] as i32[]);
   t.isFalse(exitsAnything(bad), "BadExit means the authorities said not to");
   return t.report();
 }

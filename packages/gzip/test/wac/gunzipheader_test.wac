@@ -39,7 +39,7 @@ const i32 FHCRC = 2;
  */
 u8[] withHeaderFields(u8[] payload, i32 flg, u8[] fields) {
   u8[] base = gzipBest(payload);
-  u8[] out = u8[base.len() + fields.len()]();
+  u8[] out = u8[].filled(base.len() + fields.len(), 0);
   for (i32 i = 0; i < 10; i++) { out[i] = base[i]; }
   out[3] = flg;
   for (i32 i = 0; i < fields.len(); i++) { out[10 + i] = fields[i]; }
@@ -50,13 +50,13 @@ u8[] withHeaderFields(u8[] payload, i32 flg, u8[] fields) {
 /** A NUL-terminated string, as FNAME and FCOMMENT are stored. */
 u8[] cstr(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len() + 1]();
+  u8[] out = u8[].filled(b.len() + 1, 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
   return out;
 }
 
 u8[] join(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -82,13 +82,15 @@ export string test_a_stream_carrying_a_filename_from_python(Core core, Cli cli) 
   T t = T.create();
   u8[] text = repeated("the most common gzip header in the world\n", 4);
   Exec r = cli.exec("python3",
-                    string[]("-c",
+                    [
+                             "-c",
                              "import gzip, io, sys\n" +
                              "buf = io.BytesIO()\n" +
                              "with gzip.GzipFile(filename=\"report.txt\", mode=\"wb\", " +
                              "fileobj=buf, mtime=0) as f:\n" +
                              "    f.write(sys.stdin.buffer.read())\n" +
-                             "sys.stdout.buffer.write(buf.getvalue())\n"),
+                             "sys.stdout.buffer.write(buf.getvalue())\n"
+                    ],
                     text).wait();
   t.isTrue(r.ran(), "python3 ran — " + r.error);
   if (!r.ran()) { return t.report(); }
@@ -109,10 +111,10 @@ export string test_every_combination_of_the_optional_header_fields() {
   u8[] name = cstr("archive.tar");
   u8[] comment = cstr("written by hand");
   // FEXTRA is a two-byte length followed by that many bytes.
-  u8[] extra = u8[](4, 0, 0x41, 0x42, 0x43, 0x44);
+  u8[] extra = [4, 0, 0x41, 0x42, 0x43, 0x44];
   // FHCRC is two bytes. gunzipBytes skips rather than verifies it, which is within spec — the field
   // is optional to check — so the value here only has to be skipped.
-  u8[] hcrc = u8[](0x12, 0x34);
+  u8[] hcrc = [0x12, 0x34];
 
   roundTrips(t, "FNAME", withHeaderFields(text, FNAME, name), text);
   roundTrips(t, "FCOMMENT", withHeaderFields(text, FCOMMENT, comment), text);
@@ -143,7 +145,7 @@ export string test_empty_and_single_character_names_and_comments() {
   roundTrips(t, "empty comment", withHeaderFields(text, FCOMMENT, cstr("")), text);
   roundTrips(t, "empty name and empty comment",
              withHeaderFields(text, FNAME | FCOMMENT, join(cstr(""), cstr(""))), text);
-  roundTrips(t, "empty FEXTRA", withHeaderFields(text, FEXTRA, u8[](0, 0)), text);
+  roundTrips(t, "empty FEXTRA", withHeaderFields(text, FEXTRA, [0, 0] as u8[]), text);
   return t.report();
 }
 
@@ -157,7 +159,7 @@ export string test_empty_and_single_character_names_and_comments() {
 export string test_traps_a_name_with_no_terminator() {
   u8[] base = gzipBest("truncated name".toBytes());
   u8[] tail = "name-with-no-terminator-at-all-running-to-the-very-end".toBytes();
-  u8[] noNul = u8[10 + tail.len()]();
+  u8[] noNul = u8[].filled(10 + tail.len(), 0);
   for (i32 i = 0; i < 10; i++) { noNul[i] = base[i]; }
   noNul[3] = FNAME;
   for (i32 i = 0; i < tail.len(); i++) { noNul[10 + i] = tail[i]; }

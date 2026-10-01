@@ -69,9 +69,9 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
   string dir = scratchDir(cli);
   i32 whole = 0;
   i32 invalid = 0;
-  string[] declined = string[own.len()](fill: "");
+  string[] declined = string[].filled(own.len(), "");
   i32 nDeclined = 0;
-  string[] rejected = string[own.len()](fill: "");
+  string[] rejected = string[].filled(own.len(), "");
   i32 nRejected = 0;
 
   // **One front end per entry, which is what `buildFiles` exists for** — `issues/lang/0129`, and the
@@ -101,7 +101,7 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
     // load it as one artefact. `manifestWire` is `manifestFiles` given the metadata rather than
     // re-deriving it.
     u8[] wasm = withManifestSection(b.wasm, manifestWire(b.wasm, types, sigs, own[i], name, 0));
-    Ran r = runModule(cli, wasm, dir, "selfemit_" + name + ".wasm", string[0](fill: ""));
+    Ran r = runModule(cli, wasm, dir, "selfemit_" + name + ".wasm", string[].filled(0, ""));
     if (!r.ok || wasRejected(r)) {
       invalid = invalid + 1;
       rejected[nRejected] = name + (r.ok ? " — " + r.stderr : " — " + r.error);
@@ -118,7 +118,7 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
   }
 
   // The same invariant as the corpus, on the files that decide the last rung.
-  string[] badNames = string[nRejected](fill: "");
+  string[] badNames = string[].filled(nRejected, "");
   for (i32 i = 0; i < nRejected; i++) { badNames[i] = rejected[i]; }
   t.eqI32(invalid, 0,
           itoa(invalid) + " of wacc's own sources produced a module the engine refused — the " +
@@ -126,7 +126,7 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
 
   // A floor rather than an equality: this is meant to rise, and a slot that adds a feature must not
   // quietly lose one.
-  string[] whyNot = string[nDeclined](fill: "");
+  string[] whyNot = string[].filled(nDeclined, "");
   for (i32 i = 0; i < nDeclined; i++) { whyNot[i] = declined[i]; }
   t.eqI32(whole, own.len(),
           "only " + itoa(whole) + " of wacc's " + itoa(own.len()) + " sources compile whole: " +

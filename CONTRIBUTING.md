@@ -1,6 +1,6 @@
 # Contributing to wac
 
-Read [CLAUDE.md](CLAUDE.md) first — it is the orienting document, and it says where things are and
+[CLAUDE.md](CLAUDE.md) first — it is the orienting document, and it says where things are and
 how to run them. This file is the part that is about *how to work*, and it is short on purpose.
 
 **This document described a TypeScript compiler until 2026-08-28.** It defined an "atom"

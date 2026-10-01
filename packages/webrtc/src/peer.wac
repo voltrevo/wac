@@ -140,10 +140,10 @@ export struct Peer {
 
   Peer of(u8[] certDer, u8[] signingKey, u8[] signingNonce, u8[] scalar, u8[] random, u8[] cookie) {
     return Peer(certDer, signingKey, signingNonce, scalar, random, cookie,
-                Partial[8](fill: Partial(-1, 0, u8[0](), 0)), 0,
-                u8[0](), u8[0](), false,
-                u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, u8[0](), 0, 0, 0, false,
-                0 as i64, 0 as i64, u8[][0](), 0 as i64, 0);
+                Partial[].filled(8, Partial(-1, 0, u8[](), 0)), 0,
+                u8[](), u8[](), false,
+                u8[](), u8[](), u8[](), u8[](), u8[](), false, u8[](), 0, 0, 0, false,
+                0 as i64, 0 as i64, u8[][](), 0 as i64, 0);
   }
 
   /** Our ephemeral public key — the point in the ServerKeyExchange. */
@@ -161,23 +161,23 @@ export struct Peer {
       if (this.partials[i].seq == seq) { at = i; }
     }
     if (at < 0) {
-      if (this.partialCount >= this.partials.len() || total < 0) { return u8[0](); }
+      if (this.partialCount >= this.partials.len() || total < 0) { return u8[](); }
       at = this.partialCount;
-      this.partials[at] = Partial(seq, kind, u8[total](), 0);
+      this.partials[at] = Partial(seq, kind, u8[].filled(total, 0), 0);
       this.partialCount = at + 1;
     }
     Partial p = this.partials[at];
-    if (offset < 0 || offset + fragLen > p.body.len()) { return u8[0](); }
+    if (offset < 0 || offset + fragLen > p.body.len()) { return u8[](); }
     for (i32 i = 0; i < fragLen && i < piece.len(); i++) { p.body[offset + i] = piece[i]; }
     p.have = p.have + fragLen;
-    if (p.have < p.body.len()) { return u8[0](); }
+    if (p.have < p.body.len()) { return u8[](); }
     return p.body;
   }
 
   /** Append a message to the transcript, in the unfragmented form the hash is over. */
   void remember(this, i32 kind, i32 seq, u8[] body) {
     u8[] msg = handshake(kind, seq, body);
-    u8[] out = u8[this.transcript.len() + msg.len()]();
+    u8[] out = u8[].filled(this.transcript.len() + msg.len(), 0);
     for (i32 i = 0; i < this.transcript.len(); i++) { out[i] = this.transcript[i]; }
     for (i32 i = 0; i < msg.len(); i++) { out[this.transcript.len() + i] = msg[i]; }
     this.transcript = out;
@@ -185,7 +185,7 @@ export struct Peer {
 
   /** The ECDSA signature over `client_random + server_random + ServerECDHParams`, DER encoded. */
   u8[] signParams(const this, u8[] params) {
-    u8[] signed = u8[this.clientRandom.len() + this.random.len() + params.len()]();
+    u8[] signed = u8[].filled(this.clientRandom.len() + this.random.len() + params.len(), 0);
     i32 at = 0;
     for (i32 i = 0; i < this.clientRandom.len(); i++) { signed[at + i] = this.clientRandom[i]; }
     at = at + this.clientRandom.len();
@@ -194,13 +194,13 @@ export struct Peer {
     for (i32 i = 0; i < params.len(); i++) { signed[at + i] = params[i]; }
 
     u8[] raw = p256Sign(this.signingKey, signed, this.signingNonce);
-    if (raw.len() != 64) { return u8[0](); }
-    u8[] r = u8[32]();
-    u8[] s = u8[32]();
+    if (raw.len() != 64) { return u8[](); }
+    u8[] r = u8[].filled(32, 0);
+    u8[] s = u8[].filled(32, 0);
     for (i32 i = 0; i < 32; i++) { r[i] = raw[i]; s[i] = raw[32 + i]; }
     u8[] rd = derInteger(r);
     u8[] sd = derInteger(s);
-    u8[] both = u8[rd.len() + sd.len()]();
+    u8[] both = u8[].filled(rd.len() + sd.len(), 0);
     for (i32 i = 0; i < rd.len(); i++) { both[i] = rd[i]; }
     for (i32 i = 0; i < sd.len(); i++) { both[rd.len() + i] = sd[i]; }
     return derSequence(both);
@@ -232,7 +232,7 @@ export struct Peer {
    * ordering to get right and no counter to remember, which is the whole point.
    */
   u8[][] receive(this, u8[] datagram) {
-    u8[][] out = u8[][0]();
+    u8[][] out = u8[][]();
     i32 at = 0;
     while (recordSize(datagram, at) > 0) {
       i32 size = recordSize(datagram, at);
@@ -256,7 +256,7 @@ export struct Peer {
           // what says that, so a handshake is refused here rather than established with someone who
           // never presented a certificate or presented one they cannot sign for.
           if (same && this.peerVerified != 0) {
-            u8[] full = u8[this.transcript.len() + plainMsg.len()]();
+            u8[] full = u8[].filled(this.transcript.len() + plainMsg.len(), 0);
             for (i32 i = 0; i < this.transcript.len(); i++) { full[i] = this.transcript[i]; }
             for (i32 i = 0; i < plainMsg.len(); i++) { full[this.transcript.len() + i] = plainMsg[i]; }
             // **One past the flight, not the literal 5.** The server's messages are numbered
@@ -267,7 +267,7 @@ export struct Peer {
             // its own flight for ever. `issues/system/0153` chased that symptom for some time.
             u8[] ours = handshake(20, this.lastFlight.len() + 1,
                                   verifyData(this.master, "server finished", full));
-            u8[] ccs = u8[1]();
+            u8[] ccs = u8[].filled(1, 0);
             ccs[0] = 1;
             out = appendOne(out, this.plain(typeChangeCipherSpec(), ccs));
             out = appendOne(out, this.sealed(typeHandshake(), ours));
@@ -289,7 +289,7 @@ export struct Peer {
     i32 seq = (f[4] << 8) | f[5];
     i32 offset = (f[6] << 16) | (f[7] << 8) | f[8];
     i32 fragLen = (f[9] << 16) | (f[10] << 8) | f[11];
-    u8[] piece = u8[f.len() - 12]();
+    u8[] piece = u8[].filled(f.len() - 12, 0);
     for (i32 i = 0; i < piece.len(); i++) { piece[i] = f[12 + i]; }
     u8[] body = this.reassemble(kind, seq, offset, fragLen, total, piece);
     if (body.len() == 0) { return out; }
@@ -324,7 +324,7 @@ export struct Peer {
       this.remember(12, 3, ske);
       this.remember(13, 4, req);
       this.remember(14, 5, done);
-      this.lastFlight = u8[][5]();
+      this.lastFlight = u8[][].defaulted(5);
       this.lastFlight[0] = handshake(2, 1, sh);
       this.lastFlight[1] = handshake(11, 2, cert);
       this.lastFlight[2] = handshake(12, 3, ske);
@@ -406,13 +406,13 @@ export struct Peer {
    * against OpenSSL and libwebrtc.
    */
   u8[][] due(this, i64 now, i64 rto) {
-    if (this.lastFlight.len() == 0 || this.established) { return u8[][0](); }
+    if (this.lastFlight.len() == 0 || this.established) { return u8[][](); }
     i64 wait = rto;
     for (i32 i = 1; i < this.flightTries && wait < (60000 as i64); i++) { wait = wait * (2 as i64); }
     if (wait > (60000 as i64)) { wait = 60000 as i64; }
-    if (now - this.flightSentAt < wait) { return u8[][0](); }
+    if (now - this.flightSentAt < wait) { return u8[][](); }
     this.flightSentAt = now;
-    return this.resend(u8[][0]());
+    return this.resend(u8[][]());
   }
 
   /** How many messages the last flight held — zero before there is one. */
@@ -432,7 +432,7 @@ export struct Peer {
     i32 scheme = (body[0] << 8) | body[1];
     i32 sigLen = (body[2] << 8) | body[3];
     if (sigLen <= 0 || 4 + sigLen > body.len()) { return false; }
-    u8[] sig = u8[sigLen]();
+    u8[] sig = u8[].filled(sigLen, 0);
     for (i32 i = 0; i < sigLen; i++) { sig[i] = body[4 + i]; }
     Cert c = parseCert(this.peerCertDer);
     if (!c.wellFormed) { return false; }
@@ -447,9 +447,9 @@ export struct Peer {
 
   /** Open an application record, or empty — what a caller hands to SCTP. */
   u8[] application(const this, u8[] datagram, i32 at) {
-    if (!this.keysReady) { return u8[0](); }
+    if (!this.keysReady) { return u8[](); }
     Record r = parseRecord(datagram, at);
-    if (!r.ok || r.epoch != 1) { return u8[0](); }
+    if (!r.ok || r.epoch != 1) { return u8[](); }
     return open(this.clientWriteKey, this.clientIv, r.epoch, r.sequence, r.kind, r.version,
                 r.fragment);
   }
@@ -457,7 +457,7 @@ export struct Peer {
 
 /** Grow a list of datagrams by one. */
 u8[][] appendOne(u8[][] list, u8[] one) {
-  u8[][] out = u8[][list.len() + 1]();
+  u8[][] out = u8[][].defaulted(list.len() + 1);
   for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
   out[list.len()] = one;
   return out;
@@ -465,7 +465,7 @@ u8[][] appendOne(u8[][] list, u8[] one) {
 
 /** `b[from..to)`. */
 u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
   return out;
 }

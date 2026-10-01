@@ -121,13 +121,13 @@ export Tokens lz77Range(u8[] data, Tables t, i32 start, i32 end) {
   i32 n = end;
   // Every token consumes at least one input byte, so one slot per fresh byte suffices.
   i32 room = n - start + 1;
-  Tokens tok = Tokens(i32[room](), i32[room](), 0, i32[numLitLen()](), i32[numDist()]());
+  Tokens tok = Tokens(i32[].filled(room, 0), i32[].filled(room, 0), 0, i32[].filled(numLitLen(), 0), i32[].filled(numDist(), 0));
 
-  i32[] head = i32[hashSize()]();
+  i32[] head = i32[].filled(hashSize(), 0);
   for (i32 i = 0; i < hashSize(); i++) {
     head[i] = -1;
   }
-  i32[] prev = i32[n]();
+  i32[] prev = i32[].filled(n, 0);
 
   // The history, hashed but not emitted.
   for (i32 i = 0; i + minMatch() <= start; i++) {
@@ -239,14 +239,14 @@ export u8[] deflateFixed(u8[] data) {
   w.writeBits(1, 2);   // BTYPE = 01, fixed Huffman
 
   // Materialise the fixed code as tables so writeTokens is shared.
-  i32[] litCode = i32[288]();
-  i32[] litLen = i32[288]();
+  i32[] litCode = i32[].filled(288, 0);
+  i32[] litLen = i32[].filled(288, 0);
   for (i32 s = 0; s < 288; s++) {
     litCode[s] = fixedLitCode(s);
     litLen[s] = fixedLitBits(s);
   }
-  i32[] distCode = i32[numDist()]();
-  i32[] distLen = i32[numDist()]();
+  i32[] distCode = i32[].filled(numDist(), 0);
+  i32[] distLen = i32[].filled(numDist(), 0);
   for (i32 d = 0; d < numDist(); d++) {
     distCode[d] = d;     // fixed distance codes are 5 bits, code == symbol
     distLen[d] = 5;
@@ -285,7 +285,7 @@ void clPush(ClSeq s, i32 sym, i32 extra) {
 
 ClSeq runLengthEncode(i32[] lens, i32 total) {
   // Each input length emits at most one symbol, so `total` slots suffice.
-  ClSeq s = ClSeq(i32[total + 1](), i32[total + 1](), 0);
+  ClSeq s = ClSeq(i32[].filled(total + 1, 0), i32[].filled(total + 1, 0), 0);
 
   i32 i = 0;
   while (i < total) {
@@ -333,7 +333,7 @@ ClSeq runLengthEncode(i32[] lens, i32 total) {
  * with the symbols most likely to be used, so trailing entries are usually zero
  * and can be dropped (that is what HCLEN counts).
  */
-const i32[] CL_ORDER = i32[](16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+const i32[] CL_ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
 /** Extra bits carried by code-length symbols 16, 17 and 18. */
 i32 clExtraBits(i32 sym) {
@@ -382,7 +382,7 @@ export void writeDynamicBlock(BitWriter w, Tokens tok, Tables t, bool bfinal) {
   // Both trees' lengths are encoded as one concatenated sequence, so a repeat
   // can straddle the boundary between them.
   i32 total = hlit + hdist;
-  i32[] lens = i32[total]();
+  i32[] lens = i32[].filled(total, 0);
   for (i32 i = 0; i < hlit; i++) {
     lens[i] = lit.len[i];
   }
@@ -392,7 +392,7 @@ export void writeDynamicBlock(BitWriter w, Tokens tok, Tables t, bool bfinal) {
 
   ClSeq seq = runLengthEncode(lens, total);
 
-  i32[] clFreq = i32[numCl()]();
+  i32[] clFreq = i32[].filled(numCl(), 0);
   for (i32 i = 0; i < seq.n; i++) {
     clFreq[seq.sym[i]]++;
   }

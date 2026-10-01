@@ -45,7 +45,7 @@ f64 atof(string s) { return atofSpan(s.toBytes(), 0, s.len()); }
 /** The eight bytes of an f64, big-endian, as hex — the form the oracle reads. */
 string bits64(f64 x) {
   u64 b = f64.toBits(x);
-  u8[] out = u8[8]();
+  u8[] out = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
     out[i] = ((b >> ((7 - i) * 8)) & 255) as@ i32;
   }
@@ -67,7 +67,7 @@ void parsed(Lines lines, string s) {
 
 export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cli) {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "0", "-0", "1", "-1", "10", "1.5", "-2.25", "0.1", "0.2", "0.3",
     // Either side of the exact-significand limit.
     "9007199254740991", "9007199254740992", "9007199254740993",
@@ -82,7 +82,8 @@ export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cl
     "1.000000000000000000001", "1e23", "1e-23",
     // A famous strtod hang/precision case.
     "2.2250738585072011360574097967091319759348195463516456480234261097248222015" +
-      "6858036286346714528823753e-308");
+      "6858036286346714528823753e-308"
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) { parsed(lines, cases[i]); }
   checkDeno(t, cli, ORACLE, lines, "the naive-conversion cases");
@@ -98,8 +99,8 @@ export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cl
  * re-deriving each one from the two doubles it should lie between.
  */
 string[] midpoints() {
-  return string[](
-    "10000000000000001110223024625156540423631668090820312500000000000000000000" +
+  return [
+      "10000000000000001110223024625156540423631668090820312500000000000000000000" +
       "00000000000000000000000000000000e-105",
     "10000000000000003330669073875469621270895004272460937500000000000000000000" +
       "00000000000000000000000000000000e-105",
@@ -134,7 +135,8 @@ string[] midpoints() {
     "10995116277760001220703125000000000000e-25",
     "10995116277760003662109375000000000000e-25",
     "10995116277760006103515625000000000000e-25",
-    "10995116277760008544921875000000000000e-25");
+    "10995116277760008544921875000000000000e-25"
+  ];
 }
 
 export string test_atof_exact_halfway_cases_round_to_even(Core core, Cli cli) {
@@ -213,7 +215,7 @@ export string test_atof_random_decimals_across_the_exponent_range(Core core, Cli
  */
 export string test_atof_the_estimate_is_inside_the_bisection_window() {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "1", "1.5", "0.1", "0.2", "3.141592653589793", "2.718281828459045",
     "9007199254740993", "123456789.123456789", "1e10", "1e-10", "6.02214076e23",
     "1.7976931348623157e308", "5e-324", "0.000001", "999999999999999999999",
@@ -229,7 +231,8 @@ export string test_atof_the_estimate_is_inside_the_bisection_window() {
     "1.000000000000000000000000000000000000001",
     "1.000000000000000000000000000000000000000",
     "0.00000000000000000000000000000000000000",
-    "10000000000000000000000000000000000000000000000000e-30");
+    "10000000000000000000000000000000000000000000000000e-30"
+  ];
   i32 guessed = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     u64 estimate = approxBits(scan(cases[i].toBytes(), 0, cases[i].len()));
@@ -263,7 +266,7 @@ export string test_atof_the_estimate_is_inside_the_bisection_window() {
  */
 export string test_atof_the_spellings_a_generator_does_not_produce(Core core, Cli cli) {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     // **Uppercase `E`**, which both exponent scanners accept and neither had been given.
     "1E5", "1E-5", "1E+5", "1.5E10", "-2.5E-10", "0E0", "1E308", "1E-308", "1E309", "1E-400",
     // **An exponent with more digits than the accumulator takes**, which stops accumulating rather
@@ -281,7 +284,8 @@ export string test_atof_the_spellings_a_generator_does_not_produce(Core core, Cl
     "12345678901234567890123456789012345678901", "10000000000000000000000000000000000000001",
     "0.10000000000000000000000000000001", "0.10000000000000000000000000000000",
     // Digits dropped before the point rather than after it, which is the other arm of the same count.
-    "123456789012345678901234567890123456789", "-123456789012345678901234567890123456789");
+    "123456789012345678901234567890123456789", "-123456789012345678901234567890123456789"
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) { parsed(lines, cases[i]); }
   checkDeno(t, cli, ORACLE, lines, "the spellings a generator does not produce");

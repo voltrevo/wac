@@ -2,7 +2,7 @@
 // why: `++` as a value reads the element it is incrementing, and a packed element is read with a sign
 // from: issues/lang/0084
 export i32 f() {
-  u8[] a = u8[3](fill: 5);
+  u8[] a = u8[].filled(3, 5);
   i32 v = a[1]++;
   return v * 100 + a[1];
 }

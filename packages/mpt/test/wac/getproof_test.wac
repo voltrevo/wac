@@ -102,7 +102,7 @@ u8[] unhex(string s) {
   string body = s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s;
   u8[] d = body.toBytes();
   if (d.len() % 2 != 0) { trap; }
-  u8[] out = u8[d.len() / 2]();
+  u8[] out = u8[].filled(d.len() / 2, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]); }
   return out;
 }
@@ -134,7 +134,7 @@ string quantity(string s) {
 /** A JSON array of hex strings, as the node list a proof is. */
 u8[][] nodes(JsonValue v) {
   JsonArray a = items(v);
-  u8[][] out = u8[][a.len()](fill: u8[0]());
+  u8[][] out = u8[][].filled(a.len(), u8[]());
   for (i32 i = 0; i < a.len(); i++) { out[i] = unhex(text(a.get(i))); }
   return out;
 }
@@ -239,8 +239,8 @@ export string test_the_clients_roots_are_this_packages_constants(Core core, Cli 
   t.eqStr(text(member(c, "codeHash")),
           "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
           "and the empty code hash");
-  t.eqStr(hex(keccak256(u8[](0x80))), strip(text(member(c, "storageHash"))), "keccak256(rlp(\"\"))");
-  t.eqStr(hex(keccak256(u8[0]())), strip(text(member(c, "codeHash"))), "keccak256(\"\")");
+  t.eqStr(hex(keccak256([0x80] as u8[])), strip(text(member(c, "storageHash"))), "keccak256(rlp(\"\"))");
+  t.eqStr(hex(keccak256(u8[]())), strip(text(member(c, "codeHash"))), "keccak256(\"\")");
   return t.report();
 }
 

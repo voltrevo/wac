@@ -67,9 +67,9 @@ export const string DESC_SIG_PREFIX = "Tor onion service descriptor sig v3";
 export u8[] encryptLayer(
   u8[] plaintext, u8[] secretData, u8[] subcredential, i64 revision, u8[] salt, u8[] constant
 ) {
-  if (salt.len() != SALT_LEN || subcredential.len() != 32) { return u8[0](); }
+  if (salt.len() != SALT_LEN || subcredential.len() != 32) { return u8[](); }
   u8[] keys = layerKeys(secretData, subcredential, revision, salt, constant);
-  if (keys.len() != S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN) { return u8[0](); }
+  if (keys.len() != S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN) { return u8[](); }
 
   u8[] ciphertext = aesCtr(slice(keys, 0, S_KEY_LEN),
                            slice(keys, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), plaintext);
@@ -96,8 +96,8 @@ export u8[] encryptLayer(
 export u8[] descriptorDocument(
   i32 lifetimeMinutes, u8[] signingCert, i64 revision, u8[] superencrypted, u8[] signingSeed
 ) {
-  if (signingCert.len() == 0 || signingSeed.len() != 32) { return u8[0](); }
-  if (lifetimeMinutes <= 0) { return u8[0](); }
+  if (signingCert.len() == 0 || signingSeed.len() != 32) { return u8[](); }
+  if (lifetimeMinutes <= 0) { return u8[](); }
 
   Buf d = Buf.create();
   d.pushAll("hs-descriptor 3\n".toBytes());
@@ -111,7 +111,7 @@ export u8[] descriptorDocument(
   // The span ends here: everything written so far, the newline that closed the object included.
   u8[] signed = d.bytes();
   u8[] sig = ed25519Sign(signingSeed, prefixed(signed));
-  if (sig.len() != 64) { return u8[0](); }
+  if (sig.len() != 64) { return u8[](); }
 
   d.pushAll(("signature " + b64Unpadded(sig) + "\n").toBytes());
   return d.bytes();
@@ -141,7 +141,7 @@ export u8[] signedSpanOf(u8[] document) {
     // tor steps *past* the newline, so the span includes it.
     if (hit) { return slice(document, 0, i + 1); }
   }
-  return u8[0]();
+  return u8[]();
 }
 
 /**
@@ -191,9 +191,9 @@ u8[] pemBlock(string label, u8[] body) {
 export u8[] introPointSection(
   u8[] linkSpecifiers, u8[] ntorOnionKey, u8[] authKeyCert, u8[] encKey, u8[] encKeyCert
 ) {
-  if (ntorOnionKey.len() != 32 || encKey.len() != 32) { return u8[0](); }
+  if (ntorOnionKey.len() != 32 || encKey.len() != 32) { return u8[](); }
   if (authKeyCert.len() == 0 || encKeyCert.len() == 0 || linkSpecifiers.len() == 0) {
-    return u8[0]();
+    return u8[]();
   }
 
   Buf d = Buf.create();
@@ -218,11 +218,11 @@ export u8[] introPointSection(
  * layer's padding is what hides it from anyone who has not decrypted that far.
  */
 export u8[] encryptedPlaintext(u8[][] introPoints) {
-  if (introPoints.len() == 0) { return u8[0](); }
+  if (introPoints.len() == 0) { return u8[](); }
   Buf d = Buf.create();
   d.pushAll("create2-formats 2\n".toBytes());
   for (i32 i = 0; i < introPoints.len(); i++) {
-    if (introPoints[i].len() == 0) { return u8[0](); }
+    if (introPoints[i].len() == 0) { return u8[](); }
     d.pushAll(introPoints[i]);
   }
   return d.bytes();
@@ -250,7 +250,7 @@ export u8[] encryptedPlaintext(u8[][] introPoints) {
  * against a committed vector.
  */
 export u8[] superencryptedPlaintext(u8[] ephemeralKey, u8[][] authClients, u8[] innerBlob) {
-  if (ephemeralKey.len() != 32 || authClients.len() == 0) { return u8[0](); }
+  if (ephemeralKey.len() != 32 || authClients.len() == 0) { return u8[](); }
 
   Buf d = Buf.create();
   d.pushAll("desc-auth-type x25519\n".toBytes());
@@ -258,7 +258,7 @@ export u8[] superencryptedPlaintext(u8[] ephemeralKey, u8[][] authClients, u8[] 
   for (i32 i = 0; i < authClients.len(); i++) {
     // Each decoy is 8 + 16 + 16 bytes laid out as three base64 fields.
     u8[] c = authClients[i];
-    if (c.len() != 40) { return u8[0](); }
+    if (c.len() != 40) { return u8[](); }
     d.pushAll(("auth-client " + b64Unpadded(slice(c, 0, 8)) + " " +
                b64Unpadded(slice(c, 8, 24)) + " " + b64Unpadded(slice(c, 24, 40)) + "\n").toBytes());
   }
@@ -282,7 +282,7 @@ export u8[] padToBlock(u8[] plaintext) {
   i32 block = SUPERENC_PAD_MULTIPLE;
   i32 want = ((plaintext.len() + block - 1) / block) * block;
   if (want == 0) { want = block; }
-  u8[] out = u8[want]();
+  u8[] out = u8[].filled(want, 0);
   for (i32 i = 0; i < plaintext.len(); i++) { out[i] = plaintext[i]; }
   return out;
 }

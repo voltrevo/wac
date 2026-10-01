@@ -211,7 +211,7 @@ string inBase(i32 v, i32 base, bool upper) {
 }
 
 string charFor(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }

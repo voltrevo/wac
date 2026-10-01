@@ -32,24 +32,28 @@ import { hexEnc, hexEncUpper, hexDec, hexAccepts, hexDecodedOrTrap, b64Enc, b64D
 
 /** The rejection inputs for base64: everything well-formed decoding refuses. */
 string[] b64Bad() {
-  return string[](
+  return [
     "A", "AAAAA", "A===", "AB=A", "=", "AB=", "ABCDE=", "A@AA", "AA A", "QR==", "Zm9vYmF=",
-    "", "AA", "QQ", "Zm9v", "Zm9vYg", "Zm9vYmE", "====", "=A", "AAAA=", "AA@", "A@A", "@AA");
+    "", "AA", "QQ", "Zm9v", "Zm9vYg", "Zm9vYmE", "====", "=A", "AAAA=", "AA@", "A@A", "@AA"
+  ];
 }
 
 /** The same for base32, both alphabets. */
 string[] b32Bad() {
-  return string[](
+  return [
     "A", "AAA", "AAAAAA", "AAAAAAAAA", "A=======", "AAA=====", "", "AA", "AAAA", "AAAAA",
     "AAAAAAA", "AAAAAAAA", "MY======", "MY=====", "MY=======", "MZXW6===", "MZXW6==",
     "MZ======", "M2======", "8=======", "@@@@@@@@", "=======",
     // Lowercase, which decoders must accept.
-    "my======", "mzxw6yTBOI======", "cpnmuoj1", "cpnmuoj1e8======");
+    "my======", "mzxw6yTBOI======", "cpnmuoj1", "cpnmuoj1e8======"
+  ];
 }
 
 string[] hexBad() {
-  return string[]("0", "abc", "0g", "0 0", "0x00", "", "00", "ff", "FF", "aA",
-                  "0123456789abcdefABCDEF");
+  return [
+                  "0", "abc", "0g", "0 0", "0x00", "", "00", "ff", "FF", "aA",
+                  "0123456789abcdefABCDEF"
+  ];
 }
 
 export i32 main() {
@@ -64,14 +68,14 @@ export i32 main() {
 
   // Every length up to 300, which walks all four short-group shapes repeatedly.
   for (i32 len = 0; len <= 300; len++) {
-    u8[] data = u8[len]();
+    u8[] data = u8[].filled(len, 0);
     for (i32 i = 0; i < len; i++) {
       x = x ^ (x << 13);
       x = x ^ (x >> 17);
       x = x ^ (x << 5);
       data[i] = (x & 255) as~ i32;
     }
-    bool[] bools = bool[](true, false);
+    bool[] bools = [true, false];
     for (i32 p = 0; p < 2; p++) {
       bool pad = bools[p];
       seen = seen + hexDec(hexEnc(data)).len();
@@ -92,7 +96,7 @@ export i32 main() {
   }
 
   string[] bad32 = b32Bad();
-  bool[] hexAlpha = bool[](true, false);
+  bool[] hexAlpha = [true, false];
   for (i32 i = 0; i < bad32.len(); i++) {
     u8[] t = bad32[i].toBytes();
     for (i32 h = 0; h < 2; h++) {

@@ -77,7 +77,7 @@ struct Journal {
 string[] fields(string s) {
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\t") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   string cur = "";
   for (i32 i = 0; i < s.len(); i++) {
@@ -90,10 +90,10 @@ string[] fields(string s) {
 
 /** `traceTableFiles`' rows: index, line, col, kind, file. */
 Point[] pointsOf(string src) {
-  string[] rows = splitLines(traceTableFiles(string[](ENTRY), string[](src), ENTRY));
+  string[] rows = splitLines(traceTableFiles([ENTRY], [src], ENTRY));
   i32 n = 0;
   for (i32 i = 0; i < rows.len(); i++) { if (rows[i].len() > 0) { n = n + 1; } }
-  Point[] out = Point[n](fill: Point(0, 0, ""));
+  Point[] out = Point[].filled(n, Point(0, 0, ""));
   i32 at = 0;
   for (i32 i = 0; i < rows.len(); i++) {
     if (rows[i].len() == 0) { continue; }
@@ -117,17 +117,17 @@ Journal traced(Cli cli, string name, string src, i32 slots) {
   cli.mkdir(dir, true).wait();
   string path = dir + "/" + name + ".wasm";
   u8[] wasm = slots == 0
-    ? emitFilesTraced(string[](ENTRY), string[](src), ENTRY)
-    : emitFilesTracedSlots(string[](ENTRY), string[](src), ENTRY, slots);
+    ? emitFilesTraced([ENTRY], [src], ENTRY)
+    : emitFilesTracedSlots([ENTRY], [src], ENTRY, slots);
   if (wasm.len() <= 8) {
-    return Journal(i32[0](), i32[0](), 0, 0, false, name + ": the emitter declined this program");
+    return Journal(i32[](), i32[](), 0, 0, false, name + ": the emitter declined this program");
   }
   cli.writeFile(path, wasm).wait();
 
   Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
-                    string[]("covdump", path), u8[0]()).wait();
+                    ["covdump", path], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
-    return Journal(i32[0](), i32[0](), 0, 0, false,
+    return Journal(i32[](), i32[](), 0, 0, false,
                    name + ": covdump — " + execReason(r));
   }
 
@@ -139,10 +139,10 @@ Journal traced(Cli cli, string name, string src, i32 slots) {
     if (f.len() == 2 && atoi(f[0]) == n) { n = n + 1; }
   }
   if (n < 2) {
-    return Journal(i32[0](), i32[0](), 0, 0, false,
+    return Journal(i32[](), i32[](), 0, 0, false,
                    name + ": covdump printed " + itoa(n) + " slots: " + string.fromBytes(r.stdout));
   }
-  i32[] raw = i32[n]();
+  i32[] raw = i32[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < rows.len() && at < n; i++) {
     string[] f = fields(rows[i]);
@@ -152,8 +152,8 @@ Journal traced(Cli cli, string name, string src, i32 slots) {
   // Slot 0 is how many entries are live; the last is how many events happened.
   i32 used = raw[0];
   i32 events = used / 2;
-  i32[] sites = i32[events]();
-  i32[] values = i32[events]();
+  i32[] sites = i32[].filled(events, 0);
+  i32[] values = i32[].filled(events, 0);
   for (i32 k = 0; k < events; k++) {
     sites[k] = raw[1 + 2 * k];
     values[k] = raw[2 + 2 * k];
@@ -183,7 +183,7 @@ bool hasKind(Point[] points, string kind) {
 
 /** The kinds a run recorded, in order. */
 string kindsOf(Point[] points, Journal j) {
-  string[] out = string[j.sites.len()](fill: "");
+  string[] out = string[].filled(j.sites.len(), "");
   for (i32 i = 0; i < j.sites.len(); i++) {
     i32 s = j.sites[i];
     out[i] = (s >= 0 && s < points.len()) ? points[s].kind : "?";
@@ -193,14 +193,14 @@ string kindsOf(Point[] points, Journal j) {
 
 /** The values a run recorded, in order. */
 string valuesOf(Journal j) {
-  string[] out = string[j.values.len()](fill: "");
+  string[] out = string[].filled(j.values.len(), "");
   for (i32 i = 0; i < j.values.len(); i++) { out[i] = itoa(j.values[i]); }
   return joined(out, ",");
 }
 
 /** The values recorded at points of one kind, in order. */
 string valuesOfKind(Point[] points, Journal j, string kind) {
-  string[] out = string[j.values.len()](fill: "");
+  string[] out = string[].filled(j.values.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < j.values.len(); i++) {
     i32 s = j.sites[i];
@@ -209,7 +209,7 @@ string valuesOfKind(Point[] points, Journal j, string kind) {
       n = n + 1;
     }
   }
-  string[] r = string[n](fill: "");
+  string[] r = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { r[i] = out[i]; }
   return joined(r, ",");
 }
@@ -243,7 +243,7 @@ export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_f
   // The shape of AES's S-box lookup, and the whole reason indices are recorded: `f` has exactly one
   // branch point per run either way, so counting branches reports it as uniform.
   T t = T.create();
-  const string BODY = "const u8[] SBOX = u8[](3, 1, 4, 1, 5, 9, 2, 6);\n" +
+  const string BODY = "const u8[] SBOX = [3, 1, 4, 1, 5, 9, 2, 6];\n" +
     "export i32 f(i32 secret) {\n" +
     "  i32 v = SBOX[secret & 7];\n" +
     "  return v;\n" +
@@ -336,7 +336,7 @@ export string test_the_journal_is_a_journal_order_is_what_it_records(Core core, 
   // Two runs that touch the same indices in a different *order* have identical counts, and coverage
   // cannot tell them apart. This is what a trace is for.
   T t = T.create();
-  const string BODY = "const u8[] TBL = u8[](0, 1, 2, 3);\n" +
+  const string BODY = "const u8[] TBL = [0, 1, 2, 3];\n" +
     "export i32 f(i32 secret) {\n" +
     "  i32 a = TBL[secret & 1];\n" +
     "  i32 b = TBL[(secret + 1) & 1];\n" +

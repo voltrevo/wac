@@ -38,13 +38,13 @@ export struct Desk {
   i32 grabX;
   i32 grabY;
 
-  Desk create() { return Desk(Window[0](fill: Window(Rect(0, 0, 0, 0), Grid.create(1, 1, 0), i32[0]())), -1, 0, 0); }
+  Desk create() { return Desk(Window[].filled(0, Window(Rect(0, 0, 0, 0), Grid.create(1, 1, 0), i32[]())), -1, 0, 0); }
 
   /** Add a window with a terminal of `cols` by `rows`, on top. */
   void open(this, i32 x, i32 y, i32 cols, i32 rows, i32[] title) {
     Grid g = Grid.create(cols, rows, 200);
     Rect r = Rect(x, y, cols * cellWidth(), rows * cellHeight() + barHeight());
-    Window[] next = Window[this.wins.len() + 1](fill: Window(r, g, title));
+    Window[] next = Window[].filled(this.wins.len() + 1, Window(r, g, title));
     for (i32 i = 0; i < this.wins.len(); i++) { next[i] = this.wins[i]; }
     next[this.wins.len()] = Window(r, g, title);
     this.wins = next;
@@ -53,7 +53,7 @@ export struct Desk {
   /** Remove the window at `i`, which is what the close button does. */
   void close(this, i32 i) {
     if (i < 0 || i >= this.wins.len()) { return; }
-    Window[] next = Window[this.wins.len() - 1](fill: this.wins[0]);
+    Window[] next = Window[].filled(this.wins.len() - 1, this.wins[0]);
     i32 at = 0;
     for (i32 j = 0; j < this.wins.len(); j++) {
       if (j == i) { continue; }
@@ -69,7 +69,7 @@ export struct Desk {
 
   /** The frames, in stacking order, for hit-testing. */
   Rect[] frames(const this) {
-    Rect[] out = Rect[this.wins.len()](fill: Rect(0, 0, 0, 0));
+    Rect[] out = Rect[].filled(this.wins.len(), Rect(0, 0, 0, 0));
     for (i32 i = 0; i < this.wins.len(); i++) { out[i] = this.wins[i].frame; }
     return out;
   }

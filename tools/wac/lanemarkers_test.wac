@@ -48,26 +48,26 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
  * lists disagreed" is the entire subject of this file, so keeping a third one would be a joke at
  * its own expense. The line is a one-liner by construction:
  *
- *     string[] tsRoots() { return string[]("packages", "tools", "harness", "core", "bootstrap"); }
+ *     string[] tsRoots() { return ["packages", "tools", "harness", "core", "bootstrap"]; }
  */
 string[] rootsFromRunner(T t, Cli cli) {
   FileResult f = cli.readFile("tools/runTests.wac").wait();
   t.isTrue(f.ok, "cannot read tools/runTests.wac — " + f.error);
-  if (!f.ok) { return string[0](fill: ""); }
+  if (!f.ok) { return string[].filled(0, ""); }
   string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
   for (i32 i = 0; i < lines.len(); i++) {
     if (!startsWith(lines[i], "string[] tsRoots()")) { continue; }
     return quotedIn(lines[i]);
   }
   t.fail("tools/runTests.wac has no `string[] tsRoots()` line — has it been renamed?");
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }
 
 /** Every double-quoted run in `line`, in order. */
 string[] quotedIn(string line) {
   i32 n = 0;
   for (i32 i = 0; i < line.len(); i++) { if (line.slice(i, i + 1) == "\"") { n = n + 1; } }
-  string[] out = string[n / 2](fill: "");
+  string[] out = string[].filled(n / 2, "");
   i32 at = 0;
   i32 from = 0 - 1;
   for (i32 i = 0; i < line.len(); i++) {
@@ -96,7 +96,7 @@ export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core
 
   // `site` is excluded from the Deno pass outright rather than by a marker — `--ignore=site` in the
   // runner — so a marker there would be read by nobody and is not this test's business either.
-  string[] files = sourceFiles(core, cli, string[](".ts"), string[]("site", "node_modules"));
+  string[] files = sourceFiles(core, cli, [".ts"], ["site", "node_modules"]);
   t.isTrue(files.len() > 50,
            "only " + itoa(files.len()) + " .ts file(s) found — did the walk resolve?");
 
@@ -135,7 +135,7 @@ export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core
   // `packages/wacc/test/wac/programscompile_test.wac` and the count fell from 3 to 2, with nothing about the scan
   // having changed. A floor that a successful port breaks is measuring the wrong thing.
   i32 inWac = 0;
-  string[] wacFiles = sourceFiles(core, cli, string[](".wac"), string[]("site", "node_modules"));
+  string[] wacFiles = sourceFiles(core, cli, [".wac"], ["site", "node_modules"]);
   for (i32 i = 0; i < wacFiles.len(); i++) {
     FileResult f = cli.readFile(wacFiles[i]).wait();
     if (!f.ok) { continue; }
@@ -164,7 +164,7 @@ export string test_every_tree_the_runner_walks_for_markers_still_exists(Core cor
   // Against the tracked files rather than `stat`: a root that exists but holds no TypeScript is as
   // useless to the walk as one that is not there, and `compiler` — which sat in this list for a day
   // after being deleted — would have been caught by either. Tracked files answer both at once.
-  string[] files = sourceFiles(core, cli, string[](".ts"), string[]("node_modules"));
+  string[] files = sourceFiles(core, cli, [".ts"], ["node_modules"]);
   t.isTrue(files.len() > 50, "only " + itoa(files.len()) + " .ts file(s) found — did the walk resolve?");
 
   string empty = "";
@@ -202,11 +202,11 @@ export string test_every_tree_the_runner_walks_for_markers_still_exists(Core cor
  */
 export string test_every_lane_marker_names_a_lane_the_runner_knows(Core core, Cli cli) {
   T t = T.create();
-  string[] known = string[]("heavy", "exclusive", "normal");
+  string[] known = ["heavy", "exclusive", "normal"];
 
   // Both halves of the suite declare lanes, so both are read: `.test.ts` for the Deno pass and
   // `.wac` for the wac one.
-  string[] files = sourceFiles(core, cli, string[](".ts", ".wac"), string[]("site", "node_modules"));
+  string[] files = sourceFiles(core, cli, [".ts", ".wac"], ["site", "node_modules"]);
   t.isTrue(files.len() > 100, "only " + itoa(files.len()) + " file(s) found — did the walk resolve?");
 
   i32 markers = 0;

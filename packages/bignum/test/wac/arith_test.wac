@@ -46,7 +46,7 @@ u8[] b(string s) { return s.toBytes(); }
 /** A random magnitude of exactly `bits` bits, as hex text — so the top bit is always set. */
 string randomHex(Rng rng, i32 bits) {
   if (bits == 0) { return "0"; }
-  i32[] bs = i32[bits]();
+  i32[] bs = i32[].filled(bits, 0);
   bs[0] = 1;
   for (i32 i = 1; i < bits; i++) { bs[i] = bit(rng); }
   string digits = "0123456789abcdef";
@@ -124,8 +124,8 @@ export string test_arith_exhaustive_over_small_values(Core core, Cli cli) {
 export string test_arith_limb_boundaries(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] powers = i32[](0, 1, 15, 16, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 160, 192);
-  string[] values = string[powers.len() * 5](fill: "");
+  i32[] powers = [0, 1, 15, 16, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 160, 192];
+  string[] values = string[].filled(powers.len() * 5, "");
   i32 n = 0;
   for (i32 p = 0; p < powers.len(); p++) {
     string anchor = decimalOf(lines, powerOfTwoHex(powers[p]));
@@ -153,8 +153,8 @@ export string test_arith_limb_boundaries(Core core, Cli cli) {
 export string test_arith_all_ones_and_all_zeros_limb_runs(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] limbCounts = i32[](1, 2, 3, 4, 8, 17);
-  string[] values = string[limbCounts.len() * 6](fill: "");
+  i32[] limbCounts = [1, 2, 3, 4, 8, 17];
+  string[] values = string[].filled(limbCounts.len() * 6, "");
   i32 n = 0;
   for (i32 c = 0; c < limbCounts.len(); c++) {
     i32 limbs = limbCounts[c];
@@ -223,9 +223,9 @@ export string test_arith_divisors_engineered_to_need_the_add_back(Core core, Cli
   T t = T.create();
   Rng rng = Rng(0x51DE51DE);
   Lines lines = Lines.create();
-  i32[] limbCounts = i32[](2, 3, 4, 6);
-  string[] tops = string[]("80000000", "80000001", "fffffffe", "ffffffff");
-  string[] rests = string[]("00000000", "ffffffff", "00000001");
+  i32[] limbCounts = [2, 3, 4, 6];
+  string[] tops = ["80000000", "80000001", "fffffffe", "ffffffff"];
+  string[] rests = ["00000000", "ffffffff", "00000001"];
   for (i32 c = 0; c < limbCounts.len(); c++) {
     for (i32 tI = 0; tI < tops.len(); tI++) {
       for (i32 rI = 0; rI < rests.len(); rI++) {
@@ -275,18 +275,19 @@ export string test_arith_divisors_engineered_to_need_the_add_back(Core core, Cli
 export string test_arith_the_quotient_estimate_survives_rhat_reaching_base(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  string[] aHex = string[](
+  string[] aHex = [
     "ffffffff00000000ffffffff00000000ffffffff0000000000000000",
-    "ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000");
+    "ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000"
+  ];
   string dHex = "fffffffffffffffffffffffe";
   string d = decimalOf(lines, dHex);
   for (i32 i = 0; i < aHex.len(); i++) {
     withSigns(lines, decimalOf(lines, aHex[i]), d);
   }
   // And a sweep of the same shape, so a variant of the mistake is caught too.
-  string[] lowD = string[]("fffffffe", "ffffffff", "00000000", "00000001");
-  string[] his = string[]("ffffffff", "fffffffe", "80000000");
-  string[] mids = string[]("00000000", "00000001", "ffffffff");
+  string[] lowD = ["fffffffe", "ffffffff", "00000000", "00000001"];
+  string[] his = ["ffffffff", "fffffffe", "80000000"];
+  string[] mids = ["00000000", "00000001", "ffffffff"];
   for (i32 l = 0; l < lowD.len(); l++) {
     string dv = decimalOf(lines, "ffffffff" + "ffffffff" + lowD[l]);
     for (i32 h = 0; h < his.len(); h++) {
@@ -341,10 +342,10 @@ export string test_arith_division_identity_holds(Core core, Cli cli) {
  */
 export string test_arith_truncated_division_on_every_sign() {
   T t = T.create();
-  string[] xs = string[]("7", "-7", "7", "-7", "1", "-1");
-  string[] ys = string[]("2", "2", "-2", "-2", "3", "3");
-  string[] qs = string[]("3", "-3", "-3", "3", "0", "0");
-  string[] rs = string[]("1", "-1", "1", "-1", "1", "-1");
+  string[] xs = ["7", "-7", "7", "-7", "1", "-1"];
+  string[] ys = ["2", "2", "-2", "-2", "3", "3"];
+  string[] qs = ["3", "-3", "-3", "3", "0", "0"];
+  string[] rs = ["1", "-1", "1", "-1", "1", "-1"];
   for (i32 i = 0; i < xs.len(); i++) {
     t.eqStr(text(opDiv(b(xs[i]), b(ys[i]))), qs[i], xs[i] + " / " + ys[i]);
     t.eqStr(text(opRem(b(xs[i]), b(ys[i]))), rs[i], xs[i] + " % " + ys[i]);
@@ -414,9 +415,9 @@ export string test_shifts_match_bigint_including_negative_values(Core core, Cli 
   T t = T.create();
   Rng rng = Rng(0x11223344);
   Lines lines = Lines.create();
-  string[] fixed = string[]("0", "1", "2", "3", "5", "255", "256", "4294967295", "4294967296");
-  i32[] counts = i32[](0, 1, 2, 7, 8, 31, 32, 33, 63, 64, 65, 96, 127, 128, 200, 400);
-  string[] values = string[fixed.len() + 20](fill: "");
+  string[] fixed = ["0", "1", "2", "3", "5", "255", "256", "4294967295", "4294967296"];
+  i32[] counts = [0, 1, 2, 7, 8, 31, 32, 33, 63, 64, 65, 96, 127, 128, 200, 400];
+  string[] values = string[].filled(fixed.len() + 20, "");
   i32 n = 0;
   for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
   for (i32 bits = 1; bits <= 200; bits = bits + 11) {
@@ -424,7 +425,7 @@ export string test_shifts_match_bigint_including_negative_values(Core core, Cli 
     n = n + 1;
   }
   for (i32 i = 0; i < n; i++) {
-    string[] both = string[](values[i], negated(values[i]));
+    string[] both = [values[i], negated(values[i])];
     for (i32 s = 0; s < both.len(); s++) {
       for (i32 k = 0; k < counts.len(); k++) {
         lines.add("big shl " + both[s] + " " + itoa(counts[k]) + " " +
@@ -473,7 +474,7 @@ export string test_shifts_a_negative_count_reverses_direction(Core core, Cli cli
   T t = T.create();
   Rng rng = Rng(0x44332211);
   Lines lines = Lines.create();
-  i32[] counts = i32[](1, 5, 32, 33, 70);
+  i32[] counts = [1, 5, 32, 33, 70];
   for (i32 trial = 0; trial < 60; trial++) {
     string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(200)));
     string v = bit(rng) == 1 ? negated(mag) : mag;
@@ -498,8 +499,8 @@ export string test_shifts_shifting_everything_out(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
   string big = decimalOf(lines, powerOfTwoHex(100));
-  string[] mags = string[]("1", "255", big);
-  i32[] counts = i32[](200, 500);
+  string[] mags = ["1", "255", big];
+  i32[] counts = [200, 500];
   for (i32 i = 0; i < mags.len(); i++) {
     for (i32 k = 0; k < counts.len(); k++) {
       t.eqStr(text(opShr(b(mags[i]), counts[k])), "0", mags[i] + " >> " + itoa(counts[k]));
@@ -522,7 +523,7 @@ export string test_mul_small_and_div_small_match_the_general_operations(Core cor
   T t = T.create();
   Rng rng = Rng(0x2B2B2B2B);
   Lines lines = Lines.create();
-  i32[] smalls = i32[](1, 2, 3, 10, 255, 65535, 65536, 1000000000, 0x7FFFFFFF, -1, -2);
+  i32[] smalls = [1, 2, 3, 10, 255, 65535, 65536, 1000000000, 0x7FFFFFFF, -1, -2];
   for (i32 trial = 0; trial < 120; trial++) {
     string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(250)));
     string v = bit(rng) == 1 ? negated(mag) : mag;
@@ -556,15 +557,15 @@ export string test_cmp_and_cmp_abs_match_bigint(Core core, Cli cli) {
   T t = T.create();
   Rng rng = Rng(0x6A6A6A6A);
   Lines lines = Lines.create();
-  string[] fixed = string[]("0", "1", "2", "4294967295", "4294967296");
-  string[] values = string[fixed.len() + 14](fill: "");
+  string[] fixed = ["0", "1", "2", "4294967295", "4294967296"];
+  string[] values = string[].filled(fixed.len() + 14, "");
   i32 n = 0;
   for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
   for (i32 bits = 1; bits <= 200; bits = bits + 17) {
     values[n] = decimalOf(lines, randomHex(rng, bits));
     n = n + 1;
   }
-  string[] signed = string[n * 2](fill: "");
+  string[] signed = string[].filled(n * 2, "");
   for (i32 i = 0; i < n; i++) {
     signed[i * 2] = values[i];
     signed[i * 2 + 1] = negated(values[i]);
@@ -585,8 +586,8 @@ export string test_negate_abs_and_copy_preserve_value(Core core, Cli cli) {
   T t = T.create();
   Rng rng = Rng(0x9E9E9E9E);
   Lines lines = Lines.create();
-  string[] fixed = string[]("0", "1", "4294967295", "4294967296");
-  string[] values = string[fixed.len() + 17](fill: "");
+  string[] fixed = ["0", "1", "4294967295", "4294967296"];
+  string[] values = string[].filled(fixed.len() + 17, "");
   i32 n = 0;
   for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
   for (i32 bits = 1; bits <= 200; bits = bits + 13) {
@@ -594,7 +595,7 @@ export string test_negate_abs_and_copy_preserve_value(Core core, Cli cli) {
     n = n + 1;
   }
   for (i32 i = 0; i < n; i++) {
-    string[] both = string[](values[i], negated(values[i]));
+    string[] both = [values[i], negated(values[i])];
     for (i32 s = 0; s < both.len(); s++) {
       lines.add("big neg " + both[s] + " - " + text(opNeg(b(both[s]))));
       lines.add("big abs " + both[s] + " - " + text(opAbs(b(both[s]))));

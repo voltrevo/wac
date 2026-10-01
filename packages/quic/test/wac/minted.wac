@@ -32,20 +32,20 @@ export u8[] anInitial(T t, Core core, Cli cli, string name) {
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     t.fail("our socket did not bind — " + sock.error);
-    return u8[0]();
+    return u8[]();
   }
   Daemon d = start(cli, "deno run -A --unstable-net " + quoted(CLIENT) + " " + itoa(sock.port),
                    dir + "/client.log");
   if (!d.ok()) {
     t.fail("the QUIC client did not start — " + d.error);
     cli.closeSocket(sock.handle);
-    return u8[0]();
+    return u8[]();
   }
 
-  u8[] got = u8[0]();
+  u8[] got = u8[]();
   for (i32 i = 0; i < 40 && got.len() == 0; i++) {
     Pending<Datagram> p = cli.receiveFrom(sock.handle);
-    if (core.waitAny(i32[](p.id), 1000) < 0) { p.drop(p.id); continue; }
+    if (core.waitAny([p.id], 1000) < 0) { p.drop(p.id); continue; }
     Datagram dg = p.wait();
     if (dg.error == "" && dg.bytes.len() > 0) { got = dg.bytes; }
   }

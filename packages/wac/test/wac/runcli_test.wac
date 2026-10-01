@@ -42,7 +42,7 @@ import { Core, Cli, Exec, Change } from "std/platform.wac";
 const string NOCAPS = "export i32 main() { return 3; }\n";
 
 Exec wac(Cli cli, string[] args) {
-  return cli.exec(binaryPath(cli), args, u8[0]()).wait();
+  return cli.exec(binaryPath(cli), args, u8[]()).wait();
 }
 
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
@@ -70,7 +70,7 @@ export string test_wac_run_takes_a_main_with_no_capabilities_and_returns_its_ans
   T t = T.create();
   string dir = programIn(cli, t, "runcli-nocaps", NOCAPS);
 
-  Exec r = wac(cli, string[]("run", dir + "/p.wac"));
+  Exec r = wac(cli, ["run", dir + "/p.wac"]);
   t.isTrue(!contains(said(r), "manifest"),
            "a program that declares nothing is not a bookkeeping problem: " + said(r));
   t.eqI32(r.status, 3, "and its answer is the exit status: " + said(r));
@@ -85,11 +85,11 @@ export string test_the_wasmtime_host_takes_one_too(Core core, Cli cli) {
   if (wacland == "") { return t.report(); }
 
   string dir = programIn(cli, t, "runcli-native", NOCAPS);
-  Exec built = wac(cli, string[]("build", dir + "/p.wac", "-o", dir + "/p", "--quiet"));
+  Exec built = wac(cli, ["build", dir + "/p.wac", "-o", dir + "/p", "--quiet"]);
   t.eqI32(built.status, 0, "could not build the module — " + said(built));
   if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
-  Exec r = cli.exec(wacland, string[](dir + "/p.wasm"), u8[0]()).wait();
+  Exec r = cli.exec(wacland, [dir + "/p.wasm"], u8[]()).wait();
   t.isTrue(!contains(said(r), "manifest"), "the same on the second host: " + said(r));
   t.eqI32(r.status, 3, "and the same answer: " + said(r));
 
@@ -103,7 +103,7 @@ export string test_a_main_naming_a_capability_this_host_cannot_build_still_says_
     "import { Page } from \"std/platform.wac\";\n" +
     "export i32 main(Page page) { return 0; }\n");
 
-  Exec r = wac(cli, string[]("run", dir + "/p.wac"));
+  Exec r = wac(cli, ["run", dir + "/p.wac"]);
   t.isTrue(r.status != 0, "a capability no host binary builds is not a success: " + said(r));
   // Names the capability, rather than reporting a missing manifest struct or trapping inside.
   t.isTrue(contains(said(r), "Page"), "and says which one: " + said(r));
@@ -126,14 +126,14 @@ export string test_a_built_deno_app_whose_main_takes_no_capabilities_runs(Core c
   T t = T.create();
   string dir = programIn(cli, t, "runcli-app", NOCAPS);
 
-  string made = builtByDeno(cli, dir + "/p.wac", "runcli-nocaps-app", string[0](fill: ""),
+  string made = builtByDeno(cli, dir + "/p.wac", "runcli-nocaps-app", string[].filled(0, ""),
                             "deno", false);
   t.isTrue(made != "", "the app built");
   if (made == "") { cli.remove(dir, true).wait(); return t.report(); }
   string app = dir + "/p";
   t.isTrue(copyBuilt(cli, made, app, true), "the build copied to " + app);
 
-  Exec r = cli.exec(app, string[0](fill: ""), u8[0]()).wait();
+  Exec r = cli.exec(app, string[].filled(0, ""), u8[]()).wait();
   t.isTrue(r.ran(), "the app did not run — " + r.error);
   t.isTrue(!contains(said(r), "reading 'of'"),
            "a program that declares nothing must not die in `worldFor`: " + said(r));

@@ -23,10 +23,11 @@ import { GenStats, Mutant, bumpLiteral, changedWacFiles, generate, isMutationTar
        from "./mutateoperators.wac";
 
 string[] SUBJECTS() {
-  return string[](
+  return [
     "packages/fmt/src/itoa.wac",
     "packages/rlp/src/rlp.wac",
-    "packages/fmt/src/ftoa.wac");
+    "packages/fmt/src/ftoa.wac"
+  ];
 }
 
 string read(Core core, Cli cli, string path) {
@@ -40,7 +41,7 @@ string oursFor(Core core, Cli cli, string file) {
   string source = read(core, cli, file);
   if (source == "") { return ""; }
   GenStats stats = GenStats(0, 0, 0);
-  Mutant[] got = generate(file, source, string[]("relational", "literal", "guard", "extreme"),
+  Mutant[] got = generate(file, source, ["relational", "literal", "guard", "extreme"],
                           stats, 3);
   string out = "";
   for (i32 i = 0; i < got.len(); i++) {
@@ -63,8 +64,7 @@ string theirsFor(Core core, Cli cli, string file) {
     + "const src = await Deno.readTextFile('" + file + "');\n"
     + "for (const m of generate('" + file + "', src)) console.log(m.name);\n";
   Exec r = cli.exec("deno",
-                    string[]("run", "-A", "--no-check", "--unstable-sloppy-imports", "-",
-                             ),
+                    ["run", "-A", "--no-check", "--unstable-sloppy-imports", "-",],
                     program.toBytes()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("the oracle did not run: " + string.fromBytes(r.stderr));

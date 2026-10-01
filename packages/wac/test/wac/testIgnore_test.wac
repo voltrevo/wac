@@ -33,7 +33,7 @@ Dir workspace(Cli cli) {
   string dir = scratch(cli, "test-ignore");
   Change made = cli.mkdir(dir, true).wait();
   if (!made.ok()) { return Dir(false, "", "a working directory: " + made.message); }
-  string[] names = string[]("a_test.wac", "b_test.wac", "c_test.wac");
+  string[] names = ["a_test.wac", "b_test.wac", "c_test.wac"];
   for (i32 i = 0; i < names.len(); i++) {
     Change w = cli.writeFile(dir + "/" + names[i], ONE().toBytes()).wait();
     if (!w.ok()) { return Dir(false, "", names[i] + ": " + w.message); }
@@ -48,10 +48,10 @@ struct Ran {
 }
 
 Ran wacTest(Cli cli, string[] args) {
-  string[] argv = string[args.len() + 1](fill: "");
+  string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = "test";
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
-  Exec r = cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+  Exec r = cli.exec(binaryPath(cli), argv, u8[]()).wait();
   if (!r.ran()) { return Ran(false, -1, r.error); }
   return Ran(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
 }
@@ -62,14 +62,14 @@ export string test_a_named_file_is_dropped_and_the_count_says_so_6vp2knq(Core co
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
-  Ran all = wacTest(cli, string[](d.path));
+  Ran all = wacTest(cli, [d.path]);
   t.isTrue(all.started, "the binary started");
   if (!all.started) { return t.report(); }
   t.eqI32(all.status, 0, "the baseline passes — " + all.out);
   t.isTrue(contains(all.out, "3 files: 3 ok"), "three files without the flag — got \"" + all.out + "\"");
   t.isFalse(contains(all.out, "--ignore"), "and the summary does not mention a flag nobody passed");
 
-  Ran less = wacTest(cli, string[]("--ignore", d.path + "/b_test.wac", d.path));
+  Ran less = wacTest(cli, ["--ignore", d.path + "/b_test.wac", d.path]);
   t.eqI32(less.status, 0, "it still passes — " + less.out);
   // Both halves: what ran, and what did not. A flag that dropped a file and said `2 files: 2 ok`
   // would satisfy the first and be the bug this is here for.
@@ -85,7 +85,7 @@ export string test_a_directory_excludes_what_is_under_it_6vp2knq(Core core, Cli 
   if (!d.ok) { return t.report(); }
 
   // A prefix match, as `deno test --ignore` is — naming the directory takes everything in it.
-  Ran none = wacTest(cli, string[]("--ignore", d.path, d.path));
+  Ran none = wacTest(cli, ["--ignore", d.path, d.path]);
   t.isTrue(none.started, "the binary started");
   if (!none.started) { return t.report(); }
   // **Excluding everything is its own message.** "No tests under <dir>" would be a wrong answer —
@@ -106,8 +106,8 @@ export string test_the_flag_is_read_wherever_it_is_written_6vp2knq(Core core, Cl
   // Before the path and after it. `wac test` already had this rule for `--filter` and the flags
   // before it; a value-carrying flag is where it gets broken, because skipping the flag without its
   // value leaves the value looking like a target.
-  Ran before = wacTest(cli, string[]("--ignore", d.path + "/b_test.wac", d.path));
-  Ran after = wacTest(cli, string[](d.path, "--ignore", d.path + "/b_test.wac"));
+  Ran before = wacTest(cli, ["--ignore", d.path + "/b_test.wac", d.path]);
+  Ran after = wacTest(cli, [d.path, "--ignore", d.path + "/b_test.wac"]);
   t.eqI32(after.status, before.status, "the same status either way");
   t.isTrue(contains(after.out, "2 files: 2 ok"), "and the same run — got \"" + after.out + "\"");
   t.isTrue(contains(after.out, "1 not run (--ignore)"), "with the same count");
@@ -129,11 +129,11 @@ export string test_a_single_named_file_is_not_a_way_around_it_6vp2knq(Core core,
   // from one source must not get a different answer for naming a file than for naming its
   // directory.
   string one = d.path + "/a_test.wac";
-  Ran plain = wacTest(cli, string[](one));
+  Ran plain = wacTest(cli, [one]);
   t.eqI32(plain.status, 0, "the file passes when it is not excluded — " + plain.out);
   t.isTrue(contains(plain.out, "1 passed"), "and runs — got \"" + plain.out + "\"");
 
-  Ran skipped = wacTest(cli, string[]("--ignore", one, one));
+  Ran skipped = wacTest(cli, ["--ignore", one, one]);
   t.eqI32(skipped.status, 0, "excluding it is not a failure — " + skipped.out);
   t.isTrue(contains(skipped.out, "not run (--ignore)"),
            "and it says the file was excluded — got \"" + skipped.out + "\"");

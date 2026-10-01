@@ -32,7 +32,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
 
 /** What `native/src/main.rs` looks up by name, and would return `None` for if it were absent. */
 string[] hostNeeds() {
-  return string[](
+  return [
     "Core",
     "Cli",
     "Pending<i32>",
@@ -40,7 +40,8 @@ string[] hostNeeds() {
     "Pending<bool>",
     "Pending<string>",
     "Pending<u8[]>",
-    "Pending<u8[]?>");
+    "Pending<u8[]?>"
+  ];
 }
 
 bool listed(string[] all, string want) {
@@ -50,7 +51,7 @@ bool listed(string[] all, string want) {
 
 /** The `name` of every member of an array of objects. */
 string[] namesIn(JsonArray items) {
-  string[] out = string[items.len()](fill: "");
+  string[] out = string[].filled(items.len(), "");
   for (i32 i = 0; i < items.len(); i++) { out[i] = strOf(objectOf(items.get(i)), "name"); }
   return out;
 }
@@ -71,8 +72,10 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   t.isTrue(whyDir == "", whyDir);
 
   Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
-    string[]("build", "packages/platform/example/wc.wac",
-             "--allow-read", "-o", dir + "/wc", "--quiet"), u8[0]()).wait();
+    [
+             "build", "packages/platform/example/wc.wac",
+             "--allow-read", "-o", dir + "/wc", "--quiet"
+    ], u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
            "wac build wrote it — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
@@ -94,12 +97,12 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   t.isTrue(callbacks.len() > 0, "the manifest lists no callbacks");
   t.isTrue(structs.len() > 0, "the manifest describes no structs");
 
-  string[] callbackTypes = string[callbacks.len()](fill: "");
+  string[] callbackTypes = string[].filled(callbacks.len(), "");
   for (i32 i = 0; i < callbacks.len(); i++) {
     callbackTypes[i] = strOf(objectOf(callbacks.get(i)), "type");
   }
 
-  string[] unresolved = string[64](fill: "");
+  string[] unresolved = string[].filled(64, "");
   i32 nUnresolved = 0;
   for (i32 i = 0; i < structs.len(); i++) {
     JsonObject s = objectOf(structs.get(i));
@@ -119,7 +122,7 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
       }
     }
   }
-  string[] firstFew = string[nUnresolved < 5 ? nUnresolved : 5](fill: "");
+  string[] firstFew = string[].filled(nUnresolved < 5 ? nUnresolved : 5, "");
   for (i32 i = 0; i < firstFew.len(); i++) { firstFew[i] = unresolved[i]; }
   t.eqI32(nUnresolved, 0,
           itoa(nUnresolved) + " funcref field(s) name a signature the manifest has no dispatcher " +
@@ -127,12 +130,12 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
 
   string[] names = namesIn(structs);
   string[] needs = hostNeeds();
-  string[] missing = string[needs.len()](fill: "");
+  string[] missing = string[].filled(needs.len(), "");
   i32 nMissing = 0;
   for (i32 i = 0; i < needs.len(); i++) {
     if (!listed(names, needs[i])) { missing[nMissing] = needs[i]; nMissing = nMissing + 1; }
   }
-  string[] gone = string[nMissing](fill: "");
+  string[] gone = string[].filled(nMissing, "");
   for (i32 i = 0; i < nMissing; i++) { gone[i] = missing[i]; }
   t.eqI32(nMissing, 0,
           "the manifest does not name " + joined(gone, ", ") + " — main.rs asks for each");
@@ -146,7 +149,7 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   t.isTrue(at >= 0, "the manifest describes no Read, which is what every readChunk answers with");
   if (at >= 0) {
     JsonArray variants = arrayOf(objectOf(structs.get(at)), "variants");
-    string[] wanted = string[]("Data", "End", "Failed");
+    string[] wanted = ["Data", "End", "Failed"];
     for (i32 i = 0; i < wanted.len(); i++) {
       i32 v = indexOfNamed(variants, wanted[i]);
       t.isTrue(v >= 0, "Read has no " + wanted[i] + " variant in the manifest");
@@ -208,7 +211,7 @@ export string test_a_program_declaring_a_name_platform_also_declares_still_runs(
   t.isTrue(cli.writeFile(dir + "/clash.wac", src.toBytes()).wait().ok(), "wrote the fixture");
 
   Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
-    string[]("run", "--allow-read", dir + "/clash.wac"), u8[0]()).wait();
+    ["run", "--allow-read", dir + "/clash.wac"], u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {

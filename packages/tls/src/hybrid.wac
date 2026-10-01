@@ -52,7 +52,7 @@ export u8[] hybridClientOffer(u8[] kemSeed, u8[] xPriv) {
   u8[] kem = mlkemKeyGen(kemSeed);          // ek ++ dk
   u8[] xPub = x25519Base(xPriv);
 
-  u8[] out = u8[1216 + 2400]();
+  u8[] out = u8[].filled(1216 + 2400, 0);
   for (i32 i = 0; i < 1184; i++) { out[i] = kem[i]; }
   for (i32 i = 0; i < 32; i++) { out[1184 + i] = xPub[i]; }
   for (i32 i = 0; i < 2400; i++) { out[1216 + i] = kem[1184 + i]; }
@@ -69,7 +69,7 @@ export u8[] hybridClientOffer(u8[] kemSeed, u8[] xPriv) {
  */
 export bool hybridClientShareValid(u8[] share) {
   if (share.len() != hybridClientShareLen()) { return false; }
-  u8[] ek = u8[1184]();
+  u8[] ek = u8[].filled(1184, 0);
   for (i32 i = 0; i < 1184; i++) { ek[i] = share[i]; }
   return mlkemEkValid(ek);
 }
@@ -88,9 +88,9 @@ export u8[] hybridServerAccept(u8[] clientShare, u8[] m, u8[] xPriv) {
   if (m.len() != 32) { trap; }
   if (xPriv.len() != 32) { trap; }
 
-  u8[] ek = u8[1184]();
+  u8[] ek = u8[].filled(1184, 0);
   for (i32 i = 0; i < 1184; i++) { ek[i] = clientShare[i]; }
-  u8[] xPeer = u8[32]();
+  u8[] xPeer = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { xPeer[i] = clientShare[1184 + i]; }
 
   // mlkemEncaps validates the encapsulation key's coefficients, which is the check
@@ -107,11 +107,11 @@ export u8[] hybridServerAccept(u8[] clientShare, u8[] m, u8[] xPriv) {
   //
   // Empty rather than a trap: the peer chose these bytes.
   u8[]? xs = x25519Shared(xPriv, xPeer);
-  if (xs is null) { return u8[0](); }
+  if (xs is null) { return u8[](); }
   u8[] xShared = xs!;
   u8[] xPub = x25519Base(xPriv);
 
-  u8[] out = u8[1120 + 64]();
+  u8[] out = u8[].filled(1120 + 64, 0);
   for (i32 i = 0; i < 1088; i++) { out[i] = enc[32 + i]; }
   for (i32 i = 0; i < 32; i++) { out[1088 + i] = xPub[i]; }
   for (i32 i = 0; i < 32; i++) { out[1120 + i] = enc[i]; }
@@ -133,21 +133,21 @@ export u8[] hybridClientFinish(u8[] offerAndDk, u8[] serverShare, u8[] xPriv) {
   if (serverShare.len() != 1120) { trap; }
   if (xPriv.len() != 32) { trap; }
 
-  u8[] dk = u8[2400]();
+  u8[] dk = u8[].filled(2400, 0);
   for (i32 i = 0; i < 2400; i++) { dk[i] = offerAndDk[1216 + i]; }
-  u8[] ct = u8[1088]();
+  u8[] ct = u8[].filled(1088, 0);
   for (i32 i = 0; i < 1088; i++) { ct[i] = serverShare[i]; }
-  u8[] xPeer = u8[32]();
+  u8[] xPeer = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { xPeer[i] = serverShare[1088 + i]; }
 
   u8[] kemShared = mlkemDecaps(dk, ct);
   // The client's half of the same rule — see `hybridServerAccept`. A server that sent a small-order
   // point would have reduced the hybrid to ML-KEM alone.
   u8[]? xs = x25519Shared(xPriv, xPeer);
-  if (xs is null) { return u8[0](); }
+  if (xs is null) { return u8[](); }
   u8[] xShared = xs!;
 
-  u8[] out = u8[64]();
+  u8[] out = u8[].filled(64, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = kemShared[i]; }
   for (i32 i = 0; i < 32; i++) { out[32 + i] = xShared[i]; }
   return out;

@@ -28,7 +28,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   u8[] flags = a.flags.toBytes();
   for (i32 i = 0; i < flags.len(); i++) {
     if (!known(flags[i])) {
-      u8[] one = u8[1](fill: flags[i]);
+      u8[] one = u8[].filled(1, flags[i]);
       core.warn(a.name + ": invalid option -- '" + string.fromBytes(one) + "'");
       core.warn("Try '" + a.name + " --help' for more information.");
       return 1;
@@ -117,7 +117,7 @@ i32 copy(Core core, Cli cli, Fs fs, Args a) {
   bool failed = false;
   // The feed travels with the span: it changes when the run moves to the next operand, and on anything
   // but a host mount it is serving bytes rather than pulling on the process's own input.
-  Feed fed = Feed.of(cli, u8[0]());
+  Feed fed = Feed.of(cli, u8[]());
   while (true) {
     Span got = nextSpan(core, cli, fs, a, at, opened, fed);
     fed = got.fed;

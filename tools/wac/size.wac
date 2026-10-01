@@ -52,18 +52,22 @@ import { gzipBest } from "../../packages/gzip/src/gzip.wac";
 
 /** The layers, largest last so the table reads as a build-up. */
 string[] entries() {
-  return string[]("packages/tor/size/proto_only.wac",
+  return [
+                  "packages/tor/size/proto_only.wac",
                   "packages/tor/size/tor_only.wac",
                   "packages/tor/size/tls_only.wac",
-                  "packages/tor/src/client_entry.wac");
+                  "packages/tor/src/client_entry.wac"
+  ];
 }
 
 /** What each layer is, in the words the table prints. */
 string[] labels() {
-  return string[]("cells + path selection, no crypto",
+  return [
+                  "cells + path selection, no crypto",
                   "tor protocol + its crypto",
                   "TLS 1.3 client + its crypto",
-                  "the whole client");
+                  "the whole client"
+  ];
 }
 
 /** How many times each layer is compiled. The median of five is the reported number. */
@@ -112,8 +116,8 @@ export i32 main(Core core, Cli cli) {
       lines = lines + splitKeepingEmpty(src.texts[k]).len();
     }
 
-    i64[] took = i64[RUNS]();
-    u8[] wasm = u8[0]();
+    i64[] took = i64[].filled(RUNS, 0);
+    u8[] wasm = u8[]();
     for (i32 r = 0; r < RUNS; r++) {
       i64 t0 = core.monotonicNanos().wait();
       wasm = emitFiles(src.paths, src.texts, ents[i]);

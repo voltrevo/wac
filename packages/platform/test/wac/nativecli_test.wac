@@ -58,10 +58,12 @@ bool put(Cli cli, string path, string text) { return putFile(cli, path, text) ==
  */
 Exec host(Cli cli, string repo, string at, string entry, string out, string extra) {
   return cli.exec("/bin/sh",
-    string[]("-c", "cd " + at + " && exec deno run -A --import-map " + repo + "/deno.json " +
+    [
+                   "-c", "cd " + at + " && exec deno run -A --import-map " + repo + "/deno.json " +
                    repo + "/packages/platform/native.ts " + entry + " -o " + out +
-                   (extra == "" ? "" : " " + extra)),
-    u8[0]()).wait();
+                   (extra == "" ? "" : " " + extra)
+    ],
+    u8[]()).wait();
 }
 
 /**

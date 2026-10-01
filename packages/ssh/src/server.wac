@@ -72,9 +72,9 @@ export u8[] hostKeyBlob(u8[] publicKey) {
 /** The client's ephemeral public key out of SSH_MSG_KEX_ECDH_INIT, or empty if it is not one. */
 export u8[] parseEcdhInit(u8[] payload) {
   Reader r = Reader.over(payload);
-  if (r.byte() != msgKexEcdhInit()) { return u8[0](); }
+  if (r.byte() != msgKexEcdhInit()) { return u8[](); }
   u8[] qc = r.str();
-  if (!r.ok || qc.len() != 32) { return u8[0](); }
+  if (!r.ok || qc.len() != 32) { return u8[](); }
   return qc;
 }
 
@@ -146,7 +146,7 @@ export struct AuthRequest {
 }
 
 AuthRequest noAuth() {
-  return AuthRequest(false, u8[0](), u8[0](), u8[0](), false, u8[0](), u8[0](), u8[0]());
+  return AuthRequest(false, u8[](), u8[](), u8[](), false, u8[](), u8[](), u8[]());
 }
 
 /**
@@ -163,12 +163,12 @@ export AuthRequest parseAuthRequest(u8[] payload) {
   u8[] method = r.str();
   if (!r.ok) { return noAuth(); }
   if (!equal(method, ascii("publickey"))) {
-    return AuthRequest(true, user, service, method, false, u8[0](), u8[0](), u8[0]());
+    return AuthRequest(true, user, service, method, false, u8[](), u8[](), u8[]());
   }
   bool hasSignature = r.bool();
   u8[] keyType = r.str();
   u8[] publicBlob = r.str();
-  u8[] signature = hasSignature ? r.str() : u8[0]();
+  u8[] signature = hasSignature ? r.str() : u8[]();
   if (!r.ok) { return noAuth(); }
   return AuthRequest(true, user, service, method, hasSignature, keyType, publicBlob, signature);
 }
@@ -350,10 +350,10 @@ export u8[] channelClose(i32 channel) {
 /** The name of a CHANNEL_REQUEST — `exec`, `shell`, `pty-req`, `env` — or empty. */
 export u8[] requestName(u8[] payload) {
   Reader r = Reader.over(payload);
-  if (r.byte() != msgChannelRequest()) { return u8[0](); }
+  if (r.byte() != msgChannelRequest()) { return u8[](); }
   r.u32();
   u8[] name = r.str();
-  return r.ok ? name : u8[0]();
+  return r.ok ? name : u8[]();
 }
 
 /**
@@ -373,7 +373,7 @@ export i32 readOpenChannel(u8[] payload) {
   i32 typeLen = (payload[1] << 24) | (payload[2] << 16) | (payload[3] << 8) | payload[4];
   if (typeLen < 0 || 5 + typeLen + 4 > payload.len()) { return -1; }
   if (typeLen != 7) { return -1; }                       // "session" and nothing else
-  const u8[] SESSION = u8[](0x73, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e);
+  const u8[] SESSION = [0x73, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e];
   for (i32 i = 0; i < 7; i++) {
     if (payload[5 + i] != SESSION[i]) { return -1; }
   }
@@ -401,13 +401,13 @@ export bool requestWantsReply(u8[] payload) {
 /** The command out of a CHANNEL_REQUEST for `exec`, or empty when it is a different request. */
 export u8[] execCommand(u8[] payload) {
   Reader r = Reader.over(payload);
-  if (r.byte() != msgChannelRequest()) { return u8[0](); }
+  if (r.byte() != msgChannelRequest()) { return u8[](); }
   r.u32();                                    // channel, the caller already has it
   u8[] name = r.str();
   r.bool();                                   // want_reply
-  if (!r.ok || !equal(name, ascii("exec"))) { return u8[0](); }
+  if (!r.ok || !equal(name, ascii("exec"))) { return u8[](); }
   u8[] command = r.str();
-  return r.ok ? command : u8[0]();
+  return r.ok ? command : u8[]();
 }
 
 /**

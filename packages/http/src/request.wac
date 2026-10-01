@@ -133,7 +133,7 @@ export Parsed parseRequest(u8[] input, i32 maxBody) {
   if (!isDigit(minorByte)) { return Parsed.Bad(ERR_VERSION()); }
 
   Request req = Request(slice(input, begin, sp1), slice(input, sp1 + 1, sp2), minorByte - '0',
-                        Headers.create(), u8[0](), 0);
+                        Headers.create(), u8[](), 0);
 
   // ── Header fields ───────────────────────────────────────────────────────────────────
   i32 at = lineEnd + 2;
@@ -222,7 +222,7 @@ export Parsed parseRequest(u8[] input, i32 maxBody) {
 Parsed readChunked(u8[] input, i32 start, Request req, i32 maxBody) {
   i32 at = start;
   i32 total = 0;
-  u8[] body = u8[0]();
+  u8[] body = u8[]();
   i32 bodyLen = 0;
 
   while (true) {
@@ -258,7 +258,7 @@ Parsed readChunked(u8[] input, i32 start, Request req, i32 maxBody) {
     // sum is not, and a `maxBody` above half of i32 makes the addition itself wrap.
     if (size > maxBody - total) { return Parsed.Bad(ERR_TOO_LARGE()); }
     total = total + size;
-    u8[] grown = u8[total]();
+    u8[] grown = u8[].filled(total, 0);
     for (i32 k = 0; k < bodyLen; k++) { grown[k] = body[k]; }
     for (i32 k = 0; k < size; k++) { grown[bodyLen + k] = input[at + k]; }
     body = grown;

@@ -127,7 +127,7 @@ u8[] fieldOf(u8[] line, i32 which) {
   }
   i32 end = at;
   while (end < line.len() && line[end] != 32) { end = end + 1; }
-  u8[] out = u8[end - at]();
+  u8[] out = u8[].filled(end - at, 0);
   for (i32 i = 0; i < end - at; i++) { out[i] = line[at + i]; }
   return out;
 }

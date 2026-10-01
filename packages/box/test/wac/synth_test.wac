@@ -95,7 +95,7 @@ export string test_a_file_with_no_end_says_so_rather_than_hanging_or_inventing_a
 
 export string test_everything_but_dev_null_is_read_only_and_says_which(Core core, Cli cli) {
   T t = T.create();
-  string[] paths = string[]("/dev/zero", "/dev/urandom", "/proc/self/cmdline");
+  string[] paths = ["/dev/zero", "/dev/urandom", "/proc/self/cmdline"];
   for (i32 i = 0; i < paths.len(); i++) {
     Ran r = runSealed(core, cli, "echo x > " + paths[i]);
     t.isTrue(r.status != 0, paths[i] + " accepted a write");
@@ -106,7 +106,7 @@ export string test_everything_but_dev_null_is_read_only_and_says_which(Core core
     // `chmod` for something no mode can change. `FAULT_READ_ONLY` is the category; this is its words.
     t.isTrue(r.err.indexOf("Read-only file system") >= 0, paths[i] + ": " + show(r.err));
   }
-  string[] refused = string[]("mkdir /dev/d", "rm /dev/null", "rmdir /proc/self");
+  string[] refused = ["mkdir /dev/d", "rm /dev/null", "rmdir /proc/self"];
   for (i32 i = 0; i < refused.len(); i++) {
     t.isTrue(runSealed(core, cli, refused[i]).status != 0, refused[i] + " was allowed");
   }
@@ -164,7 +164,7 @@ export string test_step_sixs_own_criterion(Core core, Cli cli) {
   for (i32 i = 0; i < cmdline.outBytes.len(); i++) { if (cmdline.outBytes[i] == 0) { hasNul = true; } }
   t.isTrue(hasNul, "not NUL-separated: " + show(cmdline.out));
 
-  Exec theirs = cli.exec("bash", string[]("-c", "cat /proc/self/cmdline"), u8[0]()).wait();
+  Exec theirs = cli.exec("bash", ["-c", "cat /proc/self/cmdline"], u8[]()).wait();
   if (theirs.ran()) {
     t.eqStr(cmdline.out, string.fromBytes(theirs.stdout), "bash disagrees about /proc/self/cmdline");
   } else {

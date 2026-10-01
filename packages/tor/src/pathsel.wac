@@ -76,7 +76,7 @@ export i64 positionWeight(i32 position, bool isGuard, bool isExit, i64[] weights
  * and nothing looks wrong.
  */
 export i64[] weightedBandwidths(Relay[] relays, i32 position, i64[] weights) {
-  i64[] out = i64[relays.len()]();
+  i64[] out = i64[].filled(relays.len(), 0);
   for (i32 i = 0; i < relays.len(); i++) {
     bool guard = hasFlag(relays[i], "Guard");
     bool exit = hasFlag(relays[i], "Exit") && !hasFlag(relays[i], "BadExit");
@@ -197,7 +197,7 @@ export i32 choose(
   Relay[] relays, i64[] weighted, i32[] chosen, i32[] familyStart, i32[] familyOf,
   bool allowSameSubnet, i64 r
 ) {
-  i64[] eligible = i64[weighted.len()]();
+  i64[] eligible = i64[].filled(weighted.len(), 0);
   for (i32 i = 0; i < weighted.len(); i++) {
     eligible[i] = pathAllows(relays, chosen, i, familyStart, familyOf, allowSameSubnet)
       ? weighted[i]
@@ -248,9 +248,11 @@ import { parseInt } from "./directory.wac";
 const i32 WEIGHT_COUNT = 12;
 
 string weightName(i32 i) {
-  string[] names = string[]("Wgg", "Wgd", "Wge", "Wgm",
+  string[] names = [
+                            "Wgg", "Wgd", "Wge", "Wgm",
                             "Wmg", "Wmd", "Wme", "Wmm",
-                            "Weg", "Wed", "Wee", "Wem");
+                            "Weg", "Wed", "Wee", "Wem"
+  ];
   return names[i];
 }
 
@@ -265,7 +267,7 @@ string weightName(i32 i) {
  * does is broken or probing, and `weightedChoice` traps on a negative weight.
  */
 export i64[] parseWeights(u8[] doc) {
-  i64[] out = i64[WEIGHT_COUNT]();
+  i64[] out = i64[].filled(WEIGHT_COUNT, 0);
   for (i32 i = 0; i < WEIGHT_COUNT; i++) { out[i] = 10000; }
   // Wge is the exception, and it is not an omission by the authorities: they publish
   // nineteen weights and this is not one of them. tor hardcodes `We = 0` for the guard
@@ -291,9 +293,9 @@ export i64[] parseWeights(u8[] doc) {
         if (doc[j] == '=' && eq < 0) { eq = j; }
       }
       if (eq > start) {
-        u8[] name = u8[eq - start]();
+        u8[] name = u8[].filled(eq - start, 0);
         for (i32 j = 0; j < name.len(); j++) { name[j] = doc[start + j]; }
-        u8[] value = u8[i - eq - 1]();
+        u8[] value = u8[].filled(i - eq - 1, 0);
         for (i32 j = 0; j < value.len(); j++) { value[j] = doc[eq + 1 + j]; }
         string n = string.fromBytes(name);
         i32 v = parseInt(string.fromBytes(value));
@@ -349,7 +351,7 @@ export Families resolveFamilies(Relay[] relays) {
 
   // Each relay's claims, as indices. A claim naming nobody in this consensus is dropped
   // here rather than carried as a name that can never match.
-  Vec<i32>[] claims = Vec<i32>[relays.len()](fill: Vec.create());
+  Vec<i32>[] claims = Vec<i32>[].filled(relays.len(), Vec.create());
   for (i32 i = 0; i < relays.len(); i++) {
     Vec<i32> mine = Vec.create();
     for (i32 j = 0; j < relays[i].family.len(); j++) {
@@ -359,7 +361,7 @@ export Families resolveFamilies(Relay[] relays) {
     claims[i] = mine;
   }
 
-  i32[] start = i32[relays.len() + 1]();
+  i32[] start = i32[].filled(relays.len() + 1, 0);
   Vec<i32> of = Vec.create();
   for (i32 i = 0; i < relays.len(); i++) {
     start[i] = of.len();
@@ -394,7 +396,7 @@ i32 lookupName(Map<string, i32> byName, Map<string, i32> byFingerprint, string t
     for (i32 i = 1; i < t.len(); i++) {
       if ((t[i] == '=' || t[i] == '~') && end == t.len()) { end = i; }
     }
-    u8[] hexPart = u8[end - 1]();
+    u8[] hexPart = u8[].filled(end - 1, 0);
     for (i32 i = 0; i < hexPart.len(); i++) { hexPart[i] = upperHex(t[1 + i]); }
     return byFingerprint.getOr(string.fromBytes(hexPart), -1);
   }
@@ -404,7 +406,7 @@ i32 lookupName(Map<string, i32> byName, Map<string, i32> byFingerprint, string t
 /** Uppercase hex of an identity, which is how a consensus writes a fingerprint. */
 string hexOf(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();
-  u8[] out = u8[b.len() * 2]();
+  u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i * 2] = digits[(b[i] >> 4) & 15];
     out[i * 2 + 1] = digits[b[i] & 15];

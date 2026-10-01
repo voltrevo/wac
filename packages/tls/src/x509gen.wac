@@ -38,27 +38,27 @@ import {
 } from "./derwrite.wac";
 
 /** `id-at-commonName`, 2.5.4.3. */
-u8[] oidCommonName() { return u8[](0x55, 0x04, 0x03); }
+u8[] oidCommonName() { return [0x55, 0x04, 0x03] as u8[]; }
 /** `id-ce-basicConstraints`, 2.5.29.19. */
-u8[] oidBasicConstraintsHere() { return u8[](0x55, 0x1D, 0x13); }
+u8[] oidBasicConstraintsHere() { return [0x55, 0x1D, 0x13] as u8[]; }
 /** `2.5.29.17` — subjectAltName, the only place a verifier looks for a name. */
-u8[] oidSubjectAltNameHere() { return u8[](0x55, 0x1D, 0x11); }
+u8[] oidSubjectAltNameHere() { return [0x55, 0x1D, 0x11] as u8[]; }
 
 /** `SEQUENCE { SET { SEQUENCE { OID commonName, PrintableString name } } }`. */
 u8[] nameOf(string commonName) {
-  u8[][] atv = u8[][2]();
+  u8[][] atv = u8[][].defaulted(2);
   atv[0] = derOid(oidCommonName());
   atv[1] = derPrintableString(commonName);
-  u8[][] rdn = u8[][1]();
+  u8[][] rdn = u8[][].defaulted(1);
   rdn[0] = derSequence(derConcat(atv));
-  u8[][] seq = u8[][1]();
+  u8[][] seq = u8[][].defaulted(1);
   seq[0] = derSet(derConcat(rdn));
   return derSequence(derConcat(seq));
 }
 
 /** `SEQUENCE { OID }` — an AlgorithmIdentifier with absent parameters, which is ed25519's form. */
 u8[] algEd25519() {
-  u8[][] p = u8[][1]();
+  u8[][] p = u8[][].defaulted(1);
   p[0] = derOid(oidEd25519());
   return derSequence(derConcat(p));
 }
@@ -71,9 +71,9 @@ u8[] algEd25519() {
  * verify while parsing perfectly.
  */
 u8[] algRsa(u8[] oid) {
-  u8[][] p = u8[][2]();
+  u8[][] p = u8[][].defaulted(2);
   p[0] = derOid(oid);
-  p[1] = derTlv(0x05, u8[0]());       // NULL
+  p[1] = derTlv(0x05, u8[]());       // NULL
   return derSequence(derConcat(p));
 }
 
@@ -85,7 +85,7 @@ u8[] algRsa(u8[] oid) {
  * borrowed the wrong one still parses.
  */
 u8[] algEcPublicKey() {
-  u8[][] p = u8[][2]();
+  u8[][] p = u8[][].defaulted(2);
   p[0] = derOid(oidEcPublicKey());
   p[1] = derOid(oidPrime256v1());
   return derSequence(derConcat(p));
@@ -93,7 +93,7 @@ u8[] algEcPublicKey() {
 
 /** `SEQUENCE { OID ecdsa-with-SHA256 }` — parameters absent, which RFC 5758 requires. */
 u8[] algEcdsaSha256() {
-  u8[][] p = u8[][1]();
+  u8[][] p = u8[][].defaulted(1);
   p[0] = derOid(oidEcdsaSha256());
   return derSequence(derConcat(p));
 }
@@ -106,11 +106,11 @@ u8[] algEcdsaSha256() {
  * bit, so an encoder that skipped it would work about a quarter of the time.
  */
 u8[] ecdsaSigValue(u8[] raw) {
-  if (raw.len() != 64) { return u8[0](); }
-  u8[] r = u8[32]();
-  u8[] sv = u8[32]();
+  if (raw.len() != 64) { return u8[](); }
+  u8[] r = u8[].filled(32, 0);
+  u8[] sv = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { r[i] = raw[i]; sv[i] = raw[32 + i]; }
-  u8[][] p = u8[][2]();
+  u8[][] p = u8[][].defaulted(2);
   p[0] = derInteger(r);
   p[1] = derInteger(sv);
   return derSequence(derConcat(p));
@@ -118,7 +118,7 @@ u8[] ecdsaSigValue(u8[] raw) {
 
 /** `SEQUENCE { AlgorithmIdentifier, BIT STRING }`. */
 u8[] spki(u8[] algorithm, u8[] keyBits) {
-  u8[][] p = u8[][2]();
+  u8[][] p = u8[][].defaulted(2);
   p[0] = algorithm;
   p[1] = derBitString(keyBits);
   return derSequence(derConcat(p));
@@ -126,7 +126,7 @@ u8[] spki(u8[] algorithm, u8[] keyBits) {
 
 /** `SEQUENCE { RSAPublicKey }` as a BIT STRING body: `SEQUENCE { INTEGER n, INTEGER e }`. */
 u8[] rsaPublicKeyBits(u8[] modulus, u8[] exponent) {
-  u8[][] p = u8[][2]();
+  u8[][] p = u8[][].defaulted(2);
   p[0] = derInteger(modulus);
   p[1] = derInteger(exponent);
   return derSequence(derConcat(p));
@@ -134,7 +134,7 @@ u8[] rsaPublicKeyBits(u8[] modulus, u8[] exponent) {
 
 /** `SEQUENCE { notBefore, notAfter }`. */
 u8[] validity(i64 notBefore, i64 notAfter) {
-  u8[][] p = u8[][2]();
+  u8[][] p = u8[][].defaulted(2);
   p[0] = derTime(notBefore);
   p[1] = derTime(notAfter);
   return derSequence(derConcat(p));
@@ -161,7 +161,7 @@ u8[] validity(i64 notBefore, i64 notAfter) {
  * `[2] IMPLICIT IA5String` is tag `0x82`, which is why the name goes in without a string header.
  */
 u8[] subjectAltName(string dns) {
-  u8[][] ext = u8[][2]();
+  u8[][] ext = u8[][].defaulted(2);
   ext[0] = derOid(oidSubjectAltNameHere());
   ext[1] = derTlv(0x04, derSequence(derTlv(0x82, dns.toBytes())));
   return derSequence(derConcat(ext));
@@ -178,18 +178,18 @@ u8[] subjectAltName(string dns) {
  * it, which is the shape a caller wants when the name is not the identity.
  */
 u8[] extensions(bool isCa, string dns) {
-  u8[][] ext = u8[][3]();
+  u8[][] ext = u8[][].defaulted(3);
   ext[0] = derOid(oidBasicConstraintsHere());
   ext[1] = derTlv(0x01, caTrue());                       // critical: TRUE
-  ext[2] = derTlv(0x04, derSequence(isCa ? derTlv(0x01, caTrue()) : u8[0]()));
-  u8[][] all = u8[][dns.len() > 0 ? 2 : 1]();
+  ext[2] = derTlv(0x04, derSequence(isCa ? derTlv(0x01, caTrue()) : u8[]()));
+  u8[][] all = u8[][].defaulted(dns.len() > 0 ? 2 : 1);
   all[0] = derSequence(derConcat(ext));
   if (dns.len() > 0) { all[1] = subjectAltName(dns); }
   return derExplicit(3, derSequence(derConcat(all)));
 }
 
 u8[] caTrue() {
-  u8[] b = u8[1]();
+  u8[] b = u8[].filled(1, 0);
   b[0] = 0xFF;
   return b;
 }
@@ -206,7 +206,7 @@ u8[] tbsCertificate(
   u8[] subjectPublicKeyInfo, bool isCa
 ) {
   u8[] name = nameOf(subject);
-  u8[][] p = u8[][7]();
+  u8[][] p = u8[][].defaulted(7);
   p[0] = derExplicit(0, derIntegerSmall(2));   // version v3
   p[1] = derIntegerSmall(serial);
   p[2] = signatureAlgorithm;
@@ -215,7 +215,7 @@ u8[] tbsCertificate(
   p[5] = name;                                  // subject
   p[6] = subjectPublicKeyInfo;
   u8[] body = derConcat(p);
-  u8[][] both = u8[][2]();
+  u8[][] both = u8[][].defaulted(2);
   both[0] = body;
   both[1] = extensions(isCa, subject);
   return derSequence(derConcat(both));
@@ -223,7 +223,7 @@ u8[] tbsCertificate(
 
 /** `SEQUENCE { tbsCertificate, AlgorithmIdentifier, BIT STRING signature }`. */
 u8[] wrap(u8[] tbs, u8[] algorithm, u8[] signature) {
-  u8[][] p = u8[][3]();
+  u8[][] p = u8[][].defaulted(3);
   p[0] = tbs;
   p[1] = algorithm;
   p[2] = derBitString(signature);
@@ -240,14 +240,14 @@ u8[] wrap(u8[] tbs, u8[] algorithm, u8[] signature) {
  * `notAfter` precedes its `notBefore` parses and is never valid, which is worse than not existing.
  */
 export u8[] selfSignedEd25519(string subject, i64 serial, i64 notBefore, i64 notAfter, u8[] seed) {
-  if (seed.len() != 32) { return u8[0](); }
-  if (notAfter <= notBefore) { return u8[0](); }
+  if (seed.len() != 32) { return u8[](); }
+  if (notAfter <= notBefore) { return u8[](); }
   u8[] alg = algEd25519();
   u8[] tbs = tbsCertificate(serial, alg, subject, notBefore, notAfter,
                             spki(alg, ed25519PublicKey(seed)), false);
-  if (tbs.len() == 0) { return u8[0](); }
+  if (tbs.len() == 0) { return u8[](); }
   u8[] sig = ed25519Sign(seed, tbs);
-  if (sig.len() != 64) { return u8[0](); }
+  if (sig.len() != 64) { return u8[](); }
   return wrap(tbs, alg, sig);
 }
 
@@ -267,20 +267,20 @@ export u8[] selfSignedEd25519(string subject, i64 serial, i64 notBefore, i64 not
  */
 export u8[] selfSignedP256(string subject, i64 serial, i64 notBefore, i64 notAfter,
                            u8[] priv, u8[] nonce) {
-  if (priv.len() != 32 || nonce.len() != 32) { return u8[0](); }
-  if (notAfter <= notBefore) { return u8[0](); }
+  if (priv.len() != 32 || nonce.len() != 32) { return u8[](); }
+  if (notAfter <= notBefore) { return u8[](); }
   u8[] pub = p256PublicKey(priv);
-  if (pub.len() != 65) { return u8[0](); }        // uncompressed, 0x04 || X || Y
+  if (pub.len() != 65) { return u8[](); }        // uncompressed, 0x04 || X || Y
   u8[] alg = algEcdsaSha256();
   u8[] tbs = tbsCertificate(serial, alg, subject, notBefore, notAfter,
                             spki(algEcPublicKey(), pub), false);
-  if (tbs.len() == 0) { return u8[0](); }
+  if (tbs.len() == 0) { return u8[](); }
   // **`p256Sign` hashes for you**, like `ed25519Sign` beside it and `rsaSignPkcs1` below. Passing
   // `sha256(tbs)` here signs `sha256(sha256(tbs))`, which is a certificate nothing can verify —
   // and the first version of this did exactly that, undetected, because the oracle was accepting a
   // trusted self-signed certificate without checking its signature at all.
   u8[] sig = ecdsaSigValue(p256Sign(priv, tbs, nonce));
-  if (sig.len() == 0) { return u8[0](); }
+  if (sig.len() == 0) { return u8[](); }
   return wrap(tbs, alg, sig);
 }
 
@@ -294,14 +294,14 @@ export u8[] selfSignedRsa(
   string subject, i64 serial, i64 notBefore, i64 notAfter,
   u8[] modulus, u8[] exponent, u8[] privateExponent
 ) {
-  if (modulus.len() == 0 || exponent.len() == 0 || privateExponent.len() == 0) { return u8[0](); }
-  if (notAfter <= notBefore) { return u8[0](); }
+  if (modulus.len() == 0 || exponent.len() == 0 || privateExponent.len() == 0) { return u8[](); }
+  if (notAfter <= notBefore) { return u8[](); }
   u8[] alg = algRsa(oidRsaSha256());
   u8[] tbs = tbsCertificate(serial, alg, subject, notBefore, notAfter,
                             spki(algRsa(oidRsaEncryption()),
                                  rsaPublicKeyBits(modulus, exponent)), false);
-  if (tbs.len() == 0) { return u8[0](); }
+  if (tbs.len() == 0) { return u8[](); }
   u8[] sig = rsaSignPkcs1(modulus, privateExponent, tbs, 32);
-  if (sig.len() == 0) { return u8[0](); }
+  if (sig.len() == 0) { return u8[](); }
   return wrap(tbs, alg, sig);
 }

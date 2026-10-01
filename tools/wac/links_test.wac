@@ -80,7 +80,7 @@ struct StringSet {
   StringSet withCapacity(i32 want) {
     i32 cap = 16;
     while (cap < want * 2) { cap = cap * 2; }
-    return StringSet(string[cap](fill: ""), bool[cap](fill: false), 0);
+    return StringSet(string[].filled(cap, ""), bool[].filled(cap, false), 0);
   }
 
   i32 slotFor(const this, string k) {
@@ -145,7 +145,7 @@ string dirname(string p) {
 /** `a/b` + `../c` → `a/c`. A leading `..` that climbs past the root is kept, so it fails visibly. */
 string resolve(string dir, string rel) {
   string[] parts = splitOn(dir == "" ? rel : dir + "/" + rel, '/');
-  string[] out = string[parts.len()](fill: "");
+  string[] out = string[].filled(parts.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < parts.len(); i++) {
     string part = parts[i];
@@ -163,7 +163,7 @@ string[] splitOn(string s, i32 sep) {
   u8[] b = s.toBytes();
   i32 n = 1;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == sep) { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 start = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -178,7 +178,7 @@ string[] splitOn(string s, i32 sep) {
 // ── what a link target looks like ────────────────────────────────────────────
 
 bool endsWithExt(string t) {
-  string[] exts = string[](".md", ".ts", ".wac", ".json", ".html", ".txt", ".sh", ".rs", ".toml");
+  string[] exts = [".md", ".ts", ".wac", ".json", ".html", ".txt", ".sh", ".rs", ".toml"];
   for (i32 i = 0; i < exts.len(); i++) {
     if (t.len() > exts[i].len() && t.slice(t.len() - exts[i].len(), t.len()) == exts[i]) {
       return true;
@@ -190,7 +190,7 @@ bool endsWithExt(string t) {
 /** `https:`, `mailto:`, `data:`, a bare anchor, or an absolute path — none of them ours to check. */
 bool skipTarget(string t) {
   if (t.len() == 0) { return true; }
-  string[] prefixes = string[]("http:", "https:", "mailto:", "data:", "#", "/");
+  string[] prefixes = ["http:", "https:", "mailto:", "data:", "#", "/"];
   for (i32 i = 0; i < prefixes.len(); i++) {
     if (t.len() >= prefixes[i].len() && t.slice(0, prefixes[i].len()) == prefixes[i]) { return true; }
   }
@@ -211,7 +211,7 @@ bool looksLikeCode(string t) {
 
 /** The link targets in one text: everything in a `](…)`, minus any anchor. */
 string[] targets(string text, bool source) {
-  string[] out = string[256](fill: "");
+  string[] out = string[].filled(256, "");
   i32 n = 0;
   u8[] b = text.toBytes();
   for (i32 i = 0; i + 1 < b.len() && n < out.len(); i++) {
@@ -232,7 +232,7 @@ string[] targets(string text, bool source) {
     out[n] = t;
     n = n + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -246,7 +246,7 @@ bool hasPrefix(string s, string prefix) {
 }
 
 bool linkableSource(string f) {
-  string[] exts = string[](".md", ".wac", ".ts", ".rs", ".py", ".sh");
+  string[] exts = [".md", ".wac", ".ts", ".rs", ".py", ".sh"];
   for (i32 i = 0; i < exts.len(); i++) { if (hasSuffix(f, exts[i])) { return true; } }
   return false;
 }
@@ -328,7 +328,7 @@ export string test_the_check_has_something_to_check(Core core, Cli cli) {
  */
 string slug(string heading) {
   u8[] b = heading.toBytes();
-  u8[] kept = u8[b.len()]();
+  u8[] kept = u8[].filled(b.len(), 0);
   i32 n = 0;
   for (i32 i = 0; i < b.len(); i++) {
     i32 c = b[i];
@@ -343,7 +343,7 @@ string slug(string heading) {
   while (from < n && kept[from] == ' ') { from = from + 1; }
   i32 to = n;
   while (to > from && kept[to - 1] == ' ') { to = to - 1; }
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) {
     out[i] = kept[from + i] == ' ' ? '-' : kept[from + i];
   }
@@ -390,7 +390,7 @@ StringSet headingsOf(string text) {
  * was to make every example a real relative path; the rule here is to describe the shape instead.
  */
 string[][] anchorsIn(string text) {
-  string[][] out = string[][256](fill: string[0]());
+  string[][] out = string[][].filled(256, string[]());
   i32 n = 0;
   u8[] b = text.toBytes();
   for (i32 i = 0; i + 1 < b.len() && n < out.len(); i++) {
@@ -407,10 +407,10 @@ string[][] anchorsIn(string text) {
     string path = whole.slice(0, hash);
     // Cross-file anchors only into markdown; anything else is not a document with headings.
     if (path != "" && !hasSuffix(path, ".md")) { continue; }
-    out[n] = string[](path, whole.slice(hash + 1, whole.len()));
+    out[n] = [path, whole.slice(hash + 1, whole.len())];
     n = n + 1;
   }
-  string[][] exact = string[][n](fill: string[0]());
+  string[][] exact = string[][].filled(n, string[]());
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -512,7 +512,7 @@ export string test_no_tracked_file_carries_a_conflict_marker(Core core, Cli cli)
 }
 
 bool markerCandidate(string f) {
-  string[] exts = string[](".md", ".ts", ".tsx", ".wac", ".json", ".rs", ".toml", ".sh");
+  string[] exts = [".md", ".ts", ".tsx", ".wac", ".json", ".rs", ".toml", ".sh"];
   for (i32 i = 0; i < exts.len(); i++) { if (hasSuffix(f, exts[i])) { return true; } }
   return false;
 }
@@ -533,9 +533,11 @@ string[] rootedPaths(string text) {
   // repository's roots had to learn about it separately and this one did not. A backticked `core/…`
   // path had therefore never been checked: `core/`'s own coverage driver was deleted with four live
   // references to it still in the tree, and this test stayed green until `core/` was added here.
-  string[] roots = string[]("packages/", "tools/", "harness/", "bootstrap/", "spec/", "design/",
-                            "issues/", "native/", "site/", "core/", "docs/");
-  string[] out = string[512](fill: "");
+  string[] roots = [
+                            "packages/", "tools/", "harness/", "bootstrap/", "spec/", "design/",
+                            "issues/", "native/", "site/", "core/", "docs/"
+  ];
+  string[] out = string[].filled(512, "");
   i32 n = 0;
   u8[] b = text.toBytes();
   for (i32 i = 0; i < b.len() && n < out.len(); i++) {
@@ -553,7 +555,7 @@ string[] rootedPaths(string text) {
     out[n] = inner;
     n = n + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -578,21 +580,23 @@ bool allPathChars(string s) {
  * is also the point: a new dead path fails until somebody says which kind it is.
  */
 string[][] gone() {
-  return string[][](
-    string[]("packages/fmt/src/itoa.wac", "packages/box/src/lib/num.wac"),
-    string[]("tools/deadexports.ts", "packages/zstd/src/castrepro.wac"),
-    string[]("tools/discovery.test.ts", "tools/test.ts"),
-    string[]("tools/deadexports.ts", "packages/a/src/x.wac"),
-    string[]("tools/deadexports.ts", "packages/a/b.wac"),
-    string[]("compiler/wacResolve.ts", "packages/a/b.wac"),
-    string[]("MERGE.md", "tools/wacPin.ts"),
-    string[]("MERGE.md", "harness/wacVersion.ts"),
-    string[]("design/lang/0001-import-resolution-core-and-what-packages-inherit.md",
-             "packages/bytes/src/read.wac"),
-    string[]("tools/jobsSweep.sh", "tools/test.ts"),
-    string[]("tools/wac/links_test.wac", "tools/x.ts"),
-    string[]("packages/bls/tools/genfips-experiment.py", "packages/bls/test/wac/fips.wac"),
-    string[]("CLAUDE.md", "atoms/wac/"),
+  return [
+    ["packages/fmt/src/itoa.wac", "packages/box/src/lib/num.wac"],
+    ["tools/deadexports.ts", "packages/zstd/src/castrepro.wac"],
+    ["tools/discovery.test.ts", "tools/test.ts"],
+    ["tools/deadexports.ts", "packages/a/src/x.wac"],
+    ["tools/deadexports.ts", "packages/a/b.wac"],
+    ["compiler/wacResolve.ts", "packages/a/b.wac"],
+    ["MERGE.md", "tools/wacPin.ts"],
+    ["MERGE.md", "harness/wacVersion.ts"],
+    [
+             "design/lang/0001-import-resolution-core-and-what-packages-inherit.md",
+             "packages/bytes/src/read.wac"
+    ],
+    ["tools/jobsSweep.sh", "tools/test.ts"],
+    ["tools/wac/links_test.wac", "tools/x.ts"],
+    ["packages/bls/tools/genfips-experiment.py", "packages/bls/test/wac/fips.wac"],
+    ["CLAUDE.md", "atoms/wac/"],
     // **One deletion, 2026-08-21: the suite orchestrator moved from TypeScript to wac.**
     // tools/runTests.ts, tools/killedLane.ts and its test became `tools/runTests.wac`,
     // `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`. Every sentence below is either an
@@ -600,33 +604,33 @@ string[][] gone() {
     // today and must not be rewritten to name a file that did not exist when it was written — or
     // one of the new files saying what it replaced. The alternative was editing seventeen records
     // to make a link checker green, which is the wrong direction.
-    string[]("issues/lang/open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md", "tools/runTests.ts"),
-    string[]("issues/system/closed/0069-tests-hand-out-ports-by-binding-and-releasing-them.md", "tools/runTests.ts"),
-    string[]("issues/system/closed/0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md", "tools/runTests.ts"),
-    string[]("issues/system/closed/0077-a-file-named-test-ts-is-run-by-the-suite-that-launches-it.md", "tools/runTests.ts"),
-    string[]("issues/system/closed/0140-every-build-still-orphans-its-transpile-cache-entry.md", "tools/runTests.ts"),
-    string[]("issues/system/closed/0172-the-exec-tests-fail-in-the-wac-test-lane-because-it-grants-nothing.md", "tools/runTests.ts"),
-    string[]("issues/system/closed/0176-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0136-the-suite-leaves-its-temp-directories-behind-and-the-disk-filled.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0142-a-suite-was-killed-with-the-gate-in-place.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0161-moving-the-suite-off-deno-the-order.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0173-a-wac-test-cannot-say-which-grant-it-needs.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md", "tools/runTests.ts"),
-    string[]("issues/system/open/0204-wac-test-recompiles-every-directory-on-every-run.md", "tools/runTests.ts"),
-    string[]("tools/runTests.wac", "tools/runTests.ts"),
-    string[]("tools/runTests.wac", "tools/killedLane.ts"),
-    string[]("tools/wac/suitegate.wac", "tools/killedLane.ts"),
-    string[]("tools/wac/suitehouse.wac", "tools/runTests.ts"),
-    string[]("tools/runTests.wac", "tools/killedLane.test.ts"),
-    string[]("tools/suiteGate.ts", "tools/killedLane.test.ts"),
-    string[]("tools/wac/suitegate_test.wac", "tools/killedLane.test.ts"),
+    ["issues/lang/open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md", "tools/runTests.ts"],
+    ["issues/system/closed/0069-tests-hand-out-ports-by-binding-and-releasing-them.md", "tools/runTests.ts"],
+    ["issues/system/closed/0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md", "tools/runTests.ts"],
+    ["issues/system/closed/0077-a-file-named-test-ts-is-run-by-the-suite-that-launches-it.md", "tools/runTests.ts"],
+    ["issues/system/closed/0140-every-build-still-orphans-its-transpile-cache-entry.md", "tools/runTests.ts"],
+    ["issues/system/closed/0172-the-exec-tests-fail-in-the-wac-test-lane-because-it-grants-nothing.md", "tools/runTests.ts"],
+    ["issues/system/closed/0176-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md", "tools/runTests.ts"],
+    ["issues/system/open/0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md", "tools/runTests.ts"],
+    ["issues/system/open/0136-the-suite-leaves-its-temp-directories-behind-and-the-disk-filled.md", "tools/runTests.ts"],
+    ["issues/system/open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md", "tools/runTests.ts"],
+    ["issues/system/open/0142-a-suite-was-killed-with-the-gate-in-place.md", "tools/runTests.ts"],
+    ["issues/system/open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md", "tools/runTests.ts"],
+    ["issues/system/open/0161-moving-the-suite-off-deno-the-order.md", "tools/runTests.ts"],
+    ["issues/system/open/0173-a-wac-test-cannot-say-which-grant-it-needs.md", "tools/runTests.ts"],
+    ["issues/system/open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md", "tools/runTests.ts"],
+    ["issues/system/open/0204-wac-test-recompiles-every-directory-on-every-run.md", "tools/runTests.ts"],
+    ["tools/runTests.wac", "tools/runTests.ts"],
+    ["tools/runTests.wac", "tools/killedLane.ts"],
+    ["tools/wac/suitegate.wac", "tools/killedLane.ts"],
+    ["tools/wac/suitehouse.wac", "tools/runTests.ts"],
+    ["tools/runTests.wac", "tools/killedLane.test.ts"],
+    ["tools/suiteGate.ts", "tools/killedLane.test.ts"],
+    ["tools/wac/suitegate_test.wac", "tools/killedLane.test.ts"],
     // And the two this list names in the comment above it, which is the same rule applied to the
     // file that applies it.
-    string[]("tools/wac/links_test.wac", "tools/runTests.ts"),
-    string[]("tools/wac/links_test.wac", "tools/killedLane.ts"),
+    ["tools/wac/links_test.wac", "tools/runTests.ts"],
+    ["tools/wac/links_test.wac", "tools/killedLane.ts"],
     // **One deletion, 2026-08-28: `bootstrap.sh` became the only way to build `wac`.**
     // `tools/seed.sh` rebuilt the seed with the seed, and `tools/install.ts` was the installer it
     // called; both went when the ladder became the one route in, because a build that starts from
@@ -634,17 +638,18 @@ string[][] gone() {
     // sentences below are the design notes that decided the shape and the migration documents that
     // carried it out — records of what was true on a day, and rewriting them to name
     // `bootstrap.sh` would claim the decision was made about a script that did not yet exist.
-    string[]("design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "tools/seed.sh"),
-    string[]("design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "tools/install.ts"),
-    string[]("design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md", "tools/seed.sh"),
-    string[]("bootstrap/PLAN.md", "tools/seed.sh"),
-    string[]("bootstrap/MIGRATION.md", "tools/seed.sh"),
-    string[]("bootstrap/MIGRATION.md", "tools/install.ts"),
-    string[]("packages/wacc/test/wac/uninstall_test.wac", "tools/install.test.ts"),
-    string[]("packages/wacc/test/wac/uninstall_test.wac", "tools/install.ts"),
+    ["design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "tools/seed.sh"],
+    ["design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "tools/install.ts"],
+    ["design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md", "tools/seed.sh"],
+    ["bootstrap/PLAN.md", "tools/seed.sh"],
+    ["bootstrap/MIGRATION.md", "tools/seed.sh"],
+    ["bootstrap/MIGRATION.md", "tools/install.ts"],
+    ["packages/wacc/test/wac/uninstall_test.wac", "tools/install.test.ts"],
+    ["packages/wacc/test/wac/uninstall_test.wac", "tools/install.ts"],
     // And the two named in the comment above, which is again the rule applied to its own file.
-    string[]("tools/wac/links_test.wac", "tools/seed.sh"),
-    string[]("tools/wac/links_test.wac", "tools/install.ts"));
+    ["tools/wac/links_test.wac", "tools/seed.sh"],
+    ["tools/wac/links_test.wac", "tools/install.ts"]
+  ];
 }
 
 bool excused(string file, string path) {
@@ -656,7 +661,7 @@ bool excused(string file, string path) {
 }
 
 bool prosePath(string f) {
-  string[] exts = string[](".md", ".wac", ".ts", ".tsx", ".rs", ".sh", ".py");
+  string[] exts = [".md", ".wac", ".ts", ".tsx", ".rs", ".sh", ".py"];
   for (i32 i = 0; i < exts.len(); i++) { if (hasSuffix(f, exts[i])) { return true; } }
   return false;
 }
@@ -720,9 +725,11 @@ export string test_no_backticked_path_names_the_layout_before_the_merge(Core cor
   T t = T.create();
   string[] all = tracked(core, cli);
   // The documents whose subject *is* the merge say the old names in order to explain them.
-  string[] exemptFiles = string[]("MERGE.md", "tools/wac/links_test.wac");
-  string[] departedRoots = string[]("atoms/", "wac-mono/", "wac/atoms/", "wac/issues/",
-                                    "wac/design/", "wac/src/", "wac/tools/");
+  string[] exemptFiles = ["MERGE.md", "tools/wac/links_test.wac"];
+  string[] departedRoots = [
+                                    "atoms/", "wac-mono/", "wac/atoms/", "wac/issues/",
+                                    "wac/design/", "wac/src/", "wac/tools/"
+  ];
   i32 found = 0;
   string first = "";
   for (i32 i = 0; i < all.len(); i++) {
@@ -758,7 +765,7 @@ bool isNumberedIssue(string f) {
 
 /** Everything between a pair of backticks on one line, whatever it is. */
 string[] backtickedAny(string text) {
-  string[] out = string[512](fill: "");
+  string[] out = string[].filled(512, "");
   i32 n = 0;
   u8[] b = text.toBytes();
   for (i32 i = 0; i < b.len() && n < out.len(); i++) {
@@ -770,7 +777,7 @@ string[] backtickedAny(string text) {
     n = n + 1;
     i = end;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

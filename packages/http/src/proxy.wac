@@ -163,12 +163,12 @@ i32 replyCap() { return 1 << 16; }
 export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string host, i32 port) {
   Socket s = cli.connect(proxyHost, proxyPort).wait();
   if (s.handle < 0) {
-    return Tunnel(false, -1, u8[0](), "the proxy at " + proxyHost + ":" + itoa(proxyPort)
+    return Tunnel(false, -1, u8[](), "the proxy at " + proxyHost + ":" + itoa(proxyPort)
       + " could not be reached: " + s.error);
   }
   if (!cli.send(s.handle, connectRequest(host, port)).wait()) {
     cli.closeSocket(s.handle);
-    return Tunnel(false, -1, u8[0](), "the proxy accepted a connection and not a request");
+    return Tunnel(false, -1, u8[](), "the proxy accepted a connection and not a request");
   }
 
   string authority = host + ":" + itoa(port);
@@ -180,11 +180,11 @@ export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string ho
         cli.closeSocket(s.handle);
         // Distinct from a refusal on purpose: nothing was said, so there is no status to report and the
         // cause is upstream of any policy the proxy has.
-        return Tunnel(false, -1, u8[0](), "the proxy closed the connection before answering");
+        return Tunnel(false, -1, u8[](), "the proxy closed the connection before answering");
       }
       Failed(why): {
         cli.closeSocket(s.handle);
-        return Tunnel(false, -1, u8[0](), "reading the proxy's reply failed: " + why);
+        return Tunnel(false, -1, u8[](), "reading the proxy's reply failed: " + why);
       }
     }
     u8[] soFar = all.bytes();
@@ -192,28 +192,28 @@ export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string ho
       NeedMore: {
         if (all.len > replyCap()) {
           cli.closeSocket(s.handle);
-          return Tunnel(false, -1, u8[0](), "the proxy sent " + itoa(all.len)
+          return Tunnel(false, -1, u8[](), "the proxy sent " + itoa(all.len)
             + " bytes without finishing a reply");
         }
       }
       NotHttp(line): {
         cli.closeSocket(s.handle);
-        return Tunnel(false, -1, u8[0](), "the proxy's reply is not HTTP: " + line);
+        return Tunnel(false, -1, u8[](), "the proxy's reply is not HTTP: " + line);
       }
       Refused(line): {
         cli.closeSocket(s.handle);
         // The proxy's own line, verbatim. A 403 here is an allowlist, not a network.
-        return Tunnel(false, -1, u8[0](), "the proxy refused " + authority + ": " + line);
+        return Tunnel(false, -1, u8[](), "the proxy refused " + authority + ": " + line);
       }
       Established(at): {
-        u8[] leftover = u8[soFar.len() - at]();
+        u8[] leftover = u8[].filled(soFar.len() - at, 0);
         for (i32 i = 0; i < leftover.len(); i++) { leftover[i] = soFar[at + i]; }
         return Tunnel(true, s.handle, leftover, "");
       }
     }
   }
   // Unreachable: every arm above either returns or loops.
-  return Tunnel(false, -1, u8[0](), "unreachable");
+  return Tunnel(false, -1, u8[](), "unreachable");
 }
 
 /** One past the `\r\n\r\n` that ends a reply's head, or -1. */

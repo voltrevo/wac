@@ -49,7 +49,7 @@ const string EXERCISE = "core/test/cov_exercise.wac";
 const string PREFIX = "core/";
 
 /** The eleven tests that expect a trap, called one at a time with the trap caught. */
-string[] cases() { return string[]("trapCase:11"); }
+string[] cases() { return ["trapCase:11"] as string[]; }
 
 export i32 main(Core core, Cli cli) {
   bool verbose = false;
@@ -61,11 +61,11 @@ export i32 main(Core core, Cli cli) {
   // No grants: `core` is the layer everything else stands on and its tests touch nothing outside the
   // program — no file, no process, no socket. A driver given a capability it does not need is one
   // whose exercises could quietly start using it.
-  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), cases());
+  Measured m = measure(core, cli, EXERCISE, string[].filled(0, ""), cases());
   if (m.nPoints == 0) { return 1; }
 
   report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
-                 Pin[0](fill: Pin("", 0, "", true, "")),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Pin[].filled(0, Pin("", 0, "", true, "")),
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

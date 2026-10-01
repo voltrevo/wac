@@ -46,7 +46,7 @@ f64 atof(string s) { return atofSpan(s.toBytes(), 0, s.len()); }
 /** The eight bytes of an f64, big-endian, as hex — the form the oracle reads. */
 string bits64(f64 x) {
   u64 b = f64.toBits(x);
-  u8[] out = u8[8]();
+  u8[] out = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
     out[i] = ((b >> ((7 - i) * 8)) & 255) as@ i32;
   }
@@ -86,7 +86,7 @@ export string test_ftoa_specials_and_zeros() {
  * case — and the file passed with all six in it.
  */
 u64[] hardCases() {
-  return u64[](
+  return [
     0x3FF0000000000000,   // 1
     0xBFF0000000000000,   // -1
     0x4000000000000000,   // 2
@@ -130,7 +130,8 @@ u64[] hardCases() {
     0x3FF0147AE147AE14,   // 1.005
     0x4005666666666666,   // 2.675
     0x4021000000000000,   // 8.5
-    0x3FD6666666666666);  // 0.35
+    0x3FD6666666666666  // 0.35
+  ] as u64[];
 }
 
 export string test_ftoa_hand_picked_hard_cases(Core core, Cli cli) {

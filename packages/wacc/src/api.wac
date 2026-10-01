@@ -60,7 +60,7 @@ export i32[] dumpParseErrors(u8[] src) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed);
   parseProgram(p);
-  i32[] out = i32[p.errorCount * 3]();
+  i32[] out = i32[].filled(p.errorCount * 3, 0);
   for (i32 i = 0; i < p.errorCount * 3; i++) { out[i] = p.errors[i]; }
   return out;
 }
@@ -75,7 +75,7 @@ export i32[] dumpErrors(u8[] src) {
   // package could see one, because every caller comes through here. They go first: a lexical
   // complaint is about text the parser never got to see. `spec/cases/0081`.
   i32 lexCount = lexed.errorCount * 3;
-  i32[] out = i32[lexCount + p.errorCount * 3]();
+  i32[] out = i32[].filled(lexCount + p.errorCount * 3, 0);
   for (i32 i = 0; i < lexCount; i++) { out[i] = lexed.errors[i]; }
   for (i32 i = 0; i < p.errorCount * 3; i++) { out[lexCount + i] = p.errors[i]; }
   return out;
@@ -127,7 +127,7 @@ export string dumpFirstTypeHint(u8[] src) {
   P p = P.create(src, lexed);
   Program prog = parseProgram(p);
   C c = C.create(src, lexed.tokens, lexed.tokenCount, lexed.tokenCount);
-  declareModule(c, prog, string[0](fill: ""));
+  declareModule(c, prog, string[].filled(0, ""));
   checkModule(c, prog);
   string[] hints = hintsOf(c);
   return hints.len() > 0 ? hints[0] : "";
@@ -635,8 +635,8 @@ export string diagnoseGraphIn(string[] paths, string[] sources, Res res, string 
   // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
   // letting each one size its own tables parsed a widely-imported file once per importer — 54% of
   // what this call cost, measured. `issues/lang/0133`.
-  Lexed?[] lexes = Lexed?[paths.len() + 1]();
-  Program?[] progs = Program?[paths.len() + 1]();
+  Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
+  Program?[] progs = Program?[].defaulted(paths.len() + 1);
   i32[] counts = declCountsInto(paths, sources, lexes, progs);
   // **The edges too, once.** Every closure below was computed from the *text*: a file's import list
   // was re-extracted once per closure that reached it, and each spec resolved by a linear scan of
@@ -645,19 +645,19 @@ export string diagnoseGraphIn(string[] paths, string[] sources, Res res, string 
   // thousand edges in it. Taken once, a closure is an integer walk and the loop below does no string
   // work at all.
   Edges edges = edgesOfIn(paths, sources, res);
-  i32[] seen = i32[paths.len()]();
+  i32[] seen = i32[].filled(paths.len(), 0);
   for (i32 i = 0; i < paths.len(); i++) {
     // **Each file is checked against its own closure, not against the whole list.** Handing
     // `checkFilesWith` 179 files to check one that imports three is the whole of why the naive
     // loop costs `n ×` a full parse. Nothing is lost: a file cannot be affected by a file it does
     // not reach.
     i32 n = closureFrom(edges, i, seen);
-    string[] subPaths = string[n](fill: "");
-    string[] subSources = string[n](fill: "");
+    string[] subPaths = string[].filled(n, "");
+    string[] subSources = string[].filled(n, "");
     // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
-    i32[] subCounts = i32[n + 1]();
-    Lexed?[] subLexes = Lexed?[n + 1]();
-    Program?[] subProgs = Program?[n + 1]();
+    i32[] subCounts = i32[].filled(n + 1, 0);
+    Lexed?[] subLexes = Lexed?[].defaulted(n + 1);
+    Program?[] subProgs = Program?[].defaulted(n + 1);
     for (i32 k = 0; k < n; k++) {
       i32 at = seen[k];
       subPaths[k] = paths[at];
@@ -681,7 +681,7 @@ export string diagnoseGraphIn(string[] paths, string[] sources, Res res, string 
     //
     // The mappings are keyed by path *string* — `mappedTo` compares `mapFrom[i] == from` — so they
     // survive the subsetting unchanged and only `roots` needs rebuilding.
-    string[] subRoots = string[n](fill: "");
+    string[] subRoots = string[].filled(n, "");
     for (i32 k = 0; k < n; k++) {
       i32 at = seen[k];
       subRoots[k] = at < res.roots.len() ? res.roots[at] : "";
@@ -742,8 +742,8 @@ struct ByLen {
 }
 
 ByLen byLength(string[] paths) {
-  i32[] head = i32[256](fill: 0 - 1);
-  i32[] next = i32[paths.len()](fill: 0 - 1);
+  i32[] head = i32[].filled(256, 0 - 1);
+  i32[] next = i32[].filled(paths.len(), 0 - 1);
   for (i32 i = 0; i < paths.len(); i++) {
     i32 b = paths[i].len() & 255;
     next[i] = head[b];
@@ -771,7 +771,7 @@ Edges edgesOfIn(string[] paths, string[] sources, Res res) {
   // deleting the call is not: with no edges every closure is empty and almost nothing gets checked.
   //
   // The specs are kept rather than recomputed, which is what removes the second parse.
-  string[][] specsOf = string[][n](fill: string[]());
+  string[][] specsOf = string[][].filled(n, string[]());
   i32 upper = 0;
   for (i32 i = 0; i < n; i++) {
     string src = i < sources.len() ? sources[i] : "";
@@ -782,8 +782,8 @@ Edges edgesOfIn(string[] paths, string[] sources, Res res) {
   // specifier that resolves outside the graph is dropped, so the exact count needs the resolutions the
   // count pass was there to avoid. `start[n]` still says where the edges end and the only reader walks
   // `start[f]` to `start[f + 1]`, so a longer tail is never looked at.
-  i32[] start = i32[n + 1]();
-  i32[] to = i32[upper]();
+  i32[] start = i32[].filled(n + 1, 0);
+  i32[] to = i32[].filled(upper, 0);
   i32 at = 0;
   for (i32 i = 0; i < n; i++) {
     start[i] = at;
@@ -875,8 +875,8 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
 
 /** `diagnoseFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string diagnoseFilesIn(string[] paths, string[] sources, Res res, string entry) {
-  Lexed?[] lexes = Lexed?[paths.len() + 1]();
-  Program?[] progs = Program?[paths.len() + 1]();
+  Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
+  Program?[] progs = Program?[].defaulted(paths.len() + 1);
   i32[] counts = declCountsInto(paths, sources, lexes, progs);
   return diagnoseFilesWithIn(paths, sources, res, entry, counts, lexes, progs);
 }
@@ -1095,7 +1095,7 @@ bool listHas(string[] list, i32 n, string name) {
 string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
   i32 cap = only.len();
   for (i32 d = 0; d < prog.decls.len(); d++) { cap = cap + 1; }
-  string[] want = string[cap](fill: "");
+  string[] want = string[].filled(cap, "");
   i32 n = 0;
   for (i32 i = 0; i < only.len() && n < cap; i++) {
     if (listHas(want, n, only[i])) { continue; }
@@ -1105,7 +1105,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
 
   // Names this file declares, so a signature mentioning `i32` or a type from a third module adds
   // nothing — this file could not declare those even if asked.
-  string[] mine = string[prog.decls.len()](fill: "");
+  string[] mine = string[].filled(prog.decls.len(), "");
   i32 mn = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
@@ -1127,8 +1127,8 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
   while (grew) {
     grew = false;
     for (i32 d = 0; d < prog.decls.len(); d++) {
-      string[] found = string[64](fill: "");
-      i32[] seen = i32[1]();
+      string[] found = string[].filled(64, "");
+      i32[] seen = i32[].filled(1, 0);
       match (prog.decls[d].kind) {
         StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
@@ -1182,7 +1182,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
     }
   }
 
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = want[i]; }
   return out;
 }
@@ -1196,7 +1196,7 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
  * `packages/box`, 25% of `diagnoseGraph` (`issues/lang/0133`). These are the programs it needs.
  */
 i32[] declCountsInto(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs) {
-  i32[] counts = i32[paths.len() + 1]();
+  i32[] counts = i32[].filled(paths.len() + 1, 0);
   for (i32 i = 0; i < paths.len(); i++) {
     // **Through the shared frontend**, so this tree is the one the emitter links — see `frontend.wac`.
     Frontend cfe = frontendOf(i < paths.len() ? paths[i] : "",
@@ -1219,8 +1219,8 @@ i32[] declCountsInto(string[] paths, string[] sources, Lexed?[] lexes, Program?[
 }
 
 C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
-  Lexed?[] lexes = Lexed?[callerPaths.len() + 1]();
-  Program?[] progs = Program?[callerPaths.len() + 1]();
+  Lexed?[] lexes = Lexed?[].defaulted(callerPaths.len() + 1);
+  Program?[] progs = Program?[].defaulted(callerPaths.len() + 1);
   i32[] counts = declCountsInto(callerPaths, callerSources, lexes, progs);
   return checkFilesWithIn(callerPaths, callerSources, Res.empty(), entry, counts, lexes, progs);
 }
@@ -1246,8 +1246,8 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
   // the two types the compiler itself ships, and the emitter had core's source the whole time.
   // `issues/lang/0109`. Adding it here rather than in the checker keeps one answer to "what does
   // core declare": `coreSource`, which is also what the emitter compiles.
-  string[] paths = string[callerPaths.len() + 1](fill: "");
-  string[] sources = string[callerSources.len() + 1](fill: "");
+  string[] paths = string[].filled(callerPaths.len() + 1, "");
+  string[] sources = string[].filled(callerSources.len() + 1, "");
   for (i32 i = 0; i < callerPaths.len(); i++) {
     paths[i] = callerPaths[i];
     sources[i] = i < callerSources.len() ? callerSources[i] : "";
@@ -1294,15 +1294,15 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
   // `decode` and so does `codec/src/hex.wac`, and a closure holding both let the wrong one answer —
   // the entry asked `rlp.wac` for it. So each import is resolved to the path it names, and a file
   // contributes only what that file was asked for.
-  string[] wantFrom = string[512]();
-  string[] wantName = string[512]();
+  string[] wantFrom = string[].defaulted(512);
+  string[] wantName = string[].defaulted(512);
   // What this file calls it, which is the name it must be declared under — `Dup as DupB` brings in a
   // `DupB`, and two modules' `Dup` are two types rather than one that overwrote the other.
-  string[] wantAlias = string[512]();
+  string[] wantAlias = string[].defaulted(512);
   // Where the *import* is written, taken here because the loop below retargets `c` at each imported
   // file in turn: a diagnostic about `main.wac`'s import must not carry `b.wac`'s line numbers.
-  i32[] wantLine = i32[512]();
-  i32[] wantCol = i32[512]();
+  i32[] wantLine = i32[].filled(512, 0);
+  i32[] wantCol = i32[].filled(512, 0);
   i32 n = 0;
   for (i32 d = 0; d < eprog.decls.len(); d++) {
     match (eprog.decls[d].kind) {
@@ -1383,7 +1383,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
       if (wantFrom[k] == paths[i]) { want = want + 1; }
     }
     if (want == 0) { continue; }
-    string[] only = string[want]();
+    string[] only = string[].defaulted(want);
     i32 at = 0;
     for (i32 k = 0; k < n; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
@@ -1577,16 +1577,16 @@ export string capReachFiles(string[] paths, string[] sources) {
   for (i32 i = 0; i < paths.len(); i++) { if (paths[i] != "") { n = i + 1; } }
 
   i32 maxTy = 8192;
-  string[] tyName = string[maxTy](fill: "");
+  string[] tyName = string[].filled(maxTy, "");
   // What each type holds, tab-delimited and tab-terminated so a search for `"\t" + name + "\t"`
   // cannot match a prefix: `Cli` must not be found inside `ClientState`.
-  string[] tyHolds = string[maxTy](fill: "");
-  bool[] bearing = bool[maxTy]();
+  string[] tyHolds = string[].filled(maxTy, "");
+  bool[] bearing = bool[].filled(maxTy, false);
   i32 tyCount = 0;
   bool overflowed = false;
 
   // Every named type any declaration in this file mentions in a field, parameter or return.
-  string[] mentions = string[n + 1](fill: "");
+  string[] mentions = string[].filled(n + 1, "");
 
   for (i32 i = 0; i < n; i++) {
     if (paths[i] == "") { continue; }
@@ -1674,8 +1674,8 @@ export string capReachFiles(string[] paths, string[] sources) {
 
 /** `tyNames`, tab-delimited and tab-terminated, so a search cannot match a prefix. */
 string tyNamesJoined(u8[] src, Lexed lx, Ty t) {
-  string[] found = string[64](fill: "");
-  i32[] seen = i32[1]();
+  string[] found = string[].filled(64, "");
+  i32[] seen = i32[].filled(1, 0);
   tyNames(src, lx, t, found, seen);
   string out = "";
   for (i32 i = 0; i < seen[0]; i++) { out = out + found[i] + "\t"; }

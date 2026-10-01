@@ -65,7 +65,7 @@ export u8[] microdescriptor(u8[] descriptor, string policySummary) {
   u8[] onionKey = onionKeyBlock(descriptor);
   u8[] ntor = lineValue(descriptor, "ntor-onion-key ");
   u8[] master = lineValue(descriptor, "master-key-ed25519 ");
-  if (onionKey.len() == 0 || ntor.len() == 0 || master.len() == 0) { return u8[0](); }
+  if (onionKey.len() == 0 || ntor.len() == 0 || master.len() == 0) { return u8[](); }
 
   Buf d = Buf.create();
   d.pushAll("onion-key\n".toBytes());
@@ -114,7 +114,7 @@ export u8[][] splitMicrodescriptors(u8[] all) {
   for (i32 i = 0; i + keyword.len() <= all.len(); i++) {
     if (startsAt(all, i, keyword)) { count = count + 1; }
   }
-  u8[][] out = u8[][count]();
+  u8[][] out = u8[][].defaulted(count);
   i32 n = 0;
   i32 from = -1;
   for (i32 i = 0; i + keyword.len() <= all.len(); i++) {
@@ -129,7 +129,7 @@ export u8[][] splitMicrodescriptors(u8[] all) {
 /** The `m`-line digests for a concatenated run, in the order they appear. */
 export u8[][] microdescDigests(u8[] all) {
   u8[][] parts = splitMicrodescriptors(all);
-  u8[][] out = u8[][parts.len()]();
+  u8[][] out = u8[][].defaulted(parts.len());
   for (i32 i = 0; i < parts.len(); i++) { out[i] = microdescDigest(parts[i]); }
   return out;
 }
@@ -153,7 +153,7 @@ bool startsAt(u8[] text, i32 at, u8[] needle) {
  */
 u8[] onionKeyBlock(u8[] descriptor) {
   i32 at = pastLineStarting(descriptor, "onion-key\n".toBytes());
-  if (at < 0) { return u8[0](); }
+  if (at < 0) { return u8[](); }
   u8[] end = "-----END RSA PUBLIC KEY-----\n".toBytes();
   for (i32 i = at; i + end.len() <= descriptor.len(); i++) {
     bool hit = true;
@@ -162,9 +162,9 @@ u8[] onionKeyBlock(u8[] descriptor) {
     }
     if (!hit) { continue; }
     i32 stop = i + end.len();
-    u8[] out = u8[stop - at]();
+    u8[] out = u8[].filled(stop - at, 0);
     for (i32 k = 0; k < out.len(); k++) { out[k] = descriptor[at + k]; }
     return out;
   }
-  return u8[0]();
+  return u8[]();
 }

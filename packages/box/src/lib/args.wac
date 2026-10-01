@@ -118,7 +118,7 @@ export Args parseFrom(Cli cli, i32 first, string name) {
   // running an applet in-process has a `Vec<string>` of its own to hand over. Same parser, so a
   // flag cannot come to mean one thing under `box` and another under `sh`.
   i32 n = cli.argCount().wait();
-  string[] argv = string[n](fill: "");
+  string[] argv = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { argv[i] = string.fromBytes(cli.arg(i).wait()); }
   return parseList(argv, first, name);
 }
@@ -143,7 +143,7 @@ string shortFormOf(string name, string s) {
   // Attached, because that is the spelling the loop below already handles for a value: `--lines=5`
   // becomes `-n5`. With no `=`, a flag that takes a value picks the next argument up on its own, which
   // is `--lines 5` and is what GNU does too.
-  u8[] one = u8[1](fill: 0);
+  u8[] one = u8[].filled(1, 0);
   one[0] = letter;
   string flag = "-" + string.fromBytes(one);
   return eq < 0 ? flag : flag + body.slice(eq + 1, body.len());
@@ -154,9 +154,9 @@ export Args parseList(string[] argv, i32 first, string name) {
   // about whether `-n 2` consumes the `2`, so `tail -n 2 file` allocated two slots and wrote one,
   // leaving a phantom `""` that reached `openStream` as an empty path. A scratch array of the
   // largest it could be, then a copy of exactly what was written, cannot drift that way.
-  string[] scratch = string[argv.len()](fill: "");
+  string[] scratch = string[].filled(argv.len(), "");
   i32 at = 0;
-  string[] pairs = string[argv.len()](fill: "");
+  string[] pairs = string[].filled(argv.len(), "");
   i32 np = 0;
 
   string flags = "";
@@ -242,11 +242,11 @@ export Args parseList(string[] argv, i32 first, string name) {
     i++;
   }
 
-  string[] rest = string[at](fill: "");
+  string[] rest = string[].filled(at, "");
   for (i32 k = 0; k < at; k++) { rest[k] = scratch[k]; }
-  string[] values = string[np](fill: "");
+  string[] values = string[].filled(np, "");
   for (i32 k = 0; k < np; k++) { values[k] = pairs[k]; }
-  string[] own = string[argv.len() - first > 0 ? argv.len() - first : 0](fill: "");
+  string[] own = string[].filled(argv.len() - first > 0 ? argv.len() - first : 0, "");
   for (i32 k = first; k < argv.len(); k++) { own[k - first] = argv[k]; }
   return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own, missingValue, longOpt);
 }
@@ -416,7 +416,7 @@ export string badNumberMessage(Args a) {
 
 /** One entry of `Args.values`: the letter, then its value. */
 string valueOf(i32 letter, string value) {
-  return string.fromBytes(u8[1](fill: letter)) + value;
+  return string.fromBytes(u8[].filled(1, letter)) + value;
 }
 
 /**

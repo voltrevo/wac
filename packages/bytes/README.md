@@ -7,7 +7,7 @@ import { Buf } from "../../bytes/src/buf.wac";
 
 Buf b = Buf.create();
 b.push('h');
-b.pushAll(u8[]('i'));
+b.pushAll(['i'] as u8[]);
 string s = b.toStr();     // "hi"
 ```
 

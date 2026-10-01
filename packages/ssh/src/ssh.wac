@@ -46,7 +46,7 @@ export i32 main(Core core, Cli cli) {
   }
   u8[]? passphraseRaw = cli.env("SSH_PASSPHRASE").wait();
   string? passphrase = passphraseRaw is null ? null : string.fromBytes(passphraseRaw!);
-  u8[] pass = (passphrase is null) ? u8[0]() : passphrase!.toBytes();
+  u8[] pass = (passphrase is null) ? u8[]() : passphrase!.toBytes();
   PrivateKey key = readEd25519(keyFile.bytes, pass);
   match (key.error) {
     Ok: {}
@@ -120,7 +120,7 @@ export i32 main(Core core, Cli cli) {
 i32 checkHost(Core core, Cli cli, Options o, u8[] hostKey) {
   string path = o.home + "/.ssh/known_hosts";
   FileResult f = cli.readFile(path).wait();
-  u8[] contents = f.ok ? f.bytes : u8[0]();
+  u8[] contents = f.ok ? f.bytes : u8[]();
 
   string name = o.port == defaultPort() ? o.host : "[" + o.host + "]:" + itoa(o.port);
   u8[] keyType = "ssh-ed25519".toBytes();
@@ -250,7 +250,7 @@ Options parseArgs(Core core, Cli cli) {
 }
 
 u8[] joinBytes(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   out.copyFrom(a, 0, 0, a.len());
   out.copyFrom(b, 0, a.len(), b.len());
   return out;

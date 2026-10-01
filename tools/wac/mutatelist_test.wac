@@ -36,7 +36,7 @@ bool holds(string haystack, string needle) {
  * confused with "there was nothing in it to find".
  */
 string makeFixture(Cli cli) {
-  cli.exec("bash", string[]("-c", "rm -rf '" + ROOT() + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + ROOT() + "'"], u8[]()).wait();
   string why = write(cli, ROOT() + "/src/a.wac",
                      "export bool small(i32 n) {\n"
                      + "  if (n < 10) { return true; }\n"
@@ -57,8 +57,8 @@ export string test_the_list_names_the_mutants_of_the_source_and_not_the_tests(Co
   if (why != "") { return t.report(); }
 
   Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac",
-                    string[]("run", "--allow-read", "tools/wac/mutatelist.wac", ROOT()),
-                    u8[0]()).wait();
+                    ["run", "--allow-read", "tools/wac/mutatelist.wac", ROOT()],
+                    u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isTrue(r.ran(), "the program ran");
   if (!r.ran()) { return t.report(); }
@@ -77,14 +77,14 @@ export string test_the_list_names_the_mutants_of_the_source_and_not_the_tests(Co
   // whether the count is the whole population.
   t.isTrue(holds(said, "literal:"), "and it says what sampling left out: " + said);
 
-  cli.exec("bash", string[]("-c", "rm -rf '" + ROOT() + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + ROOT() + "'"], u8[]()).wait();
   return t.report();
 }
 
 export string test_it_says_what_it_wants_when_given_nothing(Core core, Cli cli) {
   T t = T.create();
   Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac",
-                    string[]("run", "--allow-read", "tools/wac/mutatelist.wac"), u8[0]()).wait();
+                    ["run", "--allow-read", "tools/wac/mutatelist.wac"], u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isTrue(r.ran() && r.status != 0, "no argument is a failure rather than an empty report");
   t.isTrue(holds(said, "usage:"), "and it says what it wanted: " + said);
@@ -100,22 +100,22 @@ string ops(string[] xs) {
 /** The flags, apart from the program, which is why they are parsed apart from it. */
 export string test_the_flags_are_the_references_spellings() {
   T t = T.create();
-  t.eqStr(parseFlags(string[]("--package", "rlp")).dir, "packages/rlp",
+  t.eqStr(parseFlags(["--package", "rlp"]).dir, "packages/rlp",
           "--package names a package, not a path");
-  t.eqStr(parseFlags(string[]("packages/rlp")).dir, "packages/rlp", "and a bare path is taken as given");
-  t.eqStr(ops(parseFlags(string[]("d", "--operators=guard,extreme")).operators), "guard,extreme",
+  t.eqStr(parseFlags(["packages/rlp"]).dir, "packages/rlp", "and a bare path is taken as given");
+  t.eqStr(ops(parseFlags(["d", "--operators=guard,extreme"]).operators), "guard,extreme",
           "--operators= narrows the set");
-  t.eqI32(parseFlags(string[]("d")).perShape, 3, "three literals per shape by default");
-  t.isTrue(parseFlags(string[]("d", "--no-sample")).perShape > 1000000,
+  t.eqI32(parseFlags(["d"]).perShape, 3, "three literals per shape by default");
+  t.isTrue(parseFlags(["d", "--no-sample"]).perShape > 1000000,
            "and --no-sample means every one, which is the flag for a survivor sampling might hide");
 
   // A flag that wants a value and does not get one is refused rather than ignored.
-  t.isTrue(parseFlags(string[]("--package")).problem != "", "--package with nothing after it");
-  t.isTrue(parseFlags(string[]("--nonsense", "d")).problem != "",
+  t.isTrue(parseFlags(["--package"]).problem != "", "--package with nothing after it");
+  t.isTrue(parseFlags(["--nonsense", "d"]).problem != "",
            "an unknown flag is refused rather than read as a directory");
-  t.isTrue(parseFlags(string[]("a", "b")).problem != "",
+  t.isTrue(parseFlags(["a", "b"]).problem != "",
            "and two directories is a mistake worth naming, not a silent choice of one");
-  t.eqStr(parseFlags(string[0](fill: "")).dir, "", "no arguments names no directory");
+  t.eqStr(parseFlags(string[].filled(0, "")).dir, "", "no arguments names no directory");
   return t.report();
 }
 
@@ -123,10 +123,14 @@ export string test_the_flags_are_the_references_spellings() {
 export string test_narrowing_the_operators_narrows_the_output(Core core, Cli cli) {
   T t = T.create();
   string bin = cli.cwd().wait() + "/native/v8/target/release/wac";
-  Exec all = cli.exec(bin, string[]("run", "--allow-read", "tools/wac/mutatelist.wac",
-                                    "--package", "rlp"), u8[0]()).wait();
-  Exec guard = cli.exec(bin, string[]("run", "--allow-read", "tools/wac/mutatelist.wac",
-                                      "--package", "rlp", "--operators=guard"), u8[0]()).wait();
+  Exec all = cli.exec(bin, [
+                                    "run", "--allow-read", "tools/wac/mutatelist.wac",
+                                    "--package", "rlp"
+  ], u8[]()).wait();
+  Exec guard = cli.exec(bin, [
+                                      "run", "--allow-read", "tools/wac/mutatelist.wac",
+                                      "--package", "rlp", "--operators=guard"
+  ], u8[]()).wait();
   t.isTrue(all.ran() && guard.ran(), "both runs happened");
   if (!all.ran() || !guard.ran()) { return t.report(); }
   string a = string.fromBytes(all.stdout);
@@ -154,8 +158,8 @@ export string test_triage_accounts_for_every_mutant(Core core, Cli cli) {
   if (why != "") { return t.report(); }
 
   Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac",
-                    string[]("run", "--allow-read", "tools/wac/mutatelist.wac", ROOT(), "--triage"),
-                    u8[0]()).wait();
+                    ["run", "--allow-read", "tools/wac/mutatelist.wac", ROOT(), "--triage"],
+                    u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isTrue(r.ran() && r.status == 0, "the triage pass ran — " + said);
   if (!r.ran()) { return t.report(); }
@@ -164,6 +168,6 @@ export string test_triage_accounts_for_every_mutant(Core core, Cli cli) {
   t.isTrue(holds(said, "not counted as killed"),
            "and says why excluding them keeps a score honest: " + said);
 
-  cli.exec("bash", string[]("-c", "rm -rf '" + ROOT() + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + ROOT() + "'"], u8[]()).wait();
   return t.report();
 }

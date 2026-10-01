@@ -48,14 +48,14 @@ struct Fixture {
 string scratch(Cli cli) { return cli.cwd().wait() + "/.cache/network"; }
 
 bool build(T t, Cli cli, string entry, string out, string[] grants, bool worker) {
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
-  string[] tail = worker ? string[]("--worker", "-o", out) : string[]("-o", out);
-  string[] args = string[head.len() + grants.len() + tail.len()](fill: "");
+  string[] head = ["run", "-A", "packages/platform/build.ts", entry];
+  string[] tail = worker ? ["--worker", "-o", out] : ["-o", out];
+  string[] args = string[].filled(head.len() + grants.len() + tail.len(), "");
   i32 at = 0;
   for (i32 i = 0; i < head.len(); i++) { args[at] = head[i]; at = at + 1; }
   for (i32 i = 0; i < grants.len(); i++) { args[at] = grants[i]; at = at + 1; }
   for (i32 i = 0; i < tail.len(); i++) { args[at] = tail[i]; at = at + 1; }
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  Exec r = cli.exec("deno", args, u8[]()).wait();
   t.isTrue(r.ran(), "deno ran — " + r.error);
   t.eqI32(r.status, 0, "building " + entry + ": " + string.fromBytes(r.stderr));
   return r.ran() && r.status == 0;
@@ -117,22 +117,22 @@ bool built(T t, Cli cli, string shared) {
   if (have.exists && have.modifiedMillis > newest) { return true; }
 
   if (!build(t, cli, "packages/tor/src/network.wac", shared + "/network",
-             string[]("--allow-read", "--allow-write", "--allow-net"), false)) {
+             ["--allow-read", "--allow-write", "--allow-net"], false)) {
     return false;
   }
   if (!build(t, cli, "packages/platform/example/waiter.wac", shared + "/waiter.worker.js",
-             string[0](fill: ""), true)) {
+             string[].filled(0, ""), true)) {
     return false;
   }
   if (!build(t, cli, "packages/platform/example/wc.wac", shared + "/wc.worker.js",
-             string[0](fill: ""), true)) {
+             string[].filled(0, ""), true)) {
     return false;
   }
   // Two-stage: prints `stages: listening`, waits, then `stages: serving`. The second line cannot
   // already have arrived when the ready marker resolves, which is what makes the `wait` cases below
   // test the waiting rather than the luck.
   return build(t, cli, "packages/platform/example/stages.wac", shared + "/stages.worker.js",
-               string[0](fill: ""), true);
+               string[].filled(0, ""), true);
 }
 
 /**
@@ -152,7 +152,7 @@ Fixture fixture(T t, Cli cli, string name) {
   if (why != "") { return Fixture(false, why, dir, ""); }
   string launcher = dir + "/network";
 
-  string[] parts = string[]("network", "waiter.worker.js", "wc.worker.js", "stages.worker.js");
+  string[] parts = ["network", "waiter.worker.js", "wc.worker.js", "stages.worker.js"];
   for (i32 i = 0; i < parts.len(); i++) {
     if (!copyOver(cli, shared + "/" + parts[i], dir + "/" + parts[i])) {
       return Fixture(false, "could not copy " + parts[i] + " into the case's directory", dir, "");
@@ -184,8 +184,8 @@ struct Ran {
  */
 Ran run(Cli cli, Fixture f, string description) {
   Exec r = cli.exec("/bin/sh",
-                    string[]("-c", "cd " + f.dir + " && exec ./network " + description),
-                    u8[0]()).wait();
+                    ["-c", "cd " + f.dir + " && exec ./network " + description],
+                    u8[]()).wait();
   return Ran(r.ran() ? r.status : -1, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
 
@@ -201,11 +201,12 @@ export string test_a_network_comes_up_work_runs_and_everything_stops(Core core, 
   T t = T.create();
   Fixture f = fixture(t, cli, "up");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "# two nodes and one piece of work",
     "node alpha | waiter: running | waiter.worker.js",
     "node beta  | waiter: running | waiter.worker.js",
-    "run  count |               | wc.worker.js counted.txt"));
+    "run  count |               | wc.worker.js counted.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
@@ -236,11 +237,12 @@ export string test_a_node_that_never_announces_itself_fails_the_run(Core core, C
   // waits for a later state is 972ms. What has to fit inside the bound is `alpha` starting and
   // printing its marker, because the assertion below is that a node which *is* up is not reported
   // down. Four seconds was eight to twenty times that; two is four to ten, under load.
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "timeout 2000",
     "node alpha | waiter: running    | waiter.worker.js",
     "node ghost | never printed this | waiter.worker.js",
-    "run  count |                    | wc.worker.js counted.txt"));
+    "run  count |                    | wc.worker.js counted.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 1, "a network that did not come up is a failed run");
@@ -260,9 +262,10 @@ export string test_the_exit_code_of_the_work_is_the_exit_code_of_the_run(Core co
   if (!f.ok) { t.fail(f.error); return t.report(); }
   // `wc` on a file that is not there exits 1. Every node comes up, so this separates "the network
   // failed" from "the network was fine and the thing we asked it to do did not work".
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
-    "run  count |               | wc.worker.js nosuch.txt"));
+    "run  count |               | wc.worker.js nosuch.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 1, "the failing work fails the run");
@@ -286,13 +289,13 @@ export string test_a_description_with_nothing_to_run_is_a_failure(Core core, Cli
   if (!f.ok) { t.fail(f.error); return t.report(); }
   // The failure mode this guards: a description whose `run` line was commented out stands the
   // network up, tears it down, and exits 0 — reporting success for having done nothing.
-  describe(cli, f, "net.txt", string[]("node alpha | waiter: running | waiter.worker.js"));
+  describe(cli, f, "net.txt", ["node alpha | waiter: running | waiter.worker.js"]);
   Ran r = run(cli, f, "net.txt");
   t.eqI32(r.status, 1, "standing a network up is not the same as using it");
   t.isTrue(contains(r.err, "asks for nothing to be run"), "and it says so");
 
   // And a description with no nodes at all.
-  describe(cli, f, "empty.txt", string[]("run count | | wc.worker.js counted.txt"));
+  describe(cli, f, "empty.txt", ["run count | | wc.worker.js counted.txt"]);
   Ran e = run(cli, f, "empty.txt");
   t.eqI32(e.status, 1, "there is no network to run across");
   t.isTrue(contains(e.err, "no nodes"), "and it says so");
@@ -304,10 +307,11 @@ export string test_a_bundle_that_is_not_there_is_reported_against_the_node(Core 
   T t = T.create();
   Fixture f = fixture(t, cli, "nobundle");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
     "node gone  | waiter: running | nosuch.worker.js",
-    "run  count |               | wc.worker.js counted.txt"));
+    "run  count |               | wc.worker.js counted.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
   t.eqI32(r.status, 1, "a missing bundle is a failed run");
   t.isTrue(contains(r.err, "gone"), "the node is named, not just the file");
@@ -328,9 +332,10 @@ export string test_a_nodes_ready_line_supplies_an_argument_to_the_work(Core core
   T t = T.create();
   Fixture f = fixture(t, cli, "capture");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | waiter: runn | waiter.worker.js",
-    "run  count |              | wc.worker.js {alpha}.txt"));
+    "run  count |              | wc.worker.js {alpha}.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
@@ -350,9 +355,10 @@ export string test_a_reference_to_a_node_not_in_the_description_fails(Core core,
   T t = T.create();
   Fixture f = fixture(t, cli, "typo");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
-    "run  count |                 | wc.worker.js {alpah}.txt"));
+    "run  count |                 | wc.worker.js {alpah}.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 1, "an unresolved reference is a failed run");
@@ -370,9 +376,10 @@ export string test_braces_that_are_not_references_are_left_alone(Core core, Cli 
   Fixture f = fixture(t, cli, "braces");
   if (!f.ok) { t.fail(f.error); return t.report(); }
   cli.writeFile(f.dir + "/{}.txt", ("literal braces\n").toBytes()).wait();
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
-    "run  count |                 | wc.worker.js {}.txt"));
+    "run  count |                 | wc.worker.js {}.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
@@ -389,10 +396,11 @@ export string test_wait_holds_the_next_step_until_a_node_reaches_a_later_state(C
   T t = T.create();
   Fixture f = fixture(t, cli, "wait");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | stages: listening | stages.worker.js",
     "wait alpha | stages: serving   |",
-    "run  count |                    | wc.worker.js counted.txt"));
+    "run  count |                    | wc.worker.js counted.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
@@ -410,11 +418,12 @@ export string test_a_wait_for_something_a_node_never_says_fails(Core core, Cli c
   T t = T.create();
   Fixture f = fixture(t, cli, "waitnever");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "timeout 2000",
     "node alpha | waiter: running | waiter.worker.js",
     "wait alpha | never says this |",
-    "run  count |                 | wc.worker.js counted.txt"));
+    "run  count |                 | wc.worker.js counted.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 1, "a state never reached is a failed run");
@@ -429,10 +438,11 @@ export string test_a_wait_naming_a_node_that_does_not_exist_fails(Core core, Cli
   T t = T.create();
   Fixture f = fixture(t, cli, "waitnonode");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
     "wait beta  | waiter: running |",
-    "run  count |                 | wc.worker.js counted.txt"));
+    "run  count |                 | wc.worker.js counted.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
   t.eqI32(r.status, 1, "a wait for a node that is not there is a failed run");
   t.isTrue(contains(r.err, "wait names beta, which is not a node"), "and it says which");
@@ -452,10 +462,11 @@ export string test_a_wait_captures_even_when_the_node_had_already_said_it(Core c
   T t = T.create();
   Fixture f = fixture(t, cli, "waitalready");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node alpha | stages: serving | stages.worker.js",
     "wait alpha | stages: listen  |",
-    "run  count |                 | wc.worker.js {alpha}.txt"));
+    "run  count |                 | wc.worker.js {alpha}.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
@@ -476,11 +487,12 @@ export string test_a_node_after_a_run_starts_after_it(Core core, Cli cli) {
   T t = T.create();
   Fixture f = fixture(t, cli, "ordering");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", string[](
+  describe(cli, f, "net.txt", [
     "node early | waiter: running | waiter.worker.js",
     "run  first |                 | wc.worker.js counted.txt",
     "node late  | waiter: running | waiter.worker.js",
-    "run  second|                 | wc.worker.js counted.txt"));
+    "run  second|                 | wc.worker.js counted.txt"
+  ]);
   Ran r = run(cli, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);

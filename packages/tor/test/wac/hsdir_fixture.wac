@@ -4,7 +4,7 @@
 // It was a TypeScript wrapper until 2026-08-17, and that wrapper packed everything into flat byte
 // arrays — a case's blinded key, shared random value, time period and period length concatenated
 // into eighty bytes, the directories as a count followed by pairs — because the seam it handed them
-// over was a single `fn<u8[](i32, u8[], u8[])>`. The seam is gone, so the packing is too:
+// over was a single `fn<[i32, u8[], u8[]]>`. The seam is gone, so the packing is too:
 // `hsdir_test.wac` asks for the field it wants. `issues/system/0161` step 4.
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.

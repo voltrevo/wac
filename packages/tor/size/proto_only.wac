@@ -14,6 +14,6 @@ export u8[] b7(i32 c, i32 h, u8[] d) { return encodeCreate2(c, h, d); }
 export u8[] b8(u8[] p) { return decodeCreated2(p); }
 export u8[] b9() { return encodePadding(); }
 // `Relay[]` does not marshal; an empty list keeps the code reachable to be measured.
-export i32 f1(i32 p, i64[] w) { return weightedBandwidths(Relay[0](), p, w).len(); }
-export i32 f2(i64[] w, i32[] c, i32[] s, i32[] o, bool m, i64 r) { return choose(Relay[0](), w, c, s, o, m, r); }
+export i32 f1(i32 p, i64[] w) { return weightedBandwidths(Relay[](), p, w).len(); }
+export i32 f2(i64[] w, i32[] c, i32[] s, i32[] o, bool m, i64 r) { return choose(Relay[](), w, c, s, o, m, r); }
 export bool f3(bool a, i32[] r, i32 p) { return portPermitted(a, r, p); }

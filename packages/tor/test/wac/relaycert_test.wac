@@ -57,8 +57,8 @@ struct Rsa {
 Rsa rsaKey(T t, Cli cli) {
   Lines lines = Lines.create();
   lines.add("rsakeypair 1024");
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "an RSA-1024 key");
-  if (!a.ok) { return Rsa(false, u8[0](), u8[0](), u8[0]()); }
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "an RSA-1024 key");
+  if (!a.ok) { return Rsa(false, u8[](), u8[](), u8[]()); }
   return Rsa(true, decoded(word(a.lines[0], 1)), decoded(word(a.lines[0], 2)),
              decoded(word(a.lines[0], 3)));
 }
@@ -89,13 +89,13 @@ export string test_every_certificate_tor_made_verifies(Core core, Cli cli) {
     t.isTrue(verifyEd25519Cert(cert, master), which + ": verifies under the master identity");
 
     // And does not verify under something else, so the check is not vacuous.
-    u8[] wrong = u8[32]();
+    u8[] wrong = u8[].filled(32, 0);
     for (i32 j = 0; j < 32; j++) { wrong[j] = master[j]; }
     wrong[0] = (wrong[0] ^ 1);
     t.isFalse(verifyEd25519Cert(cert, wrong), which + ": does not verify under a different key");
 
     // Every byte of the body is signed: move one and it must fail.
-    u8[] tampered = u8[cert.len()]();
+    u8[] tampered = u8[].filled(cert.len(), 0);
     for (i32 j = 0; j < cert.len(); j++) { tampered[j] = cert[j]; }
     tampered[10] = (tampered[10] ^ 1);
     t.isFalse(verifyEd25519Cert(tampered, master), which + ": a flipped body bit is refused");
@@ -107,10 +107,10 @@ export string test_a_certificate_we_build_is_byte_for_byte_reproducible() {
   // Deterministic in every field, so equality is available as an assertion rather than only
   // "it verifies" — which a wrong-but-self-consistent encoder would also satisfy.
   T t = T.create();
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 7 + 1) & 0xFF; }
   u8[] identity = ed25519PublicKey(seed);
-  u8[] certified = u8[32]();
+  u8[] certified = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { certified[i] = (i * 11 + 5) & 0xFF; }
 
   u8[] cert = ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_ED25519, certified, identity, seed);
@@ -141,7 +141,7 @@ export string test_a_certificate_we_build_is_byte_for_byte_reproducible() {
                                    identity, seed)), "the key type is covered");
 
   // Wrong widths are refused rather than padded.
-  t.eqI32(ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_ED25519, u8[31](), identity, seed).len(),
+  t.eqI32(ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_ED25519, u8[].filled(31, 0), identity, seed).len(),
           0, "a 31-byte certified key is refused");
   t.eqI32(ed25519Cert(CERT_TYPE_SIGNING, -1, KEY_TYPE_ED25519, certified, identity, seed).len(),
           0, "a negative expiration is refused");
@@ -155,10 +155,10 @@ export string test_a_link_certificate_names_the_tls_certificate() {
   // the ed25519 chain to the TLS connection the client is actually on — without it a relay could
   // present somebody else's certificate chain over its own TLS.
   T t = T.create();
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 3 + 9) & 0xFF; }
   u8[] signing = ed25519PublicKey(seed);
-  u8[] tlsCert = u8[400]();
+  u8[] tlsCert = u8[].filled(400, 0);
   for (i32 i = 0; i < 400; i++) { tlsCert[i] = (i * 13 + 2) & 0xFF; }
 
   u8[] digest = linkCertDigest(tlsCert);
@@ -172,7 +172,7 @@ export string test_a_link_certificate_names_the_tls_certificate() {
   t.isTrue(verifyEd25519Cert(cert, signing), "signed by the signing key");
 
   // A different TLS certificate must give a different link certificate, or the binding is nominal.
-  u8[] otherTls = u8[400]();
+  u8[] otherTls = u8[].filled(400, 0);
   for (i32 i = 0; i < 400; i++) { otherTls[i] = tlsCert[i]; }
   otherTls[399] = (otherTls[399] ^ 1);
   t.isFalse(equal(linkCertDigest(otherTls), digest), "one changed byte changes the digest");
@@ -183,7 +183,7 @@ export string test_the_rsa_crosscert_has_its_own_shape(Core core, Cli cli) {
   // Type 7 is not an ed25519 certificate at all: a different layout, an RSA signature, and a
   // personalisation prefix that types 4 to 6 do not have.
   T t = T.create();
-  u8[] ed = u8[32]();
+  u8[] ed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { ed[i] = (i * 5 + 7) & 0xFF; }
   // A modulus and private exponent are supplied by the host, since generating an RSA key is not
   // something this package does — see `design/0002` D4.
@@ -204,17 +204,17 @@ export string test_the_rsa_crosscert_has_its_own_shape(Core core, Cli cli) {
   // which is the only party here that did not produce it.
   Lines lines = Lines.create();
   lines.add("crosscert " + hex(n) + " " + hex(key.e) + " " + hex(cert));
-  Answers verdict = ask(t, cli, "node", string[](ORACLE), lines, "the host's verdict");
+  Answers verdict = ask(t, cli, "node", [ORACLE], lines, "the host's verdict");
   if (!verdict.ok) { return t.report(); }
   t.eqStr(word(verdict.lines[0], 1), "1", "the host verifies our cross-certificate");
 
   // A different key or expiration must change the signature.
-  u8[] other = u8[32]();
+  u8[] other = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { other[i] = ed[i]; }
   other[0] = (other[0] ^ 1);
   t.isFalse(equal(rsaCrossCert(other, 496804, n, d), cert), "the ed25519 key is signed over");
   t.isFalse(equal(rsaCrossCert(ed, 496805, n, d), cert), "and so is the expiration");
-  t.eqI32(rsaCrossCert(u8[31](), 496804, n, d).len(), 0, "a short ed25519 key is refused");
+  t.eqI32(rsaCrossCert(u8[].filled(31, 0), 496804, n, d).len(), 0, "a short ed25519 key is refused");
   return t.report();
 }
 
@@ -223,15 +223,15 @@ export string test_a_certs_cell_carries_one_of_each() {
   // here rather than sent and rejected by the far end, which would look like a handshake failure
   // with no explanation.
   T t = T.create();
-  u8[] a = u8[10]();
-  u8[] b = u8[300]();
+  u8[] a = u8[].filled(10, 0);
+  u8[] b = u8[].filled(300, 0);
   for (i32 i = 0; i < 10; i++) { a[i] = i; }
   for (i32 i = 0; i < 300; i++) { b[i] = (i * 3) & 0xFF; }
 
-  u8[][] certs = u8[][2]();
+  u8[][] certs = u8[][].defaulted(2);
   certs[0] = a;
   certs[1] = b;
-  u8[] cell = certsCell(i32[](CERT_TYPE_SIGNING, CERT_TYPE_LINK), certs);
+  u8[] cell = certsCell([CERT_TYPE_SIGNING, CERT_TYPE_LINK], certs);
   t.eqI32(cell.len(), 1 + 3 + 10 + 3 + 300, "the cell is a count and two length-prefixed entries");
   t.eqI32(cell[0], 2, "two certificates");
   t.isTrue(equal(certOfType(cell, CERT_TYPE_SIGNING), a), "the signing certificate reads back");
@@ -242,15 +242,15 @@ export string test_a_certs_cell_carries_one_of_each() {
   t.eqI32(cell[1 + 3 + 10 + 1], 1, "the second length's high byte is 1");
   t.eqI32(cell[1 + 3 + 10 + 2], 44, "and its low byte is 44 — 300 is not a byte");
 
-  t.eqI32(certsCell(i32[](CERT_TYPE_SIGNING, CERT_TYPE_SIGNING), certs).len(), 0,
+  t.eqI32(certsCell([CERT_TYPE_SIGNING, CERT_TYPE_SIGNING], certs).len(), 0,
           "two certificates of one type are refused");
-  u8[][] empty = u8[][1]();
-  empty[0] = u8[0]();
-  t.eqI32(certsCell(i32[](CERT_TYPE_SIGNING), empty).len(), 0, "an empty certificate is refused");
-  t.eqI32(certsCell(i32[](CERT_TYPE_SIGNING), certs).len(), 0, "mismatched lengths are refused");
+  u8[][] empty = u8[][].defaulted(1);
+  empty[0] = u8[]();
+  t.eqI32(certsCell([CERT_TYPE_SIGNING], empty).len(), 0, "an empty certificate is refused");
+  t.eqI32(certsCell([CERT_TYPE_SIGNING], certs).len(), 0, "mismatched lengths are refused");
 
   // A truncated cell must not be read past its end.
-  u8[] short_ = u8[6]();
+  u8[] short_ = u8[].filled(6, 0);
   short_[0] = 1;
   short_[1] = CERT_TYPE_SIGNING;
   short_[2] = 0;
@@ -273,13 +273,15 @@ export string test_a_certs_cell_carries_one_of_each() {
   // A 300-byte certificate is the case that separates a two-byte length from a one-byte one. A reader
   // that took only the low byte would see 44, resynchronise inside the certificate body, and report
   // some other number — or -1 — rather than two.
-  u8[][] four = u8[][4]();
+  u8[][] four = u8[][].defaulted(4);
   four[0] = a;
   four[1] = b;
   four[2] = fillBytes(700, 5);
   four[3] = fillBytes(1, 9);
-  u8[] real = certsCell(i32[](2, CERT_TYPE_SIGNING, CERT_TYPE_LINK,
-                              CERT_TYPE_RSA_CROSSCERT), four);
+  u8[] real = certsCell([
+                              2, CERT_TYPE_SIGNING, CERT_TYPE_LINK,
+                              CERT_TYPE_RSA_CROSSCERT
+  ] as i32[], four);
   t.isTrue(real.len() > 0, "the four a relay actually sends");
   t.eqI32(certsCount(real), 4, "and the parser counts four");
 
@@ -294,18 +296,18 @@ export string test_a_certs_cell_carries_one_of_each() {
   t.eqI32(certsCount(overcount), -1, "a cell claiming more certificates than it carries");
 
   // And a single certificate, which is where an off-by-one in the loop would hide.
-  u8[][] one = u8[][1]();
+  u8[][] one = u8[][].defaulted(1);
   one[0] = a;
-  t.eqI32(certsCount(certsCell(i32[](CERT_TYPE_SIGNING), one)), 1, "one is one");
+  t.eqI32(certsCount(certsCell([CERT_TYPE_SIGNING], one)), 1, "one is one");
   return t.report();
 }
 
 export string test_the_onion_key_crosscert_binds_both_identities(Core core, Cli cli) {
   T t = T.create();
 
-  u8[] fingerprint = u8[20]();
+  u8[] fingerprint = u8[].filled(20, 0);
   for (i32 i = 0; i < 20; i++) { fingerprint[i] = (i * 11 + 3) & 0xFF; }
-  u8[] edIdentity = u8[32]();
+  u8[] edIdentity = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { edIdentity[i] = (250 - i * 5) & 0xFF; }
 
   Rsa onion = rsaKey(t, cli);
@@ -318,47 +320,47 @@ export string test_the_onion_key_crosscert_binds_both_identities(Core core, Cli 
 
   Lines lines = Lines.create();
   lines.add("rsarecover " + hex(onionN) + " " + hex(onion.e) + " " + hex(sig));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the recovered payload");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "the recovered payload");
   if (!a.ok) { return t.report(); }
   u8[] got = decoded(word(a.lines[0], 1));
 
   // The host recovers the payload with a public-key operation, which is how a relay's peer checks
   // this. It is the only way to check it: tor signs the bare 52 bytes with no DigestInfo, so there is
   // nothing for a normal verifier to match against.
-  u8[] want = u8[52]();
+  u8[] want = u8[].filled(52, 0);
   for (i32 i = 0; i < 20; i++) { want[i] = fingerprint[i]; }
   for (i32 i = 0; i < 32; i++) { want[20 + i] = edIdentity[i]; }
   t.eqBytes(got, want, "the recovered payload is the fingerprint then the ed25519 identity");
 
   // The order is load-bearing and both halves are opaque bytes, so a transposition would otherwise
   // go unnoticed. Assert the two spans separately against a payload built the other way round.
-  u8[] swapped = u8[52]();
+  u8[] swapped = u8[].filled(52, 0);
   for (i32 i = 0; i < 32; i++) { swapped[i] = edIdentity[i]; }
   for (i32 i = 0; i < 20; i++) { swapped[32 + i] = fingerprint[i]; }
   t.isFalse(equal(got, swapped), "the identity does not come first");
 
   // A digest of the wrong length is refused rather than padded or truncated into place.
-  t.eqI32(onionKeyCrosscert(u8[19](), edIdentity, onionN, onionD).len(), 0,
+  t.eqI32(onionKeyCrosscert(u8[].filled(19, 0), edIdentity, onionN, onionD).len(), 0,
           "a 19-byte digest is refused");
-  t.eqI32(onionKeyCrosscert(fingerprint, u8[31](), onionN, onionD).len(), 0,
+  t.eqI32(onionKeyCrosscert(fingerprint, u8[].filled(31, 0), onionN, onionD).len(), 0,
           "a 31-byte ed25519 identity is refused");
   return t.report();
 }
 
 u8[] headBytes(u8[] b, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
   return out;
 }
 
 u8[] fillBytes(i32 n, i32 role) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (role * 41 + i * 7 + 3) & 0xFF; }
   return out;
 }
 
 u8[] copyBytes(u8[] b) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
   return out;
 }

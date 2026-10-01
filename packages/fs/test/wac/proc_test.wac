@@ -41,21 +41,21 @@ Vec<string> words(string[] xs) {
 export string test_a_pid_is_never_reused() {
   T t = T.create();
   Procs procs = Procs.create();
-  i32 first = procs.start(0, words(string[]("sh")), 0);
+  i32 first = procs.start(0, words(["sh"]), 0);
   t.eqI32(first, 1, "the first pid");
   procs.exited(first, 0);
   t.eqI32(procs.reap(first), 0, "reaping gives the exit code");
   t.isFalse(procs.has(first), "and the row is gone");
   // The reason this matters: something holding pid 1 from before must not now be talking to a
   // different process. Linux reuses pids and lives with the race; nothing here has to.
-  t.eqI32(procs.start(0, words(string[]("wc")), 0), 2, "the next pid is not the one just freed");
+  t.eqI32(procs.start(0, words(["wc"]), 0), 2, "the next pid is not the one just freed");
   return t.report();
 }
 
 export string test_a_row_outlives_the_process_until_reaped() {
   T t = T.create();
   Procs procs = Procs.create();
-  i32 pid = procs.start(1, words(string[]("false")), 0);
+  i32 pid = procs.start(1, words(["false"]), 0);
   t.isTrue(procs.exited(pid, 3), "the exit is recorded");
   // Still there — this is the zombie, and it is the only reason `$?` can be asked for later.
   t.isTrue(procs.has(pid), "the row survives the process");
@@ -71,7 +71,7 @@ export string test_a_row_outlives_the_process_until_reaped() {
 export string test_a_signal_to_something_that_has_exited_is_refused() {
   T t = T.create();
   Procs procs = Procs.create();
-  i32 pid = procs.start(1, words(string[]("yes")), 0);
+  i32 pid = procs.start(1, words(["yes"]), 0);
   t.isTrue(procs.signal(pid, 2), "a signal to a running process is accepted");
   t.eqI32(procs.takeSignal(pid), 2, "and collected");
   t.eqI32(procs.takeSignal(pid), 0, "once");
@@ -93,7 +93,7 @@ string host(Cli cli, string path) {
 
 /** The keys of a `Key:\tvalue` file, in order. */
 string[] keysOf(string status) {
-  string[] out = string[128](fill: "");
+  string[] out = string[].filled(128, "");
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= status.len() && n < out.len(); i++) {
@@ -105,7 +105,7 @@ string[] keysOf(string status) {
     }
     from = i + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -116,7 +116,7 @@ string[] keysOf(string status) {
 // reason; they are duplicated rather than shared because a test file that imports another test
 // file's internals is worse than eight lines.
 u8[] fakeRandom(i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 7 + 11) & 255; }
   return out;
 }
@@ -148,7 +148,7 @@ Pending<u8[]> pendingRandom(i32 n) {
 Fs mounted() {
   Fs f = Fs.inMemory(0);
   f.mountSynth("/proc", pendingRandom);
-  f.enter(words(string[]("sh", "-c", "ps")));
+  f.enter(words(["sh", "-c", "ps"]));
   return f;
 }
 
@@ -163,7 +163,7 @@ bool endsWith(string s, string p) {
 
 /** `s` split on NUL, with the trailing empty piece a terminator leaves dropped. */
 string[] splitNul(string s) {
-  string[] out = string[64](fill: "");
+  string[] out = string[].filled(64, "");
   i32 n = 0;
   i32 from = 0;
   u8[] b = s.toBytes();
@@ -172,7 +172,7 @@ string[] splitNul(string s) {
     if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
     from = i + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -200,7 +200,7 @@ export string test_proc_cmdline_is_nul_separated_and_terminated(Core core, Cli c
 }
 
 string oneByte(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }
@@ -271,7 +271,7 @@ string lineStartingWith(string s, string prefix) {
 export string test_proc_lists_a_pid_per_process_and_self() {
   T t = T.create();
   Fs f = mounted();
-  i32 pid = f.procs.start(1, words(string[]("wc", "-l")), 0);
+  i32 pid = f.procs.start(1, words(["wc", "-l"]), 0);
   string[]? listing = f.readDir("/proc");
   t.isTrue(!(listing is null), "/proc lists");
   if (listing is null) { return t.report(); }

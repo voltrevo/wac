@@ -175,14 +175,14 @@ export struct Chan {
  * becomes a failed operation rather than a trap or a hang.
  */
 Reader ask(Chan c, Buf request) {
-  if (c.broken) { return Reader(u8[0](), 0, 0, true, "the filesystem channel is closed"); }
+  if (c.broken) { return Reader(u8[](), 0, 0, true, "the filesystem channel is closed"); }
   u8[] body = request.bytes();
   Buf framed = Buf.create();
   framed.pushU32(body.len() as@ u32);
   framed.pushAll(body);
   if (!c.cli.send(c.handle, framed.bytes()).wait()) {
     c.broken = true;
-    return Reader(u8[0](), 0, 0, true, "the filesystem channel would not take the request");
+    return Reader(u8[](), 0, 0, true, "the filesystem channel would not take the request");
   }
   return answer(c);
 }
@@ -197,7 +197,7 @@ export Reader answer(Chan c) {
       i32 want = frameLength(c);
       if (want < 0) {
         c.broken = true;
-        return Reader(u8[0](), 0, 0, true, "a filesystem answer longer than two gigabytes");
+        return Reader(u8[](), 0, 0, true, "a filesystem answer longer than two gigabytes");
       }
       if (have >= 4 + want) {
         u8[] all = c.held.bytes();
@@ -217,15 +217,15 @@ export Reader answer(Chan c) {
       // closes the channel — but every question still outstanding is now unanswerable.
       End: {
         c.broken = true;
-        return Reader(u8[0](), 0, 0, true, "the filesystem channel ended");
+        return Reader(u8[](), 0, 0, true, "the filesystem channel ended");
       }
       Failed(why): {
         c.broken = true;
-        return Reader(u8[0](), 0, 0, true, why);
+        return Reader(u8[](), 0, 0, true, why);
       }
     }
   }
-  return Reader(u8[0](), 0, 0, true, "unreachable");
+  return Reader(u8[](), 0, 0, true, "unreachable");
 }
 
 /** The length prefix at the cursor, or -1 if it does not fit in a signed i32. */
@@ -436,7 +436,7 @@ export FileResult decodeFileResult(Reader r) {
   i32 fault = r.u32();
   string error = r.string();
   u8[] bytes = r.bytes(r.u32());
-  if (r.bad) { return FileResult.of(false, u8[0](), channelGone(r), FAULT_OTHER()); }
+  if (r.bad) { return FileResult.of(false, u8[](), channelGone(r), FAULT_OTHER()); }
   return FileResult.of(ok, bytes, error, fault);
 }
 
@@ -498,7 +498,7 @@ export string[]? decodeNames(Reader r) {
   if (r.bad || present == 0) { return null; }
   i32 n = r.u32();
   if (r.bad) { return null; }
-  string[] out = string[n]();
+  string[] out = string[].defaulted(n);
   for (i32 i = 0; i < n; i++) { out[i] = r.string(); }
   if (r.bad) { return null; }
   return out;

@@ -64,8 +64,8 @@ Each step lands with the probe's count moving and the suite green.
 | step | state |
 |---|---|
 | 1 oracle | done — 482 examples, 152 met at the start |
-| 2 wapy | open |
-| 3 syntax | open |
+| 2 wapy | done — deleted, with `spec/spec` and `spec/cli` retired |
+| 3 syntax | in progress — `fn<R(P)>` (met 162), match arms without `case` (179), array literals and factories (204; closes `issues/lang/0265c`) |
 | 4 checking | open |
 | 5 library | open |
 | 6 semantics | open |

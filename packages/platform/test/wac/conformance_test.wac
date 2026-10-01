@@ -185,7 +185,7 @@ string hostsOf(Cli cli, Cover[] all, Cover c) {
     // Unioned, not concatenated: the second test usually repeats a host the first already had, and
     // `contains(hosts, "deno")` must not depend on how many times it appears.
     string second = hostsOfFile(cli, c.also);
-    string[] names = string[]("wasmtime", "v8", "deno", "node");
+    string[] names = ["wasmtime", "v8", "deno", "node"];
     string out = "";
     for (i32 i = 0; i < names.len(); i++) {
       if (contains(first, names[i]) || contains(second, names[i])) {
@@ -207,7 +207,7 @@ string hostsOf(Cli cli, Cover[] all, Cover c) {
       string inherited = hostsOf(cli, all, all[i]);
       if (c.also == "") { return inherited; }
       string mine = hostsOfFile(cli, c.also);
-      string[] names = string[]("wasmtime", "v8", "deno", "node");
+      string[] names = ["wasmtime", "v8", "deno", "node"];
       string out = "";
       for (i32 k = 0; k < names.len(); k++) {
         if (contains(inherited, names[k]) || contains(mine, names[k])) {
@@ -221,7 +221,7 @@ string hostsOf(Cli cli, Cover[] all, Cover c) {
 }
 
 Cover[] coverage() {
-  return Cover[](
+  return [
     // ── The filesystem: twelve operations and every grant refusal, on both hosts ──
     where2("READ_FILE", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `cat f`, and refused with no grant"),
     where2("WRITE_FILE", "packages/platform/test/wac/native_hostfs_test.wac", "packages/platform/test/wac/runtimes_test.wac", "native_hostfs: `touch`, and write-only grants"),
@@ -406,7 +406,8 @@ Cover[] coverage() {
     gap("POP_CHILD", "as PUSH_CHILD"),
     gap("ASK_INTERRUPT",
       "answers no on every host but a page, so there is nothing for two non-page hosts to disagree " +
-      "about. The page's answer is checked in a real browser by `browser_live`"));
+      "about. The page's answer is checked in a real browser by `browser_live`")
+  ];
 }
 
 Cover? entryFor(Cover[] all, string op) {
@@ -431,7 +432,7 @@ export string test_the_readmes_capability_table_lists_every_capability_there_is(
   i32 span = src.slice(from, src.len()).indexOf("\n\n");
   string table = src.slice(from, span < 0 ? src.len() : from + span);
 
-  string[] structs = string[]("Core", "Cli", "Page");
+  string[] structs = ["Core", "Cli", "Page"];
   for (i32 s = 0; s < structs.len(); s++) {
     string[] declared = declaredFields(cli, structs[s]);
     string missing = "";
@@ -460,7 +461,7 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
   t.isTrue(caps.len() >= 30,
            "only " + itoa(caps.len()) + " native capabilities found — has the extraction broken?");
 
-  string[] structs = string[]("Cli", "Core");
+  string[] structs = ["Cli", "Core"];
   for (i32 s = 0; s < structs.len(); s++) {
     string[] declared = declaredFields(cli, structs[s]);
     // The count first: an extraction that quietly matched nothing would make the loop below vacuous,
@@ -494,12 +495,12 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
 
 /** The opcodes both hosts have to answer — those with a native arm under the camelCase name. */
 string[] sharedOpcodes(Cli cli, string[] ops, string[] caps) {
-  string[] out = string[ops.len()](fill: "");
+  string[] out = string[].filled(ops.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < ops.len(); i++) {
     if (has(caps, camel(ops[i]))) { out[n] = ops[i]; n = n + 1; }
   }
-  string[] trimmed = string[n](fill: "");
+  string[] trimmed = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { trimmed[i] = out[i]; }
   return trimmed;
 }
@@ -511,7 +512,7 @@ export string test_every_opcode_on_the_two_host_surface_is_accounted_for(Core co
   t.isTrue(ops.len() >= 38, "only " + itoa(ops.len()) + " opcodes found — has the extraction broken?");
 
   string[] shared = sharedOpcodes(cli, ops, caps);
-  string[] pageOnly = string[ops.len() - shared.len()](fill: "");
+  string[] pageOnly = string[].filled(ops.len() - shared.len(), "");
   i32 p = 0;
   for (i32 i = 0; i < ops.len(); i++) {
     if (!has(caps, camel(ops[i]))) { pageOnly[p] = ops[i]; p = p + 1; }
@@ -611,7 +612,7 @@ export string test_the_ledger_says_how_much_of_the_surface_is_actually_compared(
 export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core core, Cli cli) {
   T t = T.create();
   Cover[] all = coverage();
-  string[] silent = string[all.len()](fill: "");
+  string[] silent = string[].filled(all.len(), "");
   i32 n = 0;
   i32 distinct = 0;
   string everySeen = "";
@@ -644,7 +645,7 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
   for (i32 i = 0; i < all.len(); i++) {
     if (all[i].kind == "gap") { continue; }
     string hosts = hostsOf(cli, all, all[i]);
-    string[] files = string[](all[i].kind == "where" ? all[i].ref : "", all[i].also);
+    string[] files = [all[i].kind == "where" ? all[i].ref : "", all[i].also];
     for (i32 f = 0; f < files.len(); f++) {
       if (files[f] == "") { continue; }
       string src = sourceOf(cli, files[f]);
@@ -660,7 +661,7 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
   // **And the whole list going stale at once**, which the per-entry floor cannot see: if every
   // pattern stopped matching, every entry would fail above — but if the *tests* were rewritten onto
   // one host, each would still derive one and the ledger would quietly become single-host.
-  string[] names = string[]("wasmtime", "v8", "deno", "node");
+  string[] names = ["wasmtime", "v8", "deno", "node"];
   for (i32 i = 0; i < names.len(); i++) {
     if (contains(everySeen, names[i])) { distinct = distinct + 1; }
   }

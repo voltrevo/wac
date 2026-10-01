@@ -28,7 +28,7 @@ export i32 run() {
   if (b.get() != 7) { return 4; }
   Box<Box<i32>> nested = Box<Box<i32>>(Box<i32>(3));
   if (nested.get().get() != 3) { return 5; }
-  Box<u8[]> arr = Box<u8[]>(u8[2]());
+  Box<u8[]> arr = Box<u8[]>(u8[].filled(2, 0));
   if (arr.get().len() != 2) { return 6; }
 
   return 0;

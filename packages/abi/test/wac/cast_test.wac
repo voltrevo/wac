@@ -51,7 +51,7 @@ import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
  * `"missing"`. `issues/system/0173`.
  */
 string findCast(Core core, Cli cli) {
-  Exec onPath = cli.exec("cast", string[]("--version"), u8[0]()).wait();
+  Exec onPath = cli.exec("cast", ["--version"], u8[]()).wait();
   if (onPath.ran() && onPath.status == 0) { return "cast"; }
 
   u8[]? h = cli.env("HOME").wait();
@@ -61,7 +61,7 @@ string findCast(Core core, Cli cli) {
     return "nolookup";
   }
   string candidate = string.fromBytes(h!) + "/tools/foundry/cast";
-  Exec there = cli.exec(candidate, string[]("--version"), u8[0]()).wait();
+  Exec there = cli.exec(candidate, ["--version"], u8[]()).wait();
   if (there.ran() && there.status == 0) { return candidate; }
 
   core.warn("packages/abi/test/wac/cast_test.wac: no `cast` on PATH or in ~/tools/foundry — the " +
@@ -72,16 +72,16 @@ string findCast(Core core, Cli cli) {
 
 /** `cast abi-encode 'f(types)' args…`, or a trap naming what it said. */
 u8[] castEncode(Core core, Cli cli, string cast, string[] types, string[] args) {
-  string[] argv = string[types.len() + args.len() + 2](fill: "");
+  string[] argv = string[].filled(types.len() + args.len() + 2, "");
   argv[0] = "abi-encode";
   string joined = "";
   for (i32 i = 0; i < types.len(); i++) { joined = (i == 0 ? "" : joined + ",") + types[i]; }
   argv[1] = "f(" + joined + ")";
   for (i32 i = 0; i < args.len(); i++) { argv[2 + i] = args[i]; }
-  string[] exact = string[2 + args.len()](fill: "");
+  string[] exact = string[].filled(2 + args.len(), "");
   for (i32 i = 0; i < exact.len(); i++) { exact[i] = argv[i]; }
 
-  Exec r = cli.exec(cast, exact, u8[0]()).wait();
+  Exec r = cli.exec(cast, exact, u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("cast abi-encode f(" + joined + "): " +
               (r.ran() ? string.fromBytes(r.stderr) : r.error));
@@ -111,44 +111,45 @@ string repeated(string s, i32 times) {
 }
 
 Case[] corpusGaps() {
-  return Case[](
-    Case(string[]("bytes"), string[]("0x"), "an empty bytes is a length and nothing after it"),
-    Case(string[]("string"), string[](""), "and so is an empty string"),
-    Case(string[]("uint256[]"), string[]("[]"), "an empty array"),
-    Case(string[]("string[]"), string[]("[]"), "an empty array of a dynamic type"),
-    Case(string[]("bytes[]"), string[]("[0x]"), "one empty element"),
-    Case(string[]("bytes"), string[]("0x" + repeated("11", 31)),
+  return [
+    Case(["bytes"], ["0x"], "an empty bytes is a length and nothing after it"),
+    Case(["string"], [""], "and so is an empty string"),
+    Case(["uint256[]"], ["[]"], "an empty array"),
+    Case(["string[]"], ["[]"], "an empty array of a dynamic type"),
+    Case(["bytes[]"], ["[0x]"], "one empty element"),
+    Case(["bytes"], ["0x" + repeated("11", 31)],
          "31 bytes: one padding word, one byte spare"),
-    Case(string[]("bytes"), string[]("0x" + repeated("22", 32)),
+    Case(["bytes"], ["0x" + repeated("22", 32)],
          "32 bytes: exactly one word, no padding"),
-    Case(string[]("bytes"), string[]("0x" + repeated("33", 33)),
+    Case(["bytes"], ["0x" + repeated("33", 33)],
          "33 bytes: two words, and the boundary"),
-    Case(string[]("string"), string[](repeated("x", 32)), "the same boundary for a string"),
-    Case(string[]("string"), string[](repeated("é", 20)),
+    Case(["string"], [repeated("x", 32)], "the same boundary for a string"),
+    Case(["string"], [repeated("é", 20)],
          "bytes rather than characters decide the length"),
-    Case(string[]("uint256", "bytes", "uint256"), string[]("1", "0xdead", "2"),
+    Case(["uint256", "bytes", "uint256"], ["1", "0xdead", "2"],
          "a dynamic value between two static ones"),
-    Case(string[]("bytes", "bytes"), string[]("0xaa", "0xbb"),
+    Case(["bytes", "bytes"], ["0xaa", "0xbb"],
          "two tails, and the second offset is the test"),
-    Case(string[]("(uint256,(string,bytes))"), string[]("(1,(hi,0x02))"),
+    Case(["(uint256,(string,bytes))"], ["(1,(hi,0x02))"],
          "a dynamic tuple inside a tuple"),
-    Case(string[]("string[2]"), string[]("[a,bb]"), "a fixed array whose elements are dynamic"),
-    Case(string[]("(uint256,string)[2]"), string[]("[(1,a),(2,bb)]"), "and of dynamic tuples"),
-    Case(string[]("(string,bytes)[]"), string[]("[(a,0x01),(bb,0x)]"),
+    Case(["string[2]"], ["[a,bb]"], "a fixed array whose elements are dynamic"),
+    Case(["(uint256,string)[2]"], ["[(1,a),(2,bb)]"], "and of dynamic tuples"),
+    Case(["(string,bytes)[]"], ["[(a,0x01),(bb,0x)]"],
          "an array of dynamic tuples"),
-    Case(string[]("uint256[][]"), string[]("[[1,2],[],[3]]"), "an empty row between two full ones"),
-    Case(string[]("uint256[2][]"), string[]("[[1,2],[3,4]]"), "a dynamic array of static arrays"),
-    Case(string[]("uint256[][2]"), string[]("[[1],[2,3]]"), "and the other way round"),
-    Case(string[]("uint256"),
-         string[]("115792089237316195423570985008687907853269984665640564039457584007913129639935"),
+    Case(["uint256[][]"], ["[[1,2],[],[3]]"], "an empty row between two full ones"),
+    Case(["uint256[2][]"], ["[[1,2],[3,4]]"], "a dynamic array of static arrays"),
+    Case(["uint256[][2]"], ["[[1],[2,3]]"], "and the other way round"),
+    Case(["uint256"],
+         ["115792089237316195423570985008687907853269984665640564039457584007913129639935"],
          "the largest word there is"),
-    Case(string[]("address"), string[]("0xffffffffffffffffffffffffffffffffffffffff"),
+    Case(["address"], ["0xffffffffffffffffffffffffffffffffffffffff"],
          "every bit of an address set"),
-    Case(string[]("bool", "bool"), string[]("true", "false"), "both bools, packed one to a word"),
-    Case(string[]("bytes32"), string[]("0x" + repeated("ab", 32)),
+    Case(["bool", "bool"], ["true", "false"], "both bools, packed one to a word"),
+    Case(["bytes32"], ["0x" + repeated("ab", 32)],
          "a full word that is not a number"),
-    Case(string[]("(bool,uint256[],string)"), string[]("(true,[1,2,3],mixed)"),
-         "static and dynamic members in one tuple"));
+    Case(["(bool,uint256[],string)"], ["(true,[1,2,3],mixed)"],
+         "static and dynamic members in one tuple")
+  ];
 }
 
 i32[] schemaOf(string[] types) {
@@ -175,8 +176,8 @@ export string test_bytes_another_implementation_produced_round_trip(Core core, C
 
   // **The canary.** Every assertion here is "these agree", which a harness that encoded nothing would
   // also satisfy. Two encodings that must differ prove `cast` is really running.
-  u8[] one = castEncode(core, cli, cast, string[]("uint256"), string[]("1"));
-  u8[] two = castEncode(core, cli, cast, string[]("uint256"), string[]("2"));
+  u8[] one = castEncode(core, cli, cast, ["uint256"], ["1"]);
+  u8[] two = castEncode(core, cli, cast, ["uint256"], ["2"]);
   t.isTrue(hex(one) != hex(two), "the oracle is not running — two different values encoded alike");
 
   Case[] cases = corpusGaps();

@@ -78,12 +78,12 @@ i32 atoiAt(string s, i32 from, i32 to) {
 export string test_each_issue_trees_index_states_the_number_of_issues_it_has(Core core, Cli cli) {
   T t = T.create();
 
-  Exec ls = cli.exec("git", string[]("ls-files", "issues"), u8[0]()).wait();
+  Exec ls = cli.exec("git", ["ls-files", "issues"], u8[]()).wait();
   t.isTrue(ls.ran() && ls.status == 0, "git ls-files issues failed");
   if (!ls.ran() || ls.status != 0) { return t.report(); }
   string[] tracked = nonEmptyLines(string.fromBytes(ls.stdout));
 
-  string[] trees = string[]("lang", "system");
+  string[] trees = ["lang", "system"];
   for (i32 k = 0; k < trees.len(); k++) {
     string tree = trees[k];
     i32 open = countIn(tracked, "issues/" + tree + "/open/");
@@ -98,7 +98,7 @@ export string test_each_issue_trees_index_states_the_number_of_issues_it_has(Cor
     t.isTrue(f.ok, "issues/" + tree + "/INDEX.md is readable — " + f.error);
     if (!f.ok) { continue; }
 
-    i32[] said = i32[2]();
+    i32[] said = i32[].filled(2, 0);
     statedCounts(string.fromBytes(f.bytes), said);
     t.isTrue(said[0] >= 0,
              tree + ": INDEX.md states no `N issues, M closed.` line — has the wording changed?");

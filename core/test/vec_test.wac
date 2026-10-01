@@ -136,12 +136,12 @@ export string test_to_array_and_from_array() {
   for (i32 i = 0; i < 5; i++) { v.push(i); }
   i32[] a = v.toArray();
   t.eqI32(a.len(), 5, "toArray trims spare capacity");
-  t.eqI32Array(a, i32[](0, 1, 2, 3, 4), "and holds the elements in order");
+  t.eqI32Array(a, [0, 1, 2, 3, 4] as i32[], "and holds the elements in order");
   // It is a copy: mutating the Vec afterwards must not show through.
   v.set(0, 99);
   t.eqI32(a[0], 0, "toArray copied rather than aliased");
 
-  Vec<i32> w = Vec.fromArray(i32[](7, 8, 9));
+  Vec<i32> w = Vec.fromArray([7, 8, 9] as i32[]);
   t.eqI32(w.len(), 3, "fromArray takes the length from the array");
   t.eqI32(w.get(2), 9, "and the elements");
   return t.report();

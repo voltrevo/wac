@@ -75,7 +75,7 @@ import { LockText, manifestOf, lockOf, rewriteLock, updatedLock, planFor, planNe
 
 /** Every manifest `test/wac/manifest_test.wac` reads, valid and not. */
 string[] manifests() {
-  return string[](
+  return [
     "{}",
     "{ }",
     "// nothing\n{}",
@@ -92,7 +92,8 @@ string[] manifests() {
     "{ imports: { a: { git: 'g', ref: 1 } } }",
     "{ imports: { a: { git: 'g', ref: 'r', subdir: 1 } } }",
     "{ imports: { '': { git: 'g', ref: 'r' } } }",
-    "{ imports: { '/': { git: 'g', ref: 'r' } } }");
+    "{ imports: { '/': { git: 'g', ref: 'r' } } }"
+  ];
 }
 
 /** One import entry, as a manifest fragment. */
@@ -116,8 +117,8 @@ i32 manifestExercises() {
   for (i32 i = 0; i < ms.len(); i++) { readManifest(ms[i].toBytes()); seen = seen + 1; }
 
   // The overlap rule, both orders, plus the pairs it must allow.
-  string[] oa = string[]("wac/", "foo", "a", "x/", "p", "wac/", "foo", "a/", "ab/");
-  string[] ob = string[]("wac/packages/json/", "foo/", "a", "x/y", "p/q/", "wac2/", "foobar", "b/", "a/");
+  string[] oa = ["wac/", "foo", "a", "x/", "p", "wac/", "foo", "a/", "ab/"];
+  string[] ob = ["wac/packages/json/", "foo/", "a", "x/y", "p/q/", "wac2/", "foobar", "b/", "a/"];
   for (i32 i = 0; i < oa.len(); i++) {
     readManifest(("{ imports: { " + entryOf(oa[i]) + ", " + entryOf(ob[i]) + " } }").toBytes());
     readManifest(("{ imports: { " + entryOf(ob[i]) + ", " + entryOf(oa[i]) + " } }").toBytes());
@@ -125,8 +126,10 @@ i32 manifestExercises() {
   }
 
   // Every `subdir`, escaping and not — the escape check is a scan with three ways out.
-  string[] subs = string[]("", "a", "a/b", "packages/std", "..", "../x", "a/../..", "a/../../b",
-                           "/abs", "a/../b");
+  string[] subs = [
+                           "", "a", "a/b", "packages/std", "..", "../x", "a/../..", "a/../../b",
+                           "/abs", "a/../b"
+  ];
   for (i32 i = 0; i < subs.len(); i++) {
     readManifest(("{ imports: { 'a': { git: 'g', ref: 'r', subdir: '" + subs[i] + "' } } }").toBytes());
     seen = seen + 1;
@@ -135,7 +138,7 @@ i32 manifestExercises() {
   // Matching, including the two shapes that must *not* match.
   Manifest table = readManifest(
     "{ imports: { 'bits/': { git: 'g', ref: 'r' }, 'acme': { git: 'g', ref: 'r' } } }".toBytes());
-  string[] specs = string[]("std/vec.wac", "std/a/b.wac", "acme", "std", "bits/", "acme/x", "other");
+  string[] specs = ["std/vec.wac", "std/a/b.wac", "acme", "std", "bits/", "acme/x", "other"];
   for (i32 i = 0; i < specs.len(); i++) { matchSpecifier(table, specs[i]); seen = seen + 1; }
   return seen;
 }
@@ -143,16 +146,18 @@ i32 manifestExercises() {
 /** `root.wac`'s search: nothing in `manifest.wac` calls it, so it is its own workload. */
 i32 rootExercises() {
   i32 seen = MANIFEST_NAME().len();
-  string[] file = string[](
+  string[] file = [
     "pkg/src/a/b.wac", "pkg/a.wac", "a.wac", "a/b/c.wac", "/x/y/z.wac", "/x/y/z.wac",
     "pkg/src/a/b.wac", "pkg/./src/../src/a/b.wac", "a/b.wac", "a/b.wac",
     // The refusals, which are where the interesting branches are.
-    "pkg/a.wac", "/a.wac", "a.wac", "pkgx/a.wac", "../a.wac", "../../a.wac");
-  string[] boundary = string[](
+    "pkg/a.wac", "/a.wac", "a.wac", "pkgx/a.wac", "../a.wac", "../../a.wac"
+  ];
+  string[] boundary = [
     "pkg", "pkg", ".", ".", "/x", "/", "pkg/src", "pkg/", "", "./",
-    "other", ".", "/", "pkg", ".", ".");
+    "other", ".", "/", "pkg", ".", "."
+  ];
   for (i32 i = 0; i < file.len(); i++) { seen = seen + candidateRoots(file[i], boundary[i]).len(); }
-  string[] paths = string[]("a/b/c.wac", "a/b.wac", "b.wac", "/b.wac", "/a/b.wac", "/");
+  string[] paths = ["a/b/c.wac", "a/b.wac", "b.wac", "/b.wac", "/a/b.wac", "/"];
   for (i32 i = 0; i < paths.len(); i++) { seen = seen + dirOf(paths[i]).len(); }
   return seen;
 }
@@ -164,7 +169,7 @@ i32 lockExercises() {
   seen = seen + actionUse() + actionCreate() + actionRefresh();
 
   string LOCK = lockText();
-  string[] against = string[](
+  string[] against = [
     "{ imports: { 'bits/': { git: 'g1', ref: 'main' } } }",
     "{ imports: { 'fresh': { git: 'g9', ref: 'main' } } }",
     "{ imports: { 'bits/': { git: 'OTHER', ref: 'main' } } }",
@@ -172,14 +177,15 @@ i32 lockExercises() {
     "{ imports: { 'sub': { git: 'g2', ref: 'v1', subdir: 'new' } } }",
     "{ imports: { 'sub': { git: 'g2', ref: 'v1' } } }",
     "{ imports: { 'kept': { git: 'g', ref: 'r' } } }",
-    "{}");
+    "{}"
+  ];
   for (i32 i = 0; i < against.len(); i++) {
     seen = seen + planFor(against[i].toBytes(), LOCK.toBytes()).len();
     if (planNeedsResolving(against[i].toBytes(), LOCK.toBytes())) { seen = seen + 1; }
     seen = seen + orphansFor(against[i].toBytes(), LOCK.toBytes()).len();
   }
 
-  string[] texts = string[](
+  string[] texts = [
     "{}", "// none yet\n{}", LOCK, "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",
     "{ imports: { a: { ref: 'r', commit: '" + A40 + "' } } }",
     "{ imports: { a: { git: 'g', commit: '" + A40 + "' } } }",
@@ -197,7 +203,8 @@ i32 lockExercises() {
     "{ imports: { \"a\\tb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
     "{ imports: { \"a\\rb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
     "{ imports: { z: { git: 'g', ref: 'r', commit: '" + A40 + "' }, " +
-      "a: { git: 'g', ref: 'r', commit: '" + B40 + "' } } }");
+      "a: { git: 'g', ref: 'r', commit: '" + B40 + "' } } }"
+  ];
   for (i32 i = 0; i < texts.len(); i++) {
     lockOf(texts[i].toBytes());
     LockText w = rewriteLock(texts[i].toBytes());
@@ -215,26 +222,33 @@ i32 mappingExercises() {
     "  'sub/':   { git: 'g', ref: 'r', subdir: 'packages/acme' },\n" +
     "  'deep/':  { git: 'g', ref: 'r', subdir: 'a/b' },\n" +
     "  'exact':  { git: 'g', ref: 'r', subdir: 'packages/one' },\n} }";
-  string[] specs = string[](
+  string[] specs = [
     "whole/src/a.wac", "whole/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
     "deep/../c.wac", "deep/../../x.wac", "sub/../other/a.wac", "whole/a/../b.wac", "sub/./a.wac",
     "whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac", "sub/../../../etc/passwd",
-    "other/a.wac", "whole", "./a.wac", "", "exactly");
+    "other/a.wac", "whole", "./a.wac", "", "exactly"
+  ];
   for (i32 i = 0; i < specs.len(); i++) {
     locateIn(MAP.toBytes(), specs[i]);
     seen = seen + mappingFor(MAP.toBytes(), specs[i]);
   }
-  string[] atSpec = string[]("@/src/a.wac", "@/a.wac", "@/a.wac", "@/a.wac", "@/./x/../a.wac",
-                             "@/", "./a.wac", "a.wac", "@", "@x/a.wac");
-  string[] atRoot = string[]("proj", "proj/nested", ".", "", "proj", "proj", "proj", "proj",
-                             "proj", "proj");
+  string[] atSpec = [
+                             "@/src/a.wac", "@/a.wac", "@/a.wac", "@/a.wac", "@/./x/../a.wac",
+                             "@/", "./a.wac", "a.wac", "@", "@x/a.wac"
+  ];
+  string[] atRoot = [
+                             "proj", "proj/nested", ".", "", "proj", "proj", "proj", "proj",
+                             "proj", "proj"
+  ];
   for (i32 i = 0; i < atSpec.len(); i++) {
     seen = seen + atPath(atSpec[i], atRoot[i]).len();
     if (isAt(atSpec[i])) { seen = seen + 1; }
   }
-  string[] shas = string[](A40, "0000000000000000000000000000000000000000", "", "3f2a",
+  string[] shas = [
+                           A40, "0000000000000000000000000000000000000000", "", "3f2a",
                            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                           "gggggggggggggggggggggggggggggggggggggggg", A40 + "a");
+                           "gggggggggggggggggggggggggggggggggggggggg", A40 + "a"
+  ];
   for (i32 i = 0; i < shas.len(); i++) { if (fullSha(shas[i])) { seen = seen + 1; } }
   return seen;
 }
@@ -245,26 +259,28 @@ i32 updateExercises() {
   string two = "{ imports: { 'bits/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }";
   updatedLock(two.toBytes(),
     ("{ imports: { 'bits/': { git: 'g1', ref: 'main', commit: '" + A40 + "' } } }").toBytes(),
-    string[](D40, C40));
+    [D40, C40]);
   updatedLock("{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }".toBytes(),
     ("{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + A40 + "' } } }").toBytes(),
-    string[](C40));
-  updatedLock(two.toBytes(), "{}".toBytes(), string[](C40, ""));          // a missing commit
-  updatedLock(two.toBytes(), "{}".toBytes(), string[](C40));              // too few
-  updatedLock(two.toBytes(), "{}".toBytes(), string[](C40, C40, C40));    // too many
-  updatedLock("{".toBytes(), "{}".toBytes(), string[0](fill: ""));        // a manifest that will not read
-  updatedLock(two.toBytes(), "[".toBytes(), string[](C40, C40));          // a lock that will not read
+    [C40]);
+  updatedLock(two.toBytes(), "{}".toBytes(), [C40, ""]);          // a missing commit
+  updatedLock(two.toBytes(), "{}".toBytes(), [C40]);              // too few
+  updatedLock(two.toBytes(), "{}".toBytes(), [C40, C40, C40]);    // too many
+  updatedLock("{".toBytes(), "{}".toBytes(), string[].filled(0, ""));        // a manifest that will not read
+  updatedLock(two.toBytes(), "[".toBytes(), [C40, C40]);          // a lock that will not read
   seen = seen + 7;
 
   // Ref resolution, with the pairs a `git ls-remote` table cannot produce, which is what the
   // vendored corpus in `refs_test.wac` covers from the other side.
-  refToCommit(string[]("refs/heads/main"), string[0](fill: ""), "main");   // unpaired
-  refToCommit(string[]("refs/heads/main"), string[]("nope"), "main");      // not a sha
-  string[] rn = string[]("refs/heads/main", "refs/tags/v1", "refs/tags/v1^{}");
-  string[] rc = string[](A40, B40, C40);
-  string[] queries = string[]("main", "v1", "refs/heads/main", "refs/tags/v1",
+  refToCommit(["refs/heads/main"], string[].filled(0, ""), "main");   // unpaired
+  refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
+  string[] rn = ["refs/heads/main", "refs/tags/v1", "refs/tags/v1^{}"];
+  string[] rc = [A40, B40, C40];
+  string[] queries = [
+                              "main", "v1", "refs/heads/main", "refs/tags/v1",
                               "0000000000000000000000000000000000000000", "refs/tags/v1^{}x",
-                              "dup", "nope");
+                              "dup", "nope"
+  ];
   for (i32 i = 0; i < queries.len(); i++) { refToCommit(rn, rc, queries[i]); seen = seen + 1; }
   return seen;
 }
@@ -272,29 +288,31 @@ i32 updateExercises() {
 /** Which transports the toolchain has, and the cache layout. */
 i32 transportAndCacheExercises() {
   i32 seen = 0;
-  string[] urls = string[](
+  string[] urls = [
     "https://github.com/voltrevo/wac", "https://github.com/voltrevo/wac.git",
     "https://user@example.invalid:8443/a/b", "http://example.invalid/r",
     "git@github.com:voltrevo/wac.git", "ssh://git@example.invalid/r",
-    "git://example.invalid/r", "file:///tmp/r", "example.invalid/r", "");
+    "git://example.invalid/r", "file:///tmp/r", "example.invalid/r", ""
+  ];
   for (i32 i = 0; i < urls.len(); i++) { seen = seen + transportRefusal(urls[i]).len(); }
 
   string SHA = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a";
-  string[] cacheUrls = string[](
+  string[] cacheUrls = [
     "https://github.com/voltrevo/wac", "https://github.com/voltrevo/wac.git",
     "http://example.invalid/x", "https://example.invalid:8443/a/b",
     "https://user@example.invalid/a", "https://github.com/Voltrevo/Wac",
     "https://example.invalid/a/b", "https://example.invalid/a-b",
     "https://example.invalid/../../etc/passwd", "https://example.invalid/a/./b",
     "https://exämple.invalid/ünï/çode", "https://example.invalid/日本語",
-    "https://example.invalid/%41/!b", "%!%!%!", "");
+    "https://example.invalid/%41/!b", "%!%!%!", ""
+  ];
   for (i32 i = 0; i < cacheUrls.len(); i++) {
     seen = seen + repoUrlOf(repoDirName(cacheUrls[i])).len();
     seen = seen + cacheOf("/home/x/.wac", cacheUrls[i], SHA).len();
   }
-  string[] bad = string[]("a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%");
+  string[] bad = ["a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%"];
   for (i32 i = 0; i < bad.len(); i++) { seen = seen + repoUrlOf(bad[i]).len(); }
-  string[] homes = string[]("/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///", "rel/.wac");
+  string[] homes = ["/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///", "rel/.wac"];
   for (i32 i = 0; i < homes.len(); i++) { seen = seen + cacheDir(homes[i]).len(); }
   seen = seen + cacheOf("/home/x/.wac", "", SHA).len();
   seen = seen + cacheOf("/home/x/.wac", "https://example.invalid/r", "").len();

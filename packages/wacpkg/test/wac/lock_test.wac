@@ -40,8 +40,8 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
   Step[] steps = plan(m, l);
   t.eqI32(steps.len(), 2, "two steps");
   if (steps.len() != 2) { return t.report(); }
-  string[] names = string[]("bits/", "acme");
-  string[] commits = string[](A(), B());
+  string[] names = ["bits/", "acme"];
+  string[] commits = [A(), B()];
   for (i32 i = 0; i < 2; i++) {
     t.eqStr(steps[i].name, names[i], "step " + names[i]);
     t.eqI32(steps[i].action, USE(), names[i] + " is USE");
@@ -61,17 +61,18 @@ export string test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_w
   Lock l = lok(lockText);
   if (!l.ok) { t.fail("the lock did not read"); return t.report(); }
 
-  string[] entries = string[](
+  string[] entries = [
     "'bits/': { git: 'g1', ref: 'main' }",
     "'fresh': { git: 'g9', ref: 'main' }",
     "'bits/': { git: 'OTHER', ref: 'main' }",
     "'bits/': { git: 'g1', ref: 'v2' }",
     "'sub': { git: 'g2', ref: 'v1', subdir: 'new' }",
     // Dropping a subdir the lock recorded is a change too, in the other direction.
-    "'sub': { git: 'g2', ref: 'v1' }");
-  string[] names   = string[]("bits/", "fresh", "bits/", "bits/", "sub", "sub");
-  i32[] actions    = i32[](USE(), CREATE(), REFRESH(), REFRESH(), REFRESH(), REFRESH());
-  string[] words   = string[]("", "", "git", "ref", "subdir", "subdir");
+    "'sub': { git: 'g2', ref: 'v1' }"
+  ];
+  string[] names   = ["bits/", "fresh", "bits/", "bits/", "sub", "sub"];
+  i32[] actions    = [USE(), CREATE(), REFRESH(), REFRESH(), REFRESH(), REFRESH()];
+  string[] words   = ["", "", "git", "ref", "subdir", "subdir"];
 
   for (i32 i = 0; i < entries.len(); i++) {
     Manifest m = man("{ imports: { " + entries[i] + " } }");
@@ -125,7 +126,7 @@ export string test_an_entry_whose_mapping_is_gone_is_an_orphan_not_a_step() {
   t.eqI32(steps.len(), 1, "the plan covers the manifest only");
   if (steps.len() == 1) { t.eqStr(steps[0].name, "kept", "and it is the one still there"); }
   string[] orphans = orphansOf(m, l);
-  t.eqStrArray(orphans, string[]("gone"), "the entry with no mapping is an orphan");
+  t.eqStrArray(orphans, ["gone"], "the entry with no mapping is an orphan");
   return t.report();
 }
 
@@ -182,9 +183,9 @@ export string test_every_character_the_writer_escapes_round_trips() {
   // A quoted JSON5 key may hold a newline or a tab, and a writer that emitted one raw would
   // produce a lockfile that is neither JSON nor JSON5 — unreadable by the thing that wrote it,
   // which is the worst kind of broken.
-  string[] names = string[]("a\"b", "a\\b", "a\nb", "a\tb", "a\rb", "a\"\\\n\t\rb");
+  string[] names = ["a\"b", "a\\b", "a\nb", "a\tb", "a\rb", "a\"\\\n\t\rb"];
   for (i32 i = 0; i < names.len(); i++) {
-    LockEntry[] one = LockEntry[1](fill: LockEntry(names[i], "g", "r", "", A()));
+    LockEntry[] one = LockEntry[].filled(1, LockEntry(names[i], "g", "r", "", A()));
     u8[] written = writeLock(one);
     t.isTrue(strictJson(written), "a name with an escape writes strict JSON");
     Lock back = readLock(written);
@@ -198,18 +199,22 @@ export string test_every_character_the_writer_escapes_round_trips() {
 
 export string test_a_commit_must_be_forty_lowercase_hex_digits() {
   T t = T.create();
-  string[] good = string[](A(), B(), SHA(), "0000000000000000000000000000000000000000",
+  string[] good = [
+                           A(), B(), SHA(), "0000000000000000000000000000000000000000",
                            "abcdef0123456789000000000000000000000000",
                            // 41, deliberately: a length check written `>= 40` accepts this and
                            // every other case in this test would still pass.
-                           "abcdef01234567890000000000000000000000000");
+                           "abcdef01234567890000000000000000000000000"
+  ];
   for (i32 i = 0; i < good.len(); i++) {
     bool want = good[i].len() == 40;
     t.eqBool(isFullSha(good[i]), want, "\"" + good[i] + "\" (" + itoa(good[i].len()) + " chars)");
   }
-  string[] bad = string[]("", "3f2a1b0c", A().slice(0, 39), A() + "a",
+  string[] bad = [
+                          "", "3f2a1b0c", A().slice(0, 39), A() + "a",
                           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                          "gggggggggggggggggggggggggggggggggggggggg", A().slice(0, 39) + " ");
+                          "gggggggggggggggggggggggggggggggggggggggg", A().slice(0, 39) + " "
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(isFullSha(bad[i]), "\"" + bad[i] + "\" is refused");
   }
@@ -222,7 +227,7 @@ export string test_a_commit_must_be_forty_lowercase_hex_digits() {
 
 export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_code() {
   T t = T.create();
-  string[] empty = string[]("{}", "{ }", "// none yet\n{}");
+  string[] empty = ["{}", "{ }", "// none yet\n{}"];
   for (i32 i = 0; i < empty.len(); i++) {
     Lock l = lok(empty[i]);
     t.isTrue(l.ok, "\"" + empty[i] + "\" is a valid lock");
@@ -230,7 +235,7 @@ export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_co
   }
   // Present but the wrong kind, for each field in turn. The `default:` arms for `git` and `ref` were
   // the only unreached branches in the file until every field got a case of its own.
-  string[] texts = string[](
+  string[] texts = [
     "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",
     "{ imports: { a: { ref: 'r', commit: '" + A() + "' } } }",
     "{ imports: { a: { git: 'g', commit: '" + A() + "' } } }",
@@ -239,8 +244,9 @@ export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_co
     "{ imports: { a: { git: 'g', ref: 1, commit: '" + A() + "' } } }",
     "{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }",
     "{ imports: { a: { git: 'g', ref: 'r', commit: '" + A() + "', subdir: 1 } } }",
-    "{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }");
-  i32[] codes = i32[](1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 6);
+    "{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }"
+  ];
+  i32[] codes = [1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 6];
   for (i32 i = 0; i < texts.len(); i++) {
     Lock l = lok(texts[i]);
     t.isFalse(l.ok, texts[i] + " is refused");
@@ -278,14 +284,14 @@ export string test_apply_plan_refuses_steps_that_did_not_come_from_plan() {
 
   // A lock that has never heard of `a/`, and a step claiming `USE` for it anyway.
   Lock empty = Lock.empty();
-  Step[] steps = Step[](Step("a/", USE(), SHA_A, ""));
-  string[] resolved = string[]("");
+  Step[] steps = [Step("a/", USE(), SHA_A, "")];
+  string[] resolved = [""];
   LockEntry[] out = applyPlan(m, empty, steps, resolved);
   t.eqI32(out.len(), 0, "a USE for a mapping the lock has never seen was applied rather than refused");
 
   // The same step against a lock that *does* have the entry is applied, so the refusal above is
   // about the missing entry rather than about `applyPlan` refusing everything.
-  Lock has = Lock(true, 0, "", LockEntry[](LockEntry("a/", "https://e.test/a", "main", "", SHA_B)));
+  Lock has = Lock(true, 0, "", [LockEntry("a/", "https://e.test/a", "main", "", SHA_B)]);
   LockEntry[] ok = applyPlan(m, has, steps, resolved);
   t.eqI32(ok.len(), 1, "a USE for a mapping the lock has was refused");
   if (ok.len() == 1) {
@@ -295,7 +301,7 @@ export string test_apply_plan_refuses_steps_that_did_not_come_from_plan() {
   }
 
   // A step count that does not match the manifest is refused too, which is the guard above it.
-  t.eqI32(applyPlan(m, has, Step[0](fill: Step("", USE(), "", "")), string[0](fill: "")).len(), 0,
+  t.eqI32(applyPlan(m, has, Step[].filled(0, Step("", USE(), "", "")), string[].filled(0, "")).len(), 0,
           "a step array of the wrong length was applied");
   return t.report();
 }
@@ -310,11 +316,12 @@ export string test_apply_plan_refuses_steps_that_did_not_come_from_plan() {
  */
 export string test_entries_sort_by_name_when_the_names_share_a_prefix() {
   T t = T.create();
-  LockEntry[] entries = LockEntry[](
+  LockEntry[] entries = [
     LockEntry("alpine/", "https://e.test/alpine", "main", "", SHA_A),
     LockEntry("alpha/", "https://e.test/alpha", "main", "", SHA_B),
     LockEntry("alp/", "https://e.test/alp", "main", "", SHA_A),
-    LockEntry("beta/", "https://e.test/beta", "main", "", SHA_B));
+    LockEntry("beta/", "https://e.test/beta", "main", "", SHA_B)
+  ];
   string text = string.fromBytes(writeLock(entries));
 
   // Written in order, so the shortest shared prefix comes first and `alpha` before `alpine`.

@@ -49,12 +49,16 @@ export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) 
   string child = dir + "/wc.worker.js";
 
   Exec bp = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/pipe.wac",
-             "--allow-read", "-o", pipe), u8[0]()).wait();
+    [
+             "run", "-A", "packages/platform/build.ts", "packages/platform/example/pipe.wac",
+             "--allow-read", "-o", pipe
+    ], u8[]()).wait();
   t.isTrue(bp.ran() && bp.status == 0, "pipe.wac built — " + string.fromBytes(bp.stderr));
   Exec bc = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
-             "--worker", "-o", child), u8[0]()).wait();
+    [
+             "run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
+             "--worker", "-o", child
+    ], u8[]()).wait();
   t.isTrue(bc.ran() && bc.status == 0, "wc.wac built as a worker — " + string.fromBytes(bc.stderr));
   if (!bp.ran() || bp.status != 0 || !bc.ran() || bc.status != 0) {
     cli.remove(dir, true).wait();
@@ -62,7 +66,7 @@ export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) 
   }
 
   // Empty args: `wc` with no arguments reads standard input, which is the point here.
-  Exec r = cli.exec(pipe, string[](child, "", ""), "one two three\n".toBytes()).wait();
+  Exec r = cli.exec(pipe, [child, "", ""], "one two three\n".toBytes()).wait();
   t.isTrue(r.ran(), "the pipeline ran");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 0, string.fromBytes(r.stderr));
@@ -91,12 +95,16 @@ export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
   string child = dir + "/wc.worker.js";
 
   Exec bi = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/inetd.wac",
-             "--allow-read", "--allow-net", "-o", inetd), u8[0]()).wait();
+    [
+             "run", "-A", "packages/platform/build.ts", "packages/platform/example/inetd.wac",
+             "--allow-read", "--allow-net", "-o", inetd
+    ], u8[]()).wait();
   t.isTrue(bi.ran() && bi.status == 0, "inetd.wac built — " + string.fromBytes(bi.stderr));
   Exec bc = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
-             "--worker", "-o", child), u8[0]()).wait();
+    [
+             "run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
+             "--worker", "-o", child
+    ], u8[]()).wait();
   t.isTrue(bc.ran() && bc.status == 0, "wc.wac built as a worker — " + string.fromBytes(bc.stderr));
   if (!bi.ran() || bi.status != 0 || !bc.ran() || bc.status != 0) {
     cli.remove(dir, true).wait();

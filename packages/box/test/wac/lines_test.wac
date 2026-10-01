@@ -61,21 +61,21 @@ export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli
   // Not uniform, so each is asked rather than assumed.
   t.isTrue(cli.writeFile(nonl, "alpha\nbravo".toBytes()).wait().ok(), "wrote the unterminated one");
 
-  string[][] invocations = string[][](
-    string[]("head"), string[]("head", "-3"),
-    string[]("tail"), string[]("tail", "-3"), string[]("tail", "-1"),
-    string[]("nl"), string[]("uniq"), string[]("uniq", "-c")
-  );
+  string[][] invocations = [
+    ["head"], ["head", "-3"],
+    ["tail"], ["tail", "-3"], ["tail", "-1"],
+    ["nl"], ["uniq"], ["uniq", "-c"]
+  ];
 
   for (i32 i = 0; i < invocations.len(); i++) {
     string[] inv = invocations[i];
     for (i32 f = 0; f < 2; f++) {
       string path = f == 0 ? many : nonl;
-      string[] argv = string[inv.len() + 1](fill: "");
+      string[] argv = string[].filled(inv.len() + 1, "");
       for (i32 k = 0; k < inv.len(); k++) { argv[k] = inv[k]; }
       argv[inv.len()] = path;
 
-      string[] theirs = string[inv.len()](fill: "");
+      string[] theirs = string[].filled(inv.len(), "");
       for (i32 k = 1; k < inv.len(); k++) { theirs[k - 1] = inv[k]; }
       theirs[inv.len() - 1] = path;
 
@@ -86,8 +86,8 @@ export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli
   }
 
   // `tail -N` asking for more lines than exist.
-  t.eqStr(runApplet(core, cli, dir, string[]("tail", "-100000", many)).out,
-          realOut(cli, "tail", string[]("-100000", many)), "tail past the start");
+  t.eqStr(runApplet(core, cli, dir, ["tail", "-100000", many]).out,
+          realOut(cli, "tail", ["-100000", many]), "tail past the start");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -115,7 +115,7 @@ export string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
   want.pushAll("b".toBytes()); want.pushCodepoint(0x00FC); want.pushCodepoint(0x2014);
   want.pushAll("a\n".toBytes());
 
-  t.eqStr(runApplet(core, cli, dir, string[]("rev", path)).out, string.fromBytes(want.bytes()),
+  t.eqStr(runApplet(core, cli, dir, ["rev", path]).out, string.fromBytes(want.bytes()),
           "rev moves whole scalars");
 
   cli.remove(dir, true).wait();
@@ -137,11 +137,11 @@ export string test_one_very_long_line_is_linear(Core core, Cli cli) {
   string path = dir + "/oneline.txt";
 
   i32 width = 500000;
-  u8[] line = u8[width](fill: 0x78);                 // 'x'
+  u8[] line = u8[].filled(width, 0x78);                 // 'x'
   t.isTrue(cli.writeFile(path, line).wait().ok(), "wrote half a megabyte with no newline");
 
   i64 started = core.monotonicNanos().wait();
-  Ran got = runApplet(core, cli, dir, string[]("tail", "-1", path));
+  Ran got = runApplet(core, cli, dir, ["tail", "-1", path]);
   i64 elapsed = core.monotonicNanos().wait() - started;
 
   t.eqI32(got.out.len(), width, "one very long line comes back whole");

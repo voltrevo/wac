@@ -73,8 +73,8 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
   if (!made.ok()) { return none("a working directory: " + made.message); }
   string probe = work + "/fuzzprobe";
 
-  Exec built = cli.exec(binary(cli), string[]("build", PROBE, "-o", probe, "--allow-read"),
-                        u8[0]()).wait();
+  Exec built = cli.exec(binary(cli), ["build", PROBE, "-o", probe, "--allow-read"],
+                        u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     return none("the probe builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
   }
@@ -82,7 +82,7 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
   Case[] all = buildCorpus(corpora, seed);
   i32 step = stride < 1 ? 1 : stride;
   i32 kept = (all.len() + step - 1) / step;
-  Case[] base = Case[kept](fill: Case("", u8[0]()));
+  Case[] base = Case[].filled(kept, Case("", u8[]()));
   for (i32 i = 0; i < kept; i++) { base[i] = all[i * step]; }
   Rng rng = makeRng(seed ^ 0xBADBEEF);
   i32 trapped = 0;
@@ -102,7 +102,7 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
     cli.writeFile(originalPath, data).wait();
 
     for (i32 attempt = 0; attempt < attempts; attempt++) {
-      u8[] corrupt = u8[valid.len()]();
+      u8[] corrupt = u8[].filled(valid.len(), 0);
       for (i32 i = 0; i < valid.len(); i++) { corrupt[i] = valid[i]; }
       i32 kind = rng.upto(4);
       i32 keep = corrupt.len();
@@ -119,12 +119,12 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
       } else {                                         // truncate
         keep = rng.upto(corrupt.len());
       }
-      u8[] handed = u8[keep]();
+      u8[] handed = u8[].filled(keep, 0);
       for (i32 i = 0; i < keep; i++) { handed[i] = corrupt[i]; }
       cli.writeFile(corruptPath, handed).wait();
 
-      Exec r = cli.exec(binary(cli), string[](probe, "--allow-read", originalPath, corruptPath),
-                        u8[0]()).wait();
+      Exec r = cli.exec(binary(cli), [probe, "--allow-read", originalPath, corruptPath],
+                        u8[]()).wait();
       cases = cases + 1;
       if (!r.ran()) {
         notRan = notRan + 1;

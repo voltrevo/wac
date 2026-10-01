@@ -25,7 +25,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { blockedFiles, dumpTypeErrors } from "../../src/api.wac";
 
 string blockedFor(string src) {
-  return blockedFiles(string[]("/m.wac"), string[](src), "/m.wac");
+  return blockedFiles(["/m.wac"], [src], "/m.wac");
 }
 
 i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
@@ -85,7 +85,7 @@ export string test_operands_that_disagree_have_no_type_and_the_refusal_names_the
  */
 export string test_a_string_or_bool_literal_pair_has_a_type_and_reports_once() {
   T t = T.create();
-  string[] name = string[](
+  string[] name = [
     "i32 from two string literals", "bool from two string literals",
     "i32 from two bool literals", "a chain of three strings reports once",
     "a string literal alone", "a string literal beside a named string",
@@ -97,9 +97,10 @@ export string test_a_string_or_bool_literal_pair_has_a_type_and_reports_once() {
     "a named integer times a string literal still reports once",
     "an integer literal plus a string literal", "the same with the integer written as a sum",
     "an integer literal plus a bool literal", "a bool literal plus a string literal",
-    "a string literal plus a bool literal", "a named i32 plus an integer sum, legal");
-  i32[] want = i32[](1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0);
-  string[] src = string[](
+    "a string literal plus a bool literal", "a named i32 plus an integer sum, legal"
+  ];
+  i32[] want = [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0];
+  string[] src = [
     "export i32 f() { i32 n = \"a\" + \"b\"; return n; }\n",
     "export i32 f() { bool b = \"a\" + \"b\"; return b ? 1 : 0; }\n",
     "export i32 f() { i32 n = true + false; return n; }\n",
@@ -122,7 +123,8 @@ export string test_a_string_or_bool_literal_pair_has_a_type_and_reports_once() {
     "export i32 f() { i32 n = 1 + true; return n; }\n",
     "export i32 f() { i32 n = true + \"a\"; return n; }\n",
     "export i32 f() { string s = \"a\" + true; return s.len(); }\n",
-    "export i32 f(i32 x) { i32 n = x + (1 + 1); return n; }\n");
+    "export i32 f(i32 x) { i32 n = x + (1 + 1); return n; }\n"
+  ];
   t.eqI32(name.len(), src.len(), "the name and program lists disagree in length");
   t.eqI32(name.len(), want.len(), "the name and count lists disagree in length");
   if (name.len() != src.len() || name.len() != want.len()) { return t.report(); }

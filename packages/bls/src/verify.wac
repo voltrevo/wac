@@ -36,11 +36,13 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 
 /** The domain separation tag Ethereum signatures use. */
 export u8[] ethDst() {
-  const u8[] DST = u8[](0x42, 0x4c, 0x53, 0x5f, 0x53, 0x49, 0x47, 0x5f, 0x42, 0x4c, 0x53, 0x31,
+  const u8[] DST = [
+                        0x42, 0x4c, 0x53, 0x5f, 0x53, 0x49, 0x47, 0x5f, 0x42, 0x4c, 0x53, 0x31,
                         0x32, 0x33, 0x38, 0x31, 0x47, 0x32, 0x5f, 0x58, 0x4d, 0x44, 0x3a, 0x53,
                         0x48, 0x41, 0x2d, 0x32, 0x35, 0x36, 0x5f, 0x53, 0x53, 0x57, 0x55, 0x5f,
-                        0x52, 0x4f, 0x5f, 0x50, 0x4f, 0x50, 0x5f);
-  u8[] out = u8[DST.len()]();
+                        0x52, 0x4f, 0x5f, 0x50, 0x4f, 0x50, 0x5f
+  ];
+  u8[] out = u8[].filled(DST.len(), 0);
   for (i32 i = 0; i < DST.len(); i++) { out[i] = DST[i]; }
   return out;
 }
@@ -87,7 +89,7 @@ bool verifyPair(G1 pk, u8[] message, G2 sig) {
   Pair? a = toPair(pk, h);
   Pair? b = toPair(g1Negate(g1Generator()), sig);
   if ((a is null) || (b is null)) { return false; }
-  Pair[] pairs = Pair[2]();
+  Pair[] pairs = Pair[].defaulted(2);
   pairs[0] = a!;
   pairs[1] = b!;
   return productIsOne(pairs);
@@ -170,7 +172,7 @@ export G2? aggregateSignatures(u8[][] signatures) {
 /** `Aggregate`, as bytes in, bytes out; empty on refusal. */
 export u8[] aggregate(u8[][] signatures) {
   G2? agg = aggregateSignatures(signatures);
-  if (agg is null) { return u8[0](); }
+  if (agg is null) { return u8[](); }
   return g2Compress(agg!);
 }
 
@@ -209,7 +211,7 @@ export bool aggregateVerify(u8[][] pubkeys, u8[][] messages, u8[] signature) {
   if (sig is null) { return false; }
   if (g2IsInfinity(sig!)) { return false; }
 
-  Pair[] pairs = Pair[n + 1]();
+  Pair[] pairs = Pair[].defaulted(n + 1);
   for (i32 i = 0; i < n; i++) {
     G1? pk = g1FromBytes(pubkeys[i]);
     if (pk is null) { return false; }
@@ -251,7 +253,7 @@ export bool aggregateVerify(u8[][] pubkeys, u8[][] messages, u8[] signature) {
  * verifying one at a time.
  */
 export u32[] batchScalar(u8[] transcript, i32 i) {
-  u8[] tagged = u8[transcript.len() + 4]();
+  u8[] tagged = u8[].filled(transcript.len() + 4, 0);
   for (i32 j = 0; j < transcript.len(); j++) { tagged[j] = transcript[j]; }
   tagged[transcript.len() + 0] = (i >> 24) & 0xFF;
   tagged[transcript.len() + 1] = (i >> 16) & 0xFF;
@@ -260,7 +262,7 @@ export u32[] batchScalar(u8[] transcript, i32 i) {
   u8[] h = sha256(tagged);
 
   // Two 32-bit words, least significant first, as `g1Mul` and `g2Mul` read a scalar.
-  u32[] k = u32[2]();
+  u32[] k = u32[].filled(2, 0);
   for (i32 w = 0; w < 2; w++) {
     u32 v = 0;
     for (i32 b = 0; b < 4; b++) { v = (v << 8) | (h[w * 4 + b] as@ u32); }
@@ -278,7 +280,7 @@ export u8[] batchTranscript(u8[][] pubkeys, u8[][] messages, u8[][] signatures, 
   for (i32 i = 0; i < pubkeys.len(); i++) {
     total = total + pubkeys[i].len() + messages[i].len() + signatures[i].len();
   }
-  u8[] t = u8[total]();
+  u8[] t = u8[].filled(total, 0);
   i32 at = 0;
   for (i32 j = 0; j < entropy.len(); j++) { t[at] = entropy[j]; at = at + 1; }
   for (i32 i = 0; i < pubkeys.len(); i++) {
@@ -320,7 +322,7 @@ export bool batchVerify(u8[][] pubkeys, u8[][] messages, u8[][] signatures, u8[]
 
   u8[] transcript = batchTranscript(pubkeys, messages, signatures, entropy);
 
-  Pair[] pairs = Pair[n + 1]();
+  Pair[] pairs = Pair[].defaulted(n + 1);
   G2 sigSum = g2Infinity();
   for (i32 i = 0; i < n; i++) {
     G1? pk = g1FromBytes(pubkeys[i]);

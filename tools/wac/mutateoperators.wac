@@ -75,7 +75,7 @@ export struct GenStats {
 export i32 LITERAL_PER_SHAPE() { return 3; }
 
 export string[] ALL_OPERATORS() {
-  return string[]("relational", "literal", "guard", "extreme");
+  return ["relational", "literal", "guard", "extreme"];
 }
 
 bool wants(string[] operators, string name) {
@@ -105,7 +105,7 @@ string unescaped(string body) {
     if (e == "n") { out = out + "\n"; }
     else if (e == "t") { out = out + "\t"; }
     else if (e == "r") { out = out + "\r"; }
-    else if (e == "0") { u8[] z = u8[1](fill: 0); out = out + string.fromBytes(z); }
+    else if (e == "0") { u8[] z = u8[].filled(1, 0); out = out + string.fromBytes(z); }
     else { out = out + e; }
   }
   return out;
@@ -146,7 +146,7 @@ export Tok[] lexOf(string source) {
   i32[] flat = lexTokensOf(bytes);
   i32 stride = lexTokenStride();
   i32 n = stride <= 0 ? 0 : flat.len() / stride;
-  Tok[] out = Tok[n](fill: Tok("", "", 0, 0));
+  Tok[] out = Tok[].filled(n, Tok("", "", 0, 0));
   for (i32 t = 0; t < n; t++) {
     i32 i = t * stride;
     string kind = tokenKindName(flat[i]);
@@ -177,7 +177,7 @@ i32[] lineStarts(string source) {
   for (i32 i = 0; i < source.len(); i++) {
     if (charAt(source, i) == "\n") { lines = lines + 1; }
   }
-  i32[] out = i32[lines](fill: 0);
+  i32[] out = i32[].filled(lines, 0);
   i32 at = 1;
   for (i32 i = 0; i < source.len(); i++) {
     if (charAt(source, i) == "\n" && at < lines) { out[at] = i + 1; at = at + 1; }
@@ -203,13 +203,13 @@ Edit editOf(string file, i32 at, string was, string replacement) {
  * boundary case, a survivor of the second means the code is barely tested.
  */
 string[] relationalAlts(string kind) {
-  if (kind == "<") { return string[]("<=", ">"); }
-  if (kind == "<=") { return string[]("<", ">="); }
-  if (kind == ">") { return string[](">=", "<"); }
-  if (kind == ">=") { return string[](">", "<="); }
-  if (kind == "==") { return string[]("!="); }
-  if (kind == "!=") { return string[]("=="); }
-  return string[0](fill: "");
+  if (kind == "<") { return ["<=", ">"]; }
+  if (kind == "<=") { return ["<", ">="]; }
+  if (kind == ">") { return [">=", "<"]; }
+  if (kind == ">=") { return [">", "<="]; }
+  if (kind == "==") { return ["!="]; }
+  if (kind == "!=") { return ["=="]; }
+  return string[].filled(0, "");
 }
 
 bool allDigits(string s) {
@@ -361,7 +361,7 @@ export struct Fn {
  * comments, which is the only hard part.
  */
 export Fn[] functionsOf(Tok[] tokens) {
-  Fn[] out = Fn[tokens.len()](fill: Fn("", "", 0, 0));
+  Fn[] out = Fn[].filled(tokens.len(), Fn("", "", 0, 0));
   i32 n = 0;
   i32 depth = 0;
   for (i32 i = 0; i < tokens.len(); i++) {
@@ -406,7 +406,7 @@ export Fn[] functionsOf(Tok[] tokens) {
     n = n + 1;
     i = q - 1;
   }
-  Fn[] exact = Fn[n](fill: Fn("", "", 0, 0));
+  Fn[] exact = Fn[].filled(n, Fn("", "", 0, 0));
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -415,7 +415,7 @@ export Fn[] functionsOf(Tok[] tokens) {
  * A key identifying "the same kind of literal, in the same place, in the same function".
  *
  * The literal operator's cost is dominated by code that repeats one statement: a constant table
- * (`v[0] = 0x...;` twelve times, or `u8[](0x63, 0x7c, ...)` two hundred and fifty-six times) and
+ * (`v[0] = 0x...;` twelve times, or `[0x63, 0x7c, ...] as u8[]` two hundred and fifty-six times) and
  * unrolled arithmetic. Bumping the third entry of a table and bumping the fourth are not two
  * experiments; they are one experiment run twice, and the answer is the same both times because the
  * same assertions decide it.
@@ -477,26 +477,25 @@ i32 roundedDiv(i32 a, i32 b) { return (2 * a + b) / (2 * b); }
  */
 export Mutant[] generate(string file, string source, string[] operators, GenStats stats,
                          i32 perShape) {
-  if (!lexes(source)) { return Mutant[0](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", "")))); }
+  if (!lexes(source)) { return Mutant[].filled(0, Mutant("", "", Edit[].filled(0, Edit("", 0, 0, "", "")))); }
   Tok[] tokens = lexOf(source);
   i32[] starts = lineStarts(source);
   Fn[] bodySpans = functionsOf(tokens);
 
-  Mutant[] out = Mutant[0](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+  Mutant[] out = Mutant[].filled(0, Mutant("", "", Edit[].filled(0, Edit("", 0, 0, "", ""))));
   i32 count = 0;
   // Sized from the work rather than grown: the relational operator emits at most two per token and
   // the others at most one, so this is an upper bound that no file can exceed.
-  Mutant[] buf = Mutant[tokens.len() * 3 + bodySpans.len() + 1](
-    fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+  Mutant[] buf = Mutant[].filled(tokens.len() * 3 + bodySpans.len() + 1, Mutant("", "", Edit[].filled(0, Edit("", 0, 0, "", ""))));
 
   // Token index -> the declaration a literal belongs to, for `shapeKey`: the enclosing top-level
   // function, or for module-level code the `const` being initialised.
   //
   // The `const` half is not a detail. The largest tables in the repo are module-level
-  // `const u8[] SBOX = u8[](...)` initialisers, which are outside every function span; keying them
+  // `const u8[] SBOX = [...]` initialisers, which are outside every function span; keying them
   // all to one empty scope put `unicode/src/tables.wac`'s six separate tables into a single class
   // and sampled three literals for the lot. Six tables are six questions.
-  string[] scope = string[tokens.len()](fill: "");
+  string[] scope = string[].filled(tokens.len(), "");
   for (i32 f = 0; f < bodySpans.len(); f++) {
     for (i32 k = bodySpans[f].open; k <= bodySpans[f].close && k < scope.len(); k++) {
       scope[k] = bodySpans[f].name;
@@ -525,11 +524,11 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
   // it, so one class with 8,792 members in `unicode/src/tables.wac` would be quadratic. Two passes
   // and a prefix sum are linear, which is what the reference's `Map<string, number[]>` is on a host
   // with growable arrays.
-  bool[] literalWanted = bool[tokens.len()](fill: false);
+  bool[] literalWanted = bool[].filled(tokens.len(), false);
   i32 shapes = 0;
   if (wants(operators, "literal")) {
     Map<string, i32> classOf = Map.create(hashString, stringEq);
-    i32[] classIdOf = i32[tokens.len()](fill: -1);
+    i32[] classIdOf = i32[].filled(tokens.len(), -1);
     for (i32 i = 0; i < tokens.len(); i++) {
       if (tokens[i].kind != "int" || bumpLiteral(tokens[i].text) == "") { continue; }
       string key = shapeKey(tokens, i, scope[i]);
@@ -541,15 +540,15 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
         shapes = shapes + 1;
       }
     }
-    i32[] countIn = i32[shapes + 1](fill: 0);
+    i32[] countIn = i32[].filled(shapes + 1, 0);
     for (i32 i = 0; i < tokens.len(); i++) {
       if (classIdOf[i] >= 0) { countIn[classIdOf[i]] = countIn[classIdOf[i]] + 1; }
     }
-    i32[] startIn = i32[shapes + 1](fill: 0);
+    i32[] startIn = i32[].filled(shapes + 1, 0);
     i32 running = 0;
     for (i32 c = 0; c < shapes; c++) { startIn[c] = running; running = running + countIn[c]; }
-    i32[] members = i32[running + 1](fill: 0);
-    i32[] filled = i32[shapes + 1](fill: 0);
+    i32[] members = i32[].filled(running + 1, 0);
+    i32[] filled = i32[].filled(shapes + 1, 0);
     for (i32 i = 0; i < tokens.len(); i++) {
       i32 c = classIdOf[i];
       if (c < 0) { continue; }
@@ -586,7 +585,7 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
       string was = source.slice(start, end);
       if (normalised(was) == normalised(replacement)) { continue; }
       buf[count] = Mutant("extreme/" + short(file) + "/" + fun.name, "operator",
-                          Edit[](Edit(file, start, end, replacement, was)));
+                          [Edit(file, start, end, replacement, was)]);
       count = count + 1;
     }
   }
@@ -602,7 +601,7 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
           buf[count] = Mutant(
             "relational/" + short(file) + ":" + itoa(t.line) + ":" + itoa(t.col)
               + "/" + t.text + "→" + alts[a],
-            "operator", Edit[](editOf(file, start, t.text, alts[a])));
+            "operator", [editOf(file, start, t.text, alts[a])]);
           count = count + 1;
         }
       }
@@ -620,7 +619,7 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
         buf[count] = Mutant(
           "literal/" + short(file) + ":" + itoa(t.line) + ":" + itoa(t.col)
             + "/" + t.text + "→" + bumped,
-          "operator", Edit[](editOf(file, start, t.text, bumped)));
+          "operator", [editOf(file, start, t.text, bumped)]);
         count = count + 1;
       }
     }
@@ -639,12 +638,12 @@ export Mutant[] generate(string file, string source, string[] operators, GenStat
       }
       buf[count] = Mutant(
         "guard/" + short(file) + ":" + itoa(t.line) + ":" + itoa(t.col), "operator",
-        Edit[](Edit(file, start, end, "", source.slice(start, end))));
+        [Edit(file, start, end, "", source.slice(start, end))]);
       count = count + 1;
     }
   }
 
-  out = Mutant[count](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+  out = Mutant[].filled(count, Mutant("", "", Edit[].filled(0, Edit("", 0, 0, "", ""))));
   for (i32 i = 0; i < count; i++) { out[i] = buf[i]; }
   return out;
 }
@@ -693,7 +692,7 @@ bool hasSegment(string path, string name) {
 export string[] changedWacFiles(string diffOutput) {
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    string[] out = pass == 1 ? string[].filled(n, "") : string[].filled(0, "");
     i32 at = 0;
     i32 from = 0;
     for (i32 i = 0; i <= diffOutput.len(); i++) {
@@ -707,5 +706,5 @@ export string[] changedWacFiles(string diffOutput) {
     if (pass == 1) { return out; }
     n = at;
   }
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }

@@ -191,40 +191,40 @@ struct Said {
 Said say(Cli cli, string dir, string command, string[] argv) {
   string line = "cd " + dir + " && exec " + command;
   for (i32 i = 0; i < argv.len(); i++) { line = line + " " + argv[i]; }
-  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
   if (!r.ran()) { return Said(-1, "the host did not start: " + r.error); }
   return Said(r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
 }
 
 /** The invocations, as argument vectors. */
 string[][] cases() {
-  return string[][](
-    string[]("check", "src/main.wac"),        // the canary: this one must succeed
-    string[]("check", "src/bad.wac"),         // a type error, with a span and a caret
-    string[]("check", "src/missing.wac"),     // a file that is not there
-    string[]("nonsense", "src/main.wac"),     // an unknown subcommand, so the usage line
-    string[]("bindgen", "src/lib.wac"),       // TypeScript glue
-    string[]("bindgen", "src/lib.wac", "--js"),
+  return [
+    ["check", "src/main.wac"],        // the canary: this one must succeed
+    ["check", "src/bad.wac"],         // a type error, with a span and a caret
+    ["check", "src/missing.wac"],     // a file that is not there
+    ["nonsense", "src/main.wac"],     // an unknown subcommand, so the usage line
+    ["bindgen", "src/lib.wac"],       // TypeScript glue
+    ["bindgen", "src/lib.wac", "--js"],
     // **`run`, which is the first subcommand to live in the wac program rather than in a host.**
     // `issues/system/0230a` option 2 moved it there once `spawn` could start a module everywhere
     // (`issues/system/0144`), and the native binary still answers it in Rust — so for `run` these
     // rows compare *two implementations of one command*, not one implementation through two hosts.
     // That is the evidence step 4 of that issue wants before either is deleted.
-    string[]("run", "src/hello.wac"),         // it runs, and its output is the program's
-    string[]("run", "src/seven.wac"),         // ...and the exit code is the program's, not 0 or 1
-    string[]("run", "src/hello.wac", "--", "--allow-read"),   // past `--`, a grant is an argument
-    string[]("run", "--nonsense", "src/hello.wac"),           // an unknown flag, named
-    string[]("run"),                                          // no entry, so `run`'s own usage line
+    ["run", "src/hello.wac"],         // it runs, and its output is the program's
+    ["run", "src/seven.wac"],         // ...and the exit code is the program's, not 0 or 1
+    ["run", "src/hello.wac", "--", "--allow-read"],   // past `--`, a grant is an argument
+    ["run", "--nonsense", "src/hello.wac"],           // an unknown flag, named
+    ["run"],                                          // no entry, so `run`'s own usage line
     // **`wac <module.wasm>` — "run that program", the most basic thing the command does**, and it
     // worked on the native binary alone until 2026-08-22: the other two printed the usage block at
     // somebody holding a built program. The grants are the interesting part. A module run this way
     // gets what **its own manifest** declares, which is not `spawn`'s rule — so the two rows below
     // are one program built twice, and the only difference between them is a flag at *its* build.
-    string[]("hello.wasm"),                   // it runs, and its output is the program's
-    string[]("reader.wasm"),                  // built without the grant: denied on every host
-    string[]("reader-read.wasm"),             // built with it: allowed on every host
-    string[]("nosuch.wasm"),                  // a `.wasm` that is not there — a file, not a command
-    string[]("notamodule.wasm"),              // a file that is there and is not a program
+    ["hello.wasm"],                   // it runs, and its output is the program's
+    ["reader.wasm"],                  // built without the grant: denied on every host
+    ["reader-read.wasm"],             // built with it: allowed on every host
+    ["nosuch.wasm"],                  // a `.wasm` that is not there — a file, not a command
+    ["notamodule.wasm"],              // a file that is there and is not a program
     // **`test`, one file — `issues/system/0230a` step 5.** The module is loaded and its `test*`
     // exports called, which `Cli.load` made expressible (`issues/system/0240c`): before it a wac
     // program could start a *program* and not call a *function*, and a test is a function.
@@ -241,22 +241,22 @@ string[][] cases() {
     // program refused the flag rather than print the zeroes it would otherwise get, and this comment
     // said so. `issues/system/0243c` is closed: the compiler declares the three it injected, and the
     // three hosts agree on `6 of 279 points (2%)` and every line of the table beneath it.
-    string[]("test", "--allow-read", "src/one_test.wac"),     // 3 pass, 2 fail, and which
-    string[]("test", "--allow-read", "--filter", "passes", "src/one_test.wac"),
-    string[]("test", "--allow-read", "--filter", "zzz", "src/one_test.wac"),   // matches nothing
-    string[]("test", "--nonsense", "src/one_test.wac"),       // an unknown flag, named
-    string[]("test", "--allow-read", "src/missing_test.wac"),
+    ["test", "--allow-read", "src/one_test.wac"],     // 3 pass, 2 fail, and which
+    ["test", "--allow-read", "--filter", "passes", "src/one_test.wac"],
+    ["test", "--allow-read", "--filter", "zzz", "src/one_test.wac"],   // matches nothing
+    ["test", "--nonsense", "src/one_test.wac"],       // an unknown flag, named
+    ["test", "--allow-read", "src/missing_test.wac"],
     // **The two grant rows.** The first is the canary for `issues/system/0242c`: a test that writes,
     // on a run that granted only read, has to be *denied* — and "denied" rather than "failed", because
     // `Change` reading the fault off its own refusal is half of what that issue fixed. The second is a
     // run that granted nothing at all, where the test is skipped and named and the status is 4.
-    string[]("test", "--allow-read", "src/writes_test.wac"),
-    string[]("test", "src/reads_test.wac"),
-    string[]("test", "--allow-env", "capsrc/env_test.wac"),
+    ["test", "--allow-read", "src/writes_test.wac"],
+    ["test", "src/reads_test.wac"],
+    ["test", "--allow-env", "capsrc/env_test.wac"],
     // **`test` granting the network**, which no row did: `--allow-net` was in six `test` rows' worth
     // of company in the table and in none of them. A dial to a closed loopback port, asserted to come
     // back as a refusal rather than merely a failure — the category `issues/system/0255c` added.
-    string[]("test", "--allow-net", "capsrc/net_test.wac"),
+    ["test", "--allow-net", "capsrc/net_test.wac"],
     // **A trap on the failing path, which is the only path that prints what the trap said.** The rows
     // above cover a trap that *passes* — `test_traps_on_purpose` — and a pass prints nothing, so what
     // `trap "…"` wrote had never been compared between hosts at all. It did not match: the native
@@ -267,7 +267,7 @@ string[][] cases() {
     // global between calls, so a second trap in the same module would report the first one's sentence
     // on every host — agreement, on a value that is wrong. A differential can pin that as easily as
     // anything else, and pinning it is how it would survive being fixed.
-    string[]("test", "--allow-read", "src/breaks_test.wac"),
+    ["test", "--allow-read", "src/breaks_test.wac"],
     // **`--quiet`, which is `--verbose` turned around.** Naming every test is the default as of
     // 2026-08-29, so what needs a row is the flag that suppresses it — and the row above already
     // covers the default, since every `test` row prints those lines now.
@@ -276,26 +276,26 @@ string[][] cases() {
     // implemented by nobody on three of the four hosts — spelled correctly, doing nothing — while
     // the native printed a line per passing test. A flag that is refused is a bad answer and a flag
     // that is silently dropped is a worse one.
-    string[]("test", "--allow-read", "--quiet", "src/one_test.wac"),
+    ["test", "--allow-read", "--quiet", "src/one_test.wac"],
     // **`tracestat`, which was a host command until it was not.** Two rows: the journal it reads, and
     // the sentence it says about a file that is not an instrumented module. The second is the one that
     // would have caught the move being half done — a host that still intercepted the command would
     // answer its own wording, and a host that never had it would answer `unknown command`.
-    string[]("tracestat", "traced.wasm"),
-    string[]("tracestat", "src/hello.wac"),
+    ["tracestat", "traced.wasm"],
+    ["tracestat", "src/hello.wac"],
     // **`covdump`, which moved the same day and for the same reason** — and which needed
     // `issues/system/0263c` fixing first, because it runs the module with the world its manifest
     // declares and a loaded module could not use a capability at all. The table, and a case count that
     // is not one: the second never loads anything, so it compares the command's own sentence.
-    string[]("covdump", "covered.wasm"),
-    string[]("covdump", "covered.wasm", "hello:many"),
+    ["covdump", "covered.wasm"],
+    ["covdump", "covered.wasm", "hello:many"],
     // **`ctcompare`, the last of the three.** A journal against itself, which must be `same`; the same
     // through `--all`, which is a different walk with its own `split`/`site`/`longer` vocabulary; and
     // one path where two are needed, which is the usage error. Comparing a module with itself is the
     // one comparison whose answer is known without running anything.
-    string[]("ctcompare", "traced.wasm", "traced.wasm"),
-    string[]("ctcompare", "--all", "traced.wasm", "traced.wasm"),
-    string[]("ctcompare", "traced.wasm"),
+    ["ctcompare", "traced.wasm", "traced.wasm"],
+    ["ctcompare", "--all", "traced.wasm", "traced.wasm"],
+    ["ctcompare", "traced.wasm"],
     // **The five commands that arrived after this table stopped growing** — `issues/system/0268a`
     // step 2. `app`, `app-run`, `validate`, `sh` and `update` all became the wac program's in the days
     // around `issues/system/0257c`, and none of them had a row. That is not a gap in the abstract: on
@@ -309,28 +309,28 @@ string[][] cases() {
     // and `Said` compares status and both streams, so the row disagrees loudly rather than shrugging.
     // Checked before it was written, because a row whose failure mode is untested is a row that
     // cannot fail.
-    string[]("app", "src/hello.wac", "-o", "thing"),
-    string[]("app-run", "thing"),              // …and the artefact runs, which is the round trip
-    string[]("app", "src/hello.wac"),          // no `-o`, so `app`'s own usage
+    ["app", "src/hello.wac", "-o", "thing"],
+    ["app-run", "thing"],              // …and the artefact runs, which is the round trip
+    ["app", "src/hello.wac"],          // no `-o`, so `app`'s own usage
     // `validate` needs the engine and nothing else, so its four shapes are cheap: a module that loads,
     // a file that is not one, a path that is not there — unreadable counts as rejected, so one missing
     // file does not hide the verdict on the others — and no arguments at all.
-    string[]("validate", "hello.wasm"),
-    string[]("validate", "notamodule.wasm"),
-    string[]("validate", "nosuch.wasm"),
-    string[]("validate"),
+    ["validate", "hello.wasm"],
+    ["validate", "notamodule.wasm"],
+    ["validate", "nosuch.wasm"],
+    ["validate"],
     // The shell and the fetcher, which were separate payloads the binary carried until `0257c` put
     // them in the one program. `echo` is a builtin, so this needs no grant and reaches no filesystem;
     // `update` in a directory with no manifest is the one invocation of it that touches no network.
-    string[]("sh", "-c", "echo hi"),
-    string[]("update"),
+    ["sh", "-c", "echo hi"],
+    ["update"],
     // **`uninstall` is deliberately not here, and the reason is worth more than the row.** It removes
     // `$WAC_HOME` and edits shell profiles. This harness hands each host an argv and a working
     // directory; it does not hand it an isolated environment, so a row for `uninstall` would delete
     // the installation of whoever ran the suite. The command whose capability failure would be worst
     // to trigger on purpose is the one to leave uncovered and say so — `uninstall_test.wac` drives it
     // against a fake `$WAC_HOME` instead, which is where a test that needs an environment belongs.
-    string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
+    ["test", "--allow-read", "--coverage", "src/one_test.wac"],
     // **A socket failure, as a category rather than a sentence.** `Socket` carried no fault until
     // `issues/system/0238c` and the `FAULT_*` vocabulary had nothing for a network failure until
     // `issues/system/0255c`'s first half, so this printed nothing on any host — three hosts agreeing
@@ -339,26 +339,27 @@ string[][] cases() {
     // rather than comparing hosts. This row is the other half: that they still agree once it is not
     // empty, including the wording, which comes from `faultWords` and so is the program's rather than
     // any host's.
-    string[]("run", "--allow-net", "src/dial.wac"),
+    ["run", "--allow-net", "src/dial.wac"],
     // **`run` granting, and `run` granting nothing.** Until these, no `run` row granted anything at
     // all — the one that mentions `--allow-read` passes it *past* `--`, as an argument. `run` is the
     // other command written twice, so how each implementation narrows a child's world is two
     // implementations' worth of question, and `issues/system/0242c` is what happens when nobody asks
     // it. One program, run both ways, reporting what it was allowed to do.
-    string[]("run", "--allow-read", "--allow-write", "src/caps.wac"),
+    ["run", "--allow-read", "--allow-write", "src/caps.wac"],
     // **The environment granted to a `run`**, which was excused in `testflagrows_test.wac` until
     // `issues/system/0256c` closed. The row above reports it as `unset` because it was not granted;
     // this one reports `ok`, and the two together are what makes the first one mean something.
-    string[]("run", "--allow-read", "--allow-env", "src/caps.wac"),
-    string[]("run", "src/caps.wac"),
+    ["run", "--allow-read", "--allow-env", "src/caps.wac"],
+    ["run", "src/caps.wac"],
     // **A directory, which is a different command underneath.** One aggregate module for the whole
     // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
     // part: `ok`, `not run (--ignore)`, `with failures`, `needing a grant`, `with nothing matching
     // --filter`. Five of those distinctions were wrong in my first attempt and one — telling a file
     // that wants a *flag* from one that wants a *host* — was wrong in the native command too.
-    string[]("test", "--allow-read", "--allow-write", "src"),
-    string[]("test", "--allow-read", "--ignore", "src/one_test.wac", "src"),
-    string[]("test", "--allow-read", "--filter", "zzz", "src"));
+    ["test", "--allow-read", "--allow-write", "src"],
+    ["test", "--allow-read", "--ignore", "src/one_test.wac", "src"],
+    ["test", "--allow-read", "--filter", "zzz", "src"]
+  ];
 }
 
 /**
@@ -522,18 +523,24 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // number `tracestat` reports depends on the instrumentation rather than on the source. Small slots
   // on purpose, so `wanted` and `slots` are both small numbers a reader can check by eye.
   Exec traced = cli.exec(native,
-                         string[]("build", dir + "/src/hello.wac", "--trace", "--trace-slots", "8",
-                                  "-o", dir + "/traced", "--quiet"), u8[0]()).wait();
+                         [
+                                  "build", dir + "/src/hello.wac", "--trace", "--trace-slots", "8",
+                                  "-o", dir + "/traced", "--quiet"
+                         ], u8[]()).wait();
   t.isTrue(traced.ran() && traced.status == 0,
            "the traced fixture built: " + traced.error + string.fromBytes(traced.stderr));
   // And the coverage half, for `covdump` — the same source, counted rather than journalled.
   Exec covered = cli.exec(native,
-                          string[]("build", dir + "/src/hello.wac", "--coverage",
-                                   "-o", dir + "/covered", "--quiet"), u8[0]()).wait();
+                          [
+                                   "build", dir + "/src/hello.wac", "--coverage",
+                                   "-o", dir + "/covered", "--quiet"
+                          ], u8[]()).wait();
   t.isTrue(covered.ran() && covered.status == 0,
            "the coverage fixture built: " + covered.error + string.fromBytes(covered.stderr));
-  string[] grants = string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
-                             "--allow-net");
+  string[] grants = [
+                             "--allow-read", "--allow-write", "--allow-run", "--allow-env",
+                             "--allow-net"
+  ];
   string deno = builtByDeno(cli, ENTRY, "wac-deno-cli", grants, "deno", false);
   // **Node is the third host and not an afterthought.** It is the same wac program through a
   // different runtime, and the only thing that differs underneath is how a worker is made — so if a
@@ -553,10 +560,10 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // difference in what a host does with a module cannot be a difference in the module. Not
   // `builtProgram`, which keys a cache by name under `.cache/` — these belong to this fixture, and one
   // of them exists only to be denied.
-  Said mk = say(cli, dir, native, string[]("build", "src/hello.wac", "-o", "hello"));
-  Said mkR = say(cli, dir, native, string[]("build", "src/reader.wac", "-o", "reader"));
+  Said mk = say(cli, dir, native, ["build", "src/hello.wac", "-o", "hello"]);
+  Said mkR = say(cli, dir, native, ["build", "src/reader.wac", "-o", "reader"]);
   Said mkG = say(cli, dir, native,
-                 string[]("build", "--allow-read", "src/reader.wac", "-o", "reader-read"));
+                 ["build", "--allow-read", "src/reader.wac", "-o", "reader-read"]);
   t.eqI32(mk.status, 0, "hello.wasm built: " + mk.out);
   t.eqI32(mkR.status, 0, "reader.wasm built: " + mkR.out);
   t.eqI32(mkG.status, 0, "reader-read.wasm built: " + mkG.out);
@@ -636,9 +643,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   cli.mkdir(dir + "/h1", true).wait();
   cli.mkdir(dir + "/h2", true).wait();
   cli.mkdir(dir + "/h3", true).wait();
-  Said b1 = say(cli, dir, native, string[]("build", "src/hello.wac", "-o", "h1/same"));
-  Said b2 = say(cli, dir, deno, string[]("build", "src/hello.wac", "-o", "h2/same"));
-  Said b3 = say(cli, dir, "node " + node, string[]("build", "src/hello.wac", "-o", "h3/same"));
+  Said b1 = say(cli, dir, native, ["build", "src/hello.wac", "-o", "h1/same"]);
+  Said b2 = say(cli, dir, deno, ["build", "src/hello.wac", "-o", "h2/same"]);
+  Said b3 = say(cli, dir, "node " + node, ["build", "src/hello.wac", "-o", "h3/same"]);
   t.eqI32(b1.status, 0, "the native host built it: " + b1.out);
   t.eqI32(b2.status, 0, "the Deno host built it: " + b2.out);
   t.eqI32(b3.status, 0, "the Node host built it: " + b3.out);
@@ -685,7 +692,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // invocation. So `wac test <dir>` with no grants is a fair question to neither — the native
     // cannot read the directory to discover it is one and compiles it as a file, and the hosted one
     // walks it. These pass what the directory rows above pass.
-    string[] g = string[]("test", "--allow-read", "--allow-write", "t");
+    string[] g = ["test", "--allow-read", "--allow-write", "t"];
     Said rel1 = say(cli, fresh, native, g);
     Said rel2 = say(cli, fresh, deno, g);
     Said rel3 = say(cli, fresh, "node " + node, g);
@@ -700,7 +707,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // block asked: the run happened and no table was printed. It also has to be the *same* table —
     // narrowed to the files walked, not the whole graph, or it reads `2%` for a suite that covers its
     // own files well.
-    string[] c = string[]("test", "--allow-read", "--allow-write", "--coverage", "t");
+    string[] c = ["test", "--allow-read", "--allow-write", "--coverage", "t"];
     Said cov1 = say(cli, fresh, native, c);
     Said cov2 = say(cli, fresh, deno, c);
     t.isTrue(contains(cov1.out, "branch coverage:"), "native reports coverage: " + cov1.out);
@@ -711,9 +718,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // Absolute, and compared with each host's own relative answer rather than across hosts: the
     // per-file header names the path the caller typed, so the two forms differ on purpose. What must
     // hold is that both work — an absolute directory produced `..//abs/path` and failed to compile.
-    Said abs2 = say(cli, fresh, deno, string[]("test", "--allow-read", "--allow-write", fresh + "/t"));
+    Said abs2 = say(cli, fresh, deno, ["test", "--allow-read", "--allow-write", fresh + "/t"]);
     Said abs3 = say(cli, fresh, "node " + node,
-                    string[]("test", "--allow-read", "--allow-write", fresh + "/t"));
+                    ["test", "--allow-read", "--allow-write", fresh + "/t"]);
     t.eqI32(abs2.status, 0, "deno, the same directory named absolutely: " + abs2.out);
     t.eqI32(abs3.status, 0, "node, the same directory named absolutely: " + abs3.out);
     t.isTrue(contains(abs2.out, "1 passed, 0 failed"), "and it ran the test: " + abs2.out);

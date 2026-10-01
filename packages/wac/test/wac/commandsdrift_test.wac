@@ -36,7 +36,7 @@ const string SOURCE = "packages/wac/src/wac.wac";
 
 /** Every `cmd == "…"` the dispatcher tests, in the order it tests them, without duplicates. */
 string[] acceptedCommands(string src) {
-  string[] found = string[64](fill: "");
+  string[] found = string[].filled(64, "");
   i32 n = 0;
   string needle = "cmd == \"";
   i32 at = 0;
@@ -55,7 +55,7 @@ string[] acceptedCommands(string src) {
     for (i32 i = 0; i < n; i++) { if (found[i] == name) { seen = true; } }
     if (!seen && n < found.len()) { found[n] = name; n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
   return out;
 }
@@ -70,7 +70,7 @@ export string test_the_derivation_found_the_commands_it_must_find(Core core, Cli
   if (raw.fault != FAULT_NONE()) { return t.report(); }
   string[] cmds = acceptedCommands(string.fromBytes(raw.bytes));
   t.isTrue(cmds.len() >= 12, "only " + itoa(cmds.len()) + " commands derived from " + SOURCE);
-  string[] must = string[]("check", "build", "run", "test", "update", "app", "validate", "sh");
+  string[] must = ["check", "build", "run", "test", "update", "app", "validate", "sh"];
   for (i32 i = 0; i < must.len(); i++) {
     bool got = false;
     for (i32 j = 0; j < cmds.len(); j++) { if (cmds[j] == must[i]) { got = true; } }
@@ -86,7 +86,7 @@ export string test_every_accepted_command_is_named_in_the_usage_block(Core core,
   if (raw.fault != FAULT_NONE()) { return t.report(); }
   string[] cmds = acceptedCommands(string.fromBytes(raw.bytes));
 
-  Exec r = cli.exec(binaryPath(cli), string[]("--help"), u8[0]()).wait();
+  Exec r = cli.exec(binaryPath(cli), ["--help"], u8[]()).wait();
   t.isTrue(r.ran(), "wac --help did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
   string help = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
@@ -128,13 +128,13 @@ export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli)
   }
 
   // A word that is no grant of ours, on a command that does take grants.
-  Exec a = cli.exec(binaryPath(cli), string[]("build", "--allow-everything", prog, "-o", "/tmp/wac-flagshape-out"), u8[0]()).wait();
+  Exec a = cli.exec(binaryPath(cli), ["build", "--allow-everything", prog, "-o", "/tmp/wac-flagshape-out"], u8[]()).wait();
   t.eqI32(a.status, 2, "an invented grant should exit 2: " + string.fromBytes(a.stderr));
   t.isTrue(contains(string.fromBytes(a.stderr), "is not a grant"),
            "an invented grant should say so: " + string.fromBytes(a.stderr));
 
   // A real grant, on a command that has none. Not the same mistake, and not the same sentence.
-  Exec b = cli.exec(binaryPath(cli), string[]("check", "--allow-read", prog), u8[0]()).wait();
+  Exec b = cli.exec(binaryPath(cli), ["check", "--allow-read", prog], u8[]()).wait();
   t.eqI32(b.status, 2, "a grant `check` does not take should exit 2: " + string.fromBytes(b.stderr));
   t.isTrue(contains(string.fromBytes(b.stderr), "unknown flag"),
            "a real grant on the wrong command is an unknown flag: " + string.fromBytes(b.stderr));
@@ -142,7 +142,7 @@ export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli)
            "...and must not be called an invented one: " + string.fromBytes(b.stderr));
 
   // Neither. The refusal names what the command *does* take, which the old fixed string could not.
-  Exec c = cli.exec(binaryPath(cli), string[]("audit", "--nonsense", prog), u8[0]()).wait();
+  Exec c = cli.exec(binaryPath(cli), ["audit", "--nonsense", prog], u8[]()).wait();
   t.eqI32(c.status, 2, "an unknown flag should exit 2: " + string.fromBytes(c.stderr));
   t.isTrue(contains(string.fromBytes(c.stderr), "--verbose"),
            "the refusal should say what `audit` takes: " + string.fromBytes(c.stderr));
@@ -154,21 +154,21 @@ export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli)
   //
   // Asserted against a task that does not exist, so this stays a question about argument boundaries
   // rather than about whatever the tree's tasks happen to do.
-  Exec tail = cli.exec(binaryPath(cli), string[]("task", "no-such-task", "--check"), u8[0]()).wait();
+  Exec tail = cli.exec(binaryPath(cli), ["task", "no-such-task", "--check"], u8[]()).wait();
   t.isTrue(!contains(string.fromBytes(tail.stderr), "unknown flag"),
            "`--check` after a task name is the task's: " + string.fromBytes(tail.stderr));
   t.isTrue(contains(string.fromBytes(tail.stderr), "no-such-task"),
            "and the refusal is about the task: " + string.fromBytes(tail.stderr));
 
   // ...while a flag *before* the name is still this command's, and it has none.
-  Exec before = cli.exec(binaryPath(cli), string[]("task", "--nonsense"), u8[0]()).wait();
+  Exec before = cli.exec(binaryPath(cli), ["task", "--nonsense"], u8[]()).wait();
   t.isTrue(contains(string.fromBytes(before.stderr), "unknown flag"),
            "a flag before the task name is `wac task`'s: " + string.fromBytes(before.stderr));
 
   // **The canary.** `check` took no flag check at all until this table existed, and exited 0 on
   // anything — so a test that only asserted refusals would have passed on the broken build by
   // never reaching a command that answered. This is the same command with nothing wrong.
-  Exec ok = cli.exec(binaryPath(cli), string[]("check", prog), u8[0]()).wait();
+  Exec ok = cli.exec(binaryPath(cli), ["check", prog], u8[]()).wait();
   t.eqI32(ok.status, 0, "the same command without a flag should succeed: " + string.fromBytes(ok.stderr));
 
   cli.remove(prog, false).wait();

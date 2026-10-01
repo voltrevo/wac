@@ -35,7 +35,7 @@ export i32 main(Core core, Cli cli) {
   if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "echo") { return echo(cli); }
   if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "flood") { return flood(core, cli); }
 
-  Child kid = cli.spawnSelf(argvOf(string[]("echo", "feed")), GRANT_NONE, "", false, false).wait();
+  Child kid = cli.spawnSelf(argvOf(["echo", "feed"]), GRANT_NONE, "", false, false).wait();
   if (kid.unavailable()) {
     core.warn("feed: this world cannot spawn: " + kid.error);
     return 2;
@@ -88,7 +88,7 @@ i32 BLOCK() { return 65536; }
 
 /** Spawn a child that writes more than the queue holds, and count every byte it sent. */
 bool flooded(Core core, Cli cli) {
-  Child kid = cli.spawnSelf(argvOf(string[]("flood", "feed")), GRANT_NONE, "", false, false).wait();
+  Child kid = cli.spawnSelf(argvOf(["flood", "feed"]), GRANT_NONE, "", false, false).wait();
   if (kid.unavailable() || kid.handle < 0) {
     core.warn("feed: the flooding child would not start: " + kid.error);
     return false;
@@ -150,7 +150,7 @@ bool contains(string s, string needle) {
  * 200 is well inside it — no upper bound, because how much longer is the machine's business.
  */
 i32 flood(Core core, Cli cli) {
-  u8[] block = u8[BLOCK()](fill: 'x');
+  u8[] block = u8[].filled(BLOCK(), 'x');
   i64 began = core.monotonicNanos().wait();
   i32 sent = 0;
   while (sent < FLOOD_BYTES()) {
@@ -158,7 +158,7 @@ i32 flood(Core core, Cli cli) {
     sent = sent + BLOCK();
   }
   i64 took = core.monotonicNanos().wait() - began;
-  u8[] line = u8[VERDICT_LEN()](fill: ' ');
+  u8[] line = u8[].filled(VERDICT_LEN(), ' ');
   u8[] said = ("waited: " + (took >= 200000000 ? "yes" : "NO")).toBytes();
   line.copyFrom(said, 0, 0, said.len());
   line[VERDICT_LEN() - 1] = '\n';

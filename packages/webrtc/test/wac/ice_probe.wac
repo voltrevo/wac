@@ -50,7 +50,7 @@ export u8[] success(u8[] tid, u8[] ourPassword, i32 family, u8[] peerIp, i32 pee
 /** The address a response reports, so a test can check we told the peer about *its* address. */
 export i32[] reportedAddress(u8[] msg) {
   Addr a = xorMapped(parse(msg).attr(attrXorMappedAddress()), parse(msg).tid);
-  i32[] out = i32[2 + a.ip.len()]();
+  i32[] out = i32[].filled(2 + a.ip.len(), 0);
   out[0] = a.family;
   out[1] = a.port;
   for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }

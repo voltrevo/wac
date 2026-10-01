@@ -90,7 +90,7 @@ export FseTable readTable(u8[] src, i32 at, i32 maxSymbol, i32 maxLog) {
   if (log > maxLog) { trap; }
 
   i32 size = 1 << log;
-  i32[] counts = i32[maxSymbol + 1]();
+  i32[] counts = i32[].filled(maxSymbol + 1, 0);
 
   i32 remaining = size + 1;
   i32 threshold = size;
@@ -185,10 +185,10 @@ export FseTable buildFromCounts(i32[] counts, i32 maxSymbol, i32 log) {
 FseTable build(i32[] counts, i32 maxSymbol, i32 log) {
   i32 size = 1 << log;
   i32 mask = size - 1;
-  i32[] symbol = i32[size]();
-  i32[] nbBits = i32[size]();
-  i32[] newState = i32[size]();
-  i32[] next = i32[maxSymbol + 1]();
+  i32[] symbol = i32[].filled(size, 0);
+  i32[] nbBits = i32[].filled(size, 0);
+  i32[] newState = i32[].filled(size, 0);
+  i32[] next = i32[].filled(maxSymbol + 1, 0);
 
   i32 highThreshold = size - 1;
   for (i32 s = 0; s <= maxSymbol; s++) {
@@ -235,9 +235,9 @@ FseTable build(i32[] counts, i32 maxSymbol, i32 log) {
  * bits are read — every state means that symbol and stays where it is. One state, zero bits.
  */
 export FseTable rleTable(i32 symbol) {
-  i32[] sym = i32[1]();
+  i32[] sym = i32[].filled(1, 0);
   sym[0] = symbol;
-  return FseTable(0, sym, i32[1](), i32[1](), 0);
+  return FseTable(0, sym, i32[].filled(1, 0), i32[].filled(1, 0), 0);
 }
 
 /**
@@ -381,7 +381,7 @@ export i32[] decompress(u8[] src, i32 maxSymbol, i32 maxLog, i32 maxOut) {
   // Writing past `maxOut` traps on the array's own bounds check, so there is nothing to test
   // for here. A corrupt stream that would decode for as long as it is fed zeros stops the same
   // way a genuinely oversized one does, which is the right outcome for both.
-  i32[] out = i32[maxOut]();
+  i32[] out = i32[].filled(maxOut, 0);
   i32 n = 0;
   while (true) {
     out[n] = symbolAt(t, s1);
@@ -403,7 +403,7 @@ export i32[] decompress(u8[] src, i32 maxSymbol, i32 maxLog, i32 maxOut) {
     }
   }
 
-  i32[] exact = i32[n]();
+  i32[] exact = i32[].filled(n, 0);
   exact.copyFrom(out, 0, 0, n);
   return exact;
 }

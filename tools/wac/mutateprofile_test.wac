@@ -22,8 +22,8 @@ string joined(string[] xs) {
  */
 export string test_the_oldest_profiles_are_the_ones_removed() {
   T t = T.create();
-  string[] paths = string[]("a.json", "b.json", "c.json", "d.json", "e.json");
-  i64[] times = i64[](10 as i64, 50 as i64, 30 as i64, 20 as i64, 40 as i64);
+  string[] paths = ["a.json", "b.json", "c.json", "d.json", "e.json"];
+  i64[] times = [10 as i64, 50 as i64, 30 as i64, 20 as i64, 40 as i64];
 
   // Newest first: b(50) e(40) c(30) d(20) a(10). Keeping three leaves d and a.
   t.eqStr(joined(toEvict(paths, times, 3)), "d.json a.json",
@@ -32,7 +32,7 @@ export string test_the_oldest_profiles_are_the_ones_removed() {
           "keeping one leaves everything else");
   t.eqI32(toEvict(paths, times, 5).len(), 0, "keeping as many as there are removes nothing");
   t.eqI32(toEvict(paths, times, 9).len(), 0, "and so does keeping more than there are");
-  t.eqI32(toEvict(string[0](fill: ""), i64[0](fill: 0 as i64), 3).len(), 0,
+  t.eqI32(toEvict(string[].filled(0, ""), i64[].filled(0, 0 as i64), 3).len(), 0,
           "an empty directory has nothing to evict");
   return t.report();
 }
@@ -40,8 +40,8 @@ export string test_the_oldest_profiles_are_the_ones_removed() {
 /** A tie is not a reason to prefer one: both are equally current. */
 export string test_profiles_written_together_are_equally_current() {
   T t = T.create();
-  string[] paths = string[]("a.json", "b.json", "c.json");
-  i64[] same = i64[](7 as i64, 7 as i64, 7 as i64);
+  string[] paths = ["a.json", "b.json", "c.json"];
+  i64[] same = [7 as i64, 7 as i64, 7 as i64];
   t.eqI32(toEvict(paths, same, 2).len(), 1, "one of three still goes when only two are kept");
   return t.report();
 }
@@ -74,13 +74,13 @@ string show(string[] xs) {
  */
 export string test_a_profile_survives_the_round_trip() {
   T t = T.create();
-  string[] known = string[]("a.wac:10", "a.wac:11", "b.wac:3");
-  string[] tests = string[]("test_one test_two", "", "test_two test_three");
-  string[] files = string[]("x_test.wac", "y_test.wac");
-  i32[] cost = i32[](50, -1);
+  string[] known = ["a.wac:10", "a.wac:11", "b.wac:3"];
+  string[] tests = ["test_one test_two", "", "test_two test_three"];
+  string[] files = ["x_test.wac", "y_test.wac"];
+  i32[] cost = [50, -1];
 
-  string[] homeNames = string[]("test_one", "test_two", "test_three");
-  string[] homeFiles = string[]("x_test.wac", "x_test.wac", "y_test.wac");
+  string[] homeNames = ["test_one", "test_two", "test_three"];
+  string[] homeFiles = ["x_test.wac", "x_test.wac", "y_test.wac"];
 
   Decoded got = decodeProfile(encodeProfile(known, tests, files, cost, homeNames, homeFiles));
   t.isTrue(got.ok, "it decoded");
@@ -103,9 +103,9 @@ export string test_a_profile_survives_the_round_trip() {
 /** A line no test reaches is not the same as a line the profile does not know. */
 export string test_an_unhit_line_round_trips_as_unhit_rather_than_absent() {
   T t = T.create();
-  Decoded got = decodeProfile(encodeProfile(string[]("a.wac:11"), string[](""),
-                                            string[0](fill: ""), i32[0](fill: 0),
-                                            string[0](fill: ""), string[0](fill: "")));
+  Decoded got = decodeProfile(encodeProfile(["a.wac:11"], [""],
+                                            string[].filled(0, ""), i32[](),
+                                            string[].filled(0, ""), string[].filled(0, "")));
   t.isTrue(got.ok, "it decoded");
   t.eqI32(got.known.len(), 1, "the line is still known");
   t.eqStr(got.tests[0], "", "and still reached by nothing — which is not the same as unknown");
@@ -138,22 +138,22 @@ export string test_text_that_is_not_a_profile_is_refused() {
  */
 export string test_the_tree_key_is_the_content_and_nothing_else() {
   T t = T.create();
-  string[] entries = string[]("a_test.wac");
-  string[] paths = string[]("a.wac", "b.wac");
-  string[] texts = string[]("one", "two");
+  string[] entries = ["a_test.wac"];
+  string[] paths = ["a.wac", "b.wac"];
+  string[] texts = ["one", "two"];
 
   string k = treeKeyOf(entries, paths, texts);
   t.eqStr(treeKeyOf(entries, paths, texts), k, "the same tree twice is the same key");
 
-  t.eqStr(treeKeyOf(entries, string[]("b.wac", "a.wac"), string[]("two", "one")), k,
+  t.eqStr(treeKeyOf(entries, ["b.wac", "a.wac"], ["two", "one"]), k,
           "and so is the same tree gathered in another order");
 
-  t.isTrue(treeKeyOf(entries, paths, string[]("one!", "two")) != k,
+  t.isTrue(treeKeyOf(entries, paths, ["one!", "two"]) != k,
            "one byte of one file changes it");
-  t.isTrue(treeKeyOf(entries, paths, string[]("two", "one")) != k,
+  t.isTrue(treeKeyOf(entries, paths, ["two", "one"]) != k,
            "and two files that swapped contents are a different tree, which a key over contents "
              + "alone would miss");
-  t.isTrue(treeKeyOf(string[]("b_test.wac"), paths, texts) != k,
+  t.isTrue(treeKeyOf(["b_test.wac"], paths, texts) != k,
            "asking about different test files is a different question");
   return t.report();
 }

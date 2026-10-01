@@ -71,27 +71,27 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  * halfway would otherwise report zeroes, which is what an unreached branch looks like.
  */
 i32[] countsFor(T t, Cli cli, string dir, i32 arg, i32 want) {
-  string[] paths = string[](ENTRY);
-  string[] sources = string[](program(arg));
+  string[] paths = [ENTRY];
+  string[] sources = [program(arg)];
   u8[] wasm = emitFilesCovered(paths, sources, ENTRY);
   string at = dir + "/cov" + itoa(arg) + ".wasm";
   Change wrote = cli.writeFile(at, wasm).wait();
-  if (wrote.fault != 0) { t.fail("could not write " + at); return i32[0](); }
+  if (wrote.fault != 0) { t.fail("could not write " + at); return i32[](); }
 
-  Exec r = cli.exec(binary(cli), string[]("covdump", at), u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), ["covdump", at], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     t.fail("covdump did not run for classify(" + itoa(arg) + ") — " + r.error +
            string.fromBytes(r.stderr));
-    return i32[0]();
+    return i32[]();
   }
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  if (lines.len() == 0) { t.fail("covdump said nothing"); return i32[0](); }
+  if (lines.len() == 0) { t.fail("covdump said nothing"); return i32[](); }
   if (trimmed(lines[lines.len() - 1]) != itoa(want) + " counter(s)") {
     t.fail("covdump reported \"" + lines[lines.len() - 1] + "\", the table has " + itoa(want));
-    return i32[0]();
+    return i32[]();
   }
 
-  i32[] out = i32[want]();
+  i32[] out = i32[].filled(want, 0);
   for (i32 i = 0; i < lines.len() - 1; i++) {
     i32 idx = atoiField(field(lines[i], 0));
     if (idx >= 0 && idx < want) { out[idx] = atoiField(field(lines[i], 1)); }
@@ -125,12 +125,12 @@ i32 at(i32[] counts, string[] kinds, string kind, i32 nth) {
 export string test_coverage_a_counter_says_how_many_times_its_point_ran(Core core, Cli cli) {
   T t = T.create();
   string dir = scratchDir(cli);
-  string[] rows = splitLines(covTableFiles(string[](ENTRY), string[](program(3)), ENTRY));
+  string[] rows = splitLines(covTableFiles([ENTRY], [program(3)], ENTRY));
   t.isTrue(rows.len() >= 6,
            "only " + itoa(rows.len()) + " points — the instrumentation is not reaching the branches");
   if (rows.len() < 6) { return t.report(); }
 
-  string[] kinds = string[rows.len()](fill: "");
+  string[] kinds = string[].filled(rows.len(), "");
   for (i32 i = 0; i < rows.len(); i++) { kinds[i] = field(rows[i], 3); }
 
   i32[] three = countsFor(t, cli, dir, 3, rows.len());
@@ -138,7 +138,7 @@ export string test_coverage_a_counter_says_how_many_times_its_point_ran(Core cor
   i32[] zero = countsFor(t, cli, dir, 0, rows.len());
   if (three.len() == 0 || twenty.len() == 0 || zero.len() == 0) { return t.report(); }
 
-  string[] wrong = string[16](fill: "");
+  string[] wrong = string[].filled(16, "");
   i32 n = 0;
   // The early return: the `then` arm runs and nothing after it does.
   if (at(twenty, kinds, "then", 0) != 1) { wrong[n] = "classify(20) did not take the `then` arm"; n = n + 1; }
@@ -160,7 +160,7 @@ export string test_coverage_a_counter_says_how_many_times_its_point_ran(Core cor
   if (entries < 2) { wrong[n] = itoa(entries) + " entry points for two functions"; n = n + 1; }
   if (at(three, kinds, "entry", 1) != 0) { wrong[n] = "an uncalled function's entry point fired"; n = n + 1; }
 
-  string[] said = string[n](fill: "");
+  string[] said = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { said[i] = wrong[i]; }
   t.eqI32(n, 0, itoa(n) + " disagreement(s): " + joined(said, "; ") +
                 " — the table is " + joined(kinds, ", "));
@@ -197,9 +197,9 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
   string dir = scratchDir(cli);
   i32 compared = 0;
   i32 instrumented = 0;
-  string[] same = string[16](fill: "");
+  string[] same = string[].filled(16, "");
   i32 nSame = 0;
-  string[] wrote = string[c.paths.len()](fill: "");
+  string[] wrote = string[].filled(c.paths.len(), "");
   i32 nWrote = 0;
 
   // **One entry per package, and the middle-sized one.** Both halves of each pair are used — the plain
@@ -238,7 +238,7 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
   // and without that every closure held only the entry, so 36 of 40 emitted nothing. The `>= 20`
   // assertion below is what caught it.
   i32 n = c.paths.len();
-  i32[] picked = i32[n]();
+  i32[] picked = i32[].filled(n, 0);
   i32 nPicked = 0;
   i32 cursor = 0;
   while (cursor < n) {
@@ -293,7 +293,7 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
     }
   }
 
-  string[] toCheck = string[nWrote](fill: "");
+  string[] toCheck = string[].filled(nWrote, "");
   for (i32 i = 0; i < nWrote; i++) { toCheck[i] = wrote[i]; }
   Validated v = validateAll(cli, toCheck);
   t.isTrue(v.ok, "the engine was asked about the instrumented modules — " + v.error);
@@ -302,7 +302,7 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
           joined(v.rejected, ", "));
 
   t.isTrue(instrumented >= 20, "only " + itoa(instrumented) + " modules were instrumented");
-  string[] said = string[nSame](fill: "");
+  string[] said = string[].filled(nSame, "");
   for (i32 i = 0; i < nSame; i++) { said[i] = same[i]; }
   t.eqI32(nSame, 0, "instrumenting changed nothing in: " + joined(said, ", "));
   return t.report();

@@ -42,7 +42,7 @@ struct Borrowed {
 
 Borrowed aClientHello(T t, Core core, Cli cli, string name) {
   u8[] packet = anInitial(t, core, cli, name);
-  if (packet.len() == 0) { return Borrowed(false, u8[0](), u8[0]()); }
+  if (packet.len() == 0) { return Borrowed(false, u8[](), u8[]()); }
   t.eqI32(handshakeType(packet), 1, "the fixture is a ClientHello");
   return Borrowed(true, cryptoOf(packet), scidOf(packet, false));
 }
@@ -139,7 +139,7 @@ export string test_a_packet_that_fails_authentication_gets_silence(Core core, Cl
   // One bit of the authentication tag. Everything else — header, length, padding, connection ids —
   // is exactly the packet the server answered above, so a reply here would mean the oracle reads
   // something other than the AEAD and the acceptance test proves less than it claims.
-  u8[] tampered = u8[packet.len()]();
+  u8[] tampered = u8[].filled(packet.len(), 0);
   tampered.copyFrom(packet, 0, 0, packet.len());
   tampered[tampered.len() - 1] = tampered[tampered.len() - 1] ^ 0x01;
 

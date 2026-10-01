@@ -51,7 +51,7 @@ string[] words(string s) {
     if (!sp && !inWord) { n = n + 1; }
     inWord = !sp;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 from = -1;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -95,11 +95,11 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
     core.warn("git live fetch test: skipped — HTTP_PROXY is not set");
     return t.report();
   }
-  string[] names = string[]("HTTP_PROXY", "HTTPS_PROXY");
-  string[] values = string[](proxy, proxy);
+  string[] names = ["HTTP_PROXY", "HTTPS_PROXY"];
+  string[] values = [proxy, proxy];
 
   // What the remote says HEAD is, from git rather than from us.
-  Exec ls = withEnv(cli, names, values, "git", string[]("ls-remote", REMOTE, "HEAD"));
+  Exec ls = withEnv(cli, names, values, "git", ["ls-remote", REMOTE, "HEAD"]);
   if (!ls.ran() || ls.status != 0) {
     core.warn("git live fetch test: skipped — git ls-remote failed: " +
               string.fromBytes(ls.stderr));
@@ -114,10 +114,14 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
   // Read for the trust store, net for the socket, env for the proxy. No write.
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
-                   string[](builtProgram(cli, "packages/git/example/gitfetch.wac", "gitfetch",
-                                         string[]("--allow-net", "--allow-env", "--allow-read",
-                                                  "--quiet")),
-                            REMOTE, "1"));
+                   [
+                                         builtProgram(cli, "packages/git/example/gitfetch.wac", "gitfetch",
+                                         [
+                                                  "--allow-net", "--allow-env", "--allow-read",
+                                                  "--quiet"
+                                         ]),
+                            REMOTE, "1"
+                   ]);
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitfetch failed: " + err);
   t.eqStr(err, "", "gitfetch warned");

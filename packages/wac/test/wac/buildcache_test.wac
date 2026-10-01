@@ -79,9 +79,11 @@ string runnerWhyNot(Cli cli) {
   string whyDir = madeDir(cli, cli.cwd().wait() + "/.cache/buildcache-runner");
   if (whyDir != "") { return whyDir; }
   Exec r = cli.execWith(wacBinary(cli),
-      string[]("build", WACC, "-o", runnerStem(cli), "--quiet",
-               "--allow-read", "--allow-write", "--allow-env", "--allow-run"),
-      u8[0](), string[0](fill: ""), false, false).wait();
+      [
+               "build", WACC, "-o", runnerStem(cli), "--quiet",
+               "--allow-read", "--allow-write", "--allow-env", "--allow-run"
+      ],
+      u8[](), string[].filled(0, ""), false, false).wait();
   if (!r.ran()) { return "could not run " + wacBinary(cli) + " — " + r.error; }
   if (r.status != 0) {
     return "building " + WACC + " as a module failed: " + string.fromBytes(r.stderr);
@@ -99,11 +101,11 @@ string runnerWhyNot(Cli cli) {
  */
 i32 build(Cli cli, string home, string keep, string entry, string stem, string flag) {
   string[] args = flag == ""
-      ? string[](runnerStem(cli) + ".wasm", "build", entry, "-o", stem, "--quiet")
-      : string[](runnerStem(cli) + ".wasm", "build", entry, "-o", stem, "--quiet", flag);
-  string[] env = keep == "" ? string[]("WAC_HOME=" + home)
-                            : string[]("WAC_HOME=" + home, "WAC_BUILD_CACHE_KEEP=" + keep);
-  Exec r = cli.execWith(wacBinary(cli), args, u8[0](), env, false, false).wait();
+      ? [runnerStem(cli) + ".wasm", "build", entry, "-o", stem, "--quiet"]
+      : [runnerStem(cli) + ".wasm", "build", entry, "-o", stem, "--quiet", flag];
+  string[] env = keep == "" ? ["WAC_HOME=" + home]
+                            : ["WAC_HOME=" + home, "WAC_BUILD_CACHE_KEEP=" + keep];
+  Exec r = cli.execWith(wacBinary(cli), args, u8[](), env, false, false).wait();
   return r.ran() ? r.status : 0 - 1;
 }
 
@@ -128,7 +130,7 @@ i32 entriesIn(Cli cli, string dir) {
 
 u8[] bytesOf(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
-  return r.ok ? r.bytes : u8[0]();
+  return r.ok ? r.bytes : u8[]();
 }
 
 export string test_a_repeat_build_is_the_same_bytes_and_no_second_entry(Core core, Cli cli) {
@@ -344,8 +346,8 @@ export string test_no_cache_neither_reads_nor_writes(Core core, Cli cli) {
 /** One `wac build` under `home`, answering everything it printed. */
 string outputOf(Cli cli, string home, string entry, string stem) {
   Exec r = cli.execWith(wacBinary(cli),
-      string[](runnerStem(cli) + ".wasm", "build", entry, "-o", stem),
-      u8[0](), string[]("WAC_HOME=" + home), false, false).wait();
+      [runnerStem(cli) + ".wasm", "build", entry, "-o", stem],
+      u8[](), ["WAC_HOME=" + home], false, false).wait();
   if (!r.ran()) { return "(did not run: " + r.error + ")"; }
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }

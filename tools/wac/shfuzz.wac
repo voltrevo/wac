@@ -45,7 +45,7 @@ import { shellMain } from "../../packages/sh/src/entry.wac";
 import { boxNames, boxRun } from "../../packages/box/src/shrun.wac";
 
 /** The seeds the gate keeps, and how many scripts each contributes. */
-export i32[] seeds() { return i32[](1, 3, 11, 47); }
+export i32[] seeds() { return [1, 3, 11, 47] as i32[]; }
 export i32 perSeed() { return 30; }
 
 export string vectorsPath() { return "packages/box/test/fuzz-vectors.txt"; }
@@ -86,11 +86,11 @@ export struct Rand {
 }
 
 string[] words() {
-  return string[]("a", "b", "hi", "\"x y\"", "$'t\\tb'", "\"$v\"", "$v", "f", "n");
+  return ["a", "b", "hi", "\"x y\"", "$'t\\tb'", "\"$v\"", "$v", "f", "n"];
 }
 
 string[] redirs() {
-  return string[]("", " > out", " >> out", " 2> err", " 2>&1", " >&2", " 2>/dev/null", " < f");
+  return ["", " > out", " >> out", " 2> err", " 2>&1", " >&2", " 2>/dev/null", " < f"];
 }
 
 /** One command with no control flow in it. The fifteen shapes, in the order the seeds expect. */
@@ -164,7 +164,7 @@ string stmt(Rand r, i32 depth, i32 maxDepth) {
     return a + " && " + b + " || " + c;
   }
   if (which == 11) {
-    string subject = r.pick(string[]("x", "$v", "f", "\"x y\""));
+    string subject = r.pick(["x", "$v", "f", "\"x y\""]);
     string a = simple(r);
     string b = simple(r);
     return "case " + subject + " in\nx) " + a + ";;\n*) " + b + ";;\nesac";
@@ -178,8 +178,8 @@ string stmt(Rand r, i32 depth, i32 maxDepth) {
   // **A here-document, and only at the top level.** Its terminator must be alone on a line, which is why
   // a `; ` joiner made this ungenerable — and why it stays ungenerable *inside* a compound.
   if (which == 15) {
-    string cmd = r.pick(string[]("cat", "wc -l", "head -1"));
-    string body = r.pick(string[]("one", "x y", "$v"));
+    string cmd = r.pick(["cat", "wc -l", "head -1"]);
+    string body = r.pick(["one", "x y", "$v"]);
     return cmd + " <<EOF\n" + body + "\nEOF";
   }
   // **The positional parameters**: `set --` replaces them, `shift` drops one, and a function body has its
@@ -191,7 +191,7 @@ string stmt(Rand r, i32 depth, i32 maxDepth) {
     // needed" consumes the random source in a different order, and the seeds then mean different scripts:
     // seed 1 agreed for ten scripts and diverged on the eleventh, which is exactly how far a plausible
     // misreading gets before anything notices.
-    string word = r.pick(string[]("x", "\"x y\"", "$v"));
+    string word = r.pick(["x", "\"x y\"", "$v"]);
     i32 form = r.int(3);
     if (form == 0) { return "set -- a b c\necho $#\nshift\necho $1 $#"; }
     if (form == 1) { return "p" + d + "() { shift\necho \"[$1]\"\n}\np" + d + " one two"; }
@@ -300,16 +300,18 @@ export bool fixtures(Cli cli, string dir) {
  */
 Exec askBash(Cli cli, string dir, string script) {
   return cli.exec("env",
-                  string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                  [
+                           "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                            "LC_ALL=C", "HOME=" + dir,
                            "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
-                           "bash", dir, script),
-                  u8[0]()).wait();
+                           "bash", dir, script
+                  ],
+                  u8[]()).wait();
 }
 
 /** The same script through this repository's own shell, in this process. */
 export Answer askOurs(Core core, Cli cli, string dir, string script) {
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), dir, false);
+  Frame f = Frame.of(["sh", "-c", script], u8[](), dir, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
@@ -328,7 +330,7 @@ void field(Buf out, string tag, u8[] bytes) {
 }
 
 string versionOf(Cli cli, string program, string flag) {
-  Exec r = cli.exec(program, string[](flag), u8[0]()).wait();
+  Exec r = cli.exec(program, [flag], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return "(absent)"; }
   string all = string.fromBytes(r.stdout);
   i32 nl = all.indexOf("\n");

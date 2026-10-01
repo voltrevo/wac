@@ -27,7 +27,7 @@ const i32 CHUNK = 32;
 
 /** `hash(a || b)` for two 32-byte chunks, which is every internal node in an SSZ tree. */
 export u8[] hashPair(u8[] a, u8[] b) {
-  u8[] buf = u8[CHUNK * 2]();
+  u8[] buf = u8[].filled(CHUNK * 2, 0);
   for (i32 i = 0; i < CHUNK; i++) {
     buf[i] = a[i];
     buf[CHUNK + i] = b[i];
@@ -44,7 +44,7 @@ export u8[] hashPair(u8[] a, u8[] b) {
  * stands in for.
  */
 export u8[] zeroHash(i32 d) {
-  u8[] h = u8[CHUNK]();
+  u8[] h = u8[].filled(CHUNK, 0);
   for (i32 i = 0; i < d; i++) { h = hashPair(h, h); }
   return h;
 }
@@ -76,7 +76,7 @@ export i32 depthFor(i32 leaves) {
 export u8[] padToChunks(u8[] data) {
   i32 n = chunkCount(data.len());
   if (n == 0) { n = 1; }
-  u8[] out = u8[n * CHUNK]();
+  u8[] out = u8[].filled(n * CHUNK, 0);
   for (i32 i = 0; i < data.len(); i++) { out[i] = data[i]; }
   return out;
 }
@@ -98,20 +98,20 @@ export u8[] merkleize(u8[] data, i32 limit) {
   i32 depth = depthFor(leaves);
 
   // Level 0: the chunks that actually exist. Everything to their right is a zero subtree.
-  u8[] level = u8[have * CHUNK]();
+  u8[] level = u8[].filled(have * CHUNK, 0);
   for (i32 i = 0; i < have * CHUNK && i < data.len(); i++) { level[i] = data[i]; }
 
   for (i32 d = 0; d < depth; d++) {
     i32 n = level.len() / CHUNK;
     if (n == 0) { return zeroHash(depth - d); }        // nothing left but padding
     i32 pairs = (n + 1) / 2;
-    u8[] next = u8[pairs * CHUNK]();
+    u8[] next = u8[].filled(pairs * CHUNK, 0);
     for (i32 p = 0; p < pairs; p++) {
-      u8[] left = u8[CHUNK]();
+      u8[] left = u8[].filled(CHUNK, 0);
       for (i32 i = 0; i < CHUNK; i++) { left[i] = level[p * 2 * CHUNK + i]; }
       u8[] right = zeroHash(d);                        // the padded sibling, if there is no real one
       if (p * 2 + 1 < n) {
-        right = u8[CHUNK]();
+        right = u8[].filled(CHUNK, 0);
         for (i32 i = 0; i < CHUNK; i++) { right[i] = level[(p * 2 + 1) * CHUNK + i]; }
       }
       u8[] h = hashPair(left, right);
@@ -120,7 +120,7 @@ export u8[] merkleize(u8[] data, i32 limit) {
     level = next;
   }
   if (level.len() == 0) { return zeroHash(depth); }
-  u8[] root = u8[CHUNK]();
+  u8[] root = u8[].filled(CHUNK, 0);
   for (i32 i = 0; i < CHUNK; i++) { root[i] = level[i]; }
   return root;
 }
@@ -133,7 +133,7 @@ export u8[] merkleize(u8[] data, i32 limit) {
  * items followed by five zeros.
  */
 export u8[] mixInLength(u8[] root, i32 length) {
-  u8[] len = u8[CHUNK]();
+  u8[] len = u8[].filled(CHUNK, 0);
   i32 v = length;
   for (i32 i = 0; i < 4; i++) {
     len[i] = v & 0xFF;
@@ -197,7 +197,7 @@ export u8[]? rootBitlist(u8[] serialized, i32 limit) {
   i32 bits = bitlistLength(serialized);
   if (bits < 0 || bits > limit) { return null; }
   i32 bytes = (bits + 7) / 8;
-  u8[] data = u8[bytes]();
+  u8[] data = u8[].filled(bytes, 0);
   for (i32 i = 0; i < bytes; i++) { data[i] = serialized[i]; }
   // Clear anything above the last real bit, including the delimiter if it shared the final byte.
   i32 spare = bits & 7;
@@ -246,10 +246,10 @@ export u64 subtreeIndex(u64 gindex) {
 export bool isValidMerkleBranch(u8[] leaf, u8[] branch, i32 depth, u64 index, u8[] root) {
   if (leaf.len() != CHUNK || root.len() != CHUNK) { return false; }
   if (branch.len() != depth * CHUNK) { return false; }
-  u8[] node = u8[CHUNK]();
+  u8[] node = u8[].filled(CHUNK, 0);
   for (i32 i = 0; i < CHUNK; i++) { node[i] = leaf[i]; }
   for (i32 d = 0; d < depth; d++) {
-    u8[] sib = u8[CHUNK]();
+    u8[] sib = u8[].filled(CHUNK, 0);
     for (i32 i = 0; i < CHUNK; i++) { sib[i] = branch[d * CHUNK + i]; }
     u64 bit = (index >> (d as@ u32)) & 1;
     bool onRight = bit != 0;
@@ -281,7 +281,7 @@ export bool isValidNormalizedMerkleBranch(u8[] leaf, u8[] branch, u64 gindex, u8
   for (i32 i = 0; i < extra * CHUNK; i++) {
     if (branch[i] != 0) { return false; }
   }
-  u8[] rest = u8[depth * CHUNK]();
+  u8[] rest = u8[].filled(depth * CHUNK, 0);
   for (i32 i = 0; i < depth * CHUNK; i++) { rest[i] = branch[extra * CHUNK + i]; }
   return isValidMerkleBranch(leaf, rest, depth, index, root);
 }

@@ -259,7 +259,7 @@ export string test_and_a_packet_that_was_acknowledged_is_not_resent() {
   // datagram into a connection that never stops repeating itself. No network needed — the question
   // is whether the record was retired, and `connection_test.wac` covers the counting around it.
   T t = T.create();
-  t.eqI32(resendAfterAckIsEmpty(u8[0](), dcid(), scid(), NAME, ("acknowledged").toBytes()), 0,
+  t.eqI32(resendAfterAckIsEmpty(u8[](), dcid(), scid(), NAME, ("acknowledged").toBytes()), 0,
           "an acknowledged packet has nothing to resend");
   return t.report();
 }

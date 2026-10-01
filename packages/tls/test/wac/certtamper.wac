@@ -41,7 +41,7 @@ export Tampered sweepTampering(u8[] leaf, u8[] ca, string host, i64 now, i32 str
   i32 wrongCode = 0;
   i32 step = stride < 1 ? 1 : stride;
   for (i32 i = start; i < leaf.len(); i = i + step) {
-    u8[] c = u8[leaf.len()]();
+    u8[] c = u8[].filled(leaf.len(), 0);
     for (i32 k = 0; k < leaf.len(); k++) { c[k] = leaf[k]; }
     c[i] = c[i] ^ 0xFF;
     Cert parsed = parseCert(c);

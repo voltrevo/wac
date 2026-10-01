@@ -26,8 +26,8 @@ export i32 tac(Core core, Cli cli, Fs fs, Args a) {
   // the opposite and its apparent ordering *is* the artefact.
   //
   // It costs nothing here: `tac` already holds each file whole, since the last line is the first one out.
-  u8[][] held = u8[][count](fill: u8[0]());
-  bool[] got = bool[count](fill: false);
+  u8[][] held = u8[][].filled(count, u8[]());
+  bool[] got = bool[].filled(count, false);
   for (i32 f = 0; f < count; f++) {
     Input in = readInput(core, cli, fs, a, f);
     // Reported, skipped, and the status at the end — GNU's rule for every operand-taking filter here.
@@ -41,7 +41,7 @@ export i32 tac(Core core, Cli cli, Fs fs, Args a) {
     u8[] bytes = held[f];
     u8[][] lines = splitLines(bytes);
     i32 n = lines.len();
-    u8[][] out = u8[][n](fill: u8[0]());
+    u8[][] out = u8[][].filled(n, u8[]());
     for (i32 i = 0; i < n; i++) { out[i] = lines[n - 1 - i]; }
     u8[] text = joinLines(out, n);
     // **A file with no final newline keeps none**, and that last line comes *first* here — so the

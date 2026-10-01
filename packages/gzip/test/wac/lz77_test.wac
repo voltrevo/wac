@@ -20,7 +20,7 @@ u8[] repeated(string s, i32 times) {
   return out.toBytes();
 }
 
-u8[] filled(i32 n, i32 byte) { return u8[n](fill: byte); }
+u8[] filled(i32 n, i32 byte) { return u8[].filled(n, byte); }
 
 /** gunzip's answer against `input`, as a message or "". */
 string same(Cli cli, u8[] input, string what) {
@@ -46,7 +46,7 @@ export string test_repetitive_input_actually_compresses(Core core, Cli cli) {
  */
 export string test_an_overlapping_match_at_distance_one(Core core, Cli cli) {
   T t = T.create();
-  i32[] runs = i32[](3, 4, 5, 258, 259, 260, 300, 1000, 5000);
+  i32[] runs = [3, 4, 5, 258, 259, 260, 300, 1000, 5000];
   for (i32 i = 0; i < runs.len(); i++) {
     t.eqStr(same(cli, filled(runs[i], 0x61), itoa(runs[i]) + " identical bytes"), "",
             itoa(runs[i]) + " identical bytes");
@@ -68,7 +68,7 @@ export string test_every_length_code(Core core, Cli cli) {
   i32 wrong = 0;
   string first = "";
   for (i32 len = 3; len <= 258; len++) {
-    u8[] input = u8[len * 2 + 1]();
+    u8[] input = u8[].filled(len * 2 + 1, 0);
     for (i32 i = 0; i < len; i++) {
       i32 b = (i * 7 + len) & 0xFF;
       input[i] = b;
@@ -101,15 +101,17 @@ export string test_every_length_code(Core core, Cli cli) {
  */
 export string test_distances_across_the_whole_window(Core core, Cli cli) {
   T t = T.create();
-  i32[] gaps = i32[](0, 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512,
+  i32[] gaps = [
+                     0, 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512,
                      768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384,
-                     24576, 32000, 32760 - 8);
-  u8[] pattern = u8[](1, 2, 3, 4, 5, 6, 7, 8);
+                     24576, 32000, 32760 - 8
+  ];
+  u8[] pattern = [1, 2, 3, 4, 5, 6, 7, 8];
   i32 wrong = 0;
   string first = "";
   for (i32 g = 0; g < gaps.len(); g++) {
     i32 gap = gaps[g];
-    u8[] input = u8[pattern.len() * 2 + gap]();
+    u8[] input = u8[].filled(pattern.len() * 2 + gap, 0);
     for (i32 i = 0; i < pattern.len(); i++) {
       input[i] = pattern[i];
       input[pattern.len() + gap + i] = pattern[i];
@@ -132,7 +134,7 @@ export string test_distances_across_the_whole_window(Core core, Cli cli) {
 /** Beyond 32768 the encoder must stop referencing positions it can no longer encode a distance for. */
 export string test_input_larger_than_the_window(Core core, Cli cli) {
   T t = T.create();
-  u8[] input = u8[200000]();
+  u8[] input = u8[].filled(200000, 0);
   i32 s = 13579;
   for (i32 i = 0; i < input.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;

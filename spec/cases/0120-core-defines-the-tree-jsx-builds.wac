@@ -21,6 +21,6 @@ i32 depth(Node n) {
 
 export i32 run() {
   Node br = Node.Element("br", Attr[](), Node[]());
-  Node div = Node.Element("div", Attr[](Attr("class", "a")), Node[](Node.Text("hello"), br));
+  Node div = Node.Element("div", [Attr("class", "a")], [Node.Text("hello"), br]);
   return depth(div);
 }

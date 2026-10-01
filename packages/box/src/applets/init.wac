@@ -76,7 +76,7 @@ string[] words(string line) {
     word = word + string.fromCodepoint(b[i]);
   }
   if (word.len() > 0) { out.push(word); }
-  string[] made = string[out.len()](fill: "");
+  string[] made = string[].filled(out.len(), "");
   for (i32 i = 0; i < out.len(); i++) { made[i] = out.get(i); }
   return made;
 }
@@ -184,8 +184,8 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     while (reading || complaining) {
       i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0);
       for (i32 k = 0; k < chans.len(); k++) { if (!(chans.get(k) is null)) { live++; } }
-      i32[] ids = i32[live](fill: 0);
-      i32[] what = i32[live](fill: -1);
+      i32[] ids = i32[].filled(live, 0);
+      i32[] what = i32[].filled(live, -1);
       i32 at = 0;
       if (reading) { ids[at] = outT.id; what[at] = -2; at++; }
       if (complaining) { ids[at] = errT.id; what[at] = -3; at++; }

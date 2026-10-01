@@ -50,7 +50,7 @@ u32 rotl(u32 x, u32 n) { return (x << n) | (x >> (32 - n)); }
  */
 u32[] initialState(u8[] key, u32 counter, u8[] nonce) {
   if (key.len() != 32 || nonce.len() != 12) { trap; }
-  u32[] s = u32[16]();
+  u32[] s = u32[].filled(16, 0);
   // "expand 32-byte k", as four little-endian words.
   s[0] = 0x61707865; s[1] = 0x3320646e; s[2] = 0x79622d32; s[3] = 0x6b206574;
   for (i32 i = 0; i < 8; i++) { s[4 + i] = leWord32(key, i * 4); }
@@ -139,7 +139,7 @@ void core(u32[] start, u32 counter, u8[] out, i32 off) {
 
 /** One 64-byte keystream block. */
 export u8[] chachaBlock(u8[] key, u32 counter, u8[] nonce) {
-  u8[] out = u8[64]();
+  u8[] out = u8[].filled(64, 0);
   core(initialState(key, counter, nonce), counter, out, 0);
   return out;
 }
@@ -150,9 +150,9 @@ export u8[] chachaBlock(u8[] key, u32 counter, u8[] nonce) {
  */
 export u8[] chacha20(u8[] key, u32 counter, u8[] nonce, u8[] msg) {
   i32 n = msg.len();
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   u32[] start = initialState(key, counter, nonce);
-  u8[] ks = u8[64]();
+  u8[] ks = u8[].filled(64, 0);
   i32 i = 0;
   u32 block = counter;
   while (i < n) {

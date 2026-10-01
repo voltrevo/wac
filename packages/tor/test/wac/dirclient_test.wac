@@ -26,10 +26,10 @@ const i64 VALID = 1785675600;   // 2026-08-02 13:00:00 UTC
 
 export string test_request_paths() {
   T t = T.create();
-  t.eqStr(microdescPath(string[]("aaa", "bbb", "ccc")), "/tor/micro/d/aaa-bbb-ccc",
+  t.eqStr(microdescPath(["aaa", "bbb", "ccc"]), "/tor/micro/d/aaa-bbb-ccc",
           "digests joined with dashes, as tor expects");
-  t.eqStr(microdescPath(string[]("only")), "/tor/micro/d/only", "one digest has no separator");
-  t.eqStr(certificatePath(string[]("AAA", "BBB")), "/tor/keys/fp/AAA+BBB",
+  t.eqStr(microdescPath(["only"]), "/tor/micro/d/only", "one digest has no separator");
+  t.eqStr(certificatePath(["AAA", "BBB"]), "/tor/keys/fp/AAA+BBB",
           "fingerprints joined with plus");
   return t.report();
 }
@@ -129,13 +129,13 @@ export string test_a_body_we_did_not_ask_to_be_compressed_is_noticed() {
 
 export string test_microdescriptors_are_batched_so_a_url_stays_answerable() {
   T t = T.create();
-  string[] many = string[200](fill: "d");
+  string[] many = string[].filled(200, "d");
   string[][] batches = microdescBatches(many);
   t.eqI32(batches.len(), 3, "two hundred digests is three batches");
   t.eqI32(batches[0].len(), 92, "ninety-two, which is what tor uses");
   t.eqI32(batches[2].len(), 16, "and the remainder in the last");
 
-  t.eqI32(microdescBatches(string[5](fill: "d")).len(), 1, "a small network is one batch");
-  t.eqI32(microdescBatches(string[0]()).len(), 0, "and none at all is none");
+  t.eqI32(microdescBatches(string[].filled(5, "d")).len(), 1, "a small network is one batch");
+  t.eqI32(microdescBatches(string[]()).len(), 0, "and none at all is none");
   return t.report();
 }

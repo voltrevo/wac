@@ -22,19 +22,19 @@ import { T } from "../../../wactest/src/assert.wac";
 import { openClientInitial, sealClientInitial } from "../../src/initial.wac";
 
 u8[] body() {
-  u8[] m = u8[64]();
+  u8[] m = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { m[i] = (i * 7 + 1) & 255; }
   return m;
 }
 
 u8[] dcid() {
-  u8[] d = u8[8]();
+  u8[] d = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) { d[i] = (i * 3 + 2) & 255; }
   return d;
 }
 
 u8[] scid() {
-  u8[] s = u8[4]();
+  u8[] s = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { s[i] = (i * 5 + 9) & 255; }
   return s;
 }

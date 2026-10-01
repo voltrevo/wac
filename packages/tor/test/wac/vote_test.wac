@@ -50,7 +50,7 @@ u8[] rLines(u8[] doc) {
   for (i32 i = 0; i <= doc.len(); i++) {
     if (i < doc.len() && doc[i] != 10) { continue; }
     if (i - at > 2 && doc[at] == 'r' && doc[at + 1] == 32) {
-      u8[] line = u8[i - at]();
+      u8[] line = u8[].filled(i - at, 0);
       for (i32 j = 0; j < line.len(); j++) { line[j] = doc[at + j]; }
       out = out == "" ? string.fromBytes(line) : out + "\n" + string.fromBytes(line);
     }
@@ -67,7 +67,7 @@ export string test_the_signed_span_is_tors(Core core, Cli cli) {
 
   Lines lines = Lines.create();
   lines.add("rsarecoverder " + strOf(v, "signingKeyDer") + " " + strOf(v, "signature"));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "what the embedded signing key recovers");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "what the embedded signing key recovers");
   if (!a.ok) { return t.report(); }
   u8[] want = decoded(word(a.lines[0], 1));
   t.eqI32(want.len(), 20, "the signing key recovered a SHA-1 digest");
@@ -107,7 +107,7 @@ export string test_the_entries_are_ordered_by_identity_digest(Core core, Cli cli
   i32 n = cases.len();
   t.isTrue(n >= 3, "several relays, so the order is a real question");
 
-  u8[][] descriptors = u8[][n]();
+  u8[][] descriptors = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) {
     descriptors[i] = strOf(objectOf(cases.get(i)), "descriptor").toBytes();
   }
@@ -115,7 +115,7 @@ export string test_the_entries_are_ordered_by_identity_digest(Core core, Cli cli
   // The r lines in our order, against the r lines in the order tor's authority wrote them. The input
   // order here is the vector's, which is neither the document's nor alphabetical.
   u8[][] lines = sortedStatusEntries(descriptors);
-  u8[] joined = u8[0]();
+  u8[] joined = u8[]();
   for (i32 i = 0; i < n; i++) {
     joined = i == 0 ? lines[i] : concat(concat(joined, "\n".toBytes()), lines[i]);
   }
@@ -132,7 +132,7 @@ export string test_the_entries_are_ordered_by_identity_digest(Core core, Cli cli
 }
 
 u8[] concat(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -148,7 +148,7 @@ u8[] identityOf(u8[] line) {
   }
   i32 end = at;
   while (end < line.len() && line[end] != 32) { end = end + 1; }
-  u8[] out = u8[end - at]();
+  u8[] out = u8[].filled(end - at, 0);
   for (i32 i = 0; i < end - at; i++) { out[i] = line[at + i]; }
   return out;
 }
@@ -179,7 +179,7 @@ export string test_the_order_is_on_bytes_not_on_the_base64(Core core, Cli cli) {
   u8[] low = stubDescriptor("low", "0000000000000000000000000000000000000000");
   u8[] high = stubDescriptor("high", "F400000000000000000000000000000000000000");
 
-  u8[][] given = u8[][2]();
+  u8[][] given = u8[][].defaulted(2);
   given[0] = high;
   given[1] = low;
 
@@ -202,7 +202,7 @@ u8[] nicknameOf(u8[] line) {
   i32 at = 2;                       // past "r "
   i32 end = at;
   while (end < line.len() && line[end] != 32) { end = end + 1; }
-  u8[] out = u8[end - at]();
+  u8[] out = u8[].filled(end - at, 0);
   for (i32 i = 0; i < end - at; i++) { out[i] = line[at + i]; }
   return out;
 }
@@ -222,7 +222,7 @@ export string test_the_vote_tor_accepted_is_reproduced(Core core, Cli cli) {
     num64Of(g, "validUntil"),
     numOf(g, "voteSeconds"), numOf(g, "distSeconds"));
 
-  RelayOpinion[] relays = RelayOpinion[1]();
+  RelayOpinion[] relays = RelayOpinion[].defaulted(1);
   relays[0] = RelayOpinion(strOf(g, "descriptor").toBytes(), strOf(g, "flags"),
                            num64Of(g, "bandwidth"), strOf(g, "exitPolicy"));
 

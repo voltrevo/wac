@@ -56,7 +56,7 @@ export string test_a_fresh_run_directory_of_anothers_is_left_alone(Core core, Cl
   t.isTrue(wrote.ok(), "and put a file in it — " + wrote.message);
 
   // Any command that builds sweeps first; `--help` does not, so this runs something.
-  Exec r = cli.exec(binaryPath(cli), string[]("run"), u8[0]()).wait();
+  Exec r = cli.exec(binaryPath(cli), ["run"], u8[]()).wait();
   t.isTrue(r.ran(), "the binary ran — " + r.error);
 
   Stat after = cli.stat(planted).wait();

@@ -79,10 +79,12 @@ void runPhase(i32 which, string[] paths, string[] texts, const Res res, string e
 
 /** Small to large, spanning about 20x — the range over which emit's share stayed flat. */
 string[] samples() {
-  return string[]("packages/zstd/src/frame.wac",
+  return [
+                  "packages/zstd/src/frame.wac",
                   "packages/json/src/json.wac",
                   "packages/wacc/src/api.wac",
-                  "packages/box/src/box.wac");
+                  "packages/box/src/box.wac"
+  ];
 }
 
 /** A gathered program, trimmed to the shape the compiler takes. */
@@ -97,7 +99,7 @@ struct Loaded {
 Loaded load(Fs fs, Cli cli, string entry) {
   Sources src = gather(fs, cli, entry);
   if (src.why != "") {
-    return Loaded(false, string[0](fill: ""), string[0](fill: ""), resOf(src), 0);
+    return Loaded(false, string[].filled(0, ""), string[].filled(0, ""), resOf(src), 0);
   }
   string[] paths = exactly(src.paths, src.n);
   string[] texts = exactly(src.texts, src.n);
@@ -163,7 +165,7 @@ i32 byPhase(Core core, Cli cli, Fs fs) {
     }
     string row = "| " + shortName(entries[i]) + " | " + itoa(l.paths.len()) + " | " + itoa(l.kib);
     i64 total = 0;
-    i64[] each = i64[phaseCount()](fill: 0);
+    i64[] each = i64[].filled(phaseCount(), 0);
     for (i32 p = 0; p < phaseCount(); p++) {
       runPhase(p, l.paths, l.texts, l.res, entries[i]);          // warm
       i64 a = timePhase(core, p, l.paths, l.texts, l.res, entries[i]);
@@ -182,7 +184,7 @@ i32 byPhase(Core core, Cli cli, Fs fs) {
 /** Every program in the repository, cold, once each. */
 i32 overAll(Core core, Cli cli, Fs fs) {
   Program[] list = findPrograms(cli);
-  i64[] totals = i64[phaseCount()](fill: 0);
+  i64[] totals = i64[].filled(phaseCount(), 0);
   i32 done = 0;
   i32 skipped = 0;
   i32 failed = 0;
@@ -235,9 +237,11 @@ i32 byMemory(Core core, Cli cli) {
   for (i32 p = 0 - 1; p < phaseCount(); p++) {
     string name = p < 0 ? "baseline" : phaseName(p);
     Exec ran = cli.exec(binaryPath(cli),
-                        string[]("run", "--allow-read", "--allow-env",
-                                 "tools/wac/benchcompile.wac", "--phase", name, entry),
-                        u8[0]()).wait();
+                        [
+                                 "run", "--allow-read", "--allow-env",
+                                 "tools/wac/benchcompile.wac", "--phase", name, entry
+                        ],
+                        u8[]()).wait();
     if (!ran.ran() || ran.status != 0) {
       core.warn("the " + name + " child did not run — " + ran.error
                 + string.fromBytes(ran.stderr));
@@ -279,7 +283,7 @@ export i32 main(Core core, Cli cli) {
   bool all = false;
   bool mem = false;
   i32 phaseAt = 0 - 1;
-  string[] args = string[16](fill: "");
+  string[] args = string[].filled(16, "");
   i32 argc = cli.argCount().wait();
   if (argc > 16) { argc = 16; }
   for (i32 i = 0; i < argc; i++) {

@@ -122,10 +122,10 @@ export i32 useConst(i32 x) { return (x & BLOCK) + TWO_BLOCKS; }
 // A constant ARRAY is one shared table, built once when the module is
 // instantiated rather than rebuilt at every use — which is the whole reason to
 // want them. Writing through one is an error, since there is only the one.
-const i32[] TABLE = i32[](10, 20, 30);
+const i32[] TABLE = [10, 20, 30];
 export i32 fromTable(i32 i) { return TABLE[i]; }
 // ERROR: TABLE[0] = 9;              // one object, shared by every use
-// ERROR: const i32[] S = i32[8]();  // no elements written down to evaluate
+// ERROR: const i32[] S = i32[].filled(8, 0);  // no elements written down to evaluate
 
 export i32 variables() {
   i32 x = 5;                 // mutable
@@ -398,9 +398,9 @@ export i32 mustBePositive(i32 n) {
 // WasmGC arrays: heap, GC'd, bounds-checked, fixed length at creation. Length
 // is NOT part of the type — i32[] of length 3 and of length 5 are the same type.
 export i32 arrays() {
-  i32[] a = i32[5]();          // array.new_default — length 5, all zeros
-  i32[] b = i32[](1, 2, 3);    // array.new_fixed — length 3
-  i32[] c = i32[b.len()]();    // length can be any runtime i32 expression
+  i32[] a = i32[].filled(5, 0);          // array.new_default — length 5, all zeros
+  i32[] b = [1, 2, 3];    // array.new_fixed — length 3
+  i32[] c = i32[].filled(b.len(), 0);    // length can be any runtime i32 expression
   a[0] = 10;                   // array.set
   return a[0] + b[2] + a.len() + c.len();   // array.get / array.len   -> 21
 }
@@ -408,19 +408,19 @@ export i32 arrays() {
 
 // Arrays are references — assignment aliases, it does not copy.
 export i32 arrayAlias() {
-  i32[] a = i32[](1, 2, 3);
+  i32[] a = [1, 2, 3];
   i32[] b = a;
   b[0] = 99;
   return a[0];                 // -> 99
 }
 
-// `T[N]()` requires that T has a default value (see section 10).
+// `T[].defaulted(N)` requires that T has a default value (see section 10).
 export i32 arrayOfRefs() {
-  Point?[] maybe = Point?[10]();     // nullable elements default to null
-  Point[]  pts   = Point[10]();      // each element is a distinct Point()
-  i32[][]  grid  = i32[][3]();       // array of array REFS, not a matrix:
-  grid[0] = i32[](1, 2, 3);          // each row may have a different length
-  grid[1] = i32[](4, 5, 6, 7);
+  Point?[] maybe = Point?[].defaulted(10);     // nullable elements default to null
+  Point[]  pts   = Point[].defaulted(10);      // each element is a distinct Point()
+  i32[][]  grid  = i32[][].defaulted(3);       // array of array REFS, not a matrix:
+  grid[0] = [1, 2, 3] as i32[];          // each row may have a different length
+  grid[1] = [4, 5, 6, 7] as i32[];
   return (maybe[0] is null ? 1 : 0) + (pts[0].x == 0.0 ? 1 : 0) + grid[1][3];
 }                                                                // -> 9
 
@@ -430,24 +430,24 @@ export i32 arrayOfRefs() {
 // i8/i16 sign-extend (array.get_s). Writes truncate either way. These four
 // exist only as array elements: never variables, parameters, fields or returns.
 export i32 packed() {
-  u8[] bytes = u8[4]();
+  u8[] bytes = u8[].filled(4, 0);
   bytes[0] = 0xFF;             // reads back 255 — zero-extended
   bytes[1] = 300;              // silently truncates to 44
-  u8[] hello = u8[](104, 101, 108, 108, 111);   // literal form takes i32s too
-  u16[] shorts = u16[2]();
+  u8[] hello = [104, 101, 108, 108, 111];   // literal form takes i32s too
+  u16[] shorts = u16[].filled(2, 0);
   shorts[0] = 1000;
   bytes[2] |= 0x0F;            // compound ops read-extend, compute at i32,
   bytes[3]++;                  // truncate on store
   return bytes[0] + bytes[1] + hello[0] + shorts[0] + bytes[2] + bytes[3];
 }
 export i32 packedSigned() {
-  i8[] b = i8[1]();
+  i8[] b = i8[].filled(1, 0);
   b[0] = 0xFF;                 // the same byte as above...
   return b[0];                 // ...reads back -1 here.  Use u8[] for bytes.
 }
 // ERROR: u8 x = 5;                    // no packed locals
 // ERROR: i32 f(u8 v) { return v; }    // no packed params, and no packed returns
-// ERROR: u8[] bad = u8[](1.5);        // packed elements must be i32
+// ERROR: u8[] bad = [1.5];        // packed elements must be i32
 // ERROR: bytes[0] == 'é';             // a byte is NOT a codepoint: 'é' is 233,
 //                                     // but "é" is the two bytes 195 169, so
 //                                     // this could never be true. Numbers
@@ -511,7 +511,7 @@ export i32 structAlias() {
 
 // ── 10. DEFAULT VALUES ──────────────────────────────────────────────────────
 
-// `T()` and `T[N]()` need T to have a default. A struct does if every field
+// `T()` and `T[].defaulted(N)` need T to have a default. A struct does if every field
 // does:
 //   primitives -> 0 / 0.0 / false      nullable T? -> null
 //   non-null struct T -> T() if T itself has a default (recursive)
@@ -728,7 +728,7 @@ export i32 maybes() {
 // `a is Just` are errors, while `match` is unaffected: an arm resolves its
 // variant through the subject's enum rather than through the file's scope.
 
-// An enum HAS NO DEFAULT VALUE — there is no default variant — so `Step[2]()`
+// An enum HAS NO DEFAULT VALUE — there is no default variant — so `Step[].defaulted(2)`
 // and a struct holding a bare `Step` cannot be default-constructed. Write the
 // array as a literal, or make the field nullable.
 
@@ -772,7 +772,7 @@ export i32 unwrapLvalue() {
 export i32 anyrefs() {
   i31ref small = 42 as! i31ref;      // ref.i31; checked, since i32 may not fit
   i32 n = small as i32;              // i31.get_s; lossless, 31 bits fit i32
-  anyref[] items = anyref[3]();
+  anyref[] items = anyref[].defaulted(3);
   items[0] = 7 as! i31ref;           // no allocation
   items[1] = Point(1.0, 2.0);        // heap allocated
   i32 total = n;
@@ -810,7 +810,7 @@ fn<bool(i32, i32)> comparator(bool reverse) {
 struct Handler { fn<i32(i32)> cb; }
 
 export i32 funcrefUses() {
-  fn<i32(i32)>[] fs = fn<i32(i32)>[](double, square, negate);
+  fn<i32(i32)>[] fs = [double, square, negate];
   i32 total = 0;
   for (i32 i = 0; i < fs.len(); i++) { total += fs[i](5); }   // 10 + 25 - 5
   Handler h = Handler(square);
@@ -972,7 +972,7 @@ export bool selfTest() {
       && strEq()
       && branch(-5) == 5 && branch(0) == 0 && branch(5) == 5
       && loops(3) == 10
-      && breakContinue(i32[](1, -1, 2, 99, 50)) == 3
+      && breakContinue([1, -1, 2, 99, 50] as i32[]) == 3
       && infinite(4, 10) == 12 && forever(7) == 7
       && classify(0) == 0 && classify(3) == 1
       && ternary(3, 7) == 7

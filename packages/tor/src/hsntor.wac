@@ -58,7 +58,7 @@ u8[] protoid() { return "tor-hs-ntor-curve25519-sha3-256-1".toBytes(); }
 u8[] tweak(string suffix) {
   u8[] p = protoid();
   u8[] s = suffix.toBytes();
-  u8[] out = u8[p.len() + s.len()]();
+  u8[] out = u8[].filled(p.len() + s.len(), 0);
   for (i32 i = 0; i < p.len(); i++) { out[i] = p[i]; }
   for (i32 i = 0; i < s.len(); i++) { out[p.len() + i] = s[i]; }
   return out;
@@ -73,7 +73,7 @@ export u8[] mHsExpand() { return tweak(":hs_key_expand"); }
 export u8[] clientPublicKey(u8[] secret) { return x25519Base(secret); }
 
 u8[] u64be(i64 v) {
-  u8[] b = u8[8]();
+  u8[] b = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
     b[i] = ((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
   }
@@ -83,7 +83,7 @@ u8[] u64be(i64 v) {
 u8[] concat(u8[][] parts) {
   i32 n = 0;
   for (i32 i = 0; i < parts.len(); i++) { n = n + parts[i].len(); }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < parts.len(); i++) {
     for (i32 j = 0; j < parts[i].len(); j++) { out[at + j] = parts[i][j]; }
@@ -115,7 +115,7 @@ bool isZero(u8[] b) {
  * bytes — without it, `MAC("ab", "c")` and `MAC("a", "bc")` are one hash.
  */
 export u8[] hsMac(u8[] key, u8[] message) {
-  u8[][] parts = u8[][3]();
+  u8[][] parts = u8[][].defaulted(3);
   parts[0] = u64be(key.len() as i64);
   parts[1] = key;
   parts[2] = message;
@@ -132,23 +132,23 @@ export u8[] hsMac(u8[] key, u8[] message) {
 export u8[] clientIntroduceKeys(
   u8[] introAuthKey, u8[] introEncKey, u8[] clientSecret, u8[] subcredential
 ) {
-  if (introAuthKey.len() != 32 || introEncKey.len() != 32) { return u8[0](); }
-  if (clientSecret.len() != 32 || subcredential.len() != 32) { return u8[0](); }
+  if (introAuthKey.len() != 32 || introEncKey.len() != 32) { return u8[](); }
+  if (clientSecret.len() != 32 || subcredential.len() != 32) { return u8[](); }
 
   u8[] clientPublic = x25519Base(clientSecret);
   u8[] shared = x25519(clientSecret, introEncKey);
   // A small-order `B` makes the shared value all zero for every scalar, so anyone holding no private
   // key derives exactly what we would. tor-spec says abort; there is no key to return here.
-  if (isZero(shared)) { return u8[0](); }
+  if (isZero(shared)) { return u8[](); }
 
-  u8[][] secret = u8[][5]();
+  u8[][] secret = u8[][].defaulted(5);
   secret[0] = shared;
   secret[1] = introAuthKey;
   secret[2] = clientPublic;
   secret[3] = introEncKey;
   secret[4] = protoid();
 
-  u8[][] input = u8[][4]();
+  u8[][] input = u8[][].defaulted(4);
   input[0] = concat(secret);
   input[1] = tHsEnc();
   input[2] = mHsExpand();
@@ -173,21 +173,21 @@ export u8[] clientIntroduceKeys(
 export u8[] serviceIntroduceKeys(
   u8[] introAuthKey, u8[] introEncSecret, u8[] clientPublic, u8[] subcredential
 ) {
-  if (introAuthKey.len() != 32 || introEncSecret.len() != 32) { return u8[0](); }
-  if (clientPublic.len() != 32 || subcredential.len() != 32) { return u8[0](); }
+  if (introAuthKey.len() != 32 || introEncSecret.len() != 32) { return u8[](); }
+  if (clientPublic.len() != 32 || subcredential.len() != 32) { return u8[](); }
 
   u8[] introEncKey = x25519Base(introEncSecret);
   u8[] shared = x25519(introEncSecret, clientPublic);
-  if (isZero(shared)) { return u8[0](); }
+  if (isZero(shared)) { return u8[](); }
 
-  u8[][] secret = u8[][5]();
+  u8[][] secret = u8[][].defaulted(5);
   secret[0] = shared;
   secret[1] = introAuthKey;
   secret[2] = clientPublic;
   secret[3] = introEncKey;
   secret[4] = protoid();
 
-  u8[][] input = u8[][4]();
+  u8[][] input = u8[][].defaulted(4);
   input[0] = concat(secret);
   input[1] = tHsEnc();
   input[2] = mHsExpand();
@@ -211,15 +211,15 @@ export u8[] serviceIntroduceKeys(
 export u8[] clientRendezvousKeys(
   u8[] introAuthKey, u8[] clientSecret, u8[] introEncKey, u8[] serviceEphemeral
 ) {
-  if (introAuthKey.len() != 32 || introEncKey.len() != 32) { return u8[0](); }
-  if (clientSecret.len() != 32 || serviceEphemeral.len() != 32) { return u8[0](); }
+  if (introAuthKey.len() != 32 || introEncKey.len() != 32) { return u8[](); }
+  if (clientSecret.len() != 32 || serviceEphemeral.len() != 32) { return u8[](); }
 
   u8[] clientPublic = x25519Base(clientSecret);
   u8[] xy = x25519(clientSecret, serviceEphemeral);
   u8[] xb = x25519(clientSecret, introEncKey);
-  if (isZero(xy) || isZero(xb)) { return u8[0](); }
+  if (isZero(xy) || isZero(xb)) { return u8[](); }
 
-  u8[][] parts = u8[][7]();
+  u8[][] parts = u8[][].defaulted(7);
   parts[0] = xy;
   parts[1] = xb;
   parts[2] = introAuthKey;
@@ -232,7 +232,7 @@ export u8[] clientRendezvousKeys(
   u8[] keySeed = hsMac(rendSecret, tHsEnc());
   u8[] verify = hsMac(rendSecret, tHsVerify());
 
-  u8[][] auth = u8[][7]();
+  u8[][] auth = u8[][].defaulted(7);
   auth[0] = verify;
   auth[1] = introAuthKey;
   auth[2] = introEncKey;
@@ -242,7 +242,7 @@ export u8[] clientRendezvousKeys(
   auth[6] = "Server".toBytes();
   u8[] authMac = hsMac(concat(auth), tHsMac());
 
-  u8[][] out = u8[][2]();
+  u8[][] out = u8[][].defaulted(2);
   out[0] = authMac;
   out[1] = keySeed;
   return concat(out);
@@ -280,16 +280,16 @@ export u8[] clientRendezvousKeys(
 export u8[] serviceRendezvousKeys(
   u8[] introAuthKey, u8[] introEncSecret, u8[] serviceEphemeralSecret, u8[] clientPublic
 ) {
-  if (introAuthKey.len() != 32 || introEncSecret.len() != 32) { return u8[0](); }
-  if (serviceEphemeralSecret.len() != 32 || clientPublic.len() != 32) { return u8[0](); }
+  if (introAuthKey.len() != 32 || introEncSecret.len() != 32) { return u8[](); }
+  if (serviceEphemeralSecret.len() != 32 || clientPublic.len() != 32) { return u8[](); }
 
   u8[] introEncKey = x25519Base(introEncSecret);
   u8[] serviceEphemeral = x25519Base(serviceEphemeralSecret);
   u8[] xy = x25519(serviceEphemeralSecret, clientPublic);
   u8[] xb = x25519(introEncSecret, clientPublic);
-  if (isZero(xy) || isZero(xb)) { return u8[0](); }
+  if (isZero(xy) || isZero(xb)) { return u8[](); }
 
-  u8[][] parts = u8[][7]();
+  u8[][] parts = u8[][].defaulted(7);
   parts[0] = xy;
   parts[1] = xb;
   parts[2] = introAuthKey;
@@ -302,7 +302,7 @@ export u8[] serviceRendezvousKeys(
   u8[] keySeed = hsMac(rendSecret, tHsEnc());
   u8[] verify = hsMac(rendSecret, tHsVerify());
 
-  u8[][] auth = u8[][7]();
+  u8[][] auth = u8[][].defaulted(7);
   auth[0] = verify;
   auth[1] = introAuthKey;
   auth[2] = introEncKey;
@@ -312,15 +312,15 @@ export u8[] serviceRendezvousKeys(
   auth[6] = "Server".toBytes();
   u8[] authMac = hsMac(concat(auth), tHsMac());
 
-  u8[][] out = u8[][2]();
+  u8[][] out = u8[][].defaulted(2);
   out[0] = authMac;
   out[1] = keySeed;
   return concat(out);
 }
 
 export u8[] rendezvousCircuitKeys(u8[] ntorKeySeed) {
-  if (ntorKeySeed.len() != 32) { return u8[0](); }
-  u8[][] parts = u8[][2]();
+  if (ntorKeySeed.len() != 32) { return u8[](); }
+  u8[][] parts = u8[][].defaulted(2);
   parts[0] = ntorKeySeed;
   parts[1] = mHsExpand();
   return shake256(concat(parts), 128);

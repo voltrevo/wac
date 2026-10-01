@@ -58,8 +58,8 @@ u8[] certificationKeyword() { return "dir-key-certification\n".toBytes(); }
  */
 export u8[] certificationDigest(u8[] document) {
   i32 end = pastLineStarting(document, certificationKeyword());
-  if (end < 0) { return u8[0](); }
-  u8[] signed = u8[end]();
+  if (end < 0) { return u8[](); }
+  u8[] signed = u8[].filled(end, 0);
   for (i32 i = 0; i < end; i++) { signed[i] = document[i]; }
   return sha1(signed);
 }
@@ -74,11 +74,11 @@ export string plainFingerprint(u8[] digest) { return string.fromBytes(encodeUppe
  */
 export u8[] authorityCertificate(AuthorityKeys k, i64 published, i64 expires) {
   u8[] fingerprint = rsaFingerprint(k.identityN, k.identityE);
-  if (fingerprint.len() != 20) { return u8[0](); }
+  if (fingerprint.len() != 20) { return u8[](); }
 
   // The signing key vouches for the identity fingerprint itself, not for any digest of this document.
   u8[] crosscert = rsaSignRawPkcs1(k.signingN, k.signingD, fingerprint);
-  if (crosscert.len() == 0) { return u8[0](); }
+  if (crosscert.len() == 0) { return u8[](); }
 
   Buf d = Buf.create();
   d.pushAll("dir-key-certificate-version 3\n".toBytes());
@@ -97,9 +97,9 @@ export u8[] authorityCertificate(AuthorityKeys k, i64 published, i64 expires) {
   // The certification covers its own keyword line, so the keyword goes in before the digest is taken.
   d.pushAll(certificationKeyword());
   u8[] digest = certificationDigest(d.bytes());
-  if (digest.len() != 20) { return u8[0](); }
+  if (digest.len() != 20) { return u8[](); }
   u8[] certification = rsaSignRawPkcs1(k.identityN, k.identityD, digest);
-  if (certification.len() == 0) { return u8[0](); }
+  if (certification.len() == 0) { return u8[](); }
   d.pushAll(pemBlock("SIGNATURE", certification));
 
   return d.bytes();

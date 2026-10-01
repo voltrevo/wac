@@ -33,11 +33,12 @@ i32 hashSize() { return 32; }
  * "OxychromaticBlowfishSwatDynamite" — arbitrary, but it has to match byte for byte, so it is
  * spelled out as bytes rather than built from a string to keep any encoding question out of it.
  */
-const u8[] MAGIC = u8[](
+const u8[] MAGIC = [
   0x4f, 0x78, 0x79, 0x63, 0x68, 0x72, 0x6f, 0x6d,      // Oxychrom
   0x61, 0x74, 0x69, 0x63, 0x42, 0x6c, 0x6f, 0x77,      // aticBlow
   0x66, 0x69, 0x73, 0x68, 0x53, 0x77, 0x61, 0x74,      // fishSwat
-  0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x74, 0x65);     // Dynamite
+  0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x74, 0x65     // Dynamite
+];
 
 /**
  * One bcrypt hash: 32 bytes out, from a 64-byte hashed password and a 64-byte hashed salt.
@@ -58,7 +59,7 @@ u8[] bcryptHash(u8[] sha2pass, u8[] sha2salt) {
 
   // The magic block as eight big-endian words, then 64 passes of the cipher over all four of its
   // 64-bit halves.
-  i32[] cdata = i32[8]();
+  i32[] cdata = i32[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
     cdata[i] = (MAGIC[i * 4] << 24) | (MAGIC[i * 4 + 1] << 16)
              | (MAGIC[i * 4 + 2] << 8) | MAGIC[i * 4 + 3];
@@ -70,7 +71,7 @@ u8[] bcryptHash(u8[] sha2pass, u8[] sha2salt) {
   }
 
   // Little-endian, against the big-endian read above. Not a typo.
-  u8[] out = u8[hashSize()]();
+  u8[] out = u8[].filled(hashSize(), 0);
   for (i32 i = 0; i < 8; i++) {
     out[i * 4] = cdata[i] & 255;
     out[i * 4 + 1] = (cdata[i] >>> 8) & 255;
@@ -97,16 +98,16 @@ export u8[] bcryptPbkdf(u8[] pass, u8[] salt, i32 keylen, i32 rounds) {
   i32 stride = (keylen + hashSize() - 1) / hashSize();
   i32 amt = (keylen + stride - 1) / stride;
 
-  u8[] key = u8[origKeylen]();
+  u8[] key = u8[].filled(origKeylen, 0);
   u8[] sha2pass = sha512(pass);
-  u8[] out = u8[hashSize()]();
-  u8[] tmpout = u8[hashSize()]();
+  u8[] out = u8[].filled(hashSize(), 0);
+  u8[] tmpout = u8[].filled(hashSize(), 0);
 
   i32 count = 1;
   i32 left = keylen;
   while (left > 0) {
     // Round one salts with `salt || count`, big-endian.
-    u8[] counted = u8[salt.len() + 4]();
+    u8[] counted = u8[].filled(salt.len() + 4, 0);
     counted.copyFrom(salt, 0, 0, salt.len());
     counted[salt.len()] = (count >>> 24) & 255;
     counted[salt.len() + 1] = (count >>> 16) & 255;

@@ -48,7 +48,7 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
     i32 from = fromLine ? (want > 0 ? want - 1 : 0) : all.len() - want;
     if (from < 0) { from = 0; }
     if (from > all.len()) { from = all.len(); }
-    u8[] piece = u8[all.len() - from]();
+    u8[] piece = u8[].filled(all.len() - from, 0);
     piece.copyFrom(all, from, 0, all.len() - from);
     if (!emitTo(out, piece, false)) { out.flush(); return 0; }
     continue;
@@ -68,8 +68,8 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
     continue;
   }
 
-  u8[][] ring = u8[][want](fill: u8[0]());
-  bool[] terminated = bool[want](fill: true);
+  u8[][] ring = u8[][].filled(want, u8[]());
+  bool[] terminated = bool[].filled(want, true);
   i32 seen = 0;
   Lines s = Lines.create();
   Feed fed = in.fed;

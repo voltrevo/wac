@@ -56,10 +56,10 @@ bool defined(string spec) {
 export string test_every_import_in_the_repository_is_a_specifier_the_language_defines(
     Core core, Cli cli) {
   T t = T.create();
-  string[] files = sourceFiles(core, cli, string[](".wac"), string[0](fill: ""));
+  string[] files = sourceFiles(core, cli, [".wac"], string[].filled(0, ""));
   t.isTrue(files.len() > 100, "the walk found " + itoa(files.len()) + " files — did it resolve?");
 
-  string[] bad = string[files.len()](fill: "");
+  string[] bad = string[].filled(files.len(), "");
   i32 n = 0;
   i32 imports = 0;
   for (i32 f = 0; f < files.len(); f++) {

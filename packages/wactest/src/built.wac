@@ -40,7 +40,7 @@ import { Cli, Exec, Stat, FileResult } from "std/platform.wac";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
 export i64 newestUnder(Cli cli, string dir) {
-  return newestUnderExcept(cli, dir, string[0](fill: ""));
+  return newestUnderExcept(cli, dir, string[].filled(0, ""));
 }
 
 /**
@@ -81,7 +81,7 @@ string[] importsOf(string src) {
   for (i32 i = 0; i + 6 <= src.len(); i++) {
     if (src.slice(i, i + 6) == "from \"") { found = found + 1; }
   }
-  string[] out = string[found](fill: "");
+  string[] out = string[].filled(found, "");
   i32 n = 0;
   for (i32 i = 0; i + 6 <= src.len(); i++) {
     if (src.slice(i, i + 6) != "from \"") { continue; }
@@ -115,7 +115,7 @@ string dirOfPath(string path) {
 string resolvedFrom(string fromPath, string spec) {
   string joinedPath = dirOfPath(fromPath) + "/" + spec;
   bool rooted = joinedPath.len() > 0 && joinedPath.slice(0, 1) == "/";
-  string[] parts = string[64](fill: "");
+  string[] parts = string[].filled(64, "");
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= joinedPath.len(); i++) {
@@ -162,7 +162,7 @@ export struct Closure {
  * name to put in the message and the count to prove the walk resolved.
  */
 export Closure closureOf(Cli cli, string entry) {
-  string[] seen = string[CLOSURE_CAP](fill: "");
+  string[] seen = string[].filled(CLOSURE_CAP, "");
   seen[0] = entry;
   i32 n = 1;
   i32 at = 0;
@@ -222,13 +222,13 @@ export struct Sources {
 }
 
 export Sources sourcesOf(Cli cli, string entry) {
-  string[] seen = string[CLOSURE_CAP](fill: "");
-  string[] text = string[CLOSURE_CAP](fill: "");
+  string[] seen = string[].filled(CLOSURE_CAP, "");
+  string[] text = string[].filled(CLOSURE_CAP, "");
   seen[0] = entry;
   i32 n = 1;
   i32 at = 0;
   i32 kept = 0;
-  string[] paths = string[CLOSURE_CAP](fill: "");
+  string[] paths = string[].filled(CLOSURE_CAP, "");
   while (at < n) {
     string path = seen[at];
     at = at + 1;
@@ -236,7 +236,7 @@ export Sources sourcesOf(Cli cli, string entry) {
     // is what will be handed these, so it already has them.
     if (!cli.stat(path).wait().isFile) { continue; }
     FileResult f = cli.readFile(path).wait();
-    if (!f.ok) { return Sources(string[0](fill: ""), string[0](fill: ""), path); }
+    if (!f.ok) { return Sources(string[].filled(0, ""), string[].filled(0, ""), path); }
     string src = string.fromBytes(f.bytes);
     paths[kept] = path;
     text[kept] = src;
@@ -252,8 +252,8 @@ export Sources sourcesOf(Cli cli, string entry) {
       n = n + 1;
     }
   }
-  string[] outPaths = string[kept](fill: "");
-  string[] outTexts = string[kept](fill: "");
+  string[] outPaths = string[].filled(kept, "");
+  string[] outTexts = string[].filled(kept, "");
   for (i32 i = 0; i < kept; i++) { outPaths[i] = paths[i]; outTexts[i] = text[i]; }
   return Sources(outPaths, outTexts, "");
 }
@@ -328,8 +328,10 @@ export string nativeHostWhyNot(Cli cli) {
   // than its sources, six callers skipped their native halves, and the two that *assert* the native
   // half ran failed in the gate. The list is `tools/wac/seedfresh_test.wac`'s, which had it right, and it
   // is `native/`'s crate — `native/v8` is the other one.
-  string[] inputs = string[]("native/src", "native/manifest/src", "native/Cargo.toml",
-                             "native/Cargo.lock", "native/build.rs");
+  string[] inputs = [
+                             "native/src", "native/manifest/src", "native/Cargo.toml",
+                             "native/Cargo.lock", "native/build.rs"
+  ];
   for (i32 i = 0; i < inputs.len(); i++) {
     if (host.modifiedMillis < newestOf(cli, root + "/" + inputs[i])) {
       return "native/target/release/wac is older than " + inputs[i]
@@ -418,7 +420,7 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants) 
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
   if (have.exists && sameFlags && have.modifiedMillis > newest) { return stem + ".wasm"; }
 
-  string[] args = string[4 + grants.len()](fill: "");
+  string[] args = string[].filled(4 + grants.len(), "");
   args[0] = "build";
   args[1] = entry;
   args[2] = "-o";
@@ -436,7 +438,7 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants) 
   // remembered to look. The compiler's own message went to this process's stderr on the way past, so
   // the reason is in the run's output even though the return value cannot carry it. `.flags` goes too,
   // or a later build with the same grants would find a sidecar agreeing with it and no module.
-  Exec built = cli.exec(wac, args, u8[0]()).wait();
+  Exec built = cli.exec(wac, args, u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     cli.remove(stem + ".wasm", false).wait();
     cli.remove(stem + ".flags", false).wait();
@@ -503,7 +505,7 @@ export string builtApp(Cli cli, string entry, string name, string[] grants) {
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
   if (have.exists && sameFlags && have.modifiedMillis > newest) { return out; }
 
-  string[] args = string[4 + grants.len()](fill: "");
+  string[] args = string[].filled(4 + grants.len(), "");
   args[0] = "app";
   args[1] = entry;
   args[2] = "-o";
@@ -511,7 +513,7 @@ export string builtApp(Cli cli, string entry, string name, string[] grants) {
   for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
   // The same rule as `builtProgram`: a failed build takes the artefact with it, because a stale one
   // still runs and the test then passes against code that no longer compiles.
-  Exec built = cli.exec(wac, args, u8[0]()).wait();
+  Exec built = cli.exec(wac, args, u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     cli.remove(out, false).wait();
     cli.remove(out + ".flags", false).wait();
@@ -566,7 +568,7 @@ export string builtByDeno(Cli cli, string entry, string name, string[] grants, s
   line = line + " --target " + target;
   if (worker) { line = line + " --worker"; }
   line = line + " -o \"" + out + "\"";
-  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
   return out;
 }

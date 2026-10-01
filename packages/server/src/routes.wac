@@ -75,7 +75,7 @@ void writeJsonString(Buf out, u8[] s) {
 void writeInt(Buf out, i32 v) {
   if (v < 0) { out.push('-'); v = -v; }
   if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[12]();
+  u8[] tmp = u8[].filled(12, 0);
   i32 n = 0;
   while (v > 0) { tmp[n] = 48 + (v % 10); v = v / 10; n++; }
   for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
@@ -113,7 +113,7 @@ u8[] queryToJson(u8[] query) {
 
 /** Percent-decoding plus `+` meaning space, which is what a query string uses. */
 u8[] formDecode(u8[] s) {
-  u8[] plussed = u8[s.len()]();
+  u8[] plussed = u8[].filled(s.len(), 0);
   for (i32 i = 0; i < s.len(); i++) { plussed[i] = s[i] == '+' ? ' ' : s[i]; }
   return pctDecode(plussed);
 }
@@ -124,7 +124,7 @@ u8[][] segments(u8[] path) {
   for (i32 i = 0; i < path.len(); i++) {
     if (path[i] == '/' && i + 1 < path.len() && path[i + 1] != '/') { count++; }
   }
-  u8[][] out = u8[][count > 0 ? count : 1]();
+  u8[][] out = u8[][].defaulted(count > 0 ? count : 1);
   i32 n = 0;
   i32 at = 0;
   while (at < path.len()) {
@@ -137,7 +137,7 @@ u8[][] segments(u8[] path) {
     }
     at = end;
   }
-  u8[][] exact = u8[][n]();
+  u8[][] exact = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -149,7 +149,7 @@ Response matchRoute(u8[] patternRaw, u8[] subjectRaw) {
   if (p is null) { return text(400, "the pattern is outside the supported subset\n".toBytes()); }
 
   i32 n = slotCount(p!);
-  i32[] caps = i32[n]();
+  i32[] caps = i32[].filled(n, 0);
   i32 start = reSearch(p!, subject, 0, caps, 200000);
   Buf out = Buf.create();
   if (start == BUDGET()) {
@@ -187,7 +187,7 @@ export Response route(Request request, i64 nowMillis) {
   if (parsed is null) { return text(400, "unparseable request target\n".toBytes()); }
   Url u = parsed!;
   u8[] path = pathname(u);
-  u8[] query = (u.query is not null) ? u.query! : u8[0]();
+  u8[] query = (u.query is not null) ? u.query! : u8[]();
 
   bool isGet = eqBytes(request.method, "GET") || eqBytes(request.method, "HEAD");
   bool isPost = eqBytes(request.method, "POST");

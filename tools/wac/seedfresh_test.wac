@@ -128,13 +128,15 @@ export string test_the_seed_inside_wac_is_there_and_not_older_than_anything_it_i
  * not one of them. Watching it would make this red for an edit that changes nothing.
  */
 string[] rustInputs(Cli cli) {
-  string[] dirs = string[]("native/v8/src", "native/manifest/src");
-  string[] named = string[]("native/v8/Cargo.toml", "native/v8/Cargo.lock", "native/v8/build.rs",
-                            "native/manifest/Cargo.toml");
+  string[] dirs = ["native/v8/src", "native/manifest/src"];
+  string[] named = [
+                            "native/v8/Cargo.toml", "native/v8/Cargo.lock", "native/v8/build.rs",
+                            "native/manifest/Cargo.toml"
+  ];
   // Two passes so the array is sized from the work rather than from a guess.
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    string[] out = pass == 1 ? string[].filled(n, "") : string[].filled(0, "");
     i32 at = 0;
     for (i32 d = 0; d < dirs.len(); d++) {
       string[]? entries = cli.readDir(dirs[d]).wait();
@@ -156,7 +158,7 @@ string[] rustInputs(Cli cli) {
     if (pass == 1) { return out; }
     n = at;
   }
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }
 
 /**

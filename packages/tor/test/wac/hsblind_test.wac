@@ -25,7 +25,7 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { arrayOf } from "../../../wactest/src/jsonfile.wac";
 u8[] bytesToHex(u8[] b) {
   u8[] digits = "0123456789abcdef".toBytes();
-  u8[] out = u8[b.len() * 2]();
+  u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i * 2] = digits[(b[i] >> 4) & 0xF];
     out[i * 2 + 1] = digits[b[i] & 0xF];
@@ -92,7 +92,7 @@ i64 numField(JsonObject o, string key) {
 /** The two periods as big-endian u64s, the shape `be64` above reads. */
 u8[] periodBytes(Cli cli) {
   JsonObject c = blindCase(cli);
-  u8[] out = u8[16]();
+  u8[] out = u8[].filled(16, 0);
   putBe64(out, 0, numField(c, "timePeriod"));
   putBe64(out, 8, numField(c, "periodLength"));
   return out;
@@ -134,7 +134,7 @@ export string test_a_real_onion_address_decodes_to_the_services_identity_key(Cor
   t.isTrue(equal(onionAddress(identity), onion), "the identity key encodes to the address");
 
   // With the suffix, which is how a user writes it and how a SOCKS request arrives.
-  u8[] withSuffix = u8[onion.len() + 6]();
+  u8[] withSuffix = u8[].filled(onion.len() + 6, 0);
   for (i32 i = 0; i < onion.len(); i++) { withSuffix[i] = onion[i]; }
   u8[] dot = ".onion".toBytes();
   for (i32 i = 0; i < 6; i++) { withSuffix[onion.len() + i] = dot[i]; }
@@ -150,7 +150,7 @@ export string test_every_address_in_the_specification_decodes(Core core, Cli cli
   i32 n = listLen(cli, "addressExamples");
   t.eqI32(n, 3, "three real examples are quoted from the spec");
   for (i32 i = 0; i < n; i++) {
-    u8[] idx = u8[1]();
+    u8[] idx = u8[].filled(1, 0);
     idx[0] = i;
     u8[] addr = listAt(cli, "addressExamples", i);
     u8[] key = onionPubkey(addr);
@@ -170,7 +170,7 @@ export string test_every_address_in_the_specification_decodes(Core core, Cli cli
   i32 bad = listLen(cli, "invalidExamples");
   t.eqI32(bad, 1, "one illustrative address is quoted");
   for (i32 i = 0; i < bad; i++) {
-    u8[] idx = u8[1]();
+    u8[] idx = u8[].filled(1, 0);
     idx[0] = i;
     u8[] addr = listAt(cli, "invalidExamples", i);
     t.eqI32(addr.len(), 56, "it is a 56-character address");
@@ -187,7 +187,7 @@ export string test_a_mistyped_address_is_refused(Core core, Cli cli) {
   // checksum covers the key, the version covers the tail, and base32 covers the alphabet.
   i32 accepted = 0;
   for (i32 i = 0; i < onion.len(); i++) {
-    u8[] bad = u8[onion.len()]();
+    u8[] bad = u8[].filled(onion.len(), 0);
     for (i32 j = 0; j < onion.len(); j++) { bad[j] = onion[j]; }
     // 'a'..'z','2'..'7' — step within the alphabet so the failure is the checksum, not the decode.
     bad[i] = (onion[i] == 97) ? 98 : ((onion[i] >= 98 && onion[i] <= 122) ? (onion[i] - 1) : 97);
@@ -196,12 +196,12 @@ export string test_a_mistyped_address_is_refused(Core core, Cli cli) {
   t.eqI32(accepted, 0, "no single-character change to a valid address is accepted");
 
   // Wrong length, wrong version, and a character outside the alphabet.
-  u8[] short_ = u8[55]();
+  u8[] short_ = u8[].filled(55, 0);
   for (i32 i = 0; i < 55; i++) { short_[i] = onion[i]; }
   t.eqI32(onionPubkey(short_).len(), 0, "55 characters is refused");
   t.eqI32(onionPubkey("".toBytes()).len(), 0, "an empty address is refused");
-  t.eqI32(addressChecksum(u8[31]()).len(), 0, "a 31-byte key has no checksum");
-  t.eqI32(onionAddress(u8[33]()).len(), 0, "a 33-byte key has no address");
+  t.eqI32(addressChecksum(u8[].filled(31, 0)).len(), 0, "a 31-byte key has no checksum");
+  t.eqI32(onionAddress(u8[].filled(33, 0)).len(), 0, "a 33-byte key has no address");
   return t.report();
 }
 
@@ -254,7 +254,7 @@ export string test_the_blinded_key_depends_on_every_input(Core core, Cli cli) {
   t.isFalse(equal(blindedPublicKey(identity, tp + 1, plen), base), "the period changes it");
   t.isFalse(equal(blindedPublicKey(identity, tp - 1, plen), base), "so does the previous period");
   t.isFalse(equal(blindedPublicKey(identity, tp, plen + 1), base), "the period length changes it");
-  u8[] other = u8[32]();
+  u8[] other = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { other[i] = identity[i]; }
   other[0] = (other[0] ^ 1);
   // A flipped bit may or may not still be a curve point; either a different key or a refusal is
@@ -268,7 +268,7 @@ export string test_the_blinded_key_depends_on_every_input(Core core, Cli cli) {
   t.isFalse(equal(sub, subcredential(identity, blindedPublicKey(identity, tp + 1, plen))),
             "the subcredential changes with the period");
   t.isFalse(equal(sub, credential(identity)), "the subcredential is not the credential");
-  t.eqI32(subcredential(identity, u8[31]()).len(), 0, "a short blinded key has no subcredential");
+  t.eqI32(subcredential(identity, u8[].filled(31, 0)).len(), 0, "a short blinded key has no subcredential");
   return t.report();
 }
 

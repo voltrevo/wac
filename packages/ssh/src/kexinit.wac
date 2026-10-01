@@ -127,14 +127,14 @@ export u8[] negotiate(u8[] ours, u8[] theirs) {
     i32 stop = start;
     while (stop < ours.len() && ours[stop] != 0x2c) { stop++; }      // ','
     if (stop > start && listContains(theirs, ours, start, stop - start)) {
-      u8[] out = u8[stop - start]();
+      u8[] out = u8[].filled(stop - start, 0);
       out.copyFrom(ours, start, 0, stop - start);
       return out;
     }
     if (stop >= ours.len()) { break; }
     start = stop + 1;
   }
-  return u8[0]();
+  return u8[]();
 }
 
 /** Whether `list` contains the name `name[at..at+n]` as a whole comma-separated element. */

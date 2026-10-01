@@ -43,8 +43,8 @@ string tagOf(JsonValue v) {
 
 export string test_every_kind_arrives_with_the_right_tag() {
   T t = T.create();
-  string[] docs = string[]("null", "true", "1", "\"x\"", "[]", "{}");
-  string[] tags = string[]("Null", "Bool", "Number", "Str", "Array", "Object");
+  string[] docs = ["null", "true", "1", "\"x\"", "[]", "{}"];
+  string[] tags = ["Null", "Bool", "Number", "Str", "Array", "Object"];
   for (i32 i = 0; i < docs.len(); i++) {
     JsonValue? v = parse(docs[i].toBytes());
     t.isTrue(!(v is null), docs[i] + " did not parse");
@@ -55,7 +55,7 @@ export string test_every_kind_arrives_with_the_right_tag() {
 
 export string test_a_document_that_is_not_json_parses_as_null() {
   T t = T.create();
-  string[] bad = string[]("", "{", "[1,]", "tru", "{\"a\"}", "1 2");
+  string[] bad = ["", "{", "[1,]", "tru", "{\"a\"}", "1 2"];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isTrue(parse(bad[i].toBytes()) is null, "\"" + bad[i] + "\" should not have parsed");
   }
@@ -151,8 +151,10 @@ export string test_containers_are_walkable_in_order_and_with_duplicates() {
  */
 export string test_a_tree_handed_back_serializes_to_what_it_came_from() {
   T t = T.create();
-  string[] docs = string[]("{\"b\":1,\"a\":[1,2,{\"c\":true}],\"n\":1e2}", "[]", "{}", "null",
-                           "\"x\"", "-0");
+  string[] docs = [
+                           "{\"b\":1,\"a\":[1,2,{\"c\":true}],\"n\":1e2}", "[]", "{}", "null",
+                           "\"x\"", "-0"
+  ];
   for (i32 i = 0; i < docs.len(); i++) {
     JsonValue? v = parse(docs[i].toBytes());
     t.isTrue(!(v is null), docs[i] + " did not parse");
@@ -172,14 +174,15 @@ export string test_a_tree_handed_back_serializes_to_what_it_came_from() {
  */
 export string test_the_tree_walks_to_the_same_data_the_host_produces(Core core, Cli cli) {
   T t = T.create();
-  string[] docs = string[](
+  string[] docs = [
     "null", "true", "false", "0", "-1", "42", "1.5", "-2.25", "1e3",
     "\"\"", "\"hello\"", "\"h\\u00e9llo \\ud83d\\ude00\"", "\"\\t\\n\\\"\\\\\"",
     "[]", "[1]", "[1,2,3]", "[[1],[2,[3]]]", "[null,true,false]",
     "{}", "{\"a\":1}", "{\"a\":1,\"b\":[2,3]}", "{\"a\":{\"b\":{\"c\":[]}}}",
     "{\"deep\":[1,[2,[3,[4]]]],\"uni\":\"héllo 😀\",\"neg\":-0.5,\"big\":1e20}",
     "{\"a\":1,\"a\":2}",
-    "  \t{ \"spaced\" : [ 1 , 2 ] }\n");
+    "  \t{ \"spaced\" : [ 1 , 2 ] }\n"
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < docs.len(); i++) {
     JsonValue? v = parse(docs[i].toBytes());
@@ -272,7 +275,7 @@ string twoHex(i32 c) {
 }
 
 string oneByte(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }

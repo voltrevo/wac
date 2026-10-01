@@ -27,9 +27,9 @@ export struct Blowfish {
 
   /** A context holding the raw pi constants, before any key is mixed in. */
   Blowfish create() {
-    i32[] p = i32[18]();
+    i32[] p = i32[].filled(18, 0);
     p.copyFrom(P_INIT, 0, 0, 18);
-    i32[] s = i32[1024]();
+    i32[] s = i32[].filled(1024, 0);
     s.copyFrom(S_INIT, 0, 0, 1024);
     return Blowfish(p, s);
   }
@@ -80,11 +80,11 @@ export struct Blowfish {
    * behave differently from a short one, and why the index carries across the whole call.
    */
   void expandState(this, u8[] data, u8[] key) {
-    i32[] j = i32[1]();
+    i32[] j = i32[].filled(1, 0);
     for (i32 i = 0; i < 18; i++) {
       this.p[i] = this.p[i] ^ streamWord(key, j);
     }
-    i32[] v = i32[2]();
+    i32[] v = i32[].filled(2, 0);
     j[0] = 0;
     for (i32 i = 0; i < 18; i += 2) {
       v[0] = v[0] ^ streamWord(data, j);
@@ -106,11 +106,11 @@ export struct Blowfish {
 
   /** The same, unsalted: the running block is not xored with anything between encryptions. */
   void expand0State(this, u8[] key) {
-    i32[] j = i32[1]();
+    i32[] j = i32[].filled(1, 0);
     for (i32 i = 0; i < 18; i++) {
       this.p[i] = this.p[i] ^ streamWord(key, j);
     }
-    i32[] v = i32[2]();
+    i32[] v = i32[].filled(2, 0);
     for (i32 i = 0; i < 18; i += 2) {
       this.encipher(v, 0);
       this.p[i] = v[0];
@@ -142,12 +142,13 @@ i32 streamWord(u8[] src, i32[] j) {
   return v;
 }
 
-const i32[] P_INIT = i32[](
+const i32[] P_INIT = [
   608135816, -2052912941, 320440878, 57701188, -1542899678, 698298832,
   137296536, -330404727, 1160258022, 953160567, -1101764913, 887688300,
-  -1062458953, -914599715, 1065670069, -1253635817, -1843997223, -1988494565);
+  -1062458953, -914599715, 1065670069, -1253635817, -1843997223, -1988494565
+];
 
-const i32[] S_INIT = i32[](
+const i32[] S_INIT = [
   -785314906, -1730169428, 805139163, -803545161, -1193168915, 1780907670,
   -1166241723, -248741991, 614570311, -1282315017, 134345442, -2054226922,
   1667834072, 1901547113, -1537671517, -191677058, 227898511, 1921955416,
@@ -318,4 +319,5 @@ const i32[] S_INIT = i32[](
   950779232, 625454576, -1170726756, -146354570, 2007998917, 544563296,
   -2050228658, -1964470824, 2058025392, 1291430526, 424198748, 50039436,
   29584100, -689184263, -1865090967, -1503863136, 1057563949, -1039604065,
-  -1219600078, -831004069, 1469046755, 985887462);
+  -1219600078, -831004069, 1469046755, 985887462
+];

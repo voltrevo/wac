@@ -37,13 +37,13 @@ const i32 EPOCH_0RTT = 2;
 const i32 EPOCH_1RTT = 3;
 
 i32[] token() {
-  i32[] out = i32[16]();
+  i32[] out = i32[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { out[i] = 0xA0 + i; }
   return out;
 }
 
-i32[] cid() { return i32[](0xDE, 0xAD, 0xBE, 0xEF, 0x01); }
-i32[] eight() { return i32[](1, 2, 3, 4, 5, 6, 7, 8); }
+i32[] cid() { return [0xDE, 0xAD, 0xBE, 0xEF, 0x01] as i32[]; }
+i32[] eight() { return [1, 2, 3, 4, 5, 6, 7, 8] as i32[]; }
 
 /**
  * One row of table 3: the bytes, the type it should read as, its length, and where it is legal.
@@ -70,13 +70,13 @@ i32 epochsOf(i32[] which) {
 }
 
 u8[] bytesOf(i32[] parts) {
-  u8[] out = u8[parts.len()]();
+  u8[] out = u8[].filled(parts.len(), 0);
   for (i32 i = 0; i < parts.len(); i++) { out[i] = parts[i]; }
   return out;
 }
 
 u8[] concat(i32[] head, i32[] a, i32[] b) {
-  u8[] out = u8[head.len() + a.len() + b.len()]();
+  u8[] out = u8[].filled(head.len() + a.len() + b.len(), 0);
   i32 at = 0;
   for (i32 i = 0; i < head.len(); i++) { out[at] = head[i]; at = at + 1; }
   for (i32 i = 0; i < a.len(); i++) { out[at] = a[i]; at = at + 1; }
@@ -85,38 +85,39 @@ u8[] concat(i32[] head, i32[] a, i32[] b) {
 }
 
 Row[] rows() {
-  i32 app = epochsOf(i32[](EPOCH_0RTT, EPOCH_1RTT));
-  i32 oneRtt = epochsOf(i32[](EPOCH_1RTT));
-  i32 handshakeish = epochsOf(i32[](EPOCH_INITIAL, EPOCH_HANDSHAKE, EPOCH_1RTT));
-  return Row[](
-    Row("PADDING", bytesOf(i32[](0x00, 0x00, 0x00)), 0x00, 3, anyEpoch()),
-    Row("PING", bytesOf(i32[](0x01)), 0x01, 1, anyEpoch()),
+  i32 app = epochsOf([EPOCH_0RTT, EPOCH_1RTT]);
+  i32 oneRtt = epochsOf([EPOCH_1RTT]);
+  i32 handshakeish = epochsOf([EPOCH_INITIAL, EPOCH_HANDSHAKE, EPOCH_1RTT]);
+  return [
+    Row("PADDING", bytesOf([0x00, 0x00, 0x00] as i32[]), 0x00, 3, anyEpoch()),
+    Row("PING", bytesOf([0x01] as i32[]), 0x01, 1, anyEpoch()),
     // largest 5, delay 0, one range block, first-range 5.
-    Row("ACK", bytesOf(i32[](0x02, 5, 0, 0, 5)), 0x02, 5, handshakeish),
-    Row("RESET_STREAM", bytesOf(i32[](0x04, 4, 7, 60)), 0x04, 4, app),
-    Row("STOP_SENDING", bytesOf(i32[](0x05, 4, 7)), 0x05, 3, app),
-    Row("CRYPTO", bytesOf(i32[](0x06, 0, 2, 0xAA, 0xBB)), 0x06, 5, handshakeish),
-    Row("NEW_TOKEN", bytesOf(i32[](0x07, 3, 9, 9, 9)), 0x07, 5, oneRtt),
+    Row("ACK", bytesOf([0x02, 5, 0, 0, 5] as i32[]), 0x02, 5, handshakeish),
+    Row("RESET_STREAM", bytesOf([0x04, 4, 7, 60] as i32[]), 0x04, 4, app),
+    Row("STOP_SENDING", bytesOf([0x05, 4, 7] as i32[]), 0x05, 3, app),
+    Row("CRYPTO", bytesOf([0x06, 0, 2, 0xAA, 0xBB] as i32[]), 0x06, 5, handshakeish),
+    Row("NEW_TOKEN", bytesOf([0x07, 3, 9, 9, 9] as i32[]), 0x07, 5, oneRtt),
     // STREAM with LEN and FIN: type 0x0b = 0x08 | LEN | FIN. id 4, length 2, two bytes.
-    Row("STREAM len+fin", bytesOf(i32[](0x0B, 4, 2, 0x11, 0x22)), 0x09, 5, app),
+    Row("STREAM len+fin", bytesOf([0x0B, 4, 2, 0x11, 0x22] as i32[]), 0x09, 5, app),
     // STREAM with OFF and LEN, no FIN: 0x0e. **A two-byte varint offset**, 0x4123 = 291.
-    Row("STREAM off+len", bytesOf(i32[](0x0E, 4, 0x41, 0x23, 2, 0x33, 0x44)), 0x08, 7, app),
-    Row("MAX_DATA", bytesOf(i32[](0x10, 63)), 0x10, 2, app),
-    Row("MAX_STREAM_DATA", bytesOf(i32[](0x11, 4, 60)), 0x11, 3, app),
-    Row("MAX_STREAMS bidi", bytesOf(i32[](0x12, 8)), 0x12, 2, app),
-    Row("MAX_STREAMS uni", bytesOf(i32[](0x13, 8)), 0x13, 2, app),
-    Row("DATA_BLOCKED", bytesOf(i32[](0x14, 20)), 0x14, 2, app),
-    Row("STREAM_DATA_BLOCKED", bytesOf(i32[](0x15, 4, 20)), 0x15, 3, app),
-    Row("STREAMS_BLOCKED bidi", bytesOf(i32[](0x16, 3)), 0x16, 2, app),
-    Row("STREAMS_BLOCKED uni", bytesOf(i32[](0x17, 3)), 0x17, 2, app),
+    Row("STREAM off+len", bytesOf([0x0E, 4, 0x41, 0x23, 2, 0x33, 0x44] as i32[]), 0x08, 7, app),
+    Row("MAX_DATA", bytesOf([0x10, 63] as i32[]), 0x10, 2, app),
+    Row("MAX_STREAM_DATA", bytesOf([0x11, 4, 60] as i32[]), 0x11, 3, app),
+    Row("MAX_STREAMS bidi", bytesOf([0x12, 8] as i32[]), 0x12, 2, app),
+    Row("MAX_STREAMS uni", bytesOf([0x13, 8] as i32[]), 0x13, 2, app),
+    Row("DATA_BLOCKED", bytesOf([0x14, 20] as i32[]), 0x14, 2, app),
+    Row("STREAM_DATA_BLOCKED", bytesOf([0x15, 4, 20] as i32[]), 0x15, 3, app),
+    Row("STREAMS_BLOCKED bidi", bytesOf([0x16, 3] as i32[]), 0x16, 2, app),
+    Row("STREAMS_BLOCKED uni", bytesOf([0x17, 3] as i32[]), 0x17, 2, app),
     // seq 1, retire 0, a 5-byte id, a 16-byte token: 1 + 1 + 1 + 1 + 5 + 16.
-    Row("NEW_CONNECTION_ID", concat(i32[](0x18, 1, 0, 5), cid(), token()), 0x18, 25, app),
-    Row("RETIRE_CONNECTION_ID", bytesOf(i32[](0x19, 2)), 0x19, 2, app),
-    Row("PATH_CHALLENGE", concat(i32[](0x1A), eight(), i32[0]()), 0x1A, 9, app),
-    Row("PATH_RESPONSE", concat(i32[](0x1B), eight(), i32[0]()), 0x1B, 9, oneRtt),
-    Row("CONNECTION_CLOSE transport", bytesOf(i32[](0x1C, 10, 0, 1, 0x21)), 0x1C, 5, handshakeish),
-    Row("CONNECTION_CLOSE application", bytesOf(i32[](0x1D, 10, 1, 0x21)), 0x1C, 4, app),
-    Row("HANDSHAKE_DONE", bytesOf(i32[](0x1E)), 0x1E, 1, oneRtt));
+    Row("NEW_CONNECTION_ID", concat([0x18, 1, 0, 5] as i32[], cid(), token()), 0x18, 25, app),
+    Row("RETIRE_CONNECTION_ID", bytesOf([0x19, 2] as i32[]), 0x19, 2, app),
+    Row("PATH_CHALLENGE", concat([0x1A] as i32[], eight(), i32[]()), 0x1A, 9, app),
+    Row("PATH_RESPONSE", concat([0x1B] as i32[], eight(), i32[]()), 0x1B, 9, oneRtt),
+    Row("CONNECTION_CLOSE transport", bytesOf([0x1C, 10, 0, 1, 0x21] as i32[]), 0x1C, 5, handshakeish),
+    Row("CONNECTION_CLOSE application", bytesOf([0x1D, 10, 1, 0x21] as i32[]), 0x1C, 4, app),
+    Row("HANDSHAKE_DONE", bytesOf([0x1E] as i32[]), 0x1E, 1, oneRtt)
+  ];
 }
 
 /** The highest epoch a row is legal in, so a read is about the encoding rather than the column. */
@@ -165,9 +166,9 @@ export string test_a_walk_over_all_of_them_ends_exactly_at_the_end() {
     legal = legal + 1;
     total = total + all[i].bytes.len();
   }
-  u8[] b = u8[total]();
-  i32[] kinds = i32[legal]();
-  string[] names = string[legal](fill: "");
+  u8[] b = u8[].filled(total, 0);
+  i32[] kinds = i32[].filled(legal, 0);
+  string[] names = string[].filled(legal, "");
   i32 at = 0;
   i32 k = 0;
   for (i32 i = 0; i < all.len(); i++) {
@@ -202,46 +203,46 @@ export string test_a_walk_over_all_of_them_ends_exactly_at_the_end() {
 export string test_a_stream_frames_fields() {
   T t = T.create();
   // 0x0b: LEN and FIN. Stream 4, no offset field, two bytes, and the stream ends here.
-  u8[] withLen = bytesOf(i32[](0x0B, 4, 2, 0x11, 0x22));
+  u8[] withLen = bytesOf([0x0B, 4, 2, 0x11, 0x22] as i32[]);
   t.eqI64(streamId(withLen, 0), 4, "the stream id");
   t.eqI64(streamOffset(withLen, 0), 0, "no OFF bit means offset zero, not offset absent");
-  t.eqBytes(streamData(withLen, 0), bytesOf(i32[](0x11, 0x22)), "its data");
+  t.eqBytes(streamData(withLen, 0), bytesOf([0x11, 0x22] as i32[]), "its data");
   t.isTrue(streamFin(withLen, 0), "and the fin bit");
 
   // 0x0e: OFF and LEN, no FIN. The offset is the two-byte varint 0x4123, which is 0x123 = 291.
-  u8[] withOff = bytesOf(i32[](0x0E, 4, 0x41, 0x23, 2, 0x33, 0x44));
+  u8[] withOff = bytesOf([0x0E, 4, 0x41, 0x23, 2, 0x33, 0x44] as i32[]);
   t.eqI64(streamOffset(withOff, 0), 291, "a two-byte varint offset");
   t.isFalse(streamFin(withOff, 0), "and no fin");
-  t.eqBytes(streamData(withOff, 0), bytesOf(i32[](0x33, 0x44)), "its data");
+  t.eqBytes(streamData(withOff, 0), bytesOf([0x33, 0x44] as i32[]), "its data");
 
   // **No LEN bit: the frame runs to the end of the packet.** This is the case a reader that always
   // expected a length gets wrong, and it gets it wrong by reading the next frame's bytes as this
   // frame's length — so it is worth its own line.
-  u8[] toEnd = bytesOf(i32[](0x08, 4, 0x77, 0x88, 0x99));
-  t.eqBytes(streamData(toEnd, 0), bytesOf(i32[](0x77, 0x88, 0x99)), "it runs to the end");
+  u8[] toEnd = bytesOf([0x08, 4, 0x77, 0x88, 0x99] as i32[]);
+  t.eqBytes(streamData(toEnd, 0), bytesOf([0x77, 0x88, 0x99] as i32[]), "it runs to the end");
   t.eqI32(sizeAtIn(toEnd, 0, EPOCH_1RTT), 5, "and it takes the whole buffer");
   return t.report();
 }
 
 export string test_a_new_connection_ids_parts_land_where_they_belong() {
   T t = T.create();
-  u8[] b = concat(i32[](0x18, 1, 0, 5), cid(), token());
+  u8[] b = concat([0x18, 1, 0, 5] as i32[], cid(), token());
   t.eqI64(newCidSeq(b, 0), 1, "the sequence number");
   t.eqBytes(newCid(b, 0), bytesOf(cid()), "the connection id");
   t.eqBytes(newCidToken(b, 0), bytesOf(token()), "the stateless-reset token");
 
   // A zero-length id is a protocol violation rather than an empty id: a peer using zero-length ids
   // cannot be handed a new one, so RFC 9000 §19.15 fixes the range at 1 to 20.
-  t.eqI32(kindAtIn(concat(i32[](0x18, 1, 0, 0), token(), i32[0]()), 0, EPOCH_1RTT), -4,
+  t.eqI32(kindAtIn(concat([0x18, 1, 0, 0] as i32[], token(), i32[]()), 0, EPOCH_1RTT), -4,
           "a zero-length id is refused");
-  i32[] twentyOne = i32[21]();
+  i32[] twentyOne = i32[].filled(21, 0);
   for (i32 i = 0; i < 21; i++) { twentyOne[i] = 1; }
-  t.eqI32(kindAtIn(concat(i32[](0x18, 1, 0, 21), twentyOne, token()), 0, EPOCH_1RTT), -4,
+  t.eqI32(kindAtIn(concat([0x18, 1, 0, 21] as i32[], twentyOne, token()), 0, EPOCH_1RTT), -4,
           "and so is one past 20");
 
   // Truncated before the token: the frame is not there, and that is Incomplete rather than a
   // violation — the datagram may simply have ended.
-  u8[] short = u8[b.len() - 1]();
+  u8[] short = u8[].filled(b.len() - 1, 0);
   for (i32 i = 0; i < short.len(); i++) { short[i] = b[i]; }
   t.eqI32(kindAtIn(short, 0, EPOCH_1RTT), -1, "a byte short is Incomplete");
   return t.report();
@@ -249,9 +250,9 @@ export string test_a_new_connection_ids_parts_land_where_they_belong() {
 
 export string test_max_stream_data_and_max_streams_read_their_numbers_and_their_kind() {
   T t = T.create();
-  t.eqI64(maxStreamDataFor(bytesOf(i32[](0x11, 4, 60)), 0), 60, "MAX_STREAM_DATA's number");
-  t.isFalse(maxStreamsIsUni(bytesOf(i32[](0x12, 8)), 0), "0x12 is bidirectional");
-  t.isTrue(maxStreamsIsUni(bytesOf(i32[](0x13, 8)), 0), "0x13 is unidirectional");
+  t.eqI64(maxStreamDataFor(bytesOf([0x11, 4, 60] as i32[]), 0), 60, "MAX_STREAM_DATA's number");
+  t.isFalse(maxStreamsIsUni(bytesOf([0x12, 8] as i32[]), 0), "0x12 is bidirectional");
+  t.isTrue(maxStreamsIsUni(bytesOf([0x13, 8] as i32[]), 0), "0x13 is unidirectional");
   return t.report();
 }
 
@@ -261,28 +262,28 @@ export string test_a_stream_is_reassembled_by_offset_not_by_arrival() {
   // packet reordering is what does, which is to say only in production.
   T t = T.create();
   // Two frames, the second one first: offsets 3 and 0. `0x0e` is STREAM with OFF and LEN.
-  i32[] later = i32[](0x0E, 0, 3, 3, 0x64, 0x65, 0x66);   // "def" at offset 3
-  i32[] first = i32[](0x0E, 0, 0, 3, 0x61, 0x62, 0x63);   // "abc" at offset 0
-  t.eqStr(streamText(concat(later, first, i32[0]()), 0), "abcdef",
+  i32[] later = [0x0E, 0, 3, 3, 0x64, 0x65, 0x66];   // "def" at offset 3
+  i32[] first = [0x0E, 0, 0, 3, 0x61, 0x62, 0x63];   // "abc" at offset 0
+  t.eqStr(streamText(concat(later, first, i32[]()), 0), "abcdef",
           "arrival order is not offset order");
-  t.isTrue(streamWholeFor(concat(later, first, i32[0]()), 0), "and the stream is whole");
+  t.isTrue(streamWholeFor(concat(later, first, i32[]()), 0), "and the stream is whole");
 
   // A gap is not a short read. Offsets 0 and 6 with nothing between is a stream this reader cannot
   // represent — one packet has nowhere to keep the pieces — so it says so rather than handing back
   // "abc\0\0" and letting a caller believe it.
-  u8[] gapped = concat(first, i32[](0x0E, 0, 6, 2, 0x67, 0x68), i32[0]());
+  u8[] gapped = concat(first, [0x0E, 0, 6, 2, 0x67, 0x68] as i32[], i32[]());
   t.isFalse(streamWholeFor(gapped, 0), "a hole is reported, not zero-filled");
   t.eqI32(streamLenFor(gapped, 0), 0, "and nothing is handed back");
 
   // Frames for another stream in the same payload are not this stream's data. A reader that walked
   // frames and ignored the id would pass every case above.
-  u8[] mixed = concat(first, i32[](0x0E, 4, 0, 3, 0x78, 0x79, 0x7A), i32[0]());
+  u8[] mixed = concat(first, [0x0E, 4, 0, 3, 0x78, 0x79, 0x7A] as i32[], i32[]());
   t.eqStr(streamText(mixed, 0), "abc", "stream 4's bytes are not stream 0's");
   t.eqStr(streamText(mixed, 4), "xyz", "and stream 4 has its own");
 
   // FIN is a fact about the stream, so it is reported even when the data has a hole — a caller that
   // has to buffer still needs to know the peer has stopped sending.
-  u8[] finished = concat(first, i32[](0x0F, 0, 6, 2, 0x67, 0x68), i32[0]());
+  u8[] finished = concat(first, [0x0F, 0, 6, 2, 0x67, 0x68] as i32[], i32[]());
   t.isTrue(streamFinFor(finished, 0), "the fin bit is read");
   t.isFalse(streamWholeFor(finished, 0), "and it does not paper over the gap");
   return t.report();

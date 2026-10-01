@@ -27,7 +27,7 @@ export i32 tar(Core core, Cli cli, Fs fs, Args a) {
   }
   // Two zero blocks end the archive. Without them GNU tar reads the stream fine and then
   // says "unexpected EOF", which is the sort of thing a round trip with itself misses.
-  cli.write(u8[1024](fill: 0));
+  cli.write(u8[].filled(1024, 0));
   return code;
 }
 
@@ -108,7 +108,7 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   // Pad the contents to a block. A file that is already a multiple gets nothing, which is
   // why this is a remainder and not an unconditional block.
   i32 rest = f.bytes.len() % 512;
-  if (rest != 0) { cli.write(u8[512 - rest](fill: 0)); }
+  if (rest != 0) { cli.write(u8[].filled(512 - rest, 0)); }
   return true;
 }
 
@@ -121,7 +121,7 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
  */
 u8[] header(string path, i32 size, i64 mtimeMillis, i32 kind) {
   u8[] name = path.toBytes();
-  u8[] h = u8[512](fill: 0);
+  u8[] h = u8[].filled(512, 0);
   for (i32 i = 0; i < name.len() && i < 100; i++) { h[i] = name[i]; }
 
   putOctal(h, 100, 8, 493);                       // mode: 0755

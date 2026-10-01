@@ -23,7 +23,7 @@ export i64 wide(i64 a) { return a * 2; }
 export string greet(string who) { return "hi " + who; }
 export u8[] echo(u8[] b) { return b; }
 export i32[] doubled(i32[] xs) {
-  i32[] out = i32[xs.len()](fill: 0);
+  i32[] out = i32[].filled(xs.len(), 0);
   for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }
   return out;
 }

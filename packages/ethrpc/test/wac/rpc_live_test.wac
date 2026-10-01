@@ -41,7 +41,7 @@ export string test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_sock
   t.isTrue(node.ok(), "anvil came up — " + node.why);
   if (!node.ok()) { return t.report(); }
 
-  Exec r = runExample(cli, ENTRY, string[]("127.0.0.1", itoa(node.port)));
+  Exec r = runExample(cli, ENTRY, ["127.0.0.1", itoa(node.port)]);
   t.eqI32(r.status, 0, "exit " + itoa(r.status) + ": " + string.fromBytes(r.stderr));
   // anvil starts at block zero and mines on demand, so the answer is `0x0` — checked exactly, because
   // "some hex string" would pass for an error message that happened to start with 0x.
@@ -52,7 +52,7 @@ export string test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_sock
   i32 dead = deadPort.port;
   t.isTrue(dead > 0, "a port nothing is listening on — " + deadPort.error);
   if (dead > 0) {
-    Exec bad = runExample(cli, ENTRY, string[]("127.0.0.1", itoa(dead)));
+    Exec bad = runExample(cli, ENTRY, ["127.0.0.1", itoa(dead)]);
     t.eqI32(bad.status, 1, "a refused connection should fail: " + string.fromBytes(bad.stdout));
     t.isTrue(string.fromBytes(bad.stderr).indexOf("blocknumber:") >= 0,
              "the refusal does not name the program: " + string.fromBytes(bad.stderr));

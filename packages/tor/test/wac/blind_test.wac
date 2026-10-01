@@ -177,9 +177,9 @@ export string test_blinding_refuses_what_it_should(Core core, Cli cli) {
   t.isTrue(!equal(good, blindedSecretKey(hexOf(cli, 1, "identitySecret"), factor)),
            "another identity gives another key");
 
-  t.eqI32(blindedSecretKey(u8[32](), factor).len(), 0, "a 32-byte secret is not an expanded one");
-  t.eqI32(blindedSecretKey(secret, u8[31]()).len(), 0, "a 31-byte factor is not a factor");
-  t.eqI32(blindedSecretKey(u8[0](), factor).len(), 0, "and nothing is not a secret");
+  t.eqI32(blindedSecretKey(u8[].filled(32, 0), factor).len(), 0, "a 32-byte secret is not an expanded one");
+  t.eqI32(blindedSecretKey(secret, u8[].filled(31, 0)).len(), 0, "a 31-byte factor is not a factor");
+  t.eqI32(blindedSecretKey(u8[](), factor).len(), 0, "and nothing is not a secret");
 
   t.eqStr(BLIND_PREFIX_STRING, "Derive temporary signing key hash input", "tor's own string");
   return t.report();
@@ -187,7 +187,7 @@ export string test_blinding_refuses_what_it_should(Core core, Cli cli) {
 
 /** Flip a bit that keeps the scalar clamped, so the change is about blinding and not about clamping. */
 u8[] flipScalar(u8[] b) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
   out[1] = out[1] ^ 1;
   return out;
@@ -195,7 +195,7 @@ u8[] flipScalar(u8[] b) {
 
 /** Flip a byte of the prefix half, which only the rehash depends on. */
 u8[] flipPrefix(u8[] b) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
   out[40] = out[40] ^ 1;
   return out;

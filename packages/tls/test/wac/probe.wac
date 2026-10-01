@@ -47,7 +47,7 @@ import { parseClientHello, ClientHello, serverHello, encryptedExtensions, certif
 export u8[] tlsParseClientHello(u8[] body, i32 preferred) {
   ClientHello ch = parseClientHello(body, preferred);
   i32 n = 2 + 1 + 1 + ch.sessionId.len() + 1 + ch.keyShare.len() + 2 + ch.serverName.len() + 32;
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 p = 0;
   out[p] = (ch.suite >> 8) & 0xFF; p++;
   out[p] = ch.suite & 0xFF; p++;
@@ -109,9 +109,11 @@ import { parseCert, Cert, certMatchesHost, certSignedBy, verifyChain, verifyPath
  * and no test noticed, because no test called them.
  */
 export u8[] x509Constants() {
-  return u8[](keyEd25519(), keyP256(), keyRsa(), keyP384(),
+  return [
+              keyEd25519(), keyP256(), keyRsa(), keyP384(),
               sigEd25519Alg(), sigEcdsaSha256(), sigEcdsaSha384(),
-              sigRsaSha256(), sigRsaSha384(), sigRsaSha512(), sigRsaPss());
+              sigRsaSha256(), sigRsaSha384(), sigRsaSha512(), sigRsaPss()
+  ];
 }
 
 /**
@@ -123,7 +125,7 @@ export u8[] x509Parse(u8[] der) {
   Cert c = parseCert(der);
   i32 n = 8 + 8 + 1 + 1 + 1 + 2 + c.publicKey.len() + 1 + c.rsaExponent.len()
         + 2 + c.dnsNames.len();
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 p = 0;
   for (i32 i = 0; i < 8; i++) { out[p + i] = ((c.notBefore >> (((7 - i) * 8) as i64)) & 255) as! i32; }
   p += 8;
@@ -194,12 +196,13 @@ import {
   alertUnsupportedCertificate, alertCertificateExpired, alertUnknownCa, alertBody,
 } from "../../src/record.wac";
 export u8[] alertCodes() {
-  return u8[](
+  return [
     alertCloseNotify(), alertUnexpectedMessage(), alertBadRecordMac(),
     alertHandshakeFailure(), alertBadCertificate(), alertUnsupportedCertificate(),
     alertCertificateExpired(), alertIllegalParameter(), alertUnknownCa(),
     alertDecodeError(), alertDecryptError(), alertProtocolVersion(),
-    alertMissingExtension(), alertNoApplicationProtocol());
+    alertMissingExtension(), alertNoApplicationProtocol()
+  ];
 }
 export u8[] alertEncode(i32 description) { return alertBody(description); }
 
@@ -231,7 +234,7 @@ export i32 wireRead(u8[] buf, i32 op, i32 n) {
 /** Write a length-prefixed vector of `n` bytes; traps where the Writer does. */
 export i32 wireVec(i32 width, i32 n) {
   Writer w = Writer.create();
-  u8[] src = u8[n]();
+  u8[] src = u8[].filled(n, 0);
   if (width == 8) { w.vec8(src); }
   else if (width == 16) { w.vec16(src); }
   else if (width == 24) { w.vec24(src); }

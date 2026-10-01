@@ -69,7 +69,7 @@ export void check(T t, Cli cli, string program, string[] args, Lines lines, stri
 
 /** The common case: a Deno oracle script in this repository. */
 export void checkDeno(T t, Cli cli, string script, Lines lines, string what) {
-  check(t, cli, "deno", string[]("run", "--no-check", script), lines, what);
+  check(t, cli, "deno", ["run", "--no-check", script], lines, what);
 }
 
 /**
@@ -114,9 +114,9 @@ export Answers ask(T t, Cli cli, string program, string[] args, Lines lines, str
 Answers askBytes(T t, Cli cli, string program, string[] args, u8[] payload, i32 n, string what) {
   Exec r = cli.exec(program, args, payload).wait();
   t.isTrue(r.ran(), what + ": the oracle ran — " + r.error);
-  if (!r.ran()) { return Answers(false, string[0](fill: "")); }
+  if (!r.ran()) { return Answers(false, string[].filled(0, "")); }
   t.eqI32(r.status, 0, what + ": the oracle exited zero — " + string.fromBytes(r.stderr));
-  if (r.status != 0) { return Answers(false, string[0](fill: "")); }
+  if (r.status != 0) { return Answers(false, string[].filled(0, "")); }
 
   string out = string.fromBytes(r.stdout);
   i32 count = 0;
@@ -125,7 +125,7 @@ Answers askBytes(T t, Cli cli, string program, string[] args, u8[] payload, i32 
   }
   if (out.len() > 0 && out.slice(out.len() - 1, out.len()) != "\n") { count = count + 1; }
 
-  string[] all = string[count](fill: "");
+  string[] all = string[].filled(count, "");
   i32 at = 0;
   i32 from = 0;
   for (i32 i = 0; i <= out.len(); i++) {
@@ -143,9 +143,9 @@ Answers askBytes(T t, Cli cli, string program, string[] args, u8[] payload, i32 
     }
   }
   t.eqStr(last, "DONE " + itoa(n), what + ": the oracle answered everything it was sent");
-  if (last != "DONE " + itoa(n)) { return Answers(false, string[0](fill: "")); }
+  if (last != "DONE " + itoa(n)) { return Answers(false, string[].filled(0, "")); }
 
-  string[] answers = string[at - 1](fill: "");
+  string[] answers = string[].filled(at - 1, "");
   for (i32 i = 0; i < at - 1; i++) { answers[i] = all[i]; }
   return Answers(true, answers);
 }
@@ -224,7 +224,7 @@ export string askArgvCached(T t, Cli cli, string program, string[] args, string 
     if (deep > newest) { newest = deep; }
   }
   string stamp = itoa((newest / (1000 as i64)) as! i32);
-  string[] parts = string[args.len() + inputs.len()](fill: "");
+  string[] parts = string[].filled(args.len() + inputs.len(), "");
   for (i32 i = 0; i < args.len(); i++) { parts[i] = args[i]; }
   for (i32 i = 0; i < inputs.len(); i++) { parts[args.len() + i] = inputs[i]; }
   string key = name + "-" + itoa(sumOfStrings(parts)) + "-" + itoa(parts.len()) + "-" + stamp;
@@ -233,7 +233,7 @@ export string askArgvCached(T t, Cli cli, string program, string[] args, string 
   FileResult held = cli.readFile(path).wait();
   if (held.ok) { return string.fromBytes(held.bytes); }
 
-  Exec r = cli.exec(program, args, u8[0]()).wait();
+  Exec r = cli.exec(program, args, u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0, what + ": the oracle ran — " + string.fromBytes(r.stderr));
   if (!r.ran() || r.status != 0) { return ""; }
   string answer = string.fromBytes(r.stdout);
@@ -304,7 +304,7 @@ string[] linesOf(string body) {
     if (i > from) { n = n + 1; }
     from = i + 1;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   from = 0;
   for (i32 i = 0; i <= body.len(); i++) {
@@ -316,7 +316,7 @@ string[] linesOf(string body) {
 }
 
 export Answers askDeno(T t, Cli cli, string script, Lines lines, string what) {
-  return ask(t, cli, "deno", string[]("run", "--no-check", script), lines, what);
+  return ask(t, cli, "deno", ["run", "--no-check", script], lines, what);
 }
 
 /** The `n`th space-separated word of a line, or `""`. */

@@ -37,7 +37,7 @@ const string WIRE = "E\tNode@2\tNode__two\tElement:tag:string;Text:\n";
 const string SIGS = "make\tNode@2\t\n";
 
 /** A bare wasm header — nothing here instantiates it. */
-u8[] header() { return u8[](0, 0x61, 0x73, 0x6d, 1, 0, 0, 0); }
+u8[] header() { return [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0] as u8[]; }
 
 /** Whether `line` is prose rather than code. The glue's doc comments quote the wac name, `@` and all. */
 bool isComment(string line) {

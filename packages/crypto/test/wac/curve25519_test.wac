@@ -38,12 +38,12 @@ const i32 ED_VERIFY = 2;
 const i32 X_BASE = 3;
 const i32 X_SHARED = 4;
 u8[] fill(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 41 + seed * 7 + 13) & 0xFF; }
   return out;
 }
 u8[] cat3(u8[] a, u8[] b) {
-  u8[] o = u8[a.len() + b.len()]();
+  u8[] o = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
@@ -81,7 +81,7 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
  * needs a host lane. `issues/system/0161`.
  */
 void checkCurve(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", string[](ORACLE), lines, what);
+  check(t, cli, "node", [ORACLE], lines, what);
 }
 
 export string test_x25519_agrees_with_the_host(Core core, Cli cli) {
@@ -110,7 +110,7 @@ export string test_x25519_clamps_its_scalar() {
   // every randomly generated scalar.
   T t = T.create();
   u8[] base = fill(32, 5);
-  u8[] clamped = u8[32]();
+  u8[] clamped = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { clamped[i] = base[i]; }
   clamped[0] = clamped[0] & 248;        // low three bits
   clamped[31] = (clamped[31] & 127) | 64;
@@ -118,7 +118,7 @@ export string test_x25519_clamps_its_scalar() {
 
   // And a scalar differing outside those bits must give a different answer, or the test
   // above would be satisfied by ignoring the scalar entirely.
-  u8[] different = u8[32]();
+  u8[] different = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { different[i] = base[i]; }
   different[10] = different[10] ^ 0xFF;
   t.isFalse(equal(x25519Base(base), x25519Base(different)), "other bits do matter");
@@ -157,9 +157,9 @@ export string test_ed25519_rejects_what_it_should(Core core, Cli cli) {
   u8[] sig = ed25519Sign(seed, msg);
   t.isTrue(ed25519Verify(pub, msg, sig), "the genuine signature verifies");
 
-  i32[] spots = i32[](0, 31, 32, 63);
+  i32[] spots = [0, 31, 32, 63];
   for (i32 i = 0; i < spots.len(); i++) {
-    u8[] bad = u8[64]();
+    u8[] bad = u8[].filled(64, 0);
     for (i32 j = 0; j < 64; j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     t.isFalse(ed25519Verify(pub, msg, bad),
@@ -175,7 +175,7 @@ export string test_ed25519_rejects_what_it_should(Core core, Cli cli) {
   Lines lines = Lines.create();
   lines.add("edverify " + hex(pub) + " " + hex(sig) + " " + hex(msg) + " 1");
   for (i32 i = 0; i < spots.len(); i++) {
-    u8[] bad = u8[64]();
+    u8[] bad = u8[].filled(64, 0);
     for (i32 j = 0; j < 64; j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     lines.add("edverify " + hex(pub) + " " + hex(bad) + " " + hex(msg) + " 0");
@@ -193,18 +193,19 @@ export string test_low_order_points_give_an_all_zero_secret() {
   // on the identity, whose u-coordinate encodes as zero. A peer can send one to force a
   // known shared secret, so producing the documented value is what lets a caller notice.
   T t = T.create();
-  string[] lowOrder = string[](
+  string[] lowOrder = [
     "0000000000000000000000000000000000000000000000000000000000000000",
     "0100000000000000000000000000000000000000000000000000000000000000",
     "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
     "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
     "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
     "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
-  u8[] scalar = u8[32]();
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+  ];
+  u8[] scalar = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { scalar[i] = (i * 29 + 3) & 0xFF; }
   for (i32 i = 0; i < lowOrder.len(); i++) {
-    t.eqBytes(x25519(scalar, decoded(lowOrder[i])), u8[32](),
+    t.eqBytes(x25519(scalar, decoded(lowOrder[i])), u8[].filled(32, 0),
               "low-order point " + itoa64(i as i64) + " gives an all-zero secret");
   }
   return t.report();
@@ -215,10 +216,10 @@ export string test_the_top_bit_of_a_u_coordinate_is_ignored() {
   // Two encodings of the same point must therefore give the same secret, and an
   // implementation that skips the mask disagrees with every peer on half its inputs.
   T t = T.create();
-  u8[] scalar = u8[32]();
+  u8[] scalar = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { scalar[i] = (i * 13 + 7) & 0xFF; }
   u8[] u = x25519Base(scalar);
-  u8[] withTopBit = u8[32]();
+  u8[] withTopBit = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { withTopBit[i] = u[i]; }
   withTopBit[31] = withTopBit[31] | 0x80;
   t.eqBytes(x25519(scalar, u), x25519(scalar, withTopBit),
@@ -234,18 +235,18 @@ export string test_rfc_8032_ed25519_vectors() {
   u8[] seed1 = decoded("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
   u8[] pub1 = decoded("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
   t.eqBytes(ed25519PublicKey(seed1), pub1, "RFC 8032 test 1 public key");
-  t.eqBytes(ed25519Sign(seed1, u8[0]()),
+  t.eqBytes(ed25519Sign(seed1, u8[]()),
             decoded("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
                   "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"),
             "RFC 8032 test 1 signature over the empty message");
-  t.isTrue(ed25519Verify(pub1, u8[0](),
+  t.isTrue(ed25519Verify(pub1, u8[](),
                          decoded("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
                                "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")),
            "and it verifies");
 
   u8[] seed2 = decoded("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
   u8[] pub2 = decoded("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
-  u8[] msg2 = u8[1]();
+  u8[] msg2 = u8[].filled(1, 0);
   msg2[0] = 0x72;
   t.eqBytes(ed25519PublicKey(seed2), pub2, "RFC 8032 test 2 public key");
   t.eqBytes(ed25519Sign(seed2, msg2),
@@ -265,7 +266,7 @@ export string test_a_non_canonical_s_is_rejected() {
   T t = T.create();
   u8[] seed = decoded("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
   u8[] pub = ed25519PublicKey(seed);
-  u8[] msg = u8[1]();
+  u8[] msg = u8[].filled(1, 0);
   msg[0] = 0x72;
   u8[] sig = ed25519Sign(seed, msg);
   t.isTrue(ed25519Verify(pub, msg, sig), "the genuine signature verifies");
@@ -273,7 +274,7 @@ export string test_a_non_canonical_s_is_rejected() {
   u8[] L = decoded("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
 
   // S + L, added little-endian with carry.
-  u8[] plusL = u8[64]();
+  u8[] plusL = u8[].filled(64, 0);
   for (i32 i = 0; i < 32; i++) { plusL[i] = sig[i]; }
   i32 carry = 0;
   for (i32 i = 0; i < 32; i++) {
@@ -284,7 +285,7 @@ export string test_a_non_canonical_s_is_rejected() {
   t.isFalse(ed25519Verify(pub, msg, plusL), "S + L is refused");
 
   // S = L exactly, the boundary the range check is written against.
-  u8[] atL = u8[64]();
+  u8[] atL = u8[].filled(64, 0);
   for (i32 i = 0; i < 32; i++) { atL[i] = sig[i]; }
   for (i32 i = 0; i < 32; i++) { atL[32 + i] = L[i]; }
   t.isFalse(ed25519Verify(pub, msg, atL), "S = L is refused");
@@ -300,14 +301,14 @@ export string test_x_equals_zero_with_the_sign_bit_is_not_a_point() {
   // This check existed and was inert until it was moved to where returning null actually
   // rejects, so it is worth keeping pinned.
   T t = T.create();
-  u8[] identity = u8[32]();
+  u8[] identity = u8[].filled(32, 0);
   identity[0] = 1;                                   // y = 1, sign 0
-  u8[] signed = u8[32]();
+  u8[] signed = u8[].filled(32, 0);
   signed[0] = 1;
   signed[31] = 0x80;                                 // y = 1, sign 1
 
   u8[] msg = "anything".toBytes();
-  u8[] sig = u8[64]();
+  u8[] sig = u8[].filled(64, 0);
   // A garbage signature: what matters is that the *key* is refused before the maths, so
   // verification against the signed identity must be false rather than trapping.
   t.isFalse(ed25519Verify(signed, msg, sig), "x = 0 with the sign bit set is not a key");
@@ -347,8 +348,8 @@ export string test_the_expanded_key_path_agrees_with_the_seed_one() {
   // The one refusal that answers rather than trapping: a seed of the wrong size. A short one would
   // run off the end of the array anyway, but a long one would be read for its first 32 bytes and the
   // tail ignored — so without the check two different inputs would have one identity.
-  t.eqI32(ed25519ExpandedSecret(u8[31]()).len(), 0, "a 31-byte seed is refused");
-  t.eqI32(ed25519ExpandedSecret(u8[33]()).len(), 0, "a 33-byte seed is refused");
+  t.eqI32(ed25519ExpandedSecret(u8[].filled(31, 0)).len(), 0, "a 31-byte seed is refused");
+  t.eqI32(ed25519ExpandedSecret(u8[].filled(33, 0)).len(), 0, "a 33-byte seed is refused");
   return t.report();
 }
 
@@ -380,14 +381,14 @@ export string test_the_curve25519_conversion_agrees_in_both_directions() {
 
   u8[] curvePub = x25519Base(curveSecret);
   u8[] fromCurve = ed25519FromCurve25519Public(curvePub, bit) is null
-    ? u8[0]() : ed25519FromCurve25519Public(curvePub, bit)!;
+    ? u8[]() : ed25519FromCurve25519Public(curvePub, bit)!;
   t.isTrue(equal(fromCurve, edPub),
            "the public key converted from u matches the one derived from the secret");
 
   // The other sign bit gives a different, valid-looking key: the map cannot tell which x was meant,
   // which is exactly why the bit has to be carried alongside rather than recomputed.
   u8[] other = ed25519FromCurve25519Public(curvePub, 1 - bit) is null
-    ? u8[0]() : ed25519FromCurve25519Public(curvePub, 1 - bit)!;
+    ? u8[]() : ed25519FromCurve25519Public(curvePub, 1 - bit)!;
   t.eqI32(other.len(), 32, "the other sign bit still decodes");
   t.isTrue(!equal(other, edPub), "and gives a different key, which is why the bit is carried");
   return t.report();
@@ -441,21 +442,21 @@ export string test_a_malformed_key_or_signature_is_refused() {
                      "085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00");
   t.isTrue(ed25519Verify(pub, msg, sig), "the genuine signature verifies");
 
-  i32[] keyLens = i32[](0, 31, 33, 64);
+  i32[] keyLens = [0, 31, 33, 64];
   for (i32 i = 0; i < keyLens.len(); i++) {
-    t.isFalse(ed25519Verify(u8[keyLens[i]](), msg, sig),
+    t.isFalse(ed25519Verify(u8[].filled(keyLens[i], 0), msg, sig),
               "a " + itoa64(keyLens[i] as i64) + "-byte key is not a key");
   }
-  i32[] sigLens = i32[](0, 32, 63, 65);
+  i32[] sigLens = [0, 32, 63, 65];
   for (i32 i = 0; i < sigLens.len(); i++) {
-    t.isFalse(ed25519Verify(pub, msg, u8[sigLens[i]]()),
+    t.isFalse(ed25519Verify(pub, msg, u8[].filled(sigLens[i], 0)),
               "a " + itoa64(sigLens[i] as i64) + "-byte signature is not a signature");
   }
 
   // A y-coordinate with no corresponding x is not a point. 2 is such a y: `y^2 - 1` over
   // `d*y^2 + 1` is a non-residue, so nothing squares to it — and `ptDecode` has to say so rather
   // than return whichever square root the arithmetic happened to produce.
-  u8[] notAPoint = u8[32]();
+  u8[] notAPoint = u8[].filled(32, 0);
   notAPoint[0] = 2;
   t.isTrue(ptDecode(notAPoint) is null, "a y-coordinate that is not on the curve does not decode");
   return t.report();
@@ -483,8 +484,8 @@ export string test_a_small_order_point_has_no_shared_secret() {
   T t = T.create();
 
   // An honest peer's point, and both ends agreeing on what it produces.
-  u8[] mineScalar = u8[32]();
-  u8[] theirScalar = u8[32]();
+  u8[] mineScalar = u8[].filled(32, 0);
+  u8[] theirScalar = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) {
     mineScalar[i] = (i * 29 + 3) & 0xFF;
     theirScalar[i] = (i * 13 + 7) & 0xFF;
@@ -498,14 +499,15 @@ export string test_a_small_order_point_has_no_shared_secret() {
   }
 
   // The same seven the test above uses, refused rather than returned.
-  string[] lowOrder = string[](
+  string[] lowOrder = [
     "0000000000000000000000000000000000000000000000000000000000000000",
     "0100000000000000000000000000000000000000000000000000000000000000",
     "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
     "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
     "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
     "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+  ];
   for (i32 i = 0; i < lowOrder.len(); i++) {
     t.isTrue(x25519Shared(mineScalar, decoded(lowOrder[i])) is null,
              "low-order point " + itoa64(i as i64) + " produced a shared secret");
@@ -515,8 +517,8 @@ export string test_a_small_order_point_has_no_shared_secret() {
   }
 
   // Widths, so a caller cannot get a secret out of the wrong shape.
-  t.isTrue(x25519Shared(u8[31](fill: 1), x25519Base(theirScalar)) is null, "a 31-byte scalar was used");
-  t.isTrue(x25519Shared(mineScalar, u8[31](fill: 1)) is null, "a 31-byte peer point was used");
-  t.isTrue(x25519Shared(mineScalar, u8[0]()) is null, "an empty peer point was used");
+  t.isTrue(x25519Shared(u8[].filled(31, 1), x25519Base(theirScalar)) is null, "a 31-byte scalar was used");
+  t.isTrue(x25519Shared(mineScalar, u8[].filled(31, 1)) is null, "a 31-byte peer point was used");
+  t.isTrue(x25519Shared(mineScalar, u8[]()) is null, "an empty peer point was used");
   return t.report();
 }

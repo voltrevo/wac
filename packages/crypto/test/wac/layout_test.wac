@@ -17,7 +17,7 @@ import {
 } from "../../src/layout.wac";
 
 u8[] fill(i32 n, i32 a, i32 b) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
   return out;
 }
@@ -27,14 +27,14 @@ export string test_the_two_orders_disagree_where_they_should() {
   // self-consistent — so the direction is pinned by reading bytes whose value differs
   // between them, and by the two agreeing exactly on a palindrome.
   T t = T.create();
-  u8[] b = u8[8]();
+  u8[] b = u8[].filled(8, 0);
   b[0] = 0x01; b[1] = 0x02; b[2] = 0x03; b[3] = 0x04;
   b[4] = 0x05; b[5] = 0x06; b[6] = 0x07; b[7] = 0x08;
   t.eqU32(beWord32(b, 0), 0x01020304 as! u32, "beWord32 reads most-significant first");
   t.eqU32(leWord32(b, 0), 0x04030201 as! u32, "leWord32 reads least-significant first");
   t.eqU64(beWord64(b, 0), 0x0102030405060708 as! u64, "beWord64 reads most-significant first");
 
-  u8[] pal = u8[4]();
+  u8[] pal = u8[].filled(4, 0);
   pal[0] = 0xAB; pal[1] = 0xCD; pal[2] = 0xCD; pal[3] = 0xAB;
   t.eqU32(beWord32(pal, 0), leWord32(pal, 0), "the orders agree on a palindrome");
   return t.report();
@@ -48,8 +48,8 @@ export string test_reads_and_stores_are_inverses_at_every_offset() {
   for (i32 off = 0; off + 4 <= buf.len(); off++) {
     u32 be = beWord32(buf, off);
     u32 le = leWord32(buf, off);
-    u8[] beBytes = u8[4]();
-    u8[] leBytes = u8[4]();
+    u8[] beBytes = u8[].filled(4, 0);
+    u8[] leBytes = u8[].filled(4, 0);
     storeBE32(be, beBytes, 0);
     storeLE32(le, leBytes, 0);
     bool okBe = true;
@@ -62,7 +62,7 @@ export string test_reads_and_stores_are_inverses_at_every_offset() {
     t.isTrue(okLe, "storeLE32 undoes leWord32 at offset " + itoa64(off as i64));
   }
   for (i32 off = 0; off + 8 <= buf.len(); off++) {
-    u8[] back = u8[8]();
+    u8[] back = u8[].filled(8, 0);
     storeBE64(beWord64(buf, off), back, 0);
     bool ok = true;
     for (i32 i = 0; i < 8; i++) { if (back[i] != buf[off + i]) { ok = false; } }
@@ -76,12 +76,12 @@ export string test_the_top_bit_survives() {
   // trip still works, because the same wrong sign is applied both ways, so this checks
   // the value rather than the round trip.
   T t = T.create();
-  u8[] ff = u8[8]();
+  u8[] ff = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) { ff[i] = 0xFF; }
   t.eqU32(beWord32(ff, 0), 4294967295 as! u32, "beWord32 of all ones");
   t.eqU32(leWord32(ff, 0), 4294967295 as! u32, "leWord32 of all ones");
 
-  u8[] high = u8[4]();
+  u8[] high = u8[].filled(4, 0);
   high[0] = 0x80; high[1] = 0x00; high[2] = 0x00; high[3] = 0x00;
   t.eqU32(beWord32(high, 0), 2147483648 as! u32, "beWord32 with only the top bit set");
   t.eqU32(leWord32(high, 0), 128 as! u32, "and the same bytes read the other way");

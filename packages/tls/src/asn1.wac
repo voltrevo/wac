@@ -73,7 +73,7 @@ export struct Der {
    */
   bool[] bad;
 
-  Der create(u8[] buf) { return Der(buf, 0, buf.len(), bool[1]()); }
+  Der create(u8[] buf) { return Der(buf, 0, buf.len(), bool[].filled(1, false)); }
 
   /**
    * A cursor over part of a buffer, with `end` clamped to what the buffer holds.
@@ -87,7 +87,7 @@ export struct Der {
   Der over(u8[] buf, i32 start, i32 end) {
     i32 lo = start < 0 ? 0 : (start > buf.len() ? buf.len() : start);
     i32 hi = end > buf.len() ? buf.len() : (end < lo ? lo : end);
-    return Der(buf, lo, hi, bool[1]());
+    return Der(buf, lo, hi, bool[].filled(1, false));
   }
 
   /** Whether anything malformed has been seen by any cursor over this buffer. */
@@ -172,9 +172,9 @@ export struct Der {
     this.pos += n;
     if (this.pos > this.buf.len() || begin > this.pos) {
       this.reject();
-      return u8[0]();
+      return u8[]();
     }
-    u8[] out = u8[this.pos - begin]();
+    u8[] out = u8[].filled(this.pos - begin, 0);
     for (i32 i = 0; i < out.len(); i++) { out[i] = this.buf[begin + i]; }
     return out;
   }
@@ -182,8 +182,8 @@ export struct Der {
   /** Everything left in this cursor's region. */
   u8[] rest(const this) {
     i32 hi = this.end > this.buf.len() ? this.buf.len() : this.end;
-    if (this.pos >= hi) { return u8[0](); }
-    u8[] out = u8[hi - this.pos]();
+    if (this.pos >= hi) { return u8[](); }
+    u8[] out = u8[].filled(hi - this.pos, 0);
     for (i32 i = 0; i < out.len(); i++) { out[i] = this.buf[this.pos + i]; }
     return out;
   }
@@ -205,7 +205,7 @@ export struct Der {
     i32 unused = inner.byte();
     if (unused != 0) {
       inner.reject();
-      return u8[0]();
+      return u8[]();
     }
     return inner.rest();
   }
@@ -224,11 +224,11 @@ export bool oidEquals(u8[] a, u8[] b) {
 }
 
 /** 1.3.101.112 — Ed25519, RFC 8410. */
-export u8[] oidEd25519() { return u8[](0x2B, 0x65, 0x70); }
+export u8[] oidEd25519() { return [0x2B, 0x65, 0x70] as u8[]; }
 /** 2.5.29.17 — subjectAltName. */
-export u8[] oidSubjectAltName() { return u8[](0x55, 0x1D, 0x11); }
+export u8[] oidSubjectAltName() { return [0x55, 0x1D, 0x11] as u8[]; }
 /** 2.5.29.19 — basicConstraints. */
-export u8[] oidBasicConstraints() { return u8[](0x55, 0x1D, 0x13); }
+export u8[] oidBasicConstraints() { return [0x55, 0x1D, 0x13] as u8[]; }
 // commonName's OID was here. Nothing looks a subject up by component — Names are
 // compared as encoded bytes, and host matching reads subjectAltName only, which is what
 // RFC 6125 §6.4.4 and every browser since 2017 require. Deleting it rather than keeping
@@ -236,9 +236,9 @@ export u8[] oidBasicConstraints() { return u8[](0x55, 0x1D, 0x13); }
 
 // Algorithm identifiers a certificate can carry.
 /** 1.2.840.10045.2.1 — id-ecPublicKey. */
-export u8[] oidEcPublicKey() { return u8[](0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01); }
+export u8[] oidEcPublicKey() { return [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01] as u8[]; }
 /** 1.2.840.10045.3.1.7 — prime256v1, the curve parameter for P-256. */
-export u8[] oidPrime256v1() { return u8[](0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07); }
+export u8[] oidPrime256v1() { return [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07] as u8[]; }
 /**
  * 1.3.132.0.34 — secp384r1, the curve parameter for P-384.
  *
@@ -246,21 +246,21 @@ export u8[] oidPrime256v1() { return u8[](0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x
  * 1.2.840.10045, but P-384 and P-521 were only ever registered by SECG under 1.3.132, so
  * the byte string looks nothing like its neighbour and cannot be derived from it.
  */
-export u8[] oidSecp384r1() { return u8[](0x2B, 0x81, 0x04, 0x00, 0x22); }
+export u8[] oidSecp384r1() { return [0x2B, 0x81, 0x04, 0x00, 0x22] as u8[]; }
 /** 1.2.840.10045.4.3.2 — ecdsa-with-SHA256. */
-export u8[] oidEcdsaSha256() { return u8[](0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02); }
+export u8[] oidEcdsaSha256() { return [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02] as u8[]; }
 /** 1.2.840.10045.4.3.3 — ecdsa-with-SHA384. */
-export u8[] oidEcdsaSha384() { return u8[](0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03); }
+export u8[] oidEcdsaSha384() { return [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03] as u8[]; }
 /** 1.2.840.113549.1.1.1 — rsaEncryption. */
-export u8[] oidRsaEncryption() { return u8[](0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01); }
+export u8[] oidRsaEncryption() { return [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01] as u8[]; }
 /** 1.2.840.113549.1.1.10 — RSASSA-PSS. */
-export u8[] oidRsaPss() { return u8[](0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A); }
+export u8[] oidRsaPss() { return [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A] as u8[]; }
 /** 1.2.840.113549.1.1.11 — sha256WithRSAEncryption. */
-export u8[] oidRsaSha256() { return u8[](0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B); }
+export u8[] oidRsaSha256() { return [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B] as u8[]; }
 /** 1.2.840.113549.1.1.12 — sha384WithRSAEncryption. */
-export u8[] oidRsaSha384() { return u8[](0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C); }
+export u8[] oidRsaSha384() { return [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C] as u8[]; }
 /** 1.2.840.113549.1.1.13 — sha512WithRSAEncryption. */
-export u8[] oidRsaSha512() { return u8[](0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D); }
+export u8[] oidRsaSha512() { return [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D] as u8[]; }
 
 /**
  * The contents of an INTEGER, with any leading zero removed.
@@ -273,22 +273,22 @@ export u8[] oidRsaSha512() { return u8[](0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x0
 export u8[] unsignedInteger(u8[] der) {
   i32 at = 0;
   while (at + 1 < der.len() && der[at] == 0) { at++; }
-  u8[] out = u8[der.len() - at]();
+  u8[] out = u8[].filled(der.len() - at, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = der[at + i]; }
   return out;
 }
 /** 2.5.29.15 — keyUsage. */
-export u8[] oidKeyUsage() { return u8[](0x55, 0x1D, 0x0F); }
+export u8[] oidKeyUsage() { return [0x55, 0x1D, 0x0F] as u8[]; }
 /** 2.5.29.37 — extKeyUsage. */
-export u8[] oidExtKeyUsage() { return u8[](0x55, 0x1D, 0x25); }
+export u8[] oidExtKeyUsage() { return [0x55, 0x1D, 0x25] as u8[]; }
 /** 1.3.6.1.5.5.7.3.1 — id-kp-serverAuth, the purpose a TLS server certificate needs. */
-export u8[] oidServerAuth() { return u8[](0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01); }
+export u8[] oidServerAuth() { return [0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01] as u8[]; }
 /**
  * 2.5.29.37.0 — anyExtendedKeyUsage.
  *
  * A certificate carrying this asserts every purpose at once, which is the escape hatch
  * for a CA that does not want to enumerate them. Treated as satisfying serverAuth.
  */
-export u8[] oidAnyExtKeyUsage() { return u8[](0x55, 0x1D, 0x25, 0x00); }
+export u8[] oidAnyExtKeyUsage() { return [0x55, 0x1D, 0x25, 0x00] as u8[]; }
 /** 2.5.29.30 — nameConstraints. */
-export u8[] oidNameConstraints() { return u8[](0x55, 0x1D, 0x1E); }
+export u8[] oidNameConstraints() { return [0x55, 0x1D, 0x1E] as u8[]; }

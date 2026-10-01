@@ -5,7 +5,7 @@
 // store, in TypeScript, reading `/etc/ssl/certs/ca-certificates.crt` with `Deno.readTextFile` and
 // `atob` — fine for a test driven from Deno and no use to a program. And `box`'s `gets` applet, which
 // *is* an https client written in wac, builds a store of **one**: it takes a path to a single
-// pre-converted `.der` on its command line and indexes it as `i32[](0, root.len())`.
+// pre-converted `.der` on its command line and indexes it as `[0, root.len()] as i32[]`.
 //
 // So the gap this closes is narrower than "wac cannot verify a chain" — it can, and `gets` does. What
 // it cannot do is use **the store the system already has**, because that is PEM and there was nothing
@@ -86,7 +86,7 @@ export Store pemBundle(u8[] pem) {
     if (matchesAt(pem, i, beginMarker())) { blocks = blocks + 1; }
   }
 
-  i32[] offsets = i32[blocks * 2]();
+  i32[] offsets = i32[].filled(blocks * 2, 0);
   Buf der = Buf.create();
   i32 found = 0;
   i32 refused = 0;
@@ -124,7 +124,7 @@ export Store pemBundle(u8[] pem) {
   if (found == blocks) { return Store(der.take(), offsets, refused); }
   // Short: a block was refused, or the armour ran out mid-file. The trailing pairs would read as a
   // certificate of length zero at offset zero, which `verifyPath` would try.
-  i32[] exact = i32[found * 2]();
+  i32[] exact = i32[].filled(found * 2, 0);
   for (i32 i = 0; i < found * 2; i++) { exact[i] = offsets[i]; }
   return Store(der.take(), exact, refused);
 }

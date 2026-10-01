@@ -31,7 +31,7 @@ import { Read } from "core";
 async void serve(Core core, Cli cli, i32 sock, i32[] served) {
   while (true) {
     Read r = await cli.recv(sock);
-    u8[] echo = u8[0]();
+    u8[] echo = u8[]();
     bool over = false;
     match (r) {
       Data(bytes): { echo = bytes; }
@@ -65,7 +65,7 @@ export string test_two_clients_are_accepted_and_served_under_one_drain(Core core
   Socket l = cli.listen("127.0.0.1", 0).wait();
   t.isTrue(l.handle >= 0, "bound a loopback listener");
 
-  i32[] served = i32[1]();
+  i32[] served = i32[].filled(1, 0);
   accepting(core, cli, l.handle, 2, served);
 
   // Both connect before anything is drained, so the second is accepted while the first is open —

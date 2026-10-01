@@ -21,7 +21,7 @@ import { Option } from "core/option.wac";
  * One slot's contents.
  *
  * A struct rather than parallel `K[]`/`V[]` arrays because an empty slot has to be
- * representable: `Entry<K, V>?[]` is an array of nulls at creation, whereas `K[n]()` needs a
+ * representable: `Entry<K, V>?[]` is an array of nulls at creation, whereas `K[].defaulted(n)` needs a
  * default value for K and a struct or enum has none. The nullable is the same trick
  * `json`'s hand-written containers use, and it costs one reference per slot.
  */
@@ -46,7 +46,7 @@ export struct Map<K, V> {
    * The type arguments come from the declared type; the funcrefs say how K behaves.
    */
   Map<K, V> create(fn<i32(K)> hash, fn<bool(K, K)> eq) {
-    return Map(MapEntry<K, V>?[8](), 0, hash, eq);
+    return Map(MapEntry<K, V>?[].defaulted(8), 0, hash, eq);
   }
 
   /** An empty Map with room for `capacity` entries before it has to grow. */
@@ -60,7 +60,7 @@ export struct Map<K, V> {
     i64 want = (capacity as i64) + ((capacity as i64) / 3) + 1;
     i64 size = 8;
     while (size < want && size < 1073741824) { size = size * 2; }
-    return Map(MapEntry<K, V>?[size as! i32](), 0, hash, eq);
+    return Map(MapEntry<K, V>?[].defaulted(size as! i32), 0, hash, eq);
   }
 
   i32 len(const this) { return this.n; }
@@ -182,7 +182,7 @@ export struct Map<K, V> {
       if (e is null) { continue; }
       // The first live entry supplies the fill value, which is why the array is not
       // allocated before the loop: there is nothing to fill it with until one is found.
-      if (seen == 0) { out = K[this.n](fill: e!.key); }
+      if (seen == 0) { out = K[].filled(this.n, e!.key); }
       out[seen] = e!.key;
       seen++;
     }
@@ -196,7 +196,7 @@ export struct Map<K, V> {
     for (i32 i = 0; i < this.slots.len(); i++) {
       MapEntry<K, V>? e = this.slots[i];
       if (e is null) { continue; }
-      if (seen == 0) { out = V[this.n](fill: e!.val); }
+      if (seen == 0) { out = V[].filled(this.n, e!.val); }
       out[seen] = e!.val;
       seen++;
     }
@@ -206,7 +206,7 @@ export struct Map<K, V> {
   /** Double the table and reinsert. Private in spirit; wac has no way to say so. */
   void grow(this) {
     MapEntry<K, V>?[] old = this.slots;
-    this.slots = MapEntry<K, V>?[old.len() * 2]();
+    this.slots = MapEntry<K, V>?[].defaulted(old.len() * 2);
     this.n = 0;
     for (i32 i = 0; i < old.len(); i++) {
       MapEntry<K, V>? e = old[i];

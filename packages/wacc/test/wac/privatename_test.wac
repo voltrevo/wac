@@ -53,7 +53,7 @@ import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 const string ENTRY = "/pn/main.wac";
 
 string[] pnPaths() {
-  return string[]("/pn/held.wac", "/pn/lib.wac", "/pn/stranger.wac", ENTRY);
+  return ["/pn/held.wac", "/pn/lib.wac", "/pn/stranger.wac", ENTRY];
 }
 
 /**
@@ -69,8 +69,7 @@ string[] pnPaths() {
  * the two axes that separate the three cases below.
  */
 string[] pnSources(bool strangerExported, bool entryImportsStranger) {
-  return string[](
-    "export struct Held {\n  i32 n;\n}\n",
+  return ["export struct Held {\n  i32 n;\n}\n",
 
     "import { Held } from \"./held.wac\";\n" +
     "export Held make() { return Held(7); }\n",
@@ -83,7 +82,7 @@ string[] pnSources(bool strangerExported, bool entryImportsStranger) {
     "export i32 total() { Held h = make(); return h.n" +
     (entryImportsStranger ? " + strangerSum()" : "") + "; }\n" +
     "export i32 main() { return total() == " + (entryImportsStranger ? "10" : "7") +
-    " ? 7 : 0; }\n");
+    " ? 7 : 0; }\n"];
 }
 
 /** Build it, run it, and say whether the answer came back. */
@@ -96,7 +95,7 @@ string pnBuildAndRun(T t, Cli cli, string what, bool strangerExported, bool entr
   // as nothing at all. A module that emitted no code otherwise reports success — `issues/lang/0155`.
   t.eqStr(emitDeclineFiles(p, s, ENTRY), "", what + ": the emit declined");
   u8[] wasm = emitFilesSelfDescribing(p, s, ENTRY, "privatename.wasm", 0);
-  Ran r = runModule(cli, wasm, scratchDir(cli), "privatename.wasm", string[0](fill: ""));
+  Ran r = runModule(cli, wasm, scratchDir(cli), "privatename.wasm", string[].filled(0, ""));
   t.isTrue(r.ok, what + ": it built and ran — " + r.error);
   if (!r.ok) { return ""; }
   // The exit status carries the comparison the module made — an i32 answer does not fit in eight

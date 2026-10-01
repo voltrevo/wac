@@ -27,7 +27,7 @@ const i64 NOW = 1785931200;
 
 /** A service ephemeral secret. Clamped, and fixed so a failure is reproducible. */
 u8[] ephemeral() {
-  u8[] s = u8[32]();
+  u8[] s = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { s[i] = (i * 37 + 11) & 0xFF; }
   s[0] = s[0] & 248;
   s[31] = (s[31] & 127) | 64;
@@ -182,7 +182,7 @@ export string test_a_replay_is_refused_before_any_crypto(Core core, Cli cli) {
   t.eqI32(handleIntroduce2(cell, auth, secret, subcred, ephemeral(), cells, cookies, NOW, true).error,
           INTRO2_OK, "the first arrival is answered");
 
-  u8[] wrongSecret = u8[32]();
+  u8[] wrongSecret = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { wrongSecret[i] = secret[i]; }
   wrongSecret[1] = wrongSecret[1] ^ 1;
   t.eqI32(handleIntroduce2(cell, auth, wrongSecret, subcred, ephemeral(), cells, cookies, NOW,
@@ -192,7 +192,7 @@ export string test_a_replay_is_refused_before_any_crypto(Core core, Cli cli) {
 
   // And a cell we could not read is still remembered, so retrying it is cheap the second time too.
   ReplayCache fresh = introReplayCache(8);
-  u8[] garbage = u8[200](fill: 7);
+  u8[] garbage = u8[].filled(200, 7);
   t.eqI32(handleIntroduce2(garbage, auth, secret, subcred, ephemeral(), fresh, cookies, NOW,
                            true).error,
           INTRO2_UNREADABLE, "nonsense with a parseable header is unreadable");
@@ -257,7 +257,7 @@ export string test_where_the_client_wants_to_meet(Core core, Cli cli) {
   t.eqI32(refused.clientPublic.len(), 32,
           "though the client key is still reported — the cell was read, it was the address we refused");
 
-  t.eqI32(handleIntroduce2(u8[200](fill: 7), auth, secret, subcred, ephemeral(), introReplayCache(8),
+  t.eqI32(handleIntroduce2(u8[].filled(200, 7), auth, secret, subcred, ephemeral(), introReplayCache(8),
                            cookieReplayCache(8), NOW, false).error,
           INTRO2_UNREADABLE, "while a cell that does not verify is unreadable, not a bad address");
   return t.report();
@@ -271,21 +271,21 @@ export string test_what_is_refused(Core core, Cli cli) {
   u8[] secret = hexOf(cli, 0, "introEncSecret");
   u8[] subcred = hexOf(cli, 0, "subcredential");
 
-  t.eqI32(handleIntroduce2(u8[0](), auth, secret, subcred, ephemeral(), introReplayCache(8),
+  t.eqI32(handleIntroduce2(u8[](), auth, secret, subcred, ephemeral(), introReplayCache(8),
                            cookieReplayCache(8), NOW, true).error,
           INTRO2_UNREADABLE, "an empty cell has no encrypted section to remember");
-  t.eqI32(handleIntroduce2(u8[40](), auth, secret, subcred, ephemeral(), introReplayCache(8),
+  t.eqI32(handleIntroduce2(u8[].filled(40, 0), auth, secret, subcred, ephemeral(), introReplayCache(8),
                            cookieReplayCache(8), NOW, true).error,
           INTRO2_UNREADABLE, "nor does a short one");
 
   // A service ephemeral secret that is not one. The handshake produces nothing and no cell is built,
   // rather than a cell built around an empty key.
-  t.eqI32(handleIntroduce2(cell, auth, secret, subcred, u8[31](), introReplayCache(8),
+  t.eqI32(handleIntroduce2(cell, auth, secret, subcred, u8[].filled(31, 0), introReplayCache(8),
                            cookieReplayCache(8), NOW, true).error,
           INTRO2_NO_KEYS, "and a service key that is not a key answers nothing");
 
   // Another service's subcredential: the MAC is over a key derived from it, so this is unreadable.
-  u8[] otherSub = u8[32]();
+  u8[] otherSub = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { otherSub[i] = subcred[i]; }
   otherSub[0] = otherSub[0] ^ 1;
   t.eqI32(handleIntroduce2(cell, auth, secret, otherSub, ephemeral(), introReplayCache(8),

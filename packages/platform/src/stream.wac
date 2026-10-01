@@ -175,7 +175,7 @@ export struct Feed {
   string why;
 
   /** Standard input, pulled a chunk at a time through the capability. */
-  Feed fromStdin(Cli cli) { return Feed(cli, true, u8[0](), 0, false, ""); }
+  Feed fromStdin(Cli cli) { return Feed(cli, true, u8[](), 0, false, ""); }
 
   /** Bytes somebody already has — a here-document, a pipeline stage's collected output. */
   Feed of(Cli cli, u8[] bytes) { return Feed(cli, false, bytes, 0, false, ""); }
@@ -188,7 +188,7 @@ export struct Feed {
    * loop longer.
    */
   u8[] next(this) {
-    if (this.ended) { return u8[0](); }
+    if (this.ended) { return u8[](); }
     if (!this.streaming) {
       this.ended = true;
       return this.remaining();
@@ -197,7 +197,7 @@ export struct Feed {
       Data(bytes): { return bytes; }
       End: {
         this.ended = true;
-        return u8[0]();
+        return u8[]();
       }
       Failed(why): {
         // A read that failed *ends* the input as far as a filter is concerned, and the reason is kept:
@@ -205,10 +205,10 @@ export struct Feed {
         // possible answers.
         this.ended = true;
         this.why = why;
-        return u8[0]();
+        return u8[]();
       }
     }
-    return u8[0]();
+    return u8[]();
   }
 
   /** Everything, for a program that cannot answer before it has seen all of it. */
@@ -228,8 +228,8 @@ export struct Feed {
 
   /** What a buffered feed has not handed over yet. */
   u8[] remaining(this) {
-    if (this.at >= this.held.len()) { return u8[0](); }
-    u8[] out = u8[this.held.len() - this.at](fill: 0);
+    if (this.at >= this.held.len()) { return u8[](); }
+    u8[] out = u8[].filled(this.held.len() - this.at, 0);
     out.copyFrom(this.held, this.at, 0, out.len());
     this.at = this.held.len();
     return out;
@@ -302,7 +302,7 @@ export Line nextLine(Lines s, Feed in) {
       s.pending.len = 0;
       s.at = 0;
       s.scanned = 0;
-      return rest.len() > 0 ? Line(true, rest, false) : Line(false, u8[0](), false);
+      return rest.len() > 0 ? Line(true, rest, false) : Line(false, u8[](), false);
     }
 
     // Drop what has already been handed out before growing. `copyFrom` is a memmove, so a downward
@@ -323,7 +323,7 @@ export Line nextLine(Lines s, Feed in) {
       s.pending.pushAll(more);
     }
   }
-  return Line(false, u8[0](), false);
+  return Line(false, u8[](), false);
 }
 
 /**
@@ -349,15 +349,15 @@ export void emit(Cli cli, u8[] line, bool nl) {
     cli.write(line);
     return;
   }
-  u8[] out = u8[line.len() + 1](fill: '\n');
+  u8[] out = u8[].filled(line.len() + 1, '\n');
   out.copyFrom(line, 0, 0, line.len());
   cli.write(out);
 }
 
 /** `b[at..to)`. */
 u8[] sliceOf(u8[] b, i32 at, i32 to) {
-  if (to <= at) { return u8[0](); }
-  u8[] out = u8[to - at](fill: 0);
+  if (to <= at) { return u8[](); }
+  u8[] out = u8[].filled(to - at, 0);
   out.copyFrom(b, at, 0, to - at);
   return out;
 }
@@ -372,7 +372,7 @@ u8[] sliceOf(u8[] b, i32 at, i32 to) {
  * shell handing on what it parsed, passes them straight through and never comes here.
  */
 export u8[][] argvOf(string[] args) {
-  u8[][] out = u8[][args.len()](fill: u8[0]());
+  u8[][] out = u8[][].filled(args.len(), u8[]());
   for (i32 i = 0; i < args.len(); i++) { out[i] = args[i].toBytes(); }
   return out;
 }

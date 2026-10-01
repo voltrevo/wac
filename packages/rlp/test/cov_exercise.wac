@@ -43,8 +43,8 @@ export void trapCase(i32 i) {
   if (i == 2) { tr__traps_on_a_negative_inside_a_list(); }
   // `bytesOf` on a list and `itemsOf` on a byte string: the accessors' refusing halves, which trap
   // rather than answering an empty value a caller could carry forward.
-  if (i == 3) { bytesOf(Item.List(Item[0](fill: Item.Bytes(u8[0]())))); }
-  if (i == 4) { itemsOf(Item.Bytes(u8[](1))); }
+  if (i == 3) { bytesOf(Item.List(Item[].filled(0, Item.Bytes(u8[]())))); }
+  if (i == 4) { itemsOf(Item.Bytes([1] as u8[])); }
 }
 
 export i32 main(Core core, Cli cli) {

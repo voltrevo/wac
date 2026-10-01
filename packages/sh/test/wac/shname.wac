@@ -39,12 +39,12 @@ export string pattern() { return "^(?:\\S*bash|environment)(?:: -c)?: line \\d+:
 export string sameName(string text) {
   Program? p = compile(pattern().toBytes());
   if (p is null) { return text; }
-  i32[] caps = i32[slotCount(p!)]();
+  i32[] caps = i32[].filled(slotCount(p!), 0);
 
   u8[] b = text.toBytes();
   // One buffer, not repeated concatenation: `core/README.md` says `s + t` in a loop is quadratic, and
   // this runs over every script's stderr.
-  u8[] out = u8[b.len() + 8]();
+  u8[] out = u8[].filled(b.len() + 8, 0);
   i32 k = 0;
   i32 start = 0;
   while (start <= b.len()) {
@@ -64,7 +64,7 @@ export string sameName(string text) {
     if (end >= b.len()) { break; }
     start = end + 1;
   }
-  u8[] cut = u8[k]();
+  u8[] cut = u8[].filled(k, 0);
   for (i32 i = 0; i < k; i++) { cut[i] = out[i]; }
   return string.fromBytes(cut);
 }

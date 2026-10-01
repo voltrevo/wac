@@ -7,7 +7,7 @@ export u8[][] splitLines(u8[] data) {
   i32 n = 0;
   for (i32 i = 0; i < data.len(); i++) { if (data[i] == '\n') { n++; } }
   if (data.len() > 0 && data[data.len() - 1] != '\n') { n++; }
-  u8[][] out = u8[][n](fill: u8[0]());
+  u8[][] out = u8[][].filled(n, u8[]());
   i32 at = 0;
   i32 start = 0;
   for (i32 i = 0; i <= data.len(); i++) {
@@ -25,7 +25,7 @@ export u8[][] splitLines(u8[] data) {
 export u8[] joinLines(u8[][] lines, i32 count) {
   i32 total = 0;
   for (i32 i = 0; i < count; i++) { total = total + lines[i].len() + 1; }
-  u8[] out = u8[total](fill: '\n');
+  u8[] out = u8[].filled(total, '\n');
   i32 at = 0;
   for (i32 i = 0; i < count; i++) {
     out.copyFrom(lines[i], 0, at, lines[i].len());
@@ -65,14 +65,14 @@ export u8[][] mergeSortWith(u8[][] xs, i32 n, fn<i32(u8[], u8[])> cmp) {
   if (n <= 1) { return xs; }
   i32 mid = n / 2;
   i32 right = n - mid;
-  u8[][] l = u8[][mid](fill: u8[0]());
-  u8[][] r = u8[][right](fill: u8[0]());
+  u8[][] l = u8[][].filled(mid, u8[]());
+  u8[][] r = u8[][].filled(right, u8[]());
   for (i32 i = 0; i < mid; i++) { l[i] = xs[i]; }
   for (i32 i = 0; i < right; i++) { r[i] = xs[mid + i]; }
   u8[][] ls = mergeSortWith(l, mid, cmp);
   u8[][] rs = mergeSortWith(r, right, cmp);
 
-  u8[][] out = u8[][n](fill: u8[0]());
+  u8[][] out = u8[][].filled(n, u8[]());
   i32 li = 0;
   i32 ri = 0;
   for (i32 i = 0; i < n; i++) {

@@ -31,7 +31,7 @@ const i32 EK_LEN = 1184;
 const i32 CT_LEN = 1088;
 
 u8[] pattern(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + seed) & 0xFF; }
   return out;
 }
@@ -135,9 +135,9 @@ export string test_a_tampered_share_gives_a_different_secret_not_an_error() {
   u8[] serverShare = slice(accepted, 0, hybridServerShareLen());
   u8[] good = hybridClientFinish(offer, serverShare, pattern(32, 18));
 
-  i32[] spots = i32[](0, CT_LEN - 1, CT_LEN, hybridServerShareLen() - 1);
+  i32[] spots = [0, CT_LEN - 1, CT_LEN, hybridServerShareLen() - 1];
   for (i32 k = 0; k < spots.len(); k++) {
-    u8[] bad = u8[serverShare.len()]();
+    u8[] bad = u8[].filled(serverShare.len(), 0);
     for (i32 i = 0; i < bad.len(); i++) { bad[i] = serverShare[i]; }
     bad[spots[k]] = bad[spots[k]] ^ 1;
     u8[] got = hybridClientFinish(offer, bad, pattern(32, 18));
@@ -178,7 +178,7 @@ u8[] goodServerShare() {
 
 /** `b` with one byte appended, and `b` with its last byte removed. */
 u8[] plusByte(u8[] b) {
-  u8[] o = u8[b.len() + 1]();
+  u8[] o = u8[].filled(b.len() + 1, 0);
   for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
   return o;
 }

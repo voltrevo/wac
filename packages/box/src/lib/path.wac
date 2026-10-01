@@ -30,7 +30,7 @@ export u8[] stripTrailing(u8[] b) {
 export u8[] baseName(u8[] path) {
   u8[] b = stripTrailing(path);
   // Only slashes: `/` and `//` are the root, and the root's name is itself.
-  if (b.len() == 0) { return path.len() == 0 ? u8[0]() : "/".toBytes(); }
+  if (b.len() == 0) { return path.len() == 0 ? u8[]() : "/".toBytes(); }
   i32 cut = 0;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == '/') { cut = i + 1; } }
   return slice(b, cut, b.len());

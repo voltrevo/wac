@@ -55,12 +55,12 @@ const string PREFIX = "packages/quic/";
 
 /** A datagram socket for the live tests, a process for quinn, and the vendored captures. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/quic/src/client.wac", "struct Client", "struct", false,
+  return [
+         Rule("packages/quic/src/client.wac", "struct Client", "struct", false,
          "**The not-found arms of twenty accessors, each reading a server's flight for one thing.** " +
          "`serverCertificate`, `serverSignature`, `serverFinishedVerifies`, `serverChain` and the " +
          "rest walk the same handshake bytes looking for one message, and every one has an arm for " +
@@ -161,16 +161,16 @@ Rule[] rules() {
          "         `proven: false` rather than deleted: a parameter identifier the reader does not " +
          "know is silently skipped, so removing these would not fail anything and would quietly " +
          "narrow what this package understands.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/quic/src/frame.wac", 147, "export i32 EPOCH_HANDSHAKE() { return 1; }", false,
+  return [
+        Pin("packages/quic/src/frame.wac", 147, "export i32 EPOCH_HANDSHAKE() { return 1; }", false,
         "The Handshake epoch constant, unread. Every test packet is an Initial or a 1-RTT, and the " +
         "epoch in between carries the rest of the TLS flight — so the one packet type this package " +
         "walks frames in and never tests is the one the handshake actually completes in."),
-    Pin("packages/quic/src/frame.wac", 155, "if (n < 0 || at < 0 || at + n > b.len()) { return u8[0](); }", true,
+    Pin("packages/quic/src/frame.wac", 155, "if (n < 0 || at < 0 || at + n > b.len()) { return u8[](); }", true,
         "`slice` asked for more bytes than remain. Its callers all check the length first — those are " +
         "the thirty-two guards `test/wac/truncated_test.wac` now sweeps — so this is the belt under " +
         "those braces and reaching it means one of them is wrong."),
@@ -198,14 +198,14 @@ Pin[] pins() {
     Pin("packages/quic/src/packet.wac", 201, "if (at < 0 || at + 5 > b.len()) { return false; }", false,
         "The version-negotiation recogniser refusing a datagram too short to be one — see the rule " +
         "over `negotiationVersions` for why the whole feature is dark."),
-    Pin("packages/quic/src/initial.wac", 170, "if (!h.ok) { return u8[0](); }", false,
+    Pin("packages/quic/src/initial.wac", 170, "if (!h.ok) { return u8[](); }", false,
         "A long header that will not parse, refused before decryption is attempted — the first of the " +
         "three failures `initial.wac`'s comment names and the one furthest from a test. " +
         "`tamper_test.wac` covers the third."),
     Pin("packages/quic/src/initial.wac", 432, "if (mask.len() == 0) { return -1; }", false,
         "Header protection failing to produce a mask while reading a short header's key phase — the " +
         "packet is too short to sample from. Same family as `:119`, in the 1-RTT reader."),
-    Pin("packages/quic/src/initial.wac", 119, "if (ciphertext.len() < 16) { return u8[0](); }", false,
+    Pin("packages/quic/src/initial.wac", 119, "if (ciphertext.len() < 16) { return u8[](); }", false,
         "A packet body shorter than an authentication tag. `tamper_test.wac` damages a tag and this " +
         "is the neighbouring failure — asking the reader for something that is not there at all — " +
         "which `initial.wac`'s own comment names beside it: *\"a header that will not parse, a sample " +
@@ -214,19 +214,19 @@ Pin[] pins() {
     Pin("packages/quic/src/initial.wac", 559, "if (originalDcid.len() > MAX_CID()) { return false; }", false,
         "A Retry checked against an oversized original connection id — a caller's argument rather " +
         "than a peer's packet."),
-    Pin("packages/quic/src/initial.wac", 573, "if (packet.len() < 16) { return u8[0](); }", false,
+    Pin("packages/quic/src/initial.wac", 573, "if (packet.len() < 16) { return u8[](); }", false,
         "A Retry packet too short to carry its own integrity tag. `retry_test.wac` drives eight cases " +
         "and every one is well-formed; this is the truncated one, which is the family " +
         "`test/wac/truncated_test.wac` closed for frames and nobody has done for packets."),
-    Pin("packages/quic/src/initial.wac", 587, "if (!h.ok || h.packetType != TYPE_RETRY()) { return u8[0](); }", false,
+    Pin("packages/quic/src/initial.wac", 587, "if (!h.ok || h.packetType != TYPE_RETRY()) { return u8[](); }", false,
         "Asking for a Retry's token when the packet is not a Retry — see `:566`.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

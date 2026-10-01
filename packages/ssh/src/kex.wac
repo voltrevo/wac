@@ -113,8 +113,10 @@ export u8[] exchangeHash(u8[] vc, u8[] vs, u8[] clientKexInit, u8[] serverKexIni
  * would otherwise be handed to Ed25519 verification as though it were a point.
  */
 export bool verifyEd25519Host(u8[] hostKey, u8[] signature, u8[] h) {
-  const u8[] NAME = u8[](0x73, 0x73, 0x68, 0x2d, 0x65, 0x64, 0x32, 0x35,
-                         0x35, 0x31, 0x39);                         // "ssh-ed25519"
+  const u8[] NAME = [
+                         0x73, 0x73, 0x68, 0x2d, 0x65, 0x64, 0x32, 0x35,
+                         0x35, 0x31, 0x39                         // "ssh-ed25519"
+  ];
   Reader kr = Reader.over(hostKey);
   u8[] keyName = kr.str();
   u8[] pub = kr.str();
@@ -173,7 +175,7 @@ export u8[] deriveKey(u8[] k, u8[] h, u8[] sessionId, i32 letter, i32 needed) {
     out.pushAll(block);
   }
 
-  u8[] result = u8[needed]();
+  u8[] result = u8[].filled(needed, 0);
   result.copyFrom(out.data, 0, 0, needed);
   return result;
 }

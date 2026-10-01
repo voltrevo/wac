@@ -31,11 +31,11 @@ export struct G2 {
 
 /** The G2 generator's x. */
 Fp2 g2x() {
-  u32[] a = u32[12]();
+  u32[] a = u32[].filled(12, 0);
   a[0] = 0x02940a10; a[1] = 0xf5f28fa2; a[2] = 0x87b4961a; a[3] = 0xb3f5fb26;
   a[4] = 0x3e2ae580; a[5] = 0xa1a893b5; a[6] = 0x1a3caee9; a[7] = 0x9894999d;
   a[8] = 0x1863366b; a[9] = 0x6f67b763; a[10] = 0x4350bcd7; a[11] = 0x05819192;
-  u32[] b = u32[12]();
+  u32[] b = u32[].filled(12, 0);
   b[0] = 0x9e23f606; b[1] = 0xa5a9c075; b[2] = 0xbccd60c3; b[3] = 0xaaa0c59d;
   b[4] = 0xe2867806; b[5] = 0x3bb17e18; b[6] = 0x8541b367; b[7] = 0x1b1ab6cc;
   b[8] = 0xf2158547; b[9] = 0xc2b6ed0e; b[10] = 0x7360edf3; b[11] = 0x11922a09;
@@ -43,11 +43,11 @@ Fp2 g2x() {
 }
 /** And its y. */
 Fp2 g2y() {
-  u32[] a = u32[12]();
+  u32[] a = u32[].filled(12, 0);
   a[0] = 0x60494c4a; a[1] = 0x4c730af8; a[2] = 0x5e369c5a; a[3] = 0x597cfa1f;
   a[4] = 0xaa0a635a; a[5] = 0xe7e6856c; a[6] = 0x6e0d495f; a[7] = 0xbbefb5e9;
   a[8] = 0xf0ef25a2; a[9] = 0x07d3a975; a[10] = 0x7e80dae5; a[11] = 0x0083fd8e;
-  u32[] b = u32[12]();
+  u32[] b = u32[].filled(12, 0);
   b[0] = 0xdf64b05d; b[1] = 0xadc0fc92; b[2] = 0x2b1461dc; b[3] = 0x18aa270a;
   b[4] = 0x3be4eba0; b[5] = 0x86adac6a; b[6] = 0xc93da33a; b[7] = 0x79495c4e;
   b[8] = 0xa43ccaed; b[9] = 0xe7175850; b[10] = 0x63de1bf2; b[11] = 0x0b2bc2a1;
@@ -55,11 +55,11 @@ Fp2 g2y() {
 }
 /** b = 4(1 + u), the twisted curve's constant. */
 Fp2 curveB2() {
-  u32[] a = u32[12]();
+  u32[] a = u32[].filled(12, 0);
   a[0] = 0x000cfff3; a[1] = 0xaa270000; a[2] = 0xfc34000a; a[3] = 0x53cc0032;
   a[4] = 0x6b0a807f; a[5] = 0x478fe97a; a[6] = 0xe6ba24d7; a[7] = 0xb1d37ebe;
   a[8] = 0xbf78ab2f; a[9] = 0x8ec9733b; a[10] = 0x3d83de7e; a[11] = 0x09d64551;
-  u32[] b = u32[12]();
+  u32[] b = u32[].filled(12, 0);
   b[0] = 0x000cfff3; b[1] = 0xaa270000; b[2] = 0xfc34000a; b[3] = 0x53cc0032;
   b[4] = 0x6b0a807f; b[5] = 0x478fe97a; b[6] = 0xe6ba24d7; b[7] = 0xb1d37ebe;
   b[8] = 0xbf78ab2f; b[9] = 0x8ec9733b; b[10] = 0x3d83de7e; b[11] = 0x09d64551;
@@ -144,11 +144,11 @@ export bool g2IsOnCurve(G2 p) {
 
 /** 1/ξ^((p−1)/3), the x-coefficient of the ψ endomorphism. */
 Fp2 psiX() {
-  u32[] a = u32[12]();
+  u32[] a = u32[].filled(12, 0);
   a[0] = 0x00000000; a[1] = 0x00000000; a[2] = 0x00000000; a[3] = 0x00000000;
   a[4] = 0x00000000; a[5] = 0x00000000; a[6] = 0x00000000; a[7] = 0x00000000;
   a[8] = 0x00000000; a[9] = 0x00000000; a[10] = 0x00000000; a[11] = 0x00000000;
-  u32[] b = u32[12]();
+  u32[] b = u32[].filled(12, 0);
   b[0] = 0x867545c3; b[1] = 0x890dc9e4; b[2] = 0x3285a5d5; b[3] = 0x2af32253;
   b[4] = 0x309b7e2c; b[5] = 0x50880866; b[6] = 0x7e881024; b[7] = 0xa20d1b8c;
   b[8] = 0xe2db9068; b[9] = 0x14e4f04f; b[10] = 0x1564853a; b[11] = 0x14e56d3f;
@@ -156,11 +156,11 @@ Fp2 psiX() {
 }
 /** 1/ξ^((p−1)/2), its y-coefficient. */
 Fp2 psiY() {
-  u32[] a = u32[12]();
+  u32[] a = u32[].filled(12, 0);
   a[0] = 0xa55c9ad1; a[1] = 0x3e2f585d; a[2] = 0x86c18183; a[3] = 0x4294213d;
   a[4] = 0x8b623732; a[5] = 0x382844c8; a[6] = 0x19103e18; a[7] = 0x92ad2afd;
   a[8] = 0xac7cf0b9; a[9] = 0x1d794e4f; a[10] = 0x7d825ec8; a[11] = 0x0bd592fc;
-  u32[] b = u32[12]();
+  u32[] b = u32[].filled(12, 0);
   b[0] = 0x5aa30fda; b[1] = 0x7bcfa7a2; b[2] = 0x2a927e7c; b[3] = 0xdc17dec1;
   b[4] = 0x6b4ebef1; b[5] = 0x2f088dd8; b[6] = 0xda74d4a7; b[7] = 0xd1ca2087;
   b[8] = 0x96cebc1d; b[9] = 0x2da25966; b[10] = 0xbbfd87d2; b[11] = 0x0e2b7eed;
@@ -169,7 +169,7 @@ Fp2 psiY() {
 
 /** |x|, the BLS parameter's magnitude, as a two-word scalar. */
 export u32[] absX() {
-  u32[] v = u32[2]();
+  u32[] v = u32[].filled(2, 0);
   v[0] = 0x00010000; v[1] = 0xd2010000;
   return v;
 }
@@ -243,7 +243,7 @@ bool fp2IsLarger(Fp2 a) {
 }
 
 export u8[] g2Compress(G2 p) {
-  u8[] out = u8[96]();
+  u8[] out = u8[].filled(96, 0);
   if (g2IsInfinity(p)) {
     out[0] = 0xc0;
     return out;
@@ -276,8 +276,8 @@ export G2? g2Decompress(u8[] s) {
     return g2Infinity();
   }
 
-  u8[] hi = u8[48]();
-  u8[] lo = u8[48]();
+  u8[] hi = u8[].filled(48, 0);
+  u8[] lo = u8[].filled(48, 0);
   for (i32 i = 0; i < 48; i++) { hi[i] = s[i]; lo[i] = s[48 + i]; }
   hi[0] = hi[0] & 0x1F;
   Fp2? x = fp2FromBytes(hi, lo);

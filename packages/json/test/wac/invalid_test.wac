@@ -27,13 +27,13 @@ import { ERR_NONE } from "../../src/parse.wac";
 const string ORACLE = "packages/json/test/oracle.ts";
 
 string oneByte(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }
 
 string[] invalid() {
-  return string[](
+  return [
     // empty and whitespace-only
     "", " ", "\n", "\t",
     // truncated values
@@ -55,14 +55,16 @@ string[] invalid() {
     // raw control bytes are not allowed unescaped
     "\"a\nb\"", "\"a\tb\"", "\"a" + oneByte(1) + "b\"",
     // not JSON at all
-    "undefined", "function(){}", "<html>", "//comment", "/*c*/1");
+    "undefined", "function(){}", "<html>", "//comment", "/*c*/1"
+  ];
 }
 
 string[] valid() {
-  return string[](
+  return [
     "null", "true", "false", "0", "-0", "1", "1.5", "1e5", "-1.5e-5",
     "\"\"", "\"a\"", "[]", "{}", "[1,2]", "{\"a\":1}", "{\"a\":[1,{\"b\":null}]}",
-    "\"\\u0041\"", "\"\\ud83d\\ude00\"", "  1  ", "[ 1 , 2 ]");
+    "\"\\u0041\"", "\"\\ud83d\\ude00\"", "  1  ", "[ 1 , 2 ]"
+  ];
 }
 
 export string test_invalid_documents_are_rejected(Core core, Cli cli) {
@@ -101,12 +103,13 @@ export string test_valid_documents_are_accepted(Core core, Cli cli) {
  */
 export string test_mutations_agree_with_the_host(Core core, Cli cli) {
   T t = T.create();
-  string[] seeds = string[](
+  string[] seeds = [
     "{\"a\":1,\"b\":[1,2,3],\"c\":{\"d\":null}}",
     "[true,false,null,1.5,-2e3,\"s\"]",
     "\"\\u0041\\n\\t\\\\\"",
     "[[[1]]]",
-    "{\"k\":\"v\"}");
+    "{\"k\":\"v\"}"
+  ];
   string inject = "{}[],:\"\\ 0139aeflnrstuxEN+-.\n\t";
   Lines lines = Lines.create();
   i32 checked = 0;

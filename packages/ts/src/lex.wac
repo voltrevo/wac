@@ -292,7 +292,7 @@ export Lexed lex(u8[] src) {
   out.push(line);
   out.push(col);
 
-  i32[] toks = i32[out.len()](fill: 0);
+  i32[] toks = i32[].filled(out.len(), 0);
   for (i32 k = 0; k < out.len(); k++) { toks[k] = out.get(k); }
   return Lexed(toks, err, errAt);
 }
@@ -313,7 +313,7 @@ bool regexCanStart(i32 prevKind, string prevText, bool afterControlHead) {
 
 /** The bytes `[from, to)` as a string. */
 string textOf(u8[] src, i32 from, i32 to) {
-  u8[] b = u8[to - from]();
+  u8[] b = u8[].filled(to - from, 0);
   for (i32 k = from; k < to; k++) { b[k - from] = src[k]; }
   return string.fromBytes(b);
 }
@@ -456,10 +456,12 @@ i32 scanRegex(u8[] src, i32 i) {
  * type argument list, because that is a parsing question and this is not a parser.
  */
 i32 scanPunct(u8[] src, i32 i) {
-  string[] four = string[]( ">>>=" );
-  string[] three = string[]( "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "&&=", "||=", "??=" );
-  string[] two = string[]( "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.", "++", "--",
-                           "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>" );
+  string[] four = [">>>="];
+  string[] three = ["...", "===", "!==", "**=", "<<=", ">>=", ">>>", "&&=", "||=", "??="];
+  string[] two = [
+                           "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.", "++", "--",
+                           "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>"
+  ];
   for (i32 k = 0; k < four.len(); k++) {
     if (matches(src, i, four[k])) { return i + 4; }
   }

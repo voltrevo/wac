@@ -33,7 +33,7 @@ u8[] buildFlavoured(JsonObject c, bool microdesc) {
     decoded(strOf(c, "identityN")), decoded(strOf(c, "identityE")), decoded(strOf(c, "identityD")),
     decoded(strOf(c, "signingN")), decoded(strOf(c, "signingE")), decoded(strOf(c, "signingD")));
 
-  ConsensusVoter[] voters = ConsensusVoter[1]();
+  ConsensusVoter[] voters = ConsensusVoter[].defaulted(1);
   voters[0] = ConsensusVoter(strOf(c, "nickname"), decoded(strOf(c, "identityDigest")),
                              strOf(c, "address"), strOf(c, "ip"),
                              numOf(c, "dirPort"), numOf(c, "orPort"), strOf(c, "contact"),
@@ -44,7 +44,7 @@ u8[] buildFlavoured(JsonObject c, bool microdesc) {
                                      numOf(c, "voteSeconds"), numOf(c, "distSeconds"),
                                      strOf(c, "bandwidthWeights"));
 
-  RelayOpinion[] relays = RelayOpinion[1]();
+  RelayOpinion[] relays = RelayOpinion[].defaulted(1);
   relays[0] = RelayOpinion(strOf(c, "descriptor").toBytes(), strOf(c, "flags"),
                            num64Of(c, "bandwidth"), strOf(c, "exitPolicy"));
 
@@ -72,7 +72,7 @@ export string test_the_signature_is_over_the_span_and_by_the_signing_key(Core co
   t.isTrue(sig.len() >= 128, "the consensus carries a signature");
   Lines lines = Lines.create();
   lines.add("rsarecover " + strOf(c, "signingN") + " " + strOf(c, "signingE") + " " + hex(sig));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "what the signing key recovers");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "what the signing key recovers");
   if (!a.ok) { return t.report(); }
   t.eqBytes(decoded(word(a.lines[0], 1)), voteSignatureDigest(cons),
             "the signing key signed our digest over the signed span");
@@ -97,7 +97,7 @@ u8[] signatureOf(u8[] doc) {
     for (i32 j = 0; j < begin.len(); j++) { if (doc[i + j] != begin[j]) { hit = false; break; } }
     if (hit) { at = i + begin.len(); }
   }
-  if (at < 0) { return u8[0](); }
+  if (at < 0) { return u8[](); }
   u8[] end = "-----END SIGNATURE-----".toBytes();
   i32 stop = at;
   while (stop + end.len() <= doc.len()) {
@@ -106,13 +106,13 @@ u8[] signatureOf(u8[] doc) {
     if (hit) { break; }
     stop = stop + 1;
   }
-  u8[] packed = u8[stop - at]();
+  u8[] packed = u8[].filled(stop - at, 0);
   i32 n = 0;
   for (i32 i = at; i < stop; i++) { if (doc[i] != 10) { packed[n] = doc[i]; n = n + 1; } }
-  u8[] text = u8[n]();
+  u8[] text = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { text[i] = packed[i]; }
   u8[]? decoded = b64decode(text);
-  return decoded is null ? u8[0]() : decoded!;
+  return decoded is null ? u8[]() : decoded!;
 }
 
 /** The lines of a document, without their newlines. */
@@ -120,7 +120,7 @@ string[] linesOf(u8[] doc) {
   string all = string.fromBytes(doc);
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) { if (all.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n > 0 ? n : 1](fill: "");
+  string[] out = string[].filled(n > 0 ? n : 1, "");
   i32 at = 0;
   i32 from = 0;
   for (i32 i = 0; i < all.len(); i++) {

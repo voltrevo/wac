@@ -4,6 +4,6 @@
 // from: spec/spec/enums.md, whose only checker was the reference's suite
 enum E { A(i32 x), B }
 export i32 f() {
-  E[] a = E[2]();
+  E[] a = E[].defaulted(2);
   return match (a[0]) { A(x): x, B: 0 };
 }

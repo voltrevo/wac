@@ -63,7 +63,7 @@ struct Ran {
  * containing a space is no longer a thing this has to be careful about.
  */
 Ran runIt(Cli cli, string cmd, string[] args) {
-  Exec r = cli.execWith(cmd, args, u8[0](), string[]("WACLAND_PROBE=seen"), false, false).wait();
+  Exec r = cli.execWith(cmd, args, u8[](), ["WACLAND_PROBE=seen"], false, false).wait();
   if (!r.ran()) { return Ran(-1, "", cmd + " did not run — " + r.error); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
@@ -86,25 +86,25 @@ string nativeBinary(Core core, Cli cli) {
 
 string buildOne(Cli cli, string entry, bool native, string out, string[] grants) {
   if (native) {
-    string[] args = string[4 + grants.len()](fill: "");
+    string[] args = string[].filled(4 + grants.len(), "");
     args[0] = "build";
     args[1] = entry;
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
       return "wac build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
     }
     return "";
   }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
-  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  string[] head = ["run", "-A", "packages/platform/build.ts", entry];
+  string[] args = string[].filled(head.len() + grants.len() + 2, "");
   for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) { return "build.ts: " + string.fromBytes(r.stderr); }
   return "";
 }
@@ -127,7 +127,7 @@ string[] linesOf(string text) {
       at = i + 1;
     }
   }
-  string[] out = string[count](fill: "");
+  string[] out = string[].filled(count, "");
   i32 n = 0;
   at = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -161,7 +161,7 @@ i64 numberAfter(string text, string after) {
 /** The two lines carrying monotonic nanoseconds, with the number replaced by its name. */
 string masked(string out) {
   string text = out;
-  string[] markers = string[]("stage 3 quick ", "stage 3 slow ");
+  string[] markers = ["stage 3 quick ", "stage 3 slow "];
   for (i32 m = 0; m < markers.len(); m++) {
     i32 at = text.indexOf(markers[m]);
     if (at < 0) { continue; }
@@ -240,20 +240,20 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
   string denoProgram = dir + "/wacland-deno";
   // **With reading**, which stage 6 needs: it hands a child `GRANT_NONE` and then `GRANT_READ`, and a
   // parent that could not read either way would prove nothing about the ceiling.
-  string why = buildOne(cli, ENTRY, false, denoProgram, string[]("--allow-read", "--allow-env"));
+  string why = buildOne(cli, ENTRY, false, denoProgram, ["--allow-read", "--allow-env"]);
   t.eqStr(why, "", "the Deno half built");
   if (why != "") { return t.report(); }
-  Ran js = runIt(cli, denoProgram, string[]("one", "two"));
+  Ran js = runIt(cli, denoProgram, ["one", "two"]);
 
   // The Deno half on its own, so that a skipped native half still tests something.
   assertConformant(t, js, "deno");
 
   string native = nativeBinary(core, cli);
   if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
-  why = buildOne(cli, ENTRY, true, dir + "/wacland", string[]("--allow-read", "--allow-env"));
+  why = buildOne(cli, ENTRY, true, dir + "/wacland", ["--allow-read", "--allow-env"]);
   t.eqStr(why, "", "the native half built");
   if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran rs = runIt(cli, native, string[](dir + "/wacland.wasm", "one", "two"));
+  Ran rs = runIt(cli, native, [dir + "/wacland.wasm", "one", "two"]);
   assertConformant(t, rs, "native");
 
   // And the transcripts are the same, once the two measurements are masked.
@@ -267,7 +267,7 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
 }
 
 string[] namesOf(JsonArray items) {
-  string[] out = string[items.len()](fill: "");
+  string[] out = string[].filled(items.len(), "");
   for (i32 i = 0; i < items.len(); i++) {
     match (items.get(i)) {
       Object(members): {
@@ -328,7 +328,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
   // previous field's function. Every call would go somewhere plausible.
   T t = T.create();
   string dir = freshScratch(t, cli, "order");
-  string why = buildOne(cli, ENTRY, true, dir + "/order", string[0](fill: ""));
+  string why = buildOne(cli, ENTRY, true, dir + "/order", string[].filled(0, ""));
   t.eqStr(why, "", "the manifest built");
   if (why != "") { return t.report(); }
 
@@ -347,7 +347,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
   if (core0 is null) { cli.remove(dir, true).wait(); return t.report(); }
 
   JsonArray fields = arrayIn(core0!, "fields");
-  t.eqStrArray(namesOf(fields), string[](
+  t.eqStrArray(namesOf(fields), [
     "nowMillis",
     "monotonicNanos",
     "sleepMillis",
@@ -362,14 +362,15 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
     // The scheduler, and the one field here a host does not *implement* — it builds it by calling the
     // module's own `Sched.create` and hands it back, which is how a program is given somewhere for
     // its continuations to wait without any host knowing what a continuation is.
-    "sched"), "Core's field order");
+    "sched"
+  ], "Core's field order");
 
   // Every *funcref* field names a signature that is in the callback table — the lookup the runtime
   // does when it wires one. A field that is not a funcref is not wired at all: the runtime builds it
   // by calling the module's own `create` and hands it straight back, which is what `Core.sched` is.
   // Checked rather than skipped, because a field that is neither is a manifest nobody can build from.
   JsonArray callbacks = arrayIn(m, "callbacks");
-  string[] callbackTypes = string[callbacks.len()](fill: "");
+  string[] callbackTypes = string[].filled(callbacks.len(), "");
   for (i32 i = 0; i < callbacks.len(); i++) {
     match (callbacks.get(i)) {
       Object(members): { callbackTypes[i] = stringIn(members, "type"); }
@@ -422,12 +423,12 @@ export string test_running_a_host_program_agrees_between_the_two_native_hosts(Co
   T t = T.create();
   string dir = freshScratch(t, cli, "exec");
   string out = dir + "/probe";
-  string why = buildOne(cli, EXEC_PROBE, true, out, string[]("--allow-run"));
+  string why = buildOne(cli, EXEC_PROBE, true, out, ["--allow-run"]);
   t.eqStr(why, "", "the probe built");
   if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
 
   // The V8 host first, and asserted on its own, so a skipped native half still tests something.
-  Ran v8 = runIt(cli, root(cli) + "/native/v8/target/release/wac", string[](out + ".wasm"));
+  Ran v8 = runIt(cli, root(cli) + "/native/v8/target/release/wac", [out + ".wasm"]);
   t.eqI32(v8.code, 0, "the probe exited zero on the V8 host: " + v8.out + v8.err);
   t.isTrue(contains(v8.err, "inherit: ran=yes status=0 buffered=0/0"), v8.err);
   t.isTrue(contains(v8.err, "env: ran=yes handed=yes kept-others=yes"), v8.err);
@@ -436,7 +437,7 @@ export string test_running_a_host_program_agrees_between_the_two_native_hosts(Co
 
   string native = nativeBinary(core, cli);
   if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran rs = runIt(cli, native, string[](out + ".wasm"));
+  Ran rs = runIt(cli, native, [out + ".wasm"]);
   t.eqI32(rs.code, 0, "and on the wasmtime host: " + rs.out + rs.err);
   t.eqStr(rs.err, v8.err, "the two hosts disagree about `execWith`");
   t.eqStr(rs.out, v8.out, "the two hosts disagree about the inherited stream");

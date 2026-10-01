@@ -414,7 +414,7 @@ writable and not:
 ```wac
 Pending<u8[]> ra = cli.recv(a);
 Pending<u8[]> rb = cli.recv(b);
-i32 first = core.waitAny(i32[](ra.id, rb.id), -1);   // parks; returns 0 or 1
+i32 first = core.waitAny([ra.id, rb.id], -1);   // parks; returns 0 or 1
 ```
 
 **It lives on `Core`, not `Cli`.** It grants nothing — it cannot start work, only notice that
@@ -470,7 +470,7 @@ notice (issue 0018). The fix is a parameter on the wait:
 
 ```wac
 Pending<u8[]> r = cli.recv(h);
-i32 which = core.waitAny(i32[](r.id), 5000);   // -1 when the five seconds run out
+i32 which = core.waitAny([r.id], 5000);   // -1 when the five seconds run out
 if (which < 0) {
   r.cancel();                  // stop waiting for the read
   cli.closeSocket(h);          // ...and stop the read itself
@@ -708,7 +708,7 @@ no file, no path and no grant of its own — and a program whose `main` dispatch
 65 programs. That is what `packages/box` is: `box sort` is `box` reading its first argument.
 
 ```wac
-Child kid = cli.spawnSelf(string[]("sort", "-n"), GRANT_READ).wait();
+Child kid = cli.spawnSelf(["sort", "-n"], GRANT_READ).wait();
 ```
 
 A child runs `main` even when the program also exports `page`, because it was spawned: it has a handle
@@ -894,7 +894,7 @@ queue what arrives. Three things follow, and they are the reason for the shape:
   and wac has no mutable globals; the alternative is threading a state struct through every
   handler, which is the service shape and is heavier than this needs to be.
 - **`waitAny` composes over it.** A click *or* a five-second deadline is
-  `core.waitAny(i32[](e.id, file.id), -1)` — a click *or* a dropped file, one call. That is
+  `core.waitAny([e.id, file.id], -1)` — a click *or* a dropped file, one call. That is
   the thing callbacks make hard.
 - **The application decides when it is over.** Returning from `page` ends it and the launcher
   prints the exit line; the document stays as the program left it.

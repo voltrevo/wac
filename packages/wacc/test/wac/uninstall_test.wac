@@ -59,9 +59,9 @@ bool present(Cli cli, string path) {
 
 /** Every difference between what survived and what should have. */
 string[] survivors(Cli cli, string home, bool cacheKept) {
-  string[] wrong = string[8](fill: "");
+  string[] wrong = string[].filled(8, "");
   i32 n = 0;
-  string[] ours = string[]("bin/wac", "env", "install.json5");
+  string[] ours = ["bin/wac", "env", "install.json5"];
   for (i32 i = 0; i < ours.len(); i++) {
     if (present(cli, home + "/" + ours[i])) { wrong[n] = ours[i] + " survived"; n = n + 1; }
   }
@@ -70,13 +70,13 @@ string[] survivors(Cli cli, string home, bool cacheKept) {
     wrong[n] = cacheKept ? "--keep-cache was given and the cache went anyway" : "the cache survived";
     n = n + 1;
   }
-  string[] theirs = string[]("wac.json5", "notes.txt");
+  string[] theirs = ["wac.json5", "notes.txt"];
   for (i32 i = 0; i < theirs.len(); i++) {
     if (!present(cli, home + "/" + theirs[i])) {
       wrong[n] = theirs[i] + " was removed and is not ours"; n = n + 1;
     }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = wrong[i]; }
   return out;
 }
@@ -104,8 +104,8 @@ export string test_the_subcommand_removes_what_an_install_wrote(Core core, Cli c
   string dir = scratch(cli, "uninstall-bin");
   string home = fixture(cli, t, dir);
 
-  Exec r = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](home, dir),
-                   binaryPath(cli), string[]("self", "uninstall"));
+  Exec r = onlyEnv(cli, ["WAC_HOME", "HOME"], [home, dir],
+                   binaryPath(cli), ["self", "uninstall"]);
   t.isTrue(r.ran(), "the command did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "wac self uninstall failed: " + string.fromBytes(r.stderr));
@@ -125,8 +125,8 @@ export string test_keep_cache_keeps_the_cache_and_nothing_else(Core core, Cli cl
   string dir = scratch(cli, "uninstall-keep");
   string home = fixture(cli, t, dir);
 
-  Exec r = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](home, dir),
-                   binaryPath(cli), string[]("self", "uninstall", "--keep-cache"));
+  Exec r = onlyEnv(cli, ["WAC_HOME", "HOME"], [home, dir],
+                   binaryPath(cli), ["self", "uninstall", "--keep-cache"]);
   t.isTrue(r.ran() && r.status == 0,
            "wac self uninstall --keep-cache failed: " + string.fromBytes(r.stderr));
   string[] wrong = survivors(cli, home, true);
@@ -142,8 +142,8 @@ export string test_removing_nothing_says_so_rather_than_failing(Core core, Cli c
   string dir = scratch(cli, "uninstall-twice");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Exec r = onlyEnv(cli, string[]("WAC_HOME", "HOME"), string[](dir + "/.wac", dir),
-                   binaryPath(cli), string[]("self", "uninstall"));
+  Exec r = onlyEnv(cli, ["WAC_HOME", "HOME"], [dir + "/.wac", dir],
+                   binaryPath(cli), ["self", "uninstall"]);
   t.isTrue(r.ran(), "the command did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "uninstalling nothing was an error: " + string.fromBytes(r.stderr));

@@ -12,7 +12,7 @@ import { Url, parseUrl, serialize, pathname, hostname } from "../src/url.wac";
 
 void writeDecimal(Buf out, i32 v) {
   if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[6]();
+  u8[] tmp = u8[].filled(6, 0);
   i32 n = 0;
   i32 x = v;
   while (x > 0) { tmp[n] = 48 + (x % 10); x = x / 10; n++; }
@@ -65,6 +65,6 @@ export u8[] parse(u8[] input) { return describe(parseUrl(input, null)); }
 
 export u8[] parseWithBase(u8[] input, u8[] base) {
   Url? b = parseUrl(base, null);
-  if (b is null) { return u8[1](fill: '0'); }
+  if (b is null) { return u8[].filled(1, '0'); }
   return describe(parseUrl(input, b));
 }

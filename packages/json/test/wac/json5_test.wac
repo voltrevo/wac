@@ -47,7 +47,7 @@ const string DIR = "packages/json/test/jsontestsuite";
  * needs, and the grant would stop saying anything about who actually uses it.
  */
 Answers askOracle(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "deno", string[]("run", "--allow-read", "--no-check", ORACLE), lines, what);
+  return ask(t, cli, "deno", ["run", "--allow-read", "--no-check", ORACLE], lines, what);
 }
 
 /**
@@ -59,7 +59,7 @@ Answers askOracle(T t, Cli cli, Lines lines, string what) {
  * reference fails the test and asks to be deleted.
  */
 string[] knownInputs() {
-  return string[](
+  return [
     // An unquoted member name outside ASCII. ECMAScript's IdentifierName is a Unicode category
     // question; the tables could be generated but would be linked into every program that parses
     // JSON, so parseKey refuses with ERR_UNSUPPORTED rather than guessing. Quoting the name works.
@@ -79,7 +79,8 @@ string[] knownInputs() {
     "{a\\u0041:1}",
     "{a\\u0041:1,b:2}",
     "{$a\\u0042:1}",
-    "{$a\\u0042:1,b:2}");
+    "{$a\\u0042:1,b:2}"
+  ];
 }
 
 bool isKnown(string input) {
@@ -100,7 +101,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
            "only " + itoa(got.lines.len()) + " corpus cases came back — the corpus is not being read");
   if (got.lines.len() <= 400) { return t.report(); }
 
-  string[] inputs = string[got.lines.len()](fill: "");
+  string[] inputs = string[].filled(got.lines.len(), "");
   for (i32 i = 0; i < got.lines.len(); i++) {
     string line = got.lines[i];
     i32 sp = line.indexOf(" ");
@@ -122,7 +123,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
   t.eqI32(verdicts.lines.len(), inputs.len(), "a verdict per case");
   if (verdicts.lines.len() != inputs.len()) { return t.report(); }
 
-  string[] wrong = string[8](fill: "");
+  string[] wrong = string[].filled(8, "");
   i32 nWrong = 0;
   i32 divergedAsExpected = 0;
   for (i32 i = 0; i < inputs.len(); i++) {
@@ -153,7 +154,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
           "the known-divergence list has " + itoa(knownInputs().len()) + " entries and " +
           itoa(divergedAsExpected) + " of them diverged");
 
-  string[] tell = string[nWrong < wrong.len() ? nWrong : wrong.len()](fill: "");
+  string[] tell = string[].filled(nWrong < wrong.len() ? nWrong : wrong.len(), "");
   for (i32 i = 0; i < tell.len(); i++) { tell[i] = wrong[i]; }
   t.eqI32(nWrong, 0, itoa(nWrong) + " of " + itoa(inputs.len()) +
                      " disagree with npm:json5@2.2.3: " + joined(tell, " | "));
@@ -202,7 +203,7 @@ export string test_json5_accepts_every_json_document_with_the_same_tree(Core cor
   t.isTrue(entries is not null, "the JSONTestSuite corpus is listable");
   if (entries is null) { return t.report(); }
 
-  string[] wrong = string[8](fill: "");
+  string[] wrong = string[].filled(8, "");
   i32 nWrong = 0;
   i32 compared = 0;
   string[] names = entries!;
@@ -233,7 +234,7 @@ export string test_json5_accepts_every_json_document_with_the_same_tree(Core cor
 
   t.isTrue(compared >= 90, "only " + itoa(compared) + " documents were compared — the corpus is " +
                            "not being read");
-  string[] tell = string[nWrong < wrong.len() ? nWrong : wrong.len()](fill: "");
+  string[] tell = string[].filled(nWrong < wrong.len() ? nWrong : wrong.len(), "");
   for (i32 i = 0; i < tell.len(); i++) { tell[i] = wrong[i]; }
   t.eqI32(nWrong, 0, itoa(nWrong) + " of " + itoa(compared) + " differ between the two modes: " +
                      joined(tell, " | "));

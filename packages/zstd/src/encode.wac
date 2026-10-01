@@ -112,11 +112,11 @@ struct Matcher {
   i32[] prev;
 
   Matcher create(u8[] data) {
-    i32[] head = i32[1 << hashBits()]();
+    i32[] head = i32[].filled(1 << hashBits(), 0);
     for (i32 i = 0; i < head.len(); i++) {
       head[i] = -1;
     }
-    return Matcher(data, head, i32[data.len() + 1]());
+    return Matcher(data, head, i32[].filled(data.len() + 1, 0));
   }
 
   /** Three bytes into one bucket. The same mixing `packages/gzip` uses, which is enough here. */
@@ -201,10 +201,10 @@ struct Block {
  */
 Block findSequences(Matcher m, i32 at0, i32 to) {
   i32 room = to - at0 + 1;
-  Block b = Block(Buf.create(), i32[room](), i32[room](), i32[room](), i32[room](),
-                  i32[room](), i32[room](), 0);
+  Block b = Block(Buf.create(), i32[].filled(room, 0), i32[].filled(room, 0), i32[].filled(room, 0), i32[].filled(room, 0),
+                  i32[].filled(room, 0), i32[].filled(room, 0), 0);
 
-  i32[] best = i32[2]();
+  i32[] best = i32[].filled(2, 0);
   i32 at = at0;
   i32 literalStart = at0;
 
@@ -350,7 +350,7 @@ Fitted fit(i32[] counts, i32 maxSymbol, i32 total, i32 maxLog) {
 
 /** Count how often each code occurs in a block. */
 i32[] countCodes(i32[] codes, i32 count, i32 maxSymbol) {
-  i32[] counts = i32[maxSymbol + 1]();
+  i32[] counts = i32[].filled(maxSymbol + 1, 0);
   for (i32 i = 0; i < count; i++) {
     counts[codes[i]]++;
   }
@@ -386,7 +386,7 @@ void writeLiterals(Buf out, u8[] literals) {
     return;
   }
 
-  i32[] counts = i32[256]();
+  i32[] counts = i32[].filled(256, 0);
   for (i32 i = 0; i < n; i++) {
     counts[literals[i]]++;
   }
@@ -466,7 +466,7 @@ u8[] bodyWith(Block b, u8[] literals, CTable cLL, CTable cOF, CTable cML, i32 mo
  */
 u8[] compressedBody(Block b, CTable cLL, CTable cOF, CTable cML, i32 rawSize) {
   u8[] literals = b.literals.bytes();
-  u8[] predefined = bodyWith(b, literals, cLL, cOF, cML, 0, u8[0]());
+  u8[] predefined = bodyWith(b, literals, cLL, cOF, cML, 0, u8[]());
 
   u8[] best = predefined;
   if (b.count > 0) {
@@ -486,7 +486,7 @@ u8[] compressedBody(Block b, CTable cLL, CTable cOF, CTable cML, i32 rawSize) {
     if (fitted.len() < best.len()) { best = fitted; }
   }
 
-  if (best.len() >= rawSize) { return u8[0](); }       // not worth it
+  if (best.len() >= rawSize) { return u8[](); }       // not worth it
   return best;
 }
 

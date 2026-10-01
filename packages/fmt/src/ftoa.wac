@@ -79,7 +79,7 @@ Decimal decomposeFloat(bool neg, i32 be, u64 frac, i32 maxBe, u64 implicitBit, i
   // construction — a matched subject is const within its arm, and outside a match
   // the enum has no fields — so the value is built here and constructed once at the
   // end. That was a builder in disguise before.
-  u8[] digits = u8[24]();
+  u8[] digits = u8[].filled(24, 0);
   i32 count = 0;
   i32 exp10 = 0;
 
@@ -274,11 +274,11 @@ export void writeF64(Buf out, f64 x) { writeDecimal(out, decompose(x)); }
 void writeDecimal(Buf out, Decimal d) {
   match (d) {
     NaN: {
-      out.pushAll(u8[]('N', 'a', 'N'));
+      out.pushAll(['N', 'a', 'N'] as u8[]);
     }
     Inf(neg): {
       if (neg) { out.push('-'); }
-      out.pushAll(u8[]('I', 'n', 'f', 'i', 'n', 'i', 't', 'y'));
+      out.pushAll(['I', 'n', 'f', 'i', 'n', 'i', 't', 'y'] as u8[]);
     }
     Zero: {
       // Unsigned, matching String(-0) === "0".
@@ -340,7 +340,7 @@ void writeDigits(Buf out, u8[] digits, i32 count, i32 exp10) {
 /** Decimal digits of a non-negative i32. Only ever called with 0..323 here. */
 void writeSmallInt(Buf out, i32 v) {
   if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[12]();
+  u8[] tmp = u8[].filled(12, 0);
   i32 n = 0;
   i32 m = v;
   while (m > 0) {

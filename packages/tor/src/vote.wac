@@ -48,19 +48,19 @@ export i32 signedLength(u8[] document) { return pastLineStarting(document, signa
  */
 export u8[] voteSignatureDigest(u8[] document) {
   i32 end = signedLength(document);
-  if (end < 0) { return u8[0](); }
+  if (end < 0) { return u8[](); }
   return sha1(head(document, end));
 }
 
 /** The 32-byte SHA-256 a `directory-signature sha256` signs, over the same span. */
 export u8[] voteSignatureDigest256(u8[] document) {
   i32 end = signedLength(document);
-  if (end < 0) { return u8[0](); }
+  if (end < 0) { return u8[](); }
   return sha256(head(document, end));
 }
 
 u8[] head(u8[] document, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = document[i]; }
   return out;
 }
@@ -84,7 +84,7 @@ u8[] head(u8[] document, i32 n) {
  */
 export u8[][] sortedStatusEntries(u8[][] descriptors) {
   u8[][] order = sortedDescriptors(descriptors);
-  u8[][] lines = u8[][order.len()]();
+  u8[][] lines = u8[][].defaulted(order.len());
   for (i32 i = 0; i < order.len(); i++) { lines[i] = routerStatusLine(order[i]); }
   return lines;
 }
@@ -100,7 +100,7 @@ export u8[][] sortedStatusEntries(u8[][] descriptors) {
  */
 export u8[][] sortedDescriptors(u8[][] descriptors) {
   i32 n = descriptors.len();
-  u8[][] order = u8[][n]();
+  u8[][] order = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { order[i] = descriptors[i]; }
 
   for (i32 i = 1; i < n; i++) {
@@ -166,7 +166,7 @@ export u8[] voteDocument(
 ) {
   u8[] identityFp = rsaFingerprint(keys.identityN, keys.identityE);
   u8[] signingFp = rsaFingerprint(keys.signingN, keys.signingE);
-  if (identityFp.len() != 20 || signingFp.len() != 20) { return u8[0](); }
+  if (identityFp.len() != 20 || signingFp.len() != 20) { return u8[](); }
 
   Buf d = Buf.create();
   d.pushAll("network-status-version 3\n".toBytes());
@@ -197,11 +197,11 @@ export u8[] voteDocument(
   d.pushAll(certificate);
 
   // Entries in ascending identity-digest order, which `sortedStatusEntries` establishes.
-  u8[][] descriptors = u8[][relays.len()]();
+  u8[][] descriptors = u8[][].defaulted(relays.len());
   for (i32 i = 0; i < relays.len(); i++) { descriptors[i] = relays[i].descriptor; }
   u8[][] lines = sortedStatusEntries(descriptors);
   for (i32 i = 0; i < lines.len(); i++) {
-    if (lines[i].len() == 0) { return u8[0](); }
+    if (lines[i].len() == 0) { return u8[](); }
     RelayOpinion r = opinionFor(relays, lines[i]);
     d.pushAll(lines[i]);
     d.push(10);
@@ -223,10 +223,10 @@ export u8[] voteDocument(
   // The signature covers the keyword and one space, so the fingerprints that follow are outside it.
   d.pushAll(signatureKeyword());
   u8[] digest = voteSignatureDigest(d.bytes());
-  if (digest.len() != 20) { return u8[0](); }
+  if (digest.len() != 20) { return u8[](); }
   d.pushAll((plainFingerprint(identityFp) + " " + plainFingerprint(signingFp) + "\n").toBytes());
   u8[] sig = rsaSignRawPkcs1(keys.signingN, keys.signingD, digest);
-  if (sig.len() == 0) { return u8[0](); }
+  if (sig.len() == 0) { return u8[](); }
   d.pushAll(pemBlock("SIGNATURE", sig));
 
   return d.bytes();

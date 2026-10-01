@@ -43,7 +43,7 @@ export struct Client {
   u8[] hostKey;
 
   Client create(Core core, Cli cli, i32 sock) {
-    return Client(Conn.create(core, cli, sock), u8[0](), u8[0]());
+    return Client(Conn.create(core, cli, sock), u8[](), u8[]());
   }
 
   bool failed(const this) { return this.conn.failed(); }
@@ -63,7 +63,7 @@ export struct Client {
     }
 
     // The server may send banner lines first, so this reads until a version line appears.
-    u8[] serverVersion = u8[0]();
+    u8[] serverVersion = u8[]();
     while (true) {
       Version v = scanVersion(this.conn.buf.data, 0, this.conn.buf.len);
       match (v.status) {
@@ -122,7 +122,7 @@ export struct Client {
     this.sessionId = h;
     this.hostKey = reply!.hostKey;
 
-    if (!this.conn.sendPacket(u8[](msgNewKeys()))) { this.conn.fail("cannot send NEWKEYS"); return; }
+    if (!this.conn.sendPacket([msgNewKeys()])) { this.conn.fail("cannot send NEWKEYS"); return; }
     u8[] theirNewKeys = this.conn.readPacket();
     if (this.conn.failed()) { return; }
     if (theirNewKeys[0] != msgNewKeys()) { this.conn.fail("expected NEWKEYS"); return; }

@@ -26,7 +26,7 @@ import { shErr, shOut, shStatus, shTouchStubs, shWritten } from "./wac/probe.wac
 
 /** Every script written out by hand, in the order the TypeScript listed them. */
 string[] scripts() {
-  return string[](
+  return [
     "",
     " ",
     "\n",
@@ -771,12 +771,13 @@ string[] scripts() {
     "for x in a; do ) ; done",
     "(echo a) )",
     "{ echo a; } )",
-    "while true; do :; done");
+    "while true; do :; done"
+  ];
 }
 
 /** The compound commands whose every prefix is also exercised — see `prefixes`. */
 string[] complete() {
-  return string[](
+  return [
     "if true; then echo a; elif false; then echo b; else echo c; fi",
     "while true; do echo a; done",
     "until true; do echo a; done",
@@ -792,12 +793,13 @@ string[] complete() {
     "case a in a) echo x ;; b) echo y ;; esac",
     "f() { echo a; echo b; }",
     "for x in a b c; do echo $x; done",
-    "if a; then b; elif c; then d; else e; fi");
+    "if a; then b; elif c; then d; else e; fi"
+  ];
 }
 
 /** Shapes the prefixes do not reach: a bad token where a list may start, and the separators. */
 string[] odd() {
-  return string[](
+  return [
     "\"unterminated",
     "'unterminated",
     "; echo a",
@@ -819,12 +821,13 @@ string[] odd() {
     "done",
     "fi",
     "}",
-    "case a in a) echo x\n;; esac");
+    "case a in a) echo x\n;; esac"
+  ];
 }
 
 /** The other side of the capture flag: output written through the capability, not collected. */
 string[] written() {
-  return string[](
+  return [
     "echo written",
     "echo a | rev",
     "{ echo grouped; }",
@@ -837,12 +840,13 @@ string[] written() {
     "f() { echo f; }; f",
     "echo dir/*",
     "exit 1",
-    "nosuchcommand");
+    "nosuchcommand"
+  ];
 }
 
 /** The builtins the exercise reached only after 2026-08-29 — `issues/system/0288b`. */
 string[] builtins() {
-  return string[](
+  return [
     "cd /tmp && ls",
     "ls",
     "ls /nosuchfile",
@@ -892,7 +896,8 @@ string[] builtins() {
     "ls -Y",
     "cat -Y",
     "wc -Q",
-    "ls -Y /bin/prog");
+    "ls -Y /bin/prog"
+  ];
 }
 
 /**
@@ -914,7 +919,7 @@ string[] prefixes(string script) {
 
   }
   for (i32 i = 1; i < script.len(); i++) { out.push(script.slice(0, i)); }
-  string[] arr = string[out.len()](fill: "");
+  string[] arr = string[].filled(out.len(), "");
   for (i32 i = 0; i < out.len(); i++) { arr[i] = out.get(i); }
   return arr;
 }

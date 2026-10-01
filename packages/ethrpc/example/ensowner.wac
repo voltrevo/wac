@@ -40,15 +40,16 @@ export i32 main(Core core, Cli cli) {
   string registry = n > 3 ? string.fromBytes(cli.arg(3).wait()) : REGISTRY();
   // A block hash the caller got from somewhere that is not this node — a friend, an explorer, a
   // checkpoint. With one, the state root is anchored; without one, it is the node's own word.
-  u8[] expected = n > 4 ? hexOf(string.fromBytes(cli.arg(4).wait())) : u8[0]();
+  u8[] expected = n > 4 ? hexOf(string.fromBytes(cli.arg(4).wait())) : u8[]();
 
   // Both slots in one request: one round trip, one account proof, one block. Asking twice would answer
   // about two states, and a name transferred between them gives an owner and a resolver that never
   // coexisted — which is exactly the kind of plausible wrong answer this stack exists to refuse.
   u8[] node = namehash(name);
-  string[] slots = string[](
+  string[] slots = [
     "0x" + string.fromBytes(hexEncode(ownerSlot(node))),
-    "0x" + string.fromBytes(hexEncode(resolverSlot(node))));
+    "0x" + string.fromBytes(hexEncode(resolverSlot(node)))
+  ];
   Proof p = proofOfSlots(cli, host, port, registry, slots, expected);
   if (!p.ok) { core.warn("ensowner: " + p.error); return 1; }
 
@@ -83,7 +84,7 @@ u8[] hexOf(string s) {
   u8[] b = s.toBytes();
   i32 at = b.len() >= 2 && b[0] == '0' && (b[1] == 'x' || b[1] == 'X') ? 2 : 0;
   i32 n = (b.len() - at) / 2;
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) {
     out[i] = (digit(b[at + i * 2]) << 4) | digit(b[at + i * 2 + 1]);
   }

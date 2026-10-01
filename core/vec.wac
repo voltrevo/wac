@@ -9,7 +9,7 @@
 // Capacity doubles, so n pushes cost O(n) amortised.
 //
 // One shape note that is wac rather than taste: growing an array needs a value to fill it
-// with, because `T[n]()` requires T to have a default and a struct or enum has none. The
+// with, because `T[].defaulted(n)` requires T to have a default and a struct or enum has none. The
 // value being pushed is always available at exactly the moment growth is needed, so `push`
 // fills with it. That is why there is no `reserve()` without an element and why
 // `withCapacity` asks for one.
@@ -22,7 +22,7 @@ export struct Vec<T> {
 
   /** An empty Vec. Zero capacity, so the first push allocates. */
   Vec<T> create() {
-    // The array *literal* form with no elements, not `T[0]()`: a sized array needs a default
+    // The array *literal* form with no elements, not `T[]()`: a sized array needs a default
     // value for T and an enum or a struct has none, whereas a literal with no elements needs
     // nothing. That is what makes an empty `Vec<Option<i32>>` possible at all.
     return Vec(T[](), 0);
@@ -37,7 +37,7 @@ export struct Vec<T> {
    */
   Vec<T> withCapacity(i32 capacity, T fill) {
     if (capacity < 0) { trap; }
-    return Vec(T[capacity](fill: fill), 0);
+    return Vec(T[].filled(capacity, fill), 0);
   }
 
   /** A Vec over an existing array, taking ownership of it — no copy. */
@@ -74,7 +74,7 @@ export struct Vec<T> {
       // Doubling zero is zero, so the floor matters: `create()` starts at zero capacity and
       // without it the store below would go out of bounds. Buf learned the same thing.
       i32 grown = this.data.len() == 0 ? 4 : this.data.len() * 2;
-      T[] next = T[grown](fill: v);
+      T[] next = T[].filled(grown, v);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }
       this.data = next;
     }
@@ -141,7 +141,7 @@ export struct Vec<T> {
   /** Everything, as an array of exactly `len()` — a copy, so the Vec may still be used. */
   T[] toArray(const this) {
     if (this.n == 0) { return T[](); }
-    T[] out = T[this.n](fill: this.data[0]);
+    T[] out = T[].filled(this.n, this.data[0]);
     for (i32 i = 0; i < this.n; i++) { out[i] = this.data[i]; }
     return out;
   }

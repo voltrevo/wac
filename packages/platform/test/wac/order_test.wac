@@ -52,7 +52,7 @@ struct Split {
  */
 Split splitArgs(string src, i32 open) {
   u8[] b = src.toBytes();
-  string[] found = string[256](fill: "");
+  string[] found = string[].filled(256, "");
   i32 n = 0;
   i32 depth = 0;
   i32 at = open + 1;
@@ -96,7 +96,7 @@ Split splitArgs(string src, i32 open) {
   }
   // A trailing comma leaves an empty final part.
   if (n > 0 && trimmed(found[n - 1]) == "") { n = n - 1; }
-  string[] parts = string[n](fill: "");
+  string[] parts = string[].filled(n, "");
   for (i32 k = 0; k < n; k++) { parts[k] = found[k]; }
   return Split(parts, i);
 }
@@ -127,13 +127,13 @@ string[] wacOrder(string src, string name) {
   i32 at = src.indexOf("  " + name + " of(");
   if (at < 0) { trap; }
   Split s = splitArgs(src, src.slice(at, src.len()).indexOf("(") + at);
-  string[] out = string[s.parts.len()](fill: "");
+  string[] out = string[].filled(s.parts.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < s.parts.len(); i++) {
     string id = trailingName(s.parts[i]);
     if (id.len() > 0) { out[n] = id; n = n + 1; }
   }
-  string[] names = string[n](fill: "");
+  string[] names = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { names[i] = out[i]; }
   return names;
 }
@@ -150,7 +150,7 @@ string headMarker(string part) {
 
 /** Every `OP.NAME` in `part`, deduplicated. */
 string[] opsIn(string part) {
-  string[] found = string[16](fill: "");
+  string[] found = string[].filled(16, "");
   i32 n = 0;
   i32 at = 0;
   while (at < part.len()) {
@@ -168,7 +168,7 @@ string[] opsIn(string part) {
     }
     at = start;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
   return out;
 }
@@ -189,7 +189,7 @@ string nameOfOp(string op) {
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] == '_') { upNext = true; continue; }
     if (upNext) { out = out + op.slice(i, i + 1); upNext = false; continue; }
-    u8[] one = u8[1](fill: 0);
+    u8[] one = u8[].filled(1, 0);
     one[0] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
     out = out + string.fromBytes(one);
   }
@@ -199,7 +199,7 @@ string nameOfOp(string op) {
 /** Markers anywhere outside the call, which could pair with an argument by position. */
 string[] straysOutside(string src, i32 from, i32 to) {
   string outside = src.slice(0, from) + src.slice(to, src.len());
-  string[] found = string[32](fill: "");
+  string[] found = string[].filled(32, "");
   i32 n = 0;
   i32 at = 0;
   while (at < outside.len() && n < found.len()) {
@@ -212,7 +212,7 @@ string[] straysOutside(string src, i32 from, i32 to) {
     n = n + 1;
     at = start + close;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
   return out;
 }
@@ -230,14 +230,14 @@ string[] providerOrder(T t, string src, string name) {
   string call = "return cls." + name + ".of(";
   i32 at = src.indexOf(call);
   t.isTrue(at >= 0, "no cls." + name + ".of in provider.ts");
-  if (at < 0) { return string[0](fill: ""); }
+  if (at < 0) { return string[].filled(0, ""); }
   Split s = splitArgs(src, src.slice(at, src.len()).indexOf("(") + at);
 
   // Nothing outside the argument list may carry a marker, or a stray could pair with an argument by
   // position and hide exactly the drift this is looking for.
   string[] strays = straysOutside(src, at, s.end);
 
-  string[] out = string[s.parts.len()](fill: "");
+  string[] out = string[].filled(s.parts.len(), "");
   for (i32 i = 0; i < s.parts.len(); i++) {
     string marker = headMarker(s.parts[i]);
     if (marker == "") {
@@ -267,7 +267,7 @@ export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order
   string wac = sourceOf(cli, "std/platform.wac");
   string prov = sourceOf(cli, "packages/platform/host/provider.ts");
 
-  string[] structs = string[]("Cli", "Core", "Page");
+  string[] structs = ["Cli", "Core", "Page"];
   for (i32 i = 0; i < structs.len(); i++) {
     string[] declared = wacOrder(wac, structs[i]);
     string[] passed = providerOrder(t, prov, structs[i]);

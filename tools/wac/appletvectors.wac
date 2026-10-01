@@ -58,15 +58,17 @@ i32 maxBytes() { return 8192; }
  */
 export Exec askBash(Cli cli, string dir, string script) {
   return cli.exec("env",
-                  string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                  [
+                           "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                            "LC_ALL=C", "HOME=" + dir,
                            "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
-                           "bash", dir, script),
-                  u8[0]()).wait();
+                           "bash", dir, script
+                  ],
+                  u8[]()).wait();
 }
 
 string versionOf(Cli cli, string program, string flag) {
-  Exec r = cli.exec(program, string[](flag), u8[0]()).wait();
+  Exec r = cli.exec(program, [flag], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return "(absent)"; }
   string all = string.fromBytes(r.stdout);
   i32 nl = all.indexOf("\n");
@@ -90,7 +92,7 @@ export i32 main(Core core, Cli cli) {
   i32 b = capture(core, cli, operandCases(), operandFixtures(), operandVectors());
   if (b != 0) { return b; }
   ErrCase[] errs = operandErrorCases();
-  string[] scripts = string[errs.len()](fill: "");
+  string[] scripts = string[].filled(errs.len(), "");
   for (i32 i = 0; i < errs.len(); i++) { scripts[i] = errs[i].script; }
   i32 c = capture(core, cli, scripts, operandErrorFixtures(), operandErrorVectors());
   if (c != 0) { return c; }

@@ -25,14 +25,14 @@ import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
  * be able to say what PATH is — including saying it is one without `wac` in it.
  */
 Exec sh(Cli cli, string script) {
-  return cli.exec("/bin/sh", string[]("-c", script), u8[0]()).wait();
+  return cli.exec("/bin/sh", ["-c", script], u8[]()).wait();
 }
 
 /** `wac app <entry> [grant] -o <dest>`, run against the binary this test is running under. */
 Exec build(Cli cli, string entry, string grant, string dest) {
-  string[] argv = grant == "" ? string[]("app", entry, "-o", dest)
-                              : string[]("app", entry, grant, "-o", dest);
-  return cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+  string[] argv = grant == "" ? ["app", entry, "-o", dest]
+                              : ["app", entry, grant, "-o", dest];
+  return cli.exec(binaryPath(cli), argv, u8[]()).wait();
 }
 
 /** A program with no imports beyond `Core`, so the build is a compile of two lines. */
@@ -195,7 +195,7 @@ export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli
   i32 eol = mark;
   while (eol < head.len() && head.slice(eol, eol + 1) != "\n") { eol = eol + 1; }
   string edited = head.slice(0, mark) + "# wac-app 0.0.0-not-this-one" + head.slice(eol, head.len());
-  u8[] out = u8[edited.len() + (got.bytes.len() - cut)]();
+  u8[] out = u8[].filled(edited.len() + (got.bytes.len() - cut), 0);
   u8[] eb = edited.toBytes();
   for (i32 i = 0; i < eb.len(); i++) { out[i] = eb[i]; }
   for (i32 i = 0; i < got.bytes.len() - cut; i++) { out[eb.len() + i] = got.bytes[cut + i]; }
@@ -273,7 +273,7 @@ export string test_an_app_stamped_with_no_version_still_runs(Core core, Cli cli)
   // The trailing space is kept and nothing follows it — `APP_MARK` exactly, which is the line
   // `preamble("")` writes.
   string edited = head.slice(0, mark) + "# wac-app " + head.slice(eol, head.len());
-  u8[] out = u8[edited.len() + (got.bytes.len() - cut)]();
+  u8[] out = u8[].filled(edited.len() + (got.bytes.len() - cut), 0);
   u8[] eb = edited.toBytes();
   for (i32 i = 0; i < eb.len(); i++) { out[i] = eb[i]; }
   for (i32 i = 0; i < got.bytes.len() - cut; i++) { out[eb.len() + i] = got.bytes[cut + i]; }
@@ -324,11 +324,11 @@ export string test_app_refuses_a_flag_it_cannot_finish(Core core, Cli cli) {
 
   // The three that reach the shared compile and change what it emits. `--js` is refused too, but by
   // the generic message: it is `bindgen`'s flag, so pointing at `wac build` would be a wrong hint.
-  string[] flags = string[]("--coverage", "--trace", "--trace-slots");
+  string[] flags = ["--coverage", "--trace", "--trace-slots"];
   for (i32 i = 0; i < flags.len(); i++) {
     Exec made = cli.exec(binaryPath(cli),
-                         string[]("app", dir + "/hello.wac", flags[i], "-o", dir + "/thing"),
-                         u8[0]()).wait();
+                         ["app", dir + "/hello.wac", flags[i], "-o", dir + "/thing"],
+                         u8[]()).wait();
     t.isTrue(made.ran(), "wac app did not run — " + made.error);
     t.eqI32(made.status, 2, flags[i] + " was accepted: " + string.fromBytes(made.stderr));
     string said = string.fromBytes(made.stderr);
@@ -344,8 +344,8 @@ export string test_app_refuses_a_flag_it_cannot_finish(Core core, Cli cli) {
 
   // A flag belonging to a *third* command gets the ordinary refusal, naming what `app` does take.
   Exec js = cli.exec(binaryPath(cli),
-                     string[]("app", dir + "/hello.wac", "--js", "-o", dir + "/thing"),
-                     u8[0]()).wait();
+                     ["app", dir + "/hello.wac", "--js", "-o", dir + "/thing"],
+                     u8[]()).wait();
   t.eqI32(js.status, 2, "--js was accepted: " + string.fromBytes(js.stderr));
   t.isTrue(contains(string.fromBytes(js.stderr), "--allow-read"),
            "the refusal does not say what `app` takes: " + string.fromBytes(js.stderr));

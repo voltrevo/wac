@@ -21,7 +21,7 @@ export struct Response {
   Headers headers;                 // framing headers are added by `write`, not by the caller
   u8[] body;
 
-  Response create(i32 status) { return Response(status, Headers.create(), u8[0]()); }
+  Response create(i32 status) { return Response(status, Headers.create(), u8[]()); }
 
   /** Add a field. Content-Length and Transfer-Encoding are refused — see the file header. */
   void set(this, string name, string value) {

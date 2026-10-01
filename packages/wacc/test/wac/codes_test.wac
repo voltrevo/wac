@@ -53,34 +53,37 @@ i32 firstCode(i32[] out) { return out.len() >= 3 ? out[0] : -1; }
  * character the parser then chokes on. `@` is the latter: it lexes fine and fails at code 20.
  */
 string[] lexWhat() {
-  return string[](
+  return [
     "a string with no closing quote",
     "an escape that is not one at all",
     "a Unicode escape naming no codepoint",
-    "a control character written raw in a literal");
+    "a control character written raw in a literal"
+  ];
 }
 string[] lexSrc() {
-  return string[](
+  return [
     "export i32 f() { string s = \"oops; return 0; }",
     "export i32 f() { string s = \"a\\qb\"; return 0; }",
     "export i32 f() { string s = \"\\u{110000}\"; return 0; }",
-    "export i32 f() { string s = \"a\u{0094}b\"; return 0; }");
+    "export i32 f() { string s = \"a\u{0094}b\"; return 0; }"
+  ];
 }
 // errUnterminatedString, errUnknownEscape, errBadUnicodeEscape, errRawCharacter
-i32[] lexCode() { return i32[](2, 3, 8, 9); }
+i32[] lexCode() { return [2, 3, 8, 9] as i32[]; }
 
 string[] parseWhat() {
-  return string[]("a type name where a type must be", "nothing where an expression must be");
+  return ["a type name where a type must be", "nothing where an expression must be"];
 }
 string[] parseSrc() {
-  return string[](
+  return [
     "export i32 f() { 3 x = 1; return x; }",
-    "export i32 f() { return 1 + ; }");
+    "export i32 f() { return 1 + ; }"
+  ];
 }
-i32[] parseCode() { return i32[](20, 22); }   // perrExpected, perrBadPrimary
+i32[] parseCode() { return [20, 22] as i32[]; }   // perrExpected, perrBadPrimary
 
 string[] checkWhat() {
-  return string[](
+  return [
     "a name nothing declares",
     "assigning to a const variable",
     "a call with the wrong number of arguments",
@@ -88,10 +91,11 @@ string[] checkWhat() {
     "a match on something that is not an enum",
     "an arm binding more names than the variant has",
     "a cast to a packed type",
-    "a cast between a number and a reference");
+    "a cast between a number and a reference"
+  ];
 }
 string[] checkSrc() {
-  return string[](
+  return [
     "export i32 f() { return nope; }",
     "export i32 f() { const i32 k = 1; k = 2; return k; }",
     "void g(i32 a) {} export i32 f() { g(); return 0; }",
@@ -99,8 +103,9 @@ string[] checkSrc() {
     "export i32 f(i32 n) { match (n) { default: { return 0; } } return 1; }",
     "enum E { A, C(i32 p) } export i32 f(E e) { " +
     "return match (e) { A: 0, C(p, q): q }; }",
-    "export i32 f() { i32 a = 65; u8[] b = u8[](a as u8); return b[0]; }",
-    "export i32 f() { i32 n = 1; string s = n as string; return s.len(); }");
+    "export i32 f() { i32 a = 65; u8[] b = [a as u8]; return b[0]; }",
+    "export i32 f() { i32 n = 1; string s = n as string; return s.len(); }"
+  ];
 }
 // errUndefinedName, errConstVariable, errCallArity, errNoSuchField, errMatchNotEnum, errArmBindArity,
 // errPackedPosition, errWrongCastOp
@@ -114,7 +119,7 @@ string[] checkSrc() {
 // mutant it kills is a constant whose body becomes `return 0`, and a code nothing names by value is a
 // code no test can tell from zero. `issues/system/0005` asks for a row per constant as each is next
 // touched, and these two were touched.
-i32[] checkCode() { return i32[](35, 10, 32, 39, 72, 76, 26, 16); }
+i32[] checkCode() { return [35, 10, 32, 39, 72, 76, 26, 16] as i32[]; }
 
 export string test_each_lexer_diagnostic_carries_the_code_it_is_supposed_to() {
   T t = T.create();
@@ -154,7 +159,7 @@ export string test_and_the_codes_within_one_phase_are_distinct() {
   // naming one rule when the other is what happened — and the row for each would still pass, because
   // each row only ever looks at its own answer.
   T t = T.create();
-  string[] phases = string[]("lex", "parse", "check");
+  string[] phases = ["lex", "parse", "check"];
   for (i32 p = 0; p < phases.len(); p++) {
     string[] what = p == 0 ? lexWhat() : (p == 1 ? parseWhat() : checkWhat());
     i32[] code = p == 0 ? lexCode() : (p == 1 ? parseCode() : checkCode());
@@ -236,26 +241,28 @@ export string test_each_literal_form_escapes_its_own_delimiter_and_only_its_own(
 export string test_a_unicode_escape_is_bounded_by_what_fromCodepoint_accepts() {
   T t = T.create();
 
-  string[] refused = string[](
+  string[] refused = [
     "\\u{110000}",     // one past the top
     "\\u{D800}",       // the first surrogate
     "\\u{DFFF}",       // the last surrogate
     "\\u{}",           // no digits
     "\\u{1234567}",    // seven, and seven cannot be in range
     "\\u{XY}",         // not hex
-    "\\u41");          // no braces at all
+    "\\u41"          // no braces at all
+  ];
   for (i32 i = 0; i < refused.len(); i++) {
     string src = "export i32 f() { string s = \"" + refused[i] + "\"; return 0; }";
     t.eqI32(firstCode(dumpErrors(src.toBytes())), 8, "refused: " + refused[i]);
   }
 
-  string[] taken = string[](
+  string[] taken = [
     "\\u{0}",          // the bottom
     "\\u{7F}",         // one byte
     "\\u{D7FF}",       // just below the surrogates
     "\\u{E000}",       // just above them
     "\\u{10FFFF}",     // the top
-    "\\u{10ffff}");    // and lowercase hex is the same value
+    "\\u{10ffff}"    // and lowercase hex is the same value
+  ];
   for (i32 i = 0; i < taken.len(); i++) {
     string src = "export i32 f() { string s = \"" + taken[i] + "\"; return 0; }";
     t.eqI32(firstCode(dumpErrors(src.toBytes())), 0 - 1, "taken: " + taken[i]);
@@ -266,7 +273,7 @@ export string test_a_unicode_escape_is_bounded_by_what_fromCodepoint_accepts() {
 /**
  * A character literal in a byte is a codepoint in a byte, and that is its own fault.
  *
- * **A plain number is not this rule.** `u8[](300)` truncating to `44` is deliberate and has a clause
+ * **A plain number is not this rule.** `[300] as u8[]` truncating to `44` is deliberate and has a clause
  * of its own — spec/spec/arrays.md's `[§wac-arr-i8-lit-trunc-i9g6kol]`, *"the fixed-element form
  * takes `i32` values too, and truncates them the same way a write does"* — so a byte array can be
  * written as a literal list. A first version of this test refused those too; the spec's acceptance
@@ -286,24 +293,25 @@ export string test_a_unicode_escape_is_bounded_by_what_fromCodepoint_accepts() {
 export string test_a_character_literal_above_ascii_cannot_be_written_into_a_byte() {
   T t = T.create();
 
-  string[] refused = string[](
-    "export i32 f() { return u8[]('é')[0]; }",
-    "export i32 f() { return u8[]('\u{1F600}')[0]; }",
-    "export i32 f() { return i8[]('é')[0]; }",
-    "export i32 f() { return u8[1](fill: 'é')[0]; }");
+  string[] refused = [
+    "export i32 f() { return (['é'] as u8[])[0]; }",
+    "export i32 f() { return (['\u{1F600}'] as u8[])[0]; }",
+    "export i32 f() { return (['é'] as i8[])[0]; }",
+    "export i32 f() { return u8[].filled(1, 'é')[0]; }"
+  ];
   for (i32 i = 0; i < refused.len(); i++) {
     t.eqI32(firstCode(dumpTypeErrors(refused[i].toBytes())), 209, "refused: " + refused[i]);
   }
 
   // 127 is the last codepoint that is also a byte, and 128 is the first that is not.
-  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return u8[]('\u{7F}')[0]; }".toBytes())),
+  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return (['\u{7F}'] as u8[])[0]; }".toBytes())),
           0 - 1, "the last ASCII codepoint is still a byte");
-  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return u8[]('\u{80}')[0]; }".toBytes())),
+  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return (['\u{80}'] as u8[])[0]; }".toBytes())),
           209, "and the first non-ASCII one is not");
 
-  // A wider packed element is not making this claim: `i16[]('é')` is a codepoint in something that
+  // A wider packed element is not making this claim: `['é'] as i16[]` is a codepoint in something that
   // can hold it, and the rule this test states is about bytes.
-  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return i16[]('é')[0]; }".toBytes())),
+  t.eqI32(firstCode(dumpTypeErrors("export i32 f() { return (['é'] as i16[])[0]; }".toBytes())),
           0 - 1, "a 16-bit element is not a byte");
 
   // **The two spellings that are not an element slot**, and the comparison is the one
@@ -316,12 +324,12 @@ export string test_a_character_literal_above_ascii_cannot_be_written_into_a_byte
             "export bool f() { u8[] b = \"é\".toBytes(); return 'é' == b[0]; }".toBytes())),
           209, "and the same written the other way round");
   t.eqI32(firstCode(dumpTypeErrors(
-            "export i32 f() { u8[] b = u8[1](); b[0] = 'é'; return b[0]; }".toBytes())),
+            "export i32 f() { u8[] b = u8[].filled(1, 0); b[0] = 'é'; return b[0]; }".toBytes())),
           209, "storing a codepoint into a byte");
 
   // And the ASCII comparison every byte-scanning loop here is built on stays legal.
   t.eqI32(firstCode(dumpTypeErrors(
-            "export bool f() { u8[] b = u8[1](); return b[0] == 'A'; }".toBytes())),
+            "export bool f() { u8[] b = u8[].filled(1, 0); return b[0] == 'A'; }".toBytes())),
           0 - 1, "comparing a byte against an ASCII codepoint is what the loops do");
   return t.report();
 }
@@ -350,7 +358,7 @@ export string test_a_literal_refuses_the_characters_that_cannot_be_seen() {
   T t = T.create();
 
   // Every category, one code point each, raw inside a string.
-  i32[] refused = i32[](
+  i32[] refused = [
     0x0094,     // Cc — a C1 control, the case a codepoint range misses
     0x00AD,     // Cf — soft hyphen
     0x200B,     // Cf — zero width space
@@ -358,7 +366,8 @@ export string test_a_literal_refuses_the_characters_that_cannot_be_seen() {
     0xFEFF,     // Cf — byte order mark
     0xE000,     // Co — private use
     0x2028,     // Zl — line separator
-    0x2029);    // Zp — paragraph separator
+    0x2029    // Zp — paragraph separator
+  ];
   for (i32 i = 0; i < refused.len(); i++) {
     string src = "export i32 f() { string s = \"a" + string.fromCodepoint(refused[i])
                + "b\"; return 0; }";
@@ -374,7 +383,7 @@ export string test_a_literal_refuses_the_characters_that_cannot_be_seen() {
 
   // The two `Cf` code points D3 admits, because they change what a visible character looks like
   // rather than where it sits — emoji sequences and correct rendering in Persian, Hindi and Malay.
-  i32[] allowed = i32[](0x200C, 0x200D, 0x2014, 0x00E9, 0x1F600);
+  i32[] allowed = [0x200C, 0x200D, 0x2014, 0x00E9, 0x1F600];
   for (i32 i = 0; i < allowed.len(); i++) {
     string src = "export i32 f() { string s = \"a" + string.fromCodepoint(allowed[i])
                + "b\"; return 0; }";

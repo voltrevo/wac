@@ -43,16 +43,16 @@ string appletName(string file) {
 /** Every name that is both a builtin and an applet, in `builtinNames()`'s order. */
 string[] shadowed(Cli cli) {
   string[]? files = cli.readDir(appletDir()).wait();
-  if (files is null) { return string[0](); }
+  if (files is null) { return string[](); }
   string[] b = builtinNames();
-  string[] hit = string[b.len()](fill: "");
+  string[] hit = string[].filled(b.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < b.len(); i++) {
     for (i32 j = 0; j < files!.len(); j++) {
       if (appletName(files![j]) == b[i]) { hit[n] = b[i]; n = n + 1; }
     }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = hit[i]; }
   return out;
 }
@@ -101,7 +101,7 @@ export string test_every_known_divergence_is_still_shadowed(Core core, Cli cli) 
   // all — because the builtin went, which is `issues/system/0201`'s first option — must be taken off
   // the list rather than left asserting something about a name nobody shadows.
   string missing = "";
-  string[] known = string[]("mkdir", "rm");
+  string[] known = ["mkdir", "rm"];
   for (i32 k = 0; k < known.len(); k++) {
     bool still = false;
     for (i32 i = 0; i < got.len(); i++) { if (got[i] == known[k]) { still = true; } }

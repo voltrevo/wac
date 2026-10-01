@@ -29,7 +29,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
 
 /** A pattern, not random: a truncation or a doubled chunk would visibly break it. */
 u8[] pattern(i32 size) {
-  u8[] data = u8[size]();
+  u8[] data = u8[].filled(size, 0);
   for (i32 i = 0; i < size; i++) { data[i] = (i * 31 + (i >> 13)) & 0xFF; }
   return data;
 }
@@ -67,18 +67,18 @@ export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
   // name, which could not be cached at all before `issues/system/0283c` and is rebuilt here only
   // when the sources or the compiler move. That matters more here than elsewhere: this case runs the
   // program fifteen times, at up to three megabytes a pass.
-  string app = builtProgram(cli, BOX, "chunking-box", string[]("--allow-read", "--allow-write"));
+  string app = builtProgram(cli, BOX, "chunking-box", ["--allow-read", "--allow-write"]);
   t.isTrue(app != "", "box built");
   if (app == "") { cli.remove(dir, true).wait(); return t.report(); }
 
-  i32[] sizes = i32[](MB - 1, MB, MB + 1, 3 * MB, 2 * MB);
+  i32[] sizes = [MB - 1, MB, MB + 1, 3 * MB, 2 * MB];
   for (i32 k = 0; k < sizes.len(); k++) {
     i32 size = sizes[k];
     u8[] data = pattern(size);
     cli.writeFile(src, data).wait();
 
     // Out through `write`: the whole file crosses as the request payload.
-    Exec cat = cli.exec(binaryPath(cli), string[](app, "cat", src), u8[0]()).wait();
+    Exec cat = cli.exec(binaryPath(cli), [app, "cat", src], u8[]()).wait();
     t.isTrue(cat.ran() && cat.status == 0,
              "cat at " + itoa(size) + " bytes — " + string.fromBytes(cat.stderr));
     if (cat.ran() && cat.status == 0) {
@@ -88,7 +88,7 @@ export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
 
     // And through `writeFile`, which is where `cp` was failing.
     cli.remove(dst, false).wait();
-    Exec cp = cli.exec(binaryPath(cli), string[](app, "cp", src, dst), u8[0]()).wait();
+    Exec cp = cli.exec(binaryPath(cli), [app, "cp", src, dst], u8[]()).wait();
     t.isTrue(cp.ran() && cp.status == 0,
              "cp at " + itoa(size) + ": " + string.fromBytes(cp.stderr));
     if (cp.ran() && cp.status == 0) {
@@ -105,7 +105,7 @@ export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
   FileResult data = cli.readFile(src).wait();
   t.isTrue(data.ok, "the source is still there — " + data.error);
   if (data.ok) {
-    Exec gz = cli.exec(binaryPath(cli), string[](app, "gzip", src), u8[0]()).wait();
+    Exec gz = cli.exec(binaryPath(cli), [app, "gzip", src], u8[]()).wait();
     t.isTrue(gz.ran() && gz.status == 0, "gzip ran — " + string.fromBytes(gz.stderr));
     // Compressed, rather than handed back unchanged — a `gzip` that copied its input would round
     // trip perfectly and prove nothing about either direction.
@@ -113,7 +113,7 @@ export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
              "gzip made it no smaller: " + itoa(gz.stdout.len()) + " from " +
              itoa(data.bytes.len()));
     if (gz.ran() && gz.status == 0) {
-      Exec back = cli.exec(binaryPath(cli), string[](app, "gunzip"), gz.stdout).wait();
+      Exec back = cli.exec(binaryPath(cli), [app, "gunzip"], gz.stdout).wait();
       t.isTrue(back.ran() && back.status == 0, "gunzip ran — " + string.fromBytes(back.stderr));
       if (back.ran() && back.status == 0) {
         string d = firstDifference(back.stdout, data.bytes);

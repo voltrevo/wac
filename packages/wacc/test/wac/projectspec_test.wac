@@ -31,10 +31,10 @@ import { Change, Cli, Core, Exec } from "std/platform.wac";
 
 /** `wac <cmd> <args…>` — the binary, which carries wacc. */
 Exec wacc(Cli cli, string cmd, string[] args) {
-  string[] all = string[args.len() + 1](fill: "");
+  string[] all = string[].filled(args.len() + 1, "");
   all[0] = cmd;
   for (i32 i = 0; i < args.len(); i++) { all[i + 1] = args[i]; }
-  return cli.exec(binaryPath(cli), all, u8[0]()).wait();
+  return cli.exec(binaryPath(cli), all, u8[]()).wait();
 }
 
 /** One file, with its directory made first. */
@@ -68,7 +68,7 @@ export string test_a_project_specifier_resolves_against_its_own_project(Core cor
 
   // wacc, over the same fixture. `wac run` makes `main`'s answer the exit status rather than
   // printing it, so the two are compared through what each one's interface actually reports.
-  Exec w = wacc(cli, "run", string[](dir + "/src/main.wac"));
+  Exec w = wacc(cli, "run", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) { t.eqI32(w.status, 42, "wacc answered " + itoa(w.status) + ", want 42"); }
   cli.remove(dir, true).wait();
@@ -110,12 +110,12 @@ export string test_a_mistake_behind_a_project_import_is_caught_in_a_non_entry_fi
                "export i32 main() { return take(Point.create(1)); }\n"), "main");
 
   // `b.wac` is not the entry, and asks for a field `Point` does not have.
-  string[] spelling = string[]("@/src/point.wac", "./point.wac");
+  string[] spelling = ["@/src/point.wac", "./point.wac"];
   for (i32 i = 0; i < spelling.len(); i++) {
     t.isTrue(put(cli, dir + "/src/b.wac",
                  "import { Point } from \"" + spelling[i] + "\";\n" +
                  "export i32 take(Point p) { return p.nofield; }\n"), "b via " + spelling[i]);
-    Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+    Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
     t.isTrue(w.ran(), "wac did not run — " + w.error);
     if (!w.ran()) { continue; }
     string said = string.fromBytes(w.stdout) + string.fromBytes(w.stderr);
@@ -129,7 +129,7 @@ export string test_a_mistake_behind_a_project_import_is_caught_in_a_non_entry_fi
   t.isTrue(put(cli, dir + "/src/b.wac",
                "import { Point } from \"@/src/point.wac\";\n" +
                "export i32 take(Point p) { return p.x; }\n"), "b, corrected");
-  Exec ok = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  Exec ok = wacc(cli, "check", [dir + "/src/main.wac"]);
   t.isTrue(ok.ran(), "wac did not run — " + ok.error);
   if (ok.ran()) {
     t.eqI32(ok.status, 0, "refused a correct program: " +
@@ -162,7 +162,7 @@ export string test_the_root_is_the_importing_files_project_not_the_entrys(Core c
                "import { seven } from \"../../libB/src/b.wac\";\n" +
                "export i32 main() { return seven(); }\n"), "appA main");
 
-  Exec w = wacc(cli, "run", string[](dir + "/appA/src/main.wac"));
+  Exec w = wacc(cli, "run", [dir + "/appA/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7,
@@ -192,7 +192,7 @@ export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cl
   // could not resolve and compiled what was left, which is the failure that looks like success — so
   // this asserts the refusal rather than merely that the two agree, which they did while both were
   // wrong in different ways.
-  Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string wsaid = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
@@ -226,7 +226,7 @@ export string test_a_project_import_of_a_file_that_does_not_exist_is_refused(Cor
   // The control for this one is `test_a_project_specifier_resolves_against_its_own_project` above:
   // the same shape with the file present is accepted there, so a rule that refused every `@/` would
   // be caught rather than met by this assertion.
-  Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string wsaid = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
@@ -278,7 +278,7 @@ export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
 
   // wacc is the side that can actually fail here: a `Point` from two modules does not type-check
   // against itself, and when it slips past the checker the engine refuses the module.
-  Exec w = wacc(cli, "run", string[](dir + "/src/main.wac"));
+  Exec w = wacc(cli, "run", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7,
@@ -293,8 +293,8 @@ export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
   // vacuous test until I asked why. A relative entry makes the root `.`, where that class of
   // mistake does change the key. Between them the case sees both.
   Exec rel = cli.exec("/bin/sh",
-                      string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " run src/main.wac"),
-                      u8[0]()).wait();
+                      ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " run src/main.wac"],
+                      u8[]()).wait();
   t.isTrue(rel.ran(), "wac did not run from inside the project — " + rel.error);
   if (rel.ran()) {
     t.eqI32(rel.status, 7,
@@ -334,12 +334,14 @@ export string test_a_project_specifier_does_not_depend_on_the_working_directory(
                "export i32 main() { return v(); }\n"), "a file two directories down");
 
   // (where to run from, what to call the entry) — the same file every time.
-  string[] where = string[](dir, dir + "/src", dir + "/src/util", dir + "/src/util");
-  string[] entry = string[]("src/util/deep.wac", "util/deep.wac", "deep.wac", "./deep.wac");
+  string[] where = [dir, dir + "/src", dir + "/src/util", dir + "/src/util"];
+  string[] entry = ["src/util/deep.wac", "util/deep.wac", "deep.wac", "./deep.wac"];
   for (i32 i = 0; i < where.len(); i++) {
     Exec w = cli.exec("/bin/sh",
-                      string[]("-c", "cd " + where[i] + " && exec " + binaryPath(cli) +
-                                     " run " + entry[i]), u8[0]()).wait();
+                      [
+                                     "-c", "cd " + where[i] + " && exec " + binaryPath(cli) +
+                                     " run " + entry[i]
+                      ], u8[]()).wait();
     t.isTrue(w.ran(), "wac did not run — " + w.error);
     if (w.ran()) {
       t.eqI32(w.status, 9, "wacc from " + where[i] + " with " + entry[i] + " answered " +
@@ -378,7 +380,7 @@ export string test_a_bare_specifier_that_names_no_mapping_is_refused(Core core, 
                "import { two } from \"sub/lib.wac\";\n" +
                "export i32 main() { return two(); }\n"), "wrote main");
 
-  Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string said = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
@@ -392,7 +394,7 @@ export string test_a_bare_specifier_that_names_no_mapping_is_refused(Core core, 
   t.isTrue(put(cli, dir + "/src/main.wac",
                "import { two } from \"./sub/lib.wac\";\n" +
                "export i32 main() { return two(); }\n"), "rewrote main");
-  Exec ok = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  Exec ok = wacc(cli, "check", [dir + "/src/main.wac"]);
   t.isTrue(ok.ran() && ok.status == 0,
            "the relative spelling stopped working: " +
            string.fromBytes(ok.stderr) + string.fromBytes(ok.stdout));

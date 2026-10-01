@@ -14,7 +14,7 @@ export u8[] handle(u8[] input, i64 nowMillis) {
   Served s = serve(input, nowMillis);
   if (!s.ready) { return "wait".toBytes(); }
   u8[] head = "ready".toBytes();
-  u8[] digits = u8[24]();
+  u8[] digits = u8[].filled(24, 0);
   i32 n = 0;
   i32 c = s.consumed;
   if (c == 0) { digits[n] = '0'; n++; }
@@ -26,7 +26,7 @@ export u8[] handle(u8[] input, i64 nowMillis) {
     digits[lo + i] = digits[n - 1 - i];
     digits[n - 1 - i] = t;
   }
-  u8[] out = u8[head.len() + 1 + n + 1 + 1 + 1 + s.response.len()]();
+  u8[] out = u8[].filled(head.len() + 1 + n + 1 + 1 + 1 + s.response.len(), 0);
   i32 at = 0;
   for (i32 i = 0; i < head.len(); i++) { out[at] = head[i]; at++; }
   out[at] = 0; at++;

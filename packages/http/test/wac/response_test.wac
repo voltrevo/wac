@@ -76,10 +76,11 @@ i32 statusOf(ParsedResponse p) {
  * must still be *refused* — being on the list is permission to differ, not to do anything.
  */
 string[] stricter() {
-  return string[](
+  return [
     // A major version this grammar does not describe. An HTTP/2 frame is not an HTTP/1 message,
     // and reading one as the other is how a connection desynchronises.
-    "HTTP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n");
+    "HTTP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n"
+  ];
 }
 
 bool isStricter(string text) {
@@ -104,7 +105,7 @@ string describe(string method, string text) {
 }
 
 void check(T t, Cli cli, string[] texts, string[] methods) {
-  u8[][] cases = u8[][texts.len()](fill: u8[0]());
+  u8[][] cases = u8[][].filled(texts.len(), u8[]());
   for (i32 i = 0; i < texts.len(); i++) { cases[i] = wire(texts[i]); }
   ResponseOutcome[] want = responseOracle(t, cli, cases, methods);
   if (want.len() != texts.len()) { return; }
@@ -161,11 +162,11 @@ void compareOk(T t, string label, ParsedResponse got, i32 status, string version
 }
 
 /** A list of `n` copies of `method`, for the corpora that are all GETs. */
-string[] allGet(i32 n) { return string[n](fill: "GET"); }
+string[] allGet(i32 n) { return string[].filled(n, "GET"); }
 
 export string test_well_formed_responses(Core core, Cli cli) {
   T t = T.create();
-  string[] texts = string[](
+  string[] texts = [
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
     "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
     "HTTP/1.1 404 Not Found\r\nContent-Length: 3\r\n\r\nabc",
@@ -177,21 +178,23 @@ export string test_well_formed_responses(Core core, Cli cli) {
     "HTTP/1.1 200 OK\r\nContent-Length:   5   \r\n\r\nhello",
     "HTTP/1.1 999 Weird\r\nContent-Length: 0\r\n\r\n",
     "HTTP/1.1 200\r\nContent-Length: 0\r\n\r\n",
-    "HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
+    "HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n"
+  ];
   check(t, cli, texts, allGet(texts.len()));
   return t.report();
 }
 
 export string test_chunked_responses(Core core, Cli cli) {
   T t = T.create();
-  string[] texts = string[](
+  string[] texts = [
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n2\r\nbc\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nA\r\n0123456789\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\ntransfer-encoding: CHUNKED\r\n\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;x=1\r\nhello\r\n0\r\n\r\n",
-    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: v\r\n\r\n");
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: v\r\n\r\n"
+  ];
   check(t, cli, texts, allGet(texts.len()));
   return t.report();
 }
@@ -200,13 +203,14 @@ export string test_bodies_that_are_not_there_whatever_the_headers_say(Core core,
   T t = T.create();
   // Rule 1: HEAD, 1xx, 204 and 304 have no body. The Content-Length is kept, because a caller may
   // want to know what the GET would have returned, but no bytes belong to this message.
-  check(t, cli, string[](
+  check(t, cli, [
     "HTTP/1.1 204 No Content\r\n\r\n",
     "HTTP/1.1 304 Not Modified\r\nContent-Length: 99\r\n\r\n",
     "HTTP/1.1 204 No Content\r\nContent-Length: 99\r\n\r\n",
     "HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n",
-    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"),
-    string[]("GET", "GET", "GET", "HEAD", "HEAD"));
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+  ],
+    ["GET", "GET", "GET", "HEAD", "HEAD"]);
 
   // And directly, since the oracle cannot see the distinction: a HEAD response must consume only
   // its headers, so a following response is still there to be read. A client that waited for 99
@@ -217,7 +221,7 @@ export string test_bodies_that_are_not_there_whatever_the_headers_say(Core core,
   t.eqStr(bodyOf(first), "", "the HEAD response had a body");
   if (wacOutcome(first) != "ok") { return t.report(); }
   u8[] all = wire(stream);
-  u8[] rest = u8[all.len() - consumedOf(first)]();
+  u8[] rest = u8[].filled(all.len() - consumedOf(first), 0);
   for (i32 i = consumedOf(first); i < all.len(); i++) { rest[i - consumedOf(first)] = all[i]; }
   ParsedResponse second = parseResponse(rest, "GET".toBytes(), false, MAX_BODY());
   t.eqStr(wacOutcome(second), "ok", "the response after a HEAD did not parse");
@@ -237,10 +241,11 @@ export string test_a_body_delimited_by_the_connection_closing(Core core, Cli cli
   T t = T.create();
   // Rule 5, and the reason `parseResponse` takes `eof`: with no length and no chunking, "the
   // message is complete" and "the connection ended" are the same statement.
-  string[] texts = string[](
+  string[] texts = [
     "HTTP/1.1 200 OK\r\n\r\nuntil close",
     "HTTP/1.1 200 OK\r\n\r\n",
-    "HTTP/1.1 200 OK\r\nX: 1\r\n\r\nbody here");
+    "HTTP/1.1 200 OK\r\nX: 1\r\n\r\nbody here"
+  ];
   check(t, cli, texts, allGet(texts.len()));
 
   // Before EOF the same bytes are incomplete, not complete-with-a-short-body. Getting this wrong
@@ -257,7 +262,7 @@ export string test_a_body_delimited_by_the_connection_closing(Core core, Cli cli
 
 export string test_ambiguous_framing_is_refused(Core core, Cli cli) {
   T t = T.create();
-  string[] texts = string[](
+  string[] texts = [
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello",
@@ -266,14 +271,15 @@ export string test_ambiguous_framing_is_refused(Core core, Cli cli) {
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nX: 1\r\n 2\r\nContent-Length: 0\r\n\r\n",
-    "HTTP/1.1 200 OK\r\nX : 1\r\nContent-Length: 0\r\n\r\n");
+    "HTTP/1.1 200 OK\r\nX : 1\r\nContent-Length: 0\r\n\r\n"
+  ];
   check(t, cli, texts, allGet(texts.len()));
   return t.report();
 }
 
 export string test_malformed_status_lines(Core core, Cli cli) {
   T t = T.create();
-  string[] texts = string[](
+  string[] texts = [
     "HTTP/1.1\r\n\r\n",
     "HTTP/1.1 \r\n\r\n",
     "HTTP/1.1 xyz OK\r\n\r\n",
@@ -282,7 +288,8 @@ export string test_malformed_status_lines(Core core, Cli cli) {
     "HTTP/1.1200 OK\r\n\r\n",
     "hello\r\n\r\n",
     "\r\n\r\n",
-    "HTTP/1.1 099 Low\r\nContent-Length: 0\r\n\r\n");
+    "HTTP/1.1 099 Low\r\nContent-Length: 0\r\n\r\n"
+  ];
   check(t, cli, texts, allGet(texts.len()));
   return t.report();
 }
@@ -309,10 +316,10 @@ export string test_the_request_writer_produces_what_our_own_parser_reads_back(Co
   T t = T.create();
   // A round trip through the two halves, and then the same bytes past llhttp, so this is not
   // merely the writer and parser agreeing with each other.
-  string[] methods = string[]("GET", "POST", "PUT", "DELETE");
-  string[] targets = string[]("/", "/x", "/a/b?c=d", "/x");
-  string[] bodies = string[]("", "hello", "{\"a\":1}", "");
-  u8[][] requests = u8[][methods.len()](fill: u8[0]());
+  string[] methods = ["GET", "POST", "PUT", "DELETE"];
+  string[] targets = ["/", "/x", "/a/b?c=d", "/x"];
+  string[] bodies = ["", "hello", "{\"a\":1}", ""];
+  u8[][] requests = u8[][].filled(methods.len(), u8[]());
   for (i32 i = 0; i < methods.len(); i++) {
     Headers h = Headers.create();
     h.push("Accept".toBytes(), "*/*".toBytes());
@@ -347,10 +354,11 @@ export string test_a_malformed_status_line_says_so_specifically() {
   //
   // A line with no status *field* is a line-structure error, not a status one — the parser
   // says ERR_LINE for that, which is right and is why it is not in this list.
-  string[] texts = string[](
+  string[] texts = [
     "HTTP/1.1 20 OK\r\n\r\n",              // too few status digits
     "HTTP/1.1 2O0 OK\r\n\r\n",             // a letter among them
-    "HTTP/1.1 abc OK\r\n\r\n");            // no digits at all, but the right shape
+    "HTTP/1.1 abc OK\r\n\r\n"            // no digits at all, but the right shape
+  ];
   for (i32 i = 0; i < texts.len(); i++) {
     ParsedResponse got = parseResponse(wire(texts[i]), "GET".toBytes(), true, MAX_BODY());
     t.eqStr(wacOutcome(got), "bad", "\"" + texts[i] + "\"");
@@ -420,17 +428,19 @@ string phraseOf(i32 status) {
  */
 export string test_every_reason_phrase_is_the_one_node_writes(Core core, Cli cli) {
   T t = T.create();
-  i32[] codes = i32[](200, 201, 204, 301, 304, 400, 403, 404, 405, 408, 411, 413, 414, 415,
-                      500, 501, 505);
+  i32[] codes = [
+                      200, 201, 204, 301, 304, 400, 403, 404, 405, 408, 411, 413, 414, 415,
+                      500, 501, 505
+  ];
 
   // One `node` for the whole table: it prints `<code> <phrase>` a line at a time.
   string script = "const h=require('http');for(const c of process.argv.slice(1))" +
                   "console.log(c+' '+(h.STATUS_CODES[c]||'(none)'));";
-  string[] args = string[codes.len() + 2](fill: "");
+  string[] args = string[].filled(codes.len() + 2, "");
   args[0] = "-e";
   args[1] = script;
   for (i32 i = 0; i < codes.len(); i++) { args[i + 2] = itoa(codes[i]); }
-  Exec r = cli.exec("node", args, u8[0]()).wait();
+  Exec r = cli.exec("node", args, u8[]()).wait();
   t.isTrue(r.ran(), "node ran — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "node exited cleanly — " + string.fromBytes(r.stderr));

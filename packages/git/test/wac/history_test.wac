@@ -37,7 +37,7 @@ struct Git {
   string dir;
 
   Exec run(const this, string[] args) {
-    string[] full = string[args.len() + 6](fill: "");
+    string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
     full[2] = "-c";
@@ -45,7 +45,7 @@ struct Git {
     full[4] = "-c";
     full[5] = "user.email=ada@example.com";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, u8[0]()).wait();
+    return this.cli.exec("git", full, u8[]()).wait();
   }
 
   string text(const this, string[] args) {
@@ -62,10 +62,10 @@ string trimmed(string s) {
 }
 
 string[] splitOn(string s, string sep) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == sep) { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -89,21 +89,21 @@ Git history(T t, Cli cli, string name) {
   Git g = Git(cli, dir);
   if (!made.ok()) { return g; }
 
-  g.run(string[]("init", "-q", "-b", "main"));
+  g.run(["init", "-q", "-b", "main"]);
   cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
-  g.run(string[]("add", "-A"));
-  g.run(string[]("commit", "-qm", "root commit"));
-  g.run(string[]("checkout", "-qb", "side"));
+  g.run(["add", "-A"]);
+  g.run(["commit", "-qm", "root commit"]);
+  g.run(["checkout", "-qb", "side"]);
   cli.writeFile(dir + "/b.txt", "side\n".toBytes()).wait();
-  g.run(string[]("add", "-A"));
-  g.run(string[]("commit", "-qm", "on the side"));
-  g.run(string[]("checkout", "-q", "main"));
+  g.run(["add", "-A"]);
+  g.run(["commit", "-qm", "on the side"]);
+  g.run(["checkout", "-q", "main"]);
   cli.writeFile(dir + "/c.txt", "main\n".toBytes()).wait();
-  g.run(string[]("add", "-A"));
-  g.run(string[]("commit", "-qm", "on main"));
-  Exec m = g.run(string[]("merge", "-q", "--no-ff", "-m", "the merge", "side"));
+  g.run(["add", "-A"]);
+  g.run(["commit", "-qm", "on main"]);
+  Exec m = g.run(["merge", "-q", "--no-ff", "-m", "the merge", "side"]);
   t.eqI32(m.status, 0, "git merge: " + string.fromBytes(m.stderr));
-  g.run(string[]("gc", "-q"));
+  g.run(["gc", "-q"]);
   return g;
 }
 
@@ -123,10 +123,10 @@ struct Reader {
         default: { }
       }
     }
-    if (!this.havePack) { return u8[0](); }
+    if (!this.havePack) { return u8[](); }
     match (objectNamed(this.pack, decoded(name))) {
       Found(kind, data): { return data; }
-      Absent(why): { return u8[0](); }
+      Absent(why): { return u8[](); }
     }
   }
 }
@@ -143,18 +143,18 @@ Reader reader(T t, Cli cli, string dir) {
     }
   }
   t.isTrue(stem != "", "the fixture has a pack, so `git gc` ran");
-  if (stem == "") { return Reader(cli, dir, false, openPackOrDie(t, u8[0](), u8[0]())); }
+  if (stem == "") { return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]())); }
 
   FileResult p = cli.readFile(pd + "/" + stem + ".pack").wait();
   FileResult i = cli.readFile(pd + "/" + stem + ".idx").wait();
   t.isTrue(p.ok && i.ok, "the pack and its index could be read");
-  if (!p.ok || !i.ok) { return Reader(cli, dir, false, openPackOrDie(t, u8[0](), u8[0]())); }
+  if (!p.ok || !i.ok) { return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]())); }
 
   match (openPack(p.bytes, i.bytes)) {
     Ready(pack): { return Reader(cli, dir, true, pack); }
     Refused(why): {
       t.isTrue(false, "the fixture's pack did not open: " + why);
-      return Reader(cli, dir, false, openPackOrDie(t, u8[0](), u8[0]()));
+      return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]()));
     }
   }
 }
@@ -194,10 +194,10 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
   u8[]? target = packedTarget(packed, "refs/heads/main");
   t.isTrue(!(target is null), "refs/heads/main is in packed-refs");
   if (target is null) { return t.report(); }
-  t.eqStr(hexStr(target!), g.text(string[]("rev-parse", "HEAD")), "packed-refs names HEAD's commit");
+  t.eqStr(hexStr(target!), g.text(["rev-parse", "HEAD"]), "packed-refs names HEAD's commit");
 
   // Every ref we found must be one git agrees exists, with the same target.
-  string[] shown = splitOn(g.text(string[]("show-ref")), "\n");
+  string[] shown = splitOn(g.text(["show-ref"]), "\n");
   for (i32 i = 0; i < packed.len(); i++) {
     PackedRef r = packed.get(i);
     string want = hexStr(r.target) + " " + r.name;
@@ -207,11 +207,11 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
   }
 
   // A detached HEAD is the other shape, and it is direct rather than symbolic.
-  g.run(string[]("checkout", "-q", "--detach"));
+  g.run(["checkout", "-q", "--detach"]);
   FileResult detachedFile = cli.readFile(g.dir + "/.git/HEAD").wait();
   match (parseRef(detachedFile.bytes)) {
     Direct(name): {
-      t.eqStr(hexStr(name), g.text(string[]("rev-parse", "HEAD")), "a detached HEAD names its commit");
+      t.eqStr(hexStr(name), g.text(["rev-parse", "HEAD"]), "a detached HEAD names its commit");
     }
     default: { t.isTrue(false, "a detached HEAD did not read as direct"); }
   }
@@ -238,7 +238,7 @@ export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gi
   t.isTrue(!(start is null), "HEAD resolves through packed-refs");
   if (start is null) { return t.report(); }
 
-  string[] ours = string[64](fill: "");
+  string[] ours = string[].filled(64, "");
   i32 count = 0;
   i32 merges = 0;
   bool root = false;
@@ -262,10 +262,10 @@ export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gi
     }
   }
 
-  string[] walked = string[count](fill: "");
+  string[] walked = string[].filled(count, "");
   for (i32 i = 0; i < count; i++) { walked[i] = ours[i]; }
   t.eqStr(joined(walked, ","),
-          joined(splitOn(g.text(string[]("rev-list", "--first-parent", "HEAD")), "\n"), ","),
+          joined(splitOn(g.text(["rev-list", "--first-parent", "HEAD"]), "\n"), ","),
           "our walk is git's");
 
   // The two shapes a linear-history parser gets wrong, both required to have been crossed.
@@ -280,25 +280,25 @@ export string test_a_commits_fields_are_the_ones_git_prints(Core core, Cli cli) 
   T t = T.create();
   Git g = history(t, cli, "hist3");
   Reader r = reader(t, cli, g.dir);
-  string head = g.text(string[]("rev-parse", "HEAD"));
+  string head = g.text(["rev-parse", "HEAD"]);
 
   match (parseCommit(r.read(head))) {
     Malformed(why): { t.isTrue(false, "HEAD did not parse: " + why); }
     Understood(c): {
-      t.eqStr(c.treeHex(), g.text(string[]("rev-parse", "HEAD^{tree}")), "the tree");
-      t.eqStr(splitOn(c.message, "\n")[0], g.text(string[]("log", "-1", "--format=%s")),
+      t.eqStr(c.treeHex(), g.text(["rev-parse", "HEAD^{tree}"]), "the tree");
+      t.eqStr(splitOn(c.message, "\n")[0], g.text(["log", "-1", "--format=%s"]),
               "the subject");
       t.eqStr(c.author.name, "Ada L <ada@example.com>", "the author");
       t.eqStr(c.committer.name, "Ada L <ada@example.com>", "the committer");
 
       // **`--date=raw` prints `<unix-seconds> <zone>`**, which is the author line's own tail. Read
       // that way the zone is git's answer rather than an assumption about the machine's timezone.
-      string raw = g.text(string[]("log", "-1", "--format=%ad", "--date=raw"));
+      string raw = g.text(["log", "-1", "--format=%ad", "--date=raw"]);
       t.eqStr(itoa64(c.author.when) + " " + c.author.zone, raw, "the author's timestamp and zone");
 
       // The merge's parents, in git's order — a set comparison would pass on a reader that reversed
       // them.
-      string[] parents = splitOn(g.text(string[]("log", "-1", "--format=%P")), " ");
+      string[] parents = splitOn(g.text(["log", "-1", "--format=%P"]), " ");
       t.eqI32(c.parents.len(), parents.len(), "the number of parents");
       for (i32 i = 0; i < parents.len() && i < c.parents.len(); i++) {
         t.eqStr(hexStr(c.parents.get(i)), parents[i], "parent " + itoa64(i as i64));

@@ -23,22 +23,22 @@ string yn(bool b) { return b ? "yes" : "no"; }
 
 export i32 main(Core core, Cli cli) {
   // Inherited: the line below arrives on *this* program's stdout, and the answer carries none of it.
-  Exec a = cli.execWith("/bin/echo", string[]("from the grandchild"), u8[0](), string[](),
+  Exec a = cli.execWith("/bin/echo", ["from the grandchild"], u8[](), string[](),
                         false, true).wait();
   cli.writeErr(("inherit: ran=" + yn(a.ran()) + " status=" + itoa(a.status) +
                 " buffered=" + itoa(a.stdout.len()) + "/" + itoa(a.stderr.len()) + "\n").toBytes());
 
   // Handed a name, and the environment it would have had anyway is still there.
-  Exec b = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
-                        string[]("WAC_EXEC_PROBE=handed over"), false, false).wait();
+  Exec b = cli.execWith("/usr/bin/printenv", string[](), u8[](),
+                        ["WAC_EXEC_PROBE=handed over"], false, false).wait();
   string had = string.fromBytes(b.stdout);
   cli.writeErr(("env: ran=" + yn(b.ran()) +
                 " handed=" + yn(had.indexOf("WAC_EXEC_PROBE=handed over") >= 0) +
                 " kept-others=" + yn(had.indexOf("PATH=") >= 0) + "\n").toBytes());
 
   // Cleared: exactly what was passed, which is `issues/system/0198`'s end state.
-  Exec c = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
-                        string[]("WAC_EXEC_PROBE=only this"), true, false).wait();
+  Exec c = cli.execWith("/usr/bin/printenv", string[](), u8[](),
+                        ["WAC_EXEC_PROBE=only this"], true, false).wait();
   cli.writeErr(("cleared: ran=" + yn(c.ran()) + " only-what-was-passed=" +
                 yn(string.fromBytes(c.stdout) == "WAC_EXEC_PROBE=only this\n") + "\n").toBytes());
 
@@ -52,12 +52,12 @@ export i32 main(Core core, Cli cli) {
   // `ran=yes` is the other half of the claim and the easier one to get wrong: the program started, so
   // this is not `error`'s business — a signal is how it *ended*. `issues/system/0184` wants exactly
   // this distinction one level up, for a wasm trap.
-  Exec d = cli.execWith("/bin/sh", string[]("-c", "kill -9 $$"), u8[0](), string[](), false, true)
+  Exec d = cli.execWith("/bin/sh", ["-c", "kill -9 $$"], u8[](), string[](), false, true)
               .wait();
   cli.writeErr(("signalled: ran=" + yn(d.ran()) + " status=" + itoa(d.status) +
                 " signalled=" + yn(d.signalled()) + "\n").toBytes());
 
-  Exec e = cli.execWith("/bin/sh", string[]("-c", "exit 255"), u8[0](), string[](), false, true)
+  Exec e = cli.execWith("/bin/sh", ["-c", "exit 255"], u8[](), string[](), false, true)
               .wait();
   cli.writeErr(("exited: ran=" + yn(e.ran()) + " status=" + itoa(e.status) +
                 " signalled=" + yn(e.signalled()) + "\n").toBytes());

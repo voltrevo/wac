@@ -55,7 +55,7 @@ export Big? parseDecimal(u8[] s) {
 
 /** Decimal digits, with a leading '-' for a negative value and "0" for zero. */
 export u8[] formatDecimal(Big a) {
-  if (isZero(a)) { return u8[1](fill: '0'); }
+  if (isZero(a)) { return u8[].filled(1, '0'); }
 
   // Nine digits per limb-sized division. The digits come out least-significant first,
   // so they are collected and then reversed.
@@ -83,7 +83,7 @@ export u8[] formatDecimal(Big a) {
 
   i32 n = digits.len;
   i32 total = a.neg ? n + 1 : n;
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   if (a.neg) { out[0] = '-'; at = 1; }
   for (i32 i = 0; i < n; i++) { out[at + i] = digits.get(n - 1 - i); }
@@ -96,7 +96,7 @@ i32 hexDigit(u32 nib) { return nib < 10 ? (48 + nib) as@ i32 : (87 + nib) as@ i3
 
 /** Lowercase hex digits, with a leading '-' for a negative value and "0" for zero. */
 export u8[] formatHex(Big a) {
-  if (isZero(a)) { return u8[1](fill: '0'); }
+  if (isZero(a)) { return u8[].filled(1, '0'); }
   Buf digits = Buf.create();
   for (i32 i = 0; i < a.n; i++) {
     u32 v = a.limbs[i];
@@ -116,7 +116,7 @@ export u8[] formatHex(Big a) {
   }
   i32 n = digits.len;
   i32 total = a.neg ? n + 1 : n;
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   if (a.neg) { out[0] = '-'; at = 1; }
   for (i32 i = 0; i < n; i++) { out[at + i] = digits.get(n - 1 - i); }

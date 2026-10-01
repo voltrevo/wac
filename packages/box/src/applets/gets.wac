@@ -41,7 +41,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   if (!rootFile.ok) { core.warn(a.name + ": " + a.rest[2] + ": " + readReason(rootFile)); return 1; }
   u8[] root = rootFile.bytes;
   // The store is DER certificates end to end, indexed by (start, end) pairs. One here.
-  i32[] offsets = i32[](0, root.len());
+  i32[] offsets = [0, root.len()];
 
   ClientStep s = clientStep(tlsClientInit(
     host.toBytes(), root, offsets,
@@ -63,8 +63,8 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
     return 1;
   }
 
-  u8[] buffered = u8[0]();
-  u8[] body = u8[0]();
+  u8[] buffered = u8[]();
+  u8[] body = u8[]();
   bool requested = false;
 
   while (true) {
@@ -88,7 +88,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
         + "User-Agent: box\r\n"
         + "Connection: close\r\n\r\n";
       ClientStep out = clientStep(tlsClientSend(s.state, req.toBytes()));
-      s = ClientStep(out.state, out.toSend, u8[0]());
+      s = ClientStep(out.state, out.toSend, u8[]());
       if (!cli.send(sock.handle, s.toSend).wait()) { break; }
       requested = true;
     }

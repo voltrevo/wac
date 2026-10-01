@@ -38,7 +38,7 @@ struct World {
 }
 
 export i32 f() {
-  i32[] seen = i32[2]();
+  i32[] seen = i32[].filled(2, 0);
   World w = World.of(boxAt);
 
   // The receiver is a call through a field, and the argument is a lambda.

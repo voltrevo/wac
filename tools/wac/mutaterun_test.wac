@@ -66,7 +66,7 @@ export string test_the_control_is_a_comment_and_changes_nothing_else() {
   T t = T.create();
   string src = "i32 two() { return 2; }\n";
   Mutant c = controlFor("a.wac", src.len());
-  Applied a = applyEdits(string[]("a.wac"), string[](src), c);
+  Applied a = applyEdits(["a.wac"], [src], c);
   t.isTrue(a.ok, "it applies");
   t.eqStr(a.texts[0].slice(0, src.len()), src,
           "the program is untouched — the edit is appended, not spliced through it");
@@ -106,14 +106,14 @@ export string test_a_mutants_locations_are_every_line_it_touches() {
   T t = T.create();
   string src = "a\nb\nc\nd\n";           // offsets: a=0 b=2 c=4 d=6
   // A span from the middle of line 2 to the middle of line 4.
-  Mutant spanning = Mutant("m", "operator", Edit[](Edit("f.wac", 2, 7, "", "")));
+  Mutant spanning = Mutant("m", "operator", [Edit("f.wac", 2, 7, "", "")]);
   string[] got = locationsOf("f.wac", src, spanning);
   t.eqI32(got.len(), 3, "lines 2, 3 and 4 — a span is not a point");
   t.eqStr(got[0], "f.wac:2", "starting where the span starts");
 
   // Two edits, as the two-file distance guard produces: both contribute.
   Mutant two = Mutant("m", "operator",
-                      Edit[](Edit("f.wac", 0, 0, "", ""), Edit("f.wac", 6, 6, "", "")));
+                      [Edit("f.wac", 0, 0, "", ""), Edit("f.wac", 6, 6, "", "")]);
   string[] both = locationsOf("f.wac", src, two);
   t.eqI32(both.len(), 2, "one line from each edit");
   t.eqStr(both[0] + " " + both[1], "f.wac:1 f.wac:4", "and both are named");
@@ -142,7 +142,7 @@ export string test_a_mutants_locations_are_every_line_it_touches() {
 export string test_a_test_that_never_finishes_is_stopped_by_the_deadline(Core core, Cli cli) {
   T t = T.create();
   string root = ".cache/mutatedeadline-fixture";
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[]()).wait();
   cli.mkdir(root, true).wait();
   // A test that spins for ever: the shape a removed loop guard produces.
   cli.writeFile(root + "/spin_test.wac",
@@ -154,7 +154,7 @@ export string test_a_test_that_never_finishes_is_stopped_by_the_deadline(Core co
 
   string cwd = cli.cwd().wait();
   Ran got = runTests(core, cli, cwd + "/native/v8/target/release/wac", cwd,
-                     string[](root + "/spin_test.wac"), 2000);
+                     [root + "/spin_test.wac"], 2000);
 
   t.isTrue(got.timedOut, "the deadline stopped it rather than the run hanging");
   t.isTrue(got.verdict.isKilled(),
@@ -173,13 +173,13 @@ export string test_a_test_that_never_finishes_is_stopped_by_the_deadline(Core co
                  + "  return t.report();\n"
                  + "}\n").toBytes()).wait();
   Ran quick = runTests(core, cli, cwd + "/native/v8/target/release/wac", cwd,
-                       string[](root + "/quick_test.wac"), 2000);
+                       [root + "/quick_test.wac"], 2000);
   t.isFalse(quick.timedOut,
             "a test that finishes is not reported as timed out — without this, a `timedOut` stuck "
               + "true would score every mutant a kill and read as a perfect suite");
   t.isTrue(quick.verdict.isSurvived(),
            "and its verdict is the exit code's, not the deadline's — " + quick.verdict.word());
 
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[]()).wait();
   return t.report();
 }

@@ -37,7 +37,7 @@ void ignoreDrop(i32 id) {}
 // ── Core ──────────────────────────────────────────────────────────────────────
 
 i64 resolveZero(i32 id) { return 0; }
-u8[] resolveBytes(i32 id) { return u8[id](); }
+u8[] resolveBytes(i32 id) { return u8[].filled(id, 0); }
 
 Pending<i64> fakeNow() { return Pending.of(0, resolveZero, alwaysSettled, ignoreDrop); }
 Pending<i64> fakeMonotonic() { return Pending.of(0, resolveZero, alwaysSettled, ignoreDrop); }
@@ -65,7 +65,7 @@ bool resolveFromId(i32 id) { return id != 0; }
 u8[] resolveStdin(i32 id) { return "piped\n".toBytes(); }
 
 Pending<i32> fakeArgCount() { return Pending.of(0, resolveZeroI32, alwaysSettled, ignoreDrop); }
-u8[] resolveNoBytes(i32 id) { return u8[0](); }
+u8[] resolveNoBytes(i32 id) { return u8[](); }
 /** Bytes, as the capability answers now: an argument is not text. wac-mono 0065. */
 Pending<u8[]> fakeArg(i32 i) { return Pending.of(0, resolveNoBytes, alwaysSettled, ignoreDrop); }
 Pending<u8[]> fakeStdin() { return Pending.of(0, resolveStdin, alwaysSettled, ignoreDrop); }
@@ -95,7 +95,7 @@ FileResult resolveFile(i32 id) {
   // The category as well as the message, as a host answers now: a program that phrases
   // "No such file or directory" from the *fault* would otherwise see FAULT_NONE here and print the
   // double's own words instead. wac-mono 0062.
-  return FileResult.of(false, u8[0](), "no such file", FAULT_NOT_FOUND());
+  return FileResult.of(false, u8[](), "no such file", FAULT_NOT_FOUND());
 }
 Pending<FileResult> fakeReadFile(string path) {
   i32 which = 0;
@@ -160,7 +160,7 @@ string[]? resolveDir(i32 id) {
   // Deliberately out of order and with a dotfile: a glob sorts its matches and excludes names
   // beginning with a dot unless the pattern does too, and neither branch runs against a tidy
   // directory of two sorted names.
-  string[] names = string[4]();
+  string[] names = string[].defaulted(4);
   names[0] = "two";
   names[1] = "one";
   names[2] = ".hidden";
@@ -244,7 +244,7 @@ void fakeCloseSend(i32 handle) {}
 Pending<Socket> fakeBindDatagram(string address, i32 port) {
   return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
 }
-Datagram resolveNoDatagram(i32 id) { return Datagram.of(u8[0](), "", 0, "no datagram here"); }
+Datagram resolveNoDatagram(i32 id) { return Datagram.of(u8[](), "", 0, "no datagram here"); }
 Pending<Datagram> fakeReceiveFrom(i32 handle) {
   return Pending.of(0, resolveNoDatagram, alwaysSettled, ignoreDrop);
 }
@@ -337,7 +337,7 @@ string resolveRoot(i32 id) { return "/"; }
 Pending<bool> fakePushChild(string[] argv, u8[] stdin, string cwd, bool inheritIn) {
   return Pending.of(1, resolveFromId, alwaysSettled, ignoreDrop);
 }
-Captured resolveNothing(i32 id) { return Captured.of(u8[0](), u8[0](), false); }
+Captured resolveNothing(i32 id) { return Captured.of(u8[](), u8[](), false); }
 Pending<Captured> fakePopChild() {
   return Pending.of(0, resolveNothing, alwaysSettled, ignoreDrop);
 }
@@ -351,7 +351,7 @@ Pending<Captured> fakePopChild() {
  * gone (the reference's only job is bootstrapping), so this is now style, and kept for consistency
  * with the rest of the file.
  */
-Exec resolveNoHost(i32 id) { return Exec.of(0, u8[0](), u8[0](), "no host in this probe"); }
+Exec resolveNoHost(i32 id) { return Exec.of(0, u8[](), u8[](), "no host in this probe"); }
 // `env`, `clearEnv` and `inherit` are taken and ignored, like every other argument here: this
 // probe answers "no host" to the whole capability. They are in the signature because `Cli.of`
 // is positional and a shape that does not match wires the field to its neighbour.
@@ -462,7 +462,7 @@ export i32 shTouchStubs() {
   }
   if (c.env("SET_IN_ENV").wait() is not null) { n++; }
   if (c.env("NOT_SET").wait() is null) { n++; }
-  if (c.write(u8[0]())) { n++; }
+  if (c.write(u8[]())) { n++; }
   if (c.stat("x").wait().exists) { n++; }
   if (c.readDir("dir").wait() is not null) { n++; }
   if (c.readDir("nope").wait() is null) { n++; }
@@ -473,7 +473,7 @@ export i32 shTouchStubs() {
   n += c.openInput("x").wait().fault;
   if (c.openOutput("x").wait().ok()) { n++; }
   n += c.connect("h", 1).wait().handle + c.listen("127.0.0.1", 1).wait().handle + c.accept(1).wait().handle;
-  if (c.send(1, u8[0]()).wait()) { n++; }
+  if (c.send(1, u8[]()).wait()) { n++; }
   c.closeSocket(1);
 
   Core k = fakeCore();

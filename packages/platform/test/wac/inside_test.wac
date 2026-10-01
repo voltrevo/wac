@@ -42,7 +42,7 @@ string freshScratch(T t, Cli cli, string name) {
  * move.
  */
 string built(T t, Cli cli) {
-  string mod = builtProgram(cli, INSIDE, "inside", string[]("--allow-read", "--allow-write"));
+  string mod = builtProgram(cli, INSIDE, "inside", ["--allow-read", "--allow-write"]);
   t.isTrue(mod != "", "inside.wac built");
   return mod;
 }
@@ -54,7 +54,7 @@ export string test_a_childs_output_comes_back_to_its_caller_and_goes_nowhere_els
   string app = built(t, cli);
   if (app == "") { cli.remove(dir, true).wait(); return t.report(); }
 
-  Exec r = cli.exec(binaryPath(cli), string[](app, dir), u8[0]()).wait();
+  Exec r = cli.exec(binaryPath(cli), [app, dir], u8[]()).wait();
   t.isTrue(r.ran(), "the built program ran");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   string out = string.fromBytes(r.stdout);
@@ -89,7 +89,7 @@ export string test_a_child_reads_what_it_was_fed_not_the_terminals_standard_inpu
 
   // Something on the real standard input that the child must *not* see. Without the check in
   // `READ_CHUNK` a filter running inside a shell would swallow the terminal.
-  Exec r = cli.exec(binaryPath(cli), string[](app, dir), "THE PARENT'S OWN INPUT\n".toBytes()).wait();
+  Exec r = cli.exec(binaryPath(cli), [app, dir], "THE PARENT'S OWN INPUT\n".toBytes()).wait();
   t.isTrue(r.ran(), "the built program ran");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   string out = string.fromBytes(r.stdout);

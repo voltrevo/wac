@@ -104,8 +104,8 @@ i32 bundleFrom(Core core, Cli cli, string entry, string out) {
     for (i32 i = 0; i < imports.len(); i++) { queue.push(resolve(p, imports[i].spec)); }
   }
 
-  string[] ps = string[paths.len()](fill: "");
-  u8[][] ts = u8[][texts.len()](fill: u8[0]());
+  string[] ps = string[].filled(paths.len(), "");
+  u8[][] ts = u8[][].filled(texts.len(), u8[]());
   for (i32 i = 0; i < paths.len(); i++) { ps[i] = paths.get(i); ts[i] = texts.get(i); }
 
   Bundled b = bundle(ps, ts, entry);

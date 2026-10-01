@@ -59,7 +59,7 @@ string[] probeFiles(Core core, Cli cli) {
   string[] all = tracked(core, cli);
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) { if (isProbe(all[i])) { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (isProbe(all[i])) { out[at] = all[i]; at = at + 1; }
@@ -82,12 +82,12 @@ bool isProbe(string path) {
  */
 string[] naming(Core core, Cli cli, string needle, i32[] status) {
   Exec r = cli.exec("git",
-    string[]("grep", "-lF", needle, "--", "*.ts", "*.wac", "*.md", "*.json", ":!site/"),
-    u8[0]()).wait();
+    ["grep", "-lF", needle, "--", "*.ts", "*.wac", "*.md", "*.json", ":!site/"],
+    u8[]()).wait();
   if (!r.ran()) {
     status[0] = -1;
     core.warn("probes: git grep did not run — " + r.error);
-    return string[0](fill: "");
+    return string[].filled(0, "");
   }
   status[0] = r.status;
   return nonEmptyLines(string.fromBytes(r.stdout));
@@ -105,7 +105,7 @@ export string test_every_probe_file_is_named_by_something_that_could_reach_it(Co
 
   string orphans = "";
   i32 n = 0;
-  i32[] status = i32[1]();
+  i32[] status = i32[].filled(1, 0);
   for (i32 i = 0; i < probes.len(); i++) {
     string[] hits = naming(core, cli, basename(probes[i]), status);
     t.isTrue(status[0] <= 1,

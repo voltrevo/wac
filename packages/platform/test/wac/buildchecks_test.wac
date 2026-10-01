@@ -41,7 +41,7 @@ export string test_a_program_the_checker_refuses_does_not_build(Core core, Cli c
   if (wrote.fault != 0) { return t.report(); }
 
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  Exec r = cli.exec(wac, string[]("build", entry, "-o", out), u8[0]()).wait();
+  Exec r = cli.exec(wac, ["build", entry, "-o", out], u8[]()).wait();
   t.isTrue(r.ran(), "the wac binary ran — " + r.error);
   if (!r.ran()) { return t.report(); }
 

@@ -66,7 +66,7 @@ JsonArray? memberArray(JsonValue v, string key) {
 }
 
 Case[] cases(T t, Cli cli) {
-  Case[] none = Case[0](fill: Case("", "", u8[0](), u8[0](), string[0](fill: "")));
+  Case[] none = Case[].filled(0, Case("", "", u8[](), u8[](), string[].filled(0, "")));
   FileResult f = cli.readFile("packages/bls/test/pairing.json").wait();
   t.isTrue(f.ok, "pairing.json could not be read: " + f.error);
   if (!f.ok) { return none; }
@@ -77,11 +77,11 @@ Case[] cases(T t, Cli cli) {
   t.isTrue(!(list is null), "pairing.json has no `cases`");
   if (list is null) { return none; }
 
-  Case[] out = Case[list!.len()](fill: Case("", "", u8[0](), u8[0](), string[0](fill: "")));
+  Case[] out = Case[].filled(list!.len(), Case("", "", u8[](), u8[](), string[].filled(0, "")));
   for (i32 i = 0; i < list!.len(); i++) {
     JsonValue c = list!.get(i);
     JsonArray? miller = memberArray(c, "miller");
-    string[] coeffs = string[miller is null ? 0 : miller!.len()](fill: "");
+    string[] coeffs = string[].filled(miller is null ? 0 : miller!.len(), "");
     if (!(miller is null)) {
       for (i32 k = 0; k < miller!.len(); k++) {
         match (miller!.get(k)) {
@@ -98,7 +98,7 @@ Case[] cases(T t, Cli cli) {
 
 /** An Fp12 value as its twelve 48-byte coefficients, which is how the vectors write it. */
 string coefficient(u8[] b, i32 i) {
-  u8[] out = u8[48]();
+  u8[] out = u8[].filled(48, 0);
   for (i32 k = 0; k < 48; k++) { out[k] = b[i * 48 + k]; }
   return hex(out);
 }
@@ -138,9 +138,9 @@ export string test_the_pairing_refuses_the_identity_rather_than_returning_one(Co
   T t = T.create();
   Case[] all = cases(t, cli);
   if (all.len() == 0) { return t.report(); }
-  u8[] infG1 = u8[48]();
+  u8[] infG1 = u8[].filled(48, 0);
   infG1[0] = 0xc0;
-  u8[] infG2 = u8[96]();
+  u8[] infG2 = u8[].filled(96, 0);
   infG2[0] = 0xc0;
   t.eqI32(blsPairing(infG1, all[0].q).len(), 0, "e(O, Q) returned a value");
   t.eqI32(blsPairing(all[0].p, infG2).len(), 0, "e(P, O) returned a value");

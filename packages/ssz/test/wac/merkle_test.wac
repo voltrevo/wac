@@ -98,7 +98,7 @@ u8[]? rootFor(string ty, string caseName, u8[] ssz) {
     if (n < 0) { return null; }
     // A refusal comes back as `null` and is compared as an empty root, which no case's root can be.
     u8[]? r = rootBitlist(ssz, n);
-    return r is null ? u8[0]() : r!;
+    return r is null ? u8[]() : r!;
   }
   if (startsWith(name, "vec_")) {
     i32 numAt = afterUnderscore(name, 4);
@@ -114,9 +114,9 @@ u8[]? rootFor(string ty, string caseName, u8[] ssz) {
 
 /** The five types this test drives, and how many cases each must contribute. */
 string[] countedTypes() {
-  return string[]("uints", "boolean", "bitvector", "bitlist", "basic_vector");
+  return ["uints", "boolean", "bitvector", "bitlist", "basic_vector"];
 }
-i32[] countedWant() { return i32[](48, 2, 54, 450, 200); }
+i32[] countedWant() { return [48, 2, 54, 450, 200] as i32[]; }
 
 export string test_every_schema_free_case_merkleizes_to_ethereums_root(Core core, Cli cli) {
   T t = T.create();
@@ -129,7 +129,7 @@ export string test_every_schema_free_case_merkleizes_to_ethereums_root(Core core
 
   string[] types = countedTypes();
   i32[] want = countedWant();
-  i32[] seen = i32[types.len()]();
+  i32[] seen = i32[].filled(types.len(), 0);
   i32 reported = 0;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
@@ -159,7 +159,7 @@ export string test_the_limit_is_what_fixes_the_tree_not_the_datas_length() {
   // The property that separates a correct merkleizer from one that pads to its input. Two chunks of
   // real data under limits of 2, 4 and 8 must give three different roots; an implementation ignoring
   // the limit gives one.
-  u8[] data = u8[64]();
+  u8[] data = u8[].filled(64, 0);
   data[0] = 1;
   data[32] = 2;
   string a = hex(merkleize(data, 2));
@@ -174,13 +174,13 @@ export string test_the_limit_is_what_fixes_the_tree_not_the_datas_length() {
 export string test_zerohash_is_the_padded_subtree_it_stands_in_for() {
   T t = T.create();
   // The optimisation and the thing it replaces must agree, or every short value is wrong.
-  u8[] expect = u8[32]();
+  u8[] expect = u8[].filled(32, 0);
   for (i32 d = 0; d < 6; d++) {
     t.eqStr(hex(zeroHash(d)), hex(expect), "zeroHash(" + itoa(d) + ") is not that depth's subtree");
     expect = hashPair(expect, expect);
   }
   // An empty value under a limit is exactly the zero subtree.
-  t.eqStr(hex(merkleize(u8[0](), 8)), hex(zeroHash(3)),
+  t.eqStr(hex(merkleize(u8[](), 8)), hex(zeroHash(3)),
           "merkleizing nothing under a limit of 8 is not zeroHash(3)");
   return t.report();
 }
@@ -189,22 +189,22 @@ export string test_a_bitlists_delimiter_is_measured_not_merkleized() {
   T t = T.create();
   // `Bitlist` length comes from the highest set bit of the last byte, and that bit is not data.
   // Eight zero bits are `00 01`: a zero byte, then the delimiter alone in the next.
-  u8[][] cases = u8[][6](fill: u8[0]());
-  cases[0] = u8[](0x01);
-  cases[1] = u8[](0x02);
-  cases[2] = u8[](0x03);
-  cases[3] = u8[](0xff);
-  cases[4] = u8[](0x00, 0x01);
-  cases[5] = u8[](0xff, 0x01);
-  i32[] bits = i32[](0, 1, 1, 7, 8, 8);
+  u8[][] cases = u8[][].filled(6, u8[]());
+  cases[0] = [0x01] as u8[];
+  cases[1] = [0x02] as u8[];
+  cases[2] = [0x03] as u8[];
+  cases[3] = [0xff] as u8[];
+  cases[4] = [0x00, 0x01] as u8[];
+  cases[5] = [0xff, 0x01] as u8[];
+  i32[] bits = [0, 1, 1, 7, 8, 8];
   for (i32 i = 0; i < cases.len(); i++) {
     t.eqI32(bitlistLength(cases[i]), bits[i], "bitlistLength(" + hex(cases[i]) + ")");
   }
   // No delimiter at all is malformed, not empty.
-  t.eqI32(bitlistLength(u8[](0x00)), -1, "a zero final byte was accepted");
-  t.eqI32(bitlistLength(u8[0]()), -1, "an empty bitlist was accepted");
+  t.eqI32(bitlistLength([0x00] as u8[]), -1, "a zero final byte was accepted");
+  t.eqI32(bitlistLength(u8[]()), -1, "an empty bitlist was accepted");
   // Over the limit is a refusal.
-  t.isTrue(rootBitlist(u8[](0xff), 3) is null, "seven bits were accepted into a Bitlist[3]");
+  t.isTrue(rootBitlist([0xff] as u8[], 3) is null, "seven bits were accepted into a Bitlist[3]");
   return t.report();
 }
 
@@ -223,12 +223,12 @@ export string test_a_bitlists_delimiter_is_measured_not_merkleized() {
 
 /** Every level of a tree over `leaves`, bottom-up, with each internal node offered to `lines`. */
 u8[][][] tree(u8[][] leaves, Lines lines) {
-  u8[][][] levels = u8[][][8](fill: u8[][0](fill: u8[0]()));
+  u8[][][] levels = u8[][][].filled(8, u8[][].filled(0, u8[]()));
   levels[0] = leaves;
   i32 n = 1;
   while (levels[n - 1].len() > 1) {
     u8[][] level = levels[n - 1];
-    u8[][] next = u8[][level.len() / 2](fill: u8[0]());
+    u8[][] next = u8[][].filled(level.len() / 2, u8[]());
     for (i32 i = 0; i < level.len(); i = i + 2) {
       next[i / 2] = hashPair(level[i], level[i + 1]);
       lines.add("hashpair " + hex(level[i]) + " " + hex(level[i + 1]) + " " + hex(next[i / 2]));
@@ -236,7 +236,7 @@ u8[][][] tree(u8[][] leaves, Lines lines) {
     levels[n] = next;
     n = n + 1;
   }
-  u8[][][] out = u8[][][n](fill: u8[][0](fill: u8[0]()));
+  u8[][][] out = u8[][][].filled(n, u8[][].filled(0, u8[]()));
   for (i32 i = 0; i < n; i++) { out[i] = levels[i]; }
   return out;
 }
@@ -244,7 +244,7 @@ u8[][][] tree(u8[][] leaves, Lines lines) {
 /** The sibling at each level on the path to `index`, bottom-up — which is what a branch is. */
 u8[] branchFor(u8[][][] levels, i32 index) {
   i32 depth = levels.len() - 1;
-  u8[] out = u8[depth * 32]();
+  u8[] out = u8[].filled(depth * 32, 0);
   i32 i = index;
   for (i32 d = 0; d < depth; d++) {
     u8[] sibling = levels[d][i ^ 1];
@@ -256,9 +256,9 @@ u8[] branchFor(u8[][][] levels, i32 index) {
 
 /** Eight distinct 32-byte leaves, differing in byte `at`. */
 u8[][] eightLeaves(i32 at) {
-  u8[][] leaves = u8[][8](fill: u8[0]());
+  u8[][] leaves = u8[][].filled(8, u8[]());
   for (i32 i = 0; i < 8; i++) {
-    u8[] l = u8[32]();
+    u8[] l = u8[].filled(32, 0);
     l[at] = i + 1;
     leaves[i] = l;
   }
@@ -266,14 +266,14 @@ u8[][] eightLeaves(i32 at) {
 }
 
 u8[] concat(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
 }
 
 u8[] prefixOf(u8[] a, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = a[i]; }
   return out;
 }
@@ -296,7 +296,7 @@ export string test_isvalidmerklebranch_accepts_every_position_and_rejects_pertur
               "leaf " + itoa(i) + "'s branch verified at index " + itoa(i ^ 1) +
               ": the side bits are ignored");
     // A flipped byte anywhere in the branch must fail.
-    u8[] tampered = concat(branch, u8[0]());
+    u8[] tampered = concat(branch, u8[]());
     tampered[0] = tampered[0] ^ 1;
     t.isFalse(isValidMerkleBranch(leaves[i], tampered, 3, i as! u64, root),
               "a tampered branch verified for leaf " + itoa(i));
@@ -325,12 +325,12 @@ export string test_the_normalized_branch_check_requires_the_surplus_nodes_to_be_
            "an exact-length normalized branch was rejected");
   // A branch longer than the gindex needs is legitimate when the surplus is zero — that is how a
   // fork moves a field deeper without changing the proof's wire format.
-  t.isTrue(isValidNormalizedMerkleBranch(leaves[index], concat(u8[64](), branch), gindex as! u64,
+  t.isTrue(isValidNormalizedMerkleBranch(leaves[index], concat(u8[].filled(64, 0), branch), gindex as! u64,
                                          root),
            "a zero-padded normalized branch was rejected");
   // Non-zero surplus must be refused, not trimmed. Accepting it would let a prover hang an unrelated
   // subtree below the field being proved, which is why the spec returns false here.
-  u8[] junk = u8[64]();
+  u8[] junk = u8[].filled(64, 0);
   junk[7] = 1;
   t.isFalse(isValidNormalizedMerkleBranch(leaves[index], concat(junk, branch), gindex as! u64, root),
             "a normalized branch with non-zero surplus nodes was accepted");

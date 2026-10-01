@@ -59,7 +59,7 @@ const string PREFIX = "packages/crypto/";
  * start using them.
  */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 /**
@@ -72,12 +72,12 @@ string[] grants() {
  * (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`), and a case past the end returns rather than
  * trapping, so a width may be an upper bound.
  */
-string[] cases() { return string[]("trapCase:145", "trapProbe:35"); }
+string[] cases() { return ["trapCase:145", "trapProbe:35"]; }
 
 /** Points nothing here reaches, each with the argument for it. */
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/crypto/src/ed25519.wac", 339, "if (byteShift + i < 64)", true,
+  return [
+        Pin("packages/crypto/src/ed25519.wac", 339, "if (byteShift + i < 64)", true,
         "The bound holds by construction: this shifts a 32-byte value left within a 64-byte " +
         "buffer, and `byteShift` is derived from the same bit count that sizes the loop. The " +
         "guard is what makes the shift correct *as written* rather than by the caller's " +
@@ -158,13 +158,13 @@ Pin[] pins() {
         "u1*G + u2*Q landing on the identity during verification. Constructible by an " +
         "attacker choosing r and s together, which is exactly why the check is here; not " +
         "constructible by accident, which is why no test drives it."),
-    Pin("packages/crypto/src/weierstrass.wac", 403, "if (jacIsInfinity(point)) { return u8[0](); }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 403, "if (jacIsInfinity(point)) { return u8[](); }", true,
         "k*G at infinity during signing, which needs k = 0 mod n — already rejected above. " +
         "FIPS 186-4 specifies the retry anyway."),
-    Pin("packages/crypto/src/weierstrass.wac", 409, "if (scnIsZero(rN)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 409, "if (scnIsZero(rN)) { return u8[](); }", false,
         "r = 0 during signing. FIPS 186-4 requires the retry; the probability is about 2^-256 " +
         "and no test can produce it without solving for k."),
-    Pin("packages/crypto/src/weierstrass.wac", 420, "if (scnIsZero(sN)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 420, "if (scnIsZero(sN)) { return u8[](); }", false,
         "s = 0 during signing. As above."),
     Pin("packages/crypto/src/scalarn.wac", 79, "if (be.len() % 4 != 0) { trap; }", true,
         "`scnFromBytes` given a byte count that is not a whole number of 32-bit limbs. Every " +
@@ -245,7 +245,8 @@ Pin[] pins() {
         "e has no inverse mod p-1 — `test_a_prime_is_rejected_when_e_has_no_inverse` in " +
         "`rsagen_test.wac` is that check — and λ is a divisor of (p-1)(q-1), so an inverse " +
         "mod both factors is an inverse mod λ. Kept because it is the one line that would " +
-        "notice `suitablePrime` losing that filter."));
+        "notice `suitablePrime` losing that filter.")
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -261,5 +262,5 @@ export i32 main(Core core, Cli cli) {
   // No rules: every entry here is about one line. `packages/fs` is where a class of points needed one
   // sentence rather than ninety-four.
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

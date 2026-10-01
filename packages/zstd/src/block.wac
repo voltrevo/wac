@@ -22,7 +22,7 @@ export struct Decoder {
   i32[] reps;           // the three most recent offsets
 
   Decoder create() {
-    i32[] reps = i32[3]();
+    i32[] reps = i32[].filled(3, 0);
     reps[0] = 1;
     reps[1] = 4;
     reps[2] = 8;
@@ -112,15 +112,15 @@ export void decodeCompressed(u8[] src, i32 at, i32 size, Buf out, Decoder d) {
   i32 p = at + h.headerSize;
   if (p + h.compressedSize > end) { trap; }
 
-  u8[] literals = u8[0]();
+  u8[] literals = u8[]();
   if (h.kind == 0) {
-    literals = u8[h.regenSize]();
+    literals = u8[].filled(h.regenSize, 0);
     literals.copyFrom(src, p, 0, h.regenSize);
   } else if (h.kind == 1) {
     // An RLE section always occupies one byte, so `p + 1 > end` above has already refused a
     // block that stops here.
     i32 v = src[p];
-    literals = u8[h.regenSize]();
+    literals = u8[].filled(h.regenSize, 0);
     literals.fill(v, 0, h.regenSize);
   } else if (h.kind == 2) {
     // The tree comes with the block, and is what a later treeless block will reuse.

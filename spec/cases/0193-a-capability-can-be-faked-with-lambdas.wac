@@ -16,8 +16,8 @@ struct Sink {
 }
 
 i32 run(Sink out) {
-  out.write(u8[](104, 105, 33));
-  out.write(u8[](111, 107));
+  out.write([104, 105, 33] as u8[]);
+  out.write([111, 107] as u8[]);
   return out.count();
 }
 

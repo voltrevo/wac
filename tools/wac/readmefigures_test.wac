@@ -63,12 +63,12 @@ string read(Core core, Cli cli, string path) {
 string[] firstMatch(string pattern, string text) {
   Program? p = compile(pattern.toBytes());
   if (p is null) { trap; }
-  i32[] caps = i32[slotCount(p!)]();
+  i32[] caps = i32[].filled(slotCount(p!), 0);
   u8[] input = text.toBytes();
   i32 at = search(p!, input, 0, caps, 10000000);
-  if (at == NO_MATCH()) { return string[0](); }
+  if (at == NO_MATCH()) { return string[](); }
   i32 groups = caps.len() / 2;
-  string[] out = string[groups](fill: "");
+  string[] out = string[].filled(groups, "");
   for (i32 g = 0; g < groups; g++) {
     i32 from = caps[g * 2];
     i32 to = caps[g * 2 + 1];
@@ -126,7 +126,7 @@ i32[] mapFigures(Core core, Cli cli) {
     packages = packages + 1;
     wacLines = wacLines + number(m[1]);
   }
-  return i32[](packages, wacLines);
+  return [packages, wacLines];
 }
 
 /**
@@ -196,8 +196,10 @@ export string test_packages_readme_repeats_what_the_map_generates(Core core, Cli
   T t = T.create();
   string shape = "([0-9,]+) packages, ([0-9,]+) lines of wac, ([0-9,]+) tests[^,]*, " +
                  "([0-9,]+) command-line programs and ([0-9,]+) browser pages";
-  string[] names = string[]("packages", "lines of wac", "tests", "command-line programs",
-                            "browser pages");
+  string[] names = [
+                            "packages", "lines of wac", "tests", "command-line programs",
+                            "browser pages"
+  ];
 
   string[] generated = firstMatch(shape, flat(read(core, cli, "MAP.md")));
   t.isTrue(generated.len() > 0,
@@ -270,7 +272,7 @@ export string test_the_readmes_transcript_is_the_front_pages(Core core, Cli cli)
  * narrower question — and one that accepted more than TypeScript writes would hide a drift.
  */
 string[] transcriptPairs(string block) {
-  string[] out = string[64](fill: "");
+  string[] out = string[].filled(64, "");
   i32 n = 0;
   u8[] b = block.toBytes();
   bool inString = false;
@@ -287,7 +289,7 @@ string[] transcriptPairs(string block) {
     first = !first;
     n = n + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -309,7 +311,7 @@ string unescapeTs(string s) {
 }
 
 string oneChar(i32 c) {
-  u8[] one = u8[1]();
+  u8[] one = u8[].filled(1, 0);
   one[0] = c;
   return string.fromBytes(one);
 }
@@ -318,7 +320,7 @@ string[] lines(string s) {
   i32 n = 1;
   u8[] b = s.toBytes();
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 start = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -359,19 +361,26 @@ string trimEnd(string s) {
 
 /** Where a number word is a real claim about how many applets there are, this is the whole list. */
 string[] numberWords() {
-  return string[]("ten", "eleven", "twelve", "twenty", "thirty", "forty", "fifty", "sixty",
-                  "seventy", "eighty", "ninety", "hundred");
+  return [
+                  "ten", "eleven", "twelve", "twenty", "thirty", "forty", "fifty", "sixty",
+                  "seventy", "eighty", "ninety", "hundred"
+  ];
 }
 
 /** Counts that are not the size of the program: file, phrase, and what it does count. */
 string[][] notTheTotal() {
-  return string[][](
-    string[]("packages/box/README.md", "a dozen applets were",
-             "how many were still stubs when the flag parser arrived"),
-    string[]("packages/box/README.md", "Ten applets printed `c.message` raw",
-             "how many printed the host's sentence before 2026-08-09"),
-    string[]("packages/box/README.md", "375 flags and 43 applets",
-             "the applets that take flags, which is the flag corpus rather than the program"));
+  return [
+             ["packages/box/README.md", "a dozen applets were",
+             "how many were still stubs when the flag parser arrived"],
+    [
+             "packages/box/README.md", "Ten applets printed `c.message` raw",
+             "how many printed the host's sentence before 2026-08-09"
+    ],
+    [
+             "packages/box/README.md", "375 flags and 43 applets",
+             "the applets that take flags, which is the flag corpus rather than the program"
+    ]
+  ];
 }
 
 /**
@@ -385,7 +394,7 @@ string[][] notTheTotal() {
  * because it is a rewrite that counts something else, and it was the file that found this.
  */
 string[] liveDocs(Core core, Cli cli) {
-  Exec r = cli.exec("git", string[]("ls-files", "*.md"), u8[0]()).wait();
+  Exec r = cli.exec("git", ["ls-files", "*.md"], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("readmeFigures: git ls-files failed: " +
               (r.ran() ? string.fromBytes(r.stderr) : r.error));
@@ -396,7 +405,7 @@ string[] liveDocs(Core core, Cli cli) {
   for (i32 i = 0; i < all.len(); i++) {
     if (live(all[i])) { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (live(all[i])) { out[at] = all[i]; at = at + 1; }
@@ -423,7 +432,7 @@ bool isNumberWord(string token) {
 
 string lowered(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i] = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + 32 : b[i];
   }
@@ -489,7 +498,7 @@ export string test_every_document_counts_the_applets_the_same_and_in_digits(Core
 
 /** Every `<token> applets` or `<token>-applets` on a line, as the tokens. */
 string[] appletTokens(string line) {
-  string[] out = string[8](fill: "");
+  string[] out = string[].filled(8, "");
   i32 n = 0;
   i32 from = 0;
   while (n < out.len()) {
@@ -509,7 +518,7 @@ string[] appletTokens(string line) {
     out[n] = line.slice(start, sep);
     n = n + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -537,7 +546,7 @@ string flat(string s) {
       continue;
     }
     inSpace = false;
-    u8[] one = u8[1]();
+    u8[] one = u8[].filled(1, 0);
     one[0] = b[i];
     out = out + string.fromBytes(one);
   }
@@ -634,7 +643,7 @@ string[] identifiersMatching(string text, string pattern) {
     if (firstMatch(pattern, text.slice(start, i)).len() > 0) { n = n + 1; }
     start = i + 1;
   }
-  string[] out = string[n > 0 ? n : 1](fill: "");
+  string[] out = string[].filled(n > 0 ? n : 1, "");
   i32 at = 0;
   start = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -643,7 +652,7 @@ string[] identifiersMatching(string text, string pattern) {
     if (m.len() > 0 && at < n) { out[at] = m[1]; at = at + 1; }
     start = i + 1;
   }
-  return at == n ? out : string[0](fill: "");
+  return at == n ? out : string[].filled(0, "");
 }
 
 /**
@@ -820,10 +829,14 @@ i32 newlines(string text) {
 export string test_the_bootstrap_readmes_trust_table_is_the_files_it_names(Core core, Cli cli) {
   T t = T.create();
   string readme = read(core, cli, "bootstrap/README.md");
-  string[] paths = string[]("bootstrap/rust/src/lib.rs", "bootstrap/boot/l1.l0",
-                            "bootstrap/rust-ladder/src/flatten.rs");
-  string[] labels = string[]("wac-L0 assembler, one of the two", "wac-L1 interpreter, hand-written",
-                             "the flattener");
+  string[] paths = [
+                            "bootstrap/rust/src/lib.rs", "bootstrap/boot/l1.l0",
+                            "bootstrap/rust-ladder/src/flatten.rs"
+  ];
+  string[] labels = [
+                             "wac-L0 assembler, one of the two", "wac-L1 interpreter, hand-written",
+                             "the flattener"
+  ];
   i32 total = 0;
   for (i32 i = 0; i < paths.len(); i++) {
     i32 lines = newlines(read(core, cli, paths[i]));
@@ -871,9 +884,11 @@ export string test_the_bootstrap_readmes_trust_table_is_the_files_it_names(Core 
 export string test_the_bootstrap_readmes_rung_table_is_the_files_it_names(Core core, Cli cli) {
   T t = T.create();
   string readme = read(core, cli, "bootstrap/README.md");
-  string[] paths = string[]("bootstrap/boot/l1.l0", "bootstrap/boot/l2.l1", "bootstrap/boot/l3.l2",
-                            "bootstrap/boot/l4.l3", "bootstrap/boot/l5.l4");
-  string[] labels = string[]("wac-L1", "wac-L2", "wac-L3", "wac-L4", "wac-L5");
+  string[] paths = [
+                            "bootstrap/boot/l1.l0", "bootstrap/boot/l2.l1", "bootstrap/boot/l3.l2",
+                            "bootstrap/boot/l4.l3", "bootstrap/boot/l5.l4"
+  ];
+  string[] labels = ["wac-L1", "wac-L2", "wac-L3", "wac-L4", "wac-L5"];
   i32 rungs = 0;
   for (i32 i = 0; i < paths.len(); i++) {
     i32 lines = newlines(read(core, cli, paths[i]));

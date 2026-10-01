@@ -90,7 +90,7 @@ export Unzipped zlibDecompress(u8[] stream) {
   // FDICT — a preset dictionary the stream does not carry. git never sets it.
   if ((stream[1] & 0x20) != 0) { return Unzipped.Bad("preset dictionary is not supported"); }
 
-  u8[] body = u8[stream.len() - 6]();
+  u8[] body = u8[].filled(stream.len() - 6, 0);
   for (i32 i = 0; i < body.len(); i++) { body[i] = stream[2 + i]; }
   u8[] out = inflate(body);
 

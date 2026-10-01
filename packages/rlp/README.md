@@ -13,10 +13,8 @@ different failure modes.
 ```wac
 import { decode, encode, fromI64, Decoded, Item } from "../rlp/src/rlp.wac";
 
-u8[] bytes = encode(Item.List(Item[](
-  Item.Bytes("dog".toBytes()),
-  Item.Bytes(fromI64(1024))
-)));                                   // 0xc9 83 646f67 82 0400
+u8[] bytes = encode(Item.List([Item.Bytes("dog".toBytes()),
+  Item.Bytes(fromI64(1024))]));                                   // 0xc9 83 646f67 82 0400
 
 Decoded got = decode(bytes);
 if (!got.ok) { core.warn(got.error); }

@@ -156,24 +156,24 @@ bool holds(string[] xs, string x) {
 }
 
 /**
- * The flags every `string[](...)` row whose first element is `cmd` supplies.
+ * The flags every `[...]` row whose first element is `cmd` supplies.
  *
- * A row is flat — `string[]("test", "--allow-read", "src/one_test.wac")` — so its end is the next
- * `)`, and its subcommand is the first quoted element. Anything after a bare `"--"` is an argument to
+ * A row is flat — `["test", "--allow-read", "src/one_test.wac"]` — so its end is the next
+ * `]`, and its subcommand is the first quoted element. Anything after a bare `"--"` is an argument to
  * the program rather than a flag to the command, which is what one `run` row exists to check, so the
  * scan of a row stops there.
  */
 string[] flagsFor(string table, string cmd) {
   Vec<string> out = Vec.create();
-  string open = "string[](";
+  string open = "[\"";
   i32 i = 0;
   while (i < table.len()) {
     string rest = table.slice(i, table.len());
     i32 at = rest.indexOf(open);
     if (at < 0) { return out.toArray(); }
-    i32 from = i + at + open.len();
+    i32 from = i + at + 1;      // past the `[`, so the row begins at its first quote
     string tail = table.slice(from, table.len());
-    i32 close = tail.indexOf(")");
+    i32 close = tail.indexOf("]");
     if (close < 0) { return out.toArray(); }
     string row = tail.slice(0, close);
     i = from + close;

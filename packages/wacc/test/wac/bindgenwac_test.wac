@@ -83,13 +83,13 @@ string firstDifference(string a, string b) {
  * one remembered side is still a differential, and one with two is nothing.
  */
 string askOracle(T t, Cli cli, string[] args, string what, string[] inputs) {
-  string[] argv = string[args.len() + 3](fill: "");
+  string[] argv = string[].filled(args.len() + 3, "");
   argv[0] = "run";
   argv[1] = "-A";
   argv[2] = ORACLE;
   for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
   return askArgvCached(t, cli, "deno", argv, what + ": the reference generator", "bindgen",
-                       string[]("compiler", "harness", "packages/wacc/src"), inputs);
+                       ["compiler", "harness", "packages/wacc/src"], inputs);
 }
 
 /**
@@ -111,8 +111,8 @@ struct Program {
 }
 
 Program[] cases() {
-  return Program[](
-    Program("a scalar and nothing else",
+  return [
+         Program("a scalar and nothing else",
          "export i32 add(i32 a, i32 b) { return a + b; }\n"),
     Program("a string, both ways",
          "export string greet(string who) { return \"hello \" + who; }\n"),
@@ -133,7 +133,7 @@ Program[] cases() {
          "}\n"),
     Program("a numeric array in both directions",
          "export i32[] doubled(i32[] xs) {\n" +
-         "  i32[] out = i32[xs.len()]();\n" +
+         "  i32[] out = i32[].filled(xs.len(), 0);\n" +
          "  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }\n" +
          "  return out;\n" +
          "}\n"),
@@ -155,11 +155,12 @@ Program[] cases() {
          "    Square(q): return q * q;\n" +
          "  }\n" +
          "}\n" +
-         "export u8[] bytes(u8[] b) { return b; }\n"));
+         "export u8[] bytes(u8[] b) { return b; }\n")
+  ];
 }
 
 void compare(T t, Cli cli, string dir, string what, string entry, string[] paths, string[] sources) {
-  string[] langs = string[]("ts", "js");
+  string[] langs = ["ts", "js"];
 
   // **Emitted once for both languages.** The glue differs between `ts` and `js`; the module it is glue
   // *for* does not, and this line was inside the loop below — so the whole of `packages/wacc/src/api.wac`
@@ -171,10 +172,10 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
     string lang = langs[k];
     // The sources are the key's other half: the oracle reads the entry from disk, so the arguments
     // alone would name a question whose answer had changed.
-    string[] inputs = string[sources.len() + paths.len()](fill: "");
+    string[] inputs = string[].filled(sources.len() + paths.len(), "");
     for (i32 j = 0; j < paths.len(); j++) { inputs[j] = paths[j]; }
     for (i32 j = 0; j < sources.len(); j++) { inputs[paths.len() + j] = sources[j]; }
-    string theirs = askOracle(t, cli, string[]("files", entry, lang), what + " (" + lang + ")", inputs);
+    string theirs = askOracle(t, cli, ["files", entry, lang], what + " (" + lang + ")", inputs);
     if (theirs == "") { continue; }
     string mine = bindgenFiles(wasm, paths, sources, entry, lang);
 
@@ -195,7 +196,7 @@ export string test_the_two_generators_write_the_same_glue_for_each_shape(Core co
     // comparing across two names always differs and says nothing.
     string entry = dir + "/case" + itoa(i) + ".wac";
     cli.writeFile(entry, all[i].src.toBytes()).wait();
-    compare(t, cli, dir, all[i].what, entry, string[](entry), string[](all[i].src));
+    compare(t, cli, dir, all[i].what, entry, [entry], [all[i].src]);
   }
   cli.remove(dir, true).wait();
   return t.report();
@@ -219,18 +220,18 @@ export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enu
   const string SIGS = "make\tNode@2\t\n";
   // A bare wasm header — nothing here instantiates it.
   const string WASM_HEX = "0061736d01000000";
-  u8[] wasm = u8[](0, 0x61, 0x73, 0x6d, 1, 0, 0, 0);
+  u8[] wasm = [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
 
   string dir = freshScratch(t, cli, "keyed");
   cli.writeFile(dir + "/sigs", SIGS.toBytes()).wait();
   cli.writeFile(dir + "/wire", WIRE.toBytes()).wait();
 
-  string[] langs = string[]("ts", "js");
+  string[] langs = ["ts", "js"];
   for (i32 k = 0; k < langs.len(); k++) {
     string lang = langs[k];
     string theirs = askOracle(t, cli,
-      string[]("wire", WASM_HEX, dir + "/sigs", dir + "/wire", lang), "a keyed enum (" + lang + ")",
-      string[](SIGS, WIRE));
+      ["wire", WASM_HEX, dir + "/sigs", dir + "/wire", lang], "a keyed enum (" + lang + ")",
+      [SIGS, WIRE]);
     if (theirs == "") { continue; }
     string mine = bindgenWire(wasm, SIGS, WIRE, lang);
 
@@ -247,13 +248,14 @@ export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enu
 export string test_the_two_generators_write_the_same_glue_for_whole_programs(Core core, Cli cli) {
   // The shapes that are not reachable from a one-file program, so they are named by their entry.
   T t = T.create();
-  string[] entries = string[](
+  string[] entries = [
     // A callback going in, a funcref coming out, `Pending<T>` and its aliases, and 40-odd dispatchers:
     // the whole capability boundary, which is the hardest thing this generator is ever handed.
     "packages/platform/example/wc.wac",
     // The compiler itself — half a megabyte of module through the base64 writer, and the program whose
     // glue the website actually ships.
-    "packages/wacc/src/api.wac");
+    "packages/wacc/src/api.wac"
+  ];
 
   for (i32 i = 0; i < entries.len(); i++) {
     Graph g = graphOf(cli, entries[i]);
@@ -283,15 +285,16 @@ export string test_the_two_generators_write_the_same_glue_for_whole_programs(Cor
  */
 export string test_a_callback_returning_a_function_is_left_out_and_named(Core core, Cli cli) {
   T t = T.create();
-  string[] paths = string[]("/t/main.wac");
-  string[] sources = string[](
+  string[] paths = ["/t/main.wac"];
+  string[] sources = [
       "export struct Chooser {\n" +
       "  fn<fn<i32(i32)>(bool)> pick;\n" +
       "}\n" +
       "export i32 use(Chooser c, bool which, i32 n) {\n" +
       "  fn<i32(i32)> f = c.pick(which);\n" +
       "  return f(n);\n" +
-      "}\n");
+      "}\n"
+  ];
 
   // **Named, which is the half that was missing entirely.** The type is spelled out so a reader of the
   // report knows which shape was refused rather than only which field.

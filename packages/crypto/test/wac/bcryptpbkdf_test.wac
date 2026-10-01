@@ -81,12 +81,13 @@ struct KeyCase {
  * the striped output path (stride 2) and 32 bytes does not (stride 1), so both are covered.
  */
 KeyCase[] cases() {
-  return KeyCase[](
+  return [
     KeyCase("ed25519", "aes256-ctr", "aes-256-ctr", 32, 16, 16, "correct horse battery staple"),
     KeyCase("ed25519", "aes128-ctr", "aes-128-ctr", 16, 16, 1, "x"),
     KeyCase("ed25519", "aes256-ctr", "aes-256-ctr", 32, 16, 4,
             "a passphrase with spaces and ünicode"),
-    KeyCase("rsa", "aes256-ctr", "aes-256-ctr", 32, 16, 4, "pw"));
+    KeyCase("rsa", "aes256-ctr", "aes-256-ctr", 32, 16, 4, "pw")
+  ];
 }
 
 /** The base64 body of a PEM file: every line that is not a `-----` delimiter, joined. */
@@ -125,10 +126,12 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
     cli.remove(f + ".pub", false).wait();
 
     string[] argv = c.type == "rsa"
-      ? string[]("-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", itoa(c.rounds), "-Z", c.cipher,
-                 "-b", "2048")
-      : string[]("-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", itoa(c.rounds), "-Z", c.cipher);
-    Exec gen = cli.exec("ssh-keygen", argv, u8[0]()).wait();
+      ? [
+                 "-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", itoa(c.rounds), "-Z", c.cipher,
+                 "-b", "2048"
+      ]
+      : ["-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", itoa(c.rounds), "-Z", c.cipher];
+    Exec gen = cli.exec("ssh-keygen", argv, u8[]()).wait();
     t.isTrue(gen.ran(), "ssh-keygen ran — " + gen.error);
     if (!gen.ran()) { return t.report(); }
     t.eqI32(gen.status, 0, "ssh-keygen made " + c.type + " — " + string.fromBytes(gen.stderr));
@@ -199,7 +202,7 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
   // A generation that silently failed for every case would leave nothing compared and everything
   // green.
   t.eqI32(checked, all.len(), "every case was generated and decrypted");
-  check(t, cli, "node", string[](ORACLE), lines, "aes-ctr against node");
+  check(t, cli, "node", [ORACLE], lines, "aes-ctr against node");
   return t.report();
 }
 
@@ -246,7 +249,7 @@ export string test_the_second_block_interleaves_with_the_first_rather_than_follo
            "the 64-byte derivation starts with the whole 32-byte one; blocks are concatenated, " +
            "not striped");
 
-  i32[] lens = i32[](1, 31, 32, 33, 48, 64, 100);
+  i32[] lens = [1, 31, 32, 33, 48, 64, 100];
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] out = bcryptPbkdf("pw".toBytes(), "s".toBytes(), lens[i], 1);
     t.eqI32(out.len(), lens[i], "asked for " + itoa(lens[i]) + " bytes");

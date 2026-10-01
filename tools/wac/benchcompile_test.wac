@@ -43,9 +43,11 @@ string readOr(Cli cli, string path, T t) {
  */
 string[] apiCallsIn(string text) {
   Vec<string> out = Vec.create();
-  string[] stems = string[]("diagnoseGraph", "diagnoseFiles", "buildFiles", "emitFiles",
+  string[] stems = [
+                            "diagnoseGraph", "diagnoseFiles", "buildFiles", "emitFiles",
                             "blockedFiles", "exportSigsFiles", "bindTypesFiles", "describeFiles",
-                            "covTableFiles", "missingImportFiles", "bindgenDeclinedFiles");
+                            "covTableFiles", "missingImportFiles", "bindgenDeclinedFiles"
+  ];
   for (i32 s = 0; s < stems.len(); s++) {
     i32 at = 0;
     while (true) {

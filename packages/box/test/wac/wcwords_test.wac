@@ -43,7 +43,7 @@ struct Cp {
  *     so, which is the only reason anything is on this list.
  */
 Cp[] separators() {
-  return Cp[](
+  return [
     Cp("nbsp", 0x00A0), Cp("em space", 0x2003), Cp("figure space", 0x2007),
     Cp("ogham space", 0x1680), Cp("narrow nbsp", 0x202F), Cp("medium math space", 0x205F),
     Cp("ideographic space", 0x3000), Cp("en quad", 0x2000), Cp("hair space", 0x200A),
@@ -52,7 +52,7 @@ Cp[] separators() {
     Cp("zero width space", 0x200B),
     Cp("em dash", 0x2014), Cp("box drawing", 0x2500), Cp("e acute", 0x00E9),
     Cp("emoji", 0x1F600)
-  );
+  ];
 }
 
 /**
@@ -62,7 +62,7 @@ Cp[] separators() {
  * corrupt exactly the differential it was fetched for.
  */
 string realWc(Cli cli, string[] args) {
-  Exec r = cli.exec("wc", args, u8[0]()).wait();
+  Exec r = cli.exec("wc", args, u8[]()).wait();
   return string.fromBytes(r.stdout);
 }
 
@@ -74,7 +74,7 @@ export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cl
 
   // **The oracle has to be there**, and a missing `wc` would otherwise make every comparison below
   // agree on the empty string. `Exec.error` is non-empty only when the program could not be started.
-  t.isTrue(cli.exec("wc", string[]("--version"), u8[0]()).wait().error == "", "there is a real wc");
+  t.isTrue(cli.exec("wc", ["--version"], u8[]()).wait().error == "", "there is a real wc");
 
   Cp[] cps = separators();
   for (i32 i = 0; i < cps.len(); i++) {
@@ -89,8 +89,8 @@ export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cl
       b.push(0x0a);
       t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the case");
 
-      Ran got = runApplet(core, cli, dir, string[]("wc", "-w", path));
-      t.eqStr(got.out, realWc(cli, string[]("-w", path)),
+      Ran got = runApplet(core, cli, dir, ["wc", "-w", path]);
+      t.eqStr(got.out, realWc(cli, ["-w", path]),
               "wc -w on " + cps[i].name + (shape == 0 ? " between" : " alone"));
     }
   }
@@ -116,7 +116,7 @@ export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
   string path = dir + "/split.txt";
 
-  Cp[] wide = Cp[](Cp("em dash", 0x2014), Cp("emoji", 0x1F600));
+  Cp[] wide = [Cp("em dash", 0x2014), Cp("emoji", 0x1F600)];
   u8[] word = "word ".toBytes();
 
   for (i32 i = 0; i < wide.len(); i++) {
@@ -135,8 +135,8 @@ export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli
       b.pushAll(" tail\n".toBytes());
       t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the split case");
 
-      Ran got = runApplet(core, cli, dir, string[]("wc", path));
-      t.eqStr(got.out, realWc(cli, string[](path)),
+      Ran got = runApplet(core, cli, dir, ["wc", path]);
+      t.eqStr(got.out, realWc(cli, [path]),
               wide[i].name + " broken after " + itoa(split) + " byte(s) at the chunk boundary");
     }
   }
@@ -162,7 +162,7 @@ export string test_wc_w_agrees_on_the_tour(Core core, Cli cli) {
     return t.report();
   }
 
-  Ran got = runApplet(core, cli, cli.cwd().wait(), string[]("wc", "-w", tour));
-  t.eqStr(got.out, realWc(cli, string[]("-w", tour)), "wc -w on spec/tour.wac");
+  Ran got = runApplet(core, cli, cli.cwd().wait(), ["wc", "-w", tour]);
+  t.eqStr(got.out, realWc(cli, ["-w", tour]), "wc -w on spec/tour.wac");
   return t.report();
 }

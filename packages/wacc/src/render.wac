@@ -80,7 +80,7 @@ export string renderDiagnostics(string wire, string[] paths, string[] sources) {
   // One entry is enough rather than a map: diagnostics arrive grouped by file, so this misses only at
   // a boundary, and the common case is one file anyway.
   string lastFile = "";
-  string[] lastLines = string[1](fill: "");
+  string[] lastLines = string[].filled(1, "");
   string[] lines = linesOf(wire);
   for (i32 i = 0; i < lines.len(); i++) {
     string cur = lines[i];

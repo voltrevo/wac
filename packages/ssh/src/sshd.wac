@@ -99,7 +99,7 @@ export i32 main(Core core, Cli cli) {
     core.warn("sshd: " + o.hostKey + ": " + hostFile.error);
     return 1;
   }
-  PrivateKey host = readEd25519(hostFile.bytes, u8[0]());
+  PrivateKey host = readEd25519(hostFile.bytes, u8[]());
   match (host.error) {
     Ok: {}
     BadPassphrase: {
@@ -288,10 +288,10 @@ bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
 u8[] handshake(Conn conn, PrivateKey host) {
   if (!conn.cli.send(conn.sock, serverVersionLine()).wait()) {
     conn.fail("cannot send the version line");
-    return u8[0]();
+    return u8[]();
   }
 
-  u8[] clientVersionLine = u8[0]();
+  u8[] clientVersionLine = u8[]();
   while (true) {
     Version v = scanVersion(conn.buf.data, 0, conn.buf.len);
     match (v.status) {
@@ -302,57 +302,57 @@ u8[] handshake(Conn conn, PrivateKey host) {
       Incomplete: {
         if (!conn.fill()) {
           conn.fail("the connection closed during the version exchange");
-          return u8[0]();
+          return u8[]();
         }
         continue;
       }
       default: {
         conn.fail("the client did not send a usable version line");
-        return u8[0]();
+        return u8[]();
       }
     }
     break;
   }
   if (!speaksV2(clientVersionLine)) {
     conn.fail("the client does not speak SSH-2");
-    return u8[0]();
+    return u8[]();
   }
 
   u8[] ourKexInit = encode(serverProposal(), conn.core.randomBytes(16).wait());
-  if (!conn.sendPacket(ourKexInit)) { conn.fail("cannot send KEXINIT"); return u8[0](); }
+  if (!conn.sendPacket(ourKexInit)) { conn.fail("cannot send KEXINIT"); return u8[](); }
 
   u8[] theirKexInit = conn.readPacket();
-  if (conn.failed()) { return u8[0](); }
-  if (theirKexInit[0] != msgKexInit()) { conn.fail("expected KEXINIT"); return u8[0](); }
+  if (conn.failed()) { return u8[](); }
+  if (theirKexInit[0] != msgKexInit()) { conn.fail("expected KEXINIT"); return u8[](); }
 
   // The *client's* order decides. A server that picked its own favourite would use an algorithm
   // the client is not using, and every packet after NEWKEYS would fail its tag.
   Proposal? theirs = decode(theirKexInit);
-  if (theirs is null) { conn.fail("the client's KEXINIT did not parse"); return u8[0](); }
+  if (theirs is null) { conn.fail("the client's KEXINIT did not parse"); return u8[](); }
   if (negotiate(theirs!.kex, serverProposal().kex).len() == 0) {
     conn.fail("no key exchange in common");
-    return u8[0]();
+    return u8[]();
   }
   if (negotiate(theirs!.hostKey, serverProposal().hostKey).len() == 0) {
     conn.fail("no host key algorithm in common — this server only has an Ed25519 key");
-    return u8[0]();
+    return u8[]();
   }
   if (negotiate(theirs!.cipherToServer, serverProposal().cipherToServer).len() == 0) {
     conn.fail("no cipher in common");
-    return u8[0]();
+    return u8[]();
   }
 
   u8[] initPayload = conn.readPacket();
-  if (conn.failed()) { return u8[0](); }
+  if (conn.failed()) { return u8[](); }
   u8[] qc = parseEcdhInit(initPayload);
-  if (qc.len() == 0) { conn.fail("expected the key exchange init"); return u8[0](); }
+  if (qc.len() == 0) { conn.fail("expected the key exchange init"); return u8[](); }
 
   u8[] secret = conn.core.randomBytes(32).wait();
   u8[] qs = ephemeralPublic(secret);
   u8[]? shared = sharedSecret(secret, qc);
   if (shared is null) {
     conn.fail("the client sent a low-order point");
-    return u8[0]();
+    return u8[]();
   }
 
   u8[] ks = hostKeyBlob(hostPublicPoint(host));
@@ -360,13 +360,13 @@ u8[] handshake(Conn conn, PrivateKey host) {
                         ks, qc, qs, shared!);
   if (!conn.sendPacket(ecdhReply(ks, qs, h, host.seed))) {
     conn.fail("cannot send the key exchange reply");
-    return u8[0]();
+    return u8[]();
   }
-  if (!conn.sendPacket(u8[](msgNewKeys()))) { conn.fail("cannot send NEWKEYS"); return u8[0](); }
+  if (!conn.sendPacket([msgNewKeys()])) { conn.fail("cannot send NEWKEYS"); return u8[](); }
 
   u8[] theirNewKeys = conn.readPacket();
-  if (conn.failed()) { return u8[0](); }
-  if (theirNewKeys[0] != msgNewKeys()) { conn.fail("expected NEWKEYS"); return u8[0](); }
+  if (conn.failed()) { return u8[](); }
+  if (theirNewKeys[0] != msgNewKeys()) { conn.fail("expected NEWKEYS"); return u8[](); }
 
   // 'C' is client-to-server, so the server reads with C and writes with D — the opposite way
   // round from the client, and the one asymmetry that produces a connection where nothing
@@ -380,7 +380,7 @@ u8[] handshake(Conn conn, PrivateKey host) {
 u8[] hostPublicPoint(PrivateKey host) {
   // The blob is `string "ssh-ed25519"` then `string` the point: 4 + 11 + 4 + 32 bytes.
   if (host.publicBlob.len() < 51) { trap; }
-  u8[] point = u8[32]();
+  u8[] point = u8[].filled(32, 0);
   point.copyFrom(host.publicBlob, host.publicBlob.len() - 32, 0, 32);
   return point;
 }
@@ -409,7 +409,7 @@ string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs
   FileResult passwd = fs.readFile("/etc/passwd");
   if (passwd.ok) { users = parsePasswd(passwd.bytes); }
   FileResult keys = cli.readFile(o.authorizedKeys).wait();
-  u8[] allowed = keys.ok ? keys.bytes : u8[0]();
+  u8[] allowed = keys.ok ? keys.bytes : u8[]();
 
   // A client may try several keys, and the first attempt is usually a probe with no signature.
   for (i32 attempt = 0; attempt < 16; attempt++) {
@@ -539,7 +539,7 @@ bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   // Both shapes still work and they are different sessions: `ssh -T host` sends no `pty-req`, the
   // client keeps its own line editing, and the server sees whole lines — which is what every test
   // here drives. `ssh -tt host` asks for one, and then every keystroke arrives on its own.
-  u8[] command = u8[0]();
+  u8[] command = u8[]();
   bool interactive = false;
   bool pty = false;
   Terminal terminal = Terminal("", 0, 0);
@@ -800,27 +800,27 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
       u8[] held = keys.typed.get(0);
       keys.typed = tailOf(keys.typed);
       i32 end = held.len() > 0 && held[held.len() - 1] == 10 ? held.len() - 1 : held.len();
-      u8[] cmd = u8[end]();
+      u8[] cmd = u8[].filled(end, 0);
       cmd.copyFrom(held, 0, 0, end);
       runScript(sh, string.fromBytes(cmd));
       u8[] out = sh.outBuf.take();
       u8[] err = sh.errOut.take();
       if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
       if (err.len() > 0) { conn.sendPacket(channelStderr(channel, forTerminal(err))); }
-      if (sh.exiting) { return Result(u8[0](), u8[0](), sh.exitCode); }
+      if (sh.exiting) { return Result(u8[](), u8[](), sh.exitCode); }
     }
     // …and then a `^D` that arrived behind them, which ends the session exactly as it does when it
     // is read at the prompt.
-    if (keys.eof) { return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status); }
+    if (keys.eof) { return Result(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status); }
 
     u8[] p = conn.readPacket();
     if (conn.failed()) {
       // The client hanging up ends the session; it is not an error to report.
       conn.error = "";
-      return Result(u8[0](), u8[0](), sh.status);
+      return Result(u8[](), u8[](), sh.status);
     }
     Incoming m = parse(p);
-    if (!m.ok) { conn.fail("a channel message did not parse"); return Result(u8[0](), u8[0](), 1); }
+    if (!m.ok) { conn.fail("a channel message did not parse"); return Result(u8[](), u8[](), 1); }
 
     if (m.kind == msgChannelEof() || m.kind == msgChannelClose()) { break; }
     if (m.kind != msgChannelData()) { continue; }
@@ -834,19 +834,19 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
         if (t.interrupted()) { conn.sendPacket(channelData(channel, crlf())); continue; }
         // A line the *poll* completed while a command was running is held in the same `Line`, so it
         // arrives here on the next keystroke rather than being lost — see `Keystrokes.arrived`.
-        if (t.eof) { return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status); }
+        if (t.eof) { return Result(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status); }
         if (!t.hasLine) { continue; }
         // The newline the discipline put on the end is for a program reading a stream; a command is a
         // string, so it comes off again.
         i32 end = t.line.len() > 0 && t.line[t.line.len() - 1] == 10 ? t.line.len() - 1 : t.line.len();
-        u8[] cmd = u8[end]();
+        u8[] cmd = u8[].filled(end, 0);
         cmd.copyFrom(t.line, 0, 0, end);
         runScript(sh, string.fromBytes(cmd));
         u8[] out = sh.outBuf.take();
         u8[] err = sh.errOut.take();
         if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
         if (err.len() > 0) { conn.sendPacket(channelStderr(channel, forTerminal(err))); }
-        if (sh.exiting) { return Result(u8[0](), u8[0](), sh.exitCode); }
+        if (sh.exiting) { return Result(u8[](), u8[](), sh.exitCode); }
       }
       continue;
     }
@@ -864,7 +864,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
       // `exit\r` is not `exit`. Only the one at the line boundary goes; a `\r` anywhere else is
       // data the shell should see.
       i32 end = (nl > 0 && pending.get(nl - 1) == 13) ? nl - 1 : nl;
-      u8[] line = u8[end]();
+      u8[] line = u8[].filled(end, 0);
       line.copyFrom(pending.data, 0, 0, end);
       pending.dropFront(nl + 1);
 
@@ -873,7 +873,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
       u8[] err = sh.errOut.take();
       if (out.len() > 0) { conn.sendPacket(channelData(channel, out)); }
       if (err.len() > 0) { conn.sendPacket(channelStderr(channel, err)); }
-      if (sh.exiting) { return Result(u8[0](), u8[0](), sh.exitCode); }
+      if (sh.exiting) { return Result(u8[](), u8[](), sh.exitCode); }
     }
   }
 
@@ -885,7 +885,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
     if (out.len() > 0) { conn.sendPacket(channelData(channel, out)); }
     if (err.len() > 0) { conn.sendPacket(channelStderr(channel, err)); }
   }
-  return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status);
+  return Result(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status);
 }
 
 /** Everything but the first element. `Vec` has no `shift`, and a queue of typed lines needs one. */
@@ -897,7 +897,7 @@ Vec<u8[]> tailOf(Vec<u8[]> v) {
 
 /** A newline as a terminal in raw mode needs it: return, then feed. */
 u8[] crlf() {
-  u8[] out = u8[2](fill: 13);
+  u8[] out = u8[].filled(2, 13);
   out[1] = 10;
   return out;
 }

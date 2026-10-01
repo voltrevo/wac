@@ -76,7 +76,7 @@ export struct Checked {
   i64 revision;         // the revision counter, for a store deciding whether this replaces what it has
 }
 
-Checked refused(i32 reason) { return Checked(reason, u8[0](), -1); }
+Checked refused(i32 reason) { return Checked(reason, u8[](), -1); }
 
 /**
  * Whether a directory should keep this descriptor, and the name to keep it under.
@@ -136,9 +136,9 @@ export i64 certExpiryHours(u8[] cert) {
 
 /** Base64, or empty rather than a partial decode — a truncated signature is not a short one. */
 u8[] b64Or(u8[] text) {
-  if (text.len() == 0) { return u8[0](); }
+  if (text.len() == 0) { return u8[](); }
   u8[]? decoded = b64decode(text);
-  return (decoded is null) ? u8[0]() : decoded!;
+  return (decoded is null) ? u8[]() : decoded!;
 }
 
 

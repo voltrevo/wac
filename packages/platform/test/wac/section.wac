@@ -28,7 +28,7 @@ export i32 leb(u8[] b, i32[] pos) {
 export string name(u8[] b, i32[] pos) {
   i32 n = leb(b, pos);
   if (n < 0 || pos[0] + n > b.len()) { return ""; }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[pos[0] + i]; }
   pos[0] = pos[0] + n;
   return string.fromBytes(out);
@@ -44,7 +44,7 @@ export string name(u8[] b, i32[] pos) {
 export string customSection(u8[] b, string want) {
   if (b.len() < 8) { return ""; }
   string found = "";
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   while (pos[0] + 1 < b.len()) {
     i32 id = b[pos[0]];
@@ -54,11 +54,11 @@ export string customSection(u8[] b, string want) {
     if (end > b.len()) { return found; }
     if (id == 0) {
       i32 nameEnd = pos[0];
-      i32[] at = i32[1]();
+      i32[] at = i32[].filled(1, 0);
       at[0] = pos[0];
       string got = name(b, at);
       if (got == want) {
-        u8[] body = u8[end - at[0]]();
+        u8[] body = u8[].filled(end - at[0], 0);
         for (i32 i = 0; i < body.len(); i++) { body[i] = b[at[0] + i]; }
         found = string.fromBytes(body);
       }

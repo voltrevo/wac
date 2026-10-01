@@ -38,7 +38,7 @@ i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
 const string JSX = "import { Attr, Node } from \"core\";\n";
 
 string[] refusedNames() {
-  return string[](
+  return [
     "argument, an integer sum into a string",
     "argument, a ternary of integers into a string",
     "array element, an integer sum into a string[]",
@@ -57,15 +57,16 @@ string[] refusedNames() {
     "a switch case value, a string sum — caught by another rule, kept as coverage",
     "the condition of an `if`, an integer sum",
     "the condition of a `while`, a string sum — already caught, kept as coverage",
-    "slice's count argument, a ternary of strings");
+    "slice's count argument, a ternary of strings"
+  ];
 }
 
 string[] refusedPrograms() {
-  return string[](
+  return [
     "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(1 + 2); }\n",
     "i32 g(string s) { return s.len(); }\nexport i32 f(bool b) { return g(b ? 1 : 2); }\n",
-    "export i32 f() { string[] a = string[](1 + 2); return a.len(); }\n",
-    "export i32 f() { string[] a = string[3](fill: 1 + 2); return a.len(); }\n",
+    "export i32 f() { string[] a = [1 + 2]; return a.len(); }\n",
+    "export i32 f() { string[] a = string[].filled(3, 1 + 2); return a.len(); }\n",
     "struct S { string v; }\nexport i32 f() { S s = S(1 + 2); return s.v.len(); }\n",
     "enum E { A(string s), B }\nexport i32 f() { E e = E.A(1 + 2); return 0; }\n",
     "export i32 f() { return \"ab\".indexOf(1 + 2); }\n",
@@ -74,13 +75,14 @@ string[] refusedPrograms() {
     "export i32 f() { string s = string.fromCodepoint(\"a\" + \"b\"); return s.len(); }\n",
     JSX + "export i32 f() { Node n = <div class={1 + 2}></div>; return 0; }\n",
     JSX + "export i32 f() { Node n = <div>{1 + 2}</div>; return 0; }\n",
-    "export i32 f(bool b) { i32[] a = i32[b ? \"x\" : \"y\"](); return a.len(); }\n",
+    "export i32 f(bool b) { i32[] a = i32[].filled(b ? \"x\" : \"y\", 0); return a.len(); }\n",
     "export i32 f(i32[] a, bool b) { return a[b ? \"x\" : \"y\"]; }\n",
     "export i32 f(i32[] a, bool b) { a[b ? \"x\" : \"y\"] = 1; return 0; }\n",
     "export i32 f(i32 x) { switch (x) { case \"a\" + \"b\": { return 1; } default: { return 0; } } }\n",
     "export i32 f() { if (1 + 1) { return 1; } return 0; }\n",
     "export i32 f() { while (\"a\" + \"b\") { return 1; } return 0; }\n",
-    "export i32 f(bool b) { return \"ab\".slice(1, b ? \"x\" : \"y\").len(); }\n");
+    "export i32 f(bool b) { return \"ab\".slice(1, b ? \"x\" : \"y\").len(); }\n"
+  ];
 }
 
 /** Every slot, with a compound literal that cannot go there. */
@@ -105,15 +107,16 @@ export string test_a_compound_literal_is_refused_where_a_direct_one_is() {
  */
 export string test_the_direct_form_of_each_slot_is_still_refused() {
   T t = T.create();
-  string[] name = string[](
+  string[] name = [
     "argument", "array element", "array fill", "constructor positional",
     "variant payload", "indexOf", "fromBytes", "fromCodepoint",
     "JSX attribute", "JSX child", "array size", "array index read",
-    "array index written", "switch case value", "an if condition", "slice's count");
-  string[] src = string[](
+    "array index written", "switch case value", "an if condition", "slice's count"
+  ];
+  string[] src = [
     "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(1); }\n",
-    "export i32 f() { string[] a = string[](1); return a.len(); }\n",
-    "export i32 f() { string[] a = string[3](fill: 1); return a.len(); }\n",
+    "export i32 f() { string[] a = [1]; return a.len(); }\n",
+    "export i32 f() { string[] a = string[].filled(3, 1); return a.len(); }\n",
     "struct S { string v; }\nexport i32 f() { S s = S(1); return s.v.len(); }\n",
     "enum E { A(string s), B }\nexport i32 f() { E e = E.A(1); return 0; }\n",
     "export i32 f() { return \"ab\".indexOf(1); }\n",
@@ -121,12 +124,13 @@ export string test_the_direct_form_of_each_slot_is_still_refused() {
     "export i32 f() { string s = string.fromCodepoint(\"a\"); return s.len(); }\n",
     JSX + "export i32 f() { Node n = <div class={1}></div>; return 0; }\n",
     JSX + "export i32 f() { Node n = <div>{1}</div>; return 0; }\n",
-    "export i32 f() { i32[] a = i32[\"a\"](); return a.len(); }\n",
+    "export i32 f() { i32[] a = i32[].filled(\"a\", 0); return a.len(); }\n",
     "export i32 f(i32[] a) { return a[\"a\"]; }\n",
     "export i32 f(i32[] a) { a[\"a\"] = 1; return 0; }\n",
     "export i32 f(i32 x) { switch (x) { case \"a\": { return 1; } default: { return 0; } } }\n",
     "export i32 f() { if (1) { return 1; } return 0; }\n",
-    "export i32 f() { return \"ab\".slice(1, \"x\").len(); }\n");
+    "export i32 f() { return \"ab\".slice(1, \"x\").len(); }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     t.isTrue(diagsFor(src[i]) > 0, name[i] + ": the direct form went silent");
   }
@@ -144,29 +148,31 @@ export string test_the_direct_form_of_each_slot_is_still_refused() {
  */
 export string test_the_same_compound_literals_where_they_fit() {
   T t = T.create();
-  string[] name = string[](
+  string[] name = [
     "an integer sum into an i64", "a ternary of integers into an i32",
     "a float sum into an f64", "an integer sum into an i32[]",
     "an integer sum into a u8[]", "a string sum into a string argument",
     "a ternary of integers into a u8[] element", "a string literal as a JSX attribute value",
     "an integer sum as an array size", "a ternary of integers as an index",
     "an integer sum as a switch case value", "a bool-typed condition",
-    "an integer sum as slice's count", "a ternary of integers as slice's count");
-  string[] src = string[](
+    "an integer sum as slice's count", "a ternary of integers as slice's count"
+  ];
+  string[] src = [
     "i32 g(i64 v) { return 0; }\nexport i32 f() { return g(1 + 2); }\n",
     "i32 g(i32 v) { return v; }\nexport i32 f(bool b) { return g(b ? 1 : 2); }\n",
     "i32 g(f64 v) { return 0; }\nexport i32 f() { return g(1.5 + 2.5); }\n",
-    "export i32 f() { i32[] a = i32[](1 + 2); return a.len(); }\n",
-    "export i32 f() { u8[] a = u8[](1 + 2); return a.len(); }\n",
+    "export i32 f() { i32[] a = [1 + 2]; return a.len(); }\n",
+    "export i32 f() { u8[] a = [1 + 2]; return a.len(); }\n",
     "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(\"a\" + \"b\"); }\n",
-    "export i32 f(bool b) { u8[] a = u8[](b ? 1 : 2); return a.len(); }\n",
+    "export i32 f(bool b) { u8[] a = [b ? 1 : 2]; return a.len(); }\n",
     JSX + "export i32 f() { Node n = <div class={\"a\"}></div>; return 0; }\n",
-    "export i32 f() { i32[] a = i32[1 + 1](); return a.len(); }\n",
+    "export i32 f() { i32[] a = i32[].filled(1 + 1, 0); return a.len(); }\n",
     "export i32 f(i32[] a, bool b) { return a[b ? 1 : 2]; }\n",
     "export i32 f(i32 x) { switch (x) { case 1 + 1: { return 1; } default: { return 0; } } }\n",
     "export i32 f(bool b) { if (b) { return 1; } return 0; }\n",
     "export i32 f() { return \"ab\".slice(1, 1 + 1).len(); }\n",
-    "export i32 f(bool b) { return \"ab\".slice(1, b ? 1 : 2).len(); }\n");
+    "export i32 f(bool b) { return \"ab\".slice(1, b ? 1 : 2).len(); }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused a legal program");
   }
@@ -185,7 +191,7 @@ export string test_no_refused_row_is_accepted_by_both() {
   string[] src = refusedPrograms();
   for (i32 i = 0; i < src.len(); i++) {
     i32 diags = diagsFor(src[i]);
-    string blocked = blockedFiles(string[]("/m.wac"), string[](src[i]), "/m.wac");
+    string blocked = blockedFiles(["/m.wac"], [src[i]], "/m.wac");
     t.isTrue(diags > 0 || blocked != "",
         name[i] + ": the checker and the emitter both accepted it, so a build writes a module "
         + "with no `f` in it and exits 0");

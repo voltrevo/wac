@@ -56,10 +56,10 @@ string trimmedEnd(string s) {
 }
 
 string[] splitLines(string s) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -68,13 +68,13 @@ string[] splitLines(string s) {
     count = count + 1;
     at = i + 1;
   }
-  string[] exact = string[count](fill: "");
+  string[] exact = string[].filled(count, "");
   for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
   return exact;
 }
 
 string[] sorted(string[] all) {
-  string[] out = string[all.len()](fill: "");
+  string[] out = string[].filled(all.len(), "");
   for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
@@ -119,14 +119,14 @@ i32 segments(string name) {
 
 /** The first up-to-`limit` entries of `all` that are not in `other`. */
 string[] missingFrom(string[] all, string[] other, i32 limit) {
-  string[] out = string[limit](fill: "");
+  string[] out = string[].filled(limit, "");
   i32 n = 0;
   for (i32 i = 0; i < all.len() && n < limit; i++) {
     if (has(other, all[i])) { continue; }
     out[n] = all[i];
     n = n + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -140,10 +140,10 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
     core.warn("git ls-remote test: skipped — HTTP_PROXY is not set");
     return t.report();
   }
-  string[] names = string[]("HTTP_PROXY", "HTTPS_PROXY");
-  string[] values = string[](proxy, proxy);
+  string[] names = ["HTTP_PROXY", "HTTPS_PROXY"];
+  string[] values = [proxy, proxy];
 
-  Exec first = withEnv(cli, names, values, "git", string[]("ls-remote", REMOTE));
+  Exec first = withEnv(cli, names, values, "git", ["ls-remote", REMOTE]);
   if (!first.ran() || first.status != 0) {
     core.warn("git ls-remote test: skipped — git ls-remote failed: " +
               string.fromBytes(first.stderr));
@@ -169,17 +169,21 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
   // Read for the trust store, net for the socket, env for the proxy. No write.
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
-                   string[](builtProgram(cli, "packages/git/example/gitls.wac", "gitls",
-                                         string[]("--allow-net", "--allow-env", "--allow-read",
-                                                  "--quiet")),
-                            REMOTE));
+                   [
+                                         builtProgram(cli, "packages/git/example/gitls.wac", "gitls",
+                                         [
+                                                  "--allow-net", "--allow-env", "--allow-read",
+                                                  "--quiet"
+                                         ]),
+                            REMOTE
+                   ]);
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitls failed: " + err);
   t.eqStr(err, "", "gitls warned");
   if (r.status != 0) { return t.report(); }
   string ours = trimmedEnd(string.fromBytes(r.stdout));
 
-  Exec second = withEnv(cli, names, values, "git", string[]("ls-remote", REMOTE));
+  Exec second = withEnv(cli, names, values, "git", ["ls-remote", REMOTE]);
   string after = trimmedEnd(string.fromBytes(second.stdout));
   if (before != after) {
     // Not a failure of ours: `refs/pull/*` moved while this ran.

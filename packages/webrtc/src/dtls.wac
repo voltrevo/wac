@@ -60,7 +60,7 @@ export i32 hsCertificateRequest() { return 13; }
  * certificate" and offers its own self-signed one.
  */
 export u8[] certificateRequest() {
-  u8[] out = u8[8]();
+  u8[] out = u8[].filled(8, 0);
   out[0] = 1;  out[1] = 64;      // one certificate type: ecdsa_sign
   out[2] = 0;  out[3] = 2;       // two bytes of signature algorithms
   out[4] = 4;  out[5] = 3;       // sha256, ecdsa
@@ -110,10 +110,10 @@ export i32 recordSize(u8[] b, i32 at) {
  */
 export Record parseRecord(u8[] b, i32 at) {
   i32 size = recordSize(b, at);
-  if (size < 0) { return Record(false, 0, 0, 0, 0 as i64, u8[0]()); }
+  if (size < 0) { return Record(false, 0, 0, 0, 0 as i64, u8[]()); }
   i64 seq = 0 as i64;
   for (i32 i = 0; i < 6; i++) { seq = (seq * (256 as i64)) + (b[at + 5 + i] as i64); }
-  u8[] frag = u8[size - 13]();
+  u8[] frag = u8[].filled(size - 13, 0);
   for (i32 i = 0; i < frag.len(); i++) { frag[i] = b[at + 13 + i]; }
   return Record(true, b[at], (b[at + 1] << 8) | b[at + 2],
                 (b[at + 3] << 8) | b[at + 4], seq, frag);
@@ -121,7 +121,7 @@ export Record parseRecord(u8[] b, i32 at) {
 
 /** Wrap a fragment in a record header. */
 export u8[] record(i32 kind, i32 version, i32 epoch, i64 sequence, u8[] fragment) {
-  u8[] out = u8[13 + fragment.len()]();
+  u8[] out = u8[].filled(13 + fragment.len(), 0);
   out[0] = kind;
   out[1] = (version >> 8) & 0xFF;
   out[2] = version & 0xFF;
@@ -145,20 +145,20 @@ export u8[] record(i32 kind, i32 version, i32 epoch, i64 sequence, u8[] fragment
  * message would accept a truncated ServerHello as a complete one.
  */
 export Handshake parseHandshake(u8[] f) {
-  if (f.len() < 12) { return Handshake(false, 0, 0, false, u8[0]()); }
+  if (f.len() < 12) { return Handshake(false, 0, 0, false, u8[]()); }
   i32 len = (f[1] << 16) | (f[2] << 8) | f[3];
   i32 seq = (f[4] << 8) | f[5];
   i32 off = (f[6] << 16) | (f[7] << 8) | f[8];
   i32 flen = (f[9] << 16) | (f[10] << 8) | f[11];
-  if (12 + flen > f.len()) { return Handshake(false, 0, 0, false, u8[0]()); }
-  u8[] body = u8[flen]();
+  if (12 + flen > f.len()) { return Handshake(false, 0, 0, false, u8[]()); }
+  u8[] body = u8[].filled(flen, 0);
   for (i32 i = 0; i < flen; i++) { body[i] = f[12 + i]; }
   return Handshake(true, f[0], seq, off == 0 && flen == len, body);
 }
 
 /** Wrap a body in a handshake header, unfragmented. */
 export u8[] handshake(i32 kind, i32 messageSeq, u8[] body) {
-  u8[] out = u8[12 + body.len()]();
+  u8[] out = u8[].filled(12 + body.len(), 0);
   out[0] = kind;
   out[1] = (body.len() >> 16) & 0xFF;
   out[2] = (body.len() >> 8) & 0xFF;
@@ -195,7 +195,7 @@ export u8[] clientHello(u8[] random, u8[] cookie) {
   // 10 + 6 + 12, counted as (type 2 + length 2 + body) each: supported_groups carries a two-byte
   // list length and two groups, ec_point_formats a one-byte length and one format, and
   // signature_algorithms a two-byte length and three pairs.
-  u8[] ext = u8[10 + 6 + 12]();
+  u8[] ext = u8[].filled(10 + 6 + 12, 0);
   i32 e = 0;
   // supported_groups: x25519 (0x001d) and secp256r1 (0x0017)
   ext[e] = 0x00; ext[e + 1] = 0x0A;
@@ -219,7 +219,7 @@ export u8[] clientHello(u8[] random, u8[] cookie) {
   e = e + 12;
 
   i32 n = 2 + 32 + 1 + 1 + cookie.len() + 2 + 4 + 2 + 2 + e;
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   out[at] = 0xFE; out[at + 1] = 0xFD; at = at + 2;                 // client_version, DTLS 1.2
   for (i32 i = 0; i < 32; i++) { out[at + i] = i < random.len() ? random[i] : 0; }
@@ -248,10 +248,10 @@ export u8[] clientHello(u8[] random, u8[] cookie) {
  * Nothing here needs to: echoing an empty cookie is what echoing an empty cookie should do.
  */
 export u8[] verifyCookie(u8[] body) {
-  if (body.len() < 3) { return u8[0](); }
+  if (body.len() < 3) { return u8[](); }
   i32 len = body[2];
-  if (3 + len > body.len()) { return u8[0](); }
-  u8[] c = u8[len]();
+  if (3 + len > body.len()) { return u8[](); }
+  u8[] c = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { c[i] = body[3 + i]; }
   return c;
 }
@@ -280,17 +280,17 @@ export i32 serverCurve(u8[] body) {
 
 /** The server's ephemeral public key out of a ServerKeyExchange, or empty. */
 export u8[] serverPublic(u8[] body) {
-  if (body.len() < 4 || body[0] != 3) { return u8[0](); }
+  if (body.len() < 4 || body[0] != 3) { return u8[](); }
   i32 n = body[3];
-  if (4 + n > body.len()) { return u8[0](); }
-  u8[] p = u8[n]();
+  if (4 + n > body.len()) { return u8[](); }
+  u8[] p = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { p[i] = body[4 + i]; }
   return p;
 }
 
 /** A ClientKeyExchange body: one length byte and the point. */
 export u8[] clientKeyExchange(u8[] publicKey) {
-  u8[] out = u8[1 + publicKey.len()]();
+  u8[] out = u8[].filled(1 + publicKey.len(), 0);
   out[0] = publicKey.len();
   for (i32 i = 0; i < publicKey.len(); i++) { out[1 + i] = publicKey[i]; }
   return out;
@@ -305,12 +305,12 @@ export u8[] clientKeyExchange(u8[] publicKey) {
  * peer checks rather than any path to a root.
  */
 export u8[] leafCertificate(u8[] body) {
-  if (body.len() < 6) { return u8[0](); }
+  if (body.len() < 6) { return u8[](); }
   i32 listLen = (body[0] << 16) | (body[1] << 8) | body[2];
-  if (3 + listLen > body.len()) { return u8[0](); }
+  if (3 + listLen > body.len()) { return u8[](); }
   i32 n = (body[3] << 16) | (body[4] << 8) | body[5];
-  if (n <= 0 || 6 + n > body.len()) { return u8[0](); }
-  u8[] der = u8[n]();
+  if (n <= 0 || 6 + n > body.len()) { return u8[](); }
+  u8[] der = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { der[i] = body[6 + i]; }
   return der;
 }
@@ -325,11 +325,11 @@ export u8[] leafCertificate(u8[] body) {
  * shape as `packages/quic`'s missing CertificateVerify.
  */
 export u8[] serverKeyExchangeSigned(u8[] clientRandom, u8[] serverRandom, u8[] body) {
-  if (body.len() < 4 || body[0] != 3) { return u8[0](); }
+  if (body.len() < 4 || body[0] != 3) { return u8[](); }
   i32 pointLen = body[3];
   i32 paramsLen = 4 + pointLen;
-  if (paramsLen > body.len()) { return u8[0](); }
-  u8[] out = u8[clientRandom.len() + serverRandom.len() + paramsLen]();
+  if (paramsLen > body.len()) { return u8[](); }
+  u8[] out = u8[].filled(clientRandom.len() + serverRandom.len() + paramsLen, 0);
   i32 at = 0;
   for (i32 i = 0; i < clientRandom.len(); i++) { out[at + i] = clientRandom[i]; }
   at = at + clientRandom.len();
@@ -349,12 +349,12 @@ export i32 serverKeyExchangeScheme(u8[] body) {
 
 /** The signature itself, or empty. */
 export u8[] serverKeyExchangeSignature(u8[] body) {
-  if (body.len() < 4 || body[0] != 3) { return u8[0](); }
+  if (body.len() < 4 || body[0] != 3) { return u8[](); }
   i32 at = 4 + body[3];
-  if (at + 4 > body.len()) { return u8[0](); }
+  if (at + 4 > body.len()) { return u8[](); }
   i32 n = (body[at + 2] << 8) | body[at + 3];
-  if (at + 4 + n > body.len()) { return u8[0](); }
-  u8[] sig = u8[n]();
+  if (at + 4 + n > body.len()) { return u8[](); }
+  u8[] sig = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { sig[i] = body[at + 4 + i]; }
   return sig;
 }
@@ -378,7 +378,7 @@ export i32 curveSecp256r1() { return 0x0017; }
  * admits is an oddity: a client that has not yet agreed a version must be able to read it.
  */
 export u8[] helloVerifyRequest(u8[] cookie) {
-  u8[] out = u8[3 + cookie.len()]();
+  u8[] out = u8[].filled(3 + cookie.len(), 0);
   out[0] = 0xFE;
   out[1] = 0xFF;
   out[2] = cookie.len();
@@ -389,20 +389,20 @@ export u8[] helloVerifyRequest(u8[] cookie) {
 /** The cookie a ClientHello carried, or empty — the first hello of a handshake has none. */
 export u8[] helloCookie(u8[] body) {
   // version(2) random(32) session_id(1+n) cookie(1+n)
-  if (body.len() < 35) { return u8[0](); }
+  if (body.len() < 35) { return u8[](); }
   i32 at = 34 + body[34] + 1;
-  if (at >= body.len()) { return u8[0](); }
+  if (at >= body.len()) { return u8[](); }
   i32 n = body[at];
-  if (at + 1 + n > body.len()) { return u8[0](); }
-  u8[] c = u8[n]();
+  if (at + 1 + n > body.len()) { return u8[](); }
+  u8[] c = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { c[i] = body[at + 1 + i]; }
   return c;
 }
 
 /** The client's random out of a ClientHello. */
 export u8[] helloRandom(u8[] body) {
-  if (body.len() < 34) { return u8[0](); }
-  u8[] r = u8[32]();
+  if (body.len() < 34) { return u8[](); }
+  u8[] r = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { r[i] = body[2 + i]; }
   return r;
 }
@@ -432,24 +432,24 @@ export bool helloOffers(u8[] body, i32 suite) {
  * with ours — while telling you nothing about anyone else.
  */
 export i32[] helloGroups(u8[] body) {
-  if (body.len() < 35) { return i32[0](); }
+  if (body.len() < 35) { return i32[](); }
   i32 at = 34 + body[34] + 1;                    // past session_id
-  if (at >= body.len()) { return i32[0](); }
+  if (at >= body.len()) { return i32[](); }
   at = at + 1 + body[at];                        // past the cookie
-  if (at + 2 > body.len()) { return i32[0](); }
+  if (at + 2 > body.len()) { return i32[](); }
   at = at + 2 + ((body[at] << 8) | body[at + 1]); // past cipher_suites
-  if (at >= body.len()) { return i32[0](); }
+  if (at >= body.len()) { return i32[](); }
   at = at + 1 + body[at];                        // past compression_methods
-  if (at + 2 > body.len()) { return i32[0](); }
+  if (at + 2 > body.len()) { return i32[](); }
   i32 extEnd = at + 2 + ((body[at] << 8) | body[at + 1]);
   at = at + 2;
   if (extEnd > body.len()) { extEnd = body.len(); }
   while (at + 4 <= extEnd) {
     i32 kind = (body[at] << 8) | body[at + 1];
     i32 len = (body[at + 2] << 8) | body[at + 3];
-    if (at + 4 + len > extEnd) { return i32[0](); }
+    if (at + 4 + len > extEnd) { return i32[](); }
     if (kind == 0x000A) {
-      if (len < 2) { return i32[0](); }
+      if (len < 2) { return i32[](); }
       i32 listLen = (body[at + 4] << 8) | body[at + 5];
       // **The list has to fit inside the extension that carries it, and this once did not check.**
       // `len` bounds the extension body; the list occupies `listLen` of it after its own two-byte
@@ -461,9 +461,9 @@ export i32[] helloGroups(u8[] body) {
       // The odd case is separate and is not an overrun: a group is two bytes, so an odd list length
       // is a message no conforming peer sends, and `listLen / 2` would silently drop the remainder
       // and read one byte of whatever follows as half a group.
-      if (2 + listLen > len || listLen % 2 != 0) { return i32[0](); }
+      if (2 + listLen > len || listLen % 2 != 0) { return i32[](); }
       i32 n = listLen / 2;
-      i32[] out = i32[n]();
+      i32[] out = i32[].filled(n, 0);
       for (i32 i = 0; i < n; i++) {
         out[i] = (body[at + 6 + i * 2] << 8) | body[at + 7 + i * 2];
       }
@@ -471,7 +471,7 @@ export i32[] helloGroups(u8[] body) {
     }
     at = at + 4 + len;
   }
-  return i32[0]();
+  return i32[]();
 }
 
 /**
@@ -489,7 +489,7 @@ export i32[] helloGroups(u8[] body) {
  * it, because the peer would then rely on it.
  */
 export u8[] serverHello(u8[] random, i32 suite) {
-  u8[] out = u8[2 + 32 + 1 + 2 + 1 + 2 + 5]();
+  u8[] out = u8[].filled(2 + 32 + 1 + 2 + 1 + 2 + 5, 0);
   out[0] = 0xFE; out[1] = 0xFD;
   for (i32 i = 0; i < 32; i++) { out[2 + i] = i < random.len() ? random[i] : 0; }
   out[34] = 0;                                   // no session id
@@ -505,7 +505,7 @@ export u8[] serverHello(u8[] random, i32 suite) {
 
 /** A Certificate message: a three-byte list length, then three bytes of DER length and the DER. */
 export u8[] certificateMessage(u8[] der) {
-  u8[] out = u8[6 + der.len()]();
+  u8[] out = u8[].filled(6 + der.len(), 0);
   i32 listLen = 3 + der.len();
   out[0] = (listLen >> 16) & 0xFF;
   out[1] = (listLen >> 8) & 0xFF;
@@ -525,7 +525,7 @@ export u8[] certificateMessage(u8[] der) {
  * reconstruction.
  */
 export u8[] serverEcdhParams(i32 namedCurve, u8[] publicKey) {
-  u8[] out = u8[4 + publicKey.len()]();
+  u8[] out = u8[].filled(4 + publicKey.len(), 0);
   out[0] = 3;                                    // named_curve
   out[1] = (namedCurve >> 8) & 0xFF;
   out[2] = namedCurve & 0xFF;
@@ -536,7 +536,7 @@ export u8[] serverEcdhParams(i32 namedCurve, u8[] publicKey) {
 
 /** A ServerKeyExchange: the parameters, the signature scheme, and the signature. */
 export u8[] serverKeyExchange(u8[] params, i32 scheme, u8[] signature) {
-  u8[] out = u8[params.len() + 4 + signature.len()]();
+  u8[] out = u8[].filled(params.len() + 4 + signature.len(), 0);
   for (i32 i = 0; i < params.len(); i++) { out[i] = params[i]; }
   i32 at = params.len();
   out[at] = (scheme >> 8) & 0xFF;
@@ -548,14 +548,14 @@ export u8[] serverKeyExchange(u8[] params, i32 scheme, u8[] signature) {
 }
 
 /** A ServerHelloDone, which has no body at all — the message is its own content. */
-export u8[] serverHelloDone() { return u8[0](); }
+export u8[] serverHelloDone() { return u8[](); }
 
 /** The client's ephemeral public key out of a ClientKeyExchange, or empty. */
 export u8[] clientPublic(u8[] body) {
-  if (body.len() < 1) { return u8[0](); }
+  if (body.len() < 1) { return u8[](); }
   i32 n = body[0];
-  if (1 + n > body.len()) { return u8[0](); }
-  u8[] p = u8[n]();
+  if (1 + n > body.len()) { return u8[](); }
+  u8[] p = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { p[i] = body[1 + i]; }
   return p;
 }

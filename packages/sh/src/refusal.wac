@@ -43,11 +43,11 @@ export struct Output {
    */
   bool refusedByShell;
 
-  Output ok(u8[] out) { return Output(out, u8[0](), 0, true, false); }
-  Output fail(u8[] err, i32 status) { return Output(u8[0](), err, status, true, false); }
-  Output missing() { return Output(u8[0](), u8[0](), 127, false, false); }
+  Output ok(u8[] out) { return Output(out, u8[](), 0, true, false); }
+  Output fail(u8[] err, i32 status) { return Output(u8[](), err, status, true, false); }
+  Output missing() { return Output(u8[](), u8[](), 127, false, false); }
   /** A failure that is the shell's own limit rather than the command's — see `refusedByShell`. */
-  Output refused(u8[] err, i32 status) { return Output(u8[0](), err, status, true, true); }
+  Output refused(u8[] err, i32 status) { return Output(u8[](), err, status, true, true); }
 }
 
 /**

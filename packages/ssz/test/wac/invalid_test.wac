@@ -102,15 +102,15 @@ World world() {
   i32 uint128 = s.basic(16);
   i32 uint256 = s.basic(32);
 
-  i32 singleField = s.container(i32[](byte));
-  i32 small = s.container(i32[](uint16, uint16));
-  i32 fixed = s.container(i32[](uint8, uint64, uint32));
-  i32 varStruct = s.container(i32[](uint16, s.list(uint16, 1024), uint8));
-  i32 complex = s.container(i32[](
+  i32 singleField = s.container([byte]);
+  i32 small = s.container([uint16, uint16]);
+  i32 fixed = s.container([uint8, uint64, uint32]);
+  i32 varStruct = s.container([uint16, s.list(uint16, 1024), uint8]);
+  i32 complex = s.container([
     uint16, s.list(uint16, 128), uint8, s.list(byte, 256), varStruct,
-    s.vector(fixed, 4), s.vector(varStruct, 2)));
-  i32 bits = s.container(i32[](
-    s.bitlist(5), s.bitvector(2), s.bitvector(1), s.bitlist(6), s.bitvector(8)));
+    s.vector(fixed, 4), s.vector(varStruct, 2)
+  ]);
+  i32 bits = s.container([s.bitlist(5), s.bitvector(2), s.bitvector(1), s.bitlist(6), s.bitvector(8)]);
   return World(s, boolean, byte, uint8, uint16, uint32, uint64, uint128, uint256,
                singleField, small, fixed, varStruct, complex, bits);
 }
@@ -220,8 +220,10 @@ i32 typeOf(World w, string group, string name) {
 
   if (group == "containers") {
     // The type is the longest known container name that prefixes the case.
-    string[] known = string[]("SingleFieldTestStruct", "SmallTestStruct", "FixedTestStruct",
-                              "VarTestStruct", "ComplexTestStruct", "BitsStruct");
+    string[] known = [
+                              "SingleFieldTestStruct", "SmallTestStruct", "FixedTestStruct",
+                              "VarTestStruct", "ComplexTestStruct", "BitsStruct"
+    ];
     string best = "";
     for (i32 i = 0; i < known.len(); i++) {
       if (name == known[i] || startsWith(name, known[i] + "_")) {
@@ -243,12 +245,14 @@ export string test_every_invalid_ssz_generic_encoding_is_refused(Core core, Cli 
   if (cases is null) { return t.report(); }
 
   World w = world();
-  i32[] types = i32[0]();
-  i32[] fields = i32[0]();
-  string[] groups = string[]("basic_vector", "containers", "bitvector", "uints", "bitlist",
-                             "boolean");
-  i32[] want = i32[](957, 104, 31, 18, 17, 4);
-  i32[] ran = i32[groups.len()]();
+  i32[] types = i32[]();
+  i32[] fields = i32[]();
+  string[] groups = [
+                             "basic_vector", "containers", "bitvector", "uints", "bitlist",
+                             "boolean"
+  ];
+  i32[] want = [957, 104, 31, 18, 17, 4];
+  i32[] ran = i32[].filled(groups.len(), 0);
   i32 unparsed = 0;
   i32 accepted = 0;
   i32 shown = 0;
@@ -311,31 +315,31 @@ export string test_the_refusals_are_not_vacuous_the_same_shapes_valid_are_accept
   i32[] types = w.s.t();
   i32[] fields = w.s.f();
 
-  ok(t, types, fields, w.boolean, u8[](0), "boolean false");
-  ok(t, types, fields, w.boolean, u8[](1), "boolean true");
-  no(t, types, fields, w.boolean, u8[](2), "boolean 0x02");
-  no(t, types, fields, w.boolean, u8[0](), "zero-length boolean");
-  no(t, types, fields, w.boolean, u8[](1, 0), "two-byte boolean");
+  ok(t, types, fields, w.boolean, [0] as u8[], "boolean false");
+  ok(t, types, fields, w.boolean, [1] as u8[], "boolean true");
+  no(t, types, fields, w.boolean, [2] as u8[], "boolean 0x02");
+  no(t, types, fields, w.boolean, u8[](), "zero-length boolean");
+  no(t, types, fields, w.boolean, [1, 0] as u8[], "two-byte boolean");
 
-  ok(t, types, fields, vecBool4, u8[](1, 0, 1, 0), "Vector[boolean, 4]");
-  no(t, types, fields, vecBool4, u8[](1, 0, 2, 0), "Vector[boolean, 4] holding 0x02");
-  no(t, types, fields, vecBool4, u8[](1, 0, 1), "Vector[boolean, 4] one byte short");
+  ok(t, types, fields, vecBool4, [1, 0, 1, 0] as u8[], "Vector[boolean, 4]");
+  no(t, types, fields, vecBool4, [1, 0, 2, 0] as u8[], "Vector[boolean, 4] holding 0x02");
+  no(t, types, fields, vecBool4, [1, 0, 1] as u8[], "Vector[boolean, 4] one byte short");
 
-  ok(t, types, fields, w.uint16, u8[](0xff, 0xff), "uint16");
-  no(t, types, fields, w.uint16, u8[](0xff), "short uint16");
-  no(t, types, fields, w.uint16, u8[](0, 0, 0), "long uint16");
+  ok(t, types, fields, w.uint16, [0xff, 0xff] as u8[], "uint16");
+  no(t, types, fields, w.uint16, [0xff] as u8[], "short uint16");
+  no(t, types, fields, w.uint16, [0, 0, 0] as u8[], "long uint16");
 
-  ok(t, types, fields, bl4, u8[](0x13), "Bitlist[4] with 4 bits");    // 0b10011, delimiter at bit 4
-  no(t, types, fields, bl4, u8[](0x23), "Bitlist[4] with 5 bits");    // 0b100011
-  no(t, types, fields, bl4, u8[](0), "Bitlist[4] with no delimiter");
-  no(t, types, fields, bl4, u8[0](), "empty Bitlist[4]");
+  ok(t, types, fields, bl4, [0x13] as u8[], "Bitlist[4] with 4 bits");    // 0b10011, delimiter at bit 4
+  no(t, types, fields, bl4, [0x23] as u8[], "Bitlist[4] with 5 bits");    // 0b100011
+  no(t, types, fields, bl4, [0] as u8[], "Bitlist[4] with no delimiter");
+  no(t, types, fields, bl4, u8[](), "empty Bitlist[4]");
 
-  ok(t, types, fields, bv8, u8[](0xff), "Bitvector[8]");
-  no(t, types, fields, bv8, u8[](0xff, 0), "Bitvector[8] with a trailing byte");
+  ok(t, types, fields, bv8, [0xff] as u8[], "Bitvector[8]");
+  no(t, types, fields, bv8, [0xff, 0] as u8[], "Bitvector[8] with a trailing byte");
 
   // A container, with and without its trailing byte: the fault class that dominates the vectors.
-  ok(t, types, fields, w.small, u8[](0x2a, 0x00, 0x00, 0x00), "SmallTestStruct");
-  no(t, types, fields, w.small, u8[](0x2a, 0x00, 0x00, 0x00, 0), "SmallTestStruct with an extra byte");
+  ok(t, types, fields, w.small, [0x2a, 0x00, 0x00, 0x00] as u8[], "SmallTestStruct");
+  no(t, types, fields, w.small, [0x2a, 0x00, 0x00, 0x00, 0] as u8[], "SmallTestStruct with an extra byte");
   return t.report();
 }
 

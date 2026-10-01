@@ -116,12 +116,12 @@ export i32 main(Core core, Cli cli) {
     string pkg = wanted.get(i);
     string[] parts = splitOn(commandFor(tasks, pkg), " ");
     if (parts.len() == 0) { continue; }
-    string[] args = string[parts.len()](fill: "");
+    string[] args = string[].filled(parts.len(), "");
     for (i32 k = 1; k < parts.len(); k++) { args[k - 1] = parts[k]; }
     args[parts.len() - 1] = "--points";
 
     i64 started = core.nowMillis().wait();
-    Exec r = cli.exec(parts[0], args, u8[0]()).wait();
+    Exec r = cli.exec(parts[0], args, u8[]()).wait();
     i32 rows = absorb(flags, string.fromBytes(r.stdout), pkg);
     i64 took = core.nowMillis().wait() - started;
 
@@ -176,7 +176,7 @@ i32 absorb(Map<string, i32> flags, string text, string pkg) {
 export string[] splitOnTabs(string s) {
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\t") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 from = 0;
   for (i32 i = 0; i < s.len(); i++) {
@@ -200,9 +200,9 @@ void report(Core core, Map<string, i32> flags, Map<string, i32> ran, Vec<string>
     files.push(file);
   }
 
-  i32[] nAll = i32[files.len()]();
-  i32[] nAny = i32[files.len()]();
-  i32[] nOwn = i32[files.len()]();
+  i32[] nAll = i32[].filled(files.len(), 0);
+  i32[] nAny = i32[].filled(files.len(), 0);
+  i32[] nOwn = i32[].filled(files.len(), 0);
   for (i32 i = 0; i < keys.len(); i++) {
     i32 at = index.getOr(keys[i].slice(0, keys[i].indexOf("\t")), -1);
     i32 f = flags.getOr(keys[i], 0);
@@ -225,7 +225,7 @@ void report(Core core, Map<string, i32> flags, Map<string, i32> ran, Vec<string>
 
   // Biggest gain first — an insertion sort, because the interesting rows are the top few and the
   // list is one entry per shared file.
-  i32[] order = i32[rows.len()]();
+  i32[] order = i32[].filled(rows.len(), 0);
   for (i32 i = 0; i < rows.len(); i++) {
     i32 v = rows.get(i);
     i32 at = i;

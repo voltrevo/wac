@@ -58,7 +58,7 @@ string progPath(Cli cli) {
 
 /** curve25519's clamping, which tor applies to the secret itself. */
 u8[] clamped(u8[] s) {
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = s[i]; }
   out[0] = out[0] & 248;
   out[31] = (out[31] & 127) | 64;
@@ -78,7 +78,7 @@ string[] words(u8[] bytes) {
     if (!space && !inWord) { n = n + 1; }
     inWord = !space;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 start = -1;
   for (i32 i = 0; i <= bytes.len(); i++) {
@@ -86,7 +86,7 @@ string[] words(u8[] bytes) {
                  bytes[i] == '\t';
     if (!space && start < 0) { start = i; }
     if (space && start >= 0) {
-      u8[] w = u8[i - start]();
+      u8[] w = u8[].filled(i - start, 0);
       for (i32 j = 0; j < w.len(); j++) {
         i32 c = bytes[start + j];
         w[j] = c >= 'A' && c <= 'Z' ? c + 32 : c;
@@ -112,7 +112,7 @@ string[] words(u8[] bytes) {
  * being recorded as a vector.
  */
 string[] runN(Core core, Cli cli, string prog, i32 want, string[] args) {
-  Exec r = cli.exec(prog, args, u8[0]()).wait();
+  Exec r = cli.exec(prog, args, u8[]()).wait();
   if (!r.ran()) {
     core.warn("capture-hsntor: " + prog + " would not start: " + r.error);
     trap;
@@ -143,11 +143,11 @@ string[] runN(Core core, Cli cli, string prog, i32 want, string[] args) {
  */
 string x25519Public(Core core, Cli cli, u8[] secret) {
   u8[] prefix = decoded("302e020100300506032b656e04220420");
-  u8[] key = u8[prefix.len() + secret.len()]();
+  u8[] key = u8[].filled(prefix.len() + secret.len(), 0);
   key.copyFrom(prefix, 0, 0, prefix.len());
   key.copyFrom(secret, 0, prefix.len(), secret.len());
   Exec r = cli.exec("openssl",
-                    string[]("pkey", "-inform", "DER", "-pubout", "-outform", "DER"), key).wait();
+                    ["pkey", "-inform", "DER", "-pubout", "-outform", "DER"], key).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("capture-hsntor: openssl could not derive the public key: " +
               (r.ran() ? string.fromBytes(r.stderr) : r.error));
@@ -157,7 +157,7 @@ string x25519Public(Core core, Cli cli, u8[] secret) {
     core.warn("capture-hsntor: openssl answered " + itoa(r.stdout.len()) + " bytes, not a key");
     trap;
   }
-  u8[] pub = u8[32]();
+  u8[] pub = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { pub[i] = r.stdout[r.stdout.len() - 32 + i]; }
   return hex(pub);
 }
@@ -199,12 +199,12 @@ export i32 main(Core core, Cli cli) {
     string servicePub = x25519Public(core, cli, serviceSec);
 
     string[] one = runN(core, cli, prog, 2,
-                        string[]("client1", authPub, encPub, hex(clientSec), subcred));
+                        ["client1", authPub, encPub, hex(clientSec), subcred]);
     // The service's side of the same two keys. `server1` also emits rendezvous values, but its
     // ephemeral keypair is generated inside the tool, so only the first two lines are reproducible —
     // the rest would be a vector that changes every run.
     string[] server = runN(core, cli, prog, 5,
-                           string[]("server1", authPub, hex(encSec), clientPub, subcred));
+                           ["server1", authPub, hex(encSec), clientPub, subcred]);
     // tor's own statement that the two sides agree. If this ever differed, one of the two
     // derivations in tor would be wrong and no test of ours could be trusted either way.
     if (server[0] != one[0] || server[1] != one[1]) {
@@ -213,8 +213,10 @@ export i32 main(Core core, Cli cli) {
       return 1;
     }
     string[] two = runN(core, cli, prog, 2,
-                        string[]("client2", authPub, hex(clientSec), encPub, servicePub,
-                                 subcred));
+                        [
+                                 "client2", authPub, hex(clientSec), encPub, servicePub,
+                                 subcred
+                        ]);
 
     out = out + "    {\n";
     out = out + field(3, 2, "introAuthKey", authPub, false);
@@ -241,7 +243,7 @@ export i32 main(Core core, Cli cli) {
 /** `seed` followed by a literal suffix, which is how each input is derived. */
 u8[] join(u8[] seed, string suffix) {
   u8[] s = suffix.toBytes();
-  u8[] out = u8[seed.len() + s.len()]();
+  u8[] out = u8[].filled(seed.len() + s.len(), 0);
   out.copyFrom(seed, 0, 0, seed.len());
   out.copyFrom(s, 0, seed.len(), s.len());
   return out;

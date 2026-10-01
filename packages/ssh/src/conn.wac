@@ -61,7 +61,7 @@ export struct Conn {
   bool armed;
 
   Conn create(Core core, Cli cli, i32 sock) {
-    return Conn(core, cli, sock, Buf.create(), u8[0](), u8[0](), 0, 0, false, "",
+    return Conn(core, cli, sock, Buf.create(), u8[](), u8[](), 0, 0, false, "",
                 cli.recv(sock), true);
   }
 
@@ -89,7 +89,7 @@ export struct Conn {
     if (this.hasPacket()) { return true; }
     while (true) {
       this.rearm();
-      if (this.core.waitAny(i32[](this.pending.id), 0) < 0) { return false; }
+      if (this.core.waitAny([this.pending.id], 0) < 0) { return false; }
       this.armed = false;
       match (this.pending.wait()) {
         Data(bytes): { this.buf.pushAll(bytes); }
@@ -175,21 +175,21 @@ export struct Conn {
    */
   u8[] readPacket(this) {
     while (true) {
-      if (this.failed()) { return u8[0](); }
+      if (this.failed()) { return u8[](); }
       u8[] payload = this.tryOnePacket();
-      if (this.failed()) { return u8[0](); }
+      if (this.failed()) { return u8[](); }
       if (payload.len() > 0) {
         i32 kind = payload[0];
         if (kind == msgIgnore() || kind == msgDebug() || kind == msgExtInfo()) { continue; }
         if (kind == msgDisconnect()) {
           this.fail("the peer disconnected");
-          return u8[0]();
+          return u8[]();
         }
         return payload;
       }
       if (!this.fill()) {
         this.fail("the connection closed while waiting for a packet");
-        return u8[0]();
+        return u8[]();
       }
     }
   }
@@ -204,12 +204,12 @@ export struct Conn {
           this.seqIn++;
           // A zero-length payload is a legal packet and not "nothing yet", so it is reported as a
           // one-byte NOOP rather than as an empty buffer the caller would wait on forever.
-          return p.payload.len() == 0 ? u8[](msgIgnore()) : p.payload;
+          return p.payload.len() == 0 ? [msgIgnore()] : p.payload;
         }
-        Incomplete: { return u8[0](); }
+        Incomplete: { return u8[](); }
         default: {
           this.fail("a packet failed its authentication tag");
-          return u8[0]();
+          return u8[]();
         }
       }
     }
@@ -218,12 +218,12 @@ export struct Conn {
       Ok: {
         this.buf.dropFront(f.used);
         this.seqIn++;
-        return f.payload.len() == 0 ? u8[](msgIgnore()) : f.payload;
+        return f.payload.len() == 0 ? [msgIgnore()] : f.payload;
       }
-      Incomplete: { return u8[0](); }
+      Incomplete: { return u8[](); }
       default: {
         this.fail("the peer sent something that is not a packet");
-        return u8[0]();
+        return u8[]();
       }
     }
   }

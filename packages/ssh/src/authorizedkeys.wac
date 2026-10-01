@@ -83,7 +83,7 @@ Match checkLine(u8[] file, i32 at, i32 end, u8[] keyType, u8[] keyBlob) {
   i32 blobEnd = fieldEnd(file, blobStart, end);
   if (blobEnd <= blobStart) { return Match.Unknown; }
 
-  u8[] b64 = u8[blobEnd - blobStart]();
+  u8[] b64 = u8[].filled(blobEnd - blobStart, 0);
   b64.copyFrom(file, blobStart, 0, blobEnd - blobStart);
   u8[]? blob = decode(b64);
   if (blob is null) { return Match.Unknown; }                          // an unreadable line

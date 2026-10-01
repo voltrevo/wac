@@ -39,7 +39,7 @@ import {
 export const i32 AUTH_METHOD_ED25519_SHA256_RFC5705 = 3;
 
 /** Link protocol versions this relay speaks. 5 is the current one; 4 is still widely used. */
-export i32[] supportedVersions() { return i32[](4, 5); }
+export i32[] supportedVersions() { return [4, 5] as i32[]; }
 
 /**
  * The four cells a responder sends after receiving a VERSIONS cell.
@@ -55,9 +55,9 @@ export i32[] supportedVersions() { return i32[](4, 5); }
  */
 export u8[] relayHandshakeReply(u8[] certsCellBody, u8[] challenge, u8[] initiatorIpv4, i64 now) {
   if (certsCellBody.len() == 0 || challenge.len() != 32 || initiatorIpv4.len() != 4) {
-    return u8[0]();
+    return u8[]();
   }
-  if (isZero(challenge)) { return u8[0](); }
+  if (isZero(challenge)) { return u8[](); }
 
   u8[] versions = encodeVersions(supportedVersions());
   u8[] certs = encodeVar(0, cmdCerts(), certsCellBody);
@@ -68,7 +68,7 @@ export u8[] relayHandshakeReply(u8[] certsCellBody, u8[] challenge, u8[] initiat
   // somebody was wrong by twenty thousand days. It bootstrapped anyway, because the recommendation
   // for that check is `warn` rather than `fail`, which is exactly why nothing here noticed for as
   // long as no C tor was in the suite.
-  u8[] netinfo = relayNetinfoAt(initiatorIpv4, u8[0](), now);
+  u8[] netinfo = relayNetinfoAt(initiatorIpv4, u8[](), now);
   return concat4(versions, certs, auth, netinfo);
 }
 
@@ -79,8 +79,8 @@ export u8[] relayHandshakeReply(u8[] certsCellBody, u8[] challenge, u8[] initiat
  * and a modern initiator that wants to authenticate offers ed25519 anyway.
  */
 export u8[] authChallengeBody(u8[] challenge) {
-  if (challenge.len() != 32) { return u8[0](); }
-  u8[] body = u8[32 + 2 + 2]();
+  if (challenge.len() != 32) { return u8[](); }
+  u8[] body = u8[].filled(32 + 2 + 2, 0);
   for (i32 i = 0; i < 32; i++) { body[i] = challenge[i]; }
   body[33] = 1;                                        // N_Methods, big-endian 1
   body[35] = AUTH_METHOD_ED25519_SHA256_RFC5705;       // big-endian, high byte zero
@@ -99,10 +99,10 @@ export u8[] authChallengeBody(u8[] challenge) {
  * not know its own address yet.
  */
 export u8[] relayNetinfoAt(u8[] initiatorIpv4, u8[] myIpv4, i64 now) {
-  if (initiatorIpv4.len() != 4) { return u8[0](); }
-  if (myIpv4.len() != 0 && myIpv4.len() != 4) { return u8[0](); }
+  if (initiatorIpv4.len() != 4) { return u8[](); }
+  if (myIpv4.len() != 0 && myIpv4.len() != 4) { return u8[](); }
   i32 mine = (myIpv4.len() == 4) ? 1 : 0;
-  u8[] payload = u8[4 + 6 + 1 + (mine * 6)]();
+  u8[] payload = u8[].filled(4 + 6 + 1 + (mine * 6), 0);
   for (i32 i = 0; i < 4; i++) {
     payload[i] = ((now >> (((3 - i) * 8) as@ u32)) & 0xFF) as~ i32;
   }
@@ -150,12 +150,12 @@ export i32 responderVersion(u8[] cell) {
  * address of the right length.
  */
 export u8[] netinfoOtherAddress(u8[] cell) {
-  if (cell.len() == 0 || cellCommand(cell, 0, ID_WIDE) != cmdNetinfo()) { return u8[0](); }
+  if (cell.len() == 0 || cellCommand(cell, 0, ID_WIDE) != cmdNetinfo()) { return u8[](); }
   u8[] payload = cellPayload(cell, 0, ID_WIDE);
-  if (payload.len() < 6) { return u8[0](); }
-  if (payload[4] != 4 || payload[5] != 4) { return u8[0](); }
-  if (payload.len() < 10) { return u8[0](); }
-  u8[] out = u8[4]();
+  if (payload.len() < 6) { return u8[](); }
+  if (payload[4] != 4 || payload[5] != 4) { return u8[](); }
+  if (payload.len() < 10) { return u8[](); }
+  u8[] out = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { out[i] = payload[6 + i]; }
   return out;
 }
@@ -167,7 +167,7 @@ bool isZero(u8[] b) {
 }
 
 u8[] concat4(u8[] a, u8[] b, u8[] c, u8[] d) {
-  u8[] out = u8[a.len() + b.len() + c.len() + d.len()]();
+  u8[] out = u8[].filled(a.len() + b.len() + c.len() + d.len(), 0);
   i32 at = 0;
   for (i32 i = 0; i < a.len(); i++) { out[at + i] = a[i]; }
   at = at + a.len();

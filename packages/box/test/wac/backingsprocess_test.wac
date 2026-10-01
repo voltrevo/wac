@@ -33,13 +33,13 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
 
 /** Build one box binary, and say why not if it did not build. */
 bool build(T t, Cli cli, string entry, string stem, string[] grants) {
-  string[] argv = string[grants.len() + 4](fill: "");
+  string[] argv = string[].filled(grants.len() + 4, "");
   argv[0] = "build";
   argv[1] = entry;
   argv[2] = "-o";
   argv[3] = stem;
   for (i32 i = 0; i < grants.len(); i++) { argv[i + 4] = grants[i]; }
-  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
            "built " + entry + " — " + execReason(r));
   return r.ran() && r.status == 0;
@@ -47,12 +47,12 @@ bool build(T t, Cli cli, string entry, string stem, string[] grants) {
 
 /** Run a built box shell over a script, and hand back what it said. */
 Exec run(Cli cli, string stem, string[] extra, string script) {
-  string[] argv = string[extra.len() + 3](fill: "");
+  string[] argv = string[].filled(extra.len() + 3, "");
   argv[0] = stem + ".wasm";
   for (i32 i = 0; i < extra.len(); i++) { argv[i + 1] = extra[i]; }
   argv[extra.len() + 1] = "-c";
   argv[extra.len() + 2] = "mkdir -p /tmp; " + script;
-  return cli.exec(binary(cli), argv, u8[0]()).wait();
+  return cli.exec(binary(cli), argv, u8[]()).wait();
 }
 
 string show(Exec r) {
@@ -70,25 +70,25 @@ export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with
   string sealed = dir + "/sealedsh";
   string imaged = dir + "/imaged";
   string host = dir + "/hostsh";
-  if (!build(t, cli, "packages/box/src/bin/sealedsh.wac", sealed, string[0](fill: ""))) {
+  if (!build(t, cli, "packages/box/src/bin/sealedsh.wac", sealed, string[].filled(0, ""))) {
     return t.report();
   }
   if (!build(t, cli, "packages/box/src/bin/imaged.wac", imaged,
-             string[]("--allow-read", "--allow-write"))) { return t.report(); }
+             ["--allow-read", "--allow-write"])) { return t.report(); }
   if (!build(t, cli, "packages/box/src/bin/sh.wac", host,
-             string[]("--allow-read", "--allow-write", "--allow-env"))) { return t.report(); }
+             ["--allow-read", "--allow-write", "--allow-env"])) { return t.report(); }
 
   // **What makes an image an image** is that a second process finds what the first wrote.
   string image = dir + "/persist.img";
   cli.remove(image, false).wait();   // a leftover from an earlier run would make this pass for free
-  Exec first = run(cli, imaged, string[](image), "echo kept > /keep; ls /");
+  Exec first = run(cli, imaged, [image], "echo kept > /keep; ls /");
   t.isTrue(contains(string.fromBytes(first.stdout), "keep"), show(first));
-  Exec second = run(cli, imaged, string[](image), "cat /keep");
+  Exec second = run(cli, imaged, [image], "cat /keep");
   t.eqStr(string.fromBytes(second.stdout), "kept\n",
           "an image did not survive its own process: " + show(second));
 
   // **And what makes a memory session memory** is that it does not.
-  Exec forgot = run(cli, sealed, string[0](fill: ""), "cat /keep; echo status=$?");
+  Exec forgot = run(cli, sealed, string[].filled(0, ""), "cat /keep; echo status=$?");
   t.eqStr(string.fromBytes(forgot.stdout), "status=1\n",
           "a sealed session remembered something: " + show(forgot));
 
@@ -98,7 +98,7 @@ export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with
   string whyDir2 = madeDir(cli, work);
   t.isTrue(whyDir2 == "", whyDir2);
   cli.remove(work + "/here", false).wait();
-  run(cli, host, string[0](fill: ""), "cd " + work + "; echo ondisk > here");
+  run(cli, host, string[].filled(0, ""), "cd " + work + "; echo ondisk > here");
   FileResult wrote = cli.readFile(work + "/here").wait();
   t.isTrue(wrote.ok, "the host mount wrote nothing to the real disk — " + wrote.error);
   if (!wrote.ok) { return t.report(); }

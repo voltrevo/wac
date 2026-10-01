@@ -245,7 +245,7 @@ bool ruleHits(const Rule r, string path, bool isDir) {
   // git does and the reason it never reads a `node_modules`.
   if (isDir && pat.len() > 3 && pat[pat.len() - 1] == '*' && pat[pat.len() - 2] == '*'
       && pat[pat.len() - 3] == '/') {
-    u8[] head = u8[pat.len() - 3]();
+    u8[] head = u8[].filled(pat.len() - 3, 0);
     for (i32 i = 0; i < head.len(); i++) { head[i] = pat[i]; }
     if (r.anchored) {
       if (matchFrom(head, 0, p, 0)) { return true; }

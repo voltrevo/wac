@@ -44,7 +44,7 @@ export struct Update {
 }
 
 /** Twenty zero bytes — the `old` of a ref being created. */
-export u8[] absentName() { return u8[20](); }
+export u8[] absentName() { return u8[].filled(20, 0); }
 
 /**
  * Whether this advertisement is the one an empty repository sends.
@@ -206,7 +206,7 @@ export Report readReport(u8[] b) {
   bool unpacked = false;
   bool sawUnpack = false;
   string unpackWhy = "";
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   bool reading = true;
   while (reading) {
     match (readPkt(b, pos)) {

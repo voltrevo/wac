@@ -32,12 +32,12 @@ export string test_gzip_and_the_system_gzip_read_each_others_output(Core core, C
   u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
-  Ran squeezed = runAppletIn(core, cli, dir, string[]("gzip"), raw);
+  Ran squeezed = runAppletIn(core, cli, dir, ["gzip"], raw);
   t.eqI32(squeezed.status, 0, "gzip ran: " + squeezed.err);
   t.isTrue(squeezed.outBytes.len() < raw.len(), "gzip did not compress: " + itoa(squeezed.outBytes.len()));
 
   // Ours reads its own.
-  t.eqStr(differs(runAppletIn(core, cli, dir, string[]("gunzip"), squeezed.outBytes).outBytes, raw), "",
+  t.eqStr(differs(runAppletIn(core, cli, dir, ["gunzip"], squeezed.outBytes).outBytes, raw), "",
           "box could not read its own gzip");
 
   // **The system one reads ours.** This is the direction that catches a header we invented.
@@ -47,9 +47,9 @@ export string test_gzip_and_the_system_gzip_read_each_others_output(Core core, C
 
   // **And ours reads the system one's**, which catches a decompressor that only understands what our
   // compressor happens to emit.
-  Exec sysGz = cli.exec("gzip", string[]("-c"), raw).wait();
+  Exec sysGz = cli.exec("gzip", ["-c"], raw).wait();
   t.isTrue(sysGz.error == "", "there is a real gzip: " + sysGz.error);
-  t.eqStr(differs(runAppletIn(core, cli, dir, string[]("gunzip"), sysGz.stdout).outBytes, raw), "",
+  t.eqStr(differs(runAppletIn(core, cli, dir, ["gunzip"], sysGz.stdout).outBytes, raw), "",
           "box could not read the system gzip's");
 
   cli.remove(dir, true).wait();
@@ -70,7 +70,7 @@ export string test_crc32_matches_an_independently_computed_checksum(Core core, C
   u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
-  u32[] table = u32[256]();
+  u32[] table = u32[].filled(256, 0);
   for (i32 n = 0; n < 256; n++) {
     u32 c = n as@ u32;
     for (i32 k = 0; k < 8; k++) {
@@ -91,7 +91,7 @@ export string test_crc32_matches_an_independently_computed_checksum(Core core, C
 
   // `-` is the name for standard input, which is where this arrived from, and the two spaces are the
   // spelling the applet shares with `sha256sum`.
-  Ran got = runAppletIn(core, cli, dir, string[]("crc32"), raw);
+  Ran got = runAppletIn(core, cli, dir, ["crc32"], raw);
   t.eqStr(trimEnd(got.out), want + "  -", "crc32 of README.md");
 
   cli.remove(dir, true).wait();
@@ -113,10 +113,10 @@ export string test_date_is_rfc3339_and_is_now(Core core, Cli cli) {
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
 
-  string[] fmt = string[]("-u", "+%Y-%m-%dT%H:%M");
-  string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
-  Ran got = runApplet(core, cli, dir, string[]("date"));
-  string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[0]()).wait().stdout));
+  string[] fmt = ["-u", "+%Y-%m-%dT%H:%M"];
+  string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
+  Ran got = runApplet(core, cli, dir, ["date"]);
+  string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
 
   t.eqI32(got.status, 0, "date ran: " + got.err);
   string mine = trimEnd(got.out);
@@ -147,14 +147,14 @@ export string test_urlencode_round_trips(Core core, Cli cli) {
   uni.pushCodepoint(0x00FC); uni.pushAll("n".toBytes()); uni.pushCodepoint(0x00EF);
   uni.pushAll("code ".toBytes()); uni.pushCodepoint(0x2713);          // ✓
 
-  string[] cases = string[]("a b/c?d=e&f#g", uni.toStr(), "plain", "%already%20encoded");
+  string[] cases = ["a b/c?d=e&f#g", uni.toStr(), "plain", "%already%20encoded"];
   for (i32 i = 0; i < cases.len(); i++) {
     u8[] input = (cases[i] + "\n").toBytes();
-    Ran encoded = runAppletIn(core, cli, dir, string[]("urlencode"), input);
+    Ran encoded = runAppletIn(core, cli, dir, ["urlencode"], input);
     t.eqI32(encoded.status, 0, "urlencode ran: " + encoded.err);
     t.isTrue(encoded.out.indexOf(" ") < 0, "a space survived encoding: " + encoded.out);
 
-    Ran back = runAppletIn(core, cli, dir, string[]("urldecode"), encoded.outBytes);
+    Ran back = runAppletIn(core, cli, dir, ["urldecode"], encoded.outBytes);
     t.eqStr(back.out, cases[i] + "\n", cases[i] + " did not round-trip");
   }
 

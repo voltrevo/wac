@@ -45,7 +45,7 @@ u8[] mExpand() { return "ntor-curve25519-sha256-1:key_expand".toBytes(); }
 u8[] serverTag() { return "Server".toBytes(); }
 
 u8[] cat(u8[] a, u8[] b) {
-  u8[] o = u8[a.len() + b.len()]();
+  u8[] o = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
@@ -89,17 +89,17 @@ export u8[] ntorClientFinish(u8[] identity, u8[] onionKey, u8[] ephemeralPriv,
   // 31-byte private key has a bug that should stop it. Only `reply` comes from a stranger, and an
   // empty return is the answer this function already documents for one — *the relay did not prove it
   // holds the onion key*, which a reply of the wrong width has not.
-  if (reply.len() != 64) { return u8[0](); }
+  if (reply.len() != 64) { return u8[](); }
 
-  u8[] serverEph = u8[32]();
-  u8[] auth = u8[32]();
+  u8[] serverEph = u8[].filled(32, 0);
+  u8[] auth = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { serverEph[i] = reply[i]; auth[i] = reply[32 + i]; }
 
   u8[] xy = x25519(ephemeralPriv, serverEph);
   u8[] xb = x25519(ephemeralPriv, onionKey);
   // A small-order Y or B makes the shared value all zero for every scalar, so an attacker
   // needs no private key at all. tor-spec says abort; there is nothing to salvage.
-  if (allZero(xy) || allZero(xb)) { return u8[0](); }
+  if (allZero(xy) || allZero(xb)) { return u8[](); }
 
   u8[] clientEph = x25519Base(ephemeralPriv);
   u8[] secretInput = cat(cat(cat(cat(cat(cat(xy, xb), identity), onionKey), clientEph),
@@ -116,7 +116,7 @@ export u8[] ntorClientFinish(u8[] identity, u8[] onionKey, u8[] ephemeralPriv,
   // leaks which byte of AUTH was wrong.
   i32 diff = 0;
   for (i32 i = 0; i < 32; i++) { diff = diff | (expected[i] ^ auth[i]); }
-  if (diff != 0) { return u8[0](); }
+  if (diff != 0) { return u8[](); }
 
   return hkdfExpandRfc5869(keySeed, mExpand(), keyLen);
 }
@@ -131,14 +131,14 @@ export u8[] ntorClientFinish(u8[] identity, u8[] onionKey, u8[] ephemeralPriv,
 export u8[] ntorServerRespond(u8[] identity, u8[] onionPriv, u8[] request,
                               u8[] serverEphPriv, i32 keyLen) {
   if (request.len() != 84) { trap; }
-  u8[] clientEph = u8[32]();
+  u8[] clientEph = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { clientEph[i] = request[52 + i]; }
 
   u8[] onionKey = x25519Base(onionPriv);
   u8[] serverEph = x25519Base(serverEphPriv);
   u8[] xy = x25519(serverEphPriv, clientEph);
   u8[] xb = x25519(onionPriv, clientEph);
-  if (allZero(xy) || allZero(xb)) { return u8[0](); }
+  if (allZero(xy) || allZero(xb)) { return u8[](); }
 
   u8[] secretInput = cat(cat(cat(cat(cat(cat(xy, xb), identity), onionKey), clientEph),
                              serverEph), protoId());

@@ -43,7 +43,7 @@ i32 lineCount(string text) {
 
 export string test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.exec("python3", string[](GENERATOR, "--stdout"), u8[0]()).wait();
+  Exec r = cli.exec("python3", [GENERATOR, "--stdout"], u8[]()).wait();
   t.isTrue(r.ran(), "genfpkernel.py could not be run: " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "genfpkernel.py failed:\n" + string.fromBytes(r.stderr));

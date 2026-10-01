@@ -52,7 +52,7 @@ Answer matched(string pattern, u8[] input, bool ignoreCase) {
   Program? prog = ignoreCase ? compileIgnoreCase(pattern.toBytes()) : compile(pattern.toBytes());
   if (prog is null) { return Answer("", true, false); }
   Program p = prog!;
-  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32[] caps = i32[].filled(slotCount(p), -1);
   i32 found = search(p, input, 0, caps, STEPS);
   if (found == BUDGET()) { return Answer("", false, true); }
   if (found == NO_MATCH()) { return Answer("null", false, false); }
@@ -75,19 +75,20 @@ bool accepts(string pattern) { return !(compile(pattern.toBytes()) is null); }
  * construction — the fixture, not the engine, was what passed. GitHub wac-mono#28.
  */
 u8[][] subjects() {
-  string[] ascii = string[](
+  string[] ascii = [
     "", "a", "b", "ab", "ba", "aa", "abc", "abcabc", "aaa", "aaaa", "xay", "xaby",
     "a b", "  ", "a1b2", "123", "abc123", "_x_", "A", "aA", "-", "]", "[",
-    "aaaaaaaaaa", "abababab", "cba", "cab", "xyz");
-  u8[][] out = u8[][ascii.len() + 6](fill: u8[0]());
+    "aaaaaaaaaa", "abababab", "cba", "cab", "xyz"
+  ];
+  u8[][] out = u8[][].filled(ascii.len() + 6, u8[]());
   for (i32 i = 0; i < ascii.len(); i++) { out[i] = ascii[i].toBytes(); }
   i32 n = ascii.len();
-  out[n] = u8[](10);                      // "\n"
-  out[n + 1] = u8[]('a', 10, 'b');        // "a\nb"
-  out[n + 2] = u8[](13);                  // "\r"
-  out[n + 3] = u8[]('a', 13, 'b');        // "a\rb"
-  out[n + 4] = u8[]('a', 13, 10, 'b');    // "a\r\nb"
-  out[n + 5] = u8[](13, 10);              // "\r\n"
+  out[n] = [10] as u8[];                      // "\n"
+  out[n + 1] = ['a', 10, 'b'] as u8[];        // "a\nb"
+  out[n + 2] = [13] as u8[];                  // "\r"
+  out[n + 3] = ['a', 13, 'b'] as u8[];        // "a\rb"
+  out[n + 4] = ['a', 13, 10, 'b'] as u8[];    // "a\r\nb"
+  out[n + 5] = [13, 10] as u8[];              // "\r\n"
   return out;
 }
 
@@ -116,60 +117,67 @@ void checkAll(T t, Cli cli, string[] patterns, u8[][] inputs, string what) {
 
 export string test_literals_dot_and_anchors(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "a", "abc", "", "b", ".", "..", "a.c", ".*", "^a", "a$", "^a$", "^$", "^", "$",
-    "^abc$", "a.b", "^.", ".$"), subjects(), "literals, dot and anchors");
+    "^abc$", "a.b", "^.", ".$"
+  ], subjects(), "literals, dot and anchors");
   return t.report();
 }
 
 export string test_character_classes(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "[abc]", "[^abc]", "[a-c]", "[^a-c]", "[a-cx-z]", "[-a]", "[a-]", "[]]", "[^]]",
     "[0-9]", "[^0-9]", "[a-zA-Z]", "[\\n]", "[\\t]", "[.]", "[*]", "[a\\-c]",
-    "[abc]+", "[^a]*", "[a-c][x-z]"), subjects(), "character classes");
+    "[abc]+", "[^a]*", "[a-c][x-z]"
+  ], subjects(), "character classes");
   return t.report();
 }
 
 export string test_shorthand_classes(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "\\d", "\\D", "\\w", "\\W", "\\s", "\\S", "\\d+", "\\w+", "\\s+", "\\W\\w",
-    "[\\d]", "[\\w]", "[\\d\\w]", "[\\da-f]", "\\d\\d\\d"), subjects(), "shorthand classes");
+    "[\\d]", "[\\w]", "[\\d\\w]", "[\\da-f]", "\\d\\d\\d"
+  ], subjects(), "shorthand classes");
   return t.report();
 }
 
 export string test_greedy_quantifiers(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "a*", "a+", "a?", "ab*", "ab+", "ab?", "a*b", "a+b", "a?b", ".*b", ".+b",
-    "a{2}", "a{2,}", "a{2,3}", "a{0,2}", "a{0}", "a{1}", "a{3,3}", "(ab){2}", "(a|b){2,3}"),
+    "a{2}", "a{2,}", "a{2,3}", "a{0,2}", "a{0}", "a{1}", "a{3,3}", "(ab){2}", "(a|b){2,3}"
+  ],
     subjects(), "greedy quantifiers");
   return t.report();
 }
 
 export string test_lazy_quantifiers(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "a*?", "a+?", "a??", "a*?b", "a+?b", ".*?b", ".+?b", "a{2,3}?", "a{0,2}?", "a{2,}?",
-    "(ab)+?", "[abc]+?"), subjects(), "lazy quantifiers");
+    "(ab)+?", "[abc]+?"
+  ], subjects(), "lazy quantifiers");
   return t.report();
 }
 
 export string test_groups_and_alternation(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "(a)", "(a)(b)", "(ab)", "(a|b)", "a|b", "a|b|c", "(a|ab)c", "(ab|a)c", "|a", "a|",
     "(?:a)", "(?:a|b)c", "((a))", "(a(b))", "(a)|(b)", "(a*)", "(a+)b", "(a|b)*",
-    "(a)(b)?", "((a)|(b))c"), subjects(), "groups and alternation");
+    "(a)(b)?", "((a)|(b))c"
+  ], subjects(), "groups and alternation");
   return t.report();
 }
 
 export string test_word_boundaries(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "\\ba", "a\\b", "\\ba\\b", "\\Ba", "a\\B", "\\babc\\b", "\\b", "\\B",
-    "\\w+\\b", "\\b\\w"), subjects(), "word boundaries");
+    "\\w+\\b", "\\b\\w"
+  ], subjects(), "word boundaries");
   return t.report();
 }
 
@@ -181,9 +189,10 @@ export string test_word_boundaries(Core core, Cli cli) {
  */
 export string test_backtracking_order_is_the_whole_answer(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "(a|ab)", "(a|ab)c", "(ab|a)", "(ab|a)b", "a*a", "(a*)(a*)", "(a+)(a*)",
-    "(a?)(a?)a", ".*(b)", ".*?(b)", "(a*)*", "(a*)+", "(a|)*", "(|a)*"),
+    "(a?)(a?)a", ".*(b)", ".*?(b)", "(a*)*", "(a*)+", "(a|)*", "(|a)*"
+  ],
     subjects(), "backtracking order");
   return t.report();
 }
@@ -196,11 +205,10 @@ export string test_backtracking_order_is_the_whole_answer(Core core, Cli cli) {
  */
 export string test_empty_matching_loops_terminate_and_agree(Core core, Cli cli) {
   T t = T.create();
-  string[] small = string[]("", "a", "aa", "b", "ab", "aab");
-  u8[][] inputs = u8[][small.len()](fill: u8[0]());
+  string[] small = ["", "a", "aa", "b", "ab", "aab"];
+  u8[][] inputs = u8[][].filled(small.len(), u8[]());
   for (i32 i = 0; i < small.len(); i++) { inputs[i] = small[i].toBytes(); }
-  checkAll(t, cli, string[](
-    "(a*)*", "(a*)*b", "()*", "(){2,}", "(a?)*", "(a?)+", "()+", "(|a)+", "(a|)+b"),
+  checkAll(t, cli, ["(a*)*", "(a*)*b", "()*", "(){2,}", "(a?)*", "(a?)+", "()+", "(|a)+", "(a|)+b"],
     inputs, "empty-matching loops");
   return t.report();
 }
@@ -214,17 +222,18 @@ export string test_empty_matching_loops_terminate_and_agree(Core core, Cli cli) 
 export string test_patterns_outside_the_subset_are_rejected(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  string[] bad = string[](
+  string[] bad = [
     "(?=a)", "(?!a)", "(?<=a)", "(?<!a)", "(?<name>a)", "\\1", "(a)\\1",
     "*a", "+a", "?a", "(a", "a)", "[a", "[z-a]", "a{2,1}", "\\",
-    "[\\D]", "[\\W]", "[\\S]");
+    "[\\D]", "[\\W]", "[\\S]"
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(accepts(bad[i]), "/" + bad[i] + "/ was accepted and should not be");
     lines.add("accept " + hex(bad[i].toBytes()) + " " + (accepts(bad[i]) ? "1" : "0"));
   }
   // And things that look similar but are in the subset. `{2}` is not among them any more — see
   // `test_a_leading_brace_is_a_known_divergence` below.
-  string[] good = string[]("(?:a)", "a{2,3}", "[a-z]", "\\d", "\\.", "\\\\", "a{,2}");
+  string[] good = ["(?:a)", "a{2,3}", "[a-z]", "\\d", "\\.", "\\\\", "a{,2}"];
   for (i32 i = 0; i < good.len(); i++) {
     t.isTrue(accepts(good[i]), "/" + good[i] + "/ was rejected and should not be");
     lines.add("accept " + hex(good[i].toBytes()) + " " + (accepts(good[i]) ? "1" : "0"));
@@ -235,20 +244,23 @@ export string test_patterns_outside_the_subset_are_rejected(Core core, Cli cli) 
 
 export string test_escapes_of_metacharacters(Core core, Cli cli) {
   T t = T.create();
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "\\.", "\\*", "\\+", "\\?", "\\(", "\\)", "\\[", "\\]", "\\|", "\\^", "\\$",
-    "\\\\", "\\n", "\\t", "a\\.b", "\\.\\*"), subjects(), "escapes");
+    "\\\\", "\\n", "\\t", "a\\.b", "\\.\\*"
+  ], subjects(), "escapes");
   return t.report();
 }
 
 
 string[] atoms() {
-  return string[]("a", "b", "c", ".", "\\d", "\\w", "\\s", "[ab]", "[^a]", "[a-c]", "x", "1", "_",
-                  "(a)", "(a|b)", "(?:ab)", "\\.", "^", "$", "\\b");
+  return [
+                  "a", "b", "c", ".", "\\d", "\\w", "\\s", "[ab]", "[^a]", "[a-c]", "x", "1", "_",
+                  "(a)", "(a|b)", "(?:ab)", "\\.", "^", "$", "\\b"
+  ];
 }
 
 string[] quants() {
-  return string[]("", "", "", "*", "+", "?", "*?", "+?", "??", "{2}", "{1,2}", "{0,2}", "{2,}");
+  return ["", "", "", "*", "+", "?", "*?", "+?", "??", "{2}", "{1,2}", "{0,2}", "{2,}"];
 }
 
 string piece(Rng rng, bool nested, i32 depth) {
@@ -343,13 +355,15 @@ export string test_fuzz_nested_groups_agree_with_regexp(Core core, Cli cli) {
 export string test_the_i_flag_agrees_with_regexp_over_ascii(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  string[] patterns = string[](
+  string[] patterns = [
     "a", "abc", "A", "ABC", "aBc", "[a-z]", "[A-Z]", "[a-cX-Z]", "[^a-z]", "[^A]",
     "a+", "A*", "(a|B)", "(?:ab)+", "a{2,3}", "\\ba\\b", "^abc$", "[a-z0-9_]+",
-    "x[yz]", "(a)(B)?", "\\w+", "\\d[a-f]", "[-a-c]", "K", "k");
-  string[] subjects = string[](
+    "x[yz]", "(a)(B)?", "\\w+", "\\d[a-f]", "[-a-c]", "K", "k"
+  ];
+  string[] subjects = [
     "", "a", "A", "ab", "AB", "aB", "Ab", "abc", "ABC", "AbC", "xyz", "XYZ", "a1b2",
-    "_x_", "ABCABC", "kK", "Kk", "zZ");
+    "_x_", "ABCABC", "kK", "Kk", "zZ"
+  ];
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 i = 0; i < subjects.len(); i++) {
       Answer a = matched(patterns[p], subjects[i].toBytes(), true);
@@ -372,8 +386,8 @@ export string test_the_i_flag_agrees_with_regexp_over_ascii(Core core, Cli cli) 
  */
 export string test_the_i_flag_changes_nothing_when_nothing_is_cased() {
   T t = T.create();
-  string[] patterns = string[]("\\d+", "[0-9]", "^$", "\\.", "[-_]", "1{2}", "(\\s)");
-  string[] subjects = string[]("", "1", "12", ".", "-", "_", " ", "a1");
+  string[] patterns = ["\\d+", "[0-9]", "^$", "\\.", "[-_]", "1{2}", "(\\s)"];
+  string[] subjects = ["", "1", "12", ".", "-", "_", " ", "a1"];
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 i = 0; i < subjects.len(); i++) {
       Answer plain = matched(patterns[p], subjects[i].toBytes(), false);
@@ -402,9 +416,9 @@ export string test_a_capture_heavy_quantifier_runs_out_of_room() {
   t.isTrue(!(prog is null), "the pattern compiles");
   if (prog is null) { return t.report(); }
   Program p = prog!;
-  i32[] budgets = i32[](64, 96, 128, 256);
+  i32[] budgets = [64, 96, 128, 256];
   for (i32 i = 0; i < budgets.len(); i++) {
-    i32[] caps = i32[slotCount(p)](fill: -1);
+    i32[] caps = i32[].filled(slotCount(p), -1);
     i32 found = search(p, "aaa".toBytes(), 0, caps, budgets[i]);
     // Either it matched or it gave up; both are answers. The bug was neither.
     t.isTrue(found >= 0 || found == NO_MATCH() || found == BUDGET(),
@@ -415,7 +429,7 @@ export string test_a_capture_heavy_quantifier_runs_out_of_room() {
   t.isTrue(!(plentyProg is null), "the control pattern compiles");
   if (plentyProg is null) { return t.report(); }
   Program q = plentyProg!;
-  i32[] caps = i32[slotCount(q)](fill: -1);
+  i32[] caps = i32[].filled(slotCount(q), -1);
   t.neI32(search(q, "aa".toBytes(), 0, caps, 200000), NO_MATCH(),
           "a reasonable pattern should still match");
   return t.report();
@@ -501,17 +515,18 @@ export string test_the_compilers_tables_grow_and_keep_what_was_in_them(Core core
   string big = "";
   for (i32 i = 0; i < 30; i++) { big = big + "a?"; }
 
-  string[] patterns = string[](
+  string[] patterns = [
     "(" + alt + ")", "(" + alt + ")+", alt,
     manyRanges, "(" + manyRanges + ")?",
     "(" + big + "){2}", "(" + big + "){3}", "((" + big + "){2}){2}",
     // The two tables at once: an alternation of many branches, each with a wide class.
-    "(" + thirteen + "|" + thirteen + "|" + thirteen + "|a|b|c|d|e|f|g)");
+    "(" + thirteen + "|" + thirteen + "|" + thirteen + "|a|b|c|d|e|f|g)"
+  ];
   checkAll(t, cli, patterns, subjects(), "grown tables");
 
   // **A named escape as the high end of a range**, which is the one arm of the range parser that reads
   // a second escape — `[\0-\n]` is bytes 0 through 10, and JavaScript reads it the same way.
-  checkAll(t, cli, string[]("[\\0-\\n]", "[\\t-\\r]", "[\\0-\\n]+"), subjects(), "escaped range ends");
+  checkAll(t, cli, ["[\\0-\\n]", "[\\t-\\r]", "[\\0-\\n]+"], subjects(), "escaped range ends");
 
   // And a shorthand there is refused rather than read as a byte, which `RegExp` is not the oracle for:
   // JavaScript without the `u` flag accepts `[a-\d]` and reads the `\d` as a literal `d`. This engine
@@ -545,9 +560,10 @@ export string test_the_parser_corners_a_generated_corpus_misses(Core core, Cli c
   //              arm of the expansion that wraps a star rather than a plus
   //   `[a-\z]`   an escape as a range end that is not one of the named ones, so it is the byte itself
   //   `a{2,1}`   a maximum below the minimum, which JavaScript refuses — see below
-  checkAll(t, cli, string[](
+  checkAll(t, cli, [
     "a{2", "a{2,3", "a{,2", "a{0,}", "(a|b){0,}", "(a*){0,}", "x{0,}y",
-    "[a-\\z]", "[\\0-\\n]", "[a-\\z]+", "(a{2)"), subjects(), "parser corners");
+    "[a-\\z]", "[\\0-\\n]", "[a-\\z]+", "(a{2)"
+  ], subjects(), "parser corners");
 
   // Refused, and each says which rule refused it. A shorthand is not a range end; a quantifier needs
   // something to quantify; a construct that consumes nothing is refused rather than spun on.

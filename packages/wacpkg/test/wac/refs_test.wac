@@ -36,22 +36,22 @@ Corpus load(Cli cli) {
   if (!r.ok) {
     return Corpus(false, CORPUS_PATH() + " is not readable — `deno run -A "
                   + "packages/wacpkg/tools/vendorRefs.ts` rebuilds it", "",
-                  string[0](), string[0](), JsonArray.create());
+                  string[](), string[](), JsonArray.create());
   }
   JsonValue? doc = parse(r.bytes);
   if (doc is null) {
     return Corpus(false, CORPUS_PATH() + " is not valid JSON", "",
-                  string[0](), string[0](), JsonArray.create());
+                  string[](), string[](), JsonArray.create());
   }
   JsonArray? ad = memberArray(doc!, "advertised");
   JsonArray? qs = memberArray(doc!, "queries");
   if ((ad is null) || (qs is null)) {
     return Corpus(false, CORPUS_PATH() + " has no `advertised`/`queries` array", "",
-                  string[0](), string[0](), JsonArray.create());
+                  string[](), string[](), JsonArray.create());
   }
   JsonArray rows = ad!;
-  string[] names = string[rows.n](fill: "");
-  string[] commits = string[rows.n](fill: "");
+  string[] names = string[].filled(rows.n, "");
+  string[] commits = string[].filled(rows.n, "");
   for (i32 i = 0; i < rows.n; i++) {
     JsonValue? row = rows.items[i];
     if (row is null) { continue; }
@@ -96,8 +96,8 @@ export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Core core,
   //   this refuses with R_AMBIGUOUS, because a lockfile silently choosing between two things a
   //   human named the same is how a dependency moves without anybody deciding. `refs/tags/dup`
   //   says which and is one word longer.
-  string[] known = string[]("dup");
-  bool[] diverged = bool[known.len()](fill: false);
+  string[] known = ["dup"];
+  bool[] diverged = bool[].filled(known.len(), false);
 
   for (i32 i = 0; i < c.queries.n; i++) {
     JsonValue? q = c.queries.items[i];
@@ -138,7 +138,7 @@ export string test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object(Co
            "the fixture no longer has an annotated tag — regenerate it with vendorRefs.ts");
   if (tagObject == peeled) { return t.report(); }
 
-  string[] spellings = string[]("v1", "refs/tags/v1");
+  string[] spellings = ["v1", "refs/tags/v1"];
   for (i32 i = 0; i < spellings.len(); i++) {
     Resolved got = resolveRef(c.names, c.commits, spellings[i]);
     t.isTrue(got.ok, spellings[i] + " resolves");
@@ -194,7 +194,7 @@ export string test_what_is_not_there_and_what_is_not_a_corpus(Core core, Cli cli
   Corpus c = load(cli);
   t.isTrue(c.ok, c.error);
   if (!c.ok) { return t.report(); }
-  string[] missing = string[]("nope", "refs/heads/nope", "", "refs/tags/v1^{}x");
+  string[] missing = ["nope", "refs/heads/nope", "", "refs/tags/v1^{}x"];
   for (i32 i = 0; i < missing.len(); i++) {
     Resolved got = resolveRef(c.names, c.commits, missing[i]);
     t.isFalse(got.ok, "\"" + missing[i] + "\" does not resolve");
@@ -202,9 +202,9 @@ export string test_what_is_not_there_and_what_is_not_a_corpus(Core core, Cli cli
   }
   // A malformed advertisement is its own answer, not "not found" — the caller's parse is what is
   // wrong, and telling it "no such ref" would send it looking in the wrong place.
-  Resolved short = resolveRef(string[]("refs/heads/main"), string[0](), "main");
+  Resolved short = resolveRef(["refs/heads/main"], string[](), "main");
   t.eqI32(short.code, R_MALFORMED(), "unpaired arrays are MALFORMED");
-  Resolved notSha = resolveRef(string[]("refs/heads/main"), string[]("nope"), "main");
+  Resolved notSha = resolveRef(["refs/heads/main"], ["nope"], "main");
   t.eqI32(notSha.code, R_MALFORMED(), "a non-sha object name is MALFORMED");
   Resolved ambiguous = resolveRef(c.names, c.commits, "dup");
   t.eqI32(ambiguous.code, R_AMBIGUOUS(), "a name that is both a branch and a tag is AMBIGUOUS");

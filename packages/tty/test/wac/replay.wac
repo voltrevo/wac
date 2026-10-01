@@ -28,12 +28,12 @@ export struct Loaded {
 
 /** The oracle whose answers the vectors hold, spawned per call. */
 export u8[] pty(Core core, Cli cli, string command, u8[] input) {
-  return through(core, cli, "script", string[]("-qec", command, "/dev/null"), input);
+  return through(core, cli, "script", ["-qec", command, "/dev/null"], input);
 }
 
 /** The pty that can hold a mode — `script` cannot, which is what `discipline.py` exists for. */
 export u8[] discipline(Core core, Cli cli, string mode, u8[] input) {
-  return through(core, cli, "python3", string[]("packages/tty/tools/discipline.py", mode), input);
+  return through(core, cli, "python3", ["packages/tty/tools/discipline.py", mode], input);
 }
 
 /** One program, fed `input`, run to completion; its standard output, or a trap with the reason. */
@@ -76,14 +76,14 @@ export string vectorsPath() { return "packages/tty/test/kernel-vectors.txt"; }
 export Loaded load(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
-    return Loaded(Vector[0](), 0, "",
+    return Loaded(Vector[](), 0, "",
                   "cannot read " + path + " — run `wac run --allow-read --allow-write --allow-run " +
                   "tools/wac/ttyvectors.wac` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
   if (l.text != "wac-tty-vectors 1") {
-    return Loaded(Vector[0](), 0, "", "not a tty vectors file: " + l.text);
+    return Loaded(Vector[](), 0, "", "not a tty vectors file: " + l.text);
   }
   string oracle = "";
   i32 at = l.next;
@@ -96,9 +96,9 @@ export Loaded load(Cli cli, string path) {
     }
     count = numberIn(h.text, "count:");
   }
-  if (count < 0) { return Loaded(Vector[0](), 0, oracle, "no count in the header"); }
+  if (count < 0) { return Loaded(Vector[](), 0, oracle, "no count in the header"); }
 
-  Vector[] items = Vector[count](fill: Vector("", u8[0](), u8[0]()));
+  Vector[] items = Vector[].filled(count, Vector("", u8[](), u8[]()));
   i32 n = 0;
   for (i32 i = 0; i < count; i++) {
     Line ml = lineAt(b, at);
@@ -138,8 +138,8 @@ Line lineAt(u8[] b, i32 at) {
 
 u8[] sliceOf(u8[] b, i32 from, i32 to) {
   i32 n = to - from;
-  if (n <= 0) { return u8[0](); }
-  u8[] out = u8[n]();
+  if (n <= 0) { return u8[](); }
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[from + i]; }
   return out;
 }

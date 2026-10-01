@@ -22,19 +22,19 @@ export i32[] exec(u8[] pattern, u8[] input, i32 at) { return execFlags(pattern, 
  */
 export i32[] execBasic(u8[] pattern, u8[] input, i32 at) {
   Program? prog = compileBasic(pattern).program;
-  if (prog is null) { return i32[1](fill: -1); }
+  if (prog is null) { return i32[].filled(1, -1); }
   Program p = prog!;
-  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32[] caps = i32[].filled(slotCount(p), -1);
   i32 found = search(p, input, at, caps, 1000000);
-  if (found == BUDGET()) { return i32[1](fill: -2); }
-  i32[] out = i32[1](fill: found == NO_MATCH() ? 0 : 1);
+  if (found == BUDGET()) { return i32[].filled(1, -2); }
+  i32[] out = i32[].filled(1, found == NO_MATCH() ? 0 : 1);
   return out;
 }
 
 /** What a basic pattern becomes, so a failing case can be read rather than guessed at. Empty if it will not translate. */
 export u8[] basicAsExtended(u8[] pattern) {
   Rewritten r = toExtended(pattern);
-  return r.pattern is null ? u8[0]() : r.pattern!;
+  return r.pattern is null ? u8[]() : r.pattern!;
 }
 
 /** Why a pattern was refused, so a test can check the sentence and not only the refusal. */
@@ -50,24 +50,24 @@ export string whyExtended(u8[] pattern) { return compileExtended(pattern).why; }
  */
 export i32[] execExtended(u8[] pattern, u8[] input, i32 at) {
   Program? prog = compileExtended(pattern).program;
-  if (prog is null) { return i32[1](fill: -1); }
+  if (prog is null) { return i32[].filled(1, -1); }
   Program p = prog!;
-  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32[] caps = i32[].filled(slotCount(p), -1);
   i32 found = search(p, input, at, caps, 1000000);
-  if (found == BUDGET()) { return i32[1](fill: -2); }
-  return i32[1](fill: found == NO_MATCH() ? 0 : 1);
+  if (found == BUDGET()) { return i32[].filled(1, -2); }
+  return i32[].filled(1, found == NO_MATCH() ? 0 : 1);
 }
 
 /** As `exec`, with the `i` flag. */
 export i32[] execFlags(u8[] pattern, u8[] input, i32 at, bool ignoreCase) {
   Program? p = ignoreCase ? compileIgnoreCase(pattern) : compile(pattern);
-  if (p is null) { return i32[1](fill: -1); }
+  if (p is null) { return i32[].filled(1, -1); }
   i32 n = slotCount(p!);
-  i32[] caps = i32[n]();
+  i32[] caps = i32[].filled(n, 0);
   i32 r = search(p!, input, at, caps, 200000);
-  if (r == BUDGET()) { return i32[1](fill: -2); }
-  if (r == NO_MATCH()) { return i32[1](fill: 0); }
-  i32[] out = i32[n + 1]();
+  if (r == BUDGET()) { return i32[].filled(1, -2); }
+  if (r == NO_MATCH()) { return i32[].filled(1, 0); }
+  i32[] out = i32[].filled(n + 1, 0);
   out[0] = 1;
   for (i32 i = 0; i < n; i++) { out[i + 1] = caps[i]; }
   return out;
@@ -86,13 +86,13 @@ export bool accepts(u8[] pattern) { return !(compile(pattern) is null); }
  */
 export i32[] execBudget(u8[] pattern, u8[] input, i32 at, i32 budget) {
   Program? p = compile(pattern);
-  if (p is null) { return i32[1](fill: -1); }
+  if (p is null) { return i32[].filled(1, -1); }
   i32 n = slotCount(p!);
-  i32[] caps = i32[n]();
+  i32[] caps = i32[].filled(n, 0);
   i32 r = search(p!, input, at, caps, budget);
-  if (r == BUDGET()) { return i32[1](fill: -2); }
-  if (r == NO_MATCH()) { return i32[1](fill: 0); }
-  i32[] out = i32[n + 1]();
+  if (r == BUDGET()) { return i32[].filled(1, -2); }
+  if (r == NO_MATCH()) { return i32[].filled(1, 0); }
+  i32[] out = i32[].filled(n + 1, 0);
   out[0] = 1;
   for (i32 i = 0; i < n; i++) { out[i + 1] = caps[i]; }
   return out;

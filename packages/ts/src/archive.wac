@@ -50,7 +50,7 @@ export Archive read(u8[] b) {
     if (sig != 0x04034b50) { break; }
     i32 method = u16At(b, at + 8);
     if (method != 0) {
-      return Archive(Entry[0](fill: Entry("", u8[0]())),
+      return Archive(Entry[].filled(0, Entry("", u8[]())),
                      "the archive is compressed (method " + itoa32(method)
                      + "); this reads store-only zips");
     }
@@ -60,11 +60,11 @@ export Archive read(u8[] b) {
     i32 nameAt = at + 30;
     i32 dataAt = nameAt + nameLen + extraLen;
     if (dataAt + size > b.len()) {
-      return Archive(Entry[0](fill: Entry("", u8[0]())), "the archive is truncated");
+      return Archive(Entry[].filled(0, Entry("", u8[]())), "the archive is truncated");
     }
-    u8[] name = u8[nameLen]();
+    u8[] name = u8[].filled(nameLen, 0);
     for (i32 i = 0; i < nameLen; i++) { name[i] = b[nameAt + i]; }
-    u8[] data = u8[size]();
+    u8[] data = u8[].filled(size, 0);
     for (i32 i = 0; i < size; i++) { data[i] = b[dataAt + i]; }
     out.push(Entry(string.fromBytes(name), data));
     at = dataAt + size;
@@ -133,7 +133,7 @@ export u8[] write(Entry[] entries) {
   put32(out, dirAt);
   put16(out, 0);                    // comment length
 
-  u8[] b = u8[out.len()]();
+  u8[] b = u8[].filled(out.len(), 0);
   for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i); }
   return b;
 }

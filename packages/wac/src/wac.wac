@@ -196,7 +196,7 @@ void sweepBuildCache(Cli cli, string dir) {
   i32 keep = keepBuilds(cli);
   if (n <= keep) { return; }
   // Ages in the same order as the names, so the two can be sorted together.
-  i64[] when = i64[n]();
+  i64[] when = i64[].filled(n, 0);
   for (i32 i = 0; i < n; i++) {
     Stat s = cli.stat(dir + "/" + names![i]).wait();
     when[i] = s.exists ? s.modifiedMillis : (0 as i64);
@@ -474,7 +474,7 @@ string usageFor(string cmd) {
  * counted rather than removed so the shell is told where its arguments begin.
  */
 string[] allArgs(Cli cli, i32 argc) {
-  string[] out = string[argc](fill: "");
+  string[] out = string[].filled(argc, "");
   for (i32 i = 0; i < argc; i++) { out[i] = string.fromBytes(cli.arg(i).wait()); }
   return out;
 }
@@ -493,7 +493,7 @@ bool takesValue(string flag) {
 }
 
 string[] positionals(Cli cli, i32 argc) {
-  string[] out = string[argc](fill: "");
+  string[] out = string[].filled(argc, "");
   i32 n = 0;
   i32 i = 1;
   while (i < argc) {
@@ -568,41 +568,49 @@ bool hasFlag(Cli cli, i32 argc, string flag) {
  */
 string[] flagsFor(string cmd) {
   if (cmd == "build") {
-    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
-                    "-o", "--quiet", "--coverage", "--trace", "--trace-slots", "--no-cache");
+    return [
+                    "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+                    "-o", "--quiet", "--coverage", "--trace", "--trace-slots", "--no-cache"
+    ];
   }
   if (cmd == "test") {
-    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+    return [
+                    "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
                     // **`--quiet` rather than `--verbose`, since 2026-08-29.** A run says which
                     // tests it ran and how long each took, the way `deno test` and `cargo test` do;
                     // the flag is for the caller that wants only the tally, which is the suite.
-                    "--coverage", "--filter", "--ignore", "--quiet");
+                    "--coverage", "--filter", "--ignore", "--quiet"
+    ];
   }
   // The grants and the destination, and nothing that needs a second command to finish — which is the
   // whole of `issues/system/0274c`.
   if (cmd == "app") {
-    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
-                    "-o");
+    return [
+                    "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+                    "-o"
+    ];
   }
   // The grants govern the *program* these two start rather than this process, which is why they are
   // the only flags either takes: everything else on the line belongs to whatever is being run.
   if (cmd == "run") {
-    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run");
+    return ["--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run"];
   }
   if (cmd == "sh") {
-    return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
-                    "-c");
+    return [
+                    "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run",
+                    "-c"
+    ];
   }
   // `--js` asks for the glue rather than the bindings, so it is `bindgen`'s alone: on `check` or
   // `compile` it was accepted and read by nobody.
-  if (cmd == "bindgen") { return string[]("--js", "--quiet"); }
-  if (cmd == "compile") { return string[]("--quiet"); }
-  if (cmd == "audit") { return string[]("--verbose"); }
-  if (cmd == "ctcompare") { return string[]("--all"); }
-  if (cmd == "self") { return string[]("--from", "--no-profile", "--keep-cache"); }
+  if (cmd == "bindgen") { return ["--js", "--quiet"]; }
+  if (cmd == "compile") { return ["--quiet"]; }
+  if (cmd == "audit") { return ["--verbose"]; }
+  if (cmd == "ctcompare") { return ["--all"]; }
+  if (cmd == "self") { return ["--from", "--no-profile", "--keep-cache"]; }
   // `check` says one sentence about one file. `validate`, `covdump`, `tracestat`, `update`, `task`
   // and `app-run` take arguments and no flags.
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }
 
 /**
@@ -891,7 +899,7 @@ export i32 main(Core core, Cli cli) {
     string appPath = string.fromBytes(cli.arg(1).wait());
     // Argument 0 for the program is the first thing after the file, exactly as `run` counts: the
     // artefact's own path is how it was found, not something it was told.
-    u8[][] rest = u8[][argc - 2 < 0 ? 0 : argc - 2](fill: u8[0]());
+    u8[][] rest = u8[][].filled(argc - 2 < 0 ? 0 : argc - 2, u8[]());
     for (i32 i = 2; i < argc; i++) { rest[i - 2] = cli.arg(i).wait(); }
     return appRun(core, cli, argc, appPath, rest);
   }
@@ -948,7 +956,7 @@ export i32 main(Core core, Cli cli) {
   // megabytes. `packages/wac/src/counters.wac` has the reading and the comparing.
   if (cmd == "ctcompare") {
     bool all = false;
-    string[] both = string[2](fill: "");
+    string[] both = string[].filled(2, "");
     i32 seen = 0;
     for (i32 i = 1; i < argc; i++) {
       string a = string.fromBytes(cli.arg(i).wait());
@@ -984,7 +992,7 @@ export i32 main(Core core, Cli cli) {
       return 0;
     }
 
-    Exercise[] none = Exercise[0](fill: Exercise("", 0 - 1));
+    Exercise[] none = Exercise[].filled(0, Exercise("", 0 - 1));
     Counters ca = read(core, cli, both[0], none, true);
     if (ca.error != "") { core.warn("wac: " + ca.error); return 1; }
     Counters cb = read(core, cli, both[1], none, true);
@@ -1016,7 +1024,7 @@ export i32 main(Core core, Cli cli) {
     // **Parsed before anything runs, so a bad count is a usage error rather than a missing export.**
     // Left to the call, `sweep:many` comes back as "no export named sweep:many" — a message about the
     // module, naming a fault in the command line.
-    Exercise[] also = Exercise[argc](fill: Exercise("", 0 - 1));
+    Exercise[] also = Exercise[].filled(argc, Exercise("", 0 - 1));
     i32 n = 0;
     for (i32 i = 2; i < argc; i++) {
       string a = string.fromBytes(cli.arg(i).wait());
@@ -1034,7 +1042,7 @@ export i32 main(Core core, Cli cli) {
       also[n] = Exercise(a.slice(0, colon), cases);
       n = n + 1;
     }
-    Exercise[] asked = Exercise[n](fill: Exercise("", 0 - 1));
+    Exercise[] asked = Exercise[].filled(n, Exercise("", 0 - 1));
     for (i32 i = 0; i < n; i++) { asked[i] = also[i]; }
 
     Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), asked, false);
@@ -1067,7 +1075,7 @@ export i32 main(Core core, Cli cli) {
       return 2;
     }
     Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()),
-                      Exercise[0](fill: Exercise("", 0 - 1)), false);
+                      Exercise[].filled(0, Exercise("", 0 - 1)), false);
     if (c.error != "") { core.warn("wac: " + c.error); return 1; }
     if (c.values.len() < 2) {
       core.warn("wac: a journal is at least two slots; got " + itoa(c.values.len()));
@@ -1120,7 +1128,7 @@ export i32 main(Core core, Cli cli) {
     // this ran everything correctly and printed nothing at all — `wac task map` exited 0 in silence
     // and looked like it had worked. Inheriting costs the capture, which a task runner has no use
     // for; the status is what it reports on.
-    Exec r = tcli.execWith("/bin/sh", string[]("-c", line), u8[0](), string[0](), false, true).wait();
+    Exec r = tcli.execWith("/bin/sh", ["-c", line], u8[](), string[](), false, true).wait();
     if (!r.ran()) {
       core.warn("wac: task `" + want + "` did not start — " + r.error);
       return 1;
@@ -1235,7 +1243,7 @@ export i32 main(Core core, Cli cli) {
   //
   // The walk is not a *test* of anything, so a directory with no `*_test.wac` in it says so here
   // rather than failing to read a file nobody named.
-  string[] walked = string[0](fill: "");
+  string[] walked = string[].filled(0, "");
   // **What the caller typed**, kept because `entry` is about to stop being it: a directory target is
   // rewritten to the generated aggregate, and a message naming that names a file nobody asked about.
   string target = entry;
@@ -1253,7 +1261,7 @@ export i32 main(Core core, Cli cli) {
   // on how the caller happened to spell the target.
   bool severalOrDir = cmd == "test" && (pos.len() > 1 || fs.stat(entry).isDir);
   if (cmd == "test" && !severalOrDir
-      && withoutIgnored(string[](entry), flagValue(cli, argc, "--ignore")).len() == 0) {
+      && withoutIgnored([entry], flagValue(cli, argc, "--ignore")).len() == 0) {
     // The walk's own spelling for a run that excluded everything, in the one-file shape: `0 ok`
     // rather than nothing at all, because "excluded" and "no tests here" are different answers and
     // the exit code cannot tell them apart.
@@ -1261,7 +1269,7 @@ export i32 main(Core core, Cli cli) {
     return 0;
   }
   if (severalOrDir) {
-    string[] asked = string[pos.len()](fill: "");
+    string[] asked = string[].filled(pos.len(), "");
     for (i32 i = 0; i < pos.len(); i++) { asked[i] = normalisePath(pos[i]); }
     string[] found = testTargets(fs, asked);
     walked = withoutIgnored(found, flagValue(cli, argc, "--ignore"));
@@ -1281,7 +1289,7 @@ export i32 main(Core core, Cli cli) {
       return 1;
     }
     string aggregate = "";
-    string[] texts = string[walked.len()](fill: "");
+    string[] texts = string[].filled(walked.len(), "");
     // **Serial on purpose, and measured rather than assumed.** Every read here is independent, so this
     // loop reads like the obvious place to launch them all and collect afterwards — `Pending` starts
     // the work when it is made, so it would not even need `async`. Measured over
@@ -1539,7 +1547,7 @@ export i32 main(Core core, Cli cli) {
   string blocked = "";
   string sigs = "";
   string types = "";
-  u8[] wasm = u8[0]();
+  u8[] wasm = u8[]();
   if (covered || traced) {
     // **`*In` where the callee reads `res`, plain where it does not.** `blockedFilesIn`,
     // `exportSigsFilesIn` and `bindTypesFilesIn` pass the carrier through to the linker, so a
@@ -1944,14 +1952,14 @@ i32 auditReport(Core core, const Sources src, string entry, bool verbose) {
 
   // One line per *mapping*, one for the local project and one for the built-ins — see `mappingRoots`
   // for why the mapping list is derived rather than read straight off `mapSpec`.
-  string[] prefixes = string[src.mapN + 1](fill: "");
-  string[] roots = string[src.mapN + 1](fill: "");
+  string[] prefixes = string[].filled(src.mapN + 1, "");
+  string[] roots = string[].filled(src.mapN + 1, "");
   i32 maps = mappingRoots(src, prefixes, roots);
   i32 groups = maps + 2;
-  string[] label = string[groups](fill: "");
-  i32[] reach = i32[groups]();
-  i32[] total = i32[groups]();
-  string[] example = string[groups](fill: "");
+  string[] label = string[].filled(groups, "");
+  i32[] reach = i32[].filled(groups, 0);
+  i32[] total = i32[].filled(groups, 0);
+  string[] example = string[].filled(groups, "");
   label[0] = "(this project)";
   for (i32 g = 1; g <= maps; g++) { label[g] = prefixes[g - 1] + "   " + roots[g - 1]; }
   label[groups - 1] = "(built-in: std/, core/)";
@@ -2174,7 +2182,7 @@ i32 installCommand(Core core, Cli cli, i32 argc) {
  * carrying `# wac`. Answers 1 if it wrote one and 0 if it did not, so the caller can say which.
  */
 i32 ensureProfileLine(Cli cli, string hd, string home) {
-  string[] profiles = string[](hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile");
+  string[] profiles = [hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile"];
   for (i32 i = 0; i < profiles.len(); i++) {
     FileResult got = cli.readFile(profiles[i]).wait();
     if (!got.ok) { continue; }
@@ -2213,12 +2221,12 @@ i32 uninstallCommand(Core core, Cli cli, i32 argc) {
   if (!(h is null) && h!.len() > 0) {
     string hd = string.fromBytes(h!);
     i32 lines = 0;
-    string[] profiles = string[](hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile");
+    string[] profiles = [hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile"];
     for (i32 i = 0; i < profiles.len(); i++) { lines = lines + removeProfileLine(cli, profiles[i]); }
     if (lines > 0) { went = went + (wentN > 0 ? ", " : "") + itoa(lines) + " profile line(s)"; wentN++; }
   }
 
-  string[] named = string[]("bin/wac", "env", "install.json5");
+  string[] named = ["bin/wac", "env", "install.json5"];
   for (i32 i = 0; i < named.len(); i++) {
     Change gone = cli.remove(home + "/" + named[i], false).wait();
     if (gone.ok()) { went = went + (wentN > 0 ? ", " : "") + named[i]; wentN++; }

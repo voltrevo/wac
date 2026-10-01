@@ -76,7 +76,7 @@ export i32 pastLineStarting(u8[] text, u8[] needle) {
 
 /** The first `n` bytes of `text`. */
 u8[] head(u8[] text, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = text[i]; }
   return out;
 }
@@ -89,9 +89,9 @@ u8[] head(u8[] text, i32 n) {
  */
 export u8[] edDescriptorDigest(u8[] descriptor) {
   i32 end = pastLineStarting(descriptor, edSignatureKeyword());
-  if (end < 0) { return u8[0](); }
+  if (end < 0) { return u8[](); }
   u8[] prefix = edDescriptorPrefix();
-  u8[] signed = u8[prefix.len() + end]();
+  u8[] signed = u8[].filled(prefix.len() + end, 0);
   for (i32 i = 0; i < prefix.len(); i++) { signed[i] = prefix[i]; }
   for (i32 i = 0; i < end; i++) { signed[prefix.len() + i] = descriptor[i]; }
   return sha256(signed);
@@ -105,7 +105,7 @@ export u8[] edDescriptorDigest(u8[] descriptor) {
  */
 export u8[] rsaDescriptorDigest(u8[] descriptor) {
   i32 end = pastLineStarting(descriptor, rsaSignatureKeyword());
-  if (end < 0) { return u8[0](); }
+  if (end < 0) { return u8[](); }
   return sha1(head(descriptor, end));
 }
 
@@ -120,7 +120,7 @@ export u8[] rsaDescriptorDigest(u8[] descriptor) {
  * only this one is what every other relay computes.
  */
 export u8[] rsaPublicKeyDer(u8[] modulus, u8[] exponent) {
-  return derSequence(derConcat(u8[][](derInteger(modulus), derInteger(exponent))));
+  return derSequence(derConcat([derInteger(modulus), derInteger(exponent)]));
 }
 
 /** SHA-1 of the DER `RSAPublicKey`, which is what a relay's identity fingerprint is. */
@@ -248,13 +248,13 @@ export string spacedFingerprint(u8[] digest) {
 export u8[] routerDescriptor(RelayKeys k, RelayInfo info) {
   u8[] masterPub = ed25519PublicKey(k.edIdentitySeed);
   u8[] signingPub = ed25519PublicKey(k.edSigningSeed);
-  if (masterPub.len() != 32 || signingPub.len() != 32) { return u8[0](); }
+  if (masterPub.len() != 32 || signingPub.len() != 32) { return u8[](); }
 
   // The signing certificate: the master identity certifying the key that signs the descriptor, with
   // itself in extension 4 so a reader who has only the master key can check it.
   u8[] signingCert = ed25519Cert(CERT_TYPE_SIGNING, info.certExpiryHours, KEY_TYPE_ED25519,
                                  signingPub, masterPub, k.edIdentitySeed);
-  if (signingCert.len() == 0) { return u8[0](); }
+  if (signingCert.len() == 0) { return u8[](); }
 
   // The ntor key, and the proposal 228 key derived from it that cross-certifies the identity.
   u8[] ntorPub = x25519Base(k.ntorSecret);
@@ -262,12 +262,12 @@ export u8[] routerDescriptor(RelayKeys k, RelayInfo info) {
   u8[] ntorEd = ed25519PublicKeyExpanded(ntorExpanded);
   u8[] ntorCross = ed25519CertExpanded(CERT_TYPE_ONION_ID, info.certExpiryHours, KEY_TYPE_ED25519,
                                       masterPub, ntorExpanded);
-  if (ntorCross.len() == 0) { return u8[0](); }
+  if (ntorCross.len() == 0) { return u8[](); }
 
   // The TAP onion key vouching for both identities.
   u8[] fingerprint = rsaFingerprint(k.rsaIdentityN, k.rsaIdentityE);
   u8[] onionCross = onionKeyCrosscert(fingerprint, masterPub, k.rsaOnionN, k.rsaOnionD);
-  if (onionCross.len() == 0) { return u8[0](); }
+  if (onionCross.len() == 0) { return u8[](); }
 
   Buf d = Buf.create();
   d.pushAll(("router " + info.nickname + " " + info.address + " " + itoa(info.orPort) +
@@ -297,15 +297,15 @@ export u8[] routerDescriptor(RelayKeys k, RelayInfo info) {
   // The ed25519 signature covers the keyword announcing it, so the keyword goes in first.
   d.pushAll(edSignatureKeyword());
   u8[] edDigest = edDescriptorDigest(d.bytes());
-  if (edDigest.len() != 32) { return u8[0](); }
+  if (edDigest.len() != 32) { return u8[](); }
   d.pushAll((b64Unpadded(ed25519Sign(k.edSigningSeed, edDigest)) + "\n").toBytes());
 
   // And the RSA signature covers its own keyword line, newline included.
   d.pushAll(rsaSignatureKeyword());
   u8[] rsaDigest = rsaDescriptorDigest(d.bytes());
-  if (rsaDigest.len() != 20) { return u8[0](); }
+  if (rsaDigest.len() != 20) { return u8[](); }
   u8[] rsaSig = rsaSignRawPkcs1(k.rsaIdentityN, k.rsaIdentityD, rsaDigest);
-  if (rsaSig.len() == 0) { return u8[0](); }
+  if (rsaSig.len() == 0) { return u8[](); }
   d.pushAll(pemBlock("SIGNATURE", rsaSig));
 
   return d.bytes();
@@ -366,17 +366,17 @@ u8[] statusLine(u8[] descriptor, bool withDigest) {
   u8[] router = lineValue(descriptor, "router ");
   u8[] published = lineValue(descriptor, "published ");
   u8[] fingerprint = lineValue(descriptor, "fingerprint ");
-  if (router.len() == 0 || published.len() == 0 || fingerprint.len() == 0) { return u8[0](); }
+  if (router.len() == 0 || published.len() == 0 || fingerprint.len() == 0) { return u8[](); }
 
   // `router <nickname> <address> <ORPort> <SOCKSPort> <DirPort>` — the third field is dead weight in
   // the descriptor and the r line skips it, so the fields cannot simply be copied across in order.
   u8[][] parts = splitSpaces(router);
-  if (parts.len() < 5) { return u8[0](); }
+  if (parts.len() < 5) { return u8[](); }
 
   u8[] identity = fingerprintBytes(fingerprint);
-  if (identity.len() != 20) { return u8[0](); }
+  if (identity.len() != 20) { return u8[](); }
   u8[] digest = descriptorIdentityDigest(descriptor);
-  if (digest.len() != 20) { return u8[0](); }
+  if (digest.len() != 20) { return u8[](); }
 
   Buf out = Buf.create();
   out.pushAll("r ".toBytes());
@@ -401,10 +401,10 @@ u8[] statusLine(u8[] descriptor, bool withDigest) {
 /** The rest of the line starting with `keyword`, without its newline. Empty if absent. */
 export u8[] lineValue(u8[] doc, string keyword) {
   i32 at = pastLineStarting(doc, keyword.toBytes());
-  if (at < 0) { return u8[0](); }
+  if (at < 0) { return u8[](); }
   i32 end = at;
   while (end < doc.len() && doc[end] != 10) { end = end + 1; }
-  u8[] out = u8[end - at]();
+  u8[] out = u8[].filled(end - at, 0);
   for (i32 i = 0; i < end - at; i++) { out[i] = doc[at + i]; }
   return out;
 }
@@ -419,7 +419,7 @@ u8[][] splitSpaces(u8[] s) {
     count = count + 1;
     while (i < s.len() && s[i] != 32) { i = i + 1; }
   }
-  u8[][] out = u8[][count]();
+  u8[][] out = u8[][].defaulted(count);
   i32 n = 0;
   i = 0;
   while (i < s.len()) {
@@ -427,7 +427,7 @@ u8[][] splitSpaces(u8[] s) {
     if (i >= s.len()) { break; }
     i32 from = i;
     while (i < s.len() && s[i] != 32) { i = i + 1; }
-    u8[] part = u8[i - from]();
+    u8[] part = u8[].filled(i - from, 0);
     for (i32 j = 0; j < i - from; j++) { part[j] = s[from + j]; }
     out[n] = part;
     n = n + 1;
@@ -449,5 +449,5 @@ u8[] fingerprintBytes(u8[] text) {
     if (text[i] != 32) { packed.push(text[i]); }
   }
   u8[]? raw = decode(packed.take());
-  return raw is null ? u8[0]() : raw!;
+  return raw is null ? u8[]() : raw!;
 }

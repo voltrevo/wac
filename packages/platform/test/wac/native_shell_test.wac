@@ -98,7 +98,7 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
   const string ALIVE = "mkdir /x; echo deep > /x/f; cat /x/f; seq 1 3 | tac | head -2";
   // The Deno half asserted on its own, so a skipped native half still tests something — and so that a
   // sealed session is known to be *doing* something rather than refusing everything.
-  Ran alive = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), ALIVE);
+  Ran alive = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), ALIVE);
   t.eqStr(alive.out, "deep\n3\n2\n", alive.err);
 
   string native = nativeBinaryPath(core, cli, "native_shell");
@@ -109,25 +109,25 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
   }
   // The same assertion through the native host, before any comparison: two hosts that both did
   // nothing would agree on everything below.
-  Ran aliveNative = shell(core, cli, tmp, native, string[](b.sealedManifest), ALIVE);
+  Ran aliveNative = shell(core, cli, tmp, native, [b.sealedManifest], ALIVE);
   t.eqStr(aliveNative.out, "deep\n3\n2\n", aliveNative.err);
 
   string[] scripts = corpus();
   i32 n = scripts.len() < SAMPLE ? scripts.len() : SAMPLE;
   t.eqI32(n, SAMPLE, "the corpus is big enough to take a sample from");
-  string[] sample = string[n](fill: "");
+  string[] sample = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { sample[i] = scripts[i]; }
-  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), sample);
+  Ran[] denoAnswers = denoAll(cli, tmp, string[].filled(0, ""), sample);
 
   for (i32 i = 0; i < n; i++) {
     Ran a = denoAnswers[i];
     // A batch that did not answer marks every case hung; the retry is the process this replaced.
-    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]); }
-    Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), scripts[i]);
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), scripts[i]); }
+    Ran c = shell(core, cli, tmp, native, [b.sealedManifest], scripts[i]);
     // **A bound that fired is not an answer.** `timeout` reports 124, which no program chose, so a
     // run that never finished used to be printed as a host that disagreed — `native "" (124)` — and
     // read as a conformance failure. Issue 0128 is what that cost.
-    string hung = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
+    string hung = hangReport(scripts[i], ["deno", "native"], [a, c]);
     if (hung != "") { t.fail(hung); continue; }
     t.eqStr(difference(scripts[i], a, c), "", "the hosts differ");
   }
@@ -151,7 +151,7 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
   // Chosen because each reaches a different part of the boundary: an applet's own output through
   // `Core.log`, a pipeline through `pushChild`'s captured frame, the synthesised files, the process
   // table, and a hash whose answer a third party can check.
-  string[] scripts = string[](
+  string[] scripts = [
     "ls /",
     "ps",
     "echo a b c | wc -w",
@@ -159,13 +159,14 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
     "head -c 8 /dev/urandom | wc -c",
     "cat /proc/self/cmdline | wc -c",
     "echo hello | sha256sum",
-    "for i in 1 2 3; do echo $i; done | tac");
-  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), scripts);
+    "for i in 1 2 3; do echo $i; done | tac"
+  ];
+  Ran[] denoAnswers = denoAll(cli, tmp, string[].filled(0, ""), scripts);
   for (i32 i = 0; i < scripts.len(); i++) {
     Ran a = denoAnswers[i];
-    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]); }
-    Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), scripts[i]);
-    string stuck = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), scripts[i]); }
+    Ran c = shell(core, cli, tmp, native, [b.sealedManifest], scripts[i]);
+    string stuck = hangReport(scripts[i], ["deno", "native"], [a, c]);
     if (stuck != "") { t.fail(stuck); continue; }
     t.eqStr(c.out, a.out, scripts[i] + " — stdout");
     t.eqStr(c.err, a.err, scripts[i] + " — stderr");
@@ -174,7 +175,7 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
 
   // And one answer that is right rather than merely shared: `sha256sum` of "hello\n" is a number
   // neither host chose. Two hosts agreeing on a wrong hash would pass every assertion above.
-  Ran hash = shell(core, cli, tmp, native, string[](b.sealedManifest), "echo hello | sha256sum");
+  Ran hash = shell(core, cli, tmp, native, [b.sealedManifest], "echo hello | sha256sum");
   t.eqStr(hash.out,
           "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03  -\n", hash.err);
   cli.remove(tmp, true).wait();
@@ -183,7 +184,7 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
 
 /** The first file of these that this machine has, so an empty answer means withheld not absent. */
 string hostFile(Cli cli) {
-  string[] candidates = string[]("/etc/hostname", "/etc/hosts", "/etc/passwd");
+  string[] candidates = ["/etc/hostname", "/etc/hosts", "/etc/passwd"];
   for (i32 i = 0; i < candidates.len(); i++) {
     if (cli.stat(candidates[i]).wait().isFile) { return candidates[i]; }
   }
@@ -259,14 +260,14 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   string path = "";
   u8[]? pv = cli.env("PATH").wait();
   if (pv is not null) { path = string.fromBytes(pv!); }
-  string[] onlyHome = string[]("HOME=" + home, "PATH=" + path);
-  Exec seesDeno = cli.execWith(b.openDeno, string[]("-c", "echo HOME=[$HOME]"), u8[0](),
+  string[] onlyHome = ["HOME=" + home, "PATH=" + path];
+  Exec seesDeno = cli.execWith(b.openDeno, ["-c", "echo HOME=[$HOME]"], u8[](),
                                onlyHome, true, false).wait();
   t.isTrue(contains(string.fromBytes(seesDeno.stdout), home),
            "the deno host does not read the environment at all, so the seal below proves nothing: " +
            string.fromBytes(seesDeno.stdout) + string.fromBytes(seesDeno.stderr));
-  Exec seesNative = cli.execWith(native, string[](b.openManifest, "-c", "echo HOME=[$HOME]"),
-                                 u8[0](), onlyHome, true, false).wait();
+  Exec seesNative = cli.execWith(native, [b.openManifest, "-c", "echo HOME=[$HOME]"],
+                                 u8[](), onlyHome, true, false).wait();
   t.isTrue(contains(string.fromBytes(seesNative.stdout), home),
            "the native host does not read the environment at all, so the seal below proves nothing: " +
            string.fromBytes(seesNative.stdout) + string.fromBytes(seesNative.stderr));
@@ -274,7 +275,7 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   string file = hostFile(cli);
   if (file == "") { file = "/etc/hostname"; }
 
-  string[] scripts = string[](
+  string[] scripts = [
     // D4: the environment is the session's, not the server's.
     "echo [$HOME] [$PATH] [$USER]",
     // D4: so are the arguments — `-c` and the script are the *binary's* argv, not the shell's.
@@ -290,10 +291,11 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
     // *spawned* stage, which is the one that reads a different disk when it goes wrong (0116).
     "cat " + file + "; echo st=$?",
     "cat " + file + " | head -1; echo st=$?",
-    "ls /");
+    "ls /"
+  ];
   // Empty where there is nothing knowable to state — the two spawned-read cases, whose status is the
   // shell's business and whose *text* is checked separately below.
-  string[] wants = string[](
+  string[] wants = [
     "[] [] []\n",
     "count=[0] zero=[] one=[]\n",
     "16\n",
@@ -302,17 +304,18 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
     "4\n",
     "",
     "",
-    "bin\ndev\nproc\ntmp\n");
+    "bin\ndev\nproc\ntmp\n"
+  ];
 
   // Built *with* read, write and env, which is what makes this a test of the seal rather than of a
   // build that could not reach anything — so the batch is given the same three grants.
-  string[] granted = string[]("--allow-read", "--allow-write", "--allow-env");
+  string[] granted = ["--allow-read", "--allow-write", "--allow-env"];
   Ran[] denoAnswers = denoAll(cli, tmp, granted, scripts);
   for (i32 i = 0; i < scripts.len() && i < wants.len(); i++) {
     Ran a = denoAnswers[i];
-    if (a.hung) { a = shell(core, cli, tmp, b.grantedDeno, string[0](fill: ""), scripts[i]); }
-    Ran c = shell(core, cli, tmp, native, string[](b.grantedManifest), scripts[i]);
-    string stuck = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
+    if (a.hung) { a = shell(core, cli, tmp, b.grantedDeno, string[].filled(0, ""), scripts[i]); }
+    Ran c = shell(core, cli, tmp, native, [b.grantedManifest], scripts[i]);
+    string stuck = hangReport(scripts[i], ["deno", "native"], [a, c]);
     if (stuck != "") { t.fail(stuck); continue; }
     // **Each host against the claim first, then against the other.** Two hosts that leaked the same
     // way would agree with each other and be wrong, which is the failure a pure comparison cannot
@@ -330,10 +333,10 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   string first = f.ok ? firstLine(string.fromBytes(f.bytes)) : "";
   t.isTrue(first.len() > 0, "the host file this checks for is empty, so the check below is vacuous");
   if (first.len() > 0) {
-    Ran seenDeno = shell(core, cli, tmp, b.grantedDeno, string[0](fill: ""),
+    Ran seenDeno = shell(core, cli, tmp, b.grantedDeno, string[].filled(0, ""),
                          "cat " + file + " | head -1");
     t.isFalse(contains(seenDeno.out, first), "deno read " + file + ": " + seenDeno.out);
-    Ran seenNative = shell(core, cli, tmp, native, string[](b.grantedManifest),
+    Ran seenNative = shell(core, cli, tmp, native, [b.grantedManifest],
                            "cat " + file + " | head -1");
     t.isFalse(contains(seenNative.out, first), "native read " + file + ": " + seenNative.out);
   }

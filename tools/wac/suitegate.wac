@@ -518,9 +518,9 @@ export void unannounce(Cli cli, string path) { cli.remove(path, false).wait(); }
 /** Every heavy runner that is not this process and whose pid is still alive. */
 export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
   string[]? entries = cli.readDir("/tmp").wait();
-  if (entries is null) { return Note[0](fill: noNote()); }
+  if (entries is null) { return Note[].filled(0, noNote()); }
   string[] names = entries!;
-  Note[] found = Note[names.len()](fill: noNote());
+  Note[] found = Note[].filled(names.len(), noNote());
   i32 n = 0;
   for (i32 i = 0; i < names.len(); i++) {
     if (!startsWith(names[i], "wac-heavy-")) { continue; }
@@ -536,7 +536,7 @@ export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
     found[n] = note;
     n = n + 1;
   }
-  Note[] out = Note[n](fill: noNote());
+  Note[] out = Note[].filled(n, noNote());
   for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
   return out;
 }

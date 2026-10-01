@@ -85,7 +85,7 @@ string slice(u8[] b, i32 from, i32 to) {
  * and skipping the first packet unconditionally would eat a ref if the preamble were absent.
  */
 export Ad parseAdvertisement(u8[] b) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   Vec<AdRef> refs = Vec.create();
   string caps = "";
   bool first = true;
@@ -211,7 +211,7 @@ export enum Reply {
  * server's message into "not a pack: the magic is missing".
  */
 export Reply findPack(u8[] b) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   bool looking = true;
   while (looking) {
     i32 before = pos[0];
@@ -241,7 +241,7 @@ export Reply findPack(u8[] b) {
   if (at + 4 > b.len() || b[at] != 'P' || b[at + 1] != 'A' || b[at + 2] != 'C' || b[at + 3] != 'K') {
     return Reply.NoPack("what follows the negotiation is not a packfile");
   }
-  u8[] pack = u8[b.len() - at]();
+  u8[] pack = u8[].filled(b.len() - at, 0);
   for (i32 i = 0; i < pack.len(); i++) { pack[i] = b[at + i]; }
   return Reply.Packfile(pack);
 }
@@ -294,7 +294,7 @@ export string symrefOfHead(const Advertised ad) {
  */
 export Vec<u8[]> shallowsIn(u8[] b) {
   Vec<u8[]> out = Vec.create();
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   bool reading = true;
   while (reading) {
     i32 before = pos[0];

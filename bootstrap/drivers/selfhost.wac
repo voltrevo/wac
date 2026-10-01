@@ -17,7 +17,7 @@ string[] sources;
 i32 nfile = 0;
 
 export i32 drv_alloc(i32 n) {
-  inbuf = u8[n]();
+  inbuf = u8[].filled(n, 0);
   return n;
 }
 
@@ -45,14 +45,14 @@ export i32 drv_declineByte(i32 i) {
 }
 
 export i32 drv_files(i32 n) {
-  paths = string[n](fill: "");
-  sources = string[n](fill: "");
+  paths = string[].filled(n, "");
+  sources = string[].filled(n, "");
   nfile = 0;
   return 0;
 }
 
 export i32 drv_allocName(i32 n) {
-  namebuf = u8[n]();
+  namebuf = u8[].filled(n, 0);
   return n;
 }
 

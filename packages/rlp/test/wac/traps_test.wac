@@ -32,7 +32,7 @@ export string test_traps_on_the_most_negative() {
 
 /** A negative arriving through the encoder rather than directly, which is how a caller would meet it. */
 export string test_traps_on_a_negative_inside_a_list() {
-  Item[] xs = Item[2](fill: Item.Bytes(u8[0]()));
+  Item[] xs = Item[].filled(2, Item.Bytes(u8[]()));
   xs[0] = Item.Bytes(fromI64(1));
   xs[1] = Item.Bytes(fromI64(0 - 7));
   encode(Item.List(xs));

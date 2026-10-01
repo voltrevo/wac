@@ -42,7 +42,7 @@ const string ORACLE = "packages/json/test/oracle.ts";
 
 /** A one-string document containing exactly these bytes. */
 u8[] doc(u8[] body) {
-  u8[] out = u8[body.len() + 2]();
+  u8[] out = u8[].filled(body.len() + 2, 0);
   out[0] = 0x22;
   for (i32 i = 0; i < body.len(); i++) { out[i + 1] = body[i]; }
   out[body.len() + 1] = 0x22;
@@ -51,29 +51,30 @@ u8[] doc(u8[] body) {
 
 export string test_utf8_malformed_sequences_are_rejected(Core core, Cli cli) {
   T t = T.create();
-  string[] labels = string[](
+  string[] labels = [
     "lone continuation byte", "continuation after ASCII", "truncated two-byte lead",
     "two-byte lead then ASCII", "overlong NUL", "overlong slash", "overlong three-byte",
     "overlong four-byte", "truncated three-byte", "truncated four-byte", "high surrogate U+D800",
-    "low surrogate U+DFFF", "past U+10FFFF", "F5 lead", "FE", "FF", "five-byte form");
-  u8[][] bodies = u8[][17](fill: u8[0]());
-  bodies[0] = u8[](0x81);
-  bodies[1] = u8[](0x61, 0xBF);
-  bodies[2] = u8[](0xC3);
-  bodies[3] = u8[](0xC3, 0x28);
-  bodies[4] = u8[](0xC0, 0x80);
-  bodies[5] = u8[](0xC0, 0xAF);
-  bodies[6] = u8[](0xE0, 0x80, 0x80);
-  bodies[7] = u8[](0xF0, 0x80, 0x80, 0x80);
-  bodies[8] = u8[](0xE6, 0x97);
-  bodies[9] = u8[](0xF0, 0x9F, 0x98);
-  bodies[10] = u8[](0xED, 0xA0, 0x80);
-  bodies[11] = u8[](0xED, 0xBF, 0xBF);
-  bodies[12] = u8[](0xF4, 0x90, 0x80, 0x80);
-  bodies[13] = u8[](0xF5, 0x80, 0x80, 0x80);
-  bodies[14] = u8[](0xFE);
-  bodies[15] = u8[](0xFF);
-  bodies[16] = u8[](0xF8, 0x88, 0x80, 0x80, 0x80);
+    "low surrogate U+DFFF", "past U+10FFFF", "F5 lead", "FE", "FF", "five-byte form"
+  ];
+  u8[][] bodies = u8[][].filled(17, u8[]());
+  bodies[0] = [0x81] as u8[];
+  bodies[1] = [0x61, 0xBF] as u8[];
+  bodies[2] = [0xC3] as u8[];
+  bodies[3] = [0xC3, 0x28] as u8[];
+  bodies[4] = [0xC0, 0x80] as u8[];
+  bodies[5] = [0xC0, 0xAF] as u8[];
+  bodies[6] = [0xE0, 0x80, 0x80] as u8[];
+  bodies[7] = [0xF0, 0x80, 0x80, 0x80] as u8[];
+  bodies[8] = [0xE6, 0x97] as u8[];
+  bodies[9] = [0xF0, 0x9F, 0x98] as u8[];
+  bodies[10] = [0xED, 0xA0, 0x80] as u8[];
+  bodies[11] = [0xED, 0xBF, 0xBF] as u8[];
+  bodies[12] = [0xF4, 0x90, 0x80, 0x80] as u8[];
+  bodies[13] = [0xF5, 0x80, 0x80, 0x80] as u8[];
+  bodies[14] = [0xFE] as u8[];
+  bodies[15] = [0xFF] as u8[];
+  bodies[16] = [0xF8, 0x88, 0x80, 0x80, 0x80] as u8[];
 
   Lines lines = Lines.create();
   for (i32 i = 0; i < bodies.len(); i++) {
@@ -95,15 +96,16 @@ export string test_utf8_malformed_sequences_are_rejected(Core core, Cli cli) {
  */
 export string test_utf8_a_sequence_cut_off_by_the_end_of_input() {
   T t = T.create();
-  string[] labels = string[](
+  string[] labels = [
     "two-byte lead at EOF", "three-byte lead at EOF", "three-byte, one continuation, at EOF",
-    "four-byte lead at EOF", "four-byte, two continuations, at EOF");
-  u8[][] cases = u8[][5](fill: u8[0]());
-  cases[0] = u8[](0x22, 0xC3);
-  cases[1] = u8[](0x22, 0xE6);
-  cases[2] = u8[](0x22, 0xE6, 0x97);
-  cases[3] = u8[](0x22, 0xF0);
-  cases[4] = u8[](0x22, 0xF0, 0x9F, 0x98);
+    "four-byte lead at EOF", "four-byte, two continuations, at EOF"
+  ];
+  u8[][] cases = u8[][].filled(5, u8[]());
+  cases[0] = [0x22, 0xC3] as u8[];
+  cases[1] = [0x22, 0xE6] as u8[];
+  cases[2] = [0x22, 0xE6, 0x97] as u8[];
+  cases[3] = [0x22, 0xF0] as u8[];
+  cases[4] = [0x22, 0xF0, 0x9F, 0x98] as u8[];
   for (i32 i = 0; i < cases.len(); i++) {
     i32 err = canonicalize(cases[i]).code;
     // Either verdict is defensible — the input is both truncated UTF-8 and an unterminated string —
@@ -122,13 +124,15 @@ export string test_utf8_a_sequence_cut_off_by_the_end_of_input() {
  */
 export string test_utf8_a_valid_lead_with_a_bad_later_continuation(Core core, Cli cli) {
   T t = T.create();
-  string[] labels = string[]("three-byte, second continuation bad",
+  string[] labels = [
+                             "three-byte, second continuation bad",
                              "four-byte, second continuation bad",
-                             "four-byte, third continuation bad");
-  u8[][] bodies = u8[][3](fill: u8[0]());
-  bodies[0] = u8[](0xE6, 0x97, 0x41);
-  bodies[1] = u8[](0xF0, 0x9F, 0x41, 0x80);
-  bodies[2] = u8[](0xF0, 0x9F, 0x98, 0x41);
+                             "four-byte, third continuation bad"
+  ];
+  u8[][] bodies = u8[][].filled(3, u8[]());
+  bodies[0] = [0xE6, 0x97, 0x41] as u8[];
+  bodies[1] = [0xF0, 0x9F, 0x41, 0x80] as u8[];
+  bodies[2] = [0xF0, 0x9F, 0x98, 0x41] as u8[];
   Lines lines = Lines.create();
   for (i32 i = 0; i < bodies.len(); i++) {
     t.eqI32(canonicalize(doc(bodies[i])).code, ERR_UTF8(), labels[i]);
@@ -140,22 +144,23 @@ export string test_utf8_a_valid_lead_with_a_bad_later_continuation(Core core, Cl
 
 export string test_utf8_well_formed_sequences_at_every_width(Core core, Cli cli) {
   T t = T.create();
-  string[] labels = string[](
+  string[] labels = [
     "two-byte, lowest", "two-byte é", "two-byte, highest", "three-byte, lowest", "three-byte 日",
     "just below the surrogates", "just above the surrogates", "three-byte, highest",
-    "four-byte, lowest", "four-byte 😀", "four-byte, highest U+10FFFF");
-  u8[][] bodies = u8[][11](fill: u8[0]());
-  bodies[0] = u8[](0xC2, 0x80);
-  bodies[1] = u8[](0xC3, 0xA9);
-  bodies[2] = u8[](0xDF, 0xBF);
-  bodies[3] = u8[](0xE0, 0xA0, 0x80);
-  bodies[4] = u8[](0xE6, 0x97, 0xA5);
-  bodies[5] = u8[](0xED, 0x9F, 0xBF);
-  bodies[6] = u8[](0xEE, 0x80, 0x80);
-  bodies[7] = u8[](0xEF, 0xBF, 0xBF);
-  bodies[8] = u8[](0xF0, 0x90, 0x80, 0x80);
-  bodies[9] = u8[](0xF0, 0x9F, 0x98, 0x80);
-  bodies[10] = u8[](0xF4, 0x8F, 0xBF, 0xBF);
+    "four-byte, lowest", "four-byte 😀", "four-byte, highest U+10FFFF"
+  ];
+  u8[][] bodies = u8[][].filled(11, u8[]());
+  bodies[0] = [0xC2, 0x80] as u8[];
+  bodies[1] = [0xC3, 0xA9] as u8[];
+  bodies[2] = [0xDF, 0xBF] as u8[];
+  bodies[3] = [0xE0, 0xA0, 0x80] as u8[];
+  bodies[4] = [0xE6, 0x97, 0xA5] as u8[];
+  bodies[5] = [0xED, 0x9F, 0xBF] as u8[];
+  bodies[6] = [0xEE, 0x80, 0x80] as u8[];
+  bodies[7] = [0xEF, 0xBF, 0xBF] as u8[];
+  bodies[8] = [0xF0, 0x90, 0x80, 0x80] as u8[];
+  bodies[9] = [0xF0, 0x9F, 0x98, 0x80] as u8[];
+  bodies[10] = [0xF4, 0x8F, 0xBF, 0xBF] as u8[];
   Lines lines = Lines.create();
   for (i32 i = 0; i < bodies.len(); i++) {
     t.eqI32(canonicalize(doc(bodies[i])).code, ERR_NONE(), labels[i] + ": rejected");
@@ -186,7 +191,7 @@ export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core c
   i32 checked = 0;
   for (i32 i = 0; i < 4000; i++) {
     i32 len = 1 + rng.upto(5);
-    u8[] body = u8[len]();
+    u8[] body = u8[].filled(len, 0);
     bool usable = true;
     for (i32 j = 0; j < len; j++) {
       body[j] = pick(rng);
@@ -226,30 +231,31 @@ export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core c
  */
 export string test_utf8_a_hand_built_tree_cannot_produce_invalid_json() {
   T t = T.create();
-  string[] labels = string[](
+  string[] labels = [
     "lone continuation", "truncated two-byte lead", "overlong NUL", "overlong three-byte",
     "E0 with an overlong continuation", "E1 with a bad continuation", "ED as a high surrogate",
     "EE with a bad continuation", "F0 with an overlong continuation", "F1 with a bad continuation",
-    "F3 truncated", "F4 past U+10FFFF", "F5 lead", "FF");
-  u8[][] bad = u8[][14](fill: u8[0]());
-  bad[0]  = u8[](0x81);
-  bad[1]  = u8[](0xC3);
-  bad[2]  = u8[](0xC0, 0x80);
-  bad[3]  = u8[](0xE0, 0x80, 0x80);
-  bad[4]  = u8[](0xE0, 0x9F, 0x80);
-  bad[5]  = u8[](0xE1, 0x28, 0x80);
-  bad[6]  = u8[](0xED, 0xA0, 0x80);
-  bad[7]  = u8[](0xEE, 0x28, 0x80);
-  bad[8]  = u8[](0xF0, 0x8F, 0x80, 0x80);
-  bad[9]  = u8[](0xF1, 0x28, 0x80, 0x80);
-  bad[10] = u8[](0xF3, 0x80, 0x80);
-  bad[11] = u8[](0xF4, 0x90, 0x80, 0x80);
-  bad[12] = u8[](0xF5, 0x80, 0x80, 0x80);
-  bad[13] = u8[](0xFF);
+    "F3 truncated", "F4 past U+10FFFF", "F5 lead", "FF"
+  ];
+  u8[][] bad = u8[][].filled(14, u8[]());
+  bad[0]  = [0x81] as u8[];
+  bad[1]  = [0xC3] as u8[];
+  bad[2]  = [0xC0, 0x80] as u8[];
+  bad[3]  = [0xE0, 0x80, 0x80] as u8[];
+  bad[4]  = [0xE0, 0x9F, 0x80] as u8[];
+  bad[5]  = [0xE1, 0x28, 0x80] as u8[];
+  bad[6]  = [0xED, 0xA0, 0x80] as u8[];
+  bad[7]  = [0xEE, 0x28, 0x80] as u8[];
+  bad[8]  = [0xF0, 0x8F, 0x80, 0x80] as u8[];
+  bad[9]  = [0xF1, 0x28, 0x80, 0x80] as u8[];
+  bad[10] = [0xF3, 0x80, 0x80] as u8[];
+  bad[11] = [0xF4, 0x90, 0x80, 0x80] as u8[];
+  bad[12] = [0xF5, 0x80, 0x80, 0x80] as u8[];
+  bad[13] = [0xFF] as u8[];
 
   for (i32 i = 0; i < bad.len(); i++) {
     // `a` either side, so a replacement that swallowed a neighbour would show.
-    u8[] payload = u8[bad[i].len() + 2]();
+    u8[] payload = u8[].filled(bad[i].len() + 2, 0);
     payload[0] = 'a';
     for (i32 k = 0; k < bad[i].len(); k++) { payload[k + 1] = bad[i][k]; }
     payload[payload.len() - 1] = 'z';
@@ -269,14 +275,14 @@ export string test_utf8_a_hand_built_tree_cannot_produce_invalid_json() {
 
   // Well-formed sequences at every width pass through untouched, which is what makes the
   // assertions above about the *rejections* rather than about the writer mangling everything.
-  u8[][] good = u8[][5](fill: u8[0]());
-  good[0] = u8[]('a');
-  good[1] = u8[](0xC3, 0xA9);                    // é
-  good[2] = u8[](0xE6, 0x97, 0xA5);              // 日
-  good[3] = u8[](0xF0, 0x9F, 0x98, 0x80);        // 😀
+  u8[][] good = u8[][].filled(5, u8[]());
+  good[0] = ['a'] as u8[];
+  good[1] = [0xC3, 0xA9] as u8[];                    // é
+  good[2] = [0xE6, 0x97, 0xA5] as u8[];              // 日
+  good[3] = [0xF0, 0x9F, 0x98, 0x80] as u8[];        // 😀
   // A lead in F1..F3, which is its own row in the table and the only one the emoji above misses:
   // U+40000, in a plane nothing here uses and which is exactly why nothing had encoded one.
-  good[4] = u8[](0xF1, 0x80, 0x80, 0x80);
+  good[4] = [0xF1, 0x80, 0x80, 0x80] as u8[];
   for (i32 i = 0; i < good.len(); i++) {
     u8[] out = stringify(JsonValue.Str(good[i]));
     t.eqI32(out.len(), good[i].len() + 2, "a well-formed sequence of width " +

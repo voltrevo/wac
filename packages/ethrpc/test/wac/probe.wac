@@ -6,7 +6,7 @@ import { Cli } from "std/platform.wac";
 export u8[] rpc(Cli cli, string host, i32 port, string method, string params) {
   Answer a = call(cli, host, port, method, params);
   u8[] body = a.ok ? stringOf(a.result) : a.error.toBytes();
-  u8[] out = u8[1 + body.len()]();
+  u8[] out = u8[].filled(1 + body.len(), 0);
   out[0] = a.ok ? 1 : 0;
   out.copyFrom(body, 0, 1, body.len());
   return out;

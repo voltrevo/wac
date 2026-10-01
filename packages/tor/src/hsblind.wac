@@ -58,14 +58,14 @@ u8[] basepointString() {
 /** `"Derive temporary signing key" | INT_1(0)` — the trailing NUL is part of it. */
 u8[] blindString() {
   u8[] s = "Derive temporary signing key".toBytes();
-  u8[] out = u8[s.len() + 1]();
+  u8[] out = u8[].filled(s.len() + 1, 0);
   for (i32 i = 0; i < s.len(); i++) { out[i] = s[i]; }
   return out;                                    // out[s.len()] is already 0
 }
 
 /** A u64 in network byte order, which is how both nonce fields are written. */
 u8[] u64be(i64 v) {
-  u8[] b = u8[8]();
+  u8[] b = u8[].filled(8, 0);
   for (i32 i = 7; i >= 0; i--) {
     b[i] = ((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
   }
@@ -124,7 +124,7 @@ export i64 timePeriodNum(i64 nowSeconds, i64 periodLength, i64 offsetMinutes) {
  * different point.
  */
 export u8[] blindingFactor(u8[] identityKey, i64 periodNum, i64 periodLength) {
-  if (identityKey.len() != 32) { return u8[0](); }
+  if (identityKey.len() != 32) { return u8[](); }
   u8[] blind = blindString();
   u8[] bp = basepointString();
   u8[] prefix = "key-blind".toBytes();
@@ -132,7 +132,7 @@ export u8[] blindingFactor(u8[] identityKey, i64 periodNum, i64 periodLength) {
   u8[] pl = u64be(periodLength);
 
   i32 n = blind.len() + 32 + bp.len() + prefix.len() + 16;
-  u8[] buf = u8[n]();
+  u8[] buf = u8[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < blind.len(); i++) { buf[at + i] = blind[i]; }
   at = at + blind.len();
@@ -162,9 +162,9 @@ export u8[] blindingFactor(u8[] identityKey, i64 periodNum, i64 periodLength) {
  */
 export u8[] blindedPublicKey(u8[] identityKey, i64 periodNum, i64 periodLength) {
   u8[] h = blindingFactor(identityKey, periodNum, periodLength);
-  if (h.len() != 32) { return u8[0](); }
+  if (h.len() != 32) { return u8[](); }
   Point? a = ptDecode(identityKey);
-  if (a is null) { return u8[0](); }
+  if (a is null) { return u8[](); }
   return ptEncode(ptMul(h, a!));
 }
 
@@ -194,21 +194,21 @@ export const string BLIND_PREFIX_STRING = "Derive temporary signing key hash inp
  * bytes were zero, which is a different key rather than an error.
  */
 export u8[] blindedSecretKey(u8[] expandedSecret, u8[] factor) {
-  if (expandedSecret.len() != 64 || factor.len() != 32) { return u8[0](); }
+  if (expandedSecret.len() != 64 || factor.len() != 32) { return u8[](); }
 
-  u8[] scalar = u8[32]();
+  u8[] scalar = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { scalar[i] = expandedSecret[i]; }
-  u8[] blinded = scMulAdd(scalar, factor, u8[32]());
+  u8[] blinded = scMulAdd(scalar, factor, u8[].filled(32, 0));
 
   // The prefix half is *rehashed* rather than carried across. Reusing it would mean two keys sharing
   // the nonce derivation, and a service that signed with both would leak its identity scalar.
-  u8[] input = u8[BLIND_PREFIX_STRING.toBytes().len() + 32]();
+  u8[] input = u8[].filled(BLIND_PREFIX_STRING.toBytes().len() + 32, 0);
   u8[] pre = BLIND_PREFIX_STRING.toBytes();
   for (i32 i = 0; i < pre.len(); i++) { input[i] = pre[i]; }
   for (i32 i = 0; i < 32; i++) { input[pre.len() + i] = expandedSecret[32 + i]; }
   u8[] rh = sha512(input);
 
-  u8[] out = u8[64]();
+  u8[] out = u8[].filled(64, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = blinded[i]; }
   for (i32 i = 0; i < 32; i++) { out[32 + i] = rh[i]; }
   return out;
@@ -221,9 +221,9 @@ export u8[] blindedSecretKey(u8[] expandedSecret, u8[] factor) {
  * per-period subcredential can be derived from it without the identity key being present.
  */
 export u8[] credential(u8[] identityKey) {
-  if (identityKey.len() != 32) { return u8[0](); }
+  if (identityKey.len() != 32) { return u8[](); }
   u8[] pre = "credential".toBytes();
-  u8[] buf = u8[pre.len() + 32]();
+  u8[] buf = u8[].filled(pre.len() + 32, 0);
   for (i32 i = 0; i < pre.len(); i++) { buf[i] = pre[i]; }
   for (i32 i = 0; i < 32; i++) { buf[pre.len() + i] = identityKey[i]; }
   return sha3_256(buf);
@@ -239,9 +239,9 @@ export u8[] credential(u8[] identityKey) {
  */
 export u8[] subcredential(u8[] identityKey, u8[] blindedKey) {
   u8[] cred = credential(identityKey);
-  if (cred.len() != 32 || blindedKey.len() != 32) { return u8[0](); }
+  if (cred.len() != 32 || blindedKey.len() != 32) { return u8[](); }
   u8[] pre = "subcredential".toBytes();
-  u8[] buf = u8[pre.len() + 64]();
+  u8[] buf = u8[].filled(pre.len() + 64, 0);
   for (i32 i = 0; i < pre.len(); i++) { buf[i] = pre[i]; }
   for (i32 i = 0; i < 32; i++) { buf[pre.len() + i] = cred[i]; }
   for (i32 i = 0; i < 32; i++) { buf[pre.len() + 32 + i] = blindedKey[i]; }

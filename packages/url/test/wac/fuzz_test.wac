@@ -39,7 +39,7 @@ const string ORACLE = "packages/url/test/batchOracle.ts";
  * written where the test asks for it.
  */
 void ask(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "deno", string[]("run", "--no-check", "--allow-run", ORACLE), lines, what);
+  check(t, cli, "deno", ["run", "--no-check", "--allow-run", ORACLE], lines, what);
 }
 
 
@@ -49,31 +49,37 @@ void ask(T t, Cli cli, Lines lines, string what) {
 // every time, which tests only the rejection path. Fragments keep the inputs plausible enough to
 // reach the states that matter, while still combining in ways nobody would write.
 
-string[] schemes() { return string[]("http", "https", "file", "ftp", "ws", "wss", "foo", "a+b", "A", ""); }
-string[] seps() { return string[](":", "://", ":/", ":///", "://///", ":\\\\", "", ":/\\"); }
-string[] userinfo() { return string[]("", "u@", "u:p@", ":@", "@", "u:@", "%40@", "a b@", "u:p@x@"); }
+string[] schemes() { return ["http", "https", "file", "ftp", "ws", "wss", "foo", "a+b", "A", ""]; }
+string[] seps() { return [":", "://", ":/", ":///", "://///", ":\\\\", "", ":/\\"]; }
+string[] userinfo() { return ["", "u@", "u:p@", ":@", "@", "u:@", "%40@", "a b@", "u:p@x@"]; }
 
 string[] hosts() {
-  return string[]("h", "example.com", "EXAMPLE.com", "", "127.0.0.1", "0x7f.1", "2130706433",
+  return [
+                  "h", "example.com", "EXAMPLE.com", "", "127.0.0.1", "0x7f.1", "2130706433",
                   "[::1]", "[::", "1.2.3.4.5", "0x", "a b", "a%20b", "a|b", "localhost", "..",
-                  "a..b", "-", "%2e");
+                  "a..b", "-", "%2e"
+  ];
 }
 
-string[] ports() { return string[]("", ":80", ":443", ":0", ":65535", ":65536", ":", ":abc", ":-1", ":8080"); }
+string[] ports() { return ["", ":80", ":443", ":0", ":65535", ":65536", ":", ":abc", ":-1", ":8080"]; }
 
 string[] paths() {
-  return string[]("", "/", "//", "/a", "/a/b", "/a/../b", "/..", "/.", "/a/./b", "\\a", "/a\\b",
+  return [
+                  "", "/", "//", "/a", "/a/b", "/a/../b", "/..", "/.", "/a/./b", "\\a", "/a\\b",
                   "/%2e%2e/", "/ ", "/\"", "/<>", "/`", "/{}", "/%", "/%zz", "/%41", "/c:/x",
-                  "/c|/x", "/é", "/日");
+                  "/c|/x", "/é", "/日"
+  ];
 }
 
-string[] queries() { return string[]("", "?", "?a", "?a=b", "?a'b", "?a b", "?#", "?%", "?é"); }
-string[] fragments() { return string[]("", "#", "#f", "#a b", "#\"", "#é", "#a#b"); }
+string[] queries() { return ["", "?", "?a", "?a=b", "?a'b", "?a b", "?#", "?%", "?é"]; }
+string[] fragments() { return ["", "#", "#f", "#a b", "#\"", "#é", "#a#b"]; }
 
 /** The bases, with index 0 standing for "no base at all". */
 string[] bases() {
-  return string[]("", "http://example.com/a/b?q#f", "file:///a/b", "foo://host/p", "foo:opaque",
-                  "https://u:p@h:8080/x/y");
+  return [
+                  "", "http://example.com/a/b?q#f", "file:///a/b", "foo://host/p", "foo:opaque",
+                  "https://u:p@h:8080/x/y"
+  ];
 }
 
 string pick(Rng rng, string[] xs) { return xs[rng.upto(xs.len())]; }

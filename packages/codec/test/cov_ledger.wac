@@ -40,11 +40,11 @@ const string PREFIX = "packages/codec/";
  * One, and it is the `then` of an `is null` check that exists so a caller can assert its input is
  * well-formed. The only way to reach it is input that is not.
  */
-string[] cases() { return string[]("trap_hex_decoded_on_input_that_is_not_hex"); }
+string[] cases() { return ["trap_hex_decoded_on_input_that_is_not_hex"]; }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/codec/src/base32.wac", 44, "if (leftover == 4) { return 7; }", true,
+  return [
+        Pin("packages/codec/src/base32.wac", 44, "if (leftover == 4) { return 7; }", true,
         "The fall-through to `return 0` — `digitsFor(0)`. Both call sites guard against it: the " +
         "encoder computes `left = data.len() - i` and only enters the block `if (left > 0)`, and the " +
         "decoder likewise `if (leftover > 0)`. `digitsFor` is private to the file, so those two are " +
@@ -53,14 +53,15 @@ Pin[] pins() {
         "\"a final group of 0..4 leftover bytes\" and 0 is one of them. A version that trapped or " +
         "returned garbage for 0 would be correct only by the habits of its callers, which is the " +
         "same argument `packages/gzip`'s ledger makes for `copyBytes`. Answering 0 digits for 0 " +
-        "bytes is also the arithmetically right answer, so there is nothing here to get wrong later."));
+        "bytes is also the arithmetically right answer, so there is nothing here to get wrong later.")
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No grants: the exercise's `main` takes nothing, reads nothing and spawns nothing.
-  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), cases());
+  Measured m = measure(core, cli, EXERCISE, string[].filled(0, ""), cases());
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -68,5 +69,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

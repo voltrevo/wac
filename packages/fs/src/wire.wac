@@ -82,7 +82,7 @@ export struct Reader {
   string string(this) {
     i32 n = this.u32();
     if (this.bad || this.at + n > this.end) { this.bad = true; return ""; }
-    u8[] b = u8[n]();
+    u8[] b = u8[].filled(n, 0);
     b.copyFrom(this.data, this.at, 0, n);
     this.at = this.at + n;
     return string.fromBytes(b);
@@ -96,8 +96,8 @@ export struct Reader {
   }
 
   u8[] bytes(this, i32 n) {
-    if (this.bad || n < 0 || this.at + n > this.end) { this.bad = true; return u8[0](); }
-    u8[] b = u8[n]();
+    if (this.bad || n < 0 || this.at + n > this.end) { this.bad = true; return u8[](); }
+    u8[] b = u8[].filled(n, 0);
     b.copyFrom(this.data, this.at, 0, n);
     this.at = this.at + n;
     return b;

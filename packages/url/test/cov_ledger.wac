@@ -61,16 +61,16 @@ const string PREFIX = "packages/url/";
 
 /** What the tests need: a process to ask Node's own `URL`, and the environment to find it. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/url/src/host.wac", 147, "if (hi < lo) { hi = lo; }", false,
+  return [
+        Pin("packages/url/src/host.wac", 147, "if (hi < lo) { hi = lo; }", false,
         "**A slice whose end is before its start.** `slicing` is private and has four callers, every " +
         "one of which passes a range it has just computed from a found index — `1` and `len - 1` " +
         "either side of a bracket, a label boundary, the two ends of a port. None can invert.\n" +
-        "         Kept, and `proven: false` rather than `true`: what it prevents is `u8[hi - lo]()` " +
+        "         Kept, and `proven: false` rather than `true`: what it prevents is `u8[].filled(hi - lo, 0)` " +
         "with a negative length, which traps. A guard whose absence turns a caller's arithmetic " +
         "mistake into a crash is worth one comparison, and the next caller to compute a range from " +
         "two searches that can both fail is the one that needs it."),
@@ -106,14 +106,14 @@ Pin[] pins() {
         "         Kept because a ladder with no final arm is a silent no-op if a state is ever added " +
         "and its case forgotten, and this is the shape that turns that into nothing happening rather " +
         "than into a diagnosis. Uncovered is what correct looks like here.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No trap cases: none of this package's 28 tests expects a trap.
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -121,5 +121,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

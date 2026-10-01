@@ -73,7 +73,7 @@ export i32 main(Core core, Cli cli) {
   // order gets index 0 and fails.
   Pending<i64> slow = core.sleepMillis(120);
   Pending<i64> quick = core.sleepMillis(10);
-  i32 first = core.waitAny(i32[](slow.id, quick.id), -1);
+  i32 first = core.waitAny([slow.id, quick.id], -1);
   core.log("wacland: stage 3 first " + itoa(first));
   // And each resolves its *own* value, which is what says the two tickets are separate rather than one
   // completion arriving twice.
@@ -82,7 +82,7 @@ export i32 main(Core core, Cli cli) {
 
   // Stage 4. A deadline with nothing ready, which must come back rather than hang.
   Pending<i64> never = core.sleepMillis(10000);
-  i32 late = core.waitAny(i32[](never.id), 30);
+  i32 late = core.waitAny([never.id], 30);
   core.log("wacland: stage 4 timeout " + itoa(late));
   // Cancelling says "discard the answer", not "stop trying" — so the sleep is still running and this
   // program is about to end anyway. Said here because the difference is the whole of what `cancel` is.
@@ -97,7 +97,7 @@ export i32 main(Core core, Cli cli) {
   //
   // `GRANT_NONE`, which is what a child that only prints needs. Grants are a ceiling of the parent's
   // own, so asking for more than this program has would not widen it anyway.
-  u8[][] childArgv = u8[][1](fill: u8[0]());
+  u8[][] childArgv = u8[][].filled(1, u8[]());
   childArgv[0] = "--child".toBytes();
   Child kid = cli.spawnSelf(childArgv, GRANT_NONE, "", false, false).wait();
   if (kid.unavailable()) {
@@ -114,7 +114,7 @@ export i32 main(Core core, Cli cli) {
   Pending<i32> over = cli.exitCode(kid.handle);
   Pending<i64> tick = core.sleepMillis(1000);
   // Both kinds in one list. The child finishes long before the second, so this must answer 0.
-  i32 which = core.waitAny(i32[](over.id, tick.id), -1);
+  i32 which = core.waitAny([over.id, tick.id], -1);
   core.log("wacland: stage 5 first " + itoa(which));
   match (said.wait()) {
     Data(bytes): { core.log("wacland: stage 5 heard " + string.fromBytes(bytes)); }
@@ -145,14 +145,14 @@ export i32 main(Core core, Cli cli) {
 
 /** Spawn a child with `grants` and answer what it said about the environment. */
 string childEnv(Core core, Cli cli, i32 grants) {
-  u8[][] argv = u8[][1](fill: u8[0]());
+  u8[][] argv = u8[][].filled(1, u8[]());
   argv[0] = "--canenv".toBytes();
   return said(core, cli, argv, grants);
 }
 
 /** Spawn a child with `grants` and answer what it said about reading. */
 string childSays(Core core, Cli cli, i32 grants) {
-  u8[][] argv = u8[][1](fill: u8[0]());
+  u8[][] argv = u8[][].filled(1, u8[]());
   argv[0] = "--canread".toBytes();
   return said(core, cli, argv, grants);
 }

@@ -42,7 +42,7 @@ import { G2, g2IsInfinity, g2AffineX, g2AffineY } from "./g2.wac";
  * looking for somewhere to happen.
  */
 i32[] ateNaf() {
-  i32[] d = i32[64]();
+  i32[] d = i32[].filled(64, 0);
   d[0] = 0; d[1] = -1; d[2] = 0; d[3] = 1; d[4] = 0; d[5] = 0; d[6] = 1; d[7] = 0; d[8] = 0; d[9] = 0; d[10] = 0; d[11] = 0;
   d[12] = 0; d[13] = 0; d[14] = 0; d[15] = 1; d[16] = 0; d[17] = 0; d[18] = 0; d[19] = 0; d[20] = 0; d[21] = 0; d[22] = 0; d[23] = 0;
   d[24] = 0; d[25] = 0; d[26] = 0; d[27] = 0; d[28] = 0; d[29] = 0; d[30] = 0; d[31] = 0; d[32] = 0; d[33] = 0; d[34] = 0; d[35] = 0;
@@ -153,7 +153,7 @@ export Fp12 millerLoop(u32[] px, u32[] py, Fp2 qx, Fp2 qy) {
 /** `f^|x|`, then conjugated — the exponentiation the hard part is built from. */
 Fp12 expByX(Fp12 f) {
   // |x| = 0xd201000000010000, 64 bits with six set. Square-and-multiply, most significant first.
-  const i32[] BITS = i32[](63, 62, 60, 57, 48, 16);
+  const i32[] BITS = [63, 62, 60, 57, 48, 16];
   Fp12 acc = fp12One();
   bool started = false;
   for (i32 b = 63; b >= 0; b--) {
@@ -238,8 +238,8 @@ export struct Pair {
 export Fp12 millerLoopMulti(Pair[] pairs) {
   i32[] naf = ateNaf();
   i32 n = pairs.len();
-  Fp2[] negQy = Fp2[n]();
-  Rp[] r = Rp[n]();
+  Fp2[] negQy = Fp2[].defaulted(n);
+  Rp[] r = Rp[].defaulted(n);
   for (i32 j = 0; j < n; j++) {
     negQy[j] = fp2Neg(pairs[j].qy);
     r[j] = Rp(fp2Copy(pairs[j].qx), fp2Copy(pairs[j].qy), fp2One());
@@ -272,7 +272,7 @@ export Fp12 millerLoopMulti(Pair[] pairs) {
  */
 export Fp12 millerLoopTwo(u32[] px1, u32[] py1, Fp2 qx1, Fp2 qy1,
                           u32[] px2, u32[] py2, Fp2 qx2, Fp2 qy2) {
-  Pair[] pairs = Pair[2]();
+  Pair[] pairs = Pair[].defaulted(2);
   pairs[0] = Pair(px1, py1, qx1, qy1);
   pairs[1] = Pair(px2, py2, qx2, qy2);
   return millerLoopMulti(pairs);

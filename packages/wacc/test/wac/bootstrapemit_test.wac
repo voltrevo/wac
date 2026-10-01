@@ -116,11 +116,11 @@ string driverSource() {
  */
 i32[] ladderAnswers(Cli cli, string file, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/ladderRun.ts", file, exports),
-                    u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return i32[want](); }
+  Exec r = cli.exec("deno", ["run", "-A", "harness/ladderRun.ts", file, exports],
+                    u8[]()).wait();
+  if (!r.ran() || r.status != 0) { return i32[].filled(want, 0); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  i32[] out = i32[want]();
+  i32[] out = i32[].filled(want, 0);
   i32 n = 0;
   for (i32 i = 0; i < lines.len() && n < want; i++) {
     if (trimmed(lines[i]).len() == 0) { continue; }
@@ -144,8 +144,8 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   if (!haveDriver) { return t.report(); }
 
   // The driver joins the map wacc compiles from, and the disk, which is where the reference looks.
-  string[] paths = string[c.paths.len() + 1](fill: "");
-  string[] sources = string[c.paths.len() + 1](fill: "");
+  string[] paths = string[].filled(c.paths.len() + 1, "");
+  string[] sources = string[].filled(c.paths.len() + 1, "");
   for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
   paths[c.paths.len()] = DRIVER;
 
@@ -161,7 +161,7 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   // **The canaries, from the reference.** A checksum of zero would mean the driver ran nothing, and
   // a driver that accepted the program it is supposed to reject proves nothing about either
   // compiler. Both are asked of the reference because it is the side that answers in full.
-  i32[] ok = i32[1]();
+  i32[] ok = i32[].filled(1, 0);
   i32[] canaries = ladderAnswers(cli, SELFDRIVE, "dumpSum,badErrorCount", 2, ok);
   t.eqI32(ok[0], 1, "the ladder's wacc ran the driver and answered both canaries");
   if (ok[0] != 1) { return t.report(); }
@@ -176,7 +176,7 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   // Ours: one compile, and the fold read back whole.
   string dir = scratchDir(cli);
   u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "bootdrive.wasm", 0);
-  Ran r = runModule(cli, wasm, dir, "bootdrive.wasm", string[]("fold"));
+  Ran r = runModule(cli, wasm, dir, "bootdrive.wasm", ["fold"]);
   cli.remove(DRIVER, false).wait();
   if (!r.ok || wasRejected(r) || r.trapped) {
     t.fail("wacc's module did not run — " + (r.ok ? r.stderr : r.error));

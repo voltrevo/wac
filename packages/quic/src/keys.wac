@@ -52,7 +52,7 @@ export u8[] transcriptOf(u8[] messages) { return sha256(messages); }
 
 /** Two runs joined, since a transcript is always "everything so far" plus what just arrived. */
 export u8[] joined(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -64,7 +64,7 @@ export u8[] prefix(u8[] b, i32 n) {
   i32 room = b.len();
   if (take > room) { take = room; }
   if (take < 0) { take = 0; }
-  u8[] out = u8[take]();
+  u8[] out = u8[].filled(take, 0);
   for (i32 i = 0; i < take; i++) { out[i] = b[i]; }
   return out;
 }
@@ -78,9 +78,9 @@ export u8[] prefix(u8[] b, i32 n) {
  */
 export InitialKeys packetKeys(u8[] secret) {
   return InitialKeys(
-    expandLabel(secret, "quic key".toBytes(), u8[0](), 16),
-    expandLabel(secret, "quic iv".toBytes(), u8[0](), 12),
-    expandLabel(secret, "quic hp".toBytes(), u8[0](), 16),
+    expandLabel(secret, "quic key".toBytes(), u8[](), 16),
+    expandLabel(secret, "quic iv".toBytes(), u8[](), 12),
+    expandLabel(secret, "quic hp".toBytes(), u8[](), 16),
   );
 }
 

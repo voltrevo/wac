@@ -39,7 +39,7 @@ string read(Core core, Cli cli, string path) {
 
 /** The lines of `s`, trimmed, with the empty ones dropped. */
 string[] lines(string s) {
-  string[] out = string[16384](fill: "");
+  string[] out = string[].filled(16384, "");
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= s.len() && n < out.len(); i++) {
@@ -48,7 +48,7 @@ string[] lines(string s) {
     if (line != "") { out[n] = line; n = n + 1; }
     from = i + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -64,7 +64,7 @@ bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.
  */
 string[] armsOf(string source) {
   string[] all = lines(source);
-  string[] out = string[64](fill: "");
+  string[] out = string[].filled(64, "");
   i32 n = 0;
   bool inside = false;
   for (i32 i = 0; i < all.len(); i++) {
@@ -80,7 +80,7 @@ string[] armsOf(string source) {
     // is compared as written.
     if (n < out.len()) { out[n] = squeezed(all[i]); n = n + 1; }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -158,14 +158,14 @@ export string test_the_two_rust_hosts_number_the_faults_the_same_way(Core core, 
 /** Every `const FAULT_X: i32 = N;`, squeezed — so a renumbering shows as a mismatch. */
 string[] constantsOf(string source) {
   string[] all = lines(source);
-  string[] out = string[32](fill: "");
+  string[] out = string[].filled(32, "");
   i32 n = 0;
   for (i32 i = 0; i < all.len() && n < out.len(); i++) {
     if (!startsWith(all[i], "const FAULT_")) { continue; }
     out[n] = squeezed(all[i]);
     n = n + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -233,7 +233,7 @@ export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core c
 
   // No execute bit, so the kernel refuses to walk into it. `chmod` through the shell because
   // `Cli` has no mode-setting capability beyond `setExecutable`, which sets rather than clears.
-  Exec locked = cli.exec("/bin/sh", string[]("-c", "chmod 000 '" + dir + "'"), u8[0]()).wait();
+  Exec locked = cli.exec("/bin/sh", ["-c", "chmod 000 '" + dir + "'"], u8[]()).wait();
   t.isTrue(locked.ran() && locked.status == 0, "the directory was locked");
   if (!locked.ran() || locked.status != 0) { return t.report(); }
 
@@ -241,7 +241,7 @@ export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core c
   Stat s = cli.stat(dir + "/inside.txt").wait();
 
   // Unlocked before the assertions, so a failure does not leave a directory the suite cannot remove.
-  cli.exec("/bin/sh", string[]("-c", "chmod 755 '" + dir + "'"), u8[0]()).wait();
+  cli.exec("/bin/sh", ["-c", "chmod 755 '" + dir + "'"], u8[]()).wait();
 
   t.isTrue(!r.ok, "reading through a locked directory failed");
   t.eqI32(r.fault, FAULT_DENIED(), "and the fault says denied rather than " + faultWords(r.fault));
@@ -278,15 +278,15 @@ export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core c
 export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/hostfaults-unnameable";
-  cli.exec("/bin/sh", string[]("-c", "rm -rf '" + dir + "'"), u8[0]()).wait();
+  cli.exec("/bin/sh", ["-c", "rm -rf '" + dir + "'"], u8[]()).wait();
   cli.mkdir(dir, true).wait();
 
   // A raw `0xFF` byte: a name the filesystem holds happily and UTF-8 cannot spell. Made through the
   // shell because a wac string cannot carry it *to* `writeFile` on a host that would mangle it on the
   // way out — which is the thing under test, so the fixture must not go through it.
   Exec made = cli.exec("/bin/sh",
-                       string[]("-c", "cd '" + dir + "' && touch \"$(printf 'bad-\\377-name')\""),
-                       u8[0]()).wait();
+                       ["-c", "cd '" + dir + "' && touch \"$(printf 'bad-\\377-name')\""],
+                       u8[]()).wait();
   t.isTrue(made.ran() && made.status == 0,
            "the fixture was made — " + string.fromBytes(made.stderr));
   if (!made.ran() || made.status != 0) { return t.report(); }
@@ -306,7 +306,7 @@ export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core
                + " (" + faultWords(s.fault) + ") — a caller acts on that by creating it");
   }
 
-  cli.exec("/bin/sh", string[]("-c", "rm -rf '" + dir + "'"), u8[0]()).wait();
+  cli.exec("/bin/sh", ["-c", "rm -rf '" + dir + "'"], u8[]()).wait();
   return t.report();
 }
 
@@ -329,7 +329,7 @@ export string test_the_two_rust_hosts_hand_the_seed_the_same_grants(Core core, C
   string v8 = read(core, cli, V8_HOST);
   string wasmtime = read(core, cli, WASMTIME_HOST);
 
-  string[] names = string[]("read", "write", "env", "net", "run");
+  string[] names = ["read", "write", "env", "net", "run"];
   for (i32 i = 0; i < names.len(); i++) {
     string grant = names[i];
     bool inV8 = v8.indexOf("grants." + grant + " = true") >= 0

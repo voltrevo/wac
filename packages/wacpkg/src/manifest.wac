@@ -68,7 +68,7 @@ export string manifestWhy(i32 code) {
  * and `Core` are somebody else's names and stay theirs.
  */
 export bool isReservedName(string name) {
-  string[] roots = string[]("core", "std");
+  string[] roots = ["core", "std"];
   for (i32 i = 0; i < roots.len(); i++) {
     string r = roots[i];
     if (name == r || name == r + "/") { return true; }
@@ -101,7 +101,7 @@ export struct Manifest {
   Mapping[] imports;
 }
 
-Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, Mapping[0]()); }
+Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, Mapping[]()); }
 
 /** The manifest in `src`, checked. An empty document — or one with no `imports` — is valid. */
 export Manifest readManifest(u8[] src) {
@@ -115,7 +115,7 @@ export Manifest readManifest(u8[] src) {
   }
 
   JsonValue? importsVal = root.getStr("imports");
-  if (importsVal is null) { return Manifest(true, M_OK(), "", Mapping[0]()); }
+  if (importsVal is null) { return Manifest(true, M_OK(), "", Mapping[]()); }
 
   JsonObject table = JsonObject.create();
   match (importsVal!) {
@@ -123,7 +123,7 @@ export Manifest readManifest(u8[] src) {
     default: { return failed(M_IMPORTS_KIND(), "imports"); }
   }
 
-  Mapping[] out = Mapping[table.count]();
+  Mapping[] out = Mapping[].defaulted(table.count);
   for (i32 i = 0; i < table.count; i++) {
     JsonMember m = table.at(i);
     string name = m.keyStr();
@@ -348,7 +348,7 @@ string normalise(string path) {
   // slashes, so the array cannot overflow and there is no branch to get wrong.
   i32 slashes = 0;
   for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { slashes = slashes + 1; } }
-  string[] parts = string[slashes + 1](fill: "");
+  string[] parts = string[].filled(slashes + 1, "");
   i32 n = 0;
   i32 start = 0;
   for (i32 i = 0; i <= path.len(); i++) {

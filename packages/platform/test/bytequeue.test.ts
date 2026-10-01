@@ -5,7 +5,7 @@
 // invisible unless somebody is reading as the writes arrive, because a reader that only starts after
 // the queue has ended finds the empty chunk buffered in the middle and stops there too.
 //
-// `packages/sh`'s `true` returns `Output.ok(u8[0]())`, so the shell writes zero bytes and
+// `packages/sh`'s `true` returns `Output.ok(u8[].filled(0, 0))`, so the shell writes zero bytes and
 // `echo one; true; echo two` printed `one` alone through a spawned shell. `push` drops empty writes
 // now; nothing is lost, because there is nothing in them.
 

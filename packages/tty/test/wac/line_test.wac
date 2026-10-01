@@ -56,7 +56,7 @@ import { Loaded, Vector, find, load, pty, vectorsPath } from "./replay.wac";
  */
 export string test_the_oracle_is_the_configuration_this_module_implements(Core core, Cli cli) {
   T t = T.create();
-  string said = string.fromBytes(pty(core, cli, "stty -a", u8[0]()));
+  string said = string.fromBytes(pty(core, cli, "stty -a", u8[]()));
   // As *tokens*, not as substrings. `stty -a` prints `-echoprt` and `-echonl`, so asking whether the
   // output "includes echo" is a check that cannot fail — which is the shape this repo keeps finding
   // in its own measurements and would be a poor thing to add while writing about it.
@@ -64,7 +64,7 @@ export string test_the_oracle_is_the_configuration_this_module_implements(Core c
   t.isTrue(hasSetting(said, "erase", "^?"), "erase is DEL in this pty: " + said);
   t.isTrue(hasSetting(said, "kill", "^U"), "kill is ^U in this pty: " + said);
   t.isTrue(hasSetting(said, "werase", "^W"), "werase is ^W in this pty: " + said);
-  string[] on = string[]("icanon", "echo", "echoe", "isig");
+  string[] on = ["icanon", "echo", "echoe", "isig"];
   for (i32 i = 0; i < on.len(); i++) {
     t.isTrue(hasToken(flags, on[i]),
              "this pty has `" + on[i] + "`, so it is what packages/tty implements: " + said);
@@ -206,7 +206,7 @@ u8[] ours(u8[] typed) { return ttycatBytes(typed, "canonical"); }
 
 /** `stty -a`'s output split on whitespace and semicolons. */
 string[] tokens(string s) {
-  string[] out = string[512](fill: "");
+  string[] out = string[].filled(512, "");
   i32 n = 0;
   i32 from = 0;
   u8[] b = s.toBytes();
@@ -217,7 +217,7 @@ string[] tokens(string s) {
     if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
     from = i + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

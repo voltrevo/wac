@@ -246,8 +246,8 @@ export struct Identity {
  * The seed is the whole of the relay's secrecy; see the note in `rsagen.wac`.
  */
 export Identity deriveIdentity(u8[] seed, i64 now) {
-  Identity bad = Identity(false, u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](),
-                          u8[0](), u8[0](), u8[0](), u8[0](), u8[0]());
+  Identity bad = Identity(false, u8[](), u8[](), u8[](), u8[](), u8[](), u8[](), u8[](),
+                          u8[](), u8[](), u8[](), u8[](), u8[]());
   if (seed.len() != 32) { return bad; }
 
   // Each key from its own tweak of the seed, so no two are derived from the same bytes.
@@ -308,27 +308,29 @@ export u8[] identityCerts(Identity id, i64 now) {
   u8[] rsaId = selfSignedRsa("Tor relay identity", now, now - HOUR, now + 365 * 24 * HOUR,
                              id.rsaModulus, id.rsaExponent, id.rsaPrivate);
   if (signing.len() == 0 || link.len() == 0 || cross.len() == 0 || rsaId.len() == 0) {
-    return u8[0]();
+    return u8[]();
   }
 
-  u8[][] certs = u8[][4]();
+  u8[][] certs = u8[][].defaulted(4);
   certs[0] = rsaId;
   certs[1] = signing;
   certs[2] = link;
   certs[3] = cross;
-  return certsCell(i32[](CERT_TYPE_RSA_ID, CERT_TYPE_SIGNING, CERT_TYPE_LINK,
-                         CERT_TYPE_RSA_CROSSCERT), certs);
+  return certsCell([
+                         CERT_TYPE_RSA_ID, CERT_TYPE_SIGNING, CERT_TYPE_LINK,
+                         CERT_TYPE_RSA_CROSSCERT
+  ], certs);
 }
 
 u8[] tweak(u8[] seed, i32 label) {
-  u8[] input = u8[seed.len() + 1]();
+  u8[] input = u8[].filled(seed.len() + 1, 0);
   for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
   input[seed.len()] = label;
   return sha256(input);
 }
 
 u8[] clampScalar(u8[] s) {
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = s[i]; }
   out[0] = out[0] & 248;
   out[31] = (out[31] & 127) | 64;
@@ -344,7 +346,7 @@ u8[] clampScalar(u8[] s) {
  * publish needs it, because `onion-key` and `onion-key-crosscert` are not optional in a descriptor.
  */
 export RsaKey deriveTapOnionKey(u8[] seed) {
-  if (seed.len() != 32) { return RsaKey(false, u8[0](), u8[0](), u8[0](), u8[0](), u8[0]()); }
+  if (seed.len() != 32) { return RsaKey(false, u8[](), u8[](), u8[](), u8[](), u8[]()); }
   return generateRsaKey(1024, tweak(seed, 6));
 }
 
@@ -358,7 +360,7 @@ export RsaKey deriveTapOnionKey(u8[] seed) {
 export u8[] ownDescriptor(
   Identity id, RsaKey tap, string nickname, string address, i32 orPort, i64 now
 ) {
-  if (!id.ok || !tap.ok) { return u8[0](); }
+  if (!id.ok || !tap.ok) { return u8[](); }
   RelayKeys keys = RelayKeys(
     id.rsaModulus, id.rsaExponent, id.rsaPrivate,
     tap.modulus, tap.publicExponent, tap.privateExponent,
@@ -389,7 +391,7 @@ export i32 main(Core core, Cli cli) {
   string microConsensusPath = "";
   string microdescPath = "";
   string certPath = "";
-  string[] descPaths = string[0]();
+  string[] descPaths = string[]();
   i32 argc = cli.argCount().wait();
   for (i32 i = 0; i < argc; i++) {
     string a = string.fromBytes(cli.arg(i).wait());
@@ -446,7 +448,7 @@ export i32 main(Core core, Cli cli) {
     core.warn("relayd: the seed file must be at least 32 bytes");
     return 1;
   }
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = seedFile.bytes[i]; }
 
   i64 now = core.nowMillis().wait() / 1000;
@@ -560,7 +562,7 @@ export i32 main(Core core, Cli cli) {
   // is the whole reason this is not a loop that serves one connection to completion.
   // `Conn?` because a struct array needs a default and a half-built connection is not a thing
   // this program should be able to name. `live` is the count that is real.
-  Conn?[] conns = Conn?[MAX_CONNS]();
+  Conn?[] conns = Conn?[].defaulted(MAX_CONNS);
   i32 live = 0;
   // Connections are numbered from one for the log. `live` is a position in an array that compacts,
   // so it names a different connection over time and is no use for telling them apart.
@@ -636,9 +638,9 @@ Fed unpackFeed(u8[] packed) {
 }
 
 u8[] takeVec(u8[] b, i32 at) {
-  if (at + 4 > b.len()) { return u8[0](); }
+  if (at + 4 > b.len()) { return u8[](); }
   i32 n = (b[at] * 16777216) + (b[at + 1] * 65536) + (b[at + 2] * 256) + b[at + 3];
-  if (at + 4 + n > b.len()) { return u8[0](); }
+  if (at + 4 + n > b.len()) { return u8[](); }
   return slice(b, at + 4, at + 4 + n);
 }
 
@@ -781,7 +783,7 @@ struct Circ {
  * something real to hold.
  */
 Circ newCirc(Core core, Cli cli, i32 circId, Hop hop, Pending<Read> idle, u8[] kh) {
-  return Circ(circId, hop, false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false), 0, idle,
+  return Circ(circId, hop, false, Link(core, cli, "", -1, u8[](), u8[](), true, u8[](), false), 0, idle,
               -1, Buf.create(), false, -1, -1, idle, 0, 0, 0, 0, false, 0, 0,
               kh, false, false, false, -1, -1);
 }
@@ -965,8 +967,8 @@ Conn newConn(Core core, Cli cli, Socket sock, Identity id, i32 connId) {
   u8[] tls = tlsServerInitRsa(id.tlsCertDer, id.linkModulus, id.linkExponent, id.linkPrivate,
                               clampScalar(tweak(id.tlsSeed, 6)), core.randomBytes(32).wait());
   Pending<Read> first = cli.recv(sock.handle);
-  return Conn(true, connId, sock.handle, sock, tls, u8[0](), u8[0](), false, false,
-              Circ?[MAX_CIRCS](), 0, 0, first, false);
+  return Conn(true, connId, sock.handle, sock, tls, u8[](), u8[](), false, false,
+              Circ?[].defaulted(MAX_CIRCS), 0, 0, first, false);
 }
 
 /** The circuit with this id on this connection, or -1. */
@@ -1049,8 +1051,8 @@ bool startsWith(u8[] doc, string keyword) {
 
 /** The empty set — what a relay serves before its documents exist, and answers 404 from. */
 DirDocuments none() {
-  return DirDocuments(u8[0](), u8[0](), u8[0](), u8[0](), u8[][0](), u8[0](),
-                      u8[0](), u8[][0](), u8[][0](), u8[][0]());
+  return DirDocuments(u8[](), u8[](), u8[](), u8[](), u8[][](), u8[](),
+                      u8[](), u8[][](), u8[][](), u8[][]());
 }
 
 
@@ -1082,7 +1084,7 @@ string certificateFingerprint(u8[] cert) {
   i32 from = at + 12;
   i32 to = from;
   while (to < cert.len() && cert[to] != 10 && cert[to] != 13) { to = to + 1; }
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = from; i < to; i++) { out[i - from] = cert[i]; }
   return string.fromBytes(out);
 }
@@ -1114,7 +1116,7 @@ string certificateFingerprint(u8[] cert) {
 string verifiedAgainst(u8[] consensus, u8[] certFile, i64 now, string what) {
   string fp = certificateFingerprint(certFile);
   if (fp == "") { return "the certificate has no fingerprint line, so there is no authority to trust"; }
-  string[] trusted = string[1]();
+  string[] trusted = string[].defaulted(1);
   trusted[0] = fp;
   AuthorityCert[] certs = parseCertificates(certFile, trusted);
   if (certs.len() == 0) {
@@ -1166,8 +1168,8 @@ DirLoad loadDocuments(Core core, Cli cli, string consensusPath, string certPath,
   // The descriptors too, because tor asks for them over BEGIN_DIR as readily as for the consensus.
   // Leaving them out did not make it ask elsewhere: it read our 404's ten-byte body as "server info"
   // eight times over and stayed at 0/2 usable descriptors.
-  u8[] descriptors = u8[0]();
-  u8[][] digests = u8[][descPaths.len()]();
+  u8[] descriptors = u8[]();
+  u8[][] digests = u8[][].defaulted(descPaths.len());
   for (i32 di = 0; di < descPaths.len(); di++) {
     FileResult df = cli.readFile(descPaths[di]).wait();
     if (!df.ok) {
@@ -1182,9 +1184,9 @@ DirLoad loadDocuments(Core core, Cli cli, string consensusPath, string certPath,
   //
   // The `m` digests are computed here rather than passed in, exactly as a real cache does: it stores
   // microdescriptors keyed by their own digest, so the key and the document cannot disagree.
-  u8[] microCons = u8[0]();
-  u8[] micros = u8[0]();
-  u8[][] microDigests = u8[][0]();
+  u8[] microCons = u8[]();
+  u8[] micros = u8[]();
+  u8[][] microDigests = u8[][]();
   if (microConsensusPath != "" && microdescPath != "") {
     FileResult mcf = cli.readFile(microConsensusPath).wait();
     FileResult mdf = cli.readFile(microdescPath).wait();
@@ -1210,8 +1212,8 @@ DirLoad loadDocuments(Core core, Cli cli, string consensusPath, string certPath,
            (micros.len() == 0 ? ""
                               : ", plus " + itoa(microDigests.len()) + " microdescriptor(s)"));
   return DirLoad(DirDocuments(cf.bytes, microCons, kf.bytes, descriptors, digests,
-                              dirSourceFingerprint(cf.bytes), micros, microDigests, u8[][0](),
-                              u8[][0]()), true, "");
+                              dirSourceFingerprint(cf.bytes), micros, microDigests, u8[][](),
+                              u8[][]()), true, "");
 }
 
 /**
@@ -1228,7 +1230,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
       // stream that failed mid-flight is not a stream that finished, and a client that reads `DONE`
       // has been told its data arrived. `issues/system/0255c`.
       bool failed = false;
-      u8[] payload = u8[0]();
+      u8[] payload = u8[]();
       match (r) {
         Data(bytes): { payload = bytes; open = true; }
         End: { }
@@ -1310,7 +1312,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
     }
 
 
-    u8[] incoming = u8[0]();
+    u8[] incoming = u8[]();
     bool live = false;
     match (r) {
       Data(bytes): {
@@ -1520,7 +1522,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
             continue;
           }
           c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relayIntroEstablished(), 0, u8[0]()));
+                           sendToClient(k.hop, k.circId, relayIntroEstablished(), 0, u8[]()));
           core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) +
                    " is an introduction point");
           continue;
@@ -1563,7 +1565,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
             continue;
           }
           c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relayRendezvousEstablished(), 0, u8[0]()));
+                           sendToClient(k.hop, k.circId, relayRendezvousEstablished(), 0, u8[]()));
           core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) +
                    " is waiting at a rendezvous");
           continue;
@@ -1651,7 +1653,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           if (k.cellsInCirc % CIRCUIT_SENDME_EVERY == 0) {
             // Stream x.id 0 is what makes it circuit-level rather than about one stream.
             c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relaySendme(), 0, u8[0]()));
+                           sendToClient(k.hop, k.circId, relaySendme(), 0, u8[]()));
             core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) + " SENDME after " +
                      itoa(k.cellsInCirc) + " cells");
           }
@@ -1661,7 +1663,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           k.cellsInStream = k.cellsInStream + 1;
           if (k.cellsInStream % STREAM_SENDME_EVERY == 0) {
             c.tls = sendCell(cli, c.sockObj, c.tls,
-                           sendToClient(k.hop, k.circId, relaySendme(), k.streamId, u8[0]()));
+                           sendToClient(k.hop, k.circId, relaySendme(), k.streamId, u8[]()));
           }
           k.streamIn = k.streamIn + inbound.data.len();
           if (!cli.send(k.streamSock, inbound.data).wait()) {
@@ -1700,7 +1702,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           // CONNECTED with an empty payload: a directory stream has no address to report, unlike the
           // BEGIN it otherwise resembles.
           c.tls = sendCell(cli, c.sockObj, c.tls,
-                         sendToClient(k.hop, k.circId, relayConnected(), k.dirStream, u8[0]()));
+                         sendToClient(k.hop, k.circId, relayConnected(), k.dirStream, u8[]()));
           core.log("relayd: [" + itoa(c.id) + "]  a directory stream opened as " + itoa(k.dirStream));
           continue;
         }
@@ -1824,7 +1826,7 @@ struct Extended {
  * is extending to, which is why `parseExtend2` hands over opaque bytes and this does not inspect them.
  */
 Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
-  Extended bad = Extended(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false), 0, u8[0]());
+  Extended bad = Extended(false, Link(core, cli, "", -1, u8[](), u8[](), true, u8[](), false), 0, u8[]());
 
   Extend want = parseExtend2(extendBody);
   if (!want.ok) {
@@ -1912,7 +1914,7 @@ Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
 /** Twenty random bytes: half the key material of a CREATE_FAST handshake. */
 u8[] randomBytes20(Core core) {
   u8[] r = core.randomBytes(32).wait();
-  u8[] out = u8[20]();
+  u8[] out = u8[].filled(20, 0);
   for (i32 i = 0; i < 20; i++) { out[i] = r[i]; }
   return out;
 }
@@ -1927,7 +1929,7 @@ u8[] sendCell(Cli cli, Socket conn, u8[] tls, u8[] cell) {
 /** The peer's address as four bytes, or 127.0.0.1 when it cannot be read. */
 u8[] peerIpv4(string peer) {
   u8[] text = peer.toBytes();
-  u8[] out = u8[4]();
+  u8[] out = u8[].filled(4, 0);
   i32 part = 0;
   i32 value = -1;
   for (i32 i = 0; i <= text.len() && part < 4; i++) {
@@ -1947,10 +1949,10 @@ u8[] peerIpv4(string peer) {
   return (part == 4) ? out : loopback();
 }
 
-u8[] loopback() { return u8[](127, 0, 0, 1); }
+u8[] loopback() { return [127, 0, 0, 1] as u8[]; }
 
 u8[] concat(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -1959,7 +1961,7 @@ u8[] concat(u8[] a, u8[] b) {
 
 string hex(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();
-  u8[] out = u8[b.len() * 2]();
+  u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i * 2] = digits[(b[i] >> 4) & 0xF];
     out[i * 2 + 1] = digits[b[i] & 0xF];
@@ -1979,7 +1981,7 @@ i32 parseInt(string s) {
 
 /** A one-byte RELAY_END body carrying `reason`. */
 export u8[] endWith(i32 reason) {
-  u8[] r = u8[1]();
+  u8[] r = u8[].filled(1, 0);
   // Assigned as `i32` and narrowed by the array, which is how every byte writer in this repository
   // does it — `packages/quic/src/varint.wac` says so in as many words: "an explicit `as~ u8` is what
   // `wacc` declines, and it was never needed". The diagnostic for trying is worth knowing, because it
@@ -2041,14 +2043,14 @@ export u8[] endForFault(i32 fault) {
 }
 
 string[] pushString(string[] xs, string x) {
-  string[] out = string[xs.len() + 1]();
+  string[] out = string[].defaulted(xs.len() + 1);
   for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
   out[xs.len()] = x;
   return out;
 }
 
 u8[] joinBytes(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -2061,7 +2063,7 @@ u8[] joinBytes(u8[] a, u8[] b) {
  * not to cache it — honest for a testnet exit that connects to one loopback address.
  */
 u8[] connectedBody() {
-  u8[] b = u8[8]();
+  u8[] b = u8[].filled(8, 0);
   b[0] = 127;
   b[3] = 1;
   return b;

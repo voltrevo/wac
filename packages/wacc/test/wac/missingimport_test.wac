@@ -46,7 +46,7 @@ export string test_an_import_of_a_file_nobody_supplied_is_refused_when_checked_a
   //
   // Worth keeping as a shape: a rule reverted for false alarms is evidence about the machinery it
   // consults as often as about the rule. This one was right the day it was written.
-  i32[] files = dumpTypeErrorsFiles(string[]("/main.wac"), string[](main), "/main.wac");
+  i32[] files = dumpTypeErrorsFiles(["/main.wac"], [main], "/main.wac");
   t.isTrue(nOf(files) > 0, "the files-based entry point is silent again — `issues/lang/0157`'s other " +
                            "half, which reports at the import's own token");
   return t.report();
@@ -55,9 +55,11 @@ export string test_an_import_of_a_file_nobody_supplied_is_refused_when_checked_a
 export string test_a_supplied_relative_import_is_accepted() {
   T t = T.create();
   i32[] out = dumpTypeErrorsFiles(
-    string[]("/main.wac", "/b.wac"),
-    string[]("import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n",
-             "export i32 foo() { return 1; }\n"), "/main.wac");
+    ["/main.wac", "/b.wac"],
+    [
+             "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n",
+             "export i32 foo() { return 1; }\n"
+    ], "/main.wac");
   t.eqI32(nOf(out), 0, "a supplied relative import is refused — " + itoa(nOf(out)) + " diagnostics");
   return t.report();
 }
@@ -78,11 +80,13 @@ export string test_the_builtin_trees_are_not_missing_files() {
 export string test_a_real_two_file_program_is_unaffected() {
   T t = T.create();
   i32[] out = dumpTypeErrorsFiles(
-    string[]("/main.wac", "/lib.wac"),
-    string[]("import { E, add } from \"/lib.wac\";\n" +
+    ["/main.wac", "/lib.wac"],
+    [
+             "import { E, add } from \"/lib.wac\";\n" +
              "import { Core, Cli } from \"std/platform.wac\";\n" +
              "export i32 f() { E e = E.A; return add(1, 2); }\n",
-             "export enum E { A, B }\nexport i32 add(i32 a, i32 b) { return a + b; }\n"),
+             "export enum E { A, B }\nexport i32 add(i32 a, i32 b) { return a + b; }\n"
+    ],
     "/main.wac");
   t.eqI32(nOf(out), 0, "a two-file program with a std import is refused — " + itoa(nOf(out)) +
                        " diagnostics");
@@ -120,7 +124,7 @@ export string test_a_mistyped_builtin_path_is_refused() {
 export string test_the_emitter_names_the_file_it_could_not_find() {
   T t = T.create();
   string main = "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n";
-  string why = blockedFiles(string[]("/main.wac"), string[](main), "/main.wac");
+  string why = blockedFiles(["/main.wac"], [main], "/main.wac");
   t.isTrue(why != "", "the emitter accepted an import of a file nobody supplied");
   t.isTrue(why.indexOf("not supplied") >= 0, "refused for another reason — " + why);
   // **The key, not the specifier.** `./b.wac` from `/main.wac` resolves to `/b.wac`, and the resolved
@@ -142,9 +146,11 @@ export string test_it_names_the_importer_and_the_specifier() {
   // Two files, and the *second* one has the bad import — so the importer named cannot be the entry by
   // accident.
   string why = blockedFiles(
-      string[]("/app/main.wac", "/app/lib.wac"),
-      string[]("import { x } from \"./lib.wac\";\nexport i32 f() { return x(); }\n",
-               "import { y } from \"../shared/util.wac\";\nexport i32 x() { return y(); }\n"),
+      ["/app/main.wac", "/app/lib.wac"],
+      [
+               "import { x } from \"./lib.wac\";\nexport i32 f() { return x(); }\n",
+               "import { y } from \"../shared/util.wac\";\nexport i32 x() { return y(); }\n"
+      ],
       "/app/main.wac");
   t.isTrue(why.indexOf("/shared/util.wac") >= 0, "did not name the key — " + why);
   t.isTrue(why.indexOf("/app/lib.wac") >= 0, "did not name the importer — " + why);
@@ -155,8 +161,7 @@ export string test_it_names_the_importer_and_the_specifier() {
 /** A deeper path, so the name is not just the specifier echoed back. */
 export string test_and_it_names_a_nested_one() {
   T t = T.create();
-  string why = blockedFiles(string[]("/main.wac"), string[](
-      "import { foo } from \"./sub/deep/gone.wac\";\nexport i32 f() { return foo(); }\n"),
+  string why = blockedFiles(["/main.wac"], ["import { foo } from \"./sub/deep/gone.wac\";\nexport i32 f() { return foo(); }\n"],
       "/main.wac");
   t.isTrue(why.indexOf("/sub/deep/gone.wac") >= 0, "did not name the nested file — " + why);
   return t.report();
@@ -172,9 +177,11 @@ export string test_and_it_names_a_nested_one() {
 export string test_the_parts_of_a_missing_import_are_answerable() {
   T t = T.create();
   string parts = missingImportFiles(
-      string[]("/app/main.wac", "/app/lib.wac"),
-      string[]("import { x } from \"./lib.wac\";\nexport i32 f() { return x(); }\n",
-               "import { y } from \"../shared/util.wac\";\nexport i32 x() { return y(); }\n"),
+      ["/app/main.wac", "/app/lib.wac"],
+      [
+               "import { x } from \"./lib.wac\";\nexport i32 f() { return x(); }\n",
+               "import { y } from \"../shared/util.wac\";\nexport i32 x() { return y(); }\n"
+      ],
       "/app/main.wac");
   // Tab-separated, in the order a reader needs them: what to look for, where to look, what to find.
   t.eqStr(parts, "/shared/util.wac\t/app/lib.wac\t../shared/util.wac", "the parts");
@@ -185,9 +192,11 @@ export string test_the_parts_of_a_missing_import_are_answerable() {
 export string test_and_nothing_when_the_link_is_fine() {
   T t = T.create();
   string parts = missingImportFiles(
-      string[]("/main.wac", "/b.wac"),
-      string[]("import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n",
-               "export i32 foo() { return 1; }\n"),
+      ["/main.wac", "/b.wac"],
+      [
+               "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n",
+               "export i32 foo() { return 1; }\n"
+      ],
       "/main.wac");
   t.eqStr(parts, "", "a program that links reported a missing import");
   return t.report();

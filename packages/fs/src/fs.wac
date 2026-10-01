@@ -446,7 +446,7 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     // Truncate now, through the ordinary write, so that every check `writeFile` makes — the mount is
     // writable, the path is not a directory, the parent exists — happens once and in one place.
-    Change made = this.writeFile(full, u8[0]());
+    Change made = this.writeFile(full, u8[]());
     if (made.fault != FAULT_NONE()) { return made; }
     this.outPath = full;
     this.outMount = mi;
@@ -539,7 +539,7 @@ export struct Fs {
   FileResult readFile(this, string path) {
     path = this.at(path);
     i32 mi = this.mountOf(path);
-    if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    if (mi < 0) { return FileResult.of(false, u8[](), "no such file or directory", FAULT_NOT_FOUND()); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       Host(cli): { return cli.readFile(path).wait(); }
@@ -553,7 +553,7 @@ export struct Fs {
     i32 node = this.find(m, path);
     if (node < 0) { return absentRead(node); }
     if (!this.may(node, 4)) {
-      return FileResult.of(false, u8[0](), "permission denied", FAULT_DENIED());
+      return FileResult.of(false, u8[](), "permission denied", FAULT_DENIED());
     }
     if (this.nodes.get(node).isDir) {
       // `FAULT_IS_DIR`, which is the category 0067 asked for and did not have: this used to be
@@ -561,7 +561,7 @@ export struct Fs {
       // `faults.ts` had no better word for `EISDIR`. Both sides know now, so a memory filesystem and a
       // real one give a program the same answer to the same mistake — which is the whole point of the
       // categories, and was not true here.
-      return FileResult.of(false, u8[0](), "Is a directory", FAULT_IS_DIR());
+      return FileResult.of(false, u8[](), "Is a directory", FAULT_IS_DIR());
     }
     return FileResult.of(true, this.nodes.get(node).bytes(), "", FAULT_NONE());
   }
@@ -575,9 +575,9 @@ export struct Fs {
    */
   FileResult readSome(this, string path, i32 n) {
     path = this.at(path);
-    if (n < 0) { return FileResult.of(false, u8[0](), "a negative length", FAULT_OTHER()); }
+    if (n < 0) { return FileResult.of(false, u8[](), "a negative length", FAULT_OTHER()); }
     i32 mi = this.mountOf(path);
-    if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    if (mi < 0) { return FileResult.of(false, u8[](), "no such file or directory", FAULT_NOT_FOUND()); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       Synth(rand): { return synthRead(this, m, path, rand, n); }
@@ -589,7 +589,7 @@ export struct Fs {
     }
     FileResult whole = this.readFile(path);
     if (!whole.ok || whole.bytes.len() <= n) { return whole; }
-    u8[] cut = u8[n]();
+    u8[] cut = u8[].filled(n, 0);
     cut.copyFrom(whole.bytes, 0, 0, n);
     return FileResult.of(true, cut, "", FAULT_NONE());
   }
@@ -1141,8 +1141,8 @@ export Change absentChange(i32 node) {
 /** The same, for a read. */
 export FileResult absentRead(i32 node) {
   return node == NODE_NOT_A_DIR()
-    ? FileResult.of(false, u8[0](), "Not a directory", FAULT_NOT_A_DIR())
-    : FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());
+    ? FileResult.of(false, u8[](), "Not a directory", FAULT_NOT_A_DIR())
+    : FileResult.of(false, u8[](), "no such file or directory", FAULT_NOT_FOUND());
 }
 
 /**
@@ -1185,7 +1185,7 @@ string[] withMountsUnder(Fs fs, string path, string[] own) {
     sortNames(own);
     return own;
   }
-  string[] all = string[own.len() + extra.len()](fill: "");
+  string[] all = string[].filled(own.len() + extra.len(), "");
   for (i32 i = 0; i < own.len(); i++) { all[i] = own[i]; }
   for (i32 i = 0; i < extra.len(); i++) { all[own.len() + i] = extra.get(i); }
   sortNames(all);
@@ -1326,29 +1326,29 @@ string procStatus(Proc p) {
 FileResult synthRead(Fs fs, Mount m, string path, fn<Pending<u8[]>(i32)> randomBytes, i32 n) {
   i32 kind = synthKind(fs, m, path);
   if (kind == SYNTH_NONE()) {
-    return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());
+    return FileResult.of(false, u8[](), "no such file or directory", FAULT_NOT_FOUND());
   }
-  if (kind == SYNTH_DIR()) { return FileResult.of(false, u8[0](), "is a directory", FAULT_OTHER()); }
-  if (kind == SYNTH_NULL()) { return FileResult.of(true, u8[0](), "", FAULT_NONE()); }
+  if (kind == SYNTH_DIR()) { return FileResult.of(false, u8[](), "is a directory", FAULT_OTHER()); }
+  if (kind == SYNTH_NULL()) { return FileResult.of(true, u8[](), "", FAULT_NONE()); }
   if (kind == SYNTH_PROGRAM()) {
     u8[] all = programBytes(path.slice(m.at.len() + 1, path.len()));
     if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
-    u8[] cut = u8[n]();
+    u8[] cut = u8[].filled(n, 0);
     cut.copyFrom(all, 0, 0, n);
     return FileResult.of(true, cut, "", FAULT_NONE());
   }
   if (kind == SYNTH_CMDLINE() || kind == SYNTH_COMM() || kind == SYNTH_STATUS()) {
     u8[] all = procBytes(fs, m, path, kind);
     if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
-    u8[] cut = u8[n]();
+    u8[] cut = u8[].filled(n, 0);
     cut.copyFrom(all, 0, 0, n);
     return FileResult.of(true, cut, "", FAULT_NONE());
   }
   if (n < 0) {
-    return FileResult.of(false, u8[0](),
+    return FileResult.of(false, u8[](),
       "this file has no end: read a fixed number of bytes from it instead", FAULT_OTHER());
   }
-  if (kind == SYNTH_ZERO()) { return FileResult.of(true, u8[n](fill: 0), "", FAULT_NONE()); }
+  if (kind == SYNTH_ZERO()) { return FileResult.of(true, u8[].filled(n, 0), "", FAULT_NONE()); }
   return FileResult.of(true, randomBytes(n).wait(), "", FAULT_NONE());
 }
 
@@ -1375,7 +1375,7 @@ u8[] programBytes(string name) {
 u8[] procBytes(Fs fs, Mount m, string path, i32 kind) {
   i32 pid = procPid(fs, path.slice(m.at.len(), path.len()));
   Proc? found = fs.procs.find(pid);
-  if (found is null) { return u8[0](); }
+  if (found is null) { return u8[](); }
   Proc p = found!;
   if (kind == SYNTH_CMDLINE()) { return p.cmdline().toBytes(); }
   if (kind == SYNTH_COMM()) { return (p.comm() + "\n").toBytes(); }
@@ -1402,19 +1402,19 @@ string[]? synthDir(Fs fs, Mount m, string path) {
   i32 kind = synthKind(fs, m, path);
   if (kind != SYNTH_DIR()) { return null; }
   string rest = path.slice(m.at.len(), path.len());
-  if (m.at == "/dev") { return string[]("null", "random", "urandom", "zero"); }
+  if (m.at == "/dev") { return ["null", "random", "urandom", "zero"]; }
   if (m.at == "/bin") {
-    string[] names = string[fs.programs.len()](fill: "");
+    string[] names = string[].filled(fs.programs.len(), "");
     for (i32 i = 0; i < fs.programs.len(); i++) { names[i] = fs.programs.get(i); }
     sortNames(names);
     return names;
   }
-  if (rest != "" && rest != "/") { return string[]("cmdline", "comm", "status"); }
+  if (rest != "" && rest != "/") { return ["cmdline", "comm", "status"]; }
   // `/proc` itself: every pid, and `self`. Linux lists a great deal more here — `uptime`, `meminfo`,
   // `mounts` — and each of those is a fact this system would have to have to answer, so the ones it
   // has not got are absent rather than empty.
   i32[] pids = fs.procs.pids();
-  string[] names = string[pids.len() + 1](fill: "");
+  string[] names = string[].filled(pids.len() + 1, "");
   for (i32 i = 0; i < pids.len(); i++) { names[i] = itoa(pids[i]); }
   names[pids.len()] = "self";
   sortNames(names);

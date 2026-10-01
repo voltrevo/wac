@@ -56,8 +56,8 @@ string field(string line, i32 n) {
 
 export string test_every_crossing_type_reaches_the_metadata_past_the_size_of_the_table() {
   T t = T.create();
-  string[] paths = string[](ENTRY);
-  string[] sources = string[](program());
+  string[] paths = [ENTRY];
+  string[] sources = [program()];
 
   string wire = bindTypesFiles(paths, sources, ENTRY);
   string[] lines = splitLines(wire);
@@ -67,14 +67,14 @@ export string test_every_crossing_type_reaches_the_metadata_past_the_size_of_the
   //
   // **Columns 1 and 2 are both the name here**, so reading the wrong one of those two changes
   // nothing and is not a canary. Column 3 is: it makes all ninety look absent.
-  string[] named = string[lines.len()](fill: "");
+  string[] named = string[].filled(lines.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     if (field(lines[i], 0) != "S") { continue; }
     named[n] = field(lines[i], 1);
     n = n + 1;
   }
-  string[] structs = string[n](fill: "");
+  string[] structs = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { structs[i] = named[i]; }
 
   // The scan found the format it expects. A wire whose separator or tag changed would leave this at
@@ -82,14 +82,14 @@ export string test_every_crossing_type_reaches_the_metadata_past_the_size_of_the
   // rather than as one changed format.
   t.isTrue(n > 0, "the wire names " + itoa(n) + " structs");
 
-  string[] missing = string[COUNT](fill: "");
+  string[] missing = string[].filled(COUNT, "");
   i32 m = 0;
   for (i32 i = 0; i < COUNT; i++) {
     if (has(structs, "T" + itoa(i))) { continue; }
     missing[m] = "T" + itoa(i);
     m = m + 1;
   }
-  string[] absent = string[m](fill: "");
+  string[] absent = string[].filled(m, "");
   for (i32 i = 0; i < m; i++) { absent[i] = missing[i]; }
   t.eqI32(m, 0, itoa(m) + " of " + itoa(COUNT) + " crossing types are absent from the metadata (" +
                 joined(absent, ", ") + ") — the generator writes no class for them");

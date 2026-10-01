@@ -267,7 +267,7 @@ export struct Ran {
 }
 
 export Ran runProgram(Cli cli, string src) {
-  return runGraph(cli, string[](entryName()), string[](src));
+  return runGraph(cli, [entryName()], [src]);
 }
 
 /**
@@ -496,7 +496,7 @@ export struct Gen {
   Gen create(i32 seed) {
     return Gen(Rng(seed), 0, 0, Vec<Local>.create(), Vec<string>.create(),
                Vec<string>.create(), Vec<Helper>.create(), Env.create(), "  ", "",
-               i64[0](fill: 0), 0, 0, 0, 0, 0, false);
+               i64[](), 0, 0, 0, 0, 0, false);
   }
 
   /**
@@ -555,7 +555,7 @@ export struct Gen {
    * disagreed before the pool was narrowed.
    */
   Expr wideU32Literal(this) {
-    i64[] pool = i64[](2147483648, 3000000000, 4294967295, 4294967294, 2147483649);
+    i64[] pool = [2147483648, 3000000000, 4294967295, 4294967294, 2147483649];
     i64 v = pool[this.rng.intTop(pool.len())];
     return Expr(itoa64(v), TY_U32(), (Env e) => v);
   }
@@ -577,14 +577,16 @@ export struct Gen {
       // `2147483647 + 2147483647` in a u32 slot wraps to 4294967294 and every use of that variable
       // is unambiguously unsigned. Values above 2^31 arrive by arithmetic rather than by a literal
       // nobody typed.
-      i64[] upool = i64[](0, 1, 7, 255, 65536, 2147483646, 2147483647, 1073741824);
+      i64[] upool = [0, 1, 7, 255, 65536, 2147483646, 2147483647, 1073741824];
       i64 uv = upool[this.rng.intTop(upool.len())];
       return Expr(itoa64(uv), ty, (Env e) => uv);
     }
     i64[] pool = ty == TY_I32()
-      ? i64[](0, 1, 2, 0 - 1, 7, 255, 65536, 2147483647, 0 - 2147483647, 12345)
-      : i64[](4294967296, 0 - 4294967296, 2147483648, 0 - 2147483649, 1000000000000,
-              9223372036854775807, (0 - 9223372036854775807) - 1);
+      ? [0, 1, 2, 0 - 1, 7, 255, 65536, 2147483647, 0 - 2147483647, 12345] as i64[]
+      : [
+              4294967296, 0 - 4294967296, 2147483648, 0 - 2147483649, 1000000000000,
+              9223372036854775807, (0 - 9223372036854775807) - 1
+      ] as i64[];
     i64 v = pool[this.rng.intTop(pool.len())];
     return Expr(this.intLiteral(v, ty), ty, (Env e) => v);
   }
@@ -637,7 +639,7 @@ export struct Gen {
     // this is looking for, so a divisor is a literal known to be safe.
     if (which == 8 || which == 9) {
       bool isDiv = which == 8;
-      i64[] safe = i64[](1, 2, 3, 7, 10, 255);
+      i64[] safe = [1, 2, 3, 7, 10, 255];
       i64 d = safe[this.rng.intTop(safe.len())];
       return Expr("(" + a.src + (isDiv ? " / " : " % ") + itoa64(d) + ")", ty,
                   (Env e) => evalDivMod(isDiv, a, d, ty, e));
@@ -1067,12 +1069,12 @@ export struct Gen {
     // `array.new_fixed`, `array.get` and `.len()` without needing the environment to hold a
     // reference. Out-of-bounds traps, so every index the generator writes is checked against the
     // length it just chose rather than assumed.
-    this.arr = i64[](0, 1, 0 - 1, 2147483647, 12345);
+    this.arr = [0, 1, 0 - 1, 2147483647, 12345] as i64[];
     string elems = "";
     for (i32 k = 0; k < this.arr.len(); k++) {
       elems = elems + (k == 0 ? "" : ", ") + this.intLiteral(this.arr[k], TY_I32());
     }
-    this.helpers.push("i32[] mkArr() { return i32[](" + elems + "); }");
+    this.helpers.push("i32[] mkArr() { return [" + elems + "]; }");
     for (i32 k = 0; k < 3; k++) { this.makeHelper(); }
     // **One u32 local, at the top, always.** Without it the answer's u32 route fired in 1 program
     // in 200 — measured — because a u32 declaration drawn inside a block goes out of scope before
@@ -1110,8 +1112,10 @@ export struct Gen {
     // **And a wide i64, for the same reason.** The audit in the header puts i64 at 12 programs in
     // 200 — the thinnest of the three, and the one `issues/lang/0306b` lived in. A value whose high
     // half differs from its low one is what makes the half observable at all.
-    i64[] widei64 = i64[](4294967296, 1099511627776, 9223372036854775807,
-                          (0 - 9223372036854775807) - 1, 0 - 4294967297);
+    i64[] widei64 = [
+                          4294967296, 1099511627776, 9223372036854775807,
+                          (0 - 9223372036854775807) - 1, 0 - 4294967297
+    ];
     i64 iv = widei64[this.rng.intTop(widei64.len())];
     this.declare(TY_I64(), Expr(this.intLiteral(iv, TY_I64()), TY_I64(), (Env e) => iv));
     this.statements(3);
@@ -1290,7 +1294,7 @@ export Vec<Outcome> sweep(Cli cli, i32 count, i32 seed) {
   for (i32 k = 0; k < count; k++) {
     i32 s = seed + k;
     Program p = Gen.create(s).program();
-    Ran r = runGraph(cli, string[](entryName(), "s.wac"), string[](p.src, p.side));
+    Ran r = runGraph(cli, [entryName(), "s.wac"], [p.src, p.side]);
     if (!r.ok) {
       bad.push(Outcome(s, p.src, p.want, r.why));
     } else if ((r.value as i64) != p.want) {

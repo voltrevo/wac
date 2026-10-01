@@ -27,7 +27,7 @@ export i32 urlencode(Core core, Cli cli, Fs fs, Args a) {
 /** A trailing newline is the shell's, not the datum's. */
 u8[] trimNewline(u8[] b) {
   if (b.len() > 0 && b[b.len() - 1] == '\n') {
-    u8[] out = u8[b.len() - 1](fill: 0);
+    u8[] out = u8[].filled(b.len() - 1, 0);
     out.copyFrom(b, 0, 0, b.len() - 1);
     return out;
   }

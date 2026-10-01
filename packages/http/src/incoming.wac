@@ -117,7 +117,7 @@ export ParsedResponse parseResponse(u8[] input, u8[] method, bool eof, i32 maxBo
   }
 
   Incoming res = Incoming(status, minor, slice(input, reasonStart, lineEnd), Headers.create(),
-                          u8[0](), 0, false);
+                          u8[](), 0, false);
 
   // ── Header fields, on the same rules as a request ───────────────────────────────────
   i32 at = lineEnd + 2;
@@ -217,7 +217,7 @@ export ParsedResponse parseResponse(u8[] input, u8[] method, bool eof, i32 maxBo
 ParsedResponse readChunked(u8[] input, i32 start, Incoming res, i32 maxBody) {
   i32 at = start;
   i32 total = 0;
-  u8[] body = u8[0]();
+  u8[] body = u8[]();
   i32 bodyLen = 0;
 
   while (true) {
@@ -253,7 +253,7 @@ ParsedResponse readChunked(u8[] input, i32 start, Incoming res, i32 maxBody) {
     // sum is not, and a `maxBody` above half of i32 makes the addition itself wrap.
     if (size > maxBody - total) { return ParsedResponse.Bad(ERR_TOO_LARGE()); }
     total = total + size;
-    u8[] grown = u8[total]();
+    u8[] grown = u8[].filled(total, 0);
     for (i32 k = 0; k < bodyLen; k++) { grown[k] = body[k]; }
     for (i32 k = 0; k < size; k++) { grown[bodyLen + k] = input[at + k]; }
     body = grown;

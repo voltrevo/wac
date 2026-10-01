@@ -65,7 +65,7 @@ string memberText(JsonValue v, string key) {
 
 /** Ethereum's seven insert-only cases, read out of the vendored file. */
 Case[] cases(T t, Cli cli) {
-  Case[] none = Case[0](fill: Case("", u8[][0](fill: u8[0]()), u8[][0](fill: u8[0]()), ""));
+  Case[] none = Case[].filled(0, Case("", u8[][].filled(0, u8[]()), u8[][].filled(0, u8[]()), ""));
   u8[] text = cli.readFile(FIXTURES).wait().bytes;
   JsonValue? doc = parse(text);
   t.isTrue(!(doc is null), "the vendored fixtures did not parse");
@@ -77,7 +77,7 @@ Case[] cases(T t, Cli cli) {
   }
   t.isTrue(top.len() >= 7, "only " + itoa(top.len()) + " fixtures — is the vendored file intact?");
 
-  Case[] out = Case[top.len()](fill: Case("", u8[][0](fill: u8[0]()), u8[][0](fill: u8[0]()), ""));
+  Case[] out = Case[].filled(top.len(), Case("", u8[][].filled(0, u8[]()), u8[][].filled(0, u8[]()), ""));
   for (i32 i = 0; i < top.len(); i++) {
     string name = top.at(i).keyStr();
     JsonValue f = top.at(i).value;
@@ -93,8 +93,8 @@ Case[] cases(T t, Cli cli) {
       }
       default: { t.fail(name + ": not an object"); continue; }
     }
-    u8[][] keys = u8[][pairs.len()](fill: u8[0]());
-    u8[][] values = u8[][pairs.len()](fill: u8[0]());
+    u8[][] keys = u8[][].filled(pairs.len(), u8[]());
+    u8[][] values = u8[][].filled(pairs.len(), u8[]());
     for (i32 j = 0; j < pairs.len(); j++) {
       keys[j] = fixtureBytes(pairs.at(j).keyStr());
       match (pairs.at(j).value) {
@@ -119,12 +119,12 @@ string trieLine(string id, u8[][] keys, u8[][] values) {
 /** The comma-separated node list of a `proof` answer, as bytes. */
 u8[][] nodesOf(string line) {
   string csv = word(line, 3);
-  if (csv.len() == 0) { return u8[][0](fill: u8[0]()); }
+  if (csv.len() == 0) { return u8[][].filled(0, u8[]()); }
   i32 count = 1;
   for (i32 i = 0; i < csv.len(); i++) {
     if (csv.slice(i, i + 1) == ",") { count = count + 1; }
   }
-  u8[][] out = u8[][count](fill: u8[0]());
+  u8[][] out = u8[][].filled(count, u8[]());
   i32 at = 0;
   i32 from = 0;
   for (i32 i = 0; i <= csv.len(); i++) {
@@ -145,10 +145,11 @@ export string test_the_oracles_keccak256_is_keccak256(Core core, Cli cli) {
   //
   // The seven roots below would catch a broken permutation too, and much less legibly: "the `dogs` root is
   // wrong" is a sentence with four suspects in it.
-  string[] inputs = string[]("", "abc");
-  string[] want = string[](
+  string[] inputs = ["", "abc"];
+  string[] want = [
     "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-    "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45");
+    "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < inputs.len(); i++) { lines.add("hash " + hex(inputs[i].toBytes())); }
   Answers a = askDeno(t, cli, ORACLE, lines, "the oracle's keccak256");
@@ -226,9 +227,10 @@ export string test_a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unp
   // version had a raw 0x00 in its source between two quotation marks, where a reader sees a space —
   // and that is exactly how the first port of this file turned it into one. A space is a perfectly
   // ordinary absent key; a NUL is the one that would find a trie walking its keys as C strings.
-  u8[][] probes = u8[][](
+  u8[][] probes = [
     "zzz".toBytes(), "a".toBytes(), "dogz".toBytes(), "do".toBytes(), "food".toBytes(),
-    u8[](0x00), "hex".toBytes(), "AB".toBytes());
+    [0x00] as u8[], "hex".toBytes(), "AB".toBytes()
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
     lines.add(trieLine(all[i].name, all[i].keys, all[i].values));
@@ -321,7 +323,7 @@ export string test_every_perturbation_of_a_valid_proof_is_refused(Core core, Cli
 
   // Three tries in one batch: the case itself, another whose root the proof must not satisfy, and the same
   // case with one value changed — so the same nodes are presented for a root that no longer names them.
-  u8[][] tampered = u8[][c.values.len()](fill: u8[0]());
+  u8[][] tampered = u8[][].filled(c.values.len(), u8[]());
   for (i32 i = 0; i < c.values.len(); i++) {
     tampered[i] = i == 0 ? "tampered".toBytes() : c.values[i];
   }
@@ -344,7 +346,7 @@ export string test_every_perturbation_of_a_valid_proof_is_refused(Core core, Cli
 
   // A flipped byte in every node in turn, at the front, the middle and the end of each.
   for (i32 i = 0; i < good.len(); i++) {
-    i32[] offsets = i32[](0, good[i].len() / 2, good[i].len() - 1);
+    i32[] offsets = [0, good[i].len() / 2, good[i].len() - 1];
     for (i32 k = 0; k < offsets.len(); k++) {
       u8[][] nodes = copyNodes(good);
       nodes[i] = flipped(nodes[i], offsets[k]);
@@ -366,7 +368,7 @@ export string test_every_perturbation_of_a_valid_proof_is_refused(Core core, Cli
   sub[1] = good[0];
   t.isFalse(verify(root, key, sub).ok, "a valid node from elsewhere substituted: accepted");
   // A node the walk does not need, appended: a proof should carry exactly its path.
-  u8[][] appended = u8[][good.len() + 1](fill: u8[0]());
+  u8[][] appended = u8[][].filled(good.len() + 1, u8[]());
   for (i32 i = 0; i < good.len(); i++) { appended[i] = good[i]; }
   appended[good.len()] = good[0];
   t.isFalse(verify(root, key, appended).ok, "an unnecessary node appended: accepted");
@@ -377,7 +379,7 @@ export string test_every_perturbation_of_a_valid_proof_is_refused(Core core, Cli
   t.isFalse(verify(changedRoot, key, good).ok,
             "a proof for a value that was changed: accepted");
   // The empty proof, and a proof of nothing at all.
-  t.isFalse(verify(root, key, u8[][0](fill: u8[0]())).ok, "no nodes at all: accepted");
+  t.isFalse(verify(root, key, u8[][].filled(0, u8[]())).ok, "no nodes at all: accepted");
   return t.report();
 }
 
@@ -390,11 +392,11 @@ export string test_a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_v
   // keys, each the digest of its index — so the walk is eight or nine levels deep and the inline case never
   // arises. Its root is not published anywhere; the builder that produced it is the one the seven published
   // roots already agreed with.
-  u8[][] keys = u8[][200](fill: u8[0]());
-  u8[][] values = u8[][200](fill: u8[0]());
+  u8[][] keys = u8[][].filled(200, u8[]());
+  u8[][] values = u8[][].filled(200, u8[]());
   for (i32 i = 0; i < 200; i++) {
     keys[i] = keccak256(("slot-" + itoa(i)).toBytes());
-    values[i] = keccak256(u8[](i, i + 1, i + 2));
+    values[i] = keccak256([i, i + 1, i + 2]);
   }
   u8[] missing = keccak256("never-stored".toBytes());
 
@@ -429,20 +431,20 @@ export string test_a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_v
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
 u8[] flipped(u8[] node, i32 at) {
-  u8[] out = u8[node.len()]();
+  u8[] out = u8[].filled(node.len(), 0);
   for (i32 i = 0; i < node.len(); i++) { out[i] = node[i]; }
   out[at] = out[at] ^ 1;
   return out;
 }
 
 u8[][] copyNodes(u8[][] nodes) {
-  u8[][] out = u8[][nodes.len()](fill: u8[0]());
+  u8[][] out = u8[][].filled(nodes.len(), u8[]());
   for (i32 i = 0; i < nodes.len(); i++) { out[i] = nodes[i]; }
   return out;
 }
 
 u8[][] without(u8[][] nodes, i32 drop) {
-  u8[][] out = u8[][nodes.len() - 1](fill: u8[0]());
+  u8[][] out = u8[][].filled(nodes.len() - 1, u8[]());
   i32 at = 0;
   for (i32 i = 0; i < nodes.len(); i++) {
     if (i == drop) { continue; }

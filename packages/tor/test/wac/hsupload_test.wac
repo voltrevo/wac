@@ -64,15 +64,17 @@ export string test_a_rejection_is_not_a_surprise() {
 export string test_one_rejection_indicts_the_descriptor() {
   T t = T.create();
 
-  Publication all = publicationState(i32[](UPLOAD_OK, UPLOAD_OK, UPLOAD_OK, UPLOAD_OK));
+  Publication all = publicationState([UPLOAD_OK, UPLOAD_OK, UPLOAD_OK, UPLOAD_OK]);
   t.eqI32(all.uploaded, 4, "four directories took it");
   t.eqI32(all.rejected, 0, "none refused");
   t.isTrue(!all.descriptorRefused, "so the descriptor is not in question");
 
   // Seven directories accepted and one refused. The seven do not outvote the one: a rejection is a
   // fact about the bytes, and the bytes were the same for all eight.
-  Publication mixed = publicationState(i32[](UPLOAD_OK, UPLOAD_OK, UPLOAD_OK, UPLOAD_OK, UPLOAD_OK,
-                                             UPLOAD_OK, UPLOAD_OK, UPLOAD_REJECTED));
+  Publication mixed = publicationState([
+                                             UPLOAD_OK, UPLOAD_OK, UPLOAD_OK, UPLOAD_OK, UPLOAD_OK,
+                                             UPLOAD_OK, UPLOAD_OK, UPLOAD_REJECTED
+  ]);
   t.eqI32(mixed.uploaded, 7, "seven took it");
   t.eqI32(mixed.rejected, 1, "one refused");
   t.isTrue(mixed.descriptorRefused,
@@ -80,14 +82,16 @@ export string test_one_rejection_indicts_the_descriptor() {
 
   // Unreachable directories are an ordinary event on a network of volunteers and say nothing about
   // the descriptor, however many of them there are.
-  Publication down = publicationState(i32[](UPLOAD_OK, UPLOAD_NO_ANSWER, UPLOAD_UNEXPECTED,
-                                            UPLOAD_NO_ANSWER));
+  Publication down = publicationState([
+                                            UPLOAD_OK, UPLOAD_NO_ANSWER, UPLOAD_UNEXPECTED,
+                                            UPLOAD_NO_ANSWER
+  ]);
   t.eqI32(down.uploaded, 1, "one took it");
   t.eqI32(down.unreachable, 3, "three could not be reached or answered oddly");
   t.eqI32(down.rejected, 0, "none refused");
   t.isTrue(!down.descriptorRefused, "so the descriptor is still not in question");
 
-  Publication none = publicationState(i32[0]());
+  Publication none = publicationState(i32[]());
   t.eqI32(none.uploaded, 0, "no uploads is no successes");
   t.isTrue(!none.descriptorRefused, "and nothing to indict the descriptor with");
   return t.report();

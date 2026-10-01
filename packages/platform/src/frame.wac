@@ -192,7 +192,7 @@ export struct Frame {
     i32 end = this.at + want;
     if (end > this.stdin.len()) { end = this.stdin.len(); }
     i32 n = end - this.at;
-    u8[] slice = u8[n]();
+    u8[] slice = u8[].filled(n, 0);
     slice.copyFrom(this.stdin, this.at, 0, n);
     this.at = end;
     return slice;
@@ -283,7 +283,7 @@ export Cli childCliGranted(Frame f, const Cli parent, Grants g) {
 
   if (!g.read) {
     fn<Pending<FileResult>(string)> noRead =
-      (string p) => readyFile(FileResult(false, u8[0](), notGranted(), FAULT_NOT_GRANTED()));
+      (string p) => readyFile(FileResult(false, u8[](), notGranted(), FAULT_NOT_GRANTED()));
     c.readFile = noRead;
     // **`fault`, not `exists`.** `Stat` says to check the fault before trusting `exists`, precisely so
     // that "there is nothing here" and "I could not look" stay different answers — which is the whole
@@ -400,7 +400,7 @@ export Core childCore(Frame f, const Core parent) {
 export Cli childCli(Frame f, const Cli parent) {
   return Cli.of(
     () => ready(f.argv.len()),
-    (i32 i) => ready(i >= 0 && i < f.argv.len() ? f.argv[i].toBytes() : u8[0]()),
+    (i32 i) => ready(i >= 0 && i < f.argv.len() ? f.argv[i].toBytes() : u8[]()),
     parent.env,
     () => f.inheritIn || f.redirectedIn ? parent.readStdin() : ready(f.readAll()),
     (u8[] bytes) => f.write(bytes),

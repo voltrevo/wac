@@ -108,7 +108,7 @@ void writeU64(u8[] b, i32 at, i64 v) {
 }
 
 u8[] copyOf(u8[] a) {
-  u8[] out = u8[a.len()]();
+  u8[] out = u8[].filled(a.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   return out;
 }
@@ -209,7 +209,7 @@ struct Base {
 }
 
 Base baseCase(T t, Core core, Cli cli) {
-  Base none = Base(false, "", u8[0](), u8[0](), u8[0](), u8[0](), 0 as i64);
+  Base none = Base(false, "", u8[](), u8[](), u8[](), u8[](), 0 as i64);
   JsonArray? cases = syncCases(t, core, cli);
   if (cases is null) { return none; }
   JsonValue c = cases!.get(0);
@@ -258,7 +258,7 @@ export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_com
 
   // Every byte of the 96-byte signature, one at a time, would be slow; the first, a middle and the
   // last cover the compressed-point flags, the x coordinate and the y parity.
-  i32[] offsets = i32[](SIGNATURE_AT(), SIGNATURE_AT() + 48, SIGNATURE_AT() + 95);
+  i32[] offsets = [SIGNATURE_AT(), SIGNATURE_AT() + 48, SIGNATURE_AT() + 95];
   for (i32 i = 0; i < offsets.len(); i++) {
     u8[] bad = copyOf(b.update);
     bad[offsets[i]] = bad[offsets[i]] ^ 0x01;
@@ -277,7 +277,7 @@ export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_com
 
 /** A 32-bit participation field with the low `n` bits set, in the spec's bit order. */
 u8[] bitsOf(i32 n) {
-  u8[] b = u8[4]();
+  u8[] b = u8[].filled(4, 0);
   for (i32 i = 0; i < n; i++) { b[i / 8] = b[i / 8] | (1 << (i % 8)); }
   return b;
 }
@@ -293,8 +293,8 @@ export string test_the_two_participation_thresholds_are_what_the_spec_says_not_w
   t.eqI32(countBits(bitsOf(21)), 21, "countBits disagrees with the fixture");
 
   // 32 members: two thirds is 21.33, so 22 is the first supermajority and 21 is not.
-  i32[] counts = i32[](32, 22, 21, 16, 11, 0);
-  bool[] wants = bool[](true, true, false, false, false, false);
+  i32[] counts = [32, 22, 21, 16, 11, 0];
+  bool[] wants = [true, true, false, false, false, false];
   for (i32 i = 0; i < counts.len(); i++) {
     t.eqBool(hasSupermajority(bitsOf(counts[i]), counts[i]), wants[i],
              itoa(counts[i]) + "/32 participants: supermajority");
@@ -309,7 +309,7 @@ export string test_the_two_participation_thresholds_are_what_the_spec_says_not_w
   if (!b.ok) { return t.report(); }
   Store? store = freshStore(b);
   if (store is null) { return t.report(); }
-  u8[] aggregateBits = u8[4]();
+  u8[] aggregateBits = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { aggregateBits[i] = b.update[SIGNATURE_AT() - 4 + i]; }
   i32 active = countBits(aggregateBits);
   t.isTrue(active > 0, "read zero participants from the aggregate — offsets are wrong");
@@ -386,13 +386,17 @@ export string test_the_store_rejects_an_update_whose_branches_do_not_prove_what_
   // Perturbations chosen so that *only* a branch can catch them. The finalized header's body_root
   // (offset 80 within the header) is not read by any slot check, and a branch node is not read at
   // all outside the proof — so if either is accepted, the corresponding branch is not being verified.
-  string[] what = string[]("the finalized header's body_root", "the finalized header's state_root",
+  string[] what = [
+                           "the finalized header's body_root", "the finalized header's state_root",
                            "the first finality branch node", "the last finality branch node",
                            "a next_sync_committee public key", "the aggregate public key",
-                           "the first next-committee branch node");
-  i32[] at = i32[](FINALIZED_AT + 80, FINALIZED_AT + 48, FINALITY_BRANCH_AT,
+                           "the first next-committee branch node"
+  ];
+  i32[] at = [
+                   FINALIZED_AT + 80, FINALIZED_AT + 48, FINALITY_BRANCH_AT,
                    FINALITY_BRANCH_AT + 191, NEXT_COMMITTEE_AT + 24, NEXT_COMMITTEE_AT + 1584 - 24,
-                   NEXT_BRANCH_AT);
+                   NEXT_BRANCH_AT
+  ];
   for (i32 i = 0; i < what.len(); i++) {
     u8[] bad = copyOf(b.update);
     bad[at[i]] = bad[at[i]] ^ 0x01;
@@ -424,9 +428,11 @@ export string test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_
   t.isTrue(!(initializeStore(b.trustedRoot, b.bootstrap) is null),
            "the real bootstrap did not initialize");
 
-  string[] what = string[]("a committee public key", "the aggregate public key",
-                           "the first branch node", "the last branch node");
-  i32[] at = i32[](112, 112 + 1584 - 1, 1696, 1855);
+  string[] what = [
+                           "a committee public key", "the aggregate public key",
+                           "the first branch node", "the last branch node"
+  ];
+  i32[] at = [112, 112 + 1584 - 1, 1696, 1855];
   for (i32 i = 0; i < what.len(); i++) {
     u8[] bad = copyOf(b.bootstrap);
     bad[at[i]] = bad[at[i]] ^ 0x01;

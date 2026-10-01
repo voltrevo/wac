@@ -56,7 +56,7 @@ Ours serveOnce(Core core, Cli cli, string name) {
   // name cannot be cached: the output's base name is in the manifest, so two destinations are two
   // artefacts. Measured on `client_test.wac`: 2s cached against 8s not.
   string mod = builtProgram(cli, "packages/tls/test/wac/tlsserved.wac", "tlsserved",
-                            string[]("--allow-read", "--allow-net"));
+                            ["--allow-read", "--allow-net"]);
   if (mod == "") {
     return Ours(Daemon(-1, "", ""), -1, "", "the server did not build");
   }
@@ -83,8 +83,8 @@ void done(Cli cli, Ours s) {
 
 /** What `s_client` said, having been handed the request on its standard input. */
 Exec sClient(Cli cli, string binary, i32 port, string[] extra, string stdin) {
-  string[] head = string[]("s_client", "-connect", "127.0.0.1:" + itoa(port));
-  string[] args = string[head.len() + extra.len()](fill: "");
+  string[] head = ["s_client", "-connect", "127.0.0.1:" + itoa(port)];
+  string[] args = string[].filled(head.len() + extra.len(), "");
   for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
   for (i32 i = 0; i < extra.len(); i++) { args[head.len() + i] = extra[i]; }
   return cli.exec(binary, args, stdin.toBytes()).wait();
@@ -99,7 +99,7 @@ export string test_openssl_completes_a_tls13_handshake_and_exchanges_data(Core c
   if (s.port <= 0) { return t.report(); }
 
   Exec r = sClient(cli, "openssl", s.port,
-                   string[]("-tls1_3", "-servername", "wac.test", "-quiet", "-verify_quiet"), REQ);
+                   ["-tls1_3", "-servername", "wac.test", "-quiet", "-verify_quiet"], REQ);
   string out = string.fromBytes(r.stdout);
   t.isTrue(contains(out, "HTTP/1.1 200 OK"),
            "openssl got the reply — stdout: " + out + " stderr: " + string.fromBytes(r.stderr));
@@ -123,8 +123,10 @@ struct Said {
 
 Said rustls(Cli cli, Ours s) {
   Exec r = cli.exec("deno",
-    string[]("run", "-A", "packages/tls/test/rustlsclient.ts", s.dir, itoa(s.port),
-             DATA + "/ca.pem", REQ), u8[0]()).wait();
+    [
+             "run", "-A", "packages/tls/test/rustlsclient.ts", s.dir, itoa(s.port),
+             DATA + "/ca.pem", REQ
+    ], u8[]()).wait();
   if (!r.ran()) { return Said(false, "", "", "", "deno did not run — " + r.error); }
   FileResult f = cli.readFile(s.dir + "/said.json").wait();
   if (!f.ok) {
@@ -172,7 +174,7 @@ export string test_a_client_offering_no_tls13_support_is_rejected(Core core, Cli
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
 
-  Exec r = sClient(cli, "openssl", s.port, string[]("-tls1_2", "-quiet"), "");
+  Exec r = sClient(cli, "openssl", s.port, ["-tls1_2", "-quiet"], "");
   t.isFalse(contains(string.fromBytes(r.stdout), "HTTP/1.1 200 OK"), "a TLS 1.2 client was served");
   done(cli, s);
   return t.report();
@@ -216,7 +218,7 @@ export string test_the_server_negotiates_x25519mlkem768_with_a_post_quantum_clie
   if (s.port <= 0) { return t.report(); }
 
   Exec r = sClient(cli, binary, s.port,
-                   string[]("-tls1_3", "-groups", "X25519MLKEM768", "-quiet", "-verify_quiet"), REQ);
+                   ["-tls1_3", "-groups", "X25519MLKEM768", "-quiet", "-verify_quiet"], REQ);
   string out = string.fromBytes(r.stdout);
   t.isTrue(contains(out, "HTTP/1.1 200 OK"),
            "a reply over the hybrid group — stdout: " + out +

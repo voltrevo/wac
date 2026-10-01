@@ -85,7 +85,7 @@ string describe(JsonValue err) {
 export u8[] stringOf(JsonValue v) {
   match (v) {
     Str(bytes): { return bytes; }
-    default: { return u8[0](); }
+    default: { return u8[](); }
   }
 }
 

@@ -28,20 +28,20 @@ T? firstOf<T>(T[] xs) {
 }
 
 export i32 f() {
-  i32? empty = firstOf(i32[0]());
+  i32? empty = firstOf(i32[]());
   if (!(empty is null)) { return 0 - 1; }
-  i32? full = firstOf(i32[](7, 8, 9));
+  i32? full = firstOf([7, 8, 9] as i32[]);
   if (full is null) { return 0 - 2; }
 
   // **A second primitive and a reference**, because the first fix reached for `isWritableValType`
   // — which counts `anyref` and `i31ref`, the two the `Prim` arm returns *without* a `?` because
   // they are already references, and `u8`/`u16`, which it does not box. That version would have
   // spelled `anyref?`. These two hold the arm and the fix to the same list.
-  i64? wide = firstOf(i64[](42 as i64));
+  i64? wide = firstOf([42 as i64]);
   if (wide is null) { return 0 - 3; }
-  string? text = firstOf(string[]("hi"));
+  string? text = firstOf(["hi"]);
   if (text is null) { return 0 - 4; }
-  string? noText = firstOf(string[0](fill: ""));
+  string? noText = firstOf(string[].filled(0, ""));
   if (!(noText is null)) { return 0 - 5; }
 
   return full!;

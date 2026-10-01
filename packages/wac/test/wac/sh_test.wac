@@ -16,7 +16,7 @@
 // spawns `binaryPath(cli)` — the same binary `wac test` is running this file with — exactly as
 // `cliCommands_test.wac` does for `check`, `compile` and `bindgen`.
 //
-// Nothing else covered it. Every other `"sh"` in the suite is `Frame.of(string[]("sh", …))`, which is
+// Nothing else covered it. Every other `"sh"` in the suite is `Frame.of(["sh", …])`, which is
 // `packages/sh` as a *library*; the subcommand had no test at all once that file went.
 
 import { T } from "../../../wactest/src/assert.wac";
@@ -37,15 +37,15 @@ import { Core, Cli, Exec, Stat } from "std/platform.wac";
 // which is what the skip was preventing.
 
 Exec sh(Cli cli, string[] argv) {
-  string[] out = string[argv.len() + 1](fill: "");
+  string[] out = string[].filled(argv.len() + 1, "");
   out[0] = "sh";
   for (i32 i = 0; i < argv.len(); i++) { out[1 + i] = argv[i]; }
-  return cli.exec(binaryPath(cli), out, u8[0]()).wait();
+  return cli.exec(binaryPath(cli), out, u8[]()).wait();
 }
 
 export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
   T t = T.create();
-  Exec piped = sh(cli, string[]("-c", "seq 1 20 | grep 7 | wc -l"));
+  Exec piped = sh(cli, ["-c", "seq 1 20 | grep 7 | wc -l"]);
   t.isTrue(piped.ran(), "the shell ran — " + piped.error);
   if (piped.ran()) {
     t.eqStr(trimmed(string.fromBytes(piped.stdout)), "2",
@@ -54,7 +54,7 @@ export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
 
   // A second pipeline whose answer is a digest, so a shell that ran the applets in the wrong order,
   // or dropped one, cannot produce it by accident.
-  Exec hashed = sh(cli, string[]("-c", "echo hello | sha256sum"));
+  Exec hashed = sh(cli, ["-c", "echo hello | sha256sum"]);
   t.isTrue(hashed.ran(), "the shell ran — " + hashed.error);
   if (hashed.ran()) {
     string first = "";
@@ -78,7 +78,7 @@ export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
 
   // **Refused, and nothing written.** Checking only the message would pass for a shell that reported a
   // refusal and did the write anyway, which is the failure that matters.
-  Exec denied = sh(cli, string[]("-c", "echo x > " + probe));
+  Exec denied = sh(cli, ["-c", "echo x > " + probe]);
   t.isTrue(denied.ran(), "the shell ran — " + denied.error);
   if (denied.ran()) {
     string said = string.fromBytes(denied.stdout) + string.fromBytes(denied.stderr);
@@ -89,7 +89,7 @@ export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
 
   // The same shell, granted, reaches the machine. `--allow-read` only, so the write above stays
   // refused: the two grants are independent rather than one switch with a long name.
-  Exec read = sh(cli, string[]("--allow-read", "-c", "wc -l < spec/tour.wac"));
+  Exec read = sh(cli, ["--allow-read", "-c", "wc -l < spec/tour.wac"]);
   t.isTrue(read.ran(), "the shell ran — " + read.error);
   if (read.ran()) {
     t.isTrue(atoi(trimmed(string.fromBytes(read.stdout))) > 100,
@@ -99,7 +99,7 @@ export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
 
   // A flag that is not a grant is refused by name rather than ignored, because a typo that silently
   // dropped a grant would leave a program failing for a reason nobody would look for.
-  Exec bogus = sh(cli, string[]("--allow-everything", "-c", "echo x"));
+  Exec bogus = sh(cli, ["--allow-everything", "-c", "echo x"]);
   t.isTrue(bogus.ran(), "the shell ran — " + bogus.error);
   if (bogus.ran()) {
     t.eqI32(bogus.status, 2, "an unknown grant should exit 2: " + string.fromBytes(bogus.stderr));

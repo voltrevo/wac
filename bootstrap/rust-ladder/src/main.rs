@@ -391,7 +391,7 @@ mod tests {
         let src = "enum S { Dot(i32 v), Pair(i32 a, i32 b) }\n\
                    i32 span(S s) { match (s) { case Dot(v): { return v; } \
                    case Pair(a, b): { return b - a; } } return 0; }\n\
-                   i32 main() { string t = \"ab\" + \"cd\"; i32[] ns = i32[3](fill: 7); \
+                   i32 main() { string t = \"ab\" + \"cd\"; i32[] ns = i32[].filled(3, 7); \
                    return span(S.Pair(1, 32)) + t.len() + ns[2]; }";
         let l0 = l5_to_l0(scope, src);
         assert_eq!(l0.lines().filter(|l| l.starts_with("!!")).count(), 0, "wac-L5 refused something");

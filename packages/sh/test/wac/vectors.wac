@@ -54,8 +54,8 @@ Line lineAt(u8[] b, i32 at) {
 
 u8[] sliceOf(u8[] b, i32 from, i32 to) {
   i32 n = to - from;
-  if (n <= 0) { return u8[0](); }
-  u8[] out = u8[n]();
+  if (n <= 0) { return u8[](); }
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[from + i]; }
   return out;
 }
@@ -86,14 +86,14 @@ i32 numberIn(string line, string tag) {
 export Vectors load(Cli cli) {
   FileRead r = readAll(cli);
   if (!r.ok) {
-    return Vectors(Vector[0](), 0, "",
+    return Vectors(Vector[](), 0, "",
                    "cannot read " + vectorsPath() + " — run `wac run --allow-read --allow-write " +
                    "--allow-run tools/wac/shvectors.wac` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
   if (l.text != "wac-sh-vectors 1") {
-    return Vectors(Vector[0](), 0, "", "not a vectors file: " + l.text);
+    return Vectors(Vector[](), 0, "", "not a vectors file: " + l.text);
   }
   string oracle = "";
   i32 at = l.next;
@@ -104,9 +104,9 @@ export Vectors load(Cli cli) {
     if (h.text.len() > 6 && h.text.slice(0, 6) == "bash: ") { oracle = h.text.slice(6, h.text.len()); }
     count = numberIn(h.text, "count:");
   }
-  if (count < 0) { return Vectors(Vector[0](), 0, oracle, "no count in the header"); }
+  if (count < 0) { return Vectors(Vector[](), 0, oracle, "no count in the header"); }
 
-  Vector[] items = Vector[count](fill: Vector("", false, 0, "", ""));
+  Vector[] items = Vector[].filled(count, Vector("", false, 0, "", ""));
   i32 n = 0;
   for (i32 i = 0; i < count; i++) {
     Line sl = lineAt(b, at);
@@ -145,5 +145,5 @@ struct FileRead {
 
 FileRead readAll(Cli cli) {
   FileResult r = cli.readFile(vectorsPath()).wait();
-  return FileRead(r.ok, r.ok ? r.bytes : u8[0]());
+  return FileRead(r.ok, r.ok ? r.bytes : u8[]());
 }

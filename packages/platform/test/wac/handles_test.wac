@@ -76,7 +76,7 @@ i32 declared(string src, string prefix, string name, string mid) {
 /** Every right-hand side of `let nextHandle = …;` in a host. */
 string[] nextHandleStarts(string src) {
   string[] lines = splitLines(src);
-  string[] found = string[8](fill: "");
+  string[] found = string[].filled(8, "");
   i32 n = 0;
   const string MARK = "let nextHandle = ";
   for (i32 i = 0; i < lines.len() && n < found.len(); i++) {
@@ -87,7 +87,7 @@ string[] nextHandleStarts(string src) {
     found[n] = semi < 0 ? rest : rest.slice(0, semi);
     n = n + 1;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
   return out;
 }
@@ -116,13 +116,17 @@ export string test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and
   i32 floorV8 = declared(v8Src, "const ", "FIRST_FREE_HANDLE", ": i32 = ");
 
   // **Found, before compared.** Two constants that are both missing answer -1 and agree perfectly.
-  string[] names = string[]("platform.wac STDIN", "platform.wac PARENT_FS",
+  string[] names = [
+                            "platform.wac STDIN", "platform.wac PARENT_FS",
                             "children.ts PARENT_FS_HANDLE", "children.ts FIRST_FREE_HANDLE",
                             "main.rs STDIN_HANDLE", "main.rs PARENT_FS_HANDLE",
                             "main.rs FIRST_FREE_HANDLE", "v8 STDIN_HANDLE",
-                            "v8 PARENT_FS_HANDLE", "v8 FIRST_FREE_HANDLE");
-  i32[] values = i32[](stdinWac, parentWac, parentJs, floorJs, stdinRs, parentRs, floorRs,
-                       stdinV8, parentV8, floorV8);
+                            "v8 PARENT_FS_HANDLE", "v8 FIRST_FREE_HANDLE"
+  ];
+  i32[] values = [
+                       stdinWac, parentWac, parentJs, floorJs, stdinRs, parentRs, floorRs,
+                       stdinV8, parentV8, floorV8
+  ];
   for (i32 i = 0; i < names.len() && i < values.len(); i++) {
     t.neI32(values[i], -1, names[i] + " is not declared where this expects it");
   }
@@ -151,11 +155,11 @@ export string test_every_hosts_allocation_counter_starts_at_the_floor_rather_tha
   // The three JavaScript hosts allocate from a counter. Read rather than trusted, because the way this
   // went wrong before was a literal that was right when it was written: `let nextHandle = 1` is correct
   // for one reserved number and silently wrong for two.
-  string[] hosts = string[]("deno.ts", "node.ts", "browser.ts");
+  string[] hosts = ["deno.ts", "node.ts", "browser.ts"];
   for (i32 i = 0; i < hosts.len(); i++) {
     string src = sourceOf(t, cli, "packages/platform/host/" + hosts[i]);
     string[] starts = nextHandleStarts(src);
-    t.eqStrArray(starts, string[]("FIRST_FREE_HANDLE"),
+    t.eqStrArray(starts, ["FIRST_FREE_HANDLE"],
                  hosts[i] + " starts its handle counter at a literal");
   }
 

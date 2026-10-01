@@ -39,10 +39,10 @@ import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
 import { splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
 
 /** Where wac declarations are looked for. `tools/` holds no wac library code, only programs. */
-string[] wacRoots() { return string[]("packages", "harness"); }
+string[] wacRoots() { return ["packages", "harness"]; }
 
 /** And where a TypeScript caller may be, which is everywhere wac is plus the tooling that drives it. */
-string[] tsRoots() { return string[]("packages", "harness", "tools"); }
+string[] tsRoots() { return ["packages", "harness", "tools"]; }
 
 /** One declaration: the name, the file it is in, and the line it is on (1-based). */
 export struct Decl {
@@ -94,7 +94,7 @@ export void walk(Cli cli, string base, string rel, string ext, Vec<string> out) 
  */
 export string[] codeLines(string text) {
   u8[] b = text.toBytes();
-  u8[] out = u8[b.len()](fill: ' ');
+  u8[] out = u8[].filled(b.len(), ' ');
   i32 i = 0;
   while (i < b.len()) {
     i32 c = b[i];
@@ -152,7 +152,7 @@ Program mustCompile(Core core, string pattern) {
 /** The first capture of `p` in `line`, or `""`. */
 string firstCapture(Program p, string line) {
   u8[] b = line.toBytes();
-  i32[] caps = i32[slotCount(p)]();
+  i32[] caps = i32[].filled(slotCount(p), 0);
   i32 at = search(p, b, 0, caps, 1000000);
   if (at == NO_MATCH()) { return ""; }
   if (caps.len() < 4 || caps[2] < 0) { return ""; }
@@ -521,8 +521,8 @@ export Scan scanAt(Core core, Cli cli, string base) {
 
   // Pass two: where names are used. A declaration's own file answers by line, because the
   // declaration's own line does not count; another file answers by whether it imported the name.
-  bool[] declLive = bool[decls.len()](fill: false);
-  bool[] privLive = bool[privates.len()](fill: false);
+  bool[] declLive = bool[].filled(decls.len(), false);
+  bool[] privLive = bool[].filled(privates.len(), false);
   Vec<string> satisfied = Vec.create();
   for (i32 i = 0; i < files.len(); i++) {
     string f = files.get(i);
@@ -581,7 +581,7 @@ export Scan scanAt(Core core, Cli cli, string base) {
     }
   }
 
-  string[] sat = string[satisfied.len()](fill: "");
+  string[] sat = string[].filled(satisfied.len(), "");
   for (i32 i = 0; i < satisfied.len(); i++) { sat[i] = satisfied.get(i); }
   sortStrings(sat, sat.len());
 
@@ -603,7 +603,7 @@ export Scan scanAt(Core core, Cli cli, string base) {
   for (i32 i = 0; i < tr.len(); i++) { walk(cli, base, tr[i], ".ts", tsFiles); }
   Vec<string> tsText = Vec.create();
   Vec<string> tsPkg = Vec.create();
-  bool[] tsOpen = bool[tsFiles.len()](fill: false);
+  bool[] tsOpen = bool[].filled(tsFiles.len(), false);
   for (i32 i = 0; i < tsFiles.len(); i++) {
     string text = readAll(cli, base + "/" + tsFiles.get(i));
     tsText.push(text);

@@ -6,7 +6,7 @@
 
 /** Every script, in the order they were written. */
 export string[] corpus() {
-  return string[](
+  return [
     "x=abc; echo ${x:-def}",
     "x=; echo ${x:-def}",
     "unset x; echo ${x:-def}",
@@ -953,10 +953,10 @@ export string[] corpus() {
     "read a <<< hi; echo \"[$a]\"",
     "cat <<< $'x\\ty'",
     "echo ignored | cat <<< wins"
-  );
+  ];
 }
 
 /** The external programs box carries — a script naming one belongs to box's half of the split. */
 export string[] programs() {
-  return string[]("cat", "wc", "head", "tail", "sort", "uniq", "nl", "rev", "grep", "tr", "seq", "cut");
+  return ["cat", "wc", "head", "tail", "sort", "uniq", "nl", "rev", "grep", "tr", "seq", "cut"];
 }

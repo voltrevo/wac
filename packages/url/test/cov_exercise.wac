@@ -69,7 +69,7 @@ i32 hostLen(Host h) {
 }
 
 string[] hand() {
-  return string[](
+  return [
     "http://example.com/", "https://example.com:8443/a/b?c=d#e", "http://user:pw@example.com/",
     "http://:pw@example.com/", "http://user@example.com/", "http://example.com",
     "http://example.com?q", "http://example.com#f", "http://example.com/?#",
@@ -120,7 +120,8 @@ string[] hand() {
     "http://1.2.3.4.5.6/", "http://1.2.3.256/", "http://1.2.65536/", "http://1.16777216/",
     "http://[::ffff:1.2.3]/", "http://[::ffff:1.2.3.4.5]/", "http://[::ffff:.1.2.3]/",
     "http://[::ffff:1.2.3.]/", "http://[1:2:3:4:5:6:1.2.3.4]/", "http://[1:2:3:4:5:6:7:1.2.3.4]/",
-    "foo://h?q", "foo://h#f", "foo://h");
+    "foo://h?q", "foo://h#f", "foo://h"
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -130,8 +131,8 @@ export i32 main(Core core, Cli cli) {
   for (i32 i = 0; i < hs.len(); i++) { seen = seen + parse(hs[i].toBytes()).len(); }
 
   // File bases, where a Windows drive letter is reached through resolution rather than written.
-  string[] fb = string[]("file:///c:/a/b", "file:///c:", "file://h/c:/x");
-  string[] fr = string[]("..", "/x", "x", "../..", "d:/y", "/d:/y");
+  string[] fb = ["file:///c:/a/b", "file:///c:", "file://h/c:/x"];
+  string[] fr = ["..", "/x", "x", "../..", "d:/y", "/d:/y"];
   for (i32 i = 0; i < fb.len(); i++) {
     for (i32 j = 0; j < fr.len(); j++) {
       seen = seen + parseWithBase(fr[j].toBytes(), fb[i].toBytes()).len();
@@ -139,12 +140,14 @@ export i32 main(Core core, Cli cli) {
   }
 
   // Relative resolution against each base shape, which is most of the state machine.
-  string[] bases = string[](
+  string[] bases = [
     "http://example.com/a/b/c?q#f", "http://example.com/", "https://user:pw@host:8080/p/q",
-    "file:///a/b/c", "foo://host/p", "foo:opaque", "foo:opaque?q");
-  string[] refs = string[](
+    "file:///a/b/c", "foo://host/p", "foo:opaque", "foo:opaque?q"
+  ];
+  string[] refs = [
     "", "d", "/d", "//other.com/d", "../d", "../../d", "../../../d", "./d", "?q2", "#f2",
-    "?", "#", "http://absolute.example/x", "//h", "\\d", "a:b", ".", "..", "#a#b");
+    "?", "#", "http://absolute.example/x", "//h", "\\d", "a:b", ".", "..", "#a#b"
+  ];
   for (i32 i = 0; i < bases.len(); i++) {
     for (i32 j = 0; j < refs.len(); j++) {
       seen = seen + parseWithBase(refs[j].toBytes(), bases[i].toBytes()).len();
@@ -154,22 +157,25 @@ export i32 main(Core core, Cli cli) {
   // The same generator the fuzzer uses, so the report covers what the fuzzer actually reaches. Kept
   // in step with `test/fuzz.test.ts` by hand, which is the standing hazard of a second workload: if
   // the two drift, this measures something the tests do not run.
-  string[] schemes = string[]("http", "https", "file", "ftp", "ws", "wss", "foo", "a+b", "A", "");
-  string[] seps = string[](":", "://", ":/", ":///", "://///", ":\\\\", "", ":/\\");
-  string[] userinfo = string[]("", "u@", "u:p@", ":@", "@", "u:@", "%40@", "a b@", "u:p@x@");
-  string[] hosts = string[](
+  string[] schemes = ["http", "https", "file", "ftp", "ws", "wss", "foo", "a+b", "A", ""];
+  string[] seps = [":", "://", ":/", ":///", "://///", ":\\\\", "", ":/\\"];
+  string[] userinfo = ["", "u@", "u:p@", ":@", "@", "u:@", "%40@", "a b@", "u:p@x@"];
+  string[] hosts = [
     "h", "example.com", "EXAMPLE.com", "", "127.0.0.1", "0x7f.1", "2130706433", "[::1]", "[::",
-    "1.2.3.4.5", "0x", "a b", "a%20b", "a|b", "localhost", "..", "a..b", "-", "%2e");
-  string[] ports = string[]("", ":80", ":443", ":0", ":65535", ":65536", ":", ":abc", ":-1", ":8080");
-  string[] paths = string[](
+    "1.2.3.4.5", "0x", "a b", "a%20b", "a|b", "localhost", "..", "a..b", "-", "%2e"
+  ];
+  string[] ports = ["", ":80", ":443", ":0", ":65535", ":65536", ":", ":abc", ":-1", ":8080"];
+  string[] paths = [
     "", "/", "//", "/a", "/a/b", "/a/../b", "/..", "/.", "/a/./b", "\\a", "/a\\b", "/%2e%2e/",
-    "/ ", "/\"", "/<>", "/`", "/{}", "/%", "/%zz", "/%41", "/c:/x", "/c|/x", "/é", "/日");
-  string[] queries = string[]("", "?", "?a", "?a=b", "?a'b", "?a b", "?#", "?%", "?é");
-  string[] frags = string[]("", "#", "#f", "#a b", "#\"", "#é", "#a#b");
+    "/ ", "/\"", "/<>", "/`", "/{}", "/%", "/%zz", "/%41", "/c:/x", "/c|/x", "/é", "/日"
+  ];
+  string[] queries = ["", "?", "?a", "?a=b", "?a'b", "?a b", "?#", "?%", "?é"];
+  string[] frags = ["", "#", "#f", "#a b", "#\"", "#é", "#a#b"];
   // `undefined` is the first entry: no base at all, and the generator picks it as often as the rest.
-  string[] gbases = string[](
+  string[] gbases = [
     "", "http://example.com/a/b?q#f", "file:///a/b", "foo://host/p", "foo:opaque",
-    "https://u:p@h:8080/x/y");
+    "https://u:p@h:8080/x/y"
+  ];
 
   Rng r = Rng(0x1234abcd);
   for (i32 i = 0; i < 4000; i++) {
@@ -193,39 +199,42 @@ export i32 main(Core core, Cli cli) {
   // The encode sets by number, the serializer, and the two address parsers, with the inputs
   // `url_test.wac` gives them. Every one of these takes or returns something that does not cross the
   // bridge — an encode-set constant, a `Host`, a `Buf`.
-  i32[] sets = i32[](SET_C0(), SET_FRAGMENT(), SET_QUERY(), SET_SPECIAL_QUERY(), SET_PATH(),
-                     SET_USERINFO(), SET_COMPONENT());
+  i32[] sets = [
+                     SET_C0(), SET_FRAGMENT(), SET_QUERY(), SET_SPECIAL_QUERY(), SET_PATH(),
+                     SET_USERINFO(), SET_COMPONENT()
+  ];
   for (i32 c = 0; c < 128; c++) {
     for (i32 s = 0; s < sets.len(); s++) { if (inEncodeSet(c, sets[s])) { seen = seen + 1; } }
   }
-  string[] enc = string[]("%41", "a&b+c,d$e", "a'b", "", "a b", "é", "日", "/a/b", "a%zz");
+  string[] enc = ["%41", "a&b+c,d$e", "a'b", "", "a b", "é", "日", "/a/b", "a%zz"];
   for (i32 i = 0; i < enc.len(); i++) {
     for (i32 s = 0; s < sets.len(); s++) {
       seen = seen + encode(enc[i].toBytes(), sets[s]).len();
     }
     seen = seen + decode(enc[i].toBytes()).len();
   }
-  string[] dec = string[]("%41%42", "%zz", "%", "%4", "a%2Fb", "%2f", "%00", "abc");
+  string[] dec = ["%41%42", "%zz", "%", "%4", "a%2Fb", "%2f", "%00", "abc"];
   for (i32 i = 0; i < dec.len(); i++) { seen = seen + decode(dec[i].toBytes()).len(); }
 
   // The serializer's choice of where `::` goes, which only the serializer makes.
-  string[] sixes = string[](
+  string[] sixes = [
     "0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:0", "1:0:0:2:0:0:0:3", "1:0:0:2:0:0:3:4",
     "1:2:3:4:5:6:7:8", "1:0:3:4:5:6:7:8", "::ffff:127.0.0.1", "1::8", "1:2:3:4:5:6:1.2.3.4",
-    "1:2:3:4:5:6:7:8:9", "1::2::3", "", ":", "z::1");
+    "1:2:3:4:5:6:7:8:9", "1::2::3", "", ":", "z::1"
+  ];
   for (i32 i = 0; i < sixes.len(); i++) {
     Host? h = parseIpv6(sixes[i].toBytes());
     if (!(h is null)) { seen = seen + hostLen(h!); }
   }
-  string[] fours = string[](
+  string[] fours = [
     "127.1", "0x7f.1", "2130706433", "0.0.0.0", "255.255.255.255", "1.2.3.4", "256.1.1.1",
-    "1.2.3.4.5", "0177.0.0.1", "0x", "", "1.2.3.09");
+    "1.2.3.4.5", "0177.0.0.1", "0x", "", "1.2.3.09"
+  ];
   for (i32 i = 0; i < fours.len(); i++) {
     Host? h = parseIpv4(fours[i].toBytes());
     if (!(h is null)) { seen = seen + hostLen(h!); }
   }
-  string[] numish = string[](
-    "1.2.3.4", "a.1", "1.2.3.4.", "a.0x1f", "a.0177", "example.com", "1.2.3.4a", "");
+  string[] numish = ["1.2.3.4", "a.1", "1.2.3.4.", "a.0x1f", "a.0177", "example.com", "1.2.3.4a", ""];
   for (i32 i = 0; i < numish.len(); i++) {
     if (endsInNumber(numish[i].toBytes())) { seen = seen + 1; }
   }

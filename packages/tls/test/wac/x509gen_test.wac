@@ -48,7 +48,7 @@ const i64 NOT_AFTER = 1817424000;
 
 export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, Cli cli) {
   T t = T.create();
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 7 + 3) & 0xFF; }
 
   // ── P-256, which is the one a WebRTC peer needs ───────────────────────────────────────────────
@@ -57,13 +57,13 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, 
   // libwebrtc does not accept an ed25519 certificate, so a wac program that wants to be a WebRTC
   // endpoint cannot make its own identity without this — and a WebRTC certificate is self-signed
   // per session by design, since the SDP fingerprint is the whole of the identity.
-  u8[] ecKey = u8[32]();
+  u8[] ecKey = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { ecKey[i] = (i * 5 + 11) & 0xFF; }
   u8[] ecDer = selfSignedP256("wac webrtc", 7, NOT_BEFORE, NOT_AFTER, ecKey, ecKey);
   t.isTrue(ecDer.len() > 100, "a P-256 certificate was produced");
   t.eqI32(selfSignedP256("x", 1, NOT_AFTER, NOT_BEFORE, ecKey, ecKey).len(), 0,
           "an inverted validity window is refused, as for the others");
-  t.eqI32(selfSignedP256("x", 1, NOT_BEFORE, NOT_AFTER, u8[31](), ecKey).len(), 0,
+  t.eqI32(selfSignedP256("x", 1, NOT_BEFORE, NOT_AFTER, u8[].filled(31, 0), ecKey).len(), 0,
           "and a key of the wrong width, rather than being padded into something plausible");
 
   u8[] der = selfSignedEd25519("wac relay", 1, NOT_BEFORE, NOT_AFTER, seed);
@@ -74,7 +74,7 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, 
   Lines lines = Lines.create();
   lines.add("cert " + hex(ecDer));
   lines.add("cert " + hex(der));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "two certificates");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "two certificates");
   if (!a.ok) { return t.report(); }
   Facts ec = factsOf(a.lines[0]);
   Facts ed = factsOf(a.lines[1]);
@@ -114,7 +114,7 @@ export string test_openssl_reads_and_verifies_an_rsa_certificate(Core core, Cli 
   T t = T.create();
   Lines want = Lines.create();
   want.add("rsakey");
-  Answers keyed = ask(t, cli, "node", string[](ORACLE), want, "an RSA key");
+  Answers keyed = ask(t, cli, "node", [ORACLE], want, "an RSA key");
   if (!keyed.ok) { return t.report(); }
   u8[] n = decoded(word(keyed.lines[0], 1));
   u8[] e = decoded(word(keyed.lines[0], 2));
@@ -125,7 +125,7 @@ export string test_openssl_reads_and_verifies_an_rsa_certificate(Core core, Cli 
   t.isTrue(der.len() > 300, "a certificate was produced");
   Lines lines = Lines.create();
   lines.add("cert " + hex(der));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the RSA certificate");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "the RSA certificate");
   if (!a.ok) { return t.report(); }
   Facts f = factsOf(a.lines[0]);
   t.isTrue(f.verified, "openssl parses it and the RSA self-signature verifies");
@@ -172,14 +172,14 @@ export string test_a_certificate_that_cannot_be_valid_is_not_produced(Core core,
   // A window that ends before it begins parses fine and is never valid, which is worse than nothing:
   // it fails at use, far from here, with a message about expiry rather than about generation.
   T t = T.create();
-  u8[] seed = u8[32]();
+  u8[] seed = u8[].filled(32, 0);
   t.eqI32(selfSignedEd25519("x", 1, NOT_AFTER, NOT_BEFORE, seed).len(), 0,
           "an inverted validity window is refused");
   t.eqI32(selfSignedEd25519("x", 1, NOT_BEFORE, NOT_BEFORE, seed).len(), 0,
           "and a zero-length one");
-  t.eqI32(selfSignedEd25519("x", 1, NOT_BEFORE, NOT_AFTER, u8[31]()).len(), 0,
+  t.eqI32(selfSignedEd25519("x", 1, NOT_BEFORE, NOT_AFTER, u8[].filled(31, 0)).len(), 0,
           "a 31-byte seed is refused");
-  t.eqI32(selfSignedRsa("x", 1, NOT_BEFORE, NOT_AFTER, u8[0](), u8[](1), u8[](1)).len(), 0,
+  t.eqI32(selfSignedRsa("x", 1, NOT_BEFORE, NOT_AFTER, u8[](), [1] as u8[], [1] as u8[]).len(), 0,
           "an empty modulus is refused");
   return t.report();
 }
@@ -201,22 +201,22 @@ export string test_der_lengths_and_integers_are_the_shortest_form(Core core, Cli
   t.eqI32(derLength(256)[2], 0, "and no leading zero beyond what is needed");
 
   // INTEGER is signed: a top bit set needs a leading zero, and a redundant one is malformed.
-  u8[] high = u8[](0xFF, 0x01);
+  u8[] high = [0xFF, 0x01];
   u8[] enc = derInteger(high);
   t.eqI32(enc[0], 0x02, "an INTEGER");
   t.eqI32(enc[1], 3, "three content bytes");
   t.eqI32(enc[2], 0, "a leading zero, because the top bit was set");
-  u8[] low = u8[](0x01, 0x00, 0x01);
+  u8[] low = [0x01, 0x00, 0x01];
   u8[] enc2 = derInteger(low);
   t.eqI32(enc2[1], 3, "65537 needs no padding");
   t.eqI32(enc2[2], 1, "and begins with its own first byte");
-  u8[] padded = u8[](0x00, 0x00, 0x7F);
+  u8[] padded = [0x00, 0x00, 0x7F];
   t.eqI32(derInteger(padded)[1], 1, "redundant leading zeros are stripped");
   t.eqI32(derIntegerSmall(0)[1], 1, "zero is one zero byte, not none");
   t.eqI32(derIntegerSmall(0)[2], 0, "and that byte is zero");
 
   // A BIT STRING's first content byte is the unused-bit count. Omitting it shifts the key.
-  u8[] bits = derBitString(u8[](0xAB, 0xCD));
+  u8[] bits = derBitString([0xAB, 0xCD] as u8[]);
   t.eqI32(bits[0], 0x03, "a BIT STRING");
   t.eqI32(bits[1], 3, "three content bytes for two of data");
   t.eqI32(bits[2], 0, "the first being the unused-bit count");

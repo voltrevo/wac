@@ -69,10 +69,10 @@ export u8[] ghash(u8[] h, u8[] data) {
   if (h.len() != 16) { trap; }
   if (data.len() % 16 != 0) { trap; }
 
-  u64[] hv = u64[](beWord64(h, 0), beWord64(h, 8));
-  u64[] y = u64[](0, 0);
-  u64[] blk = u64[2]();
-  u64[] tmp = u64[2]();
+  u64[] hv = [beWord64(h, 0), beWord64(h, 8)];
+  u64[] y = [0, 0];
+  u64[] blk = u64[].filled(2, 0);
+  u64[] tmp = u64[].filled(2, 0);
 
   i32 n = data.len();
   for (i32 pos = 0; pos < n; pos += 16) {
@@ -85,7 +85,7 @@ export u8[] ghash(u8[] h, u8[] data) {
     y[1] = tmp[1];
   }
 
-  u8[] out = u8[16]();
+  u8[] out = u8[].filled(16, 0);
   storeBE64(y[0], out, 0);
   storeBE64(y[1], out, 8);
   return out;

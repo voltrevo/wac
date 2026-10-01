@@ -84,12 +84,12 @@ const i32 KILLED = 124;
 string[] childEnv(Cli cli, string dir, string binDir) {
   u8[]? path = cli.env("PATH").wait();
   string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
-  return string[]("LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+  return ["LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir];
 }
 
 /** One script, on one shell, in `dir`, with a bound on how long it may take. */
 Run runOne(Cli cli, string shell, string script, string dir, string[] env) {
-  Exec r = cli.execWithIn("timeout", string[]("10", shell, "-c", script), u8[0](),
+  Exec r = cli.execWithIn("timeout", ["10", shell, "-c", script], u8[](),
                           env, true, false, dir).wait();
   if (!r.ran()) { return Run("", "could not run timeout: " + r.error, 0 - 1, false); }
   return Run(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
@@ -151,7 +151,7 @@ export i32 main(Core core, Cli cli) {
   for (i32 i = 0; i < binDir.len(); i++) { if (binDir.slice(i, i + 1) == "/") { cut = i; } }
   binDir = binDir.slice(0, cut);
 
-  string[] grants = string[]("--allow-read", "--allow-write", "--allow-env");
+  string[] grants = ["--allow-read", "--allow-write", "--allow-env"];
   string calledSh = builtApp(cli, "packages/box/example/boxsh.wac", "corpusroutes-boxsh", grants);
   string spawnedSh = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusroutes-wacsh", grants);
 

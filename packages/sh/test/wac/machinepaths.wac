@@ -67,7 +67,7 @@ export string[] absolutePathsIn(string script) {
   // Two passes rather than a Vec, to keep this importable by anything without pulling in `core/vec`.
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = string[n](fill: "");
+    string[] out = string[].filled(n, "");
     i32 k = 0;
     for (i32 i = 0; i < script.len(); i++) {
       if (script.slice(i, i + 1) != "/") { continue; }
@@ -81,7 +81,7 @@ export string[] absolutePathsIn(string script) {
     }
     if (pass == 1) { return out; }
   }
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }
 
 /**

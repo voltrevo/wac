@@ -50,7 +50,7 @@ string hex16(u64 v) {
  * division would get wrong, and `0xFFFFFFFFFFFFFFFF` is the one a sign-extending shift would.
  */
 u64[] values() {
-  return u64[](
+  return [
     0, 1, 2, 0xFFFFFFFF, 0x100000000,
     0x7FFFFFFFFFFFFFFF,   // (1 << 63) - 1
     0x8000000000000000,   // 1 << 63
@@ -58,7 +58,8 @@ u64[] values() {
     0xFFFFFFFFFFFFFFFE,
     0xFFFFFFFFFFFFFFFF,
     0xFFFFFFFF00000000,
-    0xFFFFFFFFFFFFFFFE);
+    0xFFFFFFFFFFFFFFFE
+  ] as u64[];
 }
 
 void row(Lines lines, string op, u64 a, u64 b, u64 got) {
@@ -99,7 +100,7 @@ export string test_u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four(Core core, 
 export string test_u64_shift_right_does_not_sign_extend(Core core, Cli cli) {
   T t = T.create();
   u64[] vs = values();
-  i32[] shifts = i32[](0, 1, 31, 32, 33, 63);
+  i32[] shifts = [0, 1, 31, 32, 33, 63];
   Lines lines = Lines.create();
   for (i32 i = 0; i < vs.len(); i++) {
     for (i32 k = 0; k < shifts.len(); k++) {
@@ -143,8 +144,8 @@ export string test_u64_truncation_keeps_the_low_thirty_two_bits(Core core, Cli c
  */
 export string test_u64_a_u32_product_widens(Core core, Cli cli) {
   T t = T.create();
-  u32[] xs = u32[](0, 1, 0xFFFFFFFF, 0xFFFFFFFE, 0x7FFFFFFF, 0xFFFF, 0x10000);
-  u32[] ys = u32[](0, 1, 0xFFFFFFFF, 0xFFFFFFFE, 0x7FFFFFFF, 0xFFFF);
+  u32[] xs = [0, 1, 0xFFFFFFFF, 0xFFFFFFFE, 0x7FFFFFFF, 0xFFFF, 0x10000];
+  u32[] ys = [0, 1, 0xFFFFFFFF, 0xFFFFFFFE, 0x7FFFFFFF, 0xFFFF];
   Lines lines = Lines.create();
   for (i32 i = 0; i < xs.len(); i++) {
     for (i32 k = 0; k < ys.len(); k++) {

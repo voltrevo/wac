@@ -35,8 +35,8 @@ const string PROBE =
 
 /** Run the probe, optionally with `WAC_COMPILER_ID` already set, and answer what it printed. */
 string idSeenBy(Cli cli, string probe, string forced) {
-  string[] env = forced == "" ? string[0](fill: "") : string[]("WAC_COMPILER_ID=" + forced);
-  Exec r = cli.execWith(wacBinary(cli), string[]("run", "--allow-env", probe), u8[0](),
+  string[] env = forced == "" ? string[].filled(0, "") : ["WAC_COMPILER_ID=" + forced];
+  Exec r = cli.execWith(wacBinary(cli), ["run", "--allow-env", probe], u8[](),
                         env, false, false).wait();
   if (!r.ran()) { return "(did not run: " + r.error + ")"; }
   string out = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);

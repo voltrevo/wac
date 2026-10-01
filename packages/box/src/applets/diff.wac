@@ -98,7 +98,7 @@ i32[] script(u8[][] old, u8[][] new) {
   i32 n = old.len();
   i32 m = new.len();
   i32 stride = m + 1;
-  i32[] lcs = i32[(n + 1) * stride](fill: 0);
+  i32[] lcs = i32[].filled((n + 1) * stride, 0);
   for (i32 i = n - 1; i >= 0; i--) {
     for (i32 j = m - 1; j >= 0; j--) {
       i32 best = 0;
@@ -113,7 +113,7 @@ i32[] script(u8[][] old, u8[][] new) {
     }
   }
 
-  i32[] ops = i32[n + m](fill: 0);
+  i32[] ops = i32[].filled(n + m, 0);
   i32 at = 0;
   i32 i = 0;
   i32 j = 0;
@@ -130,7 +130,7 @@ i32[] script(u8[][] old, u8[][] new) {
   while (i < n) { ops[at] = 1; at++; i++; }
   while (j < m) { ops[at] = 2; at++; j++; }
 
-  i32[] out = i32[at](fill: 0);
+  i32[] out = i32[].filled(at, 0);
   for (i32 k = 0; k < at; k++) { out[k] = ops[k]; }
   return out;
 }

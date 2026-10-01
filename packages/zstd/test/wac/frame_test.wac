@@ -15,7 +15,7 @@ import { askZstd, compressLine, compressed, frameAt } from "./frames.wac";
 import { decompress } from "../../src/frame.wac";
 
 u8[] prng(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 s = seed;
   for (i32 i = 0; i < n; i++) {
     s = s ^ (s << 13);
@@ -35,28 +35,31 @@ bool sameBytes(u8[] a, u8[] b) {
 }
 
 u8[] concat(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
 }
 
 string[] plainNames() {
-  return string[]("empty", "one byte", "two bytes", "short incompressible", "three blocks",
-                  "exactly one block", "one byte over a block");
+  return [
+                  "empty", "one byte", "two bytes", "short incompressible", "three blocks",
+                  "exactly one block", "one byte over a block"
+  ];
 }
 
 /** Inputs the encoder stores rather than compresses, so the frame layer is what is exercised. */
 u8[][] plainCases() {
-  return u8[][](
-    u8[0](),
+  return [
+    u8[](),
     "x".toBytes(),
     "hi".toBytes(),
     prng(40, 1),
     // Past 128 KiB, so the encoder has to split it and the block loop runs more than once.
     prng(300000, 7),
     prng(131072, 9),
-    prng(131073, 11));
+    prng(131073, 11)
+  ];
 }
 
 /** The reference's frames and the block types it chose, in one batch. */
@@ -75,16 +78,16 @@ Encoded encodePlain(T t, Cli cli) {
   Lines first = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) { first.add(compressLine(cases[i], -1, false)); }
   Answers a = askZstd(t, cli, first, "the reference encoder");
-  if (!a.ok) { return Encoded(false, u8[][0](fill: u8[0]()), string[0](fill: "")); }
-  u8[][] frames = u8[][cases.len()](fill: u8[0]());
+  if (!a.ok) { return Encoded(false, u8[][].filled(0, u8[]()), string[].filled(0, "")); }
+  u8[][] frames = u8[][].filled(cases.len(), u8[]());
   Lines second = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) {
     frames[i] = frameAt(a, i);
     second.add("blocktypes " + hex(frames[i]));
   }
   Answers b = askZstd(t, cli, second, "the reference's own block types");
-  if (!b.ok) { return Encoded(false, u8[][0](fill: u8[0]()), string[0](fill: "")); }
-  string[] blocks = string[cases.len()](fill: "");
+  if (!b.ok) { return Encoded(false, u8[][].filled(0, u8[]()), string[].filled(0, "")); }
+  string[] blocks = string[].filled(cases.len(), "");
   for (i32 i = 0; i < cases.len(); i++) { blocks[i] = word(b.lines[i], 1); }
   return Encoded(true, frames, blocks);
 }
@@ -138,7 +141,7 @@ u8[] rleFrame(i32 value, i32 count) {
   // The content-size field has three usable widths and the two-byte one is offset by 256, so
   // it tops out at 65791 rather than 65535. Getting that wrong produced a frame Node rejected.
   i32 sizeBytes = count < 256 ? 1 : (count < 65792 ? 2 : 4);
-  u8[] out = u8[4 + 1 + sizeBytes + 3 + 1]();
+  u8[] out = u8[].filled(4 + 1 + sizeBytes + 3 + 1, 0);
   out[0] = 0x28;
   out[1] = 0xb5;
   out[2] = 0x2f;
@@ -175,10 +178,10 @@ export string test_rle_blocks_on_a_frame_the_reference_decoder_agrees_with(Core 
   // The encoder never emits a frame that is only RLE — it opens with a compressed block — so
   // this one is built by hand. Which would prove nothing on its own, so zstd's own decoder
   // checks the construction first: if Node reads it as the same bytes, the frame is real.
-  i32[] values = i32[](0x61, 0x00, 0xff, 0x41, 0x41, 0x7a, 0x2b);
-  i32[] counts = i32[](1, 5, 255, 256, 65791, 70000, 131072);
+  i32[] values = [0x61, 0x00, 0xff, 0x41, 0x41, 0x7a, 0x2b];
+  i32[] counts = [1, 5, 255, 256, 65791, 70000, 131072];
 
-  u8[][] frames = u8[][values.len()](fill: u8[0]());
+  u8[][] frames = u8[][].filled(values.len(), u8[]());
   Lines lines = Lines.create();
   for (i32 i = 0; i < values.len(); i++) {
     frames[i] = rleFrame(values[i], counts[i]);
@@ -209,7 +212,7 @@ export string test_rle_blocks_on_a_frame_the_reference_decoder_agrees_with(Core 
 export string test_traps_a_frame_truncated_below_its_declared_content_size(Core core, Cli cli) {
   T t = T.create();
   u8[] frame = compressed(t, cli, prng(40, 3), -1, false);
-  u8[] truncated = u8[frame.len() - 1]();
+  u8[] truncated = u8[].filled(frame.len() - 1, 0);
   for (i32 i = 0; i < truncated.len(); i++) { truncated[i] = frame[i]; }
   decompress(truncated);
   return "";
@@ -239,7 +242,7 @@ export string test_a_skippable_frame_is_stepped_over_not_decoded(Core core, Cli 
   u8[] data = "after the skippable".toBytes();
   u8[] frame = compressed(t, cli, data, -1, false);
   u8[] payload = "this is not zstd data at all".toBytes();
-  u8[] skip = u8[8 + payload.len()]();
+  u8[] skip = u8[].filled(8 + payload.len(), 0);
   skip[0] = 0x50;                                    // 0x184D2A50, the first of the sixteen magics
   skip[1] = 0x2A;
   skip[2] = 0x4D;
@@ -257,12 +260,12 @@ export string test_a_skippable_frame_is_stepped_over_not_decoded(Core core, Cli 
 
 // ── Garbage is refused rather than interpreted ────────────────────────────────
 
-export string test_traps_a_single_zero_byte() { decompress(u8[](0)); return ""; }
+export string test_traps_a_single_zero_byte() { decompress([0] as u8[]); return ""; }
 /** The magic, cut short. */
-export string test_traps_a_truncated_magic() { decompress(u8[](0x28, 0xb5, 0x2f)); return ""; }
+export string test_traps_a_truncated_magic() { decompress([0x28, 0xb5, 0x2f] as u8[]); return ""; }
 /** A magic that is nearly right. */
 export string test_traps_a_nearly_right_magic() {
-  decompress(u8[](0x28, 0xb5, 0x2f, 0xfe, 0, 0, 0, 0));
+  decompress([0x28, 0xb5, 0x2f, 0xfe, 0, 0, 0, 0] as u8[]);
   return "";
 }
 export string test_traps_plain_text() { decompress("not compressed at all".toBytes()); return ""; }

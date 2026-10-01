@@ -60,11 +60,11 @@ string loadNow(Cli cli) {
 string[] childEnv(Cli cli, string dir, string binDir) {
   u8[]? path = cli.env("PATH").wait();
   string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
-  return string[]("LC_ALL=C", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+  return ["LC_ALL=C", "PATH=" + binDir + ":" + rest, "HOME=" + dir];
 }
 
 Exec once(Cli cli, string cmd, string script, string dir, string binDir, i32 seconds) {
-  return cli.execWithIn("timeout", string[](itoa(seconds), cmd, "-c", script), u8[0](),
+  return cli.execWithIn("timeout", [itoa(seconds), cmd, "-c", script], u8[](),
                         childEnv(cli, dir, binDir), true, false, dir).wait();
 }
 
@@ -119,7 +119,7 @@ export string test_the_differences_from_bashs_diagnostics_are_the_ones_written_d
 
   string binDir = binDirOf(cli);
   string shell = builtApp(cli, "packages/box/src/bin/sh.wac", "stderr-wacsh",
-                          string[]("--allow-read", "--allow-write", "--allow-env"));
+                          ["--allow-read", "--allow-write", "--allow-env"]);
   string base = scratch(cli, "sh-stderr");
   cli.mkdir(base, true).wait();
 
@@ -160,7 +160,7 @@ export string test_a_builtins_diagnostic_names_the_shell_and_its_usage_line_does
   T t = T.create();
   string binDir = binDirOf(cli);
   string shell = builtApp(cli, "packages/box/src/bin/sh.wac", "stderr-wacsh",
-                          string[]("--allow-read", "--allow-write", "--allow-env"));
+                          ["--allow-read", "--allow-write", "--allow-env"]);
   string dir = scratch(cli, "sh-stderr-rule");
   cli.mkdir(dir, true).wait();
 

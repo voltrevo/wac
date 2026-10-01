@@ -82,36 +82,37 @@ string chutneyNodes(Cli cli) {
 
 Recipe[] recipes(Cli cli) {
   string lib = home(cli) + "/tor-build/torproject-tor-c8d2b17/libtor.a";
-  return Recipe[](
-    Recipe("hsntor", "packages/tor/tools/capture-hsntor.wac",
+  return [
+           Recipe("hsntor", "packages/tor/tools/capture-hsntor.wac",
            "packages/tor/tools/capture-hsntor.py",
            "packages/tor/test/data/hsntor_vectors.json", torProg(cli),
-           string[]("--allow-read", "--allow-env", "--allow-run")),
+           ["--allow-read", "--allow-env", "--allow-run"]),
     // Spawns nothing — it reads what chutney wrote. Here because a capture recipe should not be in
     // two languages, not because `exec` unblocked it.
     Recipe("relaycert", "packages/tor/tools/capture-relaycert.wac",
            "packages/tor/tools/capture-relaycert.py",
            "packages/tor/test/data/relaycert_vectors.json", chutneyNodes(cli),
-           string[]("--allow-read", "--allow-env")),
+           ["--allow-read", "--allow-env"]),
     // Compiles `blind-probe.c` against tor's `libtor.a` and runs what it built, so `exec` twice
     // over. Its vectors use `indent=1`, unlike the two above.
     Recipe("blind", "packages/tor/tools/capture-blind.wac",
            "packages/tor/tools/capture-blind.py",
            "packages/tor/test/data/blind_vectors.json", lib,
-           string[]("--allow-read", "--allow-write", "--allow-env", "--allow-run")),
+           ["--allow-read", "--allow-write", "--allow-env", "--allow-run"]),
     // The largest: two probes built, fifteen uploads to a fresh HSDir cache, and nested JSON —
     // booleans, integers, arrays and objects, where the others are flat strings.
     Recipe("hspub", "packages/tor/tools/capture-hspub.wac",
            "packages/tor/tools/capture-hspub.py",
            "packages/tor/test/data/hspublish.json", lib,
-           string[]("--allow-read", "--allow-write", "--allow-env", "--allow-run")),
+           ["--allow-read", "--allow-write", "--allow-env", "--allow-run"]),
     // **Not a tor recipe, and here anyway.** The pattern is the point rather than the package: this
     // one asks *WebCrypto* through `deno eval` instead of a C binary, which is what let a test that
     // needed a second implementation of HKDF stop being TypeScript. It needs nothing external, so it
     // is also what keeps the floor below satisfiable on a bare machine.
     Recipe("hkdfcap", "packages/crypto/tools/capture-hkdfcap.wac", "",
            "packages/crypto/test/data/hkdfcap_vectors.json", "",
-           string[]("--allow-read", "--allow-write", "--allow-run")));
+           ["--allow-read", "--allow-write", "--allow-run"])
+  ];
 }
 
 bool present(Cli cli, string path) {
@@ -134,11 +135,11 @@ bool present(Cli cli, string path) {
  * inheriting is a day this file does not notice.
  */
 u8[] output(T t, Cli cli, string what, string cmd, string[] args) {
-  Exec r = onlyEnv(cli, string[]("PATH", "HOME"), string[](pathVar(cli), home(cli)), cmd, args);
-  if (!r.ran()) { t.fail(what + ": " + cmd + " did not run — " + r.error); return u8[0](); }
+  Exec r = onlyEnv(cli, ["PATH", "HOME"], [pathVar(cli), home(cli)], cmd, args);
+  if (!r.ran()) { t.fail(what + ": " + cmd + " did not run — " + r.error); return u8[](); }
   if (r.status != 0) {
     t.fail(what + ": " + cmd + " exited " + itoa(r.status) + " — " + string.fromBytes(r.stderr));
-    return u8[0]();
+    return u8[]();
   }
   return r.stdout;
 }
@@ -163,7 +164,7 @@ export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core 
   if (!present(cli, wacBin)) { return t.report(); }
 
   Recipe[] all = recipes(cli);
-  string[] skipped = string[all.len()](fill: "");
+  string[] skipped = string[].filled(all.len(), "");
   i32 nSkipped = 0;
   i32 ran = 0;
 
@@ -182,13 +183,13 @@ export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core 
     // **Built rather than `wac run`**, which compiled the tor package from source per recipe. The
     // module is rebuilt when anything under the trees it is made from has moved; see
     // `wactest/src/built.wac`.
-    string[] argv = string[1](fill: "");
+    string[] argv = string[].filled(1, "");
     argv[0] = builtProgram(cli, r.wac, "capture-" + r.name, r.grants);
     u8[] fromWac = output(t, cli, r.name, wacBin, argv);
     if (fromWac.len() == 0) { continue; }
 
     // A recipe with no second implementation compares the wac tool against the committed file only.
-    u8[] fromPy = r.py == "" ? fromWac : output(t, cli, r.name, "python3", string[](r.py));
+    u8[] fromPy = r.py == "" ? fromWac : output(t, cli, r.name, "python3", [r.py]);
     if (fromPy.len() == 0) { continue; }
     ran = ran + 1;
 
@@ -209,7 +210,7 @@ export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core 
              r.vectors + " is " + itoa(committed.bytes.len()) + " bytes — did it load?");
   }
 
-  string[] said = string[nSkipped](fill: "");
+  string[] said = string[].filled(nSkipped, "");
   for (i32 i = 0; i < nSkipped; i++) { said[i] = skipped[i]; }
   // **Named, and a floor.** `hkdfcap` needs nothing external, so a run where even that is skipped is
   // a broken harness rather than a bare machine — and a row of passes over zero comparisons is

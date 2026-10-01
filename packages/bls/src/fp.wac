@@ -41,7 +41,7 @@ const i32 LIMBS = 12;
 
 /** p, least-significant limb first. */
 u32[] modulus() {
-  u32[] p = u32[LIMBS]();
+  u32[] p = u32[].filled(LIMBS, 0);
   p[0] = 0xffffaaab; p[1] = 0xb9feffff; p[2] = 0xb153ffff; p[3] = 0x1eabfffe;
   p[4] = 0xf6b0f624; p[5] = 0x6730d2a0; p[6] = 0xf38512bf; p[7] = 0x64774b84;
   p[8] = 0x434bacd7; p[9] = 0x4b1ba7b6; p[10] = 0x397fe69a; p[11] = 0x1a0111ea;
@@ -50,7 +50,7 @@ u32[] modulus() {
 
 /** R² mod p, for entering Montgomery form. */
 u32[] r2() {
-  u32[] v = u32[LIMBS]();
+  u32[] v = u32[].filled(LIMBS, 0);
   v[0] = 0x1c341746; v[1] = 0xf4df1f34; v[2] = 0x09d104f1; v[3] = 0x0a76e6a6;
   v[4] = 0x4c95b6d5; v[5] = 0x8de5476c; v[6] = 0x939d83c0; v[7] = 0x67eb88a9;
   v[8] = 0xb519952d; v[9] = 0x9a793e85; v[10] = 0x92cae3aa; v[11] = 0x11988fe5;
@@ -67,17 +67,17 @@ const u64 INV = 0xfffcfffd;
 
 /** One, in Montgomery form: R mod p. */
 export u32[] fpOne() {
-  u32[] v = u32[LIMBS]();
+  u32[] v = u32[].filled(LIMBS, 0);
   v[0] = 0x0002fffd; v[1] = 0x76090000; v[2] = 0xc40c0002; v[3] = 0xebf4000b;
   v[4] = 0x53c758ba; v[5] = 0x5f489857; v[6] = 0x70525745; v[7] = 0x77ce5853;
   v[8] = 0xa256ec6d; v[9] = 0x5c071a97; v[10] = 0xfa80e493; v[11] = 0x15f65ec3;
   return v;
 }
 
-export u32[] fpZero() { return u32[LIMBS](); }
+export u32[] fpZero() { return u32[].filled(LIMBS, 0); }
 
 export u32[] fpCopy(u32[] a) {
-  u32[] out = u32[LIMBS]();
+  u32[] out = u32[].filled(LIMBS, 0);
   for (i32 i = 0; i < LIMBS; i++) { out[i] = a[i]; }
   return out;
 }
@@ -165,7 +165,7 @@ u32[] toMont(u32[] a) { return fpMul(a, r2()); }
 
 /** Leave it: `a·R⁻¹ mod p`, which is `fpMul` against plain 1. */
 u32[] fromMont(u32[] a) {
-  u32[] one = u32[LIMBS]();
+  u32[] one = u32[].filled(LIMBS, 0);
   one[0] = 1;
   return fpMul(a, one);
 }
@@ -179,7 +179,7 @@ u32[] fromMont(u32[] a) {
  */
 export u32[]? fpFromBytes(u8[] s) {
   if (s.len() != 48) { return null; }
-  u32[] v = u32[LIMBS]();
+  u32[] v = u32[].filled(LIMBS, 0);
   for (i32 i = 0; i < LIMBS; i++) {
     i32 at = 48 - 4 * (i + 1);
     v[i] = (((s[at] as@ u32) << 24) | ((s[at + 1] as@ u32) << 16)
@@ -192,7 +192,7 @@ export u32[]? fpFromBytes(u8[] s) {
 /** The 48-byte big-endian encoding, canonical because the value is reduced. */
 export u8[] fpToBytes(u32[] a) {
   u32[] v = fromMont(a);
-  u8[] out = u8[48]();
+  u8[] out = u8[].filled(48, 0);
   for (i32 i = 0; i < LIMBS; i++) {
     i32 at = 48 - 4 * (i + 1);
     out[at] = ((v[i] >> 24) & 0xFF) as! i32;
@@ -348,7 +348,7 @@ export u32[]? fpInvert(u32[] a) {
 
 /** (p + 1)/4, the square-root exponent. Valid because p ≡ 3 (mod 4). */
 u32[] pPlusOneOverFour() {
-  u32[] e = u32[LIMBS]();
+  u32[] e = u32[].filled(LIMBS, 0);
   e[0] = 0xffffeaab; e[1] = 0xee7fbfff; e[2] = 0xac54ffff; e[3] = 0x07aaffff;
   e[4] = 0x3dac3d89; e[5] = 0xd9cc34a8; e[6] = 0x3ce144af; e[7] = 0xd91dd2e1;
   e[8] = 0x90d2eb35; e[9] = 0x92c6e9ed; e[10] = 0x8e5ff9a6; e[11] = 0x0680447a;
@@ -373,7 +373,7 @@ export u32[]? fpSqrt(u32[] a) {
 /** Whether the plain-form value is greater than (p−1)/2 — the sign convention for encodings. */
 export bool fpIsLexicographicallyLarger(u32[] a) {
   u32[] v = fromMont(a);
-  u32[] half = u32[LIMBS]();
+  u32[] half = u32[].filled(LIMBS, 0);
   half[0] = 0xffffd555; half[1] = 0xdcff7fff; half[2] = 0x58a9ffff; half[3] = 0x0f55ffff;
   half[4] = 0x7b587b12; half[5] = 0xb3986950; half[6] = 0x79c2895f; half[7] = 0xb23ba5c2;
   half[8] = 0x21a5d66b; half[9] = 0x258dd3db; half[10] = 0x1cbff34d; half[11] = 0x0d0088f5;
@@ -397,7 +397,7 @@ export bool fpIsLexicographicallyLarger(u32[] a) {
  * own carry edges.
  */
 export u32[] fpFromWideBytes(u8[] s) {
-  u32[] shift = u32[LIMBS]();
+  u32[] shift = u32[].filled(LIMBS, 0);
   shift[1] = 1;                          // 2³², in plain form
   u32[] radix = toMont(shift);
   u32[] acc = fpZero();
@@ -405,7 +405,7 @@ export u32[] fpFromWideBytes(u8[] s) {
   // A leading partial chunk first, so the rest divides evenly into four-byte words.
   i32 lead = s.len() % 4;
   if (lead != 0) {
-    u32[] head = u32[LIMBS]();
+    u32[] head = u32[].filled(LIMBS, 0);
     u32 w = 0;
     for (i32 i = 0; i < lead; i++) { w = (w << 8) | (s[i] as@ u32); }
     head[0] = w;
@@ -413,7 +413,7 @@ export u32[] fpFromWideBytes(u8[] s) {
     at = lead;
   }
   while (at < s.len()) {
-    u32[] word = u32[LIMBS]();
+    u32[] word = u32[].filled(LIMBS, 0);
     word[0] = (((s[at] as@ u32) << 24) | ((s[at + 1] as@ u32) << 16)
              | ((s[at + 2] as@ u32) << 8) | (s[at + 3] as@ u32));
     acc = fpAdd(fpMul(acc, radix), toMont(word));
@@ -444,7 +444,7 @@ export bool fpSgn0(u32[] a) {
  * 36 ms loop. Halving is common enough in curve formulas that it belongs here once.
  */
 export u32[] fpHalf() {
-  u32[] v = u32[12]();
+  u32[] v = u32[].filled(12, 0);
   v[0] = 0x00015554; v[1] = 0x18040000; v[2] = 0x3ab00001; v[3] = 0x85500005;
   v[4] = 0x253c276f; v[5] = 0x633cb57c; v[6] = 0x31ebb502; v[7] = 0x6e22d1ec;
   v[8] = 0xf2d14ca2; v[9] = 0xd3916126; v[10] = 0x1a006596; v[11] = 0x17fbb857;

@@ -62,9 +62,11 @@ string u64Hex(u64 v) {
  */
 export string test_fixedbig_shift_left_across_every_limb_boundary(Core core, Cli cli) {
   T t = T.create();
-  i32[] shifts = i32[](0, 1, 7, 31, 32, 33, 63, 64, 65, 95, 96, 127, 200, 500, 971, 1074);
-  u64[] values = u64[](1, 3, 0xFF, 0xFFFFFFFF, 0x100000000, 0x1FFFFFFFFFFFFF,
-                       0xFFFFFFFFFFFFFFFF);
+  i32[] shifts = [0, 1, 7, 31, 32, 33, 63, 64, 65, 95, 96, 127, 200, 500, 971, 1074];
+  u64[] values = [
+                       1, 3, 0xFF, 0xFFFFFFFF, 0x100000000, 0x1FFFFFFFFFFFFF,
+                       0xFFFFFFFFFFFFFFFF
+  ];
   Lines lines = Lines.create();
   for (i32 v = 0; v < values.len(); v++) {
     for (i32 s = 0; s < shifts.len(); s++) {
@@ -84,10 +86,10 @@ export string test_fixedbig_shift_left_across_every_limb_boundary(Core core, Cli
  */
 export string test_fixedbig_mul_small_carries(Core core, Cli cli) {
   T t = T.create();
-  u64[] v = u64[](1, 1, 1, 3, 0x1FFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 1, 7);
-  i32[] bits = i32[](0, 0, 0, 52, 52, 0, 100, 0);
-  u32[] mul = u32[](10, 10, 10, 10, 10, 10, 4, 2);
-  i32[] times = i32[](1, 19, 340, 17, 17, 30, 3, 100);
+  u64[] v = [1, 1, 1, 3, 0x1FFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 1, 7];
+  i32[] bits = [0, 0, 0, 52, 52, 0, 100, 0];
+  u32[] mul = [10, 10, 10, 10, 10, 10, 4, 2];
+  i32[] times = [1, 19, 340, 17, 17, 30, 3, 100];
   Lines lines = Lines.create();
   for (i32 i = 0; i < v.len(); i++) {
     lines.add("mul " + u64Hex(v[i]) + " " + itoa(bits[i]) + " " + itoa(mul[i] as@ i32) + " " +
@@ -135,7 +137,7 @@ export string test_fixedbig_random_add_subtract_and_compare(Core core, Cli cli) 
  */
 export string test_fixedbig_subtraction_that_borrows_across_zero_limbs(Core core, Cli cli) {
   T t = T.create();
-  i32[] bits = i32[](32, 33, 64, 96, 128, 500, 1024);
+  i32[] bits = [32, 33, 64, 96, 128, 500, 1024];
   Lines lines = Lines.create();
   for (i32 i = 0; i < bits.len(); i++) {
     lines.add("sub 0000000000000001 " + itoa(bits[i]) + " 0000000000000001 0 " +
@@ -180,8 +182,8 @@ export string test_fixedbig_zero_and_equality_edge_cases(Core core, Cli cli) {
 export string test_fixedbig_add_in_place_agrees_with_the_three_operand_sum() {
   T t = T.create();
   // Shifts chosen so each pair has a longer and a shorter side, and one pair of equal length.
-  i32[] lshift = i32[](0, 300, 64, 500, 0, 128);
-  i32[] rshift = i32[](300, 0, 64, 32, 0, 96);
+  i32[] lshift = [0, 300, 64, 500, 0, 128];
+  i32[] rshift = [300, 0, 64, 32, 0, 96];
   u64 x = 0xFFFFFFFFFFFFFFFF;
   u64 y = 0x0123456789ABCDEF;
   i32 longer = 0;

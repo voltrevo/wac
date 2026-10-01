@@ -47,11 +47,11 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
   while (i < raw.len()) {
     if (raw[i] == '[' && i + 1 < raw.len() && raw[i + 1] == ':') {
       i32 end = closerAt(raw, i + 2, ':');
-      if (end < 0) { return TrSet(false, u8[0](), who + ": missing ']'\n"); }
+      if (end < 0) { return TrSet(false, u8[](), who + ": missing ']'\n"); }
       string name = string.fromBytes(sliceOf(raw, i + 2, end));
       u8[] members = classBytes(name);
       if (members.len() == 0) {
-        return TrSet(false, u8[0](), who + ": invalid character class '" + name + "'\n");
+        return TrSet(false, u8[](), who + ": invalid character class '" + name + "'\n");
       }
       for (i32 k = 0; k < members.len(); k++) { out.push(members[k]); plain.push(0); }
       i = end + 2;
@@ -59,11 +59,11 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
     }
     if (raw[i] == '[' && i + 1 < raw.len() && raw[i + 1] == '=') {
       i32 end = closerAt(raw, i + 2, '=');
-      if (end < 0) { return TrSet(false, u8[0](), who + ": missing ']'\n"); }
+      if (end < 0) { return TrSet(false, u8[](), who + ": missing ']'\n"); }
       // An equivalence class names *one* character — in the C locale, the only one equivalent to it.
       // `[=ab=]` is a mistake rather than a two-member set, and GNU says which characters it was given.
       if (end != i + 3) {
-        return TrSet(false, u8[0](), who + ": " + string.fromBytes(sliceOf(raw, i + 2, end)) +
+        return TrSet(false, u8[](), who + ": " + string.fromBytes(sliceOf(raw, i + 2, end)) +
           ": equivalence class operand must be a single character\n");
       }
       out.push(raw[i + 2]);
@@ -87,7 +87,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
       if (!pad) {
         Count got = countOf(raw, star + 1, close);
         if (!got.ok) {
-          return TrSet(false, u8[0](), who + ": invalid repeat count '" +
+          return TrSet(false, u8[](), who + ": invalid repeat count '" +
             string.fromBytes(sliceOf(raw, star + 1, close)) + "' in [c*n] construct\n");
         }
         n = got.value;
@@ -97,10 +97,10 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
       // has", which is a question set1 cannot ask of itself; `[x*2]` is just two x's and GNU takes it in
       // either set. Refusing both was one rule too many, and it turned two working commands into errors.
       if (pad && targetLen < 0) {
-        return TrSet(false, u8[0](), who + ": the [c*] repeat construct may not appear in string1\n");
+        return TrSet(false, u8[](), who + ": the [c*] repeat construct may not appear in string1\n");
       }
       if (pad) {
-        if (padAt >= 0) { return TrSet(false, u8[0](), who + ": only one [c*] is allowed\n"); }
+        if (padAt >= 0) { return TrSet(false, u8[](), who + ": only one [c*] is allowed\n"); }
         padAt = out.len;
         padByte = what.value;
       } else {
@@ -117,7 +117,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
     if (after < raw.len() && raw[after] == '-' && after + 1 < raw.len()) {
       Read hi = readByte(raw, after + 1);
       if (hi.value < one.value) {
-        return TrSet(false, u8[0](), who + ": range-endpoints of '" + charOf(one.value) + "-" +
+        return TrSet(false, u8[](), who + ": range-endpoints of '" + charOf(one.value) + "-" +
           charOf(hi.value) + "' are in reverse collating sequence order\n");
       }
       for (i32 c = one.value; c <= hi.value; c++) { out.push(c); plain.push(1); }
@@ -144,7 +144,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
 
 /** Every byte not in `set`, in order — `-c`. */
 export u8[] complementOf(u8[] set) {
-  u8[] seen = u8[256](fill: 0);
+  u8[] seen = u8[].filled(256, 0);
   for (i32 i = 0; i < set.len(); i++) { seen[set[i]] = 1; }
   Buf out = Buf.create();
   for (i32 c = 0; c < 256; c++) {
@@ -231,12 +231,12 @@ Count countOf(u8[] raw, i32 from, i32 to) {
 }
 
 u8[] sliceOf(u8[] raw, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   out.copyFrom(raw, from, 0, to - from);
   return out;
 }
 
-string charOf(i32 c) { return string.fromBytes(u8[1](fill: c)); }
+string charOf(i32 c) { return string.fromBytes(u8[].filled(1, c)); }
 
 /**
  * The twelve POSIX classes, in the C locale, as the bytes they name.

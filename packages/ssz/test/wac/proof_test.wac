@@ -55,12 +55,12 @@ struct Proof {
 Proof[] proofs(T t, Core core, Cli cli) {
   Loaded f = json(core, cli, "ssz", "light_client_proofs", MANIFEST);
   t.isTrue(f.ok, f.error);
-  if (!f.ok) { return Proof[0](fill: Proof("", "", u8[0](), 0, u8[0](), 0)); }
+  if (!f.ok) { return Proof[].filled(0, Proof("", "", u8[](), 0, u8[](), 0)); }
   JsonArray? cases = memberArray(f.doc, "cases");
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
-  if (cases is null) { return Proof[0](fill: Proof("", "", u8[0](), 0, u8[0](), 0)); }
+  if (cases is null) { return Proof[].filled(0, Proof("", "", u8[](), 0, u8[](), 0)); }
 
-  Proof[] out = Proof[cases!.len()](fill: Proof("", "", u8[0](), 0, u8[0](), 0));
+  Proof[] out = Proof[].filled(cases!.len(), Proof("", "", u8[](), 0, u8[](), 0));
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     JsonArray? branch = memberArray(c, "branch");
@@ -100,12 +100,12 @@ u8[] fold(Proof p, Lines lines) {
 }
 
 u8[] nodeAt(u8[] branch, i32 i) {
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 k = 0; k < 32; k++) { out[k] = branch[i * 32 + k]; }
   return out;
 }
 
-string[] forks() { return string[]("altair", "deneb", "electra"); }
+string[] forks() { return ["altair", "deneb", "electra"]; }
 
 export string test_three_proofs_into_one_state_fold_to_one_root_per_fork(Core core, Cli cli) {
   T t = T.create();
@@ -205,12 +205,16 @@ export string test_the_generalized_indices_are_fork_dependent_which_is_why_norma
   Proof[] all = proofs(t, core, cli);
   if (all.len() == 0) { return t.report(); }
   string[] names = forks();
-  i32[] want = i32[](54, 55, 105,
+  i32[] want = [
                      54, 55, 105,
-                     86, 87, 169);
-  string[] order = string[]("current_sync_committee_merkle_proof",
+                     54, 55, 105,
+                     86, 87, 169
+  ];
+  string[] order = [
+                            "current_sync_committee_merkle_proof",
                             "next_sync_committee_merkle_proof",
-                            "finality_root_merkle_proof");
+                            "finality_root_merkle_proof"
+  ];
   for (i32 f = 0; f < names.len(); f++) {
     for (i32 k = 0; k < order.len(); k++) {
       i32 found = -1;
@@ -231,7 +235,7 @@ export string test_the_generalized_indices_are_fork_dependent_which_is_why_norma
 }
 
 u8[] copyOf(u8[] a) {
-  u8[] out = u8[a.len()]();
+  u8[] out = u8[].filled(a.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   return out;
 }

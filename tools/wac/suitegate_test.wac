@@ -32,11 +32,15 @@ bool exists(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
 export string test_a_file_sharing_the_prefix_but_not_the_shape_is_left_alone(Core core, Cli cli) {
   T t = T.create();
   i32 pid = ownPid(cli);
-  string[] paths = string[]("/tmp/wac-heavy-last-" + itoa(pid),
+  string[] paths = [
+                            "/tmp/wac-heavy-last-" + itoa(pid),
                             "/tmp/wac-heavy-stamp-" + itoa(pid),
-                            "/tmp/wac-heavy-note-" + itoa(pid));
-  string[] bodies = string[]("1755229000000", "\"a string\"",
-                             "{\"who\":\"agent-x\",\"label\":\"no pid at all\"}");
+                            "/tmp/wac-heavy-note-" + itoa(pid)
+  ];
+  string[] bodies = [
+                             "1755229000000", "\"a string\"",
+                             "{\"who\":\"agent-x\",\"label\":\"no pid at all\"}"
+  ];
   for (i32 i = 0; i < paths.len(); i++) { cli.writeFile(paths[i], bodies[i].toBytes()).wait(); }
 
   heavyOthers(core, cli, pid);

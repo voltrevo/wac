@@ -52,7 +52,7 @@ export i32 ls(Core core, Cli cli, Fs fs, Args a) {
   string[] found = names!;
   // Byte order, which is `ls` under `LC_ALL=C` — the environment every comparison in this repo uses. A
   // locale-aware collation is a different thing and is not implemented.
-  u8[][] shown = u8[][found.len()](fill: u8[0]());
+  u8[][] shown = u8[][].filled(found.len(), u8[]());
   i32 n = 0;
   for (i32 i = 0; i < found.len(); i++) {
     u8[] name = found[i].toBytes();

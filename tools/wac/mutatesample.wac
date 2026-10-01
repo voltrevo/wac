@@ -51,7 +51,7 @@ string fileOf(Mutant m) { return m.edits.len() == 0 ? "" : m.edits[0].file; }
 
 /** How many files the draw spans, for the line the run prints. */
 export i32 fileCount(Mutant[] mutants) {
-  string[] seen = string[mutants.len()](fill: "");
+  string[] seen = string[].filled(mutants.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < mutants.len(); i++) {
     string f = fileOf(mutants[i]);
@@ -85,7 +85,7 @@ export Mutant[] sampleMutants(Mutant[] mutants, i32 n, i32 seed) {
   // Sorted keys so the grouping does not depend on iteration order — the reference sorts the map's
   // keys for the same reason, and a draw that depended on insertion order would not be reproducible
   // from the seed alone, which is the whole promise.
-  string[] keys = string[mutants.len()](fill: "");
+  string[] keys = string[].filled(mutants.len(), "");
   i32 groups = 0;
   for (i32 i = 0; i < mutants.len(); i++) {
     string f = fileOf(mutants[i]);
@@ -104,18 +104,18 @@ export Mutant[] sampleMutants(Mutant[] mutants, i32 n, i32 seed) {
 
   // Each group's members in source order, then Fisher-Yates within it, in the reference's order:
   // group by sorted key, shuffle that group, move to the next.
-  i32[] sizes = i32[groups + 1](fill: 0);
+  i32[] sizes = i32[].filled(groups + 1, 0);
   for (i32 i = 0; i < mutants.len(); i++) {
     string f = fileOf(mutants[i]);
     for (i32 g = 0; g < groups; g++) {
       if (keys[g] == f) { sizes[g] = sizes[g] + 1; break; }
     }
   }
-  i32[] starts = i32[groups + 1](fill: 0);
+  i32[] starts = i32[].filled(groups + 1, 0);
   i32 running = 0;
   for (i32 g = 0; g < groups; g++) { starts[g] = running; running = running + sizes[g]; }
-  i32[] members = i32[running + 1](fill: 0);
-  i32[] filled = i32[groups + 1](fill: 0);
+  i32[] members = i32[].filled(running + 1, 0);
+  i32[] filled = i32[].filled(groups + 1, 0);
   for (i32 i = 0; i < mutants.len(); i++) {
     string f = fileOf(mutants[i]);
     for (i32 g = 0; g < groups; g++) {
@@ -140,7 +140,7 @@ export Mutant[] sampleMutants(Mutant[] mutants, i32 n, i32 seed) {
     }
   }
 
-  Mutant[] picked = Mutant[n](fill: mutants[0]);
+  Mutant[] picked = Mutant[].filled(n, mutants[0]);
   i32 taken = 0;
   i32 round = 0;
   while (taken < n) {
@@ -156,7 +156,7 @@ export Mutant[] sampleMutants(Mutant[] mutants, i32 n, i32 seed) {
     round = round + 1;
   }
   if (taken == n) { return picked; }
-  Mutant[] exact = Mutant[taken](fill: mutants[0]);
+  Mutant[] exact = Mutant[].filled(taken, mutants[0]);
   for (i32 i = 0; i < taken; i++) { exact[i] = picked[i]; }
   return exact;
 }

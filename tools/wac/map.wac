@@ -51,7 +51,7 @@ string[] linesOf(string s) {
   u8[] b = s.toBytes();
   i32 n = 1;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 start = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -180,9 +180,9 @@ i32 occurrences(string s, string needle) {
 
 /** Every file under `dir`, recursively. */
 string[] walk(Cli cli, string dir) {
-  string[] out = string[8192](fill: "");
+  string[] out = string[].filled(8192, "");
   i32 n = 0;
-  string[] stack = string[2048](fill: "");
+  string[] stack = string[].filled(2048, "");
   i32 top = 0;
   stack[top] = dir;
   top = 1;
@@ -202,7 +202,7 @@ string[] walk(Cli cli, string dir) {
       if (n < out.len()) { out[n] = path; n = n + 1; }
     }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -235,8 +235,8 @@ Package survey(Cli cli, string name) {
   i32 wacLines = 0;
   i32 hostTests = 0;
   i32 wacTests = 0;
-  string[] uses = string[64](fill: "");
-  i32[] used = i32[1]();
+  string[] uses = string[].filled(64, "");
+  i32[] used = i32[].filled(1, 0);
   string[] files = walk(cli, dir);
   for (i32 i = 0; i < files.len(); i++) {
     string rel = files[i];
@@ -255,7 +255,7 @@ Package survey(Cli cli, string name) {
       hostTests = hostTests + countTestsDeclaredHere(src);
     }
   }
-  string[] exact = string[used[0]](fill: "");
+  string[] exact = string[].filled(used[0], "");
   for (i32 i = 0; i < used[0]; i++) { exact[i] = uses[i]; }
   return Package(name, summarize(read(cli, dir + "/README.md")), wacLines, hostTests, wacTests,
                  sortedNames(exact));
@@ -272,7 +272,7 @@ i32 startOfLineCount(string s, string needle) {
 }
 
 string[] sortedNames(string[] names) {
-  string[] out = string[names.len()](fill: "");
+  string[] out = string[].filled(names.len(), "");
   for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
@@ -290,8 +290,8 @@ string[] sortedNames(string[] names) {
  * which would make `--check` fail for no reason and teach everyone to ignore it.
  */
 Package[] layered(Package[] all) {
-  Package[] out = Package[all.len()](fill: all[0]);
-  bool[] done = bool[all.len()](fill: false);
+  Package[] out = Package[].filled(all.len(), all[0]);
+  bool[] done = bool[].filled(all.len(), false);
   i32 n = 0;
   while (n < all.len()) {
     // Everything not yet emitted whose dependencies are all emitted, in name order.
@@ -469,7 +469,7 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
   string[] names = sortedNames(entries!);
-  Package[] pkgs = Package[names.len()](fill: Package("", "", 0, 0, 0, string[0]()));
+  Package[] pkgs = Package[].filled(names.len(), Package("", "", 0, 0, 0, string[]()));
   i32 n = 0;
   for (i32 i = 0; i < names.len(); i++) {
     Stat st = cli.stat("packages/" + names[i]).wait();
@@ -477,7 +477,7 @@ export i32 main(Core core, Cli cli) {
     pkgs[n] = survey(cli, names[i]);
     n = n + 1;
   }
-  Package[] exact = Package[n](fill: pkgs[0]);
+  Package[] exact = Package[].filled(n, pkgs[0]);
   for (i32 i = 0; i < n; i++) { exact[i] = pkgs[i]; }
 
   string text = render(cli, exact, findPrograms(cli));

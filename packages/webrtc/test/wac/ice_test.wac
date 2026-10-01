@@ -48,7 +48,7 @@ const string AGENT = "packages/webrtc/test/ice_agent.py";
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 
 void ask(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "python3", string[](ORACLE), lines, what);
+  check(t, cli, "python3", [ORACLE], lines, what);
 }
 
 // ── The live one ──────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   string result = "";
   for (i32 i = 0; i < 1200 && result == ""; i++) {
     Pending<Datagram> p = cli.receiveFrom(sock.handle);
-    if (core.waitAny(i32[](p.id), 50) < 0) {
+    if (core.waitAny([p.id], 50) < 0) {
       p.drop(p.id);
       result = readIfPresent(cli, dir + "/result.json");
       continue;
@@ -312,7 +312,7 @@ string awaitFile(Cli cli, string path, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
     string got = readIfPresent(cli, path);
     if (got != "") { return got; }
-    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+    cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait();
   }
   return "";
 }
@@ -370,17 +370,17 @@ string word(string s, i32 n) {
 
 /** `a.b.c.d` as four bytes. Empty when it is not one, which is how an IPv6 peer is skipped. */
 u8[] ipv4Of(string address) {
-  u8[] out = u8[4]();
+  u8[] out = u8[].filled(4, 0);
   i32 at = 0;
   for (i32 i = 0; i < 4; i++) {
     string rest = address.slice(at, address.len());
     i32 dot = rest.indexOf(".");
     string part = dot < 0 ? rest : rest.slice(0, dot);
-    if (part == "") { return u8[4](); }
+    if (part == "") { return u8[].filled(4, 0); }
     i32 v = 0;
     for (i32 k = 0; k < part.len(); k++) {
       i32 b = part.toBytes()[k];
-      if (b < '0' || b > '9') { return u8[4](); }
+      if (b < '0' || b > '9') { return u8[].filled(4, 0); }
       v = v * 10 + (b - '0');
     }
     out[i] = v & 255;

@@ -69,7 +69,7 @@ struct Said {
 string[] childEnv(Cli cli, string dir, string binDir) {
   u8[]? path = cli.env("PATH").wait();
   string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
-  return string[]("LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+  return ["LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir];
 }
 
 /**
@@ -79,7 +79,7 @@ string[] childEnv(Cli cli, string dir, string binDir) {
  * and counted rather than reported as a difference in wording.
  */
 Said run(Cli cli, string cmd, string script, string dir, string binDir) {
-  Exec r = cli.execWithIn("timeout", string[]("10", cmd, "-c", script), u8[0](),
+  Exec r = cli.execWithIn("timeout", ["10", cmd, "-c", script], u8[](),
                           childEnv(cli, dir, binDir), true, false, dir).wait();
   if (!r.ran()) { return Said("could not run timeout: " + r.error, false); }
   return Said(string.fromBytes(r.stderr), r.status == KILLED);
@@ -123,7 +123,7 @@ export i32 main(Core core, Cli cli) {
 
   string binDir = binDirOf(cli);
   string shell = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusstderr-wacsh",
-                          string[]("--allow-read", "--allow-write", "--allow-env"));
+                          ["--allow-read", "--allow-write", "--allow-env"]);
   string base = scratch(cli, "corpus-stderr");
   cli.mkdir(base, true).wait();
 

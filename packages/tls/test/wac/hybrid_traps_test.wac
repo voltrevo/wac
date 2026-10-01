@@ -21,7 +21,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { hybridClientOffer, hybridServerAccept, hybridClientFinish } from "../../src/hybrid.wac";
 
 u8[] bytes(i32 n) {
-  u8[] b = u8[n]();
+  u8[] b = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { b[i] = (i * 7 + 1) & 0xFF; }
   return b;
 }
@@ -95,10 +95,10 @@ export string test_traps_finishing_with_a_long_scalar() {
 export string test_a_real_exchange_derives_a_shared_secret() {
   T t = T.create();
   u8[] mine = offer();
-  u8[] share = u8[1216]();
+  u8[] share = u8[].filled(1216, 0);
   share.copyFrom(mine, 0, 0, 1216);
   u8[] accepted = hybridServerAccept(share, bytes(32), bytes(32));
-  u8[] serverShare = u8[1120]();
+  u8[] serverShare = u8[].filled(1120, 0);
   serverShare.copyFrom(accepted, 0, 0, 1120);
   t.eqI32(hybridClientFinish(mine, serverShare, bytes(32)).len(), 64, "the hybrid shared secret");
   return t.report();

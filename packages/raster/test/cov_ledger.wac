@@ -68,12 +68,12 @@ const string EXERCISE = "packages/raster/test/cov_exercise.wac";
 const string PREFIX = "packages/raster/";
 
 /** What the tests need: the vendored font hex, read from disk. */
-string[] grants() { return string[]("--allow-read"); }
+string[] grants() { return ["--allow-read"]; }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -81,6 +81,6 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
-                 Pin[0](fill: Pin("", 0, "", true, "")),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Pin[].filled(0, Pin("", 0, "", true, "")),
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

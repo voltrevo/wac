@@ -49,7 +49,7 @@ u8[] b(string s) { return s.toBytes(); }
 string randomHex(Rng rng, i32 bits) {
   if (bits == 0) { return "0"; }
   // Build the bits most-significant first, then pack four at a time.
-  i32[] b = i32[bits]();
+  i32[] b = i32[].filled(bits, 0);
   b[0] = 1;
   for (i32 i = 1; i < bits; i++) { b[i] = bit(rng); }
   string digits = "0123456789abcdef";
@@ -96,8 +96,8 @@ export string test_decimal_small_values_round_trip(Core core, Cli cli) {
 export string test_decimal_limb_boundaries_round_trip(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] powers = i32[](31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 191, 192, 255, 256);
-  string[] anchors = string[powers.len() + 4](fill: "");
+  i32[] powers = [31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 191, 192, 255, 256];
+  string[] anchors = string[].filled(powers.len() + 4, "");
   for (i32 i = 0; i < powers.len(); i++) {
     // 2^p as hex is a 1 followed by p/4 zeros, adjusted for the remainder.
     anchors[i] = decimalOf(lines, powerOfTwoHex(powers[i]));
@@ -142,7 +142,7 @@ string mulDecimalByTen9(string d) { return d + "000000000"; }
 string addSmall(string d, i32 n) {
   if (n == 0) { return d; }
   u8[] digits = d.toBytes();
-  i32[] value = i32[digits.len() + 1]();
+  i32[] value = i32[].filled(digits.len() + 1, 0);
   for (i32 i = 0; i < digits.len(); i++) { value[i + 1] = digits[i] - '0'; }
   i32 carry = n;
   for (i32 i = value.len() - 1; i >= 0 && carry != 0; i--) {
@@ -179,7 +179,7 @@ export string test_decimal_random_values_round_trip_across_sizes(Core core, Cli 
 /** Every input that denotes zero must come back as "0" — not "-0", not "00". */
 export string test_decimal_zero_has_one_spelling() {
   T t = T.create();
-  string[] zeros = string[]("0", "-0", "+0", "00", "-000", "0000000000000000000000");
+  string[] zeros = ["0", "-0", "+0", "00", "-000", "0000000000000000000000"];
   for (i32 i = 0; i < zeros.len(); i++) {
     t.eqStr(text(roundTrip(b(zeros[i]))), "0", zeros[i]);
     t.isTrue(opIsZero(b(zeros[i])), zeros[i] + ": not reported as zero");
@@ -199,9 +199,10 @@ export string test_decimal_leading_zeros_are_accepted_and_dropped() {
 
 export string test_decimal_malformed_input_is_rejected() {
   T t = T.create();
-  string[] bad = string[](
+  string[] bad = [
     "", "-", "+", "abc", "1.5", "1e5", " 1", "1 ", "1,000", "0x10", "--1", "1-", "+-1",
-    "1 2", " ", "١٢٣", "1_000");
+    "1 2", " ", "١٢٣", "1_000"
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(acceptsDecimal(b(bad[i])), "accepted \"" + bad[i] + "\"");
   }
@@ -216,7 +217,7 @@ export string test_decimal_malformed_input_is_rejected() {
  */
 export string test_decimal_a_non_digit_in_a_later_chunk_is_rejected() {
   T t = T.create();
-  i32[] positions = i32[](0, 1, 8, 9, 10, 17, 18, 19, 27);
+  i32[] positions = [0, 1, 8, 9, 10, 17, 18, 19, 27];
   for (i32 p = 0; p < positions.len(); p++) {
     string s = "";
     for (i32 i = 0; i < 30; i++) { s = s + (i == positions[p] ? "x" : "1"); }
@@ -229,7 +230,7 @@ export string test_hex_matches_bigints_to_string(Core core, Cli cli) {
   T t = T.create();
   Rng rng = Rng(0x77AA55CC);
   Lines lines = Lines.create();
-  string[] fixed = string[]("0", "1", "f", "10", "ff", "100", "ffffffff", "100000000");
+  string[] fixed = ["0", "1", "f", "10", "ff", "100", "ffffffff", "100000000"];
   for (i32 i = 0; i < fixed.len(); i++) {
     string mag = decimalOf(lines, fixed[i]);
     hexBothWays(t, lines, mag);
@@ -242,7 +243,7 @@ export string test_hex_matches_bigints_to_string(Core core, Cli cli) {
 }
 
 void hexBothWays(T t, Lines lines, string mag) {
-  string[] signs = string[]("", "-");
+  string[] signs = ["", "-"];
   for (i32 s = 0; s < signs.len(); s++) {
     string v = mag == "0" ? "0" : signs[s] + mag;
     string got = text(toHex(b(v)));
@@ -255,12 +256,12 @@ void hexBothWays(T t, Lines lines, string mag) {
 
 export string test_hex_prefix_case_and_malformed_input() {
   T t = T.create();
-  string[] good = string[]("0xff", "0XFF", "ff", "FF", "-0xff");
-  string[] want = string[]("255", "255", "255", "255", "-255");
+  string[] good = ["0xff", "0XFF", "ff", "FF", "-0xff"];
+  string[] want = ["255", "255", "255", "255", "-255"];
   for (i32 i = 0; i < good.len(); i++) {
     t.eqStr(text(fromHex(b(good[i]))), want[i], good[i]);
   }
-  string[] bad = string[]("", "-", "0x", "-0x", "g", "0xg", "ff.0", "0x 1");
+  string[] bad = ["", "-", "0x", "-0x", "g", "0xg", "ff.0", "0x 1"];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(acceptsHex(b(bad[i])), "accepted \"" + bad[i] + "\"");
   }
@@ -277,21 +278,24 @@ export string test_hex_prefix_case_and_malformed_input() {
 export string test_from_i64_and_from_u64_cover_the_extremes(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i64[] signed = i64[](
+  i64[] signed = [
     0, 1, -1, 2, -2, 1000, -1000,
     2147483647, 2147483648, -2147483648,
     4294967295, 4294967296, -4294967296,
     4611686018427387904,                    // 1 << 62
     9223372036854775807,                    // (1 << 63) - 1
-    -9223372036854775808);                  // the most negative i64
+    -9223372036854775808                  // the most negative i64
+  ];
   for (i32 i = 0; i < signed.len(); i++) {
     string got = text(fromI64(signed[i]));
     lines.add("text roundtrip " + got + " " + got);
     t.eqStr(got, itoa64Local(signed[i]), "fromI64 of a value this file can also spell");
   }
-  u64[] unsigned = u64[](0, 1, 0xFFFFFFFF, 0x100000000, 0x8000000000000000, 0xFFFFFFFFFFFFFFFF);
-  string[] wanted = string[]("0", "1", "4294967295", "4294967296", "9223372036854775808",
-                             "18446744073709551615");
+  u64[] unsigned = [0, 1, 0xFFFFFFFF, 0x100000000, 0x8000000000000000, 0xFFFFFFFFFFFFFFFF];
+  string[] wanted = [
+                             "0", "1", "4294967295", "4294967296", "9223372036854775808",
+                             "18446744073709551615"
+  ];
   for (i32 i = 0; i < unsigned.len(); i++) {
     t.eqStr(text(fromU64(unsigned[i])), wanted[i], "fromU64 of an extreme");
   }
@@ -319,7 +323,7 @@ export string test_bit_len_matches_bigint(Core core, Cli cli) {
   T t = T.create();
   Rng rng = Rng(0x5150CAFE);
   Lines lines = Lines.create();
-  string[] fixed = string[]("0", "1", "2", "3", "255", "256");
+  string[] fixed = ["0", "1", "2", "3", "255", "256"];
   for (i32 i = 0; i < fixed.len(); i++) { bitLenBothWays(lines, fixed[i]); }
   for (i32 bits = 1; bits <= 400; bits = bits + 3) {
     bitLenBothWays(lines, decimalOf(lines, randomHex(rng, bits)));

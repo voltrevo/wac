@@ -20,10 +20,11 @@ import { chainA, chainB, chainC, chainAddA, chainAddC } from "./flat.wac";
  * which is what exercises the conditional-subtraction and carry paths.
  */
 u32[] seed() {
-  return u32[](
+  return [
     0x12345677 as@ u32, 0x9abcdef0 as@ u32, 0x11223344 as@ u32, 0x55667788 as@ u32,
     0xdeadbeef as@ u32, 0x01020304 as@ u32, 0x0a0b0c0d as@ u32, 0x10203040 as@ u32,
-    0x00ff00ff as@ u32, 0x13571357 as@ u32, 0x2468ace0 as@ u32, 0x0a0111ea as@ u32);
+    0x00ff00ff as@ u32, 0x13571357 as@ u32, 0x2468ace0 as@ u32, 0x0a0111ea as@ u32
+  ];
 }
 
 export string test_the_three_multiplication_representations_agree_over_a_long_chain() {

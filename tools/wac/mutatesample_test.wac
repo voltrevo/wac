@@ -24,11 +24,11 @@ string ORACLE() { return ".cache/mutatesample-oracle.ts"; }
  * grouped by first-seen order instead of by sorted key would still pass a blocked population.
  */
 Mutant[] population(i32 n, i32 files) {
-  Mutant[] out = Mutant[n](fill: Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", ""))));
+  Mutant[] out = Mutant[].filled(n, Mutant("", "", Edit[].filled(0, Edit("", 0, 0, "", ""))));
   for (i32 i = 0; i < n; i++) {
     string file = "f" + itoa(i % files);
     out[i] = Mutant("m" + itoa(i), "operator",
-                    Edit[](Edit(file, 0, 0, "", "")));
+                    [Edit(file, 0, 0, "", "")]);
   }
   return out;
 }
@@ -57,8 +57,10 @@ string writeOracle(Cli cli) {
 
 string theirs(Cli cli, i32 n, i32 files, i32 want, i32 seed) {
   Exec r = cli.exec("deno",
-                    string[]("run", "-A", "--no-check", "--unstable-sloppy-imports", ORACLE(),
-                             itoa(n), itoa(files), itoa(want), itoa(seed)), u8[0]()).wait();
+                    [
+                             "run", "-A", "--no-check", "--unstable-sloppy-imports", ORACLE(),
+                             itoa(n), itoa(files), itoa(want), itoa(seed)
+                    ], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return "oracle-failed"; }
   string s = string.fromBytes(r.stdout);
   if (s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n") { s = s.slice(0, s.len() - 1); }
@@ -104,10 +106,10 @@ export string test_the_draw_matches_the_typescript_for_the_same_seed(Core core, 
 
   // Sizes chosen so the strata are uneven and `want` is not a multiple of the file count: a draw that
   // round-robins correctly and one that takes the first n of each file agree when everything divides.
-  i32[] ns = i32[](50, 50, 97, 97, 13);
-  i32[] fs = i32[](5, 5, 7, 7, 3);
-  i32[] wants = i32[](7, 23, 31, 96, 12);
-  i32[] seeds = i32[](1, 20260901, 7, 99, 20260901);
+  i32[] ns = [50, 50, 97, 97, 13];
+  i32[] fs = [5, 5, 7, 7, 3];
+  i32[] wants = [7, 23, 31, 96, 12];
+  i32[] seeds = [1, 20260901, 7, 99, 20260901];
   for (i32 c = 0; c < ns.len(); c++) {
     Mutant[] pop = population(ns[c], fs[c]);
     string got = namesOf(sampleMutants(pop, wants[c], seeds[c]));

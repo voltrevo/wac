@@ -127,8 +127,8 @@ export i32 page(Core core, Cli cli, Page page) {
 
   // Held across iterations, because a change event has to reach the same pack the file event built.
   // There is no `Pack?` worth carrying — an empty index reads as "nothing loaded" on its own.
-  PackIndex idx = PackIndex(0, u8[0](), i64[0](), u32[0]());
-  u8[] packBytes = u8[0]();
+  PackIndex idx = PackIndex(0, u8[](), i64[](), u32[]());
+  u8[] packBytes = u8[]();
   // The commits, newest-first as the pack happened to hold them, and where in that list the page is
   // showing. Held here because the buttons below move a cursor rather than re-reading the pack.
   Vec<string> commits = Vec.create();
@@ -138,7 +138,7 @@ export i32 page(Core core, Cli cli, Page page) {
   Pending<Picked> file = page.nextFile();
 
   while (true) {
-    i32 which = core.waitAny(i32[](ev.id, file.id), -1);
+    i32 which = core.waitAny([ev.id, file.id], -1);
     if (which < 0) { return 0; }
 
     if (which == 1) {
@@ -219,7 +219,7 @@ Vec<string> commitsIn(Page page, u8[] pack, PackIndex idx) {
   i32 tags = 0;
 
   for (i32 i = 0; i < idx.count; i++) {
-    u8[] name = u8[20]();
+    u8[] name = u8[].filled(20, 0);
     for (i32 k = 0; k < 20; k++) { name[k] = idx.names[i * 20 + k]; }
     match (objectNamed(p, name)) {
       Absent(why): { }
@@ -266,7 +266,7 @@ void detail(Page page, u8[] pack, PackIndex idx, string hex) {
     page.setText("detail", "no object named " + hex + " in this pack").wait();
     return;
   }
-  u8[] name = u8[20]();
+  u8[] name = u8[].filled(20, 0);
   for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
 
   match (objectNamed(p, name)) {
@@ -306,7 +306,7 @@ string treeListing(Pack p, PackIndex idx, string hex) {
     if (idx.hexAt(i) == hex) { at = i; break; }
   }
   if (at < 0) { return "  (not in this pack — a pack need not be complete)\n"; }
-  u8[] name = u8[20]();
+  u8[] name = u8[].filled(20, 0);
   for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
   match (objectNamed(p, name)) {
     Absent(why): { return "  (unreadable: " + why + ")\n"; }

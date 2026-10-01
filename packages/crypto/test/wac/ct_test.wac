@@ -16,7 +16,7 @@ export string test_it_compares_what_it_is_given() {
   T t = T.create();
   t.isTrue(ctEqual(seq(32, 0), seq(32, 0)), "the same bytes are the same");
   t.isTrue(!ctEqual(seq(32, 0), seq(32, 1)), "different bytes are not");
-  t.isTrue(ctEqual(u8[0](), u8[0]()), "nothing equals nothing");
+  t.isTrue(ctEqual(u8[](), u8[]()), "nothing equals nothing");
   t.isTrue(!ctEqual(seq(32, 0), seq(31, 0)), "and a prefix is not the whole");
   t.isTrue(!ctEqual(seq(31, 0), seq(32, 0)), "in either direction");
   return t.report();
@@ -80,7 +80,7 @@ export string test_the_counted_form() {
 
 /** `n` bytes, offset by `role` so two sequences differ everywhere rather than in a prefix. */
 u8[] seq(i32 n, i32 role) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (role * 97 + i * 13 + 5) & 0xFF; }
   return out;
 }

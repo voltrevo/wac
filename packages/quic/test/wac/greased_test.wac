@@ -35,10 +35,10 @@ import { ask } from "./peer.wac";
  * about by `ask`.
  */
 u8[] aGreasedReply(T t, Core core, Cli cli, string name, u8[] initial) {
-  u8[] last = u8[0]();
+  u8[] last = u8[]();
   for (i32 i = 0; i < 15; i++) {
     u8[] reply = ask(t, core, cli, name + "-" + itoa(i), initial, 5000);
-    if (reply.len() == 0) { return u8[0](); }
+    if (reply.len() == 0) { return u8[](); }
     last = reply;
     if ((reply[0] & 0x40) == 0) { return reply; }
   }

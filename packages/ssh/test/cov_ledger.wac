@@ -53,7 +53,7 @@ const string PREFIX = "packages/ssh/";
  * here.
  */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 /**
@@ -65,11 +65,11 @@ string[] grants() {
  * read past its end. `covdump` calls `trapProbe(0)`…`trapProbe(12)` with each trap caught
  * (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
  */
-string[] cases() { return string[]("trapProbe:13"); }
+string[] cases() { return ["trapProbe:13"]; }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/ssh/src/privatekey.wac", 173,
+  return [
+        Pin("packages/ssh/src/privatekey.wac", 173,
         "if (blobPoint[i] != pub[i]) { return fail(KeyError.Malformed); }", false,
         "A key file whose header public key disagrees with the one inside the private section. An " +
         "`openssh-key-v1` file carries the point twice — once in the clear and once inside the part " +
@@ -79,12 +79,13 @@ Pin[] pins() {
         "completely and is internally inconsistent, which is a different kind of wrong and takes " +
         "building the two blobs apart. Reachable, and not built — and worth building, because a file " +
         "that passed this check while carrying two different keys would authenticate as one identity " +
-        "and sign as another."));
+        "and sign as another.")
+  ];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/ssh/src/conn.wac", "struct Conn", "struct", false,
+  return [
+         Rule("packages/ssh/src/conn.wac", "struct Conn", "struct", false,
          "The client session, end to end: the version exchange, the key exchange, NEWKEYS, the " +
          "service request, public-key authentication, the channel, and the exit status. All of it is " +
          "one struct's methods and all of it needs a peer — and not a peer this driver can be, " +
@@ -98,7 +99,8 @@ Rule[] rules() {
          "parts of a session that can be checked without a peer are not in here: every message this " +
          "struct sends and every one it parses has its own function in `packet.wac`, `kexinit.wac`, " +
          "`kex.wac`, `cipher.wac`, `auth.wac` and `channel.wac`, and all six of those files are at " +
-         "100%. What is left is the sequencing, which is the thing a real server is the only judge of."));
+         "100%. What is left is the sequencing, which is the thing a real server is the only judge of.")
+  ];
 }
 
 export i32 main(Core core, Cli cli) {

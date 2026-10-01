@@ -33,7 +33,7 @@ Wacsshd imageServer(T t, Core core, Cli cli, string name, string image) {
   if (binary == "") {
     return Wacsshd(false, "the writable server did not build", "", -1, Daemon(-1, "", ""));
   }
-  Wacsshd s = startWacsshd(t, core, cli, name, string[]("-i", image), binary);
+  Wacsshd s = startWacsshd(t, core, cli, name, ["-i", image], binary);
   if (!s.ok) { t.fail("the image server did not come up — " + s.error); }
   return s;
 }
@@ -46,7 +46,7 @@ export string test_a_server_booted_on_an_image_serves_every_session_from_it(Core
   Wacsshd s = imageServer(t, core, cli, "wacsshd-image", image);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string key = s.dir + "/clientkey";
-  string[] none = string[0](fill: "");
+  string[] none = string[].filled(0, "");
 
   // **The commands are `packages/box`'s applets now**, over the image: sixty of them rather than the
   // handful `packages/sh` still carries, and they read what the session reads. The edge waited on a
@@ -101,7 +101,7 @@ export string test_a_session_on_an_image_shows_its_own_pipeline_in_ps(Core core,
   Wacsshd s = imageServer(t, core, cli, "wacsshd-ps", holder + "/ps.wacimg");
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string key = s.dir + "/clientkey";
-  string[] none = string[0](fill: "");
+  string[] none = string[].filled(0, "");
 
   Said seen = realSsh(cli, s, "seq 1 200000 | ps", key, none);
   string[] rows = splitLines(trimmed(seen.stdout));
@@ -152,9 +152,11 @@ export string test_an_image_the_server_cannot_read_stops_it_before_it_binds(Core
   t.isTrue(held.port > 0, "no port could be bound");
   held.release(cli);
   // Run to completion rather than as a daemon: the whole claim is that it *stops*.
-  Exec r = cli.exec("/bin/sh", string[]("-c",
+  Exec r = cli.exec("/bin/sh", [
+    "-c",
     "exec env HOME=" + quoted(dir) + " " + quoted(cli.cwd().wait() + "/native/v8/target/release/wac") +
-    " " + quoted(binary) + " -p " + itoa(held.port) + " -i " + quoted(image)), u8[0]()).wait();
+    " " + quoted(binary) + " -p " + itoa(held.port) + " -i " + quoted(image)
+  ], u8[]()).wait();
   string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
 
   t.neI32(r.status, 0, "the server started anyway: " + said);
@@ -180,11 +182,11 @@ export string test_a_server_that_cannot_write_its_image_says_so(Core core, Cli c
   string holder = freshScratch(t, cli, "wacsshd-nowrite-holder");
   string image = holder + "/home.wacimg";
 
-  Wacsshd s = startWacsshd(t, core, cli, "wacsshd-nowrite", string[]("-i", image), binary);
+  Wacsshd s = startWacsshd(t, core, cli, "wacsshd-nowrite", ["-i", image], binary);
   t.isTrue(s.ok, "the read-only server did not come up — " + s.error);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
-  t.eqStr(realSsh(cli, s, "mkdir /data; ls /", s.dir + "/clientkey", string[0](fill: "")).stdout,
+  t.eqStr(realSsh(cli, s, "mkdir /data; ls /", s.dir + "/clientkey", string[].filled(0, "")).stdout,
           "bin\ndata\ndev\nproc\n", "the session did not run");
   // Read before the directory goes: `stopWacsshd` removes the log with it.
   stop(cli, s.daemon);
@@ -214,7 +216,7 @@ export string test_a_session_on_an_image_has_its_own_environment(Core core, Cli 
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   Said said = realSsh(cli, s, "echo HOME=[$HOME] PATHLEN=${#PATH} TERM=[$TERM]",
-                      s.dir + "/clientkey", string[0](fill: ""));
+                      s.dir + "/clientkey", string[].filled(0, ""));
   t.eqI32(said.status, 0, "the session failed: " + said.stderr);
   t.eqStr(said.stdout, "HOME=[] PATHLEN=0 TERM=[]\n",
           "a sealed session read the server's environment");
@@ -244,9 +246,9 @@ export string test_two_keys_land_in_two_homes_and_neither_reads_the_others_file(
   if (!haveSshd(cli)) { return t.report(); }
   string keys = freshScratch(t, cli, "wacsshd-users-keys");
   string image = keys + "/system.wacimg";
-  string[] none = string[0](fill: "");
+  string[] none = string[].filled(0, "");
 
-  string[] people = string[]("ada", "grace");
+  string[] people = ["ada", "grace"];
   for (i32 i = 0; i < people.len(); i++) {
     if (!keygen(t, cli, keys + "/" + people[i])) { return t.report(); }
     restrict(cli, keys + "/" + people[i]);
@@ -338,7 +340,7 @@ export string test_two_keys_land_in_two_homes_and_neither_reads_the_others_file(
   // Each key gets its own answer, from the identity `packages/fs` enforces with rather than from
   // `$USER`, which a script can overwrite — so this is the same fact the permission checks above
   // use, asked out loud.
-  string[] uids = string[]("1000", "1001");
+  string[] uids = ["1000", "1001"];
   for (i32 i = 0; i < people.len(); i++) {
     t.eqStr(realSsh(cli, live, "whoami; id -un; id -u; id -g", keys + "/" + people[i], none).stdout,
             people[i] + "\n" + people[i] + "\n" + uids[i] + "\n" + uids[i] + "\n",

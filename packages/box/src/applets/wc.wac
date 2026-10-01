@@ -115,7 +115,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
     // of the streaming form, twice over: `inWord` already had to survive a boundary, and now a *character*
     // can straddle one. Left unclassified at end of input, which costs nothing — the bytes of a truncated
     // sequence are never printable, and only a printable makes a run a word.
-    u8[] pend = u8[0](fill: 0);
+    u8[] pend = u8[]();
     // A read that fails part way is a different thing from one that never opened, and GNU words the
     // difference in the output as well as in the message: a **directory** gets a row of zeroes, because
     // it was there and was named, while a missing file gets no row at all. Both leave the status at 1.
@@ -131,7 +131,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
       // four-byte copy and not a copy of the chunk.
       if (pend.len() > 0) {
         i32 take = data.len() < 3 ? data.len() : 3;
-        u8[] head = u8[pend.len() + take](fill: 0);
+        u8[] head = u8[].filled(pend.len() + take, 0);
         for (i32 k = 0; k < pend.len(); k++) { head[k] = pend[k]; }
         for (i32 k = 0; k < take; k++) { head[pend.len() + k] = data[k]; }
         Scalar sc = utf8 ? decode(head, 0) : Scalar(head[0], 1);
@@ -142,7 +142,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
           continue;
         }
         i = sc.size - pend.len();
-        pend = u8[0](fill: 0);
+        pend = u8[]();
         if (sc.code == '\n') { one.lines++; }
         if (utf8 ? isWordSeparator(sc.code) : isWordSeparatorC(sc.code)) {
           if (inWord && printable) { one.words++; }
@@ -156,7 +156,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
       while (i < data.len()) {
         Scalar sc = utf8 ? decode(data, i) : Scalar(data[i], 1);
         if (sc.code == TRUNCATED()) {
-          u8[] rest = u8[data.len() - i](fill: 0);
+          u8[] rest = u8[].filled(data.len() - i, 0);
           for (i32 k = 0; k < rest.len(); k++) { rest[k] = data[i + k]; }
           pend = rest;
           break;

@@ -19,7 +19,7 @@ import { deflateDynamic } from "../../src/deflate.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 
 u8[] join(u8[] a, u8[] b) {
-  u8[] both = u8[a.len() + b.len()]();
+  u8[] both = u8[].filled(a.len() + b.len(), 0);
   both.copyFrom(a, 0, 0, a.len());
   both.copyFrom(b, 0, a.len(), b.len());
   return both;
@@ -27,7 +27,7 @@ u8[] join(u8[] a, u8[] b) {
 
 /** `n` copies of one byte — the long, highly compressible payloads. */
 u8[] runOf(i32 n, i32 byte) {
-  u8[] b = u8[n]();
+  u8[] b = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { b[i] = byte; }
   return b;
 }
@@ -52,18 +52,18 @@ string bothWays(T t, u8[] one, u8[] two, string what) {
 export string test_the_end_it_reports_is_where_the_next_stream_begins() {
   T t = T.create();
   bothWays(t, "hello\\n".toBytes(), "world\\n".toBytes(), "two short strings");
-  bothWays(t, u8[0](), "after an empty one\\n".toBytes(), "an empty first stream");
+  bothWays(t, u8[](), "after an empty one\\n".toBytes(), "an empty first stream");
   bothWays(t, runOf(5000, 'a'), runOf(3000, 'b'), "five thousand and three thousand");
   // High bytes, which a stream that assumed ASCII would mangle.
-  u8[] high = u8[](0xFF, 0xFE, ' ', 'h', 'i', 'g', 'h');
+  u8[] high = [0xFF, 0xFE, ' ', 'h', 'i', 'g', 'h'];
   bothWays(t, high, "and more".toBytes(), "high bytes");
   return t.report();
 }
 
 export string test_it_agrees_with_inflate_about_the_bytes() {
   T t = T.create();
-  u8[][] texts = u8[][4]();
-  texts[0] = u8[0]();
+  u8[][] texts = u8[][].defaulted(4);
+  texts[0] = u8[]();
   texts[1] = "x".toBytes();
   texts[2] = "hello, world\\n".toBytes();
   texts[3] = runOf(20000, 'z');

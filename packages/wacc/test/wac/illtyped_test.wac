@@ -28,7 +28,7 @@ import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles, diagnoseFiles } from
 import { wireField, wireLines, ANNOTATION } from "./wire_probe.wac";
 
 string[] names() {
-  return string[](
+  return [
     "a01 s - 1", "a02 s[0] - 1", "a03 i32 n = s[0]", "a04 b ? s : 1", "a05 p + 1 (struct)",
     "a06 s < 1", "a07 a(1) (i32 called)", "a08 p.v() (field as method)", "a09 a[0] (i32 indexed)",
     "a10 -s", "a11 a.nope", "a12 g(1,2) for g(i32)", "a13 b + 1 (bool)", "a14 return s from i32",
@@ -64,11 +64,12 @@ string[] names() {
     // `>` and `==` are separate arms of the rule and only `>` was in the reproduction.
     // `issues/lang/0272b`.
     "a35 (x < 2) > 0 (bool vs literal)", "a36 (x < 2) == 1 (bool vs literal)",
-    "a37 0 > (x < 2) (the literal first)");
+    "a37 0 > (x < 2) (the literal first)"
+  ];
 }
 
 string[] programs() {
-  return string[](
+  return [
     "export i32 f(string s) { return s - 1; }\n",
     "export i32 f(string s) { return s[0] - 1; }\n",
     "export i32 f(string s) { i32 n = s[0]; return n; }\n",
@@ -105,7 +106,8 @@ string[] programs() {
     "export i32 f() { return null!; }\n",
     "export i32 f(i32 x) { return (x < 2) > 0 ? 1 : 0; }\n",
     "export i32 f(i32 x) { return (x < 2) == 1 ? 1 : 0; }\n",
-    "export i32 f(i32 x) { return 0 > (x < 2) ? 1 : 0; }\n");
+    "export i32 f(i32 x) { return 0 > (x < 2) ? 1 : 0; }\n"
+  ];
 }
 
 export string test_every_ill_typed_program_here_is_refused_by_the_checker() {
@@ -135,12 +137,14 @@ export string test_every_ill_typed_program_here_is_refused_by_the_checker() {
  */
 export string test_the_four_that_used_to_build_with_the_function_missing() {
   T t = T.create();
-  string[] name = string[]("indexing a string then subtracting (0159)",
+  string[] name = [
+                           "indexing a string then subtracting (0159)",
                            "initialising an i32 from a string index",
                            "a ternary whose branches are a string and an i32",
-                           "calling a field as a method (0165)");
+                           "calling a field as a method (0165)"
+  ];
   string[] all = programs();
-  string[] src = string[](all[1], all[2], all[3], all[7]);
+  string[] src = [all[1], all[2], all[3], all[7]];
   for (i32 i = 0; i < src.len(); i++) {
     i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
     t.isTrue(diags > 0, name[i] + ": silent again");
@@ -162,7 +166,7 @@ export string test_no_program_here_is_accepted_by_both_the_checker_and_the_emitt
   string[] src = programs();
   for (i32 i = 0; i < src.len(); i++) {
     i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
-    string blocked = blockedFiles(string[]("/m.wac"), string[](src[i]), "/m.wac");
+    string blocked = blockedFiles(["/m.wac"], [src[i]], "/m.wac");
     t.isTrue(diags > 0 || blocked != "",
         name[i] + ": the checker and the emitter both accepted it, so a build writes a module with "
         + "no `f` in it and exits 0");
@@ -185,11 +189,12 @@ export string test_no_program_here_is_accepted_by_both_the_checker_and_the_emitt
  */
 export string test_a_refused_unary_reports_once() {
   T t = T.create();
-  string[] name = string[]("~ on a string", "unary - on a bool", "unary - on a string");
-  string[] src = string[](
+  string[] name = ["~ on a string", "unary - on a bool", "unary - on a string"];
+  string[] src = [
     "export i32 f(string s) { return ~s; }\n",
     "export i32 f(bool b) { return -b; }\n",
-    "export i32 f(string s) { return -s; }\n");
+    "export i32 f(string s) { return -s; }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
     t.eqI32(diags, 1, name[i] + ": one fault, and this many diagnostics");
@@ -217,16 +222,18 @@ export string test_a_refused_unary_reports_once() {
  */
 export string test_a_string_in_an_arithmetic_operator_reports_once() {
   T t = T.create();
-  string[] name = string[](
+  string[] name = [
     "s % 2", "s * 2", "s & 1", "n * a-literal", "s + 1 (mismatch is the whole complaint)",
-    "1 + a-literal (two literals)");
-  string[] src = string[](
+    "1 + a-literal (two literals)"
+  ];
+  string[] src = [
     "export i32 f(string s) { return s % 2; }\n",
     "export i32 f(string s) { return s * 2; }\n",
     "export i32 f(string s) { return s & 1; }\n",
     "export i32 f(i32 n) { return n * \"a\"; }\n",
     "export string f(string s) { return s + 1; }\n",
-    "export string f() { return 1 + \"a\"; }\n");
+    "export string f() { return 1 + \"a\"; }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
     t.eqI32(diags, 1, name[i] + ": one fault, and this many diagnostics");
@@ -434,14 +441,14 @@ export string test_a_const_of_type_void_is_one_diagnostic() {
 
 export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
   T t = T.create();
-  string[] name = string[](
-    "i32 & bool", "i32 | f64", "i32 ^ bool", "i32 & f64", "bool | i32");
-  string[] src = string[](
+  string[] name = ["i32 & bool", "i32 | f64", "i32 ^ bool", "i32 & f64", "bool | i32"];
+  string[] src = [
     "export i32 f(i32 a, bool b) { return a & b; }\n",
     "export i32 f(i32 a, f64 b) { return a | b; }\n",
     "export i32 f(i32 a, bool b) { return a ^ b; }\n",
     "export i32 f(i32 a, f64 b) { return a & b; }\n",
-    "export i32 f(bool a, i32 b) { return a | b; }\n");
+    "export i32 f(bool a, i32 b) { return a | b; }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
     t.eqI32(diags, 1, name[i] + ": one fault, and this many diagnostics");
@@ -480,7 +487,7 @@ export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
 export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled() {
   T t = T.create();
 
-  string[] duplicates = string[](
+  string[] duplicates = [
     "export i32 f(i32 n) { switch (n) { case 1: { return 1; } case 1: { return 2; } } return 0; }\n",
     "export i32 f(i32 n) { switch (n) { case 1: { return 1; } case 0x1: { return 2; } } return 0; }\n",
     "export u32 f(u32 n) { switch (n) { case 4294967295: { return 1; } case 4294967295: { return 2; } } return 0; }\n",
@@ -495,7 +502,8 @@ export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled
     // untested, it was **redundant** — `-1 & 0xFFFFFFFF` is already `4294967295` — and the wrap is now
     // gone. The row stays because it is a real duplicate a reader could write, and because it is the
     // only one here where the two arms disagree about sign.
-    "export u32 f(u32 n) { switch (n) { case 4294967295: { return 1; } case -1: { return 2; } } return 0; }\n");
+    "export u32 f(u32 n) { switch (n) { case 4294967295: { return 1; } case -1: { return 2; } } return 0; }\n"
+  ];
   for (i32 i = 0; i < duplicates.len(); i++) {
     i32 n = dumpTypeErrors(duplicates[i].toBytes()).len() / 3;
     t.isTrue(n > 0, "accepted a switch with one value twice: " + duplicates[i]);
@@ -504,10 +512,11 @@ export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled
   // **The other direction, and it needs to be here or the rows above are satisfied by refusing every
   // switch.** Two different values, a value that only looks like another under the wrong arithmetic,
   // and a value that is not constant at all.
-  string[] legal = string[](
+  string[] legal = [
     "export i32 f(i32 n) { switch (n) { case 1: { return 1; } case 2: { return 2; } } return 0; }\n",
     "export i32 f(i32 n) { switch (n) { case -1: { return 1; } case 1: { return 2; } } return 0; }\n",
-    "export i32 f(i32 n, i32 k) { switch (n) { case k: { return 1; } default: { return 2; } } }\n");
+    "export i32 f(i32 n, i32 k) { switch (n) { case k: { return 1; } default: { return 2; } } }\n"
+  ];
   for (i32 i = 0; i < legal.len(); i++) {
     i32 n = dumpTypeErrors(legal[i].toBytes()).len() / 3;
     t.eqI32(n, 0, "refused a legal switch: " + legal[i]);
@@ -630,14 +639,16 @@ export string test_a_duplicate_method_and_a_second_default_are_refused() {
  */
 export string test_a_name_through_a_struct_says_which_of_the_two_it_is() {
   T t = T.create();
-  string[] annot = string[](
+  string[] annot = [
     "no P.nope",
-    "P.v is a field, which is reached through a value");
-  string[] src = string[](
+    "P.v is a field, which is reached through a value"
+  ];
+  string[] src = [
     "struct P { i32 v; } export i32 f() { return P.nope; }\n",
-    "struct P { i32 v; } export i32 f() { return P.v; }\n");
+    "struct P { i32 v; } export i32 f() { return P.v; }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
-    string[] lines = wireLines(diagnoseFiles(string[]("m.wac"), string[](src[i]), "m.wac"));
+    string[] lines = wireLines(diagnoseFiles(["m.wac"], [src[i]], "m.wac"));
     t.isTrue(lines.len() > 0, annot[i] + ": nothing was reported at all");
     if (lines.len() == 0) { continue; }
     t.eqStr(wireField(lines[0], ANNOTATION()), annot[i], "the annotation");
@@ -669,9 +680,8 @@ export string test_a_name_through_a_struct_says_which_of_the_two_it_is() {
 export string test_a_relative_import_of_a_file_nobody_supplied_is_refused() {
   T t = T.create();
 
-  string[] paths = string[]("/t/main.wac");
-  string[] sources = string[](
-      "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n");
+  string[] paths = ["/t/main.wac"];
+  string[] sources = ["import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n"];
   i32[] one = dumpTypeErrorsFiles(paths, sources, "/t/main.wac");
   t.eqI32(one.len() / 3, 1, "one missing import, and this many diagnostics");
   if (one.len() >= 3) {
@@ -681,11 +691,12 @@ export string test_a_relative_import_of_a_file_nobody_supplied_is_refused() {
 
   // **And with a real closure around it**, so the rule is not satisfied by "one file means every
   // import is missing" — which is what the single-file half legitimately assumes.
-  string[] paths2 = string[]("/t/main.wac", "/t/a.wac");
-  string[] sources2 = string[](
+  string[] paths2 = ["/t/main.wac", "/t/a.wac"];
+  string[] sources2 = [
       "import { bar } from \"./a.wac\";\nimport { foo } from \"./b.wac\";\n" +
       "export i32 f() { return foo() + bar(); }\n",
-      "export i32 bar() { return 1; }\n");
+      "export i32 bar() { return 1; }\n"
+  ];
   i32[] two = dumpTypeErrorsFiles(paths2, sources2, "/t/main.wac");
   t.eqI32(two.len() / 3, 1, "one of two imports is missing, and this many diagnostics");
   if (two.len() >= 3) {
@@ -693,12 +704,13 @@ export string test_a_relative_import_of_a_file_nobody_supplied_is_refused() {
   }
 
   // The same program with both files supplied, so none of the above is met by refusing imports.
-  string[] paths3 = string[]("/t/main.wac", "/t/a.wac", "/t/b.wac");
-  string[] sources3 = string[](
+  string[] paths3 = ["/t/main.wac", "/t/a.wac", "/t/b.wac"];
+  string[] sources3 = [
       "import { bar } from \"./a.wac\";\nimport { foo } from \"./b.wac\";\n" +
       "export i32 f() { return foo() + bar(); }\n",
       "export i32 bar() { return 1; }\n",
-      "export i32 foo() { return 2; }\n");
+      "export i32 foo() { return 2; }\n"
+  ];
   i32[] all = dumpTypeErrorsFiles(paths3, sources3, "/t/main.wac");
   t.eqI32(all.len() / 3, 0, "refused a program whose imports are all supplied");
   return t.report();
@@ -796,29 +808,31 @@ export string test_an_uninferrable_type_parameter_is_not_an_arity_error() {
 // for the one row: five of the seven exercise paths nobody had asked about across an import.
 
 string[] names2() {
-  return string[](
+  return [
     "b01 take(MESSAGE), imported funcref as i32", "b02 i32 x = MESSAGE, imported",
     "b03 dbl(s) for imported dbl(i32)", "b04 return imported i32 from a string function",
     "b05 dbl(1, 2) for imported dbl(i32)", "b06 p.v() for an imported struct's field",
-    "b07 fn<i32(string)> g = imported dbl(i32)");
+    "b07 fn<i32(string)> g = imported dbl(i32)"
+  ];
 }
 
 /** The imported file for each row, parallel to `names2`. */
 string[] libs2() {
-  return string[](
+  return [
     "export i32 MESSAGE() { return 4; }\n",
     "export i32 MESSAGE() { return 4; }\n",
     "export i32 dbl(i32 n) { return n * 2; }\n",
     "export i32 one() { return 1; }\n",
     "export i32 dbl(i32 n) { return n * 2; }\n",
     "export struct P { i32 v; }\n",
-    "export i32 dbl(i32 n) { return n * 2; }\n");
+    "export i32 dbl(i32 n) { return n * 2; }\n"
+  ];
 }
 
 /** The entry for each row, which imports from `./lib.wac` and misuses what it got. */
 string[] imps2() {
-  return string[](
-    "import { MESSAGE } from \"./lib.wac\";\ni32 take(i32 n) { return n; }\n" +
+  return [
+      "import { MESSAGE } from \"./lib.wac\";\ni32 take(i32 n) { return n; }\n" +
       "export i32 f() { return take(MESSAGE); }\n",
     "import { MESSAGE } from \"./lib.wac\";\nexport i32 f() { i32 x = MESSAGE; return x; }\n",
     "import { dbl } from \"./lib.wac\";\nexport i32 f(string s) { return dbl(s); }\n",
@@ -828,7 +842,8 @@ string[] imps2() {
     // **The signature is compared now, which it was not.** Before `issues/lang/0180a` an imported
     // name had no type at all, so no funcref declaration could disagree with it; the message names
     // both sides — `expected fn(string) -> i32, found fn(i32) -> i32`.
-    "import { dbl } from \"./lib.wac\";\nexport i32 f() { fn<i32(string)> g = dbl; return 0; }\n");
+    "import { dbl } from \"./lib.wac\";\nexport i32 f() { fn<i32(string)> g = dbl; return 0; }\n"
+  ];
 }
 
 export string test_every_two_file_ill_typed_program_is_refused_by_the_checker() {
@@ -841,7 +856,7 @@ export string test_every_two_file_ill_typed_program_is_refused_by_the_checker() 
   if (name.len() != lib.len() || name.len() != imp.len()) { return t.report(); }
   for (i32 i = 0; i < imp.len(); i++) {
     i32 diags = dumpTypeErrorsFiles(
-        string[]("/imp.wac", "/lib.wac"), string[](imp[i], lib[i]), "/imp.wac").len() / 3;
+        ["/imp.wac", "/lib.wac"], [imp[i], lib[i]], "/imp.wac").len() / 3;
     t.isTrue(diags > 0, name[i] + ": checked clean across the import boundary");
   }
   return t.report();
@@ -858,10 +873,10 @@ export string test_no_two_file_program_here_is_accepted_by_both() {
   string[] name = names2();
   string[] lib = libs2();
   string[] imp = imps2();
-  string[] paths = string[]("/imp.wac", "/lib.wac");
+  string[] paths = ["/imp.wac", "/lib.wac"];
   for (i32 i = 0; i < imp.len(); i++) {
-    i32 diags = dumpTypeErrorsFiles(paths, string[](imp[i], lib[i]), "/imp.wac").len() / 3;
-    string blocked = blockedFiles(paths, string[](imp[i], lib[i]), "/imp.wac");
+    i32 diags = dumpTypeErrorsFiles(paths, [imp[i], lib[i]], "/imp.wac").len() / 3;
+    string blocked = blockedFiles(paths, [imp[i], lib[i]], "/imp.wac");
     t.isTrue(diags > 0 || blocked != "", name[i] + ": accepted by both, so a build writes a module "
         + "the engine will not load or one with no `f` in it");
   }
@@ -870,7 +885,7 @@ export string test_no_two_file_program_here_is_accepted_by_both() {
   // would pass every assertion above and break every program in this repository.
   string good = "import { MESSAGE } from \"./lib.wac\";\ni32 take(i32 n) { return n; }\n" +
                 "export i32 f() { return take(MESSAGE()); }\n";
-  i32 goodDiags = dumpTypeErrorsFiles(paths, string[](good, libs2()[0]), "/imp.wac").len() / 3;
+  i32 goodDiags = dumpTypeErrorsFiles(paths, [good, libs2()[0]], "/imp.wac").len() / 3;
   t.eqI32(goodDiags, 0, "refused the well-typed twin of b01");
   return t.report();
 }
@@ -896,7 +911,7 @@ export string test_a_missing_method_decline_carries_its_line() {
              + "  Map<string, i32> m = Map.create(hashString, stringEq);\n"
              + "  return m.get(\"x\").noSuchMethodAtAll(0);\n"
              + "}\n";
-  string why = blockedFiles(string[]("/m.wac"), string[](src), "/m.wac");
+  string why = blockedFiles(["/m.wac"], [src], "/m.wac");
   t.isTrue(why != "", "the emitter did not decline a call to a method that does not exist");
   t.isTrue(why.indexOf("noSuchMethodAtAll") >= 0, "the decline does not name the method: " + why);
   t.isTrue(why.indexOf("on line 5") >= 0, "the decline gives no position: " + why);

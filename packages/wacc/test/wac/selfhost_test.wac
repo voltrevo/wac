@@ -54,8 +54,8 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  */
 Pending<Exec> submitBuild(Cli cli, string stem) {
   return cli.exec(binary(cli),
-                  string[]("build", ENTRY, "-o", stem, "--allow-read", "--allow-write", "--no-cache"),
-                  u8[0]());
+                  ["build", ENTRY, "-o", stem, "--allow-read", "--allow-write", "--no-cache"],
+                  u8[]());
 }
 
 /** A message on one line, because a report that stops at the first newline loses the rest. */
@@ -95,7 +95,7 @@ string built(Pending<Exec> p) {
 
 u8[] read(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { return u8[0](); }
+  if (!r.ok) { return u8[](); }
   return r.bytes;
 }
 

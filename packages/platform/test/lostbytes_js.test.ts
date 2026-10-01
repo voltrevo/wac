@@ -40,11 +40,11 @@ export i32 main(Core core, Cli cli) {
     cli.write("PAYLOAD".toBytes());
     return 0;
   }
-  Child kid = cli.spawnSelf(u8[][]("child".toBytes()), GRANT_ALL(), ".", false, false).wait();
+  Child kid = cli.spawnSelf(["child".toBytes()], GRANT_ALL(), ".", false, false).wait();
   if (kid.handle < 0) { core.log("no child: " + kid.error); return 1; }
   if (mode != "control") {
     Pending<Read> first = cli.recv(kid.handle);
-    core.waitAny(i32[](first.id), 50);
+    core.waitAny([first.id], 50);
     first.cancel();
     core.cancel(first.id);
   }

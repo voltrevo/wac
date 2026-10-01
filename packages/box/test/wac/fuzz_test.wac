@@ -111,12 +111,14 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
         return t.report();
       }
       Exec want = cli.exec("env",
-                           string[]("-i",
+                           [
+                                    "-i",
                                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                                     "LC_ALL=C", "HOME=" + dir,
                                     "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
-                                    "bash", dir, sc),
-                           u8[0]()).wait();
+                                    "bash", dir, sc
+                           ],
+                           u8[]()).wait();
       if (!want.ran()) {
         // No bash here is not a failure of this shell: say so and stop, rather than passing quietly.
         t.isTrue(checked > 0, "bash would not start: " + want.error);
@@ -156,8 +158,8 @@ Line lineAt(u8[] b, i32 at) {
 
 u8[] sliceOf(u8[] b, i32 from, i32 to) {
   i32 n = to - from;
-  if (n <= 0) { return u8[0](); }
-  u8[] out = u8[n]();
+  if (n <= 0) { return u8[](); }
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[from + i]; }
   return out;
 }
@@ -188,13 +190,13 @@ i32 numberIn(string line, string tag) {
 Loaded load(Cli cli) {
   FileResult r = cli.readFile(vectorsPath()).wait();
   if (!r.ok) {
-    return Loaded(Vector[0](), 0, "",
+    return Loaded(Vector[](), 0, "",
                   "cannot read " + vectorsPath() + " — run `wac run --allow-read --allow-write " +
                   "--allow-run tools/wac/shfuzz.wac --capture` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
-  if (l.text != "wac-sh-fuzz 1") { return Loaded(Vector[0](), 0, "", "not a fuzz vectors file: " + l.text); }
+  if (l.text != "wac-sh-fuzz 1") { return Loaded(Vector[](), 0, "", "not a fuzz vectors file: " + l.text); }
   string oracle = "";
   i32 at = l.next;
   i32 count = 0 - 1;
@@ -204,9 +206,9 @@ Loaded load(Cli cli) {
     if (h.text.len() > 6 && h.text.slice(0, 6) == "bash: ") { oracle = h.text.slice(6, h.text.len()); }
     count = numberIn(h.text, "count:");
   }
-  if (count < 0) { return Loaded(Vector[0](), 0, oracle, "no count in the header"); }
+  if (count < 0) { return Loaded(Vector[](), 0, oracle, "no count in the header"); }
 
-  Vector[] items = Vector[count](fill: Vector("", 0, ""));
+  Vector[] items = Vector[].filled(count, Vector("", 0, ""));
   i32 n = 0;
   for (i32 i = 0; i < count; i++) {
     Line sl = lineAt(b, at);

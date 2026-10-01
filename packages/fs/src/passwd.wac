@@ -73,7 +73,7 @@ void addLine(Vec<User> out, u8[] text, i32 at, i32 end) {
   i32 start = at;
   for (i32 i = at; i <= end; i++) {
     if (i == end || text[i] == ':') {
-      u8[] part = u8[i - start]();
+      u8[] part = u8[].filled(i - start, 0);
       part.copyFrom(text, start, 0, i - start);
       fields.push(string.fromBytes(part));
       start = i + 1;

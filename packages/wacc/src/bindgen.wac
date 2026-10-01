@@ -159,7 +159,7 @@ string tsType(G g, string t) {
   if (c >= 0 || o >= 0) {
     string ret = c >= 0 ? g.cRet[c] : g.oRet[o];
     string params = c >= 0 ? g.cParams[c] : g.oParams[o];
-    string[] ps = params == "" ? string[0](fill: "") : splitTop(params, ",");
+    string[] ps = params == "" ? string[].filled(0, "") : splitTop(params, ",");
     string args = "";
     for (i32 i = 0; i < ps.len(); i++) {
       if (i > 0) { args = args + ", "; }
@@ -259,7 +259,7 @@ string fromWasmInner(G g, string t, string expr) {
   if (o >= 0) {
     // A closure over the reference: JavaScript cannot call a funcref, but it can call the export
     // that does the `call_ref`, and the reference goes in front of the arguments.
-    string[] ps = g.oParams[o] == "" ? string[0](fill: "") : splitTop(g.oParams[o], ",");
+    string[] ps = g.oParams[o] == "" ? string[].filled(0, "") : splitTop(g.oParams[o], ",");
     string args = "";
     string fwd = "";
     for (i32 i = 0; i < ps.len(); i++) {
@@ -289,13 +289,13 @@ G readWires(string wire, string sigs, bool js) {
   string[] wl = linesOf(wire);
   string[] sl = linesOf(sigs);
   G g = G(js,
-          string[wl.len()](fill: ""), string[wl.len()](fill: ""), string[wl.len()](fill: ""),
-          string[wl.len()](fill: ""), 0,
-          string[wl.len()](fill: ""), 0,
-          string[wl.len()](fill: ""), string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
-          string[wl.len()](fill: ""), string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
-          string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
-          string[sl.len()](fill: ""), string[sl.len()](fill: ""), string[sl.len()](fill: ""), 0);
+          string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), string[].filled(wl.len(), ""),
+          string[].filled(wl.len(), ""), 0,
+          string[].filled(wl.len(), ""), 0,
+          string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), 0,
+          string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), 0,
+          string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), 0,
+          string[].filled(sl.len(), ""), string[].filled(sl.len(), ""), string[].filled(sl.len(), ""), 0);
   // **Why none of the six cursors below is bounds-checked**, which is worth stating because every
   // cursor in `emit.wac` is and the difference looks like an omission.
   //
@@ -347,7 +347,7 @@ G readWires(string wire, string sigs, bool js) {
 
 /** The parameter types of a signature cell, which is empty for none. */
 string[] paramsOf(string cellText) {
-  return cellText == "" ? string[0](fill: "") : splitTop(cellText, ",");
+  return cellText == "" ? string[].filled(0, "") : splitTop(cellText, ",");
 }
 
 // ── What can be bound ─────────────────────────────────────────────────────────────────────────
@@ -533,7 +533,7 @@ string fieldName(string f) {
 string base64(u8[] bytes) {
   u8[] alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toBytes();
   i32 groups = (bytes.len() + 2) / 3;
-  u8[] out = u8[groups * 4]();
+  u8[] out = u8[].filled(groups * 4, 0);
   i32 at = 0;
   i32 i = 0;
   while (i < bytes.len()) {
@@ -565,14 +565,14 @@ struct Out {
   i32 n;
 }
 
-Out newOut() { return Out(u8[65536](), 0); }
+Out newOut() { return Out(u8[].filled(65536, 0), 0); }
 
 void put(Out o, string s) {
   u8[] b = s.toBytes();
   if (o.n + b.len() > o.buf.len()) {
     i32 want = o.buf.len();
     while (want < o.n + b.len()) { want = want * 2; }
-    u8[] bigger = u8[want]();
+    u8[] bigger = u8[].filled(want, 0);
     for (i32 i = 0; i < o.n; i++) { bigger[i] = o.buf[i]; }
     o.buf = bigger;
   }
@@ -587,7 +587,7 @@ void line(Out o, string s) {
 }
 
 string outText(Out o) {
-  u8[] exact = u8[o.n]();
+  u8[] exact = u8[].filled(o.n, 0);
   for (i32 i = 0; i < o.n; i++) { exact[i] = o.buf[i]; }
   return string.fromBytes(exact);
 }
@@ -601,9 +601,9 @@ string outText(Out o) {
  */
 export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool coverage) {
   G g = readWires(wire, sigs, lang == "js");
-  bool[] usable = bool[g.sCount](fill: false);
+  bool[] usable = bool[].filled(g.sCount, false);
   for (i32 s = 0; s < g.sCount; s++) { usable[s] = supported(g, s); }
-  string[] crossing = string[512](fill: "");
+  string[] crossing = string[].filled(512, "");
   i32 nc = crossingOf(g, usable, crossing);
   bool needsMem = false;
   for (i32 i = 0; i < nc; i++) {
@@ -880,7 +880,7 @@ void classFor(Out o, G g, i32 t) {
   line(o, "  constructor(" + (g.js ? "$ref" : "readonly $ref: unknown") + ") {"
           + (g.js ? " this.$ref = $ref; " : "") + "}");
   if (!isEnum) {
-    string[] fs = g.tPayload[t] == "" ? string[0](fill: "") : splitTop(g.tPayload[t], ",");
+    string[] fs = g.tPayload[t] == "" ? string[].filled(0, "") : splitTop(g.tPayload[t], ",");
     string args = "";
     string conv = "";
     // **A field the glue cannot carry is left out of `$of` as well as out of the accessors.** Emitting
@@ -923,11 +923,11 @@ void classFor(Out o, G g, i32 t) {
       line(o, "  }");
     }
   } else {
-    string[] vs = g.tPayload[t] == "" ? string[0](fill: "") : splitTop(g.tPayload[t], ";");
+    string[] vs = g.tPayload[t] == "" ? string[].filled(0, "") : splitTop(g.tPayload[t], ";");
     for (i32 i = 0; i < vs.len(); i++) {
       string vn = variantName(vs[i]);
       string rest = variantPayload(vs[i]);
-      string[] fs = rest == "" ? string[0](fill: "") : splitTop(rest, "|");
+      string[] fs = rest == "" ? string[].filled(0, "") : splitTop(rest, "|");
       string args = "";
       string conv = "";
       for (i32 k = 0; k < fs.len(); k++) {

@@ -108,7 +108,7 @@ export Vec<PackedRef> parsePackedRefs(u8[] file) {
       } else {
         u8[]? target = hex20(file, at, at + 40);
         if (!(target is null) && end > at + 41 && file[at + 40] == 32) {
-          out.push(PackedRef(slice(file, at + 41, end), target!, u8[0]()));
+          out.push(PackedRef(slice(file, at + 41, end), target!, u8[]()));
         }
       }
     }

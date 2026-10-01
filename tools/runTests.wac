@@ -85,7 +85,7 @@ import { guardCodeCache, freeCaches, sweepStaleTemp, reapStaleDaemons, dropUnrea
 import { quoted } from "../packages/wactest/src/childenv.wac";
 
 /** The roots the lane walks — `harness/testLane.ts`'s `LANE_ROOTS`, and one list for its reason. */
-string[] laneRoots() { return string[]("packages", "core"); }
+string[] laneRoots() { return ["packages", "core"]; }
 
 /**
  * Files per chunk, and the number is the TypeScript's.
@@ -184,13 +184,15 @@ i32 defaultJobs() { return 4; }
 
 /** What the Deno pass grants, including the flag that is not a grant. */
 string[] denoPerms() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env",
-                  "--unstable-net");
+  return [
+                  "--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env",
+                  "--unstable-net"
+  ];
 }
 
 /** What the `wac test` lane grants. Broader than reading, for the reasons `runTests.ts` records. */
 string[] wacGrants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 /**
@@ -203,11 +205,11 @@ struct Names {
   string[] items;
   i32 n;
 
-  Names create() { return Names(string[16](fill: ""), 0); }
+  Names create() { return Names(string[].filled(16, ""), 0); }
 
   void push(this, string s) {
     if (this.n == this.items.len()) {
-      string[] bigger = string[this.items.len() * 2](fill: "");
+      string[] bigger = string[].filled(this.items.len() * 2, "");
       for (i32 i = 0; i < this.n; i++) { bigger[i] = this.items[i]; }
       this.items = bigger;
     }
@@ -224,7 +226,7 @@ struct Names {
 
   /** The list as an array of exactly its length, which is what every consumer wants. */
   string[] all(const this) {
-    string[] out = string[this.n](fill: "");
+    string[] out = string[].filled(this.n, "");
     for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
     return out;
   }
@@ -232,7 +234,7 @@ struct Names {
 
 /** Sorted in place, insertion sort: the lists here are hundreds of entries, not millions. */
 string[] sorted(string[] all) {
-  string[] out = string[all.len()](fill: "");
+  string[] out = string[].filled(all.len(), "");
   for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
@@ -264,7 +266,7 @@ void walk(Cli cli, string root, Names dirs) {
 /** The wac test files directly in one directory, sorted as `wac test` sorts what it collects. */
 string[] testFilesIn(Cli cli, string dir) {
   string[]? entries = cli.readDir(dir).wait();
-  if (entries is null) { return string[0](fill: ""); }
+  if (entries is null) { return string[].filled(0, ""); }
   Names out = Names.create();
   string[] names = sorted(entries!);
   for (i32 i = 0; i < names.len(); i++) {
@@ -325,7 +327,7 @@ void walkTs(Cli cli, string root, Names out) {
  * nobody added. `tools/wac/lanemarkers_test.wac` holds both directions: every marker in a walked
  * tree, and every walked tree holding TypeScript to walk.
  */
-string[] tsRoots() { return string[]("packages", "tools", "harness", "bootstrap"); }
+string[] tsRoots() { return ["packages", "tools", "harness", "bootstrap"]; }
 
 /**
  * The trees the broad Deno pass must not discover — `deno.json`'s `exclude`, restated.
@@ -352,7 +354,7 @@ string[] tsRoots() { return string[]("packages", "tools", "harness", "bootstrap"
  * disagreed, and only one of them was wrong. `tools/wac/denoignore_test.wac` now holds them together.
  */
 export string[] denoIgnoreRoots() {
-  return string[](".cache", "native/target", "site");
+  return [".cache", "native/target", "site"];
 }
 
 /**
@@ -414,7 +416,7 @@ Declared[] declarations(Cli cli, string[] files) {
   string[] fs = found.all();
   string[] ls = lanes.all();
   string[] ws = whys.all();
-  Declared[] out = Declared[fs.len()](fill: Declared("", "", ""));
+  Declared[] out = Declared[].filled(fs.len(), Declared("", "", ""));
   for (i32 i = 0; i < fs.len(); i++) { out[i] = Declared(fs[i], ls[i], ws[i]); }
   return out;
 }
@@ -460,7 +462,7 @@ Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
   //
   // Counting first costs a second pass over lists already in hand; the directory reads are not
   // repeated, since `kept` holds what the walk found.
-  string[][] kept = string[][dirs.len()](fill: string[0](fill: ""));
+  string[][] kept = string[][].filled(dirs.len(), string[].filled(0, ""));
   i32 total = 0;
   for (i32 d = 0; d < dirs.len(); d++) {
     Names keep = Names.create();
@@ -475,13 +477,13 @@ Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
                      : (kept[d].len() + chunkSize() - 1) / chunkSize());
   }
 
-  Chunk[] out = Chunk[total](fill: Chunk(string[0](fill: ""), "", ""));
+  Chunk[] out = Chunk[].filled(total, Chunk(string[].filled(0, ""), "", ""));
   i32 n = 0;
   for (i32 d = 0; d < dirs.len(); d++) {
     string[] mine = kept[d];
     if (mine.len() == 0) { continue; }
     if (mine.len() <= chunkSize()) {
-      out[n] = Chunk(string[](dirs[d]), dirs[d], dirs[d]);
+      out[n] = Chunk([dirs[d]], dirs[d], dirs[d]);
       n = n + 1;
       continue;
     }
@@ -519,7 +521,7 @@ Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
   // old proxy. That is the safe end: an unknown is a directory that is new or has just been re-split,
   // and putting it last is how this fails. A checkout with no file behaves exactly as before.
   string[] lines = splitLines(readTimes(cli));
-  i32[] cost = i32[n](fill: 0);
+  i32[] cost = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) {
     i32 ms = recordedMs(lines, out[i].key);
     cost[i] = ms < 0 ? 2000000000 + out[i].targets.len() : ms;
@@ -863,7 +865,7 @@ string[] underTargets(string[] targets, string[] files) {
 /** This program's arguments, as text. */
 string[] argsOf(Cli cli) {
   i32 n = cli.argCount().wait();
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = string.fromBytes(cli.arg(i).wait()); }
   return out;
 }
@@ -977,8 +979,8 @@ Found discover(Cli cli, Opts o) {
   // **A named target runs the heavy files too**, and `WAC_HEAVY=1` puts them in the broad pass: the
   // exclusion is for the run that discovers everything, which is the push.
   bool keepHeavy = o.targets.len() > 0 || envOf(cli, "WAC_HEAVY") == "1" || o.heavyOnly;
-  string[] skippedHeavy = keepHeavy ? string[0](fill: "") : heavy;
-  string[] tsHeavy = keepHeavy ? string[0](fill: "") : tsHeavyAll;
+  string[] skippedHeavy = keepHeavy ? string[].filled(0, "") : heavy;
+  string[] tsHeavy = keepHeavy ? string[].filled(0, "") : tsHeavyAll;
 
   Names skip = Names.create();
   for (i32 i = 0; i < skippedHeavy.len(); i++) { skip.push(skippedHeavy[i]); }
@@ -1003,10 +1005,12 @@ Found discover(Cli cli, Opts o) {
  */
 i32 denoPass(Core core, Cli cli, string[] args, i32 workers) {
   string sched = envOf(cli, "WAC_SCHED");
-  Exec r = cli.execWith("deno", args, u8[0](),
-                        string[]("DENO_JOBS=" + itoa(workers),
+  Exec r = cli.execWith("deno", args, u8[](),
+                        [
+                                 "DENO_JOBS=" + itoa(workers),
                                  "WAC_SCHED=" + (sched == "" ? "seed" : sched),
-                                 "WAC_SUITE_RUNNING=1"), false, true).wait();
+                                 "WAC_SUITE_RUNNING=1"
+                        ], false, true).wait();
   if (!r.ran()) {
     core.warn("   deno did not start — " + r.error);
     return 1;
@@ -1051,7 +1055,7 @@ i32 heavyLane(Core core, Cli cli, Opts o, Found f) {
   if (hw.len() > 0) {
     string wac = wacBinaryPath(cli);
     // Inherited rather than captured: one run of the whole lane, and watching it is the point.
-    Exec r = cli.execWith(wac, wacArgs(hw, string[0](fill: "")), u8[0](), string[0](fill: ""),
+    Exec r = cli.execWith(wac, wacArgs(hw, string[].filled(0, "")), u8[](), string[].filled(0, ""),
                           false, true).wait();
     // 4 is "every test in that file needs a host oracle", which is not a failure.
     if (code == 0 && r.ran() && r.status != 0 && r.status != 4) { code = r.status; }
@@ -1190,7 +1194,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     }
   }
 
-  Took[] took = Took[queue.len() + f.alone.len() + 1](fill: Took("", 0 as i64, ""));
+  Took[] took = Took[].filled(queue.len() + f.alone.len() + 1, Took("", 0 as i64, ""));
   i32 tookN = 0;
   i32 files = 0;
   i32 tests = 0;
@@ -1233,11 +1237,11 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
   // stuck, and `issues/system/0175` wants a per-test deadline that would need to.
   // Not `fill:` — a `Pending<T>` array is default-initialised, as `exec_test.wac` builds one, and
   // only the slots `busy` marks are ever read.
-  Pending<Exec>[] live = Pending<Exec>[workers]();
-  i32[] slotItem = i32[workers]();
-  i64[] slotStart = i64[workers]();
-  i32[] slotAt = i32[workers]();
-  bool[] busy = bool[workers]();
+  Pending<Exec>[] live = Pending<Exec>[].defaulted(workers);
+  i32[] slotItem = i32[].filled(workers, 0);
+  i64[] slotStart = i64[].filled(workers, 0);
+  i32[] slotAt = i32[].filled(workers, 0);
+  bool[] busy = bool[].filled(workers, false);
   i32 next = 0;
 
   // Swept rather than appended to: a log from a killed run would otherwise be read as this run's
@@ -1245,8 +1249,8 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
   string logs = logDir(cli);
   cli.remove(logs, true).wait();
   cli.mkdir(logs, true).wait();
-  string[] slotLog = string[workers](fill: "");
-  string[] slotTag = string[workers](fill: "");
+  string[] slotLog = string[].filled(workers, "");
+  string[] slotTag = string[].filled(workers, "");
   for (i32 s = 0; s < workers; s++) {
     slotLog[s] = logs + "/w" + itoa(s + 1) + ".log";
     slotTag[s] = "[w" + itoa(s + 1) + "]";
@@ -1254,11 +1258,11 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
 
   string[] ignore = f.skip;
   for (i32 s = 0; s < workers && next < queue.len(); s++) {
-    cli.writeFile(slotLog[s], u8[0]()).wait();
+    cli.writeFile(slotLog[s], u8[]()).wait();
     core.log("── " + slotTag[s] + " " + queue[next].label);
     live[s] = cli.execWith("/bin/sh",
-                           string[]("-c", chunkLine(wac, queue[next].targets, ignore, slotLog[s])),
-                           u8[0](), string[0](fill: ""), false, false);
+                           ["-c", chunkLine(wac, queue[next].targets, ignore, slotLog[s])],
+                           u8[](), string[].filled(0, ""), false, false);
     slotItem[s] = next;
     slotStart[s] = nowMs(core);
     slotAt[s] = 0;
@@ -1270,8 +1274,8 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     i32 nBusy = 0;
     for (i32 s = 0; s < workers; s++) { if (busy[s]) { nBusy = nBusy + 1; } }
     if (nBusy == 0) { break; }
-    i32[] ids = i32[nBusy]();
-    i32[] slotOf = i32[nBusy]();
+    i32[] ids = i32[].filled(nBusy, 0);
+    i32[] slotOf = i32[].filled(nBusy, 0);
     i32 at = 0;
     for (i32 s = 0; s < workers; s++) {
       if (!busy[s]) { continue; }
@@ -1333,12 +1337,14 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
 
     busy[slot] = false;
     if (next < queue.len()) {
-      cli.writeFile(slotLog[slot], u8[0]()).wait();
+      cli.writeFile(slotLog[slot], u8[]()).wait();
       core.log("── " + slotTag[slot] + " " + queue[next].label);
       live[slot] = cli.execWith("/bin/sh",
-                                string[]("-c",
-                                         chunkLine(wac, queue[next].targets, ignore, slotLog[slot])),
-                                u8[0](), string[0](fill: ""), false, false);
+                                [
+                                         "-c",
+                                         chunkLine(wac, queue[next].targets, ignore, slotLog[slot])
+                                ],
+                                u8[](), string[].filled(0, ""), false, false);
       slotItem[slot] = next;
       slotStart[slot] = nowMs(core);
       slotAt[slot] = 0;
@@ -1367,8 +1373,8 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     for (i32 i = 0; i < serial.len(); i++) {
       i64 started = nowMs(core);
       // No `--ignore` here: this run *names a file*, which is the answer to which files run.
-      Exec r = cli.execWith(wac, wacArgs(string[](serial[i]), string[0](fill: "")), u8[0](),
-                            string[0](fill: ""), false, false).wait();
+      Exec r = cli.execWith(wac, wacArgs([serial[i]], string[].filled(0, "")), u8[](),
+                            string[].filled(0, ""), false, false).wait();
       took[tookN] = Took(serial[i] + " (alone)", nowMs(core) - started, "");
       tookN = tookN + 1;
       string alone = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
@@ -1444,8 +1450,8 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
 
   // **A killed lane says so**, because nothing else does: a lane the kernel takes for memory leaves
   // no summary, and the output then looks exactly like a lane that had no tests.
-  string[] names = string[]("parallel", "exclusive", "`wac test`");
-  i32[] codes = i32[](denoCode, aloneCode, wacCode);
+  string[] names = ["parallel", "exclusive", "`wac test`"];
+  i32[] codes = [denoCode, aloneCode, wacCode];
   for (i32 i = 0; i < names.len(); i++) {
     string note = killedLaneNote(names[i], codes[i]);
     if (note != "") { core.log(note); }

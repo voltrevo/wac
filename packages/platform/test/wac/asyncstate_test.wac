@@ -156,7 +156,7 @@ export string test_one_await_flattened_answers_the_real_size(Core core, Cli cli)
 
 export string test_an_await_inside_a_loop_suspends_and_resumes(Core core, Cli cli) {
   T t = T.create();
-  string[] ps = string[]("README.md", "MERGE.md", "CLAUDE.md");
+  string[] ps = ["README.md", "MERGE.md", "CLAUDE.md"];
   i32 want = 0;
   for (i32 i = 0; i < ps.len(); i++) {
     i32 one = sizeOf(cli, ps[i]);
@@ -173,7 +173,7 @@ export string test_the_loop_machine_stops_early_when_a_read_fails(Core core, Cli
   T t = T.create();
   // The `return` from inside the loop, which is a state that sets `done` rather than a back edge —
   // and the reason the arms answer `bool` instead of falling off the end.
-  string[] ps = string[]("README.md", "no-such-file-here.md", "CLAUDE.md");
+  string[] ps = ["README.md", "no-such-file-here.md", "CLAUDE.md"];
   t.eqI32(sumOf(cli, ps).wait(), 0 - 1, "it left the loop at the failure");
   return t.report();
 }

@@ -116,7 +116,7 @@ string suffix(i32 n) {
   }
 
   i32 digits = level + 2;
-  u8[] out = u8[level + digits](fill: 'z');
+  u8[] out = u8[].filled(level + digits, 'z');
   // The counter, least significant last. Every position but the first is base 26; the first is
   // base 25 because `z` there would be indistinguishable from the marker.
   i32 rest = remaining;

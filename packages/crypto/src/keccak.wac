@@ -31,7 +31,7 @@
 // it and applying it uniformly is easier to check than a list of exceptions.
 
 /** The 24 round constants, from FIPS 202 Table 1. */
-const u64[] RC = u64[](
+const u64[] RC = [
   0x0000000000000001 & 4294967295,
   0x0000000000008082 & 4294967295,
   0x800000000000808A,
@@ -56,7 +56,7 @@ const u64[] RC = u64[](
   0x8000000000008080,
   0x0000000080000001 & 4294967295,
   0x8000000080008008,
-);
+];
 
 u64 rotl(u64 x, u64 n) { return n == 0 ? x : ((x << n) | (x >> (64 - n))); }
 
@@ -192,7 +192,7 @@ export void keccakF(u64[] a) {
  */
 export u8[] sponge(u8[] input, i32 rate, i32 domain, i32 outLen) {
   if (rate <= 0 || rate > 200) { trap; }
-  u64[] state = u64[25]();
+  u64[] state = u64[].filled(25, 0);
 
   // **Whole blocks are absorbed where they lie.** `absorb` takes an offset for the same reason
   // `compressBlock` in `sha256.wac` does: copying each rate-sized block into scratch first is a second
@@ -210,7 +210,7 @@ export u8[] sponge(u8[] input, i32 rate, i32 domain, i32 outLen) {
   }
 
   // The final, partial block, with the padding.
-  u8[] block = u8[rate]();
+  u8[] block = u8[].filled(rate, 0);
   i32 tail = input.len() - at;
   block.copyFrom(input, at, 0, tail);
   block[tail] = block[tail] | domain;
@@ -221,7 +221,7 @@ export u8[] sponge(u8[] input, i32 rate, i32 domain, i32 outLen) {
   // this correct — the absorb of the padded block already permuted, so the state is
   // ready. Permuting first instead would work for a single output block and quietly
   // shift every byte of a longer one, which is the shape SHAKE is always used in.
-  u8[] out = u8[outLen]();
+  u8[] out = u8[].filled(outLen, 0);
   i32 produced = 0;
   while (true) {
     for (i32 i = 0; i < rate && produced < outLen; i++) {
@@ -287,7 +287,7 @@ export struct Sha3_256 {
   u8[] pending;
   i32 pendingLen;
 
-  Sha3_256 create() { return Sha3_256(u64[25](), u8[136](), 0); }
+  Sha3_256 create() { return Sha3_256(u64[].filled(25, 0), u8[].filled(136, 0), 0); }
 
   /** Absorb more of the message. */
   void update(this, u8[] data) {
@@ -307,9 +307,9 @@ export struct Sha3_256 {
 
   /** An independent copy, for taking a trial digest without disturbing this one. */
   Sha3_256 clone(const this) {
-    u64[] state = u64[25]();
+    u64[] state = u64[].filled(25, 0);
     for (i32 i = 0; i < 25; i++) { state[i] = this.state[i]; }
-    u8[] pending = u8[136]();
+    u8[] pending = u8[].filled(136, 0);
     for (i32 i = 0; i < 136; i++) { pending[i] = this.pending[i]; }
     return Sha3_256(state, pending, this.pendingLen);
   }
@@ -322,14 +322,14 @@ export struct Sha3_256 {
    * different function and desynchronises the circuit rather than failing.
    */
   u8[] peek(const this) {
-    u64[] copy = u64[25]();
+    u64[] copy = u64[].filled(25, 0);
     for (i32 i = 0; i < 25; i++) { copy[i] = this.state[i]; }
-    u8[] block = u8[136]();
+    u8[] block = u8[].filled(136, 0);
     for (i32 i = 0; i < this.pendingLen; i++) { block[i] = this.pending[i]; }
     block[this.pendingLen] = block[this.pendingLen] | 0x06;
     block[135] = block[135] | 0x80;
     absorb(copy, block, 0, 136);
-    u8[] out = u8[32]();
+    u8[] out = u8[].filled(32, 0);
     for (i32 i = 0; i < 32; i++) {
       out[i] = ((copy[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32;
     }

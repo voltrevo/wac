@@ -55,7 +55,7 @@ export const i32 MAC_LEN = 32;
 
 /** A big-endian u64 — `INT_8` throughout rend-spec-v3, and `htonll` in tor's C. */
 u8[] u64be(i64 v) {
-  u8[] b = u8[8]();
+  u8[] b = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
     b[i] = ((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
   }
@@ -65,7 +65,7 @@ u8[] u64be(i64 v) {
 u8[] concat(u8[][] parts) {
   i32 n = 0;
   for (i32 i = 0; i < parts.len(); i++) { n = n + parts[i].len(); }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < parts.len(); i++) {
     for (i32 j = 0; j < parts[i].len(); j++) { out[at + j] = parts[i][j]; }
@@ -82,8 +82,8 @@ u8[] concat(u8[][] parts) {
  * both present as "the descriptor did not decrypt", and only separate assertions tell them apart.
  */
 export u8[] layerKeys(u8[] secretData, u8[] subcredential, i64 revision, u8[] salt, u8[] constant) {
-  if (subcredential.len() != 32 || salt.len() != SALT_LEN) { return u8[0](); }
-  u8[][] parts = u8[][5]();
+  if (subcredential.len() != 32 || salt.len() != SALT_LEN) { return u8[](); }
+  u8[][] parts = u8[][].defaulted(5);
   parts[0] = secretData;
   parts[1] = subcredential;
   parts[2] = u64be(revision);
@@ -94,7 +94,7 @@ export u8[] layerKeys(u8[] secretData, u8[] subcredential, i64 revision, u8[] sa
 
 /** `D_MAC = H(INT_8(len(MAC_KEY)) | MAC_KEY | INT_8(len(SALT)) | SALT | ENCRYPTED)`. */
 export u8[] layerMac(u8[] macKey, u8[] salt, u8[] ciphertext) {
-  u8[][] parts = u8[][5]();
+  u8[][] parts = u8[][].defaulted(5);
   parts[0] = u64be(macKey.len() as i64);
   parts[1] = macKey;
   parts[2] = u64be(salt.len() as i64);
@@ -115,19 +115,19 @@ export u8[] layerMac(u8[] macKey, u8[] salt, u8[] ciphertext) {
  * and stripping would mean deciding what padding is on the strength of the plaintext's own contents.
  */
 export u8[] decryptLayer(u8[] blob, u8[] secretData, u8[] subcredential, i64 revision, u8[] constant) {
-  if (blob.len() < SALT_LEN + MAC_LEN) { return u8[0](); }
+  if (blob.len() < SALT_LEN + MAC_LEN) { return u8[](); }
   u8[] salt = clamped(blob, 0, SALT_LEN);
   u8[] ciphertext = clamped(blob, SALT_LEN, blob.len() - MAC_LEN);
   u8[] mac = clamped(blob, blob.len() - MAC_LEN, blob.len());
 
   u8[] keys = layerKeys(secretData, subcredential, revision, salt, constant);
-  if (keys.len() != S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN) { return u8[0](); }
+  if (keys.len() != S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN) { return u8[](); }
   u8[] macKey = clamped(keys, S_KEY_LEN + S_IV_LEN, keys.len());
 
   u8[] want = layerMac(macKey, salt, ciphertext);
   i32 diff = 0;
   for (i32 i = 0; i < MAC_LEN; i++) { diff = diff | (want[i] ^ mac[i]); }
-  if (diff != 0) { return u8[0](); }
+  if (diff != 0) { return u8[](); }
 
   return aesCtr(clamped(keys, 0, S_KEY_LEN), clamped(keys, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), ciphertext);
 }
@@ -177,7 +177,7 @@ u8[] lineFrom(u8[] doc, i32 at) {
  */
 export u8[] keywordValue(u8[] doc, u8[] keyword) {
   i32 at = findKeywordLine(doc, keyword, 0);
-  if (at < 0) { return u8[0](); }
+  if (at < 0) { return u8[](); }
   i32 start = at + keyword.len();
   if (start < doc.len() && doc[start] == 32) { start++; }
   return lineFrom(doc, start);
@@ -191,27 +191,27 @@ export u8[] keywordValue(u8[] doc, u8[] keyword) {
  */
 export u8[] pemBlock(u8[] doc, u8[] keyword, u8[] label) {
   i32 at = findKeywordLine(doc, keyword, 0);
-  if (at < 0) { return u8[0](); }
-  u8[][] parts = u8[][3]();
+  if (at < 0) { return u8[](); }
+  u8[][] parts = u8[][].defaulted(3);
   parts[0] = "-----BEGIN ".toBytes();
   parts[1] = label;
   parts[2] = "-----".toBytes();
   u8[] begin = concat(parts);
   i32 b = findKeywordLine(doc, begin, at);
-  if (b < 0) { return u8[0](); }
+  if (b < 0) { return u8[](); }
   i32 bodyStart = b + begin.len();
   while (bodyStart < doc.len() && (doc[bodyStart] == 10 || doc[bodyStart] == 13)) { bodyStart++; }
 
-  u8[][] endParts = u8[][3]();
+  u8[][] endParts = u8[][].defaulted(3);
   endParts[0] = "-----END ".toBytes();
   endParts[1] = label;
   endParts[2] = "-----".toBytes();
   i32 e = findKeywordLine(doc, concat(endParts), bodyStart);
-  if (e < 0) { return u8[0](); }
+  if (e < 0) { return u8[](); }
 
   // Strip the newlines the base64 is wrapped at; the decoder wants a single run of digits.
   u8[] wrapped = clamped(doc, bodyStart, e);
-  u8[] flat = u8[wrapped.len()]();
+  u8[] flat = u8[].filled(wrapped.len(), 0);
   i32 n = 0;
   for (i32 i = 0; i < wrapped.len(); i++) {
     if (wrapped[i] != 10 && wrapped[i] != 13) {
@@ -220,7 +220,7 @@ export u8[] pemBlock(u8[] doc, u8[] keyword, u8[] label) {
     }
   }
   u8[]? decoded = b64decode(clamped(flat, 0, n));
-  return (decoded is null) ? u8[0]() : decoded!;
+  return (decoded is null) ? u8[]() : decoded!;
 }
 
 /** A decimal integer value, or −1 if absent or not a number. */
@@ -248,23 +248,23 @@ export i64 keywordInt(u8[] doc, u8[] keyword) {
  *     SIGNATURE[64]
  */
 export u8[] certSignedWithKey(u8[] cert) {
-  if (cert.len() < 40) { return u8[0](); }
+  if (cert.len() < 40) { return u8[](); }
   i32 n = cert[39];
   i32 at = 40;
   for (i32 i = 0; i < n; i++) {
-    if (at + 4 > cert.len()) { return u8[0](); }
+    if (at + 4 > cert.len()) { return u8[](); }
     i32 length = (cert[at] * 256) + cert[at + 1];
     i32 type = cert[at + 2];
-    if (at + 4 + length > cert.len()) { return u8[0](); }
+    if (at + 4 + length > cert.len()) { return u8[](); }
     if (type == 4 && length == 32) { return clamped(cert, at + 4, at + 36); }
     at = at + 4 + length;
   }
-  return u8[0]();
+  return u8[]();
 }
 
 /** The key a proposal-220 certificate certifies — for a descriptor cert, the signing key. */
 export u8[] certCertifiedKey(u8[] cert) {
-  if (cert.len() < 39) { return u8[0](); }
+  if (cert.len() < 39) { return u8[](); }
   return clamped(cert, 7, 39);
 }
 

@@ -70,7 +70,7 @@ export struct Session {
   Session of(Peer peer, Association assoc, Consent consent, string ourUfrag, string ourPwd,
              string theirUfrag, string theirPwd, u8[] cookie, string expectFingerprint) {
     return Session(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie,
-                   expectFingerprint, 0, u8[0](), u8[][32](fill: u8[0]()), 0, 0);
+                   expectFingerprint, 0, u8[](), u8[][].filled(32, u8[]()), 0, 0);
   }
 
   /**
@@ -98,9 +98,9 @@ export struct Session {
    * disagrees about the phase, and that is the case worth surviving.
    */
   u8[][] receive(this, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
-    if (datagram.len() == 0) { return u8[][0](); }
+    if (datagram.len() == 0) { return u8[][](); }
     if (datagram[0] < 20) { return this.stun(datagram, fromIp, fromPort, now); }
-    if (datagram[0] > 63) { return u8[][0](); }             // neither, so not ours
+    if (datagram[0] > 63) { return u8[][](); }             // neither, so not ours
     return this.dtls(datagram, now);
   }
 
@@ -116,13 +116,13 @@ export struct Session {
   u8[][] stun(this, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
     if (checkRejected(datagram, this.ourUfrag, this.theirUfrag, this.ourPwd.toBytes()) == 0) {
       this.checksAnswered = this.checksAnswered + 1;
-      u8[][] out = u8[][1]();
+      u8[][] out = u8[][].defaulted(1);
       out[0] = successFor(transactionOf(datagram), this.ourPwd.toBytes(),
                           fromIp.len() == 16 ? 2 : 1, fromIp, fromPort);
       return out;
     }
     this.consent.answered(datagram, this.theirPwd.toBytes(), now);
-    return u8[][0]();
+    return u8[][]();
   }
 
   /**
@@ -167,7 +167,7 @@ export struct Session {
         // never connected rather than one that ignored a message.
         this.channelOpen = 1;
         this.label = labelOf(payload);
-        u8[] ack = u8[1]();
+        u8[] ack = u8[].filled(1, 0);
         ack[0] = dcepAck();
         out = append(out, this.peer.sealApplication(
           this.assoc.send(stream, ppidDcep(), ack, now)));
@@ -191,8 +191,8 @@ export struct Session {
    * burst, which is the thing the window exists to stop.
    */
   u8[][] send(this, i32 stream, u8[] payload, i64 now) {
-    if (!this.peerIsExpected()) { return u8[][0](); }
-    u8[][] out = u8[][0]();
+    if (!this.peerIsExpected()) { return u8[][](); }
+    u8[][] out = u8[][]();
     u8[][] parts = this.assoc.sendLarge(stream, ppidString(), payload, chunkBytes(), now);
     for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
     return out;
@@ -200,8 +200,8 @@ export struct Session {
 
   /** Whatever the window now allows out, and a consent check when one is due. */
   u8[][] tick(this, i64 now) {
-    if (!this.peerIsExpected()) { return u8[][0](); }
-    u8[][] out = u8[][0]();
+    if (!this.peerIsExpected()) { return u8[][](); }
+    u8[][] out = u8[][]();
     u8[][] parts = this.assoc.flush(now);
     for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
     return out;
@@ -214,7 +214,7 @@ export struct Session {
    * chunk it did not receive, so anything lost stays in flight until this puts it back.
    */
   u8[][] resend(this, i64 now) {
-    u8[][] out = u8[][0]();
+    u8[][] out = u8[][]();
     u8[][] parts = this.assoc.resend();
     for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
     return out;
@@ -222,7 +222,7 @@ export struct Session {
 
   /** Take the oldest complete message, leaving the rest. Empty when there is none. */
   u8[] take(this) {
-    if (this.inboxCount == 0) { return u8[0](); }
+    if (this.inboxCount == 0) { return u8[](); }
     u8[] first = this.inbox[0];
     for (i32 i = 0; i < this.inboxCount - 1; i++) { this.inbox[i] = this.inbox[i + 1]; }
     this.inboxCount = this.inboxCount - 1;
@@ -234,7 +234,7 @@ export struct Session {
 
   /** One of them, by index. Empty for an index nothing has filled. */
   u8[] message(const this, i32 i) {
-    if (i < 0 || i >= this.inboxCount) { return u8[0](); }
+    if (i < 0 || i >= this.inboxCount) { return u8[](); }
     return this.inbox[i];
   }
 
@@ -250,8 +250,8 @@ export struct Session {
 
 /** A STUN message's transaction id — bytes 8 through 19. */
 u8[] transactionOf(u8[] msg) {
-  if (msg.len() < 20) { return u8[0](); }
-  u8[] out = u8[12]();
+  if (msg.len() < 20) { return u8[](); }
+  u8[] out = u8[].filled(12, 0);
   for (i32 i = 0; i < 12; i++) { out[i] = msg[8 + i]; }
   return out;
 }
@@ -264,17 +264,17 @@ u8[] transactionOf(u8[] msg) {
  * the protocol with it.
  */
 u8[] labelOf(u8[] msg) {
-  if (msg.len() < 12) { return u8[0](); }
+  if (msg.len() < 12) { return u8[](); }
   i32 labelLen = (msg[8] << 8) | msg[9];
-  if (msg.len() < 12 + labelLen) { return u8[0](); }
-  u8[] out = u8[labelLen]();
+  if (msg.len() < 12 + labelLen) { return u8[](); }
+  u8[] out = u8[].filled(labelLen, 0);
   for (i32 i = 0; i < labelLen; i++) { out[i] = msg[12 + i]; }
   return out;
 }
 
 /** Grow a list of datagrams by one. */
 u8[][] append(u8[][] list, u8[] one) {
-  u8[][] out = u8[][list.len() + 1]();
+  u8[][] out = u8[][].defaulted(list.len() + 1);
   for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
   out[list.len()] = one;
   return out;

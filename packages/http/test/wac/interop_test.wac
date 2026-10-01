@@ -113,7 +113,7 @@ string headerValue(Incoming r, string want) {
 
 string lowered(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()](fill: 0);
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
   }
@@ -121,7 +121,7 @@ string lowered(string s) {
 }
 
 Fetched get(Cli cli, i32 port, string path) {
-  return request(cli, ("GET").toBytes(), "127.0.0.1", port, path, u8[0](), "");
+  return request(cli, ("GET").toBytes(), "127.0.0.1", port, path, u8[](), "");
 }
 
 export string test_wac_client_to_node_server_the_response_parser_against_a_real_server(
@@ -179,7 +179,7 @@ export string test_wac_client_to_node_server_head_has_no_body_however_long_the_h
   if (node.port <= 0) { return t.report(); }
 
   Fetched head = request(cli, ("HEAD").toBytes(), "127.0.0.1", node.port, "/echo-method",
-                         u8[0](), "");
+                         u8[](), "");
   t.isTrue(head.ok, "HEAD: " + head.error);
   t.eqStr(bodyOf(head.response), "", "HEAD returned a body");
   string cl = headerValue(head.response, "content-length");
@@ -232,8 +232,10 @@ export string test_fetch_to_wac_server_the_response_writer_against_a_strict_clie
   if (wac.port <= 0) { return t.report(); }
 
   Exec r = cli.exec("deno",
-    string[]("run", "-A", "packages/http/test/strictfetch.ts",
-             "http://127.0.0.1:" + itoa(wac.port) + "/time"), u8[0]()).wait();
+    [
+             "run", "-A", "packages/http/test/strictfetch.ts",
+             "http://127.0.0.1:" + itoa(wac.port) + "/time"
+    ], u8[]()).wait();
   t.isTrue(r.ran(), "strictfetch ran — " + r.error);
   string said = string.fromBytes(r.stdout);
   cli.writeFile(dir + "/said.json", said.toBytes()).wait();
@@ -263,7 +265,7 @@ export string test_the_same_request_bytes_are_accepted_by_both_servers(Core core
   t.eqStr(wac.error, "", "the wac server is up");
   if (node.port <= 0 || wac.port <= 0) { return t.report(); }
 
-  string[] targets = string[]("/", "/plain", "/nope");
+  string[] targets = ["/", "/plain", "/nope"];
   for (i32 i = 0; i < targets.len(); i++) {
     Fetched fromWac = get(cli, wac.port, targets[i]);
     Fetched fromNode = get(cli, node.port, targets[i]);

@@ -174,7 +174,7 @@ f64 fastPath(Quick q) {
 // Exported with `approxBits`, which takes what this produces: a probe cannot check the estimate without
 // being able to make the input it estimates from.
 export Parts scan(u8[] src, i32 start, i32 end) {
-  Parts p = Parts(u8[MAX_DIGITS()](), 0, 0, false, false);
+  Parts p = Parts(u8[].filled(MAX_DIGITS(), 0), 0, 0, false, false);
   i32 i = start;
   if (i < end && src[i] == '-') { p.neg = true; i++; }
 

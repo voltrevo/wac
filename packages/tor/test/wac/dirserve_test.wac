@@ -38,15 +38,15 @@ string field(T t, Cli cli, string file, string key) {
 DirDocuments docsFrom(T t, Cli cli) {
   Lines lines = Lines.create();
   lines.add("descdigest");
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the descriptor digest");
-  u8[] digest = a.ok ? decoded(word(a.lines[0], 1)) : u8[0]();
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "the descriptor digest");
+  u8[] digest = a.ok ? decoded(word(a.lines[0], 1)) : u8[]();
   DirDocuments docs = DirDocuments(
-    field(t, cli, "consensus_generated.json", "consensus").toBytes(), u8[0](),
+    field(t, cli, "consensus_generated.json", "consensus").toBytes(), u8[](),
     field(t, cli, "authcert_generated.json", "certificate").toBytes(),
     field(t, cli, "routerdesc_generated.json", "descriptor").toBytes(),
     oneDigest(digest),
     decoded(field(t, cli, "consensus_generated.json", "identityDigest")),
-    u8[0](), u8[][0](), u8[][0](), u8[][0]());
+    u8[](), u8[][](), u8[][](), u8[][]());
 
   // Every routing assertion below compares a response body against one of these, and two empty
   // arrays agree — so a mistyped key would turn the whole file green rather than red.
@@ -61,7 +61,7 @@ DirDocuments docsFrom(T t, Cli cli) {
 string hexOf(u8[] b) { return string.fromBytes(encodeUpper(b)); }
 
 u8[][] oneDigest(u8[] d) {
-  u8[][] out = u8[][1]();
+  u8[][] out = u8[][].defaulted(1);
   out[0] = d;
   return out;
 }
@@ -124,20 +124,20 @@ export string test_microdescriptors_are_batched_with_a_hyphen(Core core, Cli cli
 
   // Two digests, one of them deliberately containing a `+` — which real ones do, roughly half the
   // time, and which a fixture chosen from a small sample can easily fail to include.
-  u8[] withPlus = u8[32]();
+  u8[] withPlus = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { withPlus[i] = (i * 7 + 251) & 0xFF; }
-  u8[] other = u8[32]();
+  u8[] other = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { other[i] = (i * 13 + 5) & 0xFF; }
   string a = b64Unpadded(withPlus);
   string b = b64Unpadded(other);
   t.isTrue(hasPlus(a), "the fixture digest really does contain a + character");
 
   u8[] body = "onion-key\nfake\n".toBytes();
-  u8[][] two = u8[][2]();
+  u8[][] two = u8[][].defaulted(2);
   two[0] = withPlus;
   two[1] = other;
-  DirDocuments docs = DirDocuments(u8[0](), u8[0](), u8[0](), u8[0](), u8[][0](), u8[0](), body, two,
-                                   u8[][0](), u8[][0]());
+  DirDocuments docs = DirDocuments(u8[](), u8[](), u8[](), u8[](), u8[][](), u8[](), body, two,
+                                   u8[][](), u8[][]());
 
   t.eqI32(dirRoute(("/tor/micro/d/" + a).toBytes(), docs).status, 200,
           "a single digest containing a + is served");
@@ -164,8 +164,8 @@ export string test_microdescriptors_are_batched_with_a_hyphen(Core core, Cli cli
 
   // And with nothing to serve, the route is a 404 rather than an empty 200 — a client reading an
   // empty body as a valid response would discard the relays it just verified.
-  DirDocuments bare = DirDocuments(u8[0](), u8[0](), u8[0](), u8[0](), u8[][0](), u8[0](),
-                                   u8[0](), u8[][0](), u8[][0](), u8[][0]());
+  DirDocuments bare = DirDocuments(u8[](), u8[](), u8[](), u8[](), u8[][](), u8[](),
+                                   u8[](), u8[][](), u8[][](), u8[][]());
   t.eqI32(dirRoute(("/tor/micro/d/" + a).toBytes(), bare).status, 404,
           "a cache holding no microdescriptors says so");
   return t.report();
@@ -173,7 +173,7 @@ export string test_microdescriptors_are_batched_with_a_hyphen(Core core, Cli cli
 
 string swapCase(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
     i32 c = b[i];
     if (c >= 65 && c <= 90) { c = c + 32; } else if (c >= 97 && c <= 122) { c = c - 32; }
@@ -199,7 +199,7 @@ export string test_the_compression_suffix_is_a_request_not_a_name(Core core, Cli
   t.eqBytes(stripDotZ("/tor/keys/all".toBytes()), "/tor/keys/all".toBytes(),
             "and an absent one changes nothing");
   t.eqBytes(stripDotZ("z".toBytes()), "z".toBytes(), "a bare z is not a suffix");
-  t.eqBytes(stripDotZ(".z".toBytes()), u8[0](), "the suffix alone leaves nothing");
+  t.eqBytes(stripDotZ(".z".toBytes()), u8[](), "the suffix alone leaves nothing");
 
   // Only the trailing one: a path with `.z` inside it keeps it.
   t.eqBytes(stripDotZ("/tor/keys/fp/A.zB".toBytes()), "/tor/keys/fp/A.zB".toBytes(),
@@ -225,7 +225,7 @@ export string test_the_response_is_framed_for_a_client(Core core, Cli cli) {
 
 string lower(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
     i32 c = b[i];
     out[i] = (c >= 65 && c <= 90) ? c + 32 : c;
@@ -290,7 +290,7 @@ export string test_a_dir_source_line_a_stranger_wrote() {
           "a dir-source occurring mid-line was read as one");
 
   // Nothing to find.
-  t.eqI32(dirSourceFingerprint(u8[0]()).len(), 0, "an empty document named an authority");
+  t.eqI32(dirSourceFingerprint(u8[]()).len(), 0, "an empty document named an authority");
   t.eqI32(dirSourceFingerprint("network-status-version 3\n".toBytes()).len(), 0,
           "a document with no dir-source named an authority");
 
@@ -298,7 +298,7 @@ export string test_a_dir_source_line_a_stranger_wrote() {
   // these leaves the scan's offsets somewhere the buffer does not reach.
   u8[] line = ("\ndir-source someauth " + fp + " 1.2.3.4\n").toBytes();
   for (i32 n = 1; n <= line.len(); n++) {
-    u8[] cut = u8[n]();
+    u8[] cut = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { cut[i] = line[i]; }
     i32 len = dirSourceFingerprint(cut).len();
     // **A cut line yields a *partial* digest, not an empty one**, which is what it should do and is
@@ -311,7 +311,7 @@ export string test_a_dir_source_line_a_stranger_wrote() {
              "a line cut to " + itoa(n) + " bytes yielded a full-length fingerprint");
   }
   // And the boundary itself, so the 61 above is a fact rather than an arithmetic guess.
-  u8[] justEnough = u8[61]();
+  u8[] justEnough = u8[].filled(61, 0);
   for (i32 i = 0; i < 61; i++) { justEnough[i] = line[i]; }
   t.eqI32(dirSourceFingerprint(justEnough).len(), 20,
           "the whole fingerprint field arrived and did not decode");
@@ -319,11 +319,11 @@ export string test_a_dir_source_line_a_stranger_wrote() {
   // are an odd number of nibbles and `decode` refuses the whole field rather than dropping one.
   // Worth pinning: it means a truncation that lands mid-byte is refused outright, and one that lands
   // on a byte boundary is not, which is a distinction a caller checking only for empty would miss.
-  u8[] oddCut = u8[60]();
+  u8[] oddCut = u8[].filled(60, 0);
   for (i32 i = 0; i < 60; i++) { oddCut[i] = line[i]; }
   t.eqI32(dirSourceFingerprint(oddCut).len(), 0,
           "an odd number of hex characters decoded to something");
-  u8[] evenCut = u8[59]();
+  u8[] evenCut = u8[].filled(59, 0);
   for (i32 i = 0; i < 59; i++) { evenCut[i] = line[i]; }
   t.eqI32(dirSourceFingerprint(evenCut).len(), 19,
           "thirty-eight hex characters did not yield nineteen bytes");

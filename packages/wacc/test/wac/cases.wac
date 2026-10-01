@@ -50,7 +50,7 @@ export struct CaseFile {
 /** Every case in `spec/cases`, in name order. */
 export CaseFile[] loadCases(Cli cli) {
   string[] names = casesIn(cli, "spec/cases");
-  CaseFile[] out = CaseFile[names.len()](fill: none(""));
+  CaseFile[] out = CaseFile[].filled(names.len(), none(""));
   for (i32 i = 0; i < names.len(); i++) {
     FileResult r = cli.readFile("spec/cases/" + names[i]).wait();
     if (!r.ok) {
@@ -65,13 +65,13 @@ export CaseFile[] loadCases(Cli cli) {
 /** `*.wac` directly in `dir`, sorted, which is the order `cases.ts` reads them in. */
 string[] casesIn(Cli cli, string dir) {
   string[]? entries = cli.readDir(dir).wait();
-  if (entries is null) { return string[0](fill: ""); }
+  if (entries is null) { return string[].filled(0, ""); }
   string[] all = entries!;
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (endsWith(all[i], ".wac")) { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 k = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (endsWith(all[i], ".wac")) { out[k] = all[i]; k = k + 1; }
@@ -87,7 +87,7 @@ string[] casesIn(Cli cli, string dir) {
 }
 
 CaseFile none(string why) {
-  return CaseFile("", "", string[0](fill: ""), string[0](fill: ""), "", Expect("", "", ""), why);
+  return CaseFile("", "", string[].filled(0, ""), string[].filled(0, ""), "", Expect("", "", ""), why);
 }
 
 /** One case file. */
@@ -95,8 +95,8 @@ export CaseFile parseCase(string name, string text) {
   string[] lines = splitLines(text);
   Expect expect = Expect("", "", "");
   string why = "";
-  string[] paths = string[16](fill: "");
-  string[] sources = string[16](fill: "");
+  string[] paths = string[].filled(16, "");
+  string[] sources = string[].filled(16, "");
   i32 nFiles = 0;
   string current = "main.wac";
   string body = "";
@@ -140,8 +140,8 @@ export CaseFile parseCase(string name, string text) {
   }
   if (nFiles == 0) { return none(name + ": no source"); }
 
-  string[] p = string[nFiles](fill: "");
-  string[] s = string[nFiles](fill: "");
+  string[] p = string[].filled(nFiles, "");
+  string[] s = string[].filled(nFiles, "");
   for (i32 i = 0; i < nFiles; i++) { p[i] = paths[i]; s[i] = sources[i]; }
   string entry = nFiles == 1 ? p[0] : "main.wac";
   bool has = false;
@@ -204,7 +204,7 @@ string[] splitLines(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     if (s.slice(i, i + 1) == "\n") { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 k = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -213,7 +213,7 @@ string[] splitLines(string s) {
     k = k + 1;
     at = i + 1;
   }
-  string[] exact = string[k](fill: "");
+  string[] exact = string[].filled(k, "");
   for (i32 i = 0; i < k; i++) { exact[i] = out[i]; }
   return exact;
 }

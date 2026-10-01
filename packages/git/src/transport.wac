@@ -72,7 +72,7 @@ export Remote parseRemote(string url) {
 /** The system's trust store, or an empty one with `refused` telling the caller why not. */
 export Store systemStore(Cli cli) {
   FileResult bundle = cli.readFile(bundlePath()).wait();
-  if (!bundle.ok) { return Store(u8[0](), i32[0](), 0); }
+  if (!bundle.ok) { return Store(u8[](), i32[](), 0); }
   return pemBundle(bundle.bytes);
 }
 
@@ -95,23 +95,23 @@ export struct Answer {
 export Answer request(Core core, Cli cli, const Store store, string host, string target,
                       u8[] body, string contentType) {
   if (store.offsets.len() == 0) {
-    return Answer(false, 0, u8[0](), "no trust store, so nothing can be verified");
+    return Answer(false, 0, u8[](), "no trust store, so nothing can be verified");
   }
 
   i32 handle = -1;
-  u8[] buffered = u8[0]();
+  u8[] buffered = u8[]();
   u8[]? proxyVar = cli.env("HTTP_PROXY").wait();
   if (proxyVar is null) {
     Socket direct = cli.connect(host, 443).wait();
-    if (direct.handle < 0) { return Answer(false, 0, u8[0](), host + ": " + direct.error); }
+    if (direct.handle < 0) { return Answer(false, 0, u8[](), host + ": " + direct.error); }
     handle = direct.handle;
   } else {
     ProxyAt at = parseProxy(string.fromBytes(proxyVar!));
     if (!at.ok) {
-      return Answer(false, 0, u8[0](), "HTTP_PROXY is not a proxy this can parse");
+      return Answer(false, 0, u8[](), "HTTP_PROXY is not a proxy this can parse");
     }
     Tunnel t = connectThrough(cli, at.host, at.port, host, 443);
-    if (!t.ok) { return Answer(false, 0, u8[0](), t.error); }
+    if (!t.ok) { return Answer(false, 0, u8[](), t.error); }
     handle = t.handle;
     buffered = t.leftover;   // **First, before any recv.** See the header.
   }
@@ -125,17 +125,17 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
     core.nowMillis().wait() / 1000));
   if (!cli.send(handle, s.toSend).wait()) {
     cli.closeSocket(handle);
-    return Answer(false, 0, u8[0](), "cannot send the client hello");
+    return Answer(false, 0, u8[](), "cannot send the client hello");
   }
 
-  u8[] got = u8[0]();
+  u8[] got = u8[]();
   bool requested = false;
   while (true) {
     i32 phase = tlsClientPhase(s.state);
     if (phase == 4) {
       if (got.len() > 0) { break; }
       cli.closeSocket(handle);
-      return Answer(false, 0, u8[0](), "TLS to " + host + " failed (code "
+      return Answer(false, 0, u8[](), "TLS to " + host + " failed (code "
         + itoa(tlsClientFailure(s.state)) + ")");
     }
     if (phase == 3 && !requested) {
@@ -148,12 +148,12 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
              + "Content-Length: " + itoa(body.len()) + "\r\n";
       }
       head = head + "Connection: close\r\n\r\n";
-      u8[] whole = u8[head.toBytes().len() + body.len()]();
+      u8[] whole = u8[].filled(head.toBytes().len() + body.len(), 0);
       u8[] headBytes = head.toBytes();
       whole.copyFrom(headBytes, 0, 0, headBytes.len());
       whole.copyFrom(body, 0, headBytes.len(), body.len());
       ClientStep out = clientStep(tlsClientSend(s.state, whole));
-      s = ClientStep(out.state, out.toSend, u8[0]());
+      s = ClientStep(out.state, out.toSend, u8[]());
       if (!cli.send(handle, s.toSend).wait()) { break; }
       requested = true;
     }
@@ -176,7 +176,7 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
       End: { closed = true; }
       Failed(why): {
         cli.closeSocket(handle);
-        return Answer(false, 0, u8[0](), host + ": " + why);
+        return Answer(false, 0, u8[](), host + ": " + why);
       }
     }
     if (closed) { break; }
@@ -184,17 +184,17 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
 
   clientStep(tlsClientClose(s.state));
   cli.closeSocket(handle);
-  if (got.len() == 0) { return Answer(false, 0, u8[0](), host + " said nothing"); }
+  if (got.len() == 0) { return Answer(false, 0, u8[](), host + " said nothing"); }
 
   match (parseResponse(got, (body.len() == 0 ? "GET" : "POST").toBytes(), true, 1 << 26)) {
-    Incomplete: { return Answer(false, 0, u8[0](), "the response ended mid-message"); }
-    Bad(code): { return Answer(false, 0, u8[0](), "unparseable response (" + itoa(code) + ")"); }
+    Incomplete: { return Answer(false, 0, u8[](), "the response ended mid-message"); }
+    Bad(code): { return Answer(false, 0, u8[](), "unparseable response (" + itoa(code) + ")"); }
     Ok(res): { return Answer(true, res.status, res.body, ""); }
   }
 }
 
 u8[] concat(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   out.copyFrom(a, 0, 0, a.len());
   out.copyFrom(b, 0, a.len(), b.len());
   return out;

@@ -23,13 +23,15 @@ const string POINT = "export struct Point { i32 x; i32 y; i32 sum(const this) { 
 
 /** The two keys name one file: `/src/point.wac` normalised, and a spelling that normalises to it. */
 string[] twoKeyPaths() {
-  return string[]("/src/main.wac", "/src/point.wac", "/src/./point.wac");
+  return ["/src/main.wac", "/src/point.wac", "/src/./point.wac"];
 }
 
 string[] twoKeySources() {
-  return string[]("import { Point } from \"./point.wac\";\n" +
+  return [
+                  "import { Point } from \"./point.wac\";\n" +
                   "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n",
-                  POINT, POINT);
+                  POINT, POINT
+  ];
 }
 
 export string test_one_file_under_two_keys_is_declined_with_a_reason() {
@@ -60,10 +62,11 @@ export string test_no_module_is_produced_for_two_keys() {
  */
 export string test_two_different_files_with_the_same_contents_are_fine() {
   T t = T.create();
-  string[] paths = string[]("/src/main.wac", "/src/point.wac", "/src/other.wac");
-  string[] sources = string[](
+  string[] paths = ["/src/main.wac", "/src/point.wac", "/src/other.wac"];
+  string[] sources = [
     "import { Point } from \"./point.wac\";\n" +
-    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT, POINT);
+    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT, POINT
+  ];
   string why = blockedFiles(paths, sources, "/src/main.wac");
   t.eqStr(why, "", "two distinct files with equal contents were declined");
   i32 errs = dumpTypeErrorsFiles(paths, sources, "/src/main.wac").len();
@@ -77,10 +80,11 @@ export string test_two_different_files_with_the_same_contents_are_fine() {
 /** And the ordinary single-key program still builds, so the guard is not refusing everything. */
 export string test_one_key_per_file_still_builds() {
   T t = T.create();
-  string[] paths = string[]("/src/main.wac", "/src/point.wac");
-  string[] sources = string[](
+  string[] paths = ["/src/main.wac", "/src/point.wac"];
+  string[] sources = [
     "import { Point } from \"./point.wac\";\n" +
-    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT);
+    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT
+  ];
   t.eqStr(blockedFiles(paths, sources, "/src/main.wac"), "", "the ordinary program was declined");
   u8[] mod = emitFilesChecked(paths, sources, "/src/main.wac");
   t.isTrue(mod.len() > 8, "no module for the ordinary program");
@@ -94,10 +98,11 @@ export string test_one_key_per_file_still_builds() {
  */
 export string test_the_perturbation_shape_is_refused_too() {
   T t = T.create();
-  string[] paths = string[]("src/main.wac", "src/point.wac", "./src/point.wac");
-  string[] sources = string[](
+  string[] paths = ["src/main.wac", "src/point.wac", "./src/point.wac"];
+  string[] sources = [
     "import { Point } from \"./point.wac\";\n" +
-    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT, POINT);
+    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT, POINT
+  ];
   string why = blockedFiles(paths, sources, "src/main.wac");
   t.isTrue(why.indexOf("two keys") >= 0, "not refused: " + why);
   t.isTrue(emitFilesChecked(paths, sources, "src/main.wac").len() <= 8, "a module was produced");

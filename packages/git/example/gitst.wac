@@ -40,11 +40,11 @@ u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
   // Lowercased, because that is how the parser stores every key — `excludesFile` in the file is
   // `core.excludesfile` here, and asking with the file's spelling would find nothing.
   string path = expandTilde(cli, configOf(configChain(cli, fs, gitDir), "core.excludesfile"));
-  if (path == "") { return u8[0](); }
+  if (path == "") { return u8[](); }
   FileResult f = fs.readFile(path);
   if (!f.ok) {
     core.warn("gitst: core.excludesFile names " + path + ", which could not be read");
-    return u8[0]();
+    return u8[]();
   }
   return f.bytes;
 }

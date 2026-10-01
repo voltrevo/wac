@@ -93,14 +93,14 @@ export u8[] encode(Item item) {
       // The payload first, because a list's prefix depends on the encoded length of everything in it.
       // Concatenating once at the end rather than growing a buffer per member keeps this O(n) in the
       // number of *bytes* rather than in the number of members squared.
-      u8[][] parts = u8[][xs.len()](fill: u8[0]());
+      u8[][] parts = u8[][].filled(xs.len(), u8[]());
       i32 total = 0;
       for (i32 i = 0; i < xs.len(); i++) {
         parts[i] = encode(xs[i]);
         total = total + parts[i].len();
       }
       u8[] head = header(total, 0xC0, 0xF7);
-      u8[] out = u8[head.len() + total]();
+      u8[] out = u8[].filled(head.len() + total, 0);
       for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
       i32 at = head.len();
       for (i32 i = 0; i < parts.len(); i++) {
@@ -117,7 +117,7 @@ u8[] encodeBytes(u8[] v) {
   // input rather than a second spelling of `5`.
   if (v.len() == 1 && v[0] < 0x80) { return v; }
   u8[] head = header(v.len(), 0x80, 0xB7);
-  u8[] out = u8[head.len() + v.len()]();
+  u8[] out = u8[].filled(head.len() + v.len(), 0);
   for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
   for (i32 i = 0; i < v.len(); i++) { out[head.len() + i] = v[i]; }
   return out;
@@ -132,13 +132,13 @@ u8[] encodeBytes(u8[] v) {
  */
 u8[] header(i32 len, i32 short, i32 long) {
   if (len < 0) { trap; }
-  if (len <= 55) { return u8[](short + len); }
+  if (len <= 55) { return [short + len]; }
   // Minimal big-endian length: no leading zero, because a decoder must reject one.
-  u8[] be = u8[4]();
+  u8[] be = u8[].filled(4, 0);
   i32 n = 0;
   i32 x = len;
   while (x > 0) { be[n] = x & 0xFF; n++; x = x / 256; }
-  u8[] out = u8[1 + n]();
+  u8[] out = u8[].filled(1 + n, 0);
   out[0] = long + n;
   for (i32 i = 0; i < n; i++) { out[1 + i] = be[n - 1 - i]; }
   return out;
@@ -147,12 +147,12 @@ u8[] header(i32 len, i32 short, i32 long) {
 /** The minimal big-endian encoding of a non-negative integer — RLP's only way to spell a number. */
 export u8[] fromI64(i64 v) {
   if (v < 0) { trap; }
-  if (v == 0) { return u8[0](); }         // zero is the empty string, not a zero byte
-  u8[] be = u8[8]();
+  if (v == 0) { return u8[](); }         // zero is the empty string, not a zero byte
+  u8[] be = u8[].filled(8, 0);
   i32 n = 0;
   i64 x = v;
   while (x > 0) { be[n] = (x & 255) as~ i32; n++; x = x / 256; }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = be[n - 1 - i]; }
   return out;
 }
@@ -178,9 +178,9 @@ export struct Decoded {
 export Decoded decode(u8[] input) {
   Cursor c = Cursor(input, 0, "");
   Item it = item(c);
-  if (c.error != "") { return Decoded.of(false, Item.Bytes(u8[0]()), c.error); }
+  if (c.error != "") { return Decoded.of(false, Item.Bytes(u8[]()), c.error); }
   if (c.at != input.len()) {
-    return Decoded.of(false, Item.Bytes(u8[0]()),
+    return Decoded.of(false, Item.Bytes(u8[]()),
       "trailing bytes: " + itoa(input.len() - c.at) + " after a complete item");
   }
   return Decoded.of(true, it, "");
@@ -201,7 +201,7 @@ struct Cursor {
 
 /** One item at the cursor. Leaves `c.error` set and the cursor wherever it stopped on failure. */
 Item item(Cursor c) {
-  Item empty = Item.Bytes(u8[0]());
+  Item empty = Item.Bytes(u8[]());
   if (c.error != "") { return empty; }
   if (c.at >= c.src.len()) {
     c.error = "input ended where an item was expected";
@@ -213,7 +213,7 @@ Item item(Cursor c) {
   if (tag < 0x80) {
     // The byte is itself. Written before the length forms because it is the case a decoder gets wrong by
     // treating 0x00..0x7f as a zero-length prefix.
-    u8[] one = u8[1]();
+    u8[] one = u8[].filled(1, 0);
     one[0] = tag;
     return Item.Bytes(one);
   }
@@ -233,9 +233,9 @@ Item item(Cursor c) {
 u8[] take(Cursor c, i32 n, bool short) {
   if (c.at + n > c.src.len()) {
     c.error = "a string of " + itoa(n) + " bytes runs past the end of the input";
-    return u8[0]();
+    return u8[]();
   }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = c.src[c.at + i]; }
   c.at = c.at + n;
   // `0x81 0x05` spells a byte that spells itself. Canonical RLP has one encoding per value and this is
@@ -248,7 +248,7 @@ u8[] take(Cursor c, i32 n, bool short) {
 
 /** A list of `payload` bytes' worth of items, read until exactly that many are consumed. */
 Item list(Cursor c, i32 payload) {
-  Item empty = Item.Bytes(u8[0]());
+  Item empty = Item.Bytes(u8[]());
   if (c.at + payload > c.src.len()) {
     c.error = "a list of " + itoa(payload) + " bytes runs past the end of the input";
     return empty;
@@ -256,13 +256,13 @@ Item list(Cursor c, i32 payload) {
   i32 end = c.at + payload;
   // Grown by doubling rather than counted first: counting means decoding twice, and the members'
   // lengths are only known by decoding them.
-  Item[] items = Item[4](fill: empty);
+  Item[] items = Item[].filled(4, empty);
   i32 n = 0;
   while (c.at < end) {
     Item next = item(c);
     if (c.error != "") { return empty; }
     if (n == items.len()) {
-      Item[] bigger = Item[items.len() * 2](fill: empty);
+      Item[] bigger = Item[].filled(items.len() * 2, empty);
       for (i32 i = 0; i < n; i++) { bigger[i] = items[i]; }
       items = bigger;
     }
@@ -275,7 +275,7 @@ Item list(Cursor c, i32 payload) {
     c.error = "a list's members overrun its declared length";
     return empty;
   }
-  Item[] exact = Item[n](fill: empty);
+  Item[] exact = Item[].filled(n, empty);
   for (i32 i = 0; i < n; i++) { exact[i] = items[i]; }
   return Item.List(exact);
 }

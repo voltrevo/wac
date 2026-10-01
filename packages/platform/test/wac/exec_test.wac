@@ -33,7 +33,7 @@ string text(u8[] b) { return string.fromBytes(b); }
 /** The simplest thing that can be true: a program runs and says what it was told to say. */
 export string test_a_program_runs_and_its_output_comes_back(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.exec("/bin/echo", string[]("hello from the host"), u8[0]()).wait();
+  Exec r = cli.exec("/bin/echo", ["hello from the host"], u8[]()).wait();
   t.eqI32(r.status, 0, "echo exited zero");
   t.eqI32(r.error.len(), 0, "and started, so there is no error to report: " + r.error);
   t.isTrue(text(r.stdout).indexOf("hello from the host") >= 0,
@@ -65,7 +65,7 @@ export string test_stdin_reaches_the_program(Core core, Cli cli) {
  */
 export string test_a_failing_program_is_still_a_program_that_ran(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.exec("/bin/sh", string[]("-c", "echo out; echo err 1>&2; exit 3"), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "echo out; echo err 1>&2; exit 3"], u8[]()).wait();
   t.eqI32(r.status, 3, "the exit code is the exit code");
   t.eqI32(r.error.len(), 0, "and it ran, so nothing is reported as a failure to start");
   t.isTrue(text(r.stdout).indexOf("out") >= 0, "stdout came back");
@@ -77,7 +77,7 @@ export string test_a_failing_program_is_still_a_program_that_ran(Core core, Cli 
 /** A program that is not there says so, and says it in `error` rather than as an exit code. */
 export string test_a_program_that_is_not_there_says_so(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.exec("/nonexistent/definitely-not-a-program", string[](), u8[0]()).wait();
+  Exec r = cli.exec("/nonexistent/definitely-not-a-program", string[](), u8[]()).wait();
   t.isTrue(r.error.len() > 0, "a program that cannot be started reports why");
   // **And it says which program**, which is what tells this apart from the refusal above it. Without
   // this the test passes on a build with no `--allow-run` at all — "Not granted to this application"
@@ -97,7 +97,7 @@ export string test_arguments_are_not_a_shell_string(Core core, Cli cli) {
   // One argument containing a space, a quote and a semicolon. A `exec` that pasted its arguments
   // into a shell line would run `echo a` and then try to run `rm`, and the space would become two
   // arguments — so this is the injection case as much as it is the quoting one.
-  Exec r = cli.exec("/bin/echo", string[]("a b; rm -rf /\" '"), u8[0]()).wait();
+  Exec r = cli.exec("/bin/echo", ["a b; rm -rf /\" '"], u8[]()).wait();
   t.eqI32(r.status, 0, "it ran");
   t.isTrue(text(r.stdout) == "a b; rm -rf /\" '\n",
            "the argument arrived whole, not split or interpreted: " + text(r.stdout));
@@ -107,7 +107,7 @@ export string test_arguments_are_not_a_shell_string(Core core, Cli cli) {
 /** Bytes, not text: stdout is `u8[]` and survives what is not valid UTF-8. */
 export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.exec("/bin/sh", string[]("-c", "printf '\\001\\377\\000\\376'"), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "printf '\\001\\377\\000\\376'"], u8[]()).wait();
   t.eqI32(r.status, 0, "it ran");
   t.eqI32(r.stdout.len(), 4, "four bytes came back, not a replacement character each: " +
                              itoa(r.stdout.len()));
@@ -135,7 +135,7 @@ export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
  */
 export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, Cli cli) {
   T t = T.create();
-  u8[] big = u8[2000000]();
+  u8[] big = u8[].filled(2000000, 0);
   for (i32 i = 0; i < big.len(); i++) { big[i] = i % 64 == 63 ? '\n' : 'a'; }
   Exec r = cli.exec("/bin/cat", string[](), big).wait();
   t.isTrue(r.ran(), "cat ran — " + r.error);
@@ -177,9 +177,9 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
 export string test_three_children_run_at_once(Core core, Cli cli) {
   T t = T.create();
   i64 t0 = core.monotonicNanos().wait();
-  Pending<Exec>[] ps = Pending<Exec>[3]();
+  Pending<Exec>[] ps = Pending<Exec>[].defaulted(3);
   for (i32 i = 0; i < ps.len(); i++) {
-    ps[i] = cli.exec("/bin/sleep", string[]("1"), u8[0]());
+    ps[i] = cli.exec("/bin/sleep", ["1"], u8[]());
   }
   // The submit phase on its own, which is what names *where* the blocking was rather than only that
   // it happened: this read 3006ms before the fix and reads 0ms after it.
@@ -217,8 +217,8 @@ export string test_three_children_run_at_once(Core core, Cli cli) {
  */
 export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.execWith("/bin/sh", string[]("-c", "printf %s \"$WAC_EXEC_PROBE\""), u8[0](),
-                        string[]("WAC_EXEC_PROBE=handed over"), false, false).wait();
+  Exec r = cli.execWith("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](),
+                        ["WAC_EXEC_PROBE=handed over"], false, false).wait();
   t.isTrue(r.ran(), "sh ran — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "it exited zero");
@@ -228,14 +228,14 @@ export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
   // The other direction, and the one a replacing implementation would fail: a name nobody mentioned
   // is still there. `PATH` rather than a variable of our own, because it is the one whose absence
   // makes a plain `sh -c "grep …"` stop working while an absolute path still runs.
-  Exec keep = cli.execWith("/bin/sh", string[]("-c", "printf %s \"$PATH\""), u8[0](),
-                           string[]("WAC_EXEC_PROBE=irrelevant"), false, false).wait();
+  Exec keep = cli.execWith("/bin/sh", ["-c", "printf %s \"$PATH\""], u8[](),
+                           ["WAC_EXEC_PROBE=irrelevant"], false, false).wait();
   t.isTrue(keep.ran() && keep.stdout.len() > 0,
            "and the environment it would have had anyway survived: PATH is " +
            itoa(keep.stdout.len()) + " bytes");
 
-  Exec over = cli.execWith("/bin/sh", string[]("-c", "printf %s \"$WAC_EXEC_PROBE\""), u8[0](),
-                           string[]("WAC_EXEC_PROBE=first", "WAC_EXEC_PROBE=second"), false,
+  Exec over = cli.execWith("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](),
+                           ["WAC_EXEC_PROBE=first", "WAC_EXEC_PROBE=second"], false,
                            false).wait();
   t.isTrue(text(over.stdout) == "second",
            "a name given twice takes the last value, not \"" + text(over.stdout) + "\"");
@@ -260,8 +260,8 @@ export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
  */
 export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli cli) {
   T t = T.create();
-  Exec r = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
-                        string[]("WAC_EXEC_PROBE=only this"), true, false).wait();
+  Exec r = cli.execWith("/usr/bin/printenv", string[](), u8[](),
+                        ["WAC_EXEC_PROBE=only this"], true, false).wait();
   t.isTrue(r.ran(), "printenv ran — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.isTrue(text(r.stdout) == "WAC_EXEC_PROBE=only this\n",
@@ -270,8 +270,8 @@ export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli 
   // The canary, and it is the one that makes the assertion above mean something: the same program,
   // not cleared, sees the environment this process has. Without it a host that started nothing —
   // or one that cleared unconditionally — would print one line or none and read as correct.
-  Exec had = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
-                          string[]("WAC_EXEC_PROBE=only this"), false, false).wait();
+  Exec had = cli.execWith("/usr/bin/printenv", string[](), u8[](),
+                          ["WAC_EXEC_PROBE=only this"], false, false).wait();
   t.isTrue(had.stdout.len() > r.stdout.len() + 100,
            "and the uncleared run sees this process's own environment: " + itoa(had.stdout.len()) +
            " bytes against " + itoa(r.stdout.len()));
@@ -298,8 +298,8 @@ export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli 
 export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli) {
   T t = T.create();
   string mod = builtProgram(cli, "packages/platform/test/wac/exec_probe.wac", "exec-probe",
-                            string[]("--allow-run"));
-  Exec r = cli.exec(wacBinary(cli), string[](mod), u8[0]()).wait();
+                            ["--allow-run"]);
+  Exec r = cli.exec(wacBinary(cli), [mod], u8[]()).wait();
   t.isTrue(r.ran(), "the probe ran — " + r.error);
   if (!r.ran()) { return t.report(); }
   string out = text(r.stdout);
@@ -318,7 +318,7 @@ export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli
   // **And the reason names the kill.** A signalled child writes no stderr, so the phrase every caller
   // reaches for — `error` then `stderr` — renders it as nothing at all, which is a reason with no cause
   // in it. `execReason` is the one place that knows.
-  Exec killed = cli.exec("/bin/sh", string[]("-c", "kill -9 $$"), u8[0]()).wait();
+  Exec killed = cli.exec("/bin/sh", ["-c", "kill -9 $$"], u8[]()).wait();
   t.isTrue(killed.error.len() == 0 && killed.stderr.len() == 0,
            "the premise: a killed child says nothing through either of the usual channels");
   t.isTrue(execReason(killed).indexOf("killed by a signal") >= 0,

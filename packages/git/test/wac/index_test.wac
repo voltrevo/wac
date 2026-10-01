@@ -43,7 +43,7 @@ struct Git {
   string dir;
 
   Exec run(const this, string[] args) {
-    string[] full = string[args.len() + 6](fill: "");
+    string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
     full[2] = "-c";
@@ -51,7 +51,7 @@ struct Git {
     full[4] = "-c";
     full[5] = "user.email=a@b";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, u8[0]()).wait();
+    return this.cli.exec("git", full, u8[]()).wait();
   }
 
   string text(const this, string[] args) {
@@ -68,10 +68,10 @@ string trimmed(string s) {
 }
 
 string[] splitLines(string s) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -99,7 +99,7 @@ Git staged(T t, Cli cli, string name) {
   Git g = Git(cli, dir);
   if (!made.ok()) { return g; }
 
-  g.run(string[]("init", "-q"));
+  g.run(["init", "-q"]);
   string whyDir1 = madeDir(cli, dir + "/sub");
   t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
@@ -108,8 +108,8 @@ Git staged(T t, Cli cli, string name) {
   cli.setExecutable(dir + "/exec.sh", true).wait();
   cli.writeFile(dir + "/a-rather-long-path-name-that-exercises-the-length-field.txt",
                 "long\n".toBytes()).wait();
-  g.run(string[]("add", "-A"));
-  Exec c = g.run(string[]("commit", "-qm", "one"));
+  g.run(["add", "-A"]);
+  Exec c = g.run(["commit", "-qm", "one"]);
   t.eqI32(c.status, 0, "git commit: " + string.fromBytes(c.stderr));
   return g;
 }
@@ -145,14 +145,14 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
     Core core, Cli cli) {
   T t = T.create();
   Git g = staged(t, cli, "index");
-  t.eqStr(g.text(string[]("status", "--porcelain")), "", "the fixture was clean to begin with");
+  t.eqStr(g.text(["status", "--porcelain"]), "", "the fixture was clean to begin with");
 
   FileResult f = cli.readFile(g.dir + "/.git/index").wait();
   t.isTrue(f.ok, "git's index could be read: " + f.error);
   if (!f.ok) { return t.report(); }
 
   Vec<IndexEntry> empty = Vec.create();
-  GitIndex idx = GitIndex(empty, u8[0]());
+  GitIndex idx = GitIndex(empty, u8[]());
   bool read = false;
   match (parseIndex(f.bytes)) {
     Unreadable(why): { t.isTrue(false, "git's index did not parse: " + why); }
@@ -161,7 +161,7 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
   if (!read) { return t.report(); }
 
   // What git says is in the index, in git's order, so a reader that lost or reordered one fails.
-  string[] want = splitLines(g.text(string[]("ls-files")));
+  string[] want = splitLines(g.text(["ls-files"]));
   t.eqI32(idx.entries.len(), want.len(),
           "we read " + itoa64(idx.entries.len() as i64) + " entries, ls-files lists " +
           itoa64(want.len() as i64));
@@ -170,7 +170,7 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
   }
 
   // Modes and object names, against `ls-files --stage`, which prints both.
-  string[] stage = splitLines(g.text(string[]("ls-files", "--stage")));
+  string[] stage = splitLines(g.text(["ls-files", "--stage"]));
   t.eqI32(stage.len(), idx.entries.len(), "ls-files --stage lists as many as we read");
   for (i32 i = 0; i < stage.len() && i < idx.entries.len(); i++) {
     IndexEntry e = idx.entries.get(i);
@@ -191,10 +191,10 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
   // **The test that matters**: hand our own bytes back and let git judge them.
   Change wrote = cli.writeFile(g.dir + "/.git/index", writeIndex(idx)).wait();
   t.isTrue(wrote.ok(), "our index was written: " + wrote.message);
-  t.eqStr(g.text(string[]("status", "--porcelain")), "",
+  t.eqStr(g.text(["status", "--porcelain"]), "",
           "git called the repository dirty after reading our index");
-  t.eqStr(g.text(string[]("ls-files")), joined(want), "ls-files is unchanged after our write");
-  t.eqI32(g.run(string[]("fsck")).status, 0, "git fsck after our index was written");
+  t.eqStr(g.text(["ls-files"]), joined(want), "ls-files is unchanged after our write");
+  t.eqI32(g.run(["fsck"]).status, 0, "git fsck after our index was written");
 
   // The canary. Every assertion above is "git agrees", and git agreeing with an index it silently
   // rebuilt would prove nothing — so an index missing an entry must make *us* disagree. Not asked of
@@ -240,13 +240,13 @@ export string test_a_zeroed_stat_cache_still_leaves_git_clean(Core core, Cli cli
     i32 used = 62 + nameLen;
     at = at + used + (8 - (used % 8));
   }
-  u8[] body = u8[b.len() - 20]();
+  u8[] body = u8[].filled(b.len() - 20, 0);
   for (i32 i = 0; i < body.len(); i++) { body[i] = b[i]; }
   u8[] sum = sha1(body);
   for (i32 i = 0; i < 20; i++) { b[b.len() - 20 + i] = sum[i]; }
   cli.writeFile(g.dir + "/.git/index", b).wait();
 
-  t.eqStr(g.text(string[]("status", "--porcelain")), "",
+  t.eqStr(g.text(["status", "--porcelain"]), "",
           "git called the repository dirty once the stat cache was zeroed — `index.wac` writing " +
           "zeros is no longer sound, and design/system/0005 step 4's criterion has to change");
 
@@ -256,16 +256,16 @@ export string test_a_zeroed_stat_cache_still_leaves_git_clean(Core core, Cli cli
 
 export string test_an_index_that_is_not_one_is_refused_rather_than_half_read() {
   T t = T.create();
-  t.isTrue(unreadable(parseIndex(u8[8]())), "a truncated index is refused");
+  t.isTrue(unreadable(parseIndex(u8[].filled(8, 0))), "a truncated index is refused");
 
-  u8[] badSig = u8[44]();
+  u8[] badSig = u8[].filled(44, 0);
   string x = "XXXX";
   for (i32 i = 0; i < 4; i++) { badSig[i] = x.toBytes()[i]; }
   t.isTrue(unreadable(parseIndex(badSig)), "a bad signature is refused");
 
   // Version 4 prefix-compresses paths, so reading it as version 2 gives one correct path and then
   // nonsense — refusing is the only honest option for a reader that does not implement it.
-  u8[] v4 = u8[32]();
+  u8[] v4 = u8[].filled(32, 0);
   u8[] dirc = "DIRC".toBytes();
   for (i32 i = 0; i < 4; i++) { v4[i] = dirc[i]; }
   v4[7] = 4;

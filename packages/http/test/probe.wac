@@ -9,7 +9,7 @@ import { Parsed, Request, parseRequest } from "../src/request.wac";
 
 void writeInt(Buf out, i32 v) {
   if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[12]();
+  u8[] tmp = u8[].filled(12, 0);
   i32 n = 0;
   i32 x = v;
   while (x > 0) { tmp[n] = 48 + (x % 10); x = x / 10; n++; }

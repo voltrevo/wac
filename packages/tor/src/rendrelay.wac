@@ -44,7 +44,7 @@ export struct RendPoints {
   i32 capacity;
 
   RendPoints create(i32 capacity) {
-    return RendPoints(u8[][capacity](), i32[capacity](), i32[capacity](), 0, capacity);
+    return RendPoints(u8[][].defaulted(capacity), i32[].filled(capacity, 0), i32[].filled(capacity, 0), 0, capacity);
   }
 }
 
@@ -83,7 +83,7 @@ export struct Joined {
   i32 circId;
 }
 
-Joined refused(i32 error) { return Joined(error, -1, u8[0](), 0, 0); }
+Joined refused(i32 error) { return Joined(error, -1, u8[](), 0, 0); }
 
 /**
  * A service presents a cookie, and the two circuits become one path.
@@ -98,12 +98,12 @@ export Joined rendezvous1(RendPoints m, u8[] body, bool circuitEndsHere) {
   // At least twenty, not exactly: the handshake follows the cookie.
   if (body.len() < REND_COOKIE_LEN) { return refused(RV_REFUSED); }
 
-  u8[] cookie = u8[REND_COOKIE_LEN]();
+  u8[] cookie = u8[].filled(REND_COOKIE_LEN, 0);
   for (i32 i = 0; i < REND_COOKIE_LEN; i++) { cookie[i] = body[i]; }
   i32 at = indexOfCookie(m, cookie);
   if (at < 0) { return refused(RV_UNKNOWN_COOKIE); }
 
-  u8[] rest = u8[body.len() - REND_COOKIE_LEN]();
+  u8[] rest = u8[].filled(body.len() - REND_COOKIE_LEN, 0);
   for (i32 i = 0; i < rest.len(); i++) { rest[i] = body[REND_COOKIE_LEN + i]; }
   Joined out = Joined(RV_OK, at, rest, m.connIds[at], m.circIds[at]);
   removeAt(m, at);

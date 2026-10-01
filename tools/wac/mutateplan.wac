@@ -37,12 +37,12 @@ i32 indexOfIn(string[] xs, string want) {
 bool holds(string[] xs, string want) { return indexOfIn(xs, want) >= 0; }
 
 string[] split(string s, string sep) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i + sep.len() <= s.len(); i++) {
     if (s.slice(i, i + sep.len()) == sep) { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 from = 0;
   i32 i = 0;
@@ -59,7 +59,7 @@ string[] split(string s, string sep) {
 }
 
 string[] sorted(string[] xs) {
-  string[] out = string[xs.len()](fill: "");
+  string[] out = string[].filled(xs.len(), "");
   for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string k = out[i];
@@ -129,9 +129,9 @@ export struct Selection {
 }
 
 export Selection selectTests(Profile p, string[] locations) {
-  string[] picked = string[0](fill: "");
+  string[] picked = string[].filled(0, "");
   i32 n = 0;
-  string[] buf = string[256](fill: "");
+  string[] buf = string[].filled(256, "");
   bool anyKnown = false;
   bool allKnown = true;
 
@@ -153,7 +153,7 @@ export Selection selectTests(Profile p, string[] locations) {
   if (!anyKnown) { return Selection(false, picked); }
   if (n == 0 && !allKnown) { return Selection(false, picked); }
 
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = buf[i]; }
   return Selection(true, sorted(exact));
 }
@@ -226,7 +226,7 @@ export string[] linesOf(string file, string source, i32 start, i32 end) {
   for (i32 i = start; i < end && i < source.len(); i++) {
     if (source.slice(i, i + 1) == "\n") { breaks = breaks + 1; }
   }
-  string[] out = string[breaks + 1](fill: "");
+  string[] out = string[].filled(breaks + 1, "");
   out[0] = file + ":" + itoa(line);
   i32 at = 1;
   for (i32 i = start; i < end && i < source.len(); i++) {
@@ -274,7 +274,7 @@ export RunPlan runPlanFor(Profile p, string[] locations, string[] homeNames, str
 
   // The files those tests live in, without repeats. A test whose home the profile does not know
   // sends the whole thing back to the full scope.
-  string[] files = string[s.tests.len()](fill: "");
+  string[] files = string[].filled(s.tests.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < s.tests.len(); i++) {
     i32 at = indexOfIn(homeNames, s.tests[i]);
@@ -283,7 +283,7 @@ export RunPlan runPlanFor(Profile p, string[] locations, string[] homeNames, str
     }
     if (!holds(files, homeFiles[at])) { files[n] = homeFiles[at]; n = n + 1; }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = files[i]; }
   // Cheapest first, because `--fail-fast` only pays when the killer runs early.
   return RunPlan(true, false, filter, byCost(exact, p));

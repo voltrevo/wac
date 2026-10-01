@@ -47,13 +47,13 @@ import { slice } from "../../../bytes/src/slice.wac";
 
 /** A field element is 4n bytes; anything else has no reading. */
 export string test_traps_on_a_field_element_of_ragged_length() {
-  fpFromBytes(u8[30]());
+  fpFromBytes(u8[].filled(30, 0));
   return "";
 }
 
 /** 4n bytes, but n is neither of the two widths this field has — 40 passes the first check. */
 export string test_traps_on_a_field_element_of_the_wrong_width() {
-  fpFromBytes(u8[40]());
+  fpFromBytes(u8[].filled(40, 0));
   return "";
 }
 
@@ -64,13 +64,13 @@ export string test_traps_on_a_field_element_of_the_wrong_width() {
  * rather than a crash: the limbs it finds there are whatever the allocator last left.
  */
 export string test_traps_multiplying_across_widths() {
-  fpMul(fpFromBytes(u8[32]()), fpFromBytes(u8[48]()));
+  fpMul(fpFromBytes(u8[].filled(32, 0)), fpFromBytes(u8[].filled(48, 0)));
   return "";
 }
 
 /** A private scalar of the wrong length for the curve. */
 export string test_traps_on_a_short_ecdh_scalar() {
-  p256Ecdh(u8[31](), u8[65]());
+  p256Ecdh(u8[].filled(31, 0), u8[].filled(65, 0));
   return "";
 }
 
@@ -80,15 +80,15 @@ export string test_traps_on_a_short_ecdh_scalar() {
  * This half of the guard is the one an attacker supplies; both are refused the same way.
  */
 export string test_traps_on_a_zero_ecdh_scalar() {
-  u8[] pub = u8[65]();
+  u8[] pub = u8[].filled(65, 0);
   pub[0] = 4;
-  p256Ecdh(u8[32](), pub);
+  p256Ecdh(u8[].filled(32, 0), pub);
   return "";
 }
 
 /** A resumed stream is positioned by a whole counter block and a whole keystream block. */
 export string test_traps_resuming_with_a_short_counter() {
-  CtrStream.resume(u8[16](), u8[8](), u8[16](), 0);
+  CtrStream.resume(u8[].filled(16, 0), u8[].filled(8, 0), u8[].filled(16, 0), 0);
   return "";
 }
 
@@ -100,11 +100,11 @@ export string test_traps_resuming_with_a_short_counter() {
  * refuse. `e = 1` and a small modulus get past the cheap checks without a real key.
  */
 export string test_traps_on_an_unknown_hash_length_in_pkcs1() {
-  u8[] n = u8[32]();
+  u8[] n = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { n[i] = 0xFF; }
-  u8[] e = u8[1]();
+  u8[] e = u8[].filled(1, 0);
   e[0] = 1;
-  rsaVerifyPkcs1(n, e, "m".toBytes(), u8[32](), 99);
+  rsaVerifyPkcs1(n, e, "m".toBytes(), u8[].filled(32, 0), 99);
   return "";
 }
 
@@ -117,11 +117,11 @@ export string test_traps_on_an_unknown_hash_length_in_pkcs1() {
  * the encoded message ends in the trailer so the check before it passes.
  */
 export string test_traps_on_an_unknown_hash_length_in_pss() {
-  u8[] n = u8[102]();
+  u8[] n = u8[].filled(102, 0);
   for (i32 i = 0; i < 102; i++) { n[i] = 0xFF; }
-  u8[] e = u8[1]();
+  u8[] e = u8[].filled(1, 0);
   e[0] = 1;
-  u8[] sig = u8[102]();
+  u8[] sig = u8[].filled(102, 0);
   sig[101] = 0xBC;
   rsaVerifyPss(n, e, "m".toBytes(), sig, 99, 0);
   return "";
@@ -134,11 +134,11 @@ export string test_traps_on_an_unknown_hash_length_in_pss() {
  */
 export string test_the_legal_widths_do_not_trap() {
   T t = T.create();
-  fpFromBytes(u8[32]());
-  fpFromBytes(u8[48]());
-  fpMul(fpFromBytes(u8[32]()), fpFromBytes(u8[32]()));
-  t.eqI32(fpFromBytes(u8[32]()).len(), 8, "a 32-byte field element is eight limbs");
-  t.eqI32(fpFromBytes(u8[48]()).len(), 12, "a 48-byte field element is twelve limbs");
+  fpFromBytes(u8[].filled(32, 0));
+  fpFromBytes(u8[].filled(48, 0));
+  fpMul(fpFromBytes(u8[].filled(32, 0)), fpFromBytes(u8[].filled(32, 0)));
+  t.eqI32(fpFromBytes(u8[].filled(32, 0)).len(), 8, "a 32-byte field element is eight limbs");
+  t.eqI32(fpFromBytes(u8[].filled(48, 0)).len(), 12, "a 48-byte field element is twelve limbs");
   return t.report();
 }
 
@@ -146,7 +146,7 @@ export string test_the_legal_widths_do_not_trap() {
 
 /** A buffer of `n` bytes holding the first `n` of a genuine value, or that value then zeros. */
 u8[] padded(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n && i < 64; i++) { out[i] = (i + seed) & 0xFF; }
   return out;
 }
@@ -163,7 +163,7 @@ export string test_the_genuine_lengths_are_accepted() {
   t.eqI32(ed25519PublicKeyExpanded(ed25519ExpandedSecret(goodSeed())).len(), 32,
           "the expanded secret gives a key too");
   t.eqI32(x25519(goodSeed(), goodSeed()).len(), 32, "x25519 answers for two 32-byte inputs");
-  t.eqI32(CtrStream.create(u8[16](), u8[16]()).apply(u8[4]()).len(), 4, "a 16-byte IV is a counter");
+  t.eqI32(CtrStream.create(u8[].filled(16, 0), u8[].filled(16, 0)).apply(u8[].filled(4, 0)).len(), 4, "a 16-byte IV is a counter");
   return t.report();
 }
 
@@ -174,22 +174,22 @@ export string test_the_genuine_lengths_are_accepted() {
 // Mutation testing found that one — deleting the check failed no test.
 
 export string test_traps_aes_ctr_refuses_a_15_byte_iv() {
-  CtrStream.create(u8[16](), padded(15, 3)).apply(u8[4]());
+  CtrStream.create(u8[].filled(16, 0), padded(15, 3)).apply(u8[].filled(4, 0));
   return "";
 }
 
 export string test_traps_aes_ctr_refuses_a_17_byte_iv() {
-  CtrStream.create(u8[16](), padded(17, 3)).apply(u8[4]());
+  CtrStream.create(u8[].filled(16, 0), padded(17, 3)).apply(u8[].filled(4, 0));
   return "";
 }
 
 export string test_traps_aes_ctr_refuses_a_20_byte_iv() {
-  CtrStream.create(u8[16](), padded(20, 3)).apply(u8[4]());
+  CtrStream.create(u8[].filled(16, 0), padded(20, 3)).apply(u8[].filled(4, 0));
   return "";
 }
 
 export string test_traps_aes_ctr_refuses_a_32_byte_iv() {
-  CtrStream.create(u8[16](), padded(32, 3)).apply(u8[4]());
+  CtrStream.create(u8[].filled(16, 0), padded(32, 3)).apply(u8[].filled(4, 0));
   return "";
 }
 
@@ -384,13 +384,13 @@ const i32 EK_LEN = 1184;
 const i32 DK_LEN = 2400;
 const i32 CT_LEN = 1088;
 
-u8[] goodBoth() { return mlkemKeyGen(u8[64]()); }
+u8[] goodBoth() { return mlkemKeyGen(u8[].filled(64, 0)); }
 u8[] goodEk() { return slice(goodBoth(), 0, EK_LEN); }
 u8[] goodDk() { return slice(goodBoth(), EK_LEN, EK_LEN + DK_LEN); }
 
 /** `b` with one byte appended, and `b` one byte shorter — the only shapes that ask about length. */
 u8[] plusByte(u8[] b) {
-  u8[] o = u8[b.len() + 1]();
+  u8[] o = u8[].filled(b.len() + 1, 0);
   for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
   return o;
 }
@@ -399,7 +399,7 @@ u8[] minusByte(u8[] b) { return slice(b, 0, b.len() - 1); }
 /** The genuine expanded secret, truncated or extended to `n`. */
 u8[] expandedTo(i32 n) {
   u8[] good = ed25519ExpandedSecret(goodSeed());
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n && i < good.len(); i++) { out[i] = good[i]; }
   return out;
 }
@@ -420,17 +420,17 @@ export string test_traps_mlkem_refuses_a_65_byte_seed() {
 }
 
 export string test_traps_mlkem_refuses_an_empty_encapsulation_key() {
-  mlkemEncaps(u8[0](), u8[32]());
+  mlkemEncaps(u8[](), u8[].filled(32, 0));
   return "";
 }
 
 export string test_traps_mlkem_refuses_an_encapsulation_key_one_byte_short() {
-  mlkemEncaps(minusByte(goodEk()), u8[32]());
+  mlkemEncaps(minusByte(goodEk()), u8[].filled(32, 0));
   return "";
 }
 
 export string test_traps_mlkem_refuses_an_encapsulation_key_one_byte_long() {
-  mlkemEncaps(plusByte(goodEk()), u8[32]());
+  mlkemEncaps(plusByte(goodEk()), u8[].filled(32, 0));
   return "";
 }
 
@@ -455,32 +455,32 @@ export string test_traps_mlkem_refuses_a_64_byte_message() {
 }
 
 export string test_traps_mlkem_refuses_an_empty_decapsulation_key() {
-  mlkemDecaps(u8[0](), u8[CT_LEN]());
+  mlkemDecaps(u8[](), u8[].filled(CT_LEN, 0));
   return "";
 }
 
 export string test_traps_mlkem_refuses_a_decapsulation_key_one_byte_short() {
-  mlkemDecaps(minusByte(goodDk()), u8[CT_LEN]());
+  mlkemDecaps(minusByte(goodDk()), u8[].filled(CT_LEN, 0));
   return "";
 }
 
 export string test_traps_mlkem_refuses_a_decapsulation_key_one_byte_long() {
-  mlkemDecaps(plusByte(goodDk()), u8[CT_LEN]());
+  mlkemDecaps(plusByte(goodDk()), u8[].filled(CT_LEN, 0));
   return "";
 }
 
 export string test_traps_mlkem_refuses_an_empty_ciphertext() {
-  mlkemDecaps(goodDk(), u8[0]());
+  mlkemDecaps(goodDk(), u8[]());
   return "";
 }
 
 export string test_traps_mlkem_refuses_a_ciphertext_one_byte_short() {
-  mlkemDecaps(goodDk(), u8[CT_LEN - 1]());
+  mlkemDecaps(goodDk(), u8[].filled(CT_LEN - 1, 0));
   return "";
 }
 
 export string test_traps_mlkem_refuses_a_ciphertext_one_byte_long() {
-  mlkemDecaps(goodDk(), u8[CT_LEN + 1]());
+  mlkemDecaps(goodDk(), u8[].filled(CT_LEN + 1, 0));
   return "";
 }
 
@@ -492,7 +492,7 @@ export string test_traps_mlkem_refuses_a_coefficient_at_or_above_q() {
   u8[] bad = slice(goodEk(), 0, EK_LEN);
   bad[0] = 0xFF;
   bad[1] = bad[1] | 0x0F;
-  mlkemEncaps(bad, u8[32]());
+  mlkemEncaps(bad, u8[].filled(32, 0));
   return "";
 }
 
@@ -514,7 +514,7 @@ u8[] pointMsg() { return "length matters".toBytes(); }
 
 /** `b` with one byte appended — the half of a length guard that nothing else covers. */
 u8[] longer(u8[] b) {
-  u8[] o = u8[b.len() + 1]();
+  u8[] o = u8[].filled(b.len() + 1, 0);
   for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
   return o;
 }
@@ -553,22 +553,22 @@ export string test_traps_p256_ecdh_on_a_compressed_point() {
 }
 
 export string test_traps_p256_ecdh_on_an_empty_point() {
-  p256Ecdh(goodPriv(), u8[0]());
+  p256Ecdh(goodPriv(), u8[]());
   return "";
 }
 
 export string test_traps_p256_ecdh_on_a_32_byte_point() {
-  p256Ecdh(goodPriv(), u8[32]());
+  p256Ecdh(goodPriv(), u8[].filled(32, 0));
   return "";
 }
 
 export string test_traps_p256_ecdh_on_a_64_byte_point() {
-  p256Ecdh(goodPriv(), u8[64]());
+  p256Ecdh(goodPriv(), u8[].filled(64, 0));
   return "";
 }
 
 export string test_traps_p256_ecdh_on_a_66_byte_point() {
-  p256Ecdh(goodPriv(), u8[66]());
+  p256Ecdh(goodPriv(), u8[].filled(66, 0));
   return "";
 }
 
@@ -584,7 +584,7 @@ export string test_traps_p256_ecdh_on_an_x_outside_the_field() {
 // Scalars outside [1, n).
 
 export string test_traps_p256_on_a_zero_private_key() {
-  p256PublicKey(u8[32]());
+  p256PublicKey(u8[].filled(32, 0));
   return "";
 }
 
@@ -666,7 +666,7 @@ const string SMALL_X_PLUS_P =
   "ffffffff00000001000000000000000000000001000000000000000000000004";
 
 u8[] uncompressed(string x, string y) {
-  u8[] out = u8[65]();
+  u8[] out = u8[].filled(65, 0);
   out[0] = 4;
   u8[] xb = decoded(x);
   u8[] yb = decoded(y);
@@ -714,7 +714,7 @@ const string P384_X_PLUS_P =
   "ffffffff000000000000000100000001";
 
 u8[] p384Point(string x, string y) {
-  u8[] out = u8[97]();
+  u8[] out = u8[].filled(97, 0);
   out[0] = 4;
   u8[] xb = wide48(x);
   u8[] yb = wide48(y);
@@ -724,7 +724,7 @@ u8[] p384Point(string x, string y) {
 
 /** A signature that is well-formed and wrong, so a decoded point *answers* rather than trapping. */
 u8[] p384NonsenseSig() {
-  u8[] sig = u8[96]();
+  u8[] sig = u8[].filled(96, 0);
   sig[47] = 1;
   sig[95] = 1;
   return sig;
@@ -777,45 +777,45 @@ export string test_p384_refuses_an_x_that_is_x_plus_p_as_an_answer() {
 
 export string test_the_two_widths_that_are_curves_still_work() {
   T t = T.create();
-  t.eqI32(fpToBytes(fpFromBytes(u8[32]())).len(), 32, "32 bytes is P-256");
-  t.eqI32(fpToBytes(fpFromBytes(u8[48]())).len(), 48, "and 48 is P-384");
+  t.eqI32(fpToBytes(fpFromBytes(u8[].filled(32, 0))).len(), 32, "32 bytes is P-256");
+  t.eqI32(fpToBytes(fpFromBytes(u8[].filled(48, 0))).len(), 48, "and 48 is P-384");
   return t.report();
 }
 
 export string test_traps_on_a_one_byte_field_element() {
-  fpToBytes(fpFromBytes(u8[1]()));
+  fpToBytes(fpFromBytes(u8[].filled(1, 0)));
   return "";
 }
 
 export string test_traps_on_a_33_byte_field_element() {
-  fpToBytes(fpFromBytes(u8[33]()));
+  fpToBytes(fpFromBytes(u8[].filled(33, 0)));
   return "";
 }
 
 export string test_traps_on_a_47_byte_field_element() {
-  fpToBytes(fpFromBytes(u8[47]()));
+  fpToBytes(fpFromBytes(u8[].filled(47, 0)));
   return "";
 }
 
 export string test_traps_on_a_49_byte_field_element() {
-  fpToBytes(fpFromBytes(u8[49]()));
+  fpToBytes(fpFromBytes(u8[].filled(49, 0)));
   return "";
 }
 
 // Multiples of four that are neither eight nor twelve limbs: the second guard, not the first.
 
 export string test_traps_on_a_four_byte_field_element() {
-  fpToBytes(fpFromBytes(u8[4]()));
+  fpToBytes(fpFromBytes(u8[].filled(4, 0)));
   return "";
 }
 
 export string test_traps_on_a_16_byte_field_element() {
-  fpToBytes(fpFromBytes(u8[16]()));
+  fpToBytes(fpFromBytes(u8[].filled(16, 0)));
   return "";
 }
 
 export string test_traps_on_a_64_byte_field_element() {
-  fpToBytes(fpFromBytes(u8[64]()));
+  fpToBytes(fpFromBytes(u8[].filled(64, 0)));
   return "";
 }
 
@@ -824,12 +824,12 @@ export string test_traps_on_a_64_byte_field_element() {
 // reducing a P-256 product modulo the P-384 prime in silence.
 
 export string test_traps_multiplying_a_p256_element_by_a_p384_one() {
-  fpMul(fpFromBytes(u8[32]()), fpFromBytes(u8[48]()));
+  fpMul(fpFromBytes(u8[].filled(32, 0)), fpFromBytes(u8[].filled(48, 0)));
   return "";
 }
 
 export string test_traps_multiplying_a_p384_element_by_a_p256_one() {
-  fpMul(fpFromBytes(u8[48]()), fpFromBytes(u8[32]()));
+  fpMul(fpFromBytes(u8[].filled(48, 0)), fpFromBytes(u8[].filled(32, 0)));
   return "";
 }
 
@@ -867,17 +867,17 @@ export string test_values_at_or_above_p_are_not_in_range() {
 // returned identical ciphertext before this: the seventeenth byte was never read. GitHub 16.
 
 export string test_traps_aes_encrypt_refuses_a_15_byte_block() {
-  aesEncrypt(u8[16](), padded(15, 3));
+  aesEncrypt(u8[].filled(16, 0), padded(15, 3));
   return "";
 }
 
 export string test_traps_aes_encrypt_refuses_a_17_byte_block() {
-  aesEncrypt(u8[16](), padded(17, 3));
+  aesEncrypt(u8[].filled(16, 0), padded(17, 3));
   return "";
 }
 
 export string test_traps_aes_decrypt_refuses_a_17_byte_block() {
-  aesDecrypt(u8[16](), padded(17, 3));
+  aesDecrypt(u8[].filled(16, 0), padded(17, 3));
   return "";
 }
 
@@ -900,50 +900,50 @@ export string test_traps_chacha_refuses_a_13_byte_nonce() {
 }
 
 export string test_traps_chacha20_refuses_a_33_byte_key() {
-  chacha20(padded(33, 3), 0, padded(12, 4), u8[4]());
+  chacha20(padded(33, 3), 0, padded(12, 4), u8[].filled(4, 0));
   return "";
 }
 
 export string test_traps_poly1305_refuses_a_33_byte_key() {
-  poly1305(padded(33, 3), u8[4]());
+  poly1305(padded(33, 3), u8[].filled(4, 0));
   return "";
 }
 
 export string test_traps_poly1305_refuses_a_31_byte_key() {
-  poly1305(padded(31, 3), u8[4]());
+  poly1305(padded(31, 3), u8[].filled(4, 0));
   return "";
 }
 
 // A resumed CTR stream's `used` is a position inside the keystream block, so 0..16. 17 was accepted
 // and the first non-empty `apply` then ran off the block. GitHub 11.
 
-// **No `apply` in these two, and that is the whole point.** With the `.apply(u8[](0))` these were
+// **No `apply` in these two, and that is the whole point.** With the `.apply([0] as u8[])` these were
 // written with, both passed before the guard existed: the deferred read runs off the keystream block
 // and traps there, so a test that only wants *a* trap cannot tell an argument check from its absence.
 // Calling `resume` alone means the trap can only come from `resume`. Verified by removing the guard:
 // with the `apply` both passed, without it both fail as "returned instead of trapping".
 
 export string test_traps_ctr_resume_refuses_a_used_of_17() {
-  CtrStream.resume(u8[16](), u8[16](), u8[16](), 17);
+  CtrStream.resume(u8[].filled(16, 0), u8[].filled(16, 0), u8[].filled(16, 0), 17);
   return "";
 }
 
 export string test_traps_ctr_resume_refuses_a_used_of_64() {
-  CtrStream.resume(u8[16](), u8[16](), u8[16](), 64);
+  CtrStream.resume(u8[].filled(16, 0), u8[].filled(16, 0), u8[].filled(16, 0), 64);
   return "";
 }
 
 export string test_traps_ctr_resume_refuses_a_negative_used() {
-  CtrStream.resume(u8[16](), u8[16](), u8[16](), -1);
+  CtrStream.resume(u8[].filled(16, 0), u8[].filled(16, 0), u8[].filled(16, 0), -1);
   return "";
 }
 
 /** And 16 is legal — `apply` refills before it reads, which is the state a block boundary saves. */
 export string test_ctr_resume_accepts_a_used_of_16() {
   T t = T.create();
-  t.eqI32(CtrStream.resume(u8[16](), u8[16](), u8[16](), 16).apply(u8[4]()).len(), 4,
+  t.eqI32(CtrStream.resume(u8[].filled(16, 0), u8[].filled(16, 0), u8[].filled(16, 0), 16).apply(u8[].filled(4, 0)).len(), 4,
           "a spent block is a legal resume point");
-  t.eqI32(CtrStream.resume(u8[16](), u8[16](), u8[16](), 0).apply(u8[4]()).len(), 4,
+  t.eqI32(CtrStream.resume(u8[].filled(16, 0), u8[].filled(16, 0), u8[].filled(16, 0), 0).apply(u8[].filled(4, 0)).len(), 4,
           "and so is a fresh one");
   return t.report();
 }
@@ -953,7 +953,7 @@ export string test_ctr_resume_accepts_a_used_of_16() {
 // gave a digest whose length field disagreed with the bytes buffered, which is worse. GitHub 12.
 
 export string test_traps_sha1_loadstate_refuses_a_pending_of_64() {
-  u8[] raw = u8[96]();
+  u8[] raw = u8[].filled(96, 0);
   raw[87] = 64;
   Sha1.loadState(raw);
   return "";
@@ -965,7 +965,7 @@ export string test_traps_sha1_loadstate_refuses_a_pending_that_disagrees_with_to
   // obvious spelling, and the one this was written with — never tested the line it names. Coverage
   // said so: the branch stayed uncovered while the test passed. 64 bytes absorbed leaves `pending`
   // at 0, so 1 is a state no sequence of updates produces.
-  u8[] raw = u8[96]();
+  u8[] raw = u8[].filled(96, 0);
   raw[87] = 1;
   raw[94] = 64;
   Sha1.loadState(raw);
@@ -976,14 +976,14 @@ export string test_traps_sha1_loadstate_refuses_a_total_below_its_pending() {
   // The other half, and the reason the consistency case above had to move: `total = 0` with
   // `pending = 1` claims one byte buffered out of none absorbed, which fails *this* guard rather
   // than the modular one. Two states, two lines — coverage is what said the second line had no case.
-  u8[] raw = u8[96]();
+  u8[] raw = u8[].filled(96, 0);
   raw[87] = 1;
   Sha1.loadState(raw);
   return "";
 }
 
 export string test_traps_sha1_loadstate_refuses_a_negative_pending() {
-  u8[] raw = u8[96]();
+  u8[] raw = u8[].filled(96, 0);
   raw[84] = 0x80;
   Sha1.loadState(raw);
   return "";

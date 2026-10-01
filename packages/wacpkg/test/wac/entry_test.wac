@@ -81,13 +81,13 @@ export string test_the_lock_writers_agree_with_the_module_underneath() {
   // wrapper that returned its input unchanged would drop `acme` and be caught.
   Manifest m = readManifest(MANIFEST().toBytes());
   Step[] steps = plan(m, l);
-  LockText up = updatedLock(MANIFEST().toBytes(), LOCK().toBytes(), string[](B(), SHA()));
+  LockText up = updatedLock(MANIFEST().toBytes(), LOCK().toBytes(), [B(), SHA()]);
   t.isTrue(up.ok, "updatedLock succeeds");
-  t.eqBytes(up.text, writeLock(applyPlan(m, l, steps, string[](B(), SHA()))),
+  t.eqBytes(up.text, writeLock(applyPlan(m, l, steps, [B(), SHA()])),
             "updatedLock is applyPlan then writeLock");
   t.isTrue(up.text.len() > 0, "and wrote something");
   // The refusal path: a commit that is not a sha must not produce a lock.
-  t.isFalse(updatedLock(MANIFEST().toBytes(), LOCK().toBytes(), string[](B(), "nope")).ok,
+  t.isFalse(updatedLock(MANIFEST().toBytes(), LOCK().toBytes(), [B(), "nope"]).ok,
             "updatedLock refuses a bad commit");
   t.isFalse(rewriteLock("[]".toBytes()).ok, "rewriteLock carries a refusal");
   return t.report();
@@ -119,7 +119,7 @@ export string test_the_planning_entry_points_agree_with_lock_wac() {
 
   t.eqStrArray(orphansFor(MANIFEST().toBytes(), LOCK().toBytes()), orphansOf(m, l),
                "orphansFor agrees");
-  t.eqStrArray(orphansFor(MANIFEST().toBytes(), LOCK().toBytes()), string[]("gone"),
+  t.eqStrArray(orphansFor(MANIFEST().toBytes(), LOCK().toBytes()), ["gone"],
                "and finds the one orphan, so an empty answer would fail");
 
   t.eqI32(actionUse(), USE(), "actionUse");
@@ -163,8 +163,8 @@ export string test_the_resolution_entry_points_agree_with_their_modules() {
 
 export string test_the_refs_and_cache_entry_points_agree_with_their_modules() {
   T t = T.create();
-  string[] names = string[]("refs/heads/main", "refs/tags/v1", "refs/tags/v1^{}");
-  string[] commits = string[](A(), B(), SHA());
+  string[] names = ["refs/heads/main", "refs/tags/v1", "refs/tags/v1^{}"];
+  string[] commits = [A(), B(), SHA()];
   Resolved direct = resolveRef(names, commits, "v1");
   Resolved via = refToCommit(names, commits, "v1");
   t.eqBool(via.ok, direct.ok, "refToCommit agrees about ok");

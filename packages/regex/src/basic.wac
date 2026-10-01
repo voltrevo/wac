@@ -231,7 +231,7 @@ export Rewritten toExtended(u8[] pattern) {
 void wrapLast(Buf out, i32 at) {
   u8[] all = out.bytes();
   i32 n = all.len() - at;
-  u8[] unit = u8[n]();
+  u8[] unit = u8[].filled(n, 0);
   unit.copyFrom(all, at, 0, n);
   // Truncate by length: `Buf` holds its logical end in `len`, and everything past it is unread capacity.
   out.len = at;

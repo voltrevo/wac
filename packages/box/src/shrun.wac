@@ -59,7 +59,7 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
   // The applet's own name is `argv[0]` here, where under `box` it is `argv[1]` — `box grep x` and
   // `grep x` in a shell are the same command spelled two ways. `parseList` takes where the
   // arguments begin so both callers use the one parser.
-  string[] args = string[argv.len()](fill: "");
+  string[] args = string[].filled(argv.len(), "");
   for (i32 i = 0; i < argv.len(); i++) { args[i] = argv.get(i); }
   string name = args[0];
   Args a = parseList(args, 1, name);
@@ -120,7 +120,7 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
 export i32 boxApplet(Core core, Cli cli) {
   i32 n = cli.argCount().wait();
   if (n < 1) { return UNKNOWN; }
-  string[] args = string[n](fill: "");
+  string[] args = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
   string name = args[0];
   // **`boxApplet` is the multi-call entry — this program run *as* an applet — so its filesystem is

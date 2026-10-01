@@ -40,12 +40,12 @@ const string PREFIX = "packages/wactest/";
 
 /** What the tests need: a process to build and spawn children, sockets, and a temp dir. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/wactest/src/oracle.wac", "", "line", false,
+  return [
+         Rule("packages/wactest/src/oracle.wac", "", "line", false,
          "**The oracle harness, at 14 of 123 — and it is imported by ninety files across this " +
          "repository.** \n" +
          "`oracle.wac` is how a test asks a reference implementation what the answer should " +
@@ -88,17 +88,17 @@ Rule[] rules() {
          "`packages/ethrpc` when a spawn goes wrong, which in a green run it does not."),
     Rule("packages/wactest/src/childenv.wac", "", "line", false,
          "Child environment construction for shapes the callers do not build.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[0](fill: Pin("", 0, "", true, ""));
+  return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

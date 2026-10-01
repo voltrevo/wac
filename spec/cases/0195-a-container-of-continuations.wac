@@ -23,7 +23,7 @@ struct Box<T> {
   T[] items;
   i32 n;
 
-  Box<T> create(T fill) { return Box(T[4](fill: fill), 0); }
+  Box<T> create(T fill) { return Box(T[].filled(4, fill), 0); }
   void push(this, T v) { this.items[this.n] = v; this.n = this.n + 1; }
   T get(const this, i32 i) { return this.items[i]; }
 }

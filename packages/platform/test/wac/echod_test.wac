@@ -48,7 +48,7 @@ string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 string scratch(Cli cli) { return cli.cwd().wait() + "/.cache/echod"; }
 
 bool haveNode(Cli cli) {
-  Exec r = cli.exec("node", string[]("--version"), u8[0]()).wait();
+  Exec r = cli.exec("node", ["--version"], u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
@@ -59,10 +59,12 @@ string build(T t, Cli cli, string name, string target, bool net) {
   t.isTrue(madeDir(cli, dir) == "", "the build directory");
   string out = dir + "/" + name;
   string[] args = net
-    ? string[]("run", "-A", "packages/platform/build.ts", ENTRY, "--allow-net", "--target", target,
-               "-o", out)
-    : string[]("run", "-A", "packages/platform/build.ts", ENTRY, "--target", target, "-o", out);
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
+    ? [
+               "run", "-A", "packages/platform/build.ts", ENTRY, "--allow-net", "--target", target,
+               "-o", out
+    ]
+    : ["run", "-A", "packages/platform/build.ts", ENTRY, "--target", target, "-o", out];
+  Exec r = cli.exec("deno", args, u8[]()).wait();
   t.isTrue(r.ran(), "deno ran — " + r.error);
   t.eqI32(r.status, 0, "building the example for " + target + ": " + string.fromBytes(r.stderr));
   return r.ran() && r.status == 0 ? out : "";
@@ -93,7 +95,7 @@ Echod started(Cli cli, string name, string line) {
     string said = string.fromBytes(cli.readFile(log).wait().bytes);
     i32 port = portIn(said);
     if (port > 0) { return Echod(true, "", port, d, log); }
-    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+    cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait();
   }
   return Echod(false, "the echo server never said its port: " +
                       string.fromBytes(cli.readFile(log).wait().bytes), -1, d, log);
@@ -136,7 +138,7 @@ Peer startPeer(Cli cli, string name) {
   }
   for (i32 i = 0; i < 400; i++) {
     if (cli.stat(dir + "/ready.json").wait().isFile) { return Peer(true, "", dir, d, 0); }
-    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+    cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait();
   }
   return Peer(false, "the UDP peer never became ready — " +
                      string.fromBytes(cli.readFile(dir + "/peer.log").wait().bytes), dir, d, 0);
@@ -159,12 +161,12 @@ Echo echoed(Cli cli, Peer p, i32 which, i32 port, u8[] payload) {
     FileResult f = cli.readFile(p.dir + "/got-" + n + ".json").wait();
     if (f.ok) {
       string said = string.fromBytes(f.bytes);
-      if (said.indexOf("\"error\"") >= 0) { return Echo(false, u8[0](), 0); }
+      if (said.indexOf("\"error\"") >= 0) { return Echo(false, u8[](), 0); }
       return Echo(true, decoded(hexIn(said)), numberIn(said, "fromPort"));
     }
-    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+    cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait();
   }
-  return Echo(false, u8[0](), 0);
+  return Echo(false, u8[](), 0);
 }
 
 /** The whole agreement, for one host. */
@@ -177,19 +179,19 @@ void echoAgrees(T t, Core core, Cli cli, string name, string line, string label)
   t.isTrue(p.ok, p.error);
   if (!p.ok) { stop(cli, s.daemon); stop(cli, p.daemon); return; }
 
-  string[] what = string[]("text", "arbitrary bytes", "empty", "a kilobyte");
-  u8[][] cases = u8[][4](fill: u8[0]());
+  string[] what = ["text", "arbitrary bytes", "empty", "a kilobyte"];
+  u8[][] cases = u8[][].filled(4, u8[]());
   cases[0] = ("hello").toBytes();
   // Not text, and not valid UTF-8 in either order. A boundary that decoded on the way through would
   // return replacement characters and every ASCII case would still pass — which is wac-mono 0065's
   // bug, in the one place where a QUIC packet lives.
-  cases[1] = u8[](0xff, 0xfe, 0x00, 0x80, 0x41, 0x00);
+  cases[1] = [0xff, 0xfe, 0x00, 0x80, 0x41, 0x00] as u8[];
   // **An empty datagram is a datagram.** A UDP packet with no payload is a thing a peer can send and
   // a thing QUIC's padding rules make meaningful; a boundary that reads empty as "nothing arrived"
   // hangs here rather than answering.
-  cases[2] = u8[0]();
+  cases[2] = u8[]();
   // Larger than one MTU's worth, so the host's receive buffer is exercised rather than assumed.
-  cases[3] = u8[1024]();
+  cases[3] = u8[].filled(1024, 0);
   for (i32 i = 0; i < 1024; i++) { cases[3][i] = (i * 7) & 255; }
 
   for (i32 i = 0; i < cases.len(); i++) {
@@ -286,7 +288,7 @@ export string test_an_ungranted_program_cannot_bind_a_datagram_socket(Core core,
   T t = T.create();
   string out = build(t, cli, "echod-nogrant", "deno", false);
   if (out == "") { return t.report(); }
-  Exec r = cli.exec(out, string[]("0"), u8[0]()).wait();
+  Exec r = cli.exec(out, ["0"], u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.eqI32(r.status, 1, "an ungranted bind should fail: " + said);
   t.isTrue(contains(said, "cannot bind"),

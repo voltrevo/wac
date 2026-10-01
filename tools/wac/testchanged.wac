@@ -59,13 +59,13 @@ import { sortStrings } from "./covledger.wac";
  * ever be inert is indistinguishable from one that is load-bearing until somebody checks.
  */
 string[] sharedPaths() {
-  return string[]("harness/", "tools/", "deno.json");
+  return ["harness/", "tools/", "deno.json"];
 }
 
 /** One `git` invocation's lines, or none. A git that fails is a repository this cannot narrow. */
 string[] gitLines(Cli cli, string[] args) {
-  Exec r = cli.exec("git", args, u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return string[0](fill: ""); }
+  Exec r = cli.exec("git", args, u8[]()).wait();
+  if (!r.ran() || r.status != 0) { return string[].filled(0, ""); }
   return splitLines(string.fromBytes(r.stdout));
 }
 
@@ -109,7 +109,7 @@ export i32 NARROWED() { return 2; }
  * cases below are ones a person would have to construct on disk to see at all.
  */
 export Plan planFor(string[] changed) {
-  if (changed.len() == 0) { return Plan(NOTHING(), string[0](fill: ""), ""); }
+  if (changed.len() == 0) { return Plan(NOTHING(), string[].filled(0, ""), ""); }
 
   Vec<string> shared = Vec<string>.create();
   Map<string, i32> pkgSeen = Map.create(hashString, stringEq);
@@ -128,14 +128,14 @@ export Plan planFor(string[] changed) {
   if (shared.len() > 0) {
     string names = "";
     for (i32 i = 0; i < shared.len(); i++) { names = names + (i == 0 ? "" : ", ") + shared.get(i); }
-    return Plan(EVERYTHING(), string[0](fill: ""), names);
+    return Plan(EVERYTHING(), string[].filled(0, ""), names);
   }
-  if (pkgs.len() == 0) { return Plan(NOTHING(), string[0](fill: ""), ""); }
+  if (pkgs.len() == 0) { return Plan(NOTHING(), string[].filled(0, ""), ""); }
 
-  string[] names = string[pkgs.len()](fill: "");
+  string[] names = string[].filled(pkgs.len(), "");
   for (i32 i = 0; i < pkgs.len(); i++) { names[i] = pkgs.get(i); }
   sortStrings(names, names.len());
-  string[] targets = string[names.len()](fill: "");
+  string[] targets = string[].filled(names.len(), "");
   string said = "";
   for (i32 i = 0; i < names.len(); i++) {
     targets[i] = "packages/" + names[i] + "/";
@@ -150,12 +150,12 @@ export i32 main(Core core, Cli cli) {
 
   Map<string, i32> seen = Map.create(hashString, stringEq);
   Vec<string> changedV = Vec<string>.create();
-  absorb(changedV, seen, gitLines(cli, string[]("diff", "--name-only", "origin/master...HEAD")));
-  absorb(changedV, seen, gitLines(cli, string[]("diff", "--name-only")));
-  absorb(changedV, seen, gitLines(cli, string[]("diff", "--name-only", "--cached")));
-  absorb(changedV, seen, gitLines(cli, string[]("ls-files", "--others", "--exclude-standard")));
+  absorb(changedV, seen, gitLines(cli, ["diff", "--name-only", "origin/master...HEAD"]));
+  absorb(changedV, seen, gitLines(cli, ["diff", "--name-only"]));
+  absorb(changedV, seen, gitLines(cli, ["diff", "--name-only", "--cached"]));
+  absorb(changedV, seen, gitLines(cli, ["ls-files", "--others", "--exclude-standard"]));
 
-  string[] changed = string[changedV.len()](fill: "");
+  string[] changed = string[].filled(changedV.len(), "");
   for (i32 i = 0; i < changedV.len(); i++) { changed[i] = changedV.get(i); }
 
   Plan plan = planFor(changed);
@@ -178,13 +178,13 @@ export i32 main(Core core, Cli cli) {
   // **The suite runner, with the targets narrowed** — not a second runner with the same rules copied
   // into it. `wac task test` with no targets is the whole suite, which is what an empty list means
   // here too, so the shared-change branch above needs no separate spelling.
-  string[] args = string[targets.len() + 2](fill: "");
+  string[] args = string[].filled(targets.len() + 2, "");
   args[0] = "task";
   args[1] = "test";
   for (i32 i = 0; i < targets.len(); i++) { args[i + 2] = targets[i]; }
 
   // Inherited rather than captured: this is the loop you watch, and a runner that says nothing for
   // five minutes and then everything is the thing `issues/system/0231c` is about.
-  Exec r = cli.execWith(wacBinary(cli), args, u8[0](), string[](), false, true).wait();
+  Exec r = cli.execWith(wacBinary(cli), args, u8[](), string[](), false, true).wait();
   return r.ran() ? r.status : 1;
 }

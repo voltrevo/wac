@@ -96,18 +96,18 @@ const i32 KILLED = 124;
 string[] childEnv(Cli cli, string dir, string binDir) {
   u8[]? path = cli.env("PATH").wait();
   string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
-  return string[]("LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir);
+  return ["LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir];
 }
 
 /** One script, on one binary, in `dir`. `mkdir -p /tmp` levels the one deliberate entry-point difference. */
 Run runOne(Cli cli, string cmd, string[] extra, string script, string dir, string[] env) {
-  string[] argv = string[extra.len() + 4](fill: "");
+  string[] argv = string[].filled(extra.len() + 4, "");
   argv[0] = "10";
   argv[1] = cmd;
   for (i32 i = 0; i < extra.len(); i++) { argv[2 + i] = extra[i]; }
   argv[extra.len() + 2] = "-c";
   argv[extra.len() + 3] = "mkdir -p /tmp; " + script;
-  Exec r = cli.execWithIn("timeout", argv, u8[0](), env, true, false, dir).wait();
+  Exec r = cli.execWithIn("timeout", argv, u8[](), env, true, false, dir).wait();
   if (!r.ran()) { return Run("", "could not run timeout: " + r.error, 0 - 1, false); }
   return Run(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status, r.status == KILLED);
 }
@@ -122,9 +122,9 @@ Three three(Cli cli, string base, string sealed, string imaged, string host, str
   string work = base + "/host" + itoa(n);
   cli.mkdir(work, true).wait();
   Three answers = Three(
-      runOne(cli, sealed, string[0](fill: ""), script, base, childEnv(cli, base, binDir)),
-      runOne(cli, imaged, string[](image), script, base, childEnv(cli, base, binDir)),
-      runOne(cli, host, string[0](fill: ""), script, work, childEnv(cli, work, binDir)));
+      runOne(cli, sealed, string[].filled(0, ""), script, base, childEnv(cli, base, binDir)),
+      runOne(cli, imaged, [image], script, base, childEnv(cli, base, binDir)),
+      runOne(cli, host, string[].filled(0, ""), script, work, childEnv(cli, work, binDir)));
   // A script that wrote nothing leaves no image, and removing what is not there is not an error here.
   cli.remove(image, false).wait();
   cli.remove(work, true).wait();
@@ -161,11 +161,11 @@ export i32 main(Core core, Cli cli) {
   binDir = binDir.slice(0, cut);
 
   string sealed = builtApp(cli, "packages/box/src/bin/sealedsh.wac", "corpusbackings-sealed",
-                           string[0](fill: ""));
+                           string[].filled(0, ""));
   string imaged = builtApp(cli, "packages/box/src/bin/imaged.wac", "corpusbackings-imaged",
-                           string[]("--allow-read", "--allow-write"));
+                           ["--allow-read", "--allow-write"]);
   string host = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusbackings-host",
-                         string[]("--allow-read", "--allow-write", "--allow-env"));
+                         ["--allow-read", "--allow-write", "--allow-env"]);
 
   string base = scratch(cli, "corpus-backings");
   cli.mkdir(base, true).wait();
@@ -173,8 +173,8 @@ export i32 main(Core core, Cli cli) {
   // **The canary.** Everything below is "these agree", which three shells that ran nothing would also
   // report. One script that must answer proves each is live.
   Three live = three(cli, base, sealed, imaged, host, binDir, "echo one", 0);
-  string[] names = string[]("memory", "image", "host");
-  Run[] arms = Run[](live.memory, live.image, live.host);
+  string[] names = ["memory", "image", "host"];
+  Run[] arms = [live.memory, live.image, live.host];
   for (i32 i = 0; i < arms.len(); i++) {
     if (!startsWith(arms[i].out, "one")) {
       core.warn("the " + names[i] + " backing did not answer `echo one`: " + show(arms[i]));

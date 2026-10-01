@@ -60,7 +60,7 @@ bool memberIsNull(JsonValue v, string key) {
 /** A member that is an array of hex strings, concatenated — one flat value for the probe. */
 u8[] flat(JsonValue v, string key) {
   JsonArray? items = memberArray(v, key);
-  if (items is null) { return u8[0](); }
+  if (items is null) { return u8[](); }
   string out = "";
   for (i32 i = 0; i < items!.len(); i++) { out = out + text(items!.get(i)); }
   return decoded(out);
@@ -157,7 +157,7 @@ export string test_a_value_at_or_above_p_is_refused_not_reduced(Core core, Cli c
     t.eqI32(blsFpStatus(decoded(b), one), 1, b + " was accepted");
   }
   // And a short or long input is refused rather than padded.
-  t.eqI32(blsFpStatus(u8[47](), u8[48]()), 1, "a 47-byte value was accepted");
+  t.eqI32(blsFpStatus(u8[].filled(47, 0), u8[].filled(48, 0)), 1, "a 47-byte value was accepted");
   return t.report();
 }
 
@@ -218,7 +218,7 @@ export string test_fp2_arithmetic_agrees_with_python(Core core, Cli cli) {
   if (v is null) { return t.report(); }
   JsonArray? cases = memberArray(v!, "fp2");
   if (cases is null) { return t.report(); }
-  string[] names = string[]("add", "sub", "mul", "sq", "conj", "mulByU", "mulByXi");
+  string[] names = ["add", "sub", "mul", "sq", "conj", "mulByU", "mulByXi"];
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     JsonValue? a = member(c, "a");
@@ -245,7 +245,7 @@ export string test_fp6_arithmetic_and_frobenius_agree_with_the_python_tower(Core
   if (v is null) { return t.report(); }
   JsonArray? cases = memberArray(v!, "fp6");
   if (cases is null) { return t.report(); }
-  string[] names = string[]("mul", "sq", "mulByV", "inv", "frob1", "frob2", "frob3");
+  string[] names = ["mul", "sq", "mulByV", "inv", "frob1", "frob2", "frob3"];
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     u8[] a = flat(c, "a");
@@ -266,7 +266,7 @@ export string test_fp12_arithmetic_and_frobenius_agree_with_the_python_tower(Cor
   if (v is null) { return t.report(); }
   JsonArray? cases = memberArray(v!, "fp12");
   if (cases is null) { return t.report(); }
-  string[] names = string[]("mul", "sq", "conj", "inv", "frob1", "frob2", "frob3");
+  string[] names = ["mul", "sq", "conj", "inv", "frob1", "frob2", "frob3"];
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     u8[] a = flat(c, "a");

@@ -178,7 +178,7 @@ export string test_a_tampered_cell_is_refused(Core core, Cli cli) {
   // wrong value, and it verifies. Nothing is tampered, so no MAC check can notice.
   t.isTrue(!parseIntroduce2(cell, flipAt(auth, 0), secret, subcred).ok,
            "a valid cell for another introduction point is refused");
-  t.isTrue(!parseIntroduce2(cell, u8[31](), secret, subcred).ok, "and a key that is not a key");
+  t.isTrue(!parseIntroduce2(cell, u8[].filled(31, 0), secret, subcred).ok, "and a key that is not a key");
   t.isTrue(!parseIntroduce2(flipAt(cell, 60), auth, secret, subcred).ok, "a changed CLIENT_PK is refused");
   t.isTrue(!parseIntroduce2(flipAt(cell, 120), auth, secret, subcred).ok,
            "a changed ciphertext byte is refused");
@@ -204,8 +204,8 @@ export string test_a_malformed_cell_is_refused(Core core, Cli cli) {
   u8[] secret = field(cli, 0, "introEncSecret");
   u8[] subcred = field(cli, 0, "subcredential");
 
-  t.isTrue(!parseIntroduce2(u8[0](), auth, secret, subcred).ok, "an empty cell is not a cell");
-  t.isTrue(!parseIntroduce2(u8[40](), auth, secret, subcred).ok, "nor is a short run of zeros");
+  t.isTrue(!parseIntroduce2(u8[](), auth, secret, subcred).ok, "an empty cell is not a cell");
+  t.isTrue(!parseIntroduce2(u8[].filled(40, 0), auth, secret, subcred).ok, "nor is a short run of zeros");
   t.isTrue(!parseIntroduce2(head(cell, 100), auth, secret, subcred).ok, "a truncated cell is refused");
 
   // A non-zero LEGACY_KEY_ID means a v2 introduction point, which this does not serve.
@@ -227,7 +227,7 @@ export string test_a_malformed_cell_is_refused(Core core, Cli cli) {
 }
 
 u8[] sub(u8[] s, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
   return out;
 }
@@ -236,7 +236,7 @@ u8[] sub(u8[] s, i32 from, i32 to) {
 export string test_the_rendezvous1_cell_is_cookie_then_handshake(Core core, Cli cli) {
   T t = T.create();
   u8[] cookie = field(cli, 0, "rendCookie");
-  u8[] handshake = u8[64]();
+  u8[] handshake = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { handshake[i] = i; }
 
   u8[] cell = rendezvous1Cell(cookie, handshake);
@@ -246,14 +246,14 @@ export string test_the_rendezvous1_cell_is_cookie_then_handshake(Core core, Cli 
     t.eqI32(cell[20 + i], handshake[i], "then Y and AUTH, forwarded to the client untouched");
   }
 
-  t.eqI32(rendezvous1Cell(u8[19](), handshake).len(), 0, "a nineteen-byte cookie is not one");
-  t.eqI32(rendezvous1Cell(cookie, u8[63]()).len(), 0, "a short handshake is refused");
-  t.eqI32(rendezvous1Cell(cookie, u8[0]()).len(), 0, "and an absent one");
+  t.eqI32(rendezvous1Cell(u8[].filled(19, 0), handshake).len(), 0, "a nineteen-byte cookie is not one");
+  t.eqI32(rendezvous1Cell(cookie, u8[].filled(63, 0)).len(), 0, "a short handshake is refused");
+  t.eqI32(rendezvous1Cell(cookie, u8[]()).len(), 0, "and an absent one");
   return t.report();
 }
 
 u8[] flipAt(u8[] b, i32 i) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 j = 0; j < b.len(); j++) { out[j] = b[j]; }
   out[i] = out[i] ^ 1;
   return out;
@@ -261,14 +261,14 @@ u8[] flipAt(u8[] b, i32 i) {
 
 /** As `flipAt(b, 0)`, but keeping curve25519's clamping so the result is still a valid scalar. */
 u8[] flipScalar(u8[] b) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 j = 0; j < b.len(); j++) { out[j] = b[j]; }
   out[1] = out[1] ^ 1;
   return out;
 }
 
 u8[] head(u8[] s, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = s[i]; }
   return out;
 }

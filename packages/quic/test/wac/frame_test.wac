@@ -24,13 +24,13 @@ const i32 EPOCH_1RTT = 3;
 
 /** Bytes from a list of small integers, which is how the hand-built frames below read. */
 u8[] bytesOf(i32[] vs) {
-  u8[] out = u8[vs.len()]();
+  u8[] out = u8[].filled(vs.len(), 0);
   for (i32 i = 0; i < vs.len(); i++) { out[i] = vs[i] & 255; }
   return out;
 }
 
 u8[] prefix(u8[] b, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   out.copyFrom(b, 0, 0, n);
   return out;
 }
@@ -83,25 +83,25 @@ export string test_the_crypto_frames_reassemble_into_a_clienthello(Core core, Cl
 export string test_ack_ping_and_connection_close_are_read_at_their_real_lengths() {
   T t = T.create();
   // PING is one byte and nothing else.
-  u8[] ping = bytesOf(i32[](0x01));
+  u8[] ping = bytesOf([0x01] as i32[]);
   t.eqI32(kindAt(ping, 0), 0x01, "PING");
   t.eqI32(sizeAt(ping, 0), 1, "PING is one byte");
 
   // ACK: type, largest=9, delay=3, range count=1, first range=0, then one (gap, length) pair. The
   // pair is the part a naive reader skips, and skipping it puts the next frame two bytes early.
-  u8[] ack = bytesOf(i32[](0x02, 9, 3, 1, 0, 2, 1, 0x01));
+  u8[] ack = bytesOf([0x02, 9, 3, 1, 0, 2, 1, 0x01] as i32[]);
   t.eqI32(kindAt(ack, 0), 0x02, "ACK");
   t.eqI32(ackLargest(ack, 0), 9, "largest acknowledged");
   t.eqI32(sizeAt(ack, 0), 7, "type, four varints and one range pair");
   t.eqI32(kindAt(ack, sizeAt(ack, 0)), 0x01, "and the frame after it is the PING");
 
   // The ECN form adds three counts and nothing else, so it is three bytes longer here.
-  u8[] ecn = bytesOf(i32[](0x03, 9, 3, 1, 0, 2, 1, 0, 0, 0, 0x01));
+  u8[] ecn = bytesOf([0x03, 9, 3, 1, 0, 2, 1, 0, 0, 0, 0x01] as i32[]);
   t.eqI32(sizeAt(ecn, 0), 10, "the ECN form carries three more counts");
   t.eqI32(kindAt(ecn, sizeAt(ecn, 0)), 0x01, "and the PING is still found");
 
   // CONNECTION_CLOSE, transport form: code, the frame type that caused it, then a reason.
-  u8[] close = bytesOf(i32[](0x1c, 0x0a, 0x06, 2, 'n', 'o'));
+  u8[] close = bytesOf([0x1c, 0x0a, 0x06, 2, 'n', 'o'] as i32[]);
   t.eqI32(kindAt(close, 0), 0x1c, "CONNECTION_CLOSE");
   t.eqStr(closeReason(close, 0), "no", "the reason comes back");
   t.eqI32(sizeAt(close, 0), 6, "type, code, frame type, length, two bytes");
@@ -110,7 +110,7 @@ export string test_ack_ping_and_connection_close_are_read_at_their_real_lengths(
   // **in a packet that may carry it.** Table 3 gives 0x1c as `ih01` and 0x1d as `__01`: an
   // application-level close names an error the application layer chose, and there is no application
   // layer yet during the handshake.
-  u8[] appClose = bytesOf(i32[](0x1d, 0x0a, 2, 'n', 'o'));
+  u8[] appClose = bytesOf([0x1d, 0x0a, 2, 'n', 'o'] as i32[]);
   t.eqStr(closeReasonAtIn(appClose, 0, EPOCH_1RTT), "no",
           "the application form has no frame type field");
   t.eqI32(sizeAtIn(appClose, 0, EPOCH_1RTT), 5, "one field shorter");
@@ -124,7 +124,7 @@ export string test_ack_ping_and_connection_close_are_read_at_their_real_lengths(
 export string test_a_frame_that_will_not_fit_stops_the_walk() {
   T t = T.create();
   // Every truncation of a CRYPTO frame: type, offset, length, then the data it promised.
-  u8[] crypto = bytesOf(i32[](0x06, 0, 4, 0xDE, 0xAD, 0xBE, 0xEF));
+  u8[] crypto = bytesOf([0x06, 0, 4, 0xDE, 0xAD, 0xBE, 0xEF] as i32[]);
   t.eqI32(sizeAt(crypto, 0), 7, "whole, it is seven bytes");
   for (i32 n = 1; n <= 6; n++) {
     t.eqI32(sizeAt(prefix(crypto, n), 0), 0, "a " + itoa(n) + "-byte prefix cannot be read whole");
@@ -135,7 +135,7 @@ export string test_a_frame_that_will_not_fit_stops_the_walk() {
   // Initial may carry. The walk stops either way, and the two reasons are distinguishable —
   // `NotPermitted` rather than `Unknown`, which is the difference between "you may not say that yet"
   // and "I do not know what that is". Only the second is a gap in this file.
-  u8[] stream = bytesOf(i32[](0x08, 1, 2, 3, 4));
+  u8[] stream = bytesOf([0x08, 1, 2, 3, 4] as i32[]);
   t.eqI32(kindAt(stream, 0), -4, "NotPermitted in an Initial");
   t.eqI32(sizeAt(stream, 0), 0, "and the walk stops rather than guessing a length");
   // The same bytes in a 1-RTT packet are a stream frame, read to the end of the buffer because the
@@ -145,7 +145,7 @@ export string test_a_frame_that_will_not_fit_stops_the_walk() {
   // **A type nobody knows is still Unknown.** 0x3f is unassigned in table 3, so there is genuinely
   // nothing to skip over, and this is the case that keeps `Unknown` meaning something now that most
   // of the table is implemented.
-  u8[] unknown = bytesOf(i32[](0x3f, 1, 2, 3, 4));
+  u8[] unknown = bytesOf([0x3f, 1, 2, 3, 4] as i32[]);
   t.eqI32(kindAtIn(unknown, 0, EPOCH_1RTT), -2, "Unknown, distinct from NotPermitted");
   t.eqI32(sizeAtIn(unknown, 0, EPOCH_1RTT), 0, "and the walk stops");
   return t.report();
@@ -155,8 +155,10 @@ export string test_the_crypto_stream_is_reassembled_by_offset_not_by_arrival() {
   T t = T.create();
   // Two frames, the second one first: offsets 2 and 0. A reader that concatenated in arrival order
   // would answer "CDAB" and be wrong in a way nothing downstream could detect.
-  u8[] outOfOrder = bytesOf(i32[](0x06, 2, 2, 0x43, 0x44,
-                                  0x06, 0, 2, 0x41, 0x42));
+  u8[] outOfOrder = bytesOf([
+                                  0x06, 2, 2, 0x43, 0x44,
+                                  0x06, 0, 2, 0x41, 0x42
+  ] as i32[]);
   t.eqI32(streamLen(outOfOrder), 4, "four bytes in total");
   t.isTrue(streamWhole(outOfOrder), "and no hole between them");
   t.eqI32(streamByte(outOfOrder, 0), 0x41, "A first");
@@ -165,12 +167,12 @@ export string test_the_crypto_stream_is_reassembled_by_offset_not_by_arrival() {
   // A hole: offset 0 never arrives, so nothing may be handed to a parser. TLS is a stream and a
   // message is not there until its bytes are — answering with the later fragment would be handing a
   // parser the middle of a message and calling it the start.
-  u8[] hole = bytesOf(i32[](0x06, 4, 2, 0x45, 0x46));
+  u8[] hole = bytesOf([0x06, 4, 2, 0x45, 0x46] as i32[]);
   t.eqI32(streamLen(hole), 0, "nothing contiguous from zero");
   t.isFalse(streamWhole(hole), "and it says something arrived early");
 
   // Padding around CRYPTO is ordinary and must not end the walk or enter the stream.
-  u8[] padded = bytesOf(i32[](0x00, 0x00, 0x00, 0x06, 0, 1, 0x5A, 0x00, 0x00));
+  u8[] padded = bytesOf([0x00, 0x00, 0x00, 0x06, 0, 1, 0x5A, 0x00, 0x00] as i32[]);
   t.eqI32(streamLen(padded), 1, "one byte of handshake between the zeros");
   t.eqI32(streamByte(padded, 0), 0x5A, "and it is the one that was sent");
   return t.report();

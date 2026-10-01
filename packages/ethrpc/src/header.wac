@@ -43,15 +43,19 @@ export struct Header {
 
 /** The fields in the order the encoding takes them, up to the first the node did not report. */
 string[] FIXED() {
-  return string[]("parentHash", "sha3Uncles", "miner", "stateRoot", "transactionsRoot", "receiptsRoot",
+  return [
+                  "parentHash", "sha3Uncles", "miner", "stateRoot", "transactionsRoot", "receiptsRoot",
                   "logsBloom", "difficulty", "number", "gasLimit", "gasUsed", "timestamp", "extraData",
-                  "mixHash", "nonce");
+                  "mixHash", "nonce"
+  ];
 }
 
 /** Appended by later forks, in this order, each present only from its fork onwards. */
 string[] OPTIONAL() {
-  return string[]("baseFeePerGas", "withdrawalsRoot", "blobGasUsed", "excessBlobGas",
-                  "parentBeaconBlockRoot", "requestsHash");
+  return [
+                  "baseFeePerGas", "withdrawalsRoot", "blobGasUsed", "excessBlobGas",
+                  "parentBeaconBlockRoot", "requestsHash"
+  ];
 }
 
 /** Which fields are integers — RLP-minimal — rather than fixed-width byte strings. */
@@ -68,7 +72,7 @@ bool isQuantity(string name) {
  * that and use the node's own `hash` field, which only proves the node is consistent with itself.
  */
 export Header headerOf(JsonValue block, u8[] expectedHash) {
-  Item[] parts = Item[21](fill: Item.Bytes(u8[0]()));
+  Item[] parts = Item[].filled(21, Item.Bytes(u8[]()));
   i32 n = 0;
 
   string[] fixed = FIXED();
@@ -77,7 +81,7 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
     // and a difficulty of zero is what every post-Merge block has. Treating either as missing rejects
     // every block anvil produces, which is how this was found.
     if (isNull(memberOf(block, fixed[i]))) {
-      return Header.of(false, u8[0](), u8[0](), "the block has no " + fixed[i]);
+      return Header.of(false, u8[](), u8[](), "the block has no " + fixed[i]);
     }
     // **`isQuantity` now decides the decoding as well as the encoding.** It always had to: a QUANTITY
     // may have an odd number of digits and DATA may not, and one decoder for both padded everything
@@ -101,17 +105,17 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
     n++;
   }
 
-  Item[] used = Item[n](fill: Item.Bytes(u8[0]()));
+  Item[] used = Item[].filled(n, Item.Bytes(u8[]()));
   for (i32 i = 0; i < n; i++) { used[i] = parts[i]; }
   u8[] hash = keccak256(encode(Item.List(used)));
 
   u8[] want = expectedHash.len() == 32 ? expectedHash : memberData(block, "hash");
   if (want.len() != 32) {
-    return Header.of(false, hash, u8[0](), "there is no block hash to check against");
+    return Header.of(false, hash, u8[](), "there is no block hash to check against");
   }
   for (i32 i = 0; i < 32; i++) {
     if (hash[i] != want[i]) {
-      return Header.of(false, hash, u8[0](),
+      return Header.of(false, hash, u8[](),
         "the header re-encodes to a different hash than the one it was given — " + itoa(n) + " fields");
     }
   }
@@ -122,7 +126,7 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
 u8[] minimal(u8[] raw) {
   i32 at = 0;
   while (at < raw.len() && raw[at] == 0) { at++; }
-  u8[] out = u8[raw.len() - at]();
+  u8[] out = u8[].filled(raw.len() - at, 0);
   out.copyFrom(raw, at, 0, out.len());
   return out;
 }

@@ -34,11 +34,11 @@ export u8[] aesCtr(u8[] key, u8[] iv, u8[] data) {
   u8[] w = aesExpandKey(key);
   i32 nr = aesRounds(key.len());
 
-  u8[] ctr = u8[16]();
+  u8[] ctr = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { ctr[i] = iv[i]; }
 
   i32 n = data.len();
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 pos = 0;
   while (pos < n) {
     u8[] ks = aesEncryptBlock(w, ctr, nr);
@@ -73,11 +73,11 @@ export struct CtrStream {
 
   CtrStream create(u8[] key, u8[] iv) {
     if (iv.len() != 16) { trap; }
-    u8[] ctr = u8[16]();
+    u8[] ctr = u8[].filled(16, 0);
     for (i32 i = 0; i < 16; i++) { ctr[i] = iv[i]; }
-    u8[] k = u8[key.len()]();
+    u8[] k = u8[].filled(key.len(), 0);
     for (i32 i = 0; i < key.len(); i++) { k[i] = key[i]; }
-    return CtrStream(k, aesExpandKey(key), aesRounds(key.len()), ctr, u8[16](), 16);
+    return CtrStream(k, aesExpandKey(key), aesRounds(key.len()), ctr, u8[].filled(16, 0), 16);
   }
 
   /**
@@ -95,18 +95,18 @@ export struct CtrStream {
     // caller's mistake. GitHub issue 11. 16 is legal and means "the block is spent": `apply` refills
     // before it reads, which is the state `saveState` writes at a block boundary.
     if (ctr.len() != 16 || block.len() != 16 || used < 0 || used > 16) { trap; }
-    u8[] k = u8[key.len()]();
+    u8[] k = u8[].filled(key.len(), 0);
     for (i32 i = 0; i < key.len(); i++) { k[i] = key[i]; }
-    u8[] c = u8[16]();
+    u8[] c = u8[].filled(16, 0);
     for (i32 i = 0; i < 16; i++) { c[i] = ctr[i]; }
-    u8[] b = u8[16]();
+    u8[] b = u8[].filled(16, 0);
     for (i32 i = 0; i < 16; i++) { b[i] = block[i]; }
     return CtrStream(k, aesExpandKey(key), aesRounds(key.len()), c, b, used);
   }
 
   /** Encrypt or decrypt `data`, advancing the keystream by exactly its length. */
   u8[] apply(this, u8[] data) {
-    u8[] out = u8[data.len()]();
+    u8[] out = u8[].filled(data.len(), 0);
     for (i32 i = 0; i < data.len(); i++) {
       if (this.used == 16) {
         this.block = aesEncryptBlock(this.w, this.ctr, this.nr);

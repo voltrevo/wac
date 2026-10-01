@@ -44,7 +44,7 @@ export struct Corpus {
 }
 
 Corpus refused(string why) {
-  return Corpus(false, why, string[0](fill: ""), string[0](fill: ""));
+  return Corpus(false, why, string[].filled(0, ""), string[].filled(0, ""));
 }
 
 /**
@@ -93,7 +93,7 @@ i32 walk(Cli cli, string dir, string[] found, i32 n) {
  * file's source.
  */
 string[] paths(Cli cli, i32[] countOut) {
-  string[] found = string[CAP](fill: "");
+  string[] found = string[].filled(CAP, "");
   i32 n = 0;
 
   string[]? top = cli.readDir("packages").wait();
@@ -122,22 +122,22 @@ string[] paths(Cli cli, i32[] countOut) {
  * like one flaky test.
  */
 export Corpus loadCorpus(Cli cli, string caller) {
-  i32[] countOut = i32[1]();
+  i32[] countOut = i32[].filled(1, 0);
   string[] all = paths(cli, countOut);
   i32 n = countOut[0];
   if (n == -1) { return refused(caller + ": cannot read `packages/` — these run from the repo root"); }
   if (n == -2) { return refused(caller + ": more than " + itoa(CAP) + " files; the cap is too low"); }
 
-  string[] found = string[n](fill: "");
+  string[] found = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { found[i] = all[i]; }
   sortNames(found);
 
   // `spec/tour.wac` last, as the TypeScript appends it after sorting.
-  string[] wanted = string[n + 1](fill: "");
+  string[] wanted = string[].filled(n + 1, "");
   for (i32 i = 0; i < n; i++) { wanted[i] = found[i]; }
   wanted[n] = "spec/tour.wac";
 
-  string[] sources = string[wanted.len()](fill: "");
+  string[] sources = string[].filled(wanted.len(), "");
   for (i32 i = 0; i < wanted.len(); i++) {
     FileResult r = cli.readFile(wanted[i]).wait();
     if (!r.ok) { return refused(caller + ": cannot read " + wanted[i] + " — " + r.error); }
@@ -157,7 +157,7 @@ export string[] waccSources(Corpus c) {
   for (i32 i = 0; i < c.paths.len(); i++) {
     if (c.paths[i].len() > 18 && c.paths[i].slice(0, 18) == "packages/wacc/src/") { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   for (i32 i = 0; i < c.paths.len(); i++) {
     if (c.paths[i].len() > 18 && c.paths[i].slice(0, 18) == "packages/wacc/src/") {

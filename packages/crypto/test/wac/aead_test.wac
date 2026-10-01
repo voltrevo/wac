@@ -23,12 +23,12 @@ import { aeadDecrypt, aeadEncrypt, aeadTag } from "../../src/aead.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 u8[] fill(i32 n, i32 a, i32 b) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
   return out;
 }
 u8[] cat(u8[] a, u8[] b) {
-  u8[] o = u8[a.len() + b.len()]();
+  u8[] o = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
@@ -55,11 +55,11 @@ export string test_poly1305_forced_carries() {
   // trapping and that the result depends on the message, which a reduction that
   // overflowed would break loudly.
   T t = T.create();
-  u8[] ones = u8[32]();
+  u8[] ones = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { ones[i] = 0xFF; }
-  u8[] msgA = u8[64]();
+  u8[] msgA = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { msgA[i] = 0xFF; }
-  u8[] msgB = u8[64]();
+  u8[] msgB = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { msgB[i] = 0xFF; }
   msgB[63] = 0xFE;
   u8[] tagA = poly1305(ones, msgA);
@@ -71,7 +71,7 @@ export string test_poly1305_forced_carries() {
   // tag. That is a property of the spec rather than of our arithmetic, and it is the
   // one an implementation that forgot to clamp fails.
   u8[] k1 = fill(32, 7, 3);
-  u8[] k2 = u8[32]();
+  u8[] k2 = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { k2[i] = k1[i]; }
   k2[3] = k2[3] | 0xF0;      // top four bits of r's second word: clamped away
   k2[7] = k2[7] | 0xF0;
@@ -86,7 +86,7 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** Ask node's ChaCha20-Poly1305 — `chacha` judges a seal, `open` answers about bytes we did not. */
 Answers askAead(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "node", string[](ORACLE), lines, what);
+  return ask(t, cli, "node", [ORACLE], lines, what);
 }
 
 /** A `chacha` claim: the sealed output we say these inputs produce. */
@@ -137,7 +137,7 @@ export string test_the_length_fields_stop_a_block_moving(Core core, Cli cli) {
   u8[] c = fill(16, 5, 9);
 
   u8[] split = aeadTag(key, nonce, a, c);          // aad = 16, ct = 16
-  u8[] joined = aeadTag(key, nonce, u8[0](), cat(a, c));   // aad = 0, ct = 32
+  u8[] joined = aeadTag(key, nonce, u8[](), cat(a, c));   // aad = 0, ct = 32
   t.isFalse(equal(split, joined),
             "a 16-byte block moved from the aad into the ciphertext changes the tag");
 
@@ -148,7 +148,7 @@ export string test_the_length_fields_stop_a_block_moving(Core core, Cli cli) {
   // rather than handing it one: the bytes were not sealed by us, so there is nothing to claim.
   Lines lines = Lines.create();
   lines.add("open " + hex(key) + " " + hex(nonce) + " " + hex(a) + " " + hex(cat(c, split)));
-  lines.add("open " + hex(key) + " " + hex(nonce) + " " + hex(u8[0]()) + " " +
+  lines.add("open " + hex(key) + " " + hex(nonce) + " " + hex(u8[]()) + " " +
             hex(cat(cat(a, c), split)));
   Answers r = askAead(t, cli, lines, "the two framings");
   if (!r.ok) { return t.report(); }
@@ -165,8 +165,8 @@ export string test_the_tag_covers_everything(Core core, Cli cli) {
   Lines lines = Lines.create();
   u8[] key = aeadKey();
   u8[] nonce = decoded("070000004041424344454647");
-  i32[] plainLens = i32[](0, 1, 15, 16, 17, 63, 64, 65);
-  i32[] aadLens = i32[](0, 1, 15, 16, 17);
+  i32[] plainLens = [0, 1, 15, 16, 17, 63, 64, 65];
+  i32[] aadLens = [0, 1, 15, 16, 17];
   for (i32 p = 0; p < plainLens.len(); p++) {
     for (i32 a = 0; a < aadLens.len(); a++) {
       u8[] plain = fill(plainLens[p], 5, 2);
@@ -204,14 +204,14 @@ u8[] aeadGoodTag() { return aeadTag(aeadKey(), aeadNonce(), aeadAad(), aeadCt())
 
 /** A copy with bit 0 of byte `i` flipped. */
 u8[] flipped(u8[] b, i32 i) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 k = 0; k < b.len(); k++) { out[k] = b[k]; }
   out[i] = out[i] ^ 1;
   return out;
 }
 
 u8[] head(u8[] b, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
   return out;
 }
@@ -262,7 +262,7 @@ export string test_traps_on_a_short_tag() {
  */
 u8[] paddedTag(i32 extra) {
   u8[] good = aeadGoodTag();
-  u8[] out = u8[16 + extra]();
+  u8[] out = u8[].filled(16 + extra, 0);
   for (i32 i = 0; i < 16; i++) { out[i] = good[i]; }
   for (i32 i = 16; i < out.len(); i++) { out[i] = 0xAA; }
   return out;
@@ -310,7 +310,7 @@ struct Rng {
     return this.s;
   }
   u8[] bytes(this, i32 n) {
-    u8[] o = u8[n]();
+    u8[] o = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { o[i] = (this.next() >> 11) & 0xFF; }
     return o;
   }
@@ -326,11 +326,11 @@ export string test_poly1305_agrees_with_the_reference_at_every_length_to_three_b
   u8[] key = decoded("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
   Lines lines = Lines.create();
   for (i32 n = 0; n <= 49; n++) {
-    u8[] m = u8[n]();
+    u8[] m = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { m[i] = (i * 53 + 17) & 0xFF; }
     claim(lines, key, m);
   }
-  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "every length to three blocks");
+  check(t, cli, "node", [CRYPTO_ORACLE], lines, "every length to three blocks");
   return t.report();
 }
 
@@ -345,14 +345,14 @@ export string test_poly1305_agrees_with_the_reference_under_fuzzing(Core core, C
 
   // Saturated inputs, where carries propagate the whole way and the final subtract triggers — the
   // cases random bytes almost never reach.
-  i32[] lens = i32[](16, 32, 48, 64, 100);
+  i32[] lens = [16, 32, 48, 64, 100];
   for (i32 i = 0; i < lens.len(); i++) {
-    u8[] key = u8[32]();
+    u8[] key = u8[].filled(32, 0);
     for (i32 j = 0; j < 32; j++) { key[j] = 0xFF; }
-    u8[] msg = u8[lens[i]]();
+    u8[] msg = u8[].filled(lens[i], 0);
     for (i32 j = 0; j < lens[i]; j++) { msg[j] = 0xFF; }
     claim(lines, key, msg);
   }
-  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "400 fuzz cases and five saturated ones");
+  check(t, cli, "node", [CRYPTO_ORACLE], lines, "400 fuzz cases and five saturated ones");
   return t.report();
 }

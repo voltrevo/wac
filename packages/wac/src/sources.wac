@@ -334,23 +334,23 @@ string projectRootOf(Fs fs, string path) {
  * wrong file.
  */
 export Sources gather(Fs fs, Cli cli, string entry) {
-  string[] paths = string[maxFiles()](fill: "");
-  string[] texts = string[maxFiles()](fill: "");
-  string[] roots = string[maxFiles()](fill: "");
-  string[] mapFrom = string[maxFiles()](fill: "");
-  string[] mapSpec = string[maxFiles()](fill: "");
-  string[] mapTo = string[maxFiles()](fill: "");
+  string[] paths = string[].filled(maxFiles(), "");
+  string[] texts = string[].filled(maxFiles(), "");
+  string[] roots = string[].filled(maxFiles(), "");
+  string[] mapFrom = string[].filled(maxFiles(), "");
+  string[] mapSpec = string[].filled(maxFiles(), "");
+  string[] mapTo = string[].filled(maxFiles(), "");
   // **Where each file may import from, parallel to `paths` and "" for anything local.** A file that
   // arrived through a mapping with a `subdir` may not reach the rest of its checkout, and a file it
   // imports inherits the same bound — `issues/lang/0169a`.
-  string[] confine = string[maxFiles()](fill: "");
+  string[] confine = string[].filled(maxFiles(), "");
   // **Who asked for each file, and how they spelled it.** A file that cannot be read is named on its
   // own today — `cannot read shared/gone.wac` — and the reader is then left to find which import asked
   // for it, which in a graph of a hundred files is the whole of the work. The importer and the
   // specifier are both in scope where a path is queued, two hundred lines above where the read fails.
   // The same shape as `linkFiles`'s queue, for the same reason. `issues/lang/0157`.
-  string[] askedBy = string[maxFiles()](fill: "");
-  string[] askedAs = string[maxFiles()](fill: "");
+  string[] askedBy = string[].filled(maxFiles(), "");
+  string[] askedAs = string[].filled(maxFiles(), "");
   // **Where the upward search for a `@/` root starts from, and where its answer comes back to.**
   // `candidateRoots` walks the components of the path it is given, so a relative entry could climb
   // only as far as it was spelled — `wac run main.wac` from a subdirectory reported *no wac.json5
@@ -518,7 +518,7 @@ export Sources gather(Fs fs, Cli cli, string entry) {
  * second, which is when "gather is exported" turned out not to mean "gather is usable".
  */
 export string[] exactly(string[] xs, i32 n) {
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = xs[i]; }
   return out;
 }

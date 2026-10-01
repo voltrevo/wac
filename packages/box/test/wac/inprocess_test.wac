@@ -34,7 +34,7 @@ Ran runScript(Core core, Cli cli, string script) {
   // child's own name** — box's layout, which is how an applet knows what it was called. So the name is
   // argv[0] and the shell is told to start at 1; passing 0 made it read `sh` as a *script to open* and
   // answer `sh: sh: No such file or directory`, exit 127.
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "", false);
+  Frame f = Frame.of(["sh", "-c", script], u8[](), "", false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);

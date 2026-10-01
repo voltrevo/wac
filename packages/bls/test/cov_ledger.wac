@@ -68,12 +68,12 @@ const string PREFIX = "packages/bls/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the Python oracle. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/bls/src/verify.wac", "is null", "line", true,
+  return [
+         Rule("packages/bls/src/verify.wac", "is null", "line", true,
          "**Seven `null` checks behind a guard that already established the value is not null.** " +
          "`toPair` answers `null` for exactly one reason — a point at infinity has no affine " +
          "coordinates — and every one of its callers refuses infinity on the line above. So `:220`, " +
@@ -119,12 +119,12 @@ Rule[] rules() {
          "each of them; this is the line below it."),
     Rule("packages/bls/src/g2.wac", "if (zi is null) { return null; }", "line", true,
          "The G2 half of the same pair — see `packages/bls/src/g1.wac:231`.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/bls/src/verify.wac", 271, "if (k[0] == 0 && k[1] == 0) { k[0] = 1; }", false,
+  return [
+        Pin("packages/bls/src/verify.wac", 271, "if (k[0] == 0 && k[1] == 0) { k[0] = 1; }", false,
         "**The zero batch weight, excluded rather than reasoned about.** A weight of zero drops its " +
         "term out of the batch equation entirely, so a signature carrying one is not checked at all " +
         "— which is the single value that must not occur. Reaching this line needs a transcript " +
@@ -245,13 +245,13 @@ Pin[] pins() {
         "with another length, of which there are none."),
     Pin("packages/bls/src/fp.wac", 410, "for (i32 i = 0; i < lead; i++) { w = (w << 8) | (s[i] as@ u32); }", false,
         "The loop inside `:407` — see there.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

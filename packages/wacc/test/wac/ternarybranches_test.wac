@@ -26,33 +26,36 @@ i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
 
 /** The direct form of each pair, and its compound twin. */
 string[] pairNames() {
-  return string[](
+  return [
     "an integer against a string literal",
     "an integer against a string sum",
     "a string literal against an integer",
     "a bool literal against an integer",
     "a named string against an integer",
-    "a float against a string literal");
+    "a float against a string literal"
+  ];
 }
 
 string[] directForms() {
-  return string[](
+  return [
     "export i32 f(bool b) { i32 n = b ? 1 : \"a\"; return n; }\n",
     "export i32 f(bool b) { i32 n = b ? 1 : \"a\" + \"b\"; return n; }\n",
     "export i32 f(bool b) { i32 n = b ? \"a\" : 1; return n; }\n",
     "export i32 f(bool b) { i32 n = b ? true : 1; return n; }\n",
     "export i32 f(bool b, string s) { i32 n = b ? s : 1; return n; }\n",
-    "export i32 f(bool b) { i32 n = b ? 1.5 : \"a\"; return n; }\n");
+    "export i32 f(bool b) { i32 n = b ? 1.5 : \"a\"; return n; }\n"
+  ];
 }
 
 string[] compoundForms() {
-  return string[](
+  return [
     "export i32 f(bool b) { i32 n = b ? 1 + 1 : \"a\"; return n; }\n",
     "export i32 f(bool b) { i32 n = b ? 1 + 1 : \"a\" + \"b\"; return n; }\n",
     "export i32 f(bool b) { i32 n = b ? \"a\" : 1 + 1; return n; }\n",
     "export i32 f(bool b) { i32 n = b ? true : 1 + 1; return n; }\n",
     "export i32 f(bool b, string s) { i32 n = b ? s : 1 + 1; return n; }\n",
-    "export i32 f(bool b) { i32 n = b ? 1.5 + 1.5 : \"a\"; return n; }\n");
+    "export i32 f(bool b) { i32 n = b ? 1.5 + 1.5 : \"a\"; return n; }\n"
+  ];
 }
 
 /**
@@ -87,19 +90,21 @@ export string test_a_compound_branch_answers_as_its_direct_twin_does() {
  */
 export string test_the_compound_branches_that_agree_are_accepted() {
   T t = T.create();
-  string[] name = string[](
+  string[] name = [
     "two integer sums", "an integer sum against a named i32",
     "a float sum against a named f64", "two string literals",
     "a plain integer literal pair", "a ternary of sums inside an i64 slot",
-    "a sum against a nullable, which is the null rule's business");
-  string[] src = string[](
+    "a sum against a nullable, which is the null rule's business"
+  ];
+  string[] src = [
     "export i32 f(bool b) { i32 n = b ? 1 + 1 : 2 + 2; return n; }\n",
     "export i32 f(bool b, i32 x) { i32 n = b ? 1 + 1 : x; return n; }\n",
     "export f64 f(bool b, f64 d) { f64 v = b ? 1.5 + 1.5 : d; return v; }\n",
     "export i32 f(bool b) { string s = b ? \"a\" : \"b\"; return s.len(); }\n",
     "export i32 f(bool b) { i32 n = b ? 1 : 2; return n; }\n",
     "export i64 f(bool b) { i64 n = b ? 1 + 1 : 2 + 2; return n; }\n",
-    "export i32 f(bool b, i32? q) { i32? n = b ? 1 + 1 : q; return n is null ? 0 : n!; }\n");
+    "export i32 f(bool b, i32? q) { i32? n = b ? 1 + 1 : q; return n is null ? 0 : n!; }\n"
+  ];
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(0, diagsFor(src[i]), name[i] + ": refused a legal program");
   }

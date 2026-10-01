@@ -57,10 +57,10 @@ struct Ran {
 }
 
 Ran wacTest(Cli cli, string[] args) {
-  string[] argv = string[args.len() + 1](fill: "");
+  string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = "test";
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
-  Exec r = cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+  Exec r = cli.exec(binaryPath(cli), argv, u8[]()).wait();
   if (!r.ran()) { return Ran(false, -1, r.error); }
   return Ran(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
 }
@@ -82,7 +82,7 @@ export string test_quiet_prints_the_summary_alone_5vq3mk8(Core core, Cli cli) {
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
-  Ran quiet = wacTest(cli, string[]("--quiet", d.path + "/three_test.wac"));
+  Ran quiet = wacTest(cli, ["--quiet", d.path + "/three_test.wac"]);
   t.isTrue(quiet.started, "the binary started");
   if (!quiet.started) { return t.report(); }
   t.eqI32(quiet.status, 0, "all three pass — " + quiet.out);
@@ -97,7 +97,7 @@ export string test_a_run_names_every_pass_and_times_it_5vq3mk8(Core core, Cli cl
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
-  Ran loud = wacTest(cli, string[](d.path + "/three_test.wac"));
+  Ran loud = wacTest(cli, [d.path + "/three_test.wac"]);
   t.isTrue(loud.started, "the binary started");
   if (!loud.started) { return t.report(); }
   t.eqI32(loud.status, 0, "all three still pass — " + loud.out);

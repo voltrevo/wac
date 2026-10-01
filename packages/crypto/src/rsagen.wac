@@ -70,9 +70,11 @@ export struct RsaKey {
 
 /** The first primes, for trial division. Rejects about 80% of odd candidates before any modPow. */
 i32[] smallPrimes() {
-  return i32[](3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79,
+  return [
+               3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79,
                83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167,
-               173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241, 251);
+               173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241, 251
+  ] as i32[];
 }
 
 /**
@@ -191,7 +193,7 @@ export bool millerRabin(Big n, u8[][] bases) {
 
 /** `shake256(seed | counter)`, the stream every candidate and base comes from. */
 u8[] stream(u8[] seed, i64 counter, i32 outLen) {
-  u8[] input = u8[seed.len() + 8]();
+  u8[] input = u8[].filled(seed.len() + 8, 0);
   for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
   for (i32 i = 0; i < 8; i++) {
     input[seed.len() + i] = ((counter >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
@@ -220,7 +222,7 @@ export Big randomPrime(i32 bits, u8[] seed, i64 counterBase, i32 attempts) {
     if (bitLen(candidate) != bits) { continue; }
     if (hasSmallFactor(candidate)) { continue; }
 
-    u8[][] bases = u8[][MILLER_RABIN_ROUNDS]();
+    u8[][] bases = u8[][].defaulted(MILLER_RABIN_ROUNDS);
     for (i32 i = 0; i < MILLER_RABIN_ROUNDS; i++) {
       bases[i] = stream(seed, counterBase + (attempt as i64) * 1000 + 500 + (i as i64), bytes);
     }
@@ -240,7 +242,7 @@ export Big randomPrime(i32 bits, u8[] seed, i64 counterBase, i32 attempts) {
  * differ, which catches that even if the streams were ever to collide.
  */
 export RsaKey generateRsaKey(i32 bits, u8[] seed) {
-  RsaKey bad = RsaKey(false, u8[0](), u8[0](), u8[0](), u8[0](), u8[0]());
+  RsaKey bad = RsaKey(false, u8[](), u8[](), u8[](), u8[](), u8[]());
   if (seed.len() != 32) { return bad; }
   if (bits < 512 || bits % 2 != 0) { return bad; }
 

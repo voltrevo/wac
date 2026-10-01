@@ -48,60 +48,61 @@ export string test_channel_messages_parse_to_their_fields() {
 
   // OPEN_CONFIRMATION: our number, then theirs. They need not agree, and the test uses different
   // values so a parser that read the wrong one would be caught.
-  Incoming conf = parse(cat(u8[][](u8[](91), u32be(7), u32be(42), u32be(2097152), u32be(32768))));
+  Incoming conf = parse(cat([[91] as u8[], u32be(7), u32be(42), u32be(2097152), u32be(32768)]));
   t.eqI32(conf.kind, 91, "kind wrong");
   t.eqI32(conf.channel, 7, "recipient channel wrong");
   t.eqI32(conf.senderChannel, 42, "sender channel wrong");
   t.eqI32(conf.window, 2097152, "window wrong");
   t.eqI32(conf.extra, 32768, "max packet wrong");
 
-  Incoming data = parse(cat(u8[][](u8[](94), u32be(7), strOf("hello"))));
+  Incoming data = parse(cat([[94] as u8[], u32be(7), strOf("hello")]));
   t.eqI32(data.kind, 94, "CHANNEL_DATA kind");
   t.eqStr(string.fromBytes(data.data), "hello", "CHANNEL_DATA payload");
 
-  Incoming ext = parse(cat(u8[][](u8[](95), u32be(7), u32be(1), strOf("oops"))));
+  Incoming ext = parse(cat([[95] as u8[], u32be(7), u32be(1), strOf("oops")]));
   t.eqI32(ext.extra, 1, "EXTENDED_DATA type code");
   t.eqStr(string.fromBytes(ext.data), "oops", "EXTENDED_DATA payload");
   t.eqI32(extendedDataStderr(), 1, "SSH_EXTENDED_DATA_STDERR is not 1");
 
-  Incoming adjust = parse(cat(u8[][](u8[](93), u32be(7), u32be(4096))));
+  Incoming adjust = parse(cat([[93] as u8[], u32be(7), u32be(4096)]));
   t.eqI32(adjust.window, 4096, "WINDOW_ADJUST increment wrong");
 
   // exit-status carries a uint32 *after* the want_reply boolean, and is a request rather than a
   // reply — nothing prompts it.
-  Incoming exit = parse(cat(u8[][](u8[](98), u32be(7), strOf("exit-status"), u8[1](), u32be(3))));
+  Incoming exit = parse(cat([[98] as u8[], u32be(7), strOf("exit-status"), u8[].filled(1, 0), u32be(3)]));
   t.eqI32(exit.kind, 98, "request kind wrong");
   t.eqStr(string.fromBytes(exit.data), "exit-status", "request name wrong");
   t.eqI32(exit.extra, 3, "exit status");
 
   // A request that is not exit-status has no trailing uint32 to read, and must not go looking.
-  u8[] wantReply = u8[1]();
+  u8[] wantReply = u8[].filled(1, 0);
   wantReply[0] = 1;
   Incoming other =
-    parse(cat(u8[][](u8[](98), u32be(7), strOf("keepalive@openssh.com"), wantReply)));
+    parse(cat([[98] as u8[], u32be(7), strOf("keepalive@openssh.com"), wantReply]));
   t.isTrue(other.ok, "a request without a status did not parse");
   t.eqI32(other.extra, 0, "a status was invented");
 
   Incoming failure =
-    parse(cat(u8[][](u8[](92), u32be(7), u32be(4), strOf("no more sessions"), strOf(""))));
+    parse(cat([[92] as u8[], u32be(7), u32be(4), strOf("no more sessions"), strOf("")]));
   t.eqI32(failure.extra, 4, "open failure reason wrong");
   t.eqStr(string.fromBytes(failure.data), "no more sessions", "description wrong");
 
   // A transport message is not a channel message, and that is ordinary rather than an error.
-  u8[] transport = u8[1]();
+  u8[] transport = u8[].filled(1, 0);
   transport[0] = 21;
   t.eqI32(parse(transport).kind, 0, "a transport message was taken for a channel one");
   t.isTrue(parse(transport).ok, "a transport message was reported as malformed");
 
   // Truncated messages are malformed, not silently zero-filled.
-  u8[] claimsNine = u8[5]();
+  u8[] claimsNine = u8[].filled(5, 0);
   claimsNine[3] = 9; claimsNine[4] = 1;                        // claims 9 bytes, has 1
-  u8[][] truncated = u8[][](
-    u8[0](),
-    u8[](91),
-    cat(u8[][](u8[](91), u32be(7))),
-    cat(u8[][](u8[](94), u32be(7), claimsNine)),
-    cat(u8[][](u8[](98), u32be(7), strOf("exit-status"), u8[1]())));   // no status
+  u8[][] truncated = [
+    u8[](),
+    [91] as u8[],
+    cat([[91] as u8[], u32be(7)]),
+    cat([[94] as u8[], u32be(7), claimsNine]),
+    cat([[98] as u8[], u32be(7), strOf("exit-status"), u8[].filled(1, 0)])   // no status
+  ];
   for (i32 i = 0; i < truncated.len(); i++) {
     Incoming p = parse(truncated[i]);
     t.isFalse(p.ok && p.kind != 0,
@@ -123,13 +124,14 @@ export string test_channel_messages_address_the_recipients_channel_number() {
   t.eqI32(u32At(open, 12), 7, "open does not carry our channel number");
   t.eqI32(u32At(open, 16), 8192, "open does not carry the window");
 
-  string[] names = string[]("exec", "adjust", "eof", "close", "data");
-  u8[][] msgs = u8[][](
+  string[] names = ["exec", "adjust", "eof", "close", "data"];
+  u8[][] msgs = [
     execRequest(42, ("true").toBytes(), true),
     windowAdjust(42, 100),
     channelEof(42),
     channelClose(42),
-    channelData(42, ("x").toBytes()));
+    channelData(42, ("x").toBytes())
+  ];
   for (i32 i = 0; i < msgs.len(); i++) {
     t.eqI32(u32At(msgs[i], 1), 42, names[i] + " does not address the server's number");
   }

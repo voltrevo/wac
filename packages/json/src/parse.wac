@@ -173,17 +173,17 @@ export struct Parser {
         return JsonValue.Str(b!);
       }
       case 't': {
-        if (this.eatWord(u8[]('t', 'r', 'u', 'e'))) { return JsonValue.Bool(true); }
+        if (this.eatWord(['t', 'r', 'u', 'e'] as u8[])) { return JsonValue.Bool(true); }
         this.fail(ERR_UNEXPECTED());
         return null;
       }
       case 'f': {
-        if (this.eatWord(u8[]('f', 'a', 'l', 's', 'e'))) { return JsonValue.Bool(false); }
+        if (this.eatWord(['f', 'a', 'l', 's', 'e'] as u8[])) { return JsonValue.Bool(false); }
         this.fail(ERR_UNEXPECTED());
         return null;
       }
       case 'n': {
-        if (this.eatWord(u8[]('n', 'u', 'l', 'l'))) { return JsonValue.Null; }
+        if (this.eatWord(['n', 'u', 'l', 'l'] as u8[])) { return JsonValue.Null; }
         this.fail(ERR_UNEXPECTED());
         return null;
       }
@@ -607,7 +607,7 @@ export struct Parser {
 
     // Keep the source span: it lets the serializer round-trip a number without
     // a shortest-representation float formatter, which wac does not have.
-    u8[] raw = u8[this.pos - start]();
+    u8[] raw = u8[].filled(this.pos - start, 0);
     for (i32 i = 0; i < raw.len(); i++) {
       raw[i] = this.src[start + i];
     }
@@ -639,11 +639,11 @@ export struct Parser {
     if (c == '+') { this.pos++; plain = false; }
     else if (c == '-') { this.pos++; neg = true; }
 
-    if (this.eatWord(u8[]('I', 'n', 'f', 'i', 'n', 'i', 't', 'y'))) {
+    if (this.eatWord(['I', 'n', 'f', 'i', 'n', 'i', 't', 'y'] as u8[])) {
       f64 inf = 1.0 / 0.0;
-      return JsonValue.Number(neg ? -inf : inf, u8[0]());
+      return JsonValue.Number(neg ? -inf : inf, u8[]());
     }
-    if (this.eatWord(u8[]('N', 'a', 'N'))) { return JsonValue.Number(0.0 / 0.0, u8[0]()); }
+    if (this.eatWord(['N', 'a', 'N'] as u8[])) { return JsonValue.Number(0.0 / 0.0, u8[]()); }
 
     c = this.peek();
     if (c == '0' && this.pos + 1 < this.src.len()
@@ -659,7 +659,7 @@ export struct Parser {
         digits++;
       }
       if (digits == 0) { this.fail(ERR_NUMBER()); return null; }
-      return JsonValue.Number(neg ? -v : v, u8[0]());
+      return JsonValue.Number(neg ? -v : v, u8[]());
     }
 
     i32 intStart = this.pos;
@@ -702,7 +702,7 @@ export struct Parser {
 
     if (plain) {
       f64 value = atofSpan(this.src, start, this.pos);
-      u8[] raw = u8[this.pos - start]();
+      u8[] raw = u8[].filled(this.pos - start, 0);
       for (i32 i = 0; i < raw.len(); i++) { raw[i] = this.src[start + i]; }
       return JsonValue.Number(value, raw);
     }
@@ -724,7 +724,7 @@ export struct Parser {
     if (fracEnd == fracStart) { norm.push('0'); } else { norm.pushBytes(this.src, fracStart, fracEnd - fracStart); }
     if (expEnd > expStart) { norm.pushBytes(this.src, expStart, expEnd - expStart); }
     u8[] text = norm.bytes();
-    return JsonValue.Number(atofSpan(text, 0, text.len()), u8[0]());
+    return JsonValue.Number(atofSpan(text, 0, text.len()), u8[]());
   }
 }
 

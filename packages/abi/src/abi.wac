@@ -137,7 +137,7 @@ struct R {
  * `data` as the tuple `schema` describes, where `schema` is the *members* of the top-level tuple.
  *
  * The descriptor is a tuple's contents rather than a tuple itself, because that is what a call's arguments
- * and a call's return are: `decode(returnData, i32[](T_UINT(), T_BYTES()))` reads `(uint256, bytes)`.
+ * and a call's return are: `decode(returnData, [T_UINT(), T_BYTES()])` reads `(uint256, bytes)`.
  */
 export Decoded decode(u8[] data, i32[] schema) {
   if (data.len() % 32 != 0) {
@@ -154,7 +154,7 @@ export Decoded decode(u8[] data, i32[] schema) {
   return Decoded.of(true, items, "");
 }
 
-Value[] none() { return Value[0](fill: Value.Word(u8[32]())); }
+Value[] none() { return Value[].filled(0, Value.Word(u8[].filled(32, 0))); }
 
 /**
  * The members of a tuple whose head begins at `base` and whose region ends at `end`.
@@ -163,7 +163,7 @@ Value[] none() { return Value[0](fill: Value.Word(u8[32]())); }
  * the one an implementation gets wrong by measuring from the message instead.
  */
 Value[] tupleAt(R r, i32[] schema, i32 schemaAt, i32 count, i32 base, i32 end) {
-  Value[] out = Value[count](fill: Value.Word(u8[32]()));
+  Value[] out = Value[].filled(count, Value.Word(u8[].filled(32, 0)));
   if (r.error != "") { return out; }
   // The head's width, needed before the walk: an offset must point *past* it. Without that, an offset of
   // zero aims a dynamic field at the head itself, which is how one field is made to alias another — and it
@@ -209,11 +209,11 @@ Value staticAt(R r, i32[] schema, i32 s, i32 at, i32 end) {
   i32 t = schema[s];
   if (t == T_FIXED()) {
     i32 n = schema[s + 1];
-    Value[] items = Value[n](fill: Value.Word(u8[32]()));
+    Value[] items = Value[].filled(n, Value.Word(u8[].filled(32, 0)));
     i32 step = headWords(schema, s + 2) * 32;
     for (i32 i = 0; i < n; i++) {
       items[i] = staticAt(r, schema, s + 2, at + i * step, end);
-      if (r.error != "") { return Value.Word(u8[32]()); }
+      if (r.error != "") { return Value.Word(u8[].filled(32, 0)); }
     }
     return Value.List(items);
   }
@@ -221,7 +221,7 @@ Value staticAt(R r, i32[] schema, i32 s, i32 at, i32 end) {
     return Value.List(tupleAt(r, schema, s + 2, schema[s + 1], at, end));
   }
   u8[] w = bytesAt(r, at, 32);
-  if (r.error != "") { return Value.Word(u8[32]()); }
+  if (r.error != "") { return Value.Word(u8[].filled(32, 0)); }
   if (t == T_BOOL()) {
     for (i32 i = 0; i < 31; i++) {
       if (w[i] != 0) { r.error = "a bool's first 31 bytes must be zero"; return Value.Word(w); }
@@ -241,10 +241,10 @@ Value valueAt(R r, i32[] schema, i32 s, i32 at, i32 end, i32 base) {
   i32 t = schema[s];
   if (t == T_BYTES() || t == T_STRING()) {
     i32 n = word(r, at);
-    if (r.error != "") { return Value.Bytes(u8[0]()); }
+    if (r.error != "") { return Value.Bytes(u8[]()); }
     if (at + 32 + n > end) {
       r.error = "a " + itoa(n) + "-byte string runs past the end of the payload";
-      return Value.Bytes(u8[0]());
+      return Value.Bytes(u8[]());
     }
     return Value.Bytes(bytesAt(r, at + 32, n));
   }
@@ -276,7 +276,7 @@ Value valueAt(R r, i32[] schema, i32 s, i32 at, i32 end, i32 base) {
 
 /** `n` elements of one type, laid out as a tuple would lay them: heads then tails, offsets from `base`. */
 Value[] repeatAt(R r, i32[] schema, i32 s, i32 n, i32 base, i32 end) {
-  Value[] out = Value[n](fill: Value.Word(u8[32]()));
+  Value[] out = Value[].filled(n, Value.Word(u8[].filled(32, 0)));
   if (r.error != "") { return out; }
   bool dyn = isDynamic(schema, s);
   i32 step = dyn ? 32 : headWords(schema, s) * 32;
@@ -324,9 +324,9 @@ i32 word(R r, i32 at) {
 u8[] bytesAt(R r, i32 at, i32 n) {
   if (at < 0 || at + n > r.data.len()) {
     r.error = "a read of " + itoa(n) + " bytes at " + itoa(at) + " is outside the payload";
-    return u8[0]();
+    return u8[]();
   }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = r.data[at + i]; }
   return out;
 }
@@ -353,7 +353,7 @@ export struct Encoded {
  */
 export Encoded encode(Value[] items, i32[] schema) {
   string bad = checkTuple(items, schema, 0, items.len());
-  if (bad != "") { return Encoded.of(false, u8[0](), bad); }
+  if (bad != "") { return Encoded.of(false, u8[](), bad); }
   return Encoded.of(true, encodeTuple(items, schema, 0, items.len()), "");
 }
 
@@ -422,8 +422,8 @@ u8[] encodeTuple(Value[] items, i32[] schema, i32 schemaAt, i32 count) {
     headBytes = headBytes + headWords(schema, s) * 32;
     s = s + typeLen(schema, s);
   }
-  u8[][] heads = u8[][count](fill: u8[0]());
-  u8[][] tails = u8[][count](fill: u8[0]());
+  u8[][] heads = u8[][].filled(count, u8[]());
+  u8[][] tails = u8[][].filled(count, u8[]());
   i32 tailAt = headBytes;
   s = schemaAt;
   for (i32 i = 0; i < count; i++) {
@@ -444,7 +444,7 @@ u8[] encodeStatic(Value v, i32[] schema, i32 s) {
   if (t == T_FIXED() || t == T_TUPLE()) {
     Value[] xs = listOf(v);
     if (t == T_TUPLE()) { return encodeTuple(xs, schema, s + 2, schema[s + 1]); }
-    u8[][] parts = u8[][xs.len()](fill: u8[0]());
+    u8[][] parts = u8[][].filled(xs.len(), u8[]());
     for (i32 i = 0; i < xs.len(); i++) { parts[i] = encodeStatic(xs[i], schema, s + 2); }
     return concat(parts);
   }
@@ -456,7 +456,7 @@ u8[] encodeValue(Value v, i32[] schema, i32 s) {
   if (t == T_BYTES() || t == T_STRING()) {
     u8[] b = bytesOfValue(v);
     i32 padded = ((b.len() + 31) / 32) * 32;
-    u8[] out = u8[32 + padded]();
+    u8[] out = u8[].filled(32 + padded, 0);
     u8[] len = wordOf(b.len());
     for (i32 i = 0; i < 32; i++) { out[i] = len[i]; }
     for (i32 i = 0; i < b.len(); i++) { out[32 + i] = b[i]; }
@@ -465,7 +465,7 @@ u8[] encodeValue(Value v, i32[] schema, i32 s) {
   if (t == T_ARRAY()) {
     Value[] xs = listOf(v);
     u8[] body = encodeRepeat(xs, schema, s + 1);
-    u8[] out = u8[32 + body.len()]();
+    u8[] out = u8[].filled(32 + body.len(), 0);
     u8[] len = wordOf(xs.len());
     for (i32 i = 0; i < 32; i++) { out[i] = len[i]; }
     for (i32 i = 0; i < body.len(); i++) { out[32 + i] = body[i]; }
@@ -479,8 +479,8 @@ u8[] encodeValue(Value v, i32[] schema, i32 s) {
 /** `n` elements of one type, heads then tails — the same layout a tuple of identical members has. */
 u8[] encodeRepeat(Value[] xs, i32[] schema, i32 s) {
   bool dyn = isDynamic(schema, s);
-  u8[][] heads = u8[][xs.len()](fill: u8[0]());
-  u8[][] tails = u8[][xs.len()](fill: u8[0]());
+  u8[][] heads = u8[][].filled(xs.len(), u8[]());
+  u8[][] tails = u8[][].filled(xs.len(), u8[]());
   i32 headBytes = xs.len() * (dyn ? 32 : headWords(schema, s) * 32);
   i32 tailAt = headBytes;
   for (i32 i = 0; i < xs.len(); i++) {
@@ -499,7 +499,7 @@ u8[] join(u8[][] heads, u8[][] tails) {
   i32 total = 0;
   for (i32 i = 0; i < heads.len(); i++) { total = total + heads[i].len(); }
   for (i32 i = 0; i < tails.len(); i++) { total = total + tails[i].len(); }
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   for (i32 i = 0; i < heads.len(); i++) {
     for (i32 j = 0; j < heads[i].len(); j++) { out[at] = heads[i][j]; at++; }
@@ -513,7 +513,7 @@ u8[] join(u8[][] heads, u8[][] tails) {
 u8[] concat(u8[][] parts) {
   i32 total = 0;
   for (i32 i = 0; i < parts.len(); i++) { total = total + parts[i].len(); }
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   for (i32 i = 0; i < parts.len(); i++) {
     for (i32 j = 0; j < parts[i].len(); j++) { out[at] = parts[i][j]; at++; }
@@ -524,7 +524,7 @@ u8[] concat(u8[][] parts) {
 /** A non-negative i32 as a 32-byte word. */
 u8[] wordOf(i32 v) {
   if (v < 0) { trap; }
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   i32 x = v;
   i32 at = 31;
   while (x > 0) { out[at] = x & 0xFF; at--; x = x / 256; }
@@ -535,8 +535,8 @@ u8[] wordOf(i32 v) {
 export u8[] wordOfValue(Value v) {
   match (v) {
     Word(b): { return b; }
-    Bytes(_): { return u8[32](); }
-    List(_): { return u8[32](); }
+    Bytes(_): { return u8[].filled(32, 0); }
+    List(_): { return u8[].filled(32, 0); }
   }
 }
 
@@ -545,7 +545,7 @@ export u8[] bytesOfValue(Value v) {
   match (v) {
     Word(b): { return b; }
     Bytes(b): { return b; }
-    List(_): { return u8[0](); }
+    List(_): { return u8[](); }
   }
 }
 

@@ -10,11 +10,11 @@ import { Addr, Attr, Message, attrFingerprint, attrMessageIntegrity, attrSoftwar
          withIntegrity, xorMapped, xorMappedValue } from "../../src/stun.wac";
 
 /** A Binding request with the given transaction id and nothing else. */
-export u8[] request(u8[] tid) { return encode(bindingRequest(), tid, Attr[0]()); }
+export u8[] request(u8[] tid) { return encode(bindingRequest(), tid, Attr[]()); }
 
 /** The same, with a SOFTWARE attribute, so the encoder's padding is exercised. */
 export u8[] requestWithSoftware(u8[] tid, u8[] software) {
-  Attr[] a = Attr[1](fill: Attr(attrSoftware(), software));
+  Attr[] a = Attr[].filled(1, Attr(attrSoftware(), software));
   return encode(bindingRequest(), tid, a);
 }
 
@@ -31,7 +31,7 @@ export u8[] attrOf(u8[] b, i32 kind) { return parse(b).attr(kind); }
 export i32[] mappedAddress(u8[] b) {
   Message m = parse(b);
   Addr a = xorMapped(m.attr(attrXorMappedAddress()), m.tid);
-  i32[] out = i32[2 + a.ip.len()]();
+  i32[] out = i32[].filled(2 + a.ip.len(), 0);
   out[0] = a.family;
   out[1] = a.port;
   for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }
@@ -41,7 +41,7 @@ export i32[] mappedAddress(u8[] b) {
 /** Encode an address and read it back, which is the round trip the xor has to survive. */
 export i32[] roundTripAddress(i32 family, i32 port, u8[] ip, u8[] tid) {
   Addr a = xorMapped(xorMappedValue(family, port, ip, tid), tid);
-  i32[] out = i32[2 + a.ip.len()]();
+  i32[] out = i32[].filled(2 + a.ip.len(), 0);
   out[0] = a.family;
   out[1] = a.port;
   for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }

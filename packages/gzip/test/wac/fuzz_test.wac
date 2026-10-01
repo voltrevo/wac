@@ -68,7 +68,7 @@ export string test_python_reads_everything_we_write_and_the_reverse(Core core, C
     cli.writeFile(work + "/ours/" + itoa(i) + ".gz", gzipBest(corpus[i].data)).wait();
   }
 
-  Exec r = cli.exec("python3", string[](ORACLE, work, itoa(corpus.len())), u8[0]()).wait();
+  Exec r = cli.exec("python3", [ORACLE, work, itoa(corpus.len())], u8[]()).wait();
   t.isTrue(r.ran(), "the oracle ran — " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "the oracle exited zero: " + string.fromBytes(r.stderr));
@@ -116,7 +116,7 @@ string nameOfCase(Case[] corpus, string line) {
 }
 
 string[] splitLines(string s) {
-  string[] out = string[4096](fill: "");
+  string[] out = string[].filled(4096, "");
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= s.len() && n < out.len(); i++) {
@@ -124,7 +124,7 @@ string[] splitLines(string s) {
     if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
     from = i + 1;
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

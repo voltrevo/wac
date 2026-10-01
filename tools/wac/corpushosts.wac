@@ -76,12 +76,12 @@ export i32 main(Core core, Cli cli) {
   cli.remove(tmp, true).wait();
   cli.mkdir(tmp, true).wait();
 
-  string[] slice = string[last - from](fill: "");
+  string[] slice = string[].filled(last - from, "");
   for (i32 i = from; i < last; i++) { slice[i - from] = scripts[i]; }
 
   // The Deno half in one batch, because starting Deno per script is most of the cost — `denoBatch`
   // is what `native_shell_test.wac` uses for the same reason.
-  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), slice);
+  Ran[] denoAnswers = denoAll(cli, tmp, string[].filled(0, ""), slice);
 
   i32 agree = 0;
   Vec<string> hung = Vec<string>.create();
@@ -90,10 +90,10 @@ export i32 main(Core core, Cli cli) {
     Ran a = denoAnswers[i];
     // A batched run that hit its bound is retried alone, which is what tells a busy machine from a
     // program that wedges.
-    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), slice[i]); }
-    Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), slice[i]);
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), slice[i]); }
+    Ran c = shell(core, cli, tmp, native, [b.sealedManifest], slice[i]);
 
-    string why = hangReport(slice[i], string[]("deno", "native"), Ran[](a, c));
+    string why = hangReport(slice[i], ["deno", "native"], [a, c]);
     if (why != "") { hung.push(why); continue; }
     string d = difference(slice[i], a, c);
     if (d == "") { agree = agree + 1; continue; }

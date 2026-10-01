@@ -38,7 +38,7 @@ export i32 uniq(Core core, Cli cli, Fs fs, Args a) {
   // The feed the opener chose — see `lib/input.wac`; not the process's own input.
   Feed fed = in.fed;
   Sink out = Sink.create(cli);
-  u8[] prev = u8[0]();
+  u8[] prev = u8[]();
   bool lastNl = true;
   i32 run = 0;
   while (true) {

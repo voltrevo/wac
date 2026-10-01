@@ -108,7 +108,7 @@ export string[] allLines(string s) {
   u8[] b = s.toBytes();
   i32 n = 1;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 start = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -131,7 +131,7 @@ export bool fencesAreRun(string path) {
 
 /** A file's content at a revision, or "" when it did not exist there. */
 string at(Cli cli, string rev, string path) {
-  Exec r = cli.exec("git", string[]("show", rev + ":" + path), u8[0]()).wait();
+  Exec r = cli.exec("git", ["show", rev + ":" + path], u8[]()).wait();
   return (r.ran() && r.status == 0) ? string.fromBytes(r.stdout) : "";
 }
 
@@ -149,7 +149,7 @@ export struct Verdict {
  * `tools/wac/docsonly_test.wac`.
  */
 export Verdict verdict(Core core, Cli cli, string base, string tip) {
-  Exec names = cli.exec("git", string[]("diff", "--name-only", base + ".." + tip), u8[0]()).wait();
+  Exec names = cli.exec("git", ["diff", "--name-only", base + ".." + tip], u8[]()).wait();
   if (!names.ran() || names.status != 0) {
     return Verdict(false, "cannot diff against " + base);
   }
@@ -165,7 +165,7 @@ export Verdict verdict(Core core, Cli cli, string base, string tip) {
   }
   if (notMd.len() > 0) {
     i32 show = notMd.len() < 3 ? notMd.len() : 3;
-    string[] head = string[show](fill: "");
+    string[] head = string[].filled(show, "");
     for (i32 i = 0; i < show; i++) { head[i] = notMd.get(i); }
     string more = notMd.len() > 3 ? " and " + itoa(notMd.len() - 3) + " more" : "";
     return Verdict(false, itoa(notMd.len()) + " non-markdown file(s) changed: "

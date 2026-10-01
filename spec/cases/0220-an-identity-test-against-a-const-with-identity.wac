@@ -9,8 +9,8 @@
 //      primary compiler, and the reference only has to build wacc. So this corpus, which measures
 //      wacc, is the right home and the disagreement is expected rather than a surprise.
 // from: issues/lang/0172a, issues/lang/0151
-const u64[] A = u64[](1, 2, 3);
-const u64[] B = u64[](1, 2, 3);
+const u64[] A = [1, 2, 3];
+const u64[] B = [1, 2, 3];
 u64[] g() { return A; }
 export i32 f() {
   i32 r = (g() is A) ? 1 : 0;

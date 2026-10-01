@@ -45,12 +45,12 @@ struct Paths {
   string[] items;
   i32 n;
 
-  Paths create() { return Paths(string[0](fill: ""), 0); }
+  Paths create() { return Paths(string[].filled(0, ""), 0); }
 
   void push(this, string s) {
     if (this.n == this.items.len()) {
       i32 grown = this.items.len() == 0 ? 64 : this.items.len() * 2;
-      string[] next = string[grown](fill: "");
+      string[] next = string[].filled(grown, "");
       for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
       this.items = next;
     }
@@ -92,7 +92,7 @@ export string test_the_wac_walk_names_the_same_imports_as_the_typescript_one(Cor
     string ours = joinedWith(importSpecs(f.bytes), "|");
     lines.add("imports " + path + " " + ours);
   }
-  check(t, cli, "deno", string[]("run", "--allow-read", "--no-check", ORACLE), lines,
+  check(t, cli, "deno", ["run", "--allow-read", "--no-check", ORACLE], lines,
         "the TypeScript import walk");
   core.log("    imports: " + itoa(found.n) + " files compared");
   return t.report();
@@ -103,10 +103,8 @@ export string test_a_specifier_resolves_against_the_file_that_wrote_it() {
   // walks past the start, where dropping the leading slash or keeping the `..` are the two ways this
   // goes wrong quietly.
   T t = T.create();
-  string[] from = string[](
-    "packages/git/src/repo.wac", "main.wac", "a/b/c.wac", "/abs/dir/a.wac", "/abs/a.wac");
-  string[] spec = string[](
-    "../../fs/src/fs.wac", "./lib.wac", "../../d.wac", "./b.wac", "../../b.wac");
+  string[] from = ["packages/git/src/repo.wac", "main.wac", "a/b/c.wac", "/abs/dir/a.wac", "/abs/a.wac"];
+  string[] spec = ["../../fs/src/fs.wac", "./lib.wac", "../../d.wac", "./b.wac", "../../b.wac"];
   // A `..` that climbs past the root stays, in **both** walks — `/../b.wac`. POSIX would say `/`, and
   // neither of these is a filesystem: what they compute is an identity for a path, and two identities
   // agreeing matters more than either matching `realpath`. Asserted as it is so that one of them
@@ -119,8 +117,7 @@ export string test_a_specifier_resolves_against_the_file_that_wrote_it() {
   // a program could climb above the root and be handed a different file. Fixed on 2026-08-19, and
   // the harness's body is now a call into the compiler's, so "both walks" is two implementations
   // rather than three copies — one per language, which is as few as there can be.
-  string[] want = string[](
-    "packages/fs/src/fs.wac", "lib.wac", "d.wac", "/abs/dir/b.wac", "/../b.wac");
+  string[] want = ["packages/fs/src/fs.wac", "lib.wac", "d.wac", "/abs/dir/b.wac", "/../b.wac"];
   t.eqI32(from.len(), want.len(), "a case per answer");
   for (i32 i = 0; i < from.len() && i < want.len(); i++) {
     t.eqStr(resolveFrom(from[i], spec[i]), want[i], from[i] + " + " + spec[i]);

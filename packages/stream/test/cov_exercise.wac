@@ -56,7 +56,7 @@ struct Feeder {
    */
   i32 failAfter;
 
-  Feeder create() { return Feeder(u8[0](), 0, 1, true, 0 - 1); }
+  Feeder create() { return Feeder(u8[](), 0, 1, true, 0 - 1); }
 
   void feed(this, u8[] bytes, i32 size, bool accepting) {
     this.src = bytes;
@@ -78,7 +78,7 @@ struct Feeder {
     i32 left = this.src.len() - this.at;
     i32 n = this.step < left ? this.step : left;
     if (n <= 0) { return Read.End; }
-    u8[] chunk = u8[n]();
+    u8[] chunk = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { chunk[i] = this.src[this.at + i]; }
     this.at = this.at + n;
     return Read.Data(chunk);
@@ -89,23 +89,25 @@ struct Feeder {
 
 /** Every encoded length adjacent to every other, so a cut can fall between any two widths. */
 string[] texts() {
-  return string[](
+  return [
     "", "a", "abc", "ABC", "hello world",
     "café", "日本語", "😀😁", "ΣΊΣΥΦΟΣ", "σίσυφος",
     "straße", "İstanbul", string.fromCodepoint(0x10ffff),
     "a" + string.fromCodepoint(0x80) + string.fromCodepoint(0x800) +
       string.fromCodepoint(0x10000) + "a",
     string.fromCodepoint(0x10000) + string.fromCodepoint(0x800) +
-      string.fromCodepoint(0x80) + "a");
+      string.fromCodepoint(0x80) + "a"
+  ];
 }
 
 /** Malformed input: the rejection paths, and a truncation held at end of input. */
 u8[][] malformed() {
-  return u8[][](
-    u8[](0xff), u8[](0xfe), u8[](0x80), u8[](0xbf), u8[](0xc0, 0x80), u8[](0xc2),
-    u8[](0xe0, 0xa0), u8[](0xf0, 0x9f, 0x98), u8[](0xed, 0xa0, 0x80),
-    u8[](0xf5, 0x80, 0x80, 0x80), u8[](0x61, 0xff, 0x62), u8[](0xf0, 0x9f),
-    u8[](0x41, 0xc2), u8[](0xe0, 0x80, 0x80));
+  return [
+    [0xff] as u8[], [0xfe] as u8[], [0x80] as u8[], [0xbf] as u8[], [0xc0, 0x80] as u8[], [0xc2] as u8[],
+    [0xe0, 0xa0] as u8[], [0xf0, 0x9f, 0x98] as u8[], [0xed, 0xa0, 0x80] as u8[],
+    [0xf5, 0x80, 0x80, 0x80] as u8[], [0x61, 0xff, 0x62] as u8[], [0xf0, 0x9f] as u8[],
+    [0x41, 0xc2] as u8[], [0xe0, 0x80, 0x80] as u8[]
+  ];
 }
 
 export i32 main() {
@@ -116,7 +118,7 @@ export i32 main() {
 
   // 1 exercises the held-fragment path at every position; a size past the end is the
   // whole-input-in-one-read case; the middle sizes land inside sequences of each width.
-  i32[] sizes = i32[](1, 2, 3, 4, 5, 7, 64, 1048576);
+  i32[] sizes = [1, 2, 3, 4, 5, 7, 64, 1048576];
   string[] ts = texts();
   for (i32 i = 0; i < ts.len(); i++) {
     u8[] bytes = ts[i].toBytes();
@@ -129,7 +131,7 @@ export i32 main() {
   }
 
   u8[][] bad = malformed();
-  i32[] small = i32[](1, 2, 1048576);
+  i32[] small = [1, 2, 1048576];
   for (i32 i = 0; i < bad.len(); i++) {
     for (i32 s = 0; s < small.len(); s++) {
       f.feed(bad[i], small[s], true);
@@ -164,7 +166,7 @@ export i32 main() {
   // Literal escapes are not this language's spelling — the file uses `string.fromCodepoint`.
   string sample = "hello caf" + string.fromCodepoint(0xe9) + " " +
                   string.fromCodepoint(0x4e16) + " " + string.fromCodepoint(0x1f600) + " world";
-  i32[] fails = i32[](0, 1, 3);
+  i32[] fails = [0, 1, 3];
   for (i32 i = 0; i < fails.len(); i++) {
     f.feedFailing(sample.toBytes(), 4, fails[i]);
     seen = seen + passthrough(read, write);

@@ -62,7 +62,7 @@ i32 memberI32(JsonValue v, string key, i32 missing) {
  * pairing a response with the wrong method, which is the one thing this oracle's answers turn on.
  */
 export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] methods) {
-  if (cases.len() == 0) { return ResponseOutcome[0](fill: ResponseOutcome.Incomplete); }
+  if (cases.len() == 0) { return ResponseOutcome[].filled(0, ResponseOutcome.Incomplete); }
   if (methods.len() != cases.len()) { trap; }
   Buf payload = Buf.create();
   payload.push('[');
@@ -76,7 +76,7 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
   }
   payload.push(']');
 
-  Exec r = cli.exec("node", string[](RESPONSE_ORACLE), payload.take()).wait();
+  Exec r = cli.exec("node", [RESPONSE_ORACLE], payload.take()).wait();
   if (!r.ran()) {
     return allResponsesBroken(t, cases.len(), "the response oracle could not be run: " + r.error);
   }
@@ -101,7 +101,7 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
                               itoa(cases.len()) + " cases");
   }
 
-  ResponseOutcome[] out = ResponseOutcome[cases.len()](fill: ResponseOutcome.Incomplete);
+  ResponseOutcome[] out = ResponseOutcome[].filled(cases.len(), ResponseOutcome.Incomplete);
   for (i32 i = 0; i < items.len(); i++) {
     JsonValue c = items.get(i);
     string kind = memberText(c, "outcome");
@@ -122,7 +122,7 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
 
 ResponseOutcome[] allResponsesBroken(T t, i32 n, string why) {
   t.fail(why);
-  return ResponseOutcome[n](fill: ResponseOutcome.Broken(why));
+  return ResponseOutcome[].filled(n, ResponseOutcome.Broken(why));
 }
 
 string memberText(JsonValue v, string key) {
@@ -144,10 +144,10 @@ string[] memberStrings(JsonValue v, string key) {
   match (v) {
     Object(members): {
       JsonValue? found = members.getStr(key);
-      if (found is null) { return string[0](fill: ""); }
+      if (found is null) { return string[].filled(0, ""); }
       match (found!) {
         Array(items): {
-          string[] out = string[items.len()](fill: "");
+          string[] out = string[].filled(items.len(), "");
           for (i32 i = 0; i < items.len(); i++) {
             match (items.get(i)) {
               Str(bytes): { out[i] = string.fromBytes(bytes); }
@@ -156,14 +156,14 @@ string[] memberStrings(JsonValue v, string key) {
           }
           return out;
         }
-        default: { return string[0](fill: ""); }
+        default: { return string[].filled(0, ""); }
       }
     }
-    default: { return string[0](fill: ""); }
+    default: { return string[].filled(0, ""); }
   }
 }
 
 u8[] unbase64(string s) {
   u8[]? b = decode(s.toBytes());
-  return b is null ? u8[0]() : b!;
+  return b is null ? u8[]() : b!;
 }

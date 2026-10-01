@@ -188,11 +188,12 @@ i32 json5Corpus(Cli cli) {
 /** The number paths, which the corpus barely touches. */
 i32 numbers() {
   i32 seen = 0;
-  string[] ns = string[](
+  string[] ns = [
     "0", "-0", "1", "1.5", "-2.25", "1e5", "1E-5", "1e+5", "0.1",
     "9007199254740993", "1e308", "1e309", "1e-400", "5e-324",
     "123456789012345678901234567890", "0.1234567890123456789012345",
-    "1.7976931348623157e308", "2.2250738585072011e-308", "1e23");
+    "1.7976931348623157e308", "2.2250738585072011e-308", "1e23"
+  ];
   for (i32 i = 0; i < ns.len(); i++) {
     parseNumberValue(ns[i].toBytes());
     canonicalize(ns[i].toBytes());
@@ -200,8 +201,10 @@ i32 numbers() {
   }
   // The failure paths of `parseNumberValue`, which `number_test.wac` covers and this file once did
   // not — the standing hazard of a second workload written by hand.
-  string[] bad = string[]("", "[", "1 2", "01", "-", "1e", "\"1\"", "true", "null", "[1]",
-                          "{\"a\":1}");
+  string[] bad = [
+                          "", "[", "1 2", "01", "-", "1e", "\"1\"", "true", "null", "[1]",
+                          "{\"a\":1}"
+  ];
   for (i32 i = 0; i < bad.len(); i++) { parseNumberValue(bad[i].toBytes()); seen = seen + 1; }
   return seen;
 }
@@ -209,11 +212,12 @@ i32 numbers() {
 /** Escapes and UTF-8, including the paths that reject. */
 i32 escapes() {
   i32 seen = 0;
-  string[] ss = string[](
+  string[] ss = [
     "\"\\u0041\\n\\t\\r\\b\\f\\/\\\\\\\"\"",
     "\"\\ud83d\\ude00\"", "\"\\ud83d\"", "\"\\udc00\"",
     "\"\\ud83dx\"", "\"\\u00e9\"", "\"café 日本 😀\"",
-    "\"\\uZZZZ\"", "\"\\u12\"", "\"\\q\"", "\"unterminated", "\"a\tb\"");
+    "\"\\uZZZZ\"", "\"\\u12\"", "\"\\q\"", "\"unterminated", "\"a\tb\""
+  ];
   for (i32 i = 0; i < ss.len(); i++) { canonicalize(ss[i].toBytes()); seen = seen + 1; }
   return seen;
 }
@@ -221,16 +225,17 @@ i32 escapes() {
 /** A quoted string around a raw byte sequence: control bytes and malformed UTF-8. */
 i32 rawBytes() {
   i32 seen = 0;
-  u8[][] bodies = u8[][](
-    u8[](0x81), u8[](0xC3), u8[](0xC3, 0x28), u8[](0xC0, 0x80), u8[](0xED, 0xA0, 0x80),
-    u8[](0xF5, 0x80, 0x80, 0x80), u8[](0xF4, 0x90, 0x80, 0x80), u8[](0xE0, 0x80, 0x80),
-    u8[](0xC2, 0x80), u8[](0xEF, 0xBF, 0xBF), u8[](0xF4, 0x8F, 0xBF, 0xBF), u8[](0x01),
+  u8[][] bodies = [
+    [0x81] as u8[], [0xC3] as u8[], [0xC3, 0x28] as u8[], [0xC0, 0x80] as u8[], [0xED, 0xA0, 0x80] as u8[],
+    [0xF5, 0x80, 0x80, 0x80] as u8[], [0xF4, 0x90, 0x80, 0x80] as u8[], [0xE0, 0x80, 0x80] as u8[],
+    [0xC2, 0x80] as u8[], [0xEF, 0xBF, 0xBF] as u8[], [0xF4, 0x8F, 0xBF, 0xBF] as u8[], [0x01] as u8[],
     // A valid lead with a bad *later* continuation byte, which reaches the loop rather than the
     // first range check.
-    u8[](0xE6, 0x97, 0x41), u8[](0xF0, 0x9F, 0x41, 0x80), u8[](0xF0, 0x9F, 0x98, 0x41));
+    [0xE6, 0x97, 0x41] as u8[], [0xF0, 0x9F, 0x41, 0x80] as u8[], [0xF0, 0x9F, 0x98, 0x41] as u8[]
+  ];
   for (i32 i = 0; i < bodies.len(); i++) {
     u8[] b = bodies[i];
-    u8[] quoted = u8[b.len() + 2]();
+    u8[] quoted = u8[].filled(b.len() + 2, 0);
     quoted[0] = 0x22;
     for (i32 k = 0; k < b.len(); k++) { quoted[k + 1] = b[k]; }
     quoted[b.len() + 1] = 0x22;
@@ -238,11 +243,13 @@ i32 rawBytes() {
     seen = seen + 1;
   }
   // Sequences cut off by the end of input, with no closing quote to reject them.
-  u8[][] cut = u8[][](u8[](0xC3), u8[](0xE6), u8[](0xE6, 0x97), u8[](0xF0),
-                      u8[](0xF0, 0x9F, 0x98));
+  u8[][] cut = [
+                      [0xC3] as u8[], [0xE6] as u8[], [0xE6, 0x97] as u8[], [0xF0] as u8[],
+                      [0xF0, 0x9F, 0x98] as u8[]
+  ];
   for (i32 i = 0; i < cut.len(); i++) {
     u8[] b = cut[i];
-    u8[] open = u8[b.len() + 1]();
+    u8[] open = u8[].filled(b.len() + 1, 0);
     open[0] = 0x22;
     for (i32 k = 0; k < b.len(); k++) { open[k + 1] = b[k]; }
     canonicalize(open);
@@ -254,7 +261,7 @@ i32 rawBytes() {
 /** Depth, both inside and past the limit; and containers big enough to grow several times. */
 i32 shapes() {
   i32 seen = 0;
-  i32[] depths = i32[](1, 399, 400, 500);
+  i32[] depths = [1, 399, 400, 500];
   for (i32 i = 0; i < depths.len(); i++) {
     string open = "";
     string close = "";

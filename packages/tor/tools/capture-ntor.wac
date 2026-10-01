@@ -23,7 +23,7 @@ import { hex, pad } from "./capturejson.wac";
 
 /** The same fill `ntor_test.wac` uses, so the keys match the questions it asks. */
 u8[] fill(i32 n, i32 seed) {
-  u8[] o = u8[n]();
+  u8[] o = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { o[i] = (i * 41 + seed * 7 + 11) & 0xFF; }
   return o;
 }
@@ -42,7 +42,7 @@ string torNtor(Cli cli) {
 
 /** tor's relay half: the reply then the keys, both hex, one per line. */
 string server1(Cli cli, string path, string b, string id, string msg, i32 keyLen) {
-  Exec r = cli.exec(path, string[]("server1", b, id, msg, itoa(keyLen)), u8[0]()).wait();
+  Exec r = cli.exec(path, ["server1", b, id, msg, itoa(keyLen)], u8[]()).wait();
   if (r.error != "" || r.status != 0) { return ""; }
   string text = string.fromBytes(r.stdout);
   string joined = "";

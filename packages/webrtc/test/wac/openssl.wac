@@ -70,19 +70,19 @@ const string REAP =
 
 /** Whether the reaper's pattern would match one `ps` line — the discrimination half. */
 export bool wouldReap(Cli cli, string line) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", ARMS + "ours \"$1\"", "sh", line), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", ARMS + "ours \"$1\"", "sh", line], u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
 /** Which pids the reaper would kill — for the test that the pattern is not inert. */
 export string reapSelects(Cli cli) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", REAP + "echo \"$pid\"; done"), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", REAP + "echo \"$pid\"; done"], u8[]()).wait();
   return string.fromBytes(r.stdout);
 }
 
 void reapAbandoned(Cli cli) {
-  cli.exec("/bin/sh", string[]("-c", REAP + "kill \"$pid\" 2>/dev/null; done; true"),
-           u8[0]()).wait();
+  cli.exec("/bin/sh", ["-c", REAP + "kill \"$pid\" 2>/dev/null; done; true"],
+           u8[]()).wait();
 }
 
 /**
@@ -126,9 +126,11 @@ export Dtls startServer(T t, Cli cli, string name) {
  */
 export bool waitForBind(Cli cli, Dtls s, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
-    Exec r = cli.exec("/bin/sh", string[]("-c",
-      "ss -lun 2>/dev/null | grep -q ':" + itoa(s.port) + " ' && exit 0; sleep 0.05; exit 1"),
-      u8[0]()).wait();
+    Exec r = cli.exec("/bin/sh", [
+      "-c",
+      "ss -lun 2>/dev/null | grep -q ':" + itoa(s.port) + " ' && exit 0; sleep 0.05; exit 1"
+    ],
+      u8[]()).wait();
     if (r.ran() && r.status == 0) { return true; }
   }
   return false;
@@ -189,7 +191,7 @@ export string saidUntil(Cli cli, SClient c, string marker, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
     said = c.said(cli);
     if (said.indexOf(marker) >= 0) { return said; }
-    cli.exec("/bin/sh", string[]("-c", "sleep 0.02"), u8[0]()).wait();
+    cli.exec("/bin/sh", ["-c", "sleep 0.02"], u8[]()).wait();
   }
   return said;
 }

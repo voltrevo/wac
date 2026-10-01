@@ -77,7 +77,7 @@ void urlTargets(string text, Vec<string> out) {
 export string test_no_file_reaches_out_of_the_repository_by_counting_dots(Core core, Cli cli) {
   T t = T.create();
   Vec<string> files = Vec.create();
-  string[] roots = string[]("packages", "harness", "tools");
+  string[] roots = ["packages", "harness", "tools"];
   for (i32 i = 0; i < roots.len(); i++) { walk(cli, ".", roots[i], ".ts", files); }
   t.isTrue(files.len() > 50, "only " + itoa(files.len()) + " .ts files found — did the walk resolve?");
 

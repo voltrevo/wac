@@ -51,7 +51,7 @@ struct Ran {
 }
 
 Ran run(Cli cli, string[] args) {
-  Exec r = cli.exec(binary(cli), args, u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), args, u8[]()).wait();
   if (!r.ran()) { return Ran(-1, r.error, false); }
   return Ran(r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr), true);
 }
@@ -81,7 +81,7 @@ export string test_grants_3qm7wv2_build_takes_a_grant_before_the_entry(Core core
   t.isTrue(path != "", "could not write the probe under " + probeDir(cli));
   if (path == "") { return t.report(); }
   string stem = probeDir(cli) + "/p";
-  Ran r = run(cli, string[]("build", "--allow-read", path, "-o", stem, "--quiet"));
+  Ran r = run(cli, ["build", "--allow-read", path, "-o", stem, "--quiet"]);
   t.eqI32(r.status, 0, "build with the grant first: " + r.out);
   // The old failure was about the flag as a *file*: "wacc: cannot read --allow-read".
   t.isTrue(!holds(r.out, "cannot read --allow-read"), "the flag was read as the entry: " + r.out);
@@ -119,7 +119,7 @@ export string test_grants_3qm7wv2_run_refuses_a_grant_after_the_entry(Core core,
   string path = writeProbe(cli);
   t.isTrue(path != "", "could not write the probe");
   if (path == "") { return t.report(); }
-  Ran r = run(cli, string[]("run", path, "--allow-read", "X"));
+  Ran r = run(cli, ["run", path, "--allow-read", "X"]);
   // The silent case: the program ran, without the grant, and answered 7 because its first argument was
   // the flag it had asked to be built with.
   t.eqI32(r.status, 2, "expected a usage refusal: " + r.out);
@@ -135,7 +135,7 @@ export string test_grants_3qm7wv2_after_a_double_dash_the_argument_is_the_progra
   string path = writeProbe(cli);
   t.isTrue(path != "", "could not write the probe");
   if (path == "") { return t.report(); }
-  Ran r = run(cli, string[]("run", path, "--", "--allow-read"));
+  Ran r = run(cli, ["run", path, "--", "--allow-read"]);
   // 7 is the probe saying its first argument is the string — so `--` was consumed and the flag was
   // passed through rather than granted.
   t.eqI32(r.status, 7, "expected the program's own answer, got " + itoa(r.status) + ": " + r.out);

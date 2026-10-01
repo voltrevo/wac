@@ -26,11 +26,11 @@ string crcSource() {
        + "}\n";
 }
 
-string[] paths() { return string[]("crc.wac"); }
-string[] texts() { return string[](crcSource()); }
+string[] paths() { return ["crc.wac"]; }
+string[] texts() { return [crcSource()]; }
 
 Curated[] one(string file, string find, string replace, i32 nth) {
-  return Curated[](Curated(file, find, replace, nth));
+  return [Curated(file, find, replace, nth)];
 }
 
 /**
@@ -123,14 +123,18 @@ export string test_an_edit_inherits_the_entrys_nth() {
 /** Several edits in one entry are located together, and one bad one refuses the whole. */
 export string test_several_edits_are_located_together() {
   T t = T.create();
-  Curated[] both = Curated[](Curated("crc.wac", "i32 crc = 0;", "i32 crc = 9;", 0),
-                             Curated("crc.wac", "i32 crc = 1;", "i32 crc = 8;", 0));
+  Curated[] both = [
+                             Curated("crc.wac", "i32 crc = 0;", "i32 crc = 9;", 0),
+                             Curated("crc.wac", "i32 crc = 1;", "i32 crc = 8;", 0)
+  ];
   Located got = locate("m", both, 0, paths(), texts());
   t.eqStr(got.problem, "", "two unique patterns both place");
   t.eqI32(got.mutant.edits.len(), 2, "and the mutant carries both edits");
 
-  Curated[] mixed = Curated[](Curated("crc.wac", "i32 crc = 0;", "i32 crc = 9;", 0),
-                              Curated("crc.wac", "nowhere", "x", 0));
+  Curated[] mixed = [
+                              Curated("crc.wac", "i32 crc = 0;", "i32 crc = 9;", 0),
+                              Curated("crc.wac", "nowhere", "x", 0)
+  ];
   t.isTrue(locate("m", mixed, 0, paths(), texts()).problem != "",
            "and one edit that cannot be placed refuses the entry rather than applying the rest");
   return t.report();

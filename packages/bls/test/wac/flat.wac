@@ -63,7 +63,7 @@ export void putModulus(u32[] buf, i32 off) {
 }
 
 u32[] modulusA() {
-  u32[] p = u32[N]();
+  u32[] p = u32[].filled(N, 0);
   putModulus(p, 0);
   return p;
 }
@@ -89,7 +89,7 @@ void subModulusAt(u32[] a, i32 off, u32[] p, i32 poff) {
 /** A: allocates result, accumulator and modulus — the shape `src/fp.wac` uses. */
 export u32[] mulA(u32[] a, u32[] b) {
   u32[] p = modulusA();
-  u64[] t = u64[N + 2]();
+  u64[] t = u64[].filled(N + 2, 0);
   for (i32 i = 0; i < N; i++) {
     u64 bi = b[i] as u64;
     u64 carry = 0;
@@ -114,7 +114,7 @@ export u32[] mulA(u32[] a, u32[] b) {
     for (i32 j = 0; j <= N; j++) { t[j] = t[j + 1]; }
     t[N + 1] = 0;
   }
-  u32[] out = u32[N]();
+  u32[] out = u32[].filled(N, 0);
   for (i32 i = 0; i < N; i++) { out[i] = (t[i] & 0xFFFFFFFF) as@ u32; }
   if (t[N] != 0 || geModulus(out, 0, p, 0)) { subModulusAt(out, 0, p, 0); }
   return out;
@@ -147,7 +147,7 @@ export u32[] mulB(u32[] a, u32[] b, u64[] t, u32[] p) {
     for (i32 j = 0; j <= N; j++) { t[j] = t[j + 1]; }
     t[N + 1] = 0;
   }
-  u32[] out = u32[N]();
+  u32[] out = u32[].filled(N, 0);
   for (i32 i = 0; i < N; i++) { out[i] = (t[i] & 0xFFFFFFFF) as@ u32; }
   if (t[N] != 0 || geModulus(out, 0, p, 0)) { subModulusAt(out, 0, p, 0); }
   return out;
@@ -200,7 +200,7 @@ export i32 runA(u32[] seed, i32 n) {
 }
 
 export i32 runB(u32[] seed, i32 n) {
-  u64[] t = u64[N + 2]();
+  u64[] t = u64[].filled(N + 2, 0);
   u32[] p = modulusA();
   u32[] acc = seed;
   for (i32 i = 0; i < n; i++) { acc = mulB(acc, seed, t, p); }
@@ -209,10 +209,10 @@ export i32 runB(u32[] seed, i32 n) {
 
 export i32 runC(u32[] seed, i32 n) {
   // Layout: 0 accumulator, 12 operand, 24 modulus.
-  u32[] buf = u32[36]();
+  u32[] buf = u32[].filled(36, 0);
   for (i32 i = 0; i < N; i++) { buf[i] = seed[i]; buf[N + i] = seed[i]; }
   putModulus(buf, 24);
-  u64[] t = u64[N + 2]();
+  u64[] t = u64[].filled(N + 2, 0);
   for (i32 i = 0; i < n; i++) { mulC(buf, 0, N, 0, 24, t); }
   return buf[0] as@ i32;
 }
@@ -221,7 +221,7 @@ export i32 runC(u32[] seed, i32 n) {
 export u8[] chainA(u32[] seed, i32 n) {
   u32[] acc = seed;
   for (i32 i = 0; i < n; i++) { acc = mulA(acc, seed); }
-  u8[] out = u8[N * 4]();
+  u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
     for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
   }
@@ -229,11 +229,11 @@ export u8[] chainA(u32[] seed, i32 n) {
 }
 
 export u8[] chainB(u32[] seed, i32 n) {
-  u64[] t = u64[N + 2]();
+  u64[] t = u64[].filled(N + 2, 0);
   u32[] p = modulusA();
   u32[] acc = seed;
   for (i32 i = 0; i < n; i++) { acc = mulB(acc, seed, t, p); }
-  u8[] out = u8[N * 4]();
+  u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
     for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
   }
@@ -241,12 +241,12 @@ export u8[] chainB(u32[] seed, i32 n) {
 }
 
 export u8[] chainC(u32[] seed, i32 n) {
-  u32[] buf = u32[36]();
+  u32[] buf = u32[].filled(36, 0);
   for (i32 i = 0; i < N; i++) { buf[i] = seed[i]; buf[N + i] = seed[i]; }
   putModulus(buf, 24);
-  u64[] t = u64[N + 2]();
+  u64[] t = u64[].filled(N + 2, 0);
   for (i32 i = 0; i < n; i++) { mulC(buf, 0, N, 0, 24, t); }
-  u8[] out = u8[N * 4]();
+  u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
     for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((buf[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
   }
@@ -261,7 +261,7 @@ export u8[] chainC(u32[] seed, i32 n) {
 
 export u32[] addA(u32[] a, u32[] b) {
   u32[] p = modulusA();
-  u32[] out = u32[N]();
+  u32[] out = u32[].filled(N, 0);
   u64 carry = 0;
   for (i32 i = 0; i < N; i++) {
     u64 s = (a[i] as u64) + (b[i] as u64) + carry;
@@ -273,7 +273,7 @@ export u32[] addA(u32[] a, u32[] b) {
 }
 
 export u32[] addB(u32[] a, u32[] b, u32[] p) {
-  u32[] out = u32[N]();
+  u32[] out = u32[].filled(N, 0);
   u64 carry = 0;
   for (i32 i = 0; i < N; i++) {
     u64 s = (a[i] as u64) + (b[i] as u64) + carry;
@@ -308,7 +308,7 @@ export i32 runAddB(u32[] seed, i32 n) {
 }
 
 export i32 runAddC(u32[] seed, i32 n) {
-  u32[] buf = u32[36]();
+  u32[] buf = u32[].filled(36, 0);
   for (i32 i = 0; i < N; i++) { buf[i] = seed[i]; buf[N + i] = seed[i]; }
   putModulus(buf, 24);
   for (i32 i = 0; i < n; i++) { addC(buf, 0, N, 0, 24); }
@@ -319,7 +319,7 @@ export i32 runAddC(u32[] seed, i32 n) {
 export u8[] chainAddA(u32[] seed, i32 n) {
   u32[] acc = seed;
   for (i32 i = 0; i < n; i++) { acc = addA(acc, seed); }
-  u8[] out = u8[N * 4]();
+  u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
     for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
   }
@@ -327,11 +327,11 @@ export u8[] chainAddA(u32[] seed, i32 n) {
 }
 
 export u8[] chainAddC(u32[] seed, i32 n) {
-  u32[] buf = u32[36]();
+  u32[] buf = u32[].filled(36, 0);
   for (i32 i = 0; i < N; i++) { buf[i] = seed[i]; buf[N + i] = seed[i]; }
   putModulus(buf, 24);
   for (i32 i = 0; i < n; i++) { addC(buf, 0, N, 0, 24); }
-  u8[] out = u8[N * 4]();
+  u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
     for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((buf[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
   }

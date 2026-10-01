@@ -45,7 +45,7 @@ export u8[][] programArgs(Cli cli, i32 argc, string entry) {
   if (from < argc && string.fromBytes(cli.arg(from).wait()) == "--") { from = from + 1; }
   i32 n = argc - from;
   if (n < 0) { n = 0; }
-  u8[][] out = u8[][n](fill: u8[0]());
+  u8[][] out = u8[][].filled(n, u8[]());
   for (i32 i = 0; i < n; i++) { out[i] = cli.arg(from + i).wait(); }
   return out;
 }
@@ -169,7 +169,7 @@ export i32 runModule(Core core, Cli cli, i32 argc, string path) {
     core.warn("wac: cannot read " + path + " — " + (words == "" ? f.error : words));
     return 1;
   }
-  u8[][] args = u8[][argc - 1 < 0 ? 0 : argc - 1](fill: u8[0]());
+  u8[][] args = u8[][].filled(argc - 1 < 0 ? 0 : argc - 1, u8[]());
   for (i32 i = 1; i < argc; i++) { args[i - 1] = cli.arg(i).wait(); }
   return runBytes(core, cli, f.bytes, args, path);
 }

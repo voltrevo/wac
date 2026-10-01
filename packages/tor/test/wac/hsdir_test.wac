@@ -132,7 +132,7 @@ export string test_we_choose_the_directories_tor_chose(Core core, Cli cli) {
     i64 tp = caseTimePeriod(cli, c);
     i64 plen = casePeriodLength(cli, c);
 
-    u8[][] indices = u8[][nr]();
+    u8[][] indices = u8[][].defaulted(nr);
     for (i32 i = 0; i < nr; i++) {
       indices[i] = hsRelayIndex(candidateEd(cli, i), srv, tp, plen);
     }
@@ -193,8 +193,8 @@ export string test_the_trailing_field_order_differs_between_the_two_indices(Core
   // Every other input must move the index too.
   t.isFalse(equal(service, hsServiceIndex(blinded, 2, plen, tp)), "the replica number matters");
   t.isFalse(equal(relay, hsRelayIndex(ed, disasterSrv(plen, tp), tp, plen)), "the SRV matters");
-  t.eqI32(hsServiceIndex(u8[31](), 1, plen, tp).len(), 0, "a short blinded key is refused");
-  t.eqI32(hsRelayIndex(u8[31](), srv, tp, plen).len(), 0, "a short identity is refused");
+  t.eqI32(hsServiceIndex(u8[].filled(31, 0), 1, plen, tp).len(), 0, "a short blinded key is refused");
+  t.eqI32(hsRelayIndex(u8[].filled(31, 0), srv, tp, plen).len(), 0, "a short identity is refused");
   return t.report();
 }
 
@@ -203,14 +203,14 @@ export string test_the_ring_wraps(Core core, Cli cli) {
   // end. Constructed rather than found: with a handful of relays the natural case may not occur, and
   // an off-by-one at the wrap is exactly the bug that leaves a client asking nobody.
   T t = T.create();
-  u8[][] indices = u8[][4]();
+  u8[][] indices = u8[][].defaulted(4);
   for (i32 i = 0; i < 4; i++) {
-    u8[] idx = u8[32]();
+    u8[] idx = u8[].filled(32, 0);
     idx[0] = (0x10 + i * 0x10);
     indices[i] = idx;
   }
   // A blinded key is only a hash input here, so any 32 bytes do; what is being tested is the walk.
-  u8[] blinded = u8[32]();
+  u8[] blinded = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { blinded[i] = (i * 7 + 3) & 0xFF; }
 
   i32[] one = responsibleHsdirs(blinded, indices, 1, 4, 8, 100);
@@ -242,7 +242,7 @@ export string test_the_ring_wraps(Core core, Cli cli) {
   i32 sawWrap = 0;
   i32 sawInside = 0;
   for (i32 k = 0; k < 24; k++) {
-    u8[] key = u8[32]();
+    u8[] key = u8[].filled(32, 0);
     for (i32 i = 0; i < 32; i++) { key[i] = (i * 11 + k * 37 + 1) & 0xFF; }
     u8[] tgt = hsServiceIndex(key, 1, 8, 100);
     bool above = compareIndex(tgt, indices[3]) > 0;
@@ -270,7 +270,7 @@ export string test_the_ring_wraps(Core core, Cli cli) {
   for (i32 i = 0; i < two.len(); i++) { seen2 = seen2 | bit(two[i]); }
   t.eqI32(seen2, 15, "and they are four different relays");
 
-  t.eqI32(responsibleHsdirs(blinded, u8[][0](), 2, 4, 8, 100).len(), 0, "no candidates, no choice");
+  t.eqI32(responsibleHsdirs(blinded, u8[][](), 2, 4, 8, 100).len(), 0, "no candidates, no choice");
   t.eqI32(responsibleHsdirs(blinded, indices, 0, 4, 8, 100).len(), 0, "zero replicas is refused");
   t.eqI32(responsibleHsdirs(blinded, indices, 2, 0, 8, 100).len(), 0, "zero spread is refused");
   return t.report();
@@ -281,21 +281,21 @@ export string test_index_comparison_is_unsigned(Core core, Cli cli) {
   // every index with the high bit set would sort below every index without one — half the ring
   // inverted, which still produces a plausible-looking set of directories.
   T t = T.create();
-  u8[] low = u8[32]();
-  u8[] high = u8[32]();
+  u8[] low = u8[].filled(32, 0);
+  u8[] high = u8[].filled(32, 0);
   high[0] = 0x80;
   t.eqI32(compareIndex(low, high), -1, "0x00... is below 0x80...");
   t.eqI32(compareIndex(high, low), 1, "and 0x80... is above it");
   t.eqI32(compareIndex(high, high), 0, "equal indices compare equal");
 
-  u8[] ff = u8[32]();
+  u8[] ff = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { ff[i] = 0xFF; }
   t.eqI32(compareIndex(ff, high), 1, "0xFF... is the top of the ring");
   t.eqI32(compareIndex(low, ff), -1, "and 0x00... the bottom");
 
   // The difference must be found at the first differing byte, not the last.
-  u8[] a = u8[32]();
-  u8[] b = u8[32]();
+  u8[] a = u8[].filled(32, 0);
+  u8[] b = u8[].filled(32, 0);
   a[0] = 1;
   b[31] = 1;
   t.eqI32(compareIndex(a, b), 1, "the most significant byte decides");
@@ -384,7 +384,7 @@ export string test_the_descriptor_path_is_the_one_an_hsdir_answers(Core core, Cl
     if (pb[i] == 61) { pad = pad + 1; }
   }
   t.eqI32(pad, 0, "the base64 is unpadded — tor's cache is keyed on the unpadded form");
-  t.eqI32(descriptorPath(u8[31]()).len(), 0, "a short key has no path");
+  t.eqI32(descriptorPath(u8[].filled(31, 0)).len(), 0, "a short key has no path");
   return t.report();
 }
 
@@ -397,18 +397,18 @@ export string test_only_flagged_relays_with_an_identity_are_candidates(Core core
   // after it — so the client would ask a set of directories that overlaps tor's by chance and
   // usually fails.
   T t = T.create();
-  u8[] ed = u8[32]();
+  u8[] ed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { ed[i] = (i * 3 + 1) & 0xFF; }
 
-  string[] withFlag = string[]("Fast", "HSDir", "Running");
-  string[] without = string[]("Fast", "Running");
-  Relay[] relays = Relay[4]();
-  relays[0] = Relay("a", u8[20](), "127.0.0.1", 9001, withFlag, "", 0, u8[0](), ed, null, string[0]());
-  relays[1] = Relay("b", u8[20](), "127.0.0.1", 9002, without, "", 0, u8[0](), ed, null, string[0]());
+  string[] withFlag = ["Fast", "HSDir", "Running"];
+  string[] without = ["Fast", "Running"];
+  Relay[] relays = Relay[].defaulted(4);
+  relays[0] = Relay("a", u8[].filled(20, 0), "127.0.0.1", 9001, withFlag, "", 0, u8[](), ed, null, string[]());
+  relays[1] = Relay("b", u8[].filled(20, 0), "127.0.0.1", 9002, without, "", 0, u8[](), ed, null, string[]());
   // Flagged, but no microdescriptor attached yet, so it has no ed25519 identity and cannot be placed.
-  relays[2] = Relay("c", u8[20](), "127.0.0.1", 9003, withFlag, "", 0, u8[0](), u8[0](), null,
-                    string[0]());
-  relays[3] = Relay("d", u8[20](), "127.0.0.1", 9004, withFlag, "", 0, u8[0](), ed, null, string[0]());
+  relays[2] = Relay("c", u8[].filled(20, 0), "127.0.0.1", 9003, withFlag, "", 0, u8[](), u8[](), null,
+                    string[]());
+  relays[3] = Relay("d", u8[].filled(20, 0), "127.0.0.1", 9004, withFlag, "", 0, u8[](), ed, null, string[]());
 
   i32[] candidates = hsdirCandidates(relays);
   t.eqI32(candidates.len(), 2, "only the flagged relays that can be placed are candidates");
@@ -416,7 +416,7 @@ export string test_only_flagged_relays_with_an_identity_are_candidates(Core core
   t.eqI32(candidates[1], 3, "and the second is relay d, skipping b and c");
 
   // A relay with a short identity — a truncated `id ed25519` line — is not a candidate either.
-  relays[2].ed25519Identity = u8[31]();
+  relays[2].ed25519Identity = u8[].filled(31, 0);
   t.eqI32(hsdirCandidates(relays).len(), 2, "a 31-byte identity is still not placeable");
   return t.report();
 }
@@ -525,7 +525,7 @@ export string test_the_plan_reaches_the_directories_tor_used(Core core, Cli cli)
 
   // The blinded keys are the service's, one per store period, and they are index-matched to the
   // vector's two cases — case 0 is the earlier period, case 1 the later.
-  u8[][] blinded = u8[][2]();
+  u8[][] blinded = u8[][].defaulted(2);
   for (i32 i = 0; i < 2; i++) { blinded[i] = caseBlinded(cli, i); }
 
   Publication[] plan = servicePlan(consensus, relays, blinded, true, 0);
@@ -577,7 +577,7 @@ export string test_a_consensus_with_no_srv_falls_back(Core core, Cli cli) {
   u8[] consensus = consensusDocument(cli);
   Relay[] relays = parseConsensus(consensus);
   attachMicrodescriptors(relays, microdescriptors(cli));
-  u8[][] blinded = u8[][2]();
+  u8[][] blinded = u8[][].defaulted(2);
   for (i32 i = 0; i < 2; i++) { blinded[i] = caseBlinded(cli, i); }
 
   // The same timings, with both shared-rand lines gone.

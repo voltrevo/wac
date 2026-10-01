@@ -72,16 +72,16 @@ export string test_the_filter_goes_before_the_entry_and_is_omitted_when_absent()
  */
 export string test_which_scopes_the_binary_runs() {
   T t = T.create();
-  string[] hostless = string[]("fs", "rlp");
-  string[] runnable = string[]("packages/wacc/test/wac");
+  string[] hostless = ["fs", "rlp"];
+  string[] runnable = ["packages/wacc/test/wac"];
 
-  t.isTrue(isWacRun(string[]("packages/fs/test/wac"), hostless, runnable),
+  t.isTrue(isWacRun(["packages/fs/test/wac"], hostless, runnable),
            "a package with no TypeScript test at all, which is the original rule");
-  t.isTrue(isWacRun(string[]("packages/wacc/test/wac"), hostless, runnable),
+  t.isTrue(isWacRun(["packages/wacc/test/wac"], hostless, runnable),
            "and a directory the profile proved runnable, though its package does not qualify");
-  t.isTrue(!isWacRun(string[]("packages/fs/test/wac", "packages/box/test/wac"), hostless, runnable),
+  t.isTrue(!isWacRun(["packages/fs/test/wac", "packages/box/test/wac"], hostless, runnable),
            "one unproven directory sends the whole run to Deno");
-  t.isTrue(!isWacRun(string[0](fill: ""), hostless, runnable),
+  t.isTrue(!isWacRun(string[].filled(0, ""), hostless, runnable),
            "and an empty scope is not a native run — there is nothing to select from");
   return t.report();
 }
@@ -95,21 +95,21 @@ export string test_which_scopes_the_binary_runs() {
  */
 export string test_a_mixed_scope_splits_and_a_uniform_one_does_not() {
   T t = T.create();
-  string[] hostless = string[]("fs");
-  string[] runnable = string[0](fill: "");
+  string[] hostless = ["fs"];
+  string[] runnable = string[].filled(0, "");
 
-  t.eqStr(shape(splitHalves(string[]("packages/fs/test/wac", "packages/fs/test/other"),
+  t.eqStr(shape(splitHalves(["packages/fs/test/wac", "packages/fs/test/other"],
                             hostless, runnable)),
           "packages/fs/test/wac packages/fs/test/other",
           "a uniform wac scope is one run, not two");
-  t.eqStr(shape(splitHalves(string[]("packages/box/test/wac"), hostless, runnable)),
+  t.eqStr(shape(splitHalves(["packages/box/test/wac"], hostless, runnable)),
           "packages/box/test/wac",
           "and a uniform Deno scope is one run, not two");
-  t.eqStr(shape(splitHalves(string[]("packages/box/test/wac", "packages/fs/test/wac"),
+  t.eqStr(shape(splitHalves(["packages/box/test/wac", "packages/fs/test/wac"],
                             hostless, runnable)),
           "packages/fs/test/wac | packages/box/test/wac",
           "a mixed scope splits, wac half first, whatever order it arrived in");
-  t.eqI32(splitHalves(string[0](fill: ""), hostless, runnable).len(), 1,
+  t.eqI32(splitHalves(string[].filled(0, ""), hostless, runnable).len(), 1,
           "an empty scope stays one run");
   return t.report();
 }
@@ -123,21 +123,21 @@ export string test_a_mixed_scope_splits_and_a_uniform_one_does_not() {
  */
 export string test_the_merge_prefers_a_kill_then_an_abort() {
   T t = T.create();
-  t.eqStr(mergeRuns(Verdict[](Verdict.Killed, Verdict.Survived)).word(), "killed",
+  t.eqStr(mergeRuns([Verdict.Killed, Verdict.Survived]).word(), "killed",
           "a kill in either half is a kill");
-  t.eqStr(mergeRuns(Verdict[](Verdict.Survived, Verdict.Killed)).word(), "killed",
+  t.eqStr(mergeRuns([Verdict.Survived, Verdict.Killed]).word(), "killed",
           "whichever half caught it");
-  t.eqStr(mergeRuns(Verdict[](Verdict.Killed, Verdict.Abort("nothing ran"))).word(), "killed",
+  t.eqStr(mergeRuns([Verdict.Killed, Verdict.Abort("nothing ran")]).word(), "killed",
           "and a half that could not run does not make the catch less true");
-  t.eqStr(mergeRuns(Verdict[](Verdict.Survived, Verdict.Abort("nothing ran"))).word(), "abort",
+  t.eqStr(mergeRuns([Verdict.Survived, Verdict.Abort("nothing ran")]).word(), "abort",
           "an abort beside a survival is an abort, not a survival");
-  t.eqStr(mergeRuns(Verdict[](Verdict.NoTestsHere, Verdict.Survived)).word(), "survived",
+  t.eqStr(mergeRuns([Verdict.NoTestsHere, Verdict.Survived]).word(), "survived",
           "`no-tests-here` defers to the half that ran");
-  t.eqStr(mergeRuns(Verdict[](Verdict.NoTestsHere, Verdict.NoTestsHere)).word(), "no-tests-here",
+  t.eqStr(mergeRuns([Verdict.NoTestsHere, Verdict.NoTestsHere]).word(), "no-tests-here",
           "and two absences are still an absence");
-  t.eqStr(mergeRuns(Verdict[](Verdict.Survived, Verdict.Survived)).word(), "survived",
+  t.eqStr(mergeRuns([Verdict.Survived, Verdict.Survived]).word(), "survived",
           "both halves surviving is the only way to survive");
-  t.eqStr(mergeRuns(Verdict[0](fill: Verdict.NoTestsHere)).word(), "no-tests-here",
+  t.eqStr(mergeRuns(Verdict[].filled(0, Verdict.NoTestsHere)).word(), "no-tests-here",
           "and no halves at all is an absence rather than a pass");
   return t.report();
 }
@@ -159,10 +159,10 @@ export string test_a_spawning_test_file_drops_the_scope_to_one_job() {
            "but a longer identifier that merely contains one is not a match");
   t.isTrue(!spawnsProcesses("nothing here spawns"), "and a file that names none does not");
 
-  t.eqI32(jobsFor(string[]("plain", "also plain"), 0, 4), 4, "no spawner keeps the default");
-  t.eqI32(jobsFor(string[]("plain", "uses buildApp"), 0, 4), 1, "one spawner drops the scope to one");
-  t.eqI32(jobsFor(string[]("uses buildApp"), 3, 4), 3, "and an explicit --jobs wins, because it was asked for");
-  t.eqI32(jobsFor(string[]("", "plain"), 0, 4), 4,
+  t.eqI32(jobsFor(["plain", "also plain"], 0, 4), 4, "no spawner keeps the default");
+  t.eqI32(jobsFor(["plain", "uses buildApp"], 0, 4), 1, "one spawner drops the scope to one");
+  t.eqI32(jobsFor(["uses buildApp"], 3, 4), 3, "and an explicit --jobs wins, because it was asked for");
+  t.eqI32(jobsFor(["", "plain"], 0, 4), 4,
           "an unreadable file is not evidence, and the others still decide");
   return t.report();
 }
@@ -176,7 +176,7 @@ export string test_a_spawning_test_file_drops_the_scope_to_one_job() {
  */
 export string test_a_timeout_is_a_kill() {
   T t = T.create();
-  Outcome o = outcomeOf(true, Verdict[0](fill: Verdict.NoTestsHere), false);
+  Outcome o = outcomeOf(true, Verdict[].filled(0, Verdict.NoTestsHere), false);
   t.isTrue(o.killed, "a mutation that stops the program terminating was caught");
   t.eqStr(o.noVerdict, "", "and it is a verdict, not an absence of one");
   return t.report();
@@ -193,11 +193,11 @@ export string test_a_timeout_is_a_kill() {
  */
 export string test_a_killed_mutant_is_never_reported_as_uncovered() {
   T t = T.create();
-  Outcome survived = outcomeOf(false, Verdict[](Verdict.Survived), true);
+  Outcome survived = outcomeOf(false, [Verdict.Survived], true);
   t.isTrue(!survived.killed, "it survived");
   t.isTrue(survived.notCovered, "and the profile's claim stands: nothing executes that line");
 
-  Outcome killed = outcomeOf(false, Verdict[](Verdict.Killed), true);
+  Outcome killed = outcomeOf(false, [Verdict.Killed], true);
   t.isTrue(killed.killed, "it died");
   t.isTrue(!killed.notCovered,
            "so it was reachable after all, and the coverage claim is dropped rather than printed "
@@ -208,15 +208,15 @@ export string test_a_killed_mutant_is_never_reported_as_uncovered() {
 /** An abort and an absence are both "no verdict", and each says which. */
 export string test_a_run_that_answered_neither_has_no_verdict() {
   T t = T.create();
-  Outcome abort = outcomeOf(false, Verdict[](Verdict.Abort("nothing matched the filter")), false);
+  Outcome abort = outcomeOf(false, [Verdict.Abort("nothing matched the filter")], false);
   t.isTrue(!abort.killed, "an abort is not a kill");
   t.eqStr(abort.noVerdict, "nothing matched the filter", "and it carries the reason it was given");
 
-  Outcome absent = outcomeOf(false, Verdict[](Verdict.NoTestsHere), false);
+  Outcome absent = outcomeOf(false, [Verdict.NoTestsHere], false);
   t.isTrue(!absent.killed, "and neither is an absence");
   t.eqStr(absent.noVerdict, "nothing in that scope ran", "which says which of the two it was");
 
-  Outcome plain = outcomeOf(false, Verdict[](Verdict.Survived), false);
+  Outcome plain = outcomeOf(false, [Verdict.Survived], false);
   t.eqStr(plain.noVerdict, "", "a survival is a verdict and says nothing extra");
   return t.report();
 }
@@ -224,9 +224,9 @@ export string test_a_run_that_answered_neither_has_no_verdict() {
 /** Both halves feed one outcome, through the merge whose order is its content. */
 export string test_a_mixed_scope_is_one_outcome() {
   T t = T.create();
-  t.isTrue(outcomeOf(false, Verdict[](Verdict.Survived, Verdict.Killed), false).killed,
+  t.isTrue(outcomeOf(false, [Verdict.Survived, Verdict.Killed], false).killed,
            "a kill in either half is a kill");
-  Outcome mixed = outcomeOf(false, Verdict[](Verdict.Survived, Verdict.Abort("half did not run")),
+  Outcome mixed = outcomeOf(false, [Verdict.Survived, Verdict.Abort("half did not run")],
                             false);
   t.isTrue(!mixed.killed, "an abort beside a survival is not a kill");
   t.eqStr(mixed.noVerdict, "half did not run",

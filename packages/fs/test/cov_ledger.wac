@@ -67,8 +67,8 @@ const string PREFIX = "packages/fs/src/";
 
 /** Points that cannot be reached from a probe, each named on its own line. */
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/fs/src/fs.wac", 215, "Fs onHost(Cli cli, i64 now) {", false,
+  return [
+        Pin("packages/fs/src/fs.wac", 215, "Fs onHost(Cli cli, i64 now) {", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
@@ -266,12 +266,13 @@ Pin[] pins() {
         "after `/proc` is never empty — `/proc//cmdline` and `/proc/` are both driven by " +
         "`procOps` and both arrive here as something else. The guard is against a future " +
         "caller that does not normalise first."),
-    Pin("packages/fs/src/fs.wac", 1378, "if (found is null) { return u8[0](); }", false,
+    Pin("packages/fs/src/fs.wac", 1378, "if (found is null) { return u8[](); }", false,
         "`procBytes` for a pid with no process. `synthKind` calls `procPid`, which answers -1 " +
         "for a pid that is not in the table, and a path whose kind is `SYNTH_NONE` never gets " +
         "as far as reading bytes — so `/proc/9999/cmdline` (driven, in `procOps`) is " +
         "refused a step earlier. This is the `Proc?` unwrap the type system requires and it " +
-        "has no second answer to give."));
+        "has no second answer to give.")
+  ];
 }
 
 /**
@@ -282,8 +283,8 @@ Pin[] pins() {
  * real filesystem, and a probe can build the filesystems that need neither and no more.
  */
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/fs/src/fs.wac", "Host(cli)", "line", false,
+  return [
+         Rule("packages/fs/src/fs.wac", "Host(cli)", "line", false,
          "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
          "is driven by `test/host.test.ts` and " +
          "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
@@ -349,14 +350,15 @@ Rule[] rules() {
          "The child's half of the channel: every one of these writes a question and waits for " +
          "its parent's answer. The *wire* underneath them is covered — `fs_test.wac` " +
          "round-trips all four encode/decode pairs — and the asking needs a real peer, " +
-         "which is `packages/box/test/sealing.test.ts`."));
+         "which is `packages/box/test/sealing.test.ts`.")
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No grants: every filesystem the probe builds needs no capability, which is what makes it a probe.
-  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, string[].filled(0, ""), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

@@ -61,12 +61,12 @@ const string PREFIX = "packages/http/";
 
 /** What the tests need: a process to ask `node`, and the environment to find it in. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/http/src/request.wac", 66, "if (hi <= lo) { return false; }", true,
+  return [
+        Pin("packages/http/src/request.wac", 66, "if (hi <= lo) { return false; }", true,
         "**An empty target is refused fourteen lines before this can see one.** `isValidTarget` has " +
         "one caller, at `:123`, and `:112` — `if (sp2 == sp1 + 1) { return Parsed.Bad(ERR_TARGET()); }` " +
         "— is the same condition said about the same two indices. So `hi <= lo` cannot hold here.\n" +
@@ -75,12 +75,12 @@ Pin[] pins() {
         "handed an empty range*. `GET  HTTP/1.1` is refused as `ERR_TARGET` rather than `ERR_LINE`, " +
         "which is the more specific code and is what `test_the_shapes_a_node_generated_corpus_does_" +
         "not_contain` pins — I expected `ERR_LINE` and the code was right.")
-  );
+  ];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/http/src/proxy.wac", "replyCap", "decl", false,
+  return [
+         Rule("packages/http/src/proxy.wac", "replyCap", "decl", false,
          "**How much of a reply to read before giving up, which only the socket path asks.** One " +
          "line, one caller, and that caller is `connectThrough` below — so this is uncovered for " +
          "exactly the reason the rule under it gives, and is listed separately only because a rule " +
@@ -101,14 +101,14 @@ Rule[] rules() {
          "         `readReply`, `parseProxy` and `connectRequest` — the pure functions this splits " +
          "the work into so that most of it needs no socket — are fully covered by " +
          "`proxy_test.wac`'s eight, which is the argument for having split them.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No trap cases: none of the 38 tests wired into the exercise expects a trap.
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

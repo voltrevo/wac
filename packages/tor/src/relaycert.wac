@@ -77,7 +77,7 @@ export const i32 KEY_TYPE_SHA256_X509 = 3;
 export const i32 EXT_SIGNED_WITH_KEY = 4;
 
 u8[] be32(i64 v) {
-  u8[] b = u8[4]();
+  u8[] b = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) {
     b[i] = ((v >> (((3 - i) * 8) as@ u32)) & 0xFF) as~ i32;
   }
@@ -104,10 +104,10 @@ export u8[] ed25519Cert(
   i32 certType, i64 expirationHours, i32 certKeyType, u8[] certifiedKey,
   u8[] signingKey, u8[] signingSecret
 ) {
-  if (signingKey.len() != 32 || signingSecret.len() != 32) { return u8[0](); }
+  if (signingKey.len() != 32 || signingSecret.len() != 32) { return u8[](); }
   u8[] body =
     ed25519CertBody(certType, expirationHours, certKeyType, certifiedKey, signingKey, true);
-  if (body.len() == 0) { return u8[0](); }
+  if (body.len() == 0) { return u8[](); }
   return withSignature(body, ed25519Sign(signingSecret, body));
 }
 
@@ -128,13 +128,13 @@ export u8[] ed25519CertBody(
   i32 certType, i64 expirationHours, i32 certKeyType, u8[] certifiedKey,
   u8[] signingKey, bool includeSigningKey
 ) {
-  if (certifiedKey.len() != 32) { return u8[0](); }
-  if (includeSigningKey && signingKey.len() != 32) { return u8[0](); }
-  if (expirationHours < 0 || expirationHours > 4294967295) { return u8[0](); }
+  if (certifiedKey.len() != 32) { return u8[](); }
+  if (includeSigningKey && signingKey.len() != 32) { return u8[](); }
+  if (expirationHours < 0 || expirationHours > 4294967295) { return u8[](); }
 
   i32 fixed = 1 + 1 + 4 + 1 + 32 + 1;
   i32 bodyLen = includeSigningKey ? fixed + 4 + 32 : fixed;
-  u8[] body = u8[bodyLen]();
+  u8[] body = u8[].filled(bodyLen, 0);
   body[0] = 1;
   body[1] = certType;
   u8[] exp = be32(expirationHours);
@@ -163,10 +163,10 @@ export u8[] ed25519CertBody(
 export u8[] ed25519CertExpanded(
   i32 certType, i64 expirationHours, i32 certKeyType, u8[] certifiedKey, u8[] signingExpanded
 ) {
-  if (signingExpanded.len() != 64) { return u8[0](); }
+  if (signingExpanded.len() != 64) { return u8[](); }
   u8[] body =
-    ed25519CertBody(certType, expirationHours, certKeyType, certifiedKey, u8[0](), false);
-  if (body.len() == 0) { return u8[0](); }
+    ed25519CertBody(certType, expirationHours, certKeyType, certifiedKey, u8[](), false);
+  if (body.len() == 0) { return u8[](); }
   return withSignature(body, ed25519SignExpanded(signingExpanded, body));
 }
 
@@ -188,10 +188,10 @@ export u8[] ed25519CertExpandedWithKey(
   i32 certType, i64 expirationHours, i32 certKeyType, u8[] certifiedKey, u8[] signingKey,
   u8[] signingExpanded
 ) {
-  if (signingExpanded.len() != 64 || signingKey.len() != 32) { return u8[0](); }
+  if (signingExpanded.len() != 64 || signingKey.len() != 32) { return u8[](); }
   u8[] body =
     ed25519CertBody(certType, expirationHours, certKeyType, certifiedKey, signingKey, true);
-  if (body.len() == 0) { return u8[0](); }
+  if (body.len() == 0) { return u8[](); }
   return withSignature(body, ed25519SignExpanded(signingExpanded, body));
 }
 
@@ -211,8 +211,8 @@ export u8[] ed25519CertExpandedWithKey(
 export u8[] onionKeyCrosscert(
   u8[] rsaIdentityDigest, u8[] ed25519Identity, u8[] onionModulus, u8[] onionPrivate
 ) {
-  if (rsaIdentityDigest.len() != 20 || ed25519Identity.len() != 32) { return u8[0](); }
-  u8[] payload = u8[52]();
+  if (rsaIdentityDigest.len() != 20 || ed25519Identity.len() != 32) { return u8[](); }
+  u8[] payload = u8[].filled(52, 0);
   for (i32 i = 0; i < 20; i++) { payload[i] = rsaIdentityDigest[i]; }
   for (i32 i = 0; i < 32; i++) { payload[20 + i] = ed25519Identity[i]; }
   return rsaSignRawPkcs1(onionModulus, onionPrivate, payload);
@@ -225,8 +225,8 @@ export u8[] onionKeyCrosscert(
  * except the signature, and with no personalisation prefix, despite §1.1's general rule.
  */
 u8[] withSignature(u8[] body, u8[] sig) {
-  if (sig.len() != 64) { return u8[0](); }
-  u8[] cert = u8[body.len() + 64]();
+  if (sig.len() != 64) { return u8[](); }
+  u8[] cert = u8[].filled(body.len() + 64, 0);
   for (i32 i = 0; i < body.len(); i++) { cert[i] = body[i]; }
   for (i32 i = 0; i < 64; i++) { cert[body.len() + i] = sig[i]; }
   return cert;
@@ -245,9 +245,9 @@ export bool verifyEd25519Cert(u8[] cert, u8[] signingKey) {
   if (cert.len() < 104 || signingKey.len() != 32) { return false; }
   if (cert[0] != 1) { return false; }
   i32 bodyLen = cert.len() - 64;
-  u8[] body = u8[bodyLen]();
+  u8[] body = u8[].filled(bodyLen, 0);
   for (i32 i = 0; i < bodyLen; i++) { body[i] = cert[i]; }
-  u8[] sig = u8[64]();
+  u8[] sig = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { sig[i] = cert[bodyLen + i]; }
   return ed25519Verify(signingKey, body, sig);
 }
@@ -269,21 +269,21 @@ u8[] crossCertPrefix() { return "Tor TLS RSA/Ed25519 cross-certificate".toBytes(
  * empty result rather than a truncated length.
  */
 export u8[] rsaCrossCert(u8[] ed25519Identity, i64 expirationHours, u8[] rsaModulus, u8[] rsaPrivate) {
-  if (ed25519Identity.len() != 32) { return u8[0](); }
-  if (expirationHours < 0 || expirationHours > 4294967295) { return u8[0](); }
-  if (rsaModulus.len() == 0 || rsaModulus.len() > 255) { return u8[0](); }
+  if (ed25519Identity.len() != 32) { return u8[](); }
+  if (expirationHours < 0 || expirationHours > 4294967295) { return u8[](); }
+  if (rsaModulus.len() == 0 || rsaModulus.len() > 255) { return u8[](); }
 
   u8[] prefix = crossCertPrefix();
-  u8[] signed = u8[prefix.len() + 36]();
+  u8[] signed = u8[].filled(prefix.len() + 36, 0);
   for (i32 i = 0; i < prefix.len(); i++) { signed[i] = prefix[i]; }
   for (i32 i = 0; i < 32; i++) { signed[prefix.len() + i] = ed25519Identity[i]; }
   u8[] exp = be32(expirationHours);
   for (i32 i = 0; i < 4; i++) { signed[prefix.len() + 32 + i] = exp[i]; }
 
   u8[] sig = rsaSignRawPkcs1(rsaModulus, rsaPrivate, sha256(signed));
-  if (sig.len() == 0 || sig.len() > 255) { return u8[0](); }
+  if (sig.len() == 0 || sig.len() > 255) { return u8[](); }
 
-  u8[] cert = u8[32 + 4 + 1 + sig.len()]();
+  u8[] cert = u8[].filled(32 + 4 + 1 + sig.len(), 0);
   for (i32 i = 0; i < 32; i++) { cert[i] = ed25519Identity[i]; }
   for (i32 i = 0; i < 4; i++) { cert[32 + i] = exp[i]; }
   cert[36] = sig.len();
@@ -304,16 +304,16 @@ export u8[] linkCertDigest(u8[] tlsCertDer) { return sha256(tlsCertDer); }
  * sent and rejected by the far end.
  */
 export u8[] certsCell(i32[] types, u8[][] certs) {
-  if (types.len() != certs.len() || types.len() == 0 || types.len() > 255) { return u8[0](); }
+  if (types.len() != certs.len() || types.len() == 0 || types.len() > 255) { return u8[](); }
   for (i32 i = 0; i < types.len(); i++) {
-    if (certs[i].len() == 0 || certs[i].len() > 65535) { return u8[0](); }
+    if (certs[i].len() == 0 || certs[i].len() > 65535) { return u8[](); }
     for (i32 j = i + 1; j < types.len(); j++) {
-      if (types[i] == types[j]) { return u8[0](); }
+      if (types[i] == types[j]) { return u8[](); }
     }
   }
   i32 n = 1;
   for (i32 i = 0; i < certs.len(); i++) { n = n + 3 + certs[i].len(); }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   out[0] = types.len();
   i32 at = 1;
   for (i32 i = 0; i < certs.len(); i++) {
@@ -328,20 +328,20 @@ export u8[] certsCell(i32[] types, u8[][] certs) {
 
 /** The certificate of type `want` in a CERTS cell body, or empty. */
 export u8[] certOfType(u8[] cell, i32 want) {
-  if (cell.len() < 1) { return u8[0](); }
+  if (cell.len() < 1) { return u8[](); }
   i32 n = cell[0];
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
-    if (at + 3 > cell.len()) { return u8[0](); }
+    if (at + 3 > cell.len()) { return u8[](); }
     i32 type = cell[at];
     i32 length = (cell[at + 1] * 256) + cell[at + 2];
-    if (at + 3 + length > cell.len()) { return u8[0](); }
+    if (at + 3 + length > cell.len()) { return u8[](); }
     if (type == want) {
-      u8[] out = u8[length]();
+      u8[] out = u8[].filled(length, 0);
       for (i32 j = 0; j < length; j++) { out[j] = cell[at + 3 + j]; }
       return out;
     }
     at = at + 3 + length;
   }
-  return u8[0]();
+  return u8[]();
 }

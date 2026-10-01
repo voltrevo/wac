@@ -376,8 +376,8 @@ the engine accepted, and that was wrong.
 - **String escapes were not resolved.** `"\n"` was a backslash and an n, so wacc's linker put a
   backslash between two files, and the module built from the joined text was empty. That reached me
   as *"emitFiles answers a bare module while emit works"*, with nothing about escapes in it.
-- **A sized array held nulls**, where wac says `Point[10]()` is ten distinct Points and
-  `string[3]()` is three empty strings. A program that validates, runs, and traps on the first read.
+- **A sized array held nulls**, where wac says `Point[].defaulted(10)` is ten distinct Points and
+  `string[].defaulted(3)` is three empty strings. A program that validates, runs, and traps on the first read.
 - **`string` was `u8[]`.** Same bytes, same wasm type, and they differ in the one place the corpus
   leans on: `b[i]` is the byte and `s[i]` is the one-character string.
 - **`emitn(-2147483648)` printed its last digit as `(`.** Negating the most negative i32 overflows

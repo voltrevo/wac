@@ -57,9 +57,9 @@ export i32 main(Core core, Cli cli) {
   //
   // A grant here is not a widening of what the *report* may do: it is what the exercise is compiled
   // with, so an exercise that reads a corpus says so and one that does not cannot.
-  string[] grants = string[8](fill: "");
+  string[] grants = string[].filled(8, "");
   i32 nGrants = 0;
-  string[] exports = string[64](fill: "");
+  string[] exports = string[].filled(64, "");
   i32 nExports = 0;
   for (i32 i = 2; i < argc; i++) {
     string a = string.fromBytes(cli.arg(i).wait());
@@ -82,9 +82,9 @@ export i32 main(Core core, Cli cli) {
     }
   }
 
-  string[] g = string[nGrants](fill: "");
+  string[] g = string[].filled(nGrants, "");
   for (i32 i = 0; i < nGrants; i++) { g[i] = grants[i]; }
-  string[] e = string[nExports](fill: "");
+  string[] e = string[].filled(nExports, "");
   for (i32 i = 0; i < nExports; i++) { e[i] = exports[i]; }
   Measured m = measure(core, cli, entry, g, e);
   if (m.nPoints == 0) { return 1; }

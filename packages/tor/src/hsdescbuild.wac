@@ -87,8 +87,8 @@ export struct Built {
 }
 
 Built failed(i32 error) {
-  return Built(error, u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), 0, 0,
-               u8[][0](), u8[][0]());
+  return Built(error, u8[](), u8[](), u8[](), u8[](), u8[](), u8[](), u8[](), 0, 0,
+               u8[][](), u8[][]());
 }
 
 /**
@@ -129,9 +129,9 @@ export Built buildDescriptor(
                                          blindPublic, blindExpanded);
   if (cert.len() == 0) { return failed(BUILD_FAILED); }
 
-  u8[][] sections = u8[][intros.len()]();
-  u8[][] authCerts = u8[][intros.len()]();
-  u8[][] encCerts = u8[][intros.len()]();
+  u8[][] sections = u8[][].defaulted(intros.len());
+  u8[][] authCerts = u8[][].defaulted(intros.len());
+  u8[][] encCerts = u8[][].defaulted(intros.len());
   for (i32 i = 0; i < intros.len(); i++) {
     IntroPoint ip = intros[i];
     if (ip.linkSpecifiers.len() == 0 || ip.ntorOnionKey.len() != 32 || ip.authSeed.len() != 32 ||

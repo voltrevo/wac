@@ -19,7 +19,7 @@ export struct Outgoing {
   u8[] body;
 
   Outgoing create(string method, string target, string host) {
-    return Outgoing(method.toBytes(), target.toBytes(), host.toBytes(), Headers.create(), u8[0]());
+    return Outgoing(method.toBytes(), target.toBytes(), host.toBytes(), Headers.create(), u8[]());
   }
 
   void set(this, string name, string value) {

@@ -31,18 +31,18 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 /** `P_SHA256(secret, label + seed)`, to `n` bytes. */
 export u8[] prf(u8[] secret, string label, u8[] seed, i32 n) {
   u8[] lab = label.toBytes();
-  u8[] full = u8[lab.len() + seed.len()]();
+  u8[] full = u8[].filled(lab.len() + seed.len(), 0);
   for (i32 i = 0; i < lab.len(); i++) { full[i] = lab[i]; }
   for (i32 i = 0; i < seed.len(); i++) { full[lab.len() + i] = seed[i]; }
 
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   u8[] a = full;                                    // A(0) = seed
   i32 done = 0;
   // Thirty-two bytes a round; a key block for AES-128-GCM wants forty, so two rounds is the common
   // case and the bound is generous rather than tight.
   for (i32 round = 0; round < 16 && done < n; round++) {
     a = hmacSha256(secret, a);                      // A(i)
-    u8[] input = u8[a.len() + full.len()]();
+    u8[] input = u8[].filled(a.len() + full.len(), 0);
     for (i32 i = 0; i < a.len(); i++) { input[i] = a[i]; }
     for (i32 i = 0; i < full.len(); i++) { input[a.len() + i] = full[i]; }
     u8[] block = hmacSha256(secret, input);
@@ -56,7 +56,7 @@ export u8[] prf(u8[] secret, string label, u8[] seed, i32 n) {
 
 /** Two byte strings joined, which this file does often enough to name. */
 u8[] joined(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -98,7 +98,7 @@ export u8[] verifyData(u8[] master, string label, u8[] transcript) {
  * TLS 1.2's implicit counter becomes DTLS's explicit one and the AAD is the same shape either way.
  */
 export u8[] aad(i32 epoch, i64 sequence, i32 kind, i32 version, i32 plaintextLength) {
-  u8[] a = u8[13]();
+  u8[] a = u8[].filled(13, 0);
   a[0] = (epoch >> 8) & 0xFF;
   a[1] = epoch & 0xFF;
   for (i32 i = 0; i < 6; i++) {
@@ -114,7 +114,7 @@ export u8[] aad(i32 epoch, i64 sequence, i32 kind, i32 version, i32 plaintextLen
 
 /** The twelve-byte nonce: four fixed bytes from the key block, then the eight explicit ones. */
 u8[] nonce(u8[] fixedIv, u8[] explicitPart) {
-  u8[] n = u8[12]();
+  u8[] n = u8[].filled(12, 0);
   for (i32 i = 0; i < 4; i++) { n[i] = i < fixedIv.len() ? fixedIv[i] : 0; }
   for (i32 i = 0; i < 8; i++) { n[4 + i] = i < explicitPart.len() ? explicitPart[i] : 0; }
   return n;
@@ -129,7 +129,7 @@ u8[] nonce(u8[] fixedIv, u8[] explicitPart) {
  */
 export u8[] seal(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 version,
                  u8[] plaintext) {
-  u8[] explicitPart = u8[8]();
+  u8[] explicitPart = u8[].filled(8, 0);
   explicitPart[0] = (epoch >> 8) & 0xFF;
   explicitPart[1] = epoch & 0xFF;
   for (i32 i = 0; i < 6; i++) {
@@ -139,7 +139,7 @@ export u8[] seal(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 
   u8[] a = aad(epoch, sequence, kind, version, plaintext.len());
   u8[] ct = gcmEncrypt(key, n, plaintext);
   u8[] tag = gcmTag(key, n, a, ct);
-  u8[] out = u8[8 + ct.len() + 16]();
+  u8[] out = u8[].filled(8 + ct.len() + 16, 0);
   for (i32 i = 0; i < 8; i++) { out[i] = explicitPart[i]; }
   for (i32 i = 0; i < ct.len(); i++) { out[8 + i] = ct[i]; }
   for (i32 i = 0; i < 16; i++) { out[8 + ct.len() + i] = tag[i]; }
@@ -156,13 +156,13 @@ export u8[] seal(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 
  */
 export u8[] open(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 version,
                  u8[] fragment) {
-  if (fragment.len() < 8 + 16) { return u8[0](); }
-  u8[] explicitPart = u8[8]();
+  if (fragment.len() < 8 + 16) { return u8[](); }
+  u8[] explicitPart = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) { explicitPart[i] = fragment[i]; }
   i32 ctLen = fragment.len() - 8 - 16;
-  u8[] ct = u8[ctLen]();
+  u8[] ct = u8[].filled(ctLen, 0);
   for (i32 i = 0; i < ctLen; i++) { ct[i] = fragment[8 + i]; }
-  u8[] tag = u8[16]();
+  u8[] tag = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { tag[i] = fragment[8 + ctLen + i]; }
   // The length in the AAD is the *plaintext's*, which for GCM is the ciphertext's — but it is worth
   // computing from the ciphertext rather than from the fragment, because the fragment includes the
@@ -175,9 +175,9 @@ export u8[] open(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 
   // carries on. `packages/quic`'s `unprotect` had exactly this bug and was fixed the same week; the
   // shape to copy is comparing the tag first and only then decrypting.
   u8[] want = gcmTag(key, n, a, ct);
-  if (want.len() != 16) { return u8[0](); }
+  if (want.len() != 16) { return u8[](); }
   i32 diff = 0;
   for (i32 i = 0; i < 16; i++) { diff = diff | (want[i] ^ tag[i]); }
-  if (diff != 0) { return u8[0](); }
+  if (diff != 0) { return u8[](); }
   return gcmDecrypt(key, n, a, ct, tag);
 }

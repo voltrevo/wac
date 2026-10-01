@@ -45,10 +45,10 @@ bool neverSteps() { return false; }
  * each a one-element array because that is how a wac program spells a cell today.
  */
 Pending<i32> fileSize(Core core, Cli cli, string path) {
-  i32[] slot = i32[1](fill: 0);
-  bool[] done = bool[1](fill: false);
-  i32[] armed = i32[1](fill: 0 - 1);
-  fn<bool()>[] step = fn<bool()>[1](fill: neverSteps);
+  i32[] slot = i32[].filled(1, 0);
+  bool[] done = bool[].filled(1, false);
+  i32[] armed = i32[].filled(1, 0 - 1);
+  fn<bool()>[] step = fn<bool()>[].filled(1, neverSteps);
 
   // Eager: the call to the capability happens now, at the point of the `await` — D1.
   Pending<FileResult> up = cli.readFile(path);
@@ -87,7 +87,7 @@ Pending<i32> fileSize(Core core, Cli cli, string path) {
       // existed, which is what step 2 was for.
       if (armed[0] >= 0) { core.detach(armed[0]); armed[0] = 0 - 1; }
       // **Re-read each round**, because a machine with two awaits replaces this slot as it goes.
-      // Bound to a local first because `step[0]()` does not parse: `i32[1](fill: 0)` means a call
+      // Bound to a local first because `step[0]()` does not parse: `i32[].filled(1, 0)` means a call
       // after `]` is array construction, so the parser reads `step` as a type name and says
       // *unknown type 'step'* — `issues/lang/0265c`. A state machine keeps its resumption point in
       // exactly this shape, so step 4 meets that issue rather than merely coexisting with it.

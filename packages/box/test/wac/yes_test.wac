@@ -24,7 +24,7 @@ import { main } from "../../src/box.wac";
 export string test_yes_stops_when_the_sink_stops_taking(Core core, Cli cli) {
   T t = T.create();
 
-  Frame f = Frame.of(string[]("yes", "wac"), u8[0](), cli.cwd().wait(), false);
+  Frame f = Frame.of(["yes", "wac"], u8[](), cli.cwd().wait(), false);
   // **This returns.** That is the assertion, and nothing after it would run if it were wrong — a `yes`
   // that ignored `write`'s answer would spin here until the run was killed, which is the failure this
   // test is for and the one a timeout reports as an unhelpful nothing.

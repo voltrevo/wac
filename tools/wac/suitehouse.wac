@@ -62,7 +62,7 @@ i64 sizeOf(Cli cli, string path) {
 export bool removeWidening(Cli cli, string path) {
   cli.remove(path, true).wait();
   if (!present(cli, path)) { return true; }
-  cli.execWith("/bin/chmod", string[]("-R", "u+rwX", path), u8[0](), string[0](fill: ""),
+  cli.execWith("/bin/chmod", ["-R", "u+rwX", path], u8[](), string[].filled(0, ""),
                false, false).wait();
   cli.remove(path, true).wait();
   return !present(cli, path);
@@ -305,8 +305,8 @@ export void reapStaleDaemons(Core core, Cli cli) {
  */
 export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
   string mine = needle;
-  Exec listed = cli.execWith("/bin/ps", string[]("-eo", "pid,etimes,args", "--no-headers"),
-                             u8[0](), string[0](fill: ""), false, false).wait();
+  Exec listed = cli.execWith("/bin/ps", ["-eo", "pid,etimes,args", "--no-headers"],
+                             u8[](), string[].filled(0, ""), false, false).wait();
   if (!listed.ran()) { return; }
 
   string[] lines = splitLines(string.fromBytes(listed.stdout));
@@ -333,7 +333,7 @@ export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
       seconds = seconds * (10 as i64) + ((b[d] - 48) as i64);
     }
     if (seconds * (1000 as i64) < staleMs) { continue; }
-    cli.execWith("/bin/kill", string[]("-9", pid), u8[0](), string[0](fill: ""), false, false).wait();
+    cli.execWith("/bin/kill", ["-9", pid], u8[](), string[].filled(0, ""), false, false).wait();
     if (first == "") { first = pid; }
     reaped = reaped + 1;
   }

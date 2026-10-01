@@ -25,12 +25,12 @@ export struct Huff {
    * across decoders, so callers pad instead — see forceTwo.
    */
   Huff build(i32[] freq, i32 count, i32 maxBits) {
-    i32[] work = i32[count]();
+    i32[] work = i32[].filled(count, 0);
     for (i32 i = 0; i < count; i++) {
       work[i] = freq[i];
     }
 
-    i32[] len = i32[count]();
+    i32[] len = i32[].filled(count, 0);
     i32 longest = 0;
     bool done = false;
 
@@ -71,9 +71,9 @@ export struct Huff {
  */
 void lengthsFrom(i32[] freq, i32 count, i32[] outLen) {
   i32 cap = count * 2;
-  i32[] weight = i32[cap]();
-  i32[] parent = i32[cap]();
-  i32[] alive = i32[cap]();
+  i32[] weight = i32[].filled(cap, 0);
+  i32[] parent = i32[].filled(cap, 0);
+  i32[] alive = i32[].filled(cap, 0);
 
   i32 live = 0;
   for (i32 i = 0; i < count; i++) {
@@ -134,21 +134,21 @@ void lengthsFrom(i32[] freq, i32 count, i32[] outLen) {
  * codes from the lengths alone, which is why only lengths are transmitted.
  */
 i32[] canonical(i32[] len, i32 count, i32 maxLen) {
-  i32[] blCount = i32[maxLen + 2]();
+  i32[] blCount = i32[].filled(maxLen + 2, 0);
   for (i32 i = 0; i < count; i++) {
     if (len[i] > 0) {
       blCount[len[i]]++;
     }
   }
 
-  i32[] nextCode = i32[maxLen + 2]();
+  i32[] nextCode = i32[].filled(maxLen + 2, 0);
   i32 code = 0;
   for (i32 bits = 1; bits <= maxLen; bits++) {
     code = (code + blCount[bits - 1]) << 1;
     nextCode[bits] = code;
   }
 
-  i32[] out = i32[count]();
+  i32[] out = i32[].filled(count, 0);
   for (i32 i = 0; i < count; i++) {
     if (len[i] > 0) {
       out[i] = nextCode[len[i]];

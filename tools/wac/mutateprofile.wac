@@ -28,10 +28,10 @@ export i32 KEEP() { return 3; }
  * inventing a reason.
  */
 export string[] toEvict(string[] paths, i64[] modified, i32 keep) {
-  if (paths.len() <= keep) { return string[0](fill: ""); }
+  if (paths.len() <= keep) { return string[].filled(0, ""); }
 
   // Order the indices newest first. Insertion sort: this is a directory of at most a few files.
-  i32[] order = i32[paths.len()](fill: 0);
+  i32[] order = i32[].filled(paths.len(), 0);
   for (i32 i = 0; i < paths.len(); i++) { order[i] = i; }
   for (i32 i = 1; i < order.len(); i++) {
     i32 k = order[i];
@@ -41,7 +41,7 @@ export string[] toEvict(string[] paths, i64[] modified, i32 keep) {
   }
 
   i32 n = paths.len() - keep;
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = paths[order[keep + i]]; }
   return out;
 }
@@ -85,9 +85,9 @@ JsonValue num(i32 n) { return JsonValue.Number(n as f64, itoa(n).toBytes()); }
 export string encodeProfile(string[] known, string[] tests, string[] files, i32[] cost,
                             string[] homeNames, string[] homeFiles) {
   // The name table, in first-seen order so the encoding is a function of the input alone.
-  string[] names = string[0](fill: "");
+  string[] names = string[].filled(0, "");
   i32 n = 0;
-  string[] buf = string[4096](fill: "");
+  string[] buf = string[].filled(4096, "");
   for (i32 i = 0; i < tests.len(); i++) {
     string[] each = splitOn(tests[i], " ");
     for (i32 j = 0; j < each.len(); j++) {
@@ -112,7 +112,7 @@ export string encodeProfile(string[] known, string[] tests, string[] files, i32[
     }
     if (!have && n < buf.len()) { buf[n] = homeNames[i]; n = n + 1; }
   }
-  names = string[n](fill: "");
+  names = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { names[i] = buf[i]; }
 
   JsonArray nameArr = JsonArray.create();
@@ -188,8 +188,8 @@ export struct Decoded {
 }
 
 Decoded nothing() {
-  return Decoded(false, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""),
-                 i32[0](fill: 0), string[0](fill: ""), string[0](fill: ""));
+  return Decoded(false, string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""),
+                 i32[](), string[].filled(0, ""), string[].filled(0, ""));
 }
 
 export Decoded decodeProfile(string text) {
@@ -203,11 +203,11 @@ export Decoded decodeProfile(string text) {
   JsonArray files = arrayAt(obj, "testFiles");
   JsonArray costs = arrayAt(obj, "cost");
 
-  string[] nameList = string[names.len()](fill: "");
+  string[] nameList = string[].filled(names.len(), "");
   for (i32 i = 0; i < names.len(); i++) { nameList[i] = textOf(names.get(i)); }
 
-  string[] known = string[lines.len()](fill: "");
-  string[] tests = string[lines.len()](fill: "");
+  string[] known = string[].filled(lines.len(), "");
+  string[] tests = string[].filled(lines.len(), "");
   for (i32 i = 0; i < lines.len(); i++) {
     JsonArray pair = asArray(lines.get(i));
     if (pair.len() < 2) { continue; }
@@ -222,12 +222,12 @@ export Decoded decodeProfile(string text) {
     tests[i] = joined;
   }
 
-  string[] fileList = string[files.len()](fill: "");
+  string[] fileList = string[].filled(files.len(), "");
   for (i32 i = 0; i < files.len(); i++) { fileList[i] = textOf(files.get(i)); }
 
   // Cost is keyed by file, so it is looked up rather than positional: a profile whose `cost` lists
   // fewer files than `testFiles` is one where some file was never measured, and that is `-1`.
-  i32[] costList = i32[fileList.len()](fill: -1);
+  i32[] costList = i32[].filled(fileList.len(), -1);
   for (i32 i = 0; i < costs.len(); i++) {
     JsonArray pair = asArray(costs.get(i));
     if (pair.len() < 2) { continue; }
@@ -237,8 +237,8 @@ export Decoded decodeProfile(string text) {
     }
   }
   JsonArray homes = arrayAt(obj, "homes");
-  string[] homeNames = string[homes.len()](fill: "");
-  string[] homeFiles = string[homes.len()](fill: "");
+  string[] homeNames = string[].filled(homes.len(), "");
+  string[] homeFiles = string[].filled(homes.len(), "");
   i32 homeCount = 0;
   for (i32 i = 0; i < homes.len(); i++) {
     JsonArray pair = asArray(homes.get(i));
@@ -251,8 +251,8 @@ export Decoded decodeProfile(string text) {
     homeFiles[homeCount] = fileList[fileAt];
     homeCount = homeCount + 1;
   }
-  string[] hn = string[homeCount](fill: "");
-  string[] hf = string[homeCount](fill: "");
+  string[] hn = string[].filled(homeCount, "");
+  string[] hf = string[].filled(homeCount, "");
   for (i32 i = 0; i < homeCount; i++) { hn[i] = homeNames[i]; hf[i] = homeFiles[i]; }
   return Decoded(true, known, tests, fileList, costList, hn, hf);
 }
@@ -276,12 +276,12 @@ i32 numberOf(JsonValue v) {
 }
 
 string[] splitOn(string s, string sep) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i + sep.len() <= s.len(); i++) {
     if (s.slice(i, i + sep.len()) == sep) { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 from = 0;
   i32 i = 0;
@@ -347,7 +347,7 @@ export string treeKeyOf(string[] testFiles, string[] paths, string[] texts) {
 }
 
 string[] sortedCopy(string[] xs) {
-  string[] out = string[xs.len()](fill: "");
+  string[] out = string[].filled(xs.len(), "");
   for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string k = out[i];

@@ -78,7 +78,7 @@ export struct ScOrder {
 export i64[] scnFromBytes(u8[] be) {
   if (be.len() % 4 != 0) { trap; }
   i32 len = be.len() / 4;
-  i64[] h = i64[len]();
+  i64[] h = i64[].filled(len, 0);
   for (i32 i = 0; i < len; i++) {
     i64 v = 0;
     for (i32 b = 0; b < 4; b++) { v = (v << 8) | (be[i * 4 + b] as i64); }
@@ -90,7 +90,7 @@ export i64[] scnFromBytes(u8[] be) {
 /** Limbs back to big-endian bytes, `4·len` of them. */
 export u8[] scnToBytes(i64[] a) {
   i32 len = a.len();
-  u8[] out = u8[4 * len]();
+  u8[] out = u8[].filled(4 * len, 0);
   for (i32 i = 0; i < len; i++) {
     i64 v = a[len - 1 - i];
     for (i32 b = 0; b < 4; b++) {
@@ -131,15 +131,15 @@ void selectLimbs(i64[] h, i64[] t, i64 pick) {
 /** `R mod n`, which is `R - n` because both curve orders are above `R/2`. One in Montgomery form. */
 export i64[] scnOne(ScOrder o) {
   i32 len = o.n.len();
-  i64[] zero = i64[len]();
-  i64[] h = i64[len]();
+  i64[] zero = i64[].filled(len, 0);
+  i64[] h = i64[].filled(len, 0);
   subLimbs(h, zero, o.n);
   return h;
 }
 
 /** Plain 1 — the multiplier that takes a value *out* of Montgomery form. */
 i64[] plainOne(i32 len) {
-  i64[] h = i64[len]();
+  i64[] h = i64[].filled(len, 0);
   h[0] = 1;
   return h;
 }
@@ -153,9 +153,9 @@ i64[] plainOne(i32 len) {
  */
 export i64[] scnAdd(ScOrder o, i64[] a, i64[] b) {
   i32 len = o.n.len();
-  i64[] h = i64[len]();
+  i64[] h = i64[].filled(len, 0);
   i64 carry = addLimbs(h, a, b);
-  i64[] t = i64[len]();
+  i64[] t = i64[].filled(len, 0);
   i64 borrow = subLimbs(t, h, o.n);
   selectLimbs(h, t, carry | (1 - borrow));
   return h;
@@ -182,7 +182,7 @@ export i64[] scnAdd(ScOrder o, i64[] a, i64[] b) {
 export i64[] scnMont(ScOrder o, i64[] a, i64[] b) {
   i32 len = o.n.len();
   if (a.len() != len || b.len() != len) { trap; }
-  i64[] t = i64[len + 2]();
+  i64[] t = i64[].filled(len + 2, 0);
   for (i32 i = 0; i < len; i++) {
     i64 carry = 0;
     for (i32 j = 0; j < len; j++) {
@@ -211,9 +211,9 @@ export i64[] scnMont(ScOrder o, i64[] a, i64[] b) {
   // The result is below 2n and may need the whole of the extra limb: `t[len]` is 0 or 1, and a
   // 1 means the value is at least R, which is above n. So subtract when that bit is set or when
   // the subtraction does not borrow — the same condition `scnAdd` uses, for the same reason.
-  i64[] h = i64[len]();
+  i64[] h = i64[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { h[i] = t[i]; }
-  i64[] s = i64[len]();
+  i64[] s = i64[].filled(len, 0);
   i64 borrow = subLimbs(s, h, o.n);
   selectLimbs(h, s, t[len] | (1 - borrow));
   return h;
@@ -241,11 +241,11 @@ export i64[] scnLeave(ScOrder o, i64[] a) { return scnMont(o, a, plainOne(o.n.le
  */
 export i64[] scnInvert(ScOrder o, i64[] a) {
   i32 len = o.n.len();
-  i64[] e = i64[len]();
+  i64[] e = i64[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { e[i] = o.n[i]; }
   e[0] = e[0] - 2;
   i64[] result = scnOne(o);
-  i64[] base = i64[len]();
+  i64[] base = i64[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { base[i] = a[i]; }
   for (i32 limb = 0; limb < len; limb++) {
     for (i32 bit = 0; bit < 32; bit++) {
@@ -265,9 +265,9 @@ export i64[] scnInvert(ScOrder o, i64[] a) {
  */
 export i64[] scnReduce(ScOrder o, i64[] a) {
   i32 len = o.n.len();
-  i64[] h = i64[len]();
+  i64[] h = i64[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { h[i] = a[i]; }
-  i64[] t = i64[len]();
+  i64[] t = i64[].filled(len, 0);
   i64 borrow = subLimbs(t, h, o.n);
   selectLimbs(h, t, 1 - borrow);
   return h;
@@ -313,7 +313,7 @@ export ScOrder scOrder(u8[] orderBE) {
   i32 len = n.len();
   i64 ninv = ninvOf(n[0]);
   // Placeholder r2, so `scnAdd` below has an order to work with. Only `n` is read by it.
-  ScOrder partial = ScOrder(n, ninv, i64[len]());
+  ScOrder partial = ScOrder(n, ninv, i64[].filled(len, 0));
   i64[] x = scnOne(partial);                 // R mod n
   for (i32 i = 0; i < 32 * len; i++) { x = scnAdd(partial, x, x); }
   return ScOrder(n, ninv, x);

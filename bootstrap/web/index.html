@@ -30,7 +30,7 @@ i32 span(Shape s) {
 
 i32 main() {
   string label = "hello" + " " + "world";
-  i32[] ns = i32[4](fill: 3);
+  i32[] ns = i32[].filled(4, 3);
   return span(Shape.Line(Point(1, 2), Point(11, 22))) + label.len() + ns[3];
 }
 </textarea>

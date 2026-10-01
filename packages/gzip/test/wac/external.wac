@@ -28,15 +28,17 @@ export struct External {
 
 /** Decompress with the system `gunzip`. */
 export External gunzip(Cli cli, u8[] gz) {
-  return through(cli, "gunzip", string[]("-c"), gz);
+  return through(cli, "gunzip", ["-c"], gz);
 }
 
 /** Compress with python's `gzip`, for testing a decompressor against a real encoder. */
 export External pythonGzip(Cli cli, u8[] data, i32 level) {
   return through(cli, "python3",
-                 string[]("-c",
+                 [
+                          "-c",
                           "import sys,gzip; sys.stdout.buffer.write(gzip.compress(" +
-                          "sys.stdin.buffer.read(), " + itoa(level) + "))"),
+                          "sys.stdin.buffer.read(), " + itoa(level) + "))"
+                 ],
                  data);
 }
 
@@ -48,12 +50,14 @@ export External pythonGzip(Cli cli, u8[] data, i32 level) {
  */
 export External pythonGzipNamed(Cli cli, u8[] data, string name) {
   return through(cli, "python3",
-                 string[]("-c",
+                 [
+                          "-c",
                           "import sys,gzip,io\n" +
                           "b = io.BytesIO()\n" +
                           "with gzip.GzipFile(\"" + name + "\", \"wb\", 6, b, 0) as f:\n" +
                           "    f.write(sys.stdin.buffer.read())\n" +
-                          "sys.stdout.buffer.write(b.getvalue())\n"),
+                          "sys.stdout.buffer.write(b.getvalue())\n"
+                 ],
                  data);
 }
 
@@ -65,19 +69,21 @@ export External pythonGzipNamed(Cli cli, u8[] data, string name) {
  */
 export External pythonZlib(Cli cli, u8[] data, i32 level, i32 wbits) {
   return through(cli, "python3",
-                 string[]("-c",
+                 [
+                          "-c",
                           "import sys,zlib; c=zlib.compressobj(" + itoa(level) +
                           ",zlib.DEFLATED," + itoa(wbits) + "); " +
-                          "sys.stdout.buffer.write(c.compress(sys.stdin.buffer.read())+c.flush())"),
+                          "sys.stdout.buffer.write(c.compress(sys.stdin.buffer.read())+c.flush())"
+                 ],
                  data);
 }
 
 /** One program, fed `input` on standard input, run to completion. */
 External through(Cli cli, string program, string[] args, u8[] input) {
   Exec r = cli.exec(program, args, input).wait();
-  if (!r.ran()) { return External(u8[0](), program + " would not start: " + r.error); }
+  if (!r.ran()) { return External(u8[](), program + " would not start: " + r.error); }
   if (r.status != 0) {
-    return External(u8[0](),
+    return External(u8[](),
                     program + " refused the stream (exit " + itoa(r.status) + "): " +
                     string.fromBytes(r.stderr));
   }

@@ -54,7 +54,7 @@ export string test_each_code_has_the_number_it_has_always_had() {
 
 export string test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports() {
   T t = T.create();
-  string[] texts = string[]("{}", "{ }", "// nothing\n{}", "{ name: 'x' }");
+  string[] texts = ["{}", "{ }", "// nothing\n{}", "{ name: 'x' }"];
   for (i32 i = 0; i < texts.len(); i++) {
     Manifest m = of(texts[i]);
     t.isTrue(m.ok, texts[i] + " is a valid manifest");
@@ -95,8 +95,8 @@ export string test_overlapping_names_are_refused_and_neighbouring_ones_are_not()
   T t = T.create();
   // Every pair D9 names, in **both orders** — the check compares two names and could easily be
   // right in one direction only.
-  string[] left  = string[]("wac/", "foo", "a",  "x/",  "p");
-  string[] right = string[]("wac/packages/json/", "foo/", "a", "x/y", "p/q/");
+  string[] left  = ["wac/", "foo", "a",  "x/",  "p"];
+  string[] right = ["wac/packages/json/", "foo/", "a", "x/y", "p/q/"];
   for (i32 i = 0; i < left.len(); i++) {
     Manifest one = pair(left[i], right[i]);
     Manifest two = pair(right[i], left[i]);
@@ -106,8 +106,8 @@ export string test_overlapping_names_are_refused_and_neighbouring_ones_are_not()
   }
   // The rows it must allow. A checker that refused these would pass every case above and be
   // wrong, which is why the prefix test requires the `/` rather than a bare startsWith.
-  string[] okA = string[]("wac/", "foo",    "a/", "ab/");
-  string[] okB = string[]("wac2/", "foobar", "b/", "a/");
+  string[] okA = ["wac/", "foo",    "a/", "ab/"];
+  string[] okB = ["wac2/", "foobar", "b/", "a/"];
   for (i32 i = 0; i < okA.len(); i++) {
     t.isTrue(pair(okA[i], okB[i]).ok, okA[i] + " beside " + okB[i] + " is fine");
   }
@@ -128,8 +128,8 @@ export string test_a_specifier_matches_at_most_one_mapping() {
   Manifest m = table();
   t.isTrue(m.ok, "the table reads");
   if (!m.ok) { return t.report(); }
-  string[] hits = string[]("whole/src/a.wac", "sub/src/a.wac", "exact");
-  i32[] want = i32[](0, 1, 3);
+  string[] hits = ["whole/src/a.wac", "sub/src/a.wac", "exact"];
+  i32[] want = [0, 1, 3];
   for (i32 i = 0; i < hits.len(); i++) {
     Match h = matchSpecifier(m, hits[i]);
     t.isTrue(h.found, hits[i] + " matches");
@@ -137,7 +137,7 @@ export string test_a_specifier_matches_at_most_one_mapping() {
   }
   // The prefix form matches neither the bare name nor the name with nothing after it: `whole/`
   // would resolve to the mapping's root with an empty path, which names no module.
-  string[] misses = string[]("whole", "whole/", "exact/x", "other", "", "./a.wac", "exactly");
+  string[] misses = ["whole", "whole/", "exact/x", "other", "", "./a.wac", "exactly"];
   for (i32 i = 0; i < misses.len(); i++) {
     Match h = matchSpecifier(m, misses[i]);
     t.isFalse(h.found, "\"" + misses[i] + "\" matches nothing");
@@ -153,10 +153,14 @@ export string test_the_suffix_is_joined_to_the_subdir_and_checked_after() {
   Manifest m = table();
   if (!m.ok) { t.fail("the table did not read"); return t.report(); }
 
-  string[] specs = string[]("whole/src/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
-                            "deep/../c.wac", "sub/../other/a.wac", "whole/a/../b.wac");
-  string[] lands = string[]("src/a.wac", "lib/acme/src/a.wac", "a/b/c.wac", "lib/one",
-                            "a/c.wac", "lib/other/a.wac", "b.wac");
+  string[] specs = [
+                            "whole/src/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
+                            "deep/../c.wac", "sub/../other/a.wac", "whole/a/../b.wac"
+  ];
+  string[] lands = [
+                            "src/a.wac", "lib/acme/src/a.wac", "a/b/c.wac", "lib/one",
+                            "a/c.wac", "lib/other/a.wac", "b.wac"
+  ];
   for (i32 i = 0; i < specs.len(); i++) {
     Located at = locate(m, matchSpecifier(m, specs[i]));
     t.isTrue(at.ok, specs[i] + " lands somewhere");
@@ -165,8 +169,10 @@ export string test_the_suffix_is_joined_to_the_subdir_and_checked_after() {
   // `deep/../c.wac` above is *inside* — subdir `a/b` — and this same suffix under a mapping with
   // no subdir is outside. A check on the suffix alone gets one of the two wrong whichever way it
   // is written, which is why D9 says joined, then normalised, then checked.
-  string[] out = string[]("whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac",
-                          "sub/../../../etc/passwd");
+  string[] out = [
+                          "whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac",
+                          "sub/../../../etc/passwd"
+  ];
   for (i32 i = 0; i < out.len(); i++) {
     Located at = locate(m, matchSpecifier(m, out[i]));
     t.isFalse(at.ok, out[i] + " is outside the checkout");
@@ -177,14 +183,15 @@ export string test_the_suffix_is_joined_to_the_subdir_and_checked_after() {
 
 export string test_each_malformed_shape_gets_its_own_code() {
   T t = T.create();
-  string[] texts = string[](
+  string[] texts = [
     "{", "[]", "1", "{ imports: [] }", "{ imports: { a: 1 } }", "{ imports: { a: {} } }",
     "{ imports: { a: { git: 1, ref: 'r' } } }", "{ imports: { a: { git: 'g' } } }",
     "{ imports: { a: { git: 'g', ref: 1 } } }",
     "{ imports: { a: { git: 'g', ref: 'r', subdir: 1 } } }",
     "{ imports: { '': { git: 'g', ref: 'r' } } }",
-    "{ imports: { '/': { git: 'g', ref: 'r' } } }");
-  i32[] codes = i32[](1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 8, 8);
+    "{ imports: { '/': { git: 'g', ref: 'r' } } }"
+  ];
+  i32[] codes = [1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 8, 8];
   for (i32 i = 0; i < texts.len(); i++) {
     Manifest m = of(texts[i]);
     t.isFalse(m.ok, texts[i] + " is refused");
@@ -195,16 +202,20 @@ export string test_each_malformed_shape_gets_its_own_code() {
 
 export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
   T t = T.create();
-  string[] fine = string[]("https://github.com/voltrevo/wac",
+  string[] fine = [
+                           "https://github.com/voltrevo/wac",
                            "https://github.com/voltrevo/wac.git",
-                           "https://user@example.invalid:8443/a/b");
+                           "https://user@example.invalid:8443/a/b"
+  ];
   for (i32 i = 0; i < fine.len(); i++) {
     t.eqStr(unsupportedTransport(fine[i]), "", fine[i] + " is fetchable");
   }
   // Each refusal has to name what is wrong rather than say no.
-  string[] bad = string[]("http://example.invalid/r", "git@github.com:voltrevo/wac.git",
+  string[] bad = [
+                          "http://example.invalid/r", "git@github.com:voltrevo/wac.git",
                           "ssh://git@example.invalid/r", "git://example.invalid/r",
-                          "file:///tmp/r", "example.invalid/r", "");
+                          "file:///tmp/r", "example.invalid/r", ""
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isTrue(unsupportedTransport(bad[i]).len() > 0, "\"" + bad[i] + "\" is refused");
   }
@@ -230,7 +241,7 @@ export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
  */
 export string test_a_mapping_of_a_reserved_name_is_refused() {
   T t = T.create();
-  string[] bad = string[](
+  string[] bad = [
     "{ imports: { 'std/': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'core/': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'std': { git: 'g', ref: 'r' } } }",
@@ -239,7 +250,8 @@ export string test_a_mapping_of_a_reserved_name_is_refused() {
     "{ imports: { 'std/net.wac': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'core/option.wac': { git: 'g', ref: 'r' } } }",
     // And it is refused wherever it appears, not only first.
-    "{ imports: { 'ok/': { git: 'g', ref: 'r' }, 'std/': { git: 'g', ref: 'r' } } }");
+    "{ imports: { 'ok/': { git: 'g', ref: 'r' }, 'std/': { git: 'g', ref: 'r' } } }"
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     Manifest m = of(bad[i]);
     t.isFalse(m.ok, "accepted a reserved mapping: " + bad[i]);
@@ -248,12 +260,13 @@ export string test_a_mapping_of_a_reserved_name_is_refused() {
 
   // **The near misses, which is what stops this being a substring check.** None of these is
   // reserved, and refusing them would take names away from people for no reason.
-  string[] good = string[](
+  string[] good = [
     "{ imports: { 'stdlib/': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'corelib/': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'mystd/': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'a/core/': { git: 'g', ref: 'r' } } }",
-    "{ imports: { 'Core/': { git: 'g', ref: 'r' } } }");
+    "{ imports: { 'Core/': { git: 'g', ref: 'r' } } }"
+  ];
   for (i32 i = 0; i < good.len(); i++) {
     Manifest m = of(good[i]);
     t.isTrue(m.ok, "refused a name that is not reserved: " + good[i] +
@@ -279,9 +292,11 @@ export string test_a_mapping_of_a_reserved_name_is_refused() {
  */
 export string test_every_manifest_refusal_has_its_own_sentence() {
   T t = T.create();
-  i32[] codes = i32[](M_NOT_JSON5(), M_NOT_OBJECT(), M_IMPORTS_KIND(), M_MAPPING_KIND(),
+  i32[] codes = [
+                      M_NOT_JSON5(), M_NOT_OBJECT(), M_IMPORTS_KIND(), M_MAPPING_KIND(),
                       M_NO_GIT(), M_NO_REF(), M_SUBDIR_KIND(), M_EMPTY_NAME(), M_OVERLAP(),
-                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME());
+                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME()
+  ];
   string fallback = manifestWhy(-1);
   t.isTrue(fallback.len() > 0, "an unknown code renders to nothing at all");
 

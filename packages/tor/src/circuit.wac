@@ -92,8 +92,8 @@ export struct Stream {
 
 /** The trailing twenty bytes of a 92-byte ntor expansion — KH — or empty if it was the short one. */
 u8[] nonceOf(u8[] material) {
-  if (material.len() < NTOR_KEY_MATERIAL) { return u8[0](); }
-  u8[] out = u8[NTOR_KEY_MATERIAL - HOP_KEY_MATERIAL]();
+  if (material.len() < NTOR_KEY_MATERIAL) { return u8[](); }
+  u8[] out = u8[].filled(NTOR_KEY_MATERIAL - HOP_KEY_MATERIAL, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = material[HOP_KEY_MATERIAL + i]; }
   return out;
 }
@@ -123,7 +123,7 @@ export struct Circuit {
   Circuit create(i32 circId, u8[] material) {
     Vec<Hop> hops = Vec.create();
     hops.push(Hop.create(material));
-    return Circuit(circId, hops, CIRCUIT_WINDOW, CIRCUIT_WINDOW, Vec.create(), 1, u8[0](),
+    return Circuit(circId, hops, CIRCUIT_WINDOW, CIRCUIT_WINDOW, Vec.create(), 1, u8[](),
                    nonceOf(material));
   }
 
@@ -180,9 +180,9 @@ export struct Circuit {
   Received receive(this, u8[] cell) {
     i32 cmd = cellCommand(cell, 0, ID_WIDE);
     if (cmd == cmdDestroy()) {
-      return Received(gotDestroyed(), 0, cellPayload(cell, 0, ID_WIDE), u8[0](), -1);
+      return Received(gotDestroyed(), 0, cellPayload(cell, 0, ID_WIDE), u8[](), -1);
     }
-    if (cmd != cmdRelay()) { return Received(gotNothing(), 0, u8[0](), u8[0](), -1); }
+    if (cmd != cmdRelay()) { return Received(gotNothing(), 0, u8[](), u8[](), -1); }
 
     u8[] payload = cellPayload(cell, 0, ID_WIDE);
     i32 from = -1;
@@ -190,13 +190,13 @@ export struct Circuit {
       payload = decryptRelay(this.hops.get(i), payload);
       if (relayRecognized(this.hops.get(i), payload)) { from = i; }
     }
-    if (from < 0) { return Received(gotBroken(), 0, u8[0](), u8[0](), -1); }
+    if (from < 0) { return Received(gotBroken(), 0, u8[](), u8[](), -1); }
 
     // A length field past the end of the body is a protocol violation by a hop we have
     // already authenticated — which it is entitled to be, being a stranger from a directory.
     // The circuit is finished either way; what matters is that saying so is not a crash.
     if (!relayLengthValid(payload)) {
-      return Received(gotBroken(), 0, u8[0](), u8[0](), -1);
+      return Received(gotBroken(), 0, u8[](), u8[](), -1);
     }
     i32 command = relayCommand(payload);
     i32 streamId = relayStreamId(payload);
@@ -209,14 +209,14 @@ export struct Circuit {
         Stream s = this.stream(streamId);
         s.packageWindow += STREAM_INCREMENT;
       }
-      return Received(gotNothing(), streamId, u8[0](), u8[0](), command);
+      return Received(gotNothing(), streamId, u8[](), u8[](), command);
     }
 
-    u8[] owed = u8[0]();
+    u8[] owed = u8[]();
     if (command == relayData()) {
       this.deliverWindow -= 1;
       if (this.deliverWindow < 0) {
-        return Received(gotBroken(), streamId, u8[0](), u8[0](), command);
+        return Received(gotBroken(), streamId, u8[](), u8[](), command);
       }
       // Record the digest exactly when the window reaches a multiple of the increment. This
       // cell is the one the next SENDME will name, and the hash has to be read now: one more
@@ -241,14 +241,14 @@ export struct Circuit {
 
   /** SENDMEs we now owe, circuit first then stream, as cells ready for the wire. */
   u8[] creditOwed(this, i32 streamId) {
-    u8[] out = u8[0]();
+    u8[] out = u8[]();
     while (this.deliverWindow <= CIRCUIT_WINDOW - CIRCUIT_INCREMENT) {
       // Version 1 needs the digest that proves we received the cells. It is recorded one
       // cell earlier, so it should always be here; falling back to the unauthenticated form
       // would be a silent downgrade, so refuse instead.
       if (this.pendingSendmeDigest.len() == 0) { trap; }
       out = join(out, this.sendToEnd(relaySendme(), 0, sendmeBodyV1(this.pendingSendmeDigest)));
-      this.pendingSendmeDigest = u8[0]();
+      this.pendingSendmeDigest = u8[]();
       this.deliverWindow += CIRCUIT_INCREMENT;
     }
     if (streamId != 0) {
@@ -257,7 +257,7 @@ export struct Circuit {
       if (s.deliverWindow <= STREAM_WINDOW - STREAM_INCREMENT) {
         // Stream SENDMEs carry nothing: a stream's credit is bounded by its circuit's, so
         // there is nothing there worth forging.
-        out = join(out, this.sendToEnd(relaySendme(), streamId, u8[0]()));
+        out = join(out, this.sendToEnd(relaySendme(), streamId, u8[]()));
         s.deliverWindow += STREAM_INCREMENT;
       }
     }
@@ -309,7 +309,7 @@ export struct Circuit {
    * can always open — and so the honest end-to-end test of everything below it.
    */
   u8[] beginDirCell(this, i32 streamId) {
-    return this.sendToEnd(relayBeginDir(), streamId, u8[0]());
+    return this.sendToEnd(relayBeginDir(), streamId, u8[]());
   }
 
   /** RELAY_DATA, already split to what fits beside the eleven-byte relay header. */
@@ -351,7 +351,7 @@ export struct Circuit {
   }
 
   u8[] endCell(this, i32 streamId, i32 reason) {
-    return this.sendToEnd(relayEnd(), streamId, u8[](reason));
+    return this.sendToEnd(relayEnd(), streamId, [reason]);
   }
 
   /**
@@ -371,7 +371,7 @@ export struct Circuit {
 u8[] join(u8[] a, u8[] b) {
   if (a.len() == 0) { return b; }
   if (b.len() == 0) { return a; }
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;

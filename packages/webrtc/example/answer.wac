@@ -58,13 +58,13 @@ i32 atoi(string s) {
 /** An IPv4 dotted quad as its four bytes. Empty if it is not one. */
 u8[] ipv4(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[4]();
+  u8[] out = u8[].filled(4, 0);
   i32 part = 0;
   i32 value = 0;
   bool any = false;
   for (i32 i = 0; i <= b.len(); i++) {
     if (i == b.len() || b[i] == 0x2E) {
-      if (!any || part > 3) { return u8[0](); }
+      if (!any || part > 3) { return u8[](); }
       out[part] = value & 0xFF;
       part = part + 1;
       value = 0;
@@ -73,16 +73,16 @@ u8[] ipv4(string s) {
       value = value * 10 + (b[i] - 0x30);
       any = true;
     } else {
-      return u8[0]();
+      return u8[]();
     }
   }
-  return part == 4 ? out : u8[0]();
+  return part == 4 ? out : u8[]();
 }
 
 /** A random printable fragment, since an ICE ufrag and password must be ASCII. */
 string fragment(Core core, i32 n) {
   u8[] raw = core.randomBytes(n).wait();
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   u8[] alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toBytes();
   for (i32 i = 0; i < n; i++) { out[i] = alphabet[raw[i] % alphabet.len()]; }
   return string.fromBytes(out);

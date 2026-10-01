@@ -36,7 +36,7 @@ import { startsWith } from "./strings.wac";
  * The rule is whether the guard has an *opinion* about the file or is only looking at its bytes.
  */
 export string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
+  Exec r = cli.exec("git", ["ls-files"], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("repo: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
     trap;
@@ -54,7 +54,7 @@ export string[] nonEmptyLines(string s) {
     if (i > start) { n = n + 1; }
     start = i + 1;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   start = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -107,7 +107,7 @@ export string[] sourceFiles(Core core, Cli cli, string[] exts, string[] skip) {
   for (i32 i = 0; i < all.len(); i++) {
     if (hasExtension(all[i], exts) && !under(all[i], skip) && !isVision(all[i])) { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (hasExtension(all[i], exts) && !under(all[i], skip) && !isVision(all[i])) {

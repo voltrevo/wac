@@ -20,14 +20,14 @@ import { EPOCH_1RTT, Frame, Next, nextIn } from "../../src/frame.wac";
 
 /** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
 u8[] scalar() {
-  u8[] s = u8[32]();
+  u8[] s = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
   return s;
 }
 
 /** A fixed client random, for the same reason. */
 u8[] clientRandom() {
-  u8[] r = u8[32]();
+  u8[] r = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
   return r;
 }
@@ -43,10 +43,10 @@ Client ours(u8[] dcid, u8[] scid, string serverName) {
  * The dcid is irrelevant to it and is passed as empty: the key share is settled before either side
  * has said anything, which is exactly why a client can offer one in its first flight.
  */
-export u8[] publicKey() { return ours(u8[0](), u8[0](), "").publicKey(); }
+export u8[] publicKey() { return ours(u8[](), u8[](), "").publicKey(); }
 
 /** The ClientHello alone, so the test can put it through this repository's own parser. */
-export u8[] helloOnly(u8[] scid, string serverName) { return ours(u8[0](), scid, serverName).hello; }
+export u8[] helloOnly(u8[] scid, string serverName) { return ours(u8[](), scid, serverName).hello; }
 
 /** That ClientHello, framed and sealed into an Initial ready to put on a socket. */
 export u8[] flight(u8[] dcid, u8[] scid, string serverName) {
@@ -72,27 +72,27 @@ export u8[] flightMismatched(u8[] dcid, u8[] headerScid, u8[] paramScid, string 
 
 /** The ServerHello message — header and all, which is what the transcript hashes. */
 export u8[] serverHelloMessage(u8[] datagram, u8[] dcid) {
-  return ours(dcid, u8[0](), "").serverHelloMessage(datagram);
+  return ours(dcid, u8[](), "").serverHelloMessage(datagram);
 }
 
 /** The group the server chose, or 0. x25519 is 0x001d. */
 export i32 serverGroup(u8[] datagram, u8[] dcid) {
-  return ours(dcid, u8[0](), "").serverGroup(datagram);
+  return ours(dcid, u8[](), "").serverGroup(datagram);
 }
 
 /** Whether the server said TLS 1.3 in `supported_versions`, the only place the version is real. */
 export bool serverIsTls13(u8[] datagram, u8[] dcid) {
-  return ours(dcid, u8[0](), "").serverIsTls13(datagram);
+  return ours(dcid, u8[](), "").serverIsTls13(datagram);
 }
 
 /** Whether the server asked us to try again with another group, which is a different message. */
 export bool serverAskedRetry(u8[] datagram, u8[] dcid) {
-  return ours(dcid, u8[0](), "").serverAskedRetry(datagram);
+  return ours(dcid, u8[](), "").serverAskedRetry(datagram);
 }
 
 /** The Diffie-Hellman shared secret: our scalar against the share the server sent. */
 export u8[] shared(u8[] datagram, u8[] dcid) {
-  return ours(dcid, u8[0](), "").shared(datagram);
+  return ours(dcid, u8[](), "").shared(datagram);
 }
 
 /** Where the Handshake packet begins in that datagram, or 0 if the server coalesced nothing. */
@@ -125,7 +125,7 @@ export bool serverFinishedVerifies(u8[] datagram, u8[] dcid, u8[] scid, string s
 
 /** The id the server chose for itself, which is where our next packet has to be addressed. */
 export u8[] serverChosenId(u8[] datagram) {
-  return ours(u8[0](), u8[0](), "").serverChosenId(datagram);
+  return ours(u8[](), u8[](), "").serverChosenId(datagram);
 }
 
 /** A Handshake packet carrying our Finished. */
@@ -297,8 +297,8 @@ export u8[] ackPacket(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverNa
 export u8[][] lostThenResent(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName,
                              i32 streamId, u8[] data) {
   Connection c = Connection.of(ours(dcid, scid, serverName), handshakeReply);
-  u8[] frames = u8[streamFrameLength(streamId as i64, 0 as i64, data.len())]();
-  u8[][] out = u8[][2]();
+  u8[] frames = u8[].filled(streamFrameLength(streamId as i64, 0 as i64, data.len()), 0);
+  u8[][] out = u8[][].defaulted(2);
   if (writeStream(frames, 0, streamId as i64, 0 as i64, data, true) == 0) { return out; }
   out[0] = c.send(frames);
   // Nothing acknowledged it, so this is the packet a client gives up waiting for.
@@ -310,7 +310,7 @@ export u8[][] lostThenResent(u8[] handshakeReply, u8[] dcid, u8[] scid, string s
 export i32 resendAfterAckIsEmpty(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName,
                                  u8[] data) {
   Connection c = Connection.of(ours(dcid, scid, serverName), handshakeReply);
-  u8[] frames = u8[streamFrameLength(0 as i64, 0 as i64, data.len())]();
+  u8[] frames = u8[].filled(streamFrameLength(0 as i64, 0 as i64, data.len()), 0);
   if (writeStream(frames, 0, 0 as i64, 0 as i64, data, true) == 0) { return -1; }
   c.send(frames);
   c.onAck(0 as i64);
@@ -356,7 +356,7 @@ export i32[] openedAgainst(u8[] datagram, u8[] dcid, u8[] scid, string serverNam
                            i64 now) {
   Store store = pemBundle(caPem);
   Opened o = Connection.checked(ours(dcid, scid, serverName), datagram, store.der, store.offsets, now);
-  i32[] out = i32[2]();
+  i32[] out = i32[].filled(2, 0);
   out[0] = o.verdict;
   out[1] = o.connection is null ? 0 : 1;
   return out;

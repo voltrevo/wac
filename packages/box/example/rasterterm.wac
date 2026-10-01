@@ -39,7 +39,7 @@ i32 BG() { return 0x12181AFF; }
 /** Code points from a string, through the decoder this repository already trusts. */
 i32[] cps(string s) {
   u8[] bytes = s.toBytes();
-  i32[] out = i32[count(bytes)]();
+  i32[] out = i32[].filled(count(bytes), 0);
   i32 at = 0;
   i32 n = 0;
   while (at < bytes.len() && n < out.len()) {
@@ -158,7 +158,7 @@ export i32 page(Core core, Cli cli, Page page) {
   Pending<Event> ev = page.nextEvent();
 
   for (;;) {
-    i32 which = core.waitAny(i32[](ev.id), BLINK());
+    i32 which = core.waitAny([ev.id], BLINK());
     if (which < 0) {
       // The deadline, which is the ordinary case here rather than a failure. Only where a caret is
       // drawn at all: scrolled back there is none, and blinking one that is not there would redraw

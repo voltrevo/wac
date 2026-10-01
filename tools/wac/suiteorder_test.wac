@@ -68,8 +68,8 @@ Parsed parseChunk(string line) {
 /** `wac task test -- --dry`, with the times file pointed wherever the caller wants. */
 string dryRun(T t, Cli cli, string times) {
   Exec r = cli.execWith(binaryPath(cli),
-      string[]("task", "test", "--", "--dry"), u8[0](),
-      string[]("WAC_SUITE_TIMES=" + times), false, false).wait();
+      ["task", "test", "--", "--dry"], u8[](),
+      ["WAC_SUITE_TIMES=" + times], false, false).wait();
   t.isTrue(r.ran() && r.status == 0, "the dry run — " + execReason(r));
   if (!r.ran() || r.status != 0) { return ""; }
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
@@ -133,8 +133,8 @@ struct Dry { bool ok; i32 status; string out; }
 
 Dry dryRunOn(Cli cli, string times, string target) {
   Exec r = cli.execWith(binaryPath(cli),
-      string[]("task", "test", "--", "--dry", target), u8[0](),
-      string[]("WAC_SUITE_TIMES=" + times), false, false).wait();
+      ["task", "test", "--", "--dry", target], u8[](),
+      ["WAC_SUITE_TIMES=" + times], false, false).wait();
   if (!r.ran()) { return Dry(false, 0 - 1, r.error); }
   return Dry(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
 }
@@ -222,7 +222,7 @@ export string test_merging_the_times_file_keeps_what_this_run_did_not_measure(Co
   string was = "packages/a/test/wac\t100\npackages/b/test/wac#0\t200\npackages/b/test/wac#1\t300\n";
 
   // A run that measured one of them: its line is replaced, the other two survive.
-  string got = mergedTimes(was, string[]("packages/b/test/wac#0\t999"));
+  string got = mergedTimes(was, ["packages/b/test/wac#0\t999"]);
   t.isTrue(contains(got, "packages/a/test/wac\t100"), "an untouched key was dropped: " + got);
   t.isTrue(contains(got, "packages/b/test/wac#1\t300"), "an untouched key was dropped: " + got);
   t.isTrue(contains(got, "packages/b/test/wac#0\t999"), "the new measurement is missing: " + got);
@@ -232,18 +232,18 @@ export string test_merging_the_times_file_keeps_what_this_run_did_not_measure(Co
 
   // **A prefix is not a key.** `packages/b/test/wac` and `packages/b/test/wac#0` share their start,
   // and a merge that matched on prefixes would drop the first when the second was measured.
-  t.isTrue(contains(mergedTimes(was, string[]("packages/b/test/wac#0\t1")), "packages/a/test/wac"),
+  t.isTrue(contains(mergedTimes(was, ["packages/b/test/wac#0\t1"]), "packages/a/test/wac"),
       "matching on prefixes rather than on the whole key");
-  string one = mergedTimes("packages/b/test/wac\t100\n", string[]("packages/b/test/wac#0\t1"));
+  string one = mergedTimes("packages/b/test/wac\t100\n", ["packages/b/test/wac#0\t1"]);
   t.isTrue(contains(one, "packages/b/test/wac\t100"),
       "`packages/b/test/wac` was dropped when `packages/b/test/wac#0` was measured — a directory that "
       + "grows past one chunk would lose its own record: " + one);
 
   // A first run has nothing to merge with, and a run that measured nothing does not reach here.
-  t.isTrue(contains(mergedTimes("", string[]("k\t1")), "k\t1"), "an empty file lost the new line");
+  t.isTrue(contains(mergedTimes("", ["k\t1"]), "k\t1"), "an empty file lost the new line");
 
   // A line without a tab is not a record; keeping it would make the file unparseable to itself.
-  t.isTrue(!contains(mergedTimes("junk\n", string[]("k\t1")), "junk"),
+  t.isTrue(!contains(mergedTimes("junk\n", ["k\t1"]), "junk"),
       "a line with no tab survived the merge");
   return t.report();
 }

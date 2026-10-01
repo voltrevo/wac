@@ -75,16 +75,16 @@ struct Fixture {
   string built;
 
   string[] names(const this) {
-    return string[]("HOME", "XDG_CONFIG_HOME", "GIT_AUTHOR_DATE");
+    return ["HOME", "XDG_CONFIG_HOME", "GIT_AUTHOR_DATE"];
   }
 
   string[] values(const this) {
-    return string[](this.home, this.home + "/.config", "1700000000 +0000");
+    return [this.home, this.home + "/.config", "1700000000 +0000"];
   }
 
   /** `git -C dir args…`, with the fixture's environment and nothing of the machine's identity. */
   Exec git(const this, string[] args) {
-    string[] full = string[args.len() + 2](fill: "");
+    string[] full = string[].filled(args.len() + 2, "");
     full[0] = "-C";
     full[1] = this.dir;
     for (i32 i = 0; i < args.len(); i++) { full[2 + i] = args[i]; }
@@ -106,7 +106,7 @@ struct Fixture {
     this.cli.writeFile(this.dir + "/" + file, (file + "\n").toBytes()).wait();
     string wac = this.cli.cwd().wait() + "/native/v8/target/release/wac";
     return withEnv(this.cli, this.names(), this.values(), wac,
-                   string[](this.built + ".wasm", this.dir, "add " + file));
+                   [this.built + ".wasm", this.dir, "add " + file]);
   }
 }
 
@@ -126,15 +126,17 @@ export string test_an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_
   // Built once, with the grants the program needs recorded in its manifest.
   string wacBin = cli.cwd().wait() + "/native/v8/target/release/wac";
   string stem = dir + "/gitci";
-  Exec built = cli.exec(wacBin, string[]("build", "packages/git/example/gitci.wac", "-o", stem,
-                                         "--allow-read", "--allow-write", "--allow-env", "--quiet"),
-                        u8[0]()).wait();
+  Exec built = cli.exec(wacBin, [
+                                         "build", "packages/git/example/gitci.wac", "-o", stem,
+                                         "--allow-read", "--allow-write", "--allow-env", "--quiet"
+  ],
+                        u8[]()).wait();
   t.isTrue(built.ran(), "the wac binary ran — " + built.error);
   t.eqI32(built.status, 0, "gitci did not build: " + string.fromBytes(built.stderr));
   if (!built.ran() || built.status != 0) { return t.report(); }
   Fixture f = Fixture(cli, dir, home, stem);
 
-  Exec init = f.git(string[]("init", "-q", "-b", "main", "."));
+  Exec init = f.git(["init", "-q", "-b", "main", "."]);
   t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));
   if (init.status != 0) { return t.report(); }
 
@@ -151,13 +153,13 @@ export string test_an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_
 
   // **git's own answer first**, so the fixture is known to make the levels disagree before ours is
   // compared to anything.
-  t.eqStr(f.said(string[]("config", "user.name")), "LOCAL", "git does not prefer the local file");
-  t.eqStr(f.said(string[]("config", "user.email")), "xdg@example.com",
+  t.eqStr(f.said(["config", "user.name"]), "LOCAL", "git does not prefer the local file");
+  t.eqStr(f.said(["config", "user.email"]), "xdg@example.com",
           "the XDG email did not survive the dotfile");
 
   Exec r1 = f.commit("a.txt");
   t.eqI32(r1.status, 0, "gitci refused with a full chain: " + string.fromBytes(r1.stderr));
-  t.eqStr(f.said(string[]("log", "-1", "--format=%an <%ae>")), "LOCAL <xdg@example.com>",
+  t.eqStr(f.said(["log", "-1", "--format=%an <%ae>"]), "LOCAL <xdg@example.com>",
           "wrong author with all levels set");
 
   // Drop the local file's identity: the dotfile takes over, for git and for us.
@@ -170,33 +172,33 @@ export string test_an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_
     without = text.slice(0, at) + text.slice(at + "[user]\n\tname = LOCAL\n".len(), text.len());
     cli.writeFile(dir + "/.git/config", without.toBytes()).wait();
   }
-  t.eqStr(f.said(string[]("config", "user.name")), "DOTFILE", "git did not fall back to ~/.gitconfig");
+  t.eqStr(f.said(["config", "user.name"]), "DOTFILE", "git did not fall back to ~/.gitconfig");
   Exec r2 = f.commit("b.txt");
   t.eqI32(r2.status, 0,
           "gitci refused with the identity in ~/.gitconfig: " + string.fromBytes(r2.stderr));
-  t.eqStr(f.said(string[]("log", "-1", "--format=%an <%ae>")), "DOTFILE <xdg@example.com>",
+  t.eqStr(f.said(["log", "-1", "--format=%an <%ae>"]), "DOTFILE <xdg@example.com>",
           "wrong author from the dotfile");
 
   // And drop that too: the XDG file is the last one standing.
   cli.remove(home + "/.gitconfig", false).wait();
-  t.eqStr(f.said(string[]("config", "user.name")), "XDG", "git did not fall back to the XDG file");
+  t.eqStr(f.said(["config", "user.name"]), "XDG", "git did not fall back to the XDG file");
   Exec r3 = f.commit("c.txt");
   t.eqI32(r3.status, 0,
           "gitci refused with the identity in the XDG file: " + string.fromBytes(r3.stderr));
-  t.eqStr(f.said(string[]("log", "-1", "--format=%an <%ae>")), "XDG <xdg@example.com>",
+  t.eqStr(f.said(["log", "-1", "--format=%an <%ae>"]), "XDG <xdg@example.com>",
           "wrong author from the XDG file");
 
   // With nothing set anywhere it must still **refuse** rather than invent one — the behaviour the
   // previous commit established, which a wider search must not quietly undo.
   cli.remove(home + "/.config/git/config", false).wait();
-  t.isTrue(f.git(string[]("config", "user.name")).status != 0,
+  t.isTrue(f.git(["config", "user.name"]).status != 0,
            "git still finds an identity after every file is gone");
   Exec r4 = f.commit("d.txt");
   t.isTrue(r4.status != 0, "gitci invented an author once no file set one");
-  t.eqStr(f.said(string[]("rev-list", "--count", "HEAD")), "3", "a refused commit still landed");
+  t.eqStr(f.said(["rev-list", "--count", "HEAD"]), "3", "a refused commit still landed");
 
   // Every commit above is one git can read, not merely one it accepted at write time.
-  Exec fsck = f.git(string[]("fsck", "--strict"));
+  Exec fsck = f.git(["fsck", "--strict"]);
   t.eqI32(fsck.status, 0, "fsck refused the commits: " + string.fromBytes(fsck.stderr));
 
   cli.remove(dir, true).wait();

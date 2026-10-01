@@ -49,7 +49,7 @@ string itoaSmall(i32 v) {
   string out = "";
   i32 k = v;
   while (k > 0) {
-    u8[] one = u8[1]();
+    u8[] one = u8[].filled(1, 0);
     one[0] = 48 + (k % 10);
     out = string.fromBytes(one) + out;
     k = k / 10;

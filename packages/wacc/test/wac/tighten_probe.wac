@@ -62,14 +62,14 @@ export string test_what_the_emitter_declines_across_waccs_own_sources(Core core,
 
   // `/`-prefixed, because `resolved` answers with a leading slash — the same reason
   // `selfhostemit_test.wac` does it, and passing plain paths makes every closure the entry alone.
-  string[] keys = string[c.paths.len()](fill: "");
+  string[] keys = string[].filled(c.paths.len(), "");
   for (i32 i = 0; i < c.paths.len(); i++) { keys[i] = "/" + c.paths[i]; }
   i32[] near = closureOf(keys, c.sources, entryAt);
   t.isTrue(near.len() >= 8, "only " + itoa(near.len()) + " sources in wacc's closure");
   if (near.len() < 8) { return t.report(); }
 
-  string[] cp = string[near.len()](fill: "");
-  string[] cs = string[near.len()](fill: "");
+  string[] cp = string[].filled(near.len(), "");
+  string[] cs = string[].filled(near.len(), "");
   for (i32 i = 0; i < near.len(); i++) {
     cp[i] = keys[near[i]];
     cs[i] = c.sources[near[i]];

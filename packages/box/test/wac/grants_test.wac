@@ -34,7 +34,7 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-grants"; }
 
 /** One applet, in a frame holding exactly `g` and nothing more. */
 Ran runGranted(Core core, Cli cli, string dir, string[] argv, Grants g) {
-  Frame f = Frame.of(argv, u8[0](), dir, false);
+  Frame f = Frame.of(argv, u8[](), dir, false);
   Core c = childCore(f, core);
   Cli l = childCliGranted(f, cli, g);
   i32 status = dispatch(c, l, Fs.onHost(l, 0), parseList(argv, 1, argv[0]), argv[0]);
@@ -56,11 +56,11 @@ export string test_a_denied_read_says_why(Core core, Cli cli) {
 
   // **The control comes first**, and it is not decoration: it says the file is there and `cat` works,
   // so the refusal below is about the grant and not about the fixture or the applet.
-  Ran granted = runGranted(core, cli, dir, string[]("cat", path), Grants.everything());
+  Ran granted = runGranted(core, cli, dir, ["cat", path], Grants.everything());
   t.eqI32(granted.status, 0, "cat with the grant: " + granted.err);
   t.eqStr(granted.out, "alpha beta\n", "and it reads the file");
 
-  Ran denied = runGranted(core, cli, dir, string[]("cat", path), Grants.nothing());
+  Ran denied = runGranted(core, cli, dir, ["cat", path], Grants.nothing());
   t.eqI32(denied.status, 1, "cat without the read grant fails");
   t.isTrue(denied.err.indexOf("Not granted to this application") >= 0, denied.err);
   t.eqI32(denied.outBytes.len(), 0, "and writes nothing: " + denied.out);
@@ -85,12 +85,12 @@ export string test_rm_f_without_the_write_grant_is_a_denial(Core core, Cli cli) 
   t.isTrue(cli.writeFile(doomed, "x".toBytes()).wait().ok(), "wrote the file");
 
   Grants readOnly = Grants(true, false, true);
-  Ran denied = runGranted(core, cli, dir, string[]("rm", "-f", doomed), readOnly);
+  Ran denied = runGranted(core, cli, dir, ["rm", "-f", doomed], readOnly);
   t.eqI32(denied.status, 1, "no write grant is denial, not silence: " + denied.err);
   t.isTrue(cli.stat(doomed).wait().exists, "and the file is still there");
 
   // With the grant it goes, so the refusal above is the grant talking and not `rm` being broken.
-  t.eqI32(runGranted(core, cli, dir, string[]("rm", "-f", doomed), Grants.everything()).status, 0,
+  t.eqI32(runGranted(core, cli, dir, ["rm", "-f", doomed], Grants.everything()).status, 0,
           "and with the grant it is removed");
   t.isFalse(cli.stat(doomed).wait().exists, "the file is gone");
 
@@ -116,12 +116,12 @@ export string test_without_the_write_grant_nothing_is_made(Core core, Cli cli) {
   string wanted = dir + "/denied";
 
   Grants readOnly = Grants(true, false, true);
-  Ran denied = runGranted(core, cli, dir, string[]("mkdir", wanted), readOnly);
+  Ran denied = runGranted(core, cli, dir, ["mkdir", wanted], readOnly);
   t.eqI32(denied.status, 1, "mkdir without the grant should fail: " + denied.err);
   t.isFalse(cli.stat(wanted).wait().exists, "and should make nothing");
 
   // The control: the same command with the grant does make it, so the refusal is the grant talking.
-  t.eqI32(runGranted(core, cli, dir, string[]("mkdir", wanted), Grants.everything()).status, 0,
+  t.eqI32(runGranted(core, cli, dir, ["mkdir", wanted], Grants.everything()).status, 0,
           "and with the grant it is made");
   t.isTrue(cli.stat(wanted).wait().exists, "the directory is there");
 

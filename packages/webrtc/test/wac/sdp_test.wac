@@ -40,7 +40,7 @@ export string test_aiortc_parses_our_offer_and_gets_everything_it_needs(Core cor
   Lines lines = Lines.create();
   lines.add("parse " + hexOf(sdp) + " application UDP/DTLS/SCTP wacUF wac-password-0123456789 " +
             "sha-256 " + FINGERPRINT + " auto 65536 5000 1");
-  check(t, cli, "python3", string[](ORACLE), lines, "aiortc parsing our offer");
+  check(t, cli, "python3", [ORACLE], lines, "aiortc parsing our offer");
   return t.report();
 }
 
@@ -50,7 +50,7 @@ export string test_and_we_parse_the_sdp_a_real_rtcpeerconnection_generates(Core 
   T t = T.create();
   Lines lines = Lines.create();
   lines.add("generate");
-  Answers a = ask(t, cli, "python3", string[](ORACLE), lines, "aiortc generating an offer");
+  Answers a = ask(t, cli, "python3", [ORACLE], lines, "aiortc generating an offer");
   if (!a.ok || a.lines.len() < 1) { return t.report(); }
   string sdp = string.fromBytes(decoded(word(a.lines[0], 1)));
   t.isTrue(sdp.len() > 0, "aiortc produced no SDP");
@@ -83,8 +83,8 @@ export string test_a_fingerprint_is_written_the_way_an_sdp_wants_it() {
   // rather than for a parser — and getting it wrong produces an SDP rejected as malformed.
   T t = T.create();
   t.eqStr(colons(decoded("96e0aaf2000f")), "96:E0:AA:F2:00:0F", "six bytes");
-  t.eqStr(colons(u8[0]()), "", "nothing to separate");
-  t.eqStr(colons(u8[1]()), "00", "one byte has no separator");
+  t.eqStr(colons(u8[]()), "", "nothing to separate");
+  t.eqStr(colons(u8[].filled(1, 0)), "00", "one byte has no separator");
   return t.report();
 }
 
@@ -119,7 +119,7 @@ string upper(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     string c = s.slice(i, i + 1);
     out = out + (c >= "a" && c <= "z"
-      ? string.fromBytes(u8[](c.toBytes()[0] - 32))
+      ? string.fromBytes([c.toBytes()[0] - 32])
       : c);
   }
   return out;

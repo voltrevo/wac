@@ -45,7 +45,7 @@ export JsonValue? parseJson5(u8[] src) {
 export Canonical canonicalizeJson5(u8[] src) {
   Parser p = Parser.createJson5(src);
   JsonValue? v = parseDocument(p);
-  if (v is null) { return Canonical(false, p.err, p.errPos, u8[0]()); }
+  if (v is null) { return Canonical(false, p.err, p.errPos, u8[]()); }
   Buf out = Buf.create();
   writeValue(out, v!);
   return Canonical(true, ERR_NONE(), -1, out.take());
@@ -68,7 +68,7 @@ export struct Canonical {
 export Canonical canonicalize(u8[] src) {
   Parser p = Parser.create(src);
   JsonValue? v = parseDocument(p);
-  if (v is null) { return Canonical(false, p.err, p.errPos, u8[0]()); }
+  if (v is null) { return Canonical(false, p.err, p.errPos, u8[]()); }
   Buf out = Buf.create();
   writeValue(out, v!);
   return Canonical(true, ERR_NONE(), -1, out.take());

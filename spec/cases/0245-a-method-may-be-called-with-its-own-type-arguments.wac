@@ -17,6 +17,6 @@ struct Vec<T> {
   }
 }
 export i32 f() {
-  Vec<i32> v = Vec<i32>(i32[3](fill: 4), 3);
+  Vec<i32> v = Vec<i32>(i32[].filled(3, 4), 3);
   return v.fold<i32>(0, (i32 acc, i32 x) => acc + x);
 }

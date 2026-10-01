@@ -28,7 +28,7 @@ export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core
 
   // Shared secrets chosen to exercise the mpint rules: a plain one, one with the top bit set so a
   // zero byte is prepended, and one with leading zeroes to strip.
-  u8[][] secrets = u8[][3](fill: u8[0]());
+  u8[][] secrets = u8[][].filled(3, u8[]());
   secrets[0] = ramp(32, 1, 1);
   secrets[1] = ramp(32, 1, 0);
   secrets[1][0] = 0xff;
@@ -38,8 +38,8 @@ export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core
 
   u8[] h = ramp(32, 7, 0);
   u8[] sid = ramp(32, 11, 0);
-  i32[] letters = i32[]('A', 'C', 'F');
-  i32[] lengths = i32[](1, 16, 32, 33, 64, 100);
+  i32[] letters = ['A', 'C', 'F'];
+  i32[] lengths = [1, 16, 32, 33, 64, 100];
 
   // One batch: 54 cells, and through `Cli.exec` a call per cell would be 54 processes.
   Lines lines = Lines.create();
@@ -53,7 +53,7 @@ export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core
       }
     }
   }
-  check(t, cli, "deno", string[]("run", "--no-check", ORACLE), lines, "RFC 4253 §7.2");
+  check(t, cli, "deno", ["run", "--no-check", ORACLE], lines, "RFC 4253 §7.2");
   return t.report();
 }
 
@@ -65,19 +65,19 @@ export string test_a_host_key_blob_that_names_the_wrong_algorithm_is_refused() {
   u8[] sig = filled(64, 3);
   u8[] h = filled(32, 4);
 
-  u8[] goodKey = cat(u8[][](strOf("ssh-ed25519"), str(pub)));
-  u8[] goodSig = cat(u8[][](strOf("ssh-ed25519"), str(sig)));
+  u8[] goodKey = cat([strOf("ssh-ed25519"), str(pub)]);
+  u8[] goodSig = cat([strOf("ssh-ed25519"), str(sig)]);
   // Not asserting this verifies — the bytes are made up. Only that the name checks reject.
-  t.isFalse(verifyEd25519Host(cat(u8[][](strOf("ssh-rsa"), str(pub))), goodSig, h),
+  t.isFalse(verifyEd25519Host(cat([strOf("ssh-rsa"), str(pub)]), goodSig, h),
             "a host key naming ssh-rsa was accepted as Ed25519");
-  t.isFalse(verifyEd25519Host(goodKey, cat(u8[][](strOf("ssh-rsa"), str(sig))), h),
+  t.isFalse(verifyEd25519Host(goodKey, cat([strOf("ssh-rsa"), str(sig)]), h),
             "a signature naming ssh-rsa was accepted as Ed25519");
   // Right names, wrong sizes.
-  t.isFalse(verifyEd25519Host(cat(u8[][](strOf("ssh-ed25519"), str(u8[31]()))), goodSig, h),
+  t.isFalse(verifyEd25519Host(cat([strOf("ssh-ed25519"), str(u8[].filled(31, 0))]), goodSig, h),
             "a 31-byte public key was accepted");
-  t.isFalse(verifyEd25519Host(goodKey, cat(u8[][](strOf("ssh-ed25519"), str(u8[63]()))), h),
+  t.isFalse(verifyEd25519Host(goodKey, cat([strOf("ssh-ed25519"), str(u8[].filled(63, 0))]), h),
             "a 63-byte signature was accepted");
-  t.isFalse(verifyEd25519Host(u8[0](), goodSig, h), "an empty host key was accepted");
+  t.isFalse(verifyEd25519Host(u8[](), goodSig, h), "an empty host key was accepted");
   return t.report();
 }
 
@@ -86,15 +86,15 @@ export string test_a_low_order_peer_point_is_rejected_rather_than_shared() {
   u8[] secret = ramp(32, 1, 1);
   // The all-zero point: X25519 with it yields an all-zero secret, which every session would
   // share. RFC 8731 §3 requires aborting, and nothing later in the protocol notices.
-  t.isTrue(sharedSecret(secret, u8[32]()) is null, "the all-zero point produced a shared secret");
+  t.isTrue(sharedSecret(secret, u8[].filled(32, 0)) is null, "the all-zero point produced a shared secret");
 
   // A point of order 8, likewise.
-  u8[] orderEight = u8[32]();
+  u8[] orderEight = u8[].filled(32, 0);
   orderEight[0] = 1;
   t.isTrue(sharedSecret(secret, orderEight) is null, "a low-order point produced a shared secret");
 
   // A real peer key does work, so the check is not simply refusing everything.
-  u8[] peerSecret = u8[32]();
+  u8[] peerSecret = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { peerSecret[i] = (200 - i) & 255; }
   u8[]? shared = sharedSecret(secret, ephemeralPublic(peerSecret));
   t.isTrue(shared is not null, "a valid point was rejected");

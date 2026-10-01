@@ -18,17 +18,17 @@ import { Client } from "../../src/client.wac";
 import { Connection } from "../../src/connection.wac";
 
 Client someone() {
-  u8[] s = u8[32]();
+  u8[] s = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
-  u8[] r = u8[32]();
+  u8[] r = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
-  return Client.of(s, r, u8[8](), u8[4](), "localhost");
+  return Client.of(s, r, u8[].filled(8, 0), u8[].filled(4, 0), "localhost");
 }
 
-Connection conn() { return Connection.of(someone(), u8[0]()); }
+Connection conn() { return Connection.of(someone(), u8[]()); }
 
 u8[] frames(i32 n) {
-  u8[] f = u8[4]();
+  u8[] f = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { f[i] = (n * 17 + i) & 255; }
   return f;
 }
@@ -112,7 +112,7 @@ bool resendCarriesTheSameFrames() {
 
 export string test_packet_numbers_are_handed_out_in_order_and_never_reused() {
   T t = T.create();
-  i32[] ns = i32[5]();
+  i32[] ns = i32[].filled(5, 0);
   ns[0] = 0; ns[1] = 1; ns[2] = 2; ns[3] = 9; ns[4] = 40;
   for (i32 i = 0; i < 5; i++) {
     t.eqI32(numbersAscend(ns[i]), ns[i],
@@ -124,7 +124,7 @@ export string test_packet_numbers_are_handed_out_in_order_and_never_reused() {
 /** 8 is the initial capacity, 9 grows the array and 17 is one past the doubled one. */
 export string test_everything_sent_is_outstanding_until_acknowledged() {
   T t = T.create();
-  i32[] ns = i32[7]();
+  i32[] ns = i32[].filled(7, 0);
   ns[0] = 0; ns[1] = 1; ns[2] = 5; ns[3] = 20; ns[4] = 8; ns[5] = 9; ns[6] = 17;
   for (i32 i = 0; i < 7; i++) {
     t.eqI32(outstandingAfterSends(ns[i]), ns[i], itoa(ns[i]) + " sends outstanding");
@@ -164,7 +164,7 @@ export string test_resending_with_nothing_outstanding_burns_no_number() {
 
 export string test_repeated_resends_do_not_grow_the_outstanding_count() {
   T t = T.create();
-  i32[] times = i32[4]();
+  i32[] times = i32[].filled(4, 0);
   times[0] = 1; times[1] = 2; times[2] = 10; times[3] = 50;
   for (i32 i = 0; i < 4; i++) {
     t.eqI32(repeatedResends(times[i]), 1, "after " + itoa(times[i]) + " resends");

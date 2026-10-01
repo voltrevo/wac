@@ -63,11 +63,11 @@ const string PROGRAM =
   "    cli.write(\"PAYLOAD\".toBytes());\n" +
   "    return 0;\n" +
   "  }\n" +
-  "  Child kid = cli.spawnSelf(u8[][](\"child\".toBytes()), GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  Child kid = cli.spawnSelf([\"child\".toBytes()], GRANT_ALL(), \".\", false, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  if (mode != \"control\") {\n" +
   "    Pending<Read> first = cli.recv(kid.handle);\n" +
-  "    if (mode == \"late\") { core.delay(600).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
+  "    if (mode == \"late\") { core.delay(600).wait(); } else { core.waitAny([first.id], 50); }\n" +
   "    first.cancel();\n" +
   "    core.cancel(first.id);\n" +
   "  }\n" +
@@ -94,7 +94,7 @@ const string STDIN_PROGRAM =
   "  if (mode == \"child\" || mode == \"childcontrol\" || mode == \"childlate\") {\n" +
   "    if (mode == \"child\" || mode == \"childlate\") {\n" +
   "      Pending<u8[]> first = cli.readStdin();\n" +
-  "      if (mode == \"childlate\") { core.delay(900).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
+  "      if (mode == \"childlate\") { core.delay(900).wait(); } else { core.waitAny([first.id], 50); }\n" +
   "      first.cancel();\n" +
   "      core.cancel(first.id);\n" +
   "    }\n" +
@@ -104,7 +104,7 @@ const string STDIN_PROGRAM =
   "  }\n" +
   "\n" +
   "  string kidArg = mode == \"control\" ? \"childcontrol\" : (mode == \"late\" ? \"childlate\" : \"child\");\n" +
-  "  Child kid = cli.spawnSelf(u8[][](kidArg.toBytes()), GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  Child kid = cli.spawnSelf([kidArg.toBytes()], GRANT_ALL(), \".\", false, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  core.delay(300).wait();\n" +
   "  cli.send(kid.handle, \"PAYLOAD\".toBytes()).wait();\n" +
@@ -153,21 +153,21 @@ const string ACCEPT_PROGRAM =
   "  if (listener.handle < 0) { core.log(\"no listener: \" + listener.error); return 1; }\n" +
   "\n" +
   "  string port = itoa(listener.port);\n" +
-  "  Child kid = cli.spawnSelf(u8[][](\"child\".toBytes(), port.toBytes()),\n" +
+  "  Child kid = cli.spawnSelf([\"child\".toBytes(), port.toBytes()],\n" +
   "                            GRANT_ALL(), \".\", false, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "\n" +
   "  if (mode != \"control\") {\n" +
   "    // Parked on an empty backlog, then given up on — the client dials at 300ms.\n" +
   "    Pending<Socket> first = cli.accept(listener.handle);\n" +
-  "    if (mode == \"late\") { core.delay(900).wait(); } else { core.waitAny(i32[](first.id), 50); }\n" +
+  "    if (mode == \"late\") { core.delay(900).wait(); } else { core.waitAny([first.id], 50); }\n" +
   "    first.cancel();\n" +
   "    core.cancel(first.id);\n" +
   "  }\n" +
   "\n" +
   "  // The connection should still be there to accept.\n" +
   "  Pending<Socket> second = cli.accept(listener.handle);\n" +
-  "  if (core.waitAny(i32[](second.id), 3000) < 0) {\n" +
+  "  if (core.waitAny([second.id], 3000) < 0) {\n" +
   "    core.log(\"VERDICT lost — the second accept never saw the client\");\n" +
   "    return 1;\n" +
   "  }\n" +
@@ -212,7 +212,7 @@ const string CONNECT_PROGRAM =
   "  if (served.handle < 0) { core.log(\"VERDICT lost — nothing arrived: \" + served.error); return 1; }\n" +
   "\n" +
   "  Pending<Read> r = cli.recv(served.handle);\n" +
-  "  if (core.waitAny(i32[](r.id), 1500) < 0) {\n" +
+  "  if (core.waitAny([r.id], 1500) < 0) {\n" +
   "    core.log(\"VERDICT leaked — the peer is still holding the connection open\");\n" +
   "    return 1;\n" +
   "  }\n" +
@@ -267,8 +267,8 @@ const string OWNSTDIN_PROGRAM =
   "  string self = string.fromBytes(cli.arg(2).wait());\n" +
   "  string kid = mode == \"control\" ? \"eatercontrol\" : \"eater\";\n" +
   "  Exec r = cli.exec(binary,\n" +
-  "                    string[](\"run\", \"--allow-read\", \"--allow-write\", \"--allow-run\",\n" +
-  "                             \"--allow-env\", \"--allow-net\", self, kid),\n" +
+  "                    [\"run\", \"--allow-read\", \"--allow-write\", \"--allow-run\",\n" +
+  "                     \"--allow-env\", \"--allow-net\", self, kid],\n" +
   "                    \"PAYLOAD\".toBytes()).wait();\n" +
   "  if (!r.ran()) { core.log(\"VERDICT lost — the binary did not run: \" + r.error); return 1; }\n" +
   "  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);\n" +
@@ -280,11 +280,15 @@ const string OWNSTDIN_PROGRAM =
 /** Write the program once and run it under `wac`, both streams together. */
 string ran(Cli cli, string binary, string path, string mode) {
   string[] argv = mode == ""
-    ? string[]("run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
-               path)
-    : string[]("run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
-               path, mode);
-  Exec r = cli.exec(binary, argv, u8[0]()).wait();
+    ? [
+               "run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               path
+    ]
+    : [
+               "run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               path, mode
+    ];
+  Exec r = cli.exec(binary, argv, u8[]()).wait();
   if (!r.ran()) { return "the binary did not run — " + r.error; }
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }
@@ -385,14 +389,18 @@ void checkTaken(T t, Cli cli, string binary, string stdinPath, string acceptPath
 
 /** `readStdin` on the process's own input, which needs the binary to exec itself. */
 void checkOwnStdin(T t, Cli cli, string binary, string path, string host) {
-  Exec c = cli.exec(binary, string[]("run", "--allow-read", "--allow-write", "--allow-run",
-                                     "--allow-env", "--allow-net", path, "control", binary, path),
-                    u8[0]()).wait();
+  Exec c = cli.exec(binary, [
+                                     "run", "--allow-read", "--allow-write", "--allow-run",
+                                     "--allow-env", "--allow-net", path, "control", binary, path
+  ],
+                    u8[]()).wait();
   t.isTrue(contains(string.fromBytes(c.stdout) + string.fromBytes(c.stderr), "VERDICT kept"),
            host + ": the own-stdin control saw nothing, so its case cannot fail");
-  Exec a = cli.exec(binary, string[]("run", "--allow-read", "--allow-write", "--allow-run",
-                                     "--allow-env", "--allow-net", path, "abandon", binary, path),
-                    u8[0]()).wait();
+  Exec a = cli.exec(binary, [
+                                     "run", "--allow-read", "--allow-write", "--allow-run",
+                                     "--allow-env", "--allow-net", path, "abandon", binary, path
+  ],
+                    u8[]()).wait();
   t.isTrue(contains(string.fromBytes(a.stdout) + string.fromBytes(a.stderr), "VERDICT kept"),
            host + ": an abandoned readStdin on the program's own input took it with it");
 }

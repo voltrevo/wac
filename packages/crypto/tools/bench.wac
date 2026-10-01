@@ -48,14 +48,14 @@ import { mlkemKeyGen, mlkemEncaps, mlkemDecaps, ekSize, dkSize, ctSize } from ".
 
 /** A fixed 32-byte secret. Structured rather than random, so two runs are comparable. */
 u8[] key32() {
-  u8[] k = u8[32]();
+  u8[] k = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { k[i] = ((i * 37) & 255) | 1; }
   return k;
 }
 
 /** A 2048-bit odd modulus with the top bit set. Not a key — see the header. */
 u8[] modulus2048() {
-  u8[] n = u8[256]();
+  u8[] n = u8[].filled(256, 0);
   n[0] = 0xC7;
   for (i32 i = 1; i < 255; i++) { n[i] = (i * 31 + 11) & 255; }
   n[255] = 0x8B;
@@ -64,7 +64,7 @@ u8[] modulus2048() {
 
 /** 65537, big-endian. */
 u8[] e65537() {
-  u8[] e = u8[3]();
+  u8[] e = u8[].filled(3, 0);
   e[0] = 1;
   e[2] = 1;
   return e;
@@ -83,8 +83,8 @@ void row(Core core, string name, i64 from, i64 to, i32 iters) {
 
 export i32 main(Core core, Cli cli) {
   u8[] k = key32();
-  u8[] msg = u8[32](fill: 7);
-  u8[] nonce = u8[32](fill: 9);
+  u8[] msg = u8[].filled(32, 7);
+  u8[] nonce = u8[].filled(32, 9);
 
   core.log("| operation | per call |");
   core.log("|---|---:|");
@@ -115,18 +115,18 @@ export i32 main(Core core, Cli cli) {
   i64 l = core.nowMillis().wait();  row(core, "p256Verify", j, l, n);
 
   // ML-KEM, one keypair reused so the row is the operation rather than the setup.
-  u8[] kp = mlkemKeyGen(u8[64](fill: 7));
-  u8[] ek = u8[ekSize()]();
+  u8[] kp = mlkemKeyGen(u8[].filled(64, 7));
+  u8[] ek = u8[].filled(ekSize(), 0);
   for (i32 i = 0; i < ekSize(); i++) { ek[i] = kp[i]; }
-  u8[] dk = u8[dkSize()]();
+  u8[] dk = u8[].filled(dkSize(), 0);
   for (i32 i = 0; i < dkSize(); i++) { dk[i] = kp[ekSize() + i]; }
-  u8[] ce = mlkemEncaps(ek, u8[32](fill: 3));
-  u8[] ct = u8[ctSize()]();
+  u8[] ce = mlkemEncaps(ek, u8[].filled(32, 3));
+  u8[] ct = u8[].filled(ctSize(), 0);
   for (i32 i = 0; i < ctSize(); i++) { ct[i] = ce[32 + i]; }
   i64 m = core.nowMillis().wait();
-  for (i32 i = 0; i < n; i++) { mlkemKeyGen(u8[64](fill: 7)); }
+  for (i32 i = 0; i < n; i++) { mlkemKeyGen(u8[].filled(64, 7)); }
   i64 o = core.nowMillis().wait();  row(core, "mlkemKeyGen", m, o, n);
-  for (i32 i = 0; i < n; i++) { mlkemEncaps(ek, u8[32](fill: 3)); }
+  for (i32 i = 0; i < n; i++) { mlkemEncaps(ek, u8[].filled(32, 3)); }
   i64 p = core.nowMillis().wait();  row(core, "mlkemEncaps", o, p, n);
   for (i32 i = 0; i < n; i++) { mlkemDecaps(dk, ct); }
   i64 q = core.nowMillis().wait();  row(core, "mlkemDecaps", p, q, n);
@@ -135,7 +135,7 @@ export i32 main(Core core, Cli cli) {
   // magnitude — and the modulus is not a key, so the answers mean nothing and the times do not.
   u8[] rn = modulus2048();
   u8[] re = e65537();
-  u8[] rsig = u8[256]();
+  u8[] rsig = u8[].filled(256, 0);
   for (i32 i = 0; i < 256; i++) { rsig[i] = (i * 17 + 3) & 255; }
   i32 rv = 20;
   i64 r0 = core.nowMillis().wait();
@@ -152,7 +152,7 @@ export i32 main(Core core, Cli cli) {
   // bcrypt at OpenSSH's default cost, which is what `packages/ssh` meets in the wild.
   i32 bc = 4;
   i64 b0 = core.nowMillis().wait();
-  for (i32 i = 0; i < bc; i++) { bcryptPbkdf(u8[16](fill: 7), u8[16](fill: 3), 32, 16); }
+  for (i32 i = 0; i < bc; i++) { bcryptPbkdf(u8[].filled(16, 7), u8[].filled(16, 3), 32, 16); }
   i64 b1 = core.nowMillis().wait();  row(core, "bcryptPbkdf, 16 rounds", b0, b1, bc);
   return 0;
 }

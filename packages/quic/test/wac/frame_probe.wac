@@ -215,7 +215,7 @@ export u8[] streamData(u8[] b, i32 at) {
     Stream(id, offset, data, fin): { return data; }
     default: {}
   }
-  return u8[0]();
+  return u8[]();
 }
 export bool streamFin(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
@@ -231,7 +231,7 @@ export u8[] newCid(u8[] b, i32 at) {
     NewConnectionId(seq, retire, cid, token): { return cid; }
     default: {}
   }
-  return u8[0]();
+  return u8[]();
 }
 export i64 newCidSeq(u8[] b, i32 at) {
   match (nextIn(b, at, EPOCH_1RTT()).frame) {
@@ -245,7 +245,7 @@ export u8[] newCidToken(u8[] b, i32 at) {
     NewConnectionId(seq, retire, cid, token): { return token; }
     default: {}
   }
-  return u8[0]();
+  return u8[]();
 }
 
 /** A MAX_STREAM_DATA's two numbers, and a MAX_STREAMS' kind. */

@@ -46,7 +46,7 @@ string stemOf(string path) {
 }
 
 string[] entries() {
-  return string[](
+  return [
     "packages/tor/src/app.wac",
     "packages/tor/src/socks.wac",
     "packages/tor/src/client_entry.wac",
@@ -61,7 +61,8 @@ string[] entries() {
     "packages/tor/src/hsserviced.wac",
     "packages/tor/size/proto_only.wac",
     "packages/tor/size/tor_only.wac",
-    "packages/tor/size/tls_only.wac");
+    "packages/tor/size/tls_only.wac"
+  ];
 }
 
 export string test_every_entry_file_compiles(Core core, Cli cli) {
@@ -93,7 +94,7 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   // asking, and `tor`'s sources change on the days somebody works in `tor`.
   for (i32 i = 0; i < es.len(); i++) {
     string mod = builtProgram(cli, es[i], "torentry-" + stemOf(es[i]),
-                              string[]("--allow-read", "--allow-write"));
+                              ["--allow-read", "--allow-write"]);
     t.isTrue(cli.stat(mod).wait().exists,
              es[i] + " did not compile — see " + mod + " and the build's own message above");
   }

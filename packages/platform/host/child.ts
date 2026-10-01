@@ -308,7 +308,7 @@ export function unpackExec(
  * is dropped rather than being a fault: there is nothing it could mean, and the alternative is a
  * capability that fails on a caller's typo in a variable it did not need.
  *
- * Later wins, which is what makes `execWith(..., string[]("A=1", "A=2"), ...)` end at 2 — the same
+ * Later wins, which is what makes `execWith(..., ["A=1", "A=2"], ...)` end at 2 — the same
  * rule as a shell's, and the one a caller assembling a list from two sources expects.
  */
 export function envRecord(pairs: string[]): Record<string, string> {

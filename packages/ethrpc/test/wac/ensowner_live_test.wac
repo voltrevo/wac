@@ -58,8 +58,8 @@ string hexPlusOne(string word) {
     i32 sum = v + carry;
     carry = sum > 15 ? 1 : 0;
     i32 low = sum & 15;
-    string d = low < 10 ? string.fromBytes(u8[]('0' + low))
-                        : string.fromBytes(u8[]('a' + (low - 10)));
+    string d = low < 10 ? string.fromBytes(['0' + low])
+                        : string.fromBytes(['a' + (low - 10)]);
     out = d + out;
   }
   return "0x" + out;
@@ -76,15 +76,15 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   if (!node.ok()) { return t.report(); }
 
   // `cast` decides where the owner goes, so `packages/ens` has to agree with it to find anything.
-  string namehash = castRun(cli, string[]("namehash", "wac.eth"));
+  string namehash = castRun(cli, ["namehash", "wac.eth"]);
   t.isTrue(namehash.len() == 66, "cast computed a namehash: \"" + namehash + "\"");
-  string slot = castRun(cli, string[]("index", "bytes32", namehash, "0"));
+  string slot = castRun(cli, ["index", "bytes32", namehash, "0"]);
   t.isTrue(slot.len() == 66, "cast computed a mapping slot: \"" + slot + "\"");
   if (slot.len() != 66) { stopAnvil(cli, node); return t.report(); }
 
   castRpc(cli, node.port,
-          string[]("anvil_setStorageAt", REGISTRY, slot, paddedAddress(OWNER)));
-  castRpc(cli, node.port, string[]("evm_mine"));
+          ["anvil_setStorageAt", REGISTRY, slot, paddedAddress(OWNER)]);
+  castRpc(cli, node.port, ["evm_mine"]);
 
   // The resolver goes in the slot above the owner's, and both come back from **one** request now —
   // one account proof, one block. Asking twice would answer about two states, and a name transferred
@@ -93,10 +93,10 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   t.isTrue(resolverSlot != slot && resolverSlot.len() == slot.len(),
            "the resolver's slot is the owner's plus one: " + slot + " -> " + resolverSlot);
   castRpc(cli, node.port,
-          string[]("anvil_setStorageAt", REGISTRY, resolverSlot, paddedAddress(RESOLVER)));
-  castRpc(cli, node.port, string[]("evm_mine"));
+          ["anvil_setStorageAt", REGISTRY, resolverSlot, paddedAddress(RESOLVER)]);
+  castRpc(cli, node.port, ["evm_mine"]);
 
-  Exec r = runExample(cli, ENTRY, string[]("wac.eth", "127.0.0.1", itoa(node.port)));
+  Exec r = runExample(cli, ENTRY, ["wac.eth", "127.0.0.1", itoa(node.port)]);
   t.eqI32(r.status, 0, "exit " + itoa(r.status) + ": " + string.fromBytes(r.stderr));
   t.eqStr(firstLine(string.fromBytes(r.stdout)), OWNER, "the owner");
   t.isTrue(string.fromBytes(r.stdout).indexOf("resolver " + RESOLVER) >= 0,
@@ -113,7 +113,7 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   string hash = blockHash(cli, node.port);
   t.isTrue(hash.len() == 66, "the node gave a block hash: \"" + hash + "\"");
   Exec anchored = runExample(cli, ENTRY,
-                             string[]("wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, hash));
+                             ["wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, hash]);
   t.eqI32(anchored.status, 0,
           "exit " + itoa(anchored.status) + ": " + string.fromBytes(anchored.stderr));
   t.eqStr(firstLine(string.fromBytes(anchored.stdout)), OWNER, "the owner, anchored");
@@ -126,7 +126,7 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   string madeUp = "0x";
   for (i32 i = 0; i < 32; i++) { madeUp = madeUp + "de"; }
   Exec unknown = runExample(cli, ENTRY,
-                            string[]("wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, madeUp));
+                            ["wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, madeUp]);
   t.eqI32(unknown.status, 1, "an unknown block should fail");
   t.isTrue(string.fromBytes(unknown.stderr).indexOf("does not have the block") >= 0,
            "the refusal does not say why: " + string.fromBytes(unknown.stderr));
@@ -139,14 +139,14 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   // Sealed first, then captured: a cheatcode writes into the *pending* state, so a hash read before
   // one lands describes a block anvil then rebuilds — and the child gets "no such block", which is a
   // true answer to a question about a block that no longer exists. Mine, then capture, then write.
-  castRpc(cli, node.port, string[]("evm_mine"));
+  castRpc(cli, node.port, ["evm_mine"]);
   string before = blockHash(cli, node.port);
   string beefy = "0x";
   for (i32 i = 0; i < 30; i++) { beefy = beefy + "00"; }
-  castRpc(cli, node.port, string[]("anvil_setStorageAt", REGISTRY, slot, beefy + "beef"));
-  castRpc(cli, node.port, string[]("evm_mine"));
+  castRpc(cli, node.port, ["anvil_setStorageAt", REGISTRY, slot, beefy + "beef"]);
+  castRpc(cli, node.port, ["evm_mine"]);
   Exec stale = runExample(cli, ENTRY,
-                          string[]("wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, before));
+                          ["wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, before]);
   t.eqI32(stale.status, 1,
           "a historical anchor should fail here: " + string.fromBytes(stale.stdout));
   t.isTrue(string.fromBytes(stale.stderr).indexOf("historical proofs") >= 0,
@@ -154,7 +154,7 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
 
   // A name nobody owns: absence is an answer, and the exit code says the question was answered.
   Exec none = runExample(cli, ENTRY,
-                         string[]("nobody-owns-this.eth", "127.0.0.1", itoa(node.port)));
+                         ["nobody-owns-this.eth", "127.0.0.1", itoa(node.port)]);
   t.eqI32(none.status, 0, "exit " + itoa(none.status) + ": " + string.fromBytes(none.stderr));
   string noneOut = string.fromBytes(none.stdout);
   i32 end = noneOut.len();
@@ -164,7 +164,7 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   // And a node that is not there is a failure, not an empty answer.
   i32 dead = freePort(cli);
   if (dead > 0) {
-    Exec down = runExample(cli, ENTRY, string[]("wac.eth", "127.0.0.1", itoa(dead)));
+    Exec down = runExample(cli, ENTRY, ["wac.eth", "127.0.0.1", itoa(dead)]);
     t.eqI32(down.status, 1, "a refused connection should fail: " + string.fromBytes(down.stdout));
   }
 

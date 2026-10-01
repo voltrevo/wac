@@ -191,8 +191,8 @@ export string test_an_introduction_is_routed_or_refused(Core core, Cli cli) {
 
   // A cell whose header does not validate is bad format rather than unknown id — nothing has been
   // said about any service.
-  t.eqI32(introduce1(held, u8[0](), true).status, INTRO_ACK_BAD_FORMAT, "an empty cell");
-  t.eqI32(introduce1(held, u8[200](), true).status, INTRO_ACK_BAD_FORMAT,
+  t.eqI32(introduce1(held, u8[](), true).status, INTRO_ACK_BAD_FORMAT, "an empty cell");
+  t.eqI32(introduce1(held, u8[].filled(200, 0), true).status, INTRO_ACK_BAD_FORMAT,
           "and one whose key type is zero rather than ed25519");
   u8[] wrongLegacy = copy(intro);
   wrongLegacy[0] = 1;
@@ -245,7 +245,7 @@ u8[] flip(u8[] b) {
 }
 
 u8[] copy(u8[] b) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
   return out;
 }

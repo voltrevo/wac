@@ -17,21 +17,21 @@ export i32 scalarCount(u8[] s) { return count(s); }
 
 export u8[] encodeOne(i32 cp) {
   i32 n = encodedLength(cp);
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   if (n > 0) { encode(out, 0, cp); }
   return out;
 }
 
 export u8[] lower(u8[] s) {
   u8[]? r = lowerAll(s);
-  return r is null ? u8[0]() : r!;
+  return r is null ? u8[]() : r!;
 }
 export u8[] upper(u8[] s) {
   u8[]? r = upperAll(s);
-  return r is null ? u8[0]() : r!;
+  return r is null ? u8[]() : r!;
 }
 export u8[] casefold(u8[] s) {
   u8[]? r = foldAll(s);
-  return r is null ? u8[0]() : r!;
+  return r is null ? u8[]() : r!;
 }
 export bool equalFold(u8[] a, u8[] b) { return foldEqual(a, b); }

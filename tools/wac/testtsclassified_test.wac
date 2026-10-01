@@ -45,7 +45,7 @@ const string ISSUE_NAME = "0161-moving-the-suite-off-deno-the-order.md";
  * would fail on the commit that closed the issue — the one commit where nothing is wrong.
  */
 string issueText(Cli cli) {
-  string[] where = string[]("issues/system/open/", "issues/system/closed/");
+  string[] where = ["issues/system/open/", "issues/system/closed/"];
   for (i32 i = 0; i < where.len(); i++) {
     FileResult r = cli.readFile(where[i] + ISSUE_NAME).wait();
     if (r.ok) { return string.fromBytes(r.bytes); }
@@ -88,9 +88,9 @@ export string test_every_package_with_typescript_tests_is_named_in_0161(Core cor
 
   // Paths only — no file is read to find them, which is what keeps this cheap enough to sit in
   // `wac task docs`. `duplicatedline_test.wac`'s header is the warning: 2,009 reads is two seconds.
-  string[] files = sourceFiles(core, cli, string[](".ts"), string[0](fill: ""));
+  string[] files = sourceFiles(core, cli, [".ts"], string[].filled(0, ""));
 
-  string[] found = string[64](fill: "");
+  string[] found = string[].filled(64, "");
   i32 n = 0;
   i32 tests = 0;
   for (i32 i = 0; i < files.len(); i++) {

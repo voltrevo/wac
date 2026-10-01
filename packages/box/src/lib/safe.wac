@@ -81,7 +81,7 @@ Change finish(Cli cli, Fs fs, string tmp, string path) {
 /** A sibling of `path` that no concurrent copy of this program will also pick. */
 string tempName(Core core, string path) {
   u8[] r = core.randomBytes(6).wait();
-  u8[] out = u8[12](fill: '0');
+  u8[] out = u8[].filled(12, '0');
   u8[] digits = "0123456789abcdef".toBytes();
   for (i32 i = 0; i < 6; i++) {
     out[i * 2] = digits[(r[i] >> 4) & 15];

@@ -108,7 +108,7 @@ export string test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_bui
 
   Lines lines = Lines.create();
   lines.add("roots " + BUNDLE + " " + hex(got.der) + " " + offsetsCsv(got.offsets));
-  check(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+  check(t, cli, "deno", ["run", "-A", "--no-check", ORACLE], lines,
         "the reference trust store");
   return t.report();
 }

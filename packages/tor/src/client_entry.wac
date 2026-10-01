@@ -80,9 +80,9 @@ export bool torVerifyCert(u8[] c, u8[] i, u8[] s) { return verifyKeyCertificatio
 // these exist to keep the code reachable so it is counted, not to be called. An empty relay
 // list is enough for that and says so.
 export i32 torWeights(i32 p, i64[] w) {
-  return weightedBandwidths(Relay[0](), p, w).len();
+  return weightedBandwidths(Relay[](), p, w).len();
 }
 export i32 torChoose(i64[] w, i32[] c, i32[] fs, i32[] fo, bool s, i64 r) {
-  return choose(Relay[0](), w, c, fs, fo, s, r);
+  return choose(Relay[](), w, c, fs, fo, s, r);
 }
 export bool torPortPermitted(bool a, i32[] r, i32 p) { return portPermitted(a, r, p); }

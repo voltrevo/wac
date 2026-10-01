@@ -36,7 +36,7 @@
  */
 export u8[] slice(u8[] s, i32 from, i32 to) {
   if (from < 0 || to < from || to > s.len()) { trap; }
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   out.copyFrom(s, from, 0, to - from);
   return out;
 }
@@ -52,7 +52,7 @@ export u8[] clamped(u8[] s, i32 from, i32 to) {
   i32 lo = from < 0 ? 0 : (from > s.len() ? s.len() : from);
   i32 hi = to < 0 ? 0 : (to > s.len() ? s.len() : to);
   if (hi < lo) { hi = lo; }
-  u8[] out = u8[hi - lo]();
+  u8[] out = u8[].filled(hi - lo, 0);
   out.copyFrom(s, lo, 0, hi - lo);
   return out;
 }

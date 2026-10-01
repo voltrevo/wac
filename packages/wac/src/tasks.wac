@@ -49,10 +49,10 @@ export struct Task {
  */
 export Task[] tasksIn(u8[] src) {
   JsonValue? parsed = parseJson5(src);
-  if (parsed is null) { return Task[0](); }
+  if (parsed is null) { return Task[](); }
   match (parsed!) {
     Object(obj): {
-      Task[] out = Task[obj.len()](fill: Task("", ""));
+      Task[] out = Task[].filled(obj.len(), Task("", ""));
       i32 n = 0;
       for (i32 i = 0; i < obj.len(); i++) {
         JsonMember m = obj.at(i);
@@ -67,11 +67,11 @@ export Task[] tasksIn(u8[] src) {
           default: { }
         }
       }
-      Task[] exact = Task[n](fill: Task("", ""));
+      Task[] exact = Task[].filled(n, Task("", ""));
       for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
       return exact;
     }
-    default: { return Task[0](); }
+    default: { return Task[](); }
   }
 }
 

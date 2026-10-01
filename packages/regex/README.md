@@ -14,7 +14,7 @@ import { compile, search, slotCount } from "../../regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../regex/src/program.wac";
 
 Program? p = compile("(\\w+)@(\\w+)".toBytes());
-i32[] caps = i32[slotCount(p!)]();
+i32[] caps = i32[].filled(slotCount(p!), 0);
 i32 start = search(p!, "mail me at a@b now".toBytes(), 0, caps, 100000);
 // caps holds (start, end) per group; caps[2], caps[3] are the first \w+
 ```

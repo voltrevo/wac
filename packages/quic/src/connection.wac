@@ -90,7 +90,7 @@ export struct Connection {
   i64 largestProcessed;
 
   Connection of(Client client, u8[] handshakeReply) {
-    return Connection(client, handshakeReply, 0 as i64, InFlight[0](), 0, -1 as i64, -1 as i64);
+    return Connection(client, handshakeReply, 0 as i64, InFlight[](), 0, -1 as i64, -1 as i64);
   }
 
   /**
@@ -118,7 +118,7 @@ export struct Connection {
   void reserve(this) {
     if (this.count == this.sent.len()) {
       i32 n = this.sent.len() == 0 ? 8 : this.sent.len() * 2;
-      InFlight[] grown = InFlight[n]();
+      InFlight[] grown = InFlight[].defaulted(n);
       for (i32 i = 0; i < this.count; i++) { grown[i] = this.sent[i]; }
       this.sent = grown;
     }
@@ -212,7 +212,7 @@ export struct Connection {
    */
   u8[] resend(this) {
     i64 number = this.trackResend();
-    if (number < (0 as i64)) { return u8[0](); }
+    if (number < (0 as i64)) { return u8[](); }
     return this.client.sealFrames(this.handshakeReply, this.sent[this.count - 1].frames, number);
   }
 
@@ -228,7 +228,7 @@ export struct Connection {
    */
   u8[] receive(this, u8[] packet) {
     u8[] payload = this.client.openApplication(this.handshakeReply, packet);
-    if (payload.len() == 0) { return u8[0](); }
+    if (payload.len() == 0) { return u8[](); }
     i64 truncated = this.client.applicationPacketNumber(this.handshakeReply, packet);
     if (truncated < (0 as i64)) { return payload; }
     // The width the header carried, which `applicationPacketNumber` has already unmasked for us:

@@ -30,7 +30,7 @@ export struct Ran {
 export Fs memoryFs(Core core, string program) {
   Fs fs = Fs.inMemory(0);
   fs.mkdir("/tmp", true);
-  Vec<string> argv = Vec.fromArray(string[](program));
+  Vec<string> argv = Vec.fromArray([program]);
   mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
   return fs;
 }
@@ -42,7 +42,7 @@ export Fs memoryFs(Core core, string program) {
  * name, so the shell's own arguments start at 1.
  */
 export Ran runOn(Core core, Cli cli, Fs fs, string script) {
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "/", false);
+  Frame f = Frame.of(["sh", "-c", script], u8[](), "/", false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.onFs(c, l, fs);

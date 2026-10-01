@@ -135,7 +135,7 @@ numbering has to be kept in sync with the harness by hand.
 ## Generics, and two constructs that came with them
 
 The parser reads type parameters and type arguments — `struct Vec<T>`, `T max<T>(T a, T b)`,
-`Map<string, Vec<i32>>`, `Vec<i32>[2](fill: …)` — which is
+`Map<string, Vec<i32>>`, `Vec<i32>[].filled(2, …)` — which is
 [wac-mono 0003](../../issues/system/closed/0003-wacc-parser-does-not-implement-generics.md). Until it did,
 twenty-five files were skipped by name, including all of `packages/std`, which is the most
 generics-dense wac in existence: the corpus is the whole value of a differential test, and a blind
@@ -2780,7 +2780,7 @@ and lies is worse than one that is refused.
 `i32` here, so the same-width rule two lines up called it a no-op and left the number on the stack.
 `b == true` was then `5 == 1`.
 
-**`P[2]()` gave one struct twice.** `array.new` repeats a single reference into every slot, so
+**`P[].defaulted(2)` gave one struct twice.** `array.new` repeats a single reference into every slot, so
 `a[0].v = 9` was visible through `a[1]`. Each slot now gets its own, built by a loop — but only for a
 *struct* element: an empty string and an empty array have nothing to write through, so sharing one
 is unobservable and the cheap path stays. Writing that loop, I used `local.tee` where `local.set`
@@ -3320,7 +3320,7 @@ expression is narrow — literals, `ref.null`, `ref.func`, and the GC allocation
 ```wac
 const string S = "ab" + "cd";       // a call
 const u8[] T = mk(5);               // a call
-const i32[] A = i32[](0 - 5, 3);    // arithmetic
+const i32[] A = [0 - 5, 3];    // arithmetic
 ```
 
 None of those can be written in a global's initialiser. All of them can be **assigned** to one. So a
@@ -3874,7 +3874,7 @@ every use is not the same program as one array per use, and inlining would silen
 The reference gives those a global with an `array.new_fixed` initialiser, which is where this goes
 next.
 
-One more instance of the pattern this rung keeps hitting: `Expr[16]()` does not compile, because an
+One more instance of the pattern this rung keeps hitting: `Expr[].defaulted(16)` does not compile, because an
 `Expr` has no default value — the rung 3 rule about non-defaultable types, met from inside the emitter
 that now enforces it. The initialisers are stored nullably.
 

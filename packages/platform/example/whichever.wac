@@ -28,7 +28,7 @@ export i32 main(Core core, Cli cli) {
   Pending<Read> ra = cli.recv(a.handle);
   Pending<Read> rb = cli.recv(b.handle);
 
-  i32 first = core.waitAny(i32[](ra.id, rb.id), -1);
+  i32 first = core.waitAny([ra.id, rb.id], -1);
   core.log("first=" + itoa(first) + " said=" + said(first == 0 ? ra.wait() : rb.wait()));
 
   // And the other one, which was never cancelled and is still running.
@@ -58,7 +58,7 @@ string said(Read r) {
 string trim(u8[] b) {
   i32 n = b.len();
   while (n > 0 && (b[n - 1] == '\n' || b[n - 1] == '\r')) { n--; }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   out.copyFrom(b, 0, 0, n);
   return string.fromBytes(out);
 }
@@ -76,10 +76,10 @@ i32 atoi(string s) {
 string itoa(i32 n) {
   if (n == 0) { return "0"; }
   i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[12](fill: 0);
+  u8[] digits = u8[].filled(12, 0);
   i32 at = 12;
   while (v > 0) { at--; digits[at] = '0' + (v % 10); v = v / 10; }
-  u8[] used = u8[12 - at](fill: 0);
+  u8[] used = u8[].filled(12 - at, 0);
   used.copyFrom(digits, at, 0, 12 - at);
   return (n < 0 ? "-" : "") + string.fromBytes(used);
 }

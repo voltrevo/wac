@@ -33,7 +33,7 @@ export struct Artifacts {
 }
 
 /** The failure case, so the three `return`s below do not each spell out an empty artefact. */
-Artifacts refused(string why) { return Artifacts(false, why, u8[0](), ""); }
+Artifacts refused(string why) { return Artifacts(false, why, u8[](), ""); }
 
 /**
  * Compile `entry` out of `sources` and generate its glue for `lang`.
@@ -60,7 +60,7 @@ export Artifacts artifactsOf(string[] paths, string[] sources, string entry) {
 
 /** The single-file case, which is most of them. */
 export Artifacts artifactsOfOne(string path, string source) {
-  return artifactsOf(string[](path), string[](source), path);
+  return artifactsOf([path], [source], path);
 }
 
 /** What a program did: its own exit status, or why it never started. */
@@ -163,11 +163,11 @@ export Ran runModule(Cli cli, u8[] wasm, string dir, string name, string[] args)
   Change wrote = cli.writeFile(path, wasm).wait();
   if (wrote.fault != 0) { return notRun("could not write " + path); }
 
-  string[] argv = string[args.len() + 1](fill: "");
+  string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = path;
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
 
-  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
   if (!r.ran()) { return notRun("the wac binary did not run " + path + " — " + r.error); }
   string err = string.fromBytes(r.stderr);
   return Ran(true, "", r.status, err.indexOf(" trapped") >= 0, string.fromBytes(r.stdout), err);
@@ -194,22 +194,22 @@ export struct Validated {
  * be indistinguishable from a clean one.
  */
 export Validated validateAll(Cli cli, string[] paths) {
-  if (paths.len() == 0) { return Validated(true, "", string[0](fill: "")); }
-  string[] argv = string[paths.len() + 1](fill: "");
+  if (paths.len() == 0) { return Validated(true, "", string[].filled(0, "")); }
+  string[] argv = string[].filled(paths.len() + 1, "");
   argv[0] = "validate";
   for (i32 i = 0; i < paths.len(); i++) { argv[i + 1] = paths[i]; }
 
-  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
   if (!r.ran()) {
-    return Validated(false, "wac validate did not run — " + r.error, string[0](fill: ""));
+    return Validated(false, "wac validate did not run — " + r.error, string[].filled(0, ""));
   }
   string[] lines = splitLines(string.fromBytes(r.stdout));
   if (lines.len() == 0) {
     return Validated(false, "wac validate said nothing — " + string.fromBytes(r.stderr),
-                     string[0](fill: ""));
+                     string[].filled(0, ""));
   }
 
-  string[] bad = string[paths.len()](fill: "");
+  string[] bad = string[].filled(paths.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     if (startsWith(lines[i], "rejected ")) { bad[n] = trimmed(lines[i].slice(9, lines[i].len())); n = n + 1; }
@@ -219,9 +219,9 @@ export Validated validateAll(Cli cli, string[] paths) {
   if (lines[lines.len() - 1] != want) {
     return Validated(false, "wac validate checked something other than what it was given — said \"" +
                             lines[lines.len() - 1] + "\", wanted \"" + want + "\"",
-                     string[0](fill: ""));
+                     string[].filled(0, ""));
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = bad[i]; }
   return Validated(true, "", out);
 }
@@ -237,6 +237,6 @@ export bool wasRejected(Ran r) { return r.stderr.indexOf("rejected by the engine
 
 /** The single-file case. */
 export Ran runEmittedOne(Cli cli, string path, string source, string dir, string name) {
-  return runEmitted(cli, string[](path), string[](source), path, dir, name, 0,
-                    string[0](fill: ""));
+  return runEmitted(cli, [path], [source], path, dir, name, 0,
+                    string[].filled(0, ""));
 }

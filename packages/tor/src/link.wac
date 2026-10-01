@@ -32,7 +32,7 @@ struct Step { u8[] state; u8[] toSend; u8[] appData; }
 
 Step unpack(u8[] r) {
   i32 at = 0;
-  u8[][] parts = u8[][3](fill: u8[0]());
+  u8[][] parts = u8[][].filled(3, u8[]());
   for (i32 i = 0; i < 3; i++) {
     i32 n = (r[at] << 24) | (r[at + 1] << 16) | (r[at + 2] << 8) | r[at + 3];
     parts[i] = sliceOf(r, at + 4, at + 4 + n);
@@ -43,8 +43,8 @@ Step unpack(u8[] r) {
 
 export u8[] sliceOf(u8[] s, i32 from, i32 to) {
   i32 hi = to > s.len() ? s.len() : to;
-  if (hi <= from) { return u8[0](); }
-  u8[] o = u8[hi - from]();
+  if (hi <= from) { return u8[](); }
+  u8[] o = u8[].filled(hi - from, 0);
   for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
   return o;
 }
@@ -52,7 +52,7 @@ export u8[] sliceOf(u8[] s, i32 from, i32 to) {
 export u8[] concat(u8[] a, u8[] b) {
   if (a.len() == 0) { return b; }
   if (b.len() == 0) { return a; }
-  u8[] o = u8[a.len() + b.len()]();
+  u8[] o = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
@@ -102,7 +102,7 @@ const i32 READ_TIMEOUT_MS = 30000;
 
 export Link connectRelay(Core core, Cli cli, string host, i32 port) {
   Pending<Socket> dial = cli.connect(host, port);
-  if (core.waitAny(i32[](dial.id), CONNECT_TIMEOUT_MS) < 0) {
+  if (core.waitAny([dial.id], CONNECT_TIMEOUT_MS) < 0) {
     // **This used to say there was nothing to close, and that was the assumption that hid a
     // leak.** If the connection completes just as the deadline passes, the answer *is* in hand:
     // the socket exists, it is in the host's table, and the relay at the other end is holding an
@@ -115,19 +115,19 @@ export Link connectRelay(Core core, Cli cli, string host, i32 port) {
     // `issues/system/0310b`.
     dial.cancel();
     core.warn("tor: " + host + " did not answer within " + itoa(CONNECT_TIMEOUT_MS) + "ms");
-    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0](), false);
+    return Link(core, cli, host + ":" + itoa(port), -1, u8[](), u8[](), true, u8[](), false);
   }
   Socket s = dial.wait();
   if (s.handle < 0) {
     core.warn("tor: " + host + ": " + s.error);
-    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0](), false);
+    return Link(core, cli, host + ":" + itoa(port), -1, u8[](), u8[](), true, u8[](), false);
   }
   Step st = unpack(tlsClientInit(
-    host.toBytes(), u8[0](), i32[0](),
+    host.toBytes(), u8[](), i32[](),
     core.randomBytes(32).wait(), core.randomBytes(32).wait(),
     core.randomBytes(64).wait(), core.randomBytes(32).wait(),
     core.nowMillis().wait() / 1000));
-  Link l = Link(core, cli, host + ":" + itoa(port), s.handle, st.state, u8[0](), false, u8[0](), false);
+  Link l = Link(core, cli, host + ":" + itoa(port), s.handle, st.state, u8[](), false, u8[](), false);
   if (!cli.send(s.handle, st.toSend).wait()) { l.dead = true; }
   return l;
 }
@@ -164,7 +164,7 @@ export bool pump(Link l) { return pumpFor(l, READ_TIMEOUT_MS); }
  */
 export bool pumpFor(Link l, i32 millis) {
   Pending<Read> read = l.cli.recv(l.sock);
-  if (l.core.waitAny(i32[](read.id), millis) < 0) {
+  if (l.core.waitAny([read.id], millis) < 0) {
     read.cancel();
     l.cli.closeSocket(l.sock);
     l.core.warn("tor: " + (l.peer == "" ? "a relay" : l.peer) + " went silent for " +
@@ -245,7 +245,7 @@ export u8[] nextCellFor(Link l, i32 millis) {
     if (cell.len() > 0) { return cell; }
     if (!pumpFor(l, millis)) { l.dead = true; }
   }
-  return u8[0]();
+  return u8[]();
 }
 
 /**
@@ -266,11 +266,11 @@ export i32 idWidth(Link l) {
 }
 
 export u8[] takeCell(Link l) {
-  if (l.buffered.len() == 0) { return u8[0](); }
+  if (l.buffered.len() == 0) { return u8[](); }
   // `cellSize` returns -1 for "not all here yet", and never a length beyond what it was
   // given, so a positive answer is a cell that can be sliced.
   i32 n = cellSize(l.buffered, 0, idWidth(l));
-  if (n <= 0) { return u8[0](); }
+  if (n <= 0) { return u8[](); }
   u8[] cell = sliceOf(l.buffered, 0, n);
   l.buffered = sliceOf(l.buffered, n, l.buffered.len());
   return cell;
@@ -284,7 +284,7 @@ export u8[] takeCell(Link l) {
  * anybody needs.
  */
 export bool linkHandshake(Link l, string host) {
-  sendCells(l, encodeVersions(i32[](3, 4, 5)));
+  sendCells(l, encodeVersions([3, 4, 5] as i32[]));
   u8[] versions = nextCell(l);
   if (versions.len() == 0) {
     l.core.warn("tor: no VERSIONS answer (dead=" + (l.dead ? "yes" : "no") + ")");
@@ -295,7 +295,7 @@ export bool linkHandshake(Link l, string host) {
                 ", not VERSIONS");
     return false;
   }
-  i32 agreed = negotiateVersion(cellPayload(versions, 0, idWidth(l)), i32[](3, 4, 5));
+  i32 agreed = negotiateVersion(cellPayload(versions, 0, idWidth(l)), [3, 4, 5] as i32[]);
   if (agreed < 4) {
     l.core.warn("tor: no link version in common, best was " + itoa(agreed));
     return false;
@@ -340,13 +340,13 @@ export bool linkHandshake(Link l, string host) {
 
 export u8[] ipv4Of(string host) {
   u8[] b = host.toBytes();
-  u8[] out = u8[](127, 0, 0, 1);
+  u8[] out = [127, 0, 0, 1];
   i32 part = 0;
   i32 v = 0;
   i32 digits = 0;
   for (i32 i = 0; i <= b.len(); i++) {
     if (i == b.len() || b[i] == '.') {
-      if (digits == 0 || v > 255 || part > 3) { return u8[](127, 0, 0, 1); }
+      if (digits == 0 || v > 255 || part > 3) { return [127, 0, 0, 1] as u8[]; }
       out[part] = v;
       part++;
       v = 0;
@@ -354,9 +354,9 @@ export u8[] ipv4Of(string host) {
     } else if (b[i] >= '0' && b[i] <= '9') {
       v = v * 10 + (b[i] - '0');
       digits++;
-    } else { return u8[](127, 0, 0, 1); }
+    } else { return [127, 0, 0, 1] as u8[]; }
   }
-  return part == 4 ? out : u8[](127, 0, 0, 1);
+  return part == 4 ? out : [127, 0, 0, 1] as u8[];
 }
 
 /** CREATE2 with an ntor handshake, and the key material it produces. */
@@ -364,12 +364,12 @@ export u8[] createCircuit(Link l, Circuit c, u8[] identity, u8[] onionKey, u8[] 
   sendCells(l, encodeCreate2(c.circId, handshakeNtor(),
                              ntorClientRequest(identity, onionKey, ephemeral)));
   u8[] cell = nextCell(l);
-  if (cell.len() == 0) { return u8[0](); }
+  if (cell.len() == 0) { return u8[](); }
   if (cellCommand(cell, 0, idWidth(l)) == cmdDestroy()) {
     l.core.warn("tor: the relay refused the circuit");
-    return u8[0]();
+    return u8[]();
   }
-  if (cellCommand(cell, 0, idWidth(l)) != cmdCreated2()) { return u8[0](); }
+  if (cellCommand(cell, 0, idWidth(l)) != cmdCreated2()) { return u8[](); }
   // 92 rather than 72: the extra twenty are KH, which `Circuit` keeps and a service needs. See
   // `Hop.create`.
   return ntorClientFinish(identity, onionKey, ephemeral,
@@ -430,12 +430,12 @@ void sendRequest(Link l, Circuit c, i32 sid, u8[] request) {
 export u8[][] chunkRequest(u8[] request) {
   i32 max = relayDataLen();
   i32 n = (request.len() + max - 1) / max;
-  u8[][] out = u8[][n]();
+  u8[][] out = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) {
     i32 at = i * max;
     i32 take = request.len() - at;
     if (take > max) { take = max; }
-    u8[] chunk = u8[take]();
+    u8[] chunk = u8[].filled(take, 0);
     for (i32 j = 0; j < take; j++) { chunk[j] = request[at + j]; }
     out[i] = chunk;
   }
@@ -457,7 +457,7 @@ export u8[][] chunkRequest(u8[] request) {
 export Response requestOverCircuit(Link l, Circuit c, u8[] request) {
   i32 sid = c.beginStream();
   sendCells(l, c.beginDirCell(sid));
-  u8[] raw = u8[0]();
+  u8[] raw = u8[]();
   bool connected = false;
   while (!l.dead) {
     u8[] cell = nextCell(l);
@@ -465,7 +465,7 @@ export Response requestOverCircuit(Link l, Circuit c, u8[] request) {
     Received got = c.receive(cell);
     if (got.toSend.len() > 0) { sendCells(l, got.toSend); }
     if (got.kind == gotBroken() || got.kind == gotDestroyed()) {
-      return Response(-1, "", u8[0]());
+      return Response(-1, "", u8[]());
     }
     if (got.kind == gotConnected() && !connected) {
       connected = true;
@@ -487,15 +487,15 @@ export u8[] fetchOverCircuit(Link l, Circuit c, string path) {
   // the log looking for a directory bug rather than a broken circuit.
   if (r.status < 0) {
     l.core.warn("tor: no answer for " + path + " — the circuit broke or the stream closed unanswered");
-    return u8[0]();
+    return u8[]();
   }
   if (r.status != 200) {
     l.core.warn("tor: the directory answered " + itoa(r.status) + " for " + path);
-    return u8[0]();
+    return u8[]();
   }
   if (!isIdentity(r)) {
     l.core.warn("tor: the directory compressed a body we asked it not to");
-    return u8[0]();
+    return u8[]();
   }
   return r.body;
 }
@@ -514,14 +514,14 @@ export string itoa(i32 v) {
   if (v == 0) { return "0"; }
   bool neg = v < 0;
   i32 x = neg ? -v : v;
-  u8[] buf = u8[12]();
+  u8[] buf = u8[].filled(12, 0);
   i32 n = 0;
   while (x > 0) {
     buf[n] = '0' + (x % 10);
     n++;
     x = x / 10;
   }
-  u8[] out = u8[n + (neg ? 1 : 0)]();
+  u8[] out = u8[].filled(n + (neg ? 1 : 0), 0);
   if (neg) { out[0] = '-'; }
   for (i32 i = 0; i < n; i++) { out[(neg ? 1 : 0) + i] = buf[n - 1 - i]; }
   return string.fromBytes(out);
@@ -554,12 +554,12 @@ export string[] words(string s) {
 
 export u8[] fromHex(string s) {
   u8[] h = s.toBytes();
-  if (h.len() % 2 != 0) { return u8[0](); }
-  u8[] out = u8[h.len() / 2]();
+  if (h.len() % 2 != 0) { return u8[](); }
+  u8[] out = u8[].filled(h.len() / 2, 0);
   for (i32 i = 0; i < out.len(); i++) {
     i32 hi = hexDigit(h[2 * i]);
     i32 lo = hexDigit(h[2 * i + 1]);
-    if (hi < 0 || lo < 0) { return u8[0](); }
+    if (hi < 0 || lo < 0) { return u8[](); }
     out[i] = hi * 16 + lo;
   }
   return out;

@@ -38,7 +38,7 @@ export i32 main(Core core, Cli cli) {
   }
 
   string target = r.path + "/info/refs?service=git-upload-pack";
-  Answer a = request(core, cli, store, r.host, target, u8[0](), "");
+  Answer a = request(core, cli, store, r.host, target, u8[](), "");
   if (!a.ok) {
     core.warn("gitls: " + a.error);
     return 1;

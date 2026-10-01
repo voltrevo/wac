@@ -45,7 +45,7 @@ i32 PATCH() { return 0xFF00FFFF; }
  */
 i32[] cps(string s) {
   u8[] bytes = s.toBytes();
-  i32[] out = i32[count(bytes)]();
+  i32[] out = i32[].filled(count(bytes), 0);
   i32 at = 0;
   i32 n = 0;
   while (at < bytes.len() && n < out.len()) {

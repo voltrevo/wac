@@ -23,7 +23,7 @@ i32 diffCount(u8[] a, u8[] b) {
 }
 
 u8[] filled(i32 n, i32 v) {
-  u8[] b = u8[n]();
+  u8[] b = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { b[i] = v; }
   return b;
 }
@@ -38,7 +38,7 @@ u8[] filled(i32 n, i32 v) {
  */
 export string test_sha256_streaming_matches_oneshot() {
   T t = T.create();
-  u8[] msg = u8[200]();
+  u8[] msg = u8[].filled(200, 0);
   for (i32 i = 0; i < 200; i++) { msg[i] = (i * 37 + 11) & 0xFF; }
   u8[] want = sha256(msg);
 
@@ -58,7 +58,7 @@ export string test_sha256_streaming_matches_oneshot() {
   if (diffCount(one.finish(), want) != 0) { t.fail("byte-at-a-time disagreed"); }
 
   // The empty message, and a message that is exactly one block.
-  if (diffCount(Sha256.create().finish(), sha256(u8[0]())) != 0) { t.fail("empty disagreed"); }
+  if (diffCount(Sha256.create().finish(), sha256(u8[]())) != 0) { t.fail("empty disagreed"); }
   Sha256 exact = Sha256.create();
   exact.update(slice(msg, 0, 64));
   if (diffCount(exact.finish(), sha256(slice(msg, 0, 64))) != 0) { t.fail("64 bytes disagreed"); }
@@ -83,7 +83,7 @@ export string test_sha256_streaming_matches_oneshot() {
  */
 export string test_sha512_streaming_matches_oneshot() {
   T t = T.create();
-  u8[] msg = u8[400]();
+  u8[] msg = u8[].filled(400, 0);
   for (i32 i = 0; i < 400; i++) { msg[i] = (i * 53 + 7) & 0xFF; }
   u8[] want = sha512(msg);
 
@@ -101,7 +101,7 @@ export string test_sha512_streaming_matches_oneshot() {
   for (i32 i = 0; i < 400; i++) { one.update(slice(msg, i, i + 1)); }
   if (diffCount(one.digest(64), want) != 0) { t.fail("byte-at-a-time disagreed"); }
 
-  if (diffCount(Sha512.create().digest(64), sha512(u8[0]())) != 0) { t.fail("empty disagreed"); }
+  if (diffCount(Sha512.create().digest(64), sha512(u8[]())) != 0) { t.fail("empty disagreed"); }
 
   // 111 and 112 straddle the point where the 16-byte length field no longer fits in the
   // final block — the one padding case needing a whole extra block, and 128 is the exact
@@ -172,7 +172,7 @@ export string test_chacha_roundtrip_and_keystream() {
   u8[] key = filled(32, 9);
   u8[] nonce = filled(12, 4);
   // 197 bytes: three whole blocks and a partial one.
-  u8[] msg = u8[197]();
+  u8[] msg = u8[].filled(197, 0);
   for (i32 i = 0; i < 197; i++) { msg[i] = (i * 31 + 7) & 0xFF; }
 
   u8[] ct = chacha20(key, 1, nonce, msg);

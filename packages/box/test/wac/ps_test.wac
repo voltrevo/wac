@@ -35,7 +35,7 @@ export string test_a_shell_function_is_a_parent(Core core, Cli cli) {
   string[] rows = linesOf(r.out);
   t.isTrue(rows.len() >= 5, "too few rows: " + show(r.out));
   if (rows.len() < 5) { return t.report(); }
-  string[] want = string[]("    1     0 ", "    2     1 ", "    3     2 ", "    4     3 ");
+  string[] want = ["    1     0 ", "    2     1 ", "    3     2 ", "    4     3 "];
   for (i32 i = 0; i < want.len(); i++) {
     t.eqStr(rows[i + 1].slice(0, 12), want[i], "row " + itoa(i + 1) + " of " + show(r.out));
   }
@@ -121,7 +121,7 @@ string[] linesOf(string text) {
   i32 n = 0;
   i32 at = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = pass == 0 ? string[0]() : string[n](fill: "");
+    string[] out = pass == 0 ? string[]() : string[].filled(n, "");
     i32 k = 0;
     at = 0;
     for (i32 guard = 0; guard < 256 && at < text.len(); guard++) {
@@ -137,14 +137,14 @@ string[] linesOf(string text) {
     }
     if (pass == 0) { n = k; } else { return out; }
   }
-  return string[0]();
+  return string[]();
 }
 
 /** A row split on runs of spaces, which is how a person reads one. */
 string[] fieldsOf(string row) {
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = pass == 0 ? string[0]() : string[n](fill: "");
+    string[] out = pass == 0 ? string[]() : string[].filled(n, "");
     i32 k = 0;
     i32 at = 0;
     while (at < row.len()) {
@@ -158,5 +158,5 @@ string[] fieldsOf(string row) {
     }
     if (pass == 0) { n = k; } else { return out; }
   }
-  return string[0]();
+  return string[]();
 }

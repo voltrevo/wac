@@ -10,7 +10,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { cacheRoot, cachePath, escapeRepo, unescapeRepo } from "../../src/cache.wac";
 
 string[] URLS() {
-  return string[](
+  return [
     "https://github.com/voltrevo/wac",
     "https://github.com/voltrevo/wac.git",
     "https://github.com/Voltrevo/Wac",
@@ -24,7 +24,8 @@ string[] URLS() {
     "https://example.invalid/日本語",
     "https://example.invalid/%41/!b",
     "%!%!%!",
-    "");
+    ""
+  ];
 }
 
 export string test_escaping_a_repository_name_is_reversible() {
@@ -41,12 +42,16 @@ export string test_distinct_repositories_get_distinct_directories_case_included(
   // The whole point. Every pair here is one a plausible escaper collides: two that differ only in
   // case, one whose separator is the other's escape, and the pair that motivated percent-encoding
   // rather than replacing `/` with `_`.
-  string[] a = string[]("https://x.invalid/a", "https://x.invalid/A", "https://x.invalid/a/b",
+  string[] a = [
+                        "https://x.invalid/a", "https://x.invalid/A", "https://x.invalid/a/b",
                         "https://x.invalid/a_b", "https://x.invalid/a%2Fb", "https://x.invalid/a",
-                        "https://x.invalid/a.git");
-  string[] b = string[]("https://x.invalid/A", "https://x.invalid/a", "https://x.invalid/a_b",
+                        "https://x.invalid/a.git"
+  ];
+  string[] b = [
+                        "https://x.invalid/A", "https://x.invalid/a", "https://x.invalid/a_b",
                         "https://x.invalid/a/b", "https://x.invalid/a/b", "http://x.invalid/a",
-                        "https://x.invalid/a");
+                        "https://x.invalid/a"
+  ];
   for (i32 i = 0; i < a.len(); i++) {
     t.isTrue(escapeRepo(a[i]) != escapeRepo(b[i]),
              "\"" + a[i] + "\" and \"" + b[i] + "\" do not collide");
@@ -99,7 +104,7 @@ export string test_the_path_is_a_function_of_the_home_the_repository_and_the_com
 
 export string test_an_absolute_home_stays_absolute_and_a_trailing_slash_does_not_double() {
   T t = T.create();
-  string[] homes = string[]("/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///");
+  string[] homes = ["/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///"];
   string first = cacheRoot(homes[0]);
   for (i32 i = 0; i < homes.len(); i++) {
     t.eqStr(cacheRoot(homes[i]), first, "\"" + homes[i] + "\" is the same root");
@@ -116,7 +121,7 @@ export string test_a_name_that_is_not_something_the_escaper_produced_is_refused(
   // `unescapeRepo` reads a directory name off a real filesystem, so its input is whatever is in
   // the cache — including things nobody escaped. Answering with a plausible URL for those is worse
   // than refusing, because the caller would then fetch it.
-  string[] bad = string[]("a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%");
+  string[] bad = ["a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%"];
   for (i32 i = 0; i < bad.len(); i++) {
     t.eqStr(unescapeRepo(bad[i]), "", "\"" + bad[i] + "\" is not a name the escaper makes");
   }

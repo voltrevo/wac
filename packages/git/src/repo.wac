@@ -232,10 +232,10 @@ export Written checkout(Repo r, u8[] treeName, string into) {
   // no out-parameters — the alternative is threading a pair back up every level.
   // Two slots rather than two arrays: [0] is modes this filesystem refused, [1] is symlinks written
   // as ordinary files. Both count across the recursion.
-  i32[] unset = i32[2]();
+  i32[] unset = i32[].filled(2, 0);
   i32 n = walk(r, treeName, into, "", entries, 32, unset);
   if (n < 0) { return Written.Stopped("a tree could not be read, or nesting went past 32 deep"); }
-  u8[] idx = writeIndex(GitIndex(entries, u8[0]()));
+  u8[] idx = writeIndex(GitIndex(entries, u8[]()));
   Change wrote = r.fs.writeFile(r.gitDir + "/index", idx);
   if (!wrote.ok()) { return Written.Stopped("could not write the index: " + wrote.message); }
   return Written.Files(n, unset[0], unset[1]);
@@ -862,7 +862,7 @@ export Completion completeThin(Repo r, u8[] pack) {
     Built(idx): { return Completion.Complete(pack); }
     Unindexable(why): { return Completion.Unusable(why); }
     Thin(bases): {
-      i32[] kinds = i32[bases.len()]();
+      i32[] kinds = i32[].filled(bases.len(), 0);
       Vec<u8[]> contents = Vec.create();
       for (i32 i = 0; i < bases.len(); i++) {
         match (readObject(r, bases.get(i))) {
@@ -1001,7 +1001,7 @@ export Stored commitTree(Repo r, u8[] tree, string refName, Who author, string m
       if (!moved.ok()) { return Stored.NotStored("could not update " + refName + ": " + moved.message); }
       // The index too, or `git status` compares the new commit against the old index and reports every
       // path as both deleted and untracked.
-      Change staged = r.fs.writeFile(r.gitDir + "/index", writeIndex(GitIndex(index, u8[0]())));
+      Change staged = r.fs.writeFile(r.gitDir + "/index", writeIndex(GitIndex(index, u8[]())));
       if (!staged.ok()) { return Stored.NotStored("could not write the index: " + staged.message); }
       return Stored.Named(commit);
     }

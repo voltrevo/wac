@@ -69,10 +69,10 @@ struct Built {
 }
 
 Built programs(Cli cli) {
-  string[] net = string[]("--allow-read", "--allow-write", "--allow-net");
+  string[] net = ["--allow-read", "--allow-write", "--allow-net"];
   string relayd = builtProgram(cli, "packages/tor/src/relayd.wac", "relayd", net);
   string gendesc = builtProgram(cli, "packages/tor/src/gendesc.wac", "gendesc",
-                                string[]("--allow-read", "--allow-write"));
+                                ["--allow-read", "--allow-write"]);
   string socks = builtProgram(cli, "packages/tor/src/socks.wac", "socks", net);
   string why = "";
   if (relayd == "") { why = "relayd did not build"; }
@@ -127,15 +127,17 @@ Opened opened(Core core, Cli cli, i32 proxy, i32 target) {
   i32 h = cli.connect("127.0.0.1", proxy).wait().handle;
   if (h < 0) { return Opened(false, "could not connect to the proxy on " + itoa(proxy), -1); }
 
-  cli.send(h, u8[](0x05, 0x01, 0x00)).wait();
+  cli.send(h, [0x05, 0x01, 0x00] as u8[]).wait();
   u8[] hello = readSome(core, cli, h, 2);
   if (hello.len() < 2 || hello[0] != 0x05 || hello[1] != 0x00) {
     cli.closeSocket(h);
     return Opened(false, "the proxy did not accept a no-auth greeting", -1);
   }
 
-  cli.send(h, u8[](0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
-                   ((target / 256) & 0xFF), (target & 0xFF))).wait();
+  cli.send(h, [
+                   0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
+                   ((target / 256) & 0xFF), (target & 0xFF)
+  ] as u8[]).wait();
   u8[] reply = readSome(core, cli, h, 10);
   if (reply.len() < 2 || reply[0] != 0x05) {
     cli.closeSocket(h);
@@ -155,7 +157,7 @@ Carried answered(Core core, Cli cli, i32 h, string request) {
   bool reading = true;
   while (reading) {
     Pending<Read> p = cli.recv(h);
-    if (core.waitAny(i32[](p.id), READ_MS) < 0) {
+    if (core.waitAny([p.id], READ_MS) < 0) {
       p.cancel();
       cli.closeSocket(h);
       return Carried(false, "went quiet after " + itoa(all.len()) + " byte(s)", all);
@@ -175,7 +177,7 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
   if (h < 0) { return Carried(false, "could not connect to the proxy on " + itoa(proxy), ""); }
 
   // VER 5, one method, and that method is 0 — no authentication.
-  cli.send(h, u8[](0x05, 0x01, 0x00)).wait();
+  cli.send(h, [0x05, 0x01, 0x00] as u8[]).wait();
   u8[] hello = readSome(core, cli, h, 2);
   if (hello.len() < 2 || hello[0] != 0x05 || hello[1] != 0x00) {
     cli.closeSocket(h);
@@ -183,8 +185,10 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
   }
 
   // VER, CONNECT, reserved, ATYP 1 (IPv4), 127.0.0.1, then the port big-endian.
-  cli.send(h, u8[](0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
-                   ((target / 256) & 0xFF), (target & 0xFF))).wait();
+  cli.send(h, [
+                   0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
+                   ((target / 256) & 0xFF), (target & 0xFF)
+  ] as u8[]).wait();
   u8[] reply = readSome(core, cli, h, 10);
   if (reply.len() < 2 || reply[0] != 0x05) {
     cli.closeSocket(h);
@@ -207,7 +211,7 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
     // cost ten minutes on `dird_test.wac`, whose `servedWithin` is this shape and this comment's
     // reason for existing. A deadline turns a hang into a failed assertion that says where it was.
     Pending<Read> p = cli.recv(h);
-    if (core.waitAny(i32[](p.id), READ_MS) < 0) {
+    if (core.waitAny([p.id], READ_MS) < 0) {
       p.cancel();
       cli.closeSocket(h);
       return Carried(false, "the proxy went quiet after " + itoa(all.len()) +
@@ -230,14 +234,14 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
  * a client that treats one `recv` as one reply passes on a quiet machine and fails on a loaded one.
  */
 u8[] readSome(Core core, Cli cli, i32 h, i32 want) {
-  u8[] got = u8[0]();
+  u8[] got = u8[]();
   while (got.len() < want) {
     bool more = false;
     Pending<Read> p = cli.recv(h);
-    if (core.waitAny(i32[](p.id), READ_MS) < 0) { p.cancel(); return got; }
+    if (core.waitAny([p.id], READ_MS) < 0) { p.cancel(); return got; }
     match (p.wait()) {
       Data(bytes): {
-        u8[] joined = u8[got.len() + bytes.len()](fill: 0);
+        u8[] joined = u8[].filled(got.len() + bytes.len(), 0);
         for (i32 i = 0; i < got.len(); i++) { joined[i] = got[i]; }
         for (i32 i = 0; i < bytes.len(); i++) { joined[got.len() + i] = bytes[i]; }
         got = joined;
@@ -297,7 +301,7 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
   // exists, and the consensus cannot exist until all three have written.
   // `Daemon(0, "", "")` rather than a started one: `fill:` evaluates once, so a `start(…)` here
   // would spawn a process and write a log for a slot that is about to be overwritten three times.
-  Daemon[] relays = Daemon[RELAYS](fill: Daemon(0, "", ""));
+  Daemon[] relays = Daemon[].filled(RELAYS, Daemon(0, "", ""));
   for (i32 i = 0; i < RELAYS; i++) {
     string n = itoa(i + 1);
     relays[i] = start(cli,
@@ -331,9 +335,11 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
   if (!bound) { return stopAll(t, cli, relays); }
 
   // ── Stage two: an authority, in one shot, over the descriptors they just wrote ──
-  Exec vote = cli.exec("/bin/sh", string[]("-c",
+  Exec vote = cli.exec("/bin/sh", [
+    "-c",
     "cd " + quoted(dir) + " && exec " +
-    line(cli, b.gendesc, "keys.json cert vote v - r1.desc r2.desc r3.desc")), u8[0]()).wait();
+    line(cli, b.gendesc, "keys.json cert vote v - r1.desc r2.desc r3.desc")
+  ], u8[]()).wait();
   t.isTrue(vote.ran() && vote.status == 0,
            "the authority signed a consensus — " + string.fromBytes(vote.stderr));
   if (!vote.ran() || vote.status != 0) { return stopAll(t, cli, relays); }
@@ -391,7 +397,7 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
       // test to be in two places at once.
       if (got > 0) {
         string dirdMod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
-                                      string[]("--allow-read", "--allow-net"));
+                                      ["--allow-read", "--allow-net"]);
         t.isTrue(dirdMod != "", "the target server built");
         if (dirdMod != "") {
           Daemon target = start(cli,
@@ -444,7 +450,7 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // still *serve*: a cap that leaked a slot, or a `Vec<Client>` left holding the dead,
               // would pass a test that only asked whether the process was alive.
               const i32 HOLD = 32;
-              i32[] held = i32[HOLD]();
+              i32[] held = i32[].filled(HOLD, 0);
               for (i32 i = 0; i < HOLD; i++) {
                 held[i] = cli.connect("127.0.0.1", got).wait().handle;
               }

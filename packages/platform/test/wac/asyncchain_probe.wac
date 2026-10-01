@@ -41,7 +41,7 @@ import { Cli, Core, FileResult, Pending, Sched } from "std/platform.wac";
  * answerable only by being waited on. That is exactly what it is for.
  */
 Pending<T> ready<T>(T v) {
-  T[] cell = T[1](fill: v);
+  T[] cell = T[].filled(1, v);
   fn<T(i32)> res = (i32 id) => cell[0];
   fn<bool(i32)> set = (i32 id) => true;
   fn<void(i32)> drp = (i32 id) => { };
@@ -57,7 +57,7 @@ Pending<T> ready<T>(T v) {
  * nothing to register, and the chain then advances under `wait` alone — D2's *host-backed → block*.
  */
 Pending<U> flatMap<T, U>(Pending<T> p, fn<Pending<U>(T)> f) {
-  Pending<U>?[] inner = Pending<U>?[1](fill: null);
+  Pending<U>?[] inner = Pending<U>?[].filled(1, null);
 
   fn<Pending<U>()> force = () => {
     if (inner[0] is null) { inner[0] = f(p.resolve(p.id)); }

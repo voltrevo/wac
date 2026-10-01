@@ -71,7 +71,7 @@ export u8[] clientParameters(u8[] scid, i64 maxData, i64 maxStreamData, i64 maxS
             + varintParamLength(PARAM_INITIAL_MAX_STREAMS_BIDI(), maxStreamsBidi)
             + varintParamLength(PARAM_MAX_IDLE_TIMEOUT(), idleTimeoutMs);
 
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 p = 0;
   p = p + encode(out, p, PARAM_INITIAL_SOURCE_CONNECTION_ID() as i64);
   p = p + encode(out, p, scid.len() as i64);
@@ -87,7 +87,7 @@ export u8[] clientParameters(u8[] scid, i64 maxData, i64 maxStreamData, i64 maxS
 
 /** Those parameters wrapped as a TLS extension, ready to append to a ClientHello's block. */
 export u8[] parametersExtension(u8[] params) {
-  u8[] out = u8[4 + params.len()]();
+  u8[] out = u8[].filled(4 + params.len(), 0);
   out[0] = (EXT_TRANSPORT_PARAMETERS() >> 8) & 0xFF;
   out[1] = EXT_TRANSPORT_PARAMETERS() & 0xFF;
   out[2] = (params.len() >> 8) & 0xFF;
@@ -121,7 +121,7 @@ export u8[] serverParameters(u8[] originalDcid, u8[] scid, i64 maxData, i64 maxS
             + varintParamLength(PARAM_INITIAL_MAX_STREAMS_BIDI(), maxStreamsBidi)
             + varintParamLength(PARAM_MAX_IDLE_TIMEOUT(), idleTimeoutMs);
 
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 p = 0;
   p = p + encode(out, p, PARAM_ORIGINAL_DESTINATION_CONNECTION_ID() as i64);
   p = p + encode(out, p, originalDcid.len() as i64);

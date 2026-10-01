@@ -98,7 +98,7 @@ export struct Message {
     for (i32 i = 0; i < this.attrs.len(); i++) {
       if (this.attrs[i].kind == kind) { return this.attrs[i].value; }
     }
-    return u8[0]();
+    return u8[]();
   }
 
   bool has(const this, i32 kind) {
@@ -141,14 +141,14 @@ i32 claimedLength(u8[] b) { return (b[2] << 8) | b[3]; }
  * cheapest thing an attacker can send.
  */
 export Message parse(u8[] b) {
-  if (!looksLikeStun(b)) { return Message(false, 0, u8[0](), Attr[0]()); }
+  if (!looksLikeStun(b)) { return Message(false, 0, u8[](), Attr[]()); }
   i32 len = claimedLength(b);
   // The length must be a multiple of four and must not claim more than arrived. A shorter datagram
   // than claimed is the classic truncation; a longer one is legal — some stacks pad the datagram —
   // so this bounds rather than demands equality.
-  if ((len & 3) != 0 || 20 + len > b.len()) { return Message(false, 0, u8[0](), Attr[0]()); }
+  if ((len & 3) != 0 || 20 + len > b.len()) { return Message(false, 0, u8[](), Attr[]()); }
 
-  u8[] tid = u8[12]();
+  u8[] tid = u8[].filled(12, 0);
   for (i32 i = 0; i < 12; i++) { tid[i] = b[8 + i]; }
 
   // Counted first so the array is one allocation, then filled in the same walk — the bytes of an
@@ -165,13 +165,13 @@ export Message parse(u8[] b) {
     at = at + step;
   }
 
-  Attr[] attrs = Attr[n](fill: Attr(0, u8[0]()));
+  Attr[] attrs = Attr[].filled(n, Attr(0, u8[]()));
   at = 20;
   i32 k = 0;
   while (k < n) {
     i32 kind = (b[at] << 8) | b[at + 1];
     i32 alen = (b[at + 2] << 8) | b[at + 3];
-    u8[] v = u8[alen]();
+    u8[] v = u8[].filled(alen, 0);
     for (i32 i = 0; i < alen; i++) { v[i] = b[at + 4 + i]; }
     attrs[k] = Attr(kind, v);
     at = at + 4 + ((alen + 3) & ~3);
@@ -187,7 +187,7 @@ i32 attrSize(Attr a) { return 4 + ((a.value.len() + 3) & ~3); }
 export u8[] encode(i32 kind, u8[] tid, Attr[] attrs) {
   i32 body = 0;
   for (i32 i = 0; i < attrs.len(); i++) { body = body + attrSize(attrs[i]); }
-  u8[] out = u8[20 + body]();
+  u8[] out = u8[].filled(20 + body, 0);
   out[0] = (kind >> 8) & 0xFF;
   out[1] = kind & 0xFF;
   out[2] = (body >> 8) & 0xFF;
@@ -218,12 +218,12 @@ export u8[] encode(i32 kind, u8[] tid, Attr[] attrs) {
  * point of the attribute is to survive one.
  */
 export Addr xorMapped(u8[] value, u8[] tid) {
-  if (value.len() < 8) { return Addr(0, 0, u8[0]()); }
+  if (value.len() < 8) { return Addr(0, 0, u8[]()); }
   i32 family = value[1];
   i32 port = (((value[2] << 8) | value[3]) ^ 0x2112) & 0xFFFF;
   if (family == 1) {
-    if (value.len() < 8) { return Addr(0, 0, u8[0]()); }
-    u8[] ip = u8[4]();
+    if (value.len() < 8) { return Addr(0, 0, u8[]()); }
+    u8[] ip = u8[].filled(4, 0);
     ip[0] = value[4] ^ 0x21;
     ip[1] = value[5] ^ 0x12;
     ip[2] = value[6] ^ 0xA4;
@@ -231,8 +231,8 @@ export Addr xorMapped(u8[] value, u8[] tid) {
     return Addr(1, port, ip);
   }
   if (family == 2) {
-    if (value.len() < 20 || tid.len() < 12) { return Addr(0, 0, u8[0]()); }
-    u8[] ip = u8[16]();
+    if (value.len() < 20 || tid.len() < 12) { return Addr(0, 0, u8[]()); }
+    u8[] ip = u8[].filled(16, 0);
     ip[0] = value[4] ^ 0x21;
     ip[1] = value[5] ^ 0x12;
     ip[2] = value[6] ^ 0xA4;
@@ -240,15 +240,15 @@ export Addr xorMapped(u8[] value, u8[] tid) {
     for (i32 i = 0; i < 12; i++) { ip[4 + i] = value[8 + i] ^ tid[i]; }
     return Addr(2, port, ip);
   }
-  return Addr(0, 0, u8[0]());
+  return Addr(0, 0, u8[]());
 }
 
 /** Build an XOR-MAPPED-ADDRESS value from an address, which is `xorMapped` run backwards. */
 export u8[] xorMappedValue(i32 family, i32 port, u8[] ip, u8[] tid) {
-  if (family == 1 && ip.len() != 4) { return u8[0](); }
-  if (family == 2 && ip.len() != 16) { return u8[0](); }
-  if (family != 1 && family != 2) { return u8[0](); }
-  u8[] v = u8[4 + ip.len()]();
+  if (family == 1 && ip.len() != 4) { return u8[](); }
+  if (family == 2 && ip.len() != 16) { return u8[](); }
+  if (family != 1 && family != 2) { return u8[](); }
+  u8[] v = u8[].filled(4 + ip.len(), 0);
   v[0] = 0;
   v[1] = family;
   i32 x = (port ^ 0x2112) & 0xFFFF;
@@ -272,7 +272,7 @@ export u8[] xorMappedValue(i32 family, i32 port, u8[] ip, u8[] tid) {
  * full size before the hash is taken, and the attribute is appended afterwards.
  */
 u8[] withLengthFor(u8[] msg, i32 extra) {
-  u8[] copy = u8[msg.len()]();
+  u8[] copy = u8[].filled(msg.len(), 0);
   for (i32 i = 0; i < msg.len(); i++) { copy[i] = msg[i]; }
   i32 len = claimedLength(msg) + extra;
   copy[2] = (len >> 8) & 0xFF;
@@ -283,7 +283,7 @@ u8[] withLengthFor(u8[] msg, i32 extra) {
 /** Append `attr` with `value` to an encoded message, fixing the header length. */
 u8[] appended(u8[] msg, i32 kind, u8[] value) {
   i32 pad = (value.len() + 3) & ~3;
-  u8[] out = u8[msg.len() + 4 + pad]();
+  u8[] out = u8[].filled(msg.len() + 4 + pad, 0);
   for (i32 i = 0; i < msg.len(); i++) { out[i] = msg[i]; }
   i32 at = msg.len();
   out[at] = (kind >> 8) & 0xFF;
@@ -312,7 +312,7 @@ export u8[] withIntegrity(u8[] msg, u8[] key) {
 export bool integrityOk(u8[] msg, u8[] key) {
   i32 at = integrityAt(msg);
   if (at < 0) { return false; }
-  u8[] prefix = u8[at]();
+  u8[] prefix = u8[].filled(at, 0);
   for (i32 i = 0; i < at; i++) { prefix[i] = msg[i]; }
   // Everything from the start of the attribute to the end of the message is not covered; the length
   // is set as though MESSAGE-INTEGRITY were the last thing in it, which is how the sender computed it.
@@ -344,7 +344,7 @@ i32 integrityAt(u8[] msg) {
 /** Append FINGERPRINT: CRC-32 of the message, xored with 0x5354554E, length counting it. */
 export u8[] withFingerprint(u8[] msg) {
   i32 c = (crc32(withLengthFor(msg, 8)) as@ i32) ^ 0x5354554E;
-  u8[] v = u8[4]();
+  u8[] v = u8[].filled(4, 0);
   v[0] = (c >> 24) & 0xFF;
   v[1] = (c >> 16) & 0xFF;
   v[2] = (c >> 8) & 0xFF;
@@ -366,7 +366,7 @@ export bool fingerprintOk(u8[] msg) {
   i32 at = end - 8;
   if (((msg[at] << 8) | msg[at + 1]) != attrFingerprint()) { return false; }
   if (((msg[at + 2] << 8) | msg[at + 3]) != 4) { return false; }
-  u8[] prefix = u8[at]();
+  u8[] prefix = u8[].filled(at, 0);
   for (i32 i = 0; i < at; i++) { prefix[i] = msg[i]; }
   i32 len = at + 8 - 20;
   prefix[2] = (len >> 8) & 0xFF;

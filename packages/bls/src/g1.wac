@@ -33,7 +33,7 @@ export struct G1 {
 
 /** The G1 generator's x, in Montgomery form. */
 u32[] g1x() {
-  u32[] v = u32[12]();
+  u32[] v = u32[].filled(12, 0);
   v[0] = 0xfd530c16; v[1] = 0x5cb38790; v[2] = 0x9976fff5; v[3] = 0x7817fc67;
   v[4] = 0x143ba1c1; v[5] = 0x154f95c7; v[6] = 0xf3d0e747; v[7] = 0xf0ae6acd;
   v[8] = 0x21dbf440; v[9] = 0xedce6ecc; v[10] = 0x9e0bfb75; v[11] = 0x12017741;
@@ -42,7 +42,7 @@ u32[] g1x() {
 
 /** And its y. */
 u32[] g1y() {
-  u32[] v = u32[12]();
+  u32[] v = u32[].filled(12, 0);
   v[0] = 0x0ce72271; v[1] = 0xbaac93d5; v[2] = 0x7918fd8e; v[3] = 0x8c22631a;
   v[4] = 0x570725ce; v[5] = 0xdd595f13; v[6] = 0x50405194; v[7] = 0x51ac5829;
   v[8] = 0xad0059c0; v[9] = 0x0e1c8c3f; v[10] = 0x5008a26a; v[11] = 0x0bbc3efc;
@@ -51,7 +51,7 @@ u32[] g1y() {
 
 /** b = 4, the curve constant for y² = x³ + 4. */
 u32[] curveB() {
-  u32[] v = u32[12]();
+  u32[] v = u32[].filled(12, 0);
   v[0] = 0x000cfff3; v[1] = 0xaa270000; v[2] = 0xfc34000a; v[3] = 0x53cc0032;
   v[4] = 0x6b0a807f; v[5] = 0x478fe97a; v[6] = 0xe6ba24d7; v[7] = 0xb1d37ebe;
   v[8] = 0xbf78ab2f; v[9] = 0x8ec9733b; v[10] = 0x3d83de7e; v[11] = 0x09d64551;
@@ -63,7 +63,7 @@ u32[] curveB() {
  * element. 255 bits in eight 32-bit words.
  */
 export u32[] groupOrder() {
-  u32[] v = u32[8]();
+  u32[] v = u32[].filled(8, 0);
   v[0] = 0x00000001; v[1] = 0xffffffff; v[2] = 0xfffe5bfe; v[3] = 0x53bda402;
   v[4] = 0x09a1d805; v[5] = 0x3339d808; v[6] = 0x299d7d48; v[7] = 0x73eda753;
   return v;
@@ -168,7 +168,7 @@ export bool g1IsOnCurve(G1 p) {
 
 /** |x| = 0xd201000000010000, the BLS parameter's magnitude. `x` itself is negative. */
 u32[] absX() {
-  u32[] v = u32[2]();
+  u32[] v = u32[].filled(2, 0);
   v[0] = 0x00010000; v[1] = 0xd2010000;
   return v;
 }
@@ -181,7 +181,7 @@ u32[] absX() {
  * loudly. `test/g1.py` re-derives it and asserts β³ = 1 with β ≠ 1.
  */
 u32[] g1Beta() {
-  u32[] v = u32[12]();
+  u32[] v = u32[].filled(12, 0);
   v[0] = 0x798a64e8; v[1] = 0x30f1361b; v[2] = 0x7ece5a2a; v[3] = 0xf3b8ddab;
   v[4] = 0xc61577f7; v[5] = 0x16a8ca3a; v[6] = 0x74fd029b; v[7] = 0xc26a2ff8;
   v[8] = 0x60701c6e; v[9] = 0x3636b766; v[10] = 0x241b6160; v[11] = 0x051ba4ab;
@@ -257,7 +257,7 @@ export u32[]? g1AffineY(G1 p) {
 
 /** The compressed form of `p`. */
 export u8[] g1Compress(G1 p) {
-  u8[] out = u8[48]();
+  u8[] out = u8[].filled(48, 0);
   if (g1IsInfinity(p)) {
     out[0] = 0xc0;                       // compressed | infinity, x zero
     return out;
@@ -297,7 +297,7 @@ export G1? g1Decompress(u8[] s) {
     return g1Infinity();
   }
 
-  u8[] xb = u8[48]();
+  u8[] xb = u8[].filled(48, 0);
   for (i32 i = 0; i < 48; i++) { xb[i] = s[i]; }
   xb[0] = xb[0] & 0x1F;                                // strip the flags before reading
   u32[]? x = fpFromBytes(xb);

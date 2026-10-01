@@ -56,28 +56,30 @@ struct Bundle {
   i32[] offsets;
 
   Bundle of2(u8[] a, u8[] b) {
-    u8[] d = u8[a.len() + b.len()]();
+    u8[] d = u8[].filled(a.len() + b.len(), 0);
     for (i32 i = 0; i < a.len(); i++) { d[i] = a[i]; }
     for (i32 i = 0; i < b.len(); i++) { d[a.len() + i] = b[i]; }
-    i32[] o = i32[](0, a.len(), a.len(), a.len() + b.len());
+    i32[] o = [0, a.len(), a.len(), a.len() + b.len()];
     return Bundle(d, o);
   }
   Bundle of1(u8[] a) {
-    u8[] d = u8[a.len()]();
+    u8[] d = u8[].filled(a.len(), 0);
     for (i32 i = 0; i < a.len(); i++) { d[i] = a[i]; }
-    return Bundle(d, i32[](0, a.len()));
+    return Bundle(d, [0, a.len()] as i32[]);
   }
-  Bundle empty() { return Bundle(u8[0](), i32[0]()); }
+  Bundle empty() { return Bundle(u8[](), i32[]()); }
 }
 
 Bundle of3(u8[] a, u8[] b, u8[] c) {
-  u8[] d = u8[a.len() + b.len() + c.len()]();
+  u8[] d = u8[].filled(a.len() + b.len() + c.len(), 0);
   i32 p = 0;
   for (i32 i = 0; i < a.len(); i++) { d[p] = a[i]; p++; }
   for (i32 i = 0; i < b.len(); i++) { d[p] = b[i]; p++; }
   for (i32 i = 0; i < c.len(); i++) { d[p] = c[i]; p++; }
-  i32[] o = i32[](0, a.len(), a.len(), a.len() + b.len(),
-                  a.len() + b.len(), a.len() + b.len() + c.len());
+  i32[] o = [
+                  0, a.len(), a.len(), a.len() + b.len(),
+                  a.len() + b.len(), a.len() + b.len() + c.len()
+  ];
   return Bundle(d, o);
 }
 
@@ -151,7 +153,7 @@ export string test_the_host_name_is_checked_against_the_leaf(Core core, Cli cli)
   Bundle chain = Bundle.of2(load(cli, LEAF), load(cli, INTER));
   Bundle roots = Bundle.of1(load(cli, ROOT));
   t.eqI32(check(chain, roots, "sub.wac.test", NOW, 8), 0, "the wildcard matches one label");
-  string[] wrong = string[]("wac.test.evil.com", "evil.com", "acwac.test", "a.b.wac.test");
+  string[] wrong = ["wac.test.evil.com", "evil.com", "acwac.test", "a.b.wac.test"];
   for (i32 i = 0; i < wrong.len(); i++) {
     t.eqI32(check(chain, roots, wrong[i], NOW, 8), 7, wrong[i] + " does not match");
   }
@@ -164,13 +166,13 @@ export string test_tampering_and_the_anchors_own_signature(Core core, Cli cli) {
   // leaves the DER intact and only the cryptography wrong.
   u8[] leaf = load(cli, LEAF);
   u8[] inter = load(cli, INTER);
-  u8[] badLeaf = u8[leaf.len()]();
+  u8[] badLeaf = u8[].filled(leaf.len(), 0);
   for (i32 i = 0; i < leaf.len(); i++) { badLeaf[i] = leaf[i]; }
   badLeaf[leaf.len() - 1] = badLeaf[leaf.len() - 1] ^ 1;
   t.isFalse(check(Bundle.of2(badLeaf, inter), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8) == 0,
             "a tampered leaf breaks the path");
 
-  u8[] badInter = u8[inter.len()]();
+  u8[] badInter = u8[].filled(inter.len(), 0);
   for (i32 i = 0; i < inter.len(); i++) { badInter[i] = inter[i]; }
   badInter[inter.len() - 1] = badInter[inter.len() - 1] ^ 1;
   t.isFalse(check(Bundle.of2(leaf, badInter), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8) == 0,
@@ -181,7 +183,7 @@ export string test_tampering_and_the_anchors_own_signature(Core core, Cli cli) {
   // the opposite looks equally plausible, and because checking would reject real roots
   // whose self-signatures use algorithms nobody verifies any more.
   u8[] root = load(cli, ROOT);
-  u8[] selfBroken = u8[root.len()]();
+  u8[] selfBroken = u8[].filled(root.len(), 0);
   for (i32 i = 0; i < root.len(); i++) { selfBroken[i] = root[i]; }
   selfBroken[root.len() - 1] = selfBroken[root.len() - 1] ^ 1;
   t.eqI32(check(Bundle.of2(leaf, inter), Bundle.of1(selfBroken), "wac.test", NOW, 8), 0,
@@ -305,7 +307,7 @@ string fixtureName(i32 n) {
 /**
  * Fixture `n`, read and decoded here rather than handed in.
  *
- * This file took a `fn<u8[](i32)> load` from the host until 2026-08-16, and its wrapper explained
+ * This file took a `fn<[i32]> load` from the host until 2026-08-16, and its wrapper explained
  * why: *"this callback is not an oracle but a **loader**. Nothing here supplies an answer — the
  * fixtures are inputs, and wac cannot read a file."* It can now — the test names `Cli` and the run
  * grants `--allow-read`, which is `issues/system/0161` step 4 — and `pemBundle` was already here to
@@ -320,7 +322,7 @@ u8[] load(Cli cli, i32 n) {
   if (!r.ok) { trap; }
   Store s = pemBundle(r.bytes);
   if (s.offsets.len() < 2) { trap; }
-  u8[] der = u8[s.offsets[1] - s.offsets[0]]();
+  u8[] der = u8[].filled(s.offsets[1] - s.offsets[0], 0);
   der.copyFrom(s.der, s.offsets[0], 0, der.len());
   return der;
 }
@@ -357,8 +359,10 @@ export string test_only_a_strict_dotted_quad_is_an_address(Core core, Cli cli) {
   // under the other's rules.
   T t = T.create();
   Cert ec = parseCert(load(cli, EC_LEAF));
-  string[] notAddresses = string[]("0177.0.0.1", "2130706433", "127.0.0.1.", "127.0.0",
-                                   "127.0.0.256", "127.0.0.01a", "127..0.1", "");
+  string[] notAddresses = [
+                                   "0177.0.0.1", "2130706433", "127.0.0.1.", "127.0.0",
+                                   "127.0.0.256", "127.0.0.01a", "127..0.1", ""
+  ];
   for (i32 i = 0; i < notAddresses.len(); i++) {
     t.isTrue(!certMatchesHost(ec, notAddresses[i].toBytes()),
              notAddresses[i] + " is not treated as 127.0.0.1");
@@ -465,9 +469,9 @@ export string test_an_rsa_chain_verifies(Core core, Cli cli) {
   //
   // The last bytes of a certificate are its signature, so flipping one there leaves the tbs, the
   // names and the dates untouched.
-  i32[] spots = i32[](leaf.len() - 1, leaf.len() - 20, leaf.len() - 100);
+  i32[] spots = [leaf.len() - 1, leaf.len() - 20, leaf.len() - 100];
   for (i32 i = 0; i < spots.len(); i++) {
-    u8[] bad = u8[leaf.len()]();
+    u8[] bad = u8[].filled(leaf.len(), 0);
     for (i32 k = 0; k < leaf.len(); k++) { bad[k] = leaf[k]; }
     bad[spots[i]] = bad[spots[i]] ^ 0xFF;
     t.isTrue(check(Bundle.of1(bad), rsaRoots, "wac.test", NOW, 8) != 0,
@@ -508,14 +512,14 @@ export string test_a_signature_scheme_is_refused_against_the_wrong_key_type(Core
   t.eqI32(rsa.keyType, keyRsa(), "the RSA fixture is not RSA");
 
   u8[] content = "anything at all".toBytes();
-  u8[] signature = u8[256](fill: 0x5A);
+  u8[] signature = u8[].filled(256, 0x5A);
 
   // ed25519 (0x0807) wants keyType 1; P-256 (0x0403) wants 2; P-384 (0x0503) wants 4;
   // RSA-PSS SHA-256 (0x0804) and SHA-384 (0x0805) want 3.
-  i32[] schemes = i32[](0x0807, 0x0403, 0x0503, 0x0804, 0x0805);
-  i32[] wants = i32[](1, keyP256(), keyP384(), keyRsa(), keyRsa());
-  Cert[] certs = Cert[](ed, p256, p384, rsa);
-  string[] names = string[]("ed25519", "P-256", "P-384", "RSA");
+  i32[] schemes = [0x0807, 0x0403, 0x0503, 0x0804, 0x0805];
+  i32[] wants = [1, keyP256(), keyP384(), keyRsa(), keyRsa()];
+  Cert[] certs = [ed, p256, p384, rsa];
+  string[] names = ["ed25519", "P-256", "P-384", "RSA"];
   i32 refusals = 0;
   for (i32 si = 0; si < schemes.len(); si++) {
     for (i32 ci = 0; ci < certs.len(); ci++) {

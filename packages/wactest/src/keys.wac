@@ -13,21 +13,21 @@ import { quoted } from "./childenv.wac";
 
 /** `chmod 600` — what `ssh` requires of a private key before it will use one. */
 export bool restrict(Cli cli, string path) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "chmod 600 " + quoted(path)), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "chmod 600 " + quoted(path)], u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
 /** `cp -p`, preserving the mode — an `ssh-keygen` key copied any other way loses its 0600. */
 export bool copyPreserving(Cli cli, string from, string to) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "cp -p " + quoted(from) + " " + quoted(to)),
-                    u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "cp -p " + quoted(from) + " " + quoted(to)],
+                    u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
 /** Generate an Ed25519 key pair at `path`, failing `t` if `ssh-keygen` will not. */
 export bool keygen(T t, Cli cli, string path) {
-  Exec r = cli.exec("ssh-keygen", string[]("-t", "ed25519", "-f", path, "-N", "", "-q"),
-                    u8[0]()).wait();
+  Exec r = cli.exec("ssh-keygen", ["-t", "ed25519", "-f", path, "-N", "", "-q"],
+                    u8[]()).wait();
   t.isTrue(r.ran(), "ssh-keygen ran — " + r.error);
   t.eqI32(r.status, 0, "ssh-keygen for " + path + ": " + string.fromBytes(r.stderr));
   return r.ran() && r.status == 0;

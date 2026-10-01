@@ -30,11 +30,11 @@ struct Item {
 
 /** One `<li>` per argument, and a `<ul>` around them. */
 Node listOf(string[] items) {
-  Node[] kids = Node[items.len()](fill: Node.Text(""));
+  Node[] kids = Node[].filled(items.len(), Node.Text(""));
   for (i32 i = 0; i < items.len(); i++) {
     kids[i] = <Item at={i} of="args">{Node.Text(items[i])}</Item>;
   }
-  return Node.Element("ul", Attr[](Attr("class", "args")), kids);
+  return Node.Element("ul", [Attr("class", "args")], kids);
 }
 
 /** The tree as HTML. Nothing here knows JSX exists. */
@@ -61,7 +61,7 @@ string render(Node n) {
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();
-  string[] args = string[n](fill: "");
+  string[] args = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
   core.log(render(listOf(args)));
   return 0;

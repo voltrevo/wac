@@ -55,9 +55,9 @@ void splash(i32[] now, i32 cx, i32 cy) {
 
 /** The largest absolute height after `steps` steps, in fixed point. */
 i32 maxAfter(i32 steps) {
-  i32[] before = i32[W * H]();
-  i32[] now = i32[W * H]();
-  i32[] next = i32[W * H]();
+  i32[] before = i32[].filled(W * H, 0);
+  i32[] now = i32[].filled(W * H, 0);
+  i32[] next = i32[].filled(W * H, 0);
   splash(now, W / 2, H / 2);
   for (i32 s = 0; s < steps; s++) {
     step(before, now, next);
@@ -76,9 +76,9 @@ i32 maxAfter(i32 steps) {
 
 /** How many cells are non-zero — a wave that propagates touches more of the grid over time. */
 i32 spreadAfter(i32 steps) {
-  i32[] before = i32[W * H]();
-  i32[] now = i32[W * H]();
-  i32[] next = i32[W * H]();
+  i32[] before = i32[].filled(W * H, 0);
+  i32[] now = i32[].filled(W * H, 0);
+  i32[] next = i32[].filled(W * H, 0);
   splash(now, W / 2, H / 2);
   for (i32 s = 0; s < steps; s++) {
     step(before, now, next);
@@ -96,9 +96,9 @@ i32 spreadAfter(i32 steps) {
 
 export string test_the_wave_decays_rather_than_growing() {
   T t = T.create();
-  i32[] steps = i32[4]();
+  i32[] steps = i32[].filled(4, 0);
   steps[0] = 1; steps[1] = 10; steps[2] = 50; steps[3] = 200;
-  i32[] peaks = i32[4]();
+  i32[] peaks = i32[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { peaks[i] = maxAfter(steps[i]); }
 
   t.isTrue(peaks[0] > 0, "the splash left no height at all, so nothing was simulated");

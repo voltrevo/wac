@@ -54,8 +54,8 @@ i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 t
   i32 runnable = 0;
 
   // Signatures claimed so far, so the second mutant with one is a duplicate of the first.
-  string[] seenSig = string[total + 1](fill: "");
-  string[] seenName = string[total + 1](fill: "");
+  string[] seenSig = string[].filled(total + 1, "");
+  string[] seenName = string[].filled(total + 1, "");
   i32 seen = 0;
 
   i32 emitted = 0;
@@ -71,20 +71,20 @@ i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 t
     if (!r.ok) { continue; }
     GenStats each = GenStats(0, 0, 0);
     Mutant[] got = generate(files[fi], string.fromBytes(r.bytes),
-                            string[]("relational", "literal", "guard", "extreme"), each, 3);
+                            ["relational", "literal", "guard", "extreme"], each, 3);
     for (i32 m = 0; m < got.len(); m++) {
       Applied a = applyEdits(src.paths, src.texts, got[m]);
       string sig = a.ok ? wasmHashOf(a.paths, a.texts, files[fi]) : "";
       Triage t = triageOf(false, sig == "" ? files[fi] : "", false,
-                          signatureOf(string[](files[fi]), string[](sig)),
-                          signatureOf(string[](files[fi]), string[](baseline)),
+                          signatureOf([files[fi]], [sig]),
+                          signatureOf([files[fi]], [baseline]),
                           seenSig, seenName);
       if (t.verdict == "equivalent") { equivalent = equivalent + 1; }
       else if (t.verdict == "duplicate") { duplicate = duplicate + 1; }
       else if (t.verdict == "invalid") { invalid = invalid + 1; }
       else { runnable = runnable + 1; }
       if (t.record && seen < seenSig.len()) {
-        seenSig[seen] = signatureOf(string[](files[fi]), string[](sig));
+        seenSig[seen] = signatureOf([files[fi]], [sig]);
         seenName[seen] = got[m].name;
         seen = seen + 1;
       }
@@ -111,7 +111,7 @@ i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 t
  */
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
-  string[] args = string[argc](fill: "");
+  string[] args = string[].filled(argc, "");
   for (i32 i = 0; i < argc; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
   Flags f = parseFlags(args);
   if (f.problem != "") {
@@ -154,7 +154,7 @@ export i32 main(Core core, Cli cli) {
   }
 
   i32 total = chosen.len();
-  string[] names = string[total](fill: "");
+  string[] names = string[].filled(total, "");
   for (i32 i = 0; i < total; i++) { names[i] = chosen[i].name; }
 
   if (f2.triage) { return report(core, cli, dir, files, names, total, stats); }

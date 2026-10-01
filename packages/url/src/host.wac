@@ -145,7 +145,7 @@ Host? bracketedIpv6(u8[] s) {
 
 u8[] slicing(u8[] s, i32 lo, i32 hi) {
   if (hi < lo) { hi = lo; }
-  u8[] out = u8[hi - lo]();
+  u8[] out = u8[].filled(hi - lo, 0);
   for (i32 i = lo; i < hi; i++) { out[i - lo] = s[i]; }
   return out;
 }
@@ -161,7 +161,7 @@ export Host? parseIpv4(u8[] s) {
   if (end > 0 && s[end - 1] == '.') { end--; }
 
   // Split into at most five, so a fifth is detectable as a failure.
-  i32[] starts = i32[6]();
+  i32[] starts = i32[].filled(6, 0);
   i32 n = 0;
   i32 lo = 0;
   for (i32 i = 0; i <= end; i++) {
@@ -175,7 +175,7 @@ export Host? parseIpv4(u8[] s) {
   }
   if (n > 4) { return null; }
 
-  i64[] parts = i64[4]();
+  i64[] parts = i64[].filled(4, 0);
   for (i32 k = 0; k < n; k++) {
     // Parts are recomputed rather than read back out of `starts`, since there are at most four.
     Part p = parseIpv4Number(partBytes(s, starts, k, end));
@@ -209,7 +209,7 @@ u8[] partBytes(u8[] s, i32[] starts, i32 k, i32 end) {
       lo = i + 1;
     }
   }
-  return u8[0]();
+  return u8[]();
 }
 
 // ── IPv6 ───────────────────────────────────────────────────────────────────────────────
@@ -221,7 +221,7 @@ u8[] partBytes(u8[] s, i32[] starts, i32 k, i32 end) {
  * (`::ffff:127.0.0.1`), which writes two pieces at a time.
  */
 export Host? parseIpv6(u8[] s) {
-  i32[] pieces = i32[8]();
+  i32[] pieces = i32[].filled(8, 0);
   i32 pieceIndex = 0;
   i32 compress = -1;
   i32 i = 0;
@@ -341,7 +341,7 @@ export struct HostResult {
 export HostResult parseHost(u8[] s, bool special) {
   if (s.len() > 0 && s[0] == '[') { return HostResult(bracketedIpv6(s), false); }
   if (!special) { return HostResult(parseOpaqueHost(s), false); }
-  if (s.len() == 0) { return HostResult(Host.Named(u8[0]()), false); }
+  if (s.len() == 0) { return HostResult(Host.Named(u8[]()), false); }
 
   u8[] decoded = decode(s);
   // ASCII-lowercase, which is all of IDNA that is implemented here.
@@ -366,7 +366,7 @@ export HostResult parseHost(u8[] s, bool special) {
 
 void writeU32Decimal(Buf out, u32 v) {
   if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[10]();
+  u8[] tmp = u8[].filled(10, 0);
   i32 n = 0;
   u32 x = v;
   while (x > 0) {
@@ -379,7 +379,7 @@ void writeU32Decimal(Buf out, u32 v) {
 
 void writeHexLower(Buf out, i32 v) {
   if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[4]();
+  u8[] tmp = u8[].filled(4, 0);
   i32 n = 0;
   i32 x = v;
   while (x > 0) {

@@ -55,7 +55,7 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * rather than extend — a list that is not the list of actual failures reads as knowledge.
  */
 /** Seeds whose disagreement is a known-open issue. Empty since `issues/lang/0306b` was fixed. */
-i32[] knownOpen() { return i32[0](fill: 0); }
+i32[] knownOpen() { return i32[](); }
 
 bool has(i32[] xs, i32 v) {
   for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == v) { return true; } }

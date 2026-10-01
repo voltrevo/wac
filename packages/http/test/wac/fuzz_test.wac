@@ -42,11 +42,12 @@ i32 MAX_BODY() { return 1048576; }
  * method cannot change where a message ends, so the permissiveness costs nothing.
  */
 string[] knownMethods() {
-  return string[](
+  return [
     "DELETE", "GET", "HEAD", "POST", "PUT", "CONNECT", "OPTIONS", "TRACE", "COPY", "LOCK",
     "MKCOL", "MOVE", "PROPFIND", "PROPPATCH", "SEARCH", "UNLOCK", "BIND", "REBIND", "UNBIND",
     "ACL", "REPORT", "MKACTIVITY", "CHECKOUT", "MERGE", "M-SEARCH", "NOTIFY", "SUBSCRIBE",
-    "UNSUBSCRIBE", "PATCH", "PURGE", "MKCALENDAR", "LINK", "UNLINK", "SOURCE", "QUERY");
+    "UNSUBSCRIBE", "PATCH", "PURGE", "MKCALENDAR", "LINK", "UNLINK", "SOURCE", "QUERY"
+  ];
 }
 
 bool isKnownMethod(string m) {
@@ -58,23 +59,24 @@ bool isKnownMethod(string m) {
 }
 
 string[] seeds() {
-  return string[](
+  return [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
     "GET /a?b=c HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nCookie: k=v\r\n\r\n",
     "PUT /p HTTP/1.0\r\nHost: a\r\nContent-Length: 3\r\n\r\nabc",
-    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-T: v\r\n\r\n");
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-T: v\r\n\r\n"
+  ];
 }
 
 /** Bytes worth inserting: the ones that change a message's shape rather than its content. */
 i32[] interesting() {
-  return i32[](13, 10, 0x20, 9, 0, 0x3a, 0x2c, 0x3b, 0x7f, 0x80, 0xff, 0x2e, 0x2d);
+  return [13, 10, 0x20, 9, 0, 0x3a, 0x2c, 0x3b, 0x7f, 0x80, 0xff, 0x2e, 0x2d] as i32[];
 }
 
 /** Header lines that create or resolve a framing ambiguity. */
 string[] injections() {
-  return string[](
+  return [
     "Content-Length: 5\r\n",
     "Content-Length: 0\r\n",
     "Content-Length: +5\r\n",
@@ -87,11 +89,12 @@ string[] injections() {
     "X:\r\n\tY: 2\r\n",
     " Host: b\r\n",
     "Host : b\r\n",
-    "\r\n");
+    "\r\n"
+  ];
 }
 
 u8[] spliced(u8[] base, i32 at, u8[] insert, i32 remove) {
-  u8[] out = u8[base.len() - remove + insert.len()]();
+  u8[] out = u8[].filled(base.len() - remove + insert.len(), 0);
   i32 k = 0;
   for (i32 i = 0; i < at; i++) { out[k] = base[i]; k = k + 1; }
   for (i32 i = 0; i < insert.len(); i++) { out[k] = insert[i]; k = k + 1; }
@@ -100,7 +103,7 @@ u8[] spliced(u8[] base, i32 at, u8[] insert, i32 remove) {
 }
 
 u8[] truncated(u8[] base, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = base[i]; }
   return out;
 }
@@ -119,12 +122,12 @@ u8[] lineAt(u8[] b, i32 n) {
   i32 which = 0;
   for (i32 i = 0; i + 1 < b.len(); i++) {
     if (b[i] != 13 || b[i + 1] != 10) { continue; }
-    if (which == n) { return truncated(spliced(b, 0, u8[0](), from), i - from); }
+    if (which == n) { return truncated(spliced(b, 0, u8[](), from), i - from); }
     which = which + 1;
     from = i + 2;
     i = i + 1;
   }
-  return u8[0]();
+  return u8[]();
 }
 
 u8[] mutate(Rng rng, u8[] base) {
@@ -132,15 +135,15 @@ u8[] mutate(Rng rng, u8[] base) {
   i32 kind = rng.upto(6);
   if (kind == 0) {
     // Insert an interesting byte somewhere.
-    return spliced(base, rng.upto(base.len() + 1), u8[](bytes[rng.upto(bytes.len())]), 0);
+    return spliced(base, rng.upto(base.len() + 1), [bytes[rng.upto(bytes.len())]], 0);
   }
   if (kind == 1) {
     if (base.len() == 0) { return base; }
-    return spliced(base, rng.upto(base.len()), u8[0](), 1);
+    return spliced(base, rng.upto(base.len()), u8[](), 1);
   }
   if (kind == 2) {
     if (base.len() == 0) { return base; }
-    return spliced(base, rng.upto(base.len()), u8[](bytes[rng.upto(bytes.len())]), 1);
+    return spliced(base, rng.upto(base.len()), [bytes[rng.upto(bytes.len())]], 1);
   }
   if (kind == 3) {
     // Truncate, which should produce "incomplete" far more often than "bad".
@@ -158,7 +161,7 @@ u8[] mutate(Rng rng, u8[] base) {
   }
   i32 pick = 1 + rng.upto(lines < 1 ? 1 : lines);
   u8[] line = lineAt(base, pick);
-  u8[] withCrlf = u8[line.len() + 2]();
+  u8[] withCrlf = u8[].filled(line.len() + 2, 0);
   for (i32 i = 0; i < line.len(); i++) { withCrlf[i] = line[i]; }
   withCrlf[line.len()] = 13;
   withCrlf[line.len() + 1] = 10;
@@ -190,7 +193,7 @@ Verdict verdictOf(u8[] input) {
 
 string lower(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
   }
@@ -209,7 +212,7 @@ string describe(u8[] input) {
       out = out + "\\x" + digits.slice(input[i] / 16, input[i] / 16 + 1) +
             digits.slice(input[i] % 16, input[i] % 16 + 1);
     } else {
-      u8[] one = u8[1]();
+      u8[] one = u8[].filled(1, 0);
       one[0] = input[i];
       out = out + string.fromBytes(one);
     }
@@ -220,7 +223,7 @@ string describe(u8[] input) {
 void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
   Rng rng = Rng(seedValue);
   string[] all = seeds();
-  u8[][] cases = u8[][rounds](fill: u8[0]());
+  u8[][] cases = u8[][].filled(rounds, u8[]());
   for (i32 i = 0; i < rounds; i++) {
     u8[] bytes = all[rng.upto(all.len())].toBytes();
     // One case in five is left alone. Random edits almost always break a message, so without

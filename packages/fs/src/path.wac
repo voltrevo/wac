@@ -19,14 +19,14 @@
  */
 export string normalise(string path) {
   u8[] b = path.toBytes();
-  string[] parts = string[64](fill: "");
+  string[] parts = string[].filled(64, "");
   i32 n = 0;
   i32 at = 0;
   while (at < b.len()) {
     i32 end = at;
     while (end < b.len() && b[end] != '/') { end++; }
     if (end > at) {
-      u8[] seg = u8[end - at](fill: 0);
+      u8[] seg = u8[].filled(end - at, 0);
       seg.copyFrom(b, at, 0, end - at);
       string name = string.fromBytes(seg);
       if (name == "..") {

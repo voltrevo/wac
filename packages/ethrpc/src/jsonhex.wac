@@ -33,7 +33,7 @@ export bool isNull(JsonValue v) {
 export u8[] stringOf(JsonValue v) {
   match (v) {
     Str(bytes): { return bytes; }
-    default: { return u8[0](); }
+    default: { return u8[](); }
   }
 }
 
@@ -55,11 +55,11 @@ export u8[] memberQuantity(JsonValue v, string key) {
 export u8[][] hexArray(JsonValue v) {
   match (v) {
     Array(items): {
-      u8[][] out = u8[][items.len()](fill: u8[0]());
+      u8[][] out = u8[][].filled(items.len(), u8[]());
       for (i32 i = 0; i < items.len(); i++) { out[i] = fromHexData(stringOf(items.get(i))); }
       return out;
     }
-    default: { return u8[][0](fill: u8[0]()); }
+    default: { return u8[][].filled(0, u8[]()); }
   }
 }
 
@@ -84,30 +84,30 @@ export u8[] fromHexData(u8[] text) {
   i32 at = prefixLen(text);
   i32 n = text.len() - at;
   // Odd is a node bug. Empty is "not clean hex", which is what every caller here already checks for.
-  if (n <= 0 || (n & 1) == 1) { return u8[0](); }
-  u8[] body = u8[n]();
+  if (n <= 0 || (n & 1) == 1) { return u8[](); }
+  u8[] body = u8[].filled(n, 0);
   body.copyFrom(text, at, 0, n);
   u8[]? decoded = hexDecode(body);
-  return decoded is null ? u8[0]() : decoded!;
+  return decoded is null ? u8[]() : decoded!;
 }
 
 /** `0x…` as the bytes of a number, padded to a whole byte. See `fromHexData` for why these are two. */
 export u8[] fromHexQuantity(u8[] text) {
   i32 at = prefixLen(text);
   i32 n = text.len() - at;
-  if (n <= 0) { return u8[0](); }
+  if (n <= 0) { return u8[](); }
   if ((n & 1) == 1) {
     // An odd quantity like `0x1a2`: pad one nibble, which is what makes it a number rather than bytes.
-    u8[] padded = u8[n + 1]();
+    u8[] padded = u8[].filled(n + 1, 0);
     padded[0] = '0';
     padded.copyFrom(text, at, 1, n);
     u8[]? d = hexDecode(padded);
-    return d is null ? u8[0]() : d!;
+    return d is null ? u8[]() : d!;
   }
-  u8[] body = u8[n]();
+  u8[] body = u8[].filled(n, 0);
   body.copyFrom(text, at, 0, n);
   u8[]? decoded = hexDecode(body);
-  return decoded is null ? u8[0]() : decoded!;
+  return decoded is null ? u8[]() : decoded!;
 }
 
 /** How many characters of `0x` there are in front, which is two or none. */

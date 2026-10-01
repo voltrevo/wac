@@ -39,16 +39,16 @@
 i32 limbBits(i32 i) { return (i % 2) == 0 ? 26 : 25; }
 
 /** A field element, uncarried. Ten i64 limbs, little-endian by significance. */
-export i64[] feZero() { return i64[10](); }
+export i64[] feZero() { return i64[].filled(10, 0); }
 
 export i64[] feOne() {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   h[0] = 1;
   return h;
 }
 
 export i64[] feCopy(i64[] a) {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { h[i] = a[i]; }
   return h;
 }
@@ -95,13 +95,13 @@ void feCarryFloor(i64[] h) {
 }
 
 export i64[] feAdd(i64[] a, i64[] b) {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { h[i] = a[i] + b[i]; }
   return h;
 }
 
 export i64[] feSub(i64[] a, i64[] b) {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { h[i] = a[i] - b[i]; }
   return h;
 }
@@ -116,7 +116,7 @@ export i64[] feSub(i64[] a, i64[] b) {
  * transcription exercise, which is how this kind of code goes quietly wrong.
  */
 export i64[] feMul(i64[] a, i64[] b) {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) {
     for (i32 j = 0; j < 10; j++) {
       i64 t = a[i] * b[j];
@@ -145,7 +145,7 @@ export i64[] feSquare(i64[] a) { return feMul(a, a); }
  * m * 2^26 * 10 stays inside an i64, which any curve constant is by a wide margin.
  */
 export i64[] feMulSmall(i64[] a, i64 m) {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { h[i] = a[i] * m; }
   feCarry(h);
   feCarry(h);
@@ -231,7 +231,7 @@ export u8[] feToBytes(i64[] hIn) {
   }
 
   // Pack the limbs into 32 bytes, little-endian.
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   i32 bitPos = 0;
   for (i32 i = 0; i < 10; i++) {
     i32 width = limbBits(i);
@@ -259,7 +259,7 @@ export u8[] feToBytes(i64[] hIn) {
  * better than a guard that reads as if the case were live.
  */
 export i64[] feFromBytes(u8[] s) {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   i32 bitPos = 0;
   for (i32 i = 0; i < 10; i++) {
     i32 width = limbBits(i);
@@ -404,7 +404,7 @@ export i64[] fePow22523(i64[] z) {
 
 /** Negation, which the Edwards addition law needs for subtraction. */
 export i64[] feNeg(i64[] a) {
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { h[i] = -a[i]; }
   return h;
 }
@@ -412,7 +412,7 @@ export i64[] feNeg(i64[] a) {
 /** Select b if `pick` is 1, a if it is 0, without branching on `pick`. */
 export i64[] feSelect(i64[] a, i64[] b, i32 pick) {
   i64 mask = -(pick as i64);
-  i64[] h = i64[10]();
+  i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { h[i] = a[i] ^ (mask & (a[i] ^ b[i])); }
   return h;
 }

@@ -100,7 +100,7 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
   if (refused > 0) { return 1; }
 
   Step[] steps = plan(m, l);
-  string[] resolved = string[steps.len()](fill: "");
+  string[] resolved = string[].filled(steps.len(), "");
   Store store = systemStore(cli);
   i32 fetched = 0;
 
@@ -183,7 +183,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   if (!r.ok) { core.warn("wacfetch: " + map.name + ": " + map.git + " is not an https url"); return ""; }
 
   Answer refs = request(core, cli, store, r.host,
-    r.path + "/info/refs?service=git-upload-pack", u8[0](), "");
+    r.path + "/info/refs?service=git-upload-pack", u8[](), "");
   if (!refs.ok) { core.warn("wacfetch: " + map.name + ": " + refs.error); return ""; }
   if (refs.status != 200) {
     core.warn("wacfetch: " + map.name + ": " + r.host + " answered " + itoa(refs.status)
@@ -191,8 +191,8 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
     return "";
   }
 
-  string[] names = string[0](fill: "");
-  string[] oids = string[0](fill: "");
+  string[] names = string[].filled(0, "");
+  string[] oids = string[].filled(0, "");
   string caps = "agent=wac/0";
   match (parseAdvertisement(refs.body)) {
     Garbled(why2): {
@@ -200,8 +200,8 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
       return "";
     }
     Said(ad) : {
-      names = string[ad.refs.len()](fill: "");
-      oids = string[ad.refs.len()](fill: "");
+      names = string[].filled(ad.refs.len(), "");
+      oids = string[].filled(ad.refs.len(), "");
       for (i32 i = 0; i < ad.refs.len(); i++) {
         AdRef one = ad.refs.get(i);
         names[i] = one.name;
@@ -261,7 +261,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
               + " for the pack");
     return "";
   }
-  u8[] pack = u8[0]();
+  u8[] pack = u8[]();
   match (findPack(packed.body)) {
     NoPack(why3): {
       core.warn("wacfetch: " + map.name + ": no pack in the reply: " + why3);

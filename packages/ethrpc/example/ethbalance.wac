@@ -28,7 +28,7 @@ export i32 main(Core core, Cli cli) {
   if (address.len() != 20) { core.warn("ethbalance: an address is 20 bytes"); return 2; }
   string host = n > 1 ? string.fromBytes(cli.arg(1).wait()) : "127.0.0.1";
   i32 port = n > 2 ? atoiOr(string.fromBytes(cli.arg(2).wait()), 8545) : 8545;
-  u8[] expected = n > 3 ? hexOf(string.fromBytes(cli.arg(3).wait())) : u8[0]();
+  u8[] expected = n > 3 ? hexOf(string.fromBytes(cli.arg(3).wait())) : u8[]();
 
   // Slot zero, because `eth_getProof` wants a slot list and the account proof is what is actually wanted.
   // Asking about a slot nothing wrote is not wasted: an absence proof is as small as it gets.
@@ -68,9 +68,9 @@ string note(u8[] expected) {
  */
 string decimal(u8[] be) {
   if (be.len() == 0) { return "0"; }
-  u8[] digits = u8[be.len() * 3 + 1]();
+  u8[] digits = u8[].filled(be.len() * 3 + 1, 0);
   i32 count = 0;
-  u8[] work = u8[be.len()]();
+  u8[] work = u8[].filled(be.len(), 0);
   work.copyFrom(be, 0, 0, be.len());
   i32 start = 0;
   while (start < work.len()) {
@@ -85,7 +85,7 @@ string decimal(u8[] be) {
     while (start < work.len() && work[start] == 0) { start++; }
   }
   if (count == 0) { return "0"; }
-  u8[] out = u8[count]();
+  u8[] out = u8[].filled(count, 0);
   for (i32 i = 0; i < count; i++) { out[i] = digits[count - 1 - i]; }
   return string.fromBytes(out);
 }
@@ -94,7 +94,7 @@ u8[] hexOf(string s) {
   u8[] b = s.toBytes();
   i32 at = b.len() >= 2 && b[0] == '0' && (b[1] == 'x' || b[1] == 'X') ? 2 : 0;
   i32 n = (b.len() - at) / 2;
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (digit(b[at + i * 2]) << 4) | digit(b[at + i * 2 + 1]); }
   return out;
 }

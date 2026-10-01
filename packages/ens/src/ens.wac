@@ -32,7 +32,7 @@ import { keccak256 } from "../../crypto/src/keccak.wac";
 import { slice } from "../../bytes/src/slice.wac";
 
 /** The 32 zero bytes every name's walk starts from — the root node. */
-export u8[] rootNode() { return u8[32](); }
+export u8[] rootNode() { return u8[].filled(32, 0); }
 
 /**
  * The ENS node for `name`, which must already be normalised — see the header.
@@ -59,7 +59,7 @@ export u8[] namehash(u8[] name) {
 /** `keccak256(node ++ labelHash)` — one step up the tree. Exported because a subdomain is one step. */
 export u8[] hashInto(u8[] node, u8[] labelHash) {
   if (node.len() != 32 || labelHash.len() != 32) { trap; }
-  u8[] joined = u8[64]();
+  u8[] joined = u8[].filled(64, 0);
   for (i32 i = 0; i < 32; i++) { joined[i] = node[i]; }
   for (i32 i = 0; i < 32; i++) { joined[32 + i] = labelHash[i]; }
   return keccak256(joined);
@@ -75,7 +75,7 @@ export u8[] hashInto(u8[] node, u8[] labelHash) {
  * a different name, and answering about it would be worse than refusing.
  */
 export u8[] dnsEncode(u8[] name) {
-  if (name.len() == 0) { return u8[](0); }
+  if (name.len() == 0) { return [0] as u8[]; }
   i32 total = 1;
   i32 start = 0;
   for (i32 i = 0; i <= name.len(); i++) {
@@ -86,7 +86,7 @@ export u8[] dnsEncode(u8[] name) {
       start = i + 1;
     }
   }
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   start = 0;
   for (i32 i = 0; i <= name.len(); i++) {
@@ -112,17 +112,17 @@ export u8[] dnsEncode(u8[] name) {
 // one word — no `packages/abi` needed for the encoding, though the *answer* needs it.
 
 /** `resolver(bytes32)` on the registry: which contract answers for this node. */
-export u8[] resolverCall(u8[] node) { return callWithNode(u8[](0x01, 0x78, 0xb8, 0xbf), node); }
+export u8[] resolverCall(u8[] node) { return callWithNode([0x01, 0x78, 0xb8, 0xbf] as u8[], node); }
 
 /** `addr(bytes32)` on a resolver: the address a name points at. */
-export u8[] addrCall(u8[] node) { return callWithNode(u8[](0x3b, 0x3b, 0x57, 0xde), node); }
+export u8[] addrCall(u8[] node) { return callWithNode([0x3b, 0x3b, 0x57, 0xde] as u8[], node); }
 
 /** `contenthash(bytes32)` on a resolver — the content a name points at, for a page rather than a payment. */
-export u8[] contenthashCall(u8[] node) { return callWithNode(u8[](0xbc, 0x1c, 0x58, 0xd1), node); }
+export u8[] contenthashCall(u8[] node) { return callWithNode([0xbc, 0x1c, 0x58, 0xd1] as u8[], node); }
 
 u8[] callWithNode(u8[] selector, u8[] node) {
   if (node.len() != 32) { trap; }
-  u8[] out = u8[36]();
+  u8[] out = u8[].filled(36, 0);
   for (i32 i = 0; i < 4; i++) { out[i] = selector[i]; }
   for (i32 i = 0; i < 32; i++) { out[4 + i] = node[i]; }
   return out;
@@ -137,7 +137,7 @@ u8[] callWithNode(u8[] selector, u8[] node) {
  */
 export u8[] selector(u8[] signature) {
   u8[] h = keccak256(signature);
-  u8[] out = u8[4]();
+  u8[] out = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { out[i] = h[i]; }
   return out;
 }
@@ -150,9 +150,9 @@ export u8[] selector(u8[] signature) {
  * would otherwise take the low twenty bytes of something else and treat it as one.
  */
 export u8[] addressFromWord(u8[] word) {
-  if (word.len() != 32) { return u8[0](); }
-  for (i32 i = 0; i < 12; i++) { if (word[i] != 0) { return u8[0](); } }
-  u8[] out = u8[20]();
+  if (word.len() != 32) { return u8[](); }
+  for (i32 i = 0; i < 12; i++) { if (word[i] != 0) { return u8[](); } }
+  u8[] out = u8[].filled(20, 0);
   for (i32 i = 0; i < 20; i++) { out[i] = word[12 + i]; }
   return out;
 }

@@ -105,7 +105,7 @@ export i32 page(Core core, Cli cli, Page page) {
   // What the save button would write, and what to call it. Held across iterations because a
   // download is a second act: gzip already ran when the input changed, and compressing it again
   // to answer a click would be work the page has already done.
-  u8[] packed = u8[0]();
+  u8[] packed = u8[]();
   string saveName = "typed.txt";
 
   // Two things to wait on and one call that waits on both. `nextEvent` and `nextFile` are
@@ -116,7 +116,7 @@ export i32 page(Core core, Cli cli, Page page) {
 
   packed = update(core, page, "".toBytes(), "");
   while (true) {
-    i32 which = core.waitAny(i32[](ev.id, file.id), -1);
+    i32 which = core.waitAny([ev.id, file.id], -1);
     if (which < 0) { return 0; }
 
     if (which == 1) {

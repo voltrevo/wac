@@ -42,9 +42,9 @@ export bool wholeAt(u8[] b, i32 at) {
 /** The cookie from a HelloVerifyRequest sitting in the record at `at`. */
 export u8[] cookieAt(u8[] b, i32 at) {
   Record r = parseRecord(b, at);
-  if (!r.ok || r.kind != typeHandshake()) { return u8[0](); }
+  if (!r.ok || r.kind != typeHandshake()) { return u8[](); }
   Handshake h = parseHandshake(r.fragment);
-  if (!h.ok || h.kind != hsHelloVerifyRequest()) { return u8[0](); }
+  if (!h.ok || h.kind != hsHelloVerifyRequest()) { return u8[](); }
   return verifyCookie(h.body);
 }
 
@@ -89,23 +89,23 @@ export i32 curveAt(u8[] b, i32 at) {
 /** The server's ephemeral public key from the record at `at`. */
 export u8[] serverPublicAt(u8[] b, i32 at) {
   Record r = parseRecord(b, at);
-  if (!r.ok) { return u8[0](); }
+  if (!r.ok) { return u8[](); }
   Handshake h = parseHandshake(r.fragment);
-  return h.ok && h.kind == 12 ? serverPublic(h.body) : u8[0]();
+  return h.ok && h.kind == 12 ? serverPublic(h.body) : u8[]();
 }
 
 /** Our ephemeral public key for the curve the server chose. */
 export u8[] ourPublic(i32 curve, u8[] scalar) {
   if (curve == curveX25519()) { return x25519Base(scalar); }
   if (curve == curveSecp256r1()) { return p256PublicKey(scalar); }
-  return u8[0]();
+  return u8[]();
 }
 
 /** The pre-master secret: the ECDH shared value, and nothing hashed on top of it. */
 export u8[] preMaster(i32 curve, u8[] scalar, u8[] peer) {
   if (curve == curveX25519()) { return x25519(scalar, peer); }
   if (curve == curveSecp256r1()) { return p256Ecdh(scalar, peer); }
-  return u8[0]();
+  return u8[]();
 }
 
 /** A ClientKeyExchange handshake message, header included. */
@@ -131,7 +131,7 @@ export u8[] sealedRecord(u8[] key, u8[] iv, i32 epoch, i64 seq, i32 kind, u8[] p
 /** Open the record at `at` with the server's keys; empty when it does not authenticate. */
 export u8[] openedAt(u8[] b, i32 at, u8[] key, u8[] iv) {
   Record r = parseRecord(b, at);
-  if (!r.ok) { return u8[0](); }
+  if (!r.ok) { return u8[](); }
   return open(key, iv, r.epoch, r.sequence, r.kind, r.version, r.fragment);
 }
 
@@ -146,7 +146,7 @@ export u8[] openedAt(u8[] b, i32 at, u8[] key, u8[] iv) {
  * exists to prevent.
  */
 export i32[] fragInfoAt(u8[] b, i32 at) {
-  i32[] out = i32[5](fill: -1);
+  i32[] out = i32[].filled(5, -1);
   Record r = parseRecord(b, at);
   if (!r.ok || r.kind != typeHandshake() || r.fragment.len() < 12) { return out; }
   u8[] f = r.fragment;
@@ -161,8 +161,8 @@ export i32[] fragInfoAt(u8[] b, i32 at) {
 /** The fragment's payload bytes from the record at `at` — what goes at `fragmentOffset`. */
 export u8[] fragBodyAt(u8[] b, i32 at) {
   Record r = parseRecord(b, at);
-  if (!r.ok || r.fragment.len() < 12) { return u8[0](); }
-  u8[] out = u8[r.fragment.len() - 12]();
+  if (!r.ok || r.fragment.len() < 12) { return u8[](); }
+  u8[] out = u8[].filled(r.fragment.len() - 12, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = r.fragment[12 + i]; }
   return out;
 }
@@ -253,15 +253,15 @@ export u8[] ckePublic(u8[] body) { return clientPublic(body); }
  */
 export u8[] signEcdsaDer(u8[] priv, u8[] msg, u8[] k) {
   u8[] raw = p256Sign(priv, msg, k);
-  if (raw.len() != 64) { return u8[0](); }
-  u8[] r = u8[32]();
-  u8[] s2 = u8[32]();
+  if (raw.len() != 64) { return u8[](); }
+  u8[] r = u8[].filled(32, 0);
+  u8[] s2 = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { r[i] = raw[i]; s2[i] = raw[32 + i]; }
   return derSequence(joinBytes(derInteger(r), derInteger(s2)));
 }
 
 u8[] joinBytes(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;

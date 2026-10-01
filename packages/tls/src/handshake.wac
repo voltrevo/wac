@@ -103,7 +103,7 @@ export struct ServerHello {
 
 /** The random RFC 8446 §4.1.3 gives a HelloRetryRequest, which is otherwise a ServerHello. */
 u8[] helloRetryRandom() {
-  u8[] r = u8[32]();
+  u8[] r = u8[].filled(32, 0);
   r[0] = 0xCF; r[1] = 0x21; r[2] = 0xAD; r[3] = 0x74; r[4] = 0xE5; r[5] = 0x9A; r[6] = 0x61;
   r[7] = 0x11; r[8] = 0xBE; r[9] = 0x1D; r[10] = 0x8C; r[11] = 0x02; r[12] = 0x1E; r[13] = 0x65;
   r[14] = 0xB8; r[15] = 0x91; r[16] = 0xC2; r[17] = 0xA2; r[18] = 0x11; r[19] = 0x16; r[20] = 0x7A;
@@ -128,7 +128,7 @@ export ServerHello parseServerHello(u8[] body) {
   i32 suite = r.u16();
   r.u8();                         // legacy_compression_method
 
-  u8[] keyShare = u8[0]();
+  u8[] keyShare = u8[]();
   i32 group = 0;
   bool tls13 = false;
 
@@ -182,11 +182,11 @@ export ClientHello parseClientHello(u8[] body, i32 preferredSuite) {
 
   r.vec8();                       // legacy_compression_methods, must be [0] and unused
 
-  u8[] keyShare = u8[0]();
+  u8[] keyShare = u8[]();
   bool tls13 = false;
   bool ed = false;
   bool rsaPss = false;
-  u8[] serverName = u8[0]();
+  u8[] serverName = u8[]();
 
   if (!r.empty()) {
     Reader exts = r.sub16();
@@ -204,22 +204,22 @@ export ClientHello parseClientHello(u8[] body, i32 preferredSuite) {
         // offered — a client that sends it is asking for post-quantum protection and
         // costs nothing to give it — then x25519, then P-256.
         Reader shares = body2.sub16();
-        u8[] hybridShare = u8[0]();
-        u8[] x25519Share = u8[0]();
-        u8[] p256Share = u8[0]();
+        u8[] hybridShare = u8[]();
+        u8[] x25519Share = u8[]();
+        u8[] p256Share = u8[]();
         while (!shares.empty()) {
           i32 group = shares.u16();
           u8[] key = shares.vec16();
           if (group == groupHybrid() && key.len() == 1216) {
-            hybridShare = u8[1218]();
+            hybridShare = u8[].filled(1218, 0);
             hybridShare[0] = 0x11; hybridShare[1] = 0xEC;
             for (i32 i = 0; i < 1216; i++) { hybridShare[2 + i] = key[i]; }
           } else if (group == groupX25519() && key.len() == 32) {
-            x25519Share = u8[34]();
+            x25519Share = u8[].filled(34, 0);
             x25519Share[0] = 0x00; x25519Share[1] = 0x1d;
             for (i32 i = 0; i < 32; i++) { x25519Share[2 + i] = key[i]; }
           } else if (group == groupP256() && key.len() == 65) {
-            p256Share = u8[67]();
+            p256Share = u8[].filled(67, 0);
             p256Share[0] = 0x00; p256Share[1] = 0x17;
             for (i32 i = 0; i < 65; i++) { p256Share[2 + i] = key[i]; }
           }
@@ -382,7 +382,7 @@ export u8[] clientHello(u8[] random, u8[] sessionId, i32 suite, i32 group, u8[] 
 /** EncryptedExtensions, with nothing in it. */
 export u8[] encryptedExtensions() {
   Writer body = Writer.create();
-  body.vec16(u8[0]());
+  body.vec16(u8[]());
   return handshakeMessage(hsEncryptedExtensions(), body.take());
 }
 
@@ -394,11 +394,11 @@ export u8[] encryptedExtensions() {
  */
 export u8[] certificate(u8[] der) {
   Writer body = Writer.create();
-  body.vec8(u8[0]());             // certificate_request_context
+  body.vec8(u8[]());             // certificate_request_context
 
   Writer entry = Writer.create();
   entry.vec24(der);
-  entry.vec16(u8[0]());           // per-certificate extensions
+  entry.vec16(u8[]());           // per-certificate extensions
 
   body.vec24(entry.take());
   return handshakeMessage(hsCertificate(), body.take());
@@ -456,7 +456,7 @@ export u8[] messageBody(u8[] msg) {
   if (msg.len() < 4) { trap; }
   i32 len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
   if (4 + len != msg.len()) { trap; }
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = msg[4 + i]; }
   return out;
 }

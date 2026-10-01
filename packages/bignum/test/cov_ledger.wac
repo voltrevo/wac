@@ -43,11 +43,11 @@ const string EXERCISE = "packages/bignum/test/cov_exercise.wac";
 const string PREFIX = "packages/bignum/";
 
 /** The nine trap-expecting tests, called one at a time with the trap caught. */
-string[] cases() { return string[]("trapCase:9"); }
+string[] cases() { return ["trapCase:9"]; }
 
 /** What the host-comparing tests need: a process to ask and the environment to find it in. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -61,6 +61,6 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
-                 Pin[0](fill: Pin("", 0, "", true, "")),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Pin[].filled(0, Pin("", 0, "", true, "")),
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

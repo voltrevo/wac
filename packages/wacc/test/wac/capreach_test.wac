@@ -46,8 +46,8 @@ string viaOf(string table, string path) {
   return "";
 }
 
-string[] paths2(string a, string b) { return string[](a, b); }
-string[] paths3(string a, string b, string c) { return string[](a, b, c); }
+string[] paths2(string a, string b) { return [a, b]; }
+string[] paths3(string a, string b, string c) { return [a, b, c]; }
 
 export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not(Core core, Cli cli) {
   T t = T.create();

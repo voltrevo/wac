@@ -33,8 +33,8 @@ export struct Server {
 
 /** Whether the process is still there — the one question a readiness probe cannot answer. */
 bool alive(Cli cli, i32 pid) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "kill -0 " + itoa(pid) + " 2>/dev/null"),
-                    u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "kill -0 " + itoa(pid) + " 2>/dev/null"],
+                    u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
@@ -79,8 +79,8 @@ export void stopServer(Cli cli, Server s) { stop(cli, s.d); }
 
 /** Whether a program is on the path at all, so a missing one is skipped rather than failed. */
 export bool have(Cli cli, string binary) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "command -v " + quoted(binary) + " >/dev/null"),
-                    u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "command -v " + quoted(binary) + " >/dev/null"],
+                    u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
@@ -96,10 +96,11 @@ export string openssl35(Cli cli) {
   string home = "/home/claude";
   u8[]? h = cli.env("HOME").wait();
   if (h is not null) { home = string.fromBytes(h!); }
-  string[] candidates = string[](
+  string[] candidates = [
     "",                                    // $OPENSSL35, filled in below
     home + "/tools/ossl/openssl-openssl-3.5.7/apps/openssl",
-    "/tmp/ossl/openssl-openssl-3.5.7/apps/openssl");
+    "/tmp/ossl/openssl-openssl-3.5.7/apps/openssl"
+  ];
   u8[]? named = cli.env("OPENSSL35").wait();
   if (named is not null) { candidates[0] = string.fromBytes(named!); }
   for (i32 i = 0; i < candidates.len(); i++) {

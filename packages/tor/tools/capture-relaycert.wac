@@ -74,7 +74,7 @@ u8[] readTagged(Core core, Cli cli, string path, string expect) {
   // Latin-1, and the NUL padding stripped, which is how the tag is written.
   i32 end = TAG_LEN;
   while (end > 0 && r.bytes[end - 1] == 0) { end = end - 1; }
-  u8[] tagBytes = u8[end]();
+  u8[] tagBytes = u8[].filled(end, 0);
   for (i32 i = 0; i < end; i++) { tagBytes[i] = r.bytes[i]; }
   string tag = string.fromBytes(tagBytes);
   if (tag.indexOf(expect) < 0) {
@@ -82,14 +82,14 @@ u8[] readTagged(Core core, Cli cli, string path, string expect) {
               "containing '" + expect + "'");
     trap;
   }
-  u8[] body = u8[r.bytes.len() - TAG_LEN]();
+  u8[] body = u8[].filled(r.bytes.len() - TAG_LEN, 0);
   for (i32 i = 0; i < body.len(); i++) { body[i] = r.bytes[TAG_LEN + i]; }
   return body;
 }
 
 /** `names`, sorted — `readDir`'s order is the host's and the vector's is not. */
 string[] sorted(string[] names) {
-  string[] out = string[names.len()](fill: "");
+  string[] out = string[].filled(names.len(), "");
   for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];

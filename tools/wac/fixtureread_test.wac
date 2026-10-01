@@ -109,8 +109,8 @@ export string test_every_committed_fixture_is_named_by_a_test(Core core, Cli cli
   for (i32 i = 0; i < all.len(); i++) {
     if (endsWith(all[i], ".wac") && contains(all[i], "/test/")) { nTests = nTests + 1; }
   }
-  string[] testPkg = string[nTests > 0 ? nTests : 1](fill: "");
-  string[] testText = string[nTests > 0 ? nTests : 1](fill: "");
+  string[] testPkg = string[].filled(nTests > 0 ? nTests : 1, "");
+  string[] testText = string[].filled(nTests > 0 ? nTests : 1, "");
   i32 at = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (!endsWith(all[i], ".wac") || !contains(all[i], "/test/")) { continue; }

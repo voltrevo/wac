@@ -497,7 +497,7 @@ export u8[] blockValue(u8[] src, i32 start, i32 len) {
   i32 margin = blockMargin(src, from, contentEnd);
   if (margin < 0) { margin = 0; }          // a tab: reported by the caller, decoded as written
 
-  u8[] outBuf = u8[len](fill: 0);
+  u8[] outBuf = u8[].filled(len, 0);
   i32 n = 0;
   i32 i = from;
   while (i < contentEnd) {
@@ -529,7 +529,7 @@ export u8[] blockValue(u8[] src, i32 start, i32 len) {
   // above has already emitted exactly the right number, and D5's one job is decided by where
   // `contentEnd` lands rather than by a rule of its own.
 
-  u8[] exact = u8[n]();
+  u8[] exact = u8[].filled(n, 0);
   for (i32 k = 0; k < n; k++) { exact[k] = outBuf[k]; }
   return exact;
 }
@@ -1156,12 +1156,12 @@ export Lexed lex(u8[] src) {
   // 36 KB HTML document at about 130 diagnostics *in total*, of which few are the lexer's.
   i32 maxErrors = 64;
   Lexed out = Lexed(
-    i32[(n + 1) * tokenStride()](), 0,
-    i32[maxErrors * errorStride()](), 0,
+    i32[].filled((n + 1) * tokenStride(), 0), 0,
+    i32[].filled(maxErrors * errorStride(), 0), 0,
     false
   );
   Lexer lx = Lexer(src, 0, 1, 1);
-  Modes md = Modes(i32[modeDepth(src) * 3](), 0, mNormal());
+  Modes md = Modes(i32[].filled(modeDepth(src) * 3, 0), 0, mNormal());
 
   while (true) {
     // **Text first, and no whitespace skipping**: in an element's children a space is
@@ -1263,7 +1263,7 @@ export Lexed lex(u8[] src) {
 export i32[] lexTokens(u8[] src) {
   Lexed r = lex(src);
   i32 n = r.tokenCount * tokenStride();
-  i32[] out = i32[n]();
+  i32[] out = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) {
     out[i] = r.tokens[i];
   }
@@ -1273,7 +1273,7 @@ export i32[] lexTokens(u8[] src) {
 export i32[] lexErrors(u8[] src) {
   Lexed r = lex(src);
   i32 n = r.errorCount * errorStride();
-  i32[] out = i32[n]();
+  i32[] out = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) {
     out[i] = r.errors[i];
   }

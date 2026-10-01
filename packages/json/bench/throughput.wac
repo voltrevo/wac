@@ -58,11 +58,13 @@ string repeated(string s, i32 n) {
  * as "numbers with exponents are slow" rather than "one branch of them is".
  */
 string[] shapeLabels() {
-  return string[]("structure only (nested empties)", "small integers", "simple decimals",
+  return [
+                  "structure only (nested empties)", "small integers", "simple decimals",
                   "exponent-form, fast path", "exponent-form, exact path", "long-mantissa numbers",
                   "short ASCII strings", "long ASCII strings", "strings with escapes",
                   "multi-byte UTF-8 strings", "objects, short keys", "objects, long keys",
-                  "realistic mixed");
+                  "realistic mixed"
+  ];
 }
 
 string shapeUnit(i32 i) {

@@ -70,7 +70,7 @@ export Pkt readPkt(u8[] b, i32[] pos) {
     return Pkt.Broken("a packet claims " + itoa(n) + " bytes and " + itoa(b.len() - at) + " remain");
   }
 
-  u8[] payload = u8[n - 4]();
+  u8[] payload = u8[].filled(n - 4, 0);
   for (i32 i = 0; i < payload.len(); i++) { payload[i] = b[at + 4 + i]; }
   pos[0] = at + n;
   return Pkt.Line(payload);

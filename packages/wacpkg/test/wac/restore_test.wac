@@ -41,8 +41,8 @@ const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 /** `wac update` in `dir`, with `$WAC_HOME` pointed at the fixture's cache. */
 Exec update(Cli cli, string home, string dir) {
-  return withEnv(cli, string[]("WAC_HOME"), string[](home), "/bin/sh",
-                 string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"));
+  return withEnv(cli, ["WAC_HOME"], [home], "/bin/sh",
+                 ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"]);
 }
 
 /** A project mapping `dep/`, with the lock already pinning it. */

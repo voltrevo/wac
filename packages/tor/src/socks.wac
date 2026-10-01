@@ -412,7 +412,7 @@ async void pumpAccept(Core core, Cli cli, Proxy x) {
       x.stopped = true;
       return;
     }
-    Client c = Client(x.nextClientId, incoming.handle, -1, 0, 0, u8[0](), "", false);
+    Client c = Client(x.nextClientId, incoming.handle, -1, 0, 0, u8[](), "", false);
     x.nextClientId = x.nextClientId + 1;
     x.clients.push(c);
     pumpClient(core, cli, x, c);
@@ -445,7 +445,7 @@ async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
     Read got = await cli.recv(c.sock);
     if (c.gone || x.stopped) { return; }
 
-    u8[] chunk = u8[0]();
+    u8[] chunk = u8[]();
     bool ended = false;
     match (got) {
       Data(bytes): { chunk = bytes; }
@@ -478,7 +478,7 @@ bool greeted(Core core, Cli cli, Proxy x, Client c) {
     dropClient(cli, x, c);
     return false;
   }
-  cli.send(c.sock, u8[](0x05, 0x00)).wait();
+  cli.send(c.sock, [0x05, 0x00] as u8[]).wait();
   c.pending = sliceOf(c.pending, need, c.pending.len());
   c.phase = 1;
   return true;

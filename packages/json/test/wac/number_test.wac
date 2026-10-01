@@ -22,7 +22,7 @@ const string ORACLE = "packages/json/test/oracle.ts";
 /** The eight bytes of an f64, big-endian, as hex — the form the oracle reads. */
 string bits64(f64 x) {
   u64 b = f64.toBits(x);
-  u8[] out = u8[8]();
+  u8[] out = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) { out[i] = ((b >> ((7 - i) * 8)) & 255) as@ i32; }
   return hex(out);
 }
@@ -39,7 +39,7 @@ void ask(Lines lines, string src) {
 /** Values where even a naive conversion is exact: mantissa < 2^53, |exp| <= 22. */
 export string test_exact_cases_match_the_host_bit_for_bit(Core core, Cli cli) {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "0", "-0", "1", "-1", "42", "-42",
     "1.5", "-1.5", "0.5", "2.25", "3.14159",
     "100", "1000000", "123456789",
@@ -51,7 +51,8 @@ export string test_exact_cases_match_the_host_bit_for_bit(Core core, Cli cli) {
     "0.1", "0.2", "0.3",
     "2.5e10", "7.25e-5",
     "0e0", "0e100", "0e-100",
-    "-0.0", "0.0");
+    "-0.0", "0.0"
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) { ask(lines, cases[i]); }
   checkDeno(t, cli, ORACLE, lines, "the exact cases");
@@ -67,13 +68,13 @@ export string test_exact_cases_match_the_host_bit_for_bit(Core core, Cli cli) {
  */
 export string test_a_document_that_is_not_a_number_yields_nan() {
   T t = T.create();
-  string[] unparseable = string[]("", "[", "1 2", "01", "-", "1e");
+  string[] unparseable = ["", "[", "1 2", "01", "-", "1e"];
   for (i32 i = 0; i < unparseable.len(); i++) {
     t.isTrue(isNan(parseNumberValue(unparseable[i].toBytes())),
              "\"" + unparseable[i] + "\" should be NaN");
   }
   // Parses, but is not a number — the `else` arm of the match rather than the null check above it.
-  string[] notNumbers = string[]("\"1\"", "true", "false", "null", "[1]", "{\"a\":1}");
+  string[] notNumbers = ["\"1\"", "true", "false", "null", "[1]", "{\"a\":1}"];
   for (i32 i = 0; i < notNumbers.len(); i++) {
     t.isTrue(isNan(parseNumberValue(notNumbers[i].toBytes())),
              "\"" + notNumbers[i] + "\" should be NaN");
@@ -84,7 +85,7 @@ export string test_a_document_that_is_not_a_number_yields_nan() {
 /** Values that no fast path can reach, so the exact fallback has to carry them. */
 export string test_hard_cases_are_exact_too(Core core, Cli cli) {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "1e23",                      // first power of ten past the exact table
     "1e100", "1e308", "-1e308",
     "1e-100", "1e-308",
@@ -98,7 +99,8 @@ export string test_hard_cases_are_exact_too(Core core, Cli cli) {
     "2.2250738585072014e-308",   // smallest normal
     "1234567890.1234567890",
     "9007199254740993",          // 2^53 + 1, not representable
-    "1.000000000000000000001");
+    "1.000000000000000000001"
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) { ask(lines, cases[i]); }
   checkDeno(t, cli, ORACLE, lines, "the hard cases");

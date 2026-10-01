@@ -71,7 +71,7 @@ export struct Loaded {
  * name, so the shell's own arguments start at 1 — passing 0 makes it read `sh` as a script to open.
  */
 export Ran runCase(Core core, Cli cli, string dir, string script) {
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), dir, false);
+  Frame f = Frame.of(["sh", "-c", script], u8[](), dir, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
@@ -101,13 +101,13 @@ export string trimEnd(string s) {
 
 /** `text` cut at every occurrence of `sep`. An empty input is no fields rather than one empty one. */
 export string[] splitOn(string text, string sep) {
-  if (text == "") { return string[0](); }
+  if (text == "") { return string[](); }
   i32 n = 1;
   i32 i = 0;
   while (i + sep.len() <= text.len()) {
     if (text.slice(i, i + sep.len()) == sep) { n++; i = i + sep.len(); } else { i++; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   i32 from = 0;
   i32 k = 0;
@@ -150,7 +150,7 @@ export string differs(u8[] got, u8[] want) {
  * variable, which is how `issues/system/0143` survived for as long as it did.
  */
 export string realOut(Cli cli, string prog, string[] args) {
-  Exec r = cli.exec(prog, args, u8[0]()).wait();
+  Exec r = cli.exec(prog, args, u8[]()).wait();
   return string.fromBytes(r.stdout);
 }
 
@@ -162,7 +162,7 @@ export string realOut(Cli cli, string prog, string[] args) {
  * would lose the ability to say which of the two it was looking at.
  */
 export string[] sortedOf(string[] xs) {
-  string[] out = string[xs.len()](fill: "");
+  string[] out = string[].filled(xs.len(), "");
   for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string held = out[i];
@@ -198,7 +198,7 @@ export string joinWith(string[] xs, string sep) {
  * than against a number.
  */
 export Ran runApplet(Core core, Cli cli, string dir, string[] argv) {
-  return runAppletIn(core, cli, dir, argv, u8[0]());
+  return runAppletIn(core, cli, dir, argv, u8[]());
 }
 
 /**
@@ -239,7 +239,7 @@ export Ran runSealed(Core core, Cli cli, string script) {
   // **Named as the built program names itself.** `ps` prints the session's own argv, so a frame calling
   // itself `sh` would make this session answer `sh -c ps` where `bin/sealedsh.wac` answers
   // `sealedsh -c ps` — a difference with no cause but the harness.
-  Frame f = Frame.of(string[]("sealedsh", "-c", script), u8[0](), "/", false);
+  Frame f = Frame.of(["sealedsh", "-c", script], u8[](), "/", false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.onFs(c, l, fs);
@@ -271,13 +271,13 @@ export Ran runImaged(Core core, Cli cli, string path, string script) {
   argv.push(path);
   argv.push("-c");
   argv.push(script);
-  Frame f = Frame.of(string[]("imaged", path, "-c", script), u8[0](), "/", false);
+  Frame f = Frame.of(["imaged", path, "-c", script], u8[](), "/", false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Booted booted = boot(c, l, path, argv, Vec.fromArray(boxNames()));
   if (!booted.ok) {
     c.warn("imaged: " + path + ": " + booted.error);
-    return Ran("", string.fromBytes(f.err.bytes()), 1, u8[0]());
+    return Ran("", string.fromBytes(f.err.bytes()), 1, u8[]());
   }
   Shell sh = Shell.onFs(c, l, booted.fs);
   sh.cwd = "/";
@@ -323,14 +323,14 @@ export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
 export Loaded load(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
-    return Loaded(Vector[0](), 0, "",
+    return Loaded(Vector[](), 0, "",
                   "cannot read " + path + " — run `wac run --allow-read --allow-write --allow-run " +
                   "tools/wac/appletvectors.wac` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
   if (l.text != "wac-applet-vectors 1") {
-    return Loaded(Vector[0](), 0, "", "not an applet vectors file: " + l.text);
+    return Loaded(Vector[](), 0, "", "not an applet vectors file: " + l.text);
   }
   string oracle = "";
   i32 at = l.next;
@@ -343,9 +343,9 @@ export Loaded load(Cli cli, string path) {
     }
     count = numberIn(h.text, "count:");
   }
-  if (count < 0) { return Loaded(Vector[0](), 0, oracle, "no count in the header"); }
+  if (count < 0) { return Loaded(Vector[](), 0, oracle, "no count in the header"); }
 
-  Vector[] items = Vector[count](fill: Vector("", 0, "", ""));
+  Vector[] items = Vector[].filled(count, Vector("", 0, "", ""));
   i32 n = 0;
   for (i32 i = 0; i < count; i++) {
     Line sl = lineAt(b, at);
@@ -444,8 +444,8 @@ Line lineAt(u8[] b, i32 at) {
 
 u8[] sliceOf(u8[] b, i32 from, i32 to) {
   i32 n = to - from;
-  if (n <= 0) { return u8[0](); }
-  u8[] out = u8[n]();
+  if (n <= 0) { return u8[](); }
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[from + i]; }
   return out;
 }

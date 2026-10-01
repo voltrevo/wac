@@ -40,10 +40,10 @@ string makeHome(T t, Cli cli, Sshd s, bool knownHost) {
 }
 
 /** `-p <port> 127.0.0.1`, which every case here needs. */
-string[] target(Sshd s) { return string[]("-p", itoa(s.port), "127.0.0.1"); }
+string[] target(Sshd s) { return ["-p", itoa(s.port), "127.0.0.1"]; }
 
 string[] plus(string[] head, string[] tail) {
-  string[] out = string[head.len() + tail.len()](fill: "");
+  string[] out = string[].filled(head.len() + tail.len(), "");
   for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
   for (i32 i = 0; i < tail.len(); i++) { out[head.len() + i] = tail[i]; }
   return out;
@@ -60,14 +60,14 @@ export string test_the_ssh_program_runs_a_command_on_a_real_server_end_to_end(Co
   string[] p = target(s);
 
   // Standard output, byte for byte, with nothing of the client's mixed in.
-  Said echo = ourSsh(cli, client, home, plus(p, string[]("echo", "hello", "from", "wac")));
+  Said echo = ourSsh(cli, client, home, plus(p, ["echo", "hello", "from", "wac"]));
   t.eqI32(echo.status, 0, "exit " + itoa(echo.status) + ": " + echo.stderr);
   t.eqStr(echo.stdout, "hello from wac\n", "stdout");
 
   // The command's exit status becomes the program's. Quoting survives because the whole command is
   // one argument — the same as OpenSSH, which also joins argv with spaces.
   Said failed = ourSsh(cli, client, home,
-                       plus(p, string[]("sh -c 'echo OUT; echo ERR >&2; exit 7'")));
+                       plus(p, ["sh -c 'echo OUT; echo ERR >&2; exit 7'"]));
   t.eqI32(failed.status, 7, "the command's exit status did not become the program's");
   t.eqStr(failed.stdout, "OUT\n", "stdout");
   t.isTrue(contains(failed.stderr, "ERR"), "stderr was \"" + failed.stderr + "\"");
@@ -78,7 +78,7 @@ export string test_the_ssh_program_runs_a_command_on_a_real_server_end_to_end(Co
   // on the path to assume text.
   i32 size = 300000;
   Said binary = ourSsh(cli, client, home,
-                       plus(p, string[]("head -c " + itoa(size) + " /dev/urandom | base64 -w0")));
+                       plus(p, ["head -c " + itoa(size) + " /dev/urandom | base64 -w0"]));
   t.eqI32(binary.status, 0, "exit " + itoa(binary.status) + ": " + binary.stderr);
   string encoded = trimmed(binary.stdout);
   t.isTrue(encoded.len() >= size,
@@ -105,21 +105,21 @@ export string test_the_ssh_program_refuses_an_unknown_host_and_reports_a_changed
 
   // Unknown is refused rather than accepted with a warning, and the refusal is actionable: it
   // prints the exact line to add.
-  Said unknown = ourSsh(cli, plain, home, plus(p, string[]("echo", "should", "not", "run")));
+  Said unknown = ourSsh(cli, plain, home, plus(p, ["echo", "should", "not", "run"]));
   t.neI32(unknown.status, 0, "an unknown host was accepted");
   t.eqStr(unknown.stdout, "", "the command ran against an unknown host");
   t.isTrue(contains(unknown.stderr, "is not in"), "unhelpful refusal: " + unknown.stderr);
   t.isTrue(contains(unknown.stderr, blob), "the refusal did not print the host key line to add");
 
   // `-k` records it, needs the write grant, and then the command runs.
-  Said added = ourSsh(cli, writable, home, plus(string[]("-k"), plus(p, string[]("echo", "added"))));
+  Said added = ourSsh(cli, writable, home, plus(["-k"], plus(p, ["echo", "added"])));
   t.eqI32(added.status, 0, "-k failed: " + added.stderr);
   t.eqStr(added.stdout, "added\n", "stdout after -k");
   t.isTrue(contains(string.fromBytes(cli.readFile(home + "/.ssh/known_hosts").wait().bytes), blob),
            "known_hosts was not written");
 
   // Now it is known, so no grant to write is needed and no prompt appears.
-  Said known = ourSsh(cli, plain, home, plus(p, string[]("echo", "again")));
+  Said known = ourSsh(cli, plain, home, plus(p, ["echo", "again"]));
   t.eqI32(known.status, 0, "the second run failed: " + known.stderr);
   t.eqStr(known.stdout, "again\n", "the recorded host was not recognised");
 
@@ -128,13 +128,13 @@ export string test_the_ssh_program_refuses_an_unknown_host_and_reports_a_changed
   string other = string.fromBytes(b64Encode(ramp(51, 1, 0), ALPHABET_STANDARD(), true));
   cli.writeFile(home + "/.ssh/known_hosts",
                 ("[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 " + other + "\n").toBytes()).wait();
-  Said changed = ourSsh(cli, plain, home, plus(p, string[]("echo", "nope")));
+  Said changed = ourSsh(cli, plain, home, plus(p, ["echo", "nope"]));
   t.neI32(changed.status, 0, "a changed host key was accepted");
   t.eqStr(changed.stdout, "", "the command ran against a changed host key");
   t.isTrue(contains(changed.stderr, "REMOTE HOST IDENTIFICATION HAS CHANGED"),
            "the change was not reported loudly: " + changed.stderr);
   // `-k` must not paper over it: adding is for unknown hosts, not for changed ones.
-  t.neI32(ourSsh(cli, writable, home, plus(string[]("-k"), plus(p, string[]("echo", "nope")))).status,
+  t.neI32(ourSsh(cli, writable, home, plus(["-k"], plus(p, ["echo", "nope"]))).status,
           0, "-k accepted a changed host key");
 
   stopSshd(cli, s);
@@ -151,23 +151,23 @@ export string test_the_ssh_program_reports_bad_arguments_and_unreadable_keys(Cor
   string home = makeHome(t, cli, s, true);
   string[] p = target(s);
 
-  Said usage = ourSsh(cli, client, home, string[0](fill: ""));
+  Said usage = ourSsh(cli, client, home, string[].filled(0, ""));
   t.eqI32(usage.status, 2, "no arguments");
   t.isTrue(contains(usage.stderr, "usage:"), "no usage line");
 
   t.eqI32(ourSsh(cli, client, home, p).status, 2, "a host with no command was accepted");
-  t.eqI32(ourSsh(cli, client, home, string[]("-p", "notaport", "127.0.0.1", "true")).status, 2,
+  t.eqI32(ourSsh(cli, client, home, ["-p", "notaport", "127.0.0.1", "true"]).status, 2,
           "a non-numeric port was accepted");
 
   Said missingKey = ourSsh(cli, client, home,
-                           plus(string[]("-i", s.dir + "/nosuchkey"), plus(p, string[]("true"))));
+                           plus(["-i", s.dir + "/nosuchkey"], plus(p, ["true"])));
   t.eqI32(missingKey.status, 1, "a missing identity did not fail");
   t.isFalse(contains(missingKey.stderr, "REMOTE HOST"), "it got as far as the host key");
 
   // A file that exists but is not a key.
   cli.writeFile(s.dir + "/notakey", ("hello\n").toBytes()).wait();
   Said notKey = ourSsh(cli, client, home,
-                       plus(string[]("-i", s.dir + "/notakey"), plus(p, string[]("true"))));
+                       plus(["-i", s.dir + "/notakey"], plus(p, ["true"])));
   t.eqI32(notKey.status, 1, "a non-key file was accepted");
   t.isTrue(contains(notKey.stderr, "not an OpenSSH private key"),
            "unhelpful message: " + notKey.stderr);
@@ -189,28 +189,28 @@ export string test_the_ssh_program_reads_an_encrypted_key_with_ssh_passphrase(Co
   string enc = s.dir + "/encrypted";
   t.isTrue(copyPreserving(cli, s.dir + "/clientkey", enc), "the key could not be copied");
   Exec rekey = cli.exec("ssh-keygen",
-                        string[]("-p", "-f", enc, "-P", "", "-N", pass, "-q", "-a", "4"),
-                        u8[0]()).wait();
+                        ["-p", "-f", enc, "-P", "", "-N", pass, "-q", "-a", "4"],
+                        u8[]()).wait();
   t.eqI32(rekey.status, 0, "ssh-keygen -p: " + string.fromBytes(rekey.stderr));
   if (rekey.status != 0) { stopSshd(cli, s); return t.report(); }
 
-  string[] p = plus(string[]("-i", enc), target(s));
-  string[] none = string[0](fill: "");
+  string[] p = plus(["-i", enc], target(s));
+  string[] none = string[].filled(0, "");
 
   // Without the passphrase it fails before connecting, and says which of the two it needs.
-  Said noPass = ourSsh(cli, client, home, plus(p, string[]("echo", "no")));
+  Said noPass = ourSsh(cli, client, home, plus(p, ["echo", "no"]));
   t.eqI32(noPass.status, 1, "an encrypted key was read without a passphrase");
   t.isTrue(contains(noPass.stderr, "SSH_PASSPHRASE"),
            "the message does not say how to supply one: " + noPass.stderr);
 
-  Said withPass = ourSshEnv(cli, client, home, plus(p, string[]("echo", "decrypted")),
-                            string[]("SSH_PASSPHRASE"), string[](pass));
+  Said withPass = ourSshEnv(cli, client, home, plus(p, ["echo", "decrypted"]),
+                            ["SSH_PASSPHRASE"], [pass]);
   t.eqI32(withPass.status, 0, "with the passphrase: " + withPass.stderr);
   t.eqStr(withPass.stdout, "decrypted\n", "stdout");
 
   // A wrong one is a wrong passphrase, not a corrupt file.
-  Said wrong = ourSshEnv(cli, client, home, plus(p, string[]("echo", "no")),
-                         string[]("SSH_PASSPHRASE"), string[]("wrong"));
+  Said wrong = ourSshEnv(cli, client, home, plus(p, ["echo", "no"]),
+                         ["SSH_PASSPHRASE"], ["wrong"]);
   t.eqI32(wrong.status, 1, "a wrong passphrase was accepted");
   t.isTrue(contains(wrong.stderr, "wrong or missing passphrase"),
            "unhelpful message: " + wrong.stderr);

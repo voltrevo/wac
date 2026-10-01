@@ -8,7 +8,7 @@ import { crc32 } from "../../src/crc32.wac";
 
 export string test_crc32_of_hello_world() {
   T t = T.create();
-  u8[] data = u8[](104, 101, 108, 108, 111);
+  u8[] data = [104, 101, 108, 108, 111];
   t.eqI32(crc32(data), 907060870, "crc32(\"hello\")");
   return t.report();
 }
@@ -62,7 +62,7 @@ parameter compiles to a module with **no wasm imports at all** — checkable on 
 binary rather than promised.
 
 ```wac
-export string test_sha256(fn<u8[](u8[], i32)> ref) { … }
+export string test_sha256(fn<[u8[], i32]> ref) { … }
 ```
 ```ts
 await wacTestRun(entry, "hash", [ (bytes, bits) => nodeHash(bytes, bits) ]);

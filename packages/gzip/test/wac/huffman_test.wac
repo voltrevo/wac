@@ -19,7 +19,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Huff } from "../../src/huffman.wac";
 
 i32[] fibFreqs(i32 count) {
-  i32[] freq = i32[count]();
+  i32[] freq = i32[].filled(count, 0);
   if (count > 0) { freq[0] = 1; }
   if (count > 1) { freq[1] = 1; }
   for (i32 i = 2; i < count; i++) {
@@ -30,7 +30,7 @@ i32[] fibFreqs(i32 count) {
 
 export string test_length_limit_is_enforced() {
   T t = T.create();
-  i32[] counts = i32[](2, 3, 8, 20, 30, 40, 60, 100, 286);
+  i32[] counts = [2, 3, 8, 20, 30, 40, 60, 100, 286];
   for (i32 i = 0; i < counts.len(); i++) {
     Huff h = Huff.build(fibFreqs(counts[i]), counts[i], 15);
     t.isTrue(h.maxLen <= 15, "count " + itoa(counts[i]) + " max length " + itoa(h.maxLen));
@@ -51,7 +51,7 @@ export string test_the_limit_actually_binds() {
 
 export string test_cl_alphabet_limit_is_seven_bits() {
   T t = T.create();
-  i32[] counts = i32[](2, 5, 10, 19);
+  i32[] counts = [2, 5, 10, 19];
   for (i32 i = 0; i < counts.len(); i++) {
     Huff h = Huff.build(fibFreqs(counts[i]), counts[i], 7);
     t.isTrue(h.maxLen <= 7, "count " + itoa(counts[i]) + " max length " + itoa(h.maxLen));
@@ -64,7 +64,7 @@ export string test_kraft_equality() {
   // the code is incomplete — some bit patterns decode to nothing. More means it is
   // over-subscribed and two symbols share a pattern.
   T t = T.create();
-  i32[] counts = i32[](2, 3, 8, 19, 20, 40, 100, 286);
+  i32[] counts = [2, 3, 8, 19, 20, 40, 100, 286];
   for (i32 c = 0; c < counts.len(); c++) {
     i32 n = counts[c];
     Huff h = Huff.build(fibFreqs(n), n, 15);
@@ -81,7 +81,7 @@ export string test_kraft_equality() {
 
 export string test_codes_form_a_prefix_code() {
   T t = T.create();
-  i32[] counts = i32[](2, 3, 8, 20, 40, 100, 286);
+  i32[] counts = [2, 3, 8, 20, 40, 100, 286];
   for (i32 c = 0; c < counts.len(); c++) {
     i32 n = counts[c];
     Huff h = Huff.build(fibFreqs(n), n, 15);
@@ -105,7 +105,7 @@ export string test_codes_form_a_prefix_code() {
 
 export string test_codes_fit_their_stated_width() {
   T t = T.create();
-  i32[] counts = i32[](2, 3, 8, 20, 40, 100, 286);
+  i32[] counts = [2, 3, 8, 20, 40, 100, 286];
   for (i32 c = 0; c < counts.len(); c++) {
     i32 n = counts[c];
     Huff h = Huff.build(fibFreqs(n), n, 15);

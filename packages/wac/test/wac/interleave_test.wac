@@ -40,7 +40,7 @@ export string test_a_launched_programs_error_output_lands_between_the_lines_it_w
     Core core, Cli cli) {
   T t = T.create();
 
-  string mod = builtProgram(cli, PROBE, "interleaveprobe", string[0](fill: ""));
+  string mod = builtProgram(cli, PROBE, "interleaveprobe", string[].filled(0, ""));
   t.isTrue(mod != "", "the probe built");
   if (mod == "") { return t.report(); }
 
@@ -48,7 +48,7 @@ export string test_a_launched_programs_error_output_lands_between_the_lines_it_w
   // about the run rather than about which field the harness looked at first.
   string cmd = "'" + binaryPath(cli) + "' '" + mod + "' 2>&1";
   for (i32 i = 0; i < RUNS; i++) {
-    Exec r = cli.exec("/bin/sh", string[]("-c", cmd), u8[0]()).wait();
+    Exec r = cli.exec("/bin/sh", ["-c", cmd], u8[]()).wait();
     t.isTrue(r.ran(), "run " + itoa(i) + " started — " + r.error);
     if (!r.ran()) { continue; }
     t.eqStr(string.fromBytes(r.stdout), "one\nmid\ntwo\n",

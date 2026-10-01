@@ -65,8 +65,8 @@ export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   i32 descCount = argc - 2;
   if (descCount > 1 && atoiSafe(cli.arg(argc - 1).wait()) >= 0) { descCount = descCount - 1; }
-  u8[] descriptors = u8[0]();
-  u8[][] digests = u8[][descCount]();
+  u8[] descriptors = u8[]();
+  u8[][] digests = u8[][].defaulted(descCount);
   for (i32 i = 0; i < descCount; i++) {
     u8[] one = readOr(core, cli, string.fromBytes(cli.arg(2 + i).wait()));
     if (one.len() == 0) { return 1; }
@@ -100,9 +100,9 @@ export i32 main(Core core, Cli cli) {
   // The microdesc flavour, when it is sitting next to the consensus file. Named by convention rather
   // than by a flag so the caller has one fewer thing to keep in step: `<consensus>.micro` and
   // `<consensus>.mds` are what `gendesc` writes, and an authority that has them serves them.
-  u8[] microCons = u8[0]();
-  u8[] micros = u8[0]();
-  u8[][] microDigests = u8[][0]();
+  u8[] microCons = u8[]();
+  u8[] micros = u8[]();
+  u8[][] microDigests = u8[][]();
   {
     string base = string.fromBytes(cli.arg(0).wait());
     FileResult mc = cli.readFile(base + ".micro").wait();
@@ -117,7 +117,7 @@ export i32 main(Core core, Cli cli) {
   }
 
   DirDocuments docs = DirDocuments(consensus, microCons, certificate, descriptors, digests,
-                                   fingerprint, micros, microDigests, u8[][0](), u8[][0]());
+                                   fingerprint, micros, microDigests, u8[][](), u8[][]());
 
   Socket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
@@ -215,7 +215,7 @@ u8[] readOr(Core core, Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
   if (!f.ok) {
     core.warn("dird: " + path + ": " + f.error);
-    return u8[0]();
+    return u8[]();
   }
   return f.bytes;
 }
@@ -233,7 +233,7 @@ i32 atoiSafe(u8[] text) {
 }
 
 u8[] joinBytes(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;

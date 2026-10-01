@@ -22,7 +22,7 @@ export i32 strings(Core core, Cli cli, Fs fs, Args a) {
   Buf run = Buf.create();
   bool failed = false;
   // The feed travels with the span — see `lib/input.wac`.
-  Feed fed = Feed.of(cli, u8[0]());
+  Feed fed = Feed.of(cli, u8[]());
   while (true) {
     Span got = nextSpan(core, cli, fs, a, at, opened, fed);
     fed = got.fed;
@@ -52,7 +52,7 @@ export i32 strings(Core core, Cli cli, Fs fs, Args a) {
  */
 void emit(Sink into, Buf run, i32 min) {
   if (run.len >= min) {
-    u8[] line = u8[run.len](fill: 0);
+    u8[] line = u8[].filled(run.len, 0);
     line.copyFrom(run.data, 0, 0, run.len);
     into.lineBytes(line);
   }

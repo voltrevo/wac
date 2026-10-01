@@ -50,13 +50,13 @@ export string test_has_compares_whole_elements_rather_than_prefixes() {
   // `has(names, "run")` answering true because the list holds `runner` is a test agreeing with the
   // wrong thing.
   T t = T.create();
-  string[] all = string[]("run", "runner", "");
+  string[] all = ["run", "runner", ""];
   t.isTrue(has(all, "run"), "present");
   t.isTrue(has(all, "runner"), "and so is the longer one");
   t.isTrue(has(all, ""), "the empty element is an element");
   t.isFalse(has(all, "runn"), "a prefix of an element is not an element");
   t.isFalse(has(all, "RUN"), "nor a different case");
-  t.isFalse(has(string[0](fill: ""), "run"), "and nothing is in an empty list");
+  t.isFalse(has(string[].filled(0, ""), "run"), "and nothing is in an empty list");
   return t.report();
 }
 
@@ -75,11 +75,11 @@ export string test_trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_
 
 export string test_joined_puts_the_separator_between_rather_than_after() {
   T t = T.create();
-  t.eqStr(joined(string[]("a", "b", "c"), ","), "a,b,c", "between");
-  t.eqStr(joined(string[]("a"), ","), "a", "one element carries no separator");
-  t.eqStr(joined(string[0](fill: ""), ","), "", "and nor does none");
-  t.eqStr(joined(string[]("a", "b"), ""), "ab", "an empty separator is allowed");
-  t.eqStr(joined(string[]("", ""), "-"), "-", "two empty elements still get one separator");
+  t.eqStr(joined(["a", "b", "c"], ","), "a,b,c", "between");
+  t.eqStr(joined(["a"], ","), "a", "one element carries no separator");
+  t.eqStr(joined(string[].filled(0, ""), ","), "", "and nor does none");
+  t.eqStr(joined(["a", "b"], ""), "ab", "an empty separator is allowed");
+  t.eqStr(joined(["", ""], "-"), "-", "two empty elements still get one separator");
   return t.report();
 }
 

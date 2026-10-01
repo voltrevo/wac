@@ -58,7 +58,7 @@ struct Saw {
  */
 Saw sawClose(Core core, Cli cli, i32 h) {
   Pending<Read> p = cli.recv(h);
-  if (core.waitAny(i32[](p.id), WAIT_MS) < 0) {
+  if (core.waitAny([p.id], WAIT_MS) < 0) {
     p.cancel();
     return Saw(false, true, "nothing arrived within " + itoa(WAIT_MS) + "ms");
   }

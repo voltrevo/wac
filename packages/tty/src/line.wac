@@ -122,8 +122,8 @@ export struct Typed {
    */
   i32 signal;
 
-  Typed nothing() { return Typed(u8[0](), u8[0](), false, false, 0); }
-  Typed echoed(u8[] echo) { return Typed(echo, u8[0](), false, false, 0); }
+  Typed nothing() { return Typed(u8[](), u8[](), false, false, 0); }
+  Typed echoed(u8[] echo) { return Typed(echo, u8[](), false, false, 0); }
 
   /** Whether a signal was asked for at all, which is what most callers want. */
   bool interrupted(const this) { return this.signal != 0; }
@@ -217,7 +217,7 @@ export struct Line {
       return Typed.nothing();
     }
     Typed t = this.feedLine(b);
-    if (!this.echo) { t.echo = u8[0](); }
+    if (!this.echo) { t.echo = u8[](); }
     return t;
   }
 
@@ -233,10 +233,10 @@ export struct Line {
    * See `cbreak` above for why this is not called raw.
    */
   Typed feedByte(this, i32 b) {
-    u8[] drawn = this.echo ? render(b) : u8[0]();
-    if (b == INTR()) { return Typed(drawn, u8[0](), false, false, SIGINT()); }
-    if (b == QUIT()) { return Typed(drawn, u8[0](), false, false, SIGQUIT()); }
-    return Typed(drawn, u8[1](fill: b), true, false, 0);
+    u8[] drawn = this.echo ? render(b) : u8[]();
+    if (b == INTR()) { return Typed(drawn, u8[](), false, false, SIGINT()); }
+    if (b == QUIT()) { return Typed(drawn, u8[](), false, false, SIGQUIT()); }
+    return Typed(drawn, u8[].filled(1, b), true, false, 0);
   }
 
   /** The canonical rules, unchanged — what `feed` was before there were modes. */
@@ -289,14 +289,14 @@ export struct Line {
     if (b == INTR()) {
       this.held = Buf.create();
       // `^C` and no newline: what follows it belongs to whoever is interrupted.
-      return Typed("^C".toBytes(), u8[0](), false, false, SIGINT());
+      return Typed("^C".toBytes(), u8[](), false, false, SIGINT());
     }
     if (b == QUIT()) {
       this.held = Buf.create();
       // **The line goes, exactly as `^C`'s does.** This was an ordinary control character until now, so
       // `ab^\z` delivered `ab\x1cz` where the kernel delivers `z` and signals — measured through the
       // pty, which is the oracle this module claims and which nothing had asked about `^\`.
-      return Typed("^\\".toBytes(), u8[0](), false, false, SIGQUIT());
+      return Typed("^\\".toBytes(), u8[](), false, false, SIGQUIT());
     }
     if (b == REPRINT()) {
       // `^R` echoes itself, breaks the line, and **draws what you have typed again**. It is what you
@@ -309,10 +309,10 @@ export struct Line {
       return Typed.echoed(out.take());
     }
     if (b == EOFC()) {
-      if (this.held.len == 0) { return Typed(u8[0](), u8[0](), false, true, 0); }
+      if (this.held.len == 0) { return Typed(u8[](), u8[](), false, true, 0); }
       // A line without a newline on it. The program sees exactly what was typed, and the terminal shows
       // nothing, because nothing was typed *at* the terminal.
-      return Typed(u8[0](), this.held.take(), true, false, 0);
+      return Typed(u8[](), this.held.take(), true, false, 0);
     }
     this.held.push(b);
     return Typed.echoed(render(b));
@@ -320,7 +320,7 @@ export struct Line {
 
   /** A run of bytes, as one arrival — an ssh payload rather than a keystroke. */
   Typed[] feedAll(this, u8[] bytes) {
-    Typed[] out = Typed[bytes.len()](fill: Typed.nothing());
+    Typed[] out = Typed[].filled(bytes.len(), Typed.nothing());
     for (i32 i = 0; i < bytes.len(); i++) { out[i] = this.feed(bytes[i]); }
     return out;
   }
@@ -398,13 +398,13 @@ u8[] render(i32 b) {
   // and the erase arithmetic then rubbed out two columns for something that had drawn one. Measured
   // against the pty, which is what the whole module is for and what nothing had asked about DEL.
   if (b == 127) {
-    u8[] del = u8[2](fill: '^');
+    u8[] del = u8[].filled(2, '^');
     // `^?`, not `^` plus sixty-four along — DEL is the one that goes the other way, 127 - 64.
     del[1] = 63;
     return del;
   }
-  if (b == 9 || b >= 32) { return u8[1](fill: b); }
-  u8[] out = u8[2](fill: '^');
+  if (b == 9 || b >= 32) { return u8[].filled(1, b); }
+  u8[] out = u8[].filled(2, '^');
   // `^@` for NUL through `^_` for 0x1f: the character sixty-four along, which is the pair the terminal
   // shows and the arithmetic every terminal does.
   out[1] = b + 64;
@@ -424,7 +424,7 @@ u8[] rubOut(i32 n) {
 
 /** A newline as a terminal needs it: return, then feed. */
 u8[] crlf() {
-  u8[] out = u8[2](fill: 13);
+  u8[] out = u8[].filled(2, 13);
   out[1] = 10;
   return out;
 }

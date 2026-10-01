@@ -7,7 +7,7 @@ import { decode, encode, Decoded, Value, T_UINT, T_BYTES } from "../abi/src/abi.
 
 // `(uint256, bytes)` — the descriptor is data, so a call site describes its types rather than
 // hand-writing an accessor per signature.
-i32[] schema = i32[](T_UINT(), T_BYTES());
+i32[] schema = [T_UINT(), T_BYTES()];
 Decoded d = decode(returnData, schema);
 if (!d.ok) { core.warn(d.error); }
 ```

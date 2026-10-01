@@ -43,8 +43,8 @@ string root(Cli cli) { return cli.cwd().wait(); }
 /** Whether this machine has the tools: without `ssh` and `ssh-keygen` there is no client. */
 bool haveSsh(Cli cli) {
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "command -v ssh >/dev/null && command -v ssh-keygen >/dev/null"),
-    u8[0]()).wait();
+    ["-c", "command -v ssh >/dev/null && command -v ssh-keygen >/dev/null"],
+    u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
@@ -67,7 +67,7 @@ bool haveSsh(Cli cli) {
  */
 
 string[] SSHD_GRANTS() {
-  return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-net", "--allow-env"];
 }
 
 struct Said {
@@ -77,7 +77,7 @@ struct Said {
 }
 
 Said ssh(Cli cli, string tmp, i32 port, string key, string user, string script) {
-  Exec r = cli.exec("ssh", string[](
+  Exec r = cli.exec("ssh", [
     "-p", itoa(port),
     "-i", tmp + "/" + key,
     "-o", "StrictHostKeyChecking=no",
@@ -85,7 +85,8 @@ Said ssh(Cli cli, string tmp, i32 port, string key, string user, string script) 
     "-o", "LogLevel=ERROR",
     "-o", "ConnectTimeout=10",
     user + "@127.0.0.1",
-    script), u8[0]()).wait();
+    script
+  ], u8[]()).wait();
   if (!r.ran()) { return Said(-1, "", "ssh did not run — " + r.error); }
   return Said(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
@@ -150,7 +151,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
            "the Deno sshd built — see .cache/built-sshd-arrival-deno");
   if (denoBin == "") { return t.report(); }
 
-  string[] keys = string[]("hostkey", "admin", "ada", "grace");
+  string[] keys = ["hostkey", "admin", "ada", "grace"];
   for (i32 i = 0; i < keys.len(); i++) {
     if (!keygen(t, cli, tmp + "/" + keys[i])) { return t.report(); }
     restrict(cli, tmp + "/" + keys[i]);
@@ -159,7 +160,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
   string image = tmp + "/system.wacimg";
 
   // ── The JavaScript host writes the world ────────────────────────────────
-  Server first = serve(core, cli, tmp, denoBin, string[0](fill: ""), image, tmp + "/deno.log");
+  Server first = serve(core, cli, tmp, denoBin, string[].filled(0, ""), image, tmp + "/deno.log");
   t.eqStr(first.error, "", "the Deno sshd is up");
   if (first.port <= 0) { return t.report(); }
 
@@ -202,7 +203,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
   if (!cli.stat(mod).wait().exists) { cli.remove(tmp, true).wait(); return t.report(); }
 
   // ── …and the host with no JavaScript in it serves the same file ─────────
-  Server second = serve(core, cli, tmp, native, string[](mod), image,
+  Server second = serve(core, cli, tmp, native, [mod], image,
                         tmp + "/native.log");
   t.eqStr(second.error, "", "the native sshd is up");
   if (second.port <= 0) { cli.remove(tmp, true).wait(); return t.report(); }

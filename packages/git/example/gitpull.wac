@@ -53,12 +53,12 @@ string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 /** The target `ref` has on the far end, or none — read from the advertisement bytes. */
 u8[] advertisedTarget(u8[] advertisement, string ref) {
   match (parseAdvertisement(advertisement)) {
-    Garbled(why): { return u8[0](); }
+    Garbled(why): { return u8[](); }
     Said(ad): {
       for (i32 i = 0; i < ad.refs.len(); i++) {
         if (ad.refs.get(i).name == ref) { return ad.refs.get(i).target; }
       }
-      return u8[0]();
+      return u8[]();
     }
   }
 }
@@ -166,7 +166,7 @@ export i32 main(Core core, Cli cli) {
         return 1;
       }
 
-      u8[] pack = u8[0]();
+      u8[] pack = u8[]();
       match (findPack(answer.bytes)) {
         NoPack(why): {
           core.warn("gitpull: " + why);
@@ -207,7 +207,7 @@ export i32 main(Core core, Cli cli) {
 
       // Written under the name git gives a pack: the stem is its own trailing checksum, which the
       // *completed* pack has rather than the thin one — appending objects changes it.
-      u8[] checksum = u8[20]();
+      u8[] checksum = u8[].filled(20, 0);
       for (i32 i = 0; i < 20; i++) { checksum[i] = whole[whole.len() - 20 + i]; }
       string stem = gitDir + "/objects/pack/pack-" + hexOf(checksum);
       match (indexPack(whole)) {

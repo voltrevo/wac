@@ -69,7 +69,7 @@ Reply request(Core core, Cli cli, i32 port, u8[] bytes, i32 chunks) {
   for (i32 at = 0; at < bytes.len(); at = at + size) {
     i32 end = at + size;
     if (end > bytes.len()) { end = bytes.len(); }
-    u8[] piece = u8[end - at](fill: 0);
+    u8[] piece = u8[].filled(end - at, 0);
     for (i32 i = at; i < end; i++) { piece[i - at] = bytes[i]; }
     cli.send(handle, piece).wait();
     // A pause between pieces, so the server genuinely sees more than one read rather than the kernel
@@ -104,7 +104,7 @@ Reply post(Core core, Cli cli, i32 port, string body, i32 chunks) {
   string head = "POST /tor/hs/3/publish HTTP/1.0\r\nHost: 127.0.0.1\r\n" +
                 "Content-Length: " + itoa(encoded.len()) + "\r\n\r\n";
   u8[] headBytes = head.toBytes();
-  u8[] all = u8[headBytes.len() + encoded.len()](fill: 0);
+  u8[] all = u8[].filled(headBytes.len() + encoded.len(), 0);
   for (i32 i = 0; i < headBytes.len(); i++) { all[i] = headBytes[i]; }
   for (i32 i = 0; i < encoded.len(); i++) { all[headBytes.len() + i] = encoded[i]; }
   return request(core, cli, port, all, chunks);
@@ -148,7 +148,7 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   // name cannot be cached: the output's base name is in the manifest, so two destinations are two
   // artefacts. Measured on `client_test.wac`: 2s cached against 8s not.
   string mod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
-                            string[]("--allow-read", "--allow-net"));
+                            ["--allow-read", "--allow-net"]);
   t.isTrue(mod != "", "the server built");
   if (mod == "") { return t.report(); }
 
@@ -282,7 +282,7 @@ export string test_a_stalled_client_does_not_hold_the_door(Core core, Cli cli) {
   t.isTrue(whyDir == "", whyDir);
 
   string mod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
-                            string[]("--allow-read", "--allow-net"));
+                            ["--allow-read", "--allow-net"]);
   t.isTrue(mod != "", "the server built");
   if (mod == "") { return t.report(); }
 
@@ -357,7 +357,7 @@ Reply servedWithin(Core core, Cli cli, i32 port, string target, i32 ms) {
   bool reading = true;
   while (reading) {
     Pending<Read> p = cli.recv(handle);
-    if (core.waitAny(i32[](p.id), ms) < 0) { cli.closeSocket(handle); return Reply(-2, ""); }
+    if (core.waitAny([p.id], ms) < 0) { cli.closeSocket(handle); return Reply(-2, ""); }
     match (p.wait()) {
       Data(got): { all = all + string.fromBytes(got); }
       End: { reading = false; }

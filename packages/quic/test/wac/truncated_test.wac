@@ -86,7 +86,7 @@ string named(Next n) {
 
 /** The first `n` bytes of `b`. */
 u8[] prefix(u8[] b, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
   return out;
 }
@@ -133,23 +133,23 @@ export string test_a_frame_of_varints_cut_short_is_incomplete() {
   i32 cuts = 0;
 
   // type, id, code, finalSize
-  cuts = cuts + sweep(t, "RESET_STREAM", u8[](0x04, 0x01, 0x02, 0x03), e, "ResetStream");
+  cuts = cuts + sweep(t, "RESET_STREAM", [0x04, 0x01, 0x02, 0x03] as u8[], e, "ResetStream");
   // type, id, code
-  cuts = cuts + sweep(t, "STOP_SENDING", u8[](0x05, 0x01, 0x02), e, "StopSending");
+  cuts = cuts + sweep(t, "STOP_SENDING", [0x05, 0x01, 0x02] as u8[], e, "StopSending");
   // type, max
-  cuts = cuts + sweep(t, "MAX_DATA", u8[](0x10, 0x20), e, "MaxData");
+  cuts = cuts + sweep(t, "MAX_DATA", [0x10, 0x20] as u8[], e, "MaxData");
   // type, id, max
-  cuts = cuts + sweep(t, "MAX_STREAM_DATA", u8[](0x11, 0x01, 0x20), e, "MaxStreamData");
+  cuts = cuts + sweep(t, "MAX_STREAM_DATA", [0x11, 0x01, 0x20] as u8[], e, "MaxStreamData");
   // type, max — bidirectional and unidirectional are different types, one arm each
-  cuts = cuts + sweep(t, "MAX_STREAMS", u8[](0x12, 0x08), e, "MaxStreams");
-  cuts = cuts + sweep(t, "MAX_STREAMS_UNI", u8[](0x13, 0x08), e, "MaxStreams");
+  cuts = cuts + sweep(t, "MAX_STREAMS", [0x12, 0x08] as u8[], e, "MaxStreams");
+  cuts = cuts + sweep(t, "MAX_STREAMS_UNI", [0x13, 0x08] as u8[], e, "MaxStreams");
   // type, at
-  cuts = cuts + sweep(t, "DATA_BLOCKED", u8[](0x14, 0x20), e, "DataBlocked");
-  cuts = cuts + sweep(t, "STREAM_DATA_BLOCKED", u8[](0x15, 0x01, 0x20), e, "StreamDataBlocked");
-  cuts = cuts + sweep(t, "STREAMS_BLOCKED", u8[](0x16, 0x08), e, "StreamsBlocked");
-  cuts = cuts + sweep(t, "STREAMS_BLOCKED_UNI", u8[](0x17, 0x08), e, "StreamsBlocked");
+  cuts = cuts + sweep(t, "DATA_BLOCKED", [0x14, 0x20] as u8[], e, "DataBlocked");
+  cuts = cuts + sweep(t, "STREAM_DATA_BLOCKED", [0x15, 0x01, 0x20] as u8[], e, "StreamDataBlocked");
+  cuts = cuts + sweep(t, "STREAMS_BLOCKED", [0x16, 0x08] as u8[], e, "StreamsBlocked");
+  cuts = cuts + sweep(t, "STREAMS_BLOCKED_UNI", [0x17, 0x08] as u8[], e, "StreamsBlocked");
   // type, seq
-  cuts = cuts + sweep(t, "RETIRE_CONNECTION_ID", u8[](0x19, 0x03), e, "RetireConnectionId");
+  cuts = cuts + sweep(t, "RETIRE_CONNECTION_ID", [0x19, 0x03] as u8[], e, "RetireConnectionId");
 
   t.isTrue(cuts >= 15, "only " + itoa(cuts) + " truncations were tried, which is too few to mean much");
   return t.report();
@@ -168,33 +168,33 @@ export string test_a_frame_with_a_length_cut_short_is_incomplete() {
   i32 e = EPOCH_1RTT();
 
   // CRYPTO: type, offset, length, data
-  cuts = cuts + sweep(t, "CRYPTO", u8[](0x06, 0x00, 0x03, 0xAA, 0xBB, 0xCC), e, "Crypto");
+  cuts = cuts + sweep(t, "CRYPTO", [0x06, 0x00, 0x03, 0xAA, 0xBB, 0xCC] as u8[], e, "Crypto");
   // NEW_TOKEN: type, length, token
-  cuts = cuts + sweep(t, "NEW_TOKEN", u8[](0x07, 0x02, 0xDE, 0xAD), e, "NewToken");
+  cuts = cuts + sweep(t, "NEW_TOKEN", [0x07, 0x02, 0xDE, 0xAD] as u8[], e, "NewToken");
   // **STREAM without the LEN bit cannot be truncated, and that is the point of it.** RFC 9000
   // §19.8: a STREAM frame with no length field runs to the end of the datagram, so "cut it short"
   // and "send a shorter frame" are the same thing and every prefix past the id is a *complete*
   // frame carrying less data. Swept by hand rather than by `sweep`, because asserting Incomplete
   // here would be asserting a bug.
-  t.eqStr(named(nextIn(u8[](0x08, 0x04, 0x11, 0x22), 0, e)), "Stream",
+  t.eqStr(named(nextIn([0x08, 0x04, 0x11, 0x22] as u8[], 0, e)), "Stream",
           "a STREAM frame without a length did not parse");
-  t.eqI32(nextIn(u8[](0x08, 0x04, 0x11, 0x22), 0, e).size, 4,
+  t.eqI32(nextIn([0x08, 0x04, 0x11, 0x22] as u8[], 0, e).size, 4,
           "a STREAM frame without a length did not consume the whole datagram");
-  t.eqStr(named(nextIn(u8[](0x08, 0x04), 0, e)), "Stream",
+  t.eqStr(named(nextIn([0x08, 0x04] as u8[], 0, e)), "Stream",
           "a STREAM frame with no data left is not a complete frame carrying nothing");
-  t.eqI32(nextIn(u8[](0x08, 0x04), 0, e).size, 2, "an empty STREAM frame is not two bytes");
+  t.eqI32(nextIn([0x08, 0x04] as u8[], 0, e).size, 2, "an empty STREAM frame is not two bytes");
   // The id itself can still be missing, which is the one truncation this shape has.
-  t.isTrue(isIncomplete(nextIn(u8[](0x08), 0, e)), "a STREAM frame with no id was accepted");
+  t.isTrue(isIncomplete(nextIn([0x08] as u8[], 0, e)), "a STREAM frame with no id was accepted");
   cuts = cuts + 1;
   // STREAM with LEN: type, id, length, data
-  cuts = cuts + sweep(t, "STREAM_LEN", u8[](0x0A, 0x04, 0x02, 0x11, 0x22), e, "Stream");
+  cuts = cuts + sweep(t, "STREAM_LEN", [0x0A, 0x04, 0x02, 0x11, 0x22] as u8[], e, "Stream");
   // STREAM with OFF and LEN: type, id, offset, length, data
-  cuts = cuts + sweep(t, "STREAM_OFF_LEN", u8[](0x0E, 0x04, 0x10, 0x02, 0x11, 0x22), e, "Stream");
+  cuts = cuts + sweep(t, "STREAM_OFF_LEN", [0x0E, 0x04, 0x10, 0x02, 0x11, 0x22] as u8[], e, "Stream");
   // CONNECTION_CLOSE, transport: type, code, frameType, reasonLength, reason
-  cuts = cuts + sweep(t, "CONNECTION_CLOSE", u8[](0x1C, 0x02, 0x00, 0x02, 0x68, 0x69), e,
+  cuts = cuts + sweep(t, "CONNECTION_CLOSE", [0x1C, 0x02, 0x00, 0x02, 0x68, 0x69] as u8[], e,
                       "ConnectionClose");
   // CONNECTION_CLOSE, application: no frameType field, which is the arm the other one skips
-  cuts = cuts + sweep(t, "CONNECTION_CLOSE_APP", u8[](0x1D, 0x02, 0x02, 0x68, 0x69), e,
+  cuts = cuts + sweep(t, "CONNECTION_CLOSE_APP", [0x1D, 0x02, 0x02, 0x68, 0x69] as u8[], e,
                       "ConnectionClose");
 
   t.isTrue(cuts >= 20, "only " + itoa(cuts) + " truncations were tried across the length-carrying frames");
@@ -215,12 +215,12 @@ export string test_a_frame_of_fixed_width_cut_short_is_incomplete() {
   i32 cuts = 0;
 
   cuts = cuts + sweep(t, "PATH_CHALLENGE",
-                      u8[](0x1A, 1, 2, 3, 4, 5, 6, 7, 8), e, "PathChallenge");
+                      [0x1A, 1, 2, 3, 4, 5, 6, 7, 8] as u8[], e, "PathChallenge");
   cuts = cuts + sweep(t, "PATH_RESPONSE",
-                      u8[](0x1B, 1, 2, 3, 4, 5, 6, 7, 8), e, "PathResponse");
+                      [0x1B, 1, 2, 3, 4, 5, 6, 7, 8] as u8[], e, "PathResponse");
 
   // NEW_CONNECTION_ID: type, seq, retirePriorTo, cidLen, cid, and a 16-byte token.
-  u8[] nci = u8[4 + 4 + 16]();
+  u8[] nci = u8[].filled(4 + 4 + 16, 0);
   nci[0] = 0x18; nci[1] = 0x01; nci[2] = 0x00; nci[3] = 4;
   for (i32 i = 0; i < 4; i++) { nci[4 + i] = 0xC0 + i; }
   for (i32 i = 0; i < 16; i++) { nci[8 + i] = 0x50 + i; }
@@ -246,15 +246,15 @@ export string test_an_ack_cut_short_is_incomplete() {
   i32 e = EPOCH_1RTT();
 
   // type, largest, delay, rangeCount, firstRange
-  i32 cuts = sweep(t, "ACK", u8[](0x02, 0x0A, 0x01, 0x00, 0x05), e, "Ack");
+  i32 cuts = sweep(t, "ACK", [0x02, 0x0A, 0x01, 0x00, 0x05] as u8[], e, "Ack");
   // One additional range: gap, length
-  cuts = cuts + sweep(t, "ACK_RANGES", u8[](0x02, 0x0A, 0x01, 0x01, 0x02, 0x01, 0x01), e, "Ack");
+  cuts = cuts + sweep(t, "ACK_RANGES", [0x02, 0x0A, 0x01, 0x01, 0x02, 0x01, 0x01] as u8[], e, "Ack");
   // ACK_ECN: the same, then ect0, ect1, ce
-  cuts = cuts + sweep(t, "ACK_ECN", u8[](0x03, 0x0A, 0x01, 0x00, 0x05, 0x00, 0x00, 0x00), e, "Ack");
+  cuts = cuts + sweep(t, "ACK_ECN", [0x03, 0x0A, 0x01, 0x00, 0x05, 0x00, 0x00, 0x00] as u8[], e, "Ack");
 
   // A range count larger than the bytes that follow could possibly hold. Not a truncation of a valid
   // frame — a frame that lies about its own shape, which is the same guard reached the other way.
-  Next lying = nextIn(u8[](0x02, 0x0A, 0x01, 0x3F, 0x05), 0, e);
+  Next lying = nextIn([0x02, 0x0A, 0x01, 0x3F, 0x05] as u8[], 0, e);
   t.isTrue(isIncomplete(lying),
            "an ACK claiming 63 ranges in five bytes answered " + named(lying));
 
@@ -277,30 +277,30 @@ export string test_the_frames_with_nothing_to_truncate() {
   T t = T.create();
   i32 e = EPOCH_1RTT();
 
-  Next ping = nextIn(u8[](0x01), 0, e);
+  Next ping = nextIn([0x01] as u8[], 0, e);
   t.eqStr(named(ping), "Ping", "a lone PING did not parse");
   t.eqI32(ping.size, 1, "PING is not one byte");
 
-  Next done = nextIn(u8[](0x1E), 0, e);
+  Next done = nextIn([0x1E] as u8[], 0, e);
   t.eqStr(named(done), "HandshakeDone", "a lone HANDSHAKE_DONE did not parse");
   t.eqI32(done.size, 1, "HANDSHAKE_DONE is not one byte");
 
   // Padding is run-length encoded, so four zero bytes are one frame of four rather than four frames.
-  Next pad = nextIn(u8[](0x00, 0x00, 0x00, 0x00), 0, e);
+  Next pad = nextIn([0x00, 0x00, 0x00, 0x00] as u8[], 0, e);
   t.eqStr(named(pad), "Padding(4)", "four zero bytes are not one padding run of four");
   t.eqI32(pad.size, 4, "the padding run reported the wrong size");
 
   // A run that reaches the end of the datagram is complete, not truncated — the distinction the
   // `Incomplete` variant's own comment draws, and the one case where running out of bytes is right.
-  Next toEnd = nextIn(u8[](0x00), 0, e);
+  Next toEnd = nextIn([0x00] as u8[], 0, e);
   t.eqStr(named(toEnd), "Padding(1)", "one zero byte at the end of a datagram is not padding");
 
   // Nothing at all: reading past the end of an empty buffer.
-  Next empty = nextIn(u8[0](), 0, e);
+  Next empty = nextIn(u8[](), 0, e);
   t.isTrue(isIncomplete(empty), "an empty datagram answered " + named(empty));
 
   // And past the end of a non-empty one, which is what a walk does when it has consumed everything.
-  Next past = nextIn(u8[](0x01), 1, e);
+  Next past = nextIn([0x01] as u8[], 1, e);
   t.isTrue(isIncomplete(past), "reading past the last byte answered " + named(past));
   return t.report();
 }
@@ -320,26 +320,26 @@ export string test_a_forbidden_frame_is_refused_before_it_is_read() {
   i32 e = EPOCH_INITIAL();
 
   // A complete STREAM frame, forbidden in an Initial.
-  Next whole = nextIn(u8[](0x0A, 0x04, 0x02, 0x11, 0x22), 0, e);
+  Next whole = nextIn([0x0A, 0x04, 0x02, 0x11, 0x22] as u8[], 0, e);
   t.eqStr(named(whole), "NotPermitted(10)", "a STREAM frame was allowed in an Initial packet");
 
   // The same frame cut to its type byte alone. Still the protocol violation, not a short read.
-  Next cut = nextIn(u8[](0x0A), 0, e);
+  Next cut = nextIn([0x0A] as u8[], 0, e);
   t.eqStr(named(cut), "NotPermitted(10)",
           "a truncated STREAM frame in an Initial was reported as a short read, which would let a "
           + "forbidden frame past the check by cutting it short");
 
   // MAX_DATA likewise, and a control: CRYPTO and ACK are permitted in an Initial.
-  t.eqStr(named(nextIn(u8[](0x10), 0, e)), "NotPermitted(16)",
+  t.eqStr(named(nextIn([0x10] as u8[], 0, e)), "NotPermitted(16)",
           "a truncated MAX_DATA in an Initial was not refused as forbidden");
-  t.eqStr(named(nextIn(u8[](0x06, 0x00, 0x01, 0xAA), 0, e)), "Crypto",
+  t.eqStr(named(nextIn([0x06, 0x00, 0x01, 0xAA] as u8[], 0, e)), "Crypto",
           "CRYPTO is not permitted in an Initial, which cannot be right");
-  t.eqStr(named(nextIn(u8[](0x02, 0x0A, 0x01, 0x00, 0x05), 0, e)), "Ack",
+  t.eqStr(named(nextIn([0x02, 0x0A, 0x01, 0x00, 0x05] as u8[], 0, e)), "Ack",
           "ACK is not permitted in an Initial, which cannot be right");
 
   // And a truncated CRYPTO in an Initial *is* a short read, because it is permitted there. Without
   // this the assertions above would pass on a `nextIn` that answered NotPermitted to everything.
-  t.isTrue(isIncomplete(nextIn(u8[](0x06, 0x00), 0, e)),
+  t.isTrue(isIncomplete(nextIn([0x06, 0x00] as u8[], 0, e)),
            "a truncated CRYPTO in an Initial was not reported as a short read");
   return t.report();
 }

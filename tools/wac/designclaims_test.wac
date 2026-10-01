@@ -58,7 +58,7 @@ struct Claim {
 
 Claim[] numbersBefore(string text, string after) {
   u8[] b = text.toBytes();
-  Claim[] out = Claim[64](fill: Claim(0, 0));
+  Claim[] out = Claim[].filled(64, Claim(0, 0));
   i32 n = 0;
   i32 line = 1;
   i32 i = 0;
@@ -73,14 +73,14 @@ Claim[] numbersBefore(string text, string after) {
       n = n + 1;
     }
   }
-  Claim[] exact = Claim[n](fill: Claim(0, 0));
+  Claim[] exact = Claim[].filled(n, Claim(0, 0));
   for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
   return exact;
 }
 
 /** Every number written `**123**`, in order — the shape `packages/sh/README.md` states its split in. */
 i32[] boldNumbers(string text) {
-  i32[] out = i32[32](fill: 0);
+  i32[] out = i32[].filled(32, 0);
   i32 n = 0;
   i32 at = 0;
   while (at < text.len() && n < out.len()) {
@@ -101,7 +101,7 @@ i32[] boldNumbers(string text) {
     }
     at = close + 2;
   }
-  i32[] exact = i32[n](fill: 0);
+  i32[] exact = i32[].filled(n, 0);
   for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
   return exact;
 }
@@ -109,15 +109,15 @@ i32[] boldNumbers(string text) {
 /** Every `design/**.md`, both trees, so a note added later is covered without editing this file. */
 string[] designDocs(Core core, Cli cli) {
   string[] all = tracked(core, cli);
-  string[] hit = string[all.len()](fill: "");
+  string[] hit = string[].filled(all.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
-    if (!under(all[i], string[]("design/"))) { continue; }
+    if (!under(all[i], ["design/"])) { continue; }
     if (all[i].len() < 3 || all[i].slice(all[i].len() - 3, all[i].len()) != ".md") { continue; }
     hit[n] = all[i];
     n = n + 1;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = hit[i]; }
   return out;
 }

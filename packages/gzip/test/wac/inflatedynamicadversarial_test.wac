@@ -29,11 +29,11 @@ import { Bits, ClOp, clCode, dynamic, fillZeros, one, then, storedBlock,
 // sequence was ever read.
 
 /** Just repeat and zero. */
-i32[] clRepeat() { return clCode(i32[](16, 0), i32[](1, 1)); }
+i32[] clRepeat() { return clCode([16, 0] as i32[], [1, 1] as i32[]); }
 /** ...plus long zero runs, plus length 1. */
-i32[] clFull() { return clCode(i32[](18, 0, 1, 16), i32[](2, 2, 2, 2)); }
+i32[] clFull() { return clCode([18, 0, 1, 16] as i32[], [2, 2, 2, 2] as i32[]); }
 /** Both zero-run symbols. */
-i32[] clRuns() { return clCode(i32[](0, 18, 17), i32[](1, 2, 2)); }
+i32[] clRuns() { return clCode([0, 18, 17] as i32[], [1, 2, 2] as i32[]); }
 
 /**
  * A complete dynamic block that decodes to "A", with the given HLIT and HDIST.
@@ -162,7 +162,7 @@ export string test_a_run_that_ends_exactly_at_the_tables_end_is_valid() {
 // number of bytes from the wrong place.
 
 u8[] storedWith(i32 len, i32 nlen) {
-  u8[] tail = u8[4 + len]();
+  u8[] tail = u8[].filled(4 + len, 0);
   tail[0] = len & 0xFF;
   tail[1] = (len >> 8) & 0xFF;
   tail[2] = nlen & 0xFF;
@@ -190,7 +190,7 @@ export string test_traps_stored_nlen_off_by_one() {
 export string test_a_matching_len_and_nlen_decode() {
   T t = T.create();
   t.eqStr(string.fromBytes(inflate(withBytes(storedBlock(),
-                                             u8[](0x02, 0x00, 0xFD, 0xFF, 0x41, 0x42)))),
+                                             [0x02, 0x00, 0xFD, 0xFF, 0x41, 0x42] as u8[]))),
           "AB", "a valid stored block");
   return t.report();
 }
@@ -198,7 +198,7 @@ export string test_a_matching_len_and_nlen_decode() {
 // A stored block needs four header bytes after the align. Fewer than four means reading LEN or NLEN
 // off the end of the input.
 
-u8[] storedHeaderBytes(i32 extra) { return withBytes(storedBlock(), u8[extra]()); }
+u8[] storedHeaderBytes(i32 extra) { return withBytes(storedBlock(), u8[].filled(extra, 0)); }
 
 export string test_traps_stored_with_no_header_bytes() {
   inflate(storedHeaderBytes(0));
@@ -237,7 +237,7 @@ export string test_traps_reserved_btype_eleven_after_a_valid_block() {
   b.bits(0, 1);
   b.bits(0, 2);
   // A non-final stored block holding "A", then BFINAL=1 BTYPE=11.
-  inflate(withBytes(b, u8[](0x01, 0x00, 0xFE, 0xFF, 0x41, 0x07)));
+  inflate(withBytes(b, [0x01, 0x00, 0xFE, 0xFF, 0x41, 0x07] as u8[]));
   return "BTYPE=11 after a valid block was accepted";
 }
 
@@ -246,7 +246,7 @@ export string test_traps_reserved_btype_eleven_after_a_valid_block() {
 // deflate.
 
 u8[] gzipWithCm(i32 cm) {
-  u8[] gz = u8[20]();
+  u8[] gz = u8[].filled(20, 0);
   gz[0] = 0x1F;
   gz[1] = 0x8B;
   gz[2] = cm;

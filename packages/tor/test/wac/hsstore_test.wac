@@ -164,11 +164,11 @@ export string test_the_limits_are_tors(Core core, Cli cli) {
   // signature verification. Both sides of the boundary, because tor's comparison is `>=` and a `>`
   // agrees with it on every input except the one length that distinguishes them — the same shape as
   // the padding boundary that hid a round-down for a whole session.
-  t.eqI32(checkForPublication(u8[MAX_DESCRIPTOR_LEN + 1](fill: 'a'), 0).reason, PUB_TOO_LARGE,
+  t.eqI32(checkForPublication(u8[].filled(MAX_DESCRIPTOR_LEN + 1, 'a'), 0).reason, PUB_TOO_LARGE,
           "a larger one is refused before it is read");
-  t.eqI32(checkForPublication(u8[MAX_DESCRIPTOR_LEN](fill: 'a'), 0).reason, PUB_TOO_LARGE,
+  t.eqI32(checkForPublication(u8[].filled(MAX_DESCRIPTOR_LEN, 'a'), 0).reason, PUB_TOO_LARGE,
           "and exactly HS_DESC_MAX_LEN is too large, which is where tor's `>=` bites");
-  t.isTrue(checkForPublication(u8[MAX_DESCRIPTOR_LEN - 1](fill: 'a'), 0).reason != PUB_TOO_LARGE,
+  t.isTrue(checkForPublication(u8[].filled(MAX_DESCRIPTOR_LEN - 1, 'a'), 0).reason != PUB_TOO_LARGE,
            "one byte under it is not refused for its size — it fails for being nonsense");
 
   t.eqI32(checkForPublication(replaceFirst(desc, "descriptor-lifetime 180",
@@ -199,15 +199,15 @@ export string test_the_certificate_stands_on_its_own_key(Core core, Cli cli) {
   // would be guessing, and every other check here is about the document alone.
   Checked withClock = checkForPublication(desc, 1);
   t.eqI32(withClock.reason, PUB_OK, "a clock before the expiry changes nothing");
-  t.isTrue(certExpiryHours(u8[6](fill: 255)) > 0, "an expiry is read big-endian from offset 2");
-  t.eqI64(certExpiryHours(u8[5]()), -1 as i64, "and a certificate too short to hold one says so");
+  t.isTrue(certExpiryHours(u8[].filled(6, 255)) > 0, "an expiry is read big-endian from offset 2");
+  t.eqI64(certExpiryHours(u8[].filled(5, 0)), -1 as i64, "and a certificate too short to hold one says so");
   return t.report();
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
 u8[] edit(u8[] b, i32 at, i32 to) {
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
   out[at] = out[at] == to ? to + 1 : to;
   return out;
@@ -217,7 +217,7 @@ u8[] replaceFirst(u8[] b, string find, string with) {
   i32 at = findFrom(b, find, 0);
   if (at < 0) { return b; }
   u8[] w = with.toBytes();
-  u8[] out = u8[b.len() - find.toBytes().len() + w.len()]();
+  u8[] out = u8[].filled(b.len() - find.toBytes().len() + w.len(), 0);
   for (i32 i = 0; i < at; i++) { out[i] = b[i]; }
   for (i32 i = 0; i < w.len(); i++) { out[at + i] = w[i]; }
   i32 rest = at + find.toBytes().len();

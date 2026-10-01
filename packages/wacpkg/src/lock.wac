@@ -52,10 +52,10 @@ export struct Lock {
   string detail;
   LockEntry[] entries;
 
-  Lock empty() { return Lock(true, 0, "", LockEntry[0]()); }
+  Lock empty() { return Lock(true, 0, "", LockEntry[]()); }
 }
 
-Lock lockFailed(i32 code, string detail) { return Lock(false, code, detail, LockEntry[0]()); }
+Lock lockFailed(i32 code, string detail) { return Lock(false, code, detail, LockEntry[]()); }
 
 // ── What a command may do ─────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ export struct Step {
  * about a mapping, and a mapping that is gone has nothing to decide.
  */
 export Step[] plan(Manifest m, Lock l) {
-  Step[] out = Step[m.imports.len()]();
+  Step[] out = Step[].defaulted(m.imports.len());
   for (i32 i = 0; i < m.imports.len(); i++) {
     Mapping map = m.imports[i];
     i32 at = indexOfEntry(l, map.name);
@@ -135,7 +135,7 @@ export string[] orphansOf(Manifest m, Lock l) {
   for (i32 i = 0; i < l.entries.len(); i++) {
     if (indexOfMapping(m, l.entries[i].name) < 0) { n = n + 1; }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   for (i32 i = 0; i < l.entries.len(); i++) {
     if (indexOfMapping(m, l.entries[i].name) >= 0) { continue; }
@@ -171,8 +171,8 @@ i32 indexOfMapping(Manifest m, string name) {
  * and writing a partial one would silently un-pin whatever was missing.
  */
 export LockEntry[] applyPlan(Manifest m, Lock l, Step[] steps, string[] resolved) {
-  if (steps.len() != m.imports.len() || resolved.len() != steps.len()) { return LockEntry[0](); }
-  LockEntry[] out = LockEntry[steps.len()]();
+  if (steps.len() != m.imports.len() || resolved.len() != steps.len()) { return LockEntry[](); }
+  LockEntry[] out = LockEntry[].defaulted(steps.len());
   for (i32 i = 0; i < steps.len(); i++) {
     Mapping map = m.imports[i];
     Step s = steps[i];
@@ -185,11 +185,11 @@ export LockEntry[] applyPlan(Manifest m, Lock l, Step[] steps, string[] resolved
       // `applyPlan` takes `steps` as an argument and cannot know they came from `plan` — a
       // hand-built array claiming `USE` for a mapping the lock has never heard of would otherwise
       // index past the end. Refusing is the answer; a trap in a lockfile writer is not.
-      if (at < 0) { return LockEntry[0](); }
+      if (at < 0) { return LockEntry[](); }
       out[i] = l.entries[at];
       continue;
     }
-    if (!isFullSha(resolved[i])) { return LockEntry[0](); }
+    if (!isFullSha(resolved[i])) { return LockEntry[](); }
     out[i] = LockEntry(map.name, map.git, map.ref, map.subdir, resolved[i]);
   }
   return out;
@@ -217,7 +217,7 @@ export Lock readLock(u8[] src) {
     default: { return lockFailed(L_IMPORTS_KIND(), "imports"); }
   }
 
-  LockEntry[] out = LockEntry[table.count]();
+  LockEntry[] out = LockEntry[].defaulted(table.count);
   for (i32 i = 0; i < table.count; i++) {
     JsonMember mem = table.at(i);
     string name = mem.keyStr();
@@ -339,7 +339,7 @@ string quoted(string s) {
 
 /** `entries` by name, byte-wise. Insertion sort: a manifest has tens of mappings, not thousands. */
 LockEntry[] sortedByName(LockEntry[] entries) {
-  LockEntry[] out = LockEntry[entries.len()]();
+  LockEntry[] out = LockEntry[].defaulted(entries.len());
   for (i32 i = 0; i < entries.len(); i++) { out[i] = entries[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     LockEntry v = out[i];

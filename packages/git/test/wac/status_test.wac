@@ -39,7 +39,7 @@ struct Git {
   string dir;
 
   Exec run(const this, string[] args) {
-    string[] full = string[args.len() + 6](fill: "");
+    string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
     full[2] = "-c";
@@ -47,7 +47,7 @@ struct Git {
     full[4] = "-c";
     full[5] = "user.email=a@b";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, u8[0]()).wait();
+    return this.cli.exec("git", full, u8[]()).wait();
   }
 
   /**
@@ -57,7 +57,7 @@ struct Git {
    * side disagrees. This package has been caught by that three times.
    */
   string status(const this) { return withoutTrailingNewline(string.fromBytes(
-    this.run(string[]("status", "--porcelain")).stdout)); }
+    this.run(["status", "--porcelain"]).stdout)); }
 }
 
 string withoutTrailingNewline(string s) {
@@ -65,10 +65,10 @@ string withoutTrailingNewline(string s) {
 }
 
 string[] splitLines(string s) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -76,10 +76,10 @@ string[] splitLines(string s) {
     if (i > at || true) { out[count] = s.slice(at, i); count = count + 1; }
     at = i + 1;
   }
-  string[] kept = string[count](fill: "");
+  string[] kept = string[].filled(count, "");
   i32 k = 0;
   for (i32 i = 0; i < count; i++) { if (out[i] != "") { kept[k] = out[i]; k = k + 1; } }
-  string[] trimmed = string[k](fill: "");
+  string[] trimmed = string[].filled(k, "");
   for (i32 i = 0; i < k; i++) { trimmed[i] = kept[i]; }
   return trimmed;
 }
@@ -111,11 +111,15 @@ bool anyEndsWith(string[] all, string suffix) {
 string gitst(T t, Cli cli, string dir) {
   string wac = wacBinary(cli);
   Exec r = cli.exec(wac,
-                    string[](builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
-                                          string[]("--allow-read", "--allow-write", "--allow-env",
-                                                   "--quiet")),
-                             dir),
-                    u8[0]()).wait();
+                    [
+                                          builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
+                                          [
+                                                   "--allow-read", "--allow-write", "--allow-env",
+                                                   "--quiet"
+                                          ]),
+                             dir
+                    ],
+                    u8[]()).wait();
   t.eqStr(r.error, "", "the wac binary could be started");
   t.eqI32(r.status, 0, "gitst exited zero: " + string.fromBytes(r.stderr));
   return withoutTrailingNewline(string.fromBytes(r.stdout));
@@ -128,7 +132,7 @@ Git repo(T t, Cli cli, string name) {
   Change made = cli.mkdir(dir, true).wait();
   t.isTrue(made.ok(), "a working directory: " + made.message);
   Git g = Git(cli, dir);
-  if (made.ok()) { g.run(string[]("init", "-q", "-b", "main")); }
+  if (made.ok()) { g.run(["init", "-q", "-b", "main"]); }
   return g;
 }
 
@@ -144,19 +148,19 @@ export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
   cli.writeFile(d + "/gone.txt", "three\n".toBytes()).wait();
   cli.writeFile(d + "/same.txt", "unchanged\n".toBytes()).wait();
   cli.writeFile(d + "/both.txt", "first\n".toBytes()).wait();
-  cli.writeFile(d + "/blob.bin", u8[](0, 1, 2, 255, 254, 10)).wait();
-  g.run(string[]("add", "-A"));
-  g.run(string[]("commit", "-qm", "one"));
+  cli.writeFile(d + "/blob.bin", [0, 1, 2, 255, 254, 10] as u8[]).wait();
+  g.run(["add", "-A"]);
+  g.run(["commit", "-qm", "one"]);
 
   // Every shape porcelain can put in either column, plus two files that must appear in neither.
   cli.writeFile(d + "/a.txt", "staged\n".toBytes()).wait();
-  g.run(string[]("add", "a.txt"));                                 // M  — staged only
+  g.run(["add", "a.txt"]);                                 // M  — staged only
   cli.writeFile(d + "/sub/b.txt", "unstaged\n".toBytes()).wait();   //  M — unstaged only, nested
-  g.run(string[]("rm", "-q", "gone.txt"));                         // D  — staged deletion
+  g.run(["rm", "-q", "gone.txt"]);                         // D  — staged deletion
   cli.writeFile(d + "/added.txt", "new\n".toBytes()).wait();
-  g.run(string[]("add", "added.txt"));                             // A  — staged addition
+  g.run(["add", "added.txt"]);                             // A  — staged addition
   cli.writeFile(d + "/both.txt", "staged then\n".toBytes()).wait();
-  g.run(string[]("add", "both.txt"));
+  g.run(["add", "both.txt"]);
   cli.writeFile(d + "/both.txt", "edited again\n".toBytes()).wait(); // MM — both columns at once
   cli.writeFile(d + "/untracked.txt", "new\n".toBytes()).wait();     // ?? — untracked
 
@@ -211,10 +215,12 @@ export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
   t.eqStr(joined(splitLines(gitst(t, cli, d))), joined(theirs), "our status is git's, line for line");
 
   // A clean tree is empty on both sides — the case that catches a status reporting every file.
-  g.run(string[]("reset", "-q", "--hard", "HEAD"));
-  string[] junk = string[]("untracked.txt", ".gitignore", "junk.tmp", "keep.tmp",
+  g.run(["reset", "-q", "--hard", "HEAD"]);
+  string[] junk = [
+                           "untracked.txt", ".gitignore", "junk.tmp", "keep.tmp",
                            "sub/alsonew.txt", "sub/.gitignore", "sub/inner.tmp", "sub/scoped",
-                           "inner.tmp");
+                           "inner.tmp"
+  ];
   for (i32 i = 0; i < junk.len(); i++) { cli.remove(d + "/" + junk[i], false).wait(); }
   cli.remove(d + "/fresh", true).wait();
   cli.remove(d + "/built", true).wait();
@@ -244,8 +250,8 @@ export string test_a_mode_change_with_no_content_change_is_reported_both_directi
   cli.writeFile(d + "/plain.txt", "same bytes throughout\n".toBytes()).wait();
   cli.writeFile(d + "/exec.sh", "#!/bin/sh\n".toBytes()).wait();
   cli.setExecutable(d + "/exec.sh", true).wait();
-  g.run(string[]("add", "-A"));
-  g.run(string[]("commit", "-qm", "one"));
+  g.run(["add", "-A"]);
+  g.run(["commit", "-qm", "one"]);
   t.eqStr(g.status(), "", "the fixture starts clean");
 
   // Gaining the bit, with the bytes untouched.
@@ -273,7 +279,7 @@ export string test_a_mode_change_with_no_content_change_is_reported_both_directi
 
 /** `git -C dir` with an identity and a `HOME`, since a commit needs one and the fixture needs both. */
 Exec gitAt(Cli cli, string home, string dir, string[] args) {
-  string[] full = string[args.len() + 6](fill: "");
+  string[] full = string[].filled(args.len() + 6, "");
   full[0] = "-C";
   full[1] = dir;
   full[2] = "-c";
@@ -314,27 +320,27 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   string whyDir5 = madeDir(cli, home);
   t.isTrue(whyDir5 == "", whyDir5);
 
-  Exec init = gitAt(cli, home, d, string[]("init", "-q", "-b", "main", "."));
+  Exec init = gitAt(cli, home, d, ["init", "-q", "-b", "main", "."]);
   t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));
   if (init.status != 0) { return t.report(); }
 
   cli.writeFile(home + "/.gitignore_global", "drop.txt\n!kept.txt\nboth.txt\n".toBytes()).wait();
   // In the repository's own config, so ours and git's read the setting from the same file. Quoted so
   // the shell leaves the `~` for git to expand.
-  gitAt(cli, home, d, string[]("config", "core.excludesFile", "~/.gitignore_global"));
+  gitAt(cli, home, d, ["config", "core.excludesFile", "~/.gitignore_global"]);
   cli.writeFile(d + "/.git/info/exclude", "!both.txt\n".toBytes()).wait();
   cli.writeFile(d + "/.gitignore", "kept.txt\n".toBytes()).wait();
-  string[] files = string[]("drop.txt", "kept.txt", "both.txt", "plain.txt");
+  string[] files = ["drop.txt", "kept.txt", "both.txt", "plain.txt"];
   for (i32 i = 0; i < files.len(); i++) {
     cli.writeFile(d + "/" + files[i], "x\n".toBytes()).wait();
   }
   cli.writeFile(d + "/tracked.txt", "x\n".toBytes()).wait();
-  gitAt(cli, home, d, string[]("add", "tracked.txt"));
-  Exec made = gitAt(cli, home, d, string[]("commit", "-qm", "one"));
+  gitAt(cli, home, d, ["add", "tracked.txt"]);
+  Exec made = gitAt(cli, home, d, ["commit", "-qm", "one"]);
   t.eqI32(made.status, 0, "git commit — " + string.fromBytes(made.stderr));
 
   string theirsText = withoutTrailingNewline(
-    string.fromBytes(gitAt(cli, home, d, string[]("status", "--porcelain")).stdout));
+    string.fromBytes(gitAt(cli, home, d, ["status", "--porcelain"]).stdout));
   string[] theirs = splitLines(theirsText);
 
   // **The shape, asserted before the comparison.** Each of these is the fixture doing its job; a
@@ -350,16 +356,20 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   // list. `check-ignore` exits non-zero when some path is not ignored, which `both.txt` is not, so
   // only its output is read.
   string verdicts = string.fromBytes(
-    gitAt(cli, home, d, string[]("check-ignore", "-v", "kept.txt", "both.txt")).stdout);
+    gitAt(cli, home, d, ["check-ignore", "-v", "kept.txt", "both.txt"]).stdout);
   t.isTrue(verdicts.indexOf(".gitignore:1:kept.txt") >= 0,
            ".gitignore did not decide kept.txt: " + verdicts);
 
   string wac = wacBinary(cli);
   Exec ours = withHome(cli, home, wac,
-                       string[](builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
-                                             string[]("--allow-read", "--allow-write", "--allow-env",
-                                                      "--quiet")),
-                                d));
+                       [
+                                             builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
+                                             [
+                                                      "--allow-read", "--allow-write", "--allow-env",
+                                                      "--quiet"
+                                             ]),
+                                d
+                       ]);
   t.eqStr(ours.error, "", "the wac binary could be started");
   t.eqI32(ours.status, 0, "gitst exited zero: " + string.fromBytes(ours.stderr));
   t.eqStr(withoutTrailingNewline(string.fromBytes(ours.stdout)), theirsText,

@@ -42,8 +42,8 @@ string writeTree(Cli cli, string dir) {
 
 string checkIn(Cli cli, string dir, string entry) {
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check " + entry + " 2>&1"),
-    u8[0]()).wait();
+    ["-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check " + entry + " 2>&1"],
+    u8[]()).wait();
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }
 

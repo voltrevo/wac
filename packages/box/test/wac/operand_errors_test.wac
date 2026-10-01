@@ -112,12 +112,14 @@ export string test_the_live_tools_still_skip_the_same_way(Core core, Cli cli) {
       return t.report();
     }
     Exec want = cli.exec("env",
-                         string[]("-i",
+                         [
+                                  "-i",
                                   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                                   "LC_ALL=C", "HOME=" + dir,
                                   "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
-                                  "bash", dir, list[i].script),
-                         u8[0]()).wait();
+                                  "bash", dir, list[i].script
+                         ],
+                         u8[]()).wait();
     if (!want.ran()) {
       t.isTrue(checked > 0, "bash would not start: " + want.error);
       return t.report();

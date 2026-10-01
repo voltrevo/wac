@@ -84,11 +84,13 @@ export string test_every_sync_case_has_the_steps_and_updates_the_vendoring_recor
   if (cases is null) { return t.report(); }
 
   //                                            case: steps, distinct update files
-  string[] names = string[]("light_client_sync", "light_client_sync_no_force_update",
+  string[] names = [
+                            "light_client_sync", "light_client_sync_no_force_update",
                             "advance_finality_without_sync_committee",
-                            "supply_sync_committee_from_past_update");
-  i32[] steps = i32[](10, 3, 5, 1);
-  i32[] updates = i32[](8, 2, 5, 1);
+                            "supply_sync_committee_from_past_update"
+  ];
+  i32[] steps = [10, 3, 5, 1];
+  i32[] updates = [8, 2, 5, 1];
   t.eqI32(cases!.len(), 4, "cases in the fixture");
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
@@ -114,8 +116,8 @@ export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_th
   T t = T.create();
   JsonArray? cases = syncCases(t, core, cli);
   if (cases is null) { return t.report(); }
-  string[] kinds = string[]("process_update", "force_update", "upgrade_store");
-  string[] headers = string[]("finalized_header", "optimistic_header");
+  string[] kinds = ["process_update", "force_update", "upgrade_store"];
+  string[] headers = ["finalized_header", "optimistic_header"];
 
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
@@ -193,10 +195,10 @@ export string test_the_metadata_carries_what_initialising_a_store_needs(Core cor
   T t = T.create();
   JsonArray? cases = syncCases(t, core, cli);
   if (cases is null) { return t.report(); }
-  string[] roots = string[]("genesis_validators_root", "trusted_block_root");
+  string[] roots = ["genesis_validators_root", "trusted_block_root"];
   // The fork digests decide which container type an object is; a client that ignores them would
   // read a later fork's update as an altair one.
-  string[] digests = string[]("bootstrap_fork_digest", "store_fork_digest");
+  string[] digests = ["bootstrap_fork_digest", "store_fork_digest"];
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     string name = memberText(c, "case");
@@ -327,7 +329,7 @@ export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_o
       if (memberText(s, "kind") != "process_update") { continue; }
       JsonValue? named = theUpdates!.getStr(memberText(s, "update"));
       if (named is null) { continue; }
-      u8[] update = u8[0]();
+      u8[] update = u8[]();
       match (named!) {
         Str(bytes): { update = decoded(string.fromBytes(bytes)); }
         default: { continue; }
@@ -370,7 +372,7 @@ export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_re
   JsonObject? theUpdates = memberObject(cases!.get(0), "updates");
   t.isTrue(!(theUpdates is null) && theUpdates!.len() > 0, "the first case has no updates");
   if ((theUpdates is null) || theUpdates!.len() == 0) { return t.report(); }
-  u8[] update = u8[0]();
+  u8[] update = u8[]();
   match (theUpdates!.at(0).value) {
     Str(bytes): { update = decoded(string.fromBytes(bytes)); }
     default: { t.failNow("an update is not a hex string"); }
@@ -386,7 +388,7 @@ export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_re
   string slot = slotOf(slotBytes);
   t.isTrue(slot != "0" && slot.len() <= 9, "signature_slot is implausible: " + slot);
 
-  i32[] bad = i32[](-1, 7, 99);
+  i32[] bad = [-1, 7, 99];
   for (i32 i = 0; i < bad.len(); i++) {
     t.eqI32(fieldBytes(minimal, fields, TY_LIGHT_CLIENT_UPDATE(), update, bad[i]).len(), 0,
             "field index " + itoa(bad[i]) + " returned bytes for a 7-field container");

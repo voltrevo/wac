@@ -27,7 +27,7 @@ import { contains } from "../../../wactest/src/strings.wac";
 
 /** The eight bytes every wasm module starts with, and nothing else. */
 u8[] emptyModule() {
-  u8[] m = u8[8]();
+  u8[] m = u8[].filled(8, 0);
   m[0] = 0; m[1] = 0x61; m[2] = 0x73; m[3] = 0x6d;
   m[4] = 1; m[5] = 0; m[6] = 0; m[7] = 0;
   return m;
@@ -39,8 +39,8 @@ const string SRC =
 
 export string test_a_module_with_only_a_manifest_is_refused() {
   T t = T.create();
-  string[] paths = string[]("/t/m.wac");
-  string[] sources = string[](SRC);
+  string[] paths = ["/t/m.wac"];
+  string[] sources = [SRC];
   // A real manifest, so the only thing wrong with the artefact is that the module is not there — which
   // is what made the reported one believable.
   string manifest = manifestWire(emitFiles(paths, sources, "/t/m.wac"),
@@ -62,8 +62,8 @@ export string test_a_module_with_only_a_manifest_is_refused() {
  */
 export string test_a_real_artefact_is_not_called_hollow() {
   T t = T.create();
-  string[] paths = string[]("/t/m.wac");
-  string[] sources = string[](SRC);
+  string[] paths = ["/t/m.wac"];
+  string[] sources = [SRC];
   u8[] wasm = emitFiles(paths, sources, "/t/m.wac");
   string manifest = manifestWire(wasm, bindTypesFiles(paths, sources, "/t/m.wac"),
                                  exportSigsFiles(paths, sources, "/t/m.wac"),
@@ -78,9 +78,9 @@ export string test_a_real_artefact_is_not_called_hollow() {
 /** A module with code but no exports, where the manifest says there are some. */
 export string test_a_manifest_promising_exports_a_module_lacks_is_refused() {
   T t = T.create();
-  string[] paths = string[]("/t/m.wac");
+  string[] paths = ["/t/m.wac"];
   // No `export`, so the module has a code section and an empty export section — the second arm.
-  string[] sources = string[]("i32 hidden(i32 n) { return n; }\nexport i32 main() { return hidden(1); }\n");
+  string[] sources = ["i32 hidden(i32 n) { return n; }\nexport i32 main() { return hidden(1); }\n"];
   u8[] wasm = emitFiles(paths, sources, "/t/m.wac");
   // Told it promises exports when its own count is what it is: the arm is about the *manifest*
   // disagreeing with the module, so the number comes from the caller either way.

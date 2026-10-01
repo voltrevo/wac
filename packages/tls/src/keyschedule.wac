@@ -34,10 +34,10 @@ import { hmacSha256 } from "../../crypto/src/hmac.wac";
 export i32 hashLen() { return 32; }
 
 /** SHA-256 of the empty string, which "derived" and the binder labels use as context. */
-export u8[] emptyHash() { return sha256(u8[0]()); }
+export u8[] emptyHash() { return sha256(u8[]()); }
 
 /** A hash-length string of zero bytes, the IKM for the first and last extracts. */
-export u8[] zeroKey() { return u8[hashLen()](); }
+export u8[] zeroKey() { return u8[].filled(hashLen(), 0); }
 
 /**
  * HKDF-Expand-Label, RFC 8446 §7.1.
@@ -58,7 +58,7 @@ export u8[] expandLabel(u8[] secret, u8[] label, u8[] context, i32 length) {
   if (labelLen > 255) { trap; }
   if (context.len() > 255) { trap; }
 
-  u8[] info = u8[2 + 1 + labelLen + 1 + context.len()]();
+  u8[] info = u8[].filled(2 + 1 + labelLen + 1 + context.len(), 0);
   info[0] = (length >> 8) & 0xFF;
   info[1] = length & 0xFF;
   info[2] = labelLen;
@@ -88,7 +88,7 @@ export u8[] deriveSecret(u8[] secret, u8[] label, u8[] transcriptHash) {
  * The Early Secret. With no PSK the input keying material is zeros, which is the case
  * for every handshake this implementation does.
  */
-export u8[] earlySecret(u8[] psk) { return hkdfExtract(u8[0](), psk); }
+export u8[] earlySecret(u8[] psk) { return hkdfExtract(u8[](), psk); }
 
 /** The Handshake Secret, from the Early Secret and the (EC)DHE shared secret. */
 export u8[] handshakeSecret(u8[] early, u8[] dhe) {
@@ -108,9 +108,9 @@ export u8[] masterSecret(u8[] handshake) {
  * ChaCha20-Poly1305 wants 32 and 12.
  */
 export u8[] trafficKeyIv(u8[] secret, i32 keyLen) {
-  u8[] key = expandLabel(secret, "key".toBytes(), u8[0](), keyLen);
-  u8[] iv = expandLabel(secret, "iv".toBytes(), u8[0](), 12);
-  u8[] out = u8[keyLen + 12]();
+  u8[] key = expandLabel(secret, "key".toBytes(), u8[](), keyLen);
+  u8[] iv = expandLabel(secret, "iv".toBytes(), u8[](), 12);
+  u8[] out = u8[].filled(keyLen + 12, 0);
   for (i32 i = 0; i < keyLen; i++) { out[i] = key[i]; }
   for (i32 i = 0; i < 12; i++) { out[keyLen + i] = iv[i]; }
   return out;
@@ -125,7 +125,7 @@ export u8[] trafficKeyIv(u8[] secret, i32 keyLen) {
  * the certificate's key, and this proves the key exchange was not tampered with.
  */
 export u8[] finishedVerify(u8[] baseKey, u8[] transcriptHash) {
-  u8[] finishedKey = expandLabel(baseKey, "finished".toBytes(), u8[0](), hashLen());
+  u8[] finishedKey = expandLabel(baseKey, "finished".toBytes(), u8[](), hashLen());
   return hmacSha256(finishedKey, transcriptHash);
 }
 
@@ -136,5 +136,5 @@ export u8[] finishedVerify(u8[] baseKey, u8[] transcriptHash) {
  * one, so a key compromised later does not decrypt earlier records.
  */
 export u8[] nextTrafficSecret(u8[] secret) {
-  return expandLabel(secret, "traffic upd".toBytes(), u8[0](), hashLen());
+  return expandLabel(secret, "traffic upd".toBytes(), u8[](), hashLen());
 }

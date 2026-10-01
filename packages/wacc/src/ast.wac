@@ -97,7 +97,7 @@ export enum ExprKind {
    * `<div class="a">{kid}</div>` — one element, its attributes and its children.
    *
    * **Lowered by the emitter, not by the parser.** `design/lang/0004` writes the meaning as wac
-   * source — `Node.Element("div", Attr[](…), Node[](…))` — and that is what it *means*, but it
+   * source — `Node.Element("div", […], […])` — and that is what it *means*, but it
    * cannot be what the parser builds: every name in this tree is a token, and the desugaring needs
    * `Node`, `Attr` and the string `"div"`, none of which the source wrote. Synthesising tokens moves
    * every line and column in every diagnostic, because they are measured against the lexer's array.
@@ -180,13 +180,19 @@ export enum ExprKind {
   /** `++`/`--`; `prefix` distinguishes `++i` from `i++`. */
   Incr(Lvalue target, i32 op, bool prefix),
   /**
-   * `i32[n]()`, `i32[n](fill: v)`, or `i32[](1, 2, 3)`.
+   * `i32[].filled(n, 0)`, `i32[].filled(n, v)`, or `[1, 2, 3] as i32[]`.
    *
    * `size` and `elements` are exclusive. `fill` accompanies `size` and gives every
    * element that value, which is the only way to size an array dynamically when the
    * element type has no default — as anything reachable from an enum does not.
    */
   ArrNew(Ty elem, Expr? size, Expr? fill, Expr[] elements),
+  /**
+   * `[a, b, c]` — an array literal. Its element type is not written: it comes from where the array is
+   * going, or from its elements (`spec/next/2-types/15-arrays.md`), which is why this is not an
+   * `ArrNew` — that one carries a written `Ty` and this has none to carry.
+   */
+  ArrLit(Expr[] elements),
   /**
    * `(i32 a) => a + 1` and `() => { … }` — `design/lang/0002` tier two.
    *

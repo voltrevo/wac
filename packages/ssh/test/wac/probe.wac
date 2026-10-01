@@ -54,7 +54,7 @@ export u8[] sshKexInit(u8[] cookie) { return encode(clientProposal(), cookie); }
 /** Which list to pull out of a parsed KEXINIT, by wire position. */
 export u8[] sshProposalField(u8[] payload, i32 which) {
   Proposal? p = decode(payload);
-  if (p is null) { return u8[0](); }
+  if (p is null) { return u8[](); }
   if (which == 0) { return p!.kex; }
   if (which == 1) { return p!.hostKey; }
   if (which == 2) { return p!.cipherToServer; }
@@ -63,7 +63,7 @@ export u8[] sshProposalField(u8[] payload, i32 which) {
   if (which == 5) { return p!.macToClient; }
   if (which == 6) { return p!.compToServer; }
   if (which == 7) { return p!.compToClient; }
-  return u8[0]();
+  return u8[]();
 }
 
 export bool sshProposalOk(u8[] payload) { return decode(payload) is not null; }
@@ -71,13 +71,13 @@ export bool sshProposalOk(u8[] payload) { return decode(payload) is not null; }
 /** Our choice against theirs, by the same field numbering. Empty means no overlap. */
 export u8[] sshNegotiate(u8[] serverPayload, i32 which) {
   Proposal? theirs = decode(serverPayload);
-  if (theirs is null) { return u8[0](); }
+  if (theirs is null) { return u8[](); }
   Proposal ours = clientProposal();
   if (which == 0) { return negotiate(ours.kex, theirs!.kex); }
   if (which == 1) { return negotiate(ours.hostKey, theirs!.hostKey); }
   if (which == 2) { return negotiate(ours.cipherToServer, theirs!.cipherToServer); }
   if (which == 3) { return negotiate(ours.cipherToClient, theirs!.cipherToClient); }
-  return u8[0]();
+  return u8[]();
 }
 
 // ── Wire types, exercised directly ────────────────────────────────────────────
@@ -98,7 +98,7 @@ export u8[] sshWriteString(u8[] v) {
 export u8[] sshReadString(u8[] buf) {
   Reader r = Reader.over(buf);
   u8[] v = r.str();
-  return r.ok ? v : u8[0]();
+  return r.ok ? v : u8[]();
 }
 
 export bool sshReadStringOk(u8[] buf) {
@@ -156,17 +156,17 @@ export bool sshEcdhReplyOk(u8[] payload) { return parseEcdhReply(payload) is not
 /** 0 = host key blob, 1 = server public, 2 = signature blob. */
 export u8[] sshEcdhReplyField(u8[] payload, i32 which) {
   EcdhReply? r = parseEcdhReply(payload);
-  if (r is null) { return u8[0](); }
+  if (r is null) { return u8[](); }
   if (which == 0) { return r!.hostKey; }
   if (which == 1) { return r!.serverPublic; }
   if (which == 2) { return r!.signature; }
-  return u8[0]();
+  return u8[]();
 }
 
 /** Empty when the peer's point is low-order, which must abort rather than continue. */
 export u8[] sshSharedSecret(u8[] secret, u8[] peerPublic) {
   u8[]? k = sharedSecret(secret, peerPublic);
-  return k is null ? u8[0]() : k!;
+  return k is null ? u8[]() : k!;
 }
 
 export u8[] sshExchangeHash(u8[] vc, u8[] vs, u8[] ic, u8[] isrv, u8[] ks,
@@ -383,7 +383,7 @@ export u8[] sshEphemeralPublicForSeed(u8[] seed) { return ed25519PublicKey(seed)
 export u8[] sshServerEphemeral(u8[] secret) { return srvEphemeral(secret); }
 export u8[] sshServerShared(u8[] secret, u8[] peer) {
   u8[]? k = srvShared(secret, peer);
-  return (k is null) ? u8[0]() : k!;
+  return (k is null) ? u8[]() : k!;
 }
 export u8[] sshServerChannelFailure(i32 channel) { return srvChanFailure(channel); }
 export u8[] sshServerChannelEof(i32 channel) { return srvEof(channel); }
@@ -410,7 +410,7 @@ import { msgChannelOpen, msgChannelFailure } from "../../src/channel.wac";
 
 /** Every message number, in a fixed order the test knows. */
 export i32[] sshMessageNumbers() {
-  i32[] out = i32[25](fill: 0);
+  i32[] out = i32[].filled(25, 0);
   out[0] = msgDisconnect();
   out[1] = msgIgnore();
   out[2] = msgUnimplemented();

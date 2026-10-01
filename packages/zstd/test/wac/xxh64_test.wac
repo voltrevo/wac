@@ -37,13 +37,17 @@ string hex64(u64 v) {
 }
 
 string[] vectorTexts() {
-  return string[]("", "a", "abc", "message digest", "abcdefghijklmnopqrstuvwxyz",
-                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+  return [
+                  "", "a", "abc", "message digest", "abcdefghijklmnopqrstuvwxyz",
+                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+  ];
 }
 
 string[] vectorDigests() {
-  return string[]("ef46db3751d8e999", "d24ec4f1a98c6e5b", "44bc2cf5ad770999", "066ed728fceeb3be",
-                  "cfe1f278fa89835c", "aaa46907d3047814");
+  return [
+                  "ef46db3751d8e999", "d24ec4f1a98c6e5b", "44bc2cf5ad770999", "066ed728fceeb3be",
+                  "cfe1f278fa89835c", "aaa46907d3047814"
+  ];
 }
 
 export string test_the_published_vectors() {
@@ -62,10 +66,10 @@ export string test_every_length_across_the_stripe_and_tail_boundaries() {
   // The algorithm changes shape at 32 bytes, then again at every 8 and 4 in the tail, so the
   // lengths that matter are the ones either side of those. A hash that is right at 64 bytes and
   // wrong at 37 has a broken tail, which fixed vectors alone would not localise.
-  u8[] data = u8[200]();
+  u8[] data = u8[].filled(200, 0);
   for (i32 i = 0; i < data.len(); i++) { data[i] = (i * 37 + 11) & 0xff; }
 
-  string[] seen = string[101](fill: "");
+  string[] seen = string[].filled(101, "");
   for (i32 n = 0; n <= 100; n++) {
     string h = hex64(xxh64(data, 0, n));
     for (i32 k = 0; k < n; k++) {
@@ -118,10 +122,10 @@ export string test_streamed_in_every_chunk_size_the_digest_is_the_one_shots() {
   // treats the tail differently, so hashing each piece separately agrees with the whole only when every
   // piece is a multiple of 32. Cutting at *every* size from one byte upwards is what finds that.
   // `packages/gzip`'s streaming tests use the same shape — 0006, and 0088 asks for it here.
-  i32[] lengths = i32[](0, 1, 7, 31, 32, 33, 63, 64, 65, 200, 1000);
+  i32[] lengths = [0, 1, 7, 31, 32, 33, 63, 64, 65, 200, 1000];
   for (i32 i = 0; i < lengths.len(); i++) {
     i32 len = lengths[i];
-    u8[] d = u8[len]();
+    u8[] d = u8[].filled(len, 0);
     for (i32 k = 0; k < len; k++) { d[k] = (k * 37 + 11) & 0xff; }
     string want = hex64(xxh64(d, 0, d.len()));
     i32 most = (len < 1 ? 1 : len) + 1;
@@ -138,10 +142,12 @@ export string test_and_the_published_vectors_survive_being_cut_up() {
   T t = T.create();
   // The vectors above are the real oracle; this checks the streaming path against them directly rather
   // than only against our own one-shot, which could be wrong in the same way.
-  string[] texts = string[]("", "abc",
-                            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
-  string[] want = string[]("ef46db3751d8e999", "44bc2cf5ad770999", "aaa46907d3047814");
-  i32[] cuts = i32[](1, 2, 3, 8, 16, 32, 64);
+  string[] texts = [
+                            "", "abc",
+                            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+  ];
+  string[] want = ["ef46db3751d8e999", "44bc2cf5ad770999", "aaa46907d3047814"];
+  i32[] cuts = [1, 2, 3, 8, 16, 32, 64];
   for (i32 i = 0; i < texts.len(); i++) {
     u8[] d = texts[i].toBytes();
     for (i32 c = 0; c < cuts.len(); c++) {

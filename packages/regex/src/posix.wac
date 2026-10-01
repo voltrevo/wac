@@ -226,18 +226,18 @@ bool writeClass(Buf out, string name) {
  * GNU `tr` over every byte, which is the only reason to believe it.
  */
 export i32[] classRanges(string name) {
-  if (name == "alpha") { return i32[]('A', 'Z', 'a', 'z'); }
-  if (name == "alnum") { return i32[]('0', '9', 'A', 'Z', 'a', 'z'); }
-  if (name == "digit") { return i32[]('0', '9'); }
-  if (name == "upper") { return i32[]('A', 'Z'); }
-  if (name == "lower") { return i32[]('a', 'z'); }
-  if (name == "space") { return i32[](9, 13, 32, 32); }
-  if (name == "blank") { return i32[](9, 9, 32, 32); }
-  if (name == "cntrl") { return i32[](0, 31, 127, 127); }
-  if (name == "print") { return i32[](32, 126); }
-  if (name == "graph") { return i32[](33, 126); }
-  if (name == "punct") { return i32[](33, 47, 58, 64, 91, 96, 123, 126); }
-  if (name == "xdigit") { return i32[]('0', '9', 'A', 'F', 'a', 'f'); }
+  if (name == "alpha") { return ['A', 'Z', 'a', 'z'] as i32[]; }
+  if (name == "alnum") { return ['0', '9', 'A', 'Z', 'a', 'z'] as i32[]; }
+  if (name == "digit") { return ['0', '9'] as i32[]; }
+  if (name == "upper") { return ['A', 'Z'] as i32[]; }
+  if (name == "lower") { return ['a', 'z'] as i32[]; }
+  if (name == "space") { return [9, 13, 32, 32] as i32[]; }
+  if (name == "blank") { return [9, 9, 32, 32] as i32[]; }
+  if (name == "cntrl") { return [0, 31, 127, 127] as i32[]; }
+  if (name == "print") { return [32, 126] as i32[]; }
+  if (name == "graph") { return [33, 126] as i32[]; }
+  if (name == "punct") { return [33, 47, 58, 64, 91, 96, 123, 126] as i32[]; }
+  if (name == "xdigit") { return ['0', '9', 'A', 'F', 'a', 'f'] as i32[]; }
   return i32[]();
 }
 
@@ -250,7 +250,7 @@ i32 closerAt(u8[] p, i32 from, i32 mark) {
 }
 
 u8[] sliceOf(u8[] p, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   out.copyFrom(p, from, 0, to - from);
   return out;
 }

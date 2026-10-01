@@ -58,9 +58,9 @@ export string test_every_exported_function_is_where_namesfiles_says_and_all_are_
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
-  string[] wrong = string[16](fill: "");
+  string[] wrong = string[].filled(16, "");
   i32 nWrong = 0;
-  string[] gaps = string[16](fill: "");
+  string[] gaps = string[].filled(16, "");
   i32 nGaps = 0;
   i32 checkedFiles = 0;
   i32 checkedExports = 0;
@@ -96,7 +96,7 @@ export string test_every_exported_function_is_where_namesfiles_says_and_all_are_
 
     // Marked rather than searched: a linear scan per index is quadratic, and `packages/json` alone
     // has 335 functions.
-    bool[] named = bool[total](fill: false);
+    bool[] named = bool[].filled(total, false);
     for (i32 i = 0; i < ns.indices.len(); i++) {
       if (ns.indices[i] >= 0 && ns.indices[i] < total) { named[ns.indices[i]] = true; }
     }
@@ -123,12 +123,12 @@ export string test_every_exported_function_is_where_namesfiles_says_and_all_are_
   t.isTrue(checkedFunctions >= 1000,
            "only " + itoa(checkedFunctions) + " functions seen — the name section is not being read");
 
-  string[] saidWrong = string[nWrong](fill: "");
+  string[] saidWrong = string[].filled(nWrong, "");
   for (i32 i = 0; i < nWrong; i++) { saidWrong[i] = wrong[i]; }
   t.eqI32(nWrong, 0, itoa(nWrong) + " exported function(s) are not where `namesFiles` puts them: " +
                      joined(saidWrong, "; "));
 
-  string[] saidGaps = string[nGaps](fill: "");
+  string[] saidGaps = string[].filled(nGaps, "");
   for (i32 i = 0; i < nGaps; i++) { saidGaps[i] = gaps[i]; }
   t.eqI32(nGaps, 0, itoa(nGaps) + " module(s) have unnamed functions: " + joined(saidGaps, "; "));
   return t.report();

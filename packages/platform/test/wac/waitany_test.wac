@@ -30,10 +30,10 @@ import { madeDir } from "../../../wactest/src/host.wac";
 const string ENTRY = "packages/platform/example/whichever.wac";
 
 string[] splitLines(string s) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -41,7 +41,7 @@ string[] splitLines(string s) {
     if (i > at) { out[count] = s.slice(at, i); count = count + 1; }
     at = i + 1;
   }
-  string[] exact = string[count](fill: "");
+  string[] exact = string[].filled(count, "");
   for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -118,8 +118,10 @@ export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, 
 
   // Slow port first, so its ticket is index 0 while the *fast* answer is index 1.
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  Exec r = cli.exec(wac, string[]("run", "--allow-net", ENTRY, "--",
-                                  itoa(slowPort), itoa(quickPort)), u8[0]()).wait();
+  Exec r = cli.exec(wac, [
+                                  "run", "--allow-net", ENTRY, "--",
+                                  itoa(slowPort), itoa(quickPort)
+  ], u8[]()).wait();
   stop(cli, quick);
   stop(cli, slow);
 

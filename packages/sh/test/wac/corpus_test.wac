@@ -31,7 +31,7 @@ struct Ran {
  * open and answer `sh: sh: No such file or directory`.
  */
 Ran runScript(Core core, Cli cli, string cwd, string script) {
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), cwd, false);
+  Frame f = Frame.of(["sh", "-c", script], u8[](), cwd, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
@@ -100,7 +100,7 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
   // **No external programs here.** This package's shell carries none by design — `tr` and `wc` are
   // box's, and asking for them asserts that a program is missing rather than anything about the
   // language. Box's own canary covers the applets.
-  string[] canaries = string[](
+  string[] canaries = [
     "echo hi",
     "x=5; echo $((x * 3))",
     "printf '%s|%s\\n' a b",
@@ -109,14 +109,16 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
     "x=abc; echo ${x#a}",
     "false; echo $?",
     "echo \"quoted $(echo sub)\""
-  );
+  ];
   i32 checked = 0;
   for (i32 i = 0; i < canaries.len(); i++) {
     string script = canaries[i];
     Exec r = cli.exec("env",
-                      string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                               "LC_ALL=C.UTF-8", "bash", "-c", script),
-                      u8[0]()).wait();
+                      [
+                               "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                               "LC_ALL=C.UTF-8", "bash", "-c", script
+                      ],
+                      u8[]()).wait();
     if (!r.ran()) {
       // No bash here is not a failure of this shell: say so and stop, rather than passing quietly.
       t.isTrue(i > 0, "bash would not start: " + r.error);

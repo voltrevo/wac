@@ -93,7 +93,7 @@ export bool linkSpecifiersValid(u8[] ls) {
  * Everything else is forwarded whole and never inspected.
  */
 export u8[] linkSpecifier(u8[] ls, i32 type) {
-  if (!linkSpecifiersValid(ls)) { return u8[0](); }
+  if (!linkSpecifiersValid(ls)) { return u8[](); }
   i32 n = ls[0];
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
@@ -102,13 +102,13 @@ export u8[] linkSpecifier(u8[] ls, i32 type) {
     if (t == type) { return slice(ls, at + 2, at + 2 + length); }
     at = at + 2 + length;
   }
-  return u8[0]();
+  return u8[]();
 }
 
 /** Base64 with the trailing newline trimmed, decoded, or empty. */
 u8[] decodeValue(u8[] value) {
   u8[]? d = b64decode(value);
-  return (d is null) ? u8[0]() : d!;
+  return (d is null) ? u8[]() : d!;
 }
 
 /**
@@ -132,9 +132,9 @@ export IntroPoint[] parseIntroPoints(u8[] plaintext) {
     count = count + 1;
     scan = scan + 1;
   }
-  if (count == 0) { return IntroPoint[0](); }
+  if (count == 0) { return IntroPoint[](); }
 
-  IntroPoint[] found = IntroPoint[count]();
+  IntroPoint[] found = IntroPoint[].defaulted(count);
   i32 kept = 0;
   i32 at = 0;
   for (i32 i = 0; i < count; i++) {
@@ -156,7 +156,7 @@ export IntroPoint[] parseIntroPoints(u8[] plaintext) {
     u8[] onion = decodeValue(keywordValue(section, "onion-key ntor".toBytes()));
     u8[] enc = decodeValue(keywordValue(section, "enc-key ntor".toBytes()));
     u8[] authCert = pemBlock(section, "auth-key".toBytes(), "ED25519 CERT".toBytes());
-    u8[] auth = (certType(authCert) == CERT_TYPE_INTRO_AUTH) ? certCertifiedKey(authCert) : u8[0]();
+    u8[] auth = (certType(authCert) == CERT_TYPE_INTRO_AUTH) ? certCertifiedKey(authCert) : u8[]();
 
     IntroPoint p = IntroPoint(ls, onion, auth, enc);
     if (wellFormed(p) && linkSpecifiersValid(ls)) {
@@ -166,7 +166,7 @@ export IntroPoint[] parseIntroPoints(u8[] plaintext) {
     at = start + 1;
   }
   if (kept == count) { return found; }
-  IntroPoint[] out = IntroPoint[kept]();
+  IntroPoint[] out = IntroPoint[].defaulted(kept);
   for (i32 i = 0; i < kept; i++) { out[i] = found[i]; }
   return out;
 }
@@ -184,10 +184,10 @@ export IntroPoint[] parseIntroPoints(u8[] plaintext) {
  * No extensions and no padding: padding is only required when talking to a legacy introduction point.
  */
 export u8[] introduce1Plaintext(u8[] rendCookie, u8[] rendOnionKey, u8[] rendLinkSpecifiers) {
-  if (rendCookie.len() != 20 || rendOnionKey.len() != 32) { return u8[0](); }
-  if (!linkSpecifiersValid(rendLinkSpecifiers)) { return u8[0](); }
+  if (rendCookie.len() != 20 || rendOnionKey.len() != 32) { return u8[](); }
+  if (!linkSpecifiersValid(rendLinkSpecifiers)) { return u8[](); }
   i32 n = 20 + 1 + 1 + 2 + 32 + rendLinkSpecifiers.len();
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < 20; i++) { out[at + i] = rendCookie[i]; }
   at = 20;
@@ -218,9 +218,9 @@ export u8[] introduce1Plaintext(u8[] rendCookie, u8[] rendOnionKey, u8[] rendLin
  * pieces in one place. `introduce1MacInput` gives that span.
  */
 export u8[] introduce1Cell(u8[] authKey, u8[] encrypted) {
-  if (authKey.len() != 32) { return u8[0](); }
+  if (authKey.len() != 32) { return u8[](); }
   i32 n = 20 + 1 + 2 + 32 + 1 + encrypted.len();
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   // out[0..20] stays zero: LEGACY_KEY_ID.
   out[20] = 2;              // AUTH_KEY_TYPE: ed25519
   out[21] = 0;              // AUTH_KEY_LEN, big-endian
@@ -246,7 +246,7 @@ export u8[] introduce1Cell(u8[] authKey, u8[] encrypted) {
  * distinguishes the two spans.
  */
 export u8[] introduce1MacInput(u8[] cellSoFar) {
-  if (cellSoFar.len() <= 20) { return u8[0](); }
+  if (cellSoFar.len() <= 20) { return u8[](); }
   return cellSoFar;
 }
 
@@ -257,8 +257,8 @@ export u8[] introduce1MacInput(u8[] cellSoFar) {
  * later presents the same cookie in a RENDEZVOUS1 cell, without ever learning which service that is.
  */
 export u8[] establishRendezvousCell(u8[] cookie) {
-  if (cookie.len() != 20) { return u8[0](); }
-  u8[] out = u8[20]();
+  if (cookie.len() != 20) { return u8[](); }
+  u8[] out = u8[].filled(20, 0);
   for (i32 i = 0; i < 20; i++) { out[i] = cookie[i]; }
   return out;
 }
@@ -271,7 +271,7 @@ export u8[] establishRendezvousCell(u8[] cookie) {
  * the entire authentication of the service, and nothing else in the exchange performs it.
  */
 export u8[] rendezvous2HandshakeInfo(u8[] body) {
-  if (body.len() < 64) { return u8[0](); }
+  if (body.len() < 64) { return u8[](); }
   return slice(body, 0, 64);
 }
 
@@ -299,19 +299,19 @@ export u8[] rendezvous2HandshakeInfo(u8[] body) {
 export u8[] buildIntroduce1(
   u8[] authKey, u8[] encKey, u8[] macKey, u8[] clientPublic, u8[] plaintext
 ) {
-  if (authKey.len() != 32 || encKey.len() != 32 || macKey.len() != 32) { return u8[0](); }
-  if (clientPublic.len() != 32 || plaintext.len() == 0) { return u8[0](); }
+  if (authKey.len() != 32 || encKey.len() != 32 || macKey.len() != 32) { return u8[](); }
+  if (clientPublic.len() != 32 || plaintext.len() == 0) { return u8[](); }
 
-  u8[] ciphertext = aesCtr(encKey, u8[16](), plaintext);
-  u8[] withoutMac = u8[32 + ciphertext.len()]();
+  u8[] ciphertext = aesCtr(encKey, u8[].filled(16, 0), plaintext);
+  u8[] withoutMac = u8[].filled(32 + ciphertext.len(), 0);
   for (i32 i = 0; i < 32; i++) { withoutMac[i] = clientPublic[i]; }
   for (i32 i = 0; i < ciphertext.len(); i++) { withoutMac[32 + i] = ciphertext[i]; }
 
   u8[] draft = introduce1Cell(authKey, withoutMac);
-  if (draft.len() == 0) { return u8[0](); }
+  if (draft.len() == 0) { return u8[](); }
   u8[] mac = hsMac(macKey, introduce1MacInput(draft));
 
-  u8[] encrypted = u8[withoutMac.len() + 32]();
+  u8[] encrypted = u8[].filled(withoutMac.len() + 32, 0);
   for (i32 i = 0; i < withoutMac.len(); i++) { encrypted[i] = withoutMac[i]; }
   for (i32 i = 0; i < 32; i++) { encrypted[withoutMac.len() + i] = mac[i]; }
   return introduce1Cell(authKey, encrypted);

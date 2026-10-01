@@ -34,7 +34,7 @@ export string test_the_second_time_is_a_replay() {
   almost[199] = almost[199] ^ 1;
   t.isTrue(!seenBefore(c, almost, NOW), "one byte apart is not the same cell");
 
-  t.isTrue(!seenBefore(c, u8[0](), NOW), "nothing is not a cell and is not remembered");
+  t.isTrue(!seenBefore(c, u8[](), NOW), "nothing is not a cell and is not remembered");
   return t.report();
 }
 
@@ -128,7 +128,7 @@ export string test_the_cache_is_bounded() {
 
 /** `n` bytes derived from `role`, so two cells differ in every byte rather than in a prefix. */
 u8[] bytes(i32 role, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (role * 131 + i * 17 + 7) & 0xFF; }
   return out;
 }

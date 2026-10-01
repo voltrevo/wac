@@ -31,7 +31,7 @@ export string test_a_child_that_redirects_its_output_writes_the_file(Core core, 
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
   string path = dir + "/out.txt";
 
-  Frame f = Frame.of(string[]("child"), u8[0](), dir, false);
+  Frame f = Frame.of(["child"], u8[](), dir, false);
   Cli child = childCli(f, cli);
   writeThroughRedirect(child, path, "redirected\n");
 
@@ -52,7 +52,7 @@ export string test_output_either_side_of_a_redirect_is_still_captured(Core core,
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
   string path = dir + "/middle.txt";
 
-  Frame f = Frame.of(string[]("child"), u8[0](), dir, false);
+  Frame f = Frame.of(["child"], u8[](), dir, false);
   Cli child = childCli(f, cli);
   child.write("before\n".toBytes());
   writeThroughRedirect(child, path, "inside\n");
@@ -80,17 +80,17 @@ export string test_a_frames_cwd_is_absolute_however_it_was_given(Core core, Cli 
   T t = T.create();
   string here = cli.cwd().wait();
 
-  Frame rel = Frame.of(string[]("child"), u8[0](), ".cache/wac-relcwd", false);
+  Frame rel = Frame.of(["child"], u8[](), ".cache/wac-relcwd", false);
   t.eqStr(childCli(rel, cli).cwd().wait(), here + "/.cache/wac-relcwd",
           "a relative frame cwd is joined onto the parent's");
 
-  Frame abs = Frame.of(string[]("child"), u8[0](), here + "/.cache/wac-abscwd", false);
+  Frame abs = Frame.of(["child"], u8[](), here + "/.cache/wac-abscwd", false);
   t.eqStr(childCli(abs, cli).cwd().wait(), here + "/.cache/wac-abscwd",
           "an absolute frame cwd is untouched");
 
   // No frame cwd is not a cwd of `""` — it means "the parent's", which is a third answer and the one
   // that would be lost by absolutising unconditionally.
-  Frame none = Frame.of(string[]("child"), u8[0](), "", false);
+  Frame none = Frame.of(["child"], u8[](), "", false);
   t.eqStr(childCli(none, cli).cwd().wait(), here, "no frame cwd is the parent's own");
 
   // And the write that started the issue: a child writing a bare name into a relative frame cwd.

@@ -47,7 +47,7 @@ export u8[] window(i32 w, i32 h) {
   s.fill(4, 4, w - 8, h - 8, 0x1E2528FF);      // the window
   s.rect(4, 4, w - 8, h - 8, 0x46D9C0FF);      // its frame
   s.fill(5, 5, w - 10, cellHeight() + 2, 0x2A3438FF);   // the title bar
-  s.text(i32[](0x77, 0x61, 0x63), 8, 6, 0xDCE8E7FF);    // "wac"
+  s.text([0x77, 0x61, 0x63] as i32[], 8, 6, 0xDCE8E7FF);    // "wac"
   return s.pixels;
 }
 
@@ -58,15 +58,15 @@ export i32[] windowDamage(i32 w, i32 h) {
   s.fill(4, 4, w - 8, h - 8, 0x1E2528FF);
   s.rect(4, 4, w - 8, h - 8, 0x46D9C0FF);
   s.fill(5, 5, w - 10, cellHeight() + 2, 0x2A3438FF);
-  s.text(i32[](0x77, 0x61, 0x63), 8, 6, 0xDCE8E7FF);
-  return i32[](s.dx0, s.dy0, s.dx1, s.dy1);
+  s.text([0x77, 0x61, 0x63] as i32[], 8, 6, 0xDCE8E7FF);
+  return [s.dx0, s.dy0, s.dx1, s.dy1];
 }
 
 /** Damage after drawing one small rectangle, so a test can see it is not the whole surface. */
 export i32[] damageOfFill(i32 w, i32 h, i32 x, i32 y, i32 fw, i32 fh) {
   Surface s = Surface.create(w, h);
   s.fill(x, y, fw, fh, 0xFFFFFFFF);
-  return i32[](s.dx0, s.dy0, s.dx1, s.dy1);
+  return [s.dx0, s.dy0, s.dx1, s.dy1];
 }
 
 /** Whether a freshly made surface reports nothing damaged. */
@@ -104,7 +104,7 @@ export i32[] damageOfTwo(i32 ax, i32 ay, i32 bx, i32 by) {
   Surface s = Surface.create(64, 32);
   s.fill(ax, ay, 4, 4, 0xFFFFFFFF);
   s.fill(bx, by, 4, 4, 0xFFFFFFFF);
-  return i32[](s.dx0, s.dy0, s.dx1, s.dy1);
+  return [s.dx0, s.dy0, s.dx1, s.dy1];
 }
 
 /** Whether `undamage` clears what a draw set. */
@@ -148,7 +148,7 @@ export i32[] damagedShape(i32 x, i32 y, i32 w, i32 h) {
   Surface s = Surface.create(64, 32);
   s.fill(x, y, w, h, 0x11223344);
   u8[] px = s.damagedPixels();
-  return i32[](s.dx0, s.dy0, s.dx1 - s.dx0 + 1, s.dy1 - s.dy0 + 1, px.len());
+  return [s.dx0, s.dy0, s.dx1 - s.dx0 + 1, s.dy1 - s.dy0 + 1, px.len()];
 }
 
 /** The first pixel of a region, so a test can see it was copied from the right place. */
@@ -167,7 +167,7 @@ export i32 cleanHasNoPixels() { return Surface.create(8, 8).damagedPixels().len(
 
 /** A stack of windows from flat numbers, so a test can build one without a struct array. */
 Rect[] stackOf(i32[] flat) {
-  Rect[] out = Rect[flat.len() / 4](fill: Rect(0, 0, 0, 0));
+  Rect[] out = Rect[].filled(flat.len() / 4, Rect(0, 0, 0, 0));
   for (i32 i = 0; i < flat.len() / 4; i++) {
     out[i] = Rect(flat[i * 4], flat[i * 4 + 1], flat[i * 4 + 2], flat[i * 4 + 3]);
   }
@@ -197,7 +197,7 @@ export i32 partClose() { return PART_CLOSE(); }
 export i32[] raiseThenHit(i32[] flat, i32 i, i32 px, i32 py) {
   Rect[] s = stackOf(flat);
   i32 at = raiseTo(s, i);
-  return i32[](at, topmost(s, px, py));
+  return [at, topmost(s, px, py)];
 }
 
 // ── The terminal grid (design/system/0004 step 4) ────────────────────────────
@@ -206,7 +206,7 @@ export i32[] raiseThenHit(i32[] flat, i32 i, i32 px, i32 py) {
 export i32[] gridRow(i32 cols, i32 rows, i32[] cps, i32 row) {
   Grid g = Grid.create(cols, rows, 8);
   g.write(cps);
-  i32[] out = i32[cols]();
+  i32[] out = i32[].filled(cols, 0);
   for (i32 c = 0; c < cols; c++) { out[c] = g.at(c, row); }
   return out;
 }
@@ -215,14 +215,14 @@ export i32[] gridRow(i32 cols, i32 rows, i32[] cps, i32 row) {
 export i32[] gridCursor(i32 cols, i32 rows, i32[] cps) {
   Grid g = Grid.create(cols, rows, 8);
   g.write(cps);
-  return i32[](g.curCol, g.curRow);
+  return [g.curCol, g.curRow];
 }
 
 /** A scrolled-off line, and how many are kept. */
 export i32[] gridScrolled(i32 cols, i32 rows, i32 maxBack, i32[] cps, i32 line) {
   Grid g = Grid.create(cols, rows, maxBack);
   g.write(cps);
-  i32[] out = i32[cols + 1]();
+  i32[] out = i32[].filled(cols + 1, 0);
   out[0] = g.scrollbackRows;
   for (i32 c = 0; c < cols; c++) { out[c + 1] = g.scrolledAt(c, line); }
   return out;
@@ -268,8 +268,8 @@ export i32 caretInk(i32 cols, i32 rows, i32[] cps) {
 /** A desk with two windows, the second on top, for the event tests. */
 Desk twoWindows() {
   Desk d = Desk.create();
-  d.open(10, 10, 8, 3, i32[](0x61));        // "a", back
-  d.open(40, 30, 8, 3, i32[](0x62));        // "b", front
+  d.open(10, 10, 8, 3, [0x61] as i32[]);        // "a", back
+  d.open(40, 30, 8, 3, [0x62] as i32[]);        // "b", front
   return d;
 }
 
@@ -277,7 +277,7 @@ Desk twoWindows() {
 export i32[] deskPress(i32 px, i32 py) {
   Desk d = twoWindows();
   i32 top = d.pointerDown(px, py);
-  return i32[](top, d.wins.len(), d.dragging);
+  return [top, d.wins.len(), d.dragging];
 }
 
 /** Press on a bar, drag, release — answer where the window ended up. */
@@ -287,11 +287,11 @@ export i32[] deskDrag(i32 downX, i32 downY, i32 moveX, i32 moveY) {
   d.pointerMove(moveX, moveY);
   i32 n = d.wins.len();
   Rect f = d.wins[n - 1].frame;
-  i32[] before = i32[](f.x, f.y);
+  i32[] before = [f.x, f.y];
   d.pointerUp();
   d.pointerMove(moveX + 100, moveY + 100);   // ignored: nothing is held
   Rect g = d.wins[n - 1].frame;
-  return i32[](before[0], before[1], g.x, g.y);
+  return [before[0], before[1], g.x, g.y];
 }
 
 /** Close the front window while the back one is being dragged — the drag must not transfer. */
@@ -319,7 +319,7 @@ export i32[] deskDrawn(i32 w, i32 h) {
   for (i32 y = 0; y < h; y++) {
     for (i32 x = 0; x < w; x++) { if (s.at(x, y) == 0x46D9C0FF) { frames = frames + 1; } }
   }
-  return i32[](s.dx0, s.dy0, s.dx1, s.dy1, frames, s.damagedPixels().len());
+  return [s.dx0, s.dy0, s.dx1, s.dy1, frames, s.damagedPixels().len()];
 }
 
 /**
@@ -334,7 +334,7 @@ export i32[] gridDrawnInk(i32 cols, i32 rows, i32 maxBack, i32[] cps, i32 up) {
   g.write(cps);
   Surface s = Surface.create(cols * cellWidth(), rows * cellHeight());
   g.drawFrom(s, 0, 0, 0xFFFFFFFF, 0x000000FF, up);
-  i32[] out = i32[rows]();
+  i32[] out = i32[].filled(rows, 0);
   for (i32 r = 0; r < rows; r++) {
     i32 n = 0;
     for (i32 py = r * cellHeight(); py < (r + 1) * cellHeight(); py++) {
@@ -365,7 +365,7 @@ export i32[] gridSelectionInk(i32 cols, i32 rows, i32[] cps, i32 c0, i32 r0, i32
   Surface s = Surface.create(cols * cellWidth(), rows * cellHeight());
   g.draw(s, 0, 0, 0xFFFFFFFF, 0x000000FF);
   // The top-left pixel of each cell: white where the cell was filled for selection, black otherwise.
-  i32[] out = i32[cols]();
+  i32[] out = i32[].filled(cols, 0);
   for (i32 c = 0; c < cols; c++) {
     out[c] = s.pixels[((row * cellHeight()) * s.width + c * cellWidth()) * 4];
   }
@@ -383,9 +383,9 @@ export i32[] gridClamped(i32 cols, i32 rows, i32 maxBack) {
   Grid g = Grid.create(cols, rows, maxBack);
   // `scrollbackMax` is not a field a caller can read, so it is measured: write enough lines to
   // overflow the grid and count how many are kept above the viewport.
-  i32[] nl = i32[]('x', 10, 'y', 10, 'z', 10, 'w', 10);
+  i32[] nl = ['x', 10, 'y', 10, 'z', 10, 'w', 10];
   g.write(nl);
-  return i32[](g.cols, g.rows, g.scrollbackRows);
+  return [g.cols, g.rows, g.scrollbackRows];
 }
 
 /** Whether `selected` says yes at `(col, row)` when the drag ran backwards — head before anchor. */
@@ -422,7 +422,7 @@ export i32[] gridPressWithoutDrag(i32 cols, i32 rows, i32 col, i32 row) {
   moved.selectTo(col + 1, row);
   i32 afterMove = moved.selected(col, row) ? 1 : 0;
 
-  return i32[](afterPress, textAfterPress, afterDragToItself, afterMove);
+  return [afterPress, textAfterPress, afterDragToItself, afterMove];
 }
 
 /** The length of the selected text with no selection begun, and after clearing one. */
@@ -438,7 +438,7 @@ export i32[] gridSelectionAbsent(i32 cols, i32 rows, i32[] cps) {
   i32 withOne = g.selectedText(0).len();
   g.clearSelection();
   i32 afterClearing = g.selectedText(0).len();
-  return i32[](never, extendedWithoutBeginning, withOne, afterClearing);
+  return [never, extendedWithoutBeginning, withOne, afterClearing];
 }
 
 /** The selected text with an `up` offset outside the scrollback it has, both directions. */
@@ -480,11 +480,11 @@ export i32 deskTypedWithNoWindows(i32[] cps) {
 export i32[] damageOfDegenerate(i32 x0, i32 y0, i32 x1, i32 y1) {
   Surface s = Surface.create(32, 32);
   s.damage(x0, y0, x1, y1);
-  return s.damaged() ? i32[](s.dx0, s.dy0, s.dx1, s.dy1) : i32[](-1, -1, -1, -1);
+  return s.damaged() ? [s.dx0, s.dy0, s.dx1, s.dy1] : [-1, -1, -1, -1] as i32[];
 }
 
 /** `glyphWide` and `glyphWidth` at an index, including ones the font does not have. */
 export i32[] glyphAt(i32 idx) {
-  return i32[](glyphWide(idx) ? 1 : 0, glyphWidth(idx));
+  return [glyphWide(idx) ? 1 : 0, glyphWidth(idx)];
 }
 

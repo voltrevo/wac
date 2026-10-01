@@ -47,7 +47,7 @@ export u8[] encodeUpper(u8[] data) {
  */
 export u8[]? decode(u8[] text) {
   if (text.len() % 2 != 0) { return null; }
-  u8[] out = u8[text.len() / 2]();
+  u8[] out = u8[].filled(text.len() / 2, 0);
   for (i32 i = 0; i < text.len(); i = i + 2) {
     i32 hi = digitValue(text[i]);
     i32 lo = digitValue(text[i + 1]);

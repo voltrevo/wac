@@ -33,7 +33,7 @@ export i32 sort(Core core, Cli cli, Fs fs, Args a) {
   if (numeric) { order = unique ? cmpNumeric : cmpNumericThenBytes; }
   u8[][] sorted = mergeSortWith(lines, n, order);
 
-  u8[][] out = u8[][n](fill: u8[0]());
+  u8[][] out = u8[][].filled(n, u8[]());
   i32 at = 0;
   for (i32 i = 0; i < n; i++) {
     // `-u` drops what the *sort* considers equal, so `-nu` over `1` and `01` keeps one of them,
@@ -52,7 +52,7 @@ export i32 sort(Core core, Cli cli, Fs fs, Args a) {
   }
   if (!reverse) { cli.write(joinLines(out, at)); return 0; }
 
-  u8[][] flipped = u8[][at](fill: u8[0]());
+  u8[][] flipped = u8[][].filled(at, u8[]());
   for (i32 i = 0; i < at; i++) { flipped[i] = out[at - 1 - i]; }
   cli.write(joinLines(flipped, at));
   return 0;

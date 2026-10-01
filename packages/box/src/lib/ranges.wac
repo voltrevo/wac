@@ -85,7 +85,7 @@ export Ranges parseRanges(string who, string text) {
   }
 
   // The second pass. Everything it could refuse has been refused above, so it only reads.
-  i32[] bounds = i32[count * 2](fill: 0);
+  i32[] bounds = i32[].filled(count * 2, 0);
   i32 at = 0;
   i32 k = 0;
   while (at < b.len()) {

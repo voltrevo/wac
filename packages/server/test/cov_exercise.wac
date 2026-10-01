@@ -35,7 +35,7 @@ i32 one(string request) {
  */
 string[] requests() {
   string DEL = string.fromCodepoint(0x7f);
-  return string[](
+  return [
     // every route, and each of its methods
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
@@ -79,7 +79,8 @@ string[] requests() {
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999\r\n\r\n",
     "GET /" + DEL + " HTTP/1.1\r\nHost: a\r\n\r\n",
     // chunked in, which routes the same as any other body
-    "POST /json HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n7\r\n{\"a\":1}\r\n0\r\n\r\n");
+    "POST /json HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n7\r\n{\"a\":1}\r\n0\r\n\r\n"
+  ];
 }
 
 export i32 main() {
@@ -93,7 +94,7 @@ export i32 main() {
   // input rather than an unreachable line — see `cov_ledger.wac`.
   string US = string.fromCodepoint(0x1f);       // a control character whose low nibble is >= 10
   string SO = string.fromCodepoint(0x1a);       // and whose high nibble is not
-  string[] more = string[](
+  string[] more = [
     // an unparseable request target
     "GET :// HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET %%%% HTTP/1.1\r\nHost: a\r\n\r\n",
@@ -116,7 +117,8 @@ export i32 main() {
     // which is why the first attempt at this covered nothing. `0x1a` and `0x1f` both have a low nibble
     // of ten or more, which is the half of that ternary nothing had reached.
     "GET /echo?q=%1A%1F%0B HTTP/1.1\r\nHost: a\r\n\r\n",
-    "GET /match/(.)/a%1Fb HTTP/1.1\r\nHost: a\r\n\r\n");
+    "GET /match/(.)/a%1Fb HTTP/1.1\r\nHost: a\r\n\r\n"
+  ];
   for (i32 i = 0; i < more.len(); i++) { seen = seen + one(more[i]); }
 
   // Every prefix of a request, which is what reaches the `Incomplete` return.
@@ -124,9 +126,10 @@ export i32 main() {
   for (i32 n = 0; n <= full.len(); n++) { seen = seen + one(full.slice(0, n)); }
 
   // Pipelined pairs, so `consumed` is exercised with something after it.
-  string[] firsts = string[](
+  string[] firsts = [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
-    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}");
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}"
+  ];
   for (i32 i = 0; i < firsts.len(); i++) {
     seen = seen + one(firsts[i] + "GET /time HTTP/1.1\r\nHost: a\r\n\r\n");
   }

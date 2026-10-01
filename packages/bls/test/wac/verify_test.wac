@@ -116,8 +116,8 @@ export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Core 
   // my own generated vectors could only guess at what an implementer gets wrong. Their names are
   // the specification: `deserialization_fails_infinity_with_true_b_flag`,
   // `deserialization_fails_too_few_bytes`, `deserialization_fails_not_in_curve`.
-  string[] groups = string[]("G1", "G2");
-  string[] keys = string[]("pubkey", "signature");
+  string[] groups = ["G1", "G2"];
+  string[] keys = ["pubkey", "signature"];
   i32 failures = 0;
   i32 checked = 0;
   for (i32 g = 0; g < groups.len(); g++) {

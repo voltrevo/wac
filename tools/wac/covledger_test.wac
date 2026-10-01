@@ -37,7 +37,7 @@ const string UNCOVERED_SNIPPET = "i32 neverCalled() { return 2; }";
  * the same text. This one nests, once, which is exactly as deep as a wac file goes.
  */
 string[] nested() {
-  return string[](
+  return [
     "struct Handle {",              // 1
     "  i32 id;",                    // 2
     "",                             // 3
@@ -48,7 +48,8 @@ string[] nested() {
     "",                             // 8
     "i32 plain(i32 n) {",           // 9
     "  return n;",                  // 10
-    "}");                           // 11
+    "}"                           // 11
+  ];
 }
 
 string nestedSubject(Cli cli, T t, string name) {
@@ -80,19 +81,20 @@ string subject(Cli cli, T t, string name) {
 
 /** Two points in the subject: line 1 covered, line 2 not. */
 Point[] twoPoints(string dir) {
-  return Point[](
+  return [
     Point(0, dir + "/subject.wac", 1, 1, "entry"),
-    Point(1, dir + "/subject.wac", 2, 1, "entry"));
+    Point(1, dir + "/subject.wac", 2, 1, "entry")
+  ];
 }
 
 /** Counter 0 ran, counter 1 did not. */
-i32[] oneEach() { return i32[](7, 0); }
+i32[] oneEach() { return [7, 0] as i32[]; }
 
 /** No rules at all: the pin cases below are about pins. `test_a_rule_*` cover rules. */
-Rule[] noRules() { return Rule[0](fill: Rule("", "", "line", true, "")); }
+Rule[] noRules() { return Rule[].filled(0, Rule("", "", "line", true, "")); }
 
 /** No pins at all, for the cases that are about what happens without a ledger. */
-Pin[] noPins() { return Pin[0](fill: Pin("", 0, "", true, "")); }
+Pin[] noPins() { return Pin[].filled(0, Pin("", 0, "", true, "")); }
 
 export string test_an_uncovered_point_with_no_entry_is_named(Core core, Cli cli) {
   T t = T.create();
@@ -103,7 +105,7 @@ export string test_an_uncovered_point_with_no_entry_is_named(Core core, Cli cli)
   t.isTrue(failed, "an uncovered point nothing speaks for must fail the run");
 
   // And says which one, by name: `tools/wac/coverageall.wac` repeats these lines verbatim.
-  string[] out = string[4](fill: "");
+  string[] out = string[].filled(4, "");
   t.eqI32(uncoveredLines(twoPoints(dir), 2, oneEach(), dir + "/", out), 1, "one line uncovered");
   t.eqStr(out[0], f + ":2", "and it is the second line");
 
@@ -116,7 +118,7 @@ export string test_a_pinned_uncovered_point_is_accounted_for(Core core, Cli cli)
   string dir = subject(cli, t, "covledger-pinned");
   string f = dir + "/subject.wac";
 
-  Pin[] pins = Pin[](Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."));
+  Pin[] pins = [Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called.")];
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(!failed, "a pinned uncovered point with a matching snippet is the good case");
 
@@ -132,9 +134,10 @@ export string test_a_pin_on_a_covered_point_fails(Core core, Cli cli) {
   // **The direction that was silent for however long.** The pin's snippet still matches, so the entry
   // is not stale in the drifted sense — its *reason* has stopped being true, and that is a failure
   // because an exemption nobody re-derives is how a ledger comes to describe a program that changed.
-  Pin[] pins = Pin[](
+  Pin[] pins = [
     Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."),
-    Pin(f, 1, COVERED_SNIPPET, true, "claims this is unreachable, and it is not."));
+    Pin(f, 1, COVERED_SNIPPET, true, "claims this is unreachable, and it is not.")
+  ];
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a pin on a covered point must fail: the reason has stopped holding");
 
@@ -149,7 +152,7 @@ export string test_a_pin_whose_line_moved_fails(Core core, Cli cli) {
 
   // The snippet is real and the line is not the one holding it — which is what adding a comment above
   // a pinned line does, silently, and the reason a pin is keyed on text as well as a number.
-  Pin[] pins = Pin[](Pin(f, 1, UNCOVERED_SNIPPET, true, "pinned one line early."));
+  Pin[] pins = [Pin(f, 1, UNCOVERED_SNIPPET, true, "pinned one line early.")];
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a pin whose line no longer holds its snippet must fail");
 
@@ -166,7 +169,7 @@ export string test_an_unreadable_pin_is_an_error_not_a_pass(Core core, Cli cli) 
   // against, and the only safe answer is to say so. Reading the snippet check as "no match, therefore
   // drifted" would be a diagnosis it cannot make; reading it as "no file, therefore fine" is how a
   // renamed source silently drops every exemption in it.
-  Pin[] pins = Pin[](Pin(dir + "/no-such.wac", 1, UNCOVERED_SNIPPET, true, "names a file that is not there."));
+  Pin[] pins = [Pin(dir + "/no-such.wac", 1, UNCOVERED_SNIPPET, true, "names a file that is not there.")];
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a pin on a file that cannot be read must fail");
 
@@ -187,11 +190,12 @@ export string test_the_prefix_and_the_test_rule_decide_what_counts(Core core, Cl
   //
   // **This is the rule that broke the first version of this file**, which used the test's own lines as
   // the fixture and reported nothing uncovered because every point in it was filtered by the name.
-  Point[] inTest = Point[](
+  Point[] inTest = [
     Point(0, "tools/wac/x_test.wac", 1, 1, "entry"),
-    Point(1, "tools/wac/test/y.wac", 2, 1, "entry"));
-  string[] out = string[4](fill: "");
-  t.eqI32(uncoveredLines(inTest, 2, i32[](0, 0), "tools/wac/", out), 0,
+    Point(1, "tools/wac/test/y.wac", 2, 1, "entry")
+  ];
+  string[] out = string[].filled(4, "");
+  t.eqI32(uncoveredLines(inTest, 2, [0, 0] as i32[], "tools/wac/", out), 0,
           "neither a `_test.wac` name nor a `/test/` path is counted");
 
   cli.remove(dir, true).wait();
@@ -215,7 +219,7 @@ export string test_an_unproven_pin_is_accounted_for_while_the_gap_is_open(Core c
   string dir = subject(cli, t, "covledger-unproven");
   string f = dir + "/subject.wac";
 
-  Pin[] pins = Pin[](Pin(f, 2, UNCOVERED_SNIPPET, false, "reachable; nobody has built the input."));
+  Pin[] pins = [Pin(f, 2, UNCOVERED_SNIPPET, false, "reachable; nobody has built the input.")];
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(!failed, "an open gap that is written down is not a failure");
 
@@ -228,9 +232,10 @@ export string test_an_unproven_pin_on_a_covered_point_fails(Core core, Cli cli) 
   string dir = subject(cli, t, "covledger-closed");
   string f = dir + "/subject.wac";
 
-  Pin[] pins = Pin[](
+  Pin[] pins = [
     Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."),
-    Pin(f, 1, COVERED_SNIPPET, false, "reachable; nobody has built the input."));
+    Pin(f, 1, COVERED_SNIPPET, false, "reachable; nobody has built the input.")
+  ];
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a gap that has been closed must fail so the entry goes");
 
@@ -255,22 +260,22 @@ export string test_a_rule_speaks_for_every_point_its_scope_reaches(Core core, Cl
   string f = dir + "/nested.wac";
 
   // Two uncovered points: one in the method body (line 5), one in the free function (line 10).
-  Point[] ps = Point[](Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry"));
-  i32[] none = i32[](0, 0);
+  Point[] ps = [Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry")];
+  i32[] none = [0, 0];
 
   // `decl` on the method signature reaches line 5 and not line 10, so line 10 is left over.
-  Rule[] byDecl = Rule[](Rule(f, "Cli cli", "decl", false, "needs a live handle."));
+  Rule[] byDecl = [Rule(f, "Cli cli", "decl", false, "needs a live handle.")];
   t.isTrue(ratchet(core, cli, ps, 2, none, dir + "/", noPins(), byDecl),
            "a rule reaching one of two points leaves the other unaccounted");
 
   // `struct` on the type reaches line 5 too — the same point by a different route.
-  Rule[] byStruct = Rule[](Rule(f, "struct Handle", "struct", false, "the type's own methods."));
+  Rule[] byStruct = [Rule(f, "struct Handle", "struct", false, "the type's own methods.")];
   t.isTrue(ratchet(core, cli, ps, 2, none, dir + "/", noPins(), byStruct),
            "and so does the struct scope, still leaving line 10");
 
   // Both points, so nothing is left over and the run passes: `decl` on the method plus a pin on the
   // free function's line.
-  Pin[] one = Pin[](Pin(f, 10, "return n;", false, "reachable; not driven here."));
+  Pin[] one = [Pin(f, 10, "return n;", false, "reachable; not driven here.")];
   t.isTrue(!ratchet(core, cli, ps, 2, none, dir + "/", one, byDecl),
            "a rule and a pin together can account for everything");
 
@@ -282,18 +287,18 @@ export string test_a_rule_that_matches_nothing_fails(Core core, Cli cli) {
   T t = T.create();
   string dir = nestedSubject(cli, t, "covledger-rule-stale");
   string f = dir + "/nested.wac";
-  Point[] ps = Point[](Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry"));
+  Point[] ps = [Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry")];
 
   // Everything covered, so no point is uncovered and the rule has nothing to speak for. That is the
   // same staleness a moved pin has: it explains something that is no longer there.
-  Rule[] rules = Rule[](Rule(f, "Cli cli", "decl", false, "needs a live handle."));
-  t.isTrue(ratchet(core, cli, ps, 2, i32[](1, 1), dir + "/", noPins(), rules),
+  Rule[] rules = [Rule(f, "Cli cli", "decl", false, "needs a live handle.")];
+  t.isTrue(ratchet(core, cli, ps, 2, [1, 1] as i32[], dir + "/", noPins(), rules),
            "a rule matching no uncovered point must fail");
 
   // And a pattern that was never in the file, while a point *is* uncovered — the other way to be
   // stale, and the one a blanket rule would hide.
-  Rule[] wrong = Rule[](Rule(f, "no such text anywhere", "decl", false, "a pattern that never was."));
-  t.isTrue(ratchet(core, cli, ps, 2, i32[](0, 0), dir + "/", noPins(), wrong),
+  Rule[] wrong = [Rule(f, "no such text anywhere", "decl", false, "a pattern that never was.")];
+  t.isTrue(ratchet(core, cli, ps, 2, [0, 0] as i32[], dir + "/", noPins(), wrong),
            "a pattern matching nothing must fail even with points going spare");
 
   cli.remove(dir, true).wait();
@@ -311,13 +316,13 @@ export string test_a_point_spoken_for_twice_is_still_one_point(Core core, Cli cl
   T t = T.create();
   string dir = nestedSubject(cli, t, "covledger-rule-overlap");
   string f = dir + "/nested.wac";
-  Point[] ps = Point[](Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry"));
+  Point[] ps = [Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry")];
 
   // Line 5 is spoken for twice over, and line 10 not at all. A count of mentions would be 2 for 2
   // points and read as everything accounted for.
-  Pin[] both = Pin[](Pin(f, 5, "return this.id;", false, "reachable; not driven here."));
-  Rule[] rules = Rule[](Rule(f, "Cli cli", "decl", false, "needs a live handle."));
-  t.isTrue(ratchet(core, cli, ps, 2, i32[](0, 0), dir + "/", both, rules),
+  Pin[] both = [Pin(f, 5, "return this.id;", false, "reachable; not driven here.")];
+  Rule[] rules = [Rule(f, "Cli cli", "decl", false, "needs a live handle.")];
+  t.isTrue(ratchet(core, cli, ps, 2, [0, 0] as i32[], dir + "/", both, rules),
            "two mentions of one point must not account for two points");
 
   cli.remove(dir, true).wait();
@@ -348,13 +353,13 @@ export string test_a_rule_with_no_point_of_its_own_is_named(Core core, Cli cli) 
   string[] ls = nested();
 
   // Two uncovered points inside `waitId`: its signature line and its body.
-  string[] uncovered = string[](f + ":4", f + ":5");
+  string[] uncovered = [f + ":4", f + ":5"];
 
   Rule broad = Rule(f, "waitId", "decl", false, "the whole method needs a live handle.");
   Rule narrow = Rule(f, "return this.id;", "line", false, "and the body in particular.");
 
   // Both points are claimed twice: the decl rule reaches both, the line rule reaches the second.
-  i32[] twice = i32[](2, 2);
+  i32[] twice = [2, 2];
   t.eqI32(onlyClaims(narrow, ls, uncovered, 2, twice), 0,
           "the narrow rule claims a point the broad one does not, which is not this fixture");
   t.eqI32(onlyClaims(broad, ls, uncovered, 2, twice), 0,
@@ -363,7 +368,7 @@ export string test_a_rule_with_no_point_of_its_own_is_named(Core core, Cli cli) 
   // **The canary**: with the narrow rule gone, the broad rule is the only claimant of both — so the
   // count is about exclusivity and not about the rule being broad. Without this, a function that
   // always returned zero would satisfy the two assertions above.
-  i32[] once = i32[](1, 1);
+  i32[] once = [1, 1];
   t.eqI32(onlyClaims(broad, ls, uncovered, 2, once), 2,
           "a rule that is the sole claimant of both points was credited with neither");
   t.eqI32(onlyClaims(narrow, ls, uncovered, 2, once), 1,

@@ -37,9 +37,9 @@ string root(Cli cli) { return cli.cwd().wait(); }
  * anything else is believed about its body.
  */
 string[] producedBy(u8[] b) {
-  string[] out = string[8](fill: "");
+  string[] out = string[].filled(8, "");
   i32 found = 0;
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   while (pos[0] + 1 < b.len()) {
     i32 id = b[pos[0]];
@@ -60,7 +60,7 @@ string[] producedBy(u8[] b) {
     }
     pos[0] = end;
   }
-  string[] r = string[found](fill: "");
+  string[] r = string[].filled(found, "");
   for (i32 i = 0; i < found; i++) { r[i] = out[i]; }
   return r;
 }
@@ -83,8 +83,10 @@ string builtBy(T t, Cli cli, string label, string from) {
   // this run inherited.
   string env = from.len() == 0 ? "unset WAC_APP_FROM;" : "WAC_APP_FROM='" + from + "'";
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", env + " exec deno run -A packages/platform/native.ts '" + dir +
-             "/stamp.wac' -o '" + dir + "/hello'"), u8[0]()).wait();
+    [
+             "-c", env + " exec deno run -A packages/platform/native.ts '" + dir +
+             "/stamp.wac' -o '" + dir + "/hello'"
+    ], u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
            label + ": the build — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return "<did not build>"; }

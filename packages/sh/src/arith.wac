@@ -155,7 +155,7 @@ export string errorToken(Arith a) {
   i32 from = a.tokenAt;
   while (from < a.src.len() && (a.src[from] == 32 || a.src[from] == 9)) { from++; }
   if (from >= a.src.len()) { return ""; }
-  u8[] rest = u8[a.src.len() - from]();
+  u8[] rest = u8[].filled(a.src.len() - from, 0);
   rest.copyFrom(a.src, from, 0, a.src.len() - from);
   return string.fromBytes(rest);
 }

@@ -108,7 +108,7 @@ import { fAdd, fSub, fMul, fSquare, fMulSmall, fInvert, fRoundTrip, fCSwap, x255
 
 /** Deterministic filler; `seed` varies the contents so repeats are not identical. */
 u8[] bytes(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + seed * 17 + 7) & 255; }
   return out;
 }
@@ -119,8 +119,8 @@ u8[] bytes(i32 n, i32 seed) {
  * SHA-256 pads at 64 with a 9-byte tail and SHA-512 at 128 with a 17-byte tail, so the two need
  * different sets — 55/56 is the interesting pair for one and 111/112 for the other.
  */
-i32[] sha256Lens() { return i32[](0, 1, 55, 56, 63, 64, 65, 119, 120, 200); }
-i32[] sha512Lens() { return i32[](0, 1, 111, 112, 127, 128, 129, 239, 240, 400); }
+i32[] sha256Lens() { return [0, 1, 55, 56, 63, 64, 65, 119, 120, 200] as i32[]; }
+i32[] sha512Lens() { return [0, 1, 111, 112, 127, 128, 129, 239, 240, 400] as i32[]; }
 
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
@@ -478,7 +478,7 @@ i32 probes(Core core, Cli cli) {
     sha384(bytes(lens512[i], 0));
   }
   // The partial-block arm of each streaming hash, which no one-shot can take.
-  i32[] streamLens = i32[](1, 63, 64, 65, 200);
+  i32[] streamLens = [1, 63, 64, 65, 200];
   for (i32 i = 0; i < streamLens.len(); i++) {
     sha256Streamed(bytes(streamLens[i], 0), 1);
     sha256Streamed(bytes(streamLens[i], 0), 7);
@@ -491,9 +491,9 @@ i32 probes(Core core, Cli cli) {
   // `cut` values that do not divide 16 are the point.
   u8[] key = bytes(16, 0);
   u8[] iv = bytes(16, 0);
-  i32[] ctrLens = i32[](0, 1, 15, 16, 17, 509, 1024);
-  i32[] cuts = i32[](1, 5, 16, 509);
-  i32[] ats = i32[](0, 1, 11, 16);
+  i32[] ctrLens = [0, 1, 15, 16, 17, 509, 1024];
+  i32[] cuts = [1, 5, 16, 509];
+  i32[] ats = [0, 1, 11, 16];
   for (i32 i = 0; i < ctrLens.len(); i++) {
     for (i32 k = 0; k < cuts.len(); k++) { ctrStreamed(key, iv, bytes(ctrLens[i], 0), cuts[k]); }
     for (i32 k = 0; k < ats.len(); k++) {
@@ -503,8 +503,8 @@ i32 probes(Core core, Cli cli) {
 
   // HMAC's three key regimes: shorter than the block, exactly it, and hashed down. SHA-1's block is 64
   // too, so `hmacSha1` shares the boundary.
-  i32[] keyLens = i32[](0, 1, 32, 63, 64, 65, 200);
-  i32[] msgLens = i32[](0, 1, 64, 150);
+  i32[] keyLens = [0, 1, 32, 63, 64, 65, 200];
+  i32[] msgLens = [0, 1, 64, 150];
   for (i32 i = 0; i < keyLens.len(); i++) {
     for (i32 k = 0; k < msgLens.len(); k++) { hmac(bytes(keyLens[i], 1), bytes(msgLens[k], 2)); }
     hmacSha1(bytes(keyLens[i], 0), bytes(keyLens[i], 0));
@@ -524,26 +524,26 @@ i32 probes(Core core, Cli cli) {
   // HKDF: the zero-salt default, output lengths either side of a hash block, and the largest legal
   // request. RFC 5869 caps output at 255 hash lengths because the counter is one byte; one more traps,
   // which `traps_test.wac` is where.
-  hkdfExtract(u8[0](), bytes(22, 3));
-  i32[] outLens = i32[](1, 31, 32, 33, 42, 64, 82, 255 * 32);
+  hkdfExtract(u8[](), bytes(22, 3));
+  i32[] outLens = [1, 31, 32, 33, 42, 64, 82, 255 * 32];
   for (i32 i = 0; i < outLens.len(); i++) { hkdf(bytes(13, 4), bytes(22, 5), bytes(10, 6), outLens[i]); }
-  hkdf(u8[0](), bytes(22, 7), u8[0](), 42);
+  hkdf(u8[](), bytes(22, 7), u8[](), 42);
 
   // ChaCha20: the counter's low word, and messages that do and do not fill a block.
-  u32[] ctrs = u32[](0 as~ u32, 1 as~ u32, 0xFFFFFFFF as~ u32);
+  u32[] ctrs = [0 as~ u32, 1 as~ u32, 0xFFFFFFFF as~ u32];
   for (i32 i = 0; i < ctrs.len(); i++) { chachaBlock(bytes(32, 8), ctrs[i], bytes(12, 9)); }
-  i32[] msgN = i32[](0, 1, 63, 64, 65, 127, 128, 375);
+  i32[] msgN = [0, 1, 63, 64, 65, 127, 128, 375];
   for (i32 i = 0; i < msgN.len(); i++) {
     chacha20(bytes(32, 10), 1 as~ u32, bytes(12, 11), bytes(msgN[i], 0));
   }
 
   // Poly1305: the partial-final-block path, and the r-clamping in the key.
-  i32[] polyN = i32[](0, 1, 15, 16, 17, 32, 33, 64, 129);
+  i32[] polyN = [0, 1, 15, 16, 17, 32, 33, 64, 129];
   for (i32 i = 0; i < polyN.len(); i++) { poly1305(bytes(32, 12), bytes(polyN[i], 13)); }
 
   // ChaCha20-Poly1305: AAD and ciphertext each padded to 16 independently.
-  i32[] aadLens = i32[](0, 1, 15, 16, 17, 20);
-  i32[] ptLens = i32[](0, 1, 15, 16, 17, 114);
+  i32[] aadLens = [0, 1, 15, 16, 17, 20];
+  i32[] ptLens = [0, 1, 15, 16, 17, 114];
   for (i32 i = 0; i < aadLens.len(); i++) {
     for (i32 k = 0; k < ptLens.len(); k++) {
       u8[] ct = aeadEncrypt(bytes(32, 14), bytes(12, 15), bytes(ptLens[k], 16));
@@ -553,8 +553,8 @@ i32 probes(Core core, Cli cli) {
   }
 
   // AES: all three key sizes, both directions, since the round count differs.
-  i32[] aesKeys = i32[](16, 24, 32);
-  i32[] ctrN = i32[](0, 1, 15, 16, 17, 64, 100);
+  i32[] aesKeys = [16, 24, 32];
+  i32[] ctrN = [0, 1, 15, 16, 17, 64, 100];
   for (i32 i = 0; i < aesKeys.len(); i++) {
     aesEncrypt(bytes(aesKeys[i], 18), bytes(16, 19));
     aesDecrypt(bytes(aesKeys[i], 18), bytes(16, 19));
@@ -565,18 +565,18 @@ i32 probes(Core core, Cli cli) {
 
   // GHASH: whole blocks only — it refuses anything else rather than zero-filling. All-ones drives the
   // reduction branch on nearly every one of the 128 iterations.
-  i32[] ghashN = i32[](0, 16, 32, 48, 160);
+  i32[] ghashN = [0, 16, 32, 48, 160];
   for (i32 i = 0; i < ghashN.len(); i++) { ghash(bytes(16, 22), bytes(ghashN[i], 23)); }
-  u8[] ones16 = u8[16]();
+  u8[] ones16 = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { ones16[i] = 0xFF; }
-  u8[] ones32 = u8[32]();
+  u8[] ones32 = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { ones32[i] = 0xFF; }
   ghash(ones16, ones32);
 
   // AES-GCM: the 96-bit IV shortcut and the GHASH-the-IV path for every other length.
-  i32[] ivLens = i32[](8, 12, 16, 60);
-  i32[] gcmAad = i32[](0, 16, 20);
-  i32[] gcmPt = i32[](0, 1, 15, 16, 60);
+  i32[] ivLens = [8, 12, 16, 60];
+  i32[] gcmAad = [0, 16, 20];
+  i32[] gcmPt = [0, 1, 15, 16, 60];
   for (i32 i = 0; i < ivLens.len(); i++) {
     for (i32 k = 0; k < gcmAad.len(); k++) {
       for (i32 q = 0; q < gcmPt.len(); q++) {
@@ -587,8 +587,8 @@ i32 probes(Core core, Cli cli) {
     }
   }
   // The counter increment's wrap: all-ones in the low word must carry into nothing.
-  gcmInc32(u8[16]());
-  u8[] wrap = u8[16]();
+  gcmInc32(u8[].filled(16, 0));
+  u8[] wrap = u8[].filled(16, 0);
   for (i32 i = 12; i < 16; i++) { wrap[i] = 0xFF; }
   gcmInc32(wrap);
 
@@ -600,12 +600,12 @@ i32 probes(Core core, Cli cli) {
     beWord32(bytes(16, 29), off);
     beWord64(bytes(16, 29), off);
   }
-  u32[] words = u32[](0 as~ u32, 1 as~ u32, 0x80000000 as~ u32, 0xFFFFFFFF as~ u32);
+  u32[] words = [0 as~ u32, 1 as~ u32, 0x80000000 as~ u32, 0xFFFFFFFF as~ u32];
   for (i32 i = 0; i < words.len(); i++) {
     storeLE32(words[i]);
     storeBE32(words[i]);
   }
-  u64[] longs = u64[](0 as~ u64, 1 as~ u64, (1 as i64 << (63 as i64)) as~ u64, (0 - 1) as~ u64);
+  u64[] longs = [0 as~ u64, 1 as~ u64, (1 as i64 << (63 as i64)) as~ u64, (0 - 1) as~ u64];
   for (i32 i = 0; i < longs.len(); i++) { storeBE64(longs[i]); }
   for (i32 n = 0; n <= 32; n++) { padTo16(n); }
 
@@ -624,14 +624,15 @@ i32 probes(Core core, Cli cli) {
 
 /** 32-byte little-endian field elements around p = 2^255 - 19. */
 u8[][] feValues() {
-  return u8[][](
+  return [
     decoded("0000000000000000000000000000000000000000000000000000000000000000"),  // 0
     decoded("0100000000000000000000000000000000000000000000000000000000000000"),  // 1
     decoded("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),  // p - 1
     decoded("ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),  // p - 2
     decoded("0000000000000000000000000000000000000000000000000000000000000040"),  // 1 << 254
     decoded("0000000400000000000000000000000000000000000000000000000000000000"),  // 1 << 26
-    decoded("0000000200000000000000000000000000000000000000000000000000000000")); // 1 << 25
+    decoded("0000000200000000000000000000000000000000000000000000000000000000") // 1 << 25
+  ];
 }
 
 u8[] fePMinus1() { return feValues()[2]; }
@@ -663,7 +664,7 @@ i32 curves(Core core, Cli cli) {
     fMul(vs[i], fePMinus2());
   }
   // A u-coordinate with bit 255 set: ignored, and ignored *structurally* rather than by a branch.
-  u8[] masked = u8[32]();
+  u8[] masked = u8[].filled(32, 0);
   u8[] one = feOne();
   for (i32 i = 0; i < 32; i++) { masked[i] = one[i]; }
   masked[31] = masked[31] | 0x80;
@@ -680,12 +681,12 @@ i32 curves(Core core, Cli cli) {
   edBaseEncoded();
   u8[] seed = bytes(32, 50);
   u8[] pub = edPublicKey(seed);
-  i32[] msgLens = i32[](0, 1, 64);
+  i32[] msgLens = [0, 1, 64];
   for (i32 i = 0; i < msgLens.len(); i++) {
     u8[] msg = bytes(msgLens[i], 51);
     u8[] sig = edSign(seed, msg);
     edVerify(pub, msg, sig);
-    u8[] tampered = u8[sig.len()]();
+    u8[] tampered = u8[].filled(sig.len(), 0);
     for (i32 k = 0; k < sig.len(); k++) { tampered[k] = sig[k]; }
     tampered[0] = tampered[0] ^ 1;
     edVerify(pub, msg, tampered);        // R decodes but the equation fails
@@ -715,19 +716,19 @@ i32 curves(Core core, Cli cli) {
   edVerify(bytes(31, 52), bytes(4, 53), bytes(64, 54));
   edVerify(pub, bytes(4, 53), bytes(63, 54));
   edVerify(pub, bytes(4, 53), bytes(64, 55));   // random S is almost surely >= L or a bad point
-  u8[] notAPoint = u8[32]();
+  u8[] notAPoint = u8[].filled(32, 0);
   notAPoint[0] = 2;
   edRecode(notAPoint);
   edRecode(pub);
   // An odd-x point, so the sign branch in `recoverX` runs both ways.
-  u8[] oddX = u8[32]();
+  u8[] oddX = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { oddX[i] = pub[i]; }
   oddX[31] = oddX[31] ^ 0x80;
   edRecode(oddX);
   edScalarBase(bytes(32, 56));
   // **y = 1 with the sign bit set**: x is zero, which has no odd root, so the decode must fail. This is
   // the one branch in `recoverX` that a valid point never reaches.
-  u8[] yOneOddX = u8[32]();
+  u8[] yOneOddX = u8[].filled(32, 0);
   yOneOddX[0] = 1;
   yOneOddX[31] = 0x80;
   edRecode(yOneOddX);
@@ -735,7 +736,7 @@ i32 curves(Core core, Cli cli) {
   // A public key that is not a point, and a signature whose R is not a point.
   u8[] goodSig = edSign(seed, bytes(8, 60));
   edVerify(notAPoint, bytes(8, 60), goodSig);
-  u8[] badR = u8[goodSig.len()]();
+  u8[] badR = u8[].filled(goodSig.len(), 0);
   for (i32 i = 0; i < goodSig.len(); i++) { badR[i] = goodSig[i]; }
   for (i32 i = 0; i < 32; i++) { badR[i] = notAPoint[i]; }
   edVerify(pub, bytes(8, 60), badR);
@@ -747,13 +748,14 @@ i32 curves(Core core, Cli cli) {
 
 /** 32-byte big-endian field elements around the P-256 prime. */
 u8[][] p256Values() {
-  return u8[][](
+  return [
     decoded("0000000000000000000000000000000000000000000000000000000000000000"),  // 0
     decoded("0000000000000000000000000000000000000000000000000000000000000001"),  // 1
     decoded("ffffffff00000001000000000000000000000000fffffffffffffffffffffffe"),  // p - 1
     decoded("0000000100000000000000000000000000000000000000000000000000000000"),  // 1 << 224
     decoded("0000000000000000000000000000000000000001000000000000000000000000"),  // 1 << 96
-    decoded("8000000000000000000000000000000000000000000000000000000000000000"));  // 1 << 255
+    decoded("8000000000000000000000000000000000000000000000000000000000000000")  // 1 << 255
+  ];
 }
 
 /** p - 1 */
@@ -775,14 +777,15 @@ u8[] p256K() { return decoded("0000000000000000000000000000000000000000000000000
 
 /** 48-byte big-endian field elements around the P-384 prime. */
 u8[][] p384Values() {
-  return u8[][](
+  return [
     decoded("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),  // 0
     decoded("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"),  // 1
     decoded("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffe"),  // p - 1
     decoded("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000"),  // 1 << 32
     decoded("000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000"),  // 1 << 96
     decoded("000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000"),  // 1 << 128
-    decoded("800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));  // 1 << 383
+    decoded("800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")  // 1 << 383
+  ];
 }
 
 u8[] p384PMinus1() { return decoded("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffe"); }
@@ -845,21 +848,21 @@ i32 nist(Core core, Cli cli) {
   u8[] msg = bytes(20, 70);
   u8[] sig = sign(priv, msg, p256K());
   verify(pub, msg, sig);
-  u8[] bad = u8[sig.len()]();
+  u8[] bad = u8[].filled(sig.len(), 0);
   for (i32 i = 0; i < sig.len(); i++) { bad[i] = sig[i]; }
   bad[0] = bad[0] ^ 1;
   verify(pub, msg, bad);
-  verify(pub, msg, u8[63]());
-  verify(pub, msg, u8[64]());
+  verify(pub, msg, u8[].filled(63, 0));
+  verify(pub, msg, u8[].filled(64, 0));
   // An r or an s at the group order, which the bounds check has to refuse.
   u8[] n = p256Order();
-  u8[] bigR = u8[sig.len()]();
-  u8[] bigS = u8[sig.len()]();
+  u8[] bigR = u8[].filled(sig.len(), 0);
+  u8[] bigS = u8[].filled(sig.len(), 0);
   for (i32 i = 0; i < sig.len(); i++) { bigR[i] = sig[i]; bigS[i] = sig[i]; }
   for (i32 i = 0; i < 32; i++) { bigR[i] = n[i]; bigS[32 + i] = n[i]; }
   verify(pub, msg, bigR);
   verify(pub, msg, bigS);
-  sign(priv, msg, u8[32]());
+  sign(priv, msg, u8[].filled(32, 0));
   // Decode-and-re-encode, and a digest verified directly — `p256VerifyDigest` exists for x509, which
   // hashes with whatever the certificate says rather than always SHA-256.
   reencode(pub);
@@ -884,7 +887,7 @@ i32 nist(Core core, Cli cli) {
   modExp(decoded("0000000000000000000000000000000000000000000000000000000000000003"),
          decoded("0000000000000000000000000000000000000000000000000000000000000005"),
          decoded("0000000000000000000000000000000000000000000000000000000000000007"));
-  modExp(u8[32](),
+  modExp(u8[].filled(32, 0),
          decoded("0000000000000000000000000000000000000000000000000000000000010001"),
          decoded("0000000000000000000000000000000000000000000000000000000000000ca1"));
 
@@ -897,25 +900,25 @@ i32 nist(Core core, Cli cli) {
   // signature against it. A plausible modulus is a 256-byte number with its top bits set.
   u8[] e = decoded("010001");
   u8[] rsaMsg = bytes(24, 80);
-  u8[] modulus = u8[256]();
+  u8[] modulus = u8[].filled(256, 0);
   modulus[0] = 0xC0;
   for (i32 i = 1; i < 256; i++) { modulus[i] = (i * 7 + 3) & 255; }
-  i32[] hashLens = i32[](32, 48, 64);
+  i32[] hashLens = [32, 48, 64];
   for (i32 i = 0; i < hashLens.len(); i++) {
-    verifyPkcs1(modulus, e, rsaMsg, u8[10](), hashLens[i]);      // a signature of the wrong length
-    verifyPkcs1(u8[256](), e, rsaMsg, u8[256](), hashLens[i]);   // a modulus of zero
+    verifyPkcs1(modulus, e, rsaMsg, u8[].filled(10, 0), hashLens[i]);      // a signature of the wrong length
+    verifyPkcs1(u8[].filled(256, 0), e, rsaMsg, u8[].filled(256, 0), hashLens[i]);   // a modulus of zero
     verifyPkcs1(modulus, e, rsaMsg, modulus, hashLens[i]);       // s = n, so s >= n
   }
   // **A modulus too small to hold the padding at all**: 64 bytes cannot carry a SHA-512 DigestInfo plus
   // eight padding bytes, so the length check fires before any work.
-  u8[] tiny = u8[64]();
+  u8[] tiny = u8[].filled(64, 0);
   tiny[0] = 0xC0;
-  verifyPkcs1(tiny, e, rsaMsg, u8[64](), 64);
+  verifyPkcs1(tiny, e, rsaMsg, u8[].filled(64, 0), 64);
 
-  verifyPss(modulus, e, rsaMsg, u8[10](), 32, 32);
-  verifyPss(u8[256](), e, rsaMsg, u8[256](), 32, 32);
+  verifyPss(modulus, e, rsaMsg, u8[].filled(10, 0), 32, 32);
+  verifyPss(u8[].filled(256, 0), e, rsaMsg, u8[].filled(256, 0), 32, 32);
   verifyPss(modulus, e, rsaMsg, modulus, 32, 32);
-  verifyPss(modulus, e, rsaMsg, u8[256](), 32, 250);             // a salt too long for the modulus
+  verifyPss(modulus, e, rsaMsg, u8[].filled(256, 0), 32, 250);             // a salt too long for the modulus
 
   // ## Key generation's own helpers, which its tests reach only through a whole key
   //
@@ -940,7 +943,7 @@ i32 nist(Core core, Cli cli) {
   // **bcrypt-PBKDF at key lengths that are not a multiple of the hash size**, which is where the
   // interleaved placement's final stride overruns and the loop has to stop early. `packages/ssh` asks
   // for 48 — a 32-byte key and a 16-byte IV — and nothing here had asked for anything but 32.
-  i32[] keyLens = i32[](1, 31, 33, 48, 63, 64, 65);
+  i32[] keyLens = [1, 31, 33, 48, 63, 64, 65];
   for (i32 i = 0; i < keyLens.len(); i++) {
     bcryptPbkdf(bytes(8, 92), bytes(16, 93), keyLens[i], 2);
   }
@@ -957,12 +960,12 @@ i32 nist(Core core, Cli cli) {
 export void trapProbe(i32 i) {
   // `Sha1.loadState` of anything but 96 bytes: the save/load `packages/tor` needs, where a short state
   // would be read past its end and a long one silently truncated.
-  i32[] stateLens = i32[](0, 95, 97);
+  i32[] stateLens = [0, 95, 97];
   if (i < stateLens.len()) { sha1LoadBad(stateLens[i]); return; }
   i = i - stateLens.len();
   // A CTR IV that is not 16 bytes. The long case is the one that matters: a short buffer runs off its
   // end and traps whatever the guard does, so only an over-long one tests the check.
-  i32[] ivLens = i32[](0, 15, 17, 32);
+  i32[] ivLens = [0, 15, 17, 32];
   if (i < ivLens.len()) { ctrBadIv(bytes(16, 0), ivLens[i]); return; }
   i = i - ivLens.len();
   // **RFC 5869 caps HKDF output at 255 hash lengths**, because the counter is one byte. `probes` drives
@@ -972,21 +975,21 @@ export void trapProbe(i32 i) {
   // bcrypt-PBKDF's four argument guards, which `packages/ssh` reaches through a key file and nothing
   // here reached at all.
   if (i == 0) { bcryptPbkdf(bytes(8, 0), bytes(8, 1), 32, 0); return; }
-  if (i == 1) { bcryptPbkdf(u8[0](), bytes(8, 1), 32, 1); return; }
-  if (i == 2) { bcryptPbkdf(bytes(8, 0), u8[0](), 32, 1); return; }
+  if (i == 1) { bcryptPbkdf(u8[](), bytes(8, 1), 32, 1); return; }
+  if (i == 2) { bcryptPbkdf(bytes(8, 0), u8[](), 32, 1); return; }
   if (i == 3) { bcryptPbkdf(bytes(8, 0), bytes(8, 1), 0, 1); return; }
   if (i == 4) { bcryptPbkdf(bytes(8, 0), bytes(8, 1), 32 * 32 + 1, 1); return; }
   i = i - 5;
   // `aesCtr`'s own IV check, which is a **different function** from `CtrStream.create`'s above — the two
   // are separate exports with separate guards, so one does not stand in for the other.
-  i32[] badIvs = i32[](0, 15, 17, 32);
-  if (i < badIvs.len()) { aesCtr(bytes(16, 18), u8[badIvs[i]](), bytes(32, 21)); return; }
+  i32[] badIvs = [0, 15, 17, 32];
+  if (i < badIvs.len()) { aesCtr(bytes(16, 18), u8[].filled(badIvs[i], 0), bytes(32, 21)); return; }
   i = i - badIvs.len();
   if (i == 0) { aesEncrypt(bytes(20, 18), bytes(16, 19)); return; }   // a key of no legal size
   if (i == 1) { ghash(bytes(16, 22), bytes(17, 23)); return; }        // a partial GHASH block
   if (i == 2) { ghash(bytes(15, 22), bytes(16, 23)); return; }        // a short h
-  if (i == 3) { gcmEncrypt(bytes(16, 24), u8[0](), bytes(16, 26)); return; }
-  if (i == 4) { gcmTag(bytes(16, 24), u8[0](), bytes(16, 27), bytes(16, 26)); return; }
+  if (i == 3) { gcmEncrypt(bytes(16, 24), u8[](), bytes(16, 26)); return; }
+  if (i == 4) { gcmTag(bytes(16, 24), u8[](), bytes(16, 27), bytes(16, 26)); return; }
   if (i == 5) { gcmDecrypt(bytes(16, 24), bytes(12, 25), bytes(16, 27), bytes(16, 26), bytes(15, 28)); return; }
   i = i - 6;
   // **The NIST point validation, which is the whole of what a decoder owes its caller.** Each of these
@@ -994,22 +997,22 @@ export void trapProbe(i32 i) {
   // point that is off the curve and a coordinate that is outside the field reach different lines.
   u8[] priv = p256Priv();
   u8[] pub = pubKey(priv);
-  if (i == 0) { pubKey(u8[32]()); return; }                          // a zero scalar
+  if (i == 0) { pubKey(u8[].filled(32, 0)); return; }                          // a zero scalar
   if (i == 1) { pubKey(p256Order()); return; }                       // a scalar at n
-  if (i == 2) { pubKey(u8[31]()); return; }                          // a short private key
-  if (i == 3) { ecdh(u8[31](), pub); return; }
-  if (i == 4) { sign(u8[31](), bytes(20, 70), p256K()); return; }
-  if (i == 5) { ecdh(priv, u8[64]()); return; }                      // a point one byte short
+  if (i == 2) { pubKey(u8[].filled(31, 0)); return; }                          // a short private key
+  if (i == 3) { ecdh(u8[].filled(31, 0), pub); return; }
+  if (i == 4) { sign(u8[].filled(31, 0), bytes(20, 70), p256K()); return; }
+  if (i == 5) { ecdh(priv, u8[].filled(64, 0)); return; }                      // a point one byte short
   if (i == 6) { scalarBase(p256Order()); return; }                   // n*G has no affine form
   if (i == 7) {
-    u8[] offCurve = u8[pub.len()]();
+    u8[] offCurve = u8[].filled(pub.len(), 0);
     for (i32 k = 0; k < pub.len(); k++) { offCurve[k] = pub[k]; }
     offCurve[64] = offCurve[64] ^ 1;
     ecdh(priv, offCurve);
     return;
   }
   if (i == 8) {
-    u8[] badTag = u8[pub.len()]();
+    u8[] badTag = u8[].filled(pub.len(), 0);
     for (i32 k = 0; k < pub.len(); k++) { badTag[k] = pub[k]; }
     badTag[0] = 3;                                                   // compressed, which is refused
     ecdh(priv, badTag);
@@ -1019,14 +1022,14 @@ export void trapProbe(i32 i) {
   // rather than the range check; all-ones is above p and exercises both. x and y separately, because
   // they are checked one at a time.
   if (i == 9) {
-    u8[] overX = u8[pub.len()]();
+    u8[] overX = u8[].filled(pub.len(), 0);
     for (i32 k = 0; k < pub.len(); k++) { overX[k] = pub[k]; }
     for (i32 k = 1; k <= 32; k++) { overX[k] = 0xFF; }
     ecdh(priv, overX);
     return;
   }
   if (i == 10) {
-    u8[] overY = u8[pub.len()]();
+    u8[] overY = u8[].filled(pub.len(), 0);
     for (i32 k = 0; k < pub.len(); k++) { overY[k] = pub[k]; }
     for (i32 k = 33; k <= 64; k++) { overY[k] = 0xFF; }
     ecdh(priv, overY);

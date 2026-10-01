@@ -154,7 +154,7 @@ export string builtBy(string head) {
  */
 export i32 writeApp(Core core, Cli cli, u8[] whole, string dest, string grantWords) {
   u8[] head = preamble(wacVersion(cli)).toBytes();
-  u8[] out = u8[head.len() + whole.len()]();
+  u8[] out = u8[].filled(head.len() + whole.len(), 0);
   for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
   for (i32 i = 0; i < whole.len(); i++) { out[head.len() + i] = whole[i]; }
   Change wrote = cli.writeFile(dest, out).wait();
@@ -194,7 +194,7 @@ export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
     core.warn("wac: " + path + " carries no wasm module — is it a `wac app` executable?");
     return 1;
   }
-  u8[] headBytes = u8[at]();
+  u8[] headBytes = u8[].filled(at, 0);
   for (i32 i = 0; i < at; i++) { headBytes[i] = f.bytes[i]; }
   string head = string.fromBytes(headBytes);
   // **Presence, not content** — `hasAppMark` rather than `builtBy(head) == ""`, which was the same
@@ -223,7 +223,7 @@ export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
     core.warn("     the same way. Rebuild it: wac app <entry.wac> -o " + path);
     return 1;
   }
-  u8[] wasm = u8[f.bytes.len() - at]();
+  u8[] wasm = u8[].filled(f.bytes.len() - at, 0);
   for (i32 i = at; i < f.bytes.len(); i++) { wasm[i - at] = f.bytes[i]; }
   return runBytes(core, cli, wasm, args, path);
 }

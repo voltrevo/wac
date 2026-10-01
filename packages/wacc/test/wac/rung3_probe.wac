@@ -45,7 +45,7 @@ export string complaint(string path, i32 code, i32 line, i32 col) {
 export string[] ours(string src) {
   i32[] flat = dumpTypeErrors(src.toBytes());
   i32 n = flat.len() / 3;
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) {
     out[i] = itoa(flat[i * 3 + 1]) + ":" + itoa(flat[i * 3 + 2]);
   }
@@ -67,7 +67,7 @@ export string[] ours(string src) {
 export string[] oursBesidesMissingImports(string src, i32[] countOut) {
   i32[] flat = dumpTypeErrors(src.toBytes());
   i32 n = flat.len() / 3;
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 kept = 0;
   countOut[0] = 0;
   for (i32 i = 0; i < n; i++) {
@@ -75,7 +75,7 @@ export string[] oursBesidesMissingImports(string src, i32[] countOut) {
     out[kept] = itoa(flat[i * 3 + 1]) + ":" + itoa(flat[i * 3 + 2]);
     kept = kept + 1;
   }
-  string[] trimmed = string[kept](fill: "");
+  string[] trimmed = string[].filled(kept, "");
   for (i32 i = 0; i < kept; i++) { trimmed[i] = out[i]; }
   return trimmed;
 }

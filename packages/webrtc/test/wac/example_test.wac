@@ -55,8 +55,8 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   string stem = dir + "/answer";
 
   Exec built = cli.exec(wacBinary(cli),
-                        string[]("build", SOURCE, "-o", stem, "--allow-net", "--quiet"),
-                        u8[0]()).wait();
+                        ["build", SOURCE, "-o", stem, "--allow-net", "--quiet"],
+                        u8[]()).wait();
   t.isTrue(built.ran(), "the wac binary ran — " + built.error);
   t.eqI32(built.status, 0, "the example did not build: " + string.fromBytes(built.stderr));
   if (!built.ran() || built.status != 0) { return t.report(); }
@@ -80,7 +80,7 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   string said = "";
   for (i32 i = 0; i < 400 && !contains(said, "sctp-port"); i++) {
     said = readIfPresent(cli, dir + "/answer.log");
-    if (!contains(said, "sctp-port")) { cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait(); }
+    if (!contains(said, "sctp-port")) { cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait(); }
   }
   t.isTrue(contains(said, "sctp-port"),
            "the program printed no complete description. It said: " + tail(said, 800));
@@ -96,7 +96,7 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   Lines lines = Lines.create();
   lines.add("answer " + string.fromBytes(hexEncode(said.toBytes())) +
             " application UDP/DTLS/SCTP server sha-256 95 1 5000");
-  check(t, cli, "python3", string[](ORACLE), lines, "aiortc reading the program's answer");
+  check(t, cli, "python3", [ORACLE], lines, "aiortc reading the program's answer");
 
   // **The identity is its own and is fresh.** Nothing here supplied a key: the program made a P-256
   // certificate at startup, and this is its digest.
@@ -116,18 +116,18 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
     return t.report();
   }
 
-  u8[] tid = u8[12]();
+  u8[] tid = u8[].filled(12, 0);
   for (i32 i = 0; i < 12; i++) { tid[i] = (i * 37 + 11) & 255; }
   u8[] request = iceCheck(tid, ourUfrag, OFFER_UFRAG, ourPwd.toBytes(),
-                          priorityOf(hostPref(), 65535, 1), true, u8[8](fill: 7), false);
+                          priorityOf(hostPref(), 65535, 1), true, u8[].filled(8, 7), false);
 
-  u8[] answer = u8[0]();
+  u8[] answer = u8[]();
   for (i32 attempt = 0; attempt < 20 && answer.len() == 0; attempt++) {
     Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
     if (s.handle < 0) { break; }
     cli.sendTo(s.handle, "127.0.0.1", port, request).wait();
     Pending<Datagram> p = cli.receiveFrom(s.handle);
-    if (core.waitAny(i32[](p.id), 700) < 0) {
+    if (core.waitAny([p.id], 700) < 0) {
       p.drop(p.id);
       cli.closeSocket(s.handle);
       continue;

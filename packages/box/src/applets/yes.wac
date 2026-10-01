@@ -18,7 +18,7 @@ export i32 yes(Core core, Cli cli, Fs fs, Args a) {
   // A block of them, so the cost is one host call per few thousand lines rather than per
   // line. The bridge is a round trip; `yes` is the only applet where that dominates.
   i32 per = 4096;
-  u8[] block = u8[one.len() * per](fill: 0);
+  u8[] block = u8[].filled(one.len() * per, 0);
   for (i32 i = 0; i < per; i++) { block.copyFrom(one, 0, i * one.len(), one.len()); }
 
   // **`^C` ends it**, which is design/system/0001 step 5's own criterion and the first thing in this

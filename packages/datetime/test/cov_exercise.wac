@@ -28,7 +28,7 @@ import { Rng } from "../../wactest/src/rng.wac";
 
 /** Every well-formed and malformed timestamp the tests parse. */
 string[] stamps() {
-  return string[](
+  return [
     "1970-01-01T00:00:00Z", "1970-01-01T00:00:00.000Z", "2020-02-29T12:34:56Z",
     "2000-01-01T00:00:00+00:00", "2020-06-15T10:00:00+05:30", "2020-06-15T10:00:00-08:00",
     "2020-06-15T10:00:00.5Z", "2020-06-15T10:00:00.123456789Z", "2020-06-15t10:00:00z",
@@ -44,14 +44,15 @@ string[] stamps() {
     "2020-01-01T00:00:00Zx", "2020-01-01T00:00:00.5", "2020-01-01T00:00:00.5+",
     "2020-01-01T00:00:00!00:00", "202x-01-01T00:00:00Z",
     "2020-0x-01T00:00:00Z", "2020-01-0xT00:00:00Z", "2020-01-01T00:0x:00Z",
-    "2020-01-01T00:00:0xZ", "2020-01-01T00:00:00+00:0x", "2020-01-01T00:00:00+0x:00");
+    "2020-01-01T00:00:0xZ", "2020-01-01T00:00:00+00:0x", "2020-01-01T00:00:00+0x:00"
+  ];
 }
 
 export i32 main() {
   i32 seen = 0;
 
   // Every day across four centuries, thinned: the branches repeat, the years do not.
-  i64[] far = i64[](-800000, -719469, -719468, -1000000, 1000000);
+  i64[] far = [-800000, -719469, -719468, -1000000, 1000000];
   for (i32 i = 0; i < far.len(); i++) {
     i64 n = far[i];
     seen = seen + fromDaysYear(n) + fromDaysMonth(n) + fromDaysDay(n) + dayOfWeek(n);
@@ -61,9 +62,9 @@ export i32 main() {
     seen = seen + fromDaysYear(n) + fromDaysMonth(n) + fromDaysDay(n) + dayOfWeek(n);
   }
 
-  i32[] years = i32[](-271820, -100000, -4713, -1, 0, 1, 100, 1969, 1970, 1971, 2100, 275759);
-  i32[] months = i32[](1, 2, 3, 12);
-  i32[] days = i32[](1, 28, 31);
+  i32[] years = [-271820, -100000, -4713, -1, 0, 1, 100, 1969, 1970, 1971, 2100, 275759];
+  i32[] months = [1, 2, 3, 12];
+  i32[] days = [1, 28, 31];
   for (i32 a = 0; a < years.len(); a++) {
     for (i32 b = 0; b < months.len(); b++) {
       for (i32 c = 0; c < days.len(); c++) {
@@ -79,15 +80,15 @@ export i32 main() {
   }
 
   // The dates that are well-formed as text and not as dates.
-  i32[] badY = i32[](2020, 2020, 2020, 2020, 2020, 2019, 2020, 2020);
-  i32[] badM = i32[](   0,   13,    1,    1,    2,    2,    4,    2);
-  i32[] badD = i32[](   1,    1,    0,   32,   30,   29,   31,   29);
+  i32[] badY = [2020, 2020, 2020, 2020, 2020, 2019, 2020, 2020];
+  i32[] badM = [0,   13,    1,    1,    2,    2,    4,    2];
+  i32[] badD = [1,    1,    0,   32,   30,   29,   31,   29];
   for (i32 i = 0; i < badY.len(); i++) {
     if (validDate(badY[i], badM[i], badD[i])) { seen = seen + 1; }
   }
 
   for (i32 h = -48; h <= 48; h++) { seen = seen + formatMillis((h as i64) * 3600000).len(); }
-  i64[] edges = i64[](0, 1, -1, 999, 1000, -1000, -999);
+  i64[] edges = [0, 1, -1, 999, 1000, -1000, -999];
   for (i32 i = 0; i < edges.len(); i++) { seen = seen + formatMillis(edges[i]).len(); }
 
   Rng r = Rng(0x1f2e3d4c);
@@ -107,20 +108,22 @@ export i32 main() {
 
   // `-00:00` against the other two spellings of zero — the branch `offsetKnown` exists for, which
   // nothing here reached until the drift above was found.
-  string[] zeros = string[]("2020-06-15T10:00:00-00:00", "2020-06-15T10:00:00+00:00",
-                            "2020-06-15T10:00:00Z");
+  string[] zeros = [
+                            "2020-06-15T10:00:00-00:00", "2020-06-15T10:00:00+00:00",
+                            "2020-06-15T10:00:00Z"
+  ];
   for (i32 i = 0; i < zeros.len(); i++) { seen = seen + parseOffsetKnown(zeros[i].toBytes()); }
 
   // Years outside 0000..9999, where `padYear` writes a sign and six digits. The spread above covers
   // about 1963 to 1976 and cannot reach it.
-  i64[] wide = i64[](
+  i64[] wide = [
     253402300800000,   // +010000-01-01, the first year needing the expanded form
     253402300799999,   // and the last that does not
     -62167219200000,   // 0000-01-01
     -62167219200001,   // -000001-12-31
     8640000000000000,  // +275760-09-13, the largest instant Date supports
     -8640000000000000  // -271821-04-20, the smallest
-  );
+  ];
   for (i32 i = 0; i < wide.len(); i++) { seen = seen + formatMillis(wide[i]).len(); }
 
   return seen;

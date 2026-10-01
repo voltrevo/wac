@@ -57,7 +57,7 @@ u32 roundConst(i32 round) {
 
 /** Compress one 64-byte block into the five-word state, in place. */
 void block(u32[] h, u8[] chunk, i32 at) {
-  u32[] w = u32[80]();
+  u32[] w = u32[].filled(80, 0);
   for (i32 i = 0; i < 16; i++) { w[i] = beWord32(chunk, at + i * 4); }
   // The rotate is what makes this SHA-1 rather than SHA-0. Without it every test that
   // compares the implementation against itself still passes.
@@ -103,13 +103,13 @@ export struct Sha1 {
   Sha1 create() {
     // Decimal for the same reason as the round constants — see roundConst. 1732584193 is
     // 0x67452301, and the four after it are the rest of FIPS 180-4's initial state.
-    u32[] h = u32[5]();
+    u32[] h = u32[].filled(5, 0);
     h[0] = 1732584193 as! u32;
     h[1] = 4023233417 as! u32;
     h[2] = 2562383102 as! u32;
     h[3] = 271733878 as! u32;
     h[4] = 3285377520 as! u32;
-    return Sha1(h, u8[64](), 0, 0);
+    return Sha1(h, u8[].filled(64, 0), 0, 0);
   }
 
   void update(this, u8[] data) {
@@ -133,7 +133,7 @@ export struct Sha1 {
    * un-update a SHA-1. So the trial hash happens on a clone.
    */
   Sha1 clone(const this) {
-    Sha1 copy = Sha1(u32[5](), u8[64](), this.pending, this.total);
+    Sha1 copy = Sha1(u32[].filled(5, 0), u8[].filled(64, 0), this.pending, this.total);
     for (i32 i = 0; i < 5; i++) { copy.h[i] = this.h[i]; }
     for (i32 i = 0; i < 64; i++) { copy.buf[i] = this.buf[i]; }
     return copy;
@@ -147,7 +147,7 @@ export struct Sha1 {
    * mutates — cannot be called on the result. Filed as wac issue 0060.
    */
   u8[] peek(const this) {
-    Sha1 copy = Sha1(u32[5](), u8[64](), this.pending, this.total);
+    Sha1 copy = Sha1(u32[].filled(5, 0), u8[].filled(64, 0), this.pending, this.total);
     for (i32 i = 0; i < 5; i++) { copy.h[i] = this.h[i]; }
     for (i32 i = 0; i < 64; i++) { copy.buf[i] = this.buf[i]; }
     return copy.finish();
@@ -161,7 +161,7 @@ export struct Sha1 {
    * `peek` cannot serve: it ends a hash, and what has to survive is an unfinished one.
    */
   u8[] saveState(const this) {
-    u8[] out = u8[96]();
+    u8[] out = u8[].filled(96, 0);
     for (i32 i = 0; i < 5; i++) { storeBE32(this.h[i], out, i * 4); }
     for (i32 i = 0; i < 64; i++) { out[20 + i] = this.buf[i]; }
     for (i32 i = 0; i < 4; i++) { out[84 + i] = (this.pending >> ((3 - i) * 8)) & 0xFF; }
@@ -187,9 +187,9 @@ export struct Sha1 {
    */
   Sha1 loadState(u8[] raw) {
     if (raw.len() != 96) { trap; }
-    u32[] h = u32[5]();
+    u32[] h = u32[].filled(5, 0);
     for (i32 i = 0; i < 5; i++) { h[i] = beWord32(raw, i * 4); }
-    u8[] buf = u8[64]();
+    u8[] buf = u8[].filled(64, 0);
     for (i32 i = 0; i < 64; i++) { buf[i] = raw[20 + i]; }
     i32 pending = 0;
     for (i32 i = 0; i < 4; i++) { pending = (pending << 8) | raw[84 + i]; }
@@ -222,7 +222,7 @@ export struct Sha1 {
     }
     block(this.h, this.buf, 0);
 
-    u8[] out = u8[20]();
+    u8[] out = u8[].filled(20, 0);
     for (i32 i = 0; i < 5; i++) { storeBE32(this.h[i], out, i * 4); }
     return out;
   }

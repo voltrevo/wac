@@ -23,20 +23,20 @@ import { packetKeys } from "../../src/keys.wac";
 
 /** Keys from an arbitrary secret. Nothing here is about the key schedule; it is about the header. */
 InitialKeys keys() {
-  u8[] secret = u8[32]();
+  u8[] secret = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { secret[i] = (i * 11 + 5) & 255; }
   return packetKeys(secret);
 }
 
 u8[] id() {
-  u8[] d = u8[4]();
+  u8[] d = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) { d[i] = (i * 9 + 3) & 255; }
   return d;
 }
 
 /** A payload that differs with `n`, so the ciphertext differs, so the mask differs. */
 u8[] payload(i32 n) {
-  u8[] f = u8[24]();
+  u8[] f = u8[].filled(24, 0);
   for (i32 i = 0; i < 24; i++) { f[i] = (i * 7 + n * 31) & 255; }
   return f;
 }
@@ -101,7 +101,7 @@ i32 paddedOpens(i32 padTo) {
 
 /** An ACK frame written into a fresh buffer, then read back — its largest, or -1. */
 i32 ackRoundTripLargest(i32 largest, i32 firstRange) {
-  u8[] out = u8[ackFrameLength(largest as i64, 0 as i64, firstRange as i64)]();
+  u8[] out = u8[].filled(ackFrameLength(largest as i64, 0 as i64, firstRange as i64), 0);
   if (writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64) == 0) { return -1; }
   match (next(out, 0).frame) {
     Ack(l, d): { return l as~ i32; }
@@ -112,7 +112,7 @@ i32 ackRoundTripLargest(i32 largest, i32 firstRange) {
 
 /** The same frame's size as the reader measures it, which must be what the writer returned. */
 i32 ackRoundTripSize(i32 largest, i32 firstRange) {
-  u8[] out = u8[ackFrameLength(largest as i64, 0 as i64, firstRange as i64)]();
+  u8[] out = u8[].filled(ackFrameLength(largest as i64, 0 as i64, firstRange as i64), 0);
   i32 wrote = writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64);
   if (wrote == 0) { return -1; }
   i32 read = next(out, 0).size;
@@ -121,7 +121,7 @@ i32 ackRoundTripSize(i32 largest, i32 firstRange) {
 
 /** Whether `writeAck` refuses a range it cannot honestly claim. */
 bool ackRefuses(i32 largest, i32 firstRange) {
-  u8[] out = u8[64]();
+  u8[] out = u8[].filled(64, 0);
   return writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64) == 0;
 }
 
@@ -164,8 +164,8 @@ export string test_padding_reaches_the_length_asked_for_without_disturbing_the_f
 
 export string test_an_ack_we_write_is_one_we_read() {
   T t = T.create();
-  i32[] largest = i32[7]();
-  i32[] first = i32[7]();
+  i32[] largest = i32[].filled(7, 0);
+  i32[] first = i32[].filled(7, 0);
   largest[0] = 0;     first[0] = 0;
   largest[1] = 1;     first[1] = 1;
   largest[2] = 5;     first[2] = 2;
@@ -194,7 +194,7 @@ export string test_an_ack_refuses_a_range_it_cannot_have_received() {
 
 export string test_a_packet_number_survives_being_written_and_read_back() {
   T t = T.create();
-  i32[] ns = i32[9]();
+  i32[] ns = i32[].filled(9, 0);
   ns[0] = 0; ns[1] = 1; ns[2] = 127; ns[3] = 128; ns[4] = 255;
   ns[5] = 256; ns[6] = 65535; ns[7] = 65536; ns[8] = 1 << 20;
   for (i32 i = 0; i < 9; i++) {
@@ -233,7 +233,7 @@ export string test_a_short_header_read_outside_the_packet_is_refused() {
 
   // A negative offset whose *sample* still lands inside the packet, which is the case the mask check
   // cannot see, and two that are simply past the end.
-  i32[] outside = i32[](0 - 1, 0 - 5, 0 - 21, packet.len(), packet.len() + 40);
+  i32[] outside = [0 - 1, 0 - 5, 0 - 21, packet.len(), packet.len() + 40];
   for (i32 i = 0; i < outside.len(); i++) {
     t.eqI32(shortKeyPhase(packet, outside[i], keys(), 4), 0 - 1,
             "shortKeyPhase read at offset " + itoa(outside[i]));

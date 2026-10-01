@@ -52,7 +52,7 @@ export string[] importSpecsOf(string path, u8[] src) {
       default: { }
     }
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 at = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {

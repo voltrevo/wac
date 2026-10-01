@@ -28,7 +28,7 @@ export i32 rev(Core core, Cli cli, Fs fs, Args a) {
 
 /** The line's scalars in the opposite order, each one's bytes kept intact. */
 u8[] reversed(u8[] line) {
-  u8[] out = u8[line.len()](fill: 0);
+  u8[] out = u8[].filled(line.len(), 0);
   i32 write = line.len();
   i32 at = 0;
   while (at < line.len()) {

@@ -42,12 +42,12 @@ const string PREFIX = "packages/ssz/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/ssz/src/container.wac", 212, "if (k != KIND_CONTAINER) { return null; }", true,
+  return [
+        Pin("packages/ssz/src/container.wac", 212, "if (k != KIND_CONTAINER) { return null; }", true,
         "**Every kind the table can hold is dispatched above this line.** `rootAt` handles " +
         "`KIND_BASIC` at `:133`, `KIND_BOOLEAN` at `:137`, `KIND_BITVECTOR` at `:142`, `KIND_BITLIST` " +
         "at `:160` and `KIND_VECTOR`/`KIND_LIST` at `:164` — six of the seven — so by the time control " +
@@ -58,13 +58,13 @@ Pin[] pins() {
         "that makes it visible; falling through into the container path would read a field count out " +
         "of something that has none. This is the one point in the package that is not a refusal of " +
         "hostile *data* but of an inconsistent *schema*.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
@@ -72,5 +72,5 @@ export i32 main(Core core, Cli cli) {
   if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
   report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
-                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

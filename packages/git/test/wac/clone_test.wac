@@ -42,10 +42,10 @@ string trimmedEnd(string s) {
 }
 
 string[] splitLines(string s) {
-  if (s == "") { return string[0](fill: ""); }
+  if (s == "") { return string[].filled(0, ""); }
   i32 n = 1;
   for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   i32 count = 0;
   i32 at = 0;
   for (i32 i = 0; i <= s.len(); i++) {
@@ -54,7 +54,7 @@ string[] splitLines(string s) {
     count = count + 1;
     at = i + 1;
   }
-  string[] exact = string[count](fill: "");
+  string[] exact = string[].filled(count, "");
   for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -112,8 +112,8 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
     core.warn("git clone test: skipped — HTTP_PROXY is not set");
     return t.report();
   }
-  string[] names = string[]("HTTP_PROXY", "HTTPS_PROXY");
-  string[] values = string[](proxy, proxy);
+  string[] names = ["HTTP_PROXY", "HTTPS_PROXY"];
+  string[] values = [proxy, proxy];
 
   string suffix = "";
   string cwd = cli.cwd().wait();
@@ -130,10 +130,14 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
 
   string wac = cwd + "/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
-                   string[](builtProgram(cli, "packages/git/example/gitclone.wac", "gitclone",
-                                         string[]("--allow-net", "--allow-env", "--allow-read",
-                                                  "--allow-write", "--quiet")),
-                            REMOTE, dir, "1"));
+                   [
+                                         builtProgram(cli, "packages/git/example/gitclone.wac", "gitclone",
+                                         [
+                                                  "--allow-net", "--allow-env", "--allow-read",
+                                                  "--allow-write", "--quiet"
+                                         ]),
+                            REMOTE, dir, "1"
+                   ]);
   string warned = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitclone failed: " + warned);
   if (r.status != 0) { return t.report(); }
@@ -150,10 +154,10 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   t.isTrue(startsWith(branch, "refs/heads/"), "the branch is \"" + branch + "\"");
 
   // `git -C dir …`. No identity is needed: nothing here commits.
-  string[] noNames = string[0](fill: "");
+  string[] noNames = string[].filled(0, "");
 
   // **git's verdict on the objects.** Clean means every object is there and every link resolves.
-  Exec fsck = cli.exec("git", string[]("-C", dir, "fsck"), u8[0]()).wait();
+  Exec fsck = cli.exec("git", ["-C", dir, "fsck"], u8[]()).wait();
   t.eqI32(fsck.status, 0, "git fsck refused the clone: " + string.fromBytes(fsck.stderr));
 
   // **git's verdict on the working tree: nothing to report at all.**
@@ -166,7 +170,7 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   // **The executable is asserted to be there**, because with the tolerance removed a clone holding no
   // executable would satisfy an empty status without exercising any of this — the loop that used to
   // check them would simply not run, which is how a test stops testing and keeps passing.
-  Exec staged = cli.exec("git", string[]("-C", dir, "ls-files", "-s"), u8[0]()).wait();
+  Exec staged = cli.exec("git", ["-C", dir, "ls-files", "-s"], u8[]()).wait();
   string[] stagedLines = splitLines(string.fromBytes(staged.stdout));
   string firstExec = "";
   i32 executables = 0;
@@ -182,23 +186,23 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   t.isTrue(warned.indexOf("wanted the executable bit") < 0,
            "the program still warns about modes it can set: " + warned);
 
-  Exec status = cli.exec("git", string[]("-C", dir, "status", "--porcelain"), u8[0]()).wait();
+  Exec status = cli.exec("git", ["-C", dir, "status", "--porcelain"], u8[]()).wait();
   t.eqStr(trimmedEnd(string.fromBytes(status.stdout)), "",
           "git reports differences after the clone");
 
   // And on disk rather than merely in the index, since a wrong index and a wrong file agree. `test -x`
   // because `Stat` carries no mode — `issues/system/0132`'s reading half.
   if (firstExec != "") {
-    Exec x = cli.exec("/bin/sh", string[]("-c", "test -x " + quoted(dir + "/" + firstExec)),
-                      u8[0]()).wait();
+    Exec x = cli.exec("/bin/sh", ["-c", "test -x " + quoted(dir + "/" + firstExec)],
+                      u8[]()).wait();
     t.eqI32(x.status, 0, firstExec + " is 100755 in the index but not executable on disk");
   }
 
   // HEAD is symbolic and resolves — a clone whose HEAD named a branch that did not exist would still
   // pass fsck.
-  Exec symbolic = cli.exec("git", string[]("-C", dir, "symbolic-ref", "HEAD"), u8[0]()).wait();
+  Exec symbolic = cli.exec("git", ["-C", dir, "symbolic-ref", "HEAD"], u8[]()).wait();
   t.eqStr(trimmedEnd(string.fromBytes(symbolic.stdout)), branch, "HEAD is not the branch cloned");
-  Exec resolved = cli.exec("git", string[]("-C", dir, "rev-parse", "HEAD"), u8[0]()).wait();
+  Exec resolved = cli.exec("git", ["-C", dir, "rev-parse", "HEAD"], u8[]()).wait();
   t.isTrue(isObjectName(trimmedEnd(string.fromBytes(resolved.stdout))),
            "HEAD does not resolve: " + trimmedEnd(string.fromBytes(resolved.stdout)));
 
@@ -233,17 +237,17 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
              ".git/shallow does not hold an object name");
   }
   cli.rename(dir + "/.git/shallow", dir + "/.git/shallow.away").wait();
-  Exec without = cli.exec("git", string[]("-C", dir, "fsck"), u8[0]()).wait();
+  Exec without = cli.exec("git", ["-C", dir, "fsck"], u8[]()).wait();
   string complaint = string.fromBytes(without.stdout) + string.fromBytes(without.stderr);
   t.isTrue(without.status != 0 || complaint.indexOf("broken link") >= 0 ||
            complaint.indexOf("missing commit") >= 0,
            "removing .git/shallow left git happy, so that file is not what makes this clone valid");
   cli.rename(dir + "/.git/shallow.away", dir + "/.git/shallow").wait();
-  t.eqI32(cli.exec("git", string[]("-C", dir, "fsck"), u8[0]()).wait().status, 0,
+  t.eqI32(cli.exec("git", ["-C", dir, "fsck"], u8[]()).wait().status, 0,
           "putting .git/shallow back did not restore fsck");
 
   // The checkout reached into subdirectories, not just the root.
-  Exec nested = cli.exec("git", string[]("-C", dir, "ls-files"), u8[0]()).wait();
+  Exec nested = cli.exec("git", ["-C", dir, "ls-files"], u8[]()).wait();
   string[] tracked = splitLines(string.fromBytes(nested.stdout));
   bool deep = false;
   for (i32 i = 0; i < tracked.len(); i++) {

@@ -63,7 +63,7 @@ import { errPackedPosition, errWrongCastOp } from "../../src/check.wac";
  * every one is an error under any widening rule the reference might apply.
  */
 string[] WRONG() {
-  return string[](
+  return [
     "export i32 main() { return \"x\"; }",
     "export string s() { return 1; }",
     "export bool b() { return \"y\"; }",
@@ -90,8 +90,9 @@ string[] WRONG() {
     "struct S { i32 v; }\nstruct K : S { i32 w; }\n"
       + "export i32 f(K? k) { if (k is S) { return k.v; } return 0; }",
     // **A local's name used as a type**, which is not a class disagreement like the rest of this list.
-    // `zz` is an `i32` and `zz[1]()` reads as *constructing an array of the type `zz`* — both
-    // compilers take that reading, which is `issues/lang/0265c`. The reference says
+    // `zz` is an `i32` and `zz[1]()` read as *constructing an array of the type `zz`* — both
+    // compilers took that reading until `issues/lang/0265c` closed, and it is an index of an `i32`
+    // now, which is wrong for a plainer reason and still has to be said. The reference said
     // *undefined type 'zz'*; this checker said **nothing at all**, because `knownTypeName` accepted
     // any name `findName` could see and a local is declared there beside every parameter and
     // function. It is in this list for the recall assertion above, which is the one that catches a
@@ -130,8 +131,8 @@ string[] WRONG() {
     // `P r = a;` beside them was reported. Found in sweep.test.ts's miss queue, where three of them
     // were the largest group.
     "struct P { i32 x; } struct Q { P v; } export void f(P? a) { Q q = Q(a); }",
-    "struct P { i32 x; } export void f(P? a) { P[] v = P[](a); }",
-    "struct P { i32 x; } export void f(P? a) { P[] v = P[1](fill: a); }",
+    "struct P { i32 x; } export void f(P? a) { P[] v = [a]; }",
+    "struct P { i32 x; } export void f(P? a) { P[] v = P[].filled(1, a); }",
     "struct P { i32 x; } export void f(bool c, P a, P? b) { P r = c ? a : b; }",
     // One of the last three rows of sweep.test.ts's miss queue: `bool r = a + b;` is refused and
     // `a += b` was not, because the gate asks whether the target is a *value* type and a `bool` is one.
@@ -255,7 +256,8 @@ string[] WRONG() {
     // rule and could not reach it, because `-1` types as `i32` on its own and only the slot is
     // unsigned.
     "u32 f() { return -1; }",
-    "u64 f() { return -1; }");
+    "u64 f() { return -1; }"
+  ];
 }
 
 /**
@@ -275,7 +277,7 @@ string[] WRONG() {
  * slice can tighten it to exact primitive names.
  */
 string[] CLEAN() {
-  return string[](
+  return [
     "export i32 main() { return 1; }",
     "export i64 w() { return 1; }",
     // **The other side of the range rule, at each boundary.** The fix for a literal wider than an
@@ -330,7 +332,8 @@ string[] CLEAN() {
     // The same fact through a field, because it is a different check site rather than the same one
     // twice — a struct literal's arguments are checked where a declaration's initialiser is not.
     "struct Base { i32 id; }\nstruct Kid : Base { i32 x; }\nstruct H { Base? b; }\n"
-      + "export i32 f() { H h = H(Kid(2, 38)); return h.b is null ? 0 : h.b!.id; }");
+      + "export i32 f() { H h = H(Kid(2, 38)); return h.b is null ? 0 : h.b!.id; }"
+  ];
 }
 
 export string test_rung3_every_wrong_program_gets_a_diagnostic() {
@@ -372,14 +375,15 @@ export string test_rung3_we_report_nothing_for_a_program_that_is_correct() {
  */
 export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_call_position() {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "import { helper } from \"./other.wac\";\n" +
     "export i32 main() { i32 helper = helper(); return helper; }",
     "import { helper } from \"./other.wac\";\n" +
-    "export i32 main() { i32 helper = 1; return helper(); }");
+    "export i32 main() { i32 helper = 1; return helper(); }"
+  ];
   // These programs import a file nobody supplies, which `issues/lang/0157` now refuses. Set aside
   // and counted, so a lost rule cannot hide behind the filter.
-  i32[] missing = i32[1]();
+  i32[] missing = i32[].filled(1, 0);
   i32 sawMissing = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     string[] mine = oursBesidesMissingImports(cases[i], missing);
@@ -397,10 +401,12 @@ export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_cal
  *
  * `knownTypeName` accepts any declared name deliberately — the spec makes `x is Other` where `Other`
  * is a variable an identity test, and `f(x)` where `f` is a funcref a call — and that permissiveness
- * leaked into positions with no such reading. `i32 zz = 1; zz[1]();` drew **no diagnostic at all**:
- * `zz[]` was invented, and in a statement position nothing downstream disagreed with it, so
+ * leaked into positions with no such reading. `i32 zz = 1; zz[1]();` drew **no diagnostic at all**
+ * while it read as a sized construction: `zz[]` was invented, and in a statement position nothing downstream disagreed with it, so
  * `wac check` said the file was fine and the emitter's whole-module decline was the only thing left.
- * `zz?` was silent for the same reason. `issues/lang/0170a`'s class exactly.
+ * `zz?` was silent for the same reason. `issues/lang/0170a`'s class exactly. Since `issues/lang/0265c`
+ * closed, `zz[1]()` is an index and a call and is refused as indexing an `i32`; `zz[]()` is the
+ * construction now, and is the case for the type position.
  *
  * **Asserted here rather than in `WRONG()` for the `?` case**, which was about the oracle this file
  * used to have. It compared this checker against the reference's *checker*, through `checkpos`, and
@@ -416,27 +422,28 @@ export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_cal
  */
 export string test_a_local_used_as_a_type_name_is_reported_in_every_position() {
   T t = T.create();
-  string[] bad = string[](
+  string[] bad = [
+    "export i32 g() { i32 zz = 1; return zz[]().len(); }",
     "export void g() { i32 zz = 1; zz[1](); }",
-    "export i32 g() { i32 zz = 1; return zz[1](); }",
     "export void g() { i32 zz = 1; zz? q = null; }",
     "i32 h(i32 n) { return n; } export void g() { i32 zz = 1; fn<i32(zz)> f = h; }",
-    "struct Box<T> { T v; } export void g() { i32 zz = 1; Box<zz> b = Box<zz>(zz); }");
+    "struct Box<T> { T v; } export void g() { i32 zz = 1; Box<zz> b = Box<zz>(zz); }"
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isTrue(ours(bad[i]).len() > 0, "no diagnostic for " + bad[i]);
   }
   // **The controls, and the third is the one that matters.** A rule that refused every declared name
   // in a type position would satisfy every line above and break `is` against a variable, which is the
   // construct `knownTypeName` is permissive *for*.
-  string[] fine = string[](
-    "export i32 f() { i32[] a = i32[2](fill: 0); return a[0]; }",
-    "struct S { i32 v; } export i32 f() { S[] a = S[2](fill: S(1)); return a[0].v; }",
+  string[] fine = [
+    "export i32 f() { i32[] a = i32[].filled(2, 0); return a[0]; }",
+    "struct S { i32 v; } export i32 f() { S[] a = S[].filled(2, S(1)); return a[0].v; }",
     "struct S { i32 v; } export i32 f(S x, S Other) { return x is Other ? 1 : 0; }",
     "export i32 f() { i32? q = null; return q is null ? 0 : q!; }",
-    // `issues/lang/0265c`'s workaround: the funcref comes out of the array through a local, which is
-    // the spelling that works while `a[0]()` reads as a construction.
-    "i32 five() { return 5; } export i32 f() { fn<i32()>[] a = fn<i32()>[1](fill: five); " +
-      "fn<i32()> g = a[0]; return g(); }");
+    // `a[0]()` calls the funcref in the array — `issues/lang/0265c`, unspellable until the length left
+    // the brackets — so an index followed by a call is not a type position at all.
+    "i32 five() { return 5; } export i32 f() { fn<i32()>[] a = [five]; return a[0](); }"
+  ];
   for (i32 i = 0; i < fine.len(); i++) {
     string[] mine = ours(fine[i]);
     t.eqI32(mine.len(), 0, "invented " + itoa(mine.len()) + " diagnostic(s) at " +
@@ -487,10 +494,11 @@ export string test_a_local_used_as_a_type_name_is_reported_in_every_position() {
  */
 export string test_the_same_diagnostic_is_not_reported_twice_at_one_position() {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "export void f(i32 a, bool b) { i32 r = a & b; }",
     "export void f(i32 a, bool b) { i32 r = a | b; }",
-    "export void f(i32 a, i32[] b) { i32 r = a ^ b; }");
+    "export void f(i32 a, i32[] b) { i32 r = a ^ b; }"
+  ];
   for (i32 i = 0; i < cases.len(); i++) {
     // The raw triples, because the identity of a diagnostic is its code *and* its position.
     i32[] raw = dumpTypeErrors(cases[i].toBytes());
@@ -515,11 +523,12 @@ export string test_a_malformed_import_does_not_trap_the_checker() {
   T t = T.create();
   // Each of these is refused by the parser. What is asserted is only that asking the checker about
   // them answers rather than trapping — the count is not the point and is not pinned.
-  string[] bad = string[](
+  string[] bad = [
     "import * as p from \"./p.wac\";\nexport i32 f() { return 0; }",
     "import * from \"./p.wac\";\nexport i32 f() { return 0; }",
     "import { Read } from core;\nexport i32 f() { return 0; }",
-    "export i32 f() { return ; }");
+    "export i32 f() { return ; }"
+  ];
   for (i32 i = 0; i < bad.len(); i++) {
     // `ours` goes through `dumpTypeErrors`; a trap here fails the test rather than returning.
     i32 n = ours(bad[i]).len();
@@ -590,13 +599,13 @@ export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
   // `missing` below must be non-zero, because a filter that hides a diagnostic looks exactly like a
   // checker that stopped producing it.
   T t = T.create();
-  string[] found = string[2048](fill: "");
-  i32[] n = i32[1]();
+  string[] found = string[].filled(2048, "");
+  i32[] n = i32[].filled(1, 0);
   walk(cli, "packages", found, n);
   t.isTrue(n[0] >= 250, "only " + itoa(n[0]) + " .wac files checked — the corpus did not load");
   if (n[0] < 250) { return t.report(); }
 
-  string[] complaints = string[12](fill: "");
+  string[] complaints = string[].filled(12, "");
   i32 said = 0;
   i32 total = 0;
   i32 missing = 0;
@@ -635,11 +644,13 @@ export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
  * than against zero.
  */
 string[] PRIMITIVES() {
-  return string[]("i32", "i64", "u32", "u64", "u8", "u16", "i8", "i16", "f32", "f64", "bool",
-                  "string");
+  return [
+                  "i32", "i64", "u32", "u64", "u8", "u16", "i8", "i16", "f32", "f64", "bool",
+                  "string"
+  ];
 }
-string[] LITERAL_KINDS() { return string[]("integer", "float", "string", "boolean"); }
-string[] LITERALS() { return string[]("1", "1.5", "\"x\"", "true"); }
+string[] LITERAL_KINDS() { return ["integer", "float", "string", "boolean"]; }
+string[] LITERALS() { return ["1", "1.5", "\"x\"", "true"]; }
 
 /**
  * Whether `ty` accepts a literal of `kind`, indexing `LITERAL_KINDS`.
@@ -662,8 +673,8 @@ export string test_rung3_every_primitive_against_every_literal_kind() {
   string[] types = PRIMITIVES();
   string[] kinds = LITERAL_KINDS();
   string[] literals = LITERALS();
-  string[] sources = string[types.len() * literals.len()](fill: "");
-  string[] labels = string[types.len() * literals.len()](fill: "");
+  string[] sources = string[].filled(types.len() * literals.len(), "");
+  string[] labels = string[].filled(types.len() * literals.len(), "");
   i32 n = 0;
   for (i32 a = 0; a < types.len(); a++) {
     for (i32 b = 0; b < literals.len(); b++) {
@@ -711,9 +722,9 @@ export string test_rung3_a_returned_parameter_every_declared_type_against_every_
   T t = T.create();
   string[] all = PRIMITIVES();
   // Packed types are not legal as a return type, so the declared side leaves them out.
-  string[] usable = string[]("i32", "i64", "u32", "u64", "f32", "f64", "bool", "string");
-  string[] sources = string[usable.len() * all.len()](fill: "");
-  string[] labels = string[usable.len() * all.len()](fill: "");
+  string[] usable = ["i32", "i64", "u32", "u64", "f32", "f64", "bool", "string"];
+  string[] sources = string[].filled(usable.len() * all.len(), "");
+  string[] labels = string[].filled(usable.len() * all.len(), "");
   i32 n = 0;
   for (i32 a = 0; a < usable.len(); a++) {
     for (i32 b = 0; b < all.len(); b++) {
@@ -760,12 +771,13 @@ export string test_rung3_a_name_this_slice_cannot_resolve_is_silence_not_a_guess
   // entry keeps passing, quietly asserting that a rule you have since written does not exist. What
   // caught both was a recall corpus large enough to notice the case was missing.
   T t = T.create();
-  string[] quiet = string[](
+  string[] quiet = [
     // A local shadowing a parameter. wac scopes by block and this slice does not track blocks, so
     // the name is poisoned rather than resolved to whichever declaration was seen last.
     "export i32 sh(i32 a) { if (true) { string a = \"x\"; } return a; }",
     // An ordinary expression, which has no diagnostic in it at all.
-    "export i32 arith(i32 a, i32 b) { return a + b; }");
+    "export i32 arith(i32 a, i32 b) { return a + b; }"
+  ];
   for (i32 i = 0; i < quiet.len(); i++) {
     string[] mine = ours(quiet[i]);
     t.eqI32(mine.len(), 0, "we report " + joinedWith(mine, ", ") + " for " + quiet[i] +
@@ -779,8 +791,7 @@ export string test_rung3_a_returned_local_and_a_name_used_before_its_declaration
   // declaration still resolves. Both directions are checked because declaring-as-you-walk passes the
   // first and silently fails the second.
   T t = T.create();
-  string[] sources = string[](
-    "export i32 g(bool c) { if (c) { return v; } string v = \"x\"; return 0; }");
+  string[] sources = ["export i32 g(bool c) { if (c) { return v; } string v = \"x\"; return 0; }"];
   t.isTrue(ours(sources[0]).len() > 0,
            "a name declared after its use was not resolved — the declaration pass is not running " +
            "before the check pass");
@@ -792,21 +803,23 @@ export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, 
   // opinion about which diagnostics count — it makes a program the reference rejects for some other
   // reason look accepted, which is how `i32 && i32` sat in the operator test as "left alone".
   T t = T.create();
-  string[] caught = string[](
+  string[] caught = [
     "i32 bad(bool x) { if (x) { return 1; } }",
     "i32 noElse(bool x) { if (x) { return 1; } else { } }",
     "i32 brk(i32 n) { while (true) { if (n > 0) { break; } n++; } }",
     "i32 deep(i32 n) { while (true) { { break; } } }",
     "i32 elseIf(i32 n) { while (true) { if (n > 10) { n++; } else if (n > 5) { break; } } }",
-    "i32 empty() { }");
-  string[] quiet = string[](
+    "i32 empty() { }"
+  ];
+  string[] quiet = [
     "i32 ok(bool x) { if (x) { return 1; } return 0; }",
     "i32 both(bool x) { if (x) { return 1; } else { return 2; } }",
     "i32 inf(i32 n) { while (true) { n++; } }",
     "i32 nestedBreak(i32 n) { while (true) { while (n > 0) { break; } } }",
     "i32 trapping() { trap; }",
     "void nothing() { }",
-    "void early(bool x) { if (x) { return; } }");
+    "void early(bool x) { if (x) { return; } }"
+  ];
 
   for (i32 i = 0; i < caught.len(); i++) {
     assertCaught(t, caught[i], "a reachable closing brace");
@@ -835,22 +848,24 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
   T t = T.create();
   // **Split into two lists, where the reference used to decide each entry.** The comment marking
   // where the accepted ones began was already here; it is the boundary now rather than a note.
-  string[] caught = string[](
+  string[] caught = [
     "export void a() { i32 x = null; }",
     "export void b() { i32 z; }",
     "export void c() { i8 x = 5; }",
     "export void d() { i32 x = \"s\"; }",
     "export void e() { f64 x = 1; }",
     "export void f(string s) { i32 x = s; }",
-    "export void g(i64 n) { i32 x = n; }");
+    "export void g(i64 n) { i32 x = n; }"
+  ];
   // Accepted, and each is a way the rule could be wrong in the other direction.
-  string[] quiet = string[](
+  string[] quiet = [
     "export void h() { i32 x = 5; }",
     "export void i() { i64 x = 5; }",
     "export void j() { f64 x = 1.5; }",
     "export void k() { i32? n = null; }",
     "export void l() { string s = \"x\"; }",
-    "export void m(i32 a) { i32 b = a; }");
+    "export void m(i32 a) { i32 b = a; }"
+  ];
   caughtAndQuiet(t, caught, quiet, "an initialiser");
   return t.report();
 }
@@ -870,7 +885,7 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
 export string test_rung3_same_type_operands_and_the_operators_that_answer_something_else(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "export f64 bad(i32 x, f64 y) { return x + y; }",
     "export void b2(i32 x, i64 y) { i32 r = x - y; }",
     "export void b3(f64 x, i32 y) { f64 r = x * y; }",
@@ -894,8 +909,9 @@ export string test_rung3_same_type_operands_and_the_operators_that_answer_someth
     // which is a helper the emitter generates; on a `string?` it would have to answer for null first,
     // so the reference sends it to `is` like any other reference. Exempting `string` by name exempted
     // this one too.
-    "export void s1(string? a, string? b) { bool r = a == b; }"),
-  string[](
+    "export void s1(string? a, string? b) { bool r = a == b; }"
+  ],
+  [
     "export i32 ok(i32 x, i32 y) { return x + y; }",
     "export i32 lit(i32 x) { return x + 1; }",
     "export void sh(i64 a, i32 b) { i64 r = a << b; }",
@@ -905,7 +921,8 @@ export string test_rung3_same_type_operands_and_the_operators_that_answer_someth
     // rule about strings. Both spellings, since an earlier version had a rule about strings and this
     // is what it would break.
     "export void x8(string p, string q) { bool r = p == q; }",
-    "export void x9(string p, string q) { bool r = p < q; }"),
+    "export void x9(string p, string q) { bool r = p < q; }"
+  ],
   "same-type operands");
   return t.report();
 }
@@ -927,7 +944,7 @@ export string test_rung3_same_type_operands_and_the_operators_that_answer_someth
  */
 export string test_rung3_a_calls_arguments_against_its_parameters(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "f64 g(f64 x) { return x; } export f64 bad(f32 a) { return g(a); }",
     "i32 g(i32 x) { return x; } export i32 sl() { return g(\"s\"); }",
     "i32 g(i32 x) { return x; } export i32 tw(i64 a) { return g(a); }",
@@ -935,13 +952,15 @@ export string test_rung3_a_calls_arguments_against_its_parameters(Core core, Cli
     // that happened to line up with the wrong parameter. All three directions.
     "i32 g(i32 a, i32 b) { return a; } export i32 ar() { return g(1); }",
     "i32 g() { return 1; } export i32 ar2() { return g(1); }",
-    "i32 g(i32 a) { return a; } export i32 ar3() { return g(1, 2); }"),
-  string[](
+    "i32 g(i32 a) { return a; } export i32 ar3() { return g(1, 2); }"
+  ],
+  [
     "i32 g(i32 x) { return x; } export i32 ok(i32 a) { return g(a); }",
     "i32 g(i32 x) { return x; } export i32 lit() { return g(1); }",
     "i64 g(i64 x) { return x; } export i64 wide() { return g(1); }",
     // A struct construction is the same syntax as a call and must not be read as one.
-    "struct P { i32 x; } export i32 st() { P p = P(1); return p.x; }"),
+    "struct P { i32 x; } export i32 st() { P p = P(1); return p.x; }"
+  ],
   "a call's arguments");
   return t.report();
 }
@@ -963,18 +982,20 @@ export string test_rung3_operands_and_conditions_that_have_to_be_boolean() {
   // The `// Accepted.` marker was already the boundary; it is the list division now. This was the
   // one caller of `decidedByReference`, which asked the reference to classify each entry — the
   // classification is written here instead.
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "export void a(i32 p, bool q) { bool r = p && q; }",
     "export void b(bool p, i32 q) { bool r = p || q; }",
     "export void c(bool p) { bool r = p && 1; }",
     "export void d(i32 p) { if (p) { } }",
     "export void e2(i32 p) { while (p) { } }",
-    "export i32 rejected(i32 x) { if (x) { return 1; } return 0; }"),
-  string[](
+    "export i32 rejected(i32 x) { if (x) { return 1; } return 0; }"
+  ],
+  [
     "export void f(bool p) { bool r = p && true; }",
     "export void g(bool p, bool q) { bool r = p || q; }",
     "export void h(bool p) { if (p) { } }",
-    "export void i(i32 p) { if (p > 0) { } }"),
+    "export void i(i32 p) { if (p > 0) { } }"
+  ],
   "a boolean position");
   return t.report();
 }
@@ -999,14 +1020,15 @@ export string test_rung3_operands_and_conditions_that_have_to_be_boolean() {
 export string test_rung3_struct_types_and_identity_rather_than_equality(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; } struct Q { i32 y; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     d + "export void a(P p, Q q) { bool r = p == q; }",
     d + "export void b(P p, P q) { bool r = p == q; }",
     d + "export void b2(P p, P q) { bool r = p != q; }",
     d + "export P c(Q q) { return q; }",
     d + "export void d(P p) { Q q = p; }",
-    d + "export void e2() { P p = null; }"),
-  string[](
+    d + "export void e2() { P p = null; }"
+  ],
+  [
     d + "export void f(P p) { P q = p; }",
     d + "export P g(P p) { return p; }",
     // Two strings compare by value: the language's exception, and the reason this asks about the name
@@ -1015,7 +1037,8 @@ export string test_rung3_struct_types_and_identity_rather_than_equality(Core cor
     // A void function has no value to return and must not be asked for one. Under the old model
     // `void` came back as "unknown" and was excluded by accident; now it is excluded on purpose.
     "export void i() { }",
-    "export void j(bool c) { if (c) { return; } }"),
+    "export void j(bool c) { if (c) { return; } }"
+  ],
   "struct identity");
   return t.report();
 }
@@ -1036,17 +1059,19 @@ export string test_rung3_struct_types_and_identity_rather_than_equality(Core cor
 export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "export void a(i32[] x) { i64[] y = x; }",
     "export void b(i32[] x) { i32 y = x; }",
     "export void c(i32[] x, i32[] y) { bool r = x == y; }",
-    d + "export void d(P[] x) { bool r = x == x; }"),
-  string[](
+    d + "export void d(P[] x) { bool r = x == x; }"
+  ],
+  [
     "export void e2(i32[] x) { i32[] y = x; }",
     "export void f() { i32? n = null; }",
     "export void g() { i32? n = 5; }",
     d + "export void h(P p) { P? q = p; }",
-    "export void j(i32? a) { i32? b = a; }"),
+    "export void j(i32? a) { i32? b = a; }"
+  ],
   "arrays and nullables");
   return t.report();
 }
@@ -1065,7 +1090,7 @@ export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
 export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     d + "export string a(P p) { return p.x; }",
     d + "export void c(P p) { string t = p.x; }",
     d + "export f64 d(C q) { return q.b; }",
@@ -1075,12 +1100,14 @@ export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core c
     // rule's". It is this checker's now — and what it asserts here is that the two rules do not
     // fight: a field that is missing is reported once, and not also as a type mismatch against the
     // unknown type a missing field has.
-    d + "export i32 j(P p) { return p.nope; }"),
-  string[](
+    d + "export i32 j(P p) { return p.nope; }"
+  ],
+  [
     d + "export i32 b(P p) { return p.x; }",
     d + "export i32 e2(C q) { return q.b; }",
     d + "export f64 h(C q) { return q.c; }",
-    d + "export string i(P p) { return p.s; }"),
+    d + "export string i(P p) { return p.s; }"
+  ],
   "member access");
   return t.report();
 }
@@ -1102,19 +1129,21 @@ export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core c
  */
 export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "struct P { i32 x; string bad(this) { return this.x; } }",
     "struct P { i32 x; void v(this, string s) { i32 n = s; } }",
     "struct P { i32 x; i32 sh(this, bool c) { if (c) { return 1; } } }",
     "struct P { i32 x; string s; void w(this) { i32 n = this.s; } }",
-    "struct P { i32 x; bool cmp(this, P other) { return this == other; } }"),
-  string[](
+    "struct P { i32 x; bool cmp(this, P other) { return this == other; } }"
+  ],
+  [
     "struct P { i32 x; i32 ok(this) { return this.x; } }",
     "struct P { i32 x; i32 st() { return 1; } }",
     "struct P { i32 x; void nov(this) { } }",
     "struct P { i32 x; i32 arg(this, i32 n) { return n; } }",
     // `this` in a static method is not the struct — it is nothing, and must not resolve.
-    "struct P { i32 x; i32 stat(i32 this2) { return this2; } }"),
+    "struct P { i32 x; i32 stat(i32 this2) { return this2; } }"
+  ],
   "method bodies");
   return t.report();
 }
@@ -1134,20 +1163,22 @@ export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
 export string test_rung3_assignment_through_names_fields_and_elements(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; string s; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "export void a(i32 n, string t) { n = t; }",
     "export void c(i32 n) { n = 1.5; }",
     "export void f(i32 n, i64 m) { n = m; }",
     d + "export void d(P p, string t) { p.x = t; }",
     "export void e2(i32[] a, string t) { a[0] = t; }",
-    d + "export void h(P p, i32 n) { p.s = n; }"),
-  string[](
+    d + "export void h(P p, i32 n) { p.s = n; }"
+  ],
+  [
     "export void j(i32 n, i32 m) { n = m; }",
     d + "export void k(P p) { p.x = 1; }",
     "export void l(i32[] a) { a[0] = 1; }",
     // Compound assignment belongs to the operator rule, which skips literals on purpose.
     "export void g(i32 n) { n += 1; }",
-    "export void m(i32 n, i32 o) { n += o; }"),
+    "export void m(i32 n, i32 o) { n += o; }"
+  ],
   "assignment");
   return t.report();
 }
@@ -1168,25 +1199,28 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
   T t = T.create();
   string d = "struct P { i32 x; } i32 fi() { return 1; } string fs() { return \"a\"; } ";
   string params = "i32 n, i64 m, bool b, P p, i32[] arr, i32? opt";
-  string[] labels = string[](
+  string[] labels = [
     "cast as", "cast as!", "cast as~", "is", "unary minus", "unary not", "index", "ternary",
-    "call", "call string", "construct", "unwrap", "member");
-  string[] forms = string[](
+    "call", "call string", "construct", "unwrap", "member"
+  ];
+  string[] forms = [
     "n as i64", "m as! i32", "m as~ i32", "p is P", "-n", "!b", "arr[0]", "b ? n : n",
-    "fi()", "fs()", "P(1)", "opt!", "p.x");
-  string[] returns = string[]("i32", "i64", "bool", "string", "f64", "P");
+    "fi()", "fs()", "P(1)", "opt!", "p.x"
+  ];
+  string[] returns = ["i32", "i64", "bool", "string", "f64", "P"];
   // **The type each form has**, which the reference used to be asked for one cell at a time. Every
   // one of them is in `returns`, so each form accepts exactly one of the six and the grid has 13
   // legal cells and 65 illegal ones — the same 65 the comment below records untyped casts having
   // once dropped to 50.
-  string[] formTypes = string[](
+  string[] formTypes = [
     "i64", "i32", "i32", "bool", "i32", "bool", "i32", "i32",
-    "i32", "string", "P", "i32", "i32");
+    "i32", "string", "P", "i32", "i32"
+  ];
   t.eqI32(labels.len(), forms.len(), "a form per label");
   t.eqI32(formTypes.len(), forms.len(), "a type per form");
 
-  string[] sources = string[forms.len() * returns.len()](fill: "");
-  string[] where = string[forms.len() * returns.len()](fill: "");
+  string[] sources = string[].filled(forms.len() * returns.len(), "");
+  string[] where = string[].filled(forms.len() * returns.len(), "");
   i32 n = 0;
   for (i32 f = 0; f < forms.len(); f++) {
     for (i32 r = 0; r < returns.len(); r++) {
@@ -1238,7 +1272,7 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
 export string test_rung3_struct_construction_against_field_types(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     d + "export void b() { P p = P(\"y\", 1); }",
     d + "export void g() { C q = C(1.0, 2.0); }",
     d + "export void k(i64 n) { P p = P(n, \"y\"); }",
@@ -1247,10 +1281,12 @@ export string test_rung3_struct_construction_against_field_types(Core core, Cli 
     // longer silent — and what they assert here is that the two rules do not fight: a wrong count is
     // reported once, at the construction, and not also as a field mismatch.
     d + "export void c() { P p = P(1); }",
-    d + "export void m() { P p = P(1, \"y\", 3); }"),
-  string[](
+    d + "export void m() { P p = P(1, \"y\", 3); }"
+  ],
+  [
     d + "export void a() { P p = P(1, \"y\"); }",
-    d + "export void f() { C q = C(1, 2.0); }"),
+    d + "export void f() { C q = C(1, 2.0); }"
+  ],
   "struct construction");
   return t.report();
 }
@@ -1268,19 +1304,21 @@ export string test_rung3_struct_construction_against_field_types(Core core, Cli 
 export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; } i32 takes(i32 n) { return n; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     d + "export void a(P? p) { P q = p; }",
     d + "export P b(P? p) { return p; }",
     d + "export void c(P? p, P q) { q = p; }",
     d + "export void d(i32? n) { i32 m = n; }",
-    d + "export i32 e2(i32? n) { return takes(n); }"),
-  string[](
+    d + "export i32 e2(i32? n) { return takes(n); }"
+  ],
+  [
     // Unwrapped, which is the whole point of `!`.
     d + "export void f(P? p) { P q = p!; }",
     d + "export i32 g(i32? n) { return n!; }",
     // The other direction widens and is legal.
     d + "export void h(P p) { P? q = p; }",
-    d + "export void i(P? p) { P? q = p; }"),
+    d + "export void i(P? p) { P? q = p; }"
+  ],
   "nullable into non-null");
   return t.report();
 }
@@ -1301,7 +1339,7 @@ export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(C
 export string test_rung3_const_variables_const_fields_and_const_references(Core core, Cli cli) {
   T t = T.create();
   string d = "struct P { i32 x; const i32 k; } struct Q { P p; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     d + "export void a() { const i32 n = 1; n = 2; }",
     d + "export void b() { const i32 n = 1; n += 1; }",
     d + "export void c() { const i32 n = 1; n++; }",
@@ -1309,13 +1347,15 @@ export string test_rung3_const_variables_const_fields_and_const_references(Core 
     d + "export void e2(P p) { p.k = 1; }",
     d + "export void g(const P p) { p.x = 1; }",
     d + "export void n(const Q q) { q.p.x = 1; }",
-    d + "export void o(const i32[] a) { a[0] = 1; }"),
-  string[](
+    d + "export void o(const i32[] a) { a[0] = 1; }"
+  ],
+  [
     d + "export void d() { i32 n = 1; n = 2; }",
     d + "export void f(P p) { p.x = 1; }",
     d + "export void i(i32 n) { n = 2; }",
     d + "export void j(Q q) { q.p.x = 1; }",
-    d + "export void k2(i32[] a) { a[0] = 1; }"),
+    d + "export void k2(i32[] a) { a[0] = 1; }"
+  ],
   "the const family");
   return t.report();
 }
@@ -1325,8 +1365,8 @@ export string test_rung3_a_const_this_refuses_writes_through_the_receiver(Core c
   // method's own constness, and everything else follows.
   T t = T.create();
   caughtAndQuiet(t,
-    string[]("struct R { i32 y; void w(const this) { this.y = 1; } }"),
-    string[]("struct R { i32 y; void w(this) { this.y = 1; } }"),
+    ["struct R { i32 y; void w(const this) { this.y = 1; } }"],
+    ["struct R { i32 y; void w(this) { this.y = 1; } }"],
     "a const this");
   return t.report();
 }
@@ -1352,20 +1392,22 @@ export string test_rung3_method_calls_static_and_through_a_const_receiver(Core c
   T t = T.create();
   string d = "struct P { i32 x; i32 get(const this) { return this.x; } " +
              "void set(this, i32 v) { this.x = v; } i32 mk() { return 1; } } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     d + "export void a(const P p) { p.set(1); }",
     d + "export i32 e2() { return P.nope(); }",
     d + "export i32 f(P p) { return p.nope(); }",
     // A static called on an instance, and an instance called on the struct.
     d + "export i32 h(P p) { return p.mk(); }",
-    d + "export i32 i() { return P.get(); }"),
-  string[](
+    d + "export i32 i() { return P.get(); }"
+  ],
+  [
     d + "export i32 b(const P p) { return p.get(); }",
     d + "export void c(P p) { p.set(1); }",
     d + "export i32 d() { return P.mk(); }",
     d + "export i32 j(P p) { return p.get(); }",
     // A generic's methods are not modelled, so nothing is said about them.
-    "struct Box<T> { T v; i32 get(const this) { return 1; } } export i32 k2() { return 1; }"),
+    "struct Box<T> { T v; i32 get(const this) { return 1; } } export i32 k2() { return 1; }"
+  ],
   "method calls");
   return t.report();
 }
@@ -1387,12 +1429,13 @@ export string test_rung3_method_calls_static_and_through_a_const_receiver(Core c
 export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiver(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "struct Base { i32 b; Base make() { return Base(1); } } struct Sub : Base { i32 e2; } " +
     "export void bad() { Sub s = Sub.make(); }",
     "struct Inner { i32 v; void mutate(this) { this.v = 1; } } " +
-    "struct Outer { Inner inner; void tryMutate(const this) { this.inner.mutate(); } }"),
-  string[](
+    "struct Outer { Inner inner; void tryMutate(const this) { this.inner.mutate(); } }"
+  ],
+  [
     // An instance method *is* inherited.
     "struct Base { i32 b; i32 get(const this) { return this.b; } } struct Sub : Base { i32 e2; } " +
     "export i32 ok(Sub s) { return s.get(); }",
@@ -1401,7 +1444,8 @@ export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiv
     "export void ok2() { Base b = Base.make(); }",
     // Non-const receiver, deep.
     "struct Inner { i32 v; void mutate(this) { this.v = 1; } } " +
-    "struct Outer { Inner inner; void ok3(this) { this.inner.mutate(); } }"),
+    "struct Outer { Inner inner; void ok3(this) { this.inner.mutate(); } }"
+  ],
   "statics and const receivers");
   return t.report();
 }
@@ -1412,31 +1456,33 @@ export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiv
 export string test_rung3_array_elements_duplicate_parameters_and_module_level_consts(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // Elements and fills carry the element type, not their own.
-    "export void f() { i8[] b = i8[](1.5); }",
-    "export void f() { i32[] b = i32[](, 1); }",
-    "struct E { i32 v; } export void f() { E[] e = E[2](fill: 5); }",
+    "export void f() { i8[] b = [1.5]; }",
+    "export void f() { i32[] b = [, 1]; }",
+    "struct E { i32 v; } export void f() { E[] e = E[].filled(2, 5); }",
     // A parameter list is checked without looking at a single use.
     "export void f(i32 a, i32 a) { }",
     "struct S { i32 v; void m(this, i32 a, f64 a) { } }",
     // A module-level const is const everywhere, including through a field.
     "const i32 K = 1; export void f() { K = 2; }",
-    "struct P { i32 v; } const P S = P(1); export void f() { S.v = 9; }"),
-  string[](
+    "struct P { i32 v; } const P S = P(1); export void f() { S.v = 9; }"
+  ],
+  [
     // The element type accepts a literal the same way an initialiser does.
-    "export void f() { i8[] b = i8[](1); }",
+    "export void f() { i8[] b = [1]; }",
     // An integer literal widens to `i64` but not to `f64` — an element is no more permissive than an
-    // initialiser, and `f64[2](fill: 1)` is a mismatch for the same reason `f64 x = 1` is.
-    "export void f() { i64[] b = i64[](1); }",
-    "export void f() { f64[] b = f64[2](fill: 1.0); }",
-    "struct E { i32 v; } export void f() { E[] e = E[2](fill: E(1)); }",
+    // initialiser, and `f64[].filled(2, 1)` is a mismatch for the same reason `f64 x = 1` is.
+    "export void f() { i64[] b = [1]; }",
+    "export void f() { f64[] b = f64[].filled(2, 1.0); }",
+    "struct E { i32 v; } export void f() { E[] e = E[].filled(2, E(1)); }",
     // Two names that only look alike, and a shadow in an inner scope rather than a repeat.
     "export void f(i32 a, i32 b) { }",
     "struct S { i32 v; void m(this, i32 a) { } void n(this, i32 a) { } }",
     // Reading a module-level const, and a local of the same name in a body.
     "const i32 K = 1; export i32 f() { return K; }",
-    "struct P { i32 v; } const P S = P(1); export i32 f() { return S.v; }"),
+    "struct P { i32 v; } const P S = P(1); export i32 f() { return S.v; }"
+  ],
   "elements, parameters and module consts");
   return t.report();
 }
@@ -1446,7 +1492,7 @@ export string test_rung3_array_elements_duplicate_parameters_and_module_level_co
 // skipped by every rule, so `f64.nope()` and `string.fromBytes(5)` both passed unremarked.
 export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // Arity, at the call.
     "export string bad() { return string.fromCodepoint(); }",
     "export string bad() { return string.fromBytes(); }",
@@ -1462,8 +1508,9 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
     "export string bad(i8[] b) { return string.fromBytes(b); }",
     // A name that is not on the surface at all.
     "export void bad() { f64.nope(1.0); }",
-    "export void bad() { string.nosuch(1); }"),
-  string[](
+    "export void bad() { string.nosuch(1); }"
+  ],
+  [
     "export string ok() { return string.fromCodepoint(65); }",
     "export string ok(u8[] b) { return string.fromBytes(b); }",
     "export u64 ok(f64 x) { return f64.toBits(x); }",
@@ -1472,7 +1519,8 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
     "export f32 ok(u32 b) { return f32.fromBits(b); }",
     "export i32 ok() { return \"hi\".toBytes().len(); }",
     // A local of that name is a variable, not a type: the scope is consulted before the surface.
-    "export i32 ok(i32 f64) { return f64; }"),
+    "export i32 ok(i32 f64) { return f64; }"
+  ],
   "the builtin surface");
   return t.report();
 }
@@ -1496,17 +1544,19 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
  */
 export string test_rung3_a_packed_type_in_every_position() {
   T t = T.create();
-  string[] packed = string[]("u8", "i8", "u16", "i16");
-  string[] places = string[]("parameter", "local", "return", "cast target", "struct field",
+  string[] packed = ["u8", "i8", "u16", "i16"];
+  string[] places = [
+                             "parameter", "local", "return", "cast target", "struct field",
                              // **The only positions a packed type is legal in.** A struct field is
                              // not one — it is above — and that was assumed until this grid said
                              // otherwise, which is the second time in one afternoon that reading a
                              // rule's own words ("an array element and nowhere else") would have
                              // been quicker than reasoning about it.
-                             "array element", "array field");
-  string[] sources = string[places.len() * packed.len()](fill: "");
-  string[] labels = string[places.len() * packed.len()](fill: "");
-  bool[] legal = bool[places.len() * packed.len()]();
+                             "array element", "array field"
+  ];
+  string[] sources = string[].filled(places.len() * packed.len(), "");
+  string[] labels = string[].filled(places.len() * packed.len(), "");
+  bool[] legal = bool[].filled(places.len() * packed.len(), false);
   i32 n = 0;
   for (i32 p = 0; p < places.len(); p++) {
     for (i32 k = 0; k < packed.len(); k++) {
@@ -1536,7 +1586,7 @@ export string test_rung3_a_packed_type_in_every_position() {
 
 export string test_rung3_a_reference_comparison_is_one_diagnostic_not_two() {
   T t = T.create();
-  string[] sources = string[](
+  string[] sources = [
     "struct N { i32 v; } export void a1(N a, N b) { bool r = a == b; }",
     "struct N { i32 v; } export void a2(N? a, N? b) { bool r = a == b; }",
     "struct N { i32 v; } export void a3(N? a, N b) { bool r = a == b; }",
@@ -1553,7 +1603,8 @@ export string test_rung3_a_reference_comparison_is_one_diagnostic_not_two() {
     // `a == b` on two of them outright. The rule it should have met asked `isStruct`, which an enum is
     // not, and the mixed-type rule needed the two sides to *differ*, which two `E`s do not.
     "enum E { A, B } export void b1(E a, E b) { bool r = a == b; }",
-    "enum E { A, B } export void b2(E a, i32 b) { bool r = a == b; }");
+    "enum E { A, B } export void b2(E a, i32 b) { bool r = a == b; }"
+  ];
   // **One diagnostic each, which is the whole claim** and is about us rather than about anything
   // else. The reference was asked to confirm each case really is a single mistake, and its position
   // was compared against ours; both are gone with it, and neither was what the test is named for.
@@ -1574,10 +1625,11 @@ export string test_rung3_a_reference_comparison_is_one_diagnostic_not_two() {
  */
 export string test_rung3_and_plain_strings_still_compare_by_value() {
   T t = T.create();
-  string[] sources = string[](
+  string[] sources = [
     "export bool s(string a, string b) { return a == b; }",
     "export bool t(string a) { return a != \"x\"; }",
-    "export bool u(string a, string b) { return a < b; }");
+    "export bool u(string a, string b) { return a < b; }"
+  ];
   for (i32 i = 0; i < sources.len(); i++) {
     string[] mine = ours(sources[i]);
     t.eqI32(mine.len(), 0, sources[i] + ": we said " + joinedWith(mine, ", "));
@@ -1589,7 +1641,7 @@ export string test_rung3_and_plain_strings_still_compare_by_value() {
  * **An index and an array size are `i32`, not "some integer".**
  *
  * Both checks asked `isIntegerName`, which is true of `i64`, `u32` and `u64` as well — so
- * `xs[someI64]` and `i32[someU64]()` compiled, and the reference answers *"array index must be i32,
+ * `xs[someI64]` and `i32[].filled(someU64, 0)` compiled, and the reference answers *"array index must be i32,
  * got i64"*. A length is a count and wasm's array instructions take an `i32`; the wider question was
  * never the one being asked.
  *
@@ -1599,19 +1651,20 @@ export string test_rung3_and_plain_strings_still_compare_by_value() {
  */
 export string test_rung3_an_index_and_an_array_size_are_i32_exactly() {
   T t = T.create();
-  string[] sources = string[](
+  string[] sources = [
     "export void f(i32[] xs, i32 a) { i32 r = xs[a]; }",
     "export void f(i32[] xs, i64 a) { i32 r = xs[a]; }",
     "export void f(i32[] xs, u32 a) { i32 r = xs[a]; }",
     "export void f(i32[] xs, u64 a) { i32 r = xs[a]; }",
     "export void f(i32[] xs, f64 a) { i32 r = xs[a]; }",
-    "export void f() { i32[] xs = i32[4](); }",
-    "export void f(i32 a) { i32[] xs = i32[a](); }",
-    "export void f(i64 a) { i32[] xs = i32[a](); }",
-    "export void f(u32 a) { i32[] xs = i32[a](); }",
-    "export void f(u64 a) { i32[] xs = i32[a](); }");
+    "export void f() { i32[] xs = i32[].filled(4, 0); }",
+    "export void f(i32 a) { i32[] xs = i32[].filled(a, 0); }",
+    "export void f(i64 a) { i32[] xs = i32[].filled(a, 0); }",
+    "export void f(u32 a) { i32[] xs = i32[].filled(a, 0); }",
+    "export void f(u64 a) { i32[] xs = i32[].filled(a, 0); }"
+  ];
   // Whether each must be refused — the premise of the case, written out rather than asked.
-  bool[] mustRefuse = bool[]( false, true, true, true, true, false, false, true, true, true);
+  bool[] mustRefuse = [false, true, true, true, true, false, false, true, true, true];
   for (i32 i = 0; i < sources.len(); i++) {
     if (mustRefuse[i]) { assertCaught(t, sources[i], "an index or a size"); continue; }
     assertQuiet(t, sources[i], "an index or a size");
@@ -1641,7 +1694,7 @@ export string test_rung3_an_index_and_an_array_size_are_i32_exactly() {
 export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core core, Cli cli) {
   T t = T.create();
   string d = "struct H { fn<i32(i32, u8[])> f; } struct G<T> { fn<i32(T)> g; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // The swap that started this: both arguments wrong, each its own diagnostic.
     d + "export i32 a(H h, u8[] b) { return h.f(b, 7); }",
     // One wrong is still wrong.
@@ -1649,14 +1702,16 @@ export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core cor
     d + "export i32 c(H h) { return h.f(1, 2); }",
     // And through a local of funcref type, which is the other way to reach one.
     d + "i32 t(i32 n, u8[] b) { return n; } export i32 d(u8[] b) { " +
-        "fn<i32(i32, u8[])> k = t; return k(b, 1); }"),
-  string[](
+        "fn<i32(i32, u8[])> k = t; return k(b, 1); }"
+  ],
+  [
     d + "export i32 e(H h, u8[] b) { return h.f(7, b); }",
     d + "i32 t2(i32 n, u8[] b) { return n; } export i32 f2(u8[] b) { " +
         "fn<i32(i32, u8[])> k = t2; return k(1, b); }",
     // A generic's funcref parameter is a spelling this checker cannot compare, so it says nothing
     // rather than guessing — the skip that keeps correct code quiet.
-    d + "export i32 g2(G<i32> g) { return g.g(1); }"),
+    d + "export i32 g2(G<i32> g) { return g.g(1); }"
+  ],
   "a call through a funcref");
   return t.report();
 }
@@ -1665,7 +1720,7 @@ export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, C
   T t = T.create();
   string e = "enum Shape { Point, Circle(f64 radius) } ";
   string s = "struct Base { i32 b; } struct Sub : Base { i32 s; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // No guard at all, on an enum and on a parent struct.
     e + "export f64 f(Shape s) { return s.radius; }",
     s + "export i32 f(Base b) { return b.s; }",
@@ -1675,8 +1730,9 @@ export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, C
     // Narrowing does not survive the branch it guards.
     e + "export f64 f(Shape s) { if (s is Circle) { } return s.radius; }",
     // Narrowed to the wrong variant: `Point` has no payload, and the complaint says so.
-    e + "export f64 f(Shape s) { if (s is Point) { return s.radius; } return 0.0; }"),
-  string[](
+    e + "export f64 f(Shape s) { if (s is Point) { return s.radius; } return 0.0; }"
+  ],
+  [
     // The guard, alone and under a conjunction, and one level deeper.
     e + "export f64 f(Shape s) { if (s is Circle) { return s.radius; } return 0.0; }",
     e + "export f64 f(Shape s) { if ((s is Circle) && true) { return s.radius; } return 0.0; }",
@@ -1687,7 +1743,8 @@ export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, C
     e + "export f64 f(Shape s) { match (s) { Circle(r): { return r; } " +
         "Point: { return 0.0; } } }",
     // The enum's own name is still usable for what it does have.
-    e + "export Shape f() { return Shape.Circle(1.0); }"),
+    e + "export Shape f() { return Shape.Circle(1.0); }"
+  ],
   "narrowing");
   return t.report();
 }
@@ -1704,12 +1761,12 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
     Core core, Cli cli) {
   T t = T.create();
   string c = "struct Counter { i32 c; void mutate(this) { this.c = 9; } } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // Every position an f32 literal can appear in — the reference reports in all of them.
     "export f32 f() { f32 x = 1.0e40; return x; }",
     "export f32 f() { return 1.0e40; }",
     "void g(f32 a) { } export void f() { g(1.0e40); }",
-    "export void f() { f32[] a = f32[](1.0e40); }",
+    "export void f() { f32[] a = [1.0e40]; }",
     "struct S { f32 v; } export void f() { S s = S(1.0e40); }",
     "export void f(f32 x) { x = 1.0e40; }",
     // The sign is a unary operator, so the whole literal path skipped this until it saw through one —
@@ -1720,8 +1777,9 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
     // A local aliasing something const, through a parameter and through a field.
     c + "export i32 f(const Counter p) { Counter a = p; a.mutate(); return 1; }",
     c + "struct X { Counter c; i32 t(const this) { Counter a = this.c; a.mutate(); return 1; } }",
-    "export void f(const i32[] p) { i32[] a = p; a[0] = 1; }"),
-  string[](
+    "export void f(const i32[] p) { i32[] a = p; a[0] = 1; }"
+  ],
+  [
     // The boundary itself, and f32's maximum written without an exponent.
     "export f32 f() { f32 x = 3.4028235e38; return x; }",
     "export f32 f() { f32 x = 1.0e38; return x; }",
@@ -1737,7 +1795,8 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
     "struct X { i32 n; i32 t(const this) { i32 v = this.n; v = 5; return v; } }",
     // A string is a reference and an immutable one: assigning a new string mutates nothing, so
     // aliasing a const string carries no constness. Seven sites in one file said so.
-    "const string B = \"x\"; export void f() { string s = B; s = s + \"y\"; }"),
+    "const string B = \"x\"; export void f() { string s = B; s = s + \"y\"; }"
+  ],
   "a literal's value and a const alias");
   return t.report();
 }
@@ -1750,21 +1809,22 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
 export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot(Core core, Cli cli) {
   T t = T.create();
   string b = "struct Box<T> { T v; i32 get(const this) { return 1; } } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // No slot to infer from: a receiver, and a bare statement.
     b + "export i32 f() { return Box(1).get(); }",
     b + "export void f() { Box(1.0); }",
     b + "export void f() { i32 n = Box(1.0).get(); }",
     // A slot that says what the argument must be — inference feeding the argument check.
-    b + "export void f() { Box<i32> b = Box(1.0); }"),
-  string[](
+    b + "export void f() { Box<i32> b = Box(1.0); }"
+  ],
+  [
     // Every slot the reference accepts one in.
     b + "export void f() { Box<f64> b = Box(1.0); }",
     b + "export Box<f64> f() { return Box(1.0); }",
     b + "void g(Box<f64> b) { } export void f() { g(Box(1.0)); }",
     b + "struct Q { Box<f64> b; } export void f() { Q q = Q(Box(1.0)); }",
     b + "export void f(Box<f64> b) { b = Box(1.0); }",
-    b + "export void f() { Box<f64>[] a = Box<f64>[](Box(1.0)); }",
+    b + "export void f() { Box<f64>[] a = [Box(1.0)]; }",
     // A nullable slot takes the non-null construction — the target's nullability is not part of the
     // question, and comparing the spelled target directly reported a working line in `packages/std`.
     b + "struct Q { Box<f64>? b; } export void f() { Q q = Q(Box(1.0)); }",
@@ -1772,7 +1832,8 @@ export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot(Core c
     b + "export void f() { Box<f64> b = Box<f64>(1.0); }",
     // Inside a generic's own methods the bare name means the instantiation being compiled, and the
     // return type is the slot that says so.
-    "struct Vec<T> { T[] xs; Vec<T> empty() { return Vec(T[]()); } }"),
+    "struct Vec<T> { T[] xs; Vec<T> empty() { return Vec(T[]()); } }"
+  ],
   "target-type inference");
   return t.report();
 }
@@ -1797,14 +1858,15 @@ export string test_rung3_a_generic_functions_arguments_say_what_its_parameters_a
   T t = T.create();
   string box = "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } ";
   string id = "T id<T>(T x) { return x; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // The inferred return, landing somewhere it does not fit.
     box + "export i32 f() { Box<f64> b = Box(1.0); i32 x = unbox(b); return x; }",
     box + "export void f(Box<f64> b) { string s = unbox(b); }",
     id + "export void f(f64 a) { string s = id(a); }",
     // Arity still applies to a generic function, even where the types do not.
-    id + "export void f(f64 a) { f64 x = id(a, a); }"),
-  string[](
+    id + "export void f(f64 a) { f64 x = id(a, a); }"
+  ],
+  [
     box + "export f64 f(Box<f64> b) { return unbox(b); }",
     box + "export i32 f(Box<i32> b) { return unbox(b); }",
     id + "export f64 f(f64 a) { return id(a); }",
@@ -1812,7 +1874,8 @@ export string test_rung3_a_generic_functions_arguments_say_what_its_parameters_a
     // A parameter the arguments do not settle leaves the return unknown, and unknown is silence.
     id + "export i32 f() { return id(1); }",
     // Through a suffix: `T[]` against `f64[]` looks one level down.
-    "T first<T>(T[] xs) { return xs[0]; } export f64 f(f64[] a) { return first(a); }"),
+    "T first<T>(T[] xs) { return xs[0]; } export f64 f(f64[] a) { return first(a); }"
+  ],
   "a generic function's arguments");
   return t.report();
 }
@@ -1827,15 +1890,16 @@ export string test_rung3_a_local_does_not_refute_a_call_to_the_imported_name_it_
   // alarms it produced were rung 3 red for every agent until the checker learned to ask whether the
   // name was imported.
   T t = T.create();
-  string[] quiet = string[](
+  string[] quiet = [
     // The local shadows the import, then the import is called.
     "import { factor } from \"./f.wac\";\n" +
-    "export void ok() { u8[] factor = u8[](1); i32 n = factor(2); }",
+    "export void ok() { u8[] factor = [1]; i32 n = factor(2); }",
     // And the tighter one: the local is named after the very call that fills it.
-    "import { cert } from \"./f.wac\";\nexport void ok() { u8[] cert = cert(1); }");
+    "import { cert } from \"./f.wac\";\nexport void ok() { u8[] cert = cert(1); }"
+  ];
   // These programs import a file nobody supplies, which `issues/lang/0157` now refuses. Set aside
   // and counted, so a lost rule cannot hide behind the filter.
-  i32[] missing = i32[1]();
+  i32[] missing = i32[].filled(1, 0);
   i32 sawMissing = 0;
   for (i32 i = 0; i < quiet.len(); i++) {
     string[] mine = oursBesidesMissingImports(quiet[i], missing);
@@ -1860,18 +1924,18 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     Core core, Cli cli) {
   T t = T.create();
   string sh = "struct Shape { f64 x; } struct Circle : Shape { f64 r; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // A funcref is a type: two of them agree only when their spellings do, and it is not a number.
     "export void bad(fn<i32(i32)> f) { fn<i32(bool)> g = f; }",
     "export void bad(fn<i32(i32)> f) { i32 x = f + 1; }",
     // **A declared function used as a value has a type**, and it is a funcref. It had none at all
     // here, so every mismatch through a bare function name was silent — and the emitter then made a
     // module wasm rejects, which `wac build` reported as a byte count. `issues/system/0170`.
-    "u8[] bytes() { return u8[4](); } export i32 bad() { return bytes; }",
-    "u8[] bytes() { return u8[4](); } export i32 bad() { i32 x = bytes; return x; }",
-    "u8[] bytes() { return u8[4](); } void t(i32 n) { } export void bad() { t(bytes); }",
+    "u8[] bytes() { return u8[].filled(4, 0); } export i32 bad() { return bytes; }",
+    "u8[] bytes() { return u8[].filled(4, 0); } export i32 bad() { i32 x = bytes; return x; }",
+    "u8[] bytes() { return u8[].filled(4, 0); } void t(i32 n) { } export void bad() { t(bytes); }",
     // The same name in a slot that wants a *different* funcref.
-    "u8[] bytes() { return u8[4](); } export fn<i32()> bad() { return bytes; }",
+    "u8[] bytes() { return u8[].filled(4, 0); } export fn<i32()> bad() { return bytes; }",
     // Calling: through a funcref with the wrong count, through something that is not one, and a name
     // that is nothing at all.
     "export void bad(fn<void(i32)> f) { f(1, 2); }",
@@ -1899,12 +1963,13 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     "export i32 bad(i31ref r) { return r as! i32; }",
     "export void bad(i64 x) { i31ref y = x as! i31ref; }",
     "export void bad(bool x) { i31ref y = x as i31ref; }",
-    "export i31ref bad(i32 x) { return x as i31ref; }"),
-  string[](
+    "export i31ref bad(i32 x) { return x as i31ref; }"
+  ],
+  [
     // The same funcref, and a call through one with the right count.
     "export void ok(fn<i32(i32)> f) { fn<i32(i32)> g = f; }",
     // And the shape that must stay quiet: the funcref a function's name actually is.
-    "u8[] bytes() { return u8[4](); } export i32 ok() { fn<u8[]()> g = bytes; return g().len(); }",
+    "u8[] bytes() { return u8[].filled(4, 0); } export i32 ok() { fn<u8[]()> g = bytes; return g().len(); }",
     "export void ok(fn<void(i32)> f) { f(1); }",
     "export void ok(fn<void()> f) { f(); }",
     // A declared function called normally, and a struct constructed with named arguments.
@@ -1925,7 +1990,8 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     sh + "export Shape ok(Circle c) { return c as Shape; }",
     sh + "export Circle ok(Shape s) { return s as! Circle; }",
     "export i32 ok(i31ref r) { return r as i32; }",
-    "export i31ref ok(i32 x) { return x as! i31ref; }"),
+    "export i31ref ok(i32 x) { return x as! i31ref; }"
+  ],
   "funcrefs and reference casts");
   return t.report();
 }
@@ -1942,7 +2008,7 @@ export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli
   T t = T.create();
   string d = "struct P { i32 x; } struct Base { i32 b; } struct Sub : Base { i32 s; } " +
              "enum E { A, B } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // A self-cast is redundant whichever spelling is used, not only the plain one.
     d + "export void f(i32 a) { i32 v = a as i32; }",
     d + "export void f(i32 a) { i32 v = a as! i32; }",
@@ -1966,8 +2032,9 @@ export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli
     // Both halves of the direction, independently: the type does not widen, or the nullability does
     // not.
     d + "export void f(P? a) { Base? v = a as Base?; }",
-    d + "export void f(string a) { P v = a as P; }"),
-  string[](
+    d + "export void f(string a) { P v = a as P; }"
+  ],
+  [
     // The safe direction with `as`, and the checked one with `as!`.
     d + "export void f(Sub a) { Base v = a as Base; }",
     d + "export void f(Base a) { Sub v = a as! Sub; }",
@@ -1986,7 +2053,8 @@ export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli
     d + "export void f(i32 a) { u32 v = a as@ u32; }",
     // `i31ref` is the one type that crosses: lossy going in, lossless coming back.
     d + "export void f(i32 a) { i31ref v = a as! i31ref; }",
-    d + "export void f(i31ref a) { i32 v = a as i32; }"),
+    d + "export void f(i31ref a) { i32 v = a as i32; }"
+  ],
   "the cast law");
   return t.report();
 }
@@ -2010,7 +2078,7 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
     Core core, Cli cli) {
   T t = T.create();
   string inner = "struct Inner { i32 val; void mutate(this) { this.val = 1; } } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // A case value is an i32 like the subject, and the complaint names the `case` keyword.
     "export void f(i32 x) { switch (x) { case true: { } default: { } } }",
     "export void f(i32 x) { switch (x) { case 1: { } case true: { } default: { } } }",
@@ -2023,8 +2091,9 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
     "struct C { i32 n; i32 get(const this) { return this.n; } } " +
     "export string f(C c) { return c.get(); }",
     "struct C { i32 n; i32 get(const this) { return this.n; } } " +
-    "export void f(C c) { bool b = c.get(); }"),
-  string[](
+    "export void f(C c) { bool b = c.get(); }"
+  ],
+  [
     // A case value that is an integer, in every width the subject could be.
     "export void f(i32 x) { switch (x) { case 1: { } default: { } } }",
     "export void f(i32 x) { switch (x) { case 1: { } case 2: { } } }",
@@ -2043,7 +2112,8 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
     "export i32 f(C c) { return c.get(); }",
     // A generic's method, read in the instantiation's world.
     "struct Box<T> { T v; T get(const this) { return this.v; } } " +
-    "export i32 f(Box<i32> b) { return b.get(); }"),
+    "export i32 f(Box<i32> b) { return b.get(); }"
+  ],
   "a case, a method's return, a static as a value");
   return t.report();
 }
@@ -2051,7 +2121,7 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
 export string test_rung3_override_increments_construction_arity_and_default_values(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // override, both directions.
     "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
     "struct BadRect : Shape { i32 w; i32 name(const this) { return 2; } }",
@@ -2070,7 +2140,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     // Nothing to default-construct from: a recursive struct, an enum, a struct containing one.
     "struct Node { i32 v; Node next; } export void bad() { Node n = Node(); }",
     "struct Node { Node next; }",
-    "enum E { A(i32 v), B } export i32 f() { E[] a = E[2](); return a.len(); }",
+    "enum E { A(i32 v), B } export i32 f() { E[] a = E[].defaulted(2); return a.len(); }",
     "enum E { A, B } struct S { E e; } export i32 f() { S s = S(); return 1; }",
     // A packed type where there is no slot for one.
     "export i32 process(i8 val) { return 0; }",
@@ -2079,8 +2149,9 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     // Immutable strings, and a downcast that can fail.
     "export void bad() { string s = \"hello\"; s[0] = \"H\"; }",
     "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
-    "export void bad(Shape s) { Circle c = s as Circle; }"),
-  string[](
+    "export void bad(Shape s) { Circle c = s as Circle; }"
+  ],
+  [
     // `override` that is correct, and a method that hides nothing.
     "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
     "struct R : Shape { i32 w; override i32 name(const this) { return 2; } }",
@@ -2098,7 +2169,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     // Defaults that do exist: primitives, a nullable recursive field, an enum with a fill.
     "struct P { i32 v; } export void f() { P p = P(); }",
     "struct Node { i32 v; Node? next; } export void f() { Node n = Node(); }",
-    "enum E { A, B } export i32 f() { E[] a = E[2](fill: E.A); return a.len(); }",
+    "enum E { A, B } export i32 f() { E[] a = E[].filled(2, E.A); return a.len(); }",
     // Reading a string index is ordinary; only writing is refused. **And it reads as a `string`** —
     // spec/spec/strings.md §Indexing: "returns it as a single-character string". This entry
     // returned it from an `i32` function and sat in the *accepted* list, which is a claim the
@@ -2108,7 +2179,8 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
     "export void ok(Circle c) { Shape s = c as Shape; }",
     "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
-    "export void ok(Shape s) { Circle c = s as! Circle; }"),
+    "export void ok(Shape s) { Circle c = s as! Circle; }"
+  ],
   "override, increments, arity and defaults");
   return t.report();
 }
@@ -2116,7 +2188,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
 export string test_rung3_arity_loop_depth_representation_and_compile_time_constants(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // `break` and `continue` with nothing to leave.
     "export void f() { break; }",
     "export void f() { continue; }",
@@ -2131,13 +2203,14 @@ export string test_rung3_arity_loop_depth_representation_and_compile_time_consta
     "i32 g(i32 a) { return a; } export i32 f() { return g(); }",
     "i32 g(i32 a) { return a; } export i32 f() { return g(1, 2); }",
     // A nullable packed type has no representation, in an array or on its own.
-    "export i32 f() { u8?[] xs = u8?[3](); return xs.len(); }",
+    "export i32 f() { u8?[] xs = u8?[].defaulted(3); return xs.len(); }",
     "export void f() { u8? x = null; }",
     "export void f(i8? y) { }",
     // A constant computed by calling something.
     "i32 n() { return 3; } const i32 K = n(); export i32 f() { return K; }",
-    "i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }"),
-  string[](
+    "i32 n() { return 3; } const i32[] T = i32[].filled(n(), 0); export i32 f() { return T[0]; }"
+  ],
+  [
     // Every enclosing form that makes `break` legal. **`continue` in a switch was here** and both
     // compilers accepted it, where it silently meant `break` — it left the switch and carried on
     // after it. Now refused by both, stated at `[§wac-continue-not-switch-8kd3pq7]`, and moved to
@@ -2162,7 +2235,8 @@ export string test_rung3_arity_loop_depth_representation_and_compile_time_consta
     // rather than a computation.
     "const i32 K = 1 + 2; export i32 ok() { return K; }",
     "struct P { i32 v; } const P S = P(1); export i32 ok() { return S.v; }",
-    "const i32[] T = i32[3](); export i32 ok() { return T[0]; }"),
+    "const i32[] T = i32[].filled(3, 0); export i32 ok() { return T[0]; }"
+  ],
   "arity, loop depth, representation and constants");
   return t.report();
 }
@@ -2173,26 +2247,27 @@ export string test_rung3_generic_instantiations_and_substitution_at_their_member
   string box = "struct Box<T> { T v; T get(const this) { return this.v; } } ";
   string vec = "struct Vec<T> { T[] items; i32 n; } ";
   string pair = "struct Pair<A, B> { A a; B b; } ";
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // A constructor argument read through the type argument.
     box + "export i32 f() { Box<i32> b = Box<i32>(1.5); return b.v; }",
     // A field read through it — the whole point of substitution.
     box + "export f64 f() { Box<i32> b = Box<i32>(1); return b.v; }",
     pair + "export f64 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.a; }",
     // `T[]` substitutes under the suffix, not instead of it.
-    vec + "export f64 f() { Vec<i32> v = Vec<i32>(i32[2](), 0); return v.items[0]; }",
+    vec + "export f64 f() { Vec<i32> v = Vec<i32>(i32[].filled(2, 0), 0); return v.items[0]; }",
     // Invariance: `Box<f64>` is not a `Box<i32>`, and neither is a `Box<Sub>` a `Box<Base>`.
     box + "export i32 f() { Box<i32> b = Box<f64>(1.0); return b.v; }",
-    vec + "export i32 f() { Vec<i32> v = Vec<f64>(f64[2](), 0); return v.n; }",
+    vec + "export i32 f() { Vec<i32> v = Vec<f64>(f64[].filled(2, 0.0), 0); return v.n; }",
     box + "struct Base { i32 a; } struct Sub : Base { i32 b; } " +
           "i32 take(Box<Base> x) { return 1; } export i32 f(Box<Sub> s) { return take(s); }",
     // An instantiation is a struct, so a method it does not have is still a missing method.
-    box + "export i32 f() { Box<i32> b = Box<i32>(1); return b.nosuch(); }"),
-  string[](
+    box + "export i32 f() { Box<i32> b = Box<i32>(1); return b.nosuch(); }"
+  ],
+  [
     // The same programs with the types agreeing.
     box + "export i32 f() { Box<i32> b = Box<i32>(1); return b.v; }",
     box + "export f64 f() { Box<f64> b = Box<f64>(1.0); return b.v; }",
-    vec + "export i32 f() { Vec<i32> v = Vec<i32>(i32[2](), 0); return v.items[0]; }",
+    vec + "export i32 f() { Vec<i32> v = Vec<i32>(i32[].filled(2, 0), 0); return v.items[0]; }",
     pair + "export i32 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.a; }",
     pair + "export f64 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.b; }",
     // A bare template with the arguments left to inference. Legal, and unknowable from the syntax
@@ -2204,7 +2279,8 @@ export string test_rung3_generic_instantiations_and_substitution_at_their_member
     // A generic function's signature is written in its own parameters, which mean nothing at a call
     // site: `Box<T>` accepts every `Box<…>` and `T` accepts anything.
     "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } " +
-    "export f64 f(Box<f64> b) { return unbox(b); }"),
+    "export f64 f(Box<f64> b) { return unbox(b); }"
+  ],
   "generic instantiations");
   return t.report();
 }
@@ -2212,7 +2288,7 @@ export string test_rung3_generic_instantiations_and_substitution_at_their_member
 export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declaring_one(
     Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     "export void bad() { i32 x = y; }",
     "export void bad() { undeclared = 5; }",
     "export void bad() { bool y = !undefined_var; }",
@@ -2223,8 +2299,9 @@ export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declar
     "export void bad() { i32 y = undefined_var[0]; }",
     "export void bad() { i32 y = undefined_var!; }",
     "export void bad() { i32 y = undefined_var.field; }",
-    "struct Foo { i32 count; i32 getCount(const this) { return count; } }"),
-  string[](
+    "struct Foo { i32 count; i32 getCount(const this) { return count; } }"
+  ],
+  [
     // Every binder, one per line. A gap in any of these is a false alarm rather than a missed case.
     "export i32 local() { i32 v = 1; return v; }",
     "export i32 param(i32 v) { return v; }",
@@ -2243,14 +2320,15 @@ export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declar
     "struct P { i32 x; P mk() { return P(1); } } export i32 stat() { return P.mk().x; }",
     "enum E { A, B } export E variant() { return E.A; }",
     "export string prim() { return string.fromCodepoint(65); }",
-    "export u64 prim2(f64 x) { return f64.toBits(x); }"),
+    "export u64 prim2(f64 x) { return f64.toBits(x); }"
+  ],
   "an undeclared name");
   return t.report();
 }
 
 export string test_rung3_operators_members_indexing_and_the_questions_they_ask(Core core, Cli cli) {
   T t = T.create();
-  caughtAndQuiet(t, string[](
+  caughtAndQuiet(t, [
     // Declaration positions that cannot hold a type.
     "struct Bad { void x; }",
     "void bad(void x) { }",
@@ -2281,7 +2359,7 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     "export void bad(i32 x) { x[0] = 1; }",
     "export void bad(i32[] a) { i32 x = a[true]; }",
     "export void bad(i32[] a) { a[true] = 0; }",
-    "export void bad() { i32[] a = i32[true](); }",
+    "export void bad() { i32[] a = i32[].filled(true, 0); }",
     // Ternary, switch, named construction, redundant cast.
     "export i32 bad(i32 x) { return x ? 1 : 2; }",
     "export void bad(bool c) { i32 x = c ? 1 : true; }",
@@ -2292,8 +2370,9 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     // `is` and `!` on something the question does not fit.
     "export bool bad(i32 x) { return x is null; }",
     "export bool bad(i32 a, i32 b) { return a is b; }",
-    "struct P { i32 x; } export P bad(P p) { return p!; }"),
-  string[](
+    "struct P { i32 x; } export P bad(P p) { return p!; }"
+  ],
+  [
     // Every reference kind `is null` is a fair question about — the negative form reported all of
     // these, and an enum, a funcref and a generic instantiation are exactly what it could not see.
     "struct P { i32 x; } export bool ok(P? p) { return p is null; }",
@@ -2330,7 +2409,8 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     "export void ok(i32 x) { switch (x) { case 1: { } default: { } } }",
     // A void function returning nothing, and a value function returning one.
     "export void ok() { return; }",
-    "export i32 ok2() { return 1; }"),
+    "export i32 ok2() { return 1; }"
+  ],
   "operators, members and indexing");
   return t.report();
 }
@@ -2338,11 +2418,11 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
 /**
  * A cast to a packed type says which *rule*, not which operator — `issues/lang/0289b`.
  *
- * **The advice was the defect, not the refusal.** `u8[](a as u8)` was refused with *wrong cast
+ * **The advice was the defect, not the refusal.** `[a as u8]` was refused with *wrong cast
  * operator for these types* and the help *"`as` converts without loss, `as!` checks at runtime,
  * `as~` takes the nearest value"*. All three are refused with the same sentence, because `u8` is
  * packed and there is no conversion for any operator to spell — so a reader follows the advice three
- * times, learns nothing, and is one character away from `u8[](a)`, which is accepted.
+ * times, learns nothing, and is one character away from `[a]`, which is accepted.
  *
  * **Asserted on the codes rather than the words**, which is what `dumpTypeErrors` hands back and
  * what survives a rewording. Both directions: checking only that the packed code appears would pass
@@ -2352,7 +2432,7 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
 export string test_a_cast_to_a_packed_type_names_the_rule_not_the_operator_0289b(Core core, Cli cli) {
   T t = T.create();
   i32[] flat = dumpTypeErrors(("export i32 main() {\n  i32 a = 65;\n" +
-                               "  u8[] one = u8[](a as u8);\n  return one[0];\n}\n").toBytes());
+                               "  u8[] one = [a as u8];\n  return one[0];\n}\n").toBytes());
   t.isTrue(flat.len() >= 3, "the cast is still refused");
   bool rule = false;
   bool operator = false;

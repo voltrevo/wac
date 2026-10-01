@@ -26,7 +26,7 @@ struct Rng {
   i64 s;
   Rng create(i64 seed) { return Rng(seed); }
   u8[] block(this) {
-    u8[] o = u8[16]();
+    u8[] o = u8[].filled(16, 0);
     for (i32 i = 0; i < 16; i++) {
       this.s = (this.s * 1103515245 + 12345) & 2147483647;
       o[i] = ((this.s >> 13) & 255) as! i32;
@@ -36,7 +36,7 @@ struct Rng {
 }
 
 u8[] xorBlocks(u8[] a, u8[] b) {
-  u8[] o = u8[16]();
+  u8[] o = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { o[i] = a[i] ^ b[i]; }
   return o;
 }
@@ -76,14 +76,14 @@ export string test_the_identity_and_zero_are_where_gcm_puts_them() {
   // zeros is one only if the top bit of the first byte is x^0 — reverse the convention and
   // this value becomes x^127 and multiplies like it.
   T t = T.create();
-  u8[] one = u8[16]();
+  u8[] one = u8[].filled(16, 0);
   one[0] = 0x80;
   Rng r = Rng.create(12345);
   for (i32 i = 0; i < 40; i++) {
     u8[] x = r.block();
     t.eqBytes(mul(one, x), x, "1 * X == X");
     t.eqBytes(mul(x, one), x, "X * 1 == X");
-    t.eqBytes(mul(x, u8[16]()), u8[16](), "X * 0 == 0");
+    t.eqBytes(mul(x, u8[].filled(16, 0)), u8[].filled(16, 0), "X * 0 == 0");
   }
   return t.report();
 }
@@ -110,28 +110,28 @@ export string test_it_is_associative_over_three_blocks() {
 // else; `test_traps_*` is how a test says it wants one. `issues/system/0161`.
 
 u8[] filled(i32 n, i32 v) {
-  u8[] b = u8[n]();
+  u8[] b = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { b[i] = v; }
   return b;
 }
 
 export string test_traps_on_data_that_is_not_a_whole_number_of_blocks() {
-  ghash(filled(16, 0xAB), u8[15]());
+  ghash(filled(16, 0xAB), u8[].filled(15, 0));
   return "";
 }
 
 export string test_traps_on_one_byte_of_data() {
-  ghash(filled(16, 0xAB), u8[1]());
+  ghash(filled(16, 0xAB), u8[].filled(1, 0));
   return "";
 }
 
 export string test_traps_on_seventeen_bytes_of_data() {
-  ghash(filled(16, 0xAB), u8[17]());
+  ghash(filled(16, 0xAB), u8[].filled(17, 0));
   return "";
 }
 
 export string test_traps_on_a_short_subkey() {
-  ghash(u8[15](), u8[16]());
+  ghash(u8[].filled(15, 0), u8[].filled(16, 0));
   return "";
 }
 
@@ -143,16 +143,16 @@ export string test_traps_on_a_short_subkey() {
  * subkey gets the hash of a different one. Found by mutation testing rather than by reading.
  */
 export string test_traps_on_a_subkey_of_seventeen_bytes() {
-  ghash(u8[17](), u8[16]());
+  ghash(u8[].filled(17, 0), u8[].filled(16, 0));
   return "";
 }
 
 export string test_traps_on_a_subkey_of_twenty_bytes() {
-  ghash(u8[20](), u8[16]());
+  ghash(u8[].filled(20, 0), u8[].filled(16, 0));
   return "";
 }
 
 export string test_traps_on_a_subkey_of_thirty_two_bytes() {
-  ghash(u8[32](), u8[16]());
+  ghash(u8[].filled(32, 0), u8[].filled(16, 0));
   return "";
 }

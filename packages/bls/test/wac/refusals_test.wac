@@ -65,7 +65,7 @@ u8[] infinitySig() { return g2Compress(g2Infinity()); }
 u8[] infinityKey() { return g1Compress(g1Infinity()); }
 
 u8[][] keys3() {
-  u8[][] ks = u8[][3](fill: u8[0]());
+  u8[][] ks = u8[][].filled(3, u8[]());
   ks[0] = un(PK_A); ks[1] = un(PK_B); ks[2] = un(PK);
   return ks;
 }
@@ -80,7 +80,7 @@ export string test_a_real_signature_still_verifies() {
   T t = T.create();
   t.isTrue(verify(un(PK), un(MSG), un(SIG)), "the single-signature control does not verify");
   u8[] msg = un(MSG);
-  u8[][] msgs = u8[][3](fill: msg);
+  u8[][] msgs = u8[][].filled(3, msg);
   t.isTrue(fastAggregateVerify(keys3(), msg, un(AGG_SIG)), "the fast-aggregate control does not verify");
 
   // And the encodings of the two identities are the ones the format specifies, which every refusal
@@ -112,18 +112,18 @@ export string test_an_infinity_signature_is_refused_at_every_entry_point() {
   t.isFalse(fastAggregateVerify(keys3(), msg, inf),
             "fastAggregateVerify accepted the identity as a signature");
 
-  u8[][] msgs = u8[][3](fill: msg);
+  u8[][] msgs = u8[][].filled(3, msg);
   t.isFalse(aggregateVerify(keys3(), msgs, inf),
             "aggregateVerify accepted the identity as a signature");
 
   // The batch takes the same shape, with a second real term beside it so that `n == 1` does not send
   // it down the single-verification path instead.
-  u8[][] sigs = u8[][2](fill: u8[0]());
+  u8[][] sigs = u8[][].filled(2, u8[]());
   sigs[0] = un(SIG); sigs[1] = inf;
-  u8[][] pks = u8[][2](fill: u8[0]());
+  u8[][] pks = u8[][].filled(2, u8[]());
   pks[0] = un(PK); pks[1] = un(PK_A);
-  u8[][] bmsgs = u8[][2](fill: msg);
-  t.isFalse(batchVerify(pks, bmsgs, sigs, u8[](1, 2, 3, 4)),
+  u8[][] bmsgs = u8[][].filled(2, msg);
+  t.isFalse(batchVerify(pks, bmsgs, sigs, [1, 2, 3, 4] as u8[]),
             "batchVerify accepted a batch containing the identity as a signature");
   return t.report();
 }
@@ -144,32 +144,32 @@ export string test_an_infinity_public_key_is_refused() {
 
   t.isFalse(verify(infKey, msg, un(SIG)), "verify accepted a zero secret key");
 
-  u8[][] one = u8[][1](fill: infKey);
+  u8[][] one = u8[][].filled(1, infKey);
   t.isTrue(aggregatePubkeys(one) is null, "an aggregate of one infinity key is not a refusal");
   t.isFalse(fastAggregateVerify(one, msg, un(AGG_SIG)), "fastAggregateVerify accepted a lone zero key");
 
   // And one infinity key riding along with two real ones — the shape that makes the per-key check
   // matter rather than the per-aggregate one.
-  u8[][] mixed = u8[][3](fill: u8[0]());
+  u8[][] mixed = u8[][].filled(3, u8[]());
   mixed[0] = un(PK_A); mixed[1] = infKey; mixed[2] = un(PK_B);
   t.isTrue(aggregatePubkeys(mixed) is null, "an infinity key rode along inside an aggregate");
 
   // And the signature side of the same question. `aggregateSignatures` refuses an infinity member for
   // the reason `aggregatePubkeys` does: adding the identity to a sum leaves it unchanged, so a member
   // that contributed nothing would be indistinguishable from one that was never supplied.
-  u8[][] infSigs = u8[][2](fill: un(SIG));
+  u8[][] infSigs = u8[][].filled(2, un(SIG));
   infSigs[1] = infinitySig();
   t.isTrue(aggregateSignatures(infSigs) is null, "an infinity signature aggregated with a real one");
   t.eqI32(aggregate(infSigs).len(), 0, "`aggregate` answered bytes for a set containing the identity");
-  t.isTrue(aggregateSignatures(u8[][1](fill: infinitySig())) is null,
+  t.isTrue(aggregateSignatures(u8[][].filled(1, infinitySig())) is null,
            "an aggregate of one infinity signature is not a refusal");
 
-  u8[][] msgs = u8[][3](fill: msg);
+  u8[][] msgs = u8[][].filled(3, msg);
   t.isFalse(aggregateVerify(mixed, msgs, un(AGG_SIG)),
             "aggregateVerify accepted an infinity key among real ones");
 
-  u8[][] sigs = u8[][3](fill: un(SIG));
-  t.isFalse(batchVerify(mixed, msgs, sigs, u8[](7)),
+  u8[][] sigs = u8[][].filled(3, un(SIG));
+  t.isFalse(batchVerify(mixed, msgs, sigs, [7] as u8[]),
             "batchVerify accepted an infinity key among real ones");
   return t.report();
 }
@@ -187,39 +187,39 @@ export string test_a_key_or_signature_that_is_not_a_point_is_refused_not_skipped
 
   // Right length, wrong content: 48 and 96 bytes of 0xFF. The top bits are the compression flags, so
   // this is a well-formed *shape* whose coordinate is not a field element.
-  u8[] junkKey = u8[48](fill: 0xFF);
-  u8[] junkSig = u8[96](fill: 0xFF);
+  u8[] junkKey = u8[].filled(48, 0xFF);
+  u8[] junkSig = u8[].filled(96, 0xFF);
   // And the wrong length entirely, which is refused earlier and by a different rule.
-  u8[] shortKey = u8[47](fill: 0);
-  u8[] longSig = u8[97](fill: 0);
+  u8[] shortKey = u8[].filled(47, 0);
+  u8[] longSig = u8[].filled(97, 0);
 
   t.isFalse(verify(junkKey, msg, un(SIG)), "verify accepted 48 bytes that are not a key");
   t.isFalse(verify(un(PK), msg, junkSig), "verify accepted 96 bytes that are not a signature");
   t.isFalse(verify(shortKey, msg, un(SIG)), "verify accepted a 47-byte key");
   t.isFalse(verify(un(PK), msg, longSig), "verify accepted a 97-byte signature");
 
-  t.isTrue(aggregatePubkeys(u8[][1](fill: junkKey)) is null, "an unparsable key aggregated");
-  t.isTrue(aggregateSignatures(u8[][1](fill: junkSig)) is null, "an unparsable signature aggregated");
-  t.eqI32(aggregate(u8[][1](fill: junkSig)).len(), 0,
+  t.isTrue(aggregatePubkeys(u8[][].filled(1, junkKey)) is null, "an unparsable key aggregated");
+  t.isTrue(aggregateSignatures(u8[][].filled(1, junkSig)) is null, "an unparsable signature aggregated");
+  t.eqI32(aggregate(u8[][].filled(1, junkSig)).len(), 0,
           "`aggregate` answered bytes for a signature it could not parse");
 
   // A bad member in the middle of good ones — the case where "skipped" and "refused" differ.
-  u8[][] mixed = u8[][3](fill: u8[0]());
+  u8[][] mixed = u8[][].filled(3, u8[]());
   mixed[0] = un(PK_A); mixed[1] = junkKey; mixed[2] = un(PK_B);
   t.isFalse(fastAggregateVerify(mixed, msg, un(AGG_SIG)), "an unparsable key was skipped over");
 
-  u8[][] msgs = u8[][3](fill: msg);
+  u8[][] msgs = u8[][].filled(3, msg);
   t.isFalse(aggregateVerify(mixed, msgs, un(AGG_SIG)),
             "aggregateVerify skipped over an unparsable key");
   t.isFalse(aggregateVerify(keys3(), msgs, junkSig),
             "aggregateVerify accepted an unparsable signature");
 
-  u8[][] sigs = u8[][3](fill: un(SIG));
-  t.isFalse(batchVerify(mixed, msgs, sigs, u8[](3)), "batchVerify skipped over an unparsable key");
+  u8[][] sigs = u8[][].filled(3, un(SIG));
+  t.isFalse(batchVerify(mixed, msgs, sigs, [3] as u8[]), "batchVerify skipped over an unparsable key");
 
-  u8[][] badSigs = u8[][3](fill: un(SIG));
+  u8[][] badSigs = u8[][].filled(3, un(SIG));
   badSigs[1] = junkSig;
-  t.isFalse(batchVerify(keys3(), msgs, badSigs, u8[](3)),
+  t.isFalse(batchVerify(keys3(), msgs, badSigs, [3] as u8[]),
             "batchVerify skipped over an unparsable signature");
   return t.report();
 }
@@ -234,24 +234,24 @@ export string test_a_key_or_signature_that_is_not_a_point_is_refused_not_skipped
 export string test_the_parallel_lists_must_be_the_same_length() {
   T t = T.create();
   u8[] msg = un(MSG);
-  u8[][] empty = u8[][0](fill: u8[0]());
-  u8[][] one = u8[][1](fill: un(PK));
-  u8[][] oneMsg = u8[][1](fill: msg);
-  u8[][] oneSig = u8[][1](fill: un(SIG));
+  u8[][] empty = u8[][].filled(0, u8[]());
+  u8[][] one = u8[][].filled(1, un(PK));
+  u8[][] oneMsg = u8[][].filled(1, msg);
+  u8[][] oneSig = u8[][].filled(1, un(SIG));
 
   // Empty is a refusal rather than a vacuous truth: an aggregate of nothing is the identity, and the
   // identity satisfies the equation.
   t.isFalse(aggregateVerify(empty, empty, un(SIG)), "aggregateVerify verified an empty list");
-  t.isFalse(batchVerify(empty, empty, empty, u8[](1)), "batchVerify verified an empty batch");
+  t.isFalse(batchVerify(empty, empty, empty, [1] as u8[]), "batchVerify verified an empty batch");
   t.isTrue(aggregatePubkeys(empty) is null, "an empty key list aggregated to something");
   t.isTrue(aggregateSignatures(empty) is null, "an empty signature list aggregated to something");
 
   // Three keys, one message.
-  u8[][] msgs3 = u8[][3](fill: msg);
+  u8[][] msgs3 = u8[][].filled(3, msg);
   t.isFalse(aggregateVerify(keys3(), oneMsg, un(AGG_SIG)), "aggregateVerify ignored a short message list");
-  t.isFalse(batchVerify(keys3(), oneMsg, u8[][3](fill: un(SIG)), u8[](1)),
+  t.isFalse(batchVerify(keys3(), oneMsg, u8[][].filled(3, un(SIG)), [1] as u8[]),
             "batchVerify ignored a short message list");
-  t.isFalse(batchVerify(keys3(), msgs3, oneSig, u8[](1)),
+  t.isFalse(batchVerify(keys3(), msgs3, oneSig, [1] as u8[]),
             "batchVerify ignored a short signature list");
   return t.report();
 }
@@ -268,21 +268,21 @@ export string test_the_parallel_lists_must_be_the_same_length() {
 export string test_a_batch_of_one_agrees_with_verifying_one() {
   T t = T.create();
   u8[] msg = un(MSG);
-  u8[][] pk1 = u8[][1](fill: un(PK));
-  u8[][] m1 = u8[][1](fill: msg);
-  u8[][] s1 = u8[][1](fill: un(SIG));
+  u8[][] pk1 = u8[][].filled(1, un(PK));
+  u8[][] m1 = u8[][].filled(1, msg);
+  u8[][] s1 = u8[][].filled(1, un(SIG));
 
-  t.isTrue(batchVerify(pk1, m1, s1, u8[](1, 2, 3)), "a batch of one good signature did not verify");
+  t.isTrue(batchVerify(pk1, m1, s1, [1, 2, 3] as u8[]), "a batch of one good signature did not verify");
 
   // The same signature against a different message: `verify` says false, and so must the batch.
-  u8[][] other = u8[][1](fill: un("0x0000000000000000000000000000000000000000000000000000000000000000"));
+  u8[][] other = u8[][].filled(1, un("0x0000000000000000000000000000000000000000000000000000000000000000"));
   t.isFalse(verify(un(PK), other[0], un(SIG)), "the control for the negative case verifies");
-  t.isFalse(batchVerify(pk1, other, s1, u8[](1, 2, 3)), "a batch of one bad signature verified");
+  t.isFalse(batchVerify(pk1, other, s1, [1, 2, 3] as u8[]), "a batch of one bad signature verified");
 
   // And the entropy does not change either verdict, which is what "the weights only ever mattered for
   // moving a point between different terms" means when there is one term.
-  t.isTrue(batchVerify(pk1, m1, s1, u8[0]()), "a batch of one did not verify with no entropy");
-  t.isTrue(batchVerify(pk1, m1, s1, u8[64](fill: 0xAB)),
+  t.isTrue(batchVerify(pk1, m1, s1, u8[]()), "a batch of one did not verify with no entropy");
+  t.isTrue(batchVerify(pk1, m1, s1, u8[].filled(64, 0xAB)),
            "a batch of one did not verify with different entropy");
   return t.report();
 }
@@ -301,12 +301,12 @@ export string test_a_batch_of_one_agrees_with_verifying_one() {
 export string test_a_batch_weight_is_two_words_and_never_zero() {
   T t = T.create();
   u8[] msg = un(MSG);
-  u8[][] pks = u8[][2](fill: u8[0]());
+  u8[][] pks = u8[][].filled(2, u8[]());
   pks[0] = un(PK); pks[1] = un(PK_A);
-  u8[][] msgs = u8[][2](fill: msg);
-  u8[][] sigs = u8[][2](fill: un(SIG));
+  u8[][] msgs = u8[][].filled(2, msg);
+  u8[][] sigs = u8[][].filled(2, un(SIG));
 
-  u8[] tr = batchTranscript(pks, msgs, sigs, u8[](9, 9));
+  u8[] tr = batchTranscript(pks, msgs, sigs, [9, 9] as u8[]);
   // Everything the batch commits to: the entropy and then each term's three fields in order.
   t.eqI32(tr.len(), 2 + (48 + 32 + 96) * 2, "the transcript is not the concatenation it claims to be");
   t.eqI32(tr[0], 9, "the transcript does not begin with the entropy");
@@ -330,7 +330,7 @@ export string test_a_batch_weight_is_two_words_and_never_zero() {
 
   // And the transcript is committed to: the same index over a different batch differs. Without this
   // the weights would be a fixed table an adversary could compute in advance.
-  u8[] tr2 = batchTranscript(pks, msgs, sigs, u8[](9, 8));
+  u8[] tr2 = batchTranscript(pks, msgs, sigs, [9, 8] as u8[]);
   u32[] c = batchScalar(tr2, 0);
   t.isTrue(a[0] != c[0] || a[1] != c[1], "the weight for term 0 does not depend on the transcript");
   return t.report();

@@ -30,7 +30,7 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** Ask node — a `sha1 <msg> <claimed>` line per digest this file computed. */
 void checkSha1(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", string[](ORACLE), lines, what);
+  check(t, cli, "node", [ORACLE], lines, what);
 }
 
 /** A `sha1` line: the message, and what we say its digest is. */
@@ -38,7 +38,7 @@ void claim(Lines lines, u8[] msg, u8[] digest) {
   lines.add("sha1 " + hex(msg) + " " + hex(digest));
 }
 u8[] fill(i32 n, i32 seed) {
-  u8[] o = u8[n]();
+  u8[] o = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { o[i] = (i * 37 + seed) & 0xFF; }
   return o;
 }
@@ -111,7 +111,7 @@ export string test_peek_does_not_end_the_stream(Core core, Cli cli) {
   claim(lines, a, s.peek());                    // and does not change anything when repeated
   s.update(b);
 
-  u8[] both = u8[a.len() + b.len()]();
+  u8[] both = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { both[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { both[a.len() + i] = b[i]; }
   claim(lines, both, s.peek());                 // the stream continued correctly past it
@@ -124,7 +124,7 @@ export string test_peek_does_not_end_the_stream(Core core, Cli cli) {
 export string test_a_long_message_crosses_many_blocks(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] lens = i32[](511, 512, 513, 1000, 4096);
+  i32[] lens = [511, 512, 513, 1000, 4096];
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = fill(lens[i], i);
     claim(lines, m, sha1(m));

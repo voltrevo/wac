@@ -108,7 +108,7 @@ export string test_a_build_with_no_programs_has_no_bin_at_all(Core core, Cli cli
 
 export string test_bin_is_read_only_like_every_other_synthesised_mount(Core core, Cli cli) {
   T t = T.create();
-  string[] refused = string[]("echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d");
+  string[] refused = ["echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d"];
   for (i32 i = 0; i < refused.len(); i++) {
     t.isTrue(runSealed(core, cli, refused[i]).status != 0, refused[i] + " was allowed");
   }
@@ -134,7 +134,7 @@ string joined(string[]? entries) {
 
 /** A copy in order, which is how a directory lists. */
 string[] sorted(string[] xs) {
-  string[] out = string[xs.len()](fill: "");
+  string[] out = string[].filled(xs.len(), "");
   for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
   for (i32 i = 1; i < out.len(); i++) {
     string held = out[i];

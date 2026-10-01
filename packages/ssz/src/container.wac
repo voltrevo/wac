@@ -199,7 +199,7 @@ export u8[]? rootAt(i32[] t, i32[] fields, i32 i, u8[] data, i32 start, i32 end)
     i32 n = bounds!.len() - 1;
     if (isList && n > limit) { return null; }
     if (!isList && n != limit) { return null; }
-    u8[] leaves = u8[n * CHUNK]();
+    u8[] leaves = u8[].filled(n * CHUNK, 0);
     for (i32 e = 0; e < n; e++) {
       u8[]? r = rootAt(t, fields, elem, data, bounds![e], bounds![e + 1]);
       if (r is null) { return null; }
@@ -215,7 +215,7 @@ export u8[]? rootAt(i32[] t, i32[] fields, i32 i, u8[] data, i32 start, i32 end)
   i32[]? spans = containerSpans(t, fields, i, data, start, end);
   if (spans is null) { return null; }
   i32 nf = countOf(t, i);
-  u8[] leaves = u8[nf * CHUNK]();
+  u8[] leaves = u8[].filled(nf * CHUNK, 0);
   for (i32 f = 0; f < nf; f++) {
     i32 ft = fields[childOf(t, i) + f];
     u8[]? r = rootAt(t, fields, ft, data, spans![f * 2], spans![f * 2 + 1]);
@@ -250,7 +250,7 @@ export i32[]? containerSpans(i32[] t, i32[] fields, i32 i, u8[] data, i32 start,
   }
   if (span < fixedPart) { return null; }
 
-  i32[] out = i32[nf * 2]();
+  i32[] out = i32[].filled(nf * 2, 0);
   i32 pos = start;
   i32 prevVar = -1;
   bool sawVar = false;
@@ -295,8 +295,8 @@ export i32[]? containerSpans(i32[] t, i32[] fields, i32 i, u8[] data, i32 start,
  */
 export u8[] fieldBytes(i32[] t, i32[] fields, i32 ty, u8[] data, i32 f) {
   i32[]? spans = containerSpans(t, fields, ty, data, 0, data.len());
-  if (spans is null) { return u8[0](); }
-  if (f < 0 || f >= countOf(t, ty)) { return u8[0](); }
+  if (spans is null) { return u8[](); }
+  if (f < 0 || f >= countOf(t, ty)) { return u8[](); }
   return slice(data, spans![f * 2], spans![f * 2 + 1]);
 }
 
@@ -324,12 +324,12 @@ i32[]? elementBounds(i32[] t, i32[] fields, i32 i, u8[] data, i32 start, i32 end
     i32 sz = fixedSize(t, fields, elem);
     if (sz <= 0 || span % sz != 0) { return null; }
     i32 n = span / sz;
-    i32[] b = i32[n + 1]();
+    i32[] b = i32[].filled(n + 1, 0);
     for (i32 e = 0; e <= n; e++) { b[e] = start + e * sz; }
     return b;
   }
   if (span == 0) {
-    i32[] b = i32[1]();
+    i32[] b = i32[].filled(1, 0);
     b[0] = start;
     return b;                                   // an empty list of variable elements
   }
@@ -338,7 +338,7 @@ i32[]? elementBounds(i32[] t, i32[] fields, i32 i, u8[] data, i32 start, i32 end
   if (first == 0 || (first as@ i32) % OFFSET_BYTES != 0) { return null; }
   if ((first as@ i32) > span) { return null; }
   i32 n = (first as@ i32) / OFFSET_BYTES;
-  i32[] b = i32[n + 1]();
+  i32[] b = i32[].filled(n + 1, 0);
   for (i32 e = 0; e < n; e++) {
     u32 off = readOffset(data, start + e * OFFSET_BYTES);
     if ((off as@ i32) > span) { return null; }

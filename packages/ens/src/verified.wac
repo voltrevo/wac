@@ -97,28 +97,28 @@ export Record recordOf(u8[] stateRoot, u8[] registry, u8[] name,
                        u8[][] accountNodes, u8[][] ownerNodes, u8[][] resolverNodes) {
   u8[] node = namehash(name);
   Resolved o = slotOf(stateRoot, registry, ownerSlot(node), accountNodes, ownerNodes);
-  if (!o.ok) { return Record.of(false, false, u8[0](), u8[0](), o.error); }
+  if (!o.ok) { return Record.of(false, false, u8[](), u8[](), o.error); }
   Resolved r = slotOf(stateRoot, registry, resolverSlot(node), accountNodes, resolverNodes);
-  if (!r.ok) { return Record.of(false, false, u8[0](), u8[0](), r.error); }
+  if (!r.ok) { return Record.of(false, false, u8[](), u8[](), r.error); }
   // A name with no owner has no resolver worth reporting: the record is absent, not half-absent.
-  if (!o.present) { return Record.of(true, false, u8[0](), u8[0](), ""); }
-  return Record.of(true, true, o.address, r.present ? r.address : u8[0](), "");
+  if (!o.present) { return Record.of(true, false, u8[](), u8[](), ""); }
+  return Record.of(true, true, o.address, r.present ? r.address : u8[](), "");
 }
 
 /** One address-valued slot of one account, both walks and the padding. */
 Resolved slotOf(u8[] stateRoot, u8[] registry, u8[] slot, u8[][] accountNodes, u8[][] storageNodes) {
   AccountProof a = accountAt(stateRoot, registry, accountNodes);
-  if (!a.ok) { return Resolved.of(false, false, u8[0](), "the registry's account: " + a.error); }
+  if (!a.ok) { return Resolved.of(false, false, u8[](), "the registry's account: " + a.error); }
   if (!a.present) {
     // Not the same as "the name has no owner": there is no registry at that address on this chain.
-    return Resolved.of(false, false, u8[0](), "there is no account at the registry address");
+    return Resolved.of(false, false, u8[](), "there is no account at the registry address");
   }
 
   // The storage root comes out of the account proof and is never supplied by the caller — that is the
   // composition. A root from anywhere else proves something true about a different contract.
   StorageProof s = storageAt(a.account.storageRoot, slot, storageNodes);
-  if (!s.ok) { return Resolved.of(false, false, u8[0](), "the registry's storage: " + s.error); }
-  if (!s.present) { return Resolved.of(true, false, u8[0](), ""); }
+  if (!s.ok) { return Resolved.of(false, false, u8[](), "the registry's storage: " + s.error); }
+  if (!s.present) { return Resolved.of(true, false, u8[](), ""); }
 
   return addressOfSlot(s.value);
 }
@@ -132,9 +132,9 @@ Resolved slotOf(u8[] stateRoot, u8[] registry, u8[] slot, u8[][] accountNodes, u
  */
 export Resolved addressOfSlot(u8[] value) {
   if (value.len() > 20) {
-    return Resolved.of(false, false, u8[0](), "an address slot holds at most 20 bytes");
+    return Resolved.of(false, false, u8[](), "an address slot holds at most 20 bytes");
   }
-  u8[] out = u8[20]();
+  u8[] out = u8[].filled(20, 0);
   i32 at = 20 - value.len();
   for (i32 i = 0; i < value.len(); i++) { out[at + i] = value[i]; }
   return Resolved.of(true, true, out, "");

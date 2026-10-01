@@ -53,23 +53,24 @@ export string test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_wi
   T t = T.create();
   // Interleaved deliberately, so a result recorded against a neighbour is visible whichever
   // direction it slipped.
-  string[] texts = string[](
+  string[] texts = [
     "GET /one HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhe",
     "GET /two HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: a\r\nContent-Length: x\r\n\r\n",
     "GET /three HTTP/1.1\r\nHost: a\r\n\r\n",
     "POST /y HTTP/1.1\r\nHost: a\r\nContent-Length: 9\r\n\r\nshort",
-    "GET /four HTTP/1.1\r\nHost: a\r\n\r\n");
-  string[] outcomes = string[]("ok", "incomplete", "ok", "error", "ok", "incomplete", "ok");
-  string[] targets = string[]("/one", "", "/two", "", "/three", "", "/four");
+    "GET /four HTTP/1.1\r\nHost: a\r\n\r\n"
+  ];
+  string[] outcomes = ["ok", "incomplete", "ok", "error", "ok", "incomplete", "ok"];
+  string[] targets = ["/one", "", "/two", "", "/three", "", "/four"];
 
   // Repeated past the concurrency bound, so the batching is exercised across batch boundaries as
   // well as within one: a case in batch two attributed to batch one would be caught here and not by
   // a seven-case run.
   i32 reps = 8;
   i32 n = texts.len() * reps;
-  u8[][] cases = u8[][n](fill: u8[0]());
+  u8[][] cases = u8[][].filled(n, u8[]());
   for (i32 rep = 0; rep < reps; rep++) {
     for (i32 i = 0; i < texts.len(); i++) { cases[rep * texts.len() + i] = texts[i].toBytes(); }
   }
@@ -93,7 +94,7 @@ export string test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_wi
 
 /** One of each outcome, and the shapes that were misreported: a body, a chunked body, a bare prefix. */
 string[] clockCases() {
-  return string[](
+  return [
     // Complete — these are the ones a slow window turned into "incomplete".
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
@@ -105,14 +106,15 @@ string[] clockCases() {
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel",
     // Malformed — must stay an error rather than becoming either of the above.
     "GET / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
-    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n");
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n"
+  ];
 }
 
 export string test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one(
     Core core, Cli cli) {
   T t = T.create();
   string[] texts = clockCases();
-  u8[][] cases = u8[][texts.len()](fill: u8[0]());
+  u8[][] cases = u8[][].filled(texts.len(), u8[]());
   for (i32 i = 0; i < texts.len(); i++) { cases[i] = texts[i].toBytes(); }
 
   Outcome[] hurried = oracle(t, cli, cases, -1);

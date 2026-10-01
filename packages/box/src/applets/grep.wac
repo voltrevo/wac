@@ -47,7 +47,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   if (got.program is null) { core.warn(a.name + ": " + got.why); return 2; }
   Program p = got.program!;
 
-  i32[] caps = i32[slotCount(p)](fill: 0);
+  i32[] caps = i32[].filled(slotCount(p), 0);
   bool invert = has(a, 'v');
   bool number = has(a, 'n');
   bool countOnly = has(a, 'c');
@@ -172,7 +172,7 @@ bool hasNul(u8[] data) {
 
 /** A copy with every NUL turned into a newline, which is how GNU splits a binary file into lines. */
 u8[] nulAsNewline(u8[] data) {
-  u8[] out = u8[data.len()]();
+  u8[] out = u8[].filled(data.len(), 0);
   for (i32 i = 0; i < data.len(); i++) { out[i] = data[i] == 0 ? 10 : data[i]; }
   return out;
 }

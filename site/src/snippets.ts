@@ -145,7 +145,7 @@ export const EX_CORE_MAIN = `import { Read } from "core";
 import { describe } from "./report.wac";
 
 export string demo() {
-  return describe(Read.Data(u8[](1, 2, 3)))
+  return describe(Read.Data([1, 2, 3] as u8[]))
     + " | " + describe(Read.End)
     + " | " + describe(Read.Failed("disk went away"));
 }`;

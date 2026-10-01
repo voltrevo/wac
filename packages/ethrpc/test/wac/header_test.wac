@@ -86,7 +86,7 @@ JsonValue block(T t, string extra) {
 
 /** The hash `headerOf` computes for a block, with no expectation to check against. */
 u8[] hashOf(T t, string extra) {
-  Header h = headerOf(block(t, extra), u8[0]());
+  Header h = headerOf(block(t, extra), u8[]());
   // Without a `hash` member and without an expected hash there is nothing to check against, so `ok` is
   // false by design — the hash is still computed and is what this returns.
   t.eqI32(h.hash.len(), 32, "the computed hash is not 32 bytes");
@@ -114,13 +114,13 @@ export string test_a_header_is_accepted_when_its_hash_matches_and_refused_when_i
   T t = T.create();
 
   u8[] good = hashOf(t, "");
-  Header ok = headerOf(block(t, hashMember(good)), u8[0]());
+  Header ok = headerOf(block(t, hashMember(good)), u8[]());
   t.isTrue(ok.ok, "a block carrying its own computed hash was refused: " + ok.error);
   t.eqI32(ok.stateRoot.len(), 32, "an accepted header did not answer a state root");
   t.eqI32(ok.stateRoot[0], 0x44, "the state root is not the one in the block");
 
   // The same block, one bit of the hash flipped.
-  u8[] bad = u8[32]();
+  u8[] bad = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { bad[i] = good[i]; }
   bad[31] = bad[31] ^ 1;
   Header no = headerOf(block(t, ""), bad);
@@ -145,9 +145,11 @@ export string test_a_header_is_accepted_when_its_hash_matches_and_refused_when_i
  */
 export string test_a_missing_fixed_field_is_refused_and_named() {
   T t = T.create();
-  string[] names = string[]("parentHash", "sha3Uncles", "miner", "stateRoot", "transactionsRoot",
+  string[] names = [
+                            "parentHash", "sha3Uncles", "miner", "stateRoot", "transactionsRoot",
                             "receiptsRoot", "logsBloom", "difficulty", "number", "gasLimit",
-                            "gasUsed", "timestamp", "extraData", "mixHash", "nonce");
+                            "gasUsed", "timestamp", "extraData", "mixHash", "nonce"
+  ];
   string all = FIXED_JSON();
   i32 checked = 0;
   for (i32 i = 0; i < names.len(); i++) {
@@ -168,7 +170,7 @@ export string test_a_missing_fixed_field_is_refused_and_named() {
     JsonValue? v = parse(doc.toBytes());
     t.isTrue(!(v is null), "the block without " + names[i] + " did not parse");
     if (v is null) { continue; }
-    Header h = headerOf(v!, u8[0]());
+    Header h = headerOf(v!, u8[]());
     t.isFalse(h.ok, "a block with no " + names[i] + " was accepted");
     t.isTrue(h.error.indexOf(names[i]) >= 0,
              "the refusal for a missing " + names[i] + " does not name it: " + h.error);
@@ -251,7 +253,7 @@ export string test_quantities_are_minimal_and_data_is_not() {
   JsonValue? v = parse(doc.toBytes());
   t.isTrue(!(v is null), "the padded-quantity block did not parse");
   if (!(v is null)) {
-    Header h = headerOf(v!, u8[0]());
+    Header h = headerOf(v!, u8[]());
     t.isTrue(sameHash(plain, h.hash),
              "a quantity with leading zeros hashed differently, so it is not being minimised");
   }
@@ -261,7 +263,7 @@ export string test_quantities_are_minimal_and_data_is_not() {
   JsonValue? w = parse(other.toBytes());
   t.isTrue(!(w is null), "the changed-quantity block did not parse");
   if (!(w is null)) {
-    t.isFalse(sameHash(plain, headerOf(w!, u8[0]()).hash), "changing gasUsed did not change the hash");
+    t.isFalse(sameHash(plain, headerOf(w!, u8[]()).hash), "changing gasUsed did not change the hash");
   }
 
   // A data field's leading zero byte is part of it. `mixHash` beginning 0x00 must not be shortened —
@@ -272,7 +274,7 @@ export string test_quantities_are_minimal_and_data_is_not() {
   JsonValue? z = parse(zeroLead.toBytes());
   t.isTrue(!(z is null), "the zero-leading-data block did not parse");
   if (!(z is null)) {
-    t.isFalse(sameHash(plain, headerOf(z!, u8[0]()).hash),
+    t.isFalse(sameHash(plain, headerOf(z!, u8[]()).hash),
               "a data field's leading zero byte was stripped, which loses a distinction between roots");
   }
   return t.report();
@@ -288,7 +290,7 @@ export string test_quantities_are_minimal_and_data_is_not() {
 export string test_a_header_with_no_hash_to_check_against_is_refused() {
   T t = T.create();
 
-  Header none = headerOf(block(t, ""), u8[0]());
+  Header none = headerOf(block(t, ""), u8[]());
   t.isFalse(none.ok, "a header with nothing to check against was accepted");
   t.isTrue(none.error.indexOf("no block hash") >= 0,
            "the refusal does not say there was no hash: " + none.error);
@@ -296,7 +298,7 @@ export string test_a_header_with_no_hash_to_check_against_is_refused() {
 
   // An expected hash of the wrong width is not an expected hash — it falls back to the block's own,
   // and with none present that is still a refusal rather than a silent pass.
-  Header short = headerOf(block(t, ""), u8[16](fill: 0xAB));
+  Header short = headerOf(block(t, ""), u8[].filled(16, 0xAB));
   t.isFalse(short.ok, "a 16-byte expected hash was treated as an expectation");
   return t.report();
 }

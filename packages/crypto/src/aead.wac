@@ -13,7 +13,7 @@ import { ctEqualN } from "./ct.wac";
 /** The one-time Poly1305 key: the first 32 bytes of keystream block 0. */
 u8[] oneTimeKey(u8[] key, u8[] nonce) {
   u8[] block = chachaBlock(key, 0, nonce);
-  u8[] otk = u8[32]();
+  u8[] otk = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { otk[i] = block[i]; }
   return otk;
 }
@@ -28,7 +28,7 @@ u8[] oneTimeKey(u8[] key, u8[] nonce) {
 u8[] macInput(u8[] aad, u8[] ct) {
   i32 aPad = padTo16(aad.len());
   i32 cPad = padTo16(ct.len());
-  u8[] m = u8[aad.len() + aPad + ct.len() + cPad + 16]();
+  u8[] m = u8[].filled(aad.len() + aPad + ct.len() + cPad + 16, 0);
 
   i32 p = 0;
   for (i32 i = 0; i < aad.len(); i++) { m[p] = aad[i]; p++; }

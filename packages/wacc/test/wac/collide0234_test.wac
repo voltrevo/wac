@@ -63,15 +63,15 @@ string writeTree(Cli cli, string dir, string name) {
 
 string buildIn(Cli cli, string dir) {
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' build agg.wac -o m 2>&1"),
-    u8[0]()).wait();
+    ["-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' build agg.wac -o m 2>&1"],
+    u8[]()).wait();
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }
 
 i32 runIn(Cli cli, string dir) {
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' run agg.wac > /dev/null 2>&1; echo $?"),
-    u8[0]()).wait();
+    ["-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' run agg.wac > /dev/null 2>&1; echo $?"],
+    u8[]()).wait();
   string out = string.fromBytes(r.stdout);
   return out.indexOf("0") == 0 ? 0 : 1;
 }
@@ -86,7 +86,7 @@ i32 runIn(Cli cli, string dir) {
  */
 export string test_structs_named_like_ones_the_library_uses_do_not_break_it(Core core, Cli cli) {
   T t = T.create();
-  string[] names = string[]("Arm", "JsxAttr");
+  string[] names = ["Arm", "JsxAttr"];
   for (i32 i = 0; i < names.len(); i++) {
     string dir = cli.cwd().wait() + "/.cache/collide0234-" + names[i];
     cli.remove(dir, true).wait();

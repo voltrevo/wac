@@ -32,9 +32,9 @@ import { discipline, pty, vectorsPath } from "../../packages/tty/test/wac/replay
 export i32 main(Core core, Cli cli) {
   Buf out = Buf.create();
   out.pushAll("wac-tty-vectors 1\n".toBytes());
-  out.pushAll(("kernel: " + versionOf(cli, "uname", string[]("-sr")) + "\n").toBytes());
-  out.pushAll(("script: " + versionOf(cli, "script", string[]("--version")) + "\n").toBytes());
-  out.pushAll(("python3: " + versionOf(cli, "python3", string[]("--version")) + "\n").toBytes());
+  out.pushAll(("kernel: " + versionOf(cli, "uname", ["-sr"]) + "\n").toBytes());
+  out.pushAll(("script: " + versionOf(cli, "script", ["--version"]) + "\n").toBytes());
+  out.pushAll(("python3: " + versionOf(cli, "python3", ["--version"]) + "\n").toBytes());
 
   // **The oracles agree before anything is recorded.** `script` cannot hold an `stty`, which is why the
   // mode cases go through `discipline.py`; that makes it a second oracle, and a second oracle is worth
@@ -100,7 +100,7 @@ void field(Buf out, string tag, u8[] bytes) {
 
 /** A tool's first line of `--version`, or `"(absent)"`, so the file says what produced it. */
 string versionOf(Cli cli, string program, string[] args) {
-  Exec r = cli.exec(program, args, u8[0]()).wait();
+  Exec r = cli.exec(program, args, u8[]()).wait();
   if (!r.ran()) { return "(absent)"; }
   u8[] said = r.stdout.len() > 0 ? r.stdout : r.stderr;
   string all = string.fromBytes(said);

@@ -33,11 +33,11 @@ export u8[] hkdfExpand(u8[] prk, u8[] info, i32 length) {
   i32 blocks = (length + hl - 1) / hl;
   if (blocks > 255) { trap; }
 
-  u8[] out = u8[length]();
-  u8[] prev = u8[0]();
+  u8[] out = u8[].filled(length, 0);
+  u8[] prev = u8[]();
 
   for (i32 i = 0; i < blocks; i++) {
-    u8[] input = u8[prev.len() + info.len() + 1]();
+    u8[] input = u8[].filled(prev.len() + info.len() + 1, 0);
     i32 p = 0;
     for (i32 j = 0; j < prev.len(); j++) { input[p] = prev[j]; p++; }
     for (i32 j = 0; j < info.len(); j++) { input[p] = info[j]; p++; }

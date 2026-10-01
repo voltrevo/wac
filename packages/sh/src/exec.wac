@@ -97,8 +97,8 @@ void serveJobs(Shell sh) {
       if (!sh.jobs.get(i).done && !(sh.jobs.get(i).chan is null)) { live++; }
     }
     if (live == 0) { return; }
-    i32[] ids = i32[live](fill: 0);
-    i32[] which = i32[live](fill: 0);
+    i32[] ids = i32[].filled(live, 0);
+    i32[] which = i32[].filled(live, 0);
     i32 at = 0;
     for (i32 i = 0; i < sh.jobs.len(); i++) {
       Job j = sh.jobs.get(i);
@@ -501,7 +501,7 @@ export struct Shell {
                  false, Buf.create(), noExternal, noExternalNames, false,
                  null, false, Vec.create(),
                  Map.create(hashString, stringEq),
-                 Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false, false,
+                 Vec.create(), Vec.create(), false, u8[](), 0, false, false, false, false,
                  cli.cwd().wait(), true, 0, Vec.create(), 0);
   }
 
@@ -931,7 +931,7 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
       status = 1;
     }
   }
-  return Output(u8[0](), err.take(), status, true, false);
+  return Output(u8[](), err.take(), status, true, false);
 }
 
 /** `kill -l`: the whole table, or the other spelling of the ones named. */
@@ -1175,8 +1175,8 @@ void reapJob(Shell sh, i32 index) {
   bool asking = !(j.chan is null);
   while (reading || complaining || asking) {
     i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0) + (asking ? 1 : 0);
-    i32[] ids = i32[live](fill: 0);
-    i32[] what = i32[live](fill: 0);
+    i32[] ids = i32[].filled(live, 0);
+    i32[] what = i32[].filled(live, 0);
     i32 at = 0;
     if (reading) { ids[at] = outT.id; what[at] = 0; at++; }
     if (complaining) { ids[at] = errT.id; what[at] = 1; at++; }
@@ -1276,7 +1276,7 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
     for (i32 i = 0; i < sh.jobs.len(); i++) { reapJob(sh, i); }
     dropFinished(sh);
     // Always 0. `false & wait; echo $?` is 0 in bash — the status of the *wait*, which succeeded.
-    return Output.ok(u8[0]());
+    return Output.ok(u8[]());
   }
   i32 status = 0;
   for (i32 k = 1; k < argv.len(); k++) {
@@ -1305,7 +1305,7 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
     // exactly as it is in bash.
     dropFinished(sh);
   }
-  return status == 0 ? Output.ok(u8[0]()) : Output(u8[0](), u8[0](), status, true, false);
+  return status == 0 ? Output.ok(u8[]()) : Output(u8[](), u8[](), status, true, false);
 }
 
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
@@ -1369,7 +1369,7 @@ void runStages(Shell sh, Pipeline pipeline) {
   // The child's output belongs to us and its variables do not, which is exactly what `Subshell`
   // does above; the status and standard error come back the same way.
   bool forked = pipeline.stages.len() > 1;
-  u8[] carried = u8[0]();
+  u8[] carried = u8[]();
   for (i32 i = 0; i < pipeline.stages.len(); i++) {
     bool last = i == pipeline.stages.len() - 1;
     Shell stage = forked ? sh.fork() : sh;
@@ -1487,10 +1487,10 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
 
   // Spawn them all, first to last, expanding each stage's arguments as it goes. Expansion happens
   // exactly once and in order, which is what a command substitution in an argument requires.
-  i32[] outH = i32[n](fill: -1);
-  i32[] fsH = i32[n](fill: -1);
-  i32[] pids = i32[n](fill: -1);
-  i32[] errH = i32[n](fill: -1);
+  i32[] outH = i32[].filled(n, -1);
+  i32[] fsH = i32[].filled(n, -1);
+  i32[] pids = i32[].filled(n, -1);
+  i32[] errH = i32[].filled(n, -1);
   bool inherited = false;
   for (i32 i = 0; i < n; i++) {
     Simple simple = pipeline.stages.get(i).simple;
@@ -1591,11 +1591,11 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   // a stage that is stopped or finished is dropped from the wait list rather than polled.
   Vec<Pending<Read>> outT = Vec.create();
   Vec<Pending<Read>> errT = Vec.create();
-  bool[] outOpen = bool[n](fill: true);
-  bool[] errOpen = bool[n](fill: true);
+  bool[] outOpen = bool[].filled(n, true);
+  bool[] errOpen = bool[].filled(n, true);
   // A stage stopped for want of a reader is *gone*: its handles are closed, so its exit code cannot
   // be asked for afterwards. `head -1` ending `seq` is the ordinary case, not an error.
-  bool[] stopped = bool[n](fill: false);
+  bool[] stopped = bool[].filled(n, false);
   // **A channel per stage, whether or not this shell serves one.** Built only where it does, so a
   // shell on a plain host mount neither holds the tickets nor watches the handles — see `serveFsFor`.
   Vec<Chan> fsC = Vec.create();
@@ -1608,7 +1608,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
     errT.push(sh.cli.recv(errH[i]));
     if (serving && fsH[i] >= 0) { fsC.push(Chan.of(sh.cli, fsH[i])); fsPid.push(pids[i]); }
   }
-  bool[] fsOpen = bool[fsC.len()](fill: true);
+  bool[] fsOpen = bool[].filled(fsC.len(), true);
   /** Whether this pipeline was ended by a signal or a `^C` rather than by its stages finishing. */
   bool ended = false;
 
@@ -1627,10 +1627,10 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
     // dropping the channel then is what would leave it parked on its last question.
     for (i32 k = 0; k < fsC.len(); k++) { if (fsOpen[k]) { live++; } }
     if (live == 0) { break; }
-    i32[] ids = i32[live](fill: 0);
-    i32[] stage = i32[live](fill: 0);
-    bool[] isErr = bool[live](fill: false);
-    bool[] isFs = bool[live](fill: false);
+    i32[] ids = i32[].filled(live, 0);
+    i32[] stage = i32[].filled(live, 0);
+    bool[] isErr = bool[].filled(live, false);
+    bool[] isFs = bool[].filled(live, false);
     i32 at = 0;
     for (i32 i = 0; i < n; i++) {
       if (outOpen[i]) { ids[at] = outT.get(i).id; stage[at] = i; isErr[at] = false; at++; }
@@ -1843,14 +1843,14 @@ Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
     if (prog.ok) {
       // Without argv[0]: a spawned bundle is one program, and its `arg(0)` is its first argument.
       // `spawnSelf` below keeps argv[0], because that is what tells this bundle which applet to be.
-      u8[][] outer = u8[][argv.len() - 1](fill: u8[0]());
+      u8[][] outer = u8[][].filled(argv.len() - 1, u8[]());
       for (i32 i = 1; i < argv.len(); i++) { outer[i - 1] = argv.get(i).toBytes(); }
       Child external = sh.cli
         .spawn(prog.bytes, outer, grants, sh.cwd, inheritIn ? INHERIT_IN : INHERIT_NONE, serveFs).wait();
       if (!external.unavailable()) { return external; }
     }
   }
-  u8[][] args = u8[][argv.len()](fill: u8[0]());
+  u8[][] args = u8[][].filled(argv.len(), u8[]());
   for (i32 i = 0; i < argv.len(); i++) { args[i] = argv.get(i).toBytes(); }
   return sh.cli.spawnSelf(args, grants, sh.cwd, inheritIn, serveFs).wait();
 }
@@ -2000,7 +2000,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
           sh.status = 1;
           sh.stdinBytes = savedIn;
           sh.stdinPos = savedPos;
-          return u8[0]();
+          return u8[]();
         }
         sh.stdinBytes = f.bytes;
         sh.stdinPos = 0;
@@ -2131,11 +2131,11 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
     sh.heldInput = savedHeld;
   }
 
-  if (!collect) { return u8[0](); }
+  if (!collect) { return u8[](); }
   u8[] produced = sh.outBuf.take();
   sh.capture = savedCapture;
   sh.outBuf = savedBuf;
-  u8[] complaints = u8[0]();
+  u8[] complaints = u8[]();
   if (holdErr) {
     complaints = sh.errOut.take();
     sh.errOut = savedErr;
@@ -2143,17 +2143,17 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
 
   // The same two-entry table the simple path uses, over the two buffers this compound produced.
   Plan plan = planRedirs(sh, cmd.redirs);
-  if (!plan.ok) { return u8[0](); }
+  if (!plan.ok) { return u8[](); }
   if (sameFile(plan.one, plan.two)) {
     emitTo(sh, plan.one, complaints, produced);
-    return u8[0]();
+    return u8[]();
   }
   Buf onward = Buf.create();
   if (sameAsStart(plan.one, 1)) { onward.pushAll(produced); }
   if (sameAsStart(plan.two, 1)) { onward.pushAll(complaints); }
   if (sameAsStart(plan.two, 2)) { sh.err(complaints); }
-  if (toFile(plan.two)) { emitTo(sh, plan.two, complaints, u8[0]()); }
-  if (toFile(plan.one)) { emitTo(sh, plan.one, produced, u8[0]()); }
+  if (toFile(plan.two)) { emitTo(sh, plan.two, complaints, u8[]()); }
+  if (toFile(plan.one)) { emitTo(sh, plan.one, produced, u8[]()); }
   if (sameAsStart(plan.one, 2)) { sh.err(produced); }
   u8[] going = onward.take();
   if (last) {
@@ -2161,7 +2161,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       if (sh.capture) { sh.outBuf.pushAll(going); }
       else { sh.cli.write(going); }
     }
-    return u8[0]();
+    return u8[]();
   }
   return going;
 }
@@ -2252,7 +2252,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
     // below, after this returned — so `> f` left an existing `f` alone, `> new` created nothing at all,
     // and `< nofile` reported success. See `redirsAlone`.
     redirsAlone(sh, cmd);
-    return u8[0]();
+    return u8[]();
   }
   // A prefix assignment applies to *this command only*: `x=1 cmd` leaves `x` as it was
   // afterwards, while a bare `x=1` sets it for good. So the old values are kept and put back —
@@ -2297,7 +2297,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
         if (!f.ok) {
           sh.err(("sh: " + given + ": " + readReason(f) + "\n").toBytes());
           sh.status = 1;
-          return u8[0]();
+          return u8[]();
         }
         input = f.bytes;
         hasInput = true;
@@ -2377,12 +2377,12 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
     else { sh.vars.remove(savedNames.get(i)); }
   }
 
-  if (sh.exiting) { return u8[0](); }
+  if (sh.exiting) { return u8[](); }
 
   if (!result.found) {
     sh.err(("sh: " + argv.get(0) + ": command not found\n").toBytes());
     sh.status = 127;
-    return u8[0]();
+    return u8[]();
   }
   sh.status = result.status;
   // Recorded for `runStages`, which ends the pipeline here rather than letting a later stage answer
@@ -2393,13 +2393,13 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   // error stream whatever the redirections said, and `2>` was refused for want of anywhere to put it —
   // the seam hands back two byte arrays, and only one of them was being placed.
   Plan plan = planRedirs(sh, cmd.redirs);
-  if (!plan.ok) { return u8[0](); }
+  if (!plan.ok) { return u8[](); }
   u8[] out = result.out;
   u8[] err = result.err;
   // Two descriptors on one file share a position, so one write carries both — output first.
   if (sameFile(plan.one, plan.two)) {
     emitTo(sh, plan.one, err, out);
-    return u8[0]();
+    return u8[]();
   }
   // **What goes to `Stream(1)` is what this command was going to write anyway** — down the pipe if
   // there is one, to the terminal if there is not — and that is a different thing from "wherever
@@ -2409,8 +2409,8 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   if (sameAsStart(plan.one, 1)) { onward.pushAll(out); }
   if (sameAsStart(plan.two, 1)) { onward.pushAll(err); }
   if (sameAsStart(plan.two, 2)) { sh.err(err); }
-  if (toFile(plan.two)) { emitTo(sh, plan.two, err, u8[0]()); }
-  if (toFile(plan.one)) { emitTo(sh, plan.one, out, u8[0]()); }
+  if (toFile(plan.two)) { emitTo(sh, plan.two, err, u8[]()); }
+  if (toFile(plan.one)) { emitTo(sh, plan.one, out, u8[]()); }
   // `1>&2`: what would have been output goes to the error stream, and nothing goes down the pipe.
   if (sameAsStart(plan.one, 2)) { sh.err(out); }
   u8[] going = onward.take();
@@ -2419,7 +2419,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
       if (sh.capture) { sh.outBuf.pushAll(going); }
       else { sh.cli.write(going); }
     }
-    return u8[0]();
+    return u8[]();
   }
   return going;
 }
@@ -2609,7 +2609,7 @@ void redirsAlone(Shell sh, Simple cmd) {
   }
   Plan p = planRedirs(sh, cmd.redirs);
   if (!p.ok) { return; }
-  u8[] none = u8[0]();
+  u8[] none = u8[]();
   emitTo(sh, p.one, none, none);
   // Both naming one file would otherwise truncate it twice, which is only invisible because there is
   // nothing to write — `sameFile` is the same guard the placing path uses.
@@ -2701,7 +2701,7 @@ Output readLine(Shell sh, Vec<string> argv) {
 
   if (!sawAny) {
     for (i32 i = 0; i < names.len(); i++) { sh.setVar(names.get(i), ""); }
-    return Output(u8[0](), u8[0](), 1, true, false);
+    return Output(u8[](), u8[](), 1, true, false);
   }
 
   // **Splitting is on `$IFS`**, and only the *last* name keeps the separators in the middle: `IFS=:`
@@ -2733,7 +2733,7 @@ Output readLine(Shell sh, Vec<string> argv) {
       }
     }
   }
-  return Output(u8[0](), u8[0](), sawNewline ? 0 : 1, true, false);
+  return Output(u8[](), u8[](), sawNewline ? 0 : 1, true, false);
 }
 
 /** Whether byte `i` of a read line is a blank that may split — an escaped one may not. */
@@ -2786,7 +2786,7 @@ Output setBuiltin(Shell sh, Vec<string> argv) {
   Vec<string> params = Vec.create();
   for (i32 i = first; i < argv.len(); i++) { params.push(argv.get(i)); }
   sh.params = params;
-  return Output.ok(u8[0]());
+  return Output.ok(u8[]());
 }
 
 /**
@@ -2835,7 +2835,7 @@ Output localVar(Shell sh, Vec<string> argv) {
     if (eq < 0) { sh.vars.remove(name); }
     else { sh.setVar(name, word.slice(eq + 1, word.len())); }
   }
-  return Output.ok(u8[0]());
+  return Output.ok(u8[]());
 }
 
 /** Whether this call has already made `name` local, so its saved value is the caller's. */
@@ -2882,7 +2882,7 @@ Output breakOrContinue(Shell sh, Vec<string> argv) {
       sh.err(("sh: " + name + ": " + argv.get(1) + ": numeric argument required\n").toBytes());
       sh.exiting = true;
       sh.exitCode = 128;
-      return Output.ok(u8[0]());
+      return Output.ok(u8[]());
     }
     n = atoiOr(argv.get(1), 1);
     if (n < 1) {
@@ -2895,10 +2895,10 @@ Output breakOrContinue(Shell sh, Vec<string> argv) {
   if (sh.loops == 0) {
     // bash's wording, and its status: the complaint goes to standard error and 0 stays in `$?`.
     sh.err(("sh: " + name + ": only meaningful in a `for', `while', or `until' loop\n").toBytes());
-    return Output.ok(u8[0]());
+    return Output.ok(u8[]());
   }
   if (name == "break") { sh.breaking = n; } else { sh.continuing = n; }
-  return Output.ok(u8[0]());
+  return Output.ok(u8[]());
 }
 
 /**
@@ -2913,11 +2913,11 @@ Output breakOrContinue(Shell sh, Vec<string> argv) {
 Output returnFrom(Shell sh, Vec<string> argv) {
   if (sh.depth == 0) {
     sh.err("return: can only `return' from a function or sourced script\n".toBytes());
-    return Output.fail(u8[0](), 2);
+    return Output.fail(u8[](), 2);
   }
   sh.returning = true;
   i32 code = argv.len() > 1 ? atoiOr(argv.get(1), 0) : sh.status;
-  return Output(u8[0](), u8[0](), code, true, false);
+  return Output(u8[](), u8[](), code, true, false);
 }
 
 Output cd(Shell sh, Vec<string> argv) {
@@ -2926,7 +2926,7 @@ Output cd(Shell sh, Vec<string> argv) {
   bool given = argv.len() > 1;
   string want = given ? argv.get(1) : sh.lookUp("HOME");
   if (!given && want == "") { return Output.fail("cd: HOME not set\n".toBytes(), 1); }
-  if (given && want == "") { return Output.ok(u8[0]()); }
+  if (given && want == "") { return Output.ok(u8[]()); }
 
   string previous = sh.cwd;
   string back = want == "-" ? sh.lookUp("OLDPWD") : "";
@@ -2959,7 +2959,7 @@ Output cd(Shell sh, Vec<string> argv) {
   sh.setVar("OLDPWD", previous);
   sh.setVar("PWD", target);
   // `cd -` prints where it went, as bash does; a plain `cd` says nothing.
-  return want == "-" ? Output.ok((target + "\n").toBytes()) : Output.ok(u8[0]());
+  return want == "-" ? Output.ok((target + "\n").toBytes()) : Output.ok(u8[]());
 }
 
 /**
@@ -3011,7 +3011,7 @@ Output ownership(Shell sh, Vec<string> argv) {
       status = 1;
     }
   }
-  return status == 0 ? Output.ok(u8[0]()) : Output.fail(err.take(), status);
+  return status == 0 ? Output.ok(u8[]()) : Output.fail(err.take(), status);
 }
 
 /**
@@ -3052,7 +3052,7 @@ Output mkdir(Shell sh, Vec<string> argv) {
       status = 1;
     }
   }
-  return status == 0 ? Output.ok(u8[0]()) : Output.fail(err.take(), status);
+  return status == 0 ? Output.ok(u8[]()) : Output.fail(err.take(), status);
 }
 
 /**
@@ -3072,7 +3072,7 @@ Output rm(Shell sh, Vec<string> argv) {
     else if (a == "-f") { force = true; }
     else { paths.push(a); }
   }
-  if (paths.len() == 0) { return force ? Output.ok(u8[0]()) : Output.fail("rm: missing operand\n".toBytes(), 1); }
+  if (paths.len() == 0) { return force ? Output.ok(u8[]()) : Output.fail("rm: missing operand\n".toBytes(), 1); }
 
   Buf err = Buf.create();
   i32 status = 0;
@@ -3098,7 +3098,7 @@ Output rm(Shell sh, Vec<string> argv) {
       status = 1;
     }
   }
-  return status == 0 ? Output.ok(u8[0]()) : Output.fail(err.take(), status);
+  return status == 0 ? Output.ok(u8[]()) : Output.fail(err.take(), status);
 }
 
 /**
@@ -3125,7 +3125,7 @@ Output ls(Shell sh, Vec<string> argv) {
     u8[] b = a.toBytes();
     if (b.len() >= 2 && b[0] == '-') {
       if (b[1] == '-') { return Output.fail(optionRefusal("ls", a).toBytes(), 2); }
-      u8[] one = u8[1](fill: b[1]);
+      u8[] one = u8[].filled(1, b[1]);
       return Output.fail(optionRefusal("ls", string.fromBytes(one)).toBytes(), 2);
     }
     paths.push(a);
@@ -3278,7 +3278,7 @@ u8[] named(u8[] err, string name) {
       out = out + prefixed(line, name) + "\n";
       line = "";
     } else {
-      line = line + string.fromBytes(u8[1](fill: bytes[i]));
+      line = line + string.fromBytes(u8[].filled(1, bytes[i]));
     }
   }
   if (line != "") { out = out + prefixed(line, name); }
@@ -3312,8 +3312,8 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   // Functions shadow builtins, as they do in bash for everything but the special builtins.
   if (sh.funcs.has(name)) { return callFunction(sh, argv); }
 
-  if (name == ":" || name == "true") { return Output.ok(u8[0]()); }
-  if (name == "false") { return Output(u8[0](), u8[0](), 1, true, false); }
+  if (name == ":" || name == "true") { return Output.ok(u8[]()); }
+  if (name == "false") { return Output(u8[](), u8[](), 1, true, false); }
   if (name == "echo") { return echo(argv); }
   if (name == "local") { return localVar(sh, argv); }
   if (name == "break" || name == "continue") { return breakOrContinue(sh, argv); }
@@ -3321,7 +3321,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == "exit") {
     sh.exiting = true;
     sh.exitCode = argv.len() > 1 ? atoiOr(argv.get(1), 0) : sh.status;
-    return Output.ok(u8[0]());
+    return Output.ok(u8[]());
   }
   if (name == "export") {
     // No capability sets the environment, so this records the value and says so if asked to do
@@ -3331,11 +3331,11 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
       i32 eq = indexOfEq(a);
       if (eq >= 0) { sh.setVar(a.slice(0, eq), a.slice(eq + 1, a.len())); }
     }
-    return Output.ok(u8[0]());
+    return Output.ok(u8[]());
   }
   if (name == "unset") {
     for (i32 i = 1; i < argv.len(); i++) { sh.vars.remove(argv.get(i)); }
-    return Output.ok(u8[0]());
+    return Output.ok(u8[]());
   }
   if (name == "cd") { return cd(sh, argv); }
   if (name == "pwd") { return Output.ok((sh.cwd + "\n").toBytes()); }
@@ -3347,11 +3347,11 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == "shift") {
     // bash: shifting more than there is fails and changes nothing, rather than clearing them.
     i32 n = argv.len() > 1 ? atoiOr(argv.get(1), 0) : 1;
-    if (n < 0 || n > sh.params.len()) { return Output(u8[0](), u8[0](), 1, true, false); }
+    if (n < 0 || n > sh.params.len()) { return Output(u8[](), u8[](), 1, true, false); }
     Vec<string> rest = Vec.create();
     for (i32 i = n; i < sh.params.len(); i++) { rest.push(sh.params.get(i)); }
     sh.params = rest;
-    return Output.ok(u8[0]());
+    return Output.ok(u8[]());
   }
   if (name == "kill") { return killBuiltin(sh, argv); }
   if (name == "jobs") { return jobsBuiltin(sh, argv); }
@@ -3409,7 +3409,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   // `: | cat` inherit the terminal and wait for a person who was not typing.
   bool inheritIn = mayInherit && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
   Output given = sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv,
-                             inheritIn ? u8[0]() : sh.restOfStdin(), inheritIn);
+                             inheritIn ? u8[]() : sh.restOfStdin(), inheritIn);
   if (given.found) { return given; }
   // Nothing answered, and there is no last resort to fall back on. `Output.missing()` is 127, which
   // is what a shell says about a name it cannot run — and saying it is better than the shell having
@@ -3425,15 +3425,15 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
  * nowhere. `test/wac/probe_test.wac` compares the two.
  */
 export string[] builtinNames() {
-  return string[](
+  return [
     ":", "true", "false", "echo", "exit", "export", "unset", "cd", "pwd", "ls", "mkdir", "rm",
     "chmod", "chown",
     "read", "shift", "set", "break", "continue", "return", "local", "test", "[", "help", "printf"
-  );
+  ];
 }
 
 /** The default `Shell.externalNames`: nothing is wired in, so there is nothing to list. */
-string[] noExternalNames() { return string[0](fill: ""); }
+string[] noExternalNames() { return string[].filled(0, ""); }
 
 /** The default `Shell.external`: nothing is wired in, so every name falls through. */
 Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
@@ -3504,7 +3504,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
 
   // Bytes, which is what an argument is: the child receives exactly what the shell parsed, with nothing
   // normalised on the way through. wac-mono 0065.
-  u8[][] args = u8[][argv.len() - 1](fill: u8[0]());
+  u8[][] args = u8[][].filled(argv.len() - 1, u8[]());
   for (i32 i = 1; i < argv.len(); i++) { args[i - 1] = argv.get(i).toBytes(); }
 
   // **Everything this shell has**, which the host narrows to what it actually holds. `GRANT_NONE` was
@@ -3602,8 +3602,8 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   bool asking = !(fsC is null);
   while (reading || complaining || asking) {
     i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0) + (asking ? 1 : 0);
-    i32[] ids = i32[live](fill: 0);
-    i32[] what = i32[live](fill: 0);
+    i32[] ids = i32[].filled(live, 0);
+    i32[] what = i32[].filled(live, 0);
     i32 at = 0;
     if (reading) { ids[at] = outT.id; what[at] = 0; at++; }
     if (complaining) { ids[at] = errT.id; what[at] = 1; at++; }
@@ -3720,7 +3720,7 @@ Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   }
   if (!ours) { return Output.missing(); }
 
-  u8[][] args = u8[][argv.len()](fill: u8[0]());
+  u8[][] args = u8[][].filled(argv.len(), u8[]());
   for (i32 i = 0; i < argv.len(); i++) { args[i] = argv.get(i).toBytes(); }
 
   // Everything this shell has, which the host narrows to what it actually holds. An applet run in
@@ -3824,7 +3824,7 @@ Output callFunction(Shell sh, Vec<string> argv) {
   sh.localValues = Vec.create();
   sh.localExisted = Vec.create();
 
-  runCommand(sh, body, u8[0](), true, false);
+  runCommand(sh, body, u8[](), true, false);
 
   for (i32 i = 0; i < sh.localNames.len(); i++) {
     if (sh.localExisted.get(i) == 1) { sh.setVar(sh.localNames.get(i), sh.localValues.get(i)); }
@@ -4035,7 +4035,7 @@ i64 mtimeOf(Shell sh, string path) {
 }
 
 /** A `test` answer: nothing on either stream, and true is 0 because that is what a shell means by it. */
-Output testResult(bool v) { return Output(u8[0](), u8[0](), v ? 0 : 1, true, false); }
+Output testResult(bool v) { return Output(u8[](), u8[](), v ? 0 : 1, true, false); }
 
 /**
  * The one-operand forms, including the ones that ask the filesystem.
@@ -4439,8 +4439,8 @@ u8[] hereBody(Shell sh, Redir r) {
 }
 
 u8[] sliceBytes(u8[] b, i32 from, i32 to) {
-  if (to <= from) { return u8[0](); }
-  u8[] out = u8[to - from]();
+  if (to <= from) { return u8[](); }
+  u8[] out = u8[].filled(to - from, 0);
   out.copyFrom(b, from, 0, to - from);
   return out;
 }
@@ -4461,11 +4461,11 @@ string trimStart(Shell sh, string value, string pattern, bool longest) {
   // `expandQuoted`, because a trim pattern is never subject to word splitting: `${x#a }` has a
   // trailing space in its pattern and `expandText` tokenizes it away.
   u8[] pat = expandQuoted(sh, pattern).toBytes();
-  u8[] mask = u8[pat.len()]();
+  u8[] mask = u8[].filled(pat.len(), 0);
   u8[] v = value.toBytes();
   i32 hit = -1;
   for (i32 n = 0; n <= v.len(); n++) {
-    u8[] head = u8[n]();
+    u8[] head = u8[].filled(n, 0);
     head.copyFrom(v, 0, 0, n);
     if (globMatch(pat, mask, 0, head, 0)) {
       hit = n;
@@ -4485,7 +4485,7 @@ string trimStart(Shell sh, string value, string pattern, bool longest) {
  */
 string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
   u8[] pat = expandQuoted(sh, pattern).toBytes();
-  u8[] mask = u8[pat.len()]();
+  u8[] mask = u8[].filled(pat.len(), 0);
   u8[] v = value.toBytes();
   Buf out = Buf.create();
   for (i32 i = 0; i < v.len(); i++) {
@@ -4494,7 +4494,7 @@ string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
     // unchanged rather than reaching forward to the `b`. It is a position, not a search.
     bool eligible = all || i == 0;
     if (eligible && pat.len() > 0) {
-      u8[] one = u8[1]();
+      u8[] one = u8[].filled(1, 0);
       one[0] = c;
       eligible = globMatch(pat, mask, 0, one, 0);
     }
@@ -4638,7 +4638,7 @@ string substitutePattern(Shell sh, string value, string arg, bool all) {
   // `expandText` tokenizes, so a replacement of `[&]` came back as `[ ]` — `&` is a shell
   // delimiter and got split on. The same argument covers a pattern containing a space.
   u8[] pat = expandQuoted(sh, patText).toBytes();
-  u8[] mask = u8[pat.len()]();
+  u8[] mask = u8[].filled(pat.len(), 0);
   string rep = expandQuoted(sh, repText);
   u8[] v = value.toBytes();
   // An empty pattern matches nothing rather than matching everywhere.
@@ -4719,12 +4719,12 @@ string trimEnd(Shell sh, string value, string pattern, bool longest) {
   // `expandQuoted`, because a trim pattern is never subject to word splitting: `${x#a }` has a
   // trailing space in its pattern and `expandText` tokenizes it away.
   u8[] pat = expandQuoted(sh, pattern).toBytes();
-  u8[] mask = u8[pat.len()]();
+  u8[] mask = u8[].filled(pat.len(), 0);
   u8[] v = value.toBytes();
   i32 hit = -1;
   for (i32 n = 0; n <= v.len(); n++) {
     i32 from = v.len() - n;
-    u8[] tail = u8[n]();
+    u8[] tail = u8[].filled(n, 0);
     tail.copyFrom(v, from, 0, n);
     if (globMatch(pat, mask, 0, tail, 0)) {
       hit = from;
@@ -4764,7 +4764,7 @@ string expandText(Shell sh, string text) {
  * order, because it is what makes the two stages agree about what a name is.)
  */
 string expandArith(Shell sh, string text) {
-  Arith state = Arith(u8[0](), 0, false, "", 0, 0);
+  Arith state = Arith(u8[](), 0, false, "", 0, 0);
   // Names are substituted here rather than by the ordinary expander, because the ordinary
   // expander *tokenizes* — and inside these parentheses the shell's operators are arithmetic.
   // Running `3>2` through it produced a redirection of fd 3 and the string `2`; `1&&0` split on
@@ -5002,7 +5002,7 @@ string expandPart(Shell sh, Part p) {
       u8[] out = inner.outBuf.take();
       i32 n = out.len();
       while (n > 0 && out[n - 1] == 10) { n--; }
-      u8[] trimmed = u8[n]();
+      u8[] trimmed = u8[].filled(n, 0);
       trimmed.copyFrom(out, 0, 0, n);
       return string.fromBytes(trimmed);
     }

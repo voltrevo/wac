@@ -131,7 +131,7 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
   // **Derived, because the list in `fencesAreRun` is the whole risk.** If someone teaches a fourth
   // test to compile fences — from `docs/`, say — that helper would quietly answer false for it and the
   // gate would skip work that mattered. This fails instead, naming the file.
-  string[] known = string[](
+  string[] known = [
     "packages/wacc/test/wac/specexamples.wac",
     "tools/wac/docsignatures_test.wac",
     "tools/docsOnly.wac",
@@ -140,8 +140,8 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
     "packages/wacc/src/coretext.wac",
     "std/platform.wac",
     "core/map.wac"
-  );
-  string[] why = string[](
+  ];
+  string[] why = [
     "runs every example in spec/next",
     "matches export lines in packages/*/README.md",
     "defines wacFences, the extractor this predicate is built on",
@@ -149,10 +149,10 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
     "embeds std/ and core/'s doc comments as string literals, and parses nothing",
     "doc comments with wac examples in them",
     "a doc comment with a wac example in it"
-  );
+  ];
   t.eqI32(known.len(), why.len(), "every known file needs its reason");
 
-  string[] files = sourceFiles(core, cli, string[](".ts", ".wac"), string[]());
+  string[] files = sourceFiles(core, cli, [".ts", ".wac"], string[]());
   t.isTrue(files.len() > 500,
            "only " + itoa(files.len()) + " sources found — the corpus has moved, not the answer");
 

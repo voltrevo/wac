@@ -7,7 +7,7 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";
 
-string[] none() { return string[0](fill: ""); }
+string[] none() { return string[].filled(0, ""); }
 
 export string test_identical_wasm_is_provably_equivalent() {
   T t = T.create();
@@ -20,7 +20,7 @@ export string test_identical_wasm_is_provably_equivalent() {
 export string test_a_second_mutant_with_the_same_wasm_is_a_duplicate() {
   T t = T.create();
   Triage got = triageOf(false, "", false, "a.wac=H2", "a.wac=H1",
-                        string[]("a.wac=H2"), string[]("relational/a:1:1"));
+                        ["a.wac=H2"], ["relational/a:1:1"]);
   t.eqStr(got.verdict, "duplicate", "the same question asked twice");
   t.eqStr(got.detail, "relational/a:1:1", "and it names the mutant that asked it first");
   return t.report();
@@ -65,7 +65,7 @@ export string test_a_control_is_always_run_and_its_noop_ness_recorded() {
  */
 export string test_a_file_without_a_hash_is_run() {
   T t = T.create();
-  Triage got = triageOf(true, "", false, "", "a.wac=H1", string[]("" ), string[]("earlier"));
+  Triage got = triageOf(true, "", false, "", "a.wac=H1", [""], ["earlier"]);
   t.eqStr(got.verdict, "run", "no hash means the question cannot be asked, so ask the worker");
   t.isTrue(!got.record, "and it claims nothing, so it cannot make a later mutant a duplicate of it");
   return t.report();
@@ -95,9 +95,9 @@ export string test_the_earlier_rules_win() {
 
 export string test_the_signature_pairs_each_file_with_its_hash() {
   T t = T.create();
-  t.eqStr(signatureOf(string[]("a.wac", "b.wac"), string[]("H1", "H2")), "a.wac=H1|b.wac=H2",
+  t.eqStr(signatureOf(["a.wac", "b.wac"], ["H1", "H2"]), "a.wac=H1|b.wac=H2",
           "file=hash, joined, so two files that swapped hashes are not the same signature");
-  t.eqStr(signatureOf(string[]("a.wac"), string[]("H1")), "a.wac=H1", "one file needs no separator");
+  t.eqStr(signatureOf(["a.wac"], ["H1"]), "a.wac=H1", "one file needs no separator");
   return t.report();
 }
 
@@ -114,15 +114,15 @@ export string test_the_hash_is_of_what_the_file_compiles_to() {
   // Whitespace only: a different source that is the same program.
   string spaced = "export i32 answer() {   return 41;   }\n";
 
-  string ha = wasmHashOf(string[]("a.wac"), string[](a), "a.wac");
-  string hb = wasmHashOf(string[]("a.wac"), string[](b), "a.wac");
-  string hs = wasmHashOf(string[]("a.wac"), string[](spaced), "a.wac");
+  string ha = wasmHashOf(["a.wac"], [a], "a.wac");
+  string hb = wasmHashOf(["a.wac"], [b], "a.wac");
+  string hs = wasmHashOf(["a.wac"], [spaced], "a.wac");
 
   t.isTrue(ha != "", "a file that compiles has a hash — got " + ha);
   t.isTrue(ha != hb, "a mutation that changes the program changes the bytes");
   t.eqStr(ha, hs, "and one that changes only the spelling does not — which is what makes TCE work");
 
-  t.eqStr(wasmHashOf(string[]("a.wac"), string[]("this is not wac at all @@@\n"), "a.wac"), "",
+  t.eqStr(wasmHashOf(["a.wac"], ["this is not wac at all @@@\n"], "a.wac"), "",
           "a source that does not compile hashes to nothing, which is the invalid branch's input");
   return t.report();
 }
@@ -147,9 +147,9 @@ export string test_a_mutant_that_parses_but_does_not_check_is_not_runnable() {
   // The guard operator's edit: the `trap;` goes, and what is left parses.
   string gutted = "export i32 pick(bool b) {\n  if (b) { return 1; }\n  \n}\n";
 
-  t.isTrue(wasmHashOf(string[]("a.wac"), string[](whole), "a.wac") != "",
+  t.isTrue(wasmHashOf(["a.wac"], [whole], "a.wac") != "",
            "the original compiles");
-  t.eqStr(wasmHashOf(string[]("a.wac"), string[](gutted), "a.wac"), "",
+  t.eqStr(wasmHashOf(["a.wac"], [gutted], "a.wac"), "",
           "and the mutant hashes to nothing — it parses, so only the checker can reject it, and a "
             + "hash here would send it to a test run whose exit code cannot say why it failed");
   return t.report();

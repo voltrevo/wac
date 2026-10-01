@@ -20,7 +20,7 @@ import { Cli } from "std/platform.wac";
 
 /** The first of `LC_ALL`, `LC_CTYPE`, `LANG` that is set and non-empty, or "". */
 string ctypeSetting(Cli cli) {
-  string[] names = string[]("LC_ALL", "LC_CTYPE", "LANG");
+  string[] names = ["LC_ALL", "LC_CTYPE", "LANG"];
   for (i32 i = 0; i < names.len(); i++) {
     u8[]? v = cli.env(names[i]).wait();
     if (v is null) { continue; }

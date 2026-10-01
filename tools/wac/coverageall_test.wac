@@ -16,22 +16,22 @@ import { callsRatchet, dispatchOrder, driverOf, isFailureLine, isSweep, packages
 import { Task } from "../../packages/wac/src/tasks.wac";
 
 /** The four packages every case below orders, in the alphabetical order the sweep hands over. */
-string[] four() { return string[]("abi", "bytes", "crypto", "zstd"); }
+string[] four() { return ["abi", "bytes", "crypto", "zstd"]; }
 
 export string test_with_no_recorded_times_the_alphabetical_order_is_kept() {
   T t = T.create();
   // A fresh checkout has no file, so every package is unknown, they all compare equal, and what comes
   // out is what went in. This is the case that must not regress: it is what the sweep did for a year
   // before any of this.
-  t.eqStr(joined(dispatchOrder(four(), string[0](fill: ""), i64[0]()), ","),
+  t.eqStr(joined(dispatchOrder(four(), string[].filled(0, ""), i64[]()), ","),
           "abi,bytes,crypto,zstd", "no times at all");
   return t.report();
 }
 
 export string test_the_slowest_recorded_package_goes_first() {
   T t = T.create();
-  string[] names = string[]("abi", "bytes", "crypto", "zstd");
-  i64[] ms = i64[](5000 as i64, 1000 as i64, 90000 as i64, 10000 as i64);
+  string[] names = ["abi", "bytes", "crypto", "zstd"];
+  i64[] ms = [5000 as i64, 1000 as i64, 90000 as i64, 10000 as i64];
   t.eqStr(joined(dispatchOrder(four(), names, ms), ","), "crypto,zstd,abi,bytes", "all timed");
   return t.report();
 }
@@ -41,8 +41,8 @@ export string test_a_package_with_no_recorded_time_is_dispatched_before_every_ti
   // The safe end, and the argument is asymmetric: an unknown is usually a new package and short, so
   // putting it first costs almost nothing, while putting it last re-creates the exact problem this
   // fixes for a package nobody has timed yet.
-  string[] names = string[]("abi", "crypto", "zstd");
-  i64[] ms = i64[](5000 as i64, 90000 as i64, 10000 as i64);
+  string[] names = ["abi", "crypto", "zstd"];
+  i64[] ms = [5000 as i64, 90000 as i64, 10000 as i64];
   t.eqStr(joined(dispatchOrder(four(), names, ms), ","), "bytes,crypto,zstd,abi", "one untimed");
   return t.report();
 }
@@ -54,8 +54,8 @@ export string test_two_untimed_packages_keep_the_order_they_arrived_in() {
   // `Number.MAX_SAFE_INTEGER` rather than `Infinity` because `Infinity - Infinity` is `NaN` and a
   // comparator answering `NaN` has no defined result. The wac version is an insertion sort that only
   // moves an element past a *strictly* smaller key, which is the same guarantee written out.
-  string[] names = string[]("crypto", "zstd");
-  i64[] ms = i64[](90000 as i64, 10000 as i64);
+  string[] names = ["crypto", "zstd"];
+  i64[] ms = [90000 as i64, 10000 as i64];
   t.eqStr(joined(dispatchOrder(four(), names, ms), ","), "abi,bytes,crypto,zstd", "two untimed");
   return t.report();
 }
@@ -64,8 +64,8 @@ export string test_the_input_is_not_mutated() {
   T t = T.create();
   // The sweep keeps its alphabetical package list to sort the report back into, so an in-place sort
   // here would silently reorder every row a reader scans for a red.
-  string[] pkgs = string[]("abi", "bytes", "crypto");
-  dispatchOrder(pkgs, string[]("abi"), i64[](9000 as i64));
+  string[] pkgs = ["abi", "bytes", "crypto"];
+  dispatchOrder(pkgs, ["abi"], [9000 as i64]);
   t.eqStr(joined(pkgs, ","), "abi,bytes,crypto", "the argument is untouched");
   return t.report();
 }
@@ -74,9 +74,9 @@ export string test_a_recorded_time_for_a_package_that_is_gone_is_ignored() {
   T t = T.create();
   // The times file is written from whatever ran; a package can leave `tasks.json5` between runs and
   // its entry outlives it. Sorting must not invent a row for it.
-  string[] names = string[]("retired", "abi");
-  i64[] ms = i64[](99000 as i64, 1000 as i64);
-  t.eqStr(joined(dispatchOrder(string[]("abi", "bytes"), names, ms), ","), "bytes,abi", "stale key");
+  string[] names = ["retired", "abi"];
+  i64[] ms = [99000 as i64, 1000 as i64];
+  t.eqStr(joined(dispatchOrder(["abi", "bytes"], names, ms), ","), "bytes,abi", "stale key");
   return t.report();
 }
 
@@ -151,9 +151,11 @@ export string test_the_sweep_never_dispatches_another_sweep() {
   //
   // The arithmetic is why it hid: 37 distinct `ok` lines is exactly what 38 dispatched jobs with one
   // outstanding looks like. So this asserts the *set*, not the count.
-  Task[] tasks = Task[](Task("coverage:all", "x"), Task("coverage:union", "y"),
+  Task[] tasks = [
+                        Task("coverage:all", "x"), Task("coverage:union", "y"),
                         Task("coverage:rlp", "z"), Task("coverage:tls", "w"),
-                        Task("test", "not a coverage task"));
+                        Task("test", "not a coverage task")
+  ];
   string[] got = packagesOf(tasks);
   t.eqStr(joined(got, ","), "rlp,tls", "the packages, and neither sweep");
 

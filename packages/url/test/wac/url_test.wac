@@ -26,7 +26,7 @@ export string test_encode_sets_nest() {
   //
   // Written as a property over all 256 bytes rather than case by case, since that is how the
   // standard defines them — each set is the previous one plus a handful of punctuation.
-  i32[] chain = i32[]( SET_C0(), SET_QUERY(), SET_PATH(), SET_USERINFO(), SET_COMPONENT() );
+  i32[] chain = [SET_C0(), SET_QUERY(), SET_PATH(), SET_USERINFO(), SET_COMPONENT()];
   i32 violations = 0;
   for (i32 c = 0; c < 256; c++) {
     for (i32 i = 1; i < chain.len(); i++) {
@@ -176,10 +176,10 @@ export string test_an_opaque_host_still_reads_brackets_as_an_address() {
   // parsed at all, so this arm is reachable only by the direct caller — which is what an exported
   // function has. The distinction matters because the answer is *not* a refusal: a caller that
   // treated null and empty alike would turn a legal empty host into an error.
-  HostResult empty = parseHost(u8[0](), true);
+  HostResult empty = parseHost(u8[](), true);
   t.isTrue(empty.host is not null, "an empty special host was refused rather than answered");
   t.isFalse(empty.neededIdna, "an empty host claimed to need IDNA");
-  HostResult emptyOpaque = parseHost(u8[0](), false);
+  HostResult emptyOpaque = parseHost(u8[](), false);
   t.isTrue(emptyOpaque.host is not null, "an empty opaque host was refused");
 
   Host? digits = parseOpaqueHost("1.2.3.4".toBytes());

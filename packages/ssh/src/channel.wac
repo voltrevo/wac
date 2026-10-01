@@ -78,7 +78,7 @@ export struct Window {
 
 /** SSH_MSG_CHANNEL_OPEN for a session, which is the channel type a command runs in. */
 export u8[] openSession(i32 channel, i32 window, i32 maxPacket) {
-  const u8[] SESSION = u8[](0x73, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e);      // "session"
+  const u8[] SESSION = [0x73, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e];      // "session"
   Writer w = Writer.create();
   w.byte(msgChannelOpen());
   w.str(SESSION);
@@ -94,7 +94,7 @@ export u8[] openSession(i32 channel, i32 window, i32 maxPacket) {
  * `channel` is the *server's* number for the channel, taken from the open confirmation.
  */
 export u8[] execRequest(i32 channel, u8[] command, bool wantReply) {
-  const u8[] EXEC = u8[](0x65, 0x78, 0x65, 0x63);                           // "exec"
+  const u8[] EXEC = [0x65, 0x78, 0x65, 0x63];                           // "exec"
   Writer w = Writer.create();
   w.byte(msgChannelRequest());
   w.u32(channel);
@@ -159,7 +159,7 @@ export struct Incoming {
   bool ok;
 }
 
-Incoming none() { return Incoming(0, 0, 0, 0, 0, u8[0](), false); }
+Incoming none() { return Incoming(0, 0, 0, 0, 0, u8[](), false); }
 
 /**
  * Parse one channel message.
@@ -171,7 +171,7 @@ export Incoming parse(u8[] payload) {
   if (payload.len() == 0) { return none(); }
   i32 kind = payload[0];
   if (kind < msgChannelOpen() || kind > msgChannelFailure()) {
-    return Incoming(0, 0, 0, 0, 0, u8[0](), true);
+    return Incoming(0, 0, 0, 0, 0, u8[](), true);
   }
 
   Reader r = Reader.over(payload);
@@ -184,7 +184,7 @@ export Incoming parse(u8[] payload) {
     i32 window = r.u32();
     i32 maxPacket = r.u32();
     if (!r.ok) { return none(); }
-    return Incoming(kind, channel, sender, window, maxPacket, u8[0](), true);
+    return Incoming(kind, channel, sender, window, maxPacket, u8[](), true);
   }
 
   if (kind == msgChannelOpenFailure()) {
@@ -197,7 +197,7 @@ export Incoming parse(u8[] payload) {
   if (kind == msgChannelWindowAdjust()) {
     i32 increment = r.u32();
     if (!r.ok) { return none(); }
-    return Incoming(kind, channel, 0, increment, 0, u8[0](), true);
+    return Incoming(kind, channel, 0, increment, 0, u8[](), true);
   }
 
   if (kind == msgChannelData()) {
@@ -214,8 +214,10 @@ export Incoming parse(u8[] payload) {
   }
 
   if (kind == msgChannelRequest()) {
-    const u8[] EXIT_STATUS = u8[](0x65, 0x78, 0x69, 0x74, 0x2d, 0x73, 0x74,
-                                  0x61, 0x74, 0x75, 0x73);                   // "exit-status"
+    const u8[] EXIT_STATUS = [
+                                  0x65, 0x78, 0x69, 0x74, 0x2d, 0x73, 0x74,
+                                  0x61, 0x74, 0x75, 0x73                   // "exit-status"
+    ];
     u8[] name = r.str();
     bool wantReply = r.bool();
     if (!r.ok) { return none(); }
@@ -228,6 +230,6 @@ export Incoming parse(u8[] payload) {
   }
 
   // EOF, CLOSE, SUCCESS, FAILURE and OPEN carry nothing more that a client needs.
-  return Incoming(kind, channel, 0, 0, 0, u8[0](), true);
+  return Incoming(kind, channel, 0, 0, 0, u8[](), true);
 }
 

@@ -84,7 +84,7 @@ export i32 main(Core core, Cli cli) {
 
   // The introduction point. The link specifiers are the shape `hsintro.wac` validates — a count byte
   // then one IPv4 entry for 127.0.0.1:9001.
-  u8[] ls = u8[9]();
+  u8[] ls = u8[].filled(9, 0);
   ls[0] = 1;                                        // NSPEC
   ls[1] = 0;                                        // LS_IPV4
   ls[2] = 6;                                        // length
@@ -101,14 +101,14 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
 
-  IntroPoint[] intros = IntroPoint[1](fill: IntroPoint(ls, ipNtor, ipAuthSeed, ipEncSecret));
+  IntroPoint[] intros = IntroPoint[].filled(1, IntroPoint(ls, ipNtor, ipAuthSeed, ipEncSecret));
 
   // Three more introduction points, so a descriptor can be built with more than one. Each has its
   // own keys and its own port, because two introduction points sharing a key would be one
   // introduction point written twice and would not exercise the section loop at all.
-  IntroPoint[] many = IntroPoint[3](fill: IntroPoint(ls, ipNtor, ipAuthSeed, ipEncSecret));
+  IntroPoint[] many = IntroPoint[].filled(3, IntroPoint(ls, ipNtor, ipAuthSeed, ipEncSecret));
   for (i32 mi = 0; mi < 3; mi++) {
-    u8[] mls = u8[9]();
+    u8[] mls = u8[].filled(9, 0);
     mls[0] = 1; mls[1] = 0; mls[2] = 6;
     mls[3] = 127; mls[4] = 0; mls[5] = 0; mls[6] = 1;
     mls[7] = 0x23; mls[8] = (0x29 + mi) & 0xFF;
@@ -118,16 +118,16 @@ export i32 main(Core core, Cli cli) {
 
   // Sixteen decoy client-auth entries, which a descriptor carries whether or not client
   // authorisation is in use — so that using it is not visible from the outside.
-  u8[][] clients = u8[][16]();
+  u8[][] clients = u8[][].defaulted(16);
   for (i32 ci = 0; ci < 16; ci++) {
-    u8[] one = u8[40]();
+    u8[] one = u8[].filled(40, 0);
     for (i32 i = 0; i < 40; i++) { one[i] = (ci * 97 + i * 11 + 3) & 0xFF; }
     clients[ci] = one;
   }
   u8[] ephemeral = seedFor(23);
-  u8[] innerSalt = u8[16]();
+  u8[] innerSalt = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { innerSalt[i] = (i * 29 + 5) & 0xFF; }
-  u8[] salt = u8[16]();
+  u8[] salt = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { salt[i] = (i * 23 + 11) & 0xFF; }
 
   Built b = buildDescriptor(identitySeed, signSeed, intros, periodNum, periodLength, REVISION,
@@ -168,7 +168,7 @@ export i32 main(Core core, Cli cli) {
   // changes exactly one thing and is checked by tor in `packages/tor/tools/capture-hspub.py`: two and three
   // introduction points, and the same service one time period later — which must be filed under a
   // different name, since the name *is* the blinded key.
-  IntroPoint[] two = IntroPoint[2](fill: many[0]);
+  IntroPoint[] two = IntroPoint[].filled(2, many[0]);
   two[1] = many[1];
   Built v2 = buildDescriptor(identitySeed, signSeed, two, periodNum, periodLength, REVISION,
                              LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
@@ -254,7 +254,7 @@ string jsonText(u8[] body) {
     else if (ch == 34) { out = out + "\\\""; }
     else if (ch == 92) { out = out + "\\\\"; }
     else {
-      u8[] one = u8[1]();
+      u8[] one = u8[].filled(1, 0);
       one[0] = ch;
       out = out + string.fromBytes(one);
     }
@@ -264,7 +264,7 @@ string jsonText(u8[] body) {
 
 /** A curve25519 secret has to be clamped before it is used as a scalar. */
 u8[] clamped(u8[] s) {
-  u8[] out = u8[32]();
+  u8[] out = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { out[i] = s[i]; }
   out[0] = out[0] & 248;
   out[31] = out[31] & 127;
@@ -274,7 +274,7 @@ u8[] clamped(u8[] s) {
 
 /** A deterministic 32-byte seed, distinct per role. The same shape `gendesc.wac` uses. */
 u8[] seedFor(i32 role) {
-  u8[] s = u8[32]();
+  u8[] s = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { s[i] = (role * 61 + i * 7 + 3) & 0xFF; }
   return s;
 }

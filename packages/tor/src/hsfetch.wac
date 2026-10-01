@@ -94,7 +94,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
   i64[] period = consensusTimePeriod(net.consensus, testnet, 0);
   if (period[0] < 0) {
     core.warn("tor: the consensus has no usable valid-after and fresh-until");
-    return u8[0]();
+    return u8[]();
   }
   i64 periodNum = period[0];
   i64 periodLength = period[1];
@@ -116,7 +116,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
   u8[] blinded = blindedPublicKey(identity, periodNum, periodLength);
   if (blinded.len() != 32) {
     core.warn("tor: the address does not decode to a curve point");
-    return u8[0]();
+    return u8[]();
   }
   u8[] subcred = subcredential(identity, blinded);
 
@@ -124,7 +124,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
                                    HSDIR_N_REPLICAS_DEFAULT, HSDIR_SPREAD_FETCH_DEFAULT);
   if (dirs.len() == 0) {
     core.warn("tor: no directory could be placed on the ring — are microdescriptors attached?");
-    return u8[0]();
+    return u8[]();
   }
   core.log(itoa(dirs.len()) + " responsible directories");
 
@@ -132,7 +132,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
   // that one being down is not the end of it, and treating the first 404 as final would throw that
   // away.
   string path = descriptorPath(blinded);
-  u8[] body = u8[0]();
+  u8[] body = u8[]();
   for (i32 i = 0; i < dirs.len() && body.len() == 0; i++) {
     Relay d = net.relays[dirs[i]];
     core.log("asking " + d.nickname + " at " + d.address + ":" + itoa(d.orPort));
@@ -145,7 +145,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
   }
   if (body.len() == 0) {
     core.warn("tor: no responsible directory had a descriptor for this address");
-    return u8[0]();
+    return u8[]();
   }
   core.log("descriptor: " + itoa(body.len()) + " bytes");
 
@@ -161,37 +161,37 @@ u8[] decryptDescriptor(Core core, u8[] body, u8[] blinded, u8[] subcred) {
   u8[] cert = pemBlock(body, "descriptor-signing-key-cert".toBytes(), "ED25519 CERT".toBytes());
   if (certType(cert) != 8) {
     core.warn("tor: the descriptor has no type-8 signing certificate");
-    return u8[0]();
+    return u8[]();
   }
   u8[] claimed = certSignedWithKey(cert);
   if (claimed.len() != 32) {
     core.warn("tor: the certificate names no blinded key");
-    return u8[0]();
+    return u8[]();
   }
   for (i32 i = 0; i < 32; i++) {
     if (claimed[i] != blinded[i]) {
       core.warn("tor: the descriptor is signed under a different blinded key than we asked for");
-      return u8[0]();
+      return u8[]();
     }
   }
 
   i64 revision = keywordInt(body, "revision-counter".toBytes());
   if (revision < 0) {
     core.warn("tor: the descriptor has no revision counter");
-    return u8[0]();
+    return u8[]();
   }
   u8[] outer = pemBlock(body, "superencrypted".toBytes(), "MESSAGE".toBytes());
   u8[] first = decryptLayer(outer, blinded, subcred, revision, superencryptedConstant());
   if (first.len() == 0) {
     core.warn("tor: the first layer did not decrypt — wrong subcredential, or the descriptor is "
               + "for a service with client authorisation, which is not implemented");
-    return u8[0]();
+    return u8[]();
   }
   u8[] inner = pemBlock(first, "encrypted".toBytes(), "MESSAGE".toBytes());
   u8[] second = decryptLayer(inner, blinded, subcred, revision, encryptedConstant());
   if (second.len() == 0) {
     core.warn("tor: the second layer did not decrypt");
-    return u8[0]();
+    return u8[]();
   }
   return second;
 }
@@ -218,7 +218,7 @@ i32 report(Core core, Cli cli, u8[] second) {
 
 string hex(u8[] b) {
   u8[] digits = "0123456789abcdef".toBytes();
-  u8[] out = u8[b.len() * 2]();
+  u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i * 2] = digits[(b[i] >> 4) & 0xF];
     out[i * 2 + 1] = digits[b[i] & 0xF];

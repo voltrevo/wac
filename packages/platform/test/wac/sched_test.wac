@@ -28,7 +28,7 @@ import { Core, Pending, Sched } from "std/platform.wac";
 Core scripted(Sched sched, i32[] script, i32[] at, i32[] asked) {
   // A clock nothing reads and a budget recorder nothing asserts: the tests below that do not care
   // about time pass throwaways, so `scriptedClock` stays the one implementation.
-  return scriptedClock(sched, script, at, asked, i32[8](), i64[2](), 0 as i64);
+  return scriptedClock(sched, script, at, asked, i32[].filled(8, 0), i64[].filled(2, 0), 0 as i64);
 }
 
 /**
@@ -68,8 +68,8 @@ Core scriptedClock(Sched sched, i32[] script, i32[] at, i32[] asked, i32[] asked
 export string test_dispatch_in_the_order_answered() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] seen = i32[3]();
-  i32[] n = i32[1]();
+  i32[] seen = i32[].filled(3, 0);
+  i32[] n = i32[].filled(1, 0);
 
   // **Each handler leaves a different mark.** With three that all recorded the id, the bodies were
   // interchangeable and dispatching the wrong one was invisible — a canary that always ran
@@ -79,8 +79,8 @@ export string test_dispatch_in_the_order_answered() {
   s.on(300, (i32 id) => { seen[n[0]] = 3000 + id; n[0] = n[0] + 1; }, (i32 id) => { });
 
   // The host answers the middle one, then what is left of the first, then the last.
-  i32[] asked = i32[8]();
-  Core core = scripted(s, i32[](1, 0, 0), i32[1](), asked);
+  i32[] asked = i32[].filled(8, 0);
+  Core core = scripted(s, [1, 0, 0] as i32[], i32[].filled(1, 0), asked);
 
   t.eqI32(s.run(core, -1), 3, "three handlers ran");
   t.eqI32(seen[0], 2200, "the answered one's own handler ran first");
@@ -99,7 +99,7 @@ export string test_dispatch_in_the_order_answered() {
 export string test_a_handler_can_register_more() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] rounds = i32[1]();
+  i32[] rounds = i32[].filled(1, 0);
 
   fn<void(i32)> again = (i32 id) => { };
   again = (i32 id) => {
@@ -108,7 +108,7 @@ export string test_a_handler_can_register_more() {
   };
   s.on(1, again, (i32 x) => { });
 
-  Core core = scripted(s, i32[](0, 0, 0), i32[1](), i32[8]());
+  Core core = scripted(s, [0, 0, 0] as i32[], i32[].filled(1, 0), i32[].filled(8, 0));
   t.eqI32(s.run(core, -1), 3, "the re-armed work ran too");
   t.eqI32(rounds[0], 3, "three rounds");
   t.eqI32(s.pending(), 0, "and it stopped re-arming");
@@ -119,12 +119,12 @@ export string test_a_handler_can_register_more() {
 export string test_a_deadline_returns_what_ran() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] ran = i32[1]();
+  i32[] ran = i32[].filled(1, 0);
   s.on(10, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
   s.on(20, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
 
   // One answer, then the script runs out and the fake answers -1 — a deadline that passed.
-  Core core = scripted(s, i32[](0), i32[1](), i32[8]());
+  Core core = scripted(s, [0] as i32[], i32[].filled(1, 0), i32[].filled(8, 0));
   t.eqI32(s.run(core, 5000), 1, "one handler ran before the deadline");
   t.eqI32(ran[0], 1, "and only one");
   t.eqI32(s.pending(), 1, "the unanswered ticket is still outstanding");
@@ -144,12 +144,12 @@ export string test_a_deadline_returns_what_ran() {
 export string test_a_budget_shrinks_across_waits() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] ran = i32[1]();
+  i32[] ran = i32[].filled(1, 0);
   s.on(10, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
   s.on(20, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
 
-  i32[] askedMs = i32[8]();
-  Core core = scriptedClock(s, i32[](0, 0), i32[1](), i32[8](), askedMs, i64[2](),
+  i32[] askedMs = i32[].filled(8, 0);
+  Core core = scriptedClock(s, [0, 0] as i32[], i32[].filled(1, 0), i32[].filled(8, 0), askedMs, i64[].filled(2, 0),
                             400 as i64 * 1000000 as i64);
 
   t.eqI32(s.run(core, 1000), 2, "both ran, inside the budget");
@@ -167,11 +167,11 @@ export string test_a_budget_shrinks_across_waits() {
 export string test_a_spent_budget_stops_the_loop() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] ran = i32[1]();
+  i32[] ran = i32[].filled(1, 0);
   for (i32 i = 0; i < 3; i++) { s.on(10 + i, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { }); }
 
-  i32[] asked = i32[8]();
-  Core core = scriptedClock(s, i32[](0, 0, 0), i32[1](), asked, i32[8](), i64[2](),
+  i32[] asked = i32[].filled(8, 0);
+  Core core = scriptedClock(s, [0, 0, 0] as i32[], i32[].filled(1, 0), asked, i32[].filled(8, 0), i64[].filled(2, 0),
                             600 as i64 * 1000000 as i64);
 
   // Two waits spend 1200ms of a 1000ms budget, so there is no third — and the third handler is left
@@ -193,12 +193,12 @@ export string test_a_spent_budget_stops_the_loop() {
 export string test_drain_for_leaves_the_rest_outstanding() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] ran = i32[1]();
+  i32[] ran = i32[].filled(1, 0);
   s.on(10, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
   s.on(20, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
 
   // One wait spends 1100ms of the 1000, so the second handler is never reached.
-  Core core = scriptedClock(s, i32[](0, 0), i32[1](), i32[8](), i32[8](), i64[2](),
+  Core core = scriptedClock(s, [0, 0] as i32[], i32[].filled(1, 0), i32[].filled(8, 0), i32[].filled(8, 0), i64[].filled(2, 0),
                             1100 as i64 * 1000000 as i64);
 
   t.eqI32(core.drainFor(1000), 1, "one continuation ran inside the budget");
@@ -210,8 +210,8 @@ export string test_drain_for_leaves_the_rest_outstanding() {
 export string test_drop_all_releases_each_ticket() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] dropped = i32[4]();
-  i32[] n = i32[1]();
+  i32[] dropped = i32[].filled(4, 0);
+  i32[] n = i32[].filled(1, 0);
 
   s.on(7, (i32 id) => { trap; }, (i32 id) => { dropped[n[0]] = id; n[0] = n[0] + 1; });
   s.on(9, (i32 id) => { trap; }, (i32 id) => { dropped[n[0]] = id; n[0] = n[0] + 1; });
@@ -238,8 +238,8 @@ export string test_drop_all_releases_each_ticket() {
 export string test_drop_all_clears_before_it_drops() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] dropped = i32[8]();
-  i32[] n = i32[1]();
+  i32[] dropped = i32[].filled(8, 0);
+  i32[] n = i32[].filled(1, 0);
 
   fn<void(i32)> recordAndRearm = (i32 id) => {
     dropped[n[0]] = id;
@@ -268,9 +268,9 @@ export string test_drop_all_clears_before_it_drops() {
 export string test_the_handler_carries_the_type() {
   T t = T.create();
   Sched s = Sched.create();
-  string[] got = string[1](fill: "");
+  string[] got = string[].filled(1, "");
 
-  Core core = scripted(s, i32[](0), i32[1](), i32[8]());
+  Core core = scripted(s, [0] as i32[], i32[].filled(1, 0), i32[].filled(8, 0));
 
   Pending<string> answer = Pending.of(7, (i32 id) => "hello", (i32 id) => true, (i32 id) => { });
   answer.linkedTo(core).then((string v) => { got[0] = v; });
@@ -282,7 +282,7 @@ export string test_the_handler_carries_the_type() {
 export string test_detach_takes_the_handler_and_leaves_the_ticket() {
   T t = T.create();
   Sched s = Sched.create();
-  i32[] dropped = i32[1]();
+  i32[] dropped = i32[].filled(1, 0);
 
   // Both handlers trap, so any dispatch below fails loudly rather than passing quietly.
   s.on(7, (i32 id) => { trap; }, (i32 id) => { dropped[0] = dropped[0] + 1; });

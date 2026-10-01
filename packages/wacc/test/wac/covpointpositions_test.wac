@@ -47,7 +47,7 @@ i32 KIND() { return 3; }
 i32 WHERE() { return 4; }
 
 string[] pointsOf(string lib, string entry) {
-  return wireLines(covTableFiles(string[](LIB, ENTRY), string[](lib, entry), ENTRY));
+  return wireLines(covTableFiles([LIB, ENTRY], [lib, entry], ENTRY));
 }
 
 i32 numberOf(string s) {

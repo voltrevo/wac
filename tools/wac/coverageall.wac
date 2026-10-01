@@ -111,7 +111,7 @@ struct Result {
 export string[] packagesOf(Task[] tasks) {
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    string[] out = pass == 1 ? string[].filled(n, "") : string[].filled(0, "");
     i32 at = 0;
     for (i32 i = 0; i < tasks.len(); i++) {
       if (!startsWith(tasks[i].name, "coverage:") || isSweep(tasks[i].name)) { continue; }
@@ -121,7 +121,7 @@ export string[] packagesOf(Task[] tasks) {
     if (pass == 1) { sortStrings(out, out.len()); return out; }
     n = at;
   }
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }
 
 /**
@@ -177,7 +177,7 @@ export string driverOf(string command) {
 export string[] splitOn(string s, string sep) {
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    string[] out = pass == 1 ? string[].filled(n, "") : string[].filled(0, "");
     i32 at = 0;
     i32 from = 0;
     for (i32 i = 0; i <= s.len(); i++) {
@@ -191,7 +191,7 @@ export string[] splitOn(string s, string sep) {
     if (pass == 1) { return out; }
     n = at;
   }
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }
 
 /**
@@ -213,11 +213,11 @@ export string[] splitOn(string s, string sep) {
  */
 string[] unmeasured(Cli cli, string[] known) {
   string[]? names = cli.readDir("packages").wait();
-  if (names is null) { return string[0](fill: ""); }
+  if (names is null) { return string[].filled(0, ""); }
   string[] here = names!;
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = pass == 1 ? string[n](fill: "") : string[0](fill: "");
+    string[] out = pass == 1 ? string[].filled(n, "") : string[].filled(0, "");
     i32 at = 0;
     for (i32 i = 0; i < here.len(); i++) {
       bool isKnown = false;
@@ -231,7 +231,7 @@ string[] unmeasured(Cli cli, string[] known) {
     if (pass == 1) { sortStrings(out, out.len()); return out; }
     n = at;
   }
-  return string[0](fill: "");
+  return string[].filled(0, "");
 }
 
 /**
@@ -259,8 +259,8 @@ string[] unmeasured(Cli cli, string[] known) {
  * is an insertion sort rather than anything cleverer.
  */
 export string[] dispatchOrder(string[] packages, string[] names, i64[] millis) {
-  string[] out = string[packages.len()](fill: "");
-  i64[] key = i64[packages.len()]();
+  string[] out = string[].filled(packages.len(), "");
+  i64[] key = i64[].filled(packages.len(), 0);
   for (i32 i = 0; i < packages.len(); i++) {
     i64 t = recordedMs(packages[i], names, millis);
     // Unknown sorts before every timed one, and equal to every other unknown.
@@ -315,8 +315,8 @@ export i32 main(Core core, Cli cli) {
   }
 
   string[] rows = splitLines(readTimes(cli));
-  string[] tNames = string[rows.len()](fill: "");
-  i64[] tMillis = i64[rows.len()]();
+  string[] tNames = string[].filled(rows.len(), "");
+  i64[] tMillis = i64[].filled(rows.len(), 0);
   i32 tN = 0;
   for (i32 i = 0; i < rows.len(); i++) {
     i32 tab = rows[i].indexOf("\t");
@@ -329,7 +329,7 @@ export i32 main(Core core, Cli cli) {
   string[] dispatch = dispatchOrder(packages, tNames, tMillis);
 
   i64 startedAll = nowMs(core);
-  Result[] results = Result[dispatch.len()](fill: Result("", 0, 0 as i64, "", ""));
+  Result[] results = Result[].filled(dispatch.len(), Result("", 0, 0 as i64, "", ""));
   i32 done = 0;
 
   // The queue. Each slot holds one ticket; when any of them answers, its line is printed and the slot
@@ -341,17 +341,17 @@ export i32 main(Core core, Cli cli) {
   // failure reports below read `results`, which is filled in `packages` order, so what a reader scans
   // for a red is stable even though the log is not.
   i32 workers = WORKERS < dispatch.len() ? WORKERS : dispatch.len();
-  Pending<Exec>[] live = Pending<Exec>[workers]();
-  i32[] slotItem = i32[workers]();
-  i64[] slotStart = i64[workers]();
-  bool[] busy = bool[workers]();
+  Pending<Exec>[] live = Pending<Exec>[].defaulted(workers);
+  i32[] slotItem = i32[].filled(workers, 0);
+  i64[] slotStart = i64[].filled(workers, 0);
+  bool[] busy = bool[].filled(workers, false);
   i32 next = 0;
   // Only a completion counts as progress; a poll that timed out is the ordinary case while a long
   // driver runs, and must not keep the stall bound alive.
   i64 lastProgress = nowMs(core);
 
   for (i32 s = 0; s < workers && next < dispatch.len(); s++) {
-    live[s] = cli.exec(wacBinary(cli), string[]("task", "coverage:" + dispatch[next]), u8[0]());
+    live[s] = cli.exec(wacBinary(cli), ["task", "coverage:" + dispatch[next]], u8[]());
     slotItem[s] = next;
     slotStart[s] = nowMs(core);
     busy[s] = true;
@@ -362,8 +362,8 @@ export i32 main(Core core, Cli cli) {
     i32 nBusy = 0;
     for (i32 s = 0; s < workers; s++) { if (busy[s]) { nBusy = nBusy + 1; } }
     if (nBusy == 0) { break; }
-    i32[] ids = i32[nBusy]();
-    i32[] slotOf = i32[nBusy]();
+    i32[] ids = i32[].filled(nBusy, 0);
+    i32[] slotOf = i32[].filled(nBusy, 0);
     i32 at = 0;
     for (i32 s = 0; s < workers; s++) {
       if (!busy[s]) { continue; }
@@ -420,7 +420,7 @@ export i32 main(Core core, Cli cli) {
 
     busy[slot] = false;
     if (next < dispatch.len()) {
-      live[slot] = cli.exec(wacBinary(cli), string[]("task", "coverage:" + dispatch[next]), u8[0]());
+      live[slot] = cli.exec(wacBinary(cli), ["task", "coverage:" + dispatch[next]], u8[]());
       slotItem[slot] = next;
       slotStart[slot] = nowMs(core);
       busy[slot] = true;

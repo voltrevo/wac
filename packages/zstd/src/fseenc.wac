@@ -118,7 +118,7 @@ export struct BitOut {
 export i32[] normalize(i32[] counts, i32 maxSymbol, i32 total, i32 log) {
   if (total <= 0) { trap; }
   i32 size = 1 << log;
-  i32[] norm = i32[maxSymbol + 1]();
+  i32[] norm = i32[].filled(maxSymbol + 1, 0);
 
   i32 assigned = 0;
   i32 largest = -1;
@@ -200,7 +200,7 @@ export struct CTable {
 export CTable buildCTable(i32[] norm, i32 maxSymbol, i32 log) {
   FseTable t = buildFromCounts(norm, maxSymbol, log);
   i32 size = 1 << log;
-  i32[] fromState = i32[(maxSymbol + 1) * size]();
+  i32[] fromState = i32[].filled((maxSymbol + 1) * size, 0);
 
   // Each state covers a contiguous run of targets. Across the states of one symbol those runs
   // partition the whole space, so every (symbol, target) pair gets exactly one answer and none

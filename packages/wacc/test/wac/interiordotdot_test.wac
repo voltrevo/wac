@@ -11,21 +11,24 @@ import { emitFiles, blockedFiles } from "../../src/api.wac";
 const string LIB = "export i32 answer() { return 42; }\n";
 
 /** The walker's own normalisation: what `gather` would have supplied these files under. */
-string[] paths() { return string[]("main.wac", "lib.wac"); }
+string[] paths() { return ["main.wac", "lib.wac"]; }
 
 string[] sourcesFor(string spec) {
-  return string[]("import { answer } from \"" + spec + "\";\nexport i32 main() { return answer(); }\n",
-                  LIB);
+  return [
+                  "import { answer } from \"" + spec + "\";\nexport i32 main() { return answer(); }\n",
+                  LIB
+  ];
 }
 
 export string test_a_specifier_with_an_interior_dotdot_links_to_the_file_supplied() {
   // Every spelling of "lib.wac, next to main.wac" that a person might write. Each one is resolved to
   // `lib.wac` by the walker, so each one has to be found by the linker under that key.
   T t = T.create();
-  string[] specs = string[](
+  string[] specs = [
     "./lib.wac", ".//lib.wac", "./sub/../lib.wac", "./a/b/../../lib.wac", "./././lib.wac",
-    "./sub/./../lib.wac");
-  string[] wrong = string[specs.len()](fill: "");
+    "./sub/./../lib.wac"
+  ];
+  string[] wrong = string[].filled(specs.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < specs.len(); i++) {
     string[] s = sourcesFor(specs[i]);
@@ -36,7 +39,7 @@ export string test_a_specifier_with_an_interior_dotdot_links_to_the_file_supplie
       n = n + 1;
     }
   }
-  string[] said = string[n](fill: "");
+  string[] said = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { said[i] = wrong[i]; }
   t.eqI32(n, 0, itoa(n) + " spelling(s) did not link: " + joined(said, "; "));
   return t.report();

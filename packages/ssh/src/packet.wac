@@ -91,22 +91,22 @@ export u8[] frame(u8[] payload, u8[] random, i32 block) {
  * something to clamp, and saying so here keeps every caller from having to remember it.
  */
 export Framed unframe(u8[] src, i32 at, i32 end) {
-  if (at < 0 || end > src.len() || at > end) { return Framed(Status.Malformed, u8[0](), 0); }
-  if (end - at < 4) { return Framed(Status.Incomplete, u8[0](), 0); }
+  if (at < 0 || end > src.len() || at > end) { return Framed(Status.Malformed, u8[](), 0); }
+  if (end - at < 4) { return Framed(Status.Incomplete, u8[](), 0); }
 
   i32 packetLength = (src[at] << 24) | (src[at + 1] << 16) | (src[at + 2] << 8) | src[at + 3];
   // A packet has to carry a padding-length byte and at least the 4 bytes of padding it promises.
   if (packetLength < 5 || packetLength > maxPacket()) {
-    return Framed(Status.Malformed, u8[0](), 0);
+    return Framed(Status.Malformed, u8[](), 0);
   }
-  if (end - at < 4 + packetLength) { return Framed(Status.Incomplete, u8[0](), 0); }
+  if (end - at < 4 + packetLength) { return Framed(Status.Incomplete, u8[](), 0); }
 
   i32 padLength = src[at + 4];
-  if (padLength < 4) { return Framed(Status.Malformed, u8[0](), 0); }
+  if (padLength < 4) { return Framed(Status.Malformed, u8[](), 0); }
   i32 payloadLength = packetLength - padLength - 1;
-  if (payloadLength < 0) { return Framed(Status.Malformed, u8[0](), 0); }
+  if (payloadLength < 0) { return Framed(Status.Malformed, u8[](), 0); }
 
-  u8[] payload = u8[payloadLength]();
+  u8[] payload = u8[].filled(payloadLength, 0);
   payload.copyFrom(src, at + 5, 0, payloadLength);
   return Framed(Status.Ok, payload, 4 + packetLength);
 }

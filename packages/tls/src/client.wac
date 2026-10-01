@@ -140,11 +140,11 @@ CConn decodeConn(u8[] state) {
   u8[] host = r.vec16();
   u8[] root = r.take(r.u32());
   i32 nOff = r.u32();
-  i32[] rootOffsets = i32[nOff]();
+  i32[] rootOffsets = i32[].filled(nOff, 0);
   for (i32 i = 0; i < nOff; i++) { rootOffsets[i] = r.u32(); }
   u8[] cert = r.take(r.u32());
   i32 nCh = r.u32();
-  i32[] chainOffsets = i32[nCh]();
+  i32[] chainOffsets = i32[].filled(nCh, 0);
   for (i32 i = 0; i < nCh; i++) { chainOffsets[i] = r.u32(); }
   r.expectEnd();
   return CConn(phase, suite, seqIn, seqOut, cs, ss, cas, sas, transcript, eph, p256,
@@ -154,7 +154,7 @@ CConn decodeConn(u8[] state) {
 
 void addTranscript(CConn c, u8[] msg) {
   if (c.transcript.len() + msg.len() > 65536) { trap; }
-  u8[] t = u8[c.transcript.len() + msg.len()]();
+  u8[] t = u8[].filled(c.transcript.len() + msg.len(), 0);
   for (i32 i = 0; i < c.transcript.len(); i++) { t[i] = c.transcript[i]; }
   for (i32 i = 0; i < msg.len(); i++) { t[c.transcript.len() + i] = msg[i]; }
   c.transcript = t;
@@ -163,8 +163,8 @@ void addTranscript(CConn c, u8[] msg) {
 void sealInto(Writer out, CConn c, i32 contentType, u8[] content) {
   i32 keyLen = suiteKeyLen(c.suite);
   u8[] ki = trafficKeyIv(c.clientSecret, keyLen);
-  u8[] key = u8[keyLen]();
-  u8[] iv = u8[12]();
+  u8[] key = u8[].filled(keyLen, 0);
+  u8[] iv = u8[].filled(12, 0);
   for (i32 i = 0; i < keyLen; i++) { key[i] = ki[i]; }
   for (i32 i = 0; i < 12; i++) { iv[i] = ki[keyLen + i]; }
   out.bytes(recordSeal(c.suite, key, iv, c.seqOut, contentType, content, 0));
@@ -179,8 +179,8 @@ void sealInto(Writer out, CConn c, i32 contentType, u8[] content) {
 u8[]? openWith(CConn c, u8[] record) {
   i32 keyLen = suiteKeyLen(c.suite);
   u8[] ki = trafficKeyIv(c.serverSecret, keyLen);
-  u8[] key = u8[keyLen]();
-  u8[] iv = u8[12]();
+  u8[] key = u8[].filled(keyLen, 0);
+  u8[] iv = u8[].filled(12, 0);
   for (i32 i = 0; i < keyLen; i++) { key[i] = ki[i]; }
   for (i32 i = 0; i < 12; i++) { iv[i] = ki[keyLen + i]; }
   u8[]? inner = recordTryOpen(c.suite, key, iv, c.seqIn, record);
@@ -200,11 +200,11 @@ u8[] clientHello(CConn c) {
   Writer body = Writer.create();
   body.u16(0x0303);                     // legacy_version
   body.bytes(c.clientRandom);
-  body.vec8(u8[32]());                  // legacy_session_id: 32 bytes for compatibility
+  body.vec8(u8[].filled(32, 0));                  // legacy_session_id: 32 bytes for compatibility
   Writer suites = Writer.create();
   suites.u16(c.suite);
   body.vec16(suites.take());
-  body.vec8(u8[1]());                   // legacy_compression_methods = [0]
+  body.vec8(u8[].filled(1, 0));                   // legacy_compression_methods = [0]
 
   Writer exts = Writer.create();
   // server_name
@@ -265,7 +265,7 @@ u8[] clientHello(CConn c) {
   // The hybrid share is 1216 bytes on its own, which makes this hello span two records
   // for most servers. That is the cost of not needing a HelloRetryRequest, and it is
   // what every deployed client does.
-  u8[] hybridShare = u8[hybridClientShareLen()]();
+  u8[] hybridShare = u8[].filled(hybridClientShareLen(), 0);
   for (i32 i = 0; i < hybridClientShareLen(); i++) { hybridShare[i] = c.hybridState[i]; }
   share.u16(groupX25519MlKem768());
   share.vec16(hybridShare);
@@ -293,7 +293,7 @@ u8[] serverShare(u8[] shBody) {
   r.vec8();                             // legacy_session_id_echo
   r.u16();                              // cipher_suite
   r.u8();                               // legacy_compression_method
-  u8[] share = u8[0]();
+  u8[] share = u8[]();
   bool sawTls13 = false;
   if (!r.empty()) {
     Reader exts = r.sub16();
@@ -304,15 +304,15 @@ u8[] serverShare(u8[] shBody) {
         i32 g = body.u16();
         u8[] key = body.vec16();
         if (g == groupX25519MlKem768() && key.len() == hybridServerShareLen()) {
-          share = u8[1122]();
+          share = u8[].filled(1122, 0);
           share[0] = 0x11; share[1] = 0xEC;
           for (i32 i = 0; i < hybridServerShareLen(); i++) { share[2 + i] = key[i]; }
         } else if (g == groupX25519() && key.len() == 32) {
-          share = u8[34]();
+          share = u8[].filled(34, 0);
           share[0] = 0x00; share[1] = 0x1d;
           for (i32 i = 0; i < 32; i++) { share[2 + i] = key[i]; }
         } else if (g == groupP256() && key.len() == 65) {
-          share = u8[67]();
+          share = u8[].filled(67, 0);
           share[0] = 0x00; share[1] = 0x17;
           for (i32 i = 0; i < 65; i++) { share[2 + i] = key[i]; }
         }
@@ -321,7 +321,7 @@ u8[] serverShare(u8[] shBody) {
       }
     }
   }
-  if (!sawTls13) { return u8[0](); }
+  if (!sawTls13) { return u8[](); }
   return share;
 }
 
@@ -369,10 +369,10 @@ export struct ClientStep {
  */
 export ClientStep clientStep(u8[] r) {
   i32 at = 0;
-  u8[][] parts = u8[][3](fill: u8[0]());
+  u8[][] parts = u8[][].filled(3, u8[]());
   for (i32 i = 0; i < 3; i++) {
     i32 n = (r[at] << 24) | (r[at + 1] << 16) | (r[at + 2] << 8) | r[at + 3];
-    u8[] part = u8[n]();
+    u8[] part = u8[].filled(n, 0);
     for (i32 k = 0; k < n; k++) { part[k] = r[at + 4 + k]; }
     parts[i] = part;
     at = at + 4 + n;
@@ -405,9 +405,9 @@ export u8[] tlsClientInit(u8[] host, u8[] rootDer, i32[] rootOffsets, u8[] ephem
   if (p256Priv.len() != 32) { trap; }
   if (kemSeed.len() != 64) { trap; }
   if (clientRandom.len() != 32) { trap; }
-  CConn c = CConn(0, suiteAes128Gcm(), 0, 0, u8[0](), u8[0](), u8[0](), u8[0](), u8[0](),
-                  ephemeralPriv, p256Priv, kemSeed, u8[0](), 0, clientRandom, host,
-                  rootDer, rootOffsets, now, u8[0](), i32[0](), 0);
+  CConn c = CConn(0, suiteAes128Gcm(), 0, 0, u8[](), u8[](), u8[](), u8[](), u8[](),
+                  ephemeralPriv, p256Priv, kemSeed, u8[](), 0, clientRandom, host,
+                  rootDer, rootOffsets, now, u8[](), i32[](), 0);
   // The hybrid offer is built once and kept: it carries the ML-KEM decapsulation key,
   // which the ServerHello will need and which regenerating would mean holding the seed
   // for longer than the key it produces.
@@ -422,7 +422,7 @@ export u8[] tlsClientInit(u8[] host, u8[] rootDer, i32[] rootOffsets, u8[] ephem
   rec.u16(0x0301);                      // the first record says 1.0, per RFC 8446 D.4
   rec.vec16(ch);
   out.bytes(rec.take());
-  return result(c, out.take(), u8[0]());
+  return result(c, out.take(), u8[]());
 }
 
 /** Phases: 0 fresh, 1 sent hello, 2 got ServerHello, 3 established, 4 failed. */
@@ -472,7 +472,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
     i32 recLen = (input[pos + 3] << 8) | input[pos + 4];
     if (pos + 5 + recLen > input.len()) { trap; }
     i32 outerType = input[pos];
-    u8[] record = u8[5 + recLen]();
+    u8[] record = u8[].filled(5 + recLen, 0);
     for (i32 i = 0; i < 5 + recLen; i++) { record[i] = input[pos + i]; }
     pos += 5 + recLen;
 
@@ -481,7 +481,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
     if (c.phase == 1) {
       // ServerHello, in the clear.
       if (outerType != typeHandshake()) { return fail(c, 10, alertUnexpectedMessage(), toSend, appData); }
-      u8[] msg = u8[recLen]();
+      u8[] msg = u8[].filled(recLen, 0);
       for (i32 i = 0; i < recLen; i++) { msg[i] = record[5 + i]; }
       if (messageLength(msg) != msg.len()) { return fail(c, 11, alertIllegalParameter(), toSend, appData); }
       if (messageType(msg) != 2) { return fail(c, 12, alertUnexpectedMessage(), toSend, appData); }
@@ -490,13 +490,13 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
       u8[] share = serverShare(shBody);
       if (share.len() < 3) { return fail(c, 14, alertHandshakeFailure(), toSend, appData); }
       i32 group = (share[0] << 8) | share[1];
-      u8[] peerKey = u8[share.len() - 2]();
+      u8[] peerKey = u8[].filled(share.len() - 2, 0);
       for (i32 i = 0; i < peerKey.len(); i++) { peerKey[i] = share[2 + i]; }
       c.group = group;
 
 
       addTranscript(c, msg);
-      u8[] shared = u8[0]();
+      u8[] shared = u8[]();
       if (group == groupX25519MlKem768()) {
         // 64 bytes rather than 32, and the key schedule takes it unchanged: it is the
         // IKM of an HKDF extract, which has no opinion about length.
@@ -521,7 +521,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
         if (!p256Decodes(peerKey)) { return fail(c, 15, alertIllegalParameter(), toSend, appData); }
         shared = p256Ecdh(c.p256Priv, peerKey);
       }
-      u8[] early = earlySecret(u8[hashLen()]());
+      u8[] early = earlySecret(u8[].filled(hashLen(), 0));
       u8[] hs = handshakeSecret(early, shared);
       u8[] th = sha256(c.transcript);
       c.clientSecret = deriveSecret(hs, "c hs traffic".toBytes(), th);
@@ -550,11 +550,11 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
       u8[] buf = recordContent(inner);
       i32 at = 0;
       while (at < buf.len()) {
-        u8[] rest = u8[buf.len() - at]();
+        u8[] rest = u8[].filled(buf.len() - at, 0);
         for (i32 i = 0; i < rest.len(); i++) { rest[i] = buf[at + i]; }
         i32 mlen = messageLength(rest);
         if (mlen < 0) { return fail(c, 22, alertIllegalParameter(), toSend, appData); }
-        u8[] msg = u8[mlen]();
+        u8[] msg = u8[].filled(mlen, 0);
         for (i32 i = 0; i < mlen; i++) { msg[i] = rest[i]; }
         at += mlen;
 
@@ -573,7 +573,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
           Reader list = r.slice(r.u24());
           if (list.empty()) { return fail(c, 30, alertHandshakeFailure(), toSend, appData); }
           Writer chain = Writer.create();
-          i32[] offsets = i32[32]();
+          i32[] offsets = i32[].filled(32, 0);
           i32 count = 0;
           while (!list.empty() && count < 16) {
             u8[] der = list.vec24();
@@ -584,7 +584,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
             count++;
           }
           c.serverCertDer = chain.take();
-          i32[] trimmed = i32[2 * count]();
+          i32[] trimmed = i32[].filled(2 * count, 0);
           for (i32 i = 0; i < 2 * count; i++) { trimmed[i] = offsets[i]; }
           c.chainOffsets = trimmed;
           addTranscript(c, msg);
@@ -614,7 +614,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
             if (verdict == 5) { alert = alertUnknownCa(); }
             return fail(c, 40 + verdict, alert, toSend, appData);
           }
-          u8[] leafDer = u8[c.chainOffsets[1] - c.chainOffsets[0]]();
+          u8[] leafDer = u8[].filled(c.chainOffsets[1] - c.chainOffsets[0], 0);
           for (i32 i = 0; i < leafDer.len(); i++) { leafDer[i] = c.serverCertDer[c.chainOffsets[0] + i]; }
           Cert leaf = parseCert(leafDer);
 
@@ -647,7 +647,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
           // Our Finished goes out under the *handshake* keys, before the switch.
           u8[] myFin = finished(finishedVerify(c.clientSecret, sha256(c.transcript)));
           // Middlebox compatibility: a ChangeCipherSpec before our first encrypted flight.
-          toSend.bytes(u8[](20, 3, 3, 0, 1, 1));
+          toSend.bytes([20, 3, 3, 0, 1, 1] as u8[]);
           sealInto(toSend, c, typeHandshake(), myFin);
           addTranscript(c, myFin);
 
@@ -693,13 +693,13 @@ export u8[] tlsClientSend(u8[] state, u8[] data) {
     once = true;
     i32 n = data.len() - pos;
     if (n > maxPlaintext()) { n = maxPlaintext(); }
-    u8[] chunk = u8[n]();
+    u8[] chunk = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { chunk[i] = data[pos + i]; }
     sealInto(out, c, typeApplicationData(), chunk);
     pos += n;
     if (n == 0) { pos = data.len() + 1; }
   }
-  return result(c, out.take(), u8[0]());
+  return result(c, out.take(), u8[]());
 }
 
 /** close_notify. */
@@ -712,5 +712,5 @@ export u8[] tlsClientClose(u8[] state) {
     out.bytes(plaintextAlert(alertCloseNotify()));
   }
   c.phase = 4;
-  return result(c, out.take(), u8[0]());
+  return result(c, out.take(), u8[]());
 }

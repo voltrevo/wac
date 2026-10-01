@@ -47,7 +47,7 @@ Exec runIn(Cli cli, string dir, bool keep) {
   string line = "cd '" + dir + "' && "
               + (keep ? "export WAC_KEEP_AGGREGATE=1 && " : "")
               + "exec '" + binaryPath(cli) + "' test test";
-  return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
 }
 
 /** A project directory with one passing or one uncompilable test in it. */
@@ -170,7 +170,7 @@ export string test_two_runs_at_once_in_one_project_both_succeed(Core core, Cli c
   // rather than always — so the shape assertion above is the one that cannot be lucky.
   string line = "cd '" + dir + "' && ( '" + binaryPath(cli) + "' test test & "
               + "'" + binaryPath(cli) + "' test test & wait )";
-  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
   t.isTrue(r.ran(), "the pair did not start — " + r.error);
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isFalse(contains(said, "cannot read"),

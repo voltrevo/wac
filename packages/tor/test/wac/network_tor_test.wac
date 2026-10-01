@@ -71,26 +71,26 @@ string freshScratch(T t, Cli cli, string name) {
 }
 
 string build(Cli cli, string entry, string out, string[] grants, bool worker) {
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
-  string[] tail = worker ? string[]("--worker", "-o", out) : string[]("-o", out);
-  string[] args = string[head.len() + grants.len() + tail.len()](fill: "");
+  string[] head = ["run", "-A", "packages/platform/build.ts", entry];
+  string[] tail = worker ? ["--worker", "-o", out] : ["-o", out];
+  string[] args = string[].filled(head.len() + grants.len() + tail.len(), "");
   i32 at = 0;
   for (i32 i = 0; i < head.len(); i++) { args[at] = head[i]; at = at + 1; }
   for (i32 i = 0; i < grants.len(); i++) { args[at] = grants[i]; at = at + 1; }
   for (i32 i = 0; i < tail.len(); i++) { args[at] = tail[i]; at = at + 1; }
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     return entry + " did not build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
   }
   return "";
 }
 
-string[] none() { return string[0](fill: ""); }
+string[] none() { return string[].filled(0, ""); }
 
 /** The launcher, the three relays and whatever else a case names — built into one directory. */
 string common(Cli cli, string dir) {
   return build(cli, "packages/tor/src/network.wac", dir + "/network",
-               string[]("--allow-read", "--allow-write", "--allow-net"), false) +
+               ["--allow-read", "--allow-write", "--allow-net"], false) +
          build(cli, "packages/tor/src/relayd.wac", dir + "/relayd.worker.js", none(), true) +
          build(cli, "packages/tor/src/gendesc.wac", dir + "/gendesc.worker.js", none(), true);
 }
@@ -123,8 +123,8 @@ struct Ran {
  */
 Ran runNetwork(Cli cli, string dir) {
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "cd " + quoted(dir) + " && exec timeout " + itoa(BOUND_SECONDS) + " ./network net.txt"),
-    u8[0]()).wait();
+    ["-c", "cd " + quoted(dir) + " && exec timeout " + itoa(BOUND_SECONDS) + " ./network net.txt"],
+    u8[]()).wait();
   if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error, false); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
 }
@@ -178,9 +178,9 @@ export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core 
                build(cli, "packages/tor/src/app.wac", dir + "/torapp.worker.js", none(), true);
   t.eqStr(why, "", "the network's programs built");
   if (why != "") { return t.report(); }
-  seeds(core, cli, dir, string[]("s1", "s2", "s3"));
+  seeds(core, cli, dir, ["s1", "s2", "s3"]);
 
-  describe(cli, dir, string[](
+  describe(cli, dir, [
     // Generous: three RSA-1024 prime searches happen at once here, and a busy machine makes that
     // slow. A default tuned for a quiet one would turn load into a failure.
     "timeout 300000",
@@ -191,7 +191,8 @@ export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core 
     "wait relay1 | serving the consensus |",
     "wait relay2 | serving the consensus |",
     "wait relay3 | serving the consensus |",
-    "run  fetch  |                       | torapp.worker.js seed.txt cert.fingerprint /tor/status-vote/current/consensus"));
+    "run  fetch  |                       | torapp.worker.js seed.txt cert.fingerprint /tor/status-vote/current/consensus"
+  ]);
 
   Ran r = runNetwork(cli, dir);
   t.eqI32(r.code, 0, "the network did not come up or the fetch failed — " + report(cli, r));
@@ -234,9 +235,9 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
                      none(), true);
   t.eqStr(why, "", "the onion service's programs built");
   if (why != "") { return t.report(); }
-  seeds(core, cli, dir, string[]("s1", "s2", "s3", "hs.seed"));
+  seeds(core, cli, dir, ["s1", "s2", "s3", "hs.seed"]);
 
-  describe(cli, dir, string[](
+  describe(cli, dir, [
     "timeout 300000",
     relay(1, "wacon", "--seedline seed.txt "),
     relay(2, "wacon", ""),
@@ -253,7 +254,8 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
     "wait service | introduction point established |",
     "wait service | published to                   |",
     "wait service | hsserviced:                    |",
-    "run  visit   |                       | hsconnect.worker.js seed.txt cert.fingerprint {service} 80 --testnet"));
+    "run  visit   |                       | hsconnect.worker.js seed.txt cert.fingerprint {service} 80 --testnet"
+  ]);
 
   Ran r = runNetwork(cli, dir);
   t.eqI32(r.code, 0, "the onion service run failed — " + report(cli, r));

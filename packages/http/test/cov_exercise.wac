@@ -90,7 +90,7 @@ const i64 NOW = 1592179200000;
  */
 u8[] wire(string s) {
   u8[] u = s.toBytes();
-  u8[] out = u8[u.len()]();
+  u8[] out = u8[].filled(u.len(), 0);
   i32 n = 0;
   i32 i = 0;
   while (i < u.len()) {
@@ -105,7 +105,7 @@ u8[] wire(string s) {
     n = n + 1;
     i = i + size;
   }
-  u8[] r = u8[n]();
+  u8[] r = u8[].filled(n, 0);
   for (i32 k = 0; k < n; k++) { r[k] = out[k]; }
   return r;
 }
@@ -117,7 +117,7 @@ string ctl(i32 c) { return string.fromCodepoint(c); }
 string[] cases() {
   string SOH = ctl(1);
   string HIGH = ctl(0x80);
-  return string[](
+  return [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /path/to?x=1&y=2 HTTP/1.1\r\nHost: example.com\r\n\r\n",
     "OPTIONS * HTTP/1.1\r\nHost: a\r\n\r\n",
@@ -167,13 +167,14 @@ string[] cases() {
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5 \r\nhello\r\n0\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloX0\r\n\r\n",
-    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nffffffff\r\n\r\n");
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nffffffff\r\n\r\n"
+  ];
 }
 
 /** The response corpus, with the request method each one is an answer to. */
 string[] responses() {
   string SOH = ctl(1);
-  return string[](
+  return [
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
     "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nContent-Length:5\r\n\r\nhello",
@@ -221,18 +222,20 @@ string[] responses() {
     "HTTP/1.1200 OK\r\n\r\n",
     "HTTP/1.x 200 OK\r\n\r\n",
     "hello\r\n\r\n",
-    "HTTP/1.1 200 OK" + SOH + "\r\n\r\n");
+    "HTTP/1.1 200 OK" + SOH + "\r\n\r\n"
+  ];
 }
 
 /** The method each response above is an answer to — three are not `GET` and that is the point. */
 string[] responseMethods() {
-  return string[](
+  return [
     "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET",
     "GET", "GET", "GET", "HEAD", "CONNECT",
     "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET",
     "GET", "GET",
     "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET",
-    "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET");
+    "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET"
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -242,9 +245,10 @@ export i32 main(Core core, Cli cli) {
   for (i32 i = 0; i < cs.len(); i++) { seen = seen + parseRequest(wire(cs[i]), MAX_BODY).len(); }
 
   // Every prefix of a few messages, which is what reaches the `Incomplete` returns.
-  string[] fulls = string[](
+  string[] fulls = [
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
-    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n");
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n"
+  ];
   for (i32 f = 0; f < fulls.len(); f++) {
     for (i32 n = 0; n <= fulls[f].len(); n++) {
       seen = seen + parseRequest(wire(fulls[f].slice(0, n)), MAX_BODY).len();
@@ -262,17 +266,18 @@ export i32 main(Core core, Cli cli) {
   // and two of them are guarded on the buffer still having bytes — so a buffer emptied by an earlier
   // edit changes how many numbers the *next* edit consumes. Restructuring this into something tidier
   // silently produces a different corpus, and nothing but the coverage figure would say so.
-  string[] seeds = string[](
+  string[] seeds = [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
-    "GET /a?b=c HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nCookie: k=v\r\n\r\n");
-  i32[] interesting = i32[](13, 10, 0x20, 9, 0, 0x3a, 0x2c, 0x3b, 0x7f, 0x80, 0xff, 0x2e, 0x2d);
+    "GET /a?b=c HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nCookie: k=v\r\n\r\n"
+  ];
+  i32[] interesting = [13, 10, 0x20, 9, 0, 0x3a, 0x2c, 0x3b, 0x7f, 0x80, 0xff, 0x2e, 0x2d];
   Rng r = Rng(0x1234abcd);
   for (i32 i = 0; i < 3000; i++) {
     u8[] seed = wire(seeds[r.upto(seeds.len())]);
     // Room for the seed plus one byte per insert, which is all an edit can add.
-    u8[] buf = u8[seed.len() + 8]();
+    u8[] buf = u8[].filled(seed.len() + 8, 0);
     i32 len = seed.len();
     for (i32 k = 0; k < len; k++) { buf[k] = seed[k]; }
 
@@ -296,7 +301,7 @@ export i32 main(Core core, Cli cli) {
         len = r.upto(len + 1);
       }
     }
-    u8[] input = u8[len]();
+    u8[] input = u8[].filled(len, 0);
     for (i32 k = 0; k < len; k++) { input[k] = buf[k]; }
     seen = seen + parseRequest(input, MAX_BODY).len();
   }
@@ -310,9 +315,10 @@ export i32 main(Core core, Cli cli) {
 
   // Every prefix, which is what reaches the Incomplete returns on the response side. `eof` is false
   // here: a short read is only incomplete while the connection might still say more.
-  string[] rfulls = string[](
+  string[] rfulls = [
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
-    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n");
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n"
+  ];
   for (i32 f = 0; f < rfulls.len(); f++) {
     for (i32 n = 0; n <= rfulls[f].len(); n++) {
       seen = seen + parseResponse(wire(rfulls[f].slice(0, n)), "GET".toBytes(), false, MAX_BODY).len();
@@ -321,18 +327,18 @@ export i32 main(Core core, Cli cli) {
 
   // The request writer, in each of its shapes. `NUL` separates one header from the next.
   string NUL = ctl(0);
-  string[] bm = string[]("GET", "GET", "POST", "PUT", "DELETE");
-  string[] bt = string[]("/", "/", "/x", "/a?b=c", "/x");
-  string[] bh = string[]("", "", "Accept" + NUL + "*/*", "A" + NUL + "1" + NUL + "B" + NUL + "2", "");
-  string[] bb = string[]("", "", "hello", "{\"a\":1}", "");
-  bool[] bk = bool[](true, false, true, false, true);
+  string[] bm = ["GET", "GET", "POST", "PUT", "DELETE"];
+  string[] bt = ["/", "/", "/x", "/a?b=c", "/x"];
+  string[] bh = ["", "", "Accept" + NUL + "*/*", "A" + NUL + "1" + NUL + "B" + NUL + "2", ""];
+  string[] bb = ["", "", "hello", "{\"a\":1}", ""];
+  bool[] bk = [true, false, true, false, true];
   for (i32 i = 0; i < bm.len(); i++) {
     seen = seen + buildRequest(bm[i].toBytes(), bt[i].toBytes(), "example.com".toBytes(),
                                wire(bh[i]), bb[i].toBytes(), bk[i]).len();
   }
 
   // ── The response *writer*, which is only reachable through a server ──
-  string[] served = string[](
+  string[] served = [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n",
@@ -341,7 +347,8 @@ export i32 main(Core core, Cli cli) {
     "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
     "GET / HTTP/2.0\r\n\r\n",
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999\r\n\r\n",
-    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}");
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}"
+  ];
   for (i32 i = 0; i < served.len(); i++) { seen = seen + serve(wire(served[i]), NOW).len(); }
 
   // ── The package's own tests, 32 of the 40 ──

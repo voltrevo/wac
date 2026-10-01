@@ -53,7 +53,7 @@ export i32 httpd(Core core, Cli cli, Fs fs, Args a) {
 
 /** One connection: read a request, answer it, close. No keep-alive — one at a time anyway. */
 void connection(Core core, Cli cli, Fs fs, i32 sock, string root, bool isolate) {
-  u8[] buffered = u8[0]();
+  u8[] buffered = u8[]();
   while (true) {
     match (parseRequest(buffered, 1 << 20)) {
       Incomplete: {

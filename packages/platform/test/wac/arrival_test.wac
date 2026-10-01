@@ -64,27 +64,27 @@ string nativeBinary(Core core, Cli cli) {
 }
 
 string buildOne(Cli cli, bool native, string out) {
-  string[] grants = string[]("--allow-read", "--allow-write");
+  string[] grants = ["--allow-read", "--allow-write"];
   if (native) {
-    string[] args = string[4 + grants.len()](fill: "");
+    string[] args = string[].filled(4 + grants.len(), "");
     args[0] = "build";
     args[1] = ENTRY;
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
       return "wac build imaged: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
     }
     return "";
   }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
-  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  string[] head = ["run", "-A", "packages/platform/build.ts", ENTRY];
+  string[] args = string[].filled(head.len() + grants.len() + 2, "");
   for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) { return "build.ts imaged: " + string.fromBytes(r.stderr); }
   return "";
 }
@@ -111,11 +111,11 @@ World world(Cli cli, string name) {
   string dir = root(cli) + "/.cache/arrival-" + name;
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
-  string[] grants = string[]("--allow-read", "--allow-write");
+  string[] grants = ["--allow-read", "--allow-write"];
 
   string madeDeno = builtByDeno(cli, ENTRY, "arrival-imaged", grants, "deno", false);
   string madeNative = builtProgram(cli, ENTRY, "arrival-imaged-native",
-                                   string[]("--allow-read", "--allow-write", "--quiet"));
+                                   ["--allow-read", "--allow-write", "--quiet"]);
   if (madeDeno == "") { return World(false, "imaged did not build for deno", dir, "", ""); }
 
   string deno = dir + "/imaged-deno";
@@ -139,12 +139,12 @@ World world(Cli cli, string name) {
 
 /** One session over `image`, from the world's directory, bounded and asked twice if it wedges. */
 Ran session(Core core, Cli cli, World w, string cmd, string[] extra, string image, string script) {
-  string[] args = string[extra.len() + 3](fill: "");
+  string[] args = string[].filled(extra.len() + 3, "");
   for (i32 i = 0; i < extra.len(); i++) { args[i] = extra[i]; }
   args[extra.len()] = image;
   args[extra.len() + 1] = "-c";
   args[extra.len() + 2] = script;
-  return boundedAgain(core, cli, w.dir, w.dir, cmd, args, u8[0](), () => { });
+  return boundedAgain(core, cli, w.dir, w.dir, cmd, args, u8[](), () => { });
 }
 
 /** The non-empty lines of `text`. */
@@ -155,7 +155,7 @@ string[] linesOf(string text) {
   for (i32 i = 0; i <= b.len(); i++) {
     if (i == b.len() || b[i] == '\n') { if (i > at) { count = count + 1; } at = i + 1; }
   }
-  string[] out = string[count](fill: "");
+  string[] out = string[].filled(count, "");
   i32 n = 0;
   at = 0;
   for (i32 i = 0; i <= b.len(); i++) {
@@ -176,7 +176,7 @@ export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
   const string IMG = "home.wacimg";
 
   // **One.** The JavaScript host makes a system: a home directory, a file, and a file of numbers.
-  Ran made = session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+  Ran made = session(core, cli, w, w.deno, string[].filled(0, ""), IMG,
     "mkdir -p /home/ada /etc; " +
     "echo hello from deno > /home/ada/note; " +
     "seq 1 5 > /home/ada/n; " +
@@ -193,18 +193,18 @@ export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
 
   // **Two.** The host with no JavaScript in it opens the same file: the same names, the same bytes,
   // and `sort` and `head` — two of `packages/box`'s applets — over the numbers the other host wrote.
-  Ran read = session(core, cli, w, native, string[](w.manifest), IMG,
+  Ran read = session(core, cli, w, native, [w.manifest], IMG,
     "ls /home/ada; cat /home/ada/note; sort -nr /home/ada/n | head -1; wc -l < /etc/passwd");
   t.eqStr(read.out, "n\nnote\nhello from deno\n5\n2\n", read.err);
 
   // **Two and a half: the system's *services*, from the same file.** design/0001 step 7 — what runs at
   // boot is `/etc/init` in the image, so `init` on the other host starts what this one wrote down.
   // Everything about it crosses: the parsing, the spawning, the relayed output and the statuses.
-  Ran wroteInit = session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+  Ran wroteInit = session(core, cli, w, w.deno, string[].filled(0, ""), IMG,
     "printf 'echo from the init file\nfalse\n' > /etc/init; wc -l < /etc/init");
   t.eqStr(wroteInit.out, "2\n", wroteInit.err);
-  Ran booted = session(core, cli, w, native, string[](w.manifest), IMG, "init; echo status=$?");
-  t.eqStrArray(linesOf(booted.out), string[](
+  Ran booted = session(core, cli, w, native, [w.manifest], IMG, "init; echo status=$?");
+  t.eqStrArray(linesOf(booted.out), [
     "init: started echo",
     "init: started false",
     "from the init file",
@@ -214,14 +214,15 @@ export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
     // Worth having on *this* side of the comparison: the line is printed by the wasmtime host here,
     // which is the half that would be missing if only the JavaScript one said it.
     "init: all services have stopped",
-    "status=1"), booted.err);
+    "status=1"
+  ], booted.err);
 
   // **Three.** And back the other way, which is the half that would be missing if only one host could
   // write: the format is not "what Deno emits and wasmtime tolerates".
-  Ran wrote = session(core, cli, w, native, string[](w.manifest), IMG,
+  Ran wrote = session(core, cli, w, native, [w.manifest], IMG,
     "echo written by wasmtime > /home/ada/back; ls /home/ada");
   t.eqStr(wrote.out, "back\nn\nnote\n", wrote.err);
-  Ran back = session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+  Ran back = session(core, cli, w, w.deno, string[].filled(0, ""), IMG,
     "cat /home/ada/back; ls /home/ada");
   t.eqStr(back.out, "written by wasmtime\nback\nn\nnote\n", back.err);
   cli.remove(w.dir, true).wait();
@@ -237,17 +238,19 @@ export string test_a_session_that_changes_nothing_writes_the_same_bytes_on_eithe
   t.isTrue(w.ok, "imaged built for both hosts — " + w.error);
   if (!w.ok) { return t.report(); }
 
-  Ran made = session(core, cli, w, w.deno, string[0](fill: ""), "twice.wacimg",
+  Ran made = session(core, cli, w, w.deno, string[].filled(0, ""), "twice.wacimg",
                      "mkdir -p /a/b; echo x > /a/b/c; seq 1 20 > /a/n; ls /a");
   t.eqStr(made.out, "b\nn\n", made.err);
 
-  cli.exec("/bin/sh", string[]("-c",
-    "cd '" + w.dir + "' && cp twice.wacimg js.wacimg && cp twice.wacimg rs.wacimg"),
-    u8[0]()).wait();
-  Ran a = session(core, cli, w, w.deno, string[0](fill: ""), "js.wacimg", "true");
-  Ran b = session(core, cli, w, native, string[](w.manifest), "rs.wacimg", "true");
+  cli.exec("/bin/sh", [
+    "-c",
+    "cd '" + w.dir + "' && cp twice.wacimg js.wacimg && cp twice.wacimg rs.wacimg"
+  ],
+    u8[]()).wait();
+  Ran a = session(core, cli, w, w.deno, string[].filled(0, ""), "js.wacimg", "true");
+  Ran b = session(core, cli, w, native, [w.manifest], "rs.wacimg", "true");
   string stuck = hangReport("the session that changes nothing",
-                            string[]("one host", "the other"), Ran[](a, b));
+                            ["one host", "the other"], [a, b]);
   if (stuck != "") { t.fail(stuck); cli.remove(w.dir, true).wait(); return t.report(); }
   t.eqI32(a.code, 0, a.err);
   t.eqI32(b.code, 0, b.err);
@@ -285,13 +288,13 @@ export string test_neither_host_reaches_the_disk_except_through_the_grants_the_i
 
   FileResult h = cli.readFile("/etc/hostname").wait();
   string theirs = h.ok ? trimmed(string.fromBytes(h.bytes)) : "";
-  session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+  session(core, cli, w, w.deno, string[].filled(0, ""), IMG,
           "mkdir -p /etc; echo inside-the-image > /etc/hostname");
 
-  string[] names = string[]("deno", "native");
+  string[] names = ["deno", "native"];
   for (i32 i = 0; i < 2; i++) {
     string cmd = i == 0 ? w.deno : native;
-    string[] extra = i == 0 ? string[0](fill: "") : string[](w.manifest);
+    string[] extra = i == 0 ? string[].filled(0, "") : [w.manifest];
     Ran r = session(core, cli, w, cmd, extra, IMG, "cat /etc/hostname");
     t.eqStr(r.out, "inside-the-image\n", names[i] + ": " + r.out + r.err);
     if (theirs.len() > 0) {

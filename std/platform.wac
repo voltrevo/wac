@@ -117,7 +117,7 @@ export struct Sched {
   i32 n;
 
   Sched create() {
-    return Sched(i32[8](), fn<void(i32)>[8](fill: schedIdle), fn<void(i32)>[8](fill: schedIdle), 0);
+    return Sched(i32[].filled(8, 0), fn<void(i32)>[].filled(8, schedIdle), fn<void(i32)>[].filled(8, schedIdle), 0);
   }
 
   /** How much work is outstanding — what the host asks before deciding a clean exit. */
@@ -134,9 +134,9 @@ export struct Sched {
 
   void grow(this) {
     i32 want = this.ids.len() * 2;
-    i32[] ni = i32[want]();
-    fn<void(i32)>[] nh = fn<void(i32)>[want](fill: schedIdle);
-    fn<void(i32)>[] nd = fn<void(i32)>[want](fill: schedIdle);
+    i32[] ni = i32[].filled(want, 0);
+    fn<void(i32)>[] nh = fn<void(i32)>[].filled(want, schedIdle);
+    fn<void(i32)>[] nd = fn<void(i32)>[].filled(want, schedIdle);
     for (i32 i = 0; i < this.n; i++) {
       ni[i] = this.ids[i];
       nh[i] = this.handlers[i];
@@ -250,7 +250,7 @@ export struct Sched {
       // **In registration order**, which `removeAt` preserves by shifting rather than swapping — so
       // with several continuations due at once they run in the order they were registered. That is
       // `waitAny`'s tie-break plus this list's order; neither alone is enough to say it.
-      i32[] live = i32[this.n]();
+      i32[] live = i32[].filled(this.n, 0);
       for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
       i32 which = core.waitAny(live, budget);
       waits = waits + 1;
@@ -277,8 +277,8 @@ export struct Sched {
     // this was called — dropping work it was not asked to abandon — and the clear afterwards then
     // forgets whatever the drops registered while still reporting a clean exit.
     i32 had = this.n;
-    i32[] ids = i32[had]();
-    fn<void(i32)>[] drops = fn<void(i32)>[had](fill: schedIdle);
+    i32[] ids = i32[].filled(had, 0);
+    fn<void(i32)>[] drops = fn<void(i32)>[].filled(had, schedIdle);
     for (i32 i = 0; i < had; i++) {
       ids[i] = this.ids[i];
       drops[i] = this.drops[i];
@@ -619,7 +619,7 @@ export struct Picked {
  * That works because an event is just another ticket. `nextEvent` parks the worker exactly as
  * `recv` parks it on a socket, and the page's main thread — which is the *host* — stays free to
  * run the real event loop and queue what arrives. So `waitAny` composes over it: a click or a
- * five-second deadline is `waitAny(i32[](e.id), 5000)`, which is the thing callbacks make hard.
+ * five-second deadline is `waitAny([e.id], 5000)`, which is the thing callbacks make hard.
  *
  * The operations are coarse for the reason given at the top of this file. `render` replaces the
  * application's whole root in one call, which suits building strings; `setText` and `setValue`
@@ -799,9 +799,9 @@ export struct Core {
    *
    * `millis` is the deadline, and **-1 means wait as long as it takes**:
    *
-   *     i32 w = core.waitAny(i32[](r.id, a.id), -1);   // until one of them answers
-   *     i32 w = core.waitAny(i32[](r.id), 5000);       // ...or five seconds, whichever first
-   *     i32 w = core.waitAny(i32[](click.id, file.id), 0);   // which is ready right now
+   *     i32 w = core.waitAny([r.id, a.id], -1);   // until one of them answers
+   *     i32 w = core.waitAny([r.id], 5000);       // ...or five seconds, whichever first
+   *     i32 w = core.waitAny([click.id, file.id], 0);   // which is ready right now
    *
    * **When several are ready, the answer is the first of them in the list you passed** — not the one
    * that finished first. Both hosts scan the caller's order and return the first settled ticket:
@@ -2001,7 +2001,7 @@ export struct Cli {
    * There is one current input rather than a handle per file because the transforms take
    * `fn<u8[]()>`, which has no parameter to carry a handle in. That is a choice in those
    * packages, not a limit of the language — wac can pass context beside a funcref, and a
-   * transform taking `fn<u8[](i32)>` could be handed a real file handle. Worth knowing
+   * transform taking `fn<[i32]>` could be handed a real file handle. Worth knowing
    * before anyone repeats the design: `recv(handle)` is what it looks like done that way,
    * and standard input has a handle now precisely so `waitAny` can watch it.
    *
@@ -2032,7 +2032,7 @@ export struct Cli {
    * parameter, so there is nowhere for an adapter to carry a ticket either.
    *
    * Note what that does *not* say. Context can travel beside a funcref in wac, as an
-   * unbound method reference — `fn<u8[](Reader)>` would work fine. What forbids it here is
+   * unbound method reference — `fn<[Reader]>` would work fine. What forbids it here is
    * the transforms' own signature, which is a choice in `packages/gzip` and
    * `packages/stream` rather than anything about the language.
    *
@@ -2380,7 +2380,7 @@ export struct Cli {
    *
    * `args` are arguments, **not a shell line**. They are passed as an argument vector, so a value
    * containing a space, a quote or a semicolon arrives whole and is never re-split or interpreted.
-   * A caller who wants a shell asks for one by name: `exec("/bin/sh", string[]("-c", line), ...)`.
+   * A caller who wants a shell asks for one by name: `exec("/bin/sh", ["-c", line], ...)`.
    *
    * `stdin` is handed over and then closed, so a program that reads to the end — which is most
    * oracles — sees the end.

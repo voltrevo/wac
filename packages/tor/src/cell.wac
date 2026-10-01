@@ -88,7 +88,7 @@ export bool isVarLength(i32 command) {
 export u8[] encodeFixed(i32 circId, i32 command, u8[] payload) {
   if (isVarLength(command)) { trap; }
   if (payload.len() > PAYLOAD_LEN) { trap; }
-  u8[] out = u8[CELL_LEN]();
+  u8[] out = u8[].filled(CELL_LEN, 0);
   out[0] = (circId >> 24) & 0xFF;
   out[1] = (circId >> 16) & 0xFF;
   out[2] = (circId >> 8) & 0xFF;
@@ -109,7 +109,7 @@ export u8[] encodeVar(i32 circId, i32 command, u8[] payload) {
   if (!isVarLength(command)) { trap; }
   if (payload.len() > 65535) { trap; }
   i32 idLen = command == cmdVersions() ? 2 : 4;
-  u8[] out = u8[idLen + 3 + payload.len()]();
+  u8[] out = u8[].filled(idLen + 3 + payload.len(), 0);
   if (idLen == 2) {
     out[0] = (circId >> 8) & 0xFF;
     out[1] = circId & 0xFF;
@@ -163,12 +163,12 @@ export i32 cellCircId(u8[] buf, i32 at, i32 idLen) {
 export u8[] cellPayload(u8[] buf, i32 at, i32 idLen) {
   i32 command = cellCommand(buf, at, idLen);
   if (!isVarLength(command)) {
-    u8[] out = u8[PAYLOAD_LEN]();
+    u8[] out = u8[].filled(PAYLOAD_LEN, 0);
     for (i32 i = 0; i < PAYLOAD_LEN; i++) { out[i] = buf[at + idLen + 1 + i]; }
     return out;
   }
   i32 len = (buf[at + idLen + 1] << 8) | buf[at + idLen + 2];
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = buf[at + idLen + 3 + i]; }
   return out;
 }
@@ -177,7 +177,7 @@ export u8[] cellPayload(u8[] buf, i32 at, i32 idLen) {
 
 /** A VERSIONS cell offering each of `versions`, as two-byte big-endian numbers. */
 export u8[] encodeVersions(i32[] versions) {
-  u8[] payload = u8[versions.len() * 2]();
+  u8[] payload = u8[].filled(versions.len() * 2, 0);
   for (i32 i = 0; i < versions.len(); i++) {
     payload[i * 2] = (versions[i] >> 8) & 0xFF;
     payload[i * 2 + 1] = versions[i] & 0xFF;
@@ -213,7 +213,7 @@ export i32 negotiateVersion(u8[] theirPayload, i32[] ours) {
  */
 export u8[] encodeNetinfo(u8[] theirIpv4) {
   if (theirIpv4.len() != 4) { trap; }
-  u8[] payload = u8[4 + 6 + 1]();
+  u8[] payload = u8[].filled(4 + 6 + 1, 0);
   // TIME: zero. A client's clock is nobody's business.
   payload[4] = 4;                 // OTHERADDR type: IPv4
   payload[5] = 4;                 // length
@@ -229,7 +229,7 @@ export i32 handshakeNtor() { return 2; }
 
 /** CREATE2: HTYPE (2) | HLEN (2) | HDATA. */
 export u8[] encodeCreate2(i32 circId, i32 hType, u8[] handshake) {
-  u8[] payload = u8[4 + handshake.len()]();
+  u8[] payload = u8[].filled(4 + handshake.len(), 0);
   payload[0] = (hType >> 8) & 0xFF;
   payload[1] = hType & 0xFF;
   payload[2] = (handshake.len() >> 8) & 0xFF;
@@ -246,12 +246,12 @@ export u8[] encodeCreate2(i32 circId, i32 hType, u8[] handshake) {
  * the ntor code 445 bytes of padding.
  */
 export u8[] decodeCreated2(u8[] payload) {
-  if (payload.len() < 2) { return u8[0](); }
+  if (payload.len() < 2) { return u8[](); }
   i32 len = (payload[0] << 8) | payload[1];
   // Empty rather than a trap: the relay chose this length, and an empty handshake reply
   // fails ntor's AUTH check, which is the right outcome and does not abort the process.
-  if (2 + len > payload.len()) { return u8[0](); }
-  u8[] out = u8[len]();
+  if (2 + len > payload.len()) { return u8[](); }
+  u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = payload[2 + i]; }
   return out;
 }
@@ -316,7 +316,7 @@ export u8[] encodePaddingNegotiate(i32 command, i32 lowMs, i32 highMs) {
   // The spec requires the high end not to be below the low one. Sending an inverted pair
   // makes the peer drop the connection, and the reason is not obvious from this end.
   if (highMs < lowMs) { trap; }
-  u8[] payload = u8[6]();
+  u8[] payload = u8[].filled(6, 0);
   payload[0] = 0;             // version
   payload[1] = command;
   payload[2] = (lowMs >> 8) & 0xFF;
@@ -344,12 +344,12 @@ export i32 cmdPaddingNegotiate() { return 12; }
  * each time.
  */
 export u8[] encodeDestroy(i32 circId, i32 reason) {
-  return encodeFixed(circId, cmdDestroy(), u8[](reason));
+  return encodeFixed(circId, cmdDestroy(), [reason]);
 }
 
 /** REASON_REQUESTED — we are done with it, nothing went wrong. */
 export i32 destroyRequested() { return 1; }
 
 export u8[] encodePadding() {
-  return encodeFixed(0, cmdPadding(), u8[0]());
+  return encodeFixed(0, cmdPadding(), u8[]());
 }

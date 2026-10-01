@@ -46,7 +46,7 @@ export enum Tree {
 /** Parse a tree object's content — the bytes after the `tree <len>\0` header. */
 export Tree parseTree(u8[] content) {
   // A `Vec` rather than an array grown by hand: an `Entry` is a struct and has no default value, so
-  // `Entry[n]()` is not a thing that can be written, and counting the entries first would mean
+  // `Entry[].defaulted(n)` is not a thing that can be written, and counting the entries first would mean
   // parsing them first — a counting pass is this parse done twice.
   Vec<Entry> out = Vec.create();
   i32 at = 0;
@@ -68,7 +68,7 @@ export Tree parseTree(u8[] content) {
     for (i32 i = at; i < space; i++) { m.push(content[i]); }
     Buf nm = Buf.create();
     for (i32 i = space + 1; i < nul; i++) { nm.push(content[i]); }
-    u8[] h = u8[20]();
+    u8[] h = u8[].filled(20, 0);
     for (i32 i = 0; i < 20; i++) { h[i] = content[nul + 1 + i]; }
 
     out.push(Entry(m.toStr(), nm.toStr(), h));

@@ -102,27 +102,27 @@ struct Shells {
 }
 
 string buildOne(Cli cli, bool native, string out, string[] grants) {
-  string[] tail = string[]("-o", out);
+  string[] tail = ["-o", out];
   if (native) {
-    string[] args = string[2 + grants.len() + 2](fill: "");
+    string[] args = string[].filled(2 + grants.len() + 2, "");
     args[0] = "build";
     args[1] = ENTRY;
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
       return "wac build " + out + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
     }
     return "";
   }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
-  string[] args = string[head.len() + grants.len() + tail.len()](fill: "");
+  string[] head = ["run", "-A", "packages/platform/build.ts", ENTRY];
+  string[] args = string[].filled(head.len() + grants.len() + tail.len(), "");
   for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     return "build.ts " + out + ": " + string.fromBytes(r.stderr);
   }
@@ -136,9 +136,9 @@ Shells shells(Cli cli) {
   Shells s = Shells(true, "", dir + "/wacsh-deno", dir + "/wacsh.wasm",
                     dir + "/wonly-deno", dir + "/wonly.wasm",
                     dir + "/nogrant-deno", dir + "/nogrant.wasm");
-  string[] rw = string[]("--allow-read", "--allow-write", "--allow-env");
-  string[] w = string[]("--allow-write");
-  string[] none = string[0](fill: "");
+  string[] rw = ["--allow-read", "--allow-write", "--allow-env"];
+  string[] w = ["--allow-write"];
+  string[] none = string[].filled(0, "");
 
   string why = "";
   // One walk of `sh.wac`'s 190-file closure, not six.
@@ -169,9 +169,11 @@ void fixtureAt(Cli cli, string tree) {
   cli.writeFile(tree + "/f", ("a\nb\nc\n").toBytes()).wait();
   cli.writeFile(tree + "/n", ("3\n1\n2\n").toBytes()).wait();
   cli.writeFile(tree + "/sub/deep", ("x\n").toBytes()).wait();
-  cli.exec("/bin/sh", string[]("-c",
-    "cd " + quoted(tree) + " && ln -s f link && ln -s nosuch dangling && ln -s loop loop"),
-    u8[0]()).wait();
+  cli.exec("/bin/sh", [
+    "-c",
+    "cd " + quoted(tree) + " && ln -s f link && ln -s nosuch dangling && ln -s loop loop"
+  ],
+    u8[]()).wait();
 }
 
 void fixture(Cli cli, string tmp) { fixtureAt(cli, tmp + "/tree"); }
@@ -192,16 +194,16 @@ string treeFor(Cli cli, string tmp, string which) {
 
 /** The real tools, through bash, in the same directory the shells are told to change to. */
 Ran gnu(Core core, Cli cli, string tmp, string script) {
-  return boundedAgain(core, cli, tmp, tmp, "bash", string[]("-c", "cd tree; " + script), u8[0](),
+  return boundedAgain(core, cli, tmp, tmp, "bash", ["-c", "cd tree; " + script], u8[](),
                       () => { fixture(cli, tmp); });
 }
 
 Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string script) {
-  string[] args = string[pre.len() + 2](fill: "");
+  string[] args = string[].filled(pre.len() + 2, "");
   for (i32 i = 0; i < pre.len(); i++) { args[i] = pre[i]; }
   args[pre.len()] = "-c";
   args[pre.len() + 1] = "cd tree; " + script;
-  return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[0](), () => { fixture(cli, tmp); });
+  return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[](), () => { fixture(cli, tmp); });
 }
 
 /**
@@ -249,7 +251,7 @@ bool isSpace(string c) { return c == " " || c == "\n" || c == "\t" || c == "\r";
 /** Scripts the real tools and both shells all answer the same way. */
 string[] agreed() {
   string long = tooLong();
-  return string[](
+  return [
     "cat f",
     "cat f sub/deep",
     "wc -c f",
@@ -333,7 +335,8 @@ string[] agreed() {
     "./nosuch a b",
     "./sub | cat; echo st=$?",
     "cat f | ./sub; echo st=$?",
-    "./nosuch | wc -l; echo st=$?");
+    "./nosuch | wc -l; echo st=$?"
+  ];
 }
 
 export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(Core core, Cli cli) {
@@ -354,15 +357,15 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
   // version used, behind one `exec`; `issues/system/0213` has the numbers and why a wac test could not
   // have it until it existed. A tree per script is made up front, exactly as before, so the runs are
   // as isolated as they were when they were separate processes.
-  string[] denoTrees = string[scripts.len()](fill: "");
-  string[][] denoArgv = string[][scripts.len()](fill: string[0](fill: ""));
-  u8[][] denoIn = u8[][scripts.len()](fill: u8[0]());
+  string[] denoTrees = string[].filled(scripts.len(), "");
+  string[][] denoArgv = string[][].filled(scripts.len(), string[].filled(0, ""));
+  u8[][] denoIn = u8[][].filled(scripts.len(), u8[]());
   for (i32 i = 0; i < scripts.len(); i++) {
     denoTrees[i] = treeFor(cli, tmp, "deno-" + itoa(i));
-    denoArgv[i] = string[]("-c", scripts[i]);
+    denoArgv[i] = ["-c", scripts[i]];
   }
   Ran[] jsAll = denoBatch(cli, DEFAULT_SECONDS * 2, ENTRY,
-                          string[]("--allow-read", "--allow-write", "--allow-env"), tmp,
+                          ["--allow-read", "--allow-write", "--allow-env"], tmp,
                           denoTrees, denoArgv, denoIn);
 
   for (i32 i = 0; i < scripts.len(); i++) {
@@ -373,11 +376,11 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
     string nativeTree = native == "" ? "" : treeFor(cli, tmp, "native");
 
     Pending<Exec> pw = submit(cli, DEFAULT_SECONDS, bashTree, tmp, "bash",
-                               string[]("-c", script), u8[0]());
+                               ["-c", script], u8[]());
     bool haveNative = native != "";
     Pending<Exec> pr = haveNative
-      ? submit(cli, DEFAULT_SECONDS, nativeTree, tmp, native, string[](s.manifest, "-c", script),
-               u8[0]())
+      ? submit(cli, DEFAULT_SECONDS, nativeTree, tmp, native, [s.manifest, "-c", script],
+               u8[]())
       : pw;
 
     Ran want = collect(pw);
@@ -390,9 +393,9 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
     if (js.hung) {
       fixtureAt(cli, denoTrees[i]);
       js = collect(submit(cli, DEFAULT_SECONDS * 3, denoTrees[i], tmp, s.deno,
-                          string[]("-c", script), u8[0]()));
+                          ["-c", script], u8[]()));
     }
-    string stuck = hangReport(script, string[]("bash", "deno"), Ran[](want, js));
+    string stuck = hangReport(script, ["bash", "deno"], [want, js]);
     if (stuck != "") { t.fail(stuck); continue; }
 
     t.eqStr(js.out, want.out, "deno: " + script);
@@ -403,8 +406,8 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
     t.eqStr(strip(js.err), strip(want.err), "deno stderr: " + script);
     if (!haveNative) { continue; }
     Ran rs = collect(pr);
-    if (rs.hung) { rs = shell(core, cli, tmp, native, string[](s.manifest), script); }
-    string stuckNative = hangReport(script, string[]("native"), Ran[](rs));
+    if (rs.hung) { rs = shell(core, cli, tmp, native, [s.manifest], script); }
+    string stuckNative = hangReport(script, ["native"], [rs]);
     if (stuckNative != "") { t.fail(stuckNative); continue; }
     t.eqStr(rs.out, want.out, "native: " + script);
     t.eqStr(rs.err, js.err, "native stderr: " + script);
@@ -451,7 +454,7 @@ export string test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ
   t.isTrue(whyDir2 == "", whyDir2);
 
   fixture(cli, tmp);
-  Ran js = shell(core, cli, tmp, s.deno, string[0](fill: ""), "./f");
+  Ran js = shell(core, cli, tmp, s.deno, string[].filled(0, ""), "./f");
   t.eqI32(js.code, 126, "deno status");
   t.eqStr(js.err, "sh: ./f: not a wac program: no `wac.manifest` section and not a worker bundle\n",
           "deno");
@@ -464,7 +467,7 @@ export string test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ
   string native = nativeBinary(cli);
   if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
   fixture(cli, tmp);
-  Ran rs = shell(core, cli, tmp, native, string[](s.manifest), "./f");
+  Ran rs = shell(core, cli, tmp, native, [s.manifest], "./f");
   t.eqI32(rs.code, 126, "native status");
   t.eqStr(rs.err, "sh: ./f: not a wac program: no `wac.manifest` section in it\n", "native");
   cli.remove(tmp, true).wait();
@@ -517,19 +520,19 @@ export string test_the_two_hosts_agree_where_the_real_tool_prints_more_than_this
   t.isTrue(whyDir3 == "", whyDir3);
 
   // Scripts where the real tool prints more than this system has, so the two hosts are the oracle.
-  string[] scripts = string[]("stat f", "stat sub", "find .", "du .");
+  string[] scripts = ["stat f", "stat sub", "find .", "du ."];
   for (i32 i = 0; i < scripts.len(); i++) {
     fixture(cli, tmp);
-    Ran js = shell(core, cli, tmp, s.deno, string[0](fill: ""), scripts[i]);
+    Ran js = shell(core, cli, tmp, s.deno, string[].filled(0, ""), scripts[i]);
     fixture(cli, tmp);
-    Ran rs = shell(core, cli, tmp, native, string[](s.manifest), scripts[i]);
+    Ran rs = shell(core, cli, tmp, native, [s.manifest], scripts[i]);
     t.eqStr(maskWhen(rs.out), maskWhen(js.out), "native: " + scripts[i]);
     t.eqI32(rs.code, js.code, "native status: " + scripts[i]);
   }
 
   // And one thing the mask must not have eaten.
   fixture(cli, tmp);
-  Ran st = shell(core, cli, tmp, native, string[](s.manifest), "stat f");
+  Ran st = shell(core, cli, tmp, native, [s.manifest], "stat f");
   t.isTrue(st.out.len() >= 9 && st.out.slice(0, 9) == "f file 6 ", st.out);
   cli.remove(tmp, true).wait();
   return t.report();
@@ -570,7 +573,7 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
 
   // One per grant-gated capability the shell can reach from a script. `stat`, `readDir`, `readFile`,
   // `writeFile`, `mkdir`, `remove`, `rename`, `openInput` and `openOutput` — read and write both.
-  string[] scripts = string[](
+  string[] scripts = [
     "cat f",              // readFile
     "cat < f",            // openInput, through a redirection rather than an operand
     "ls",                 // readDir
@@ -582,19 +585,20 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
     "rm f",               // remove
     "mv f g",             // rename
     "touch t",            // writeFile
-    "cp f copy");         // read and write in one command
+    "cp f copy"         // read and write in one command
+  ];
 
   // The Deno half of all twelve in one process, as the sweep above does — same program, same
   // (absent) grants, same fixture per script. A tree apiece so the runs stay as independent as they
   // were when each was its own process.
-  string[] nograntTrees = string[scripts.len()](fill: "");
-  string[][] nograntArgv = string[][scripts.len()](fill: string[0](fill: ""));
-  u8[][] nograntIn = u8[][scripts.len()](fill: u8[0]());
+  string[] nograntTrees = string[].filled(scripts.len(), "");
+  string[][] nograntArgv = string[][].filled(scripts.len(), string[].filled(0, ""));
+  u8[][] nograntIn = u8[][].filled(scripts.len(), u8[]());
   for (i32 i = 0; i < scripts.len(); i++) {
     nograntTrees[i] = treeFor(cli, tmp, "nogrant-" + itoa(i));
-    nograntArgv[i] = string[]("-c", scripts[i] + "; echo status=$?");
+    nograntArgv[i] = ["-c", scripts[i] + "; echo status=$?"];
   }
-  Ran[] jsAll = denoBatch(cli, DEFAULT_SECONDS * 2, ENTRY, string[0](fill: ""), tmp,
+  Ran[] jsAll = denoBatch(cli, DEFAULT_SECONDS * 2, ENTRY, string[].filled(0, ""), tmp,
                           nograntTrees, nograntArgv, nograntIn);
 
   for (i32 i = 0; i < scripts.len(); i++) {
@@ -608,13 +612,13 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
     string where = tmp + "/tree";
     fixture(cli, tmp);
     Ran rs = boundedAgain(core, cli, where, tmp, native,
-                          string[](s.nogrant, "-c", script + "; echo status=$?"), u8[0](),
+                          [s.nogrant, "-c", script + "; echo status=$?"], u8[](),
                           () => { fixture(cli, tmp); });
     Ran js = jsAll[i];
     if (js.hung) {
       fixture(cli, tmp);
       js = boundedAgain(core, cli, where, tmp, s.nograntDeno,
-                        string[]("-c", script + "; echo status=$?"), u8[0](),
+                        ["-c", script + "; echo status=$?"], u8[](),
                         () => { fixture(cli, tmp); });
     }
 
@@ -642,13 +646,13 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
   // The canary: a *granted* build must actually do these, or every assertion above holds because the
   // shell cannot do anything at all.
   fixture(cli, tmp);
-  Ran granted = boundedAgain(core, cli, tmp + "/tree", tmp, s.deno, string[]("-c", "cat f"),
-                             u8[0](), () => { fixture(cli, tmp); });
+  Ran granted = boundedAgain(core, cli, tmp + "/tree", tmp, s.deno, ["-c", "cat f"],
+                             u8[](), () => { fixture(cli, tmp); });
   t.eqStr(granted.out, "a\nb\nc\n", "the granted build could not read either: " + granted.err);
   // And that the *stderr* comparison is not comparing two empties: a refusal really did say something.
   fixture(cli, tmp);
-  Ran said = boundedAgain(core, cli, tmp + "/tree", tmp, s.nograntDeno, string[]("-c", "cat f"),
-                          u8[0](), () => { fixture(cli, tmp); });
+  Ran said = boundedAgain(core, cli, tmp + "/tree", tmp, s.nograntDeno, ["-c", "cat f"],
+                          u8[](), () => { fixture(cli, tmp); });
   t.isTrue(said.err.len() > 0, "a refused read said nothing at all");
   cli.remove(tmp, true).wait();
   return t.report();
@@ -678,17 +682,17 @@ export string test_the_four_grants_are_independent_write_without_read_on_both_ho
   t.isTrue(whyDir5 == "", whyDir5);
   string where = tmp + "/tree";
 
-  string[] names = string[]("deno", "native");
+  string[] names = ["deno", "native"];
   for (i32 i = 0; i < 2; i++) {
     string cmd = i == 0 ? s.wonlyDeno : native;
-    string[] pre = i == 0 ? string[0](fill: "") : string[](s.wonly);
+    string[] pre = i == 0 ? string[].filled(0, "") : [s.wonly];
     fixture(cli, tmp);
     // Writing works…
-    string[] wargs = string[pre.len() + 2](fill: "");
+    string[] wargs = string[].filled(pre.len() + 2, "");
     for (i32 k = 0; k < pre.len(); k++) { wargs[k] = pre[k]; }
     wargs[pre.len()] = "-c";
     wargs[pre.len() + 1] = "echo written > made; echo st=$?";
-    Ran wrote = boundedAgain(core, cli, where, tmp, cmd, wargs, u8[0](),
+    Ran wrote = boundedAgain(core, cli, where, tmp, cmd, wargs, u8[](),
                              () => { fixture(cli, tmp); });
     t.isTrue(contains(wrote.out, "st=0"), names[i] + ": could not write: " + wrote.err);
     // …and the bytes really landed, which `st=0` alone would not prove — a write that silently did
@@ -697,11 +701,11 @@ export string test_the_four_grants_are_independent_write_without_read_on_both_ho
     t.eqStr(made.ok ? string.fromBytes(made.bytes) : "", "written\n",
             names[i] + ": nothing was written");
     // …and reading does not.
-    string[] rargs = string[pre.len() + 2](fill: "");
+    string[] rargs = string[].filled(pre.len() + 2, "");
     for (i32 k = 0; k < pre.len(); k++) { rargs[k] = pre[k]; }
     rargs[pre.len()] = "-c";
     rargs[pre.len() + 1] = "cat f";
-    Ran read = boundedAgain(core, cli, where, tmp, cmd, rargs, u8[0](),
+    Ran read = boundedAgain(core, cli, where, tmp, cmd, rargs, u8[](),
                             () => { fixture(cli, tmp); });
     t.isTrue(contains(read.err, "Not granted to this application"),
              names[i] + ": a write-only build read a file: " + read.out + " / " + read.err);
@@ -761,7 +765,7 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   string whyDir6 = madeDir(cli, tmp);
   t.isTrue(whyDir6 == "", whyDir6);
 
-  string[] scripts = string[](
+  string[] scripts = [
     "cat",
     "wc -c",
     "cat; echo [done]",
@@ -775,16 +779,17 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
     "wc -c",
     // A reader that stops early, so the writer's end is closed under it.
     "head -1",
-    "sort");
-  u8[][] inputs = u8[][10](fill: u8[0]());
+    "sort"
+  ];
+  u8[][] inputs = u8[][].filled(10, u8[]());
   inputs[0] = ("hello\nworld\n").toBytes();
   inputs[1] = ("12345").toBytes();
-  inputs[2] = u8[0]();
+  inputs[2] = u8[]();
   inputs[3] = ("a\nb\nc\n").toBytes();
   inputs[4] = ("typed\nmore\n").toBytes();
   inputs[5] = ("partial").toBytes();
-  inputs[6] = u8[](0xff, 0xfe, 0x00, 0x01);
-  u8[] big = u8[300000](fill: 'x');
+  inputs[6] = [0xff, 0xfe, 0x00, 0x01] as u8[];
+  u8[] big = u8[].filled(300000, 'x');
   inputs[7] = big;
   inputs[8] = ("one\ntwo\nthree\n").toBytes();
   inputs[9] = ("c\na\nb\n").toBytes();
@@ -795,11 +800,11 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   // rather than the sum. `denoBatch` is still the thing that must not be used: it would feed the child
   // through the parent-fed queue that shadowed fd 0, which is the whole subject.
   i32 n = scripts.len() < inputs.len() ? scripts.len() : inputs.len();
-  Pending<Exec>[] pjs = Pending<Exec>[n]();
-  Pending<Exec>[] prs = Pending<Exec>[n]();
+  Pending<Exec>[] pjs = Pending<Exec>[].defaulted(n);
+  Pending<Exec>[] prs = Pending<Exec>[].defaulted(n);
   for (i32 i = 0; i < n; i++) {
-    pjs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i]);
-    prs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
+    pjs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, s.deno, ["-c", scripts[i]], inputs[i]);
+    prs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, native, [s.manifest, "-c", scripts[i]],
                     inputs[i]);
   }
   for (i32 i = 0; i < n; i++) {
@@ -811,10 +816,10 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
     // run look like a wedged one, and the retry is where that is told apart — a case that hangs with
     // nothing else competing is a hang. Same shape as the batch above, at line 356.
     if (js.hung) {
-      js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i], () => { });
+      js = boundedAgain(core, cli, tmp, tmp, s.deno, ["-c", scripts[i]], inputs[i], () => { });
     }
     if (rs.hung) {
-      rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
+      rs = boundedAgain(core, cli, tmp, tmp, native, [s.manifest, "-c", scripts[i]],
                         inputs[i], () => { });
     }
     t.eqStr(rs.out, js.out, label + ": the hosts read different input");
@@ -824,7 +829,7 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
 
   // The canary: the JavaScript host really did read the input, so the comparison above is not two
   // programs agreeing that they saw nothing — which is exactly the state this test was written in.
-  Ran sanity = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", "wc -c"),
+  Ran sanity = boundedAgain(core, cli, tmp, tmp, s.deno, ["-c", "wc -c"],
                             ("12345").toBytes(), () => { });
   t.eqStr(trimmed(sanity.out), "5", "the reference host read nothing either");
   cli.remove(tmp, true).wait();
@@ -857,10 +862,10 @@ export string test_kill_percent_one_ends_a_background_job_on_both_hosts(Core cor
 
   const string SCRIPT = "seq 1 300000 & kill %1; wait";
   fixture(cli, tmp);
-  Ran js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", SCRIPT), u8[0](),
+  Ran js = boundedAgain(core, cli, tmp, tmp, s.deno, ["-c", SCRIPT], u8[](),
                         () => { fixture(cli, tmp); });
   fixture(cli, tmp);
-  Ran rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", SCRIPT), u8[0](),
+  Ran rs = boundedAgain(core, cli, tmp, tmp, native, [s.manifest, "-c", SCRIPT], u8[](),
                         () => { fixture(cli, tmp); });
 
   t.isTrue(lines(js.out) < 1000, "deno: the kill did not stop it: " + itoa(lines(js.out)) + " lines");
@@ -872,11 +877,11 @@ export string test_kill_percent_one_ends_a_background_job_on_both_hosts(Core cor
   // failed to start would satisfy every assertion above.
   const string WHOLE = "seq 1 300000 & wait";
   fixture(cli, tmp);
-  t.eqI32(lines(boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", WHOLE), u8[0](),
+  t.eqI32(lines(boundedAgain(core, cli, tmp, tmp, s.deno, ["-c", WHOLE], u8[](),
                              () => { fixture(cli, tmp); }).out), 300000, "deno ran no job");
   fixture(cli, tmp);
-  t.eqI32(lines(boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", WHOLE),
-                             u8[0](), () => { fixture(cli, tmp); }).out), 300000, "native ran no job");
+  t.eqI32(lines(boundedAgain(core, cli, tmp, tmp, native, [s.manifest, "-c", WHOLE],
+                             u8[](), () => { fixture(cli, tmp); }).out), 300000, "native ran no job");
   cli.remove(tmp, true).wait();
   return t.report();
 }

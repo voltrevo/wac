@@ -33,12 +33,12 @@ const i32 ECB = 0;
 const i32 CTR = 1;
 const i32 GCM = 2;
 u8[] fill(i32 n, i32 a, i32 b) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
   return out;
 }
 u8[] cat(u8[] a, u8[] b) {
-  u8[] o = u8[a.len() + b.len()]();
+  u8[] o = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
@@ -76,7 +76,7 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
  * host function was the only way into a wasm call. `issues/system/0161`.
  */
 void checkAes(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", string[](ORACLE), lines, what);
+  check(t, cli, "node", [ORACLE], lines, what);
 }
 
 export string test_the_block_agrees_with_the_host(Core core, Cli cli) {
@@ -84,7 +84,7 @@ export string test_the_block_agrees_with_the_host(Core core, Cli cli) {
   // that the 128-bit path never runs.
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] keySizes = i32[](16, 24, 32);
+  i32[] keySizes = [16, 24, 32];
   for (i32 k = 0; k < keySizes.len(); k++) {
     for (i32 i = 0; i < 8; i++) {
       u8[] key = fill(keySizes[k], 7 + i, 3);
@@ -102,8 +102,8 @@ export string test_the_block_agrees_with_the_host(Core core, Cli cli) {
 export string test_ctr_agrees_and_the_counter_carries(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] keySizes = i32[](16, 24, 32);
-  i32[] lens = i32[](0, 1, 15, 16, 17, 31, 32, 33, 200);
+  i32[] keySizes = [16, 24, 32];
+  i32[] lens = [0, 1, 15, 16, 17, 31, 32, 33, 200];
   for (i32 k = 0; k < keySizes.len(); k++) {
     u8[] key = fill(keySizes[k], 5, 1);
     u8[] iv = fill(16, 3, 9);
@@ -118,7 +118,7 @@ export string test_ctr_agrees_and_the_counter_carries(Core core, Cli cli) {
   // incrementing the counter as one 128-bit number rather than only its low word is right
   // until exactly here.
   u8[] key = fill(16, 2, 4);
-  u8[] allOnes = u8[16]();
+  u8[] allOnes = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { allOnes[i] = 0xFF; }
   u8[] data = fill(64, 17, 3);
   lines.add("ctr " + hex(key) + " " + hex(allOnes) + " " + hex(data) + " " +
@@ -126,7 +126,7 @@ export string test_ctr_agrees_and_the_counter_carries(Core core, Cli cli) {
 
   // And just below a 32-bit boundary, where a counter that carries only within the low
   // word diverges on the fifth block.
-  u8[] nearWrap = u8[16]();
+  u8[] nearWrap = u8[].filled(16, 0);
   for (i32 i = 12; i < 16; i++) { nearWrap[i] = 0xFF; }
   lines.add("ctr " + hex(key) + " " + hex(nearWrap) + " " + hex(data) + " " +
             hex(aesCtr(key, nearWrap, data)));     // carries out of the low word
@@ -139,9 +139,9 @@ export string test_gcm_agrees_including_the_short_nonce_path(Core core, Cli cli)
   // a different code path that most callers never take and most tests never reach.
   T t = T.create();
   Lines lines = Lines.create();
-  i32[] ivLens = i32[](12, 8, 16, 60);
-  i32[] plainLens = i32[](0, 1, 16, 17, 64);
-  i32[] aadLens = i32[](0, 1, 16, 20);
+  i32[] ivLens = [12, 8, 16, 60];
+  i32[] plainLens = [0, 1, 16, 17, 64];
+  i32[] aadLens = [0, 1, 16, 20];
   u8[] key = fill(16, 9, 1);
   for (i32 v = 0; v < ivLens.len(); v++) {
     for (i32 p = 0; p < plainLens.len(); p++) {
@@ -165,7 +165,7 @@ export string test_the_gcm_counter_wraps_at_32_bits() {
   // GCM increments only the last four bytes and never carries into the rest of J0 — a
   // deliberate difference from CTR, and one that only shows at the wrap.
   T t = T.create();
-  u8[] ctr = u8[16]();
+  u8[] ctr = u8[].filled(16, 0);
   for (i32 i = 0; i < 12; i++) { ctr[i] = 0xAA; }
   ctr[12] = 0xFF; ctr[13] = 0xFF; ctr[14] = 0xFF; ctr[15] = 0xFF;
   gcmInc32(ctr);
@@ -175,7 +175,7 @@ export string test_the_gcm_counter_wraps_at_32_bits() {
   for (i32 i = 12; i < 16; i++) { t.eqI32(ctr[i], 0, "and the low word is zero"); }
 
   // An ordinary increment, so this is not merely testing that nothing happens.
-  u8[] plain = u8[16]();
+  u8[] plain = u8[].filled(16, 0);
   plain[15] = 7;
   gcmInc32(plain);
   t.eqI32(plain[15], 8, "an ordinary increment advances the last byte");
@@ -195,26 +195,26 @@ export string test_the_gcm_counter_wraps_at_32_bits() {
 
 export string test_a_ctr_stream_in_pieces_matches_the_one_shot() {
   T t = T.create();
-  u8[] key = u8[16]();
-  u8[] iv = u8[16]();
+  u8[] key = u8[].filled(16, 0);
+  u8[] iv = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { key[i] = (i * 13 + 1) & 0xFF; }
   for (i32 i = 0; i < 16; i++) { iv[i] = (i * 7) & 0xFF; }
 
-  u8[] data = u8[1000]();
+  u8[] data = u8[].filled(1000, 0);
   for (i32 i = 0; i < 1000; i++) { data[i] = (i * 31 + 7) & 0xFF; }
   u8[] want = aesCtr(key, iv, data);
 
   // Chunk sizes that are not multiples of the 16-byte block, because that is the case a
   // stream keeping only a counter gets wrong. 509 is Tor's, and the reason this exists.
-  i32[] sizes = i32[](1, 3, 15, 16, 17, 31, 33, 64, 100, 509);
+  i32[] sizes = [1, 3, 15, 16, 17, 31, 33, 64, 100, 509];
   for (i32 s = 0; s < sizes.len(); s++) {
     i32 chunk = sizes[s];
     CtrStream cs = CtrStream.create(key, iv);
-    u8[] got = u8[1000]();
+    u8[] got = u8[].filled(1000, 0);
     i32 pos = 0;
     while (pos < 1000) {
       i32 take = 1000 - pos < chunk ? 1000 - pos : chunk;
-      u8[] piece = u8[take]();
+      u8[] piece = u8[].filled(take, 0);
       for (i32 i = 0; i < take; i++) { piece[i] = data[pos + i]; }
       u8[] out = cs.apply(piece);
       for (i32 i = 0; i < take; i++) { got[pos + i] = out[i]; }
@@ -229,13 +229,13 @@ export string test_a_ctr_stream_never_repeats_its_keystream() {
   // Directly: encrypt zeros twice and require the two outputs to differ. Encrypting zeros
   // makes the output *be* the keystream, so this is not an approximation of the property.
   T t = T.create();
-  u8[] key = u8[16]();
-  u8[] iv = u8[16]();
+  u8[] key = u8[].filled(16, 0);
+  u8[] iv = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { key[i] = (i * 5 + 3) & 0xFF; }
 
   CtrStream cs = CtrStream.create(key, iv);
-  u8[] first = cs.apply(u8[509]());
-  u8[] second = cs.apply(u8[509]());
+  u8[] first = cs.apply(u8[].filled(509, 0));
+  u8[] second = cs.apply(u8[].filled(509, 0));
   bool same = true;
   for (i32 i = 0; i < 509; i++) {
     if (first[i] != second[i]) { same = false; }
@@ -244,8 +244,8 @@ export string test_a_ctr_stream_never_repeats_its_keystream() {
 
   // And the whole thing is the one-shot's keystream, in order — which pins down not just
   // that it moved but that it moved to the right place.
-  u8[] whole = aesCtr(key, iv, u8[1018]());
-  u8[] joined = u8[1018]();
+  u8[] whole = aesCtr(key, iv, u8[].filled(1018, 0));
+  u8[] joined = u8[].filled(1018, 0);
   for (i32 i = 0; i < 509; i++) { joined[i] = first[i]; }
   for (i32 i = 0; i < 509; i++) { joined[509 + i] = second[i]; }
   t.eqBytes(joined, whole, "two 509-byte pulls are the first 1018 bytes of the keystream");
@@ -267,7 +267,7 @@ u8[] gcmAad() { return decoded("feedfacedeadbeeffeedfacedeadbeefabaddad2"); }
 
 /** 97 bytes, so the last block is partial — the case a whole-block-only flaw would miss. */
 u8[] gcmPlain() {
-  u8[] p = u8[97]();
+  u8[] p = u8[].filled(97, 0);
   for (i32 i = 0; i < 97; i++) { p[i] = (i * 29 + 11) & 0xFF; }
   return p;
 }
@@ -277,14 +277,14 @@ u8[] gcmSeal() { return gcmTag(gcmKey(), gcmIv(), gcmAad(), gcmCipher()); }
 
 /** A copy with one bit of byte `i` flipped. */
 u8[] flipped(u8[] b, i32 i) {
-  u8[] c = u8[b.len()]();
+  u8[] c = u8[].filled(b.len(), 0);
   c.copyFrom(b, 0, 0, b.len());
   c[i] = c[i] ^ 1;
   return c;
 }
 
 u8[] truncated(u8[] b, i32 n) {
-  u8[] c = u8[n]();
+  u8[] c = u8[].filled(n, 0);
   c.copyFrom(b, 0, 0, n);
   return c;
 }
@@ -344,7 +344,7 @@ export string test_traps_on_a_short_tag() {
  * anything it liked to a valid tag.
  */
 export string test_traps_on_an_over_long_tag_with_a_valid_prefix() {
-  u8[] padded = u8[18]();
+  u8[] padded = u8[].filled(18, 0);
   padded.copyFrom(gcmSeal(), 0, 0, 16);
   padded[16] = 0xAA;
   padded[17] = 0xAA;
@@ -353,13 +353,13 @@ export string test_traps_on_an_over_long_tag_with_a_valid_prefix() {
 }
 
 export string test_traps_encrypting_with_an_empty_iv() {
-  gcmEncrypt(gcmKey(), u8[0](), gcmPlain());
+  gcmEncrypt(gcmKey(), u8[](), gcmPlain());
   return "";
 }
 
 /** And `gcmTag` refuses it too, not only `gcmEncrypt` — two entry points, two guards. */
 export string test_traps_tagging_with_an_empty_iv() {
-  gcmTag(gcmKey(), u8[0](), u8[0](), decoded("42831ec2217774244b7221b784d0d49c"));
+  gcmTag(gcmKey(), u8[](), u8[](), decoded("42831ec2217774244b7221b784d0d49c"));
   return "";
 }
 
@@ -371,11 +371,11 @@ export string test_traps_tagging_with_an_empty_iv() {
  */
 export string test_the_aad_ciphertext_boundary_is_authenticated() {
   T t = T.create();
-  u8[] all = u8[](1, 2, 3, 4, 5, 6, 7, 8);
-  u8[] aadA = u8[3](); aadA.copyFrom(all, 0, 0, 3);
-  u8[] ctA = u8[5](); ctA.copyFrom(all, 3, 0, 5);
-  u8[] aadB = u8[5](); aadB.copyFrom(all, 0, 0, 5);
-  u8[] ctB = u8[3](); ctB.copyFrom(all, 5, 0, 3);
+  u8[] all = [1, 2, 3, 4, 5, 6, 7, 8];
+  u8[] aadA = u8[].filled(3, 0); aadA.copyFrom(all, 0, 0, 3);
+  u8[] ctA = u8[].filled(5, 0); ctA.copyFrom(all, 3, 0, 5);
+  u8[] aadB = u8[].filled(5, 0); aadB.copyFrom(all, 0, 0, 5);
+  u8[] ctB = u8[].filled(3, 0); ctB.copyFrom(all, 5, 0, 3);
   t.isFalse(equal(gcmTag(gcmKey(), gcmIv(), aadA, ctA), gcmTag(gcmKey(), gcmIv(), aadB, ctB)),
             "3/5 and 5/3 splits of the same bytes");
   return t.report();
@@ -393,43 +393,43 @@ export string test_the_aad_ciphertext_boundary_is_authenticated() {
 // shorter spelling; this is what it costs meanwhile.
 
 export string test_traps_on_an_empty_key() {
-  aesEncrypt(u8[0](), u8[16]());
+  aesEncrypt(u8[](), u8[].filled(16, 0));
   return "FAIL: a 0-byte key was accepted";
 }
 
 export string test_traps_on_a_one_byte_key() {
-  aesEncrypt(u8[1](), u8[16]());
+  aesEncrypt(u8[].filled(1, 0), u8[].filled(16, 0));
   return "FAIL: a 1-byte key was accepted";
 }
 
 export string test_traps_one_byte_below_aes128() {
-  aesEncrypt(u8[15](), u8[16]());
+  aesEncrypt(u8[].filled(15, 0), u8[].filled(16, 0));
   return "FAIL: a 15-byte key was accepted";
 }
 
 export string test_traps_one_byte_above_aes128() {
-  aesEncrypt(u8[17](), u8[16]());
+  aesEncrypt(u8[].filled(17, 0), u8[].filled(16, 0));
   return "FAIL: a 17-byte key was accepted";
 }
 
 /** Between 128 and 192, which is the gap a length check written as `>= 16` would let through. */
 export string test_traps_between_aes128_and_aes192() {
-  aesEncrypt(u8[20](), u8[16]());
+  aesEncrypt(u8[].filled(20, 0), u8[].filled(16, 0));
   return "FAIL: a 20-byte key was accepted";
 }
 
 export string test_traps_one_byte_below_aes256() {
-  aesEncrypt(u8[31](), u8[16]());
+  aesEncrypt(u8[].filled(31, 0), u8[].filled(16, 0));
   return "FAIL: a 31-byte key was accepted";
 }
 
 export string test_traps_one_byte_above_aes256() {
-  aesEncrypt(u8[33](), u8[16]());
+  aesEncrypt(u8[].filled(33, 0), u8[].filled(16, 0));
   return "FAIL: a 33-byte key was accepted";
 }
 
 /** Well past every supported size, so a check that only guarded the neighbourhood is caught. */
 export string test_traps_on_a_sixty_four_byte_key() {
-  aesEncrypt(u8[64](), u8[16]());
+  aesEncrypt(u8[].filled(64, 0), u8[].filled(16, 0));
   return "FAIL: a 64-byte key was accepted";
 }

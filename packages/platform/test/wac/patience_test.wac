@@ -48,8 +48,8 @@ i32 count(string s, string needle) {
 /** `patience <host> <port> <millis>`, compiled and run in one step. */
 Pending<Exec> patience(Cli cli, i32 port, i32 millis) {
   return cli.exec(binaryPath(cli),
-    string[]("run", "--allow-net", PATIENCE, "--", "127.0.0.1", itoa(port), itoa(millis)),
-    u8[0]());
+    ["run", "--allow-net", PATIENCE, "--", "127.0.0.1", itoa(port), itoa(millis)],
+    u8[]());
 }
 
 export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Core core, Cli cli) {

@@ -1183,6 +1183,22 @@ i32 skip_targs(i32 i) {
   return i;
 }
 
+// The `]` closing the `[` at `i`, or -1 at the end of the tokens. Written to return rather than to
+// break out of its loop, because wac-L4 has no `break`.
+i32 close_bracket(i32 i) {
+  i32 depth = 0;
+  while (1) {
+    if (toks[i].kind == K_EOF) { return 0 - 1; }
+    if (toks[i].kind == K_PUNCT & toks[i].val == 91) { depth = depth + 1; }
+    if (toks[i].kind == K_PUNCT & toks[i].val == 93) {
+      depth = depth - 1;
+      if (depth == 0) { return i; }
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
 // Steps over a whole type, whatever shape it has, and answers where it ends — or -1 if what is
 // there is not one. **One skipper, consulted by every lookahead**, because a type that `parse_type`
 // reads and a lookahead does not is a declaration that silently becomes an expression: `fn[i32(i32)]
@@ -1433,89 +1449,98 @@ i32 args(i32 src, i32 base, i32 np) {
   return n;
 }
 
-// `Point(a, b)`, and `T[n]()` / `T[](a, b)` for an array. wac writes a construction as a call, so
-// one token of lookahead past the name is what tells them apart.
+// `Point(a, b)`, and `T[]()`, `T[].filled(n, v)` and `T[].defaulted(n)` for an array. wac writes a
+// construction as a call, so one token of lookahead past the name is what tells them apart.
 i32 construct(i32 t) {
-  // `Expr?[4]()` — the element is nullable. That is a spelling rather than a different type
-  // everywhere else on this rung, and here it is the whole answer: a nullable element's default
-  // *is* null, and a non-nullable one's is a fresh value. So the `?` is remembered exactly this
-  // far and thrown away again immediately after.
+  // `Expr?[].defaulted(4)` — the element is nullable. That is a spelling rather than a different type
+  // everywhere else on this rung, and here it is the whole answer: a nullable element's default *is*
+  // null, and a non-nullable one's is a fresh value. So the `?` is remembered exactly this far and
+  // thrown away again immediately after.
   i32 elemNullable = 0;
   if (ispunct(63)) { next(); elemNullable = 1; }
   if (ispunct(91)) {
-    // `Param[][1024]()` — a thousand arrays of Param, so every `[...]` but the last names the
-    // element type of the one after it and only the last takes the arguments. A size on any
-    // but the last would have to be emitted before the level it belongs to, which one pass and
-    // no syntax tree cannot do — and no such type is written, so it is refused rather than
-    // silently mis-emitted.
+    // `Param[][]` — every `[]` but the last names the element type of the one after it. A size in
+    // the brackets is refused: the length is not part of an array's type.
     i32 at = t;
-    i32 sized = 0;
     while (ispunct(91)) {
-      if (sized) { oops(); return at; }
       next();
-      if (ispunct(93) == 0) { expr(); sized = 1; }
+      if (ispunct(93) == 0) { oops(); return at; }
       want(93);
       at = ty_array(at);
     }
+    if (ispunct(40)) {
+      next();
+      want(41);
+      word("array.new_fixed"); tyname(at); line(" 0");
+      return at;
+    }
+    want(46);
+    if (isword("filled")) {
+      // `T[].filled(n, v)` — the count is read first, as written, and `array.new` wants it beneath
+      // the value, so it waits in a slot while the value is read.
+      next();
+      want(40);
+      i32 savedF = expect_ty;
+      expect_ty = TY_I32;
+      convert(TY_I32, expr());
+      i32 fsize = slot_new(TY_I32);
+      word("local.set"); slotname(fsize); nl();
+      want(44);
+      expect_ty = types[at].elem;
+      convert(types[at].elem, expr());
+      expect_ty = savedF;
+      want(41);
+      word("local.get"); slotname(fsize); nl();
+      word("array.new"); tyname(at); nl();
+      return at;
+    }
+    if (isword("defaulted") == 0) { oops(); return at; }
+    next();
     want(40);
-    if (sized) {
-      // **`T[n](fill: v)` fills.** It used to evaluate the fill and drop it, which left every
-      // element null — and an array of structs whose elements are all null is a program that
-      // validates, runs, and traps on the first read. `array.new` is the instruction for this
-      // and takes the value beneath the size, so the size goes into a slot while the fill is
-      // read and comes back out after it.
-      i32 hsize = slot_new(TY_I32);
-      word("local.set"); slotname(hsize); nl();
-      i32 nf = args(A_ELEM, types[at].elem, 0);
-      i32 k = 1;
-      while (k < nf) { line("drop"); k = k + 1; }
-      word("local.get"); slotname(hsize); nl();
-      if (nf == 0) {
-        i32 et2 = types[at].elem;
-        if (ty_isnum(et2) | elemNullable | has_default(et2) == 0) {
-          // A number zeroes, and a type with no default is a nullable reference, whose default
-          // *is* null — which is what array.new_default gives.
-          word("array.new_default"); tyname(at); nl();
-        } else {
-          // **Every element a distinct default.** `Point[10]()` is ten Points, not ten names for
-          // one, and writing through one must never show up in another — so this is a loop and
-          // not `array.new`, which would fill the array with a single reference. A string is the
-          // exception: it has no fields to write through, so one shared empty one would do, and
-          // it goes round the same loop because saying so twice is worse than the loop.
-          i32 held = slot_new(at);
-          i32 idx = slot_new(TY_I32);
-          word("array.new_default"); tyname(at); nl();
-          word("local.set"); slotname(held); nl();
-          konst(0);
-          word("local.set"); slotname(idx); nl();
-          i32 dl = newlabel();
-          i32 bl = newlabel();
-          word("block"); label(dl); sp(); line("->");
-          word("loop"); label(bl); sp(); line("->");
-          word("local.get"); slotname(idx); nl();
-          word("local.get"); slotname(hsize); nl();
-          line("i32.ge_s");
-          word("br_if"); label(dl); nl();
-          word("local.get"); slotname(held); nl();
-          word("local.get"); slotname(idx); nl();
-          zero_of(et2);
-          word("array.set"); tyname(at); nl();
-          word("local.get"); slotname(idx); nl();
-          konst(1);
-          line("i32.add");
-          word("local.set"); slotname(idx); nl();
-          word("br"); label(bl); nl();
-          line("end");
-          line("end");
-          word("local.get"); slotname(held); nl();
-        }
-      } else {
-        word("array.new"); tyname(at); nl();
-      }
+    i32 savedD = expect_ty;
+    expect_ty = TY_I32;
+    convert(TY_I32, expr());
+    expect_ty = savedD;
+    want(41);
+    i32 hsize = slot_new(TY_I32);
+    word("local.set"); slotname(hsize); nl();
+    word("local.get"); slotname(hsize); nl();
+    i32 et2 = types[at].elem;
+    if (ty_isnum(et2) | elemNullable | has_default(et2) == 0) {
+      // A type with no default is a nullable reference, whose default *is* null — which is what
+      // array.new_default gives. A number never arrives here from wacc's own source: the checker
+      // refuses `i32[].defaulted(n)`.
+      word("array.new_default"); tyname(at); nl();
     } else {
-      // `T[](a, b, c)` — a literal, whose length is how many arguments it has.
-      i32 n2 = args(A_ELEM, types[at].elem, 0);
-      word("array.new_fixed"); tyname(at); sp(); emitn(n2); nl();
+      // **Every element a distinct default.** `Point[].defaulted(10)` is ten Points, not ten names for
+      // one, and writing through one must never show up in another — so this is a loop and not
+      // `array.new`, which would fill the array with a single reference.
+      i32 held = slot_new(at);
+      i32 idx = slot_new(TY_I32);
+      word("array.new_default"); tyname(at); nl();
+      word("local.set"); slotname(held); nl();
+      konst(0);
+      word("local.set"); slotname(idx); nl();
+      i32 dl = newlabel();
+      i32 bl = newlabel();
+      word("block"); label(dl); sp(); line("->");
+      word("loop"); label(bl); sp(); line("->");
+      word("local.get"); slotname(idx); nl();
+      word("local.get"); slotname(hsize); nl();
+      line("i32.ge_s");
+      word("br_if"); label(dl); nl();
+      word("local.get"); slotname(held); nl();
+      word("local.get"); slotname(idx); nl();
+      zero_of(et2);
+      word("array.set"); tyname(at); nl();
+      word("local.get"); slotname(idx); nl();
+      konst(1);
+      line("i32.add");
+      word("local.set"); slotname(idx); nl();
+      word("br"); label(bl); nl();
+      line("end");
+      line("end");
+      word("local.get"); slotname(held); nl();
     }
     return at;
   }
@@ -1784,6 +1809,33 @@ i32 primary() {
   if (isword("true")) { next(); konst(1); return TY_BOOL; }
   if (isword("false")) { next(); konst(0); return TY_BOOL; }
   if (isword("null")) { next(); line("ref.null none"); return TY_NULL; }
+  // `[a, b] as T[]` — the one array literal this rung reads. It has no expected type to give a
+  // literal one, so wacc's source writes the type, and the elements are read after it at the element
+  // type: the scan finds the matching `]`, reads the type past `as`, and comes back for the elements.
+  if (ispunct(91)) {
+    i32 open = tp;
+    i32 k = close_bracket(tp);
+    if (k == 0 - 1) { oops(); return 0; }
+    tp = k + 1;
+    if (isword("as") == 0) { oops(); return 0; }
+    next();
+    i32 at = parse_type();
+    i32 after = tp;
+    tp = open;
+    next();
+    i32 n = 0;
+    i32 savedL = expect_ty;
+    while (ispunct(93) == 0 & kind() != K_EOF) {
+      expect_ty = types[at].elem;
+      convert(types[at].elem, expr());
+      n = n + 1;
+      if (ispunct(44)) { next(); }
+    }
+    expect_ty = savedL;
+    tp = after;
+    word("array.new_fixed"); tyname(at); sp(); emitn(n); nl();
+    return postfix(at);
+  }
   if (isword("match")) { return match_expr(outbuf); }
   // `i32[3]()`, `u8[](…)`, `i16[n]()` — any primitive type can start a construction, and nothing
   // else that begins an expression does.

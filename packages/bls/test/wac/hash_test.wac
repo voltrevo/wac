@@ -94,7 +94,7 @@ struct Suite {
 }
 
 Suite suite(T t, Cli cli) {
-  Suite none = Suite(false, "", Vector[0](fill: Vector("", string[0](fill: ""), "", "", "", "",
+  Suite none = Suite(false, "", Vector[].filled(0, Vector("", string[].filled(0, ""), "", "", "", "",
                                                        "", "")));
   FileResult f = cli.readFile("packages/bls/test/vendor/hash_to_G2.json").wait();
   t.isTrue(f.ok, "hash_to_G2.json could not be read: " + f.error);
@@ -106,11 +106,11 @@ Suite suite(T t, Cli cli) {
   t.isTrue(!(list is null), "hash_to_G2.json has no `vectors`");
   if (list is null) { return none; }
 
-  Vector[] out = Vector[list!.len()](fill: Vector("", string[0](fill: ""), "", "", "", "", "", ""));
+  Vector[] out = Vector[].filled(list!.len(), Vector("", string[].filled(0, ""), "", "", "", "", "", ""));
   for (i32 i = 0; i < list!.len(); i++) {
     JsonValue v = list!.get(i);
     JsonArray? us = memberArray(v, "u");
-    string[] u = string[us is null ? 0 : us!.len()](fill: "");
+    string[] u = string[].filled(us is null ? 0 : us!.len(), "");
     if (!(us is null)) {
       for (i32 k = 0; k < us!.len(); k++) {
         match (us!.get(k)) {
@@ -149,12 +149,12 @@ export string test_expand_message_xmd_refuses_what_the_rfc_puts_out_of_range(Cor
   u8[] dst = s.dst.toBytes();
   // A DST over 255 bytes, and a length needing more than 255 blocks, are both defined as errors
   // rather than as something to truncate — truncating silently would weaken domain separation.
-  t.eqI32(blsExpandMessage(u8[0](), u8[256](), 32).len(), 0, "a 256-byte DST was accepted");
-  t.eqI32(blsExpandMessage(u8[0](), dst, 255 * 32 + 1).len(), 0,
+  t.eqI32(blsExpandMessage(u8[](), u8[].filled(256, 0), 32).len(), 0, "a 256-byte DST was accepted");
+  t.eqI32(blsExpandMessage(u8[](), dst, 255 * 32 + 1).len(), 0,
           "an over-long expansion was accepted");
-  t.eqI32(blsExpandMessage(u8[0](), dst, 0).len(), 0, "a zero-length expansion was accepted");
+  t.eqI32(blsExpandMessage(u8[](), dst, 0).len(), 0, "a zero-length expansion was accepted");
   // And a length that is not a multiple of the hash size is truncated to exactly that length.
-  t.eqI32(blsExpandMessage(u8[0](), dst, 37).len(), 37,
+  t.eqI32(blsExpandMessage(u8[](), dst, 37).len(), 37,
           "a 37-byte expansion came back the wrong length");
   return t.report();
 }

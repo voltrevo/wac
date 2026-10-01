@@ -61,7 +61,7 @@ string exportedFunctionOn(string line) {
 /** Every plain exported function the source text declares. */
 string[] declaredExports(string source) {
   string[] lines = splitLines(source);
-  string[] found = string[lines.len()](fill: "");
+  string[] found = string[].filled(lines.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     string name = exportedFunctionOn(lines[i]);
@@ -69,7 +69,7 @@ string[] declaredExports(string source) {
     found[n] = name;
     n = n + 1;
   }
-  string[] out = string[n](fill: "");
+  string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
   return out;
 }
@@ -85,7 +85,7 @@ export string test_the_export_scan_reads_what_a_source_declares() {
                "export const i32 K = 1;\n" +
                "export T pick<T>(T x) { return x; }\n" +
                "// export i32 commented() { return 0; }\n" +
-               "  export u8[] spaced(i32 n) { return u8[n](); }\n";
+               "  export u8[] spaced(i32 n) { return u8[].filled(n, 0); }\n";
   string[] got = declaredExports(src);
   t.eqStr(joined(got, ","), "a,spaced", "the two plain exported functions, and nothing else");
   t.isFalse(has(got, "hidden"), "a local function is not exported");
@@ -109,10 +109,10 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   i32 short_ = 0;
   i32 reasons = 0;
   i32 totalWant = 0;
-  string[] reasonSeen = string[64](fill: "");
-  string[] invalidNames = string[32](fill: "");
+  string[] reasonSeen = string[].filled(64, "");
+  string[] invalidNames = string[].filled(32, "");
   i32 nInvalid = 0;
-  string[] shortNames = string[32](fill: "");
+  string[] shortNames = string[].filled(32, "");
   i32 nShort = 0;
 
   // **Every file is compiled as an entry, with the whole corpus available to import from.** Passing
@@ -127,8 +127,8 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   i32 CHUNK = 64;
   for (i32 base = 0; base < c.paths.len(); base = base + CHUNK) {
     i32 n = c.paths.len() - base < CHUNK ? c.paths.len() - base : CHUNK;
-    string[] wrote = string[n](fill: "");
-    string[] exported = string[n](fill: "");
+    string[] wrote = string[].filled(n, "");
+    string[] exported = string[].filled(n, "");
     for (i32 j = 0; j < n; j++) {
       // **`emitFiles`, not `emitFilesSelfDescribing`.** Validating compiles the module and never
       // looks at a manifest, and building one costs two more link passes over the whole graph per
@@ -236,7 +236,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   caps = caps + "  fn<i32()> g = () => v0";
   for (i32 i = 1; i < 33; i++) { caps = caps + " + v" + itoa(i); }
   caps = caps + ";\n  return g();\n}\n";
-  string canaryWhy = blockedFiles(string[]("/canary/m.wac"), string[](caps), "/canary/m.wac");
+  string canaryWhy = blockedFiles(["/canary/m.wac"], [caps], "/canary/m.wac");
   t.isTrue(canaryWhy != "", "a file this emitter cannot emit was not declined — the emittability " +
                             "walk is not running, so the counts above mean nothing");
   t.isTrue(contains(canaryWhy, "captures in one lambda"),
@@ -251,7 +251,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   // the right first move: a number nobody could act on yet. It has been 0 since the emitter stopped
   // dropping functions, and a module called *whole* that is missing what its source exports is
   // exactly the failure the word denies.
-  string[] shortSaid = string[nShort](fill: "");
+  string[] shortSaid = string[].filled(nShort, "");
   for (i32 i = 0; i < nShort; i++) { shortSaid[i] = shortNames[i]; }
   t.eqI32(short_, 0, itoa(short_) + " module(s) called whole are missing an export the source " +
                      "declares — issues/lang/0090: " + joined(shortSaid, "; "));
@@ -259,7 +259,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   // **The invariant, asserted.** A function the walk approves must produce a module that validates.
   // Anything else means the walk lied: it said yes to something the emitter then got wrong, and the
   // wasm error arrives dozens of instructions from the cause.
-  string[] badSaid = string[nInvalid](fill: "");
+  string[] badSaid = string[].filled(nInvalid, "");
   for (i32 i = 0; i < nInvalid; i++) { badSaid[i] = invalidNames[i]; }
   t.eqI32(invalid, 0, itoa(invalid) + " corpus file(s) produced an invalid module (" +
                       joined(badSaid, ", ") + ") — the emittability walk approved something the " +

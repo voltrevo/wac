@@ -40,12 +40,12 @@ const string PREFIX = "packages/abi/";
 
 /** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/abi/src/abi.wac", "r.error", "line", true,
+  return [
+         Rule("packages/abi/src/abi.wac", "r.error", "line", true,
          "**Eight guards, one fact: every caller checks `r.error` before calling again.** The decode " +
          "path is a cursor that records the first fault and keeps its position, and each function " +
          "reads the flag on entry so that a caller need not. The loops that drive them — `:167`'s " +
@@ -56,12 +56,12 @@ Rule[] rules() {
          "`packages/mpt`'s `step` carry the identical guard and are pinned in those packages for the " +
          "identical reason: a decoder whose second failure overwrote its first would name the last " +
          "thing examined rather than the thing that was wrong.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[](
-    Pin("packages/abi/src/abi.wac", 198, "if (at > end) {", false,
+  return [
+        Pin("packages/abi/src/abi.wac", 198, "if (at > end) {", false,
         "A head that runs past the end of its own region. Reachable — it is the same family as the " +
         "offset checks the new tests do drive — and not built: the inputs that reach it need a schema " +
         "whose head is longer than the data supplied for it, which is a third shape beyond the two " +
@@ -92,13 +92,13 @@ Pin[] pins() {
         "         Kept as a trap rather than a clamp for the reason `packages/rlp`'s `header` keeps " +
         "its own: a negative written into a 32-byte big-endian word does not produce a smaller number, " +
         "it produces a *different valid word* — an encoding of the wrong value rather than a failure.")
-  );
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

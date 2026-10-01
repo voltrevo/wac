@@ -50,11 +50,13 @@ struct Got {
  * is a real tool to be the authority on what a flag does.
  */
 string[] applets() {
-  return string[]("cat", "wc", "head", "tail", "rev", "sort", "uniq", "grep", "tr", "seq", "nl", "tac",
+  return [
+                  "cat", "wc", "head", "tail", "rev", "sort", "uniq", "grep", "tr", "seq", "nl", "tac",
                   "cut", "fold", "paste", "base64", "base32", "basename", "dirname", "echo", "sha256sum",
                   "sha512sum", "strings", "shuf", "split", "du", "ls", "diff", "find", "stat", "tee",
                   "cp", "mv", "rm", "mkdir", "rmdir", "touch", "tar", "gzip", "gunzip", "yes", "true",
-                  "false");
+                  "false"
+  ];
 }
 
 /** The bytes every probe is fed, chosen so that sorting, counting and deduplicating all show. */
@@ -62,7 +64,7 @@ string stdinText() { return "banana\napple\napple\ncherry\n"; }
 
 /** Where the system keeps its own copy of an applet, or `""` if it has none. */
 string realPath(Cli cli, string tool) {
-  string[] where = string[]("/usr/bin/" + tool, "/bin/" + tool);
+  string[] where = ["/usr/bin/" + tool, "/bin/" + tool];
   for (i32 i = 0; i < where.len(); i++) {
     Stat s = cli.stat(where[i]).wait();
     if (s.exists) { return where[i]; }
@@ -83,7 +85,7 @@ string realPath(Cli cli, string tool) {
  * or a quote is passed through as one word rather than re-split by the shell that bounds it.
  */
 Got runWith(Cli cli, string cmd, string[] args, string stdinBytes, string dir, string[] env) {
-  string[] argv = string[args.len() + 3](fill: "");
+  string[] argv = string[].filled(args.len() + 3, "");
   argv[0] = "-c";
   argv[1] = "timeout 5 \"$0\" \"$@\" | head -c 200000";
   argv[2] = cmd;
@@ -96,9 +98,9 @@ Got runWith(Cli cli, string cmd, string[] args, string stdinBytes, string dir, s
 /** The single-letter flags the real tool's own `--help` documents. */
 string[] documentedFlags(Cli cli, string tool, string[] env) {
   string real = realPath(cli, tool);
-  if (real == "") { return string[0](fill: ""); }
-  Exec r = cli.execWithIn(real, string[]("--help"), u8[0](), env, true, false, ".").wait();
-  if (!r.ran()) { return string[0](fill: ""); }
+  if (real == "") { return string[].filled(0, ""); }
+  Exec r = cli.execWithIn(real, ["--help"], u8[](), env, true, false, ".").wait();
+  if (!r.ran()) { return string[].filled(0, ""); }
   return flagsFromHelp(string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
 }
 
@@ -120,8 +122,8 @@ string[] documentedFlags(Cli cli, string tool, string[] env) {
  */
 export string[] flagsFromHelp(string text) {
   Program? p = compile("\\s-([a-zA-Z])(?:[,\\s]|$)".toBytes());
-  if (p is null) { return string[0](fill: ""); }
-  i32[] caps = i32[slotCount(p!)]();
+  if (p is null) { return string[].filled(0, ""); }
+  i32[] caps = i32[].filled(slotCount(p!), 0);
 
   Vec<string> found = Vec<string>.create();
   string[] lines = splitLines(text);
@@ -151,7 +153,7 @@ bool seen(Vec<string> v, string want) {
 }
 
 string[] toArray(Vec<string> v) {
-  string[] out = string[v.len()](fill: "");
+  string[] out = string[].filled(v.len(), "");
   for (i32 i = 0; i < v.len(); i++) { out[i] = v.get(i); }
   return out;
 }
@@ -170,7 +172,7 @@ string[] toArray(Vec<string> v) {
  * with a known answer.
  */
 bool answers(Core core, Cli cli, string box, string[] env) {
-  Got r = runWith(cli, box, string[]("echo", "canary"), "", ".", env);
+  Got r = runWith(cli, box, ["echo", "canary"], "", ".", env);
   if (trimmed(r.out) == "canary") { return true; }
   core.warn(box + " did not answer `box echo canary` — it said \"" + trimmed(r.out) + "\"");
   core.warn("  Every flag would be reported as refused, which is what an unmeasured sweep looks");
@@ -194,8 +196,10 @@ export i32 main(Core core, Cli cli) {
   // `LC_ALL=C` and nothing else inherited but `PATH`, so the answer does not move with the
   // environment the sweep happened to run in.
   u8[]? path = cli.env("PATH").wait();
-  string[] env = string[]("LC_ALL=C",
-                          "PATH=" + (path is null ? "/usr/bin:/bin" : string.fromBytes(path!)));
+  string[] env = [
+                          "LC_ALL=C",
+                          "PATH=" + (path is null ? "/usr/bin:/bin" : string.fromBytes(path!))
+  ];
 
   if (!answers(core, cli, box, env)) { return 2; }
 
@@ -217,8 +221,8 @@ export i32 main(Core core, Cli cli) {
     cli.writeFile(dir + "/f.txt", stdinText().toBytes()).wait();
 
     // Two baselines: what each answers with no flag at all, on the same input.
-    Got bare = runWith(cli, box, string[](applet, "f.txt"), stdinText(), dir, env);
-    Got bareReal = runWith(cli, real, string[]("f.txt"), stdinText(), dir, env);
+    Got bare = runWith(cli, box, [applet, "f.txt"], stdinText(), dir, env);
+    Got bareReal = runWith(cli, real, ["f.txt"], stdinText(), dir, env);
 
     string deliberate = acceptedFlags(applet);
 
@@ -227,8 +231,8 @@ export i32 main(Core core, Cli cli) {
       // `--help`/`--version` noise, which every tool has and no tool implements as an applet flag.
       if (applet != "cat" && (f == "h" || f == "V" || f == "v")) { continue; }
 
-      Got got = runWith(cli, box, string[](applet, "-" + f, "f.txt"), stdinText(), dir, env);
-      Got theirs = runWith(cli, real, string[]("-" + f, "f.txt"), stdinText(), dir, env);
+      Got got = runWith(cli, box, [applet, "-" + f, "f.txt"], stdinText(), dir, env);
+      Got theirs = runWith(cli, real, ["-" + f, "f.txt"], stdinText(), dir, env);
       checked = checked + 1;
 
       // 124 is `timeout` killing it, which says nothing about the flag.

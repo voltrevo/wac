@@ -141,7 +141,7 @@ export string test_the_default_policy_writes_no_p_line(Core core, Cli cli) {
 /** A descriptor missing what a microdescriptor is made of yields nothing, rather than a stub. */
 export string test_an_unusable_descriptor_makes_no_microdescriptor(Core core, Cli cli) {
   T t = T.create();
-  t.eqI32(microdescriptor(u8[0](), "accept 1-65535").len(), 0,
+  t.eqI32(microdescriptor(u8[](), "accept 1-65535").len(), 0,
           "an empty descriptor makes nothing");
   t.eqI32(microdescriptor("router x 127.0.0.1 1 0 0\n".toBytes(), "accept 1-65535").len(), 0,
           "a descriptor with no keys makes nothing");
@@ -149,7 +149,7 @@ export string test_an_unusable_descriptor_makes_no_microdescriptor(Core core, Cl
   // Truncated inside the onion-key block: the keyword is there and the PEM end is not, which is the
   // case a search that assumed the block was complete would run off the end of.
   u8[] full = descriptor(cli, 0);
-  u8[] cut = u8[full.len() / 2]();
+  u8[] cut = u8[].filled(full.len() / 2, 0);
   for (i32 i = 0; i < cut.len(); i++) { cut[i] = full[i]; }
   t.eqI32(microdescriptor(cut, "accept 1-65535").len(), 0,
           "a descriptor cut in half makes nothing");
@@ -168,7 +168,7 @@ export string test_a_run_of_microdescriptors_splits_back_apart(Core core, Cli cl
   i32 n = caseCount(cli);
 
   // Build a response the way a directory answer carries them: end to end, nothing between.
-  u8[] joined = u8[0]();
+  u8[] joined = u8[]();
   for (i32 i = 0; i < n; i++) {
     u8[] one = microdescriptor(descriptor(cli, i),
                               policySummary(cli, i));
@@ -190,14 +190,14 @@ export string test_a_run_of_microdescriptors_splits_back_apart(Core core, Cli cl
               "digest " + itoaLocal(i) + " is still tor's after a round trip through the blob");
   }
 
-  t.eqI32(splitMicrodescriptors(u8[0]()).len(), 0, "an empty response holds nothing");
+  t.eqI32(splitMicrodescriptors(u8[]()).len(), 0, "an empty response holds nothing");
   t.eqI32(splitMicrodescriptors("garbage with no keyword\n".toBytes()).len(), 0,
           "a response with no microdescriptor in it holds nothing");
   return t.report();
 }
 
 u8[] join(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
+  u8[] out = u8[].filled(a.len() + b.len(), 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
@@ -218,7 +218,7 @@ string itoaLocal(i32 n) {
   string out = "";
   i32 v = n;
   while (v > 0) {
-    u8[] d = u8[1]();
+    u8[] d = u8[].filled(1, 0);
     d[0] = 48 + v % 10;
     out = string.fromBytes(d) + out;
     v = v / 10;

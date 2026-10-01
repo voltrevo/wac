@@ -34,7 +34,7 @@ export string test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_a
   T t = T.create();
   u8[] key = ramp(64, 7, 1);
   i32 block = 8;
-  i32[] sizes = i32[](0, 1, 5, 6, 7, 8, 9, 100, 1000);
+  i32[] sizes = [0, 1, 5, 6, 7, 8, 9, 100, 1000];
   for (i32 i = 0; i < sizes.len(); i++) {
     i32 n = sizes[i];
     string of = "payload " + itoa(n);
@@ -73,7 +73,7 @@ export string test_a_packet_does_not_open_under_the_wrong_sequence_number() {
 
   t.eqI32(openCode(key, 42, packet, 0, packet.len(), MAX), 0,
           "the packet did not open under its own sequence number");
-  i32[] wrong = i32[](0, 41, 43, 43 + 65536);
+  i32[] wrong = [0, 41, 43, 43 + 65536];
   for (i32 i = 0; i < wrong.len(); i++) {
     t.eqI32(openCode(key, wrong[i], packet, 0, packet.len(), MAX), 2,
             "a packet sealed at 42 opened at " + itoa(wrong[i]) +
@@ -109,7 +109,7 @@ export string test_the_two_key_halves_are_not_interchangeable() {
   // here directly: a packet sealed with the halves swapped must not open with them in order.
   T t = T.create();
   u8[] key = ramp(64, 11, 4);
-  u8[] swapped = u8[64]();
+  u8[] swapped = u8[].filled(64, 0);
   swapped.copyFrom(key, 32, 0, 32);
   swapped.copyFrom(key, 0, 32, 32);
 
@@ -133,7 +133,7 @@ export string test_an_unauthenticated_length_is_bounded_before_it_is_believed() 
   // This packet's inner length is 8 — a 1-byte payload plus the padding-length byte and 6 of
   // padding — so the limits here are below that, not at it. A limit equal to the length must
   // accept, which is checked separately below.
-  i32[] limits = i32[](5, 7);
+  i32[] limits = [5, 7];
   for (i32 i = 0; i < limits.len(); i++) {
     t.eqI32(openCode(key, 0, packet, 0, packet.len(), limits[i]), 2,
             "a packet longer than the " + itoa(limits[i]) + "-byte limit was accepted");

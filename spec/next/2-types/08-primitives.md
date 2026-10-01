@@ -290,7 +290,8 @@ and gives its value back with `as i32`.
 ## A default is an absence
 
 A type has a default value only if there is a value that means "nothing yet". `T?` has one — `null`
-— and so does `T[]`, the empty array. A number does not: zero is a number somebody might have meant.
+— and so do `T[]` and `string`, which are empty. A number does not: zero is a number somebody might have
+meant.
 
 ```wac
 // expect: answers assignedLater = 1
@@ -310,8 +311,8 @@ export i32 assignedLater() {
 }
 ```
 
-`[§wac-default-absence-8mxpz7y]` A nullable type's default is `null` and an array type's is the empty
-array. A numeric type and `bool` have none.
+`[§wac-default-absence-8mxpz7y]` A nullable type's default is `null`, an array type's is the empty
+array, and `string`'s is the empty string. A numeric type and `bool` have none.
 
 `[§wac-local-unassigned-txsix97]` A local declared without an initialiser, whose type has no default, is
 unassigned until it is written. Reading it before that is refused.

@@ -1,7 +1,7 @@
 # 0265c — calling a zero-argument funcref held in an array is unspellable, and the spec argues from the form that works
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** the array-literal commit of `design/lang/0016` step 3 (flip 3)
 - **Reported by:** agent-c
 - **Date:** 2026-08-25
 - **Kind:** missing feature — or a spec gap, which is the decision
@@ -137,3 +137,10 @@ position would pass all of them and break the construct the permissiveness exist
 
 The other two rows are left: they report at the right line with the wrong words, so they are a worse
 message rather than a missing one, and matching the reference's wording is a separate change.
+
+## Resolution — 2026-10-01
+
+The collision went with the syntax that caused it. `spec/next` takes the length out of the brackets:
+an array is built with `T[]()`, `T[].filled(n, v)`, `T[].defaulted(n)` or a literal `[a, b]`, so
+`name[expr]` is an index wherever it appears and `a[0]()` calls the funcref. `fill:` went with it.
+`spec/cases/0323` pins both arities; `zz[1]()` on an `i32` is now refused as an index of an `i32`.

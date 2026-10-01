@@ -46,7 +46,7 @@ import { Proc, Procs, SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signa
 // that the *real* one is random, through a built program, which is the only place that can.
 
 u8[] fakeRandom(i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 7 + 11) & 255; }
   return out;
 }
@@ -201,7 +201,7 @@ export string imageOps() {
   Fs fs = system();
   fs.mkdir("/d", false);
   fs.writeFile("/d/f", "hello".toBytes());
-  fs.writeFile("/empty", u8[0]());
+  fs.writeFile("/empty", u8[]());
   fs.mkdir("/emptydir", false);
   fs.chmod("/d/f", 384);
   fs.chown("/d/f", "claude");
@@ -217,14 +217,14 @@ export string imageOps() {
   say(out, "rewrite " + itoa(write(back.fs).bytes.len()));
 
   say(out, "dump " + itoa(dump(w.bytes).len()));
-  say(out, "short " + read(u8[3](), 0).error);
+  say(out, "short " + read(u8[].filled(3, 0), 0).error);
   say(out, "magic " + read("not an image at all!!".toBytes(), 0).error);
 
   u8[] wrongVersion = copyOf(w.bytes);
   wrongVersion[7] = 99;
   say(out, "version " + read(wrongVersion, 0).error);
 
-  u8[] cut = u8[w.bytes.len() - 6]();
+  u8[] cut = u8[].filled(w.bytes.len() - 6, 0);
   cut.copyFrom(w.bytes, 0, 0, cut.len());
   say(out, "truncated " + read(cut, 0).error);
 
@@ -513,7 +513,7 @@ export string pathOps() {
 // ── Small things ──────────────────────────────────────────────────────────────
 
 u8[] copyOf(u8[] src) {
-  u8[] out = u8[src.len()]();
+  u8[] out = u8[].filled(src.len(), 0);
   out.copyFrom(src, 0, 0, src.len());
   return out;
 }
@@ -550,7 +550,7 @@ string itoa64(i64 n) {
 }
 
 string digit(i32 d) {
-  string[] digits = string[]("0", "1", "2", "3", "4", "5", "6", "7", "8", "9");
+  string[] digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
   return digits[d];
 }
 
@@ -714,7 +714,7 @@ export string wireOps() {
   FileResult back = decodeFileResult(readerOver(a.take()));
   say(out, "file ok " + (back.ok ? "y" : "n") + " " + itoa(back.bytes.len()));
   Buf b = Buf.create();
-  encodeFileResult(b, FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()));
+  encodeFileResult(b, FileResult.of(false, u8[](), "no such file or directory", FAULT_NOT_FOUND()));
   FileResult bad = decodeFileResult(readerOver(b.take()));
   say(out, "file bad " + (bad.ok ? "y" : "n") + " " + itoa(bad.fault) + " " + bad.error);
 
@@ -739,7 +739,7 @@ export string wireOps() {
   // A listing, and the null that says "not a directory" rather than "an empty one" — the distinction
   // `readDir` answers with and the one a naive encoding loses.
   Buf f = Buf.create();
-  string[] names = string[3](fill: "");
+  string[] names = string[].filled(3, "");
   names[0] = "bin"; names[1] = "dev"; names[2] = "etc";
   encodeNames(f, names);
   string[]? got = decodeNames(readerOver(f.take()));
@@ -754,7 +754,7 @@ export string wireOps() {
   // refusal. The second shows why the guard that records it cannot be reached twice: a reader with a
   // reason is a reader with `bad` set, `byte()` answers zero for one of those, and zero is not
   // negative — so it never arrives at the refusal at all. `issues/lang/0112`.
-  u8[] huge = u8[4]();
+  u8[] huge = u8[].filled(4, 0);
   huge[3] = 128;
   Reader first = Reader(huge, huge.len(), 0, false, "");
   say(out, "first fault " + itoa(first.u32()) + " " + first.why);
@@ -763,7 +763,7 @@ export string wireOps() {
 
   // A reader that is already broken answers a fault rather than reading past the end — all four ways,
   // since each says nothing differently.
-  Reader dead = Reader(u8[0](), 0, 0, true, "the parent went away");
+  Reader dead = Reader(u8[](), 0, 0, true, "the parent went away");
   say(out, "broken change " + itoa(decodeChange(dead).fault));
   say(out, "broken stat " + itoa(decodeStat(dead).fault));
   say(out, "broken read " + (decodeFileResult(dead).ok ? "ok" : "not ok"));
@@ -783,7 +783,7 @@ export string wireOps() {
 
   // A short answer: the frame says more than it carries, which is what a peer that died mid-write
   // leaves behind. `decodeNames` answers null and the reason names the channel rather than the file.
-  u8[] truncated = u8[3]();
+  u8[] truncated = u8[].filled(3, 0);
   say(out, "short names " + (decodeNames(readerOver(truncated)) is null ? "null" : "a list"));
   say(out, "short change " + itoa(decodeChange(readerOver(truncated)).fault));
 
@@ -792,7 +792,7 @@ export string wireOps() {
   // half-arrived one must become the second rather than a list of empty names. Above: the first
   // byte never arrived. Here: it said *yes* and the count did not follow, and then the count said
   // three and the names did not.
-  u8[] noCount = u8[1](fill: 1);
+  u8[] noCount = u8[].filled(1, 1);
   say(out, "yes without a count " + (decodeNames(readerOver(noCount)) is null ? "null" : "a list"));
   Buf countOnly = Buf.create();
   countOnly.push(1);
@@ -804,7 +804,7 @@ export string wireOps() {
   // wrong; every reason after it describes the wreckage of the first. `wrong` keeps the first and
   // drops the rest, and a decoder that fails on two fields in a row is how that arises — so this
   // drives it directly, since nothing round-tripped above fails twice.
-  Reader twice = readerOver(u8[0]());
+  Reader twice = readerOver(u8[]());
   twice.wrong("the first thing that was wrong");
   twice.wrong("the second, which describes the first one's aftermath");
   say(out, "first reason kept " + twice.why);

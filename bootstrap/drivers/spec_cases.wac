@@ -19,7 +19,7 @@ u8[] glue;
 u8[] declined;
 
 export i32 drv_alloc(i32 n) {
-  inbuf = u8[n]();
+  inbuf = u8[].filled(n, 0);
   return n;
 }
 
@@ -78,14 +78,14 @@ i32 nfile = 0;
 u8[] namebuf;
 
 export i32 drv_files(i32 n) {
-  paths = string[n]();
-  sources = string[n]();
+  paths = string[].defaulted(n);
+  sources = string[].defaulted(n);
   nfile = 0;
   return 0;
 }
 
 export i32 drv_allocName(i32 n) {
-  namebuf = u8[n]();
+  namebuf = u8[].filled(n, 0);
   return n;
 }
 
@@ -249,7 +249,7 @@ u8[] wasmnamebuf;
 u8[] entrybuf;
 
 export i32 drv_allocEntryName(i32 n) {
-  entrybuf = u8[n]();
+  entrybuf = u8[].filled(n, 0);
   return n;
 }
 
@@ -259,7 +259,7 @@ export i32 drv_setEntryNameByte(i32 i, i32 b) {
 }
 
 export i32 drv_allocWasmName(i32 n) {
-  wasmnamebuf = u8[n]();
+  wasmnamebuf = u8[].filled(n, 0);
   return n;
 }
 

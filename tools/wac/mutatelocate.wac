@@ -37,15 +37,15 @@ export struct Located {
 }
 
 Mutant nothing() {
-  return Mutant("", "", Edit[0](fill: Edit("", 0, 0, "", "")));
+  return Mutant("", "", Edit[].filled(0, Edit("", 0, 0, "", "")));
 }
 
 /** Every offset at which `needle` occurs in `haystack`, overlapping matches included. */
 i32[] occurrencesOf(string haystack, string needle) {
-  if (needle == "") { return i32[0](fill: 0); }
+  if (needle == "") { return i32[](); }
   i32 n = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    i32[] out = pass == 1 ? i32[n](fill: 0) : i32[0](fill: 0);
+    i32[] out = pass == 1 ? i32[].filled(n, 0) : i32[]();
     i32 at = 0;
     for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
       if (haystack.slice(i, i + needle.len()) != needle) { continue; }
@@ -55,7 +55,7 @@ i32[] occurrencesOf(string haystack, string needle) {
     if (pass == 1) { return out; }
     n = at;
   }
-  return i32[0](fill: 0);
+  return i32[]();
 }
 
 i32 indexOfIn(string[] xs, string want) {
@@ -94,7 +94,7 @@ string quoted(string s) {
  */
 export Located locate(string name, Curated[] edits, i32 fallbackNth,
                       string[] paths, string[] texts) {
-  Edit[] out = Edit[edits.len()](fill: Edit("", 0, 0, "", ""));
+  Edit[] out = Edit[].filled(edits.len(), Edit("", 0, 0, "", ""));
   for (i32 e = 0; e < edits.len(); e++) {
     Curated c = edits[e];
     i32 f = indexOfIn(paths, c.file);

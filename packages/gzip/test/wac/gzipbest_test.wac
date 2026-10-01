@@ -24,7 +24,7 @@ import { gzipBest, gzipStored } from "../../src/gzip.wac";
  * the same one that failed.
  */
 u8[] incompressible(i32 n, i32 alpha, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 s = seed;
   for (i32 i = 0; i < n; i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
@@ -37,8 +37,8 @@ export string test_best_never_exceeds_stored_on_either_side_of_the_threshold() {
   T t = T.create();
   // 4096 is `smallInput()`; these straddle it, and the alphabets span "compresses well" to "does not
   // compress at all", so both the shrinking and the failing cases are priced.
-  i32[] lengths = i32[](0, 1, 300, 1000, 4095, 4096, 4097, 5000, 8192, 20000);
-  i32[] alphabets = i32[](2, 16, 200, 250, 256);
+  i32[] lengths = [0, 1, 300, 1000, 4095, 4096, 4097, 5000, 8192, 20000];
+  i32[] alphabets = [2, 16, 200, 250, 256];
   i32 worse = 0;
   string first = "";
   for (i32 i = 0; i < lengths.len(); i++) {

@@ -153,10 +153,10 @@ export i32 page(Core core, Cli cli, Page page) {
 
   // Three surfaces: the step needs the two previous ones, and rotating three arrays avoids copying
   // 30,000 integers a frame just to shuffle them along.
-  i32[] before = i32[W * H]();
-  i32[] now = i32[W * H]();
-  i32[] next = i32[W * H]();
-  u8[] rgba = u8[W * SCALE * H * SCALE * 4]();
+  i32[] before = i32[].filled(W * H, 0);
+  i32[] now = i32[].filled(W * H, 0);
+  i32[] next = i32[].filled(W * H, 0);
+  u8[] rgba = u8[].filled(W * SCALE * H * SCALE * 4, 0);
 
   splash(now, W / 2, H / 2);
   paint(page, now, rgba);
@@ -170,7 +170,7 @@ export i32 page(Core core, Cli cli, Page page) {
   Pending<i64> tick = core.sleepMillis(33);
 
   while (true) {
-    i32 which = core.waitAny(i32[](ev.id, tick.id), -1);
+    i32 which = core.waitAny([ev.id, tick.id], -1);
     if (which < 0) { return 0; }
 
     if (which == 2) {

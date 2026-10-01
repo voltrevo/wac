@@ -134,13 +134,13 @@ export string test_the_mac_is_keyed_with_the_circuit(Core core, Cli cli) {
   i32 macLen = macSpanLen(v);
 
   u8[] want = hsMac(circuitKH(v), macSpanOf(cell));
-  u8[] have = u8[32]();
+  u8[] have = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { have[i] = cell[macLen + i]; }
   t.eqBytes(have, want, "the handshake MAC in the cell is the one the KH produces");
 
   // A different circuit gives a different MAC, which is the property that stops a recorded cell being
   // replayed onto another circuit. Without this the test would pass for a MAC that ignored the key.
-  u8[] otherKh = u8[20]();
+  u8[] otherKh = u8[].filled(20, 0);
   for (i32 i = 0; i < 20; i++) { otherKh[i] = 1; }
   t.isTrue(!equal(hsMac(otherKh, macSpanOf(cell)), want),
            "another circuit's KH gives another MAC");
@@ -160,13 +160,13 @@ export string test_the_signature_is_over_the_prefixed_span(Core core, Cli cli) {
   u8[] cell = built(v);
   i32 sigLen = sigSpanLen(v);
 
-  u8[] sig = u8[64]();
+  u8[] sig = u8[].filled(64, 0);
   for (i32 i = 0; i < 64; i++) { sig[i] = cell[sigLen + 2 + i]; }
 
   u8[] message = prefixed(sigSpanOf(cell));
   Lines lines = Lines.create();
   lines.add("edsign " + strOf(v, "authSeed") + " " + hex(message));
-  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "node's signature over the same span");
+  Answers a = ask(t, cli, "node", [ORACLE], lines, "node's signature over the same span");
   if (!a.ok) { return t.report(); }
   t.eqBytes(sig, decoded(word(a.lines[0], 1)),
             "node's Ed25519 over the same span produces the same signature");
@@ -181,7 +181,7 @@ export string test_the_signature_is_over_the_prefixed_span(Core core, Cli cli) {
 
   // The obvious span — two bytes more, taking in `sig_len` — is a different message. The fixture
   // records tor refusing a cell signed that way; this is the same fact on our side of the seam.
-  u8[] tooMuch = u8[sigLen + 2]();
+  u8[] tooMuch = u8[].filled(sigLen + 2, 0);
   for (i32 i = 0; i < tooMuch.len(); i++) { tooMuch[i] = cell[i]; }
   t.isTrue(!ed25519Verify(authPublic(v), prefixed(tooMuch), sig),
            "signing everything before the signature would be a different signature");
@@ -196,19 +196,19 @@ export string test_bad_inputs_make_no_cell(Core core, Cli cli) {
   u8[] pub = authPublic(v);
   u8[] kh = circuitKH(v);
 
-  t.eqI32(establishIntroCell(u8[0](), seed, kh).len(), 0, "no auth key, no cell");
-  t.eqI32(establishIntroCell(pub, u8[0](), kh).len(), 0, "no secret, no cell");
-  t.eqI32(establishIntroCell(pub, seed, u8[0]()).len(), 0, "no circuit material, no cell");
-  t.eqI32(establishIntroCell(u8[31](), seed, kh).len(), 0, "a 31-byte auth key is not one");
+  t.eqI32(establishIntroCell(u8[](), seed, kh).len(), 0, "no auth key, no cell");
+  t.eqI32(establishIntroCell(pub, u8[](), kh).len(), 0, "no secret, no cell");
+  t.eqI32(establishIntroCell(pub, seed, u8[]()).len(), 0, "no circuit material, no cell");
+  t.eqI32(establishIntroCell(u8[].filled(31, 0), seed, kh).len(), 0, "a 31-byte auth key is not one");
 
   // Truncated cells are walked rather than indexed, so the span helpers refuse them instead of
   // reading past the end.
   u8[] cell = built(v);
-  u8[] cut = u8[10]();
+  u8[] cut = u8[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { cut[i] = cell[i]; }
   t.eqI32(macSpanOf(cut).len(), 0, "a truncated cell has no MAC span");
   t.eqI32(sigSpanOf(cut).len(), 0, "and no signature span");
-  t.eqI32(macSpanOf(u8[0]()).len(), 0, "nor does an empty one");
+  t.eqI32(macSpanOf(u8[]()).len(), 0, "nor does an empty one");
   return t.report();
 }
 
@@ -242,12 +242,12 @@ export string test_the_relay_accepts_what_tor_built(Core core, Cli cli) {
   }
 
   // The nonce is per circuit, which is what stops a captured cell being replayed onto another.
-  u8[] otherKh = u8[kh.len()]();
+  u8[] otherKh = u8[].filled(kh.len(), 0);
   for (i32 i = 0; i < kh.len(); i++) { otherKh[i] = kh[i]; }
   otherKh[0] = otherKh[0] ^ 1;
   t.isTrue(!parseEstablishIntro(cell, otherKh).ok, "the same cell on another circuit is refused");
-  t.isTrue(!parseEstablishIntro(cell, u8[0]()).ok, "and a circuit with no nonce cannot host one");
-  t.isTrue(!parseEstablishIntro(u8[0](), kh).ok, "an empty cell is not a cell");
+  t.isTrue(!parseEstablishIntro(cell, u8[]()).ok, "and a circuit with no nonce cannot host one");
+  t.isTrue(!parseEstablishIntro(u8[](), kh).ok, "an empty cell is not a cell");
 
   // Two cells that are **self-consistent** rather than tampered. tor's mutations all break something
   // the MAC covers, so they are refused whatever we check — the same trap as the INTRODUCE2 auth key,
@@ -275,7 +275,7 @@ export string test_the_relay_accepts_what_tor_built(Core core, Cli cli) {
  * Not a mutation of the bytes — a cell somebody could actually have sent.
  */
 u8[] rebuilt(u8[] cell, u8[] kh, u8[] seed, i32 keyType, i32 sigLen) {
-  if (cell.len() < 38) { return u8[0](); }
+  if (cell.len() < 38) { return u8[](); }
   Buf b = Buf.create();
   b.push(keyType);
   b.push(0);

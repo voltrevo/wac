@@ -34,12 +34,12 @@ const string PREFIX = "packages/platform/";
 
 /** What the tests need: a process to build and spawn children, sockets, and a temp dir. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/platform/src/frame.wac", "childCli", "decl", false,
+  return [
+         Rule("packages/platform/src/frame.wac", "childCli", "decl", false,
          "**`childCli` — the capability frame a program hands a child — at seventeen uncovered " +
          "points.** A `Frame` narrows a `Cli`: it decides which of the parent's authorities " +
          "the child gets and rewrites the paths it may reach. Every arm here is a *refusal*: a " +
@@ -83,17 +83,17 @@ Rule[] rules() {
     Rule("packages/platform/src/frame.wac", "Pending<T> rea", "decl", false,
          "`Pending<T> rea`'s remaining arms — see the rule over `frame.wac` for the corpus " +
          "that shapes them.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[0](fill: Pin("", 0, "", true, ""));
+  return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

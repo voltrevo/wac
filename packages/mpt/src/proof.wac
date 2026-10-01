@@ -73,7 +73,7 @@ export struct Proved {
  * Every empty trie has this root — it is a hash of the encoding of nothing, so there is only one — and
  * `verify` treats it as a complete proof that any key is absent.
  */
-export u8[] emptyTrieRoot() { return keccak256(u8[](0x80)); }
+export u8[] emptyTrieRoot() { return keccak256([0x80] as u8[]); }
 
 /**
  * What `root` commits to at `key`, according to `nodes`.
@@ -83,7 +83,7 @@ export u8[] emptyTrieRoot() { return keccak256(u8[](0x80)); }
  * walk's. `nodes` is the proof, root first, each item an RLP encoding.
  */
 export Proved verify(u8[] root, u8[] key, u8[][] nodes) {
-  if (root.len() != 32) { return Proved.of(false, false, u8[0](), "a root must be 32 bytes"); }
+  if (root.len() != 32) { return Proved.of(false, false, u8[](), "a root must be 32 bytes"); }
   // **An empty trie is the one root a proof of absence needs no nodes for.** There is nothing to walk: the
   // root itself says the trie is empty, and every key is absent from an empty trie. Refusing this was not a
   // safety property, it was an off-by-one in what "proves nothing" means — and the case is ordinary rather
@@ -96,28 +96,28 @@ export Proved verify(u8[] root, u8[] key, u8[][] nodes) {
   // so it was refused with "a node must be a list, and this one is a byte string" until a real client was
   // asked; the fixtures in `test/vendor/getproof.json` are the record of it.
   if (bytesEq(root, emptyTrieRoot())) {
-    if (nodes.len() == 0) { return Proved.of(true, false, u8[0](), ""); }
+    if (nodes.len() == 0) { return Proved.of(true, false, u8[](), ""); }
     if (nodes.len() == 1 && nodes[0].len() == 1 && nodes[0][0] == 0x80) {
-      return Proved.of(true, false, u8[0](), "");
+      return Proved.of(true, false, u8[](), "");
     }
-    return Proved.of(false, false, u8[0](),
+    return Proved.of(false, false, u8[](),
       "the empty trie's root, with " + itoa(nodes.len()) + " nodes offered as a proof about it");
   }
-  if (nodes.len() == 0) { return Proved.of(false, false, u8[0](), "a proof with no nodes proves nothing"); }
+  if (nodes.len() == 0) { return Proved.of(false, false, u8[](), "a proof with no nodes proves nothing"); }
 
   u8[] path = nibblesOf(key);
-  Walk w = Walk(nodes, 0, path, 0, "", false, u8[0]());
+  Walk w = Walk(nodes, 0, path, 0, "", false, u8[]());
 
   // The first node is named by the root, which is a hash by definition.
   Item? node = nodeAt(w, root);
-  if (w.error != "") { return Proved.of(false, false, u8[0](), w.error); }
+  if (w.error != "") { return Proved.of(false, false, u8[](), w.error); }
   step(w, node!);
-  if (w.error != "") { return Proved.of(false, false, u8[0](), w.error); }
+  if (w.error != "") { return Proved.of(false, false, u8[](), w.error); }
 
   // Everything in the proof has to have been needed. A proof with a node left over is either a different
   // key's proof or one padded with something the caller might be invited to trust.
   if (w.used != nodes.len()) {
-    return Proved.of(false, false, u8[0](),
+    return Proved.of(false, false, u8[](),
       "the proof has " + itoa(nodes.len() - w.used) + " node(s) the walk never reached");
   }
   return Proved.of(true, w.found, w.value, "");
@@ -228,14 +228,14 @@ void step(Walk w, Item node) {
     // The node's path is longer than what is left of the key: the key is not under this node, and this node
     // is the proof of that.
     w.found = false;
-    w.value = u8[0]();
+    w.value = u8[]();
     return;
   }
   for (i32 i = 0; i < shared; i++) {
     if (w.path[w.at + i] != own[skip + i]) {
       // Diverged. The trie has something else at this prefix, which is exactly what proves the key absent.
       w.found = false;
-      w.value = u8[0]();
+      w.value = u8[]();
       return;
     }
   }
@@ -246,7 +246,7 @@ void step(Walk w, Item node) {
     // absent — the trie stores a shorter key along this path and nothing longer.
     if (w.at != w.path.len()) {
       w.found = false;
-      w.value = u8[0]();
+      w.value = u8[]();
       return;
     }
     if (isList(parts[1])) {
@@ -274,7 +274,7 @@ void descend(Walk w, Item child) {
   if (ref.len() == 0) {
     // An empty slot. The key is absent and this node proves it.
     w.found = false;
-    w.value = u8[0]();
+    w.value = u8[]();
     return;
   }
   if (ref.len() != 32) {
@@ -289,7 +289,7 @@ void descend(Walk w, Item child) {
 
 /** A byte string as nibbles, high first. */
 u8[] nibblesOf(u8[] b) {
-  u8[] out = u8[b.len() * 2]();
+  u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
     out[i * 2] = b[i] >> 4;
     out[i * 2 + 1] = b[i] & 15;

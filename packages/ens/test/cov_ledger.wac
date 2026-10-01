@@ -17,12 +17,12 @@ const string PREFIX = "packages/ens/";
 
 /** What the tests need: the vendored fixtures on disk, and a process for the live ones. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/ens/src/verified.wac", "Record", "decl", false,
+  return [
+         Rule("packages/ens/src/verified.wac", "Record", "decl", false,
          "**The verified path: an ENS record proved against a state root rather than asked of " +
          "a node.** `recordOf` walks a Merkle proof to a registry slot and answers what it " +
          "found; the arms here are for a proof that does not reach the slot, a slot that is " +
@@ -47,17 +47,17 @@ Rule[] rules() {
          "happens."),
     Rule("packages/ens/src/registry.wac", "trap;", "line", true,
          "The same precondition on the slot computation — see `ens.wac`.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[0](fill: Pin("", 0, "", true, ""));
+  return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

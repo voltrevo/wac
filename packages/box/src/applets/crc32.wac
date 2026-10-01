@@ -40,7 +40,7 @@ export i32 crc32(Core core, Cli cli, Fs fs, Args a) {
   // `as@` keeps the bits; `as~` would clamp a checksum past 2^31 to i32 max. `& 15` then
   // makes the sign-extension of the top nibble's shift irrelevant.
   i32 v = crc32Finish(acc) as@ i32;
-  u8[] out = u8[8](fill: '0');
+  u8[] out = u8[].filled(8, '0');
   u8[] digits = "0123456789abcdef".toBytes();
   for (i32 i = 0; i < 8; i++) {
     out[7 - i] = digits[(v >> (i * 4)) & 15];

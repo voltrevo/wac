@@ -201,7 +201,7 @@ export u8[] hsPublishResponseBytes(bool accepted) {
 
 /** The first `n` bytes of `s`, as a string, for prefix arithmetic on a target. */
 string sliceString(u8[] s, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
+  u8[] out = u8[].filled(to - from, 0);
   for (i32 i = from; i < to; i++) { out[i - from] = s[i]; }
   return string.fromBytes(out);
 }
@@ -221,7 +221,7 @@ bool equalBytes(u8[] a, u8[] b) {
 export u8[] stripDotZ(u8[] target) {
   i32 n = target.len();
   if (n >= 2 && target[n - 2] == 46 && target[n - 1] == 122) {
-    u8[] out = u8[n - 2]();
+    u8[] out = u8[].filled(n - 2, 0);
     for (i32 i = 0; i < n - 2; i++) { out[i] = target[i]; }
     return out;
   }
@@ -296,7 +296,7 @@ bool equals(u8[] s, string text) {
 /** What follows `prefix` in `s`. */
 u8[] rest(u8[] s, string prefix) {
   i32 from = prefix.toBytes().len();
-  u8[] out = u8[s.len() - from]();
+  u8[] out = u8[].filled(s.len() - from, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
   return out;
 }
@@ -324,9 +324,9 @@ export u8[] dirSourceFingerprint(u8[] consensus) {
     // it — which the private copy answered with empty and a trapping slice would answer by taking the
     // relay down. The decode is `packages/codec`'s and refuses anything that is not hex.
     u8[]? raw = decode(clamped(consensus, at, end));
-    return raw is null ? u8[0]() : raw!;
+    return raw is null ? u8[]() : raw!;
   }
-  return u8[0]();
+  return u8[]();
 }
 
 

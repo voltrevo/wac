@@ -224,11 +224,11 @@ export i32 page(Core core, Cli cli, Page page) {
   // output — a screenshot of a terminal is a drawing, and a terminal that has already done
   // something is not. The website prints the same three lines beside the embed, and
   // `packages/box/test/wac/frontpage_test.wac` fails if either drifts from what the shell actually answers.
-  string[] opening = string[](
+  string[] opening = [
     "seq 1 20 | grep 7 | wc -l",
     "echo 'a whole new stack' | gzip -c | wc -c",
     "echo hello | sha256sum"
-  );
+  ];
   page.setText("ps1", s.prompt()).wait();
   for (i32 i = 0; i < opening.len(); i++) {
     s.feedLine(opening[i]);

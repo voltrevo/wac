@@ -91,7 +91,7 @@ export string test_the_export_section_names_the_functions_a_module_actually_has(
   string src = "export i32 a() { return 1; }\n" +
                "i32 hidden() { return 2; }\n" +
                "export i32 b(i32 x) { return x + a(); }\n";
-  Exports e = exportedFunctions(emitFiles(string[]("/t/e.wac"), string[](src), "/t/e.wac"));
+  Exports e = exportedFunctions(emitFiles(["/t/e.wac"], [src], "/t/e.wac"));
 
   t.isTrue(has(e.names, "a"), "the export section names a — it holds " + joined(e.names, ", "));
   t.isTrue(has(e.names, "b"), "and b");
@@ -112,7 +112,7 @@ export string test_the_export_section_names_the_functions_a_module_actually_has(
 
 export string test_a_module_with_no_exports_reads_as_none_rather_than_failing() {
   T t = T.create();
-  Exports e = exportedFunctions(u8[](0, 0x61, 0x73, 0x6d, 1, 0, 0, 0));
+  Exports e = exportedFunctions([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0] as u8[]);
   t.eqI32(e.names.len(), 0, "a bare header exports nothing");
   return t.report();
 }

@@ -39,9 +39,11 @@ export struct Rng {
 export Rng makeRng(i32 seed) { return Rng(seed == 0 ? 1 : seed); }
 
 string[] words() {
-  return string[]("the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog", "deflate",
+  return [
+                  "the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog", "deflate",
                   "huffman", "compression", "window", "literal", "distance", "length", "symbol",
-                  "block", "stream", "byte", "bit", "code", "tree", "table", "match");
+                  "block", "stream", "byte", "bit", "code", "tree", "table", "match"
+  ];
 }
 
 /** One case: what generated it and the bytes. */
@@ -61,8 +63,10 @@ export const i32 GEN_SKEWED = 7;
 export const i32 GEN_MIXED = 8;
 
 export string[] generatorNames() {
-  return string[]("incompressible", "runs", "text", "sparse", "periodic", "windowEdge",
-                  "smallAlphabet", "skewed", "mixed");
+  return [
+                  "incompressible", "runs", "text", "sparse", "periodic", "windowEdge",
+                  "smallAlphabet", "skewed", "mixed"
+  ];
 }
 
 /**
@@ -85,14 +89,14 @@ export u8[] generate(i32 which, Rng rng, i32 size) {
 
 /** Uniform random bytes: all literals, no matches, worst case for ratio. */
 u8[] incompressible(Rng rng, i32 size) {
-  u8[] out = u8[size]();
+  u8[] out = u8[].filled(size, 0);
   for (i32 i = 0; i < size; i++) { out[i] = rng.next() & 0xFF; }
   return out;
 }
 
 /** Runs of a repeated byte: overlapping copies at distance 1. */
 u8[] runs(Rng rng, i32 size) {
-  u8[] out = u8[size]();
+  u8[] out = u8[].filled(size, 0);
   i32 i = 0;
   while (i < size) {
     i32 len = 1 + rng.upto(300);
@@ -114,14 +118,14 @@ u8[] text(Rng rng, i32 size) {
   }
   u8[] all = joined.toBytes();
   i32 take = all.len() < size ? all.len() : size;
-  u8[] out = u8[take]();
+  u8[] out = u8[].filled(take, 0);
   for (i32 i = 0; i < take; i++) { out[i] = all[i]; }
   return out;
 }
 
 /** Mostly zeros with occasional noise: very long zero runs in the code lengths. */
 u8[] sparse(Rng rng, i32 size) {
-  u8[] out = u8[size]();
+  u8[] out = u8[].filled(size, 0);
   i32 hits = 1 + rng.upto(20);
   for (i32 k = 0; k < hits; k++) {
     i32 at = rng.upto(size < 1 ? 1 : size);
@@ -134,9 +138,9 @@ u8[] sparse(Rng rng, i32 size) {
 /** A repeating period, so matches land at one predictable distance. */
 u8[] periodic(Rng rng, i32 size) {
   i32 period = 1 + rng.upto(300);
-  u8[] unit = u8[period]();
+  u8[] unit = u8[].filled(period, 0);
   for (i32 i = 0; i < period; i++) { unit[i] = rng.next() & 0xFF; }
-  u8[] out = u8[size]();
+  u8[] out = u8[].filled(size, 0);
   for (i32 i = 0; i < size; i++) { out[i] = unit[i % period]; }
   return out;
 }
@@ -147,11 +151,11 @@ u8[] periodic(Rng rng, i32 size) {
  */
 u8[] windowEdge(Rng rng, i32 size) {
   i32 n = size > 40000 ? size : 40000;
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = 0x80 | (rng.next() & 0x3F); }
-  u8[] pat = u8[64]();
+  u8[] pat = u8[].filled(64, 0);
   for (i32 i = 0; i < pat.len(); i++) { pat[i] = rng.next() & 0xFF; }
-  i32[] gaps = i32[](32700, 32760, 32768, 32770, 32800);
+  i32[] gaps = [32700, 32760, 32768, 32770, 32800];
   i32 gap = gaps[rng.upto(gaps.len())];
   for (i32 i = 0; i < pat.len(); i++) { out[i] = pat[i]; }
   if (gap + pat.len() < n) {
@@ -163,9 +167,9 @@ u8[] windowEdge(Rng rng, i32 size) {
 /** Few distinct byte values: a small, heavily skewed alphabet. */
 u8[] smallAlphabet(Rng rng, i32 size) {
   i32 k = 1 + rng.upto(5);
-  u8[] alphabet = u8[k]();
+  u8[] alphabet = u8[].filled(k, 0);
   for (i32 i = 0; i < k; i++) { alphabet[i] = rng.next() & 0xFF; }
-  u8[] out = u8[size]();
+  u8[] out = u8[].filled(size, 0);
   for (i32 i = 0; i < size; i++) { out[i] = alphabet[rng.upto(k)]; }
   return out;
 }
@@ -175,7 +179,7 @@ u8[] smallAlphabet(Rng rng, i32 size) {
  * and exercise the rebuild.
  */
 u8[] skewed(Rng rng, i32 size) {
-  u8[] out = u8[size]();
+  u8[] out = u8[].filled(size, 0);
   for (i32 i = 0; i < size; i++) {
     // Most draws land on a few symbols; the tail is very rare.
     i32 v = 0;
@@ -188,9 +192,11 @@ u8[] skewed(Rng rng, i32 size) {
 
 /** Concatenation of other shapes, so statistics shift within one stream. */
 u8[] mixed(Rng rng, i32 size) {
-  i32[] gens = i32[](GEN_INCOMPRESSIBLE, GEN_RUNS, GEN_TEXT, GEN_SPARSE, GEN_PERIODIC,
-                     GEN_SMALL_ALPHABET);
-  u8[][] chunks = u8[][256](fill: u8[0]());
+  i32[] gens = [
+                     GEN_INCOMPRESSIBLE, GEN_RUNS, GEN_TEXT, GEN_SPARSE, GEN_PERIODIC,
+                     GEN_SMALL_ALPHABET
+  ];
+  u8[][] chunks = u8[][].filled(256, u8[]());
   i32 count = 0;
   i32 n = 0;
   while (n < size && count < chunks.len()) {
@@ -201,7 +207,7 @@ u8[] mixed(Rng rng, i32 size) {
     count = count + 1;
     n = n + chunk.len();
   }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   for (i32 i = 0; i < count; i++) {
     u8[] c = chunks[i];
@@ -212,7 +218,7 @@ u8[] mixed(Rng rng, i32 size) {
 }
 
 /** The awkward sizes, which the corpus always covers before it draws any at random. */
-i32[] edgeSizes() { return i32[](0, 1, 2, 3, 4, 5, 257, 258, 259, 65534, 65535, 65536); }
+i32[] edgeSizes() { return [0, 1, 2, 3, 4, 5, 257, 258, 259, 65534, 65535, 65536] as i32[]; }
 
 /**
  * Build the corpus.
@@ -226,7 +232,7 @@ export Case[] buildCorpus(i32 count, i32 seed) {
   i32[] sizes = edgeSizes();
   i32 edges = names.len() * sizes.len();
   i32 total = count > edges ? count : edges;
-  Case[] out = Case[total](fill: Case("", u8[0]()));
+  Case[] out = Case[].filled(total, Case("", u8[]()));
   i32 n = 0;
 
   // Always include the degenerate sizes first, across every generator.
@@ -259,7 +265,7 @@ string itoaSmall(i32 v) {
   string out = "";
   i32 n = v;
   while (n > 0) {
-    u8[] one = u8[1]();
+    u8[] one = u8[].filled(1, 0);
     one[0] = 48 + (n % 10);
     out = string.fromBytes(one) + out;
     n = n / 10;

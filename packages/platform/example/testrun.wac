@@ -45,12 +45,12 @@ export i32 main(Core core, Cli cli) {
 /** Every `test*` export the module declares, read from the manifest it carries. */
 string[] testExports(u8[] wasm) {
   JsonValue? doc = parse(manifestIn(wasm).toBytes());
-  if (doc is null) { return string[0](fill: ""); }
+  if (doc is null) { return string[].filled(0, ""); }
   JsonObject root = JsonObject.create();
-  match (doc!) { Object(o): { root = o; } default: { return string[0](fill: ""); } }
+  match (doc!) { Object(o): { root = o; } default: { return string[].filled(0, ""); } }
   JsonValue? xs = root.getStr("exports");
-  if (xs is null) { return string[0](fill: ""); }
-  string[] out = string[256](fill: "");
+  if (xs is null) { return string[].filled(0, ""); }
+  string[] out = string[].filled(256, "");
   i32 n = 0;
   match (xs!) {
     Array(items): {
@@ -73,7 +73,7 @@ string[] testExports(u8[] wasm) {
     }
     default: { }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

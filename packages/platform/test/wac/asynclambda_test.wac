@@ -93,7 +93,7 @@ export string test_two_async_lambdas_overlap(Core core, Cli cli) {
 
 export string test_an_async_lambda_with_a_loop(Core core, Cli cli) {
   T t = T.create();
-  string[] ps = string[]("README.md", "MERGE.md", "CLAUDE.md");
+  string[] ps = ["README.md", "MERGE.md", "CLAUDE.md"];
   i32 want = 0;
   for (i32 i = 0; i < ps.len(); i++) { want = want + sizeOf(cli, ps[i]); }
 

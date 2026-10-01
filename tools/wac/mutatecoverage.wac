@@ -33,7 +33,7 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
  * agreeing. `issues/system/0176`.
  */
 export string[] WAC_LANE_GRANTS() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 /** What one entry's coverage came to. `ok` is false when the profile is partial or absent. */
@@ -48,7 +48,7 @@ export struct Share {
 }
 
 Share none(string why) {
-  return Share(false, why, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""));
+  return Share(false, why, string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""));
 }
 
 /**
@@ -73,14 +73,14 @@ export Share shareOf(Core core, Cli cli, string binary, string work, string entr
                      string profileDir) {
   cli.mkdir(profileDir, true).wait();
   string[] grants = WAC_LANE_GRANTS();
-  string[] args = string[3 + grants.len()](fill: "");
+  string[] args = string[].filled(3 + grants.len(), "");
   args[0] = "test";
   args[1] = "--coverage";
   for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
   args[2 + grants.len()] = entry;
 
-  Exec r = cli.execWithIn(binary, args, u8[0](),
-                          string[]("WAC_PROFILE=" + profileDir), false, false, work).wait();
+  Exec r = cli.execWithIn(binary, args, u8[](),
+                          ["WAC_PROFILE=" + profileDir], false, false, work).wait();
   if (!r.ran()) { return none("the binary did not run"); }
 
   string[]? listed = cli.readDir(profileDir).wait();
@@ -129,15 +129,15 @@ export Share shareFrom(string text, string entry) {
     : match (testsVal!) { Object(o): o, default: JsonObject.create() };
   if (tests.len() == 0) { return none("the run reached no test"); }
 
-  string[] names = string[tests.len()](fill: "");
-  string[] points = string[tests.len()](fill: "");
+  string[] names = string[].filled(tests.len(), "");
+  string[] points = string[].filled(tests.len(), "");
   for (i32 i = 0; i < tests.len(); i++) {
     names[i] = keyAt(tests, i);
     points[i] = joinArray(asArray(valueAt(tests, i)));
   }
   JsonValue? allVal = doc.get("all".toBytes());
   JsonArray all = allVal is null ? JsonArray.create() : asArray(allVal!);
-  string[] allPts = string[all.len()](fill: "");
+  string[] allPts = string[].filled(all.len(), "");
   for (i32 i = 0; i < all.len(); i++) { allPts[i] = textOf(all.get(i)); }
   return Share(true, "", allPts, names, points);
 }
@@ -188,7 +188,7 @@ export struct Profiled {
 }
 
 Profile emptyProfile() {
-  return Profile(string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), i32[0]());
+  return Profile(string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""), i32[]());
 }
 
 /**
@@ -248,7 +248,7 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
     return Profiled(false,
                     "refused: a profile pass runs every test file, so it must not start from inside"
                     + " the suite — see wac-mono 0077",
-                    emptyProfile(), string[0](fill: ""), string[0](fill: ""));
+                    emptyProfile(), string[].filled(0, ""), string[].filled(0, ""));
   }
 
   // **A hit is only safe if the key covers everything that could change what a test reaches.** A key

@@ -141,7 +141,7 @@ export u32 pWord(i32 i) {
  * overflow the array — but it can exceed p, and at most once.
  */
 export u32[] montAdd(u32[] a, u32[] b) {
-  u32[] out = u32[12]();
+  u32[] out = u32[].filled(12, 0);
   u64 carry = 0;
   u64 s = 0;
   s = (a[0] as u64) + (b[0] as u64) + carry;
@@ -187,7 +187,7 @@ export u32[] montAdd(u32[] a, u32[] b) {
 
 /** `(a - b) mod p`. On underflow, add p back — the same as working modulo 2^384 and correcting. */
 export u32[] montSub(u32[] a, u32[] b) {
-  u32[] out = u32[12]();
+  u32[] out = u32[].filled(12, 0);
   i64 borrow = 0;
   i64 d = 0;
   d = (a[0] as i64) - (b[0] as i64) - borrow;
@@ -1247,7 +1247,7 @@ export u32[] montMul(u32[] a, u32[] b) {
   t11 = hi & 0xFFFFFFFF;
   t12 = spill + (hi >> 32);
 
-  u32[] out = u32[12]();
+  u32[] out = u32[].filled(12, 0);
   out[0] = (t0 & 0xFFFFFFFF) as@ u32;
   out[1] = (t1 & 0xFFFFFFFF) as@ u32;
   out[2] = (t2 & 0xFFFFFFFF) as@ u32;

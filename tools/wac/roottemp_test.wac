@@ -45,12 +45,14 @@ string SELF() { return "tools/wac/roottemp_test.wac"; }
  * states it.
  */
 string[] SPELLINGS() {
-  return string[]("makeTempDir({ dir: \".\"", "makeTempDir({dir: \".\"",
-                  "makeTempFile({ dir: \".\"", "makeTempFile({dir: \".\"");
+  return [
+                  "makeTempDir({ dir: \".\"", "makeTempDir({dir: \".\"",
+                  "makeTempFile({ dir: \".\"", "makeTempFile({dir: \".\""
+  ];
 }
 
 string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
+  Exec r = cli.exec("git", ["ls-files"], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("roottemp: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
     trap;

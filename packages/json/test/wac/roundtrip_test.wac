@@ -24,7 +24,7 @@ import { ERR_NONE, ERR_DEPTH } from "../../src/parse.wac";
 const string ORACLE = "packages/json/test/oracle.ts";
 
 string[] cases() {
-  return string[](
+  return [
     // scalars
     "null", "true", "false", "0", "1", "-1", "42", "1.5", "-2.25", "\"\"", "\"hello\"",
     // whitespace is not preserved
@@ -44,7 +44,8 @@ string[] cases() {
     "\"café\"", "\"日本語\"", "\"😀\"", "\"\\u00e9\"", "\"\\u65e5\"", "\"\\ud83d\\ude00\"",
     // a realistic document
     "{\"name\":\"wac\",\"tags\":[\"lang\",\"wasm\"],\"version\":{\"major\":0,\"minor\":1}," +
-      "\"stable\":false,\"notes\":null}");
+      "\"stable\":false,\"notes\":null}"
+  ];
 }
 
 export string test_round_trip_matches_the_hosts(Core core, Cli cli) {
@@ -100,7 +101,7 @@ export string test_duplicate_object_keys_are_all_retained(Core core, Cli cli) {
 
 export string test_deep_nesting_inside_the_depth_limit(Core core, Cli cli) {
   T t = T.create();
-  i32[] depths = i32[](1, 10, 100, 399);
+  i32[] depths = [1, 10, 100, 399];
   Lines lines = Lines.create();
   for (i32 d = 0; d < depths.len(); d++) {
     string src = repeated("[", depths[d]) + repeated("]", depths[d]);

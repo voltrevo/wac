@@ -14,7 +14,7 @@ export string test_table_agrees_with_definition_on_every_byte() {
   // Every single-byte input reaches a different table entry, so this covers all
   // 256 of them.
   for (i32 b = 0; b < 256; b++) {
-    u8[] one = u8[1]();
+    u8[] one = u8[].filled(1, 0);
     one[0] = b;
     t.eqU32(crc32(one), crc32Bitwise(one), "single byte " + itoa(b));
   }
@@ -26,12 +26,14 @@ export string test_table_agrees_across_lengths() {
   // Lengths chosen around the two seams: 512 is where the slice-by-8 path takes
   // over from the bitwise one, and the stride is 8, so the tail loop has to handle
   // every remainder from 0 to 7.
-  i32[] lengths = i32[](0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 255, 256, 257,
+  i32[] lengths = [
+                        0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 255, 256, 257,
                         511, 512, 513, 514, 515, 516, 517, 518, 519, 520,
-                        1000, 1023, 1024, 4095, 4096, 8191);
+                        1000, 1023, 1024, 4095, 4096, 8191
+  ];
   for (i32 j = 0; j < lengths.len(); j++) {
     i32 n = lengths[j];
-    u8[] data = u8[n]();
+    u8[] data = u8[].filled(n, 0);
     // A deterministic spread rather than a constant, so state varies across the
     // whole table as the loop advances.
     for (i32 i = 0; i < n; i++) {
@@ -54,7 +56,7 @@ export string test_table_agrees_across_lengths() {
 export string test_known_vectors() {
   T t = T.create();
   // Empty input is 0 by definition, and is the one case with no table lookup.
-  t.eqU32(crc32(u8[0]()), 0, "crc32 of empty");
+  t.eqU32(crc32(u8[]()), 0, "crc32 of empty");
   t.eqU32(crc32("a".toBytes()), 3904355907, "crc32(\"a\")");
   t.eqU32(crc32("abc".toBytes()), 891568578, "crc32(\"abc\")");
   t.eqU32(crc32("hello world".toBytes()), 222957957, "crc32(\"hello world\")");
@@ -75,7 +77,7 @@ export string test_known_vectors() {
 
 /** `n` bytes of the same ramp the long-input case uses, so one recipe covers every length here. */
 u8[] ramp(i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + 7) & 0xFF; }
   return out;
 }
@@ -93,7 +95,7 @@ export string test_every_single_byte() {
   T t = T.create();
   i64 sum = 0 as i64;
   for (i32 b = 0; b < 256; b++) {
-    u8[] one = u8[1]();
+    u8[] one = u8[].filled(1, 0);
     one[0] = b;
     sum = sum + (crc32(one) as i64);
   }

@@ -38,7 +38,7 @@ string reply(string body) {
 i32 readyIn(u8[] buf) {
   i32 consumed = 0;
   while (buf.len() - consumed >= 5) {
-    u8[] rest = u8[buf.len() - consumed]();
+    u8[] rest = u8[].filled(buf.len() - consumed, 0);
     for (i32 i = consumed; i < buf.len(); i++) { rest[i - consumed] = buf[i]; }
     if (tlsRecordNeeded(rest) != 0) { break; }
     consumed = consumed + 5 + ((buf[consumed + 3] << 8) | buf[consumed + 4]);
@@ -63,7 +63,7 @@ struct Identity {
 
 void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
   u8[] state = id.rsa
-    ? tlsServerInitRsa(id.cert, id.n, u8[](0x01, 0x00, 0x01), id.d,
+    ? tlsServerInitRsa(id.cert, id.n, [0x01, 0x00, 0x01] as u8[], id.d,
                        core.randomBytes(32).wait(), core.randomBytes(32).wait())
     : tlsServerInit(id.cert, id.seed, core.randomBytes(32).wait(),
                     core.randomBytes(32).wait());
@@ -80,7 +80,7 @@ void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
     i32 ready = readyIn(raw.bytes());
     if (ready == 0) { continue; }
     u8[] all = raw.bytes();
-    u8[] whole = u8[ready]();
+    u8[] whole = u8[].filled(ready, 0);
     for (i32 i = 0; i < ready; i++) { whole[i] = all[i]; }
     raw.dropFront(ready);
 
@@ -142,7 +142,7 @@ export i32 main(Core core, Cli cli) {
     }
   }
 
-  Identity id = Identity(u8[0](), u8[0](), u8[0](), u8[0](), false);
+  Identity id = Identity(u8[](), u8[](), u8[](), u8[](), false);
   if (rsaDir == "") {
     id.cert = cli.readFile("packages/tls/test/data/server.der").wait().bytes;
     id.seed = cli.readFile("packages/tls/test/data/server.seed").wait().bytes;

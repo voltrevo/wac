@@ -30,40 +30,40 @@ import { T } from "../../../wactest/src/assert.wac";
 
 export string test_isutf8_accepts_well_formed_bytes_and_rejects_the_rest_k4mq7vn(Core core, Cli cli) {
   T t = T.create();
-  t.eqBool(string.isUtf8(u8[0]()), true, "empty");
-  t.eqBool(string.isUtf8(u8[](0x68, 0x69)), true, "ascii");
-  t.eqBool(string.isUtf8(u8[](0x00)), true, "nul");
-  t.eqBool(string.isUtf8(u8[](0x7f)), true, "del");
-  t.eqBool(string.isUtf8(u8[](0xc3, 0xa9)), true, "two byte e acute");
-  t.eqBool(string.isUtf8(u8[](0xe2, 0x82, 0xac)), true, "three byte euro");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x9f, 0x98, 0x80)), true, "four byte emoji");
-  t.eqBool(string.isUtf8(u8[](0x80)), false, "lone continuation");
-  t.eqBool(string.isUtf8(u8[](0xbf)), false, "lone bf");
-  t.eqBool(string.isUtf8(u8[](0xc0, 0x80)), false, "overlong two c0");
-  t.eqBool(string.isUtf8(u8[](0xc1, 0xbf)), false, "overlong two c1");
-  t.eqBool(string.isUtf8(u8[](0xc2, 0x80)), true, "shortest two c2");
-  t.eqBool(string.isUtf8(u8[](0xc3)), false, "truncated two");
-  t.eqBool(string.isUtf8(u8[](0xc3, 0x41)), false, "two then ascii");
-  t.eqBool(string.isUtf8(u8[](0xe0, 0x80, 0x80)), false, "overlong three");
-  t.eqBool(string.isUtf8(u8[](0xe0, 0x9f, 0xbf)), false, "three e0 boundary bad");
-  t.eqBool(string.isUtf8(u8[](0xe0, 0xa0, 0x80)), true, "three e0 boundary ok");
-  t.eqBool(string.isUtf8(u8[](0xed, 0xa0, 0x80)), false, "surrogate d800");
-  t.eqBool(string.isUtf8(u8[](0xed, 0x9f, 0xbf)), true, "last before surrogate");
-  t.eqBool(string.isUtf8(u8[](0xe2, 0x82)), false, "truncated three");
-  t.eqBool(string.isUtf8(u8[](0xe2, 0x82, 0x41)), false, "three broken tail");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x80, 0x80, 0x80)), false, "overlong four");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x8f, 0xbf, 0xbf)), false, "four f0 boundary bad");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x90, 0x80, 0x80)), true, "four f0 boundary ok");
-  t.eqBool(string.isUtf8(u8[](0xf4, 0x8f, 0xbf, 0xbf)), true, "max codepoint");
-  t.eqBool(string.isUtf8(u8[](0xf4, 0x90, 0x80, 0x80)), false, "above max");
-  t.eqBool(string.isUtf8(u8[](0xf5, 0x80, 0x80, 0x80)), false, "f5 never a lead");
-  t.eqBool(string.isUtf8(u8[](0xff)), false, "ff never a lead");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x9f, 0x98)), false, "truncated four");
-  t.eqBool(string.isUtf8(u8[](0xff, 0xff)), false, "two replacements");
-  t.eqBool(string.isUtf8(u8[](0x68, 0x69, 0xff)), false, "valid then invalid");
-  t.eqBool(string.isUtf8(u8[](0xff, 0x68, 0x69)), false, "invalid then valid");
-  t.eqBool(string.isUtf8(u8[](0xe1, 0x80, 0x41)), false, "maximal subpart");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x90, 0x80, 0x68, 0x69)), false, "subpart then valid");
+  t.eqBool(string.isUtf8(u8[]()), true, "empty");
+  t.eqBool(string.isUtf8([0x68, 0x69] as u8[]), true, "ascii");
+  t.eqBool(string.isUtf8([0x00] as u8[]), true, "nul");
+  t.eqBool(string.isUtf8([0x7f] as u8[]), true, "del");
+  t.eqBool(string.isUtf8([0xc3, 0xa9] as u8[]), true, "two byte e acute");
+  t.eqBool(string.isUtf8([0xe2, 0x82, 0xac] as u8[]), true, "three byte euro");
+  t.eqBool(string.isUtf8([0xf0, 0x9f, 0x98, 0x80] as u8[]), true, "four byte emoji");
+  t.eqBool(string.isUtf8([0x80] as u8[]), false, "lone continuation");
+  t.eqBool(string.isUtf8([0xbf] as u8[]), false, "lone bf");
+  t.eqBool(string.isUtf8([0xc0, 0x80] as u8[]), false, "overlong two c0");
+  t.eqBool(string.isUtf8([0xc1, 0xbf] as u8[]), false, "overlong two c1");
+  t.eqBool(string.isUtf8([0xc2, 0x80] as u8[]), true, "shortest two c2");
+  t.eqBool(string.isUtf8([0xc3] as u8[]), false, "truncated two");
+  t.eqBool(string.isUtf8([0xc3, 0x41] as u8[]), false, "two then ascii");
+  t.eqBool(string.isUtf8([0xe0, 0x80, 0x80] as u8[]), false, "overlong three");
+  t.eqBool(string.isUtf8([0xe0, 0x9f, 0xbf] as u8[]), false, "three e0 boundary bad");
+  t.eqBool(string.isUtf8([0xe0, 0xa0, 0x80] as u8[]), true, "three e0 boundary ok");
+  t.eqBool(string.isUtf8([0xed, 0xa0, 0x80] as u8[]), false, "surrogate d800");
+  t.eqBool(string.isUtf8([0xed, 0x9f, 0xbf] as u8[]), true, "last before surrogate");
+  t.eqBool(string.isUtf8([0xe2, 0x82] as u8[]), false, "truncated three");
+  t.eqBool(string.isUtf8([0xe2, 0x82, 0x41] as u8[]), false, "three broken tail");
+  t.eqBool(string.isUtf8([0xf0, 0x80, 0x80, 0x80] as u8[]), false, "overlong four");
+  t.eqBool(string.isUtf8([0xf0, 0x8f, 0xbf, 0xbf] as u8[]), false, "four f0 boundary bad");
+  t.eqBool(string.isUtf8([0xf0, 0x90, 0x80, 0x80] as u8[]), true, "four f0 boundary ok");
+  t.eqBool(string.isUtf8([0xf4, 0x8f, 0xbf, 0xbf] as u8[]), true, "max codepoint");
+  t.eqBool(string.isUtf8([0xf4, 0x90, 0x80, 0x80] as u8[]), false, "above max");
+  t.eqBool(string.isUtf8([0xf5, 0x80, 0x80, 0x80] as u8[]), false, "f5 never a lead");
+  t.eqBool(string.isUtf8([0xff] as u8[]), false, "ff never a lead");
+  t.eqBool(string.isUtf8([0xf0, 0x9f, 0x98] as u8[]), false, "truncated four");
+  t.eqBool(string.isUtf8([0xff, 0xff] as u8[]), false, "two replacements");
+  t.eqBool(string.isUtf8([0x68, 0x69, 0xff] as u8[]), false, "valid then invalid");
+  t.eqBool(string.isUtf8([0xff, 0x68, 0x69] as u8[]), false, "invalid then valid");
+  t.eqBool(string.isUtf8([0xe1, 0x80, 0x41] as u8[]), false, "maximal subpart");
+  t.eqBool(string.isUtf8([0xf0, 0x90, 0x80, 0x68, 0x69] as u8[]), false, "subpart then valid");
   return t.report();
 }
 
@@ -79,8 +79,8 @@ export string test_isutf8_asks_a_string_about_its_own_bytes_r2nk8fq(Core core, C
   t.eqBool("é".isUtf8(), true, "a literal is well-formed by construction");
   t.eqBool("hello".isUtf8(), true, "ascii");
   t.eqBool("".isUtf8(), true, "empty");
-  t.eqBool(string.fromBytes(u8[](0xff, 0x41)).isUtf8(), false, "fromBytes does not validate");
-  t.eqBool(string.fromBytes(u8[](0xed, 0xa0, 0x80)).isUtf8(), false, "a surrogate, through a string");
+  t.eqBool(string.fromBytes([0xff, 0x41] as u8[]).isUtf8(), false, "fromBytes does not validate");
+  t.eqBool(string.fromBytes([0xed, 0xa0, 0x80] as u8[]).isUtf8(), false, "a surrogate, through a string");
   t.eqBool(string.fromBytes("é".toBytes()).isUtf8(), true, "the round trip stays well-formed");
   return t.report();
 }
@@ -95,30 +95,30 @@ export string test_isutf8_asks_a_string_about_its_own_bytes_r2nk8fq(Core core, C
 export string test_isutf8_is_strict_about_overlongs_surrogates_and_the_maximum_p9wj3xd(
     Core core, Cli cli) {
   T t = T.create();
-  t.eqBool(string.isUtf8(u8[](0xc0, 0x80)), false, "overlong two-byte NUL");
-  t.eqBool(string.isUtf8(u8[](0xc1, 0xbf)), false, "the other overlong lead");
-  t.eqBool(string.isUtf8(u8[](0xc2, 0x80)), true, "the shortest two-byte form");
+  t.eqBool(string.isUtf8([0xc0, 0x80] as u8[]), false, "overlong two-byte NUL");
+  t.eqBool(string.isUtf8([0xc1, 0xbf] as u8[]), false, "the other overlong lead");
+  t.eqBool(string.isUtf8([0xc2, 0x80] as u8[]), true, "the shortest two-byte form");
 
-  t.eqBool(string.isUtf8(u8[](0xe0, 0x80, 0x80)), false, "overlong three-byte");
-  t.eqBool(string.isUtf8(u8[](0xe0, 0x9f, 0xbf)), false, "one below the three-byte floor");
-  t.eqBool(string.isUtf8(u8[](0xe0, 0xa0, 0x80)), true, "the three-byte floor itself");
+  t.eqBool(string.isUtf8([0xe0, 0x80, 0x80] as u8[]), false, "overlong three-byte");
+  t.eqBool(string.isUtf8([0xe0, 0x9f, 0xbf] as u8[]), false, "one below the three-byte floor");
+  t.eqBool(string.isUtf8([0xe0, 0xa0, 0x80] as u8[]), true, "the three-byte floor itself");
 
-  t.eqBool(string.isUtf8(u8[](0xed, 0xa0, 0x80)), false, "U+D800, a surrogate");
-  t.eqBool(string.isUtf8(u8[](0xed, 0xbf, 0xbf)), false, "U+DFFF, the last surrogate");
-  t.eqBool(string.isUtf8(u8[](0xed, 0x9f, 0xbf)), true, "U+D7FF, one below them");
-  t.eqBool(string.isUtf8(u8[](0xee, 0x80, 0x80)), true, "U+E000, one above them");
+  t.eqBool(string.isUtf8([0xed, 0xa0, 0x80] as u8[]), false, "U+D800, a surrogate");
+  t.eqBool(string.isUtf8([0xed, 0xbf, 0xbf] as u8[]), false, "U+DFFF, the last surrogate");
+  t.eqBool(string.isUtf8([0xed, 0x9f, 0xbf] as u8[]), true, "U+D7FF, one below them");
+  t.eqBool(string.isUtf8([0xee, 0x80, 0x80] as u8[]), true, "U+E000, one above them");
 
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x80, 0x80, 0x80)), false, "overlong four-byte");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x8f, 0xbf, 0xbf)), false, "one below the four-byte floor");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x90, 0x80, 0x80)), true, "U+10000, the floor itself");
+  t.eqBool(string.isUtf8([0xf0, 0x80, 0x80, 0x80] as u8[]), false, "overlong four-byte");
+  t.eqBool(string.isUtf8([0xf0, 0x8f, 0xbf, 0xbf] as u8[]), false, "one below the four-byte floor");
+  t.eqBool(string.isUtf8([0xf0, 0x90, 0x80, 0x80] as u8[]), true, "U+10000, the floor itself");
 
-  t.eqBool(string.isUtf8(u8[](0xf4, 0x90, 0x80, 0x80)), false, "U+110000, above the maximum");
-  t.eqBool(string.isUtf8(u8[](0xf4, 0x8f, 0xbf, 0xbf)), true, "U+10FFFF, the maximum itself");
-  t.eqBool(string.isUtf8(u8[](0xf5, 0x80, 0x80, 0x80)), false, "no lead byte above F4");
+  t.eqBool(string.isUtf8([0xf4, 0x90, 0x80, 0x80] as u8[]), false, "U+110000, above the maximum");
+  t.eqBool(string.isUtf8([0xf4, 0x8f, 0xbf, 0xbf] as u8[]), true, "U+10FFFF, the maximum itself");
+  t.eqBool(string.isUtf8([0xf5, 0x80, 0x80, 0x80] as u8[]), false, "no lead byte above F4");
 
-  t.eqBool(string.isUtf8(u8[](0xe2, 0x82)), false, "a three-byte sequence cut short");
-  t.eqBool(string.isUtf8(u8[](0xf0, 0x9f, 0x98)), false, "a four-byte sequence cut short");
-  t.eqBool(string.isUtf8(u8[](0xe2, 0x82, 0xac)), true, "the same three bytes, whole");
+  t.eqBool(string.isUtf8([0xe2, 0x82] as u8[]), false, "a three-byte sequence cut short");
+  t.eqBool(string.isUtf8([0xf0, 0x9f, 0x98] as u8[]), false, "a four-byte sequence cut short");
+  t.eqBool(string.isUtf8([0xe2, 0x82, 0xac] as u8[]), true, "the same three bytes, whole");
   return t.report();
 }
 
@@ -132,40 +132,40 @@ export string test_isutf8_is_strict_about_overlongs_surrogates_and_the_maximum_p
  */
 export string test_toutf8_replaces_what_it_cannot_decode_w7kd2mq(Core core, Cli cli) {
   T t = T.create();
-  t.eqBytes(string.toUtf8(u8[0]()).toBytes(), u8[0](), "empty");
-  t.eqBytes(string.toUtf8(u8[](0x68, 0x69)).toBytes(), u8[](0x68, 0x69), "ascii");
-  t.eqBytes(string.toUtf8(u8[](0x00)).toBytes(), u8[](0x00), "nul");
-  t.eqBytes(string.toUtf8(u8[](0x7f)).toBytes(), u8[](0x7f), "del");
-  t.eqBytes(string.toUtf8(u8[](0xc3, 0xa9)).toBytes(), u8[](0xc3, 0xa9), "two byte e acute");
-  t.eqBytes(string.toUtf8(u8[](0xe2, 0x82, 0xac)).toBytes(), u8[](0xe2, 0x82, 0xac), "three byte euro");
-  t.eqBytes(string.toUtf8(u8[](0xf0, 0x9f, 0x98, 0x80)).toBytes(), u8[](0xf0, 0x9f, 0x98, 0x80), "four byte emoji");
-  t.eqBytes(string.toUtf8(u8[](0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd), "lone continuation");
-  t.eqBytes(string.toUtf8(u8[](0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd), "lone bf");
-  t.eqBytes(string.toUtf8(u8[](0xc0, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong two c0");
-  t.eqBytes(string.toUtf8(u8[](0xc1, 0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong two c1");
-  t.eqBytes(string.toUtf8(u8[](0xc2, 0x80)).toBytes(), u8[](0xc2, 0x80), "shortest two c2");
-  t.eqBytes(string.toUtf8(u8[](0xc3)).toBytes(), u8[](0xef, 0xbf, 0xbd), "truncated two");
-  t.eqBytes(string.toUtf8(u8[](0xc3, 0x41)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x41), "two then ascii");
-  t.eqBytes(string.toUtf8(u8[](0xe0, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong three");
-  t.eqBytes(string.toUtf8(u8[](0xe0, 0x9f, 0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "three e0 boundary bad");
-  t.eqBytes(string.toUtf8(u8[](0xe0, 0xa0, 0x80)).toBytes(), u8[](0xe0, 0xa0, 0x80), "three e0 boundary ok");
-  t.eqBytes(string.toUtf8(u8[](0xed, 0xa0, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "surrogate d800");
-  t.eqBytes(string.toUtf8(u8[](0xed, 0x9f, 0xbf)).toBytes(), u8[](0xed, 0x9f, 0xbf), "last before surrogate");
-  t.eqBytes(string.toUtf8(u8[](0xe2, 0x82)).toBytes(), u8[](0xef, 0xbf, 0xbd), "truncated three");
-  t.eqBytes(string.toUtf8(u8[](0xe2, 0x82, 0x41)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x41), "three broken tail");
-  t.eqBytes(string.toUtf8(u8[](0xf0, 0x80, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "overlong four");
-  t.eqBytes(string.toUtf8(u8[](0xf0, 0x8f, 0xbf, 0xbf)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "four f0 boundary bad");
-  t.eqBytes(string.toUtf8(u8[](0xf0, 0x90, 0x80, 0x80)).toBytes(), u8[](0xf0, 0x90, 0x80, 0x80), "four f0 boundary ok");
-  t.eqBytes(string.toUtf8(u8[](0xf4, 0x8f, 0xbf, 0xbf)).toBytes(), u8[](0xf4, 0x8f, 0xbf, 0xbf), "max codepoint");
-  t.eqBytes(string.toUtf8(u8[](0xf4, 0x90, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "above max");
-  t.eqBytes(string.toUtf8(u8[](0xf5, 0x80, 0x80, 0x80)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "f5 never a lead");
-  t.eqBytes(string.toUtf8(u8[](0xff)).toBytes(), u8[](0xef, 0xbf, 0xbd), "ff never a lead");
-  t.eqBytes(string.toUtf8(u8[](0xf0, 0x9f, 0x98)).toBytes(), u8[](0xef, 0xbf, 0xbd), "truncated four");
-  t.eqBytes(string.toUtf8(u8[](0xff, 0xff)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "two replacements");
-  t.eqBytes(string.toUtf8(u8[](0x68, 0x69, 0xff)).toBytes(), u8[](0x68, 0x69, 0xef, 0xbf, 0xbd), "valid then invalid");
-  t.eqBytes(string.toUtf8(u8[](0xff, 0x68, 0x69)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x68, 0x69), "invalid then valid");
-  t.eqBytes(string.toUtf8(u8[](0xe1, 0x80, 0x41)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x41), "maximal subpart");
-  t.eqBytes(string.toUtf8(u8[](0xf0, 0x90, 0x80, 0x68, 0x69)).toBytes(), u8[](0xef, 0xbf, 0xbd, 0x68, 0x69), "subpart then valid");
+  t.eqBytes(string.toUtf8(u8[]()).toBytes(), u8[](), "empty");
+  t.eqBytes(string.toUtf8([0x68, 0x69] as u8[]).toBytes(), [0x68, 0x69] as u8[], "ascii");
+  t.eqBytes(string.toUtf8([0x00] as u8[]).toBytes(), [0x00] as u8[], "nul");
+  t.eqBytes(string.toUtf8([0x7f] as u8[]).toBytes(), [0x7f] as u8[], "del");
+  t.eqBytes(string.toUtf8([0xc3, 0xa9] as u8[]).toBytes(), [0xc3, 0xa9] as u8[], "two byte e acute");
+  t.eqBytes(string.toUtf8([0xe2, 0x82, 0xac] as u8[]).toBytes(), [0xe2, 0x82, 0xac] as u8[], "three byte euro");
+  t.eqBytes(string.toUtf8([0xf0, 0x9f, 0x98, 0x80] as u8[]).toBytes(), [0xf0, 0x9f, 0x98, 0x80] as u8[], "four byte emoji");
+  t.eqBytes(string.toUtf8([0x80] as u8[]).toBytes(), [0xef, 0xbf, 0xbd] as u8[], "lone continuation");
+  t.eqBytes(string.toUtf8([0xbf] as u8[]).toBytes(), [0xef, 0xbf, 0xbd] as u8[], "lone bf");
+  t.eqBytes(string.toUtf8([0xc0, 0x80] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "overlong two c0");
+  t.eqBytes(string.toUtf8([0xc1, 0xbf] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "overlong two c1");
+  t.eqBytes(string.toUtf8([0xc2, 0x80] as u8[]).toBytes(), [0xc2, 0x80] as u8[], "shortest two c2");
+  t.eqBytes(string.toUtf8([0xc3] as u8[]).toBytes(), [0xef, 0xbf, 0xbd] as u8[], "truncated two");
+  t.eqBytes(string.toUtf8([0xc3, 0x41] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0x41] as u8[], "two then ascii");
+  t.eqBytes(string.toUtf8([0xe0, 0x80, 0x80] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "overlong three");
+  t.eqBytes(string.toUtf8([0xe0, 0x9f, 0xbf] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "three e0 boundary bad");
+  t.eqBytes(string.toUtf8([0xe0, 0xa0, 0x80] as u8[]).toBytes(), [0xe0, 0xa0, 0x80] as u8[], "three e0 boundary ok");
+  t.eqBytes(string.toUtf8([0xed, 0xa0, 0x80] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "surrogate d800");
+  t.eqBytes(string.toUtf8([0xed, 0x9f, 0xbf] as u8[]).toBytes(), [0xed, 0x9f, 0xbf] as u8[], "last before surrogate");
+  t.eqBytes(string.toUtf8([0xe2, 0x82] as u8[]).toBytes(), [0xef, 0xbf, 0xbd] as u8[], "truncated three");
+  t.eqBytes(string.toUtf8([0xe2, 0x82, 0x41] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0x41] as u8[], "three broken tail");
+  t.eqBytes(string.toUtf8([0xf0, 0x80, 0x80, 0x80] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "overlong four");
+  t.eqBytes(string.toUtf8([0xf0, 0x8f, 0xbf, 0xbf] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "four f0 boundary bad");
+  t.eqBytes(string.toUtf8([0xf0, 0x90, 0x80, 0x80] as u8[]).toBytes(), [0xf0, 0x90, 0x80, 0x80] as u8[], "four f0 boundary ok");
+  t.eqBytes(string.toUtf8([0xf4, 0x8f, 0xbf, 0xbf] as u8[]).toBytes(), [0xf4, 0x8f, 0xbf, 0xbf] as u8[], "max codepoint");
+  t.eqBytes(string.toUtf8([0xf4, 0x90, 0x80, 0x80] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "above max");
+  t.eqBytes(string.toUtf8([0xf5, 0x80, 0x80, 0x80] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "f5 never a lead");
+  t.eqBytes(string.toUtf8([0xff] as u8[]).toBytes(), [0xef, 0xbf, 0xbd] as u8[], "ff never a lead");
+  t.eqBytes(string.toUtf8([0xf0, 0x9f, 0x98] as u8[]).toBytes(), [0xef, 0xbf, 0xbd] as u8[], "truncated four");
+  t.eqBytes(string.toUtf8([0xff, 0xff] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "two replacements");
+  t.eqBytes(string.toUtf8([0x68, 0x69, 0xff] as u8[]).toBytes(), [0x68, 0x69, 0xef, 0xbf, 0xbd] as u8[], "valid then invalid");
+  t.eqBytes(string.toUtf8([0xff, 0x68, 0x69] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0x68, 0x69] as u8[], "invalid then valid");
+  t.eqBytes(string.toUtf8([0xe1, 0x80, 0x41] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0x41] as u8[], "maximal subpart");
+  t.eqBytes(string.toUtf8([0xf0, 0x90, 0x80, 0x68, 0x69] as u8[]).toBytes(), [0xef, 0xbf, 0xbd, 0x68, 0x69] as u8[], "subpart then valid");
   return t.report();
 }
 
@@ -180,14 +180,14 @@ export string test_toutf8_replaces_what_it_cannot_decode_w7kd2mq(Core core, Cli 
  */
 export string test_toutf8_replaces_a_subpart_once_and_keeps_what_follows_n3qv8jf(Core core, Cli cli) {
   T t = T.create();
-  t.eqBytes(string.toUtf8(u8[](0xe1, 0x80, 0x41)).toBytes(),
-            u8[](0xef, 0xbf, 0xbd, 0x41), "E1 80 is one subpart, then A");
-  t.eqBytes(string.toUtf8(u8[](0xf0, 0x90, 0x80, 0x41)).toBytes(),
-            u8[](0xef, 0xbf, 0xbd, 0x41), "three bytes of a four-byte form, then A");
-  t.eqBytes(string.toUtf8(u8[](0xff, 0xff)).toBytes(),
-            u8[](0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd), "two bytes that begin nothing are two subparts");
-  t.eqBytes(string.toUtf8(u8[](0xe1, 0x41)).toBytes(),
-            u8[](0xef, 0xbf, 0xbd, 0x41), "a lead with nothing following it is one subpart");
+  t.eqBytes(string.toUtf8([0xe1, 0x80, 0x41] as u8[]).toBytes(),
+            [0xef, 0xbf, 0xbd, 0x41] as u8[], "E1 80 is one subpart, then A");
+  t.eqBytes(string.toUtf8([0xf0, 0x90, 0x80, 0x41] as u8[]).toBytes(),
+            [0xef, 0xbf, 0xbd, 0x41] as u8[], "three bytes of a four-byte form, then A");
+  t.eqBytes(string.toUtf8([0xff, 0xff] as u8[]).toBytes(),
+            [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] as u8[], "two bytes that begin nothing are two subparts");
+  t.eqBytes(string.toUtf8([0xe1, 0x41] as u8[]).toBytes(),
+            [0xef, 0xbf, 0xbd, 0x41] as u8[], "a lead with nothing following it is one subpart");
   return t.report();
 }
 
@@ -199,9 +199,9 @@ export string test_toutf8_repairs_a_string_built_from_unchecked_bytes_t6bz4hx(Co
   T t = T.create();
   t.eqStr("é".toUtf8(), "é", "a well-formed string is unchanged");
   t.eqStr("".toUtf8(), "", "empty");
-  t.eqBytes(string.fromBytes(u8[](0xff, 0x41)).toUtf8().toBytes(),
-            u8[](0xef, 0xbf, 0xbd, 0x41), "the replacement and the A that followed");
-  t.eqBool(string.fromBytes(u8[](0xff, 0x41)).toUtf8().isUtf8(), true,
+  t.eqBytes(string.fromBytes([0xff, 0x41] as u8[]).toUtf8().toBytes(),
+            [0xef, 0xbf, 0xbd, 0x41] as u8[], "the replacement and the A that followed");
+  t.eqBool(string.fromBytes([0xff, 0x41] as u8[]).toUtf8().isUtf8(), true,
            "whatever went in, what comes out is well-formed");
   t.eqBool("héllo".toUtf8().isUtf8(), true, "and stays so when nothing needed repairing");
   return t.report();

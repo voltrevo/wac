@@ -40,7 +40,7 @@ void inc32(u8[] ctr) {
 
 /** The hash subkey: the block cipher applied to a block of zeros. */
 u8[] hashSubkey(u8[] w, i32 nr) {
-  return aesEncryptBlock(w, u8[16](), nr);
+  return aesEncryptBlock(w, u8[].filled(16, 0), nr);
 }
 
 /**
@@ -50,7 +50,7 @@ u8[] hashSubkey(u8[] w, i32 nr) {
  * hashed, which is why this needs H before it can start.
  */
 u8[] initialCounter(u8[] h, u8[] iv) {
-  u8[] j0 = u8[16]();
+  u8[] j0 = u8[].filled(16, 0);
   if (iv.len() == 12) {
     for (i32 i = 0; i < 12; i++) { j0[i] = iv[i]; }
     j0[15] = 1;
@@ -58,7 +58,7 @@ u8[] initialCounter(u8[] h, u8[] iv) {
   }
   // GHASH over the IV padded to a block boundary, then its bit length.
   i32 pad = padTo16(iv.len());
-  u8[] buf = u8[iv.len() + pad + 16]();
+  u8[] buf = u8[].filled(iv.len() + pad + 16, 0);
   for (i32 i = 0; i < iv.len(); i++) { buf[i] = iv[i]; }
   storeBE64((iv.len() as! u64) * 8, buf, iv.len() + pad + 8);
   return ghash(h, buf);
@@ -67,10 +67,10 @@ u8[] initialCounter(u8[] h, u8[] iv) {
 /** GCTR: xor `data` with the keystream from counter block `ctr0`. */
 u8[] gctr(u8[] w, i32 nr, u8[] ctr0, u8[] data) {
   i32 n = data.len();
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   if (n == 0) { return out; }
 
-  u8[] ctr = u8[16]();
+  u8[] ctr = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { ctr[i] = ctr0[i]; }
 
   i32 pos = 0;
@@ -93,7 +93,7 @@ u8[] gctr(u8[] w, i32 nr, u8[] ctr0, u8[] data) {
 u8[] tagInput(u8[] aad, u8[] ct) {
   i32 ap = padTo16(aad.len());
   i32 cp = padTo16(ct.len());
-  u8[] m = u8[aad.len() + ap + ct.len() + cp + 16]();
+  u8[] m = u8[].filled(aad.len() + ap + ct.len() + cp + 16, 0);
 
   i32 p = 0;
   for (i32 i = 0; i < aad.len(); i++) { m[p] = aad[i]; p++; }
@@ -112,7 +112,7 @@ export u8[] gcmEncrypt(u8[] key, u8[] iv, u8[] plain) {
   u8[] w = aesExpandKey(key);
   i32 nr = aesRounds(key.len());
   u8[] j0 = initialCounter(hashSubkey(w, nr), iv);
-  u8[] c = u8[16]();
+  u8[] c = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { c[i] = j0[i]; }
   inc32(c);
   return gctr(w, nr, c, plain);
@@ -128,7 +128,7 @@ export u8[] gcmTag(u8[] key, u8[] iv, u8[] aad, u8[] ct) {
   u8[] s = ghash(h, tagInput(aad, ct));
   // The tag masks S with E_K(J0) — J0 itself, before any increment.
   u8[] mask = aesEncryptBlock(w, j0, nr);
-  u8[] t = u8[16]();
+  u8[] t = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { t[i] = s[i] ^ mask[i]; }
   return t;
 }

@@ -19,5 +19,5 @@ i32 countRects(Shape[] shapes) {
   return n;
 }
 export i32 f() {
-  return countRects(Shape[](Shape.Rect(1.0, 1.0), Shape.Point, Shape.Point));
+  return countRects([Shape.Rect(1.0, 1.0), Shape.Point, Shape.Point]);
 }

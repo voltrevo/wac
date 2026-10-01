@@ -46,12 +46,12 @@ string program(string elem) {
 }
 
 string why(string elem) {
-  return emitDeclineFiles(string[](ENTRY), string[](program(elem)), ENTRY);
+  return emitDeclineFiles([ENTRY], [program(elem)], ENTRY);
 }
 
 /** How many bytes the build path produced for that element, or 0 if it declined. */
 i32 built(string elem) {
-  Built b = buildFiles(string[](ENTRY), string[](program(elem)), ENTRY);
+  Built b = buildFiles([ENTRY], [program(elem)], ENTRY);
   return b.wasm.len();
 }
 
@@ -64,7 +64,7 @@ i32 built(string elem) {
  */
 export string test_a_pending_of_an_array_emits_for_every_element_type() {
   T t = T.create();
-  string[] els = string[]("u8", "i8", "i32", "u32", "i64", "u64", "f32", "f64", "bool", "string");
+  string[] els = ["u8", "i8", "i32", "u32", "i64", "u64", "f32", "f64", "bool", "string"];
   for (i32 i = 0; i < els.len(); i++) {
     string said = why(els[i]);
     t.eqStr(said, "", "the emitter declined `Pending<" + els[i] + "[]>`");
@@ -102,7 +102,7 @@ export string test_the_reason_the_build_path_reports_is_the_one_the_emitter_reco
   // above now builds — so this asserts the plumbing without pinning a bug in place.
   string src = "export struct C { fn<fn<i32(i32)>(bool)> f0; }\n" +
                "export i32 main(C c) { return 0; }\n";
-  Built b = buildFiles(string[](ENTRY), string[](src), ENTRY);
+  Built b = buildFiles([ENTRY], [src], ENTRY);
   string sep = describeSeparator();
   i32 at = b.described.indexOf(sep);
   string blocked = at < 0 ? b.described : b.described.slice(0, at);

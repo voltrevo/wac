@@ -32,7 +32,7 @@ i32 nibble(i32 c) {
 export u8[] unhex(string s) {
   u8[] d = s.toBytes();
   if (d.len() % 2 != 0) { trap; }
-  u8[] out = u8[d.len() / 2]();
+  u8[] out = u8[].filled(d.len() / 2, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]); }
   return out;
 }
@@ -55,7 +55,7 @@ export struct Ints {
 
   void push(this, i32 v) {
     if (this.n == this.xs.len()) {
-      i32[] bigger = i32[this.xs.len() * 2 + 8]();
+      i32[] bigger = i32[].filled(this.xs.len() * 2 + 8, 0);
       for (i32 i = 0; i < this.n; i++) { bigger[i] = this.xs[i]; }
       this.xs = bigger;
     }
@@ -64,12 +64,12 @@ export struct Ints {
   }
 
   i32[] take(this) {
-    i32[] out = i32[this.n]();
+    i32[] out = i32[].filled(this.n, 0);
     for (i32 i = 0; i < this.n; i++) { out[i] = this.xs[i]; }
     return out;
   }
 
-  Ints create() { return Ints(i32[16](), 0); }
+  Ints create() { return Ints(i32[].filled(16, 0), 0); }
 }
 
 bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
@@ -132,7 +132,7 @@ export void writeDescriptor(Ints out, string type) {
 
 string[] splitTuple(string t) {
   string body = t.slice(1, t.len() - 1);
-  string[] out = string[64](fill: "");
+  string[] out = string[].filled(64, "");
   i32 n = 0;
   i32 depth = 0;
   i32 start = 0;
@@ -144,7 +144,7 @@ string[] splitTuple(string t) {
     } else if (b[i] == '(' || b[i] == '[') { depth = depth + 1; }
     else if (b[i] == ')' || b[i] == ']') { depth = depth - 1; }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

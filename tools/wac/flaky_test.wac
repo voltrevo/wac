@@ -43,11 +43,11 @@ import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 string SELF() { return "tools/wac/flaky_test.wac"; }
 
 /** Where an issue may live, both trees, open before closed. */
-string[] OPEN_DIRS() { return string[]("issues/lang/open", "issues/system/open"); }
-string[] CLOSED_DIRS() { return string[]("issues/lang/closed", "issues/system/closed"); }
+string[] OPEN_DIRS() { return ["issues/lang/open", "issues/system/open"]; }
+string[] CLOSED_DIRS() { return ["issues/lang/closed", "issues/system/closed"]; }
 
 string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
+  Exec r = cli.exec("git", ["ls-files"], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     core.warn("flaky: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
     trap;
@@ -87,7 +87,7 @@ string[] tagsIn(string text) {
   string marker = "[flaky ";
   i32 found = 0;
   for (i32 pass = 0; pass < 2; pass++) {
-    string[] out = string[found](fill: "");
+    string[] out = string[].filled(found, "");
     i32 at = 0;
     i32 i = 0;
     while (i + marker.len() + 5 <= text.len()) {
@@ -105,7 +105,7 @@ string[] tagsIn(string text) {
     }
     if (pass == 1) { return out; }
   }
-  return string[0]();
+  return string[]();
 }
 
 /**
@@ -119,7 +119,7 @@ string[] tagsIn(string text) {
  * caller decides what more than one means.
  */
 string[] issuesNamed(Cli cli, string[] dirs, string n) {
-  string[] hits = string[0]();
+  string[] hits = string[]();
   for (i32 i = 0; i < dirs.len(); i++) {
     // A directory that cannot be read is not "no such issue" — it is the failure this whole file
     // exists because of, so the canary below reports it separately.
@@ -128,7 +128,7 @@ string[] issuesNamed(Cli cli, string[] dirs, string n) {
     string[] here = names!;
     for (i32 k = 0; k < here.len(); k++) {
       if (!startsWith(here[k], n + "-")) { continue; }
-      string[] grown = string[hits.len() + 1](fill: "");
+      string[] grown = string[].filled(hits.len() + 1, "");
       for (i32 j = 0; j < hits.len(); j++) { grown[j] = hits[j]; }
       grown[hits.len()] = dirs[i] + "/" + here[k];
       hits = grown;
@@ -168,7 +168,7 @@ string unambiguousOpenNumber(Cli cli) {
 /** Tracked source that could carry a tag, minus this file. */
 Tag[] taggedFiles(Core core, Cli cli) {
   string[] paths = tracked(core, cli);
-  Tag[] out = Tag[0]();
+  Tag[] out = Tag[]();
   for (i32 i = 0; i < paths.len(); i++) {
     string p = paths[i];
     if (p == SELF()) { continue; }
@@ -181,7 +181,7 @@ Tag[] taggedFiles(Core core, Cli cli) {
     if (!contains(text, "[flaky ")) { continue; }
     string[] found = tagsIn(text);
     for (i32 k = 0; k < found.len(); k++) {
-      Tag[] grown = Tag[out.len() + 1](fill: Tag("", ""));
+      Tag[] grown = Tag[].filled(out.len() + 1, Tag("", ""));
       for (i32 j = 0; j < out.len(); j++) { grown[j] = out[j]; }
       grown[out.len()] = Tag(p, found[k]);
       out = grown;
@@ -249,8 +249,10 @@ export string test_the_tag_scanner_finds_what_it_should_and_nothing_else(Core co
     t.eqStr(got[2], "0107", "third");
   }
   // The shapes that are not a tag: too few digits, too many, no bracket, and the bare word.
-  string[] no = string[]("[flaky 082]", "[flaky 01234]", "[flaky 0082", "flaky 0082]", "[flaky ]",
-                         "[flaky abcd]");
+  string[] no = [
+                         "[flaky 082]", "[flaky 01234]", "[flaky 0082", "flaky 0082]", "[flaky ]",
+                         "[flaky abcd]"
+  ];
   for (i32 i = 0; i < no.len(); i++) {
     t.eqI32(tagsIn(no[i]).len(), 0, "\"" + no[i] + "\" is not a tag");
   }
@@ -326,7 +328,7 @@ export string test_the_convention_is_written_down_where_somebody_would_look(Core
 /** ASCII lowercase, so "Flaky" in an issue's prose reads the same as "flaky". */
 string lower(string s) {
   u8[] b = s.toBytes();
-  u8[] out = u8[b.len()]();
+  u8[] out = u8[].filled(b.len(), 0);
   // No `as u8` on the sum: wacc declines that cast, and the repository's own idiom — see
   // `packages/tls/src/x509.wac`'s `lowerByte` — keeps the arithmetic in `i32` and lets the
   // element assignment narrow it. The value is 'a'..'z' either way, so nothing can be lost.

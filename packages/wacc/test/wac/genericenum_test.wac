@@ -16,8 +16,8 @@ const string PLAIN = "enum E {\n  A(i32 v), B\n\n" +
 
 /** Every diagnostic's message — field 4 of the wire. */
 string messages(string src) {
-  string[] lines = splitLines(diagnoseFiles(string[](ENTRY), string[](src), ENTRY));
-  string[] out = string[lines.len()](fill: "");
+  string[] lines = splitLines(diagnoseFiles([ENTRY], [src], ENTRY));
+  string[] out = string[].filled(lines.len(), "");
   for (i32 i = 0; i < lines.len(); i++) {
     i32 from = 0;
     i32 seen = 0;

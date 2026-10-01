@@ -17,7 +17,7 @@ export i32 blsFpStatus(u8[] a, u8[] b) {
 u8[] binary(u8[] a, u8[] b, i32 op) {
   u32[]? x = fpFromBytes(a);
   u32[]? y = fpFromBytes(b);
-  if ((x is null) || (y is null)) { return u8[0](); }
+  if ((x is null) || (y is null)) { return u8[](); }
   if (op == 0) { return fpToBytes(fpAdd(x!, y!)); }
   if (op == 1) { return fpToBytes(fpSub(x!, y!)); }
   return fpToBytes(fpMul(x!, y!));
@@ -29,12 +29,12 @@ export u8[] blsFpMul(u8[] a, u8[] b) { return binary(a, b, 2); }
 
 export u8[] blsFpNeg(u8[] a) {
   u32[]? x = fpFromBytes(a);
-  return (x is null) ? u8[0]() : fpToBytes(fpNeg(x!));
+  return (x is null) ? u8[]() : fpToBytes(fpNeg(x!));
 }
 
 export u8[] blsFpSquare(u8[] a) {
   u32[]? x = fpFromBytes(a);
-  return (x is null) ? u8[0]() : fpToBytes(fpSquare(x!));
+  return (x is null) ? u8[]() : fpToBytes(fpSquare(x!));
 }
 
 /** One's canonical encoding, which is also a check that Montgomery form round-trips. */
@@ -43,7 +43,7 @@ export u8[] blsFpOneBytes() { return fpToBytes(fpOne()); }
 /** `a` round-tripped through the form and back, which must be the identity. */
 export u8[] blsFpRoundTrip(u8[] a) {
   u32[]? x = fpFromBytes(a);
-  return (x is null) ? u8[0]() : fpToBytes(x!);
+  return (x is null) ? u8[]() : fpToBytes(x!);
 }
 
 /** Whether `a·1 == a` in the form — the one internal invariant worth asserting from here. */
@@ -68,17 +68,17 @@ import { Fp2, fp2Add, fp2Sub, fp2Mul, fp2Square, fp2Conjugate, fp2MulByU,
 /** `a⁻¹`, or empty when `a` is zero. */
 export u8[] blsFpInvert(u8[] a) {
   u32[]? x = fpFromBytes(a);
-  if (x is null) { return u8[0](); }
+  if (x is null) { return u8[](); }
   u32[]? r = fpInvert(x!);
-  return (r is null) ? u8[0]() : fpToBytes(r!);
+  return (r is null) ? u8[]() : fpToBytes(r!);
 }
 
 /** A square root, or empty when there is none — the two cases a caller must tell apart. */
 export u8[] blsFpSqrt(u8[] a) {
   u32[]? x = fpFromBytes(a);
-  if (x is null) { return u8[0](); }
+  if (x is null) { return u8[](); }
   u32[]? r = fpSqrt(x!);
-  return (r is null) ? u8[0]() : fpToBytes(r!);
+  return (r is null) ? u8[]() : fpToBytes(r!);
 }
 
 export bool blsFpLarger(u8[] a) {
@@ -92,7 +92,7 @@ Fp2? read2(u8[] c0, u8[] c1) { return fp2FromBytes(c1, c0); }
 export u8[] blsFp2Op(u8[] ac0, u8[] ac1, u8[] bc0, u8[] bc1, i32 op) {
   Fp2? a = read2(ac0, ac1);
   Fp2? b = read2(bc0, bc1);
-  if ((a is null) || (b is null)) { return u8[0](); }
+  if ((a is null) || (b is null)) { return u8[](); }
   Fp2 r = fp2Zero();
   if (op == 0) { r = fp2Add(a!, b!); }
   else if (op == 1) { r = fp2Sub(a!, b!); }
@@ -101,8 +101,8 @@ export u8[] blsFp2Op(u8[] ac0, u8[] ac1, u8[] bc0, u8[] bc1, i32 op) {
   else if (op == 4) { r = fp2Conjugate(a!); }
   else if (op == 5) { r = fp2MulByU(a!); }
   else if (op == 6) { r = fp2MulByNonresidue(a!); }
-  else { return u8[0](); }
-  u8[] out = u8[96]();
+  else { return u8[](); }
+  u8[] out = u8[].filled(96, 0);
   u8[] lo = fp2C0Bytes(r);
   u8[] hi = fp2C1Bytes(r);
   for (i32 i = 0; i < 48; i++) { out[i] = lo[i]; out[48 + i] = hi[i]; }
@@ -111,7 +111,7 @@ export u8[] blsFp2Op(u8[] ac0, u8[] ac1, u8[] bc0, u8[] bc1, i32 op) {
 
 export u8[] blsFp2Norm(u8[] ac0, u8[] ac1) {
   Fp2? a = read2(ac0, ac1);
-  return (a is null) ? u8[0]() : fpToBytes(fp2Norm(a!));
+  return (a is null) ? u8[]() : fpToBytes(fp2Norm(a!));
 }
 
 /** `1·1 == 1` in Fp2 — a shape check on the identity, not a correctness claim. */
@@ -127,8 +127,8 @@ import { Fp6, Fp12, fp6Mul, fp6Square, fp6MulByV, fp6Invert, fp6Frobenius, fp6Ze
          fp12Equals, fp12IsOne, fp12CyclotomicSquare } from "../../src/fp12.wac";
 
 Fp2? at2(u8[] s, i32 i) {
-  u8[] c0 = u8[48]();
-  u8[] c1 = u8[48]();
+  u8[] c0 = u8[].filled(48, 0);
+  u8[] c1 = u8[].filled(48, 0);
   for (i32 k = 0; k < 48; k++) {
     c0[k] = s[96 * i + k];
     c1[k] = s[96 * i + 48 + k];
@@ -148,8 +148,8 @@ Fp6? read6(u8[] s) {
 
 Fp12? read12(u8[] s) {
   if (s.len() != 576) { return null; }
-  u8[] lo = u8[288]();
-  u8[] hi = u8[288]();
+  u8[] lo = u8[].filled(288, 0);
+  u8[] hi = u8[].filled(288, 0);
   for (i32 k = 0; k < 288; k++) { lo[k] = s[k]; hi[k] = s[288 + k]; }
   Fp6? a = read6(lo);
   Fp6? b = read6(hi);
@@ -167,7 +167,7 @@ void write2(u8[] out, i32 i, Fp2 a) {
 }
 
 u8[] bytes6(Fp6 a) {
-  u8[] out = u8[288]();
+  u8[] out = u8[].filled(288, 0);
   write2(out, 0, a.c0);
   write2(out, 1, a.c1);
   write2(out, 2, a.c2);
@@ -175,7 +175,7 @@ u8[] bytes6(Fp6 a) {
 }
 
 u8[] bytes12(Fp12 a) {
-  u8[] out = u8[576]();
+  u8[] out = u8[].filled(576, 0);
   u8[] lo = bytes6(a.c0);
   u8[] hi = bytes6(a.c1);
   for (i32 k = 0; k < 288; k++) { out[k] = lo[k]; out[288 + k] = hi[k]; }
@@ -186,33 +186,33 @@ u8[] bytes12(Fp12 a) {
 export u8[] blsFp6Op(u8[] a, u8[] b, i32 op) {
   Fp6? x = read6(a);
   Fp6? y = read6(b);
-  if ((x is null) || (y is null)) { return u8[0](); }
+  if ((x is null) || (y is null)) { return u8[](); }
   if (op == 0) { return bytes6(fp6Mul(x!, y!)); }
   if (op == 1) { return bytes6(fp6Square(x!)); }
   if (op == 2) { return bytes6(fp6MulByV(x!)); }
   if (op == 3) {
     Fp6? r = fp6Invert(x!);
-    return (r is null) ? u8[0]() : bytes6(r!);
+    return (r is null) ? u8[]() : bytes6(r!);
   }
   if (op >= 4 && op <= 6) { return bytes6(fp6Frobenius(x!, op - 3)); }
-  return u8[0]();
+  return u8[]();
 }
 
 /** Fp12 ops: 0 mul, 1 square, 2 conjugate, 3 invert, 4..6 Frobenius at 1..3, 7 cyclotomic square. */
 export u8[] blsFp12Op(u8[] a, u8[] b, i32 op) {
   Fp12? x = read12(a);
   Fp12? y = read12(b);
-  if ((x is null) || (y is null)) { return u8[0](); }
+  if ((x is null) || (y is null)) { return u8[](); }
   if (op == 0) { return bytes12(fp12Mul(x!, y!)); }
   if (op == 1) { return bytes12(fp12Square(x!)); }
   if (op == 2) { return bytes12(fp12Conjugate(x!)); }
   if (op == 3) {
     Fp12? r = fp12Invert(x!);
-    return (r is null) ? u8[0]() : bytes12(r!);
+    return (r is null) ? u8[]() : bytes12(r!);
   }
   if (op >= 4 && op <= 6) { return bytes12(fp12Frobenius(x!, op - 3)); }
   if (op == 7) { return bytes12(fp12CyclotomicSquare(x!)); }
-  return u8[0]();
+  return u8[]();
 }
 
 /** `a · a⁻¹ == 1` in Fp12 — a shape check, not the correctness oracle. */
@@ -249,22 +249,22 @@ export i32 blsG1Status(u8[] s) {
 /** The affine x of a decompressed point, or empty. */
 export u8[] blsG1X(u8[] s) {
   G1? p = g1FromBytes(s);
-  if (p is null) { return u8[0](); }
+  if (p is null) { return u8[](); }
   u32[]? x = g1AffineX(p!);
-  return (x is null) ? u8[0]() : fpToBytes(x!);
+  return (x is null) ? u8[]() : fpToBytes(x!);
 }
 
 export u8[] blsG1Y(u8[] s) {
   G1? p = g1FromBytes(s);
-  if (p is null) { return u8[0](); }
+  if (p is null) { return u8[](); }
   u32[]? y = g1AffineY(p!);
-  return (y is null) ? u8[0]() : fpToBytes(y!);
+  return (y is null) ? u8[]() : fpToBytes(y!);
 }
 
 /** Re-compressing a decompressed point must give the same bytes back. */
 export u8[] blsG1RoundTrip(u8[] s) {
   G1? p = g1FromBytes(s);
-  return (p is null) ? u8[0]() : g1Compress(p!);
+  return (p is null) ? u8[]() : g1Compress(p!);
 }
 
 /** `k·G` compressed, for a scalar given as eight little-endian words. */
@@ -307,10 +307,10 @@ export i32 blsG2Status(u8[] s) {
 /** `x.c0 || x.c1` of a decompressed point, 96 bytes, or empty. */
 export u8[] blsG2X(u8[] s) {
   G2? p = g2FromBytes(s);
-  if (p is null) { return u8[0](); }
+  if (p is null) { return u8[](); }
   Fp2? x = g2AffineX(p!);
-  if (x is null) { return u8[0](); }
-  u8[] out = u8[96]();
+  if (x is null) { return u8[](); }
+  u8[] out = u8[].filled(96, 0);
   u8[] c0 = fp2C0Bytes(x!);
   u8[] c1 = fp2C1Bytes(x!);
   for (i32 i = 0; i < 48; i++) { out[i] = c0[i]; out[48 + i] = c1[i]; }
@@ -319,10 +319,10 @@ export u8[] blsG2X(u8[] s) {
 
 export u8[] blsG2Y(u8[] s) {
   G2? p = g2FromBytes(s);
-  if (p is null) { return u8[0](); }
+  if (p is null) { return u8[](); }
   Fp2? y = g2AffineY(p!);
-  if (y is null) { return u8[0](); }
-  u8[] out = u8[96]();
+  if (y is null) { return u8[](); }
+  u8[] out = u8[].filled(96, 0);
   u8[] c0 = fp2C0Bytes(y!);
   u8[] c1 = fp2C1Bytes(y!);
   for (i32 i = 0; i < 48; i++) { out[i] = c0[i]; out[48 + i] = c1[i]; }
@@ -331,7 +331,7 @@ export u8[] blsG2Y(u8[] s) {
 
 export u8[] blsG2RoundTrip(u8[] s) {
   G2? p = g2FromBytes(s);
-  return (p is null) ? u8[0]() : g2Compress(p!);
+  return (p is null) ? u8[]() : g2Compress(p!);
 }
 
 export u8[] blsG2MulGenerator(u32[] k) { return g2Compress(g2Mul(g2Generator(), k)); }
@@ -361,7 +361,7 @@ export u8[] blsExpandMessage(u8[] msg, u8[] dst, i32 len) {
 /** The two Fp2 elements, flattened as u0.c0 || u0.c1 || u1.c0 || u1.c1. */
 export u8[] blsHashToField(u8[] msg, u8[] dst) {
   Fp2[] u = hashToFieldFp2(msg, dst);
-  u8[] out = u8[192]();
+  u8[] out = u8[].filled(192, 0);
   for (i32 i = 0; i < 2; i++) {
     u8[] c0 = fp2C0Bytes(u[i]);
     u8[] c1 = fp2C1Bytes(u[i]);
@@ -380,12 +380,12 @@ import { mapToCurveG2, hashToG2 } from "../../src/map.wac";
 /** `map_to_curve(u)` as affine x || y, 192 bytes, each Fp2 as c0 || c1. */
 export u8[] blsMapToCurve(u8[] uc0, u8[] uc1) {
   Fp2? u = fp2FromBytes(uc1, uc0);
-  if (u is null) { return u8[0](); }
+  if (u is null) { return u8[](); }
   G2 q = mapToCurveG2(u!);
   Fp2? x = g2AffineX(q);
   Fp2? y = g2AffineY(q);
-  if ((x is null) || (y is null)) { return u8[0](); }
-  u8[] out = u8[192]();
+  if ((x is null) || (y is null)) { return u8[](); }
+  u8[] out = u8[].filled(192, 0);
   u8[] xc0 = fp2C0Bytes(x!);
   u8[] xc1 = fp2C1Bytes(x!);
   u8[] yc0 = fp2C0Bytes(y!);
@@ -409,8 +409,8 @@ export u8[] blsHashToG2(u8[] msg, u8[] dst) {
   G2 p = hashToG2(msg, dst);
   Fp2? x = g2AffineX(p);
   Fp2? y = g2AffineY(p);
-  if ((x is null) || (y is null)) { return u8[0](); }
-  u8[] out = u8[192]();
+  if ((x is null) || (y is null)) { return u8[](); }
+  u8[] out = u8[].filled(192, 0);
   u8[] xc0 = fp2C0Bytes(x!);
   u8[] xc1 = fp2C1Bytes(x!);
   u8[] yc0 = fp2C0Bytes(y!);
@@ -436,12 +436,12 @@ import { millerLoop, millerLoopTwo, finalExponentiate, pairing } from "../../src
 export u8[] blsMillerLoop(u8[] g1c, u8[] g2c) {
   G1? p = g1FromBytes(g1c);
   G2? q = g2FromBytes(g2c);
-  if ((p is null) || (q is null)) { return u8[0](); }
+  if ((p is null) || (q is null)) { return u8[](); }
   u32[]? px = g1AffineX(p!);
   u32[]? py = g1AffineY(p!);
   Fp2? qx = g2AffineX(q!);
   Fp2? qy = g2AffineY(q!);
-  if ((px is null) || (py is null) || (qx is null) || (qy is null)) { return u8[0](); }
+  if ((px is null) || (py is null) || (qx is null) || (qy is null)) { return u8[](); }
   return bytes12(millerLoop(px!, py!, qx!, qy!));
 }
 
@@ -449,9 +449,9 @@ export u8[] blsMillerLoop(u8[] g1c, u8[] g2c) {
 export u8[] blsPairing(u8[] g1c, u8[] g2c) {
   G1? p = g1FromBytes(g1c);
   G2? q = g2FromBytes(g2c);
-  if ((p is null) || (q is null)) { return u8[0](); }
+  if ((p is null) || (q is null)) { return u8[](); }
   Fp12? e = pairing(p!, q!);
-  return (e is null) ? u8[0]() : bytes12(e!);
+  return (e is null) ? u8[]() : bytes12(e!);
 }
 
 /** Whether `e(P,Q)·e(-P,Q) == 1`, the one identity that needs no external value. */
@@ -483,7 +483,7 @@ export u8[] blsMillerLoopTwo(u8[] a1, u8[] b1, u8[] a2, u8[] b2) {
   G2? q1 = g2FromBytes(b1);
   G1? p2 = g1FromBytes(a2);
   G2? q2 = g2FromBytes(b2);
-  if ((p1 is null) || (q1 is null) || (p2 is null) || (q2 is null)) { return u8[0](); }
+  if ((p1 is null) || (q1 is null) || (p2 is null) || (q2 is null)) { return u8[](); }
   u32[]? x1 = g1AffineX(p1!);
   u32[]? y1 = g1AffineY(p1!);
   Fp2? u1 = g2AffineX(q1!);
@@ -492,8 +492,8 @@ export u8[] blsMillerLoopTwo(u8[] a1, u8[] b1, u8[] a2, u8[] b2) {
   u32[]? y2 = g1AffineY(p2!);
   Fp2? u2 = g2AffineX(q2!);
   Fp2? v2 = g2AffineY(q2!);
-  if ((x1 is null) || (y1 is null) || (u1 is null) || (v1 is null)) { return u8[0](); }
-  if ((x2 is null) || (y2 is null) || (u2 is null) || (v2 is null)) { return u8[0](); }
+  if ((x1 is null) || (y1 is null) || (u1 is null) || (v1 is null)) { return u8[](); }
+  if ((x2 is null) || (y2 is null) || (u2 is null) || (v2 is null)) { return u8[](); }
   return bytes12(millerLoopTwo(x1!, y1!, u1!, v1!, x2!, y2!, u2!, v2!));
 }
 

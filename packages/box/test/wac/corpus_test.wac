@@ -26,7 +26,7 @@ struct Ran {
 
 /** One script through a shell that has box's sixty applets, inside this process. */
 Ran runScript(Core core, Cli cli, string cwd, string script) {
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), cwd, false);
+  Frame f = Frame.of(["sh", "-c", script], u8[](), cwd, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
@@ -81,7 +81,7 @@ export string test_every_scripted_expectation_still_holds_through_the_applets(Co
  */
 export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
   T t = T.create();
-  string[] canaries = string[](
+  string[] canaries = [
     "seq 1 5 | head -2",
     "echo a b | tr ' ' '-'",
     "echo one two three | wc -w",
@@ -90,14 +90,16 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
     "seq 1 20 | grep 7 | wc -l",
     "echo a b c | cut -d' ' -f2",
     "printf 'x\\nx\\ny\\n' | uniq -c"
-  );
+  ];
   i32 checked = 0;
   for (i32 i = 0; i < canaries.len(); i++) {
     string script = canaries[i];
     Exec r = cli.exec("env",
-                      string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                               "LC_ALL=C.UTF-8", "bash", "-c", script),
-                      u8[0]()).wait();
+                      [
+                               "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                               "LC_ALL=C.UTF-8", "bash", "-c", script
+                      ],
+                      u8[]()).wait();
     if (!r.ran()) {
       t.isTrue(i > 0, "bash would not start: " + r.error);
       return t.report();

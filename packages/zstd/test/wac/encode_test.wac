@@ -32,7 +32,7 @@ i32 firstDifference(u8[] a, u8[] b) {
 }
 
 u8[] prng(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   i32 s = seed;
   for (i32 i = 0; i < n; i++) {
     s = s ^ (s << 13);
@@ -45,7 +45,7 @@ u8[] prng(i32 n, i32 seed) {
 
 u8[] repeatedBytes(string unit, i32 times) {
   u8[] one = unit.toBytes();
-  u8[] out = u8[one.len() * times]();
+  u8[] out = u8[].filled(one.len() * times, 0);
   for (i32 i = 0; i < times; i++) {
     for (i32 k = 0; k < one.len(); k++) { out[i * one.len() + k] = one[k]; }
   }
@@ -55,7 +55,7 @@ u8[] repeatedBytes(string unit, i32 times) {
 u8[] concat(u8[][] parts) {
   i32 total = 0;
   for (i32 i = 0; i < parts.len(); i++) { total = total + parts[i].len(); }
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 at = 0;
   for (i32 i = 0; i < parts.len(); i++) {
     for (i32 k = 0; k < parts[i].len(); k++) { out[at + k] = parts[i][k]; }
@@ -81,18 +81,20 @@ u8[] jsonItems(i32 n, bool withActive) {
 }
 
 string[] corpusNames() {
-  return string[]("empty", "one byte", "two bytes", "under the minimum match", "no repetition",
+  return [
+                  "empty", "one byte", "two bytes", "under the minimum match", "no repetition",
                   "one match", "a match at the very end", "short repetition", "prose", "json",
                   "one long run", "random", "multi-block", "exactly one block",
-                  "one byte over a block", "mixed", "every byte value");
+                  "one byte over a block", "mixed", "every byte value"
+  ];
 }
 
 /** Chosen for the encoder paths they reach: no matches, only matches, block boundaries. */
 u8[][] corpus() {
-  u8[] everyByte = u8[100000]();
+  u8[] everyByte = u8[].filled(100000, 0);
   for (i32 i = 0; i < everyByte.len(); i++) { everyByte[i] = i & 0xff; }
-  return u8[][](
-    u8[0](),
+  return [
+    u8[](),
     "x".toBytes(),
     "ab".toBytes(),
     // Shorter than the minimum match, so nothing can match at all.
@@ -103,7 +105,7 @@ u8[][] corpus() {
     "hello hello hello hello world".toBytes(),
     repeatedBytes("the quick brown fox jumps over the lazy dog. ", 300),
     jsonItems(1500, false),
-    u8[50000](fill: 0x61),
+    u8[].filled(50000, 0x61),
     // Incompressible, so every block falls back to raw.
     prng(200000, 7),
     // Past one block, so the block loop runs and a match can reach across the boundary.
@@ -112,8 +114,9 @@ u8[][] corpus() {
     prng(131072, 3),
     prng(131073, 5),
     // Compressible and incompressible together, so both block kinds appear in one frame.
-    concat(u8[][](repeatedBytes("aaaa", 20000), prng(60000, 11), repeatedBytes("bbbb", 20000))),
-    everyByte);
+    concat([repeatedBytes("aaaa", 20000), prng(60000, 11), repeatedBytes("bbbb", 20000)]),
+    everyByte
+  ];
 }
 
 /**
@@ -146,7 +149,7 @@ void checkAgainstReference(T t, Cli cli, u8[][] frames, u8[][] want, string[] na
 export string test_zstd_decompresses_what_we_produce_back_to_the_original(Core core, Cli cli) {
   T t = T.create();
   u8[][] cases = corpus();
-  u8[][] frames = u8[][cases.len()](fill: u8[0]());
+  u8[][] frames = u8[][].filled(cases.len(), u8[]());
   for (i32 i = 0; i < cases.len(); i++) { frames[i] = compress(cases[i]); }
   checkAgainstReference(t, cli, frames, cases, corpusNames());
   return t.report();
@@ -189,13 +192,16 @@ export string test_data_that_obviously_compresses_obviously_compresses() {
   // A canary rather than a threshold: these are inputs where any working match finder wins by a
   // wide margin, so the numbers are loose enough to survive a change of strategy and tight
   // enough to catch a match finder that has stopped finding matches.
-  string[] names = string[]("one repeated byte", "one repeated phrase",
-                            "a long file of one line");
-  u8[][] cases = u8[][](
-    u8[50000](fill: 0x61),
+  string[] names = [
+                            "one repeated byte", "one repeated phrase",
+                            "a long file of one line"
+  ];
+  u8[][] cases = [
+    u8[].filled(50000, 0x61),
     repeatedBytes("the quick brown fox. ", 5000),
-    repeatedBytes("2026-08-02 INFO nothing happened\n", 3000));
-  i32[] ceilings = i32[](200, 300, 400);
+    repeatedBytes("2026-08-02 INFO nothing happened\n", 3000)
+  ];
+  i32[] ceilings = [200, 300, 400];
   for (i32 i = 0; i < cases.len(); i++) {
     i32 got = compress(cases[i]).len();
     t.isTrue(got <= ceilings[i],
@@ -210,8 +216,8 @@ export string test_fuzz_every_shape_and_size_round_trips_through_zstd(Core core,
   // Sizes and shapes rather than content: the block boundary, the minimum match, and the last
   // few bytes of a buffer are where an encoder goes wrong, and those are functions of length.
   Rng rng = Rng(0xBEEF);
-  u8[][] inputs = u8[][80](fill: u8[0]());
-  string[] names = string[80](fill: "");
+  u8[][] inputs = u8[][].filled(80, u8[]());
+  string[] names = string[].filled(80, "");
   for (i32 i = 0; i < 80; i++) {
     i32 n = rng.upto(6000);
     i32 kind = rng.upto(4);
@@ -219,25 +225,25 @@ export string test_fuzz_every_shape_and_size_round_trips_through_zstd(Core core,
       inputs[i] = prng(n, rng.x);
       names[i] = itoa(n) + " random bytes";
     } else if (kind == 1) {
-      inputs[i] = u8[n](fill: 0x41 + rng.upto(26));
+      inputs[i] = u8[].filled(n, 0x41 + rng.upto(26));
       names[i] = itoa(n) + " of one byte";
     } else if (kind == 2) {
       string unit = "abcdefghij".slice(0, 1 + rng.upto(9));
       u8[] one = unit.toBytes();
-      u8[] data = u8[n]();
+      u8[] data = u8[].filled(n, 0);
       for (i32 k = 0; k < n; k++) { data[k] = one[k % one.len()]; }
       inputs[i] = data;
       names[i] = itoa(n) + " of \"" + unit + "\"";
     } else {
       // Repetition with noise, which is where matches and literals mix.
       u8[] noise = prng(n, rng.x);
-      u8[] data = u8[n]();
+      u8[] data = u8[].filled(n, 0);
       for (i32 k = 0; k < n; k++) { data[k] = k % 20 < 15 ? 0x61 + (k % 5) : noise[k]; }
       inputs[i] = data;
       names[i] = itoa(n) + " mixed";
     }
   }
-  u8[][] frames = u8[][inputs.len()](fill: u8[0]());
+  u8[][] frames = u8[][].filled(inputs.len(), u8[]());
   for (i32 i = 0; i < inputs.len(); i++) { frames[i] = compress(inputs[i]); }
   checkAgainstReference(t, cli, frames, inputs, names);
   return t.report();
@@ -267,9 +273,9 @@ export string test_fitted_tables_are_worth_what_they_claim_to_be() {
     logs.pushAll(("2026-08-02T10:00:00Z INFO request id=" + itoa(i) +
                   " path=/api/items status=200 ms=" + itoa(i % 97) + "\n").toBytes());
   }
-  string[] names = string[]("json", "logs");
-  u8[][] cases = u8[][](jsonItems(3000, true), logs.take());
-  i32[] ceilings = i32[](18000, 28000);
+  string[] names = ["json", "logs"];
+  u8[][] cases = [jsonItems(3000, true), logs.take()];
+  i32[] ceilings = [18000, 28000];
   for (i32 i = 0; i < cases.len(); i++) {
     i32 got = compress(cases[i]).len();
     t.isTrue(got <= ceilings[i],
@@ -292,7 +298,7 @@ export string test_literals_are_coded_when_that_helps_and_left_alone_when_it_doe
 
   // A long run of one byte: the matcher covers all of it but the first three, so the literals
   // that survive are three copies of the same byte — one distinct value, which is what RLE is.
-  t.isTrue(frameShapes(compress(u8[50000](fill: 0x61))).hasKind("rle"),
+  t.isTrue(frameShapes(compress(u8[].filled(50000, 0x61))).hasKind("rle"),
            "one repeated literal byte");
 
   // A narrow alphabet with high entropy and matches too short to cover it — the shape Huffman
@@ -355,9 +361,9 @@ export string test_literals_sections_at_every_header_width(Core core, Cli cli) {
   // So: inputs built to land in each width, and checked against zstd rather than ourselves.
   u8[] alphabet = base64Alphabet().toBytes();
   Rng rng = Rng(0x51ded);
-  i32[] sizes = i32[](800, 5000, 20000, 90000, 300000, 900000);
-  u8[][] inputs = u8[][sizes.len()](fill: u8[0]());
-  string[] names = string[sizes.len()](fill: "");
+  i32[] sizes = [800, 5000, 20000, 90000, 300000, 900000];
+  u8[][] inputs = u8[][].filled(sizes.len(), u8[]());
+  string[] names = string[].filled(sizes.len(), "");
   for (i32 c = 0; c < sizes.len(); c++) {
     // High-entropy base64 with a repeated marker: the marker matches, everything else is a
     // literal, so literal volume tracks the input size closely.
@@ -369,7 +375,7 @@ export string test_literals_sections_at_every_header_width(Core core, Cli cli) {
     inputs[c] = out.take();
     names[c] = itoa(sizes[c]) + " symbols";
   }
-  u8[][] frames = u8[][sizes.len()](fill: u8[0]());
+  u8[][] frames = u8[][].filled(sizes.len(), u8[]());
   for (i32 i = 0; i < sizes.len(); i++) { frames[i] = compress(inputs[i]); }
   checkAgainstReference(t, cli, frames, inputs, names);
   // And our own decoder, which has to agree with zstd about the same bytes.

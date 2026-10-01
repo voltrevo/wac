@@ -48,11 +48,11 @@ export struct B {
   u8[] data;
   i32 len;
 
-  B create() { return B(u8[64](), 0); }
+  B create() { return B(u8[].filled(64, 0), 0); }
 
   void byte(this, i32 v) {
     if (this.len >= this.data.len()) {
-      u8[] bigger = u8[this.data.len() * 2]();
+      u8[] bigger = u8[].filled(this.data.len() * 2, 0);
       for (i32 i = 0; i < this.len; i++) { bigger[i] = this.data[i]; }
       this.data = bigger;
     }
@@ -247,7 +247,7 @@ bool isArrayType(string t) {
 /** A wac type's element, for an array. */
 string elemOf(string t) {
   u8[] a = t.toBytes();
-  u8[] out = u8[a.len() - 2]();
+  u8[] out = u8[].filled(a.len() - 2, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
   return string.fromBytes(out);
 }
@@ -463,7 +463,7 @@ void registerNamed(Env env, string t) {
     env.arrayType(t);
     // **And whatever the elements are.** `i32?[]` needs its element's box, and the element of a
     // nested array is another array — so recursing here covers both, and registering a type twice is
-    // free. Without it, `i32?[] xs = i32?[3]();` was "a type this emitter names only while emitting".
+    // free. Without it, `i32?[] xs = i32?[].defaulted(3);` was "a type this emitter names only while emitting".
     registerNamed(env, t.slice(0, t.len() - 2));
   }
   if (isFuncrefType(t)) { env.sigType(t); }
@@ -644,7 +644,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(cs, cl, nameTok) != raw) { continue; }
         if (params.len() != args.len()) { return ""; }
-        string[] bound = string[typeParams.len()]();
+        string[] bound = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < args.len(); i++) {
           string at = typeOfE(src, lexed, env, args[i]);
           // **A literal has no type of its own and here there is no slot to take one from**: the
@@ -926,7 +926,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
           if (methods[m].typeParams.len() == 0) { continue; }
           if (methods[m].params.len() != args.len()) { return ""; }
           i32 opushed = pushSubstitution(env, ms, ml, typeParams, ownerInst, tmpl);
-          string[] bound = string[methods[m].typeParams.len()]();
+          string[] bound = string[].defaulted(methods[m].typeParams.len());
           bool ok = true;
           for (i32 i = 0; i < args.len(); i++) {
             string at = typeOfE(src, lexed, env, args[i]);
@@ -1115,7 +1115,7 @@ bool isFuncrefType(string t) {
 /**
  * The return type inside `fn[R(A,B)]`, and the `i`th parameter — by scanning rather than splitting.
  *
- * A signature nests: `fn[i32[](fn[i32(i32)])]` has brackets and parentheses inside both halves, so
+ * A signature nests: `fn[[fn[i32(i32)]]]` has brackets and parentheses inside both halves, so
  * the split has to count depth. Getting this wrong is a type index that does not exist rather than a
  * wrong answer, but it is the kind of wrong that surfaces four functions away.
  */
@@ -2725,12 +2725,12 @@ export struct Env {
   }
 
   Env create() {
-    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[16384](), 0,
-               string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
+    return Env(string[].defaulted(2048), string[].defaulted(2048), 0, 0, 0, -1, -1, string[].defaulted(1024), 0, string[].defaulted(16384), 0,
+               string[].defaulted(256), string[].defaulted(256), 0, "", "", string[].defaulted(64), 0, string[].defaulted(512), string[].defaulted(512), 0, false,
                "", "",
-               string[512](), i32[512](), string[512](), Expr?[512](), 0,
-               string[1024](), 0,
-               string[16384](), string[16384](), string[16384](), bool[16384](), 0,
+               string[].defaulted(512), i32[].filled(512, 0), string[].defaulted(512), Expr?[].defaulted(512), 0,
+               string[].defaulted(1024), 0,
+               string[].defaulted(16384), string[].defaulted(16384), string[].defaulted(16384), bool[].filled(16384, false), 0,
 // **The function table, raised from 4096 on 2026-08-25.** `issues/system/0257c` makes `wac` one
                // program containing the compiler, the shell and the fetcher, and `wac sh` wires box's
                // sixty-five applets: the command's graph goes from 44 files to 218 and this declined
@@ -2746,34 +2746,34 @@ export struct Env {
                // shape and wants to be `Vec`. Identified by matching the *type signature* of the
                // struct's fields against this argument list, after raising a different group of
                // `string[4096]`s by eye and watching the build fail unchanged.
-               string[16384](), string[16384](), string[65536](), i32[16384](), i32[16384](), 0,
-               bool[16384](), i32[16384](), 0,
-               0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
-               string[8192](), i32[8192](), string[8192](), bool[8192](), 0,
-               string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
+               string[].defaulted(16384), string[].defaulted(16384), string[].defaulted(65536), i32[].filled(16384, 0), i32[].filled(16384, 0), 0,
+               bool[].filled(16384, false), i32[].filled(16384, 0), 0,
+               0, i32[].filled(4096, 0), i32[].filled(4096, 0), string[].defaulted(4096), string[].defaulted(4096), 0,
+               string[].defaulted(8192), i32[].filled(8192, 0), string[].defaulted(8192), bool[].filled(8192, false), 0,
+               string[].defaulted(2048), string[].defaulted(2048), i32[].filled(2048, 0), i32[].filled(2048, 0), i32[].filled(2048, 0), 0, false, false, "",
                // **`funcRecv` and `funcMethodGeneric`, raised with the rest of the function table
                // on 2026-08-25** — they are indexed by `funcCount` too, and they are *here* rather
                // than beside it because the struct declares them ninety fields later. That is the
                // whole reason the first raise looked complete and was not: matching the contiguous
                // block of `string[4096]`s found six of the eight, and the two stragglers then took
                // `funcCount` past 4096 and off the end. See `addFunc`, which now checks all eight.
-               string[1024](), i32[1024](), null, false, string[16384](), bool[16384](),
-               string[256](), 0, Ty?[16384](), string[1024](), string[16384](), "", false,
-               false, 0, "", string[256](), 0,
-               string[256](), string[256](), 0, "", false, 0, -1,
-               bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
-               Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
-               string[1024](fill: ""), i32[1024](), i32[1024](), string[1024](fill: ""),
-               i32[1024](), 0, 0,
-               string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
-               string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
-               0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
-               false, string[1024](fill: ""), string[1024](fill: ""), 0,
-               i32[4096](), i32[4096](), i32[4096](), string[4096](fill: ""), 0,
-               i32[4096](), i32[4096](), i32[4096](), 0,
-               bool[4096](), 0 - 1, B.create(), false, false, 0 - 1,
-               i32[16384](), i32[4096](), u8[][0](fill: u8[0]()), Lexed?[0](),
-               Decl[](), i32[0]());
+               string[].defaulted(1024), i32[].filled(1024, 0), null, false, string[].defaulted(16384), bool[].filled(16384, false),
+               string[].defaulted(256), 0, Ty?[].defaulted(16384), string[].defaulted(1024), string[].defaulted(16384), "", false,
+               false, 0, "", string[].defaulted(256), 0,
+               string[].defaulted(256), string[].defaulted(256), 0, "", false, 0, -1,
+               bool[].filled(16384, false), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
+               Param[][].filled(1024, Param[]()), Stmt[][].filled(1024, Stmt[]()),
+               string[].filled(1024, ""), i32[].filled(1024, 0), i32[].filled(1024, 0), string[].filled(1024, ""),
+               i32[].filled(1024, 0), 0, 0,
+               string[].filled(4096, ""), string[].filled(4096, ""), i32[].filled(4096, 0), i32[].filled(4096, 0), 0,
+               string[].filled(32768, ""), string[].filled(32768, ""), i32[].filled(1024, 0),
+               0, 0, i32[].filled(64, 0), i32[].filled(64, 0), 0, -1, string[].filled(4096, ""), 0, bool[].filled(1024, false), bool[].filled(1024, false),
+               false, string[].filled(1024, ""), string[].filled(1024, ""), 0,
+               i32[].filled(4096, 0), i32[].filled(4096, 0), i32[].filled(4096, 0), string[].filled(4096, ""), 0,
+               i32[].filled(4096, 0), i32[].filled(4096, 0), i32[].filled(4096, 0), 0,
+               bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
+               i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
+               Decl[](), i32[]());
   }
 
   
@@ -2902,7 +2902,7 @@ export struct Env {
    */
   string filesDeclaring(const this, string name) {
     // `declFiles` holds the file *index*; `filePaths` is what that file was called.
-    string[] seen = string[16](fill: "");
+    string[] seen = string[].filled(16, "");
     i32 n = 0;
     for (i32 i = 0; i < this.declCount; i++) {
       if (this.declNames[i] != name || !this.declExported[i]) { continue; }
@@ -3025,9 +3025,9 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         collectArrayTypes(env, src, lexed, inner);
       }
       For(init, cond, update, inner): {
-        if (!(init is null)) { collectArrayTypes(env, src, lexed, Stmt[](init!)); }
+        if (!(init is null)) { collectArrayTypes(env, src, lexed, [init!] as Stmt[]); }
         if (!(cond is null)) { collectArrayTypesOfExpr(env, src, lexed, cond!); }
-        if (!(update is null)) { collectArrayTypes(env, src, lexed, Stmt[](update!)); }
+        if (!(update is null)) { collectArrayTypes(env, src, lexed, [update!] as Stmt[]); }
         collectArrayTypes(env, src, lexed, inner);
       }
       Switch(subject, cases): {
@@ -3218,20 +3218,20 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
   // **1024, and `linkFailure` says so when this fills.** One entry per file *to visit*, which is one
   // per import edge followed, so a program whose entry imports 1024 files fills it before the walk is
   // done. `linkQueueSize()` rather than a literal so the message cannot drift from the array.
-  string[] queue = string[linkQueueSize()]();
+  string[] queue = string[].defaulted(linkQueueSize());
   // **Who asked, and how they spelled it — parallel to `queue`.** When a queued file turns out not to
   // be supplied, the specifier that queued it was in the *importer's* source two iterations earlier,
   // and by then the queue holds only the resolved key. So the diagnostic could name the key and
   // nothing else. `issues/lang/0157`. Matching the key back to an import is not an option: it needs
   // resolution, which is the step that cannot be redone soundly for a mapped checkout.
-  string[] queueSpec = string[linkQueueSize()](fill: "");
-  string[] queueFrom = string[linkQueueSize()](fill: "");
-  string[] seen = string[1024]();
+  string[] queueSpec = string[].filled(linkQueueSize(), "");
+  string[] queueFrom = string[].filled(linkQueueSize(), "");
+  string[] seen = string[].defaulted(1024);
   // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
   // as they are read and turned into indices once every file has one.
-  string[] fromPath = string[8192]();
-  string[] toPath = string[8192]();
-  string[] edgeName = string[8192]();
+  string[] fromPath = string[].defaulted(8192);
+  string[] toPath = string[].defaulted(8192);
+  string[] edgeName = string[].defaulted(8192);
   i32 en = 0;
   i32 qn = 1;
   i32 sn = 0;
@@ -3418,7 +3418,7 @@ i32 declCountOf(string path, string source) {
  * something needs it rather than because a real module usually has one.
  */
 export u8[] emitModule(u8[] src) {
-  return emitModuleOf(src, -1, i32[1](), i32[1](), string[1](), string[1]());
+  return emitModuleOf(src, -1, i32[].filled(1, 0), i32[].filled(1, 0), string[].defaulted(1), string[].defaulted(1));
 }
 
 /**
@@ -3428,7 +3428,7 @@ export u8[] emitModule(u8[] src) {
  * else wrong is that case and no other, since every other reason has already been reported by name.
  */
 bool grewTypesWhileEmitting(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
-  return emitModuleOf(src, entryDecls, starts, edges, names, string[1]()).len() == 8;
+  return emitModuleOf(src, entryDecls, starts, edges, names, string[].defaulted(1)).len() == 8;
 }
 
 /**
@@ -3481,50 +3481,50 @@ export u8[] emitLinkedTraced(string[] paths, string[] sources, string entry) {
  * every run. `issues/lang/0059`.
  */
 export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, Res res, string entry, i32 slots) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
-  u8[][] srcs = u8[][1024](fill: u8[0]());
-  Lexed?[] lexeds = Lexed?[1024]();
-  Program?[] progs = Program?[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
+  u8[][] srcs = u8[][].filled(1024, u8[]());
+  Lexed?[] lexeds = Lexed?[].defaulted(1024);
+  Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return bareModule(); }
   Env env = Env.create();
   env.trace = true;
   env.traceSlots = slots;
-  return emitModuleOfInto(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts,
+  return emitModuleOfInto(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts,
                           edges, names, filePaths, false, true, env, srcs, lexeds, progs);
 }
 
 /** `index\tline\tcol\tkind` per point, in counter order. */
 export string covTableLinked(string[] paths, string[] sources, Res res, string entry) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
-  u8[][] srcs = u8[][1024](fill: u8[0]());
-  Lexed?[] lexeds = Lexed?[1024]();
-  Program?[] progs = Program?[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
+  u8[][] srcs = u8[][].filled(1024, u8[]());
+  Lexed?[] lexeds = Lexed?[].defaulted(1024);
+  Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return ""; }
   Env env = Env.create();
-  return covTableOf(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  return covTableOf(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, false, srcs, lexeds, progs);
 }
 
 /** `index\tline\tcol\tkind\tfile` per point of a *traced* build, which has the index points too. */
 export string traceTableLinked(string[] paths, string[] sources, Res res, string entry) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
-  u8[][] srcs = u8[][1024](fill: u8[0]());
-  Lexed?[] lexeds = Lexed?[1024]();
-  Program?[] progs = Program?[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
+  u8[][] srcs = u8[][].filled(1024, u8[]());
+  Lexed?[] lexeds = Lexed?[].defaulted(1024);
+  Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return ""; }
-  return covTableOf(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  return covTableOf(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, true, srcs, lexeds, progs);
 }
 
@@ -3593,16 +3593,16 @@ struct Front {
 
 /** `null` where the callers each used to return `""`: the graph did not link. */
 Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
-  u8[][] srcs = u8[][1024](fill: u8[0]());
-  Lexed?[] lexeds = Lexed?[1024]();
-  Program?[] progs = Program?[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
+  u8[][] srcs = u8[][].filled(1024, u8[]());
+  Lexed?[] lexeds = Lexed?[].defaulted(1024);
+  Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return null; }
-  return frontOfRawIn(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)),
+  return frontOfRawIn(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)),
                       starts, edges, names, filePaths, false, false, Env.create(),
                       srcs, lexeds, progs);
 }
@@ -3619,7 +3619,7 @@ string bindTypesOf(Front f) {
   Lexed lexed = f.lexed;
   Program prog = f.prog;
 
-  string[] bindStructs = string[512]();
+  string[] bindStructs = string[].defaulted(512);
   i32 n = collectBindStructs(env, src, lexed, prog, bindStructs, env.entryDecls);
   string out = "";
   // **The callbacks, in the order the imports are numbered.** `cb0` is this line's `0`, and a host
@@ -3859,8 +3859,8 @@ bool looksNormal(string p) {
 }
 
 string twoKeysForOneFile(string[] paths) {
-  string[] odd = string[paths.len()](fill: "");
-  string[] oddNorm = string[paths.len()](fill: "");
+  string[] odd = string[].filled(paths.len(), "");
+  string[] oddNorm = string[].filled(paths.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < paths.len(); i++) {
     // **A substring test before `normalisePath`, because this is on the link's hot path.** Calling
@@ -4069,16 +4069,16 @@ u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked
 
 u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bool checked, bool covered,
                      bool traced) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
-  u8[][] srcs = u8[][1024](fill: u8[0]());
-  Lexed?[] lexeds = Lexed?[1024]();
-  Program?[] progs = Program?[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
+  u8[][] srcs = u8[][].filled(1024, u8[]());
+  Lexed?[] lexeds = Lexed?[].defaulted(1024);
+  Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return bareModule(); }
-  return emitModuleOfWith(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  return emitModuleOfWith(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                           names, filePaths, checked, covered, traced, srcs, lexeds, progs);
 }
 
@@ -4095,17 +4095,17 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bo
  * instrument that says what `env.fullWhy` holds turns that into one reading.
  */
 export string emitDeclineLinked(string[] paths, string[] sources, Res res, string entry) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
-  u8[][] srcs = u8[][1024](fill: u8[0]());
-  Lexed?[] lexeds = Lexed?[1024]();
-  Program?[] progs = Program?[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
+  u8[][] srcs = u8[][].filled(1024, u8[]());
+  Lexed?[] lexeds = Lexed?[].defaulted(1024);
+  Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return "the graph did not link"; }
   Env env = Env.create();
-  emitModuleOfInto(u8[0](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  emitModuleOfInto(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
                    names, filePaths, false, false, env, srcs, lexeds, progs);
   if (env.fullWhy != "") { return env.fullWhy; }
   // **Ambiguity is a decline this could not say.** `emitModuleOfFront` bares out on
@@ -4342,7 +4342,7 @@ i32 capsPerLambda() { return 32; }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
 u8[] bareModule() {
-  u8[] out = u8[8]();
+  u8[] out = u8[].filled(8, 0);
   out[0] = 0;
   out[1] = 97;
   out[2] = 115;
@@ -4472,7 +4472,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   // for a single-file caller they are the only ones there are.
   Lexed lexed = lexeds.len() > 0 && (lexeds[0] is not null)
     ? lexeds[0]!
-    : Lexed(i32[0](), 0, i32[0](), 0, false);
+    : Lexed(i32[](), 0, i32[](), 0, false);
   Program prog = progs.len() > 0 && (progs[0] is not null) ? progs[0]! : Program(Decl[]());
 
   Env env = envIn;
@@ -4564,56 +4564,56 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   bool needsStrings = env.arrayCount > 0 && hasStringType(env);
   if (needsStrings) {
     env.arrayType("u8[]");
-    string[] two = string[2]();
+    string[] two = string[].defaulted(2);
     two[0] = "string";
     two[1] = "string";
     env.addFunc(" str_eq", "bool", two);
-    string[] two2 = string[2]();
+    string[] two2 = string[].defaulted(2);
     two2[0] = "string";
     two2[1] = "string";
     env.addFunc(" str_concat", "string", two2);
-    string[] one = string[1]();
+    string[] one = string[].defaulted(1);
     one[0] = "string";
     env.addFunc(" str_to_bytes", "u8[]", one);
-    string[] one2 = string[1]();
+    string[] one2 = string[].defaulted(1);
     one2[0] = "u8[]";
     env.addFunc(" str_from_bytes", "string", one2);
-    string[] idx = string[2]();
+    string[] idx = string[].defaulted(2);
     idx[0] = "string";
     idx[1] = "i32";
     env.addFunc(" str_idx", "string", idx);
-    string[] one3 = string[1]();
+    string[] one3 = string[].defaulted(1);
     one3[0] = "i32";
     env.addFunc(" str_fromcp", "string", one3);
-    string[] three = string[3]();
+    string[] three = string[].defaulted(3);
     three[0] = "string";
     three[1] = "i32";
     three[2] = "i32";
     env.addFunc(" str_slice", "string", three);
-    string[] two3 = string[2]();
+    string[] two3 = string[].defaulted(2);
     two3[0] = "string";
     two3[1] = "string";
     env.addFunc(" str_index_of", "i32", two3);
     // **Last, because it is emitted last.** A helper's index is its position in this list, and the
     // order here has to be the order below — registering the comparison in the middle and emitting
     // it at the end made every call after it reach the wrong function.
-    string[] cmp2 = string[2]();
+    string[] cmp2 = string[].defaulted(2);
     cmp2[0] = "string";
     cmp2[1] = "string";
     env.addFunc(" str_cmp", "i32", cmp2);
     // **Two of each, because a `string` and a `u8[]` are different wasm array types.** The alternative
     // is `s.isUtf8()` lowered as `str_is_utf8(str_to_bytes(s))`, which copies the whole string to look
     // at it — `toBytes` is a copy by specification, not a view. One emitter, two functions.
-    string[] oneStr = string[1]();
+    string[] oneStr = string[].defaulted(1);
     oneStr[0] = "string";
     env.addFunc(" str_is_utf8", "bool", oneStr);
-    string[] oneBytes = string[1]();
+    string[] oneBytes = string[].defaulted(1);
     oneBytes[0] = "u8[]";
     env.addFunc(" bytes_is_utf8", "bool", oneBytes);
-    string[] oneStr2 = string[1]();
+    string[] oneStr2 = string[].defaulted(1);
     oneStr2[0] = "string";
     env.addFunc(" str_to_utf8", "string", oneStr2);
-    string[] oneBytes2 = string[1]();
+    string[] oneBytes2 = string[].defaulted(1);
     oneBytes2[0] = "u8[]";
     env.addFunc(" bytes_to_utf8", "string", oneBytes2);
   }
@@ -4645,7 +4645,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   env.cbSigCount = collectCallbackSigs(env, src, lexed, prog);
   env.outSigCount = collectOutSigs(env, src, lexed, prog, env.outSigs);
   bool startNeeded = needsStartFunction(env, src, lexed);
-  if (startNeeded) { env.addFunc(" start", "void", string[0]()); }
+  if (startNeeded) { env.addFunc(" start", "void", string[]()); }
   // **Before `settleEmittable`, which is where each function's decline reason is recorded.** Running
   // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
   // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
@@ -4934,7 +4934,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // pre-pass that registers signatures and the emission that writes bodies must agree exactly, and
   // an index that disagrees with a count is a call to the wrong function.
   i32 countedStructs = env.structCount;
-  string[] bindStructs = string[512]();
+  string[] bindStructs = string[].defaulted(512);
   i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs, entryDecls);
   // **An enum is a struct in this emitter's tables and not one at the boundary.** `collectBindStructs`
   // finds both, because it asks `isStructName` — which is the right question for reachability and the
@@ -5827,7 +5827,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
 
   // Every function this module has: the imported dispatchers, its own, and the helpers. The helpers
   // fill it as their exports are written; the rest is filled where the section is emitted.
-  string[] fnName = string[env.cbSigCount + count + helpers](fill: "");
+  string[] fnName = string[].filled(env.cbSigCount + count + helpers, "");
 
   exports.name("$bind$mem");
   exports.byte(2);    // a memory
@@ -6097,7 +6097,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     section(out, 0, pr);
   }
 
-  u8[] result = u8[out.len]();
+  u8[] result = u8[].filled(out.len, 0);
   for (i32 i = 0; i < out.len; i++) { result[i] = out.data[i]; }
   return result;
 }
@@ -6107,7 +6107,7 @@ export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
   if (t < 0) { return ""; }
   i32 start = lexed.tokens[t * tokenStride() + 1];
   i32 len = lexed.tokens[t * tokenStride() + 2];
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
   return string.fromBytes(out);
 }
@@ -6398,7 +6398,7 @@ void emitNull(B fb, Env env, string t) {
  * The value a slot holds when nothing is written into it — which for a reference is **not null**.
  *
  * `string`'s default is `""`, an array's is an empty one, and a struct's is a struct whose fields
- * are all defaulted in turn. `S()` and `string[3]()` are both spec'd to produce those, and emitting
+ * are all defaulted in turn. `S()` and `string[].defaulted(3)` are both spec'd to produce those, and emitting
  * `ref.null` for them typechecked and then trapped on the first `.len()`.
  *
  * A struct that reaches itself is the one case that must stop: a field of a struct's own type has
@@ -6407,7 +6407,7 @@ void emitNull(B fb, Env env, string t) {
  */
 void emitDefault(B fb, Env env, string t) {
   // **A default `anyref` is null**, unlike a string or a struct: there is no value of the top type
-  // to build, and an `anyref[3]()` is three empty slots by the same argument that makes a nullable
+  // to build, and an `anyref[].defaulted(3)` is three empty slots by the same argument that makes a nullable
   // field's default a null.
   if (t == "anyref" || t == "i31ref") { emitNull(fb, env, t); return; }
   if (t == "string") {
@@ -6537,7 +6537,7 @@ i32 jsxElementVariant(Env env) {
  * three values built rather than taken from expressions.
  */
 /**
- * `<Card title="x">kid</Card>` — a component, which is `Card { title: "x" }.render(Node[](kid))`.
+ * `<Card title="x">kid</Card>` — a component, which is `Card { title: "x" }.render([kid])`.
  *
  * Written as the two instructions that desugaring is rather than by building an AST: the attributes
  * are put back in **declaration order** exactly as a named construction is (wasm's `struct.new`
@@ -6632,7 +6632,7 @@ void emitRawString(B fb, Env env, string text) {
   fb.u32leb(bytes.len());
 }
 
-/** `Attr[](Attr("class", "a"), …)`, one `struct.new` per attribute. */
+/** `[Attr("class", "a"), …]`, one `struct.new` per attribute. */
 void emitJsxAttrs(B fb, u8[] src, Lexed lexed, Env env, JsxAttr[] attrs) {
   for (i32 i = 0; i < attrs.len(); i++) {
     emitRawString(fb, env, tokenTextOf(src, lexed, attrs[i].nameTok));
@@ -6702,7 +6702,7 @@ i32 jsxTextVariant(Env env) {
   return -1;
 }
 
-/** `Node[](…)` — every child is already a `Node`, including a nested element. */
+/** `[…]` — every child is already a `Node`, including a nested element. */
 void emitJsxKids(B fb, u8[] src, Lexed lexed, Env env, Expr[] kids) {
   for (i32 i = 0; i < kids.len(); i++) {
     emitExprAt(fb, src, lexed, env, kids[i], "Node");
@@ -7582,6 +7582,17 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  // **An array literal is built at the slot's type** — `i32[] a = [1, 2]` makes an `i32[]` of numbers
+  // that had no type of their own. With no array slot, its elements decide.
+  match (e.kind) {
+    ArrLit(elements): {
+      string at = arraySlotType(want);
+      if (at == "") { at = arrLitTypeOf(src, lexed, env, elements); }
+      emitArrayLiteral(fb, src, lexed, env, elements, at);
+      return;
+    }
+    default: { }
+  }
   // **A number going into a `T?` slot is boxed.** spec/spec/types.md: `i32?` is a reference to a
   // one-field struct, so `i32? b = 5;` allocates one — the cost the spec accepts deliberately, since
   // `ref.i31` would be free and would silently truncate above 2^30 (`issues/lang/0045`).
@@ -7709,6 +7720,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
     }
     Cast(op, operand, target): {
+      // **`[a, b] as T[]` is not a conversion**: it builds the literal at `T[]` in the first place, so
+      // its elements are `T`s from the start — `spec/next/2-types/15-arrays.md`.
+      match (operand.kind) {
+        ArrLit(elements): {
+          string lat = typeOfTyName(env, src, lexed, target);
+          if (arraySlotType(lat) != "") {
+            emitArrayLiteral(fb, src, lexed, env, elements, arraySlotType(lat));
+            return;
+          }
+        }
+        default: { }
+      }
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(env, src, lexed, target);
       // **A literal has no type of its own, so it takes the slot's** — and the slot here is the
@@ -8035,11 +8058,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     /**
      * An array, in whichever of the three shapes it was written.
      *
-     * `T[n]()` fills with the element's zero, `T[n](fill: v)` with a value, and `T[](a, b, c)` lists
+     * `T[].defaulted(n)` fills with the element's zero, `T[].filled(n, v)` with a value, and `[a, b, c]` lists
      * its elements. wasm has a distinct instruction for each — `new_default`, `new`, `new_fixed` —
      * which is unusually generous of the format and means none of them has to be built out of the
      * others.
      */
+    ArrLit(elements): {
+      emitArrayLiteral(fb, src, lexed, env, elements, arrLitTypeOf(src, lexed, env, elements));
+    }
     ArrNew(elem, size, fill, elements): {
       string et = typeOfTyName(env, src, lexed, elem);
       i32 ti = env.arrayType(et + "[]");
@@ -8064,12 +8090,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // `T[]()` names no size and means none: the length is zero, and `array.new_default` still
       // wants to be told so.
       //
-      // **A reference element is defaulted, not nulled.** `string[3]()` is three empty strings, so
+      // **A reference element is defaulted, not nulled.** `string[].defaulted(3)` is three empty strings, so
       // the element's default is built and `array.new` repeats it — `array.new_default` would put
       // a null in every slot, which typechecks and traps on the first `.len()`.
       if (isRefType(env, et) && !isNullableTy(elem)) {
         // **A struct element is a fresh struct per slot.** `array.new` repeats *one* reference, and
-        // the spec says `P[2]()` gives two: writing `a[0].v` must not be visible in `a[1]`. An
+        // the spec says `P[].defaulted(2)` gives two: writing `a[0].v` must not be visible in `a[1]`. An
         // empty string or an empty array has nothing to write, so sharing one is unobservable and
         // the cheap path is right for them; a struct is the case that needs the loop.
         bool distinct = env.isStructName(et) && !env.isEnumName(env.canonType(et));
@@ -8151,7 +8177,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // instance it builds comes from the slot.
           string vnew = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
           if (vnew != "") {
-            Expr?[] vargs = Expr?[args.len()]();
+            Expr?[] vargs = Expr?[].defaulted(args.len());
             for (i32 i = 0; i < args.len(); i++) { vargs[i] = args[i]; }
             emitVariantNew(fb, src, lexed, env, vnew, vargs);
             return;
@@ -8168,7 +8194,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (isStringTypeName(src, lexed, env, obj) && mname == "fromBytes" && args.len() == 1) {
             i32 fb2 = env.funcAt(" str_from_bytes");
             if (!haveRequired(env, fb2, " str_from_bytes")) { return; }
-            emitExpr(fb, src, lexed, env, args[0]);
+            emitExprAt(fb, src, lexed, env, args[0], "u8[]");
             fb.byte(16);
             fb.u32leb(env.funcIndex[fb2]);
             return;
@@ -8384,7 +8410,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // so the construction has to be recognised here as well as under `Call`.
       string vnew2 = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
       if (vnew2 != "") {
-        emitVariantNew(fb, src, lexed, env, vnew2, Expr?[0]());
+        emitVariantNew(fb, src, lexed, env, vnew2, Expr?[]());
         return;
       }
       i32 mref2 = methodRefAt(src, lexed, env, obj, nameTok);
@@ -8566,6 +8592,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // it has nothing to do with.
       string tt = typeOfE(src, lexed, env, then);
       string et = typeOfE(src, lexed, env, els);
+      // **A branch typed by its slot has no type to offer** — `p.len() == 0 ? [tag()] : p` is a `u8[]`
+      // because `p` is, and `[tag()]` alone would have said `i32[]`. Both slot-typed, the slot decides.
+      if (slotTyped(then) && slotTyped(els) && want != "") { tt = want; et = want; }
+      else if (slotTyped(then) && et != "") { tt = et; }
+      else if (slotTyped(els) && tt != "") { et = tt; }
       // **Two arms of related types need the type they share**, not the first one's. `flag ? c : s`
       // with a `Circle` and a `Shape` declared a block returning a `Circle` and then handed it a
       // `Shape`: `type error in fallthru[0]`. A parent and a child give the parent; two siblings give
@@ -8649,6 +8680,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Cast(op, operand, target): { return typeOfTyName(env, src, lexed, target); }
     ArrNew(elem, size, fill, elements): { return typeOfTyName(env, src, lexed, elem) + "[]"; }
+    ArrLit(elements): { return arrLitTypeOf(src, lexed, env, elements); }
     Member(obj, nameTok): {
       // A variant construction's type is the **variant**, not the enum: `Shape.Circle(2.0)` is a
       // `Circle`, which is what makes `s.radius` resolve to one slot in the arm that narrowed it.
@@ -8804,6 +8836,12 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       return mt;
     }
     Ternary(cond, then, els): {
+      // A branch that takes its type from the slot — `ok ? [x] : bytes` — says less than the other
+      // one, so the other is asked first.
+      if (slotTyped(then) && !slotTyped(els)) {
+        string et = typeOfE(src, lexed, env, els);
+        if (et != "") { return et; }
+      }
       string tt = typeOfE(src, lexed, env, then);
       if (tt != "") { return tt; }
       return typeOfE(src, lexed, env, els);
@@ -10017,6 +10055,12 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       }
     }
     Incr(target, op, prefix): { findLambdasLv(env, src, lexed, target, ""); }
+    ArrLit(elements): {
+      string lat = arraySlotType(want);
+      if (lat == "") { lat = arrLitTypeOf(src, lexed, env, elements); }
+      string let = lat == "" ? "" : lat.slice(0, lat.len() - 2);
+      for (i32 i = 0; i < elements.len(); i++) { findLambdasExpr(env, src, lexed, elements[i], let); }
+    }
     ArrNew(elem, size, fill, elements): {
       if (!(size is null)) { findLambdasExpr(env, src, lexed, size!, "i32"); }
       string et = typeOfTyName(env, src, lexed, elem);
@@ -11175,7 +11219,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       // Two known types that differ. wac has struct inheritance and this emitter has no notion of a
       // subtype, so `Base b = aSub;` is a `local.set` of the wrong reference type — and there is no
       // conversion to write, because the two are the same value and only the *checker* knows that.
-      string g0 = isLiteral(init) ? "" : typeOfE(src, lexed, env, init);
+      string g0 = slotTyped(init) ? "" : typeOfE(src, lexed, env, init);
       // A **variant and its enum are not related types here, they are the same one** — `Shape s =
       // Shape.Point;` differs only in the name, and the flat representation is what makes that true.
       // Canonicalising before the comparison is the whole of the difference between an enum this
@@ -11226,7 +11270,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       //
       // `returnType` is `""` for a void function, and `isStructName("")` is false, so this costs
       // nothing there.
-      string gr = isLiteral(value!) ? "" : typeOfE(src, lexed, env, value!);
+      string gr = slotTyped(value!) ? "" : typeOfE(src, lexed, env, value!);
       if (gr != "" && env.canonType(gr) != env.canonType(env.returnType) &&
           valType(gr) == valType(env.returnType) &&
           (isArrayType(env.returnType) || env.isStructName(env.returnType)) &&
@@ -11407,6 +11451,18 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // already have refused — `TypeName` is valid solely as the object of a `Member`, where the
     // member resolution consumes it. `issues/lang/0088`.
     TypeName(tn): { return unsupportedValue(src, lexed, env, e); }
+    // An array literal's elements are asked about at the slot's element type, which is what gives
+    // `[null, x]` and `[Vec.create()]` the type they would have nowhere else.
+    ArrLit(elements): {
+      string sat = arraySlotType(want);
+      if (sat == "") { return unsupportedValue(src, lexed, env, e); }
+      string set = sat.slice(0, sat.len() - 2);
+      for (i32 i = 0; i < elements.len(); i++) {
+        string el = unsupportedValueAt(src, lexed, env, elements[i], set);
+        if (el != "") { return el; }
+      }
+      return "";
+    }
     Construct(ctype, args, named): {
       string cn = typeOfTyName(env, src, lexed, ctype);
       if (!env.isStructName(cn) && isInstance(want) && templateNameOf(want) == cn
@@ -11602,6 +11658,19 @@ bool isFloatLiteral(Expr e) {
  * neither operand says which. Calling it untyped and declining it refused a working function, which
  * is how this arm found out it had to exist.
  */
+/**
+ * Whether `e` takes its type from the slot it goes into rather than having one of its own: a literal,
+ * or an array literal, whose elements may be numbers that are typed only by the array they land in.
+ * A comparison of its own type against the slot's would be comparing against a guess.
+ */
+bool slotTyped(Expr e) {
+  match (e.kind) {
+    ArrLit(elements): { return true; }
+    Ternary(cond, then, els): { return slotTyped(then) && slotTyped(els); }
+    default: { return isLiteral(e); }
+  }
+}
+
 bool isLiteral(Expr e) {
   match (e.kind) {
     IntLit(tok): { return true; }
@@ -11819,6 +11888,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
                    t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool" ||
                    t == "anyref" || t == "i31ref";
       if (!known) { return "cast to an unsupported type"; }
+      // `[a, b] as T[]` is asked about at `T[]`, which is the type it is built at.
+      match (operand.kind) {
+        ArrLit(elements): { return unsupportedValueAt(src, lexed, env, operand, t); }
+        default: { }
+      }
       return unsupportedExpr(src, lexed, env, operand);
     }
     Ternary(cond, then, els): {
@@ -11861,6 +11935,16 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return env.isStructName(ot3) ? "" : "member of an unknown type";
     }
+    ArrLit(elements): {
+      string at3 = arrLitTypeOf(src, lexed, env, elements);
+      if (at3 == "") { return "an array literal with no element type"; }
+      string et3 = at3.slice(0, at3.len() - 2);
+      for (i32 i = 0; i < elements.len(); i++) {
+        string el = unsupportedValueAt(src, lexed, env, elements[i], et3);
+        if (el != "") { return el; }
+      }
+      return "";
+    }
     ArrNew(elem, size, fill, elements): {
       string et2 = typeOfTyName(env, src, lexed, elem);
       if (et2 == "") { return "array of an unspelled type"; }
@@ -11868,7 +11952,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         string sz = unsupportedValueAt(src, lexed, env, size!, "i32");
         if (sz != "") { return sz; }
       }
-      // **The element type is the slot.** `Vec<i32>[n](fill: Vec.create())` is a static on a
+      // **The element type is the slot.** `Vec<i32>[].filled(n, Vec.create())` is a static on a
       // template, which takes its instantiation from where the answer goes — and this arm was
       // asking about the fill and every element with no slot at all, so a `null` or a template
       // static among them was refused for want of a type that is written right there.
@@ -11950,7 +12034,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           // receiver is not an expression at all, so asking whether it is one calls a perfectly good
           // struct name unresolved — which is what three corpus files were saying.
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes" && args.len() == 1) {
-            return unsupportedValue(src, lexed, env, args[0]);
+            return unsupportedValueAt(src, lexed, env, args[0], "u8[]");
           }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint" && args.len() == 1) {
             return unsupportedValueAt(src, lexed, env, args[0], "i32");
@@ -12233,7 +12317,7 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
  * entry bound", which is what makes an unresolved import an ordinary blocker here.
  */
 export string emitBlocked(u8[] src) {
-  return blockedOf(frontOfRaw(src, -1, i32[1](), i32[1](), string[1](), string[1](),
+  return blockedOf(frontOfRaw(src, -1, i32[].filled(1, 0), i32[].filled(1, 0), string[].defaulted(1), string[].defaulted(1),
                               false, false, Env.create()));
 }
 
@@ -12249,7 +12333,7 @@ export string emitBlocked(u8[] src) {
 export string emitDeclineRaw(u8[] src) {
   Env env = Env.create();
   Front1 g = oneFile("", src);
-  emitModuleOfInto(g.src, -1, i32[1](), i32[1](), string[1](), string[1](), false, false, env,
+  emitModuleOfInto(g.src, -1, i32[].filled(1, 0), i32[].filled(1, 0), string[].defaulted(1), string[].defaulted(1), false, false, env,
                    g.srcs, g.lexeds, g.progs);
   if (env.fullWhy != "") { return env.fullWhy; }
   if (env.full) { return "declined with no reason recorded"; }
@@ -12280,28 +12364,28 @@ export string blockedLinked(string[] paths, string[] sources, Res res, string en
  * `issues/lang/0157`.
  */
 export string missingImportParts(string[] paths, string[] sources, Res res, string entry) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
   linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                            u8[][].filled(0, u8[]()), Lexed?[](), Program?[]());
   if (starts[0] != 4) { return ""; }
   if (filePaths.len() < 3 || filePaths[1] == "" || filePaths[2] == "") { return ""; }
   return filePaths[0] + "\t" + filePaths[1] + "\t" + filePaths[2];
 }
 
 string linkFailure(string[] paths, string[] sources, Res res, string entry) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
+  string[] filePaths = string[].defaulted(1024);
   // **Asked first, because it is the one cause here that can name what is wrong.** The other two are
   // inferred from a sentinel and say neither a path nor a position — `issues/lang/0157` is that.
   string twoKeys = twoKeysForOneFile(paths);
   if (twoKeys != "") { return twoKeys; }
   linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
-                            u8[][0](fill: u8[0]()), Lexed?[0](), Program?[0]());
+                            u8[][].filled(0, u8[]()), Lexed?[](), Program?[]());
   // **Three ways to run out, and they used to be one sentence about the caller's file map.** The
   // sentinel is set by `linkFiles` at each guard; `0` means it never ran out and the refusal really is
   // a file nobody supplied. `issues/lang/0179a`.
@@ -12508,7 +12592,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
             // recorded and looked up under: `pick<i32>` and `pick<i64>` are two copies of one
             // written lambda, and the owner's name cannot tell them apart. `issues/lang/0277b`.
             env.curInst = env.instName[i];
-            string[] ipts = string[methods[m].params.len()]();
+            string[] ipts = string[].defaulted(methods[m].params.len());
             for (i32 a = 0; a < methods[m].params.len(); a++) {
               ipts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
             }
@@ -12700,7 +12784,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldCount = env.fieldCount + 1;
             }
             for (i32 m = 0; m < methods.len(); m++) {
-              string[] mpts = string[methods[m].params.len()]();
+              string[] mpts = string[].defaulted(methods[m].params.len());
               for (i32 a = 0; a < methods[m].params.len(); a++) {
                 mpts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
               }
@@ -12761,7 +12845,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
             if (env.funcAt(inst) >= 0) { continue; }
             i32 fpushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
-            string[] fpts = string[params.len()]();
+            string[] fpts = string[].defaulted(params.len());
             for (i32 a = 0; a < params.len(); a++) {
               fpts[a] = typeOfTyName(env, src, lexed, params[a].type);
               registerNamed(env, fpts[a]);
@@ -12831,7 +12915,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               eslot = eslot + variants[v].fields.len();
             }
             for (i32 m = 0; m < methods.len(); m++) {
-              string[] empts = string[methods[m].params.len()]();
+              string[] empts = string[].defaulted(methods[m].params.len());
               for (i32 a = 0; a < methods[m].params.len(); a++) {
                 empts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
               }
@@ -13107,7 +13191,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
-        string[] pts = string[params.len()]();
+        string[] pts = string[].defaulted(params.len());
         for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(env, src, lexed, params[i].type); }
         string fname = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
@@ -13120,7 +13204,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         if (typeParams.len() > 0) { continue; }
         string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 i = 0; i < methods.len(); i++) {
-          string[] mpts = string[methods[i].params.len()]();
+          string[] mpts = string[].defaulted(methods[i].params.len());
           for (i32 j = 0; j < methods[i].params.len(); j++) {
             mpts[j] = typeOfTyName(env, src, lexed, methods[i].params[j].type);
           }
@@ -13141,7 +13225,7 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         if (typeParams.len() > 0) { continue; }
         string eowner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 i = 0; i < methods.len(); i++) {
-          string[] epts = string[methods[i].params.len()]();
+          string[] epts = string[].defaulted(methods[i].params.len());
           for (i32 j = 0; j < methods[i].params.len(); j++) {
             epts[j] = typeOfTyName(env, src, lexed, methods[i].params[j].type);
           }
@@ -13181,7 +13265,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       }
       // **An enum's methods are bodies too**, and this walk had only `Func` and `StructDecl` — so a
       // type first named inside an enum method was first named *while emitting*, which is a decline
-      // in those words (`issues/lang/0172a`). `Q[] qs = Q[2](fill: Q(helper()));` in an enum method
+      // in those words (`issues/lang/0172a`). `Q[] qs = Q[].filled(2, Q(helper()));` in an enum method
       // was enough; the array is what does it, not the enum.
       //
       // This is the third `EnumDecl` arm missing from a declaration walk in this file today — after
@@ -13298,7 +13382,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file)
   // Kept, so a call to a generic function can read the declaration it names from wherever it is
   env.prog = prog;
   declareStructs(env, src, lexed, prog, file);
-  resolveStructRefs(env, src, lexed, u8[][0](fill: u8[0]()), Lexed?[0]());
+  resolveStructRefs(env, src, lexed, u8[][].filled(0, u8[]()), Lexed?[]());
   declareConsts(env, src, lexed, prog, file);
   declareFuncs(env, src, lexed, prog, file);
   declareBodyTypes(env, src, lexed, prog, file);
@@ -13640,15 +13724,15 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
  */
 /** The emitted functions of a linked program, in order — the same answer for a file set. */
 export string namesLinked(string[] paths, string[] sources, Res res, string entry) {
-  i32[] starts = i32[1024]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
+  i32[] starts = i32[].filled(1024, 0);
+  i32[] edges = i32[].filled(65536, 0);
+  string[] names = string[].defaulted(32768);
   return namesOfFront(frontOf(paths, sources, res, entry));
 }
 
 /** The single-file spelling, which has no file table and no imports to load. */
 export string emitNames(u8[] src) {
-  return emitNamesOf(src, i32[512](), i32[4096](), string[4096]());
+  return emitNamesOf(src, i32[].filled(512, 0), i32[].filled(4096, 0), string[].defaulted(4096));
 }
 
 /**
@@ -13662,7 +13746,7 @@ export string emitNames(u8[] src) {
  * `issues/lang/0097`.
  */
 string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
-  return namesOfFront(frontOfRaw(src, 0 - 1, starts, edges, names, string[512](), false, false,
+  return namesOfFront(frontOfRaw(src, 0 - 1, starts, edges, names, string[].defaulted(512), false, false,
                                  Env.create()));
 }
 
@@ -13711,6 +13795,12 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // A string literal is `array.new_fixed` over its bytes, which *is* a constant expression — so a
     // `const string` can live in a global like any other array constant.
     StrLit(tok): { return true; }
+    ArrLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (!isConstExpr(src, lexed, env, elements[i])) { return false; }
+      }
+      return true;
+    }
     ArrNew(elem, size, fill, elements): {
       if (typeOfTyName(env, src, lexed, elem) == "") { return false; }
       for (i32 i = 0; i < elements.len(); i++) {
@@ -13834,6 +13924,13 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
 /** Every array type an expression constructs, which a constant's initialiser can do at module level. */
 void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
   match (e.kind) {
+    ArrLit(elements): {
+      string lt = arrLitTypeOf(src, lexed, env, elements);
+      if (lt != "") { registerNamed(env, lt); }
+      for (i32 i = 0; i < elements.len(); i++) {
+        collectArrayTypesOfExpr(env, src, lexed, elements[i]);
+      }
+    }
     ArrNew(elem, size, fill, elements): {
       string t = typeOfTyName(env, src, lexed, elem);
       if (t != "") { registerNamed(env, t + "[]"); }
@@ -13938,6 +14035,7 @@ string kindOfExpr(Expr e) {
     Call(callee, args, callTargs): { return "call"; }
     Construct(ctype, args, named): { return "construct"; }
     ArrNew(elem, size, fill, elements): { return "array"; }
+    ArrLit(elements): { return "array"; }
     Unwrap(operand): { return "unwrap"; }
     Is(left, target, other, negated): { return "is"; }
     Incr(target, op, prefix): { return "incr"; }
@@ -13989,7 +14087,7 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   // **Sized by the span, which is always enough.** `\\u{1F600}` is nine source bytes and four
   // encoded ones, and every other escape shrinks too; no escape encodes to more bytes than it is
   // written with, so the literal's own length bounds the result.
-  u8[] out = u8[len]();
+  u8[] out = u8[].filled(len, 0);
   i32 n = 0;
   // **The delimiters are one byte each, except the `\{` that ends an interpolated segment.**
   // `"a\{e}bc"` lexes as `"a\{` `+` `e` `+` `}bc"` — `design/lang/0013` D7 — and the segments'
@@ -14023,7 +14121,7 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
     n = n + 1;
     i = i + 1;
   }
-  u8[] exact = u8[n]();
+  u8[] exact = u8[].filled(n, 0);
   for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
   return exact;
 }
@@ -14151,7 +14249,7 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
   b.byte(32); b.u32leb(1); b.byte(251); b.u32leb(15);
   b.byte(106);
   b.byte(33); b.u32leb(2);
-  // out = i8[n]()
+  // out = i8[].filled(n, 0)
   b.byte(32); b.u32leb(2);
   b.byte(251); b.u32leb(7); b.u32leb(at);
   b.byte(33); b.u32leb(3);
@@ -14553,7 +14651,7 @@ string fileTagOf(string path) {
   if (end > 4 && a[end - 4] == 46 && a[end - 3] == 119 && a[end - 2] == 97 && a[end - 1] == 99) {
     end = end - 4;                                            // a trailing `.wac`
   }
-  u8[] out = u8[end]();
+  u8[] out = u8[].filled(end, 0);
   for (i32 i = 0; i < end; i++) {
     i32 c = a[i];
     bool ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
@@ -14783,7 +14881,7 @@ string metaTypeSpelling(Env env, string t) {
  */
 string bindNameOf(string spelling) {
   u8[] a = spelling.toBytes();
-  u8[] tmp = u8[a.len()]();
+  u8[] tmp = u8[].filled(a.len(), 0);
   i32 n = 0;
   bool pending = false;
   for (i32 i = 0; i < a.len(); i++) {
@@ -14798,7 +14896,7 @@ string bindNameOf(string spelling) {
       pending = true;
     }
   }
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = tmp[i]; }
   return string.fromBytes(out);
 }
@@ -14848,7 +14946,7 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
   //
   // No package showed the original defect: a package exports functions, and only a *program* takes
   // `main(Core, Cli)`.
-  string[] crossing = string[512]();
+  string[] crossing = string[].defaulted(512);
   // The callback walk asks the same question about the same res, and it is handed the blob rather
   // than the file list — so it takes the bound from the environment the emitter already set up.
   i32 cn = collectBindStructs(env, src, lexed, prog, crossing, env.entryDecls);
@@ -15128,7 +15226,7 @@ string bindArrSuffix(string el) {
   if (isArrayType(el)) { return bindArrSuffix(elemOf(el)) + "Arr"; }
   u8[] a = el.toBytes();
   if (a.len() > 1 && a[a.len() - 1] == 63) {                    // a trailing `?`
-    u8[] inner = u8[a.len() - 1]();
+    u8[] inner = u8[].filled(a.len() - 1, 0);
     for (i32 i = 0; i < inner.len(); i++) { inner[i] = a[i]; }
     return bindArrSuffix(string.fromBytes(inner)) + "_null";
   }
@@ -15191,7 +15289,7 @@ bool bindableArray(Env env, string at) {
   if (refElem2(el)) {
     u8[] a = el.toBytes();
     if (a.len() > 1 && a[a.len() - 1] == 63) {
-      u8[] inner = u8[a.len() - 1]();
+      u8[] inner = u8[].filled(a.len() - 1, 0);
       for (i32 i = 0; i < inner.len(); i++) { inner[i] = a[i]; }
       string core = string.fromBytes(inner);
       return core == "string" || isArrayType(core) || env.isStructName(core);
@@ -15363,7 +15461,7 @@ string payloadFieldName(string qualified) {
   u8[] a = qualified.toBytes();
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] != 46) { continue; }                               // `.`
-    u8[] out = u8[a.len() - i - 1]();
+    u8[] out = u8[].filled(a.len() - i - 1, 0);
     for (i32 k = 0; k < out.len(); k++) { out[k] = a[i + 1 + k]; }
     return string.fromBytes(out);
   }
@@ -15523,7 +15621,7 @@ string baseOfType(string t) {
     if (isArrayType(core)) { core = elemOf(core); continue; }
     u8[] a = core.toBytes();
     if (a.len() > 1 && a[a.len() - 1] == 63) {          // a trailing `?`
-      u8[] out = u8[a.len() - 1]();
+      u8[] out = u8[].filled(a.len() - 1, 0);
       for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
       core = string.fromBytes(out);
       continue;
@@ -16514,9 +16612,9 @@ Merged mergedTreeOf(Program?[] progs) {
   for (i32 i = 0; i < progs.len(); i++) {
     if (progs[i] is not null) { total = total + progs[i]!.decls.len(); }
   }
-  if (total == 0) { return Merged(Decl[](), i32[0]()); }
-  Decl[] merged = Decl[total](fill: firstDeclOf(progs));
-  i32[] at = i32[total](fill: 0);
+  if (total == 0) { return Merged(Decl[](), i32[]()); }
+  Decl[] merged = Decl[].filled(total, firstDeclOf(progs));
+  i32[] at = i32[].filled(total, 0);
   i32 mi = 0;
   for (i32 i = 0; i < progs.len(); i++) {
     if (progs[i] is null) { continue; }
@@ -16544,9 +16642,9 @@ Decl firstDeclOf(Program?[] progs) {
  */
 Front1 oneFile(string path, u8[] src) {
   Frontend fe = frontendOf(path == "" ? "x.wac" : path, src);
-  u8[][] srcs = u8[][1](fill: fe.src);
-  Lexed?[] lexeds = Lexed?[1]();
-  Program?[] progs = Program?[1]();
+  u8[][] srcs = u8[][].filled(1, fe.src);
+  Lexed?[] lexeds = Lexed?[].defaulted(1);
+  Program?[] progs = Program?[].defaulted(1);
   lexeds[0] = fe.lexed;
   progs[0] = fe.prog;
   return Front1(fe.src, srcs, lexeds, progs);
@@ -16558,4 +16656,71 @@ struct Front1 {
   u8[][] srcs;
   Lexed?[] lexeds;
   Program?[] progs;
+}
+
+// ── Array literals ───────────────────────────────────────────────────────────────────────────────
+
+/** The array type a slot asks for — `want` itself when it is one, and "" when it is not. */
+string arraySlotType(string want) {
+  string w = want.len() > 0 && want.slice(want.len() - 1, want.len()) == "?"
+           ? want.slice(0, want.len() - 1) : want;
+  if (w.len() > 2 && w.slice(w.len() - 2, w.len()) == "[]") { return w; }
+  return "";
+}
+
+/**
+ * `[a, b]`'s array type from its elements, for a literal with no slot to take one from. The checker has
+ * refused every literal for which this has nothing to go on, so the number fallback is reached only by a
+ * literal whose elements are all numbers *and* that the checker typed from a slot this pass cannot see.
+ */
+string arrLitTypeOf(u8[] src, Lexed lexed, Env env, Expr[] elements) {
+  string t = "";
+  string lit = "";
+  bool sawNull = false;
+  for (i32 i = 0; i < elements.len(); i++) {
+    Expr el = elements[i];
+    if (isNullLit(el)) { sawNull = true; continue; }
+    string k = numberLiteralType(el);
+    if (k != "") {
+      if (lit != "f64") { lit = k; }
+      continue;
+    }
+    if (t == "") { t = typeOfE(src, lexed, env, el); }
+  }
+  if (t == "") { t = lit; }
+  if (t == "") { return ""; }
+  if (sawNull && isPrimitiveNumberType(t)) { t = t + "?"; }
+  return t + "[]";
+}
+
+/** `"i32"` for an integer literal and `"f64"` for a float one, signed or not; "" for anything else. */
+string numberLiteralType(Expr e) {
+  match (e.kind) {
+    IntLit(tok): { return "i32"; }
+    FloatLit(tok): { return "f64"; }
+    Unary(op, operand): { return numberLiteralType(operand); }
+    default: { return ""; }
+  }
+}
+
+bool isPrimitiveNumberType(string t) {
+  return t == "i8" || t == "u8" || t == "i16" || t == "u16" || t == "i32" || t == "u32"
+      || t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool";
+}
+
+/** Each element at the element type, then `array.new_fixed` — the instruction a literal of known length is. */
+void emitArrayLiteral(B fb, u8[] src, Lexed lexed, Env env, Expr[] elements, string arrayType) {
+  if (arrayType == "") {
+    env.declineFor("an array literal with no element type");
+    return;
+  }
+  string et = arrayType.slice(0, arrayType.len() - 2);
+  i32 ti = env.arrayType(arrayType);
+  for (i32 i = 0; i < elements.len(); i++) {
+    emitExprAt(fb, src, lexed, env, elements[i], et);
+  }
+  fb.byte(251);
+  fb.u32leb(8);      // array.new_fixed
+  fb.u32leb(ti);
+  fb.u32leb(elements.len());
 }

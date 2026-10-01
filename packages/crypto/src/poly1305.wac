@@ -56,7 +56,7 @@ export u8[] poly1305(u8[] key, u8[] msg) {
 
     // A whole block carries an implicit 1 at bit 128; a short final block puts
     // that 1 straight after the data, so it is padded here rather than flagged.
-    u8[] blk = u8[16]();
+    u8[] blk = u8[].filled(16, 0);
     for (i32 i = 0; i < take; i++) { blk[i] = msg[pos + i]; }
     u32 hibit = 0;
     if (take == 16) { hibit = 1 << 24; } else { blk[take] = 1; }
@@ -140,8 +140,8 @@ export u8[] poly1305(u8[] key, u8[] msg) {
   acc = (f2 as u64) + (leWord32(key, 24) as u64) + (acc >> 32); f2 = acc as@ u32;
   acc = (f3 as u64) + (leWord32(key, 28) as u64) + (acc >> 32); f3 = acc as@ u32;
 
-  u32[] words = u32[](f0, f1, f2, f3);
-  u8[] out = u8[16]();
+  u32[] words = [f0, f1, f2, f3];
+  u8[] out = u8[].filled(16, 0);
   for (i32 i = 0; i < 4; i++) { storeLE32(words[i], out, i * 4); }
   return out;
 }

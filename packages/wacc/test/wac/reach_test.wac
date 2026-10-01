@@ -52,13 +52,14 @@ string joinedWith(string[] all, i32 n, string sep) {
  * checks that every kind of the AST was considered rather than that fifteen strings were written.
  */
 string[] statementLabels() {
-  return string[](
+  return [
     "Var", "Assign", "IncrStmt", "If", "If-else", "While", "For", "For-init", "DoWhile", "Switch",
-    "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt");
+    "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt"
+  ];
 }
 
 string[] statementSources() {
-  return string[](
+  return [
     "void f() { " + BAD + " }",
     "void f(i32 n) { n = 1; " + BAD + " }",
     "void f(i32 n) { n++; " + BAD + " }",
@@ -73,11 +74,12 @@ string[] statementSources() {
     "", "", "",
     "enum E { A, B } void f(E e) { match (e) { A: { " + BAD + " } B: { } } }",
     "void f() { { " + BAD + " } }",
-    "void g(i32 n) { } void f() { g(1); " + BAD + " }");
+    "void g(i32 n) { } void f() { g(1); " + BAD + " }"
+  ];
 }
 
 string[] expressionLabels() {
-  return string[](
+  return [
     "Unary",
     // `await`'s operand is an expression like any other, and the arm that types it descends into the
     // operand *before* deciding whether it is a ticket — so a fault buried in one is reported even
@@ -89,7 +91,7 @@ string[] expressionLabels() {
     // `return x++;` was not. The grid had a Return-value cell and it passed, because the fault it
     // buries is always the same `(p + q)` — what it never varied is *which kind of expression holds
     // the fault*, which is the dimension the missing arm lived in.
-    "Incr", "Unwrap", "Is", "ArrNew", "ArrNew-size", "MatchExpr",
+    "Incr", "Unwrap", "Is", "ArrNew", "ArrNew-size", "ArrLit", "MatchExpr",
     // A JSX element holds expressions in two places — an attribute's value and a child — and a walk
     // that descends into one and not the other would be invisible to every other cell here.
     "Jsx",
@@ -111,11 +113,12 @@ string[] expressionLabels() {
     "Lambda",
     // And the written block form, which reaches the same place by a different route through the
     // parser.
-    "Lambda-block");
+    "Lambda-block"
+  ];
 }
 
 string[] expressionSources() {
-  return string[](
+  return [
     "void f(i32 p, f64 q) { i32 r = -" + SUB + "; }",
     "async i32 f(i32 p, f64 q) { return await " + SUB + "; }",
     "void f(i32 p, f64 q) { i32 r = " + SUB + " + 1; }",
@@ -134,8 +137,9 @@ string[] expressionSources() {
     "void f(i32 p, f64 q, i32[]? a) { i32 r = a![" + SUB + "]; }",
     "struct B { i32 b; } struct C : B { i32 c; } " +
     "void f(i32 p, f64 q, B b, i32[] a) { bool r = a[" + SUB + "] > 0 && (b is C); }",
-    "void f(i32 p, f64 q) { i32[] a = i32[2](" + SUB + ", 1); }",
-    "void f(i32 p, f64 q) { i32[] a = i32[" + SUB + "](); }",
+    "void f(i32 p, f64 q) { i32[] a = i32[].filled(2, " + SUB + "); }",
+    "void f(i32 p, f64 q) { i32[] a = i32[].filled(" + SUB + ", 0); }",
+    "void f(i32 p, f64 q) { i32[] a = [" + SUB + ", 1]; }",
     "enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { A: " + SUB +
     " B: 0 }; }",
     "import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(" + SUB +
@@ -143,7 +147,8 @@ string[] expressionSources() {
     "", "", "", "", "", "", "",
     "",                                   // TypeName — a leaf here; see the label list above
     "void f(i32 p, f64 q) { fn<i32()> g = () => " + SUB + "; }",
-    "void f(i32 p, f64 q) { fn<i32()> g = () => { return " + SUB + "; }; }");
+    "void f(i32 p, f64 q) { fn<i32()> g = () => { return " + SUB + "; }; }"
+  ];
 }
 
 /**
@@ -156,20 +161,22 @@ string[] expressionSources() {
  * no matter how finely you vary the others.
  */
 string[] containerLabels() {
-  return string[](
+  return [
     "free function", "exported function", "instance method", "const-this method", "static method",
-    "method with params", "method of a child struct");
+    "method with params", "method of a child struct"
+  ];
 }
 
 string[] containerSources() {
-  return string[](
+  return [
     "void f() { " + BAD + " }",
     "export void f() { " + BAD + " }",
     "struct P { i32 x; void m(this) { " + BAD + " } }",
     "struct P { i32 x; void m(const this) { " + BAD + " } }",
     "struct P { i32 x; void m() { " + BAD + " } }",
     "struct P { i32 x; void m(this, i32 n) { " + BAD + " } }",
-    "struct B { i32 b; } struct C : B { void m(this) { " + BAD + " } }");
+    "struct B { i32 b; } struct C : B { void m(this) { " + BAD + " } }"
+  ];
 }
 
 /** The kind a grid row is about — `Ternary-cond` and `Ternary` are both the `Ternary` kind. */
@@ -188,15 +195,15 @@ string kindOf(string label) {
  */
 string[] variantsOf(Cli cli, string enumName) {
   FileResult f = cli.readFile("packages/wacc/src/ast.wac").wait();
-  if (!f.ok) { return string[0](fill: ""); }
+  if (!f.ok) { return string[].filled(0, ""); }
   string src = string.fromBytes(f.bytes);
   i32 start = src.indexOf("export enum " + enumName + " {");
-  if (start < 0) { return string[0](fill: ""); }
+  if (start < 0) { return string[].filled(0, ""); }
   string rest = src.slice(start, src.len());
   i32 end = rest.indexOf("\n}");
   string body = end < 0 ? rest : rest.slice(0, end);
 
-  string[] out = string[64](fill: "");
+  string[] out = string[].filled(64, "");
   i32 n = 0;
   i32 at = 0;
   for (i32 i = 0; i <= body.len(); i++) {
@@ -214,7 +221,7 @@ string[] variantsOf(Cli cli, string enumName) {
     if (k >= b.len() || (b[k] != '(' && b[k] != ',')) { continue; }
     if (n < out.len()) { out[n] = line.slice(2, k); n = n + 1; }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -224,7 +231,7 @@ export string test_reach_every_statement_kind_is_walked() {
   string[] labels = statementLabels();
   string[] sources = statementSources();
   t.eqI32(labels.len(), sources.len(), "a source per label");
-  string[] missed = string[labels.len()](fill: "");
+  string[] missed = string[].filled(labels.len(), "");
   i32 n = 0;
   i32 considered = 0;
   for (i32 i = 0; i < labels.len() && i < sources.len(); i++) {
@@ -245,7 +252,7 @@ export string test_reach_every_expression_kind_is_walked() {
   string[] labels = expressionLabels();
   string[] sources = expressionSources();
   t.eqI32(labels.len(), sources.len(), "a source per label");
-  string[] missed = string[labels.len()](fill: "");
+  string[] missed = string[].filled(labels.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < labels.len() && i < sources.len(); i++) {
     if (sources[i] == "") { continue; }
@@ -258,13 +265,13 @@ export string test_reach_every_expression_kind_is_walked() {
 
 export string test_reach_the_grids_cover_every_kind_the_ast_has(Core core, Cli cli) {
   T t = T.create();
-  string[] enums = string[]("ExprKind", "StmtKind");
+  string[] enums = ["ExprKind", "StmtKind"];
   for (i32 e = 0; e < enums.len(); e++) {
     string[] labels = e == 0 ? expressionLabels() : statementLabels();
     string[] variants = variantsOf(cli, enums[e]);
     string[] other = variantsOf(cli, e == 0 ? "StmtKind" : "ExprKind");
     t.isTrue(variants.len() > 0, "no enum " + enums[e] + " in ast.wac");
-    string[] uncovered = string[variants.len()](fill: "");
+    string[] uncovered = string[].filled(variants.len(), "");
     i32 n = 0;
     for (i32 v = 0; v < variants.len(); v++) {
       bool covered = false;
@@ -287,10 +294,10 @@ export string test_reach_the_grids_cover_every_kind_the_ast_has(Core core, Cli c
     // those cells rather than a mistake. `Condition` names neither: it is a pure *placement*, the one
     // cell here that is about where an expression sits rather than what it is, so it is named as the
     // exception instead of being quietly tolerated by a looser rule.
-    string[] both = string[variants.len() + other.len()](fill: "");
+    string[] both = string[].filled(variants.len() + other.len(), "");
     for (i32 i = 0; i < variants.len(); i++) { both[i] = variants[i]; }
     for (i32 i = 0; i < other.len(); i++) { both[variants.len() + i] = other[i]; }
-    string[] unknown = string[labels.len()](fill: "");
+    string[] unknown = string[].filled(labels.len(), "");
     i32 u = 0;
     for (i32 i = 0; i < labels.len(); i++) {
       string kind = kindOf(labels[i]);
@@ -312,7 +319,7 @@ export string test_reach_every_kind_of_body_is_walked() {
   T t = T.create();
   string[] labels = containerLabels();
   string[] sources = containerSources();
-  string[] missed = string[labels.len()](fill: "");
+  string[] missed = string[].filled(labels.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < labels.len() && i < sources.len(); i++) {
     if (!reports(sources[i])) { missed[n] = labels[i]; n = n + 1; }

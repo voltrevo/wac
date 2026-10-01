@@ -66,7 +66,7 @@ const string PROGRAM =
   "export i32 main(Core core) { core.log(\"it compiled and it ran\"); return 0; }\n";
 
 Exec sh(Cli cli, string script) {
-  return cli.exec("/bin/sh", string[]("-c", script), u8[0]()).wait();
+  return cli.exec("/bin/sh", ["-c", script], u8[]()).wait();
 }
 
 /**
@@ -149,9 +149,11 @@ void sameAnswerOnBothHosts(Core core, Cli cli, T t, string host, string dir, str
 
   // Built **once**, by the binary running this test, and run by both. That is the whole point.
   Exec made = cli.exec(binaryPath(cli),
-                       string[]("app", dir + "/probe.wac", "--allow-read", "--allow-write",
-                                "-o", dir + "/probe"),
-                       u8[0]()).wait();
+                       [
+                                "app", dir + "/probe.wac", "--allow-read", "--allow-write",
+                                "-o", dir + "/probe"
+                       ],
+                       u8[]()).wait();
   t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
   if (made.status != 0) { return; }
 

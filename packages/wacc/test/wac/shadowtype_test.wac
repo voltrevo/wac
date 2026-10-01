@@ -71,8 +71,8 @@ export string test_a_use_before_the_redeclaration_sees_the_earlier_type() {
   T t = T.create();
   i32 n = errs("struct H { i32[] items; }\n" +
                "export i32 f() {\n" +
-               "  H h = H(i32[0]());\n" +
-               "  i32[] items = i32[0]();\n" +
+               "  H h = H(i32[]());\n" +
+               "  i32[] items = i32[]();\n" +
                "  h.items = items;\n" +
                "  i32 items = 3;\n" +
                "  return items;\n" +

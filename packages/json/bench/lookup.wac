@@ -36,7 +36,7 @@ string itoaLocal(i32 v) {
 /** `reps` scans, cycling through every key so the average is over all positions. */
 export i32 scanKeys(i32 n, i32 reps) {
   JsonObject o = build(n);
-  u8[][] keys = u8[][n]();
+  u8[][] keys = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { keys[i] = ("k" + itoaLocal(i)).toBytes(); }
   i32 hits = 0;
   for (i32 r = 0; r < reps; r++) {
@@ -51,7 +51,7 @@ export i32 scanKeys(i32 n, i32 reps) {
 export i32 indexedKeys(i32 n, i32 reps) {
   JsonObject o = build(n);
   o.buildIndex();
-  u8[][] keys = u8[][n]();
+  u8[][] keys = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { keys[i] = ("k" + itoaLocal(i)).toBytes(); }
   i32 hits = 0;
   for (i32 r = 0; r < reps; r++) {
@@ -116,7 +116,7 @@ i64 bestOfThree(Core core, i32 which, i32 n, i32 reps) {
 i64 perOp(i64 nanos, i32 reps) { return nanos / (reps as i64); }
 
 export i32 main(Core core, Cli cli) {
-  i32[] sizes = i32[](2, 4, 8, 12, 16, 24, 32, 64, 128, 256, 1024);
+  i32[] sizes = [2, 4, 8, 12, 16, 24, 32, 64, 128, 256, 1024];
 
   // Warm up, so the first measured size does not pay for whatever the host does on a first call.
   scanKeys(8, 10000);

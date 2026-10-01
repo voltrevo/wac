@@ -28,7 +28,7 @@ import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mou
 
 /** Every transcript, in the order the TypeScript called them, with what each one is for. */
 export i32 main(Core core) {
-  string[] said = string[](
+  string[] said = [
     memoryOps(),
     synthOps(),
     imageOps(),
@@ -47,11 +47,13 @@ export i32 main(Core core) {
     wireOps(),
     // Being refused: `may(node, 2)` answering no on every operation that changes what a directory
     // holds, which was the largest unaccounted group and the one a wrong answer matters most in.
-    permissionOps());
+    permissionOps()
+  ];
 
-  string[] names = string[](
+  string[] names = [
     "memoryOps", "synthOps", "imageOps", "pathOps", "renameOps", "rootlessOps", "mountOps",
-    "edgeOps", "imageBadOps", "procOps", "streamOps", "wireOps", "permissionOps");
+    "edgeOps", "imageBadOps", "procOps", "streamOps", "wireOps", "permissionOps"
+  ];
 
   // **Named rather than counted.** "a probe returned nothing" sent the reader to thirteen candidates.
   for (i32 i = 0; i < said.len(); i++) {

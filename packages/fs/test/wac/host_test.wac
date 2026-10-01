@@ -55,14 +55,14 @@ string buildOps(T t, Core core, Cli cli) {
   t.isTrue(bin.exists, "the binary that builds ops is where the seed task writes it");
   if (!bin.exists) { return ""; }
   string mod = builtProgram(cli, OPS, "fs-ops",
-                            string[]("--allow-read", "--allow-write"));
+                            ["--allow-read", "--allow-write"]);
   t.isTrue(cli.stat(mod).wait().exists, "ops builds — see .cache/built-fs-ops");
   return cli.stat(mod).wait().exists ? mod : "";
 }
 
 /** Run a script against one backing and return its transcript. */
 string run(Core core, Cli cli, string stem, string[] args, string script) {
-  string[] argv = string[args.len() + 1](fill: "");
+  string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = stem;
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
   Exec r = cli.exec(binary(cli), argv, script.toBytes()).wait();
@@ -111,8 +111,8 @@ void bothWays(T t, Core core, Cli cli, string stem, string name, string[] lines)
   t.isTrue(made.ok(), name + ": a directory for the host run — " + made.message);
   if (!made.ok()) { return; }
 
-  string inMemory = run(core, cli, stem, string[]("mem"), script);
-  string onHost = run(core, cli, stem, string[]("host", dir), script);
+  string inMemory = run(core, cli, stem, ["mem"], script);
+  string onHost = run(core, cli, stem, ["host", dir], script);
 
   // **A line per command, before the two are compared at all.**
   //
@@ -153,21 +153,21 @@ export string test_the_transcript_is_what_it_says_it_is(Core core, Cli cli) {
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  string script = joined(string[](
-    "stat /a", "write /a hello", "stat /a", "read /a", "mkdir /d", "stat /d", "ls /"));
+  string script = joined(["stat /a", "write /a hello", "stat /a", "read /a", "mkdir /d", "stat /d", "ls /"]);
   // Measured, not guessed: two of these were written from memory first — `stat dir 0` for a
   // directory, which has no size, and an unbracketed listing — and both were wrong. That is the
   // argument for pinning a transcript rather than trusting the shape everyone assumes it has.
-  string want = joined(string[](
+  string want = joined([
     "stat absent", "write 0", "stat file 5", "read [hello]", "mkdir 0", "stat dir",
-    "ls [a d]", ""));
-  t.eqStr(run(core, cli, stem, string[]("mem"), script), want, "the in-memory transcript");
+    "ls [a d]", ""
+  ]);
+  t.eqStr(run(core, cli, stem, ["mem"], script), want, "the in-memory transcript");
   string dir = workDir(cli) + "/pinned";
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
   t.isTrue(made.ok(), "a directory for the host run — " + made.message);
   if (made.ok()) {
-    t.eqStr(run(core, cli, stem, string[]("host", dir), script), want, "the same on a real disk");
+    t.eqStr(run(core, cli, stem, ["host", dir], script), want, "the same on a real disk");
     cli.remove(dir, true).wait();
   }
   return t.report();
@@ -177,8 +177,7 @@ export string test_a_file_written_reads_back(Core core, Cli cli) {
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "files", string[](
-    "stat /a", "write /a hello", "stat /a", "read /a", "write /a bye", "read /a", "stat /a"));
+  bothWays(t, core, cli, stem, "files", ["stat /a", "write /a hello", "stat /a", "read /a", "write /a bye", "read /a", "stat /a"]);
   return t.report();
 }
 
@@ -186,9 +185,10 @@ export string test_directories_and_the_three_faults_that_tell_rm_f_from_rm(Core 
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "directories", string[](
+  bothWays(t, core, cli, stem, "directories", [
     "mkdir /d", "mkdir /d", "stat /d", "write /d/f x", "rm /d", "rm /d/f", "rm /d", "rm /d",
-    "rm /gone", "mkdir /x/y", "write /x/y z"));
+    "rm /gone", "mkdir /x/y", "write /x/y z"
+  ]);
   return t.report();
 }
 
@@ -196,9 +196,10 @@ export string test_mkdir_p_and_rm_r(Core core, Cli cli) {
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "flags", string[](
+  bothWays(t, core, cli, stem, "flags", [
     "mkdirp /a/b/c", "stat /a/b/c", "mkdirp /a/b/c", "write /a/b/c/f one", "rm /a", "rmr /a",
-    "stat /a", "rmr /a"));
+    "stat /a", "rmr /a"
+  ]);
   return t.report();
 }
 
@@ -206,9 +207,10 @@ export string test_a_listing_is_the_same_set_in_the_same_order(Core core, Cli cl
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "listing", string[](
+  bothWays(t, core, cli, stem, "listing", [
     "write /b one", "write /a two", "mkdir /c", "write /c/inside three", "ls /", "ls /c", "ls /a",
-    "ls /nope", "rm /a", "ls /"));
+    "ls /nope", "rm /a", "ls /"
+  ]);
   return t.report();
 }
 
@@ -216,9 +218,10 @@ export string test_rename_moves_a_name(Core core, Cli cli) {
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "rename", string[](
+  bothWays(t, core, cli, stem, "rename", [
     "mkdir /d", "write /a one", "mv /a /d/b", "stat /a", "read /d/b", "write /c two", "mv /d/b /c",
-    "read /c", "mv /gone /x", "mv /c /nodir/x"));
+    "read /c", "mv /gone /x", "mv /c /nodir/x"
+  ]);
   return t.report();
 }
 
@@ -237,14 +240,15 @@ export string test_rename_onto_something_already_there(Core core, Cli cli) {
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "rename-onto", string[](
+  bothWays(t, core, cli, stem, "rename-onto", [
     "mkdir /de", "mkdir /df", "write /df/x c", "write /f1 a", "write /f2 b", "mkdir /d1",
     "mv /f1 /de",          // a file onto an empty directory
     "mv /f1 /df",          // a file onto a full one
     "mv /d1 /f2",          // a directory onto a file
     "mv /d1 /df",          // a directory onto a full directory
     "mv /d1 /de",          // a directory onto an empty one, which is the only allowed pair
-    "ls /", "ls /de", "ls /df", "read /df/x", "read /f1"));
+    "ls /", "ls /de", "ls /df", "read /df/x", "read /f1"
+  ]);
   return t.report();
 }
 
@@ -253,7 +257,7 @@ export string test_writing_over_a_directory_and_reading_one(Core core, Cli cli) 
   T t = T.create();
   string stem = buildOps(t, core, cli);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "kinds", string[]("mkdir /d", "read /d", "write /d no", "stat /d"));
+  bothWays(t, core, cli, stem, "kinds", ["mkdir /d", "read /d", "write /d no", "stat /d"]);
   cli.remove(workDir(cli), true).wait();
   return t.report();
 }

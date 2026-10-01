@@ -157,7 +157,7 @@ export i32 main(Core core, Cli cli) {
   i32 nAsked = 0;
 
   // Limb boundaries on both operands, where a carry grows a limb and a borrow sheds one.
-  i32[] powers = i32[](0, 1, 31, 32, 33, 63, 64, 65, 95, 96, 97, 128, 192);
+  i32[] powers = [0, 1, 31, 32, 33, 63, 64, 65, 95, 96, 97, 128, 192];
   i32 boundaryAt = nAsked;
   for (i32 i = 0; i < powers.len(); i++) {
     for (i32 d = -2; d <= 2; d++) {
@@ -172,7 +172,7 @@ export i32 main(Core core, Cli cli) {
   // All-ones and all-zeros limb runs: the family that reaches the quotient-estimate clamp and the
   // add-back. A carry that propagates the whole length of a value, and a divisor whose top limb is
   // 0xffffffff. Random digits essentially never produce either.
-  i32[] limbCounts = i32[](1, 2, 3, 4, 8, 17);
+  i32[] limbCounts = [1, 2, 3, 4, 8, 17];
   i32 runsAt = nAsked;
   for (i32 i = 0; i < limbCounts.len(); i++) {
     b1.add("ones " + itoa(limbCounts[i]) + " 0");
@@ -184,9 +184,9 @@ export i32 main(Core core, Cli cli) {
   }
 
   // Divisors shaped to need the add-back, and the random quotients they will be multiplied by.
-  i32[] addbackLimbs = i32[](2, 3, 4);
-  string[] tops = string[]("2147483648", "4294967295");
-  string[] rests = string[]("0", "4294967295");
+  i32[] addbackLimbs = [2, 3, 4];
+  string[] tops = ["2147483648", "4294967295"];
+  string[] rests = ["0", "4294967295"];
   i32 divisorsAt = nAsked;
   for (i32 i = 0; i < addbackLimbs.len(); i++) {
     for (i32 p = 0; p < tops.len(); p++) {
@@ -247,7 +247,7 @@ export i32 main(Core core, Cli cli) {
   if (!a2.ok) { return 0; }
 
   // ── Now drive the probe with all of it ──
-  string[] boundary = string[nAsked](fill: "");
+  string[] boundary = string[].filled(nAsked, "");
   i32 nBoundary = 0;
   for (i32 i = boundaryAt; i < runsAt; i++) {
     string v = decOf(a1, i);
@@ -262,7 +262,7 @@ export i32 main(Core core, Cli cli) {
     }
   }
 
-  string[] runs = string[nAsked](fill: "");
+  string[] runs = string[].filled(nAsked, "");
   i32 nRuns = 0;
   for (i32 i = runsAt; i < divisorsAt; i++) {
     string v = decOf(a1, i);
@@ -297,12 +297,14 @@ export i32 main(Core core, Cli cli) {
   }
 
   // ── Shifts, single-limb paths, unary and text: fixed shapes over a few magnitudes ──
-  string[] mags = string[]("0", "1", "5", decOf(a1, magsAt + 4), decOf(a1, magsAt),
-                           decOf(a1, magsAt + 1));
-  i32[] shifts = i32[](0, 1, 31, 32, 33, 96, 200, 500, -1, -32, -70);
+  string[] mags = [
+                           "0", "1", "5", decOf(a1, magsAt + 4), decOf(a1, magsAt),
+                           decOf(a1, magsAt + 1)
+  ];
+  i32[] shifts = [0, 1, 31, 32, 33, 96, 200, 500, -1, -32, -70];
   for (i32 i = 0; i < mags.len(); i++) {
     if (mags[i] == "") { continue; }
-    string[] signed = string[](mags[i], neg(mags[i]));
+    string[] signed = [mags[i], neg(mags[i])];
     for (i32 s = 0; s < signed.len(); s++) {
       u8[] b = signed[s].toBytes();
       for (i32 k = 0; k < shifts.len(); k++) {
@@ -311,11 +313,11 @@ export i32 main(Core core, Cli cli) {
     }
   }
 
-  string[] smallMags = string[]("0", "1", decOf(a1, magsAt + 3));
-  i32[] smalls = i32[](0, 1, 2, 10, 1000000000, -1, -2);
+  string[] smallMags = ["0", "1", decOf(a1, magsAt + 3)];
+  i32[] smalls = [0, 1, 2, 10, 1000000000, -1, -2];
   for (i32 i = 0; i < smallMags.len(); i++) {
     if (smallMags[i] == "") { continue; }
-    string[] signed = string[](smallMags[i], neg(smallMags[i]));
+    string[] signed = [smallMags[i], neg(smallMags[i])];
     for (i32 s = 0; s < signed.len(); s++) {
       u8[] b = signed[s].toBytes();
       for (i32 m = 0; m < smalls.len(); m++) {
@@ -327,10 +329,10 @@ export i32 main(Core core, Cli cli) {
     }
   }
 
-  string[] unary = string[]("0", "1", decOf(a1, magsAt + 4), decOf(a1, magsAt + 2));
+  string[] unary = ["0", "1", decOf(a1, magsAt + 4), decOf(a1, magsAt + 2)];
   for (i32 i = 0; i < unary.len(); i++) {
     if (unary[i] == "") { continue; }
-    string[] signed = string[](unary[i], neg(unary[i]));
+    string[] signed = [unary[i], neg(unary[i])];
     for (i32 s = 0; s < signed.len(); s++) {
       u8[] b = signed[s].toBytes();
       seen = seen + opNeg(b).len() + opAbs(b).len() + opCopy(b).len() + opBitLen(b);
@@ -346,29 +348,30 @@ export i32 main(Core core, Cli cli) {
   for (i32 i = 0; i < 9; i++) { nines = nines + "1"; }
   string eighteen = "";
   for (i32 i = 0; i < 18; i++) { eighteen = eighteen + "1"; }
-  string[] decs = string[](
+  string[] decs = [
     "0", "-0", "+0", "007", "-12345", forty,
-    "", "-", "+", "abc", "1.5", "1e5", " 1", "1,000", "1x", nines + "x", eighteen + "x");
+    "", "-", "+", "abc", "1.5", "1e5", " 1", "1,000", "1x", nines + "x", eighteen + "x"
+  ];
   for (i32 i = 0; i < decs.len(); i++) {
     if (acceptsDecimal(decs[i].toBytes())) { seen = seen + 1; }
   }
-  string[] hexes = string[]("0", "ff", "FF", "0xff", "0XFF", "-0xff", "", "-", "0x", "g", "0xg");
+  string[] hexes = ["0", "ff", "FF", "0xff", "0XFF", "-0xff", "", "-", "0x", "g", "0xg"];
   for (i32 i = 0; i < hexes.len(); i++) {
     if (acceptsHex(hexes[i].toBytes())) { seen = seen + 1; }
   }
   string twentyF = "";
   for (i32 i = 0; i < 20; i++) { twentyF = twentyF + "f"; }
-  string[] goodHex = string[]("0", "ff", "0xFF", "-0xff", twentyF);
+  string[] goodHex = ["0", "ff", "0xFF", "-0xff", twentyF];
   for (i32 i = 0; i < goodHex.len(); i++) { seen = seen + fromHex(goodHex[i].toBytes()).len(); }
 
   // The integer constructors, including the most negative i64.
-  i64[] i64s = i64[](0, 1, -1, 4294967296, 9223372036854775807, -9223372036854775807 - 1);
+  i64[] i64s = [0, 1, -1, 4294967296, 9223372036854775807, -9223372036854775807 - 1];
   for (i32 i = 0; i < i64s.len(); i++) { seen = seen + fromI64(i64s[i]).len(); }
-  u64[] u64s = u64[](0, 1, 18446744073709551615);
+  u64[] u64s = [0, 1, 18446744073709551615];
   for (i32 i = 0; i < u64s.len(); i++) { seen = seen + fromU64(u64s[i]).len(); }
 
   // The round-trip export.
-  string[] trips = string[]("0", "-1", decOf(a1, magsAt + 2));
+  string[] trips = ["0", "-1", decOf(a1, magsAt + 2)];
   for (i32 i = 0; i < trips.len(); i++) {
     if (trips[i] != "") { seen = seen + roundTrip(trips[i].toBytes()).len(); }
   }

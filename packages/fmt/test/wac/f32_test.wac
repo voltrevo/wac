@@ -31,7 +31,7 @@ f32 parse32(string s) { return atof32Span(s.toBytes(), 0, s.len()); }
 /** The four bytes of an f32, big-endian, as hex — the form the oracle reads. */
 string bits32(f32 x) {
   u32 b = f32.toBits(x);
-  u8[] out = u8[4]();
+  u8[] out = u8[].filled(4, 0);
   out[0] = ((b >> 24) & 255) as@ i32;
   out[1] = ((b >> 16) & 255) as@ i32;
   out[2] = ((b >> 8) & 255) as@ i32;
@@ -93,8 +93,10 @@ export string test_f32_output_round_trips_and_is_shortest(Core core, Cli cli) {
  */
 export string test_f32_the_string_and_bytes_spellings_agree() {
   T t = T.create();
-  u32[] named = u32[](0, 0x80000000, 0x7FC00000, 0x7F800000, 0xFF800000, 0x3DCCCCCD, 1,
-                      0x7F7FFFFF);
+  u32[] named = [
+                      0, 0x80000000, 0x7FC00000, 0x7F800000, 0xFF800000, 0x3DCCCCCD, 1,
+                      0x7F7FFFFF
+  ];
   i32 checked = 0;
   for (i32 i = 0; i < named.len(); i++) {
     f32 x = ofBits(named[i]);
@@ -132,12 +134,13 @@ export string test_f32_the_boundary_values() {
  */
 export string test_f32_parsing_is_correctly_rounded(Core core, Cli cli) {
   T t = T.create();
-  string[] cases = string[](
+  string[] cases = [
     "0", "-0", "1", "-1", "0.1", "0.2", "3.14159265358979",
     "1e-45", "7e-46", "1.1754944e-38", "3.4028235e38", "3.4028236e38",
     "1e39", "-1e39", "1e-50", "16777216", "16777217", "16777218",
     "1.00000005960464477539062", "0.999999940395355224609375",
-    "123456789012345678901234567890", "2.5e-324");
+    "123456789012345678901234567890", "2.5e-324"
+  ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) {
     lines.add("p32 " + hex(cases[i].toBytes()) + " " + bits32(parse32(cases[i])));

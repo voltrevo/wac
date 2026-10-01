@@ -39,13 +39,13 @@ export struct Proof {
   string error;
 
   Proof of(bool ok, u8[] stateRoot, u8[][] accountNodes, u8[][] storageNodes, string error) {
-    u8[][][] one = u8[][][1](fill: u8[][0](fill: u8[0]()));
+    u8[][][] one = u8[][][].filled(1, u8[][].filled(0, u8[]()));
     one[0] = storageNodes;
     return Proof(ok, stateRoot, accountNodes, storageNodes, one, error);
   }
 
   Proof many(bool ok, u8[] stateRoot, u8[][] accountNodes, u8[][][] slots, string error) {
-    u8[][] first = slots.len() > 0 ? slots[0] : u8[][0](fill: u8[0]());
+    u8[][] first = slots.len() > 0 ? slots[0] : u8[][].filled(0, u8[]());
     return Proof(ok, stateRoot, accountNodes, first, slots, error);
   }
 }
@@ -64,7 +64,7 @@ export struct Proof {
  * anchored path therefore answers about the past, deliberately — that is what having a trusted hash means.
  */
 export Proof proofOf(Cli cli, string host, i32 port, string address, string slot, u8[] expectedHash) {
-  string[] one = string[](slot);
+  string[] one = [slot];
   return proofOfSlots(cli, host, port, address, one, expectedHash);
 }
 
@@ -135,7 +135,7 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
         return failed("asked about " + itoa(slots.len()) + " slot(s) and got "
                       + itoa(items.len()) + " storage proofs");
       }
-      u8[][][] out = u8[][][slots.len()](fill: u8[][0](fill: u8[0]()));
+      u8[][][] out = u8[][][].filled(slots.len(), u8[][].filled(0, u8[]()));
       for (i32 i = 0; i < slots.len(); i++) {
         JsonValue entry = items.get(i);
         // The key each answer is about, checked against the slot asked for at that position. A node that
@@ -156,5 +156,5 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
 }
 
 Proof failed(string why) {
-  return Proof.many(false, u8[0](), u8[][0](fill: u8[0]()), u8[][][0](fill: u8[][0](fill: u8[0]())), why);
+  return Proof.many(false, u8[](), u8[][].filled(0, u8[]()), u8[][][].filled(0, u8[][].filled(0, u8[]())), why);
 }

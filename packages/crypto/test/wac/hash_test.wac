@@ -29,18 +29,20 @@ import { decoded } from "../../../codec/src/hex.wac";
 
 /** A deterministic message of `n` bytes; no two lengths share a prefix pattern. */
 u8[] msg(i32 n, i32 seed) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed * 11 + 3) & 0xFF; }
   return out;
 }
 
 /** The lengths a padding bug hides in, for a block size of `rate`. */
 i32[] boundaries(i32 rate, i32 lenBytes) {
-  return i32[](0, 1, 2,
+  return [
+               0, 1, 2,
                rate - lenBytes - 1, rate - lenBytes, rate - lenBytes + 1,
                rate - 2, rate - 1, rate, rate + 1,
                2 * rate - 1, 2 * rate, 2 * rate + 1,
-               3 * rate + 17);
+               3 * rate + 17
+  ] as i32[];
 }
 
 const string ORACLE = "packages/crypto/test/oracle.mjs";
@@ -54,7 +56,7 @@ const string ORACLE = "packages/crypto/test/oracle.mjs";
  * disagrees with. `issues/system/0161`.
  */
 void checkSha2(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", string[](ORACLE), lines, what);
+  check(t, cli, "node", [ORACLE], lines, what);
 }
 
 void claim(Lines lines, i32 bits, u8[] m, u8[] digest) {
@@ -170,7 +172,7 @@ export string test_the_published_nist_vectors() {
  */
 export string test_the_long_nist_vector() {
   T t = T.create();
-  u8[] m = u8[1000000]();
+  u8[] m = u8[].filled(1000000, 0);
   for (i32 i = 0; i < m.len(); i++) { m[i] = 'a'; }
   t.eqBytes(sha256(m),
             decoded("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"),
@@ -193,12 +195,12 @@ export string test_every_length_through_two_blocks(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
   for (i32 n = 0; n <= 130; n++) {
-    u8[] m = u8[n]();
+    u8[] m = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { m[i] = (i * 37 + 11) & 0xFF; }
     claim(lines, 256, m, sha256(m));
   }
   for (i32 n = 0; n <= 260; n++) {
-    u8[] m = u8[n]();
+    u8[] m = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { m[i] = (i * 53 + 7) & 0xFF; }
     claim(lines, 512, m, sha512(m));
   }
@@ -222,7 +224,7 @@ export string test_random_inputs(Core core, Cli cli) {
   for (i32 k = 0; k < 120; k++) {
     s = (s * 1103515245 + 12345) & 2147483647;
     i32 n = ((s >> 7) % 4000) as! i32;
-    u8[] m = u8[n]();
+    u8[] m = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) {
       s = (s * 1103515245 + 12345) & 2147483647;
       m[i] = ((s >> 13) & 255) as! i32;

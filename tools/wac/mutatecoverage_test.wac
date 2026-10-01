@@ -92,7 +92,7 @@ export string test_the_grants_are_the_lanes() {
 export string test_a_real_run_produces_a_profile_this_can_read(Core core, Cli cli) {
   T t = T.create();
   string root = ".cache/mutatecoverage-fixture";
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[]()).wait();
   cli.mkdir(root + "/test/wac", true).wait();
   cli.writeFile(root + "/src.wac",
                 "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
@@ -115,7 +115,7 @@ export string test_a_real_run_produces_a_profile_this_can_read(Core core, Cli cl
   t.eqStr(s.tests[0], "test_small_is_small", "named as the export is, with no translation");
   t.isTrue(s.points[0] != "", "and it reached something: " + s.points[0]);
 
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + root + "-prof'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + root + "-prof'"], u8[]()).wait();
   return t.report();
 }
 
@@ -158,7 +158,7 @@ export string test_a_coverage_point_is_a_file_and_a_line() {
 export string test_a_pass_with_nothing_to_profile_refuses(Core core, Cli cli) {
   T t = T.create();
   Profiled got = buildProfile(core, cli, "native/v8/target/release/wac", cli.cwd().wait(),
-                              string[0](fill: ""), ".cache/mutatebuild-empty-prof", "", "");
+                              string[].filled(0, ""), ".cache/mutatebuild-empty-prof", "", "");
   t.isFalse(got.ok, "an empty pass has nothing to narrow against");
   t.isTrue(got.why != "", "and says so rather than answering an empty profile silently");
   t.eqI32(got.p.known.len(), 0, "the profile it carries knows no points");
@@ -189,7 +189,7 @@ export string test_a_pass_with_nothing_to_profile_refuses(Core core, Cli cli) {
 export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core, Cli cli) {
   T t = T.create();
   string root = ".cache/mutatebuild-fixture";
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[]()).wait();
   cli.mkdir(root + "/test/wac", true).wait();
   cli.writeFile(root + "/src.wac",
                 "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
@@ -205,7 +205,7 @@ export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core,
 
   string cwd = cli.cwd().wait();
   Profiled got = buildProfile(core, cli, cwd + "/native/v8/target/release/wac", cwd,
-                              string[](root + "/test/wac/a_test.wac"), cwd + "/" + root + "-prof",
+                              [root + "/test/wac/a_test.wac"], cwd + "/" + root + "-prof",
                               "", "");
 
   if (envOf(cli, marker()) != "") {
@@ -230,7 +230,7 @@ export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core,
     }
   }
 
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + root + "-prof'"), u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + root + "-prof'"], u8[]()).wait();
   return t.report();
 }
 
@@ -252,15 +252,15 @@ export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Core cor
   if (envOf(cli, marker()) != "") {
     // Under the suite a profile pass refuses outright, so there is no cache behaviour to observe.
     // Asserting the refusal is the honest thing to check here rather than skipping.
-    Profiled nested = buildProfile(core, cli, "x", ".", string[0](fill: ""), ".", ".", "k");
+    Profiled nested = buildProfile(core, cli, "x", ".", string[].filled(0, ""), ".", ".", "k");
     t.isFalse(nested.ok, "under the suite this refuses before it reaches the cache at all");
     return t.report();
   }
 
   string root = ".cache/mutatecache-fixture";
   string cacheDir = root + "-cache";
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"),
-           u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"],
+           u8[]()).wait();
   cli.mkdir(root + "/test/wac", true).wait();
   cli.writeFile(root + "/src.wac",
                 "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
@@ -275,7 +275,7 @@ export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Core cor
                  + "}\n").toBytes()).wait();
 
   string cwd = cli.cwd().wait();
-  string[] entries = string[](root + "/test/wac/a_test.wac");
+  string[] entries = [root + "/test/wac/a_test.wac"];
   Profiled first = buildProfile(core, cli, cwd + "/native/v8/target/release/wac", cwd, entries,
                                 cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "akey");
   t.isTrue(first.ok, "the first pass profiled — " + first.why);
@@ -301,7 +301,7 @@ export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Core cor
             "a key the cache has never seen misses, and the missing binary then fails the run — "
               + "which is the canary that the two hits above were hits");
 
-  cli.exec("bash", string[]("-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"),
-           u8[0]()).wait();
+  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"],
+           u8[]()).wait();
   return t.report();
 }

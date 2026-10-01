@@ -47,8 +47,8 @@ Vector[] vectors(T t, Cli cli, i32 n) {
   Lines lines = Lines.create();
   lines.add("mlkemvec " + itoa64(n as i64));
   Answers a = askDeno(t, cli, ORACLE, lines, "ML-KEM vectors");
-  if (!a.ok) { return Vector[0](fill: Vector(u8[0](), u8[0](), u8[0](), u8[0]())); }
-  Vector[] out = Vector[a.lines.len()](fill: Vector(u8[0](), u8[0](), u8[0](), u8[0]()));
+  if (!a.ok) { return Vector[].filled(0, Vector(u8[](), u8[](), u8[](), u8[]())); }
+  Vector[] out = Vector[].filled(a.lines.len(), Vector(u8[](), u8[](), u8[](), u8[]()));
   for (i32 i = 0; i < a.lines.len(); i++) {
     string line = a.lines[i];
     out[i] = Vector(decoded(word(line, 1)), decoded(word(line, 2)),
@@ -98,9 +98,9 @@ export string test_encapsulation_is_deterministic_in_its_randomness(Core core, C
   if (all.len() == 0) { return t.report(); }
   u8[] seed = all[0].seed;
   u8[] ek = slice(mlkemKeyGen(seed), 0, EK);
-  u8[] m1 = u8[32]();
+  u8[] m1 = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { m1[i] = i; }
-  u8[] m2 = u8[32]();
+  u8[] m2 = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { m2[i] = i; }
   m2[31] = m2[31] ^ 1;
   t.eqBytes(mlkemEncaps(ek, m1), mlkemEncaps(ek, m1), "encapsulation is deterministic");
@@ -117,7 +117,7 @@ export string test_our_ciphertext_round_trips(Core core, Cli cli) {
   u8[] both = mlkemKeyGen(seed);
   u8[] ek = slice(both, 0, EK);
   u8[] dk = slice(both, EK, EK + DK);
-  u8[] m = u8[32]();
+  u8[] m = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { m[i] = (i * 3) & 0xFF; }
   u8[] out = mlkemEncaps(ek, m);
   t.eqI32(out.len(), SS + CT, "encaps returns the secret then the ciphertext");
@@ -139,16 +139,16 @@ export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure
   u8[] both = mlkemKeyGen(seed);
   u8[] ek = slice(both, 0, EK);
   u8[] dk = slice(both, EK, EK + DK);
-  u8[] m = u8[32]();
+  u8[] m = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { m[i] = (i * 7) & 0xFF; }
   u8[] out = mlkemEncaps(ek, m);
   u8[] real = slice(out, 0, SS);
   u8[] ct = slice(out, SS, SS + CT);
   t.eqBytes(mlkemDecaps(dk, ct), real, "a good ciphertext decapsulates");
 
-  i32[] spots = i32[](0, 1, 500, CT - 1);
+  i32[] spots = [0, 1, 500, CT - 1];
   for (i32 i = 0; i < spots.len(); i++) {
-    u8[] bad = u8[CT]();
+    u8[] bad = u8[].filled(CT, 0);
     for (i32 j = 0; j < CT; j++) { bad[j] = ct[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     u8[] got = mlkemDecaps(dk, bad);
@@ -160,8 +160,8 @@ export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure
   }
   // Two different corruptions must give two different rejection secrets, or the value is
   // not bound to the ciphertext at all.
-  u8[] badA = u8[CT]();
-  u8[] badB = u8[CT]();
+  u8[] badA = u8[].filled(CT, 0);
+  u8[] badB = u8[].filled(CT, 0);
   for (i32 j = 0; j < CT; j++) { badA[j] = ct[j]; badB[j] = ct[j]; }
   badA[0] = badA[0] ^ 1;
   badB[1] = badB[1] ^ 1;

@@ -26,7 +26,7 @@ export string test_map_md_is_current(Core core, Cli cli) {
   if (!bin.exists) { return t.report(); }
 
   Exec r = cli.exec(binary(cli),
-                    string[]("run", "--allow-read", "tools/wac/map.wac", "--check"), u8[0]()).wait();
+                    ["run", "--allow-read", "tools/wac/map.wac", "--check"], u8[]()).wait();
   t.isTrue(r.ran(), "the generator starts: " + r.error);
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0,
@@ -44,8 +44,8 @@ export string test_map_md_is_current(Core core, Cli cli) {
 export string test_the_sites_generated_copy_is_current(Core core, Cli cli) {
   T t = T.create();
   Exec r = cli.exec("deno",
-                    string[]("run", "--allow-read", "site/tools/syncMap.ts", "--check"),
-                    u8[0]()).wait();
+                    ["run", "--allow-read", "site/tools/syncMap.ts", "--check"],
+                    u8[]()).wait();
   // No Deno is a reason to say so, not a reason to pass: the site's generated file is either checked
   // or it is not, and a silent skip reads as coverage that was never there.
   t.isTrue(r.ran(), "deno runs the site's generator: " + r.error);
@@ -117,7 +117,7 @@ export string test_the_two_lists_of_test_registrars_agree(Core core, Cli cli) {
  * two slices — and a shape change makes the floor in the caller fire rather than making this lie.
  */
 string[] countsHere(string text) {
-  string[] out = string[16](fill: "");
+  string[] out = string[].filled(16, "");
   i32 n = 0;
   i32 from = 0;
   for (i32 i = 0; i <= text.len(); i++) {
@@ -133,7 +133,7 @@ string[] countsHere(string text) {
     }
     if (close > start && n < out.len()) { out[n] = line.slice(start, close); n = n + 1; }
   }
-  string[] exact = string[n](fill: "");
+  string[] exact = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }

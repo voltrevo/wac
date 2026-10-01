@@ -39,12 +39,12 @@ const string PREFIX = "packages/ethrpc/";
 
 /** What the tests need: the vendored fixtures on disk, and a process for the live ones. */
 string[] grants() {
-  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+  return ["--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net"];
 }
 
 Rule[] rules() {
-  return Rule[](
-    Rule("packages/ethrpc/src/jsonhex.wac", "hexArray", "decl", false,
+  return [
+         Rule("packages/ethrpc/src/jsonhex.wac", "hexArray", "decl", false,
          "**An uncovered entry.** `hexArray` reads a JSON array of hex strings — the shape " +
          "`eth_getProof` returns for a proof path — and nothing calls it, because " +
          "`getproof.wac` is its only caller and `getproof.wac` is one of the two files still " +
@@ -59,17 +59,17 @@ Rule[] rules() {
     Rule("packages/ethrpc/src/jsonhex.wac", "prefixLen", "decl", false,
          "The uppercase `0X` prefix, which is legal JSON-RPC and which no node in the corpus " +
          "emits.")
-  );
+  ];
 }
 
 Pin[] pins() {
-  return Pin[0](fill: Pin("", 0, "", true, ""));
+  return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
 export i32 main(Core core, Cli cli) {
   LedgerFlags flags = LedgerFlags.read(cli);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can

@@ -31,17 +31,21 @@ import { beaconTypesMainnet, beaconFields, TY_UINT8, TY_UINT64, TY_BYTES32, TY_B
 const string MANIFEST = "packages/ssz/test/fixtures.json";
 
 string[] containers() {
-  return string[]("BeaconBlockHeader", "SigningData", "SyncCommittee", "SyncAggregate",
+  return [
+                  "BeaconBlockHeader", "SigningData", "SyncCommittee", "SyncAggregate",
                   "LightClientHeader", "LightClientBootstrap", "LightClientUpdate",
-                  "LightClientFinalityUpdate", "LightClientOptimisticUpdate");
+                  "LightClientFinalityUpdate", "LightClientOptimisticUpdate"
+  ];
 }
 
 /** The type index for each name in `containers()`, in the same order. */
 i32[] containerTypes() {
-  return i32[](TY_BEACON_BLOCK_HEADER(), TY_SIGNING_DATA(), TY_SYNC_COMMITTEE(),
+  return [
+               TY_BEACON_BLOCK_HEADER(), TY_SIGNING_DATA(), TY_SYNC_COMMITTEE(),
                TY_SYNC_AGGREGATE(), TY_LIGHT_CLIENT_HEADER(), TY_LIGHT_CLIENT_BOOTSTRAP(),
                TY_LIGHT_CLIENT_UPDATE(), TY_LIGHT_CLIENT_FINALITY_UPDATE(),
-               TY_LIGHT_CLIENT_OPTIMISTIC_UPDATE());
+               TY_LIGHT_CLIENT_OPTIMISTIC_UPDATE()
+  ];
 }
 
 /** The position of `name` in `containers()`, or `-1`. */
@@ -68,7 +72,7 @@ export string test_every_light_client_container_merkleizes_to_ethereums_root(Cor
 
   string[] names = containers();
   i32[] types = containerTypes();
-  i32[] per = i32[names.len()]();
+  i32[] per = i32[].filled(names.len(), 0);
   i32 reported = 0;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
@@ -107,8 +111,8 @@ export string test_the_descriptors_serialized_sizes_are_ethereums(Core core, Cli
 
   string[] names = containers();
   i32[] types = containerTypes();
-  i32[] seen = i32[names.len()](fill: -1);
-  bool[] disagree = bool[names.len()](fill: false);
+  i32[] seen = i32[].filled(names.len(), -1);
+  bool[] disagree = bool[].filled(names.len(), false);
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     i32 at = indexOfContainer(memberText(c, "container"));
@@ -128,10 +132,12 @@ export string test_the_descriptors_serialized_sizes_are_ethereums(Core core, Cli
             names[i] + ": the descriptor against Ethereum's cases");
   }
   // The five figures the spec pins, so a re-vendor that changed config would be caught here too.
-  string[] pinned = string[]("BeaconBlockHeader", "LightClientOptimisticUpdate",
+  string[] pinned = [
+                             "BeaconBlockHeader", "LightClientOptimisticUpdate",
                              "LightClientFinalityUpdate", "LightClientBootstrap",
-                             "LightClientUpdate");
-  i32[] want = i32[](112, 280, 584, 24896, 25368);
+                             "LightClientUpdate"
+  ];
+  i32[] want = [112, 280, 584, 24896, 25368];
   for (i32 i = 0; i < pinned.len(); i++) {
     t.eqI32(fixedSize(t2, fl, types[indexOfContainer(pinned[i])]), want[i],
             pinned[i] + " for mainnet Altair");
@@ -150,9 +156,9 @@ export string test_a_wrong_length_update_is_refused_rather_than_merkleized(Core 
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   if (cases is null) { return t.report(); }
 
-  u8[] good = u8[0]();
+  u8[] good = u8[]();
   string wantRoot = "";
-  u8[] syncCommittee = u8[0]();
+  u8[] syncCommittee = u8[]();
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     string container = memberText(c, "container");
@@ -175,7 +181,7 @@ export string test_a_wrong_length_update_is_refused_rather_than_merkleized(Core 
            "a LightClientUpdate one byte short was accepted");
   t.isTrue(beaconRoot(TY_LIGHT_CLIENT_UPDATE(), withTrailingZero(good)) is null,
            "a LightClientUpdate one byte long was accepted");
-  t.isTrue(beaconRoot(TY_LIGHT_CLIENT_UPDATE(), u8[0]()) is null,
+  t.isTrue(beaconRoot(TY_LIGHT_CLIENT_UPDATE(), u8[]()) is null,
            "an empty LightClientUpdate was accepted");
   // And a `SyncCommittee` is 512 pubkeys plus one: 511 must not pass as 512.
   t.isTrue(beaconRoot(TY_SYNC_COMMITTEE(), prefixOf(syncCommittee, syncCommittee.len() - 48))
@@ -194,15 +200,21 @@ export string test_every_named_intermediate_type_is_the_shape_its_name_claims() 
   i32 KIND_BASIC = 0;
   i32 KIND_BITVECTOR = 1;
   i32 KIND_VECTOR = 3;
-  string[] names = string[]("uint8", "uint64", "Bytes32", "BLSPubkey (Bytes48)",
+  string[] names = [
+                            "uint8", "uint64", "Bytes32", "BLSPubkey (Bytes48)",
                             "BLSSignature (Bytes96)", "Vector[BLSPubkey, 512]", "Bitvector[512]",
-                            "sync committee branch", "finality branch");
-  i32[] tys = i32[](TY_UINT8(), TY_UINT64(), TY_BYTES32(), TY_BYTES48(), TY_BYTES96(),
+                            "sync committee branch", "finality branch"
+  ];
+  i32[] tys = [
+                    TY_UINT8(), TY_UINT64(), TY_BYTES32(), TY_BYTES48(), TY_BYTES96(),
                     TY_PUBKEY_VECTOR(), TY_SYNC_COMMITTEE_BITS(), TY_SYNC_BRANCH(),
-                    TY_FINALITY_BRANCH());
-  i32[] kinds = i32[](KIND_BASIC, KIND_BASIC, KIND_VECTOR, KIND_VECTOR, KIND_VECTOR, KIND_VECTOR,
-                      KIND_BITVECTOR, KIND_VECTOR, KIND_VECTOR);
-  i32[] params = i32[](1, 8, 32, 48, 96, 512, 512, 5, 6);
+                    TY_FINALITY_BRANCH()
+  ];
+  i32[] kinds = [
+                      KIND_BASIC, KIND_BASIC, KIND_VECTOR, KIND_VECTOR, KIND_VECTOR, KIND_VECTOR,
+                      KIND_BITVECTOR, KIND_VECTOR, KIND_VECTOR
+  ];
+  i32[] params = [1, 8, 32, 48, 96, 512, 512, 5, 6];
 
   i32[] types = beaconTypesMainnet();
   for (i32 i = 0; i < names.len(); i++) {
@@ -214,8 +226,8 @@ export string test_every_named_intermediate_type_is_the_shape_its_name_claims() 
   }
   // The byte vectors must all point at uint8 as their element, or their roots are over the wrong
   // packing. That is the one cross-reference the shapes above cannot catch.
-  i32[] byteVectors = i32[](TY_BYTES32(), TY_BYTES48(), TY_BYTES96());
-  string[] byteVectorNames = string[]("Bytes32", "Bytes48", "Bytes96");
+  i32[] byteVectors = [TY_BYTES32(), TY_BYTES48(), TY_BYTES96()];
+  string[] byteVectorNames = ["Bytes32", "Bytes48", "Bytes96"];
   for (i32 i = 0; i < byteVectors.len(); i++) {
     t.eqI32(types[byteVectors[i] * 4 + 2], TY_UINT8(),
             byteVectorNames[i] + " does not have uint8 elements");
@@ -224,13 +236,13 @@ export string test_every_named_intermediate_type_is_the_shape_its_name_claims() 
 }
 
 u8[] prefixOf(u8[] a, i32 n) {
-  u8[] out = u8[n]();
+  u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = a[i]; }
   return out;
 }
 
 u8[] withTrailingZero(u8[] a) {
-  u8[] out = u8[a.len() + 1]();
+  u8[] out = u8[].filled(a.len() + 1, 0);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   return out;
 }

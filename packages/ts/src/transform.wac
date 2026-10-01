@@ -51,8 +51,8 @@ export u8[] transform(u8[] archive) {
     return fail("the archive has no `entry` member naming the file to start from");
   }
 
-  string[] paths = string[n](fill: "");
-  u8[][] texts = u8[][n](fill: u8[0]());
+  string[] paths = string[].filled(n, "");
+  u8[][] texts = u8[][].filled(n, u8[]());
   i32 at = 0;
   for (i32 i = 0; i < a.entries.len(); i++) {
     if (a.entries[i].name == "entry") { continue; }

@@ -81,8 +81,8 @@ export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
   // are the ones with prose in them.
   // `vision/` joins `site/` as an exclusion, and for its own reason: it is maintained by hand and
   // nothing programmatic runs over it, so an edit there must not be able to fail a build.
-  string[] files = sourceFiles(core, cli, string[](".md", ".ts", ".wac", ".rs"),
-                               string[]("site/", "vision/"));
+  string[] files = sourceFiles(core, cli, [".md", ".ts", ".wac", ".rs"],
+                               ["site/", "vision/"]);
 
   // **A floor, so a walk that resolved nothing cannot pass as a clean result** — which is the failure
   // this whole file is about, one level up.
@@ -106,7 +106,7 @@ export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
       if (unit > 0) {
         n = n + 1;
         if (n <= 20) {
-          u8[] head = u8[unit < 60 ? unit : 60]();
+          u8[] head = u8[].filled(unit < 60 ? unit : 60, 0);
           for (i32 k = 0; k < head.len(); k++) { head[k] = b[from + k]; }
           found = found + "\n  " + files[f] + ":" + itoa(line) + "  " + string.fromBytes(head);
         }
@@ -126,22 +126,24 @@ export string test_the_check_can_actually_match_which_the_sweep_it_replaces_coul
   // **The canary, and it is the point of this file rather than a formality.** The predecessor reported
   // the repository clean while two duplications sat in it — not by matching nothing, but by being a
   // backreference handed to a grep that refuses them, with stderr discarded.
-  string[] real = string[](
+  string[] real = [
     "## The decision in step 4## The decision in step 4",
     "/** one constructor, and a getter *//** one constructor, and a getter */",
-    "## The decision in step 4## The decision in step 4## The decision in step 4");
+    "## The decision in step 4## The decision in step 4## The decision in step 4"
+  ];
   for (i32 i = 0; i < real.len(); i++) {
     t.isTrue(repeatedUnit(real[i]) != "", "a real duplication is not matched: " + real[i]);
   }
 
   // And it must not fire on the things that are legitimately repetitive.
-  string[] fine = string[](
+  string[] fine = [
     "// ─────────────────────────",
     "====================",
     "----------",
     "////////",
     "",
-    "a short one twice a short one twice");
+    "a short one twice a short one twice"
+  ];
   for (i32 i = 0; i < fine.len(); i++) {
     t.eqStr(repeatedUnit(fine[i]), "", "a rule line was reported as a duplication: " + fine[i]);
   }

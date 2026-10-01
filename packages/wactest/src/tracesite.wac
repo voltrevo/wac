@@ -55,7 +55,7 @@ export TraceSite traceSite(Cli cli, string stem, i32 site) {
   string want = itoa(site) + "\t";
   for (i32 i = 0; i < rows.len(); i++) {
     if (!startsWith(rows[i], want)) { continue; }
-    string[] parts = string[5](fill: "");
+    string[] parts = string[].filled(5, "");
     i32 n = 0;
     string cur = "";
     for (i32 k = 0; k <= rows[i].len(); k++) {

@@ -22,7 +22,7 @@ f64 total(Val v) {
   }
 }
 export i32 f() {
-  Val?[] items = Val?[2]();
+  Val?[] items = Val?[].defaulted(2);
   items[0] = Val.Num(2.0);
   items[1] = Val.Num(3.0);
   return total(Val.Arr(ArrData(items, 2))) as~ i32;

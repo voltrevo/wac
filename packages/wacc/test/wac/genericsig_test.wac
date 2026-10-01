@@ -41,7 +41,7 @@ const string BOX =
 
 /** Where a section's body starts, or -1 — the last of an id wins. */
 i32 sectionStart(u8[] b, i32 want) {
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
@@ -59,7 +59,7 @@ i32 typeCount(u8[] b) {
   if (b.len() <= 8) { return -1; }
   i32 at = sectionStart(b, 1);
   if (at < 0) { return -1; }
-  i32[] pos = i32[1]();
+  i32[] pos = i32[].filled(1, 0);
   pos[0] = at;
   leb(b, pos);              // one rec group
   pos[0] = pos[0] + 1;      // 0x4E, the group itself
@@ -67,7 +67,7 @@ i32 typeCount(u8[] b) {
 }
 
 u8[] boxModule() {
-  return emitFilesChecked(string[]("/main.wac"), string[](BOX), "/main.wac");
+  return emitFilesChecked(["/main.wac"], [BOX], "/main.wac");
 }
 
 /**
@@ -80,9 +80,11 @@ export string test_an_uncalled_generic_method_costs_nothing() {
   T t = T.create();
   u8[] with = boxModule();
   u8[] without = emitFilesChecked(
-    string[]("/main.wac"),
-    string[]("struct Box<T> {\n  T v;\n  Box<T> of(T v) { return Box(v); }\n}\n" +
-             "export i32 f() { Box<i32> a = Box.of(21); return a.v * 2; }\n"), "/main.wac");
+    ["/main.wac"],
+    [
+             "struct Box<T> {\n  T v;\n  Box<T> of(T v) { return Box(v); }\n}\n" +
+             "export i32 f() { Box<i32> a = Box.of(21); return a.v * 2; }\n"
+    ], "/main.wac");
   t.isTrue(with.len() > 8 && without.len() > 8, "one of the two programs does not emit");
 
   i32 types = typeCount(with) - typeCount(without);

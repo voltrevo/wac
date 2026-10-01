@@ -37,7 +37,7 @@ u8[]? mapAll(u8[] s, i32 which) {
     at = at + sc.size;
   }
 
-  u8[] out = u8[total]();
+  u8[] out = u8[].filled(total, 0);
   i32 write = 0;
   at = 0;
   while (at < s.len()) {

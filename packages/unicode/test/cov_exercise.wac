@@ -43,20 +43,22 @@ import {
 
 /** Valid text of every encoded length, and the mapping paths over it. */
 string[] good() {
-  return string[](
+  return [
     "", "a", "A", "abc", "ABC", "café", "CAFÉ", "日本語", "😀", "straße", "STRASSE",
-    "ΣΊΣΥΦΟΣ", "σίσυφος", "ς", "σ", "K", "k", "ﬁ", "İ", "ı");
+    "ΣΊΣΥΦΟΣ", "σίσυφος", "ς", "σ", "K", "k", "ﬁ", "İ", "ı"
+  ];
 }
 
 /** Every way a sequence can be malformed, which is most of the decoder. */
 u8[][] malformed() {
-  return u8[][](
-    u8[](0x80), u8[](0xbf), u8[](0xc0, 0x80), u8[](0xc1, 0xbf), u8[](0xe0, 0x80, 0x80),
-    u8[](0xe0, 0x9f, 0xbf), u8[](0xf0, 0x80, 0x80, 0x80), u8[](0xf0, 0x8f, 0xbf, 0xbf),
-    u8[](0xed, 0xa0, 0x80), u8[](0xed, 0xbf, 0xbf), u8[](0xf4, 0x90, 0x80, 0x80),
-    u8[](0xf5, 0x80, 0x80, 0x80), u8[](0xfe), u8[](0xff),
-    u8[](0xc2), u8[](0xe0, 0xa0), u8[](0xf0, 0x9f, 0x98), u8[](0xc2, 0x41),
-    u8[](0xe0, 0xa0, 0x41), u8[](0x61, 0x80, 0x62), u8[]());
+  return [
+    [0x80] as u8[], [0xbf] as u8[], [0xc0, 0x80] as u8[], [0xc1, 0xbf] as u8[], [0xe0, 0x80, 0x80] as u8[],
+    [0xe0, 0x9f, 0xbf] as u8[], [0xf0, 0x80, 0x80, 0x80] as u8[], [0xf0, 0x8f, 0xbf, 0xbf] as u8[],
+    [0xed, 0xa0, 0x80] as u8[], [0xed, 0xbf, 0xbf] as u8[], [0xf4, 0x90, 0x80, 0x80] as u8[],
+    [0xf5, 0x80, 0x80, 0x80] as u8[], [0xfe] as u8[], [0xff] as u8[],
+    [0xc2] as u8[], [0xe0, 0xa0] as u8[], [0xf0, 0x9f, 0x98] as u8[], [0xc2, 0x41] as u8[],
+    [0xe0, 0xa0, 0x41] as u8[], [0x61, 0x80, 0x62] as u8[], u8[]()
+  ];
 }
 
 export i32 main(Core core, Cli cli) {
@@ -76,9 +78,11 @@ export i32 main(Core core, Cli cli) {
   // `0xd800` and `0xdfff` are the surrogate ends, and they are here because the loop above *skips*
   // them — so `encodedLength`'s refusal of a surrogate had never been reached from this driver, while
   // `test/wac/unicode_test.wac` has tested the decoder's refusal of one since it was written.
-  i32[] edges = i32[](0, 1, 0x41, 0x5a, 0x61, 0x7a, 0x7f, 0x80, 0xdf, 0x130, 0x131, 0x212a,
+  i32[] edges = [
+                      0, 1, 0x41, 0x5a, 0x61, 0x7a, 0x7f, 0x80, 0xdf, 0x130, 0x131, 0x212a,
                       0x3c2, 0x3c3, 0x3a3, 0x7ff, 0x800, 0xffff, 0x10000, 0x10ffff, -1, 0x110000,
-                      0xd800, 0xdfff);
+                      0xd800, 0xdfff
+  ];
   for (i32 i = 0; i < edges.len(); i++) {
     i32 cp = edges[i];
     seen = seen + mapLower(cp) + mapUpper(cp) + mapFold(cp) + encodeOne(cp).len();
@@ -115,7 +119,7 @@ export i32 main(Core core, Cli cli) {
   u8[] test = "test".toBytes();
   for (i32 t = 0; t < 4000; t++) {
     i32 n = r.upto(12);
-    u8[] b = u8[n]();
+    u8[] b = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { b[i] = (r.next() & (0xff as@ u32)) as@ i32; }
     if (valid(b)) { seen = seen + 1; }
     seen = seen + lower(b).len();
