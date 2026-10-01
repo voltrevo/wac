@@ -51,7 +51,9 @@ module         = { import | decl } ;
 
 decl           = [ "export" ] , ( func_decl | struct_decl | enum_decl | type_decl
                                 | static_decl | symbol_decl | namespace_decl )
-               | "export" , "*" , "as" , name , "from" , STRING , ";" ;        (* 03 *)
+               | "export" , "*" , "as" , name , "from" , STRING , ";"          (* 03 *)
+               | "export" , "{" , import_item , { "," , import_item } , [ "," ] , "}" ,
+                 "from" , STRING , ";" ;                                       (* a re-export: 02 *)
 
 import         = "import" , "{" , import_item , { "," , import_item } , [ "," ] , "}" ,
                  "from" , STRING , ";" ;

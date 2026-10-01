@@ -45,7 +45,8 @@ Status: **taken** (the chapter follows it; say if wrong) · **needs you** (the c
 8. **A namespace cannot be reopened.** The design says reopening and merging are *"not proposed
    here"*. A spec has to say what happens, and the general collision rule already refuses a second
    declaration, so 03 states it: `[§wac-namespace-once-7ar5jqz]`.
-9. **A program may span projects through a relative path.** 02's `@/` example has the entry project
+9. **Reversed by the operator:** relative and `@/` imports stay inside their project; another project is
+   reached by package name only (`wac-import-within-project`). Formerly: **A program may span projects through a relative path.** 02's `@/` example has the entry project
    reach a nested project with `./vendored/…`. Current spec allows this explicitly. The design leaves
    *package* boundaries open, which 02 lists as Open — a project directory is not a package.
 10. **Static declarations are UPPER_SNAKE by convention.** Current spec gives conventions for types,
@@ -153,3 +154,12 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   an unused import of a missing name is not an error, so the commented line tested nothing.
 - **`is`, `is not` and `matches` bind as comparisons**, tighter than `&&`: every example, appendix A and
   vision/TECHNICAL's `Ok(cfg) matches res && …` assume it, against spec/spec's table. Retagged (D).
+
+## Chapter 02's open questions (operator's ruling)
+
+- **`export { a, b as c } from "m"` is supported** — several names and renames; no local binding; identity kept;
+  collides with other exports of the name; lazy like an import; a namespace member re-exports under its own
+  name; in the entry, a re-exported function is a program export. The no-implicit-re-export rule stays.
+- **Relative imports stay inside the package boundary**, taken as the project: the target's nearest
+  `wac.json5` must be the importer's own (two files with none count as the same). 02's `@/` example now
+  spans projects through a dependency instead of `./vendored/`.

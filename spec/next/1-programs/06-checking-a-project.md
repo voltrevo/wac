@@ -34,7 +34,7 @@ wac check ./src/lib.wac ./tools/example.wac
 
 `wac check [files]` uses the supplied files as roots and checks their full, transitive import graph.
 Every declaration in each reached file is checked, including unused declarations. Every import and
-namespace re-export is followed and validated, even when its names are unused.
+re-export — a namespace or a named one — is followed and validated, even when its names are unused.
 
 ```wac
 // expect (wac check src/lib.wac): refused
@@ -49,7 +49,7 @@ Explicit checking still loads and checks `optional.wac`. A missing `optional.wac
 though `helper` is unused.
 
 `[§wac-check-files-2ncb9c8]` `wac check` with files checks each one, and every file their imports and
-namespace re-exports reach, in full — every declaration, and every import whether or not its names
+re-exports reach, in full — every declaration, and every import whether or not its names
 are used.
 
 Supplying files replaces project-wide file discovery; unrelated neighbouring files are not scanned.
@@ -111,7 +111,7 @@ scanned for full-project checking.
 ## Validate unused imports
 
 Both forms of `wac check` validate import targets and requested exports even when the imported names
-are unused. Namespace re-exports are validated too.
+are unused. Re-exports, named and namespace, are validated too.
 
 ```wac
 // expect: emits
@@ -147,7 +147,7 @@ export i32 zero() { return 0; }
 ```
 
 `[§wac-check-unused-imports-tdqy2m2]` `wac check` refuses an import whose file is missing, an import
-of a name its file does not export, and a namespace re-export whose file is missing — whether or not
+of a name its file does not export, and a re-export whose file is missing or does not export the name — whether or not
 anything uses the imported names.
 
 Normal builds retain lazy import loading. Full-project checking validates the project without

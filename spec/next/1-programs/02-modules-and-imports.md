@@ -154,7 +154,112 @@ export i32 fooViaB() { return foo(); }
 `[§wac-no-reexport-f7kn4wq]` Importing a name from a module that imports it, rather than declaring
 and exporting it, is refused.
 
-Re-exporting is explicit, and takes the form of a namespace ([03](03-namespaces.md)).
+Re-exporting is explicit.
+
+## Re-exporting
+
+`export { … } from "…"` exports names another module exports, as this module's own:
+
+```wac
+// expect: answers area(3, 4) = 12
+// expect: answers perimeter(3, 4) = 14
+// ---- shapes/rect.wac ----
+export i32 area(i32 w, i32 h) { return w * h; }
+export i32 perimeter(i32 w, i32 h) { return 2 * (w + h); }
+// ---- shapes/lib.wac ----
+export { area, perimeter } from "./rect.wac";
+// ---- main.wac ----
+export { area, perimeter } from "./shapes/lib.wac";
+```
+
+`[§wac-reexport-names-khyrww8]` `export { a, b } from "m"` makes each named export of `m` an export of this
+module, under the same name. A re-exported name may be re-exported again.
+
+A name may be renamed on the way out, as on the way in:
+
+```wac
+// expect: answers rectArea(3, 4) = 12
+// expect: answers fromRect(3, 4) = 12
+// ---- rect.wac ----
+export i32 area(i32 w, i32 h) { return w * h; }
+// ---- main.wac ----
+import { rectArea as viaImport } from "./shapes.wac";
+
+export { area as rectArea } from "./rect.wac";
+
+export i32 fromRect(i32 w, i32 h) { return viaImport(w, h); }
+// ---- shapes.wac ----
+export { area as rectArea } from "./rect.wac";
+```
+
+`[§wac-reexport-rename-vw9i558]` `export { a as b } from "m"` exports `m`'s `a` under the name `b`.
+
+A re-export is the declaration itself, not a copy or a wrapper: a re-exported struct is the same type, and a
+re-exported symbol the same identity, as its original ([01](01-names-and-identity.md)).
+
+```wac
+// expect: answers sameType = 5
+// ---- geo.wac ----
+export struct Circle { i32 r; }
+// ---- lib.wac ----
+export { Circle as Round } from "./geo.wac";
+// ---- main.wac ----
+import { Circle } from "./geo.wac";
+import { Round } from "./lib.wac";
+
+export i32 sameType() {
+  Round c = Circle(5);                     // one type under two names
+  return c.r;
+}
+```
+
+`[§wac-reexport-identity-dwh5za5]` A re-exported declaration keeps its identity: every name it is reached by
+names the same declaration.
+
+A re-export does not bring the name into scope in the re-exporting module. To use it there as well, import it:
+
+```wac
+// expect: emits
+// ---- rect.wac ----
+export i32 area(i32 w, i32 h) { return w * h; }
+// ---- main.wac ----
+export { area } from "./rect.wac";
+
+export i32 unitArea() {
+  // ERROR: undefined name 'area' — a re-export does not bind it here
+  // return area(1, 1);
+  return 1;
+}
+```
+
+`[§wac-reexport-no-binding-rfs69bz]` `export { a } from "m"` declares nothing in the re-exporting module's
+scope.
+
+Its exported names do collide with the module's other exports, as any two declarations of one name would
+([01](01-names-and-identity.md)):
+
+```wac
+// expect: emits
+// ---- rect.wac ----
+export i32 area(i32 w, i32 h) { return w * h; }
+// ---- main.wac ----
+export { area } from "./rect.wac";
+export i32 volume(i32 w, i32 h, i32 d) { return w * h * d; }
+
+// ERROR: duplicate export 'area'
+// export i32 area(i32 side) { return side * side; }
+```
+
+`[§wac-reexport-collision-sutcnkm]` A re-exported name and another export of the same name in one module are
+refused.
+
+A re-export reads its module lazily, as an import does: `rect.wac` is read only when something needs the name
+([05](05-reachability.md)). A namespace member may be re-exported by its path, as it may be imported, and is
+exported under its own name — `export { operators.add } from "core"` exports `add`. A whole module is
+re-exported as a namespace with `export * as name from "…"` ([03](03-namespaces.md)).
+
+In the entry module, a re-exported function is an export of the compiled program like any other, under the
+name it is re-exported as ([07](07-programs.md)).
 
 Modules may import each other in a cycle:
 
@@ -231,27 +336,27 @@ is refused.
 
 `@/` is the root of the **project containing the importing file**: the nearest directory at or above
 it that holds a `wac.json5`. Not the directory the compiler was started in, and not the entry's
-project — a program may span two projects, and each file's `@/` means its own:
+project — a program spans several projects through its packages, and each file's `@/` means its own:
 
 ```wac
 // expect: answers widths = 21
 // ---- wac.json5 ----
-{}
+{ imports: { extras: { git: "https://example.com/extras", ref: "v1" } } }
 // ---- src/fmt.wac ----
 export i32 width() { return 20; }
 // ---- tools/report.wac ----
 import { width } from "@/src/fmt.wac";
 export i32 report() { return width(); }
-// ---- vendored/wac.json5 ----
-{}
-// ---- vendored/src/fmt.wac ----
+// ---- <extras>/wac.json5 ----
+{ exports: "./tools/extra.wac" }
+// ---- <extras>/src/fmt.wac ----
 export i32 width() { return 1; }
-// ---- vendored/tools/extra.wac ----
-import { width } from "@/src/fmt.wac";       // vendored's own root, not the entry's
+// ---- <extras>/tools/extra.wac ----
+import { width } from "@/src/fmt.wac";       // extras' own root, not the entry's
 export i32 extra() { return width(); }
 // ---- main.wac ----
 import { report } from "./tools/report.wac";
-import { extra } from "./vendored/tools/extra.wac";
+import { extra } from "extras";
 
 export i32 widths() { return report() + extra(); }
 ```
@@ -270,6 +375,43 @@ importing file. With none, it is refused — not treated as relative to some oth
 
 A project that uses only relative imports needs no manifest. An empty `wac.json5` is a valid one: its
 presence is all `@/` asks about.
+
+### A path stays inside its project
+
+A relative or `@/` specifier names a file in the importing file's own project. Another project — a package,
+or a directory with a `wac.json5` of its own — is reached by its package name and nothing else:
+
+```wac
+// expect: refused
+// ---- wac.json5 ----
+{}
+// ---- main.wac ----
+import { width } from "./vendored/fmt.wac";   // vendored/ is a project of its own
+export i32 vendoredWidth() { return width(); }
+// ---- vendored/wac.json5 ----
+{}
+// ---- vendored/fmt.wac ----
+export i32 width() { return 1; }
+```
+
+```wac
+// expect (wac build app/main.wac): refused
+// ---- app/wac.json5 ----
+{}
+// ---- app/main.wac ----
+import { shared } from "../shared.wac";     // above app's root: outside its project
+export i32 viaShared() { return shared(); }
+// ---- shared.wac ----
+export i32 shared() { return 1; }
+```
+
+`[§wac-import-within-project-vnqu28r]` A relative or `@/` specifier must resolve to a file whose nearest
+`wac.json5` is the importing file's own — or, for a file with none, to another file with none. A path into a
+nested project, or out past the project's root, is refused, and the diagnostic names the boundary it
+crosses.
+
+A package's files are its own to arrange: what it offers is its entry module ([04](04-packages.md)), and a
+path that reached past that would make every file in it part of its interface.
 
 ### A package is named whole
 
@@ -409,11 +551,3 @@ handed ([44](../7-library/44-std.md)).
 An import is a route to a module, not an instruction to read it. A file is read when something
 retained needs a declaration in it ([05](05-reachability.md)), and checking a whole project reads
 everything ([06](06-checking-a-project.md)).
-
-## Open
-
-- **Re-exporting one name.** A module can re-export another module as a namespace
-  ([03](03-namespaces.md)). Whether it can re-export a single imported declaration under its own
-  name — the role `export { foo } from "./a.wac"` plays elsewhere — is not decided.
-- **Relative imports across a package boundary.** Whether a file in one package may import a file in
-  another by a relative path is not decided ([04](04-packages.md)).

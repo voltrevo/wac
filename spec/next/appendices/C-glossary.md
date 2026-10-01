@@ -87,6 +87,10 @@ own and takes one from where it is used ([09](../2-types/09-numeric-literals.md)
 
 **refused** — rejected with an error diagnostic; no module is produced.
 
+**re-export** — `export { a } from "m"` or `export * as ns from "m"`: another module's declaration
+exported as this module's own, identity unchanged ([02](../1-programs/02-modules-and-imports.md),
+[03](../1-programs/03-namespaces.md)).
+
 **scheduler** — what receives continuations nobody awaited: `schedule f;` names it for a block, and `drain` runs what it holds
 ([35](../6-concurrency/35-tickets-and-await.md)).
 

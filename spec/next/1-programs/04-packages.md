@@ -263,7 +263,5 @@ export i32 oneCircle() { return radius(Circle(5)); }   // one Circle
 `[§wac-package-identity-uskz3mi]` Two manifests that resolve to the same repository, commit and path
 reach the same module, under whatever names they import it by.
 
-## Open
-
-- **Relative imports across a package boundary.** This chapter does not settle whether a relative
-  file import may cross out of one package's directory into another's.
+A package's files cannot be reached by a relative path from outside it, nor can its files reach out of it
+by one ([02](02-modules-and-imports.md)): a package is entered through its name and its `exports` alone.

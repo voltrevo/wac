@@ -117,8 +117,19 @@ def check(path, start, block):
         for _, l in fl:
             for a, b in re.findall(r"(\w+)\s+as\s+(\w+)", l if l.startswith("import") else ""):
                 if a in names: names.setdefault(b, []).extend(names[a])
+    reroots = []
+    for name, fl in files:
+        for _, l in fl:
+            m = re.match(r"export\s*\{([^}]*)\}\s*from", l)
+            if not m: continue
+            for item in m.group(1).split(","):
+                parts = item.split()
+                if not parts: continue
+                a = parts[0].split(".")[-1]; b2 = parts[-1]
+                if a in names and b2 != a: names.setdefault(b2, []).extend(names[a])
+                if name == entry: reroots += names.get(a, [])
     reached = set()
-    work = [d for d in alld if d[1] and d[5] == entry and not d[4]]
+    work = [d for d in alld if d[1] and d[5] == entry and not d[4]] + reroots
     for d in work: reached.add(id(d))
     while work:
         d = work.pop()
