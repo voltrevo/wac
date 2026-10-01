@@ -120,6 +120,12 @@ def check(path, start, block):
     reroots = []
     for name, fl in files:
         for _, l in fl:
+            m2 = re.match(r"export\s*\{([^}]*)\}\s*;", l)
+            if m2 and name == entry:
+                for item in m2.group(1).split(","):
+                    head = re.match(r"\s*(\w+)", item)
+                    if head: reroots += names.get(head.group(1), [])
+                continue
             m = re.match(r"export\s*\{([^}]*)\}\s*from", l)
             if not m: continue
             for item in m.group(1).split(","):

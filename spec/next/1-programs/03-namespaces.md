@@ -124,6 +124,9 @@ visible within its module only. No other module can import it, by the namespace 
 Visibility composes outward: a member is visible from outside a module only when every namespace around it,
 and the member itself, is exported.
 
+A module may still lift one member out under a name of its own, with an export list —
+`export { helpers.good as good };` ([02](02-modules-and-imports.md)). That exports the member, not the namespace.
+
 ## Select the group or one member
 
 ```wac

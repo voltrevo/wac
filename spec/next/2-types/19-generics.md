@@ -510,15 +510,16 @@ export i32 shared() {
 the same template with the same argument types — not the same text. An alias collapses onto its target, and
 two same-named types give two instantiations.
 
-A generic function's instantiations are not exports of a compiled program, since a host would have to call a
-name the author never wrote. A program that wants to expose one writes a concrete wrapper
-([07](../1-programs/07-programs.md)):
+A generic function's instantiations are not exports of a compiled program by themselves, since a host would
+have to call a name the author never wrote. A program exposes one by naming it in an export list
+([02](../1-programs/02-modules-and-imports.md)):
 
 ```wac
-// expect: answers maxI32 = 7
+// expect: answers maxI32(3, 7) = 7
+// expect: answers maxF64(2.5, 1.5) = 2.5
 T max<T>(T a, T b) { return a > b ? a : b; }
 
-export i32 maxI32(i32 a, i32 b) { return max(a, b); }
+export { max<i32> as maxI32, max<f64> as maxF64 };
 ```
 
 Methods that declare no receiver of a generic struct, generic static declarations, and static locals are

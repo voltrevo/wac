@@ -42,8 +42,9 @@ export gen<i32> void counting() { yield 1; }
 
 `[§wac-export-any-signature-9pdfi7d]` Any function that is not generic may be exported, whatever its
 signature — `async`, a generator, or taking a parameter no host could construct. Compiling does not
-judge what a host can call; generic functions are the exception, since a host would call a name the
-author never wrote ([19](../2-types/19-generics.md)).
+judge what a host can call. A generic function is the exception — a host would call a name the author
+never wrote — and an instantiation of one is exported by naming it, `export { max<i32> as maxI32 };`
+([02](02-modules-and-imports.md)).
 
 `export` in any other module is about modules naming each other ([02](02-modules-and-imports.md)).
 How an export crosses to a host language — what a `string` or an enum becomes in JavaScript — is

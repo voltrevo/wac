@@ -182,14 +182,39 @@ export class Point {
 write through either is seen by the other and by wac, and a cyclic structure crosses at all.
 
 `toObject()` is one level deep and leaves a struct-typed field as its wrapper, so a `Node? next` that loops back on itself
-does not hang. A `const` field has a getter and no setter. A generic instantiation is named for what the author wrote —
-`Vec<i32>` binds as `Vec_i32`.
+does not hang. A `const` field has a getter and no setter.
+
+## Generics
+
+A generic declaration has no single shape to bind, so bindgen binds instantiations. An instantiation exported by name
+binds under that name; one reached only through a signature binds under a name spelled from its arguments:
+
+```wac
+// ---- vecs.wac ----
+import { Vec } from "core";
+
+export { Vec<i32> as IntVec };
+export Vec<f64> readings() { return Vec<f64>.create(); }
+export struct Pair<T> { T a; T b; }
+```
+
+```ts
+export class IntVec { /* … */ }        // the name the export gives
+export class Vec_f64 { /* … */ }       // reached through readings(); spelled from its arguments
+// skipped: Pair — generic; export an instantiation by name, e.g. export { Pair<i32> as IntPair }
+```
+
+`[§wac-bind-instantiation-name-dwptdfb]` An instantiation exported as `export { G<T…> as N }` binds as the class or
+function `N`. One reached only through another export's signature binds as `G_T…` — `Vec<f64>` as `Vec_f64`.
+
+`[§wac-bind-generic-skipped-biz4394]` An exported generic declaration that is not instantiated by name is not bound, and is
+listed in `__bindgenSkipped` with the export list form that would bind it.
 
 `[§wac-bind-static-6wnq3kv]` A method without a receiver binds as a static member of its class. It is how JavaScript builds a
 struct with an invariant, since a struct has no other constructor.
 
-**Which types are bound.** Every struct and enum named in an exported signature, every `export struct` and `export enum`
-whether or not a function names it, every type their fields and method signatures name, to a fixpoint — through any field
+**Which types are bound.** Every struct and enum named in an exported signature, every non-generic `export struct` and
+`export enum` whether or not a function names it, every instantiation exported by name, every type their fields and method signatures name, to a fixpoint — through any field
 the boundary can carry. A container reaches its contents through its methods, and methods bind, so a `JsonArray` is
 walkable from JavaScript through `len` and `get(i)`.
 

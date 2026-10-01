@@ -53,7 +53,11 @@ decl           = [ "export" ] , ( func_decl | struct_decl | enum_decl | type_dec
                                 | static_decl | symbol_decl | namespace_decl )
                | "export" , "*" , "as" , name , "from" , STRING , ";"          (* 03 *)
                | "export" , "{" , import_item , { "," , import_item } , [ "," ] , "}" ,
-                 "from" , STRING , ";" ;                                       (* a re-export: 02 *)
+                 "from" , STRING , ";"                                         (* a re-export: 02 *)
+               | "export" , "{" , export_item , { "," , export_item } , [ "," ] , "}" , ";" ;   (* 02 *)
+export_item    = name , [ "as" , name ]
+               | name , { "." , name } , [ type_args ] , "as" , name ;        (* a member or an
+                                                                                 instantiation needs `as` *)
 
 import         = "import" , "{" , import_item , { "," , import_item } , [ "," ] , "}" ,
                  "from" , STRING , ";" ;

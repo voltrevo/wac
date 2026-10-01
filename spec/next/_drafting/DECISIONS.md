@@ -170,3 +170,10 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   a "package" is a project with `exports` — so only a nested project that is a package can be imported.
 - **Inline namespace visibility (operator's ruling, 03):** a member without `export` is visible only inside
   the namespace block; an exported member of an unexported namespace is visible only within its module.
+- **Export lists (operator's ruling):** `export { a, b as c };` exports visible declarations, own or imported (an
+  explicit re-export). `export { ns.member }` is refused; `export { ns.member as m }` works when the member is
+  visible, which lifts it out of an unexported namespace. `export { G<T> as N }` exports an instantiation — a
+  callable function in the compiled program, a type bound by bindgen as `N`. Taken: one declaration may be
+  exported under several names; a name exported twice collides. Bindgen today silently skips exported generics
+  (`collectBindStructs` drops anything with type parameters); 48 now lists them in `__bindgenSkipped` with the
+  export-list form that would bind them.

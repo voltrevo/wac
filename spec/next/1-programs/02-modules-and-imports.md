@@ -151,8 +151,8 @@ import { foo } from "./b.wac";               // b.wac imports foo; it does not e
 export i32 fooViaB() { return foo(); }
 ```
 
-`[§wac-no-reexport-f7kn4wq]` Importing a name from a module that imports it, rather than declaring
-and exporting it, is refused.
+`[§wac-no-reexport-f7kn4wq]` Importing a name from a module that imports it without exporting it is
+refused.
 
 Re-exporting is explicit.
 
@@ -287,6 +287,103 @@ export i32 pingFrom(i32 n) { return ping(n); }
 There is nothing for a cycle to get wrong. A module runs nothing when it is loaded, and static values
 are computed in the order their computations demand, not the order modules are read
 ([29](../4-static/29-static-dependencies.md)).
+
+## Export lists
+
+`export { … };` adds exports to a module, naming declarations it can already see — its own, or ones it
+imported:
+
+```wac
+// expect: answers area(3, 4) = 12
+// expect: answers size(3, 4) = 12
+// expect: answers perimeter(3, 4) = 14
+// ---- rect.wac ----
+export i32 perimeter(i32 w, i32 h) { return 2 * (w + h); }
+// ---- main.wac ----
+import { perimeter } from "./rect.wac";
+
+i32 area(i32 w, i32 h) { return w * h; }
+
+export { area, area as size, perimeter };
+```
+
+`[§wac-export-list-ggewbe3]` `export { a, b as c };` exports each named declaration visible in the module, under
+its own name or the one after `as`. The declaration may be the module's own or imported; exporting an imported
+name re-exports it, keeping its identity.
+
+One declaration may be exported under several names, as `area` is above. A name exported twice collides, as
+two declarations of one name would ([01](01-names-and-identity.md)):
+
+```wac
+// expect: emits
+export i32 area(i32 w, i32 h) { return w * h; }
+
+// ERROR: duplicate export 'area'
+// export { area };
+```
+
+`[§wac-export-list-collision-unxcmkj]` An export list naming a name the module already exports, under that name,
+is refused.
+
+### A namespace member needs a name of its own
+
+A member reached through a namespace is exported under a name the list gives it. Its path is not a name:
+
+```wac
+// expect: answers good = 7
+// expect: answers lifted = 7
+namespace helpers {
+  i32 base() { return 3; }
+  export i32 good() { return base() + 4; }
+}
+
+export { helpers.good as good };
+
+// ERROR: a namespace member is exported under a name — write helpers.good as good
+// export { helpers.good };
+
+// ERROR: 'base' is not exported from namespace 'helpers'
+// export { helpers.base as base };
+
+export i32 lifted() { return helpers.good(); }
+```
+
+`[§wac-export-member-as-dvjgbhc]` `export { ns.member as name };` exports a namespace member under `name`, where
+the member is visible: exported within its namespace, and the namespace visible in this module
+([03](03-namespaces.md)). `export { ns.member };` without `as` is refused.
+
+This is how a module lifts one member out of a namespace it does not export.
+
+### An instantiation is exported by naming it
+
+A generic declaration's instantiation is exported the same way, under a name of its own:
+
+```wac
+// expect: answers maxI32(3, 7) = 7
+// expect: answers boxedValue = 5
+T max<T>(T a, T b) { return a > b ? a : b; }
+
+struct Box<T> {
+  T value;
+  T get(const this) { return value; }
+}
+
+export { max<i32> as maxI32, Box<i32> as IntBox };
+
+export i32 boxedValue() {
+  IntBox b = Box<i32>(5);                  // IntBox is Box<i32>: one type, two spellings
+  return b.get();
+}
+```
+
+`[§wac-export-instantiation-wuh2wxp]` `export { G<T…> as name };` exports the instantiation of the generic `G` at
+`T…` under `name`: a function that a host can call, or a type that importers name. `export { G<T…> };` without
+`as` is refused.
+
+The exported name is the instantiation itself, not a new declaration. An importer's `IntBox` and its own
+`Box<i32>` are one type ([19](../2-types/19-generics.md)). In the entry module, an exported function
+instantiation is an export of the compiled program under its given name ([07](07-programs.md)), and a type
+instantiation is bound under its given name ([48](../8-tooling/48-bindgen.md)).
 
 ## Specifiers
 
