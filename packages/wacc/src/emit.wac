@@ -9118,6 +9118,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // Three tests share one node, and which one it is comes from what is present: a type, a value,
       // or neither, which is `x is null`.
       if ((target is null) && (other is null)) {
+        // `null is null` is true and a number is never null (spec/next ch10): both are constants,
+        // the operand still evaluated where it is not the literal.
+        if (isNullLit(left)) {
+          fb.byte(65); fb.i32leb(negated ? 0 : 1);
+          return;
+        }
+        string nt = typeOfE(src, lexed, env, left);
+        if (isNumericTy(nt) || nt == "bool" || isPackedValue(nt)) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(26);    // drop
+          fb.byte(65); fb.i32leb(negated ? 1 : 0);
+          return;
+        }
         emitExpr(fb, src, lexed, env, left);
         fb.byte(209);   // ref.is_null
         if (negated) { fb.byte(69); }   // i32.eqz
@@ -13074,9 +13087,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Is(left, target, other, negated): {
       if ((target is null) && (other is null)) {
+        // `null is null`, and a null test on a number: constants (spec/next ch10).
+        if (isNullLit(left)) { return ""; }
         string nl = unsupportedValue(src, lexed, env, left);
         if (nl != "") { return nl; }
         string nt = typeOfE(src, lexed, env, left);
+        if (isNumericTy(nt) || nt == "bool" || isPackedValue(nt)) { return ""; }
         return isRefType(env, nt) ? "" : "a null test on a value";
       }
       if (!(other is null)) {

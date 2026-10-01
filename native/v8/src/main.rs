@@ -1734,6 +1734,24 @@ fn coerce_arg<'s>(
     text: &str,
     ty: &str,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
+    // **`null` is a wac literal**, and an argument is written as one (spec/next README) — so a
+    // nullable parameter takes it, whatever it is nullable of: a wasm reference is null as JS
+    // `null`, a struct and a boxed number alike. A present value of a nullable reference is the
+    // reference itself, so it is read as the inner type.
+    if let Some(inner) = ty.strip_suffix('?') {
+        if text == "null" {
+            return Ok(v8::null(scope).into());
+        }
+        return match inner {
+            "string" | "u8[]" | "i32[]" | "u32[]" | "i64[]" | "u64[]" | "f64[]" => {
+                coerce_arg(scope, text, inner)
+            }
+            _ => Err(format!(
+                "a present `{ty}` cannot be written on a command line — only `null`, or a value \
+                 of a nullable string or array"
+            )),
+        };
+    }
     match ty {
         // `write_string` and `write_bytes` reach the instance through `HOST`, so they take no
         // `exports` — the staging buffer belongs to the one instance this process is running.

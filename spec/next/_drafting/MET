@@ -77,9 +77,15 @@ spec/next/2-types/09-numeric-literals.md#11
 spec/next/2-types/09-numeric-literals.md#12
 spec/next/2-types/09-numeric-literals.md#15
 spec/next/2-types/10-nullability.md#1
+spec/next/2-types/10-nullability.md#2
 spec/next/2-types/10-nullability.md#3
 spec/next/2-types/10-nullability.md#4
+spec/next/2-types/10-nullability.md#5
 spec/next/2-types/10-nullability.md#6
+spec/next/2-types/10-nullability.md#11
+spec/next/2-types/10-nullability.md#13
+spec/next/2-types/10-nullability.md#14
+spec/next/2-types/10-nullability.md#15
 spec/next/2-types/11-never-and-uninhabited.md#1
 spec/next/2-types/11-never-and-uninhabited.md#2
 spec/next/2-types/11-never-and-uninhabited.md#3
@@ -127,6 +133,7 @@ spec/next/2-types/13-enums.md#16
 spec/next/2-types/13-enums.md#17
 spec/next/2-types/13-enums.md#18
 spec/next/2-types/13-enums.md#19
+spec/next/2-types/13-enums.md#20
 spec/next/2-types/13-enums.md#21
 spec/next/2-types/13-enums.md#23
 spec/next/2-types/13-enums.md#25
@@ -200,6 +207,7 @@ spec/next/3-expressions/22-operators.md#5
 spec/next/3-expressions/22-operators.md#6
 spec/next/3-expressions/22-operators.md#8
 spec/next/3-expressions/22-operators.md#9
+spec/next/3-expressions/22-operators.md#10
 spec/next/3-expressions/23-interpolation-and-markup.md#2
 spec/next/3-expressions/23-interpolation-and-markup.md#3
 spec/next/3-expressions/23-interpolation-and-markup.md#13
@@ -221,6 +229,7 @@ spec/next/3-expressions/25-control-flow.md#8
 spec/next/3-expressions/25-control-flow.md#9
 spec/next/3-expressions/25-control-flow.md#10
 spec/next/3-expressions/25-control-flow.md#13
+spec/next/3-expressions/25-control-flow.md#14
 spec/next/3-expressions/25-control-flow.md#16
 spec/next/3-expressions/25-control-flow.md#17
 spec/next/3-expressions/26-errors-and-results.md#1

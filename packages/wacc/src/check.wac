@@ -5471,16 +5471,17 @@ void checkExpr(C c, Expr e) {
       // …and only when there *is* a target, because `f is null` on a nullable funcref is the
       // ordinary way to ask whether one was supplied, which the reference accepts. The restriction
       // is about testing a funcref's *type*, not about mentioning one.
-      if (isValueType(lt3) || (!(target is null) && startsWithFn(lt3))) {
+      // **`x is null` on a number is allowed, and false** — spec/next ch10 `§wac-nonnull-isnull-k8fn3wp`:
+      // `Slot<T>.empty` has to instantiate at `T = i32` as at `T = Node?`. A *type* test or an
+      // identity test on a number has nothing to compare, and stays refused.
+      bool nullTest = (target is null) && (other is null);
+      if ((isValueType(lt3) && !nullTest) || (!(target is null) && startsWithFn(lt3))) {
         c.report(errReferenceOp(), e.line, e.col);
       }
-      // **And a bare `null` on the left**, which has no type at all rather than a wrong one — so
-      // every guard above skipped it and `null is null` reached the emitter, which declined the whole
-      // module with the reason *"null"*. spec/spec/types.md: *"`null` is a keyword literal with no
-      // type of its own … the compiler infers the type from context"*, and there is no context here to
-      // infer from. The reference says *"'is null' requires a reference type, got null"*, which is
-      // this rule's own code. `issues/lang/0249a`.
-      if (litKindOf(left) == litNull()) { c.report(errReferenceOp(), e.line, e.col); }
+      // **`null is null` is `true`** — spec/next ch10 `§wac-isnull-kxsqi4g`. The literal's type is
+      // `never?` (ch10), so a null test on it has an answer; the old spec gave it none and this was
+      // refused (`issues/lang/0249a`). A type or identity test on it still compares nothing.
+      if (litKindOf(left) == litNull() && !nullTest) { c.report(errReferenceOp(), e.line, e.col); }
     }
     // `p!` on something that was never nullable: there is nothing to unwrap.
     Unwrap(operand): {
