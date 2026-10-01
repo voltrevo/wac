@@ -1,0 +1,8 @@
+// expect: refused
+// why: a module re-exports only what the other module exports
+// from: export lists (design/lang/0016), spec/next ch02
+// ---- m.wac ----
+i32 hidden() { return 1; }
+// ---- main.wac ----
+export { hidden } from "./m.wac";
+export i32 f() { return 0; }

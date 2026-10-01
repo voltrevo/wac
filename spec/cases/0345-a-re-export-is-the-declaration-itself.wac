@@ -1,0 +1,15 @@
+// expect: answers f = 5
+// why: `export { a as b } from "m"` exports `m`'s `a` as `b`, and a re-exported struct is the same type under every name it is reached by
+// from: export lists (design/lang/0016), spec/next ch02 §wac-reexport-identity-dwh5za5
+// ---- geo.wac ----
+export struct Circle { i32 r; }
+// ---- lib.wac ----
+export { Circle as Round } from "./geo.wac";
+// ---- main.wac ----
+import { Circle } from "./geo.wac";
+import { Round } from "./lib.wac";
+
+export i32 f() {
+  Round c = Circle(5);
+  return c.r;
+}

@@ -2465,6 +2465,34 @@ Decl parseImport(P p) {
   return Decl(DeclKind.Import(pathTok, prefixTok, items.take()), line, col);
 }
 
+/** `export { a, b as c } [from "…"];` — the items as an import's, read the other way round. */
+Decl parseExportList(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.advance();                                     // export
+  p.expect(kLbrace());
+  ImportItemList items = ImportItemList.create();
+  while (!p.at1(kRbrace()) && !p.at1(kEof())) {
+    i32 nameTok = -1;
+    if (p.at1(kIdent())) { nameTok = p.advance(); } else { p.fail(perrExpected()); break; }
+    i32 aliasTok = nameTok;
+    if (p.eat(kAs())) {
+      if (p.at1(kIdent())) { aliasTok = p.advance(); } else { p.fail(perrExpected()); }
+    }
+    items.push(ImportItem(nameTok, aliasTok));
+    if (!p.eat(kComma())) { break; }
+  }
+  p.expect(kRbrace());
+  i32 pathTok = -1;
+  // `from` is an ordinary identifier, as in an import.
+  if (p.at1(kIdent()) && p.textAt(0) == "from") {
+    p.advance();
+    if (p.at1(kString())) { pathTok = p.advance(); } else { p.fail(perrExpected()); }
+  }
+  p.expect(kSemi());
+  return Decl(DeclKind.ExportList(pathTok, items.take()), line, col);
+}
+
 Decl parseStructDecl(P p, bool exported) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
@@ -2721,6 +2749,7 @@ export Program parseProgram(P p) {
   DeclList decls = DeclList.create();
   while (!p.at1(kEof())) {
     if (p.at1(kImport())) { decls.push(parseImport(p)); continue; }
+    if (p.at1(kExport()) && p.kindAt(1) == kLbrace()) { decls.push(parseExportList(p)); continue; }
 
     // `export` may precede a struct, an enum, a static or a function, and the
     // declaration kind is only known after it.

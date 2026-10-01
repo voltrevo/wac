@@ -681,6 +681,21 @@ void printDecl(Pr w, Decl d) {
       }
       w.s("))");
     }
+    ExportList(pathTok, items): {
+      w.open("exports", d.line, d.col);
+      w.sp();
+      if (pathTok < 0) { w.s("-"); } else { w.strTok(pathTok); }
+      w.s(" (");
+      for (i32 i = 0; i < items.len(); i++) {
+        if (i > 0) { w.sp(); }
+        w.out.push('(');
+        w.tok(items[i].nameTok);
+        w.sp();
+        w.tok(items[i].aliasTok);
+        w.out.push(')');
+      }
+      w.s("))");
+    }
     Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
       w.open("func", d.line, d.col);
       w.sp(); w.s(exported ? "export" : "local");

@@ -64,6 +64,12 @@ export i32 drv_typeErrors() {
   return errs.len();
 }
 
+/** The checker over the file set `drv_pushFile` built, entry named by `namebuf`. */
+export i32 drv_typeErrorsFiles() {
+  errs = dumpTypeErrorsFiles(paths, sources, string.fromBytes(namebuf));
+  return errs.len();
+}
+
 // **A case may be more than one file**, and anything about imports has to be: the format writes
 // `// ---- lib.wac ----` between them and names `main.wac` as the entry. `emit` takes one source
 // and cannot see an import at all, so a multi-file case fed to it is a program with a comment

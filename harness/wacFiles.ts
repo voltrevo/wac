@@ -133,6 +133,8 @@ export function importPaths(src: string): string[] {
       continue;
     }
     if (c === ";") { toks.push({ kind: ";", text: ";" }); i++; continue; }
+    // Only so `export {` can be told from `export i32 …` — a re-export reads its module too.
+    if (c === "{") { toks.push({ kind: "{", text: "{" }); i++; continue; }
     if (/[A-Za-z_]/.test(c)) {
       let j = i;
       while (j < n && /[A-Za-z0-9_]/.test(src[j])) j++;
@@ -144,7 +146,9 @@ export function importPaths(src: string): string[] {
   }
 
   for (let k = 0; k < toks.length; k++) {
-    if (!(toks[k].kind === "ident" && toks[k].text === "import")) continue;
+    // `export { a } from "./m.wac";` reads its module as an import does — spec/next ch02.
+    const reexport = toks[k].kind === "ident" && toks[k].text === "export" && toks[k + 1]?.kind === "{";
+    if (!(toks[k].kind === "ident" && toks[k].text === "import") && !reexport) continue;
     // Scan to this import's `from`. Stopping at `;` keeps a malformed import from
     // consuming the one after it.
     //

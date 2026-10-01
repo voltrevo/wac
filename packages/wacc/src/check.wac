@@ -301,6 +301,85 @@ export i32 errDeferLeaves() { return 219; }
 export i32 errPatternType() { return 220; }
 /** `Ok(a, b) matches res` for `Ok(i32 v)` — a payload pattern of the wrong length. */
 export i32 errPatternArity() { return 221; }
+/** `export { area };` beside `export i32 area(…)` — one name exported twice. */
+export i32 errDuplicateExport() { return 222; }
+
+/**
+ * A module's export lists — spec/next ch02. An item of a list with no `from` names something the module
+ * can see: its own top-level declaration, or a name it imported. And a name is exported once, whether
+ * by `export` on a declaration or by an item; two of them under one name are two declarations of it.
+ *
+ * What a `from` list names is the other module's to answer, and the files-based check does — see
+ * `checkFilesWithIn`. Nothing here declares a name: a re-export binds nothing in this module.
+ */
+void checkExportLists(C c, Program prog) {
+  string[] exported = string[].defaulted(64);
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    string name = "";
+    match (prog.decls[d].kind) {
+      Func(nameTok, returnType, params, body, exported2, typeParams, isAsync): { if (exported2) { name = tokenText(c, nameTok); } }
+      StructDecl(nameTok, parentTok, fields, methods, exported2, isConst, typeParams): { if (exported2) { name = tokenText(c, nameTok); } }
+      EnumDecl(nameTok, variants, exported2, methods, typeParams): { if (exported2) { name = tokenText(c, nameTok); } }
+      StaticDecl(nameTok, type, init, exported2): { if (exported2) { name = tokenText(c, nameTok); } }
+      default: { }
+    }
+    if (name == "") { continue; }
+    if (n >= exported.len()) { exported = grownStrings(exported); }
+    exported[n] = name;
+    n = n + 1;
+  }
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      ExportList(pathTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].nameTok < 0 || items[i].aliasTok < 0) { continue; }
+          string named = tokenText(c, items[i].nameTok);
+          if (pathTok < 0 && !seenAtTopLevel(c, prog, named)) {
+            c.reportTok(errUndefinedName(), items[i].nameTok, "no " + named + " in this module to export");
+            continue;
+          }
+          string outName = tokenText(c, items[i].aliasTok);
+          bool dup = false;
+          for (i32 k = 0; k < n; k++) { if (exported[k] == outName) { dup = true; } }
+          if (dup) {
+            c.reportTok(errDuplicateExport(), items[i].aliasTok, "'" + outName + "' is already exported");
+            continue;
+          }
+          if (n >= exported.len()) { exported = grownStrings(exported); }
+          exported[n] = outName;
+          n = n + 1;
+        }
+      }
+      default: { }
+    }
+  }
+}
+
+string[] grownStrings(string[] a) {
+  string[] out = string[].defaulted(a.len() * 2 + 16);
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  return out;
+}
+
+/** Whether `name` is a top-level declaration of this module or a name it imported. */
+bool seenAtTopLevel(C c, Program prog, string name) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): { if (tokenText(c, nameTok) == name) { return true; } }
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): { if (tokenText(c, nameTok) == name) { return true; } }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): { if (tokenText(c, nameTok) == name) { return true; } }
+      StaticDecl(nameTok, type, init, exported): { if (tokenText(c, nameTok) == name) { return true; } }
+      Import(pathTok, prefixTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].aliasTok >= 0 && tokenText(c, items[i].aliasTok) == name) { return true; }
+        }
+      }
+      default: { }
+    }
+  }
+  return false;
+}
 
 /**
  * Open a scope holding the names `cond` binds when it is true — spec/next ch25 `§wac-matches-scope-i52ba3w`.
@@ -3909,7 +3988,7 @@ export string typeOfExpr(C c, Expr e) {
       string name = "";
       match (ctype.kind) {
         Named(tok, typeArgs): {
-          name = tokenText(c, tok);
+          name = c.canon(tokenText(c, tok));
           if (typeArgs.len() > 0) {
             // **A generic function named with its type arguments is a call, not a type.**
             // `zero<i32>()` and `Vec<i32>(…)` are the same syntax, so the name decides which — the
@@ -5149,7 +5228,9 @@ void checkExpr(C c, Expr e) {
       // construction nested in one — `g(Box(1.0))` — infer from the parameter.
       match (ctype.kind) {
         Named(ctok, ctargs): {
-          string cname = tokenText(c, ctok);
+          // **Through `canon`**, so `Circle(5)` means the struct when this file also calls it
+          // `Round` — one declaration under two spellings is one type (`issues/lang/0161`).
+          string cname = c.canon(tokenText(c, ctok));
           for (i32 i = 0; i < args.len(); i++) {
             // **A generic function's name is not a type.** `zero<i32>()` and `Vec<i32>(…)` are the
             // same syntax, so asking `typeOfTy` about the first answers `unknown type 'zero'` — and
@@ -5180,7 +5261,7 @@ void checkExpr(C c, Expr e) {
       }
       match (ctype.kind) {
         Named(tok, typeArgs): {
-          string name = tokenText(c, tok);
+          string name = c.canon(tokenText(c, tok));
           if (c.isStruct(name)) {
             // A **bare generic** takes its type arguments from wherever it is going. With a target
             // whose template is this one, the construction *is* that type and its arguments are
@@ -10710,6 +10791,7 @@ export void checkModule(C c, Program prog) {
   checkDuplicates(c, prog);
   checkDeclarationRules(c, prog);
   checkImportCollisions(c, prog);
+  checkExportLists(c, prog);
   // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
   // imported is in scope for the whole file, so these sit with the module-level constants.
   for (i32 d = 0; d < prog.decls.len(); d++) {

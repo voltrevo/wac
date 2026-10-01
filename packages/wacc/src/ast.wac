@@ -430,6 +430,13 @@ export enum DeclKind {
    */
   Import(i32 pathTok, i32 prefixTok, ImportItem[] items),
   /**
+   * `export { a, b as c };` and `export { a, b as c } from "./m.wac";` — spec/next ch02.
+   *
+   * Each item's `nameTok` is what it names and `aliasTok` what it is exported as. `pathTok` is the
+   * specifier of a re-export, and -1 for a list naming what this module can already see.
+   */
+  ExportList(i32 pathTok, ImportItem[] items),
+  /**
    * `typeParams` are the name tokens of `<T, U>` after the declaration's name, empty when there are
    * none. A generic function, struct or enum is the same declaration with those recorded.
    */

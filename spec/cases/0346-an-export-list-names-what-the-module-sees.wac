@@ -1,0 +1,16 @@
+// expect: answers f = 26
+// why: `export { a, a as b, c };` exports this module's own declaration and one it imported, under each name given; a re-export may be re-exported again
+// from: export lists (design/lang/0016), spec/next ch02 §wac-export-list-ggewbe3, §wac-reexport-names-khyrww8
+// ---- rect.wac ----
+export i32 perimeter(i32 w, i32 h) { return 2 * (w + h); }
+// ---- shapes.wac ----
+import { perimeter } from "./rect.wac";
+i32 area(i32 w, i32 h) { return w * h; }
+export { area, area as size, perimeter };
+// ---- lib.wac ----
+export { size, perimeter } from "./shapes.wac";
+// ---- main.wac ----
+import { area } from "./shapes.wac";
+import { size, perimeter } from "./lib.wac";
+
+export i32 f() { return area(3, 4) + size(1, 0) * 0 + perimeter(3, 4) - 0; }

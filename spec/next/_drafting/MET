@@ -5,6 +5,7 @@ spec/next/1-programs/01-names-and-identity.md#4
 spec/next/1-programs/01-names-and-identity.md#5
 spec/next/1-programs/01-names-and-identity.md#6
 spec/next/1-programs/01-names-and-identity.md#7
+spec/next/1-programs/01-names-and-identity.md#8
 spec/next/1-programs/01-names-and-identity.md#9
 spec/next/1-programs/01-names-and-identity.md#11
 spec/next/1-programs/01-names-and-identity.md#12
@@ -22,6 +23,9 @@ spec/next/1-programs/02-modules-and-imports.md#4
 spec/next/1-programs/02-modules-and-imports.md#5
 spec/next/1-programs/02-modules-and-imports.md#6
 spec/next/1-programs/02-modules-and-imports.md#7
+spec/next/1-programs/02-modules-and-imports.md#10
+spec/next/1-programs/02-modules-and-imports.md#11
+spec/next/1-programs/02-modules-and-imports.md#12
 spec/next/1-programs/02-modules-and-imports.md#13
 spec/next/1-programs/02-modules-and-imports.md#15
 spec/next/1-programs/02-modules-and-imports.md#19

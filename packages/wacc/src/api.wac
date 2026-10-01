@@ -20,7 +20,7 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText,
-         emitDeclineLinked, lambdaReportLinked } from "./emit.wac";
+         emitDeclineLinked, lambdaReportLinked, exportForwards, splitTabs } from "./emit.wac";
 import { coreSource, isBuiltinSpec } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
@@ -560,6 +560,37 @@ export string namesFiles(string[] paths, string[] sources, string entry) {
  * imports like any other name (`§wac-type-name-scope-8vqk3mn`) — a check that missed that would
  * refuse most of the repository rather than find anything wrong with it.
  */
+/**
+ * `name` asked of the file `at`, followed through export lists to the file and name that declare it —
+ * `[path, name, "y" when an export list of that file exported it as its own, else ""]`.
+ *
+ * Bounded, so a cycle of re-exports ends rather than spins.
+ */
+string[] followExport(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs, Res res,
+                      string at, string nm) {
+  string local = "";
+  for (i32 hop = 0; hop < 32; hop++) {
+    i32 fi = indexOfPath(paths, at);
+    if (fi < 0) { break; }
+    u8[] fsrc = sources[fi].toBytes();
+    Lexed flx = fi < lexes.len() && (lexes[fi] is not null) ? lexes[fi]! : lex(fsrc);
+    Program fpg = fi < progs.len() && (progs[fi] is not null) ? progs[fi]! : parseProgram(P.create(fsrc, flx));
+    string[] fw = exportForwards(fsrc, flx, fpg);
+    i32 hit = 0 - 1;
+    for (i32 w = 0; w < fw.len(); w++) {
+      if (splitTabs(fw[w])[0] == nm) { hit = w; }
+    }
+    if (hit < 0) { break; }
+    string[] parts = splitTabs(fw[hit]);
+    string target = parts[1] == "" ? at : keyOf(resolveVia(res, paths, at, parts[1]));
+    local = parts[1] == "" ? "y" : "";
+    if (target == at && parts[2] == nm) { break; }
+    at = target;
+    nm = parts[2];
+  }
+  return [at, nm, local] as string[];
+}
+
 bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
@@ -1392,6 +1423,44 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     }
   }
 
+  // **Each name asked for, followed through the export lists it passes** to the file and name that
+  // declare it — spec/next ch02. A name an export list exports as this file's own (`export { area as
+  // size };`, or naming it with no `as`) is exported by that list whether or not the declaration says
+  // `export`, so the check below is skipped for it; a name forwarded to another module is checked
+  // there, as any import is.
+  bool[] wantForwarded = bool[].filled(512, false);
+  for (i32 k = 0; k < n; k++) {
+    string[] got = followExport(paths, sources, lexes, progs, res, wantFrom[k], wantName[k]);
+    wantFrom[k] = got[0];
+    wantName[k] = got[1];
+    wantForwarded[k] = got[2] != "";
+  }
+  // **A re-export of a name its module does not export** is refused at the item, as the import it
+  // would otherwise be would be refused: the name has to be the other module's to give.
+  for (i32 d = 0; d < eprog.decls.len(); d++) {
+    match (eprog.decls[d].kind) {
+      ExportList(pathTok, items): {
+        if (pathTok < 0) { continue; }
+        string rquoted = tokenTextOf(esrc, elexed, pathTok);
+        string rtarget = keyOf(resolveVia(res, paths, entry, rquoted.slice(1, rquoted.len() - 1)));
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].nameTok < 0) { continue; }
+          string[] got = followExport(paths, sources, lexes, progs, res, rtarget,
+                                      tokenTextOf(esrc, elexed, items[i].nameTok));
+          i32 fi = indexOfPath(paths, got[0]);
+          if (fi < 0 || got[2] != "") { continue; }
+          u8[] fsrc = sources[fi].toBytes();
+          Lexed flx = fi < lexes.len() && (lexes[fi] is not null) ? lexes[fi]! : lex(fsrc);
+          Program fpg = fi < progs.len() && (progs[fi] is not null) ? progs[fi]! : parseProgram(P.create(fsrc, flx));
+          if (!exportsName(fsrc, flx, fpg, got[1])) {
+            c.reportTok(errNoSuchExport(), items[i].nameTok, "");
+          }
+        }
+      }
+      default: { }
+    }
+  }
+
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }
     i32 want = 0;
@@ -1419,7 +1488,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     // else, which does not pass it on (`§wac-no-reexport-f7kn4wq`).
     for (i32 k = 0; k < n; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
-      if (!exportsName(isrc, ilexed, iprog, wantName[k])) {
+      if (!wantForwarded[k] && !exportsName(isrc, ilexed, iprog, wantName[k])) {
         // **A built-in gets its own code**, because for those two trees "that file does not export
         // this name" is usually false: the file on disk does, and the compiler is reading the copy
         // it carries. `issues/system/0291b`.

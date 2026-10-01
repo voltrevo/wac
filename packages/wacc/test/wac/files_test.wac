@@ -92,7 +92,9 @@ export string test_the_wac_walk_names_the_same_imports_as_the_typescript_one(Cor
     string ours = joinedWith(importSpecs(f.bytes), "|");
     lines.add("imports " + path + " " + ours);
   }
-  check(t, cli, "deno", ["run", "--allow-read", "--no-check", ORACLE], lines,
+  // `--allow-write=.cache` because the oracle's imports build what they need into it when it is cold —
+  // after any change to `harness/` — and a read-only run then dies before comparing anything.
+  check(t, cli, "deno", ["run", "--allow-read", "--allow-write=.cache", "--no-check", ORACLE], lines,
         "the TypeScript import walk");
   core.log("    imports: " + itoa(found.n) + " files compared");
   return t.report();

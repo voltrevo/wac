@@ -49,6 +49,8 @@ export string[] importSpecsOf(string path, u8[] src) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       Import(pathTok, prefixTok, items): { if (pathTok >= 0) { n = n + 1; } }
+      // A re-export reads its module as an import does.
+      ExportList(pathTok, items): { if (pathTok >= 0) { n = n + 1; } }
       default: { }
     }
   }
@@ -57,6 +59,12 @@ export string[] importSpecsOf(string path, u8[] src) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       Import(pathTok, prefixTok, items): {
+        if (pathTok < 0) { continue; }
+        if (at >= out.len()) { continue; }
+        out[at] = string.fromBytes(stringLiteralBytes(src, lexed, pathTok));
+        at = at + 1;
+      }
+      ExportList(pathTok, items): {
         if (pathTok < 0) { continue; }
         if (at >= out.len()) { continue; }
         out[at] = string.fromBytes(stringLiteralBytes(src, lexed, pathTok));

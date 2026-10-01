@@ -51,20 +51,6 @@ function split(src: string): { path: string; text: string }[] {
   return out;
 }
 
-// Everything under core/, because a case that imports `core/jsx.wac` needs it and the case itself
-// only lists its own files. Passing more than the entry needs is explicitly fine.
-const core: { path: string; text: string }[] = [];
-try {
-  for (const f of Deno.readDirSync(`${HERE}../../core`)) {
-    if (f.isFile && f.name.endsWith(".wac")) {
-      core.push({
-        path: `core/${f.name}`,
-        text: await Deno.readTextFile(`${HERE}../../core/${f.name}`),
-      });
-    }
-  }
-} catch { /* no core beside us; single-file cases still work */ }
-
 const bytesOf = (s: string) => new TextEncoder().encode(s);
 
 const feedName = (name: string) => {
@@ -145,11 +131,8 @@ for (const name of files) {
   try {
     const parts = split(src);
     const entry = parts.length > 1 ? "main.wac" : parts[0].path;
-    // core/ only when the case asks for it. Handing every case the whole of core is legal —
-    // "passing more files than the entry needs is fine" — but it makes one broken core module
-    // into a hundred broken cases, and hides which is which.
-    const wantsCore = /from\s*"core\//.test(src);
-    const fileSet = wantsCore ? [...core, ...parts] : parts;
+    // `core` is carried inside the compiler, so a case's file set is its own files.
+    const fileSet = parts;
     // The rejecting phases take a single source, so they are asked about the entry.
     feed(parts.find((p) => p.path === entry)?.text ?? src);
     if (kind === "refused") {
@@ -160,7 +143,22 @@ for (const name of files) {
       // endless recursion rather than an answer.
       const parse = e.drv_parseErrors() as number;
       const typed = e.drv_typeErrors() as number;
-      if (parse > 0 || typed > 0) {
+      // **And the whole file set**, when there is one: what one file asks of another — a name it
+      // re-exports, an import it may not make — is a question about both, and the entry alone
+      // cannot answer it.
+      let typedFiles = 0;
+      if (fileSet.length > 1) {
+        e.drv_files(fileSet.length);
+        for (const f of fileSet) {
+          feed(f.text);
+          feedName(f.path);
+          e.drv_pushFile();
+        }
+        feedName(entry);
+        typedFiles = e.drv_typeErrorsFiles() as number;
+        feed(parts.find((p) => p.path === entry)?.text ?? src);
+      }
+      if (parse > 0 || typed > 0 || typedFiles > 0) {
         outcome = "ok";
       } else {
         const mod2 = emitted();

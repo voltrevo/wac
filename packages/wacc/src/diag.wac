@@ -153,6 +153,7 @@ export string checkMessage(i32 code) {
   if (code == 219) { return "a deferred statement runs on the way out and cannot leave its block"; }
   if (code == 220) { return "this pattern can never match"; }
   if (code == 221) { return "the pattern names a different number of payload fields than the variant has"; }
+  if (code == 222) { return "a name is exported once"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }

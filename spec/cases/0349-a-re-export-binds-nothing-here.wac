@@ -1,0 +1,8 @@
+// expect: refused
+// why: `export { a } from "m"` declares nothing in the re-exporting module's scope
+// from: export lists (design/lang/0016), spec/next ch02 §wac-reexport-no-binding-rfs69bz
+// ---- rect.wac ----
+export i32 area(i32 w, i32 h) { return w * h; }
+// ---- main.wac ----
+export { area } from "./rect.wac";
+export i32 unitArea() { return area(1, 1); }

@@ -3202,6 +3202,103 @@ export string sourceOf(string[] paths, string[] sources, string path) {
  * `""` means a file was named that the caller did not supply — the one failure this cannot paper
  * over, since the missing declarations would otherwise look merely undefined.
  */
+/**
+ * What a file's export lists forward, one `exported\tspecifier\tsource` each — spec/next ch02.
+ *
+ * `export { a as b } from "m"` forwards `b` to `m`'s `a`. `export { a as b };` forwards `b` to `a` as
+ * this file sees it: its own declaration, specifier `""`, or what it imported under that name, in
+ * which case the import's specifier and the name it was imported by. An item that renames nothing and
+ * names this file's own declaration still forwards, to itself: it is what makes the name exported.
+ */
+export string[] exportForwards(u8[] src, Lexed lexed, Program prog) {
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      ExportList(pathTok, items): { n = n + items.len(); }
+      default: { }
+    }
+  }
+  string[] out = string[].filled(n, "");
+  i32 at = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      ExportList(pathTok, items): {
+        for (i32 i = 0; i < items.len() && at < n; i++) {
+          string name = tokenTextOf(src, lexed, items[i].nameTok);
+          string alias = tokenTextOf(src, lexed, items[i].aliasTok);
+          string spec = "";
+          string source = name;
+          if (pathTok >= 0) {
+            spec = string.fromBytes(stringLiteralBytes(src, lexed, pathTok));
+          } else {
+            // Imported under this name? Then it forwards to where it was imported from.
+            for (i32 e = 0; e < prog.decls.len(); e++) {
+              match (prog.decls[e].kind) {
+                Import(ipath, iprefix, iitems): {
+                  if (ipath < 0) { continue; }
+                  for (i32 k = 0; k < iitems.len(); k++) {
+                    if (tokenTextOf(src, lexed, iitems[k].aliasTok) != name) { continue; }
+                    spec = string.fromBytes(stringLiteralBytes(src, lexed, ipath));
+                    source = tokenTextOf(src, lexed, iitems[k].nameTok);
+                  }
+                }
+                default: { }
+              }
+            }
+          }
+          out[at] = alias + "\t" + spec + "\t" + source;
+          at = at + 1;
+        }
+      }
+      default: { }
+    }
+  }
+  return out;
+}
+
+/** The marker an entry module's export-list edges carry before their name — see `linkFiles`. */
+string forwardMark() { return string.fromCodepoint(1); }
+
+/**
+ * The entry's `export { … }` items that name functions, as export entries — and how many.
+ *
+ * In the entry module a re-exported or renamed function is an export of the compiled program under the
+ * name it is exported as (spec/next ch02). `linkFiles` gave each item an edge from the entry, named
+ * with `forwardMark` so no source can spell it and already followed to its declaration, so the name
+ * resolves here the way any import does.
+ */
+i32 forwardExportsInto(B out, Env env) {
+  i32 n = 0;
+  for (i32 e = 0; e < env.importCount; e++) {
+    if (env.importFrom[e] != 0) { continue; }
+    string nm = env.importNames[e];
+    if (nm.len() < 2 || nm.slice(0, 1) != forwardMark()) { continue; }
+    i32 at = env.funcAt(env.keyAt(nm, 0));
+    if (at < 0 || env.funcIndex[at] < 0) { continue; }
+    out.name(nm.slice(1, nm.len()));
+    out.byte(0);
+    out.u32leb(env.funcIndex[at]);
+    n = n + 1;
+  }
+  return n;
+}
+
+/** `s` cut at every tab — three fields for an `exportForwards` entry. */
+export string[] splitTabs(string s) {
+  string[] out = ["", "", ""] as string[];
+  i32 field = 0;
+  i32 from = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i <= b.len() && field < 3; i++) {
+    if (i == b.len() || b[i] == 9) {
+      out[field] = s.slice(from, i);
+      field = field + 1;
+      from = i + 1;
+    }
+  }
+  return out;
+}
+
 /** How many newlines a source has, which is how far the next file's lines start from. */
 i32 countLines(string s) {
   u8[] b = s.toBytes();
@@ -3258,6 +3355,14 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
   // as they are read and turned into indices once every file has one.
   string[] fromPath = string[].defaulted(8192);
   string[] toPath = string[].defaulted(8192);
+  // **What each file's export lists forward** — `exportForwards`, with the specifier resolved: the
+  // file and name an `export { … }` item stands for. Every edge is followed through these once all
+  // files are read, so a name re-exported through any number of modules arrives at its declaration.
+  string[] fwdFrom = string[].defaulted(4096);
+  string[] fwdName = string[].defaulted(4096);
+  string[] fwdTo = string[].defaulted(4096);
+  string[] fwdSrc = string[].defaulted(4096);
+  i32 fwdCount = 0;
   string[] edgeName = string[].defaulted(8192);
   i32 en = 0;
   i32 qn = 1;
@@ -3333,6 +3438,21 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
       if (outLexed.len() > sn - 1) { outLexed[sn - 1] = lexed; }
       outProg[sn - 1] = prog;
     }
+    string[] fwds = exportForwards(b, lexed, prog);
+    for (i32 k = 0; k < fwds.len(); k++) {
+      if (fwdCount >= fwdFrom.len()) { starts[0] = 3; return false; }
+      string[] parts = splitTabs(fwds[k]);
+      string fto = path;
+      if (parts[1] != "") {
+        fto = resolveVia(res, paths, path, parts[1]);
+        if (fto == "core") { fto = " core"; }
+      }
+      fwdFrom[fwdCount] = path;
+      fwdName[fwdCount] = parts[0];
+      fwdTo[fwdCount] = fto;
+      fwdSrc[fwdCount] = parts[2];
+      fwdCount = fwdCount + 1;
+    }
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         Import(pathTok, prefixTok, items): {
@@ -3402,9 +3522,63 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
             en = en + 1;
           }
         }
+        // **A re-export reads its module as an import does** — and one edge for the file, so a type
+        // reached only through the re-exported declaration still resolves. It binds nothing here:
+        // the names it exports are forwards, followed below, not names in this file's scope.
+        ExportList(pathTok, items): {
+          if (pathTok < 0) { continue; }
+          string rspec = string.fromBytes(stringLiteralBytes(b, lexed, pathTok));
+          string rtarget = resolveVia(res, paths, path, rspec);
+          if (rtarget == "core") { rtarget = " core"; }
+          if (qn >= queue.len()) { starts[0] = 2; return false; }
+          queue[qn] = rtarget;
+          queueSpec[qn] = rspec;
+          queueFrom[qn] = path;
+          qn = qn + 1;
+          if (en >= fromPath.len()) { starts[0] = 3; return false; }
+          fromPath[en] = path;
+          toPath[en] = rtarget;
+          edgeName[en] = "";
+          en = en + 1;
+        }
         default: { }
       }
     }
+  }
+  // **The entry's own export list, as edges** — each item asked for under a name no source can spell,
+  // so that once followed below the emitter can export what it reaches. See `forwardExportsInto`.
+  if (sn > 0) {
+    for (i32 k = 0; k < fwdCount; k++) {
+      if (fwdFrom[k] != seen[0]) { continue; }
+      if (en >= fromPath.len()) { starts[0] = 3; return false; }
+      fromPath[en] = seen[0];
+      toPath[en] = seen[0];
+      edgeName[en] = forwardMark() + fwdName[k] + " " + fwdName[k];
+      en = en + 1;
+    }
+  }
+  // **Through every export list to the declaration.** An edge asks a file for a name; if that file's
+  // name is a forward, the edge asks the forward's target instead, until it reaches a file that
+  // declares it — a forward to itself under the same name, or no forward at all. Bounded, so a cycle
+  // of re-exports ends rather than spins; the checker is what says it is one.
+  for (i32 e = 0; e < en; e++) {
+    string pair = edgeName[e];
+    i32 sp = pair.indexOf(" ");
+    if (sp < 0) { continue; }
+    string alias = pair.slice(0, sp);
+    string want = pair.slice(sp + 1, pair.len());
+    string at = toPath[e];
+    for (i32 hop = 0; hop < 32; hop++) {
+      i32 hit = 0 - 1;
+      for (i32 k = 0; k < fwdCount; k++) {
+        if (fwdFrom[k] == at && fwdName[k] == want) { hit = k; }
+      }
+      if (hit < 0 || (fwdTo[hit] == at && fwdSrc[hit] == want)) { break; }
+      at = fwdTo[hit];
+      want = fwdSrc[hit];
+    }
+    toPath[e] = at;
+    edgeName[e] = alias + " " + want;
   }
   // Paths to indices, now that `seen` is complete.
   edges[0] = 0;
@@ -5109,8 +5283,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // `trapHelpers` here as well as in the index chain: a section's vector count and its entries are two
   // places that have to agree, and the decoder says *section was shorter than expected* when they do
   // not — 35 bytes declared, 34 read.
+  B forwardExports = B.create();
+  i32 forwardExportCount = forwardExportsInto(forwardExports, env);
   exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + bindStrHelpers +
-                 env.cbSigCount + covHelpers + trapHelpers + outHelpers + methodExportCount);
+                 env.cbSigCount + covHelpers + trapHelpers + outHelpers + methodExportCount +
+                 forwardExportCount);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -6001,6 +6178,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     fnName[startFunctionAt] = "__wac_start";
   }
   exports.bytes(methodExports);
+  exports.bytes(forwardExports);
 
   section(out, 1, types);
   // **The imports, if any.** A module that takes no host function has no import section at all, so
@@ -12904,6 +13082,8 @@ string blockedOf(Front f) {
           return from;
         }
       }
+      // An export list declares nothing: the linker has already followed it to declarations.
+      ExportList(pathTok, items): { }
       StaticDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);
         if (isArrayType(ct) || env.isStructName(ct)) {
