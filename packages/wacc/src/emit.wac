@@ -3032,7 +3032,7 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
     match (body[i].kind) {
       Var(type, nameTok, init, isConst): {
         registerNamed(env, typeOfTyName(env, src, lexed, type));
-        collectArrayTypesOfExpr(env, src, lexed, init);
+        if (init is not null) { collectArrayTypesOfExpr(env, src, lexed, init!); }
       }
       // **The expressions too.** This walk looked only at what a `var` *declared*, so a type named
       // by a construction, a cast or an argument was invisible until the moment it was emitted —
@@ -7054,6 +7054,14 @@ void emitMatches(B fb, u8[] src, Lexed lexed, Env env, Pattern pat, Expr subject
   fb.byte(32); fb.u32leb(tst);
 }
 
+/** Whether a written type is `T?`. */
+bool tyIsNullable(Ty t) {
+  match (t.kind) {
+    Nullable(inner): { return true; }
+    default: { return false; }
+  }
+}
+
 /** A payload field of the enum value in local `subj`: every variant's fields are slots of one struct. */
 void readPayload(B fb, Env env, i32 subj, string owner, i32 slot) {
   fb.byte(32); fb.u32leb(subj);
@@ -7513,7 +7521,19 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     Var(type, nameTok, init, isConst): {
       string vt = typeOfTyName(env, src, lexed, type);
-      emitExprAt(fb, src, lexed, env, init, vt);
+      if (init is not null) {
+        emitExprAt(fb, src, lexed, env, init!, vt);
+      } else if (tyIsNullable(type)) {
+        // `T? x;` holds `null` — its default (spec/next ch08 `§wac-default-absence-8mxpz7y`). Asked of
+        // the written type, because the name this emitter keeps for a nullable struct drops its `?`.
+        emitNull(fb, env, isBoxedPrimName(vt) ? vt : refCore(env, vt));
+      } else {
+        // **`T x;` holds its type's default from the start.** For a type with one that is what a read
+        // reaching it unassigned sees; for one without — a number, a `bool`, a struct with a field that
+        // has none — the checker refuses every such read, so the value is storage and nothing more,
+        // and for a struct it is what field-by-field assignment writes into.
+        emitDefault(fb, env, vt);
+      }
       // **A captured local is born in a cell.** The walk recorded which declarations are captured, by
       // position — so the value just emitted goes straight into a one-field struct and the slot holds
       // that. Everything else about the local is unchanged, including its type as far as every
@@ -10201,7 +10221,7 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
     // only one where the answer is written down beside it.
     Var(type, nameTok, init, isConst): {
       string vt = typeOfTyName(env, src, lexed, type);
-      findLambdasExpr(env, src, lexed, init, vt);
+      if (init is not null) { findLambdasExpr(env, src, lexed, init!, vt); }
       // Declared *after* the initialiser is walked, so `i32 x = x;` reads the outer `x` — the same
       // order the checker uses, and the only one that makes shadowing mean anything.
       env.walkDeclareAt(tokenTextOf(src, lexed, nameTok), vt, s.line, s.col);
@@ -11794,7 +11814,7 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
     Var(type, nameTok, init, isConst): {
       string t = typeOfTyName(env, src, lexed, type);
       if (t == "") { return "local of an unspelled type"; }
-      string r0 = unsupportedValueAt(src, lexed, env, init, t);
+      string r0 = init is null ? "" : unsupportedValueAt(src, lexed, env, init!, t);
       // The name comes into scope **after** its initialiser, which is where it comes into scope in
       // the language too.
       env.addLocal(tokenTextOf(src, lexed, nameTok), t);
@@ -11802,7 +11822,7 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       // Two known types that differ. wac has struct inheritance and this emitter has no notion of a
       // subtype, so `Base b = aSub;` is a `local.set` of the wrong reference type — and there is no
       // conversion to write, because the two are the same value and only the *checker* knows that.
-      string g0 = slotTyped(init) ? "" : typeOfE(src, lexed, env, init);
+      string g0 = init is null || slotTyped(init!) ? "" : typeOfE(src, lexed, env, init!);
       // A **variant and its enum are not related types here, they are the same one** — `Shape s =
       // Shape.Point;` differs only in the name, and the flat representation is what makes that true.
       // Canonicalising before the comparison is the whole of the difference between an enum this

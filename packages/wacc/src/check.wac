@@ -303,6 +303,394 @@ export i32 errPatternType() { return 220; }
 export i32 errPatternArity() { return 221; }
 /** `export { area };` beside `export i32 area(…)` — one name exported twice. */
 export i32 errDuplicateExport() { return 222; }
+/** `1 + 2 == 3`, `5;` — literals nothing gives a type, which have none of their own. */
+export i32 errUntypedLiteral() { return 223; }
+/** `i32 s; return s;` — a local read where not every path has assigned it. */
+export i32 errReadUnassigned() { return 224; }
+/** `i32 k; fn<i32()> f = () => k;` — a lambda capturing a local not yet assigned. */
+export i32 errCaptureUnassigned() { return 225; }
+
+// ── Definite assignment — spec/next ch08 ─────────────────────────────────────────────────────────
+//
+// A forward walk over one body. The state is which tracked locals may be unassigned, which fields of a
+// struct local being built field by field are assigned, and whether the path has ended. Paths join by
+// union of the first and intersection of the second; a path that ended — `return`, `trap`, `break`,
+// `continue` — joins as nothing. A loop is left by its condition failing (before the body, too) or by
+// a `break`, whose states the loop collects; `while (true)` only by a `break`.
+//
+// Tracked: a local declared without an initialiser whose type has no default. One with a default
+// holds it wherever a read reaches it unassigned, so there is nothing to refuse.
+
+struct DA {
+  string[] maybe;
+  i32 n;
+  string[] parts;
+  i32 np;
+  bool dead;
+  /** Inside a lambda: the enclosing body's unassigned locals, whose use there is a capture. */
+  string[] outer;
+  i32 no;
+  /** What this walk has already reported, so a capture is not reported again outside. */
+  string[] said;
+  i32 ns;
+
+  DA fresh() {
+    return DA(string[].defaulted(8), 0, string[].defaulted(8), 0, false, string[](), 0,
+              string[].defaulted(4), 0);
+  }
+
+  DA copy(const this) {
+    string[] m = string[].defaulted(this.maybe.len());
+    for (i32 i = 0; i < this.n; i++) { m[i] = this.maybe[i]; }
+    string[] p = string[].defaulted(this.parts.len());
+    for (i32 i = 0; i < this.np; i++) { p[i] = this.parts[i]; }
+    return DA(m, this.n, p, this.np, this.dead, this.outer, this.no, this.said, this.ns);
+  }
+
+  bool isOuter(const this, string name) {
+    for (i32 i = 0; i < this.no; i++) { if (this.outer[i] == name) { return true; } }
+    return false;
+  }
+
+  bool reported(const this, string name) {
+    for (i32 i = 0; i < this.ns; i++) { if (this.said[i] == name) { return true; } }
+    return false;
+  }
+
+  void noteReported(this, string name) {
+    if (this.ns >= this.said.len()) { this.said = grownStrings(this.said); }
+    this.said[this.ns] = name;
+    this.ns = this.ns + 1;
+  }
+
+  bool has(const this, string name) {
+    for (i32 i = 0; i < this.n; i++) { if (this.maybe[i] == name) { return true; } }
+    return false;
+  }
+
+  void add(this, string name) {
+    if (this.has(name)) { return; }
+    if (this.n >= this.maybe.len()) { this.maybe = grownStrings(this.maybe); }
+    this.maybe[this.n] = name;
+    this.n = this.n + 1;
+  }
+
+  void remove(this, string name) {
+    i32 k = 0;
+    for (i32 i = 0; i < this.n; i++) {
+      if (this.maybe[i] == name) { continue; }
+      this.maybe[k] = this.maybe[i];
+      k = k + 1;
+    }
+    this.n = k;
+    // Its parts go with it: assigned whole, there is nothing left to track piecewise.
+    i32 q = 0;
+    for (i32 i = 0; i < this.np; i++) {
+      if (this.parts[i].indexOf(name + ".") == 0) { continue; }
+      this.parts[q] = this.parts[i];
+      q = q + 1;
+    }
+    this.np = q;
+  }
+
+  bool hasPart(const this, string key) {
+    for (i32 i = 0; i < this.np; i++) { if (this.parts[i] == key) { return true; } }
+    return false;
+  }
+
+  void addPart(this, string key) {
+    if (this.hasPart(key)) { return; }
+    if (this.np >= this.parts.len()) { this.parts = grownStrings(this.parts); }
+    this.parts[this.np] = key;
+    this.np = this.np + 1;
+  }
+}
+
+/** Two paths meeting: maybe-unassigned on either, assigned fields on both; an ended path is not one. */
+DA daJoin(DA a, DA b) {
+  if (a.dead) { return b.copy(); }
+  if (b.dead) { return a.copy(); }
+  DA out = a.copy();
+  for (i32 i = 0; i < b.n; i++) { out.add(b.maybe[i]); }
+  i32 q = 0;
+  for (i32 i = 0; i < out.np; i++) {
+    if (!b.hasPart(out.parts[i])) { continue; }
+    out.parts[q] = out.parts[i];
+    q = q + 1;
+  }
+  out.np = q;
+  return out;
+}
+
+/** The states the innermost loop or switch was left with by `break` — none yet is an ended path. */
+struct DAExit {
+  DA breaks;
+}
+
+/** Whether a value of type `t` exists before anything is written: `null`, an empty array, `""`. */
+bool hasDefaultValue(C c, string t, i32 depth) {
+  if (t == typeNone() || t == "") { return true; }
+  if (isNullableName(t) || isArrayName(t) || t == "string") { return true; }
+  if (depth > 16) { return false; }
+  if (c.isStruct(templateOf(t)) && !c.isGeneric(templateOf(t))) {
+    for (i32 i = 0; i < c.fieldCount; i++) {
+      if (c.fieldOwners[i] != t) { continue; }
+      if (!hasDefaultValue(c, c.fieldTypes[i], depth + 1)) { return false; }
+    }
+    string parent = c.parentOf(t);
+    return parent == "" || hasDefaultValue(c, parent, depth + 1);
+  }
+  return false;
+}
+
+void checkDefiniteAssignment(C c, Stmt[] body) {
+  DAExit none = DAExit(DA.fresh());
+  none.breaks.dead = true;
+  daBody(c, body, DA.fresh(), none);
+}
+
+DA daBody(C c, Stmt[] body, DA st, DAExit loop) {
+  DA at = st;
+  for (i32 i = 0; i < body.len(); i++) {
+    if (at.dead) { return at; }
+    at = daStmt(c, body[i], at, loop);
+  }
+  return at;
+}
+
+DA daStmt(C c, Stmt s, DA st, DAExit loop) {
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): {
+      string name = tokenText(c, nameTok);
+      if (init is not null) {
+        daExpr(c, init!, st);
+        st.remove(name);
+        return st;
+      }
+      if (hasDefaultValue(c, typeOfTy(c, type), 0)) { st.remove(name); } else { st.add(name); }
+      return st;
+    }
+    Assign(target, op, rhs): {
+      daExpr(c, rhs, st);
+      daAssignTarget(c, target, tokenKind(c, op) != kAssign(), st);
+      return st;
+    }
+    IncrStmt(target, op): {
+      daAssignTarget(c, target, true, st);
+      return st;
+    }
+    ExprStmt(expr): { daExpr(c, expr, st); return st; }
+    Return(value): {
+      if (value is not null) { daExpr(c, value!, st); }
+      st.dead = true;
+      return st;
+    }
+    Trap(value): {
+      if (value is not null) { daExpr(c, value!, st); }
+      st.dead = true;
+      return st;
+    }
+    Break: {
+      loop.breaks = daJoin(loop.breaks, st);
+      st.dead = true;
+      return st;
+    }
+    Continue: { st.dead = true; return st; }
+    Block(inner): { return daBody(c, inner, st, loop); }
+    If(cond, then, els): {
+      daExpr(c, cond, st);
+      DA t = daBody(c, then, st.copy(), loop);
+      DA e = daBody(c, els, st.copy(), loop);
+      return daJoin(t, e);
+    }
+    While(cond, inner): {
+      daExpr(c, cond, st);
+      DAExit here = DAExit(DA.fresh());
+      here.breaks.dead = true;
+      daBody(c, inner, st.copy(), here);
+      return isTrueLiteral(cond) ? here.breaks : daJoin(st, here.breaks);
+    }
+    DoWhile(inner, cond): {
+      DAExit here = DAExit(DA.fresh());
+      here.breaks.dead = true;
+      DA after = daBody(c, inner, st.copy(), here);
+      if (!after.dead) { daExpr(c, cond, after); }
+      return isTrueLiteral(cond) ? here.breaks : daJoin(after, here.breaks);
+    }
+    For(init, cond, update, inner): {
+      if (init is not null) { st = daStmt(c, init!, st, loop); }
+      if (cond is not null) { daExpr(c, cond!, st); }
+      DAExit here = DAExit(DA.fresh());
+      here.breaks.dead = true;
+      DA after = daBody(c, inner, st.copy(), here);
+      if (update is not null && !after.dead) { daStmt(c, update!, after, here); }
+      return cond is null ? here.breaks : daJoin(st, here.breaks);
+    }
+    Switch(subject, cases): {
+      daExpr(c, subject, st);
+      DAExit here = DAExit(DA.fresh());
+      here.breaks.dead = true;
+      DA out = DA.fresh();
+      out.dead = true;
+      bool hasDefault = false;
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { hasDefault = true; } else { daExpr(c, cases[i].value!, st); }
+        out = daJoin(out, daBody(c, cases[i].body, st.copy(), here));
+      }
+      if (!hasDefault) { out = daJoin(out, st); }
+      return daJoin(out, here.breaks);
+    }
+    Match(subject, arms): {
+      daExpr(c, subject, st);
+      DA out = DA.fresh();
+      out.dead = true;
+      for (i32 i = 0; i < arms.len(); i++) {
+        out = daJoin(out, daBody(c, arms[i].body, st.copy(), loop));
+      }
+      return arms.len() == 0 ? st : out;
+    }
+    // Run on the way out, so whatever it reads is read there; it assigns nothing the rest can see.
+    Defer(inner): { daStmt(c, inner, st.copy(), loop); return st; }
+  }
+}
+
+/** Writing to `target` — the whole of a tracked local, or one field of one being built. */
+void daAssignTarget(C c, Lvalue target, bool alsoReads, DA st) {
+  match (target.kind) {
+    LIdent(tok): {
+      string name = tokenText(c, tok);
+      if (alsoReads) { daRead(c, name, target.line, target.col, st); }
+      st.remove(name);
+    }
+    LField(base, nameTok): {
+      match (base.kind) {
+        LIdent(btok): {
+          string bname = tokenText(c, btok);
+          if (st.has(bname) && !alsoReads) {
+            st.addPart(bname + "." + tokenText(c, nameTok));
+            return;
+          }
+          daRead(c, bname, base.line, base.col, st);
+        }
+        default: { daLvalueReads(c, base, st); }
+      }
+    }
+    default: { daLvalueReads(c, target, st); }
+  }
+}
+
+/** What an lvalue reads to find where it writes: the base it indexes or reaches a field of. */
+void daLvalueReads(C c, Lvalue lv, DA st) {
+  match (lv.kind) {
+    LIdent(tok): { daRead(c, tokenText(c, tok), lv.line, lv.col, st); }
+    LField(base, nameTok): { daLvalueReads(c, base, st); }
+    LIndex(base, index): { daLvalueReads(c, base, st); daExpr(c, index, st); }
+    default: { }
+  }
+}
+
+/**
+ * A use of `name` as a whole. A struct local built field by field is complete here or never: every
+ * field assigned on every path, or holding its type's default.
+ */
+void daRead(C c, string name, i32 line, i32 col, DA st) {
+  if (!st.has(name)) { return; }
+  string t = c.typeOfName(name);
+  if (c.isStruct(templateOf(t)) && !c.isGeneric(templateOf(t))) {
+    string missing = "";
+    string at = t;
+    for (i32 hop = 0; hop <= c.structCount && at != ""; hop++) {
+      for (i32 i = 0; i < c.fieldCount; i++) {
+        if (c.fieldOwners[i] != at) { continue; }
+        if (st.hasPart(name + "." + c.fieldNames[i])) { continue; }
+        if (hasDefaultValue(c, c.fieldTypes[i], 0)) { continue; }
+        if (missing == "") { missing = c.fieldNames[i]; }
+      }
+      at = c.parentOf(at);
+    }
+    if (missing == "") { st.remove(name); return; }
+    c.reportWith(errReadUnassigned(), line, col,
+                 "'" + name + "." + missing + "' may be unassigned when '" + name + "' is first used");
+    st.remove(name);
+    return;
+  }
+  if (st.isOuter(name)) {
+    c.reportWith(errCaptureUnassigned(), line, col, "'" + name + "' is captured before it is assigned");
+  } else {
+    c.reportWith(errReadUnassigned(), line, col, "'" + name + "' may be read before it is assigned");
+  }
+  st.noteReported(name);
+  // Once is enough: every later read is the same mistake.
+  st.remove(name);
+}
+
+void daExpr(C c, Expr e, DA st) {
+  match (e.kind) {
+    Ident(tok): { daRead(c, tokenText(c, tok), e.line, e.col, st); }
+    Unary(op, operand): { daExpr(c, operand, st); }
+    Await(operand): { daExpr(c, operand, st); }
+    Binary(op, l, r): { daExpr(c, l, st); daExpr(c, r, st); }
+    Cast(op, operand, target): { daExpr(c, operand, st); }
+    Ternary(cond, then, els): { daExpr(c, cond, st); daExpr(c, then, st); daExpr(c, els, st); }
+    Index(arr, index): { daExpr(c, arr, st); daExpr(c, index, st); }
+    Member(obj, nameTok): { daExpr(c, obj, st); }
+    Call(callee, args, callTargs): {
+      daExpr(c, callee, st);
+      for (i32 i = 0; i < args.len(); i++) { daExpr(c, args[i], st); }
+    }
+    Construct(ctype, args, named): {
+      for (i32 i = 0; i < args.len(); i++) { daExpr(c, args[i], st); }
+      for (i32 i = 0; i < named.len(); i++) { daExpr(c, named[i].value, st); }
+    }
+    ArrLit(elements): { for (i32 i = 0; i < elements.len(); i++) { daExpr(c, elements[i], st); } }
+    ArrNew(elem, size, fill, elements): {
+      if (size is not null) { daExpr(c, size!, st); }
+      if (fill is not null) { daExpr(c, fill!, st); }
+      for (i32 i = 0; i < elements.len(); i++) { daExpr(c, elements[i], st); }
+    }
+    Is(left, target, other, negated): {
+      daExpr(c, left, st);
+      if (other is not null) { daExpr(c, other!, st); }
+    }
+    Matches(pat, subject): { daExpr(c, subject, st); }
+    Unwrap(operand): { daExpr(c, operand, st); }
+    Incr(target, op, prefix): { daAssignTarget(c, target, true, st); }
+    MatchExpr(subject, arms): {
+      daExpr(c, subject, st);
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (arms[i].value is not null) { daExpr(c, arms[i].value!, st); }
+      }
+    }
+    Jsx(tagTok, closeTok, attrs, kids): {
+      for (i32 i = 0; i < attrs.len(); i++) { daExpr(c, attrs[i].value, st); }
+      for (i32 i = 0; i < kids.len(); i++) { daExpr(c, kids[i], st); }
+    }
+    // **A lambda runs when it is called, which the walk cannot see**, so a local it uses has to be
+    // assigned where the lambda is made (`§wac-assign-capture-6tpr5ix`). Its body is walked with the
+    // enclosing state, marked as captured, and its own locals are tracked as any body's are.
+    Lambda(params, body, isAsync): {
+      DA inner = st.copy();
+      inner.outer = string[].defaulted(st.n + 1);
+      inner.no = st.n;
+      for (i32 i = 0; i < st.n; i++) { inner.outer[i] = st.maybe[i]; }
+      for (i32 i = 0; i < params.len(); i++) { inner.remove(tokenText(c, params[i].nameTok)); }
+      DAExit none = DAExit(DA.fresh());
+      none.breaks.dead = true;
+      daBody(c, body, inner, none);
+      // A capture refused once stays refused: the enclosing walk need not say it again.
+      for (i32 i = 0; i < st.n; i++) {
+        if (!inner.has(st.maybe[i]) && inner.reported(st.maybe[i])) { st.remove(st.maybe[i]); }
+      }
+    }
+    default: { }
+  }
+}
+
+/** An integer or float literal, or an expression made only of them. */
+bool isNumericLiteral(C c, Expr e) {
+  i32 lit = litFamily(c, e);
+  return lit == litInteger() || lit == litFloat();
+}
 
 /**
  * A module's export lists — spec/next ch02. An item of a list with no `from` names something the module
@@ -4539,6 +4927,12 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, right);
       if (andAnd) { c.popScope(); }
       i32 k = tokenKind(c, op);
+      // **Two literals compared have no type to be compared at** — `1 + 2 == 3` is `true` as an `i32`
+      // and something else as an `i8` — and there is no fallback to pick one (spec/next ch09).
+      if ((k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe())
+          && isNumericLiteral(c, left) && isNumericLiteral(c, right)) {
+        c.report(errUntypedLiteral(), e.line, e.col);
+      }
       // `>>>` is an unsigned shift, so on a type that is already unsigned it says nothing that `>>`
       // does not — the language calls that redundant rather than harmless. On a float it has no
       // meaning at all. Both name the operator, so both are one code here.
@@ -8897,7 +9291,7 @@ void declareStmt(C c, Stmt s) {
       string vcore = withoutNull(vt);
       string vbase = vcore == "" ? vt : vcore;
       bool writable = isArrayName(vbase) || c.isStruct(vbase);
-      bool aliasesConst = writable && constExpr(c, init);
+      bool aliasesConst = writable && (init is not null) && constExpr(c, init!);
       // **A local built out of a live type parameter keeps its written spelling.** `Box<T> b` is
       // unknown to every other rule here, and has to be — but the name then carries no trace of `T`
       // at all, which is what a self-instantiating generic is recognised by. Only when the written
@@ -8915,7 +9309,7 @@ void declareStmt(C c, Stmt s) {
       // `i32 got = match (o) { Some(v): v * 3, … };` left `v` undeclared, every arm typed as
       // unknown, and the whole initialiser unknown with them. The statement form two arms down has
       // always done this; the expression form was simply never walked.
-      declareMatchBindings(c, init);
+      if (init is not null) { declareMatchBindings(c, init!); }
     }
     Block(body): { declareScoped(c, body); }
     // A deferred statement is a scope of its own: what it declares lives only while it runs.
@@ -9157,7 +9551,11 @@ void checkStmt(C c, Stmt s, Ty want) {
     // expressions that were part of something default: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied
     // to it at all, which is how the const-receiver check looked broken when it was merely unreached.
-    ExprStmt(expr): { checkExpr(c, expr); }
+    ExprStmt(expr): {
+      checkExpr(c, expr);
+      // `5;` — a value nothing reads and nothing types (`§wac-literal-no-fallback-9pffhd9`).
+      if (isNumericLiteral(c, expr)) { c.report(errUntypedLiteral(), expr.line, expr.col); }
+    }
     Assign(target, op, rhs): {
       c.expected = typeOfLvalue(c, target);
       checkExpr(c, rhs);
@@ -9268,39 +9666,46 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkPackedNullable(c, wantVar, type);
       checkPackedHere(c, wantVar, type.line, type.col);
       if (wantVar == typeNone()) { return; }
+      // `T x;` — nothing to check against the type; whether it is read before it is written is the
+      // definite-assignment walk's question (spec/next ch08).
+      if (init is null) {
+        c.setType(tokenText(c, nameTok), wantVar);
+        return;
+      }
+      Expr initE = init!;
       // **The declaration takes effect here, not in the collecting walk.** For all but a redeclared
       // name this is what the table already says; for a redeclared one it is the difference between
       // a rule that can see the shadow and one that cannot. Set after `wantVar` is known and before
       // the initialiser is walked, because the initialiser was checked against the *old* binding
       // above — `i32 a = a.m()` reads the parameter, and only the uses after it read the local.
-      i32 litVar = litFamily(c, init);
+      i32 litVar = litFamily(c, initE);
       if (litVar != litNone()) {
-        reportLiteral(c, wantVar, init, errInitTypeMismatch(), init.line, init.col);
+        reportLiteral(c, wantVar, initE, errInitTypeMismatch(), initE.line, initE.col);
         // **And walked.** This gate is `litFamily`, so a *compound* expression can take it — `1 + 2`
         // always could and `cond ? 1 : 2` does now — and returning here skipped everything inside:
         // `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a non-null reference, and the
         // reach sweep lost `Ternary-cond`. `issues/lang/0145`.
         c.expected = wantVar;
-        checkExpr(c, init);
+        checkExpr(c, initE);
         c.setType(tokenText(c, nameTok), wantVar);
         return;
       }
-      string gotVar = typeOfExpr(c, init);
+      string gotVar = typeOfExpr(c, initE);
       if (nullableIntoNonNull(c, wantVar, gotVar)) {
-        c.report(errNullableToNonNull(), init.line, init.col);
+        c.report(errNullableToNonNull(), initE.line, initE.col);
       } else if (!assignable(c, wantVar, gotVar)) {
         // `i64 x = 1 << count;` is the idiom this catches, and the reason is not in the message
         // without help — `issues/lang/0233a`. Empty for everything else, which falls through to the
         // code's own hint exactly as before.
-        string sh = shiftLiteralHint(c, init);
+        string sh = shiftLiteralHint(c, initE);
         if (sh == "") {
-          reportExpr(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar));
+          reportExpr(c, errInitTypeMismatch(), initE, expectedFound(wantVar, gotVar));
         } else {
-          reportExprHinted(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar), sh);
+          reportExprHinted(c, errInitTypeMismatch(), initE, expectedFound(wantVar, gotVar), sh);
         }
       }
       c.expected = wantVar;
-      checkExpr(c, init);
+      checkExpr(c, initE);
       // **The type and not the const flags.** Setting those too laundered `const`-ness away: a local
       // that aliases a const receiver is const *by alias*, `markAliasOnly` records that, and an
       // unconditional `setConstFlags(name, isConst, false)` undid it — `spec/cases/0006` and
@@ -10775,6 +11180,7 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     bool wasAsyncM = c.inAsync;
     c.inAsync = methods[mi].isAsync;
     checkAll(c, methods[mi].body, methods[mi].returnType);
+    checkDefiniteAssignment(c, methods[mi].body);
     c.inAsync = wasAsyncM;
     c.popScope();
     // At the **return type**, where the reference puts it. A `Method` carries no position of its own —
@@ -11022,6 +11428,7 @@ export void checkModule(C c, Program prog) {
         bool wasAsync = c.inAsync;
         c.inAsync = isAsync;
         checkAll(c, body, returnType);
+        checkDefiniteAssignment(c, body);
         c.inAsync = wasAsync;
         c.popScope();
         // Reported at the declaration rather than at the closing brace, which is where the reference

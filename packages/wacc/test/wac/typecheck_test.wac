@@ -838,11 +838,11 @@ export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, 
  * Reusing the return rules exactly — a literal is polymorphic over a family, a name has one type —
  * which is the point: if the second position needed different rules, one of the two would be wrong.
  *
- * `null` is the new part, and it covers two spellings. `i32 z;` and `i32 x = null;` parse to the same
- * `NullLit` initialiser and the reference gives both *"expected i32, got null"*, so a missing
- * initialiser needs no rule of its own. A `T?` declaration is nullable and legitimately takes one,
- * and `primOfType` answers `primNone` for a nullable type, so those stay silent rather than being
- * wrongly refused.
+ * `null` is the new part. `i32 x = null;` is *"expected i32, got null"*; a `T?` declaration is
+ * nullable and legitimately takes one, and `primOfType` answers `primNone` for a nullable type, so those
+ * stay silent rather than being wrongly refused. `i32 z;` was the same `NullLit` once and is a
+ * declaration now — unassigned until written, which is definite assignment's question (spec/next
+ * ch08), not this one's.
  */
 export string test_rung3_a_variables_initialiser_against_its_declared_type() {
   T t = T.create();
@@ -850,7 +850,6 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
   // where the accepted ones began was already here; it is the boundary now rather than a note.
   string[] caught = [
     "export void a() { i32 x = null; }",
-    "export void b() { i32 z; }",
     "export void c() { i8 x = 5; }",
     "export void d() { i32 x = \"s\"; }",
     "export void e() { f64 x = 1; }",
@@ -864,7 +863,8 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
     "export void j() { f64 x = 1.5; }",
     "export void k() { i32? n = null; }",
     "export void l() { string s = \"x\"; }",
-    "export void m(i32 a) { i32 b = a; }"
+    "export void m(i32 a) { i32 b = a; }",
+    "export void b() { i32 z; }"
   ];
   caughtAndQuiet(t, caught, quiet, "an initialiser");
   return t.report();

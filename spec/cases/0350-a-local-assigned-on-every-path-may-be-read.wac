@@ -1,0 +1,12 @@
+// expect: answers f = 13
+// why: a local declared without an initialiser is definitely assigned where every path assigns it — a path ending in trap or break reaches nothing after it
+// from: definite assignment (design/lang/0016), spec/next ch08 §wac-assign-every-path-r2q2iti, §wac-assign-exits-4tnnmsb
+i32 sign(i32 n) { i32 s; if (n < 0) { s = -1; } else if (n == 0) { s = 0; } else { s = 1; } return s; }
+i32 firstOver(i32[] xs, i32 limit) {
+  i32 found;
+  i32 i = 0;
+  while (true) { if (xs[i] > limit) { found = xs[i]; break; } i++; }
+  return found;
+}
+
+export i32 f() { return sign(-4) + sign(9) + firstOver([1, 5, 9], 8) + 4; }

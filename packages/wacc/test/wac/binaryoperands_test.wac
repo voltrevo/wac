@@ -91,7 +91,7 @@ export string test_a_string_or_bool_literal_pair_has_a_type_and_reports_once() {
     "a string literal alone", "a string literal beside a named string",
     "concatenation into a string is legal", "an integer sum into an i32",
     "an integer sum into an i64", "a float sum into an f64",
-    "a comparison of literals is a bool", "the logical operators on bool literals",
+    "a comparison of literals has no type (spec/next ch09)", "the logical operators on bool literals",
     "arithmetic on two bool literals", "a different operator on two bool literals",
     "a non-plus operator on two string literals", "arithmetic on bools in a bool slot",
     "a named integer times a string literal still reports once",
@@ -99,7 +99,7 @@ export string test_a_string_or_bool_literal_pair_has_a_type_and_reports_once() {
     "an integer literal plus a bool literal", "a bool literal plus a string literal",
     "a string literal plus a bool literal", "a named i32 plus an integer sum, legal"
   ];
-  i32[] want = [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0];
+  i32[] want = [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0];
   string[] src = [
     "export i32 f() { i32 n = \"a\" + \"b\"; return n; }\n",
     "export i32 f() { bool b = \"a\" + \"b\"; return b ? 1 : 0; }\n",

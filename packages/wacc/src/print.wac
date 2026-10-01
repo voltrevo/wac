@@ -505,7 +505,8 @@ void printStmt(Pr w, Stmt s) {
       w.sp(); w.s(isConst ? "const" : "let");
       w.sp(); printTy(w, type);
       w.sp(); w.tok(nameTok);
-      w.sp(); printExpr(w, init);
+      w.sp();
+      if (init is null) { w.s("-"); } else { printExpr(w, init!); }
       w.close();
     }
     Assign(target, op, rhs): {

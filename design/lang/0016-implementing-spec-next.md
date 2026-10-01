@@ -66,7 +66,7 @@ Each step lands with the probe's count moving and the suite green.
 | 1 oracle | done — 482 examples, 152 met at the start |
 | 2 wapy | done — deleted, with `spec/spec` and `spec/cli` retired |
 | 3 syntax | done — `fn<R(P)>`, arms without `case`, array literals and factories (closes `issues/lang/0265c`), module `static`, `core`/`std` named whole, verbatim names, `private`, `defer`, `matches` and `is` at comparison level, export lists and re-exports, nested-project imports and the project boundary (223 met). Left for later steps: `export { ns.member }` (namespaces), `export { G<T> as name }`, markup's quoted tags and hyphenated attributes, field initialisers, bindgen leaving private members out, `defer` in `async` functions |
-| 4 checking | open |
+| 4 checking | in progress — literals with no fallback (comparisons and statements; generic arguments wait on expected-type inference), definite assignment (225 met) |
 | 5 library | open |
 | 6 semantics | open |
 | 7 tooling | open |

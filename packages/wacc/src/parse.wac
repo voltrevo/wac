@@ -62,6 +62,8 @@ export i32 perrArrayElems()  { return 40; }
 export i32 perrArrayFactory() { return 41; }
 /** `const i32 X = 1;` or `i32 X = 1;` at module scope — a module-level variable is `static`. */
 export i32 perrModuleVar()   { return 42; }
+/** `const i32 x;` — a const local is given its value where it is declared. */
+export i32 perrConstNoInit() { return 43; }
 export i32 perrBareSpec()    { return 29; }
 /**
  * A keyword where a name belongs — `[§wac-keyword-name-8wnq4kp]`.
@@ -2082,6 +2084,12 @@ Stmt parseVarDecl(P p, bool noSemi) {
   Ty t = parseType(p);
   i32 nameTok = -1;
   nameTok = declName(p, perrExpected(), "variable name");
+  // `T x;` — declared now, assigned later (spec/next ch08). A `const` one could never be.
+  if (!noSemi && p.at1(kSemi())) {
+    if (isConst) { p.fail(perrConstNoInit()); }
+    p.advance();
+    return Stmt(StmtKind.Var(t, nameTok, null, isConst), line, col);
+  }
   p.expect(kAssign());
   Expr init = parseExpr(p);
   if (!noSemi) { p.expect(kSemi()); }

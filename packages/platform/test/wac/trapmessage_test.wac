@@ -68,7 +68,7 @@ export string test_a_message_the_program_computed_not_only_a_literal(Core core, 
   T t = T.create();
   Said s = run(cli, "computed",
                "export i32 main() { string why = \"ring \" + \"full\"; " +
-               "if (1 > 0) { trap why; } return 0; }\n");
+               "bool always = true; if (always) { trap why; } return 0; }\n");
   t.isTrue(s.ran, s.text);
   if (!s.ran) { return t.report(); }
   t.isTrue(s.text.indexOf("trapped: ring full") >= 0, s.text);

@@ -684,7 +684,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   bool ready = cli.mkdir(fresh + "/t", true).wait().ok()
     && put(t, cli, fresh + "/wac.json5", "{}\n")
     && put(t, cli, fresh + "/t/x_test.wac",
-           "export string test_two_is_two() { return 2 == 2 ? \"\" : \"no\"; }\n");
+           "export string test_two_is_two() { i32 two = 2; return two == 2 ? \"\" : \"no\"; }\n");
   t.isTrue(ready, "the fresh project was written");
   if (ready) {
     // **Granted, because the command's own capabilities are not a host's to differ on.** A hosted

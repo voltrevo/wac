@@ -156,7 +156,7 @@ bool awaitInLvalue(Lvalue lv) {
 /** Whether `s` contains an `await` anywhere inside it. */
 export bool awaitInStmt(Stmt s) {
   match (s.kind) {
-    Var(type, nameTok, init, isConst): { return awaitInExpr(init); }
+    Var(type, nameTok, init, isConst): { return (init is not null) && awaitInExpr(init!); }
     Assign(target, op, rhs): { return awaitInLvalue(target) || awaitInExpr(rhs); }
     IncrStmt(target, op): { return awaitInLvalue(target); }
     If(cond, then, els): {
@@ -296,8 +296,8 @@ void walkPlan(Stmt[] body, Walked w) {
         if (w.h < w.hoist.len()) {
           w.hoist[w.h] = nameTok; w.hoistTy[w.h] = type; w.h = w.h + 1;
         }
-        if (isAwait(init)) { w.n = w.n + 1; }
-        else if (awaitInExpr(init)) { w.why = "an `await` nested inside a larger expression"; }
+        if ((init is not null) && isAwait(init!)) { w.n = w.n + 1; }
+        else if ((init is not null) && awaitInExpr(init!)) { w.why = "an `await` nested inside a larger expression"; }
       }
       Return(value): {
         if ((value is not null) && isAwait(value!)) { w.n = w.n + 1; }

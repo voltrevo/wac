@@ -300,8 +300,11 @@ export struct Arm {
 }
 
 export enum StmtKind {
-  /** `isConst` folds what the pool needed two tags for. */
-  Var(Ty type, i32 nameTok, Expr init, bool isConst),
+  /**
+   * `isConst` folds what the pool needed two tags for. `init` is null for `T x;`, which is unassigned
+   * until written, or holds its type's default — spec/next ch08.
+   */
+  Var(Ty type, i32 nameTok, Expr? init, bool isConst),
   Assign(Lvalue target, i32 op, Expr rhs),
   IncrStmt(Lvalue target, i32 op),
   /** `els` is empty for no else; an `else if` is a single-statement block. */

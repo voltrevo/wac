@@ -1,0 +1,11 @@
+// expect: answers f = 7
+// why: until its first use, a struct local's fields are tracked separately; a field whose type has a default need not be assigned
+// from: definite assignment (design/lang/0016), spec/next ch08 §wac-assign-parts-usxj6ha
+struct Rgb { i32 r; i32 g; string name; }
+
+export i32 f() {
+  Rgb p;
+  p.r = 3;
+  p.g = 4;
+  return p.r + p.g + p.name.len();
+}

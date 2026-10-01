@@ -1,0 +1,9 @@
+// expect: refused
+// why: a lambda that uses a local is refused where that local is not definitely assigned
+// from: definite assignment (design/lang/0016), spec/next ch08 §wac-assign-capture-6tpr5ix
+export i32 f(i32 n) {
+  i32 k;
+  fn<i32()> early = () => k;
+  k = n;
+  return early();
+}

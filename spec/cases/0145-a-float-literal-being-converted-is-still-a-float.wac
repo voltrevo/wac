@@ -37,7 +37,8 @@ export i32 run() {
   // are no implicit conversions (spec/spec/types.md), so that is an error the reference reports
   // and this compiler does not. `issues/lang/0119`.
   if (1000000000000 as@ i32 != -727379968) { return 11; }
-  if (6 * 7 != 42) { return 12; }
+  i32 product = 6 * 7;
+  if (product != 42) { return 12; }
   i64 wide2 = 6 * 7;
   if (wide2 != 42) { return 13; }
 

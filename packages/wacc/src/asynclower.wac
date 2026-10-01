@@ -456,7 +456,12 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     // declared in the enclosing function. Nothing else could work: a second declaration inside the
     // switch arm would be a different variable, scoped to the arm, forgotten on resume.
     Var(type, nameTok, init, isConst): {
-      Expr v = subExpr(c, init);
+      // A hoisted local with no initialiser is already its cell, holding its default.
+      if (init is null) {
+        if (!inLambda && isHoisted(c, nameTok)) { return sBlock(c, Stmt[]()); }
+        return s;
+      }
+      Expr v = subExpr(c, init!);
       if (!inLambda && isHoisted(c, nameTok)) { return sCellSet(c, nameTok, v); }
       return Stmt(StmtKind.Var(type, nameTok, v, isConst), s.line, s.col);
     }
@@ -686,7 +691,7 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
       i32 k = b.slot[0];
       lowPut(b, rest, lowJoin(c, Stmt[].filled(1, sCellSet(c, nameTok, eCell(c, tVal(c, k)))),
                         gotoS(c, next)));
-      return lowerSuspend(b, subExpr(c, innerAwait(c, init)), type, rest);
+      return lowerSuspend(b, subExpr(c, innerAwait(c, init!)), type, rest);
     }
     // `return await e;` — suspend, then the answer *is* the machine's.
     Return(value): {
@@ -1004,9 +1009,9 @@ Ty? slotTicketTy(u8[] src, Lexed lexed, Ty t) {
 Expr? asyncLambdaOf(u8[] src, Lexed lexed, Stmt s) {
   match (s.kind) {
     Var(type, nameTok, init, isConst): {
-      if (slotTicketTy(src, lexed, type) is null) { return null; }
-      match (init.kind) {
-        Lambda(params, body, isAsync): { return isAsync ? init : null; }
+      if (slotTicketTy(src, lexed, type) is null || (init is null)) { return null; }
+      match (init!.kind) {
+        Lambda(params, body, isAsync): { return isAsync ? init! : null; }
         default: { return null; }
       }
     }
@@ -1207,8 +1212,8 @@ Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stm
     match (body[i].kind) {
       Var(type, nameTok, init, isConst): {
         Ty? tick = slotTicketTy(src2, lexed2, type);
-        if (tick is null) { continue; }
-        match (init.kind) {
+        if (tick is null || (init is null)) { continue; }
+        match (init!.kind) {
           Lambda(lps, lbody, la): {
             if (!la) { continue; }
             AsyncPlan plan = planBody(lbody);
@@ -1225,8 +1230,8 @@ Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stm
               names[plan.hoist.len() + j] = synthTextAt(src2, lexed2, lps[j].nameTok);
             }
             // A column of its own: the emitter keys a lambda by position, and this builds several.
-            Ctx c = Ctx(first, ups, args, init.line, init.col, names, src2, lexed2,
-                        i32[].filled(1, init.col + 5000), bool[].filled(1, false));
+            Ctx c = Ctx(first, ups, args, init!.line, init!.col, names, src2, lexed2,
+                        i32[].filled(1, init!.col + 5000), bool[].filled(1, false));
 
             Param[] ps2 = Param[].filled(lps.len(), lps.len() > 0 ? lps[0]
                                                                : Param(0 - 1, type, false));
@@ -1241,7 +1246,7 @@ Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stm
             }
             for (i32 k = 0; k < mach.len(); k++) { full[lps.len() + k] = mach[k]; }
 
-            Expr made = Expr(ExprKind.Lambda(ps2, full, false), init.line, init.col);
+            Expr made = Expr(ExprKind.Lambda(ps2, full, false), init!.line, init!.col);
             out[i] = Stmt(StmtKind.Var(type, nameTok, made, isConst), body[i].line, body[i].col);
           }
           default: { }

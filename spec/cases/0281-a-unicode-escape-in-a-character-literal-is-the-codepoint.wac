@@ -3,5 +3,7 @@
 // why: a character literal is an integer, so the escape denotes the codepoint and not its encoding
 // from: design/lang/0013 D2
 export i32 f() {
-  return '\u{1F600}' == 128512 && '\u{1F600}' == '😀' && '\u{41}' == 'A' ? 1 : 0;
+  i32 smile = '\u{1F600}';
+  i32 a = '\u{41}';
+  return smile == 128512 && smile == '😀' && a == 'A' ? 1 : 0;
 }

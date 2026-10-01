@@ -12,5 +12,6 @@
 // two until it exceeds the dividend, then step it back down subtracting where it fits. Every step is
 // exact, so no rounding enters anywhere and the answer is the one the hardware would give.
 export i32 f() {
-  return (1.0 % 0.1) == 0.09999999999999995 ? 1 : 0;
+  f64 r = 1.0 % 0.1;
+  return r == 0.09999999999999995 ? 1 : 0;
 }
