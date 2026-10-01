@@ -79,11 +79,11 @@ export string attribute(string sdp, string name) {
   i32 at = 0;
   while (at < b.len()) {
     // The start of a line, so `a=mid:0` is not found inside some other line's value.
-    bool matches = at + want.len() <= b.len();
-    for (i32 i = 0; matches && i < want.len(); i++) {
-      if (b[at + i] != want[i]) { matches = false; }
+    bool wantHere = at + want.len() <= b.len();
+    for (i32 i = 0; wantHere && i < want.len(); i++) {
+      if (b[at + i] != want[i]) { wantHere = false; }
     }
-    if (matches) {
+    if (wantHere) {
       i32 end = at + want.len();
       while (end < b.len() && b[end] != 13 && b[end] != 10) { end = end + 1; }
       u8[] v = u8[].filled(end - at - want.len(), 0);
@@ -117,11 +117,11 @@ export bool hasDataChannel(string sdp) {
   u8[] want = "m=application ".toBytes();
   i32 at = 0;
   while (at < b.len()) {
-    bool matches = at + want.len() <= b.len();
-    for (i32 i = 0; matches && i < want.len(); i++) {
-      if (b[at + i] != want[i]) { matches = false; }
+    bool wantHere = at + want.len() <= b.len();
+    for (i32 i = 0; wantHere && i < want.len(); i++) {
+      if (b[at + i] != want[i]) { wantHere = false; }
     }
-    if (matches) { return true; }
+    if (wantHere) { return true; }
     while (at < b.len() && b[at] != 10) { at = at + 1; }
     at = at + 1;
   }

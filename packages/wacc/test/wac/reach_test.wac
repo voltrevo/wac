@@ -92,7 +92,7 @@ string[] expressionLabels() {
     // `return x++;` was not. The grid had a Return-value cell and it passed, because the fault it
     // buries is always the same `(p + q)` — what it never varied is *which kind of expression holds
     // the fault*, which is the dimension the missing arm lived in.
-    "Incr", "Unwrap", "Is", "ArrNew", "ArrNew-size", "ArrLit", "MatchExpr",
+    "Incr", "Unwrap", "Is", "ArrNew", "ArrNew-size", "ArrLit", "MatchExpr", "Matches",
     // A JSX element holds expressions in two places — an attribute's value and a child — and a walk
     // that descends into one and not the other would be invisible to every other cell here.
     "Jsx",
@@ -143,6 +143,8 @@ string[] expressionSources() {
     "void f(i32 p, f64 q) { i32[] a = [" + SUB + ", 1]; }",
     "enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { A: " + SUB +
     " B: 0 }; }",
+    "enum E { A(i32 v), B } E h(i32 n) { return E.B; } " +
+    "void f(i32 p, f64 q) { bool r = A(v) matches h(" + SUB + "); }",
     "import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(" + SUB +
     ")}/>; } string itoa(i32 v) { return \"\"; }",
     "", "", "", "", "", "", "",

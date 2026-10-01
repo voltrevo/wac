@@ -1,0 +1,6 @@
+// expect: refused
+// why: a pattern no value of the subject's type can match is a mistake about the type, and is refused
+// from: `matches` (design/lang/0016), spec/next ch25
+struct Rgb { i32 r; }
+
+export i32 f(i32 n) { if (Rgb p matches n) { return p.r; } return 0; }

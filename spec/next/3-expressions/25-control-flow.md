@@ -535,7 +535,7 @@ i32 alwaysTrue(Rgb certain) {
 export i32 certainBlue() { return alwaysTrue(Rgb(1, 2, 3)); }
 ```
 
-`matches` cannot be overloaded, and binds looser than `&&` ([22](22-operators.md)).
+`matches` cannot be overloaded, and binds as tightly as `<` — tighter than `&&` ([22](22-operators.md)).
 
 ## `defer`
 

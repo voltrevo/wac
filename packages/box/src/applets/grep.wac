@@ -76,7 +76,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   bool listHits = has(a, 'l');
   bool listMisses = has(a, 'L');
   bool listing = listHits || listMisses;
-  i32 matches = 0;
+  i32 matchCount = 0;
   Sink out = Sink.create(cli);
 
   // Every file named, and **the name in front of every line when there is more than one**, which is what
@@ -128,7 +128,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
       }
       bool hit = found != NO_MATCH();
       if (hit == invert) { continue; }
-      matches++;
+      matchCount++;
       here++;
       // The status is the whole answer, so there is nothing left to read once there is one.
       if (quiet) { out.flush(); return 0; }
@@ -159,7 +159,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   }
   out.flush();
   if (unreadable) { return 2; }
-  return matches > 0 ? 0 : 1;
+  return matchCount > 0 ? 0 : 1;
 }
 
 /** Whether any byte is NUL, which is GNU's whole definition of a binary file. */

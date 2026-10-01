@@ -185,9 +185,9 @@ export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
         // The plaintext is the content, then the true type, then any padding.
         t.eqI32(plain.len(), content.len() + 1, "plaintext is content plus a type byte");
         t.eqI32(plain[plain.len() - 1], typeHandshake(), "and the type byte is the real type");
-        bool matches = true;
-        for (i32 i = 0; i < content.len(); i++) { if (plain[i] != content[i]) { matches = false; } }
-        t.isTrue(matches, "and the content is unchanged");
+        bool sameContent = true;
+        for (i32 i = 0; i < content.len(); i++) { if (plain[i] != content[i]) { sameContent = false; } }
+        t.isTrue(sameContent, "and the content is unchanged");
       }
     }
   }

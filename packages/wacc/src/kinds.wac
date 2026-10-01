@@ -313,9 +313,11 @@ export i32 kStatic() { return 88; }
 export i32 kPrivate() { return 89; }
 /** `defer` — a statement run when its block is left. spec/next ch25. */
 export i32 kDefer() { return 90; }
+/** `matches` — a pattern tested against a value. spec/next ch25. */
+export i32 kMatches() { return 91; }
 
 /** How many kinds there are, for bounds checks and table sizing. */
-export i32 kindCount() { return 91; }
+export i32 kindCount() { return 92; }
 
 /**
  * How a token kind is spelled, for a diagnostic that has to name one.
@@ -417,5 +419,6 @@ export string kindName(i32 kind) {
   if (kind == 88) { return "static"; }
   if (kind == 89) { return "private"; }
   if (kind == 90) { return "defer"; }
+  if (kind == 91) { return "matches"; }
   return "something else";
 }

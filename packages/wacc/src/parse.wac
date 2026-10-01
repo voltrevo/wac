@@ -17,7 +17,7 @@
 
 import { Ty, TyKind, tyPrim, tyNamed, tyArr, tyNullable, tyFuncref,
   Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
-  Stmt, StmtKind, Case, Arm, JsxAttr,
+  Stmt, StmtKind, Case, Arm, JsxAttr, Pattern,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program, jsxTrim } from "./ast.wac";
 import { Lexed, tokenStride } from "./lex.wac";
 import { kindName } from "./kinds.wac";
@@ -25,7 +25,7 @@ import {
   kInt, kFloat, kString, kIdent, kEof, kTrue, kFalse, kNull, kVoid, kFn, kThis,
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
   kConst, kExport, kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
-  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate, kDefer, kImport,
+  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate, kDefer, kMatches, kImport,
   kOverride, kAssign,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq,
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
@@ -302,7 +302,7 @@ export struct P {
  * what found it.
  */
 bool isKeywordKind(i32 k) {
-  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait() || k == kStatic() || k == kPrivate() || k == kDefer();
+  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait() || k == kStatic() || k == kPrivate() || k == kDefer() || k == kMatches();
 }
 
 bool atKeyword(P p) {
@@ -417,6 +417,54 @@ struct TyList {
     if (this.n == 0) { return Ty[](); }
     Ty[] out = Ty[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
+    return out;
+  }
+}
+
+/** A pattern's payload slots as they are read: a name token each, or -1 where the slot is a test. */
+struct IntList {
+  i32[] items;
+  i32 n;
+
+  IntList create() { return IntList(i32[].filled(4, 0), 0); }
+
+  void push(this, i32 v) {
+    if (this.n == this.items.len()) {
+      i32[] next = i32[].filled(this.items.len() * 2 + 4, 0);
+      for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
+      this.items = next;
+    }
+    this.items[this.n] = v;
+    this.n++;
+  }
+
+  i32[] take(const this) {
+    i32[] out = i32[].filled(this.n, 0);
+    for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
+    return out;
+  }
+}
+
+/** The tests beside them: a type where the slot is `is T`, null where it binds. */
+struct TyOptList {
+  Ty?[] items;
+  i32 n;
+
+  TyOptList create() { return TyOptList(Ty?[].defaulted(4), 0); }
+
+  void push(this, Ty? t) {
+    if (this.n == this.items.len()) {
+      Ty?[] next = Ty?[].defaulted(this.items.len() * 2 + 4);
+      for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
+      this.items = next;
+    }
+    this.items[this.n] = t;
+    this.n++;
+  }
+
+  Ty?[] take(const this) {
+    Ty?[] out = Ty?[].defaulted(this.n);
+    for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
     return out;
   }
 }
@@ -1019,7 +1067,7 @@ bool startsLower(u8[] s, i32 start, i32 len) {
 export Expr parseExpr(P p) { return parseTernary(p); }
 
 Expr parseTernary(P p) {
-  Expr e = parseIsExpr(p);
+  Expr e = parseOr(p);
   if (p.at1(kQuestion())) {
     i32 line = p.lineAt(0);
     i32 col = p.colAt(0);
@@ -1032,9 +1080,11 @@ Expr parseTernary(P p) {
   return e;
 }
 
-Expr parseIsExpr(P p) {
-  Expr e = parseOr(p);
-  if (!p.at1(kIs())) { return e; }
+/**
+ * `e is T`, `e is not T`, `e is null`, `e is other` — a test at comparison level (spec/next ch22), so
+ * `s is null || n == 0` needs no parentheses. Called with the `is` next.
+ */
+Expr parseIsTail(P p, Expr e) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
   p.advance();
@@ -1088,8 +1138,82 @@ Expr parseIsExpr(P p) {
   }
 
   // Not a type: `is` against a value, which tests reference identity.
-  Expr other = parseOr(p);
+  Expr other = parseShift(p);
   return Expr(ExprKind.Is(e, null, other, negated), line, col);
+}
+
+/**
+ * Where a pattern standing here ends — at a `matches` — or -1 when what stands here is not one.
+ *
+ * Read without parsing, because a pattern looks like an expression until its `matches`: `Ok(v)` is a
+ * call and `Rgb p` two names. A type and a name, or a name with a parenthesised payload, or a bare
+ * name — each followed by `matches`.
+ */
+i32 patternEnd(P p) {
+  if (!p.at1(kIdent())) { return 0 - 1; }
+  // `Ok(v)`, `Err(is NotFound)`
+  if (p.kindAt(1) == kLparen()) {
+    i32 depth = 0;
+    i32 j = 1;
+    while (p.kindAt(j) != kEof()) {
+      if (p.kindAt(j) == kLparen()) { depth++; }
+      if (p.kindAt(j) == kRparen()) {
+        depth--;
+        if (depth == 0) { return p.kindAt(j + 1) == kMatches() ? j + 1 : 0 - 1; }
+      }
+      j++;
+    }
+    return 0 - 1;
+  }
+  // `End` — a variant with no payload
+  if (p.kindAt(1) == kMatches()) { return 1; }
+  // `Rgb p`, `Box<i32> b`, `i32 v`
+  i32 j = 1;
+  i32 afterArgs = afterTypeArgs(p, j);
+  if (afterArgs > 0) { j = afterArgs; }
+  while (true) {
+    if (p.kindAt(j) == kLbrack() && p.kindAt(j + 1) == kRbrack()) { j += 2; }
+    else if (p.kindAt(j) == kQuestion()) { j++; }
+    else { break; }
+  }
+  if (p.kindAt(j) == kIdent() && p.kindAt(j + 1) == kMatches()) { return j + 1; }
+  return 0 - 1;
+}
+
+/** `p matches e`, with the pattern next — `patternEnd` has said it is one. */
+Expr parseMatches(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  Pattern pat = parsePattern(p);
+  p.expect(kMatches());
+  return Expr(ExprKind.Matches(pat, parseShift(p)), line, col);
+}
+
+Pattern parsePattern(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  if (p.kindAt(1) == kLparen() || p.kindAt(1) == kMatches()) {
+    i32 v = p.advance();
+    IntList names = IntList.create();
+    TyOptList tests = TyOptList.create();
+    if (p.eat(kLparen())) {
+      while (!p.at1(kRparen()) && !p.at1(kEof())) {
+        if (p.eat(kIs())) {
+          names.push(0 - 1);
+          tests.push(parseType(p));
+        } else {
+          names.push(p.expect(kIdent()));
+          tests.push(null);
+        }
+        if (!p.eat(kComma())) { break; }
+      }
+      p.expect(kRparen());
+    }
+    return Pattern(null, 0 - 1, v, names.take(), tests.take(), line, col);
+  }
+  Ty t = parseType(p);
+  i32 name = p.expect(kIdent());
+  return Pattern(t, name, 0 - 1, i32[](), Ty?[](), line, col);
 }
 
 /** The inner type of a nullable, or the type itself when it is not one. */
@@ -1168,9 +1292,16 @@ Expr parseEqExpr(P p) {
   return e;
 }
 
+/**
+ * Comparison level: `<` `<=` `>` `>=`, `is` and `matches` — spec/next ch22's level 7, left-associative.
+ *
+ * A pattern stands only where an operand begins, so `matches` is tried there and nowhere else.
+ */
 Expr parseRel(P p) {
-  Expr e = parseShift(p);
-  while (p.at1(kLt()) || p.at1(kLe()) || p.at1(kGt()) || p.at1(kGe())) {
+  Expr e = patternEnd(p) > 0 ? parseMatches(p) : parseShift(p);
+  while (true) {
+    if (p.at1(kIs())) { e = parseIsTail(p, e); continue; }
+    if (!(p.at1(kLt()) || p.at1(kLe()) || p.at1(kGt()) || p.at1(kGe()))) { break; }
     i32 line = p.lineAt(0); i32 col = p.colAt(0);
     i32 op = p.advance();
     e = Expr(ExprKind.Binary(op, e, parseShift(p)), line, col);

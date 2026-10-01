@@ -1,0 +1,16 @@
+// expect: answers f = 111
+// why: `p matches e` tests a match-arm pattern and binds its names; `is` inside a payload tests the payload; the right of `&&` sees the bindings
+// from: `matches` (design/lang/0016), spec/next ch25 §wac-matches-pattern-q76z7yq
+enum Fault { NotFound, Denied }
+enum Outcome { Ok(i32 v), Err(Fault e) }
+
+bool missing(Outcome res) { return Err(is NotFound) matches res; }
+bool positive(Outcome res) { return Ok(v) matches res && v > 0; }
+
+export i32 f() {
+  i32 a = missing(Outcome.Err(Fault.NotFound)) ? 100 : 0;
+  i32 b = missing(Outcome.Err(Fault.Denied)) ? 1000 : 0;
+  i32 c = positive(Outcome.Ok(3)) ? 10 : 0;
+  i32 d = positive(Outcome.Err(Fault.Denied)) ? 1000 : 1;
+  return a + b + c + d;
+}

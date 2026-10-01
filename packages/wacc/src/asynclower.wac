@@ -349,6 +349,7 @@ Expr subExpr(Ctx c, Expr e) {
       Expr? o = (other is null) ? null : subExpr(c, other!);
       return Expr(ExprKind.Is(subExpr(c, left), target, o, negated), e.line, e.col);
     }
+    Matches(pat, subject): { return Expr(ExprKind.Matches(pat, subExpr(c, subject)), e.line, e.col); }
     Ternary(cond, then, els): {
       return Expr(ExprKind.Ternary(subExpr(c, cond), subExpr(c, then), subExpr(c, els)),
                   e.line, e.col);

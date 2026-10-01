@@ -330,6 +330,22 @@ void printExpr(Pr w, Expr e) {
       else                        { w.s("null"); }
       w.close();
     }
+    Matches(pat, subject): {
+      w.open("matches", e.line, e.col);
+      w.sp();
+      if (pat.type is not null) {
+        printTy(w, pat.type!);
+        w.sp(); w.tok(pat.nameTok);
+      } else {
+        w.tok(pat.variantTok);
+        for (i32 i = 0; i < pat.slotNames.len(); i++) {
+          w.sp();
+          if (pat.slotNames[i] >= 0) { w.tok(pat.slotNames[i]); } else { printTy(w, pat.slotTests[i]!); }
+        }
+      }
+      w.sp(); printExpr(w, subject);
+      w.close();
+    }
     // A `match` in expression position: an arm has a value where the statement's has a body.
     MatchExpr(subject, arms): {
       w.open("matchexpr", e.line, e.col);

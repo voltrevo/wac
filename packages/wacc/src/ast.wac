@@ -140,6 +140,8 @@ export enum ExprKind {
    * expression here, so they are separate optional fields and at most one is set.
    */
   Is(Expr left, Ty? target, Expr? other, bool negated),
+  /** `p matches e` — a pattern tested against a value, binding the pattern's names. spec/next ch25. */
+  Matches(Pattern pattern, Expr subject),
   Ternary(Expr cond, Expr then, Expr els),
   /**
    * A call, with the type arguments **written at the call** if any were.
@@ -388,6 +390,24 @@ export struct Method {
    * reason `typeParams` gives: three `bool`s already sit together here.
    */
   bool isPrivate;
+}
+
+/**
+ * The left side of `matches` — a match arm's pattern. spec/next ch25.
+ *
+ * Two shapes. `Rgb p` is a **type and a name**: `type` is set and `nameTok` binds the value at that
+ * type when it is one. `Ok(v)` and `Err(is NotFound)` are a **variant and its payload**: `variantTok`
+ * names it, and each payload slot either binds a name (`slotNames[i]`) or tests the payload value
+ * (`slotTests[i]`, with `slotNames[i]` -1) — and a variant with no payload has no slots.
+ */
+export struct Pattern {
+  Ty? type;
+  i32 nameTok;
+  i32 variantTok;
+  i32[] slotNames;
+  Ty?[] slotTests;
+  i32 line;
+  i32 col;
 }
 
 /** One variant of an `enum` declaration. Payload fields are shaped like params. */

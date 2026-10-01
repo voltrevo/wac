@@ -1,0 +1,8 @@
+// expect: answers f = 1
+// why: `is` binds as `<` does, so a test combines with another condition without parentheses
+// from: `is` precedence (design/lang/0016), spec/next ch22 §wac-precedence-tests-78cupm3
+struct Rgb { i32 r; }
+
+bool emptyOrZero(Rgb? x, i32 n) { return x is null || n == 0; }
+
+export i32 f() { return emptyOrZero(null, 5) && !emptyOrZero(Rgb(1), 5) ? 1 : 0; }

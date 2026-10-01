@@ -463,18 +463,18 @@ i32 scanPunct(u8[] src, i32 i) {
                            "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>"
   ];
   for (i32 k = 0; k < four.len(); k++) {
-    if (matches(src, i, four[k])) { return i + 4; }
+    if (spellsAt(src, i, four[k])) { return i + 4; }
   }
   for (i32 k = 0; k < three.len(); k++) {
-    if (matches(src, i, three[k])) { return i + 3; }
+    if (spellsAt(src, i, three[k])) { return i + 3; }
   }
   for (i32 k = 0; k < two.len(); k++) {
-    if (matches(src, i, two[k])) { return i + 2; }
+    if (spellsAt(src, i, two[k])) { return i + 2; }
   }
   return i + 1;
 }
 
-bool matches(u8[] src, i32 i, string what) {
+bool spellsAt(u8[] src, i32 i, string what) {
   u8[] w = what.toBytes();
   if (i + w.len() > src.len()) { return false; }
   for (i32 k = 0; k < w.len(); k++) {

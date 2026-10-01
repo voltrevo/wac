@@ -98,6 +98,7 @@ export bool awaitInExpr(Expr e) {
       if (awaitInExpr(left)) { return true; }
       return (other is not null) && awaitInExpr(other!);
     }
+    Matches(pat, subject): { return awaitInExpr(subject); }
     Ternary(cond, then, els): {
       return awaitInExpr(cond) || awaitInExpr(then) || awaitInExpr(els);
     }

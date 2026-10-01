@@ -43,7 +43,7 @@ import {
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
-  Stmt, StmtKind, Ty, TyKind, tyPrim,
+  Pattern, Stmt, StmtKind, Ty, TyKind, tyPrim,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -297,6 +297,91 @@ export i32 errPrivateMember() { return 217; }
 export i32 errPrivateConstruction() { return 218; }
 /** `defer return x;` — a deferred statement cannot leave its block. */
 export i32 errDeferLeaves() { return 219; }
+/** `Rgb p matches 5` — a pattern no value of the subject's type can match. */
+export i32 errPatternType() { return 220; }
+/** `Ok(a, b) matches res` for `Ok(i32 v)` — a payload pattern of the wrong length. */
+export i32 errPatternArity() { return 221; }
+
+/**
+ * Open a scope holding the names `cond` binds when it is true — spec/next ch25 `§wac-matches-scope-i52ba3w`.
+ *
+ * The true path of a condition is its `matches` and, through `&&`, both operands' — so
+ * `Ok(v) matches r && v > 0` binds `v` for whatever runs because the whole condition held. The caller
+ * pops the scope; a scope is opened whether or not anything is bound, so it always has one to pop.
+ */
+void openMatchScope(C c, Expr cond) {
+  c.pushScope(Stmt[]());
+  declareTrueBindings(c, cond);
+}
+
+void declareTrueBindings(C c, Expr e) {
+  match (e.kind) {
+    Matches(pat, subject): { declarePatternNames(c, pat, typeOfExpr(c, subject)); }
+    Binary(op, l, r): {
+      if (tokenKind(c, op) != kAndAnd()) { return; }
+      declareTrueBindings(c, l);
+      declareTrueBindings(c, r);
+    }
+    default: { }
+  }
+}
+
+/** The names a pattern binds, at the types it binds them — a matched value or payload slots. */
+void declarePatternNames(C c, Pattern pat, string subjectT) {
+  if (pat.type is not null) {
+    if (pat.nameTok >= 0 && tokenText(c, pat.nameTok) != "_") {
+      c.declare(tokenText(c, pat.nameTok), typeOfTy(c, pat.type!));
+    }
+    return;
+  }
+  string vname = tokenText(c, pat.variantTok);
+  string world = withoutNull(subjectT) == "" ? subjectT : withoutNull(subjectT);
+  for (i32 i = 0; i < pat.slotNames.len(); i++) {
+    if (pat.slotNames[i] < 0) { continue; }
+    string bn = tokenText(c, pat.slotNames[i]);
+    if (bn == "_") { continue; }
+    string ft = world == typeNone() ? typeNone() : substituteType(c, world, c.fieldTypeAtIndex(vname, i));
+    c.declare(bn, ft);
+  }
+}
+
+/**
+ * `p matches e`: whether any value of `e`'s type could match `p` — spec/next ch25.
+ *
+ * A pattern whose answer is already *true* is allowed (`Rgb p matches certain`): it is still a question.
+ * One that can never be true is refused, since it is a mistake about the type and not about the value.
+ */
+void checkMatches(C c, Expr e, Pattern pat, Expr subject) {
+  checkExpr(c, subject);
+  string st = typeOfExpr(c, subject);
+  if (st == typeNone() || st == "") { return; }
+  string core = withoutNull(st) == "" ? st : withoutNull(st);
+  if (pat.type is not null) {
+    string tt = typeOfTy(c, pat.type!);
+    if (tt == typeNone() || tt == "") { return; }
+    bool fits = tt == core || tt == st || descendsFrom(c, tt, core) || descendsFrom(c, core, tt);
+    if (!fits) {
+      c.reportWith(errPatternType(), pat.line, pat.col,
+                   "no " + st + " is ever a " + tt);
+    }
+    return;
+  }
+  string vname = tokenText(c, pat.variantTok);
+  if (!c.isEnum(templateOf(core))) {
+    c.reportWith(errPatternType(), pat.line, pat.col, st + " has no variant " + vname);
+    return;
+  }
+  i32 arity = c.variantArityIn(templateOf(core), vname);
+  if (arity < 0) {
+    c.reportWith(errPatternType(), pat.line, pat.col, core + " has no variant " + vname);
+    return;
+  }
+  if (pat.slotNames.len() != arity) {
+    c.reportWith(errPatternArity(), pat.line, pat.col,
+                 vname + " carries " + countText(arity) + ", and this pattern names " +
+                 countText(pat.slotNames.len()));
+  }
+}
 
 /** The first type up `name`'s chain that has a private field and is not the body being checked, or `""`. */
 string privateFieldOwnerElsewhere(C c, string name) {
@@ -3608,6 +3693,7 @@ export string typeOfExpr(C c, Expr e) {
     }
     // `x is T` asks a question, so it answers a boolean whatever `x` and `T` are.
     Is(left, target, other, negated): { return "bool"; }
+    Matches(pat, subject): { return "bool"; }
     /**
      * A binary expression, which had no arm here at all — every one of them typed as unknown, so a
      * comparison used as a value, an arithmetic result returned, and an operand of an operand were
@@ -4368,7 +4454,11 @@ void checkExpr(C c, Expr e) {
     }
     Binary(op, left, right): {
       checkExpr(c, left);
+      // The right of `&&` runs only when the left held, so what the left's `matches` bound is its.
+      bool andAnd = tokenKind(c, op) == kAndAnd();
+      if (andAnd) { openMatchScope(c, left); }
       checkExpr(c, right);
+      if (andAnd) { c.popScope(); }
       i32 k = tokenKind(c, op);
       // `>>>` is an unsigned shift, so on a type that is already unsigned it says nothing that `>>`
       // does not — the language calls that redundant rather than harmless. On a float it has no
@@ -4687,6 +4777,7 @@ void checkExpr(C c, Expr e) {
     }
     // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be
     // asked about. Both land on the `is`, which is this node's own position.
+    Matches(pat, subject): { checkMatches(c, e, pat, subject); }
     Is(left, target, other, negated): {
       checkExpr(c, left);
       if (!(other is null) && isVariantConstruction(c, other!)) {
@@ -4979,7 +5070,9 @@ void checkExpr(C c, Expr e) {
       // instruction to infer its own type.
       c.expected = slot;
       c.expectedUnknown = wantUnknown;
+      openMatchScope(c, cond);
       checkExpr(c, then);
+      c.popScope();
       c.expected = slot;
       c.expectedUnknown = wantUnknown;
       checkExpr(c, els);
@@ -9264,7 +9357,9 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       // The narrowings are set and restored *outside* the arm's scope: they retype names that
       // belong to an enclosing one, and a name is only reachable while its own scope is open.
+      openMatchScope(c, cond);
       checkScoped(c, then, want);
+      c.popScope();
       for (i32 i = 0; i < nCount; i++) {
         c.setType(nNames[i], saved[i]);
         c.setConstFlags(nNames[i], savedConst[i], savedAlias[i]);
@@ -9306,7 +9401,9 @@ void checkStmt(C c, Stmt s, Ty want) {
     While(cond, body): {
       checkCond(c, cond);
       c.loopDepth = c.loopDepth + 1;
+      openMatchScope(c, cond);
       checkScoped(c, body, want);
+      c.popScope();
       c.loopDepth = c.loopDepth - 1;
     }
     DoWhile(body, cond): {
@@ -9325,10 +9422,14 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.pushScope(body);
       if (!(init is null)) { checkStmt(c, init!, want); }
       if (!(cond is null)) { checkCond(c, cond!); }
+      // The body and the update run because the condition held, so what it bound is theirs.
+      c.pushScope(Stmt[]());
+      if (!(cond is null)) { declareTrueBindings(c, cond!); }
       if (!(update is null)) { checkStmt(c, update!, want); }
       c.loopDepth = c.loopDepth + 1;
       checkAll(c, body, want);
       c.loopDepth = c.loopDepth - 1;
+      c.popScope();
       c.popScope();
     }
     Switch(subject, cases): {
@@ -9792,6 +9893,9 @@ bool mentionsParam(C c, Ty t, i32[] typeParams) {
  * `0` and below render as `?`, which is right for a line nobody recorded and is why a caller
  * counting something should not reach here with a zero it means to print.
  */
+/** A count, which unlike a line may be zero. */
+string countText(i32 v) { return v == 0 ? "0" : lineText(v); }
+
 string lineText(i32 v) {
   if (v <= 0) { return "?"; }
   string out = "";

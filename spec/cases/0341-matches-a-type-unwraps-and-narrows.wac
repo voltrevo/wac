@@ -1,0 +1,14 @@
+// expect: answers f = 49
+// why: a type pattern tests a nullable for presence, a boxed primitive for a value, and a reference for a subtype, binding it at that type
+// from: `matches` (design/lang/0016), spec/next ch25
+struct Rgb { i32 r; i32 g; i32 b; }
+struct Shape { i32 k; }
+struct Circle : Shape { i32 r; }
+
+i32 red(Rgb? maybe) { if (Rgb p matches maybe) { return p.r; } return 0; }
+i32 radius(Shape s) { return Circle c matches s ? c.r : 0; }
+i32 plusOne(i32? n) { if (i32 v matches n) { return v + 1; } return 0; }
+
+export i32 f() {
+  return red(Rgb(1, 2, 3)) + red(null) + radius(Circle(0, 7)) + radius(Shape(1)) + plusOne(40) + plusOne(null);
+}

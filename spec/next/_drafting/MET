@@ -67,6 +67,7 @@ spec/next/2-types/11-never-and-uninhabited.md#9
 spec/next/2-types/12-structs.md#1
 spec/next/2-types/12-structs.md#2
 spec/next/2-types/12-structs.md#3
+spec/next/2-types/12-structs.md#5
 spec/next/2-types/12-structs.md#10
 spec/next/2-types/12-structs.md#11
 spec/next/2-types/12-structs.md#12
@@ -75,6 +76,7 @@ spec/next/2-types/12-structs.md#14
 spec/next/2-types/12-structs.md#20
 spec/next/2-types/12-structs.md#21
 spec/next/2-types/12-structs.md#22
+spec/next/2-types/12-structs.md#23
 spec/next/2-types/12-structs.md#24
 spec/next/2-types/13-enums.md#1
 spec/next/2-types/13-enums.md#2
@@ -181,6 +183,7 @@ spec/next/3-expressions/25-control-flow.md#8
 spec/next/3-expressions/25-control-flow.md#9
 spec/next/3-expressions/25-control-flow.md#10
 spec/next/3-expressions/25-control-flow.md#13
+spec/next/3-expressions/25-control-flow.md#16
 spec/next/3-expressions/25-control-flow.md#17
 spec/next/3-expressions/26-errors-and-results.md#1
 spec/next/3-expressions/26-errors-and-results.md#5
