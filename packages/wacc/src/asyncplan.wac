@@ -111,6 +111,7 @@ export bool awaitInExpr(Expr e) {
     }
     Index(arr, index): { return awaitInExpr(arr) || awaitInExpr(index); }
     Member(obj, nameTok): { return awaitInExpr(obj); }
+    SafeMember(obj, nameTok): { return awaitInExpr(obj); }
     Unwrap(operand): { return awaitInExpr(operand); }
     Construct(ctype, args, named): {
       for (i32 i = 0; i < args.len(); i++) {

@@ -163,6 +163,8 @@ export enum ExprKind {
   Call(Expr callee, Expr[] args, Ty[] typeArgs),
   Index(Expr arr, Expr index),
   Member(Expr obj, i32 nameTok),
+  /** `p?.m` — `null` when `p` is absent, `p!.m` otherwise. spec/next ch10. */
+  SafeMember(Expr obj, i32 nameTok),
   /** `x!` — the non-null assertion. */
   Unwrap(Expr operand),
   /** `Point(1, 2)` or `Point(x: 1, y: 2)`; one of the two lists is empty. */

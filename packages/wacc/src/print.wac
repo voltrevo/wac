@@ -410,6 +410,12 @@ void printExpr(Pr w, Expr e) {
       w.sp(); w.tok(nameTok);
       w.close();
     }
+    SafeMember(obj, nameTok): {
+      w.open("safe-member", e.line, e.col);
+      w.sp(); printExpr(w, obj);
+      w.sp(); w.tok(nameTok);
+      w.close();
+    }
     Unwrap(operand): {
       w.open("unwrap", e.line, e.col);
       w.sp(); printExpr(w, operand);

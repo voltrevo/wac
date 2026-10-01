@@ -1,0 +1,5 @@
+// expect: refused
+// why: `?.` with a left operand that can never be absent has no case to handle
+// from: spec/next ch10 §wac-absence-op-needs-nullable-gp8hxz5
+struct Person { i32 age; }
+export i32 f() { Person p = Person(3); i32? a = p?.age; return a!; }

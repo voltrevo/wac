@@ -1,0 +1,12 @@
+// expect: answers f = 4
+// why: `p?.m` is null when `p` is absent and `p!.m` otherwise, and a chain reads the member only when every link is present
+// from: spec/next ch10 §wac-safe-member-merges-f7qhnij
+struct Addr   { i32 zip; }
+struct Person { Addr? home; }
+i32 zipOr(Person? p) {
+  i32? z = p?.home?.zip;
+  return z is null ? 0 : z!;
+}
+export i32 f() {
+  return zipOr(Person(Addr(4))) + zipOr(Person(null)) + zipOr(null);
+}

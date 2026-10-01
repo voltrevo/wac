@@ -40,7 +40,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
-  kLbrace,
+  kLbrace, kQuestion,
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
@@ -314,6 +314,73 @@ export i32 errCaptureUnassigned() { return 225; }
 export i32 errNeverReturns() { return 226; }
 /** `Step.Waiting(t)` where `Waiting`'s payload is `never` — a variant with no values. */
 export i32 errNeverVariant() { return 227; }
+/** `p?.m` or `p ?? q` where `p` can never be absent — spec/next ch10. */
+export i32 errAbsenceOperand() { return 228; }
+
+/** Whether an expression is the literal `null`. */
+bool isNullLiteralExpr(Expr e) {
+  match (e.kind) {
+    NullLit: { return true; }
+    default: { return false; }
+  }
+}
+
+/**
+ * The type `p?.m` answers: the member's, made nullable where it is not already — `?.` merges its own
+ * absence into the member's, so a chain never makes a `T??` (spec/next ch10
+ * `§wac-safe-member-merges-f7qhnij`). Unknown where `p` is not nullable or has no such field; the
+ * check reports those.
+ */
+string safeMemberTypeOf(C c, Expr obj, i32 nameTok) {
+  string ot = typeOfExpr(c, obj);
+  if (ot == typeNone() || ot == "") { return typeNone(); }
+  string base = withoutNull(ot);
+  if (base == "" || withoutNull(base) != "") { return typeNone(); }
+  string tmpl = templateOf(base);
+  if (!c.isStruct(tmpl)) { return typeNone(); }
+  string ft = c.fieldType(tmpl, tokenText(c, nameTok));
+  if (ft == "" || ft == typeNone()) { return typeNone(); }
+  ft = substituteType(c, base, ft);
+  return endsWith(ft, "?") ? ft : ft + "?";
+}
+
+/** `p?.m`: `p` must be able to be absent, and what it holds when present must have `m`. */
+void checkSafeMember(C c, Expr obj, i32 nameTok) {
+  checkExpr(c, obj);
+  string ot = typeOfExpr(c, obj);
+  if (ot == typeNone() || ot == "") { return; }
+  string base = withoutNull(ot);
+  if (base == "") {
+    c.reportWith(errAbsenceOperand(), obj.line, obj.col, ot + " cannot be absent");
+    return;
+  }
+  // **`?.` stops at a `T??`**: one layer off leaves a `T?`, which has no members — the two absences
+  // are collapsed with `?? null` first (`§wac-safe-member-stops-yyhgvjr`).
+  string tmpl = templateOf(base);
+  if (withoutNull(base) != "" || (c.isStruct(tmpl) && c.fieldType(tmpl, tokenText(c, nameTok)) == "")) {
+    c.reportTok(errNoSuchField(), nameTok, "no member '" + tokenText(c, nameTok) + "' on " + base);
+  }
+}
+
+/** `a ?? b`: `a` must be able to be absent, and `b` must fit what `a` holds. */
+void checkCoalesce(C c, Expr left, Expr right) {
+  string lt = typeOfExpr(c, left);
+  if (lt == typeNone() || lt == "") { return; }
+  string base = withoutNull(lt);
+  if (base == "") {
+    c.reportWith(errAbsenceOperand(), left.line, left.col, lt + " cannot be absent");
+    return;
+  }
+  if (isNullLiteralExpr(right)) { return; }
+  if (litKindOf(right) != litNone()) {
+    reportLiteral(c, base, right, errOperandMismatch(), right.line, right.col);
+    return;
+  }
+  string rt = typeOfExpr(c, right);
+  if (rt != typeNone() && rt != "" && !assignable(c, base, rt)) {
+    c.reportWith(errOperandMismatch(), right.line, right.col, expectedFound(base, rt));
+  }
+}
 
 /** Whether a variant of `world`'s enum carries a payload field of type `never`, after substitution. */
 bool variantUninhabited(C c, string world, string variant, i32 arity) {
@@ -4243,8 +4310,17 @@ export string typeOfExpr(C c, Expr e) {
      * operands, taken from whichever side is not a literal: `x + 1` is an `i32` because `x` is, and
      * the literal takes its type from the other side rather than giving one.
      */
+    SafeMember(obj, nameTok): { return safeMemberTypeOf(c, obj, nameTok); }
     Binary(op, left, right): {
       i32 bk = tokenKind(c, op);
+      // `a ?? b` — `a`'s type with its absence removed, or kept where `b` is `null` (spec/next ch10).
+      if (bk == kQuestion()) {
+        string clt = typeOfExpr(c, left);
+        if (clt == typeNone() || clt == "") { return typeNone(); }
+        if (isNullLiteralExpr(right)) { return clt; }
+        string cbase = withoutNull(clt);
+        return cbase == "" ? typeNone() : cbase;
+      }
       if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe()) {
         // **A comparison whose operands disagree has no type**, so whatever it sits in has nothing to
         // be wrong about. `export i32 f() { i32 x = 1; u32 y = 1; return x != y; }` drew *"expected
@@ -5005,6 +5081,11 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, right);
       if (andAnd) { c.popScope(); }
       i32 k = tokenKind(c, op);
+      // **`??` is not arithmetic**, so none of the operand rules below apply to it.
+      if (k == kQuestion()) {
+        checkCoalesce(c, left, right);
+        return;
+      }
       // **Two literals compared have no type to be compared at** — `1 + 2 == 3` is `true` as an `i32`
       // and something else as an `i8` — and there is no fallback to pick one (spec/next ch09).
       if ((k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe())
@@ -5683,6 +5764,7 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, index);
       checkIndex(c, e, arr, index);
     }
+    SafeMember(obj, nameTok): { checkSafeMember(c, obj, nameTok); }
     Member(obj, nameTok): {
       checkReceiver(c, obj);
       checkMember(c, e, obj, tokenText(c, nameTok));

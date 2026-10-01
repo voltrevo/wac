@@ -1,0 +1,5 @@
+// expect: refused
+// why: `?.` is not an assignment target — write through an unwrapped value instead
+// from: spec/next ch10 §wac-safe-member-no-assign-6htacsn
+struct Person { i32 age; }
+export i32 f() { Person? p = Person(3); p?.age = 4; return 0; }

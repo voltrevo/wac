@@ -34,7 +34,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde,
+  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion,
 } from "./kinds.wac";
 
 /**
@@ -8494,6 +8494,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     Binary(op, left, right): {
       i32 k = lexed.tokens[op * tokenStride()];
+      // `a ?? b` — the one binary operator whose op token is a `?`. spec/next ch10.
+      if (k == kQuestion()) {
+        emitCoalesce(fb, src, lexed, env, left, right, want);
+        return;
+      }
       if (k == kAndAnd() || k == kOrOr()) {
         emitExpr(fb, src, lexed, env, left);
         fb.byte(4);
@@ -9105,6 +9110,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       fb.u32leb(env.fieldIndex(ot2, tokenTextOf(src, lexed, nameTok)));
     }
+    SafeMember(obj, nameTok): { emitSafeMember(fb, src, lexed, env, obj, nameTok); }
     // `s is Circle` is a **tag comparison**. No cast and no test instruction: a variant and its enum
     // are the same wasm type here, so what distinguishes them is the value in slot 0 and nothing else.
     Matches(pat, subject): { emitMatches(fb, src, lexed, env, pat, subject); }
@@ -9415,12 +9421,14 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       if (k == kBang()) { return "bool"; }
       return typeOfE(src, lexed, env, operand);
     }
+    SafeMember(obj, nameTok): { return safeMemberType(src, lexed, env, obj, nameTok); }
     Binary(op, left, right): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
           k == kAndAnd() || k == kOrOr()) {
         return "bool";
       }
+      if (k == kQuestion()) { return coalesceType(src, lexed, env, left, right); }
       string lt = typeOfE(src, lexed, env, left);
       string rt = typeOfE(src, lexed, env, right);
       // **A shift's amount is not an operand**, so it does not have to match: the reference states it
@@ -9533,6 +9541,97 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     default: { return ""; }
   }
+}
+
+/** `t` without one trailing `?`, or `t` unchanged. */
+string oneLayerLess(string t) {
+  return t.len() > 0 && t.slice(t.len() - 1, t.len()) == "?" ? t.slice(0, t.len() - 1) : t;
+}
+
+/**
+ * The type `p?.m` answers, in this emitter's spelling — spec/next ch10.
+ *
+ * The member's type made nullable, and **here only a number shows it**: every reference is nullable
+ * in wasm, so a `string?` or an `Addr?` is spelled as the reference itself everywhere in this file,
+ * and only `i32?` — a box — is a different representation from `i32`.
+ */
+string safeMemberType(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
+  string base = oneLayerLess(typeOfE(src, lexed, env, obj));
+  if (!env.isStructName(base)) { return ""; }
+  string ft = env.fieldType(base, tokenTextOf(src, lexed, nameTok));
+  if (ft == "") { return ""; }
+  return nullableRep(ft);
+}
+
+/** `t?` as this emitter spells it: a box for a number, the reference itself for anything else. */
+string nullableRep(string t) {
+  if (isBoxedPrimName(t)) { return t; }
+  // A field written `Addr?` keeps its `?` in the field table; as a value it is the reference.
+  if (oneLayerLess(t) != t) { return oneLayerLess(t); }
+  return isWritableValType(t) && t != "anyref" && t != "i31ref" ? t + "?" : t;
+}
+
+/** The type `a ?? b` answers: `a`'s with its absence removed, or `a`'s own where `b` is `null`. */
+string coalesceType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
+  string lt = typeOfE(src, lexed, env, left);
+  return isNullLit(right) ? lt : oneLayerLess(lt);
+}
+
+/**
+ * `p?.m` — `null` when `p` is absent, the member otherwise, read once. spec/next ch10.
+ *
+ * The receiver is held in a scratch local so it is evaluated once, then tested: absent gives the
+ * result type's null, present gives the field — boxed where the field is a number and the result,
+ * being nullable, is a box.
+ */
+void emitSafeMember(B fb, u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
+  string base = oneLayerLess(typeOfE(src, lexed, env, obj));
+  string name = tokenTextOf(src, lexed, nameTok);
+  string ft = env.fieldType(base, name);
+  string rt = nullableRep(ft);
+  string rep = rt;
+  i32 held = env.scratch(base);
+  emitExprAt(fb, src, lexed, env, obj, base);
+  fb.byte(34); fb.u32leb(held);           // local.tee
+  fb.byte(209);                           // ref.is_null
+  fb.byte(4); writeValType(fb, env, rep); // if (result rt)
+  emitNull(fb, env, rep);
+  fb.byte(5);                             // else
+  fb.byte(32); fb.u32leb(held);           // local.get
+  fb.byte(251); fb.u32leb(2);             // struct.get
+  fb.u32leb(env.structType(base));
+  fb.u32leb(env.fieldIndex(base, name));
+  if (isBoxedPrimName(rt) && !isBoxedPrimName(ft)) {
+    fb.byte(251); fb.u32leb(0);           // struct.new — the box
+    fb.u32leb(env.boxType(boxedPrimInner(rt)));
+  }
+  fb.byte(11);
+}
+
+/**
+ * `a ?? b` — `a!` when `a` is present, `b` otherwise; `b` is evaluated only when needed.
+ *
+ * `want` is the slot's type when there is one, which is what both arms produce: an unboxed number
+ * where `a` is a box and the result is not, the box itself where the result is nullable too.
+ */
+void emitCoalesce(B fb, u8[] src, Lexed lexed, Env env, Expr left, Expr right, string want) {
+  string lt = typeOfE(src, lexed, env, left);
+  string rt = want != "" ? want : coalesceType(src, lexed, env, left, right);
+  string rep = rt;
+  i32 held = env.scratch(lt);
+  emitExprAt(fb, src, lexed, env, left, lt);
+  fb.byte(34); fb.u32leb(held);           // local.tee
+  fb.byte(209);                           // ref.is_null
+  fb.byte(4); writeValType(fb, env, rep); // if (result rt)
+  emitExprAt(fb, src, lexed, env, right, rt);
+  fb.byte(5);                             // else
+  fb.byte(32); fb.u32leb(held);           // local.get
+  if (isBoxedPrimName(lt) && !isBoxedPrimName(rt)) {
+    fb.byte(251); fb.u32leb(2);           // struct.get — the number out of its box
+    fb.u32leb(env.boxType(boxedPrimInner(lt)));
+    fb.u32leb(0);
+  }
+  fb.byte(11);
 }
 
 /** The type a binary operator's operands share, taken from whichever side is not a literal. */
@@ -10644,6 +10743,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     }
     Member(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
     Unwrap(operand): { findLambdasExpr(env, src, lexed, operand, want); }
+    SafeMember(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
     // **A call and a construction are the same node.** `use(() => 1)` parses as `Construct`, not
     // `Call` — wac cannot tell `Point(1, 2)` from `f(1, 2)` by syntax, so the parser builds one shape
     // and the emitter sorts it out by asking whether the name is a struct. This arm is therefore
@@ -12640,6 +12740,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // not instructions, and this slice has none, so it says so.
       string ot2 = operandType(src, lexed, env, left, right);
       i32 bk = lexed.tokens[op * tokenStride()];
+      // `a ?? b` takes any type that can be absent, references included (spec/next ch10).
+      if (bk == kQuestion()) { return ""; }
       // String equality has a helper now; everything else on a reference still does not.
       if (ot2 == "string" &&
           (bk == kEq() || bk == kNe() || bk == kPlus() ||
@@ -12682,6 +12784,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string ia = typeOfE(src, lexed, env, arr);
       if (ia != "string" && !isArrayType(ia)) { return "index of an unknown type"; }
       return unsupportedValue(src, lexed, env, index);
+    }
+    SafeMember(obj, nameTok): {
+      string so = unsupportedExpr(src, lexed, env, obj);
+      if (so != "") { return so; }
+      return safeMemberType(src, lexed, env, obj, nameTok) == "" ? "a `?.` on something with no such field" : "";
     }
     Member(obj, nameTok): {
       // The variant question comes **first**, because the object of `Shape.Point` is a bare name
@@ -14772,6 +14879,13 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     // three concrete copies until that landed, is the first.
     Lambda(lamParams, lamBody, lamAsync): { collectArrayTypes(env, src, lexed, lamBody); }
     Member(obj, nameTok): { collectArrayTypesOfExpr(env, src, lexed, obj); }
+    // **`p?.n` on a number field answers a box**, which nothing in the source has to name — so its
+    // type is registered here, before the type section is sized, as a written `i32?` would be.
+    SafeMember(obj, nameTok): {
+      collectArrayTypesOfExpr(env, src, lexed, obj);
+      string srt = safeMemberType(src, lexed, env, obj, nameTok);
+      if (isBoxedPrimName(srt)) { env.boxType(boxedPrimInner(srt)); }
+    }
     Index(arr, index): {
       collectArrayTypesOfExpr(env, src, lexed, arr);
       collectArrayTypesOfExpr(env, src, lexed, index);
@@ -14819,6 +14933,7 @@ string kindOfExpr(Expr e) {
     Ternary(cond, then, els): { return "ternary"; }
     Index(arr, index): { return "index"; }
     Member(obj, nameTok): { return "member"; }
+    SafeMember(obj, nameTok): { return "safe member"; }
     Call(callee, args, callTargs): { return "call"; }
     Construct(ctype, args, named): { return "construct"; }
     ArrNew(elem, size, fill, elements): { return "array"; }

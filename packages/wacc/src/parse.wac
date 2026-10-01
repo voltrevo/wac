@@ -26,7 +26,7 @@ import {
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
   kConst, kExport, kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
   kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate, kDefer, kMatches, kImport,
-  kOverride, kAssign,
+  kOverride, kAssign, kQuestionDot,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq,
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
   kPlus, kMinus, kStar, kSlash, kPercent, kEq, kNe,
@@ -154,6 +154,10 @@ export struct P {
 
   i32 kindAt(const this, i32 offset) {
     return this.lx.tokens[this.idx(offset) * tokenStride()];
+  }
+  /** Whether the next token starts exactly where this one ends — `??` rather than `? ?`. */
+  bool adjacentNext(const this) {
+    return this.startAt(0) + this.lenAt(0) == this.startAt(1);
   }
   i32 startAt(const this, i32 offset) {
     return this.lx.tokens[this.idx(offset) * tokenStride() + 1];
@@ -1072,8 +1076,25 @@ bool startsLower(u8[] s, i32 start, i32 len) {
 
 export Expr parseExpr(P p) { return parseTernary(p); }
 
-Expr parseTernary(P p) {
+/**
+ * `a ?? b` — spec/next ch10, below `||` and above the ternary, and right-associative: `a ?? b ?? c` is
+ * `a ?? (b ?? c)`. The operator is **two adjacent `?` tokens**, which the lexer leaves apart so that a
+ * `T??` type still reads as two layers; nothing else puts two `?`s side by side in an expression.
+ */
+Expr parseCoalesce(P p) {
   Expr e = parseOr(p);
+  if (p.at1(kQuestion()) && p.kindAt(1) == kQuestion() && p.adjacentNext()) {
+    i32 line = p.lineAt(0);
+    i32 col = p.colAt(0);
+    i32 op = p.advance();
+    p.advance();
+    return Expr(ExprKind.Binary(op, e, parseCoalesce(p)), line, col);
+  }
+  return e;
+}
+
+Expr parseTernary(P p) {
+  Expr e = parseCoalesce(p);
   if (p.at1(kQuestion())) {
     i32 line = p.lineAt(0);
     i32 col = p.colAt(0);
@@ -1425,6 +1446,12 @@ Expr parsePostfix(P p) {
       } else {
         e = Expr(ExprKind.Member(e, nameTok), line, col);
       }
+    } else if (p.at1(kQuestionDot())) {
+      // `p?.m` — spec/next ch10. A field read only: a method through an absence is not in the spec.
+      p.advance();
+      i32 safeTok = -1;
+      safeTok = declName(p, perrFieldName(), "field name");
+      e = Expr(ExprKind.SafeMember(e, safeTok), line, col);
     } else if (p.at1(kLbrack())) {
       p.advance();
       Expr idx = parseExpr(p);

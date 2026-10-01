@@ -29,7 +29,7 @@ import {
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
   kInc, kDec,
   kLparen, kRparen, kLbrace, kRbrace, kLbrack, kRbrack,
-  kSemi, kColon, kComma, kDot, kQuestion, kAt,
+  kSemi, kColon, kComma, kDot, kQuestion, kAt, kQuestionDot,
   kJsxText, kFatArrow,
 } from "./kinds.wac";
 
@@ -992,7 +992,13 @@ i32 lexOperator(Lexer lx) {
   if (c == ':') { return kColon(); }
   if (c == ',') { return kComma(); }
   if (c == '.') { return kDot(); }
-  if (c == '?') { return kQuestion(); }
+  if (c == '?') {
+    // `?.`, spec/next ch10 — one token, since nothing else puts a `.` straight after a `?`. **`??` is
+    // two `?` tokens**, because `T??` is a type and every lookahead that recognises one counts `?`s;
+    // the expression parser reads two adjacent ones as the operator.
+    if (lx.peek(0) == '.') { lx.advance(); return kQuestionDot(); }
+    return kQuestion();
+  }
   if (c == '@') { return kAt(); }
 
   return -1;   // not an operator: the caller reports it

@@ -1,0 +1,6 @@
+// expect: answers f = 5007
+// why: `a ?? b` answers `a!` when `a` is present and `b` otherwise, with the type of `a` made non-null
+// from: spec/next ch10 §wac-coalesce-type-uqe5ae9
+struct Config { i32 timeoutMs; }
+i32 timeoutMs(Config? cfg) { return cfg?.timeoutMs ?? 5000; }
+export i32 f() { return timeoutMs(null) + timeoutMs(Config(7)); }

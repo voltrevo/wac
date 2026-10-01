@@ -360,6 +360,9 @@ Expr subExpr(Ctx c, Expr e) {
     Index(arr, index): {
       return Expr(ExprKind.Index(subExpr(c, arr), subExpr(c, index)), e.line, e.col);
     }
+    SafeMember(obj, nameTok): {
+      return Expr(ExprKind.SafeMember(subExpr(c, obj), nameTok), e.line, e.col);
+    }
     Member(obj, nameTok): {
       return Expr(ExprKind.Member(subExpr(c, obj), nameTok), e.line, e.col);
     }

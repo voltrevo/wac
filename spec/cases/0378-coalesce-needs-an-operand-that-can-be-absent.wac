@@ -1,0 +1,4 @@
+// expect: refused
+// why: `??` with a left operand that can never be absent has no default to supply
+// from: spec/next ch10 §wac-absence-op-needs-nullable-gp8hxz5
+export i32 f(i32 n) { return n ?? 0; }

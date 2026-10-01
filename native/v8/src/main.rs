@@ -1844,6 +1844,18 @@ fn print_returned(
             println!("{}", xs.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "));
             Ok(())
         }
+        // **A nullable reference prints as what it holds, or `null`.** A `string?` is the string
+        // itself in wasm — every reference can be null — and fell through to the arm below, which
+        // asks V8 to stringify a wasm struct and prints nothing, so `wac run f.wac cityOf` answered
+        // an empty line for "Oslo".
+        "string?" | "u8[]?" | "i32[]?" => {
+            if v.is_null() || v.is_undefined() {
+                println!("null");
+                Ok(())
+            } else {
+                print_returned(scope, v, &ret[..ret.len() - 1])
+            }
+        }
         _ => {
             println!("{}", v.to_rust_string_lossy(scope));
             Ok(())

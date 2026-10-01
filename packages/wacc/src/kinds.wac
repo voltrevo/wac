@@ -316,8 +316,11 @@ export i32 kDefer() { return 90; }
 /** `matches` — a pattern tested against a value. spec/next ch25. */
 export i32 kMatches() { return 91; }
 
+/** `?.` — a member read through an absence. spec/next ch10. */
+export i32 kQuestionDot() { return 92; }
+
 /** How many kinds there are, for bounds checks and table sizing. */
-export i32 kindCount() { return 92; }
+export i32 kindCount() { return 93; }
 
 /**
  * How a token kind is spelled, for a diagnostic that has to name one.

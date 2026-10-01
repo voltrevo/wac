@@ -157,6 +157,7 @@ export string checkMessage(i32 code) {
   if (code == 225) { return "a lambda uses a local that is not yet assigned"; }
   if (code == 226) { return "a never function cannot return"; }
   if (code == 227) { return "this variant's payload has no value, so the variant cannot be constructed"; }
+  if (code == 228) { return "this operand can never be absent"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -220,6 +221,7 @@ export string checkMessage(i32 code) {
  * already read the message.
  */
 export string hintFor(i32 code) {
+  if (code == 228) { return "`?.` and `??` are for a value that may be absent — read this one directly"; }
   if (code == 1) { return "use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value"; }
   if (code == 2) { return "add a return at the end, or make every branch return"; }
   if (code == 3) { return "use `as!` for a checked conversion or `as~` for the nearest value"; }
