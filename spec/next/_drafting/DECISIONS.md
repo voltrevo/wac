@@ -196,3 +196,4 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   taken; `private virtual` refused. Reflection sees name and type, not value. Bindgen omits private members and `of`.
   Enums have no static methods (13 refuses them), so `private` there covers instance methods only.
 - **`main` is ordinary (operator):** its return-type and status rules apply only when building a program (`wac build`/`run`/`app`); `wac compile` and other modules treat it as any export.
+- **A program's `main` takes nothing or one `Sys` (operator).** Arguments arrive through `sys.args()`, added to 44 (no grant), since 45 already promised them to the program.

@@ -102,6 +102,20 @@ export void main(Sys sys) {
 effect on the world — files, the network, time, randomness, other programs — is a method reached
 through it ([44](../7-library/44-std.md)).
 
+Those are the only two shapes a program's `main` takes: nothing, or one `Sys`. What a program is told
+when it starts — its arguments, for one — comes through the `Sys` as well (`sys.args()`):
+
+```wac
+// expect: emits
+// expect (wac build): refused
+import { Sys } from "std";
+
+export i32 main(Sys sys, string name) { return name.len(); }   // not a program's parameter list
+```
+
+`[§wac-main-params-tfs9kks]` Building a program whose `main` takes anything but no parameters or exactly one
+`Sys` is refused. Compiled as a plain module, the same `main` is an ordinary export.
+
 Nothing reaches the world any other way. There is no global to read, no function that opens a file
 without being given the means, and nothing a static initialiser can acquire
 ([28](../4-static/28-static-evaluation.md)). So a function's parameters are a complete statement of

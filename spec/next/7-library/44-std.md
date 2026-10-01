@@ -22,6 +22,7 @@ Every effect is a method reached through a `Sys`, or through a handle a `Sys` ga
 ```wac
 // fragment — the surface this chapter specifies, from std
 struct Sys {
+  string[] args(const this);
   void log(const this, string line);
   void warn(const this, string line);
 
@@ -62,6 +63,24 @@ struct Child {
 
 `[§wac-std-sys-surface-2vwwqdr]` `Sys` has the methods listed above, with those signatures, and `Listener`, `Socket`, `Child`
 and `Grant` are as declared.
+
+## Arguments
+
+```wac
+// expect (wac run main.wac first second): prints
+// 2 arguments: first second
+import { Sys } from "std";
+
+export void main(Sys sys) {
+  string[] args = sys.args();
+  sys.log("\{args.len()} arguments: \{args[0]} \{args[1]}");
+}
+```
+
+Everything after the entry on the command line is the program's ([45](../8-tooling/45-cli.md)).
+
+`[§wac-std-args-p4t8ken]` `sys.args()` answers the program's arguments, in order, not including the program's own name.
+Reading them needs no grant: they are what the person running the program chose to tell it.
 
 ## Files
 
