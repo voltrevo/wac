@@ -1,7 +1,7 @@
 // Every clause the specification *refers to* is a clause it *declares*.
 //
 // A tag is declared as `[§name]` at the start of the sentence that states the rule, and referred to as
-// `` `§name` `` from anywhere else — `spec/spec/jsx.md` says an optional attribute is a nullable field
+// `` `§name` `` from anywhere else — spec/spec/jsx.md says an optional attribute is a nullable field
 // *"left out and null when it is (`§wacc-struct-nullable-optional`)"*, which is a pointer at a rule
 // stated in `structs.md`.
 //
@@ -13,12 +13,12 @@
 //   - compiler/wacSpec.test.ts requires every clause to be *checked by something*, but it finds
 //     clauses by `/\[§(wac-[a-z0-9-]+)\]/` — square brackets — so a reference in backticks is invisible
 //     to it, declared or not;
-//   - `packages/wacc/test/wac/spectags_test.wac` holds the same rule for the wacc-only namespaces, the
+//   - packages/wacc/test/wac/spectags_test.wac holds the same rule for the wacc-only namespaces, the
 //     same way;
 //   - and a name that is never declared is never in either guard's list of things to check, so the
 //     stronger the coverage guards get, the more completely a typo like this hides. It was found by
 //     asking a different question — which clauses have *nothing* holding wacc to them — and being the
-//     one clause in 419 that no file outside `spec/spec` mentioned at all.
+//     one clause in 419 that no file outside spec/spec mentioned at all.
 //
 // **Prefix mentions are not references.** `funcrefs.md` and `structs.md` discuss tags beginning `§wac-`
 // and `§wacc-`, which are not names of anything; a reference ending in `-` is prose about the namespace

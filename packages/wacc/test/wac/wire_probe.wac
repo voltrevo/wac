@@ -1,7 +1,7 @@
 // Reading the diagnostic wire, which several tests here now do.
 //
 // `diagnoseFiles` and `diagnoseGraph` answer with one diagnostic per line and nine tab-separated
-// fields per diagnostic. `spec/spec/errors.md` is what the layout means; this is only the reading of
+// fields per diagnostic. spec/spec/errors.md is what the layout means; this is only the reading of
 // it, kept in one place because `checkgraph_test.wac` and `warnings_test.wac` both want it and a
 // second copy of a field index is a second thing to get wrong.
 //

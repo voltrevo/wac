@@ -14,7 +14,7 @@
 // instead of on the behaviour it is about.
 
 // `3qm7wv2` in the names is `[§wac-cli-grants-3qm7wv2]`, the spec claim these check —
-// `spec/cli/wac.md`. A wac export cannot hold the bracketed spelling, so the suffix carries it.
+// spec/cli/wac.md. A wac export cannot hold the bracketed spelling, so the suffix carries it.
 import { Change, Cli, Core, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";

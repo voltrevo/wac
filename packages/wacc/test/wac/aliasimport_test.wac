@@ -63,7 +63,7 @@ export string test_a_variant_that_does_not_exist_is_still_refused(Core core, Cli
  * is `typeNone()`, which is silent — so the plain spelling does not become a second type, it stops
  * being a type, and every rule about it goes quiet.
  *
- * **The spec requires this to work.** `spec/spec/generics.md`
+ * **The spec requires this to work.** spec/spec/generics.md
  * `[§wac-generic-instantiation-identity-6pnq4wj]` says `Box<P>` and `Box<Point>` are one struct, for
  * `import { Point, Point as P }` — so two spellings collapsing onto one declaration is a stated rule
  * rather than a convenience. The reference implements it; wacc does not.

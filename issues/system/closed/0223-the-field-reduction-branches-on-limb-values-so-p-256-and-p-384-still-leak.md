@@ -71,7 +71,7 @@ data-dependent iteration count, and it is *faster* than this per operation. So t
 `fieldp.wac` look like `field25519.wac` rather than to sprinkle selects through the current one.
 
 Worth doing in the same pass: `normalise` and `foldVector` should be read for the same shape, and the
-`k > 0 ? … : …` ternary is a branch — `spec/spec` counts `ternary-then` and `ternary-else` as branch
+`k > 0 ? … : …` ternary is a branch — spec/spec counts `ternary-then` and `ternary-else` as branch
 points, so a select has to be written as a mask.
 
 ## Notes

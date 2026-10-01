@@ -155,7 +155,7 @@ echo
 #
 # This is a list of spellings already known to be wrong, not a parser. It cannot find a *new* kind
 # of mistake, which is the honest limit of it — the general instrument for that is reading
-# `spec/spec/grammar.md`, and `vision/vibes/GRAMMAR.md` says so.
+# spec/spec/grammar.md, and `vision/vibes/GRAMMAR.md` says so.
 echo "-- spellings that parse and are still wrong --"
 stale=0
 

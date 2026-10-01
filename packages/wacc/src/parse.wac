@@ -1026,7 +1026,7 @@ Expr parseIsExpr(P p) {
   // **`s is Shape.Circle` — a variant qualified by its enum.** `looksLikeTypeHere` says no, because
   // a `.` after a name makes an expression everywhere else in the grammar; the right side then
   // parsed as a member access and `is` compared *reference identity* against a freshly built
-  // variant, which is never the subject. So the qualified form — the spelling `spec/spec/enums.md`
+  // variant, which is never the subject. So the qualified form — the spelling spec/spec/enums.md
   // teaches, since it is how a variant is constructed — compiled clean and was always false.
   //
   // `[§enum-is-qualified-8jkq4wp]` says both spellings mean the same thing, and records this exact
@@ -2038,7 +2038,7 @@ Stmt parseSwitchStmt(P p) {
   p.expect(kLbrace());
   CaseList cases = CaseList.create();
   // **The default is last or absent.** `switch_stmt = "switch" … "{" , { case_clause } ,
-  // [ default_clause ] , "}"` in `spec/spec/grammar.md`, and a `case` after it is not a switch the
+  // [ default_clause ] , "}"` in spec/spec/grammar.md, and a `case` after it is not a switch the
   // grammar describes. Reported at the `case`, which is the token that cannot be there.
   // `spec/cases/0091`.
   bool sawDefault = false;

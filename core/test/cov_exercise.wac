@@ -22,7 +22,7 @@
 // `test_traps_*` export is *expected* to trap, so its failure is not a failure — the old file could not
 // send those through `runTestExports`, which reports one, and looped over them with its own `try`
 // instead. `covdump` catches one trap per call, and `name:<n>` makes eleven of them one export name
-// (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+// (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
 
 import { Core } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";

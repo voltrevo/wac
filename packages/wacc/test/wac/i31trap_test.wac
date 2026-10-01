@@ -1,6 +1,6 @@
 // The one place wacc is **specified to disagree** with the compiler it is otherwise measured against.
 //
-// `spec/spec/casts.md` states the rule for the whole family — *"`as!` — checked: exact or trap"* —
+// spec/spec/casts.md states the rule for the whole family — *"`as!` — checked: exact or trap"* —
 // and says it again for this cast in particular: `42 as! i31ref` is "checked (i32 may not fit in 31
 // bits)". A value with a thirty-second bit has no `i31ref` to be, so the cast has to trap.
 //

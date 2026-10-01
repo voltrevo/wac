@@ -11,10 +11,10 @@
 // runtime anyway.
 //
 // So the guard moves from "there is only one copy" to "the copies are checked against the
-// definition", which is where it should probably have been: `spec/spec/grammar.md` prints the
+// definition", which is where it should probably have been: the grammar appendix prints the
 // keywords, and that is what a reader is told.
 // `site/tools/site.test.ts` compares this file against them, and
-// `packages/wacc/test/wac/speckeywords_test.wac` compares wacc's lexer against the same fence — so
+// packages/wacc/test/wac/speckeywords_test.wac compares wacc's lexer against the same fence — so
 // the highlighter and the compiler agree by both agreeing with the document.
 
 import {

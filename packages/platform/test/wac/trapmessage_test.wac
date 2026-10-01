@@ -5,7 +5,7 @@
 //     wac: p.wac trapped: the ring is full
 //
 // It used to be `Uncaught RuntimeError: unreachable` and nothing else. `trap "…"` is the language's
-// way to say why — `spec/spec` has it, the checker checks the message's *type* — and wacc's emitter
+// way to say why — spec/spec has it, the checker checks the message's *type* — and wacc's emitter
 // matched the statement without binding its payload, so a program could be refused for writing
 // `trap 7` and then have a correct message thrown away. `issues/lang/0147`.
 //

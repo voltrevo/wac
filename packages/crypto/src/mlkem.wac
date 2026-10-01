@@ -55,7 +55,7 @@ export i32 ctSize() { return 32 * (10 * 3 + 4); }   // 1088
  * `a` reduced into [0, q), **without a branch on `a`**.
  *
  * `r >> 31` is 0 or -1 by the sign, so the mask adds q exactly when `r` is negative. It was
- * `r < 0 ? r + q() : r` until 2026-08-20, and a ternary is a branch — `spec/spec` counts
+ * `r < 0 ? r + q() : r` until 2026-08-20, and a ternary is a branch — spec/spec counts
  * `ternary-then` and `ternary-else` as branch points, which is why `fieldp.wac` grew `zeroBit`.
  *
  * **This is on the secret path and it was measured, not assumed.** Fourteen call sites, all inside

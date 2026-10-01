@@ -1,6 +1,6 @@
 // `string.isUtf8` — the companion `string.fromBytes` did not have.
 //
-// **The spec already said this was needed and there was no way to do it.** `spec/spec/strings.md`:
+// **The spec already said this was needed and there was no way to do it.** spec/spec/strings.md:
 // *"Validating on every call would cost a second pass for a guarantee the type does not otherwise
 // make; a caller that needs one should check before converting."* There was nothing to check with,
 // so `design/lang/0013` step 5 asked for one. `[§wac-str-isutf8-k4mq7vn]`,

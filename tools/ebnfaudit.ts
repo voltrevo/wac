@@ -1,9 +1,9 @@
-// Read `spec/spec/grammar.md` as a grammar rather than as prose, and say what is wrong with it.
+// Read spec/spec/grammar.md as a grammar rather than as prose, and say what is wrong with it.
 //
 //     deno run --allow-read tools/ebnfaudit.ts
 //
 // Every instrument pointed at that file so far compares it with the parser one construct at a time:
-// `speckeywords_test.wac` checks the keyword fence, `specproductions_test.wac` checks a list of
+// speckeywords_test.wac checks the keyword fence, specproductions_test.wac checks a list of
 // samples somebody has already been wrong about. Both are lists. **Neither reads the EBNF as EBNF**,
 // so a rule that refers to something that does not exist, or that cannot terminate, or that nothing
 // can reach, is invisible to all of it.
@@ -62,7 +62,7 @@
 // `array_construction` said it was *"the one place type arguments appear in something that reads as
 // an expression"*. There are four places, all measured, and they are now listed once at `type_args`.
 //
-// Nothing here catches that and neither does `specproductions_test.wac`, which checks tokens in
+// Nothing here catches that and neither does specproductions_test.wac, which checks tokens in
 // productions. **Three comments claiming uniqueness for three different sites is a shape worth
 // knowing about and there is no instrument for it.**
 
@@ -130,7 +130,7 @@ function repsOf(t: Term, into: Term[]): void {
 }
 
 function main(argv: string[]): number {
-  // A path, because until 2026-09-04 this audited `spec/spec/grammar.md` and nothing else — it took
+  // A path, because until 2026-09-04 this audited spec/spec/grammar.md and nothing else — it took
   // no argument and silently ignored one. So its very first check, *two rules with one name*, had
   // never been pointed at `vision/vibes/GRAMMAR.ebnf`, which had nine of them: 47 entries under 38 names,
   // with the later definition winning and the earlier one dead text carrying the comment that

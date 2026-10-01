@@ -557,14 +557,14 @@ Deno.test("site: the ladder page's rung excerpts are verbatim from the rungs", a
  *
  * **Monospace and backticks only.** The pages say "wac is", "wac has", "wac program" in prose all
  * over, and a check that read those would be noise. What is marked as code is a claim about what to
- * type, and that is the claim `spec/cli/wac.md` can answer.
+ * type, and that is the claim the CLI chapter can answer.
  *
  * The word list is the fence: a spelling counts as a command only if the CLI page names some
  * subcommand of that word. `wac task` is in the page, so `wac task wac:install` passes on its first
  * two words; that is deliberate, since the task registry is not the CLI page's to enumerate.
  *
  * **A file is not a subcommand**, which the lookahead below is for. `wac hello.wasm` runs a built
- * module — the form `spec/cli/wac.md` writes as `wac <module.wasm>` — and reading it as a `hello`
+ * module — the form the CLI chapter writes as `wac <module.wasm>` — and reading it as a `hello`
  * subcommand made this refuse a page that was right. Any lowercase stem would have done it, so the
  * effect was that documenting the one command whose argument is a *file* was impossible.
  *
@@ -574,7 +574,7 @@ Deno.test("site: the ladder page's rung excerpts are verbatim from the rungs", a
  * have passed on the day it was written.
  */
 Deno.test("site: the command spellings the site prints are the ones the CLI page names", async () => {
-  const cli = await Deno.readTextFile(new URL("../../spec/cli/wac.md", import.meta.url).pathname);
+  const cli = await Deno.readTextFile(new URL("../../spec/next/8-tooling/45-cli.md", import.meta.url).pathname);
   const next = new URL("../src/next/", import.meta.url);
   const files = [new URL("../src/snippets.ts", import.meta.url)];
   for await (const e of Deno.readDir(next)) {
@@ -589,7 +589,7 @@ Deno.test("site: the command spellings the site prints are the ones the CLI page
   if (missing.length > 0) {
     throw new Error(
       `the site prints ${missing.map((w) => `\`wac ${w}\``).join(", ")}, which ` +
-        `spec/cli/wac.md does not name — a reader who types that gets "unknown command"`);
+        `spec/next/8-tooling/45-cli.md does not name — a reader who types that gets "unknown command"`);
   }
 });
 
@@ -895,22 +895,22 @@ Deno.test("a wacc asset the page cannot use is refused rather than written", asy
 // no list to import (`keywordKind` is packed-integer comparisons), and a browser bundle cannot
 // read a `.md` at runtime. So the copy is checked against the definition instead.
 //
-// The other half of this pair is `packages/wacc/test/wac/speckeywords_test.wac`, which holds
+// The other half of this pair is packages/wacc/test/wac/speckeywords_test.wac, which holds
 // *wacc's lexer* to the same fence. Neither test compares the highlighter with the compiler
 // directly; they agree because both agree with the document, which is the arrangement that also
 // catches the document being wrong.
 
 import { KEYWORDS } from "../src/editor/wac-vocabulary.ts";
 
-/** The words in grammar.md's `### Keywords` fence. */
+/** The words in the grammar appendix's `## Keywords` fence. */
 function specKeywords(md: string): Set<string> {
-  const m = /### Keywords\n+```\n([\s\S]*?)```/.exec(md);
-  if (m === null) throw new Error("could not find the Keywords fence in grammar.md");
+  const m = /#+ Keywords\n+```\n([\s\S]*?)```/.exec(md);
+  if (m === null) throw new Error("could not find the Keywords fence in the grammar appendix");
   return new Set(m[1].split(/\s+/).filter(Boolean));
 }
 
 Deno.test("site: the editor's keyword list is the one the spec prints", async () => {
-  const md = await Deno.readTextFile(new URL("../../spec/spec/grammar.md", import.meta.url));
+  const md = await Deno.readTextFile(new URL("../../spec/next/appendices/A-grammar.md", import.meta.url));
   const spec = specKeywords(md);
 
   // A floor first: a fence that stopped being found, or an extraction that collapsed, would make
@@ -928,7 +928,7 @@ Deno.test("site: the editor's keyword list is the one the spec prints", async ()
   const extra = got.filter((w) => !spec.has(w));
   if (missing.length > 0 || extra.length > 0) {
     throw new Error(
-      `the editor's keyword list has drifted from grammar.md\n` +
+      `the editor's keyword list has drifted from the grammar appendix\n` +
         `  in the spec, not highlighted: ${missing.join(", ") || "(none)"}\n` +
         `  highlighted, not in the spec: ${extra.join(", ") || "(none)"}`,
     );

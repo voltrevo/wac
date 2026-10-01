@@ -118,7 +118,7 @@ export string resolveFromAt(string fromPath, string spec, string root, string ba
 /**
  * A specifier that is none of the three kinds the language defines — `issues/system/0234a`.
  *
- * `spec/spec/imports.md`: a path is relative (`./` or `../`), `@/` is the project root, and a bare
+ * spec/spec/imports.md: a path is relative (`./` or `../`), `@/` is the project root, and a bare
  * name **may name a mapping** declared in the manifest. `[§wac-import-mapped-6np2rkq]` Nothing makes
  * a bare name fall back to path arithmetic — but every caller did, joining it to the importing file's
  * directory, which produces a file that is usually not there and *occasionally is*. That is the worse

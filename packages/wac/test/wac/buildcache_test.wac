@@ -352,7 +352,7 @@ string outputOf(Cli cli, string home, string entry, string stem) {
 
 // **A warning survives the cache, because a warning nobody sees is not a warning.**
 //
-// `spec/cli/wac.md` `[§wac-cli-usage-3nkq8wj]` says warnings print and do not change the exit code,
+// spec/cli/wac.md `[§wac-cli-usage-3nkq8wj]` says warnings print and do not change the exit code,
 // and *"are not held back for `check` or suppressed on a command that also writes a file"*. A hit
 // returns above the diagnostics pass, so the first build of a warned program printed its warning and
 // every later one did not — the same source and the same command line saying two different things,

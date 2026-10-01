@@ -51,7 +51,7 @@ not against the one that did not.
 is about enums:
 
 1. `compiler/` was deleted, which took the clause's only checker with it. That made
-   `spectags_test.wac` name 26 `§enum-*` clauses as held by nothing — the list is what sent me here.
+   spectags_test.wac name 26 `§enum-*` clauses as held by nothing — the list is what sent me here.
 2. That test had not been *running*: `wac test` refused a list of paths, so the runner's chunks of
    `packages/wacc/test/wac` exited 2 without running anything (`issues/system/0272b`). Fixing that
    took the wac lane from 952 tests in 141 files to 2681 in 432, and this was in the difference.

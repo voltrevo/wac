@@ -248,7 +248,7 @@ export struct Measured {
  *
  * **An export named `name:<n>` is a sweep**: `covdump` calls `name(0)` through `name(n-1)`, each trap
  * caught. One name holds one trapping case, so a driver that damages a real frame at every byte needs
- * this rather than a name per byte — `spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`.
+ * this rather than a name per byte — spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`.
  */
 export Measured measure(Core core, Cli cli, string entry, string[] grants, string[] exports) {
   Measured none = Measured(Point[1](fill: Point(0, "", 0, 0, "")), 0, i32[1]());

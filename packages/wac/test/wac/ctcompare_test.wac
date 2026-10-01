@@ -14,7 +14,7 @@
 // journals where the modules are and answers in one line, in about half a second.
 //
 // The hash in each name is the spec claim it checks — `[§wac-cli-ctcompare-6knq4wp]` in
-// `spec/cli/wac.md`. A wac export cannot hold the bracketed spelling, so the suffix carries it.
+// spec/cli/wac.md. A wac export cannot hold the bracketed spelling, so the suffix carries it.
 //
 // **The two programs must differ only in their data.** Both drivers here are the same source with one
 // constant changed, because `main`'s own points are in the journal too: a pair written with different

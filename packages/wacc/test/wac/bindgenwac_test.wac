@@ -95,8 +95,8 @@ string askOracle(T t, Cli cli, string[] args, string what, string[] inputs) {
 /**
  * One inline program, written where both generators can be pointed at the same path.
  *
- * **Not `Case`**, which is what this was called: `speccases.wac` exports a `Case` and
- * `diagnosticgap_test.wac` declared a third, so `wac test`'s shared build for this directory could
+ * **Not `Case`**, which is what this was called: speccases.wac exports a `Case` and
+ * diagnosticgap_test.wac declared a third, so `wac test`'s shared build for this directory could
  * not emit — `the name Case, which more than one file declares` — and all 53 files were built one at
  * a time instead. `issues/lang/0162b` is the same collision arriving as something much worse.
  *

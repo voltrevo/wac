@@ -24,7 +24,7 @@ export i32 plain()       { return narrowed(Shape(99)); }      // 99  — correct
 
 `byNarrowing` answers **0**, which is `Shape.getTag` reading a `Circle`'s `tag` field. The explicit
 cast dispatches correctly, so what is missing is narrowing: inside `if (s is Circle)` the checker
-treats `s` as a `Circle` — `spec/spec` says so, and `§wac-override-dispatch-r2km6jf` was rewritten to
+treats `s` as a `Circle` — spec/spec says so, and `§wac-override-dispatch-r2km6jf` was rewritten to
 drop the cast *because* the narrowing makes it redundant — and the emitter still resolves
 `s.getTag()` against the declared type.
 

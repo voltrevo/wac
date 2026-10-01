@@ -13,7 +13,7 @@
 // The old wording survived a copy-paste review of the same page twice, which is the argument for
 // making the spec's examples spawn something.
 //
-// The hash in each name is the spec claim it checks, in `spec/cli/wac.md` — `[§wac-cli-check-4mkq8wp]`,
+// The hash in each name is the spec claim it checks, in spec/cli/wac.md — `[§wac-cli-check-4mkq8wp]`,
 // `[§wac-cli-compile-9wkn3pq]`, `[§wac-cli-bindgen-5tqm7wn]` and `[§wac-cli-usage-3nkq8wj]`. A wac
 // export cannot hold the bracketed spelling, so the suffix carries it.
 

@@ -56,7 +56,7 @@ written — there is no migration and no argument to have. That is unusually che
 
 Two ways to add them, and the choice matters:
 
-- **A `[§tag]` in `spec/spec`** runs against the reference, which honours all eleven. It also puts
+- **A `[§tag]` in spec/spec** runs against the reference, which honours all eleven. It also puts
   the case where a reader of the prose sees it, and it is counted by `site/src/next/Checked.tsx` —
   worth checking whether anything asserts the total before the number moves.
 - **A `spec/cases` entry** runs against both compilers via compiler/wacCases.test.ts and

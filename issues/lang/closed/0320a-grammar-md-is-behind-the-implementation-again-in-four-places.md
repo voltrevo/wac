@@ -59,7 +59,7 @@ Four of the five things measured in this issue were unaffected; the one that was
 re-measured in order to *undo* a correct change. A stale seed is not a broken build — everything
 compiles and the answers are simply a few commits old, which reads as evidence.
 
-The durable fix is done, in `packages/wacc/test/wac/specproductions_test.wac`, and it caught this on
+The durable fix is done, in packages/wacc/test/wac/specproductions_test.wac, and it caught this on
 its first run.
 `[§wac-grammar-keywords-h4mq7wn]` guards the keyword list *because it drifted three times*, and the
 productions had drifted twice. The new guard is that idea one level up: a table of probes, each a

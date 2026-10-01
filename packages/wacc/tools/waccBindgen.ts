@@ -345,7 +345,7 @@ function fromWasm(t: string, expr: string): string {
   if (t === "bool") return `${expr} !== 0`;
   // **An unsigned return has to be made unsigned.** wasm has no unsigned types — a `u32` comes back
   // as a signed `i32` and a `u64` as a signed `i64` — so the glue is the only place that can say
-  // which reading was meant. `spec/spec/bindgen.md`'s `§wac-bind-unsigned-5wqk3np` states it and
+  // which reading was meant. spec/spec/bindgen.md's `§wac-bind-unsigned-5wqk3np` states it and
   // shows both spellings: *"a `u32` returning `0xFF000000` reaches JS as `4278190080`, and a `u64`
   // returning `0xFF00000000000000` as `18374686479671623680n`. `i32` and `i64` are untouched."*
   //

@@ -50,7 +50,7 @@ string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.std
 /**
  * A scratch directory holding one program.
  *
- * **Inside the repository**, because an import specifier is relative — `spec/spec/imports.md`: "Import
+ * **Inside the repository**, because an import specifier is relative — spec/spec/imports.md: "Import
  * paths are relative, using `./` or `../` prefixes" — so a program in `/tmp` cannot reach
  * `packages/platform` at all. Written from `/tmp` first, the `Page` test below passed on a *compile*
  * failure instead of on the host's answer, which is a pass that would survive the host losing the rule

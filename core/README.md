@@ -3,7 +3,7 @@
 `core` — the declarations that ship inside the compiler, reached as `import { Read } from core;`.
 
 **Why anything at all is in here.** wac has nominal types, and a `fn[…]` value does not capture —
-`spec/spec/funcrefs.md` — so two identical declarations of a type are two types and no adapter can
+spec/spec/funcrefs.md — so two identical declarations of a type are two types and no adapter can
 convert between them.
 
 That sentence used to cite `[§wac-fnref-nocapture-j4wk8pm]`, which said `c.inc` is a compile error.

@@ -54,7 +54,7 @@ const string PREFIX = "packages/bytes/";
  * The trap sweep: twelve bounds checks, each expecting to trap.
  *
  * `covdump` calls `trapCase(0)`…`trapCase(11)` with a TryCatch per call
- * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`), so a case past the end returns rather than
+ * (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`), so a case past the end returns rather than
  * trapping and the width is an upper bound rather than an assertion.
  */
 string[] cases() { return string[]("trapCase:12"); }

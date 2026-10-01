@@ -1,4 +1,4 @@
-// Reading `spec/spec/grammar.md` as a grammar.
+// Reading the specification's grammar appendix as a grammar.
 //
 // The EBNF blocks in that file, as a term tree, for anything that wants to treat the spec as the
 // definition it says it is rather than as prose to grep. Two callers today —
@@ -10,7 +10,7 @@
 // is not something to generate a lexer from — so a caller brings its own lexer and treats those
 // names as terminals. That is the honest arrangement rather than a gap, and `ebnfaudit` says so.
 
-export const GRAMMAR = "spec/spec/grammar.md";
+export const GRAMMAR = "spec/next/appendices/A-grammar.md";
 
 /** One EBNF term. `alt` is a choice, `seq` a concatenation, the rest wrap a single child. */
 export type Term =
@@ -44,7 +44,7 @@ export interface Rule {
 export function ebnfSource(text: string): { text: string; firstLine: number }[] {
   const out: { text: string; firstLine: number }[] = [];
   const lines = text.split("\n");
-  // A file with no fence in it *is* the block. `spec/spec/grammar.md` carries its grammar inside
+  // A file with no fence in it *is* the block. spec/spec/grammar.md carries its grammar inside
   // ```ebnf fences because it is prose with a grammar in it; `vision/vibes/GRAMMAR.ebnf` is a grammar, and
   // asking for the fences in one returns nothing — which is how `tools/ebnfaudit.ts` came to report
   // *0 rules, 0 distinct* and a clean bill of health for a file with nine duplicate definitions in

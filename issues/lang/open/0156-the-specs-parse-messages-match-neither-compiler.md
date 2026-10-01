@@ -58,7 +58,7 @@ Not "make wacc match the spec", because the reference does not either and the RE
   there today says the opposite.
 
 Whichever it is, the check that would keep it honest is the same: one test that reads the rendered blocks
-out of `errors.md` and holds both compilers to them, rather than to positions. `spectags_test.wac`
+out of `errors.md` and holds both compilers to them, rather than to positions. spectags_test.wac
 already proves every clause is *mentioned* by something; mentioning is not comparing.
 
 ## All six parse clauses, measured — agent-a, 2026-08-21
@@ -150,7 +150,7 @@ unpinned.
 
 ### How it was found, which is the reusable part
 
-Not by reading `naming.md`. `specCases.json` records an expected message for 332 refusal cases and the
+Not by reading `naming.md`. specCases.json records an expected message for 332 refusal cases and the
 spec-case runner only checks that the program is *refused*, so a wrong message is invisible to the one
 harness that has the right string sitting in front of it. Sweeping all 317 single-file cases and
 comparing text turned this up.

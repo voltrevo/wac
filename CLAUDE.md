@@ -8,9 +8,10 @@ A C-family language for WebAssembly GC, and the systems stack written in it. See
 `wac-mono` from before then, it cannot fetch this history — see [MERGE.md](MERGE.md), which is the
 first thing to read if anything about the layout surprises you.
 
-To learn the language itself, read [spec/tour.wac](spec/tour.wac) first — the whole of wac in one
-annotated file that compiles and self-tests. It is much faster than reading `spec/spec/*.md`, and is
-the right starting point before writing or reviewing any wac code.
+**The language is defined by [spec/next](spec/next/README.md)**, which is being implemented
+(`design/lang/0016`); `spec/next/_drafting/STATUS.md` says which examples the compiler meets today.
+[spec/tour.wac](spec/tour.wac) is the language as the compiler currently implements it, in one annotated file
+that compiles and self-tests.
 
 ## wac is unstable by choice
 

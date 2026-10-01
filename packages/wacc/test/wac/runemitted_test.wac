@@ -3,7 +3,7 @@
 // Twenty-six of this package's TypeScript tests instantiated the module they had just emitted with
 // `WebAssembly.Module` and called an export. Nothing in wac instantiates wasm — `selfdrive.wac`'s
 // header is about working around exactly that — so the question was whether the conversion needed a
-// new capability. It does not: `spec/cli/wac.md` says a first argument ending in `.wasm` is a
+// new capability. It does not: spec/cli/wac.md says a first argument ending in `.wasm` is a
 // program to run, `emitFilesSelfDescribing` writes a module with its manifest inside it, and `run`'s
 // exit status is the program's own answer.
 //

@@ -1025,7 +1025,7 @@ bool isNullableTy(Ty t) {
  * always false*. So both compilers diagnose it as a warning and the reference then emits a constant,
  * while this one declined the whole function over something it had just called a warning.
  *
- * `spec/spec/types.md` settles which constant, and the spec's own case is blunter than the prose —
+ * spec/spec/types.md settles which constant, and the spec's own case is blunter than the prose —
  * `§wac-is-undefined-type-6qbn3wr` asserts `otherType()` is `0` with the comment *"an unrelated type is
  * false, not an error"*.
  *
@@ -1149,7 +1149,7 @@ bool isPairEntry(string t) { return t.len() > 5 && t.slice(0, 5) == pairMark(); 
 
 /**
  * The marker that makes a signature-table entry a **box** — the one-field struct a nullable primitive
- * is, per `spec/spec/types.md`: *"a reference to a one-field struct the compiler synthesises, and `!`
+ * is, per spec/spec/types.md: *"a reference to a one-field struct the compiler synthesises, and `!`
  * reads the field back"*.
  *
  * Same table and same reason as `pairMark`: it is grown lazily during emission, so nothing may sit
@@ -1519,7 +1519,7 @@ export struct Env {
    * Whether the declaring file marked it `export`.
    *
    * Parallel to the three above, and read only by `keyAt`: a declaration its own file kept private is
-   * not a candidate for any other file's name, which is `spec/spec/imports.md` line 16 — "only
+   * not a candidate for any other file's name, which is spec/spec/imports.md line 16 — "only
    * `export`-marked functions and types can be imported".
    */
   bool[] declExported;
@@ -6850,7 +6850,7 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   // as the block's result, so a `match` whose arms are a subtype pair emitted the `else` arm's `Base`
   // where a `Sub` was declared and the engine refused the module — *type error in fallthru[0]
   // (expected (ref null 2), got (ref null 1))*. The checker said nothing, because it unifies them:
-  // `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying exactly as a ternary's two
+  // spec/spec/enums.md §enum-match-expr-4wnq7bk has the arms unifying exactly as a ternary's two
   // branches do, and the ternary arm of `emitExpr` already folds `commonStructAncestor` for precisely
   // this. Which arm came first decided whether the program built.
   string rt = "";
@@ -7479,7 +7479,7 @@ void emitCompound(B fb, Env env, i32 k, string t) {
  * with a value type — the one place this emitter writes a block that produces something.
  */
 /**
- * `x++` and `++x` **as expressions**, which is what `spec/spec/operators.md` says they are.
+ * `x++` and `++x` **as expressions**, which is what spec/spec/operators.md says they are.
  *
  * The difference between the two is only *when* the value is taken, so both forms are the same
  * instructions in a different order rather than two implementations. The base of a field or an
@@ -7577,7 +7577,7 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
-  // **A number going into a `T?` slot is boxed.** `spec/spec/types.md`: `i32?` is a reference to a
+  // **A number going into a `T?` slot is boxed.** spec/spec/types.md: `i32?` is a reference to a
   // one-field struct, so `i32? b = 5;` allocates one — the cost the spec accepts deliberately, since
   // `ref.i31` would be free and would silently truncate above 2^30 (`issues/lang/0045`).
   //
@@ -8544,7 +8544,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.byte(212);   // ref.as_non_null
       // **A boxed primitive needs two operations, not one.** `ref.as_non_null` is the whole of `!` for
       // a nullable *reference*, because the reference is the value. A nullable primitive is a reference
-      // to a one-field struct (`spec/spec/types.md`), so the slot wants the number *inside* it — the
+      // to a one-field struct (spec/spec/types.md), so the slot wants the number *inside* it — the
       // null check and then the field read. `issues/lang/0171a`.
       string ut = typeOfE(src, lexed, env, operand);
       if (isBoxedPrimName(ut)) {
@@ -10490,7 +10490,7 @@ void emitBinary(B fb, Env env, i32 k, string t) {
  * every other checked cast is guarded, and it cannot work here: the two types are one wasm value type,
  * so the conversion emits nothing and the round trip would compare a value with itself.
  *
- * `spec/spec/casts.md` states this case with a clause of its own —
+ * spec/spec/casts.md states this case with a clause of its own —
  * `[§wac-usign-chk-p8jn3wl]` *"`check(5)` returns `5`; `check(-1)` traps"* — beside the program
  * `export u32 check(i32 x) { return x as! u32; }`. `spec/cases/0224` and `0226` run it.
  * `issues/lang/0268c`.

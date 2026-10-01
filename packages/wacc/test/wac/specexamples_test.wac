@@ -1,0 +1,49 @@
+// The specification's examples that are met stay met.
+//
+// `spec/next` is the definition and most of it is not implemented yet, so this cannot ask for every example.
+// It asks for the ones `spec/next/_drafting/MET` lists — every example that was met when
+// `packages/wacc/tools/specstatus.wac` last ran — and fails on any of them that is not met now. A change that
+// meets more examples passes and says so; running the status program records them, and from then on they
+// are held too.
+
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { splitLines } from "../../../wactest/src/strings.wac";
+import { ExJudged, judgeAll } from "./specexamples.wac";
+
+export string test_every_spec_example_once_met_is_still_met(Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile("spec/next/_drafting/MET").wait();
+  t.isTrue(f.ok, "spec/next/_drafting/MET cannot be read — run packages/wacc/tools/specstatus.wac");
+  if (!f.ok) { return t.report(); }
+  string[] held = splitLines(string.fromBytes(f.bytes));
+
+  ExJudged j = judgeAll(cli, "spec/next");
+  // A walk that found nothing would hold every listed example to nothing.
+  t.isTrue(j.verdicts.len() >= 400, "only " + itoa(j.verdicts.len()) + " examples read — did the walk resolve?");
+
+  i32 regressed = 0;
+  string detail = "";
+  for (i32 h = 0; h < held.len(); h++) {
+    bool found = false;
+    for (i32 i = 0; i < j.keys.len(); i++) {
+      if (j.keys[i] != held[h]) { continue; }
+      found = true;
+      if (j.verdicts[i].state != "met") {
+        regressed = regressed + 1;
+        if (regressed <= 10) { detail = detail + "\n  " + held[h] + " — " + j.verdicts[i].why; }
+      }
+    }
+    if (!found) {
+      regressed = regressed + 1;
+      if (regressed <= 10) { detail = detail + "\n  " + held[h] + " — no longer an example; rerun specstatus"; }
+    }
+  }
+  i32 met = 0;
+  for (i32 i = 0; i < j.verdicts.len(); i++) { if (j.verdicts[i].state == "met") { met = met + 1; } }
+  core.log("    spec examples: " + itoa(met) + " of " + itoa(j.verdicts.len()) + " met; " + itoa(held.len())
+           + " held");
+  t.eqI32(regressed, 0, itoa(regressed) + " example(s) once met are not met now:" + detail);
+  return t.report();
+}

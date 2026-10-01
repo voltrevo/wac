@@ -22,7 +22,7 @@
 // ## Why a sweep of entry points rather than cases
 //
 // The bug this shape produces is not a wrong answer, it is a trap — an index off the end of a buffer
-// somebody else sized, which `spec/spec/arrays.md` `[§wac-arr-oob-7jby7f8]` says ends the process.
+// somebody else sized, which spec/spec/arrays.md `[§wac-arr-oob-7jby7f8]` says ends the process.
 // A trap cannot be asserted in-process: the run dies and the harness reports the file, not the line.
 // So what a test can do is *reach* every entry with every shape of bad datagram and finish. Finishing
 // is the assertion, and the per-call `isTrue` below exist to say which answer came back, so a future

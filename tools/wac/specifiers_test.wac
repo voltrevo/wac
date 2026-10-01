@@ -2,7 +2,7 @@
 //
 //     wac test --allow-read --allow-run tools/wac/specifiers_test.wac
 //
-// **`spec/spec/imports.md` names three kinds and there is no fourth.** A path is relative, using
+// **spec/spec/imports.md names three kinds and there is no fourth.** A path is relative, using
 // `./` or `../`; `@/` is the project root; and a bare name may name a mapping declared in
 // `wac.json5` or one of the seven built-ins. `[§wac-import-mapped-6np2rkq]` A specifier that is
 // none of those is not defined by the language.
@@ -80,7 +80,7 @@ export string test_every_import_in_the_repository_is_a_specifier_the_language_de
   core.log("    imports: " + itoa(imports) + " across " + itoa(files.len()) + " files, " +
            itoa(n) + " undefined");
   t.eqI32(n, 0, n == 0 ? "" : "these specifiers are neither relative, nor `@/`, nor built-in, so " +
-          "`spec/spec/imports.md` does not say what they name — the first is " + bad[0]);
+          "spec/spec/imports.md does not say what they name — the first is " + bad[0]);
   return t.report();
 }
 

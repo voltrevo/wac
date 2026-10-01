@@ -1,6 +1,6 @@
 // The clauses the spec states and **nothing else held wacc to**.
 //
-// `spec/spec/errors.md` does not merely ask for a span field — it names the width for particular
+// spec/spec/errors.md does not merely ask for a span field — it names the width for particular
 // programs: *"The compiler must emit `span: 1`, `annotation: "expected bool, found i32"`,
 // `hint: "use a comparison…"`"* for `§wac-diag-bool-r8kn4wp`, and `span: 4` for
 // `§wac-diag-assign-j3qm7xf`, which is the width of `3.14`. Those are clauses, so they are the
@@ -12,7 +12,7 @@
 // caret under the first character of the offending expression instead of under the whole of it, which
 // is the difference between `^` and `^^^^` under `3.14`.
 //
-// The counting version of this lives in `diagnosticgap_test.wac`, which holds a floor under the *share*
+// The counting version of this lives in diagnosticgap_test.wac, which holds a floor under the *share*
 // of diagnostics carrying a span. A share cannot say which clause is unmet, so this names them.
 //
 // **It has grown past spans, which is why it is no longer called `diagspans`.** A measurement of all 419
@@ -98,7 +98,7 @@ export string test_the_help_the_spec_states_for_both_clauses() {
  *
  * The spec's block shows `error: unterminated string literal` and an annotation *"string literal is
  * never closed"*; compiler/wacLex.ts pushes `unterminated string literal`; the recorded corpus in
- * `specCases.json` carries that same string as the case's expected message. wacc said **"unterminated
+ * specCases.json carries that same string as the case's expected message. wacc said **"unterminated
  * string"** until 2026-08-18 — the one place in this chain that did not agree, and none of the
  * differentials could see it because they compare parse and lex errors *by position*, not by text.
  */
@@ -166,7 +166,7 @@ export string test_the_spec_required_span_over_a_comparison_returned() {
  *
  * **Measured before the fix**: `if (flag)` was told *"use a comparison, such as `x != 0`"* — a variable
  * the program does not have, in a sentence that reads as authoritative. `hintFor(code)` is a table, so
- * every non-bool condition got the same words whatever it was called. `spec/spec/errors.md` states hints
+ * every non-bool condition got the same words whatever it was called. spec/spec/errors.md states hints
  * that quote the expression — `§wac-diag-bool-r8kn4wp`'s *"use a comparison: if (x != 0) { ... }"* is
  * written for a program whose variable is `x` — so a per-instance hint is what the clause asks for.
  *

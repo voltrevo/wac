@@ -148,7 +148,7 @@ export i32 errNamedField() { return 45; }
 export i32 errFloatRange() { return 50; }
 /** `E.nope` where `E` is an enum and `nope` is none of its variants. */
 export i32 errNoVariant() { return 51; }
-/** An import specifier that is a bare word other than `core` — `spec/spec/imports.md`. */
+/** An import specifier that is a bare word other than `core` — spec/spec/imports.md. */
 export i32 errUnknownModule() { return 52; }
 /**
  * A quoted import specifier naming a file the caller did not supply.
@@ -160,7 +160,7 @@ export i32 errUnknownModule() { return 52; }
  *
  * The list of unresolved specifiers is handed to `C` rather than computed here, because resolving a
  * specifier needs the caller's path map and `isBuiltinSpec` — but the *diagnostic* belongs to the
- * checking phase, at the import's own token, which is what `spec/spec/errors.md` requires of a
+ * checking phase, at the import's own token, which is what spec/spec/errors.md requires of a
  * phase field.
  */
 export i32 errMissingImportFile() { return 77; }
@@ -1197,7 +1197,7 @@ export struct C {
   /**
    * The operands, one per error: `expected bool, found i32`, or `""` where they were not recorded.
    *
-   * `spec/spec/errors.md` calls this the `annotation` — the text after the underline — and it is the
+   * spec/spec/errors.md calls this the `annotation` — the text after the underline — and it is the
    * difference between a diagnostic that names the rule and one that helps. It sits beside the
    * triples rather than inside them because the triples are `i32` and this is not; every site that
    * has the operands in hand passes them, and a site that does not says nothing rather than guessing.
@@ -1219,7 +1219,7 @@ export struct C {
    * **Where to start printing is not how wide the span is**, and the two were confused into one
    * missing field. `widthBetween` decided — correctly — that an expression running across lines has no
    * width this can state, *"a decision for the formatter rather than a number for the wire"*. That
-   * settled the span and left this: `spec/spec/errors.md`'s `§wac-diag-multiline-ic7x2hq` shows the
+   * settled the span and left this: spec/spec/errors.md's `§wac-diag-multiline-ic7x2hq` shows the
    * lines *above* the caret, because a caret under `3.14` says nothing about which call it is an
    * argument to, and the renderer cannot work out which construct the diagnostic came from. The
    * checker can, and does — it has the call in hand at the point it reports.
@@ -1234,7 +1234,7 @@ export struct C {
    * **Because a hint that quotes an identifier cannot be static.** `hintFor(code)` answered every
    * non-bool condition with *"use a comparison, such as `x != 0`"*, so `if (flag)` was told to compare
    * a variable it does not have — a sentence that reads as authoritative and points at nothing.
-   * `spec/spec/errors.md` states hints that quote the reader's own expression
+   * spec/spec/errors.md states hints that quote the reader's own expression
    * (`§wac-diag-bool-r8kn4wp`: *"use a comparison: if (x != 0) { ... }"* for a program whose variable
    * is `x`, and `§wac-diag-wide-k4rn8wp`: *"use `(sum > 0) as i32` to convert"*), which a per-code
    * table cannot do. Empty everywhere else, so the static hints stay exactly as they were.
@@ -1254,7 +1254,7 @@ export struct C {
   /**
    * The type parameters of the generic function being checked, which are **unknown types**.
    *
-   * `T oops<T>(T a) { i32 x = "hello"; return a; }` is an error `spec/spec/generics.md` names, and
+   * `T oops<T>(T a) { i32 x = "hello"; return a; }` is an error spec/spec/generics.md names, and
    * the error has nothing to do with `T` — so the body is checked, and every question about `T`
    * answers the way this checker answers every question it cannot resolve: with nothing.
    */
@@ -1440,7 +1440,7 @@ export struct C {
    * onto.
    *
    * `import { Point, Point as P }` gives one declaration two names in this file, and
-   * `spec/spec/generics.md` `[§wac-generic-instantiation-identity-6pnq4wj]` says they are one type:
+   * spec/spec/generics.md `[§wac-generic-instantiation-identity-6pnq4wj]` says they are one type:
    * *"`Box<P>` and `Box<Point>` are one struct"*. `renameFrom`/`renameTo` cannot express that — it
    * maps a declaring name to a **single** local one, so `declareModule` registered the declaration
    * under one spelling and left the other undeclared, which is silent rather than wrong.
@@ -2695,7 +2695,7 @@ void checkCharLiteral(C c, Expr e) {
  * **This is what makes a caret's width knowable.** `reportTok` reads the width out of the token table;
  * `reportWith` takes a line and a column and records `span: 0`, which the wire means as *"nothing
  * measured a width"* — so a rendered diagnostic puts one caret under the first character of the
- * offending expression instead of under the whole of it. `spec/spec/errors.md` states the width for
+ * offending expression instead of under the whole of it. spec/spec/errors.md states the width for
  * particular programs — `span: 1` for `if (x)` under `§wac-diag-bool-r8kn4wp` and `span: 4` for
  * `3.14` under `§wac-diag-assign-j3qm7xf` — so these are clauses rather than presentation.
  *
@@ -2814,7 +2814,7 @@ void reportExpr(C c, i32 code, Expr e, string note) {
  * The sentence for `i64 x = 1 << count;`, or "" when that is not what happened.
  *
  * **A shift is typed from the value being shifted, and a literal there has no type of its own.**
- * `spec/spec/types.md` says a literal takes its type from what is expected of it, *"including as an
+ * spec/spec/types.md says a literal takes its type from what is expected of it, *"including as an
  * operand of an operator … the other operand counts as an expectation"* — and for a shift the other
  * operand is the *amount*, which is a count rather than a second value of the same type. So `1`
  * takes `count`'s `i32` and the `i64` slot is never consulted.
@@ -2868,7 +2868,7 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   }
   // **A negated literal in an unsigned slot is the operator, not the range.** `u32 f() { return -1; }`
   // said *"literal out of range for its type"*, which tells the reader to pick a different literal —
-  // and none works, because `spec/spec/operators.md` refuses unary `-` on `u32` and `u64` outright:
+  // and none works, because spec/spec/operators.md refuses unary `-` on `u32` and `u64` outright:
   // *"it wants something with a negation, so … neither does an unsigned integer"*. wacc has that rule
   // and could not reach it here: `-1` types as `i32` on its own and only the *slot* is unsigned,
   // where the reference pushes the slot's type into the operand and answers *"unary '-' is not
@@ -2998,7 +2998,7 @@ bool integerLiteralFits(C c, string want, Expr e, bool negated) {
       // The guard below stops the comparisons reading wrapped bits, and answering *true* to do it
       // reads as "no complaint": `i32 b = 18446744073709551615;` drew **no diagnostic**, built, and
       // returned **-1** — `wac run` exited 255, which is the silent wrong answer
-      // `spec/spec/types.md`'s `§wac-litctx-nofit-k3mq8wl` exists to prevent. The digits are what has
+      // spec/spec/types.md's `§wac-litctx-nofit-k3mq8wl` exists to prevent. The digits are what has
       // to be asked, and the answer is the same for all six: a magnitude too wide for an `i64` is too
       // wide for every type narrower than one, whatever the sign. The 64-bit wants have already
       // answered from the digits above, and everything else keeps falling through to `true`, so this
@@ -3069,7 +3069,7 @@ bool literalFits(C c, string want, Expr e) {
  * can, and the operator decides everything. `f64 s = 1 + 2;` was accepted because a `Binary` answered
  * *not a literal* and `typeOfExpr` of two literals is unknown, and unknown is silence — while the
  * spec has an integer literal taking an *integer* type from its context and no implicit conversions
- * (`spec/spec/types.md`). `issues/lang/0120`.
+ * (spec/spec/types.md). `issues/lang/0120`.
  *
  * A comparison answers a `bool` whatever its operands are, so `bool b = 1 == 1;` must stay a `bool`
  * and not become an integer literal sum. Mixed families answer nothing rather than guessing, which
@@ -3106,7 +3106,7 @@ i32 litFamily(C c, Expr e) {
     /**
      * **And an expression `match` of literals, for the same reason and by the same rule.**
      *
-     * `spec/spec/enums.md` `[§enum-match-expr-4wnq7bk]`: the arms unify *"exactly as a ternary's two
+     * spec/spec/enums.md `[§enum-match-expr-4wnq7bk]`: the arms unify *"exactly as a ternary's two
      * branches are (see control.md), and by the same code"*. The arm above was that code and this one
      * was missing, so the identical program was refused written with `?:` and accepted written with
      * `match` — `string s = b ? 1 : 2;` reported, `string s = match (e) { case A: 1, else: 2 };`
@@ -3527,7 +3527,7 @@ export string typeOfExpr(C c, Expr e) {
     }
     case Index(arr, index): {
       string a = typeOfExpr(c, arr);
-      // **`s[i]` is a one-character string**, not a byte and not unknown — `spec/spec/strings.md`
+      // **`s[i]` is a one-character string**, not a byte and not unknown — spec/spec/strings.md
       // §Indexing. The emitter's twin has said so for a while, in the same words; this side answered
       // `typeNone()` because a string is not an array name, and everything downstream that needed the
       // type went quiet with it. `s[0] - 1` is `string - i32` and was accepted, and `i32 n = s[0];`
@@ -3599,7 +3599,7 @@ export string typeOfExpr(C c, Expr e) {
       // `withoutNull` answers `""` for a type that is not nullable, so the bases are taken explicitly
       // rather than by comparing its output — which would call `P` and `Q` the same thing.
       // **The arms' common type, by the function a `match` expression uses too.** Sharing it is what
-      // `spec/spec/enums.md` §enum-match-expr-4wnq7bk asks for — *"and by the same code"* — and the day
+      // spec/spec/enums.md §enum-match-expr-4wnq7bk asks for — *"and by the same code"* — and the day
       // these were two copies is the day they disagreed.
       string joined = unifyArms(c, t, other);
       if (joined != typeNone()) { return joined; }
@@ -3618,7 +3618,7 @@ export string typeOfExpr(C c, Expr e) {
       string mt = "";
       for (i32 i = 0; i < arms.len(); i++) {
         if (arms[i].value is null) { return typeNone(); }
-        // **A literal arm adapts and says nothing.** `spec/spec/enums.md`: the arms unify exactly as
+        // **A literal arm adapts and says nothing.** spec/spec/enums.md: the arms unify exactly as
         // a ternary's branches do, and *"an integer or float literal arm takes the type expected of
         // the whole expression"*. So `f64 x = match (o) { case A: 1, case B: 2.5 }` is legal and the
         // `1` is an `f64`, which is why a literal cannot be asked what it is here — reading one as
@@ -3935,7 +3935,7 @@ i32 literalDigits(C c, Expr e) {
  * The common type of two arms, or `typeNone()` — the rule a ternary's branches and a `match`
  * expression's arms **share**.
  *
- * `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying *"exactly as a ternary's two
+ * spec/spec/enums.md §enum-match-expr-4wnq7bk has the arms unifying *"exactly as a ternary's two
  * branches are … and by the same code"*, and for a day it was not the same code: the ternary learned
  * these two cases and the match kept requiring equality, so `P r = c ? a : b;` was refused and the
  * identical `match` was accepted. One function now, which is what makes that sentence true
@@ -4161,7 +4161,7 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
       continue;
     }
     string got = typeOfExpr(c, kids[i]);
-    // The same for a child, which is a `Node` by `spec/spec/jsx.md` and was taking a `Node?`.
+    // The same for a child, which is a `Node` by spec/spec/jsx.md and was taking a `Node?`.
     if (nullableIntoNonNull(c, "Node", got)) {
       c.report(errNullableToNonNull(), kids[i].line, kids[i].col);
     } else if (got != typeNone() && !assignable(c, "Node", got)) {
@@ -4577,7 +4577,7 @@ void checkExpr(C c, Expr e) {
       }
       // **And a bare `null` on the left**, which has no type at all rather than a wrong one — so
       // every guard above skipped it and `null is null` reached the emitter, which declined the whole
-      // module with the reason *"null"*. `spec/spec/types.md`: *"`null` is a keyword literal with no
+      // module with the reason *"null"*. spec/spec/types.md: *"`null` is a keyword literal with no
       // type of its own … the compiler infers the type from context"*, and there is no context here to
       // infer from. The reference says *"'is null' requires a reference type, got null"*, which is
       // this rule's own code. `issues/lang/0249a`.
@@ -4785,7 +4785,7 @@ void checkExpr(C c, Expr e) {
       if (litFamily(c, then) == litNone() && litFamily(c, els) == litNone()) {
         string tt = typeOfExpr(c, then);
         string et = typeOfExpr(c, els);
-        // **Reference branches take their closest common ancestor**, which `spec/spec/control.md`
+        // **Reference branches take their closest common ancestor**, which spec/spec/control.md
         // states and this rule did not know: `flag ? c : r` on a `Circle` and a `Rect` is a `Shape`,
         // and neither branch is assignable to the other. Asking assignability in both directions
         // answers "no" for every pair of siblings, and refused four programs the spec runs.
@@ -5157,7 +5157,7 @@ bool nameExists(C c, string n) {
 
 /** Whether an expression is known not to be a boolean. Unknown is `false`: silence, as everywhere. */
 /**
- * `expected <want>, found <got>` — the annotation `spec/spec/errors.md` asks for, phrased as the
+ * `expected <want>, found <got>` — the annotation spec/spec/errors.md asks for, phrased as the
  * reference phrases it.
  *
  * Empty when either side is a type this checker cannot name, because "expected i32, found unknown"
@@ -6230,7 +6230,7 @@ bool constPath(C c, Lvalue lv) {
  *
  * **A plain integer literal is not this rule, and asking it to be was a mistake.** The first version
  * of this refused `u8[](300)` too, on the reasoning that nothing about a literal that cannot fit can
- * be right. `spec/spec/arrays.md` settles it the other way, deliberately and with a tag:
+ * be right. spec/spec/arrays.md settles it the other way, deliberately and with a tag:
  * `[§wac-arr-i8-lit-trunc-i9g6kol]` — *"the fixed-element form takes `i32` values too, and truncates
  * them the same way a write does, so a byte array can be written as a literal list"* — and
  * `byteLitTrunc()` returning `44` is a clause, not an accident. `spec/tour.wac` teaches it as well.
@@ -6568,7 +6568,7 @@ bool returnsOnlyFresh(C c, Stmt[] body) {
 /**
  * A constant case value as the 32 bits a `switch` compares, so two spellings of one value are one.
  *
- * `==` on an `i32` is a 32-bit comparison and signedness plays no part in it — `spec/spec/control.md`
+ * `==` on an `i32` is a 32-bit comparison and signedness plays no part in it — spec/spec/control.md
  * says that of the subject type and it is equally true of the case values. So `4294967295` and `-1`
  * are the same case, measured: a `u32` holding `4294967295` matches `case -1:` and one holding `1`
  * does not.
@@ -6798,7 +6798,7 @@ bool isCastRef(C c, string t) {
 /**
  * Whether two types meet anywhere in the hierarchy — the ternary's rule.
  *
- * `spec/spec/control.md`: the type of a ternary over references is their *closest common ancestor*,
+ * spec/spec/control.md: the type of a ternary over references is their *closest common ancestor*,
  * "found by walking each branch's chain of parent structs and taking the nearest struct that appears
  * in both chains". Only branches with **no** common ancestor are an error. Nullability is not part of
  * the question: `S?` and `Sub` meet at `S` whether or not either can be absent.
@@ -6807,7 +6807,7 @@ bool shareAncestor(C c, string a, string b) {
   string ac = withoutNull(a) == "" ? a : withoutNull(a);
   string bc = withoutNull(b) == "" ? b : withoutNull(b);
   // **`anyref` is the top of the reference hierarchy**, so it shares an ancestor with every reference
-  // and a cast to or from it is the documented way down: `spec/spec/casts.md` gives
+  // and a cast to or from it is the documented way down: spec/spec/casts.md gives
   // `i31ref x = val as! i31ref;` in as many words. Walking the struct parent chain never reaches
   // `anyref` — nothing declares it as a parent — so this answered "no common ancestor" and warned that
   // a cast which succeeds always traps (`issues/lang/0152`). The reference does not warn.
@@ -7691,7 +7691,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
         //
         // **Two of those are settled now, and the way they were settled is the lesson.** The first
         // probes for `copyFrom` and `fill` were refused for *arity* by both compilers, which reads
-        // exactly like "no gap here" — they had guessed the signature. `spec/spec/arrays.md` has
+        // exactly like "no gap here" — they had guessed the signature. spec/spec/arrays.md has
         // `dst.fill(value, start, end)` and `dst.copyFrom(src, srcStart, dstStart, count)`; with the
         // right shapes, `fill`'s value was a gap and is fixed beside `errBuiltinArg`, and `copyFrom`
         // already reported. So one leaked and one did not, which no invalid probe could have told
@@ -8320,7 +8320,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // **A funcref cast to itself is a standing disagreement, parked here on purpose.** The reference
   // refuses `a as fn[i32(i32)]` for an `a` of that type — *"cast from 'fn(i32) -> i32' to
   // 'fn(i32) -> i32' is redundant"* — and allows a `string`, a struct and an array cast to
-  // themselves, which this allows too. `spec/spec/casts.md` says nothing about a cast to the same
+  // themselves, which this allows too. spec/spec/casts.md says nothing about a cast to the same
   // type at all, so there is no authority to settle it: matching the reference for funcrefs alone
   // would copy an inconsistency, and matching it for all four would refuse three programs both
   // compilers accept today. It is the `cast as` row in sweep.test.ts's miss queue, and it stays
@@ -8706,7 +8706,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         string ct = typeOfLvalue(c, target);
         if (ct == typeNone() || ct == "" || isPackedName(ct)) { return; }
         // **A shift's right-hand side is a count, not the other half of a pair.**
-        // `spec/spec/operators.md`: a compound operator has *"same type rules as the underlying
+        // spec/spec/operators.md: a compound operator has *"same type rules as the underlying
         // operator"*, and spells the consequence out — `i64 <<= i32` is allowed wherever `i64 <<
         // i32` is. The same-type rule below is right for `+=` and wrong here, and it refused three
         // programs the spec runs.
@@ -9306,7 +9306,7 @@ void restoreNarrowing(C c, Expr subject, string was) {
  *
  * **`E.A` cannot mean two things.** A variant is reached as `E.A` and so is a static, so an enum
  * whose method is named after one of its own variants has a name with two meanings —
- * `spec/spec/enums.md` makes a variant a name in its own right, and this is that rule inside the
+ * spec/spec/enums.md makes a variant a name in its own right, and this is that rule inside the
  * enum rather than across the file.
  *
  * **A generic that instantiates itself with a *larger* argument never terminates.**
@@ -9318,7 +9318,7 @@ void restoreNarrowing(C c, Expr subject, string was) {
  * shape, which is narrower, and a program it accepts is one the cap would have caught anyway.
  */
 /**
- * The two collision rules `spec/spec/naming.md` states about imports.
+ * The two collision rules spec/spec/naming.md states about imports.
  *
  * *"Two imports with the same name is a compile error"* (`§wac-dup-import-vqn4100`), and *"an import
  * colliding with a local name is a compile error"* (`§wac-dup-import-local-4fadlvg`). Both are
@@ -10290,7 +10290,7 @@ export void checkModule(C c, Program prog) {
         //
         // Every bare word is `unknown module` now, `core` included. The parser is where the better
         // message lives — it can say *write `from "core"`* — and this is the rule stated on its own
-        // terms, which is what `spec/spec/imports.md` asks for.
+        // terms, which is what spec/spec/imports.md asks for.
         if (prefixTok >= 0) {
           c.reportTok(errUnknownModule(), prefixTok, "");
         }
@@ -10304,7 +10304,7 @@ export void checkModule(C c, Program prog) {
         // reported `unknown module` while the reference reported `` `core` is not a file — import
         // it unquoted `` for the same program. One rule, two implementations, two diagnostics, and
         // nothing compared them — the corpus differential only asks *whether* each side complains.
-        // **What `core` exports, and the bar for adding to it.** `spec/spec/imports.md` sets it:
+        // **What `core` exports, and the bar for adding to it.** spec/spec/imports.md sets it:
         // a type earns a place here only if a value of it has to cross a *repository* boundary
         // through a funcref signature, because wac has nominal types and no closures. `Read` passes
         // it; `Node` and `Attr` pass it more strongly, since the compiler emits their constructors
@@ -10471,7 +10471,7 @@ export void checkModule(C c, Program prog) {
         // **A generic function's body is checked**, with its type parameters left unknown.
         //
         // It was skipped entirely once, because answering questions about `T` produced wrong answers.
-        // But `spec/spec` says `T oops<T>(T a) { i32 x = "hello"; return a; }` is an error, and it is
+        // But spec/spec says `T oops<T>(T a) { i32 x = "hello"; return a; }` is an error, and it is
         // — the mistake in it has nothing to do with `T`. Leaving the parameters unknown is what
         // separates the two: everything involving one is silent by the same rule that keeps this
         // checker quiet about anything it cannot name, and everything concrete is checked as usual.

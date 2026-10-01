@@ -589,7 +589,7 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * Every diagnostic for an import graph, as text: one per line, `file\tline\tcol\tphase\tmessage`.
  *
  * Tab-separated because the boundary carries strings and not structures, and a caller that has to
- * parse something should parse the dullest thing available. `spec/spec/errors.md` asks for `span`,
+ * parse something should parse the dullest thing available. spec/spec/errors.md asks for `span`,
  * `annotation` and `hint` as well; none of them can be filled from what `report` records, which is a
  * code and a position. That is the next thing to build rather than something to invent here.
  *
@@ -921,7 +921,7 @@ string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string ent
   // span must be able to tell the two apart.
   i32[] widths = widthsOf(c);
   // **A hint written for this diagnostic wins over the code's own.** `hintFor` cannot quote the
-  // reader's expression, and two clauses in `spec/spec/errors.md` state hints that do — so a site with
+  // reader's expression, and two clauses in spec/spec/errors.md state hints that do — so a site with
   // the text in hand records one and everything else falls through to the table exactly as before.
   string[] hints = hintsOf(c);
   // **The first line to print, where the caret's own line is not it.** `§wac-diag-multiline-ic7x2hq`
@@ -1327,7 +1327,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
         // Recorded rather than reported: `C.isUnresolved` is what the `Import` arm in `check.wac`
         // asks, so the diagnostic lands at the import's own token with the path in the annotation,
         // beside `unknown module` and `no such export` rather than in a layer
-        // `spec/spec/errors.md` says diagnostics must not come from.
+        // spec/spec/errors.md says diagnostics must not come from.
         //
         // `edgesOfIn` *drops* such a specifier, with a comment saying a missing file is the caller's
         // to report — that is where the silence came from, and it stays true of the edge list: an
@@ -1419,7 +1419,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     // **One declaration asked for under two spellings.** `renamed` above answers one local name per
     // declaring name, so `declareModule` registers the declaration once — and the other spelling was
     // left undeclared, which is silent rather than wrong: `import { E, E as E2 }` made `E` stop being
-    // a type, and every rule about it went quiet. `spec/spec/generics.md`
+    // a type, and every rule about it went quiet. spec/spec/generics.md
     // `[§wac-generic-instantiation-identity-6pnq4wj]` says the two are *one* type — "`Box<P>` and
     // `Box<Point>` are one struct" — so collapsing them is the stated rule rather than a kindness.
     //

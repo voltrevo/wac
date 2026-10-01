@@ -69,7 +69,7 @@ quietly started accepting.
 
 ## Meanwhile
 
-A wacc-only syntax can be specified in `spec/spec`, exercised by `spec/cases` under `// only: wacc`,
+A wacc-only syntax can be specified in spec/spec, exercised by `spec/cases` under `// only: wacc`,
 and run through `wac test` — the closure test in `issues/lang/0139` does all three. It cannot appear
 in a package.
 

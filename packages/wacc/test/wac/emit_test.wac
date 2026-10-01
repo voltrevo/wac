@@ -337,7 +337,7 @@ string[] sources() {
     // this from the construction reading, so it is the case that decides whether the justification is
     // still true. `issues/lang/0265c`.
     "i32 twice(i32 n) { return n * 2; } export i32 f() { fn[i32(i32)][] arr = fn[i32(i32)][1](fill: twice); return arr[0](5); }",
-    // **A `match` expression whose arms are a subtype pair.** `spec/spec/enums.md` has the arms
+    // **A `match` expression whose arms are a subtype pair.** spec/spec/enums.md has the arms
     // unifying exactly as a ternary's branches do, and the *emitter* took the first arm's type as the
     // block's result and never looked at the rest — so the `else` arm's `Base` landed where a `Sub`
     // was declared and the engine refused the module: *type error in fallthru[0] (expected (ref null
@@ -350,7 +350,7 @@ string[] sources() {
       "Base w = match (e) { case A: s, else: bb }; return w.b; }",
     // **The rest of that family, both constructs and both orders.** The bug was *which arm came
     // first*: taking the first arm's type is right for whichever arm happens to be first, so a
-    // one-order test passes on the broken compiler. `spec/spec/enums.md` makes a `match`'s arms unify
+    // one-order test passes on the broken compiler. spec/spec/enums.md makes a `match`'s arms unify
     // exactly as a ternary's, so the two are asked the same four questions — a subtype pair with the
     // parent first, and a nullable pair each way, whose answers come back as an `i32` because rung 4
     // compares against a literal and a `P?` is not one.

@@ -286,7 +286,7 @@ export i32 trap_repeating_from_a_negative_index() { test_traps_repeating_from_a_
  * The tests that expect a trap, one per index, for `covdump` to call with each trap caught.
  *
  * `cov_ledger.wac`'s `cases()` names this as `trapCase:12`
- * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`). Twelve of `bounds_test.wac`'s seventeen —
+ * (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`). Twelve of `bounds_test.wac`'s seventeen —
  * every bounds check is a guard against a caller error, which is exactly the code nothing exercises by
  * accident.
  */

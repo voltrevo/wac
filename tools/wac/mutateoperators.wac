@@ -93,7 +93,7 @@ bool isHexDigit(string c) {
   return isDigit(c) || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
 }
 
-/** `\n`, `\t`, `\r`, `\0`, and the character itself for anything else — `spec/spec/grammar.md`. */
+/** `\n`, `\t`, `\r`, `\0`, and the character itself for anything else — spec/spec/grammar.md. */
 string unescaped(string body) {
   string out = "";
   for (i32 i = 0; i < body.len(); i++) {

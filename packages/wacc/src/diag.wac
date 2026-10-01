@@ -4,7 +4,7 @@
 // found two things immediately. The codes were not unique — four of them named two different errors
 // each, which no position-comparing oracle could ever have noticed. And `report` carries a code and a
 // position and nothing else, so none of these messages can say `expected i32, found f64`: the
-// operands are not there to say it with. `spec/spec/errors.md` wants `annotation` and `hint` fields
+// operands are not there to say it with. spec/spec/errors.md wants `annotation` and `hint` fields
 // too, and those need a diagnostic that carries its operands, which is the next thing to build.
 //
 // So what follows is the rule that was broken, phrased as the reference phrases it where the spec
@@ -18,9 +18,9 @@
  */
 export string lexMessage(i32 code) {
   if (code == 1) { return "unexpected character"; }
-  // **"literal", because three other places say so.** `spec/spec/errors.md`'s
+  // **"literal", because three other places say so.** spec/spec/errors.md's
   // `§wac-diag-lex-unterm-str-m9fk2wq` block shows `unterminated string literal`, compiler/wacLex.ts
-  // pushes that string, and `packages/wacc/test/specCases.json` records it as the case's expected
+  // pushes that string, and packages/wacc/test/specCases.json records it as the case's expected
   // message. This said "unterminated string" until 2026-08-18 and nothing caught it: the differentials
   // compare lex and parse errors by *position*, not by text.
   if (code == 2) { return "unterminated string literal"; }

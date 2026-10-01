@@ -105,7 +105,7 @@ selected now:
 the identity for the identity without being told.
 
 `fieldp.wac` gains `fpIsZeroBit`, `fpEqualsBit` and `fpSelect` — 0/1 values and a mask, not `a == b ? 1
-: 0`, because a ternary is a branch: `spec/spec` counts `ternary-then` and `ternary-else` as branch
+: 0`, because a ternary is a branch: spec/spec counts `ternary-then` and `ternary-else` as branch
 points and the tool records every branch.
 
 ### It cost far less than this issue predicted

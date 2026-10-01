@@ -34,7 +34,7 @@
 // `core/test/traps_test.wac` is the package's bounds-checking half, and every one of its tests expects
 // a trap — a `Vec` indexed past its length, an `Option` unwrapped when it is `None`. A trap in `main`
 // ends the run, so they go through `trapCase`, which `covdump` calls one at a time with the trap
-// caught (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+// caught (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
 //
 // **Dropping the sweep costs eight points, not eleven** — measured, after writing eleven here from the
 // number of tests. Eleven tests reach eight branch points that nothing else reaches, which is what a

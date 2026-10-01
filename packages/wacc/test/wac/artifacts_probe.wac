@@ -114,7 +114,7 @@ export string scratchDir(Cli cli) {
  * **This is how a wac test observes what emitted code does.** Twenty-six of this package's
  * TypeScript tests instantiated the module with `WebAssembly.Module` and called an export; there is
  * no capability to instantiate wasm from wac, so the module goes to a file and the `wac` binary runs
- * it — `spec/cli/wac.md`: a first argument ending in `.wasm` is a program to run, and its exit
+ * it — spec/cli/wac.md: a first argument ending in `.wasm` is a program to run, and its exit
  * status is the program's own.
  *
  * Two consequences for a caller, both of which change what a test should look like:

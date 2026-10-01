@@ -1,6 +1,6 @@
 // A name another file keeps to itself is not a name this one can be confused by.
 //
-// `spec/spec/imports.md` says it three times. Line 16: "Only `export`-marked functions and types can
+// spec/spec/imports.md says it three times. Line 16: "Only `export`-marked functions and types can
 // be imported". `[§wac-imp-coexist-p8km2v6]`: "imported names don't collide with same names in other
 // (non-imported) files". `[§wac-samename-struct-4jhq7wn]`: two files may each declare a struct of one
 // name, "the identity of a definition is the file it was written in", and that "holds however the two
@@ -22,8 +22,8 @@
 //     Case, which more than one file declares"*.
 //
 // **The second is how the suite found it.** `packages/wacc/test/wac` builds its test files into one
-// module so they compile once rather than 54 times; `diagnosticgap_test.wac` and `bindgenwac_test.wac`
-// each keep a private `struct Case`, `ast.wac` and `speccases.wac` each export one, and the shared
+// module so they compile once rather than 54 times; diagnosticgap_test.wac and `bindgenwac_test.wac`
+// each keep a private `struct Case`, `ast.wac` and speccases.wac each export one, and the shared
 // build declined — so the directory fell back to building every file on its own. It builds with this
 // fix: `wac test packages/wacc/test/wac` printed *"the shared build … did not build, so its 54 files
 // are being built one at a time"* before and prints nothing now. `issues/lang/0154` is where that was

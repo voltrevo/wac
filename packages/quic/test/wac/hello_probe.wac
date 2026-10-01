@@ -285,7 +285,7 @@ export u8[] ackPacket(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverNa
 /**
  * One packet dropped and its frames sent again, as the two packets in order.
  *
- * A `Connection` cannot live between calls: wac has no mutable file-scope state — `spec/spec/variables.md`
+ * A `Connection` cannot live between calls: wac has no mutable file-scope state — spec/spec/variables.md
  * allows `const` there and nothing else — so a probe cannot hold one across exported functions. That
  * is a property worth keeping rather than working around, so the exchange happens inside one call and
  * hands back what it would have sent.

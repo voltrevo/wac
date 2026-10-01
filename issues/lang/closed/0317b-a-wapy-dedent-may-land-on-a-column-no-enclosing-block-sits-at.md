@@ -51,7 +51,7 @@ function is. Here it is the call site: somebody numbered these deliberately, in 
 the two that work.
 
 **And the rule is untagged, which is probably why.** Every `[§…]` clause in spec/spec/ is held to
-a case or a test by `packages/wacc/test/wac/spectags_test.wac`. This sentence carries no tag, so
+a case or a test by packages/wacc/test/wac/spectags_test.wac. This sentence carries no tag, so
 that guard never asked for one, and no case exists. The two rules either side of it in the same file
 are tagged — `§wac-wapy-nolines-4gt7wxb`, `§wac-wapy-words-p2vm9kx`. An untagged rule is a rule
 with nothing holding the compiler to it, and this is what that looks like from the outside.
@@ -124,7 +124,7 @@ and reads it back on every gate and is green; so are `wapy_test`, `wapylink_test
 **A `.wapy` case was the wrong vehicle and was nearly the shape of this fix.** `spec/cases/` is
 walked with `endsWith(name, ".wac")`, so a `.wapy` file there is picked up by nothing and would have
 left the tag held by no case at all — the guard would then have failed, but only after the file had
-looked right for a while. `spectags_test.wac` accepts a *test* as well as a case, which is what this
+looked right for a while. spectags_test.wac accepts a *test* as well as a case, which is what this
 uses.
 
 `werrMisspelled` (41) and `werrIndent` (44) are still declared, still rendered by `diag.wac`, and

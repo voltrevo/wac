@@ -1,6 +1,6 @@
 // expect: answers f = 2
 // why: a local shadows a parameter of a *different type*, in the same scope with no intervening block.
-//      `spec/spec/naming.md` states the rule for a nested block; this is the same rule with no block,
+//      spec/spec/naming.md states the rule for a nested block; this is the same rule with no block,
 //      and the answer says which binding `a.m()` reached. A compiler that keeps resolving the name to
 //      the parameter answers 1.
 //      Found while replacing thirty-three copies of `struct Rng` with one shared struct

@@ -7,7 +7,7 @@
 // entry point returns `T?`; null always means "check p.err".
 //
 // **This said "and no sum types", and the file it imports from is an enum.** `value.wac`'s
-// `JsonValue` is `export enum`, and `spec/spec/enums.md` names this package as one of the three that
+// `JsonValue` is `export enum`, and spec/spec/enums.md names this package as one of the three that
 // exercised the feature hardest. So the error path could be a `Result<T, ParseFault>` and is not;
 // what is written here is what the language had when it was written.
 

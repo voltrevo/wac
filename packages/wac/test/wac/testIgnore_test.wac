@@ -12,7 +12,7 @@
 // travels in the summary, excluding everything is its own message, and both are asserted here.
 //
 // `6vp2knq` in the names is `[§wac-cli-ignore-6vp2knq]`, the spec claim these check —
-// `spec/cli/wac.md`. A wac export cannot hold the bracketed spelling, so the suffix carries it.
+// spec/cli/wac.md. A wac export cannot hold the bracketed spelling, so the suffix carries it.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";

@@ -69,7 +69,7 @@ string[] grants() {
  * caller error is exactly the code nothing exercises by accident and one export per case is what lets a
  * test say it *wants* a trap. `trapProbe` is the guards no test file carries, reached through the
  * probes' own wrappers. Both are sweeps: `covdump` calls `name(0)`…`name(n-1)` with each trap caught
- * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`), and a case past the end returns rather than
+ * (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`), and a case past the end returns rather than
  * trapping, so a width may be an upper bound.
  */
 string[] cases() { return string[]("trapCase:145", "trapProbe:35"); }

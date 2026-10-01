@@ -1,14 +1,14 @@
 // wac's vocabulary, as the spec prints it.
 //
 // **A module of its own so it can be checked.** These live apart from `wac-language.ts` because
-// that file imports CodeMirror, and the test holding this list to `spec/spec/grammar.md` runs
+// that file imports CodeMirror, and the test holding this list to the grammar appendix runs
 // under Deno where those packages do not resolve. A guard that cannot be run is not one.
 //
-// `site/tools/site.test.ts` is the check; `packages/wacc/test/wac/speckeywords_test.wac` holds
+// `site/tools/site.test.ts` is the check; packages/wacc/test/wac/speckeywords_test.wac holds
 // wacc's lexer to the same fence, so the highlighter and the compiler agree by both agreeing with
 // the document.
 /**
- * wac's keywords, as `spec/spec/grammar.md` lists them.
+ * wac's keywords, as `spec/next/appendices/A-grammar.md` lists them.
  *
  * **`as!`, `as~` and `as@` are deliberately absent**, though the fence has them: this tokeniser
  * matches whole identifier-shaped words, and none of those three is one — they are `as` followed
@@ -20,9 +20,9 @@
  * `slice(a, from, to)`. The tokeniser below still highlights it, by matching it in that position.
  */
 export const KEYWORDS = new Set<string>([
-  "import", "export", "struct", "const", "this", "override",
-  "if", "else", "while", "for", "do", "switch", "case", "default",
-  "break", "continue", "return", "trap", "true", "false", "null",
-  "is", "not", "as", "void", "fn", "enum", "match",
-  "async", "await",
+  "as", "async", "auto", "await", "break", "case", "const", "continue", "coroutine",
+  "default", "defer", "do", "else", "enum", "export", "false", "fn", "for", "gen", "if", "import", "is",
+  "match", "matches", "namespace", "not", "null", "override", "private", "return", "static", "static_for",
+  "static_if", "static_match", "static_trap", "struct", "switch", "symbol", "this", "trap", "true",
+  "type", "typeref", "union", "virtual", "void", "while", "yield",
 ]);

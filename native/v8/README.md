@@ -228,7 +228,7 @@ wac task seed
 program — 67 MB of V8 and Rust host around a 200 KB module — and went on 2026-08-20 along with
 `app:binary`, its 105 MB `deno compile` twin. `wac app <entry.wac> -o thing` writes the module with a
 `/bin/sh` preamble that execs `wac app-run` on itself, so a distributed program is a few hundred KB
-and the engine on the machine is the one the compiler ships in. `spec/cli/wac.md`. The seed below is
+and the engine on the machine is the one the compiler ships in. spec/cli/wac.md. The seed below is
 still built by hand the same way:
 
 ```
@@ -438,7 +438,7 @@ profile under-attributing by 40%.
 | 4 | one file, and every test in it needs an oracle this host cannot supply |
 | 5 | one file, and `--filter` matched nothing in it (a skip during discovery, an error when you named the file) |
 
-3 is separate from 1 for the reason `spec/cli/wac.md` gives about traps: a script needs to tell
+3 is separate from 1 for the reason spec/cli/wac.md gives about traps: a script needs to tell
 *did not compile* from *ran and did something wrong*. 4 is separate from both because 31 of the 83
 files here are entirely host-oracle tests, and counting those as failures would mean `wac test
 packages/` could never be green — which would make the exit code useless for the one thing an exit

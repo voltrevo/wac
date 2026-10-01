@@ -1,97 +1,13 @@
-# wac — A C-Family Language for WasmGC
+# spec
 
-wac is a readable surface syntax for WebAssembly GC. It maps faithfully to
-WasmGC constructs — structs, arrays, references, subtyping, null — with
-C-family syntax. No hidden magic; every feature compiles to obvious wasm
-instructions.
+- **[next/](next/README.md)** — the definition of wac, written as examples. It is being implemented
+  (`design/lang/0016`); [next/_drafting/STATUS.md](next/_drafting/STATUS.md) says which examples the
+  compiler in this tree meets, and `packages/wacc/test/wac/specexamples_test.wac` holds every one that is
+  met to staying met.
+- **[tour.wac](tour.wac)** — the language as the compiler implements it today, in one annotated file that
+  compiles, and whose `selfTest()` returns `true`.
+- **[cases/](cases/)** — whole programs, each with its expected outcome, run by
+  `packages/wacc/test/wac/cases_test.wac`: the regression corpus for bugs found and fixed.
 
-Targets real .wasm binary format with GC extensions — output runs via
-WebAssembly.instantiate in Deno. No custom VM or interpreter. The compile-to-run
-loop: wac source -> lex -> parse -> type check -> emit wasm bytecode -> assemble
-binary -> instantiate and call.
-
-## Which compiler this describes
-
-**wacc** — `packages/wacc`, the compiler written in wac. As of 2026-08-12 the specification targets it,
-and new features are built there. The TypeScript compiler in `compiler/` is a **subset with stated
-omissions**, kept to build the first `wacc.wasm` from a cold checkout, and changed only for a large
-correctness fix or for a feature wacc's own sources need. See
-[design/lang/0003](../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md) for
-what that changes about how a claim here is checked.
-
-## Start here
-
-- [tour.wac](tour.wac) — the whole language in one annotated file. Every feature
-  with the rule that governs it, the errors it rejects, and what wac deliberately
-  lacks. It compiles, and its `selfTest()` returns `true`, so it cannot drift
-  from the compiler silently. Read this before the spec files below.
-
-## Language spec
-
-- [spec/types.md](spec/types.md) — primitive types, reference types, nullability
-- [spec/variables.md](spec/variables.md) — declarations, const, mutability
-- [spec/structs.md](spec/structs.md) — struct types, fields, methods, construction, subtyping
-- [spec/arrays.md](spec/arrays.md) — GC arrays, construction, defaults
-- [spec/casts.md](spec/casts.md) — numeric casts (as/as!/as~), reference casts (is/as)
-- [spec/operators.md](spec/operators.md) — type rules, precedence, compound assignment
-- [spec/control.md](spec/control.md) — if/else, while, for, do-while, break/continue, switch, ternary
-- [spec/functions.md](spec/functions.md) — declarations, exports, void, return types
-- [spec/imports.md](spec/imports.md) — file-based imports, renaming with as
-- [spec/naming.md](spec/naming.md) — naming collisions, shadowing rules
-- [spec/funcrefs.md](spec/funcrefs.md) — function references, higher-order functions
-- [spec/async.md](spec/async.md) — async functions, await, and the tickets they are built on
-- [spec/grammar.md](spec/grammar.md) — formal EBNF grammar
-- [spec/strings.md](spec/strings.md) — string type, literals, indexing, concatenation
-- [spec/bindgen.md](spec/bindgen.md) — TypeScript bindgen: type mapping, output examples
-- [spec/errors.md](spec/errors.md) — structured error reporting format
-- [spec/buffer.md](spec/buffer.md) — Buffer: growable byte buffer example with spec tests
-- [spec/linkedlist.md](spec/linkedlist.md) — LinkedList: singly-linked list example with spec tests
-
-## CLI
-
-- [cli/wac.md](cli/wac.md) — the `wac` command (check, compile, build, bindgen, run, test, sh,
-  uninstall)
-
-## Adding a clause
-
-A `[§wac-…-…]` tag makes a sentence checkable, and two things then have to be true of it, in two
-places that are easy to miss because neither is in this directory:
-
-- **Something outside `compiler/` has to name the tag.** `packages/wacc/test/wac/spectags_test.wac`
-  walks `spec/spec` and `spec/cli` and fails with the list of any tag held only by the reference's
-  own tests — a clause wacc could break with nothing noticing. Name it in a wac test, or add a
-  `// spec:` line to the `spec/cases/` file that holds it.
-- **The site states how many tagged claims there are, and the number is checked.**
-  `site/src/next/Checked.tsx` says it in a sentence and `site/tools/site.test.ts` counts the tags in
-  `spec/` and compares. So adding a clause is a two-file change. That test runs in the push gate and
-  **not** in `wac task test` or `wac task docs`, which is thirteen minutes between writing the
-  clause and finding out — so it is worth changing the number while the clause is in front of you.
-
-## Verification
-
-- [examples.md](examples.md) — example programs and expected outputs
-- [done.md](done.md) — completion criteria
-
-## For later
-
-- **Pipeline operator** — `x |> f(_, y)` with explicit `_` placeholder
-- **Slices / sub-arrays** — views into arrays without copying
-- **Enum sugar** — `enum Shape { Circle(f64), Rect(f64, f64) }` generating
-  struct hierarchies automatically
-- **Better host interop** — passing GC refs across the JS boundary
-- **Bindgen JSON sugar** — automatic JSON<->struct/array serialization in
-  generated TypeScript wrappers
-- **Match expression** — exhaustive pattern matching on enums/types
-- **Linear memory** — `mem.i32[addr]` / `mem.u8[addr]` syntax for direct
-  wasm memory access, `memory` declarations, data segments
-- **Unsigned types** — `u32`, `u64` as distinct types with unsigned operators
-- **Generics** — `struct List<T>`, `T[] map<T, U>(T[] arr, fn[U(T)] f)`
-- **Host function imports** — `import { readFile } from "host";` passing
-  functions in at the top level
-- **Closures** — function references that capture variables from enclosing scope
-- **Immutable globals** — module-level constants, compile-time evaluated
-- **Abstract ref types** — `structref`, `arrayref`, `eqref` as parameter types
-- **Bulk array ops** — `array.copy`, `array.fill` exposed as methods
-- **Final structs** — prevent subtyping with `final` keyword
-- **Type aliases and type algebra** — `type Comparator = fn[bool(i32, i32)]`
-- **JS + d.ts bindgen** — emit `.js` + `.d.ts` instead of `.ts`
+spec/spec and spec/cli, the previous definition, were retired when `next/` became the target; appendix D
+of `next/` says what became of each of their tags.

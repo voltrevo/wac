@@ -79,8 +79,8 @@ export string test_two_fences_differing_anywhere_compare_unequal(Core core, Cli 
 
 export string test_fences_are_executed_in_spec_and_package_readmes_and_nowhere_else(Core core, Cli cli) {
   T t = T.create();
-  t.isTrue(fencesAreRun("spec/spec/types.md"), "spec/spec");
-  t.isTrue(fencesAreRun("spec/cli/wac.md"), "elsewhere under spec/");
+  t.isTrue(fencesAreRun("spec/next/2-types/08-primitives.md"), "spec/next");
+  t.isTrue(fencesAreRun("spec/next/README.md"), "elsewhere under spec/");
   t.isTrue(fencesAreRun("packages/json/README.md"), "a package README");
   t.isTrue(!fencesAreRun("issues/lang/open/0235a-written-type-arguments-parse-as-a-comparison.md"),
            "an issue");
@@ -101,7 +101,7 @@ export string test_the_verdict_over_two_ranges_that_are_in_this_repository(Core 
   // and the wiring is the half that decides whether the gate skips four minutes of work.
   //
   // `e572aee2` is the case this exists for, and it is not a contrived one: four markdown files, of
-  // which `spec/spec/generics.md` changed 231 bytes of prose with its 24 fences byte-identical, and
+  // which spec/spec/generics.md changed 231 bytes of prose with its 24 fences byte-identical, and
   // two issue files that *did* change fences — 3 to 0 and 0 to 1 — which are correctly not consulted
   // because nothing compiles a fence in `issues/`. Checked against an independent extraction on
   // 2026-08-27 before being written down here.
@@ -132,7 +132,7 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
   // test to compile fences — from `docs/`, say — that helper would quietly answer false for it and the
   // gate would skip work that mattered. This fails instead, naming the file.
   string[] known = string[](
-    "packages/wacc/test/wac/specfences_test.wac",
+    "packages/wacc/test/wac/specexamples.wac",
     "tools/wac/docsignatures_test.wac",
     "tools/docsOnly.wac",
     "tools/wac/docsonly_test.wac",
@@ -142,7 +142,7 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
     "core/map.wac"
   );
   string[] why = string[](
-    "compiles every fence in spec/spec that checks clean",
+    "runs every example in spec/next",
     "matches export lines in packages/*/README.md",
     "defines wacFences, the extractor this predicate is built on",
     "this file, which contains the search needle itself",

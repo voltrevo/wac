@@ -354,7 +354,7 @@ export string test_a_project_specifier_does_not_depend_on_the_working_directory(
  * A bare specifier that names no mapping is refused, not joined — `[§wac-import-undefined-h4mq9xk]`,
  * `issues/system/0234a`.
  *
- * **`spec/spec/imports.md` defines three kinds and this is none of them.** A path is relative, `@/`
+ * **spec/spec/imports.md defines three kinds and this is none of them.** A path is relative, `@/`
  * is the project root, and a bare name **may name a mapping** the manifest declares.
  * `[§wac-import-mapped-6np2rkq]` Nothing makes a bare name fall back to path arithmetic — but every
  * host did it, and `src/sub/lib.wac` is exactly the file that arithmetic finds.

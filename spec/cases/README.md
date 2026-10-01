@@ -4,7 +4,7 @@ A compiler is easiest to fix when the failure is four lines long. Everything her
 whole program, its expectation written at the top, and nothing else: no reference
 compiler to agree with, no package graph to stand up, no corpus to load, no timing.
 
-The point is what a *next* compiler needs. `spec/spec` says what the language is;
+The point is what a *next* compiler needs. spec/spec says what the language is;
 these say what an implementation got wrong on the way to it, reduced until nothing can
 be removed. Most of them cost a slot or two to find through an expensive oracle — the
 342-file corpus, a package's own suite, a differential against the reference — and cost
@@ -26,7 +26,7 @@ because a host-side error is the runner being wrong about the program rather tha
 program doing what the case says.
 
 `traps` was added for `issues/lang/0085`, where the rule is that a checked cast traps on a
-value that does not fit. Half of what `spec/spec/casts.md` promises has that shape, as do the
+value that does not fit. Half of what spec/spec/casts.md promises has that shape, as do the
 bounds checks and `!` on a null, and a corpus with only the other three expectations could
 state none of it — the nearest a case could get was an answer, which is exactly the wrong
 answer the bug produced.

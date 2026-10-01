@@ -1275,7 +1275,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
-        // `spec/cli/wac.md` documents and which was only ever implemented in the reference CLI.
+        // spec/cli/wac.md documents and which was only ever implemented in the reference CLI.
         //
         // `main` wins where it exists, so a program's arguments are never mistaken for a function
         // name — the ambiguity only arises for a module that has both, and a module with a `main`
@@ -1618,7 +1618,7 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
 ///
 /// The reference CLI had this and the binary did not, which is the gap that kept `wacx` alive.
 /// Arguments are coerced by the **declared parameter type** rather than guessed from the text —
-/// `spec/cli/wac.md` — so `1` is an `i32` where one is declared and the string `"1"` where a
+/// spec/cli/wac.md — so `1` is an `i32` where one is declared and the string `"1"` where a
 /// `string` is, and a `string` parameter takes the argument exactly as written, which is the whole
 /// point of a command line.
 fn call_named(

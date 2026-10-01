@@ -10,8 +10,8 @@
 
 spec/spec/grammar.md has drifted three times before this — four productions in `issues/lang/0020`,
 four more in `0320a`, and `await`, which had no production at all, earlier today. Each was found by
-reading, and each guard built afterwards was a **list**: `speckeywords_test.wac` checks the fence,
-`specproductions_test.wac` checks constructs somebody has already been wrong about. A list cannot
+reading, and each guard built afterwards was a **list**: speckeywords_test.wac checks the fence,
+specproductions_test.wac checks constructs somebody has already been wrong about. A list cannot
 report what nobody added to it.
 
 `tools/specparse.ts` runs the grammar instead. It reads the EBNF blocks, flattens them to BNF and
@@ -63,7 +63,7 @@ generate something from this file will meet it in the first hour.
 ## Fixed in
 
 spec/spec/grammar.md, this commit. Every one is a production added or widened; none changes the
-language. `packages/wacc/test/wac/specproductions_test.wac` gains rows for `type_name` and `await`;
+language. packages/wacc/test/wac/specproductions_test.wac gains rows for `type_name` and `await`;
 the rest are guarded by `specparse` itself, which is a command rather than a test because Earley
 over the whole tree is twenty-five minutes of work rather than a millisecond.
 

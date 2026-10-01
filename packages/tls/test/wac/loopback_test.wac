@@ -944,7 +944,7 @@ export string test_the_first_record_back_is_refused_on_its_framing() {
   // `test_a_corrupted_server_flight_is_refused_at_every_position`, by *trapping* rather than by
   // failing an assertion. So the check is not tidiness about a malformed field: it is the thing
   // standing between a length a stranger wrote and a read off the end of the buffer, which
-  // `spec/spec/arrays.md` `[§wac-arr-oob-7jby7f8]` ends the process for.
+  // spec/spec/arrays.md `[§wac-arr-oob-7jby7f8]` ends the process for.
   u8[] real = serverHello(u8[32](fill: 0x41), u8[0](), 0x1301, groupHybrid(), u8[1120](fill: 0x22));
   i32[] claims = i32[](0, 1, real.len(), real.len() + 1, 0xFFFFFF);
   for (i32 i = 0; i < claims.len(); i++) {

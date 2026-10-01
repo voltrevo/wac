@@ -33,7 +33,7 @@ wac: the shared build for packages/wacc/test/wac did not build, so its 23 files 
 declaring one name are fine — each means its own, and `keyAt` qualifies the second as `S@2` — while a name
 a file reaches for that *two of its imports* declare is refused, because the import list says which files
 and not which names came from which. A directory whose test files are linked into one module
-(`issues/system/0192`) makes that reachable by accident: `ast.wac` exports `Case`, `diagnosticgap_test.wac`
+(`issues/system/0192`) makes that reachable by accident: `ast.wac` exports `Case`, diagnosticgap_test.wac
 declares a private one, a third file exports one, and a file that names none of them cannot be resolved.
 Whether the linker should qualify further rather than refuse is the decision left here.
 
@@ -144,11 +144,11 @@ The ingredients, each necessary in the real case:
 
 - `packages/wacc/src/ast.wac` exports `struct Case`, and it is in the graph of every test that uses the
   compiler's API;
-- `packages/wacc/test/wac/diagnosticgap_test.wac` declares a **private** `struct Case`, and the lane links
+- packages/wacc/test/wac/diagnosticgap_test.wac declares a **private** `struct Case`, and the lane links
   a directory's test files into one module (`issues/system/0192`);
 - the new file exports a third.
 
-Removing `diagnosticgap_test.wac` from the same run takes the failures from 25 to **0** with everything
+Removing diagnosticgap_test.wac from the same run takes the failures from 25 to **0** with everything
 else unchanged. Two declarations are the status quo and are fine.
 
 Name-specific, too: `struct Expr` — also exported by `ast.wac`, also in the graph — does nothing, and
@@ -265,7 +265,7 @@ Corrections, each measured today:
   declaration in a graph the reader did not write**, which is what `import … from api.wac` brings
   (`ast.wac` exports `struct Case`).
 - **The private declaration is not necessary.** This issue lists three ingredients as *"each
-  necessary in the real case"*, one of them `diagnosticgap_test.wac`'s private `struct Case`. Two
+  necessary in the real case"*, one of them diagnosticgap_test.wac's private `struct Case`. Two
   *exported* locals plus `ast.wac`'s is enough; adding a private third changes nothing.
 - **Two declarations really are fine**, which this issue has right: one local `export struct Case`
   plus the API's builds a 626 KB module from 19 files and runs.
@@ -412,12 +412,12 @@ first file — and it is not in the output. The aggregate for this directory bui
 That fits the history. This issue was filed on 2026-08-18; **`9b4f2c4b`, the next day**, made a file's
 private declarations stop being candidates for other files — spec/spec/imports.md line 16, "only
 export-marked functions and types can be imported". The trigger described above is
-*"`ast.wac` exports `Case`, `diagnosticgap_test.wac` declares a private one, a third file exports
+*"`ast.wac` exports `Case`, diagnosticgap_test.wac declares a private one, a third file exports
 one"*, and one of those three stopped counting. Nobody re-measured the reproduction afterwards, so the
 text above still reads as live.
 
 Two exported `Case` declarations remain — `packages/wacc/src/ast.wac` and
-`packages/wacc/test/wac/speccases.wac` — so the *count* is still two. What has changed is that nothing
+packages/wacc/test/wac/speccases.wac — so the *count* is still two. What has changed is that nothing
 in that link reaches the name by the third branch any more, which is the same thing my two
 constructions showed from the other direction.
 
@@ -461,7 +461,7 @@ in the file that declared it, and one a file *writes* has to be imported.
 **What would make it reachable again is relaxing that clause**, which is the rule question this issue has
 carried since 2026-08-18: whether a name two of a file's imports declare should be qualified further
 rather than refused. That question survives; the bug does not. `§wac-type-name-scope-8vqk3mn` is the
-guard, it is held by a case, and `spectags_test.wac` counts it among 435 of 435.
+guard, it is held by a case, and spectags_test.wac counts it among 435 of 435.
 
 Closed as unreachable rather than as fixed, because nobody fixed it — two other changes made it
 unreachable, and six days passed before anyone re-measured. That is the thing worth carrying forward: a

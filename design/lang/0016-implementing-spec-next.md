@@ -8,7 +8,7 @@
 
 `spec/next` is the next version of wac, written as examples. The target is a tree where:
 
-- every example in `spec/next` meets its expectations — `packages/wacc/test/wac/specexamples_probe.wac`
+- every example in `spec/next` meets its expectations — packages/wacc/test/wac/specexamples_probe.wac
   reports no missed example, and every unsupported one is unsupported for a stated reason that is a property
   of the probe rather than of the language;
 - every package, tool and test in the repository is written in the new language, and the suite is green;

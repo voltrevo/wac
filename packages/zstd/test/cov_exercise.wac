@@ -29,7 +29,7 @@
 // half — "the checks are close enough together that stepping over bytes steps over whole branches".
 // Six frames at three masks each is more than a hundred thousand calls, so a name apiece is not a
 // file anybody reads. `covdump` takes `name:<n>` and calls `name(0)`…`name(n-1)` with each trap caught
-// (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`); the sweeps below are those exports and the
+// (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`); the sweeps below are those exports and the
 // ledger holds their widths.
 //
 // ## The oracle, and why every export asks the same question

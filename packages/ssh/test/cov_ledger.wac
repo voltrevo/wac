@@ -63,7 +63,7 @@ string[] grants() {
  * key that is not sixty-four, an X25519 scalar that is not thirty-two, padding that runs out. Every one
  * of those lengths is fixed by the protocol, so a guard is the only thing between a short buffer and a
  * read past its end. `covdump` calls `trapProbe(0)`…`trapProbe(12)` with each trap caught
- * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+ * (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
  */
 string[] cases() { return string[]("trapProbe:13"); }
 

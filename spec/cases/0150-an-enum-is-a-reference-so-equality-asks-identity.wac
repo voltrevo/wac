@@ -9,7 +9,7 @@
 //
 // The corpus is where this belongs rather than only in wacc's own differential, because the claim is
 // about the language: `==` on a reference asks the wrong question whatever compiles it, and a case
-// here is checked by both. `spec/spec/operators.md` says so for structs, arrays, enums and every
+// here is checked by both. spec/spec/operators.md says so for structs, arrays, enums and every
 // nullable form; `string` is the exception, and only unqualified — `string?` goes to `is` too.
 //
 // What was almost certainly meant is a `match`, which is how an enum is taken apart, or `is` when

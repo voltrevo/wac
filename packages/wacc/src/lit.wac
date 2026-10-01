@@ -10,7 +10,7 @@
 // conversion is written out below, and the reason for one copy is the same either way.
 
 //
-// `spec/spec/types.md` says a literal rounds to *nearest*, and nearest is not something floating
+// spec/spec/types.md says a literal rounds to *nearest*, and nearest is not something floating
 // point can be asked for while it is doing the asking: scaling a mantissa by ten repeatedly rounds
 // at every step, and `1e300` came out a unit in the last place away. So the value is computed
 // exactly — as one integer over another — and rounded once, at the end, where the answer is decided.

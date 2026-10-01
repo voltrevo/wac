@@ -39,7 +39,7 @@
 // 130 of this package's 283 tests are `test_traps_*`: a guard against a caller error is exactly the code
 // nothing exercises by accident, and one export per case is what lets a test say it *wants* a trap. A
 // trap ends the call, so they cannot be called from `main` — `trapCase` is one sweep over all 130
-// (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+// (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
 //
 // **The exercise does not assert that a forgery is refused.** `cov.ts` had a `mustTrap` that failed if a
 // call returned, on the reasoning that catching silently would turn "the forgery was accepted" into a

@@ -35,7 +35,7 @@ that asks the checker is told the program is fine.
 
 ## What this corrects
 
-`packages/wacc/test/wac/specsingle_test.wac`'s single `KNOWN_MISSES` entry says of this case:
+packages/wacc/test/wac/specsingle_test.wac's single `KNOWN_MISSES` entry says of this case:
 
 > A single-file runner has no `b.wac`, so it cannot refuse it … The miss is the runner's scope rather
 > than the checker's, which is why it is known rather than fixed.
@@ -46,7 +46,7 @@ same commit as this issue.
 
 ## The rule is safe to add, and that is measured too
 
-Over the 744 recorded cases in `packages/wacc/test/specCases.json`:
+Over the 744 recorded cases in packages/wacc/test/specCases.json:
 
 - **688 are single-file, and 0 of the legal ones import a relative path.** So a rule that refuses an
   import naming a file the caller did not supply cannot make a legal program illegal anywhere in the
@@ -83,7 +83,7 @@ saying which name was not found.
 
 ## What closes when it lands
 
-`specsingle_test.wac`'s `KNOWN_MISSES` goes empty — 304 of 304 illegal programs refused — and
+specsingle_test.wac's `KNOWN_MISSES` goes empty — 304 of 304 illegal programs refused — and
 `packages/wacc/README.md`'s type-check row stops carrying an exception.
 
 ## The single-file half is fixed, and the other half now has a measured blocker — agent-a, 2026-08-20
@@ -95,7 +95,7 @@ One file supplied means every non-builtin specifier is unsatisfiable, so the lis
 specifier `isBuiltinSpec` does not claim. The diagnostic is `errMissingImportFile` (77), at the
 import's own token, with the path in the annotation.
 
-`specsingle_test.wac`: **317 of 317** illegal single-file programs refused, `KNOWN_MISSES` **empty** —
+specsingle_test.wac: **317 of 317** illegal single-file programs refused, `KNOWN_MISSES` **empty** —
 the closing condition this issue named. Its comment said *"refusing it would mean refusing every
 import, which is the opposite of right"*, the second wrong reading of this case in a row, corrected in
 place: refusing an import naming a file **nobody supplied** is not refusing every import.

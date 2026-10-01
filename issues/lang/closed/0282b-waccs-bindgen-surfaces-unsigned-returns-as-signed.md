@@ -48,7 +48,7 @@ and fixed in the reference's bindgen, and closed against this clause.
 
 **Why it was not noticed.** The clause is held by exactly two things: the test in
 compiler/wacSpec.test.ts, which tests the *reference's* bindgen and is deleted with it, and a case
-in `packages/wacc/test/specCases.json`, which is extracted from that same TypeScript test and checks
+in packages/wacc/test/specCases.json, which is extracted from that same TypeScript test and checks
 what the *program* answers rather than what the glue converts. So the only real check was inside the
 directory being retired, pointed at the implementation being retired.
 

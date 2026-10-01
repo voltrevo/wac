@@ -2,7 +2,7 @@
 //
 // A traced build records an ordered journal of branches *and array indices*, and `wac ctcompare`
 // says where two runs' journals first part. Two runs that differ only in a secret must not part. Read
-// `spec/cli/wac.md`'s `ctcompare` clause for what a pass does and does not mean — in short, a pass is
+// spec/cli/wac.md's `ctcompare` clause for what a pass does and does not mean — in short, a pass is
 // evidence for the inputs tested, a failure is definite.
 //
 // The package is not constant-time and does not claim to be. These tests exist so that claim is a

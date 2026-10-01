@@ -47,7 +47,7 @@ A one-member tuple is the exception that needs its comma: `(T,)` is a tuple and 
 ## Modules
 
 ```ebnf
-module         = { import | decl } ;
+program        = { import | decl } ;                       (* one module, one file *)
 
 decl           = [ "export" ] , ( func_decl | struct_decl | enum_decl | type_decl
                                 | static_decl | symbol_decl | namespace_decl )
@@ -122,15 +122,17 @@ statement      = block
                | "defer" , statement                           (* 25 *)
                | expr , ";" ;
 
-local_decl     = [ "const" | "static" ] , ( type | "auto" ) , name , [ "=" , expr ] , ";" ;
+local_decl     = local_head , ";" ;
+local_head     = [ "const" | "static" ] , ( type | "auto" ) , name , [ "=" , expr ] ;
                  (* a local may be declared unassigned and assigned before it is read: 17 *)
 destructure    = tuple_pattern , "=" , expr , ";" ;                           (* 14 *)
 tuple_pattern  = "(" , binder , { "," , binder } , [ "," ] , ")"
                | ( type | "auto" ) , "(" , name , { "," , name } , ")" ;
 binder         = [ type | "auto" ] , name | tuple_pattern ;
 
-assign         = lvalue , assign_op , expr , ";"
-               | ( "++" | "--" ) , lvalue , ";" | lvalue , ( "++" | "--" ) , ";" ;
+assign         = assign_head , ";" ;
+assign_head    = lvalue , assign_op , expr
+               | ( "++" | "--" ) , lvalue | lvalue , ( "++" | "--" ) ;
 assign_op      = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | ">>>="
                | "&=" | "|=" | "^=" ;
 lvalue         = ( name | "this" ) , { "!" | "." , member_ref | "[" , expr , "]" } ;
@@ -148,7 +150,10 @@ static_if      = "static_if" , "(" , expr , ")" , block , [ "else" , ( block | s
 static_for     = "static_for" , "(" , [ for_init ] , ";" , [ expr ] , ";" , [ for_step ] , ")" , block ;
 ```
 
-`for_init` and `for_step` are a `local_decl` or `assign` without its `;`, or an expression.
+```ebnf
+for_init       = local_head | assign_head | expr ;
+for_step       = assign_head | expr ;
+```
 
 ## Expressions
 
@@ -278,11 +283,15 @@ exponent       = ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit | "_" } ;
 hex            = digit | "a".."f" | "A".."F" ;
 
 CHAR           = "'" , ( char_char | char_escape ) , "'" ;
+char_char      = (* any character except ' and \ *) ;
+string_char    = (* any character except " and \, and no \{ *) | string_escape ;
 STRING         = '"' , { string_char } , '"' ;                (* with no `\{` in it *)
 STR_HEAD       = '"' , { string_char } , "\{" ;
 STR_MID        = "}" , { string_char } , "\{" ;
 STR_TAIL       = "}" , { string_char } , '"' ;
-BLOCK_STRING   = '"""' , NEWLINE , { any } , '"""' ;          (* the margin is the least indentation; never
+BLOCK_STRING   = '"""' , NEWLINE , { any } , '"""' ;
+NEWLINE        = (* a line break *) ;
+any            = (* any character; the block ends at the first """ *) ;          (* the margin is the least indentation; never
                                                                  interpolates: 16 *)
 
 string_escape  = "\" , ( "n" | "t" | "r" | "\" | '"' | "0" | unicode ) ;

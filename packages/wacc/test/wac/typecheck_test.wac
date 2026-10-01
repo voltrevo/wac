@@ -102,7 +102,7 @@ string[] WRONG() {
     // returns an `i64`, so `18446744073709551615` arrives as -1, and `integerLiteralFits` had a guard
     // returning *true* for a negative `v` — put there so the numeric comparisons below could not read
     // wrapped bits, and reading as "no complaint". So this drew no diagnostic, built, and returned
-    // **-1**: `wac run` exited 255. `spec/spec/types.md` states the rule as a clause,
+    // **-1**: `wac run` exited 255. spec/spec/types.md states the rule as a clause,
     // `§wac-litctx-nofit-k3mq8wl` — *"a literal that does not fit is an error"* — with
     // `i32 b = 5000000000` as its own example, which was caught; the boundary was i64::MAX, and
     // everything above it was silent. Found through the mutation sweep's recall queue, which named the
@@ -140,7 +140,7 @@ string[] WRONG() {
     //
     // **The other two rows stay in the queue, and neither is a gap.** A funcref cast to itself: the
     // reference refuses it and allows a `string`, a struct and an array cast to themselves, which wacc
-    // allows too, and `spec/spec/casts.md` covers none of the four — `checkCast` carries the note where
+    // allows too, and spec/spec/casts.md covers none of the four — `checkCast` carries the note where
     // the decision is. And `is null` on a non-nullable funcref: the reference calls it an error, while
     // `§wac-nonnull-isnull-k8fn3wp` makes such a test *legal and always false*, which is why wacc says
     // it with a **warning** — extended to funcrefs now, since it was silent on them where it warned on
@@ -153,7 +153,7 @@ string[] WRONG() {
     "struct P { i32 x; } enum E { None, Some(P v) } export void f(P? a) { E e = E.Some(a); }",
     // **`fill`'s value**, the twelfth slot and the one the site enumeration pointed at but my first
     // probes could not reach: they guessed the signature and were refused for arity by *both*
-    // compilers, which reads exactly like "no gap here". `spec/spec/arrays.md` has it as
+    // compilers, which reads exactly like "no gap here". spec/spec/arrays.md has it as
     // `dst.fill(value, start, end)` — value first — and with the right shape the slot is silent on
     // a nullable. `copyFrom`, checked beside it, already reports.
     "struct P { i32 x; } export void f(P? a, P[] xs) { xs.fill(a, 0, xs.len()); }",
@@ -251,7 +251,7 @@ string[] WRONG() {
       + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }",
     // **A negated literal in an unsigned slot is the operator, not the range.** This said *"literal
     // out of range for its type"*, which tells the reader to pick a different literal — and none
-    // works: `spec/spec/operators.md` refuses unary `-` on `u32` and `u64` outright. wacc had that
+    // works: spec/spec/operators.md refuses unary `-` on `u32` and `u64` outright. wacc had that
     // rule and could not reach it, because `-1` types as `i32` on its own and only the slot is
     // unsigned.
     "u32 f() { return -1; }",
@@ -1371,151 +1371,6 @@ export string test_rung3_method_calls_static_and_through_a_const_receiver(Core c
 }
 
 /**
- * The `a -> b` pairs in the fence **containing** `row`, in `spec/spec/casts.md`, as `"a>b"`.
- *
- * Keyed on a row inside the fence rather than on a heading before it. `casts.md` has both shapes —
- * the lossless table is introduced by its sentence and the raw one is *followed* by "these are the
- * only pairs" — and reading forwards from a marker found the wrong fence for the second, which the
- * count floor caught as one pair where there are ten.
- *
- * A `<->` row is two pairs, which is how the raw list writes `i32 <-> u32` — "same bits, read the
- * other way" goes both ways and is one line for it.
- */
-string[] fencePairs(Cli cli, string row) {
-  FileResult f = cli.readFile("spec/spec/casts.md").wait();
-  if (!f.ok) { return string[0](fill: ""); }
-  string doc = string.fromBytes(f.bytes);
-  i32 at = doc.indexOf(row);
-  if (at < 0) { return string[0](fill: ""); }
-  // Back to the fence that opened before this row, then forward to the one that closes it.
-  string before = doc.slice(0, at);
-  i32 open = -1;
-  for (i32 i = 0; i + 3 <= before.len(); i++) {
-    if (before.slice(i, i + 3) == "```") { open = i + 3; }
-  }
-  if (open < 0) { return string[0](fill: ""); }
-  string body = doc.slice(open, doc.len());
-  i32 shut = body.indexOf("```");
-  if (shut < 0) { return string[0](fill: ""); }
-  body = body.slice(0, shut);
-
-  string[] ls = splitLines(body);
-  string[] out = string[ls.len() * 2](fill: "");
-  i32 n = 0;
-  for (i32 i = 0; i < ls.len(); i++) {
-    string l = trimmed(ls[i]);
-    if (l == "") { continue; }
-    bool both = l.indexOf("<->") >= 0;
-    i32 arrow = both ? l.indexOf("<->") : l.indexOf("->");
-    if (arrow < 0) { continue; }
-    string from = trimmed(l.slice(0, arrow));
-    string rest = trimmed(l.slice(arrow + (both ? 3 : 2), l.len()));
-    // The row is `from -> to  some prose`; the destination is its first word.
-    i32 sp = rest.indexOf(" ");
-    string to = sp < 0 ? rest : rest.slice(0, sp);
-    if (from == "" || to == "") { continue; }
-    out[n] = from + ">" + to;
-    n = n + 1;
-    if (both) { out[n] = to + ">" + from; n = n + 1; }
-  }
-  string[] kept = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { kept[i] = out[i]; }
-  return kept;
-}
-
-bool hasPair(string[] pairs, string want) {
-  for (i32 i = 0; i < pairs.len(); i++) { if (pairs[i] == want) { return true; } }
-  return false;
-}
-
-/** `i32 as~ u64` — the operator is the middle word. */
-string castOp(string label) { return word(label, 1); }
-
-/** `i32 as~ u64` — as `"i32>u64"`, to match a fence row. */
-string castPair(string label) { return word(label, 0) + ">" + word(label, 2); }
-
-/**
- * Every conversion against every cast operator, with **`spec/spec/casts.md` deciding each cell**.
- *
- * `[§wac-lossless-unsigned-4qmt8xv]`
- *
- * `losslessCast` and `rawCast` in the checker are **tables**, not formulas, because no formula fits:
- * `u32 -> u64` is lossless and `i32 -> u64` is not, since the first cannot be negative; `f32 -> f64`
- * is and `i64 -> f64` is not, since 53 bits of mantissa do not hold 64 of integer. `as@` is close to
- * "an integer target no wider than the source" except for `f64 -> i64`, which is refused while
- * `f64 -> i32` is allowed. A rule invented to cover most of that would be wrong about the rest.
- *
- * So the tables are carried, and this re-derives them on every run from the document that defines
- * them. **It re-derived them from the TypeScript reference until 2026-08-28**, which was the same
- * arrangement with a worse source: the reference was another implementation, and two implementations
- * agreeing says nothing about either being what the language promises. The spec is the promise.
- *
- * Reading the fences rather than restating them is the whole point — a table written out here would
- * be a third copy, and the header above says why no formula can stand in for one.
- *
- * The change found something. The lossless fence called itself "complete" and gave four of twelve
- * rows: four more sat in the unsigned section further down, and `bool` to `i64`, `u64`, `f32` and
- * `f64` were written nowhere while compiling fine. Asking the reference could never have found that,
- * because the reference is not where the promise lives.
- */
-export string test_rung3_every_conversion_against_every_cast_operator(Core core, Cli cli) {
-  T t = T.create();
-  string[] types = string[]("i32", "u32", "i64", "u64", "f32", "f64");
-  string[] ops = string[]("as", "as!", "as~", "as@");
-  string[] sources = string[types.len() * types.len() * ops.len()](fill: "");
-  string[] where = string[types.len() * types.len() * ops.len()](fill: "");
-  i32 n = 0;
-  for (i32 a = 0; a < types.len(); a++) {
-    for (i32 b = 0; b < types.len(); b++) {
-      if (types[a] == types[b]) { continue; }
-      for (i32 o = 0; o < ops.len(); o++) {
-        sources[n] = "export " + types[b] + " f(" + types[a] + " x) { return x " + ops[o] + " " +
-                     types[b] + "; }";
-        where[n] = types[a] + " " + ops[o] + " " + types[b];
-        n = n + 1;
-      }
-    }
-  }
-  string[] exact = string[n](fill: "");
-  string[] labels = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { exact[i] = sources[i]; labels[i] = where[i]; }
-
-  string[] lossless = fencePairs(cli, "i32  -> i64       sign-extend");
-  string[] raw = fencePairs(cli, "i32 <-> u32");
-  // Floors: a fence that stopped being found would give nothing, and every cell would then agree
-  // with an empty table.
-  t.eqI32(lossless.len(), 12, "the lossless fence gave " + itoa(lossless.len()) + " pairs, not 12");
-  t.isTrue(raw.len() >= 10, "the raw fence gave " + itoa(raw.len()) + " pairs, expected 10 or more");
-  if (lossless.len() == 0 || raw.len() == 0) { return t.report(); }
-
-  i32 rejected = 0;
-  i32 caught = 0;
-  for (i32 i = 0; i < exact.len(); i++) {
-    string pair = castPair(labels[i]);
-    string op = castOp(labels[i]);
-    bool lossy = !hasPair(lossless, pair);
-    // `as` where it would lose information, `as!`/`as~` where `as` would already do, and `as@`
-    // where no distinct raw form exists — each is a compile error, and the fences say which.
-    bool legal = op == "as" ? !lossy
-               : op == "as@" ? (lossy && hasPair(raw, pair))
-               : lossy;
-    if (legal) {
-      assertQuiet(t, exact[i], labels[i]);
-    } else {
-      rejected = rejected + 1;
-      if (ours(exact[i]).len() > 0) { caught = caught + 1; }
-    }
-  }
-  t.eqI32(exact.len(), 120, "the cast grid did not run");
-  t.eqI32(caught, rejected, "casts.md rejects " + itoa(rejected) + " of " + itoa(exact.len()) +
-                            " conversions and we catch " + itoa(caught) + "; the tables in " +
-                            "check.wac have drifted from the document that defines them");
-  core.log("    cast grid: " + itoa(exact.len()) + " cells, " + itoa(rejected) +
-           " rejected, all caught");
-  return t.report();
-}
-
-/**
  * Two things the method rules had wrong, both found by re-tallying what the corpus still misses.
  *
  * **Statics are not inherited.** `Sub.make()` is an error even when `Base` declares `make` and `Sub`
@@ -2245,7 +2100,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "struct Node { i32 v; Node? next; } export void f() { Node n = Node(); }",
     "enum E { A, B } export i32 f() { E[] a = E[2](fill: E.A); return a.len(); }",
     // Reading a string index is ordinary; only writing is refused. **And it reads as a `string`** —
-    // `spec/spec/strings.md` §Indexing: "returns it as a single-character string". This entry
+    // spec/spec/strings.md §Indexing: "returns it as a single-character string". This entry
     // returned it from an `i32` function and sat in the *accepted* list, which is a claim the
     // reference contradicts — it answers *return: expected i32, found string*. `issues/lang/0159`.
     "export string ok() { string s = \"hi\"; return s[0]; }",

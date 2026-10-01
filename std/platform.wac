@@ -53,7 +53,7 @@
  * **The ticket carries its own resolver, and an `id` rather than a closure.** The reason is
  * the host boundary, not the language: a JS closure is not a wasm function, so bindgen
  * registers one wasm function per host function and only *sixteen per signature* can be
- * live at once — see `spec/spec/bindgen.md`. A resolver closed over its own answer would
+ * live at once — see spec/spec/bindgen.md. A resolver closed over its own answer would
  * burn a slot per call and die on the seventeenth outstanding read. So one resolver is
  * registered per signature and the `id` selects which call it is for.
  *

@@ -6,7 +6,7 @@ export i32 run() {
   // **Every one of these was a module that would not load.** A literal has no type of its own, so it
   // takes the slot's — and for a cast the slot is the cast's *target*, which made `1.5 as~ i32` emit
   // the literal as an `i32` and then convert `i32` to `i32`: no instructions, and an `f64` left
-  // where an `i32` was promised. The spec documents all four of these answers (`spec/spec/casts.md`)
+  // where an `i32` was promised. The spec documents all four of these answers (spec/spec/casts.md)
   // and none of them could run.
   if (1.5 as~ i32 != 2) { return 1; }              // `as~` rounds
   if (1.5 as@ i32 != 1) { return 2; }              // `as@` truncates
@@ -23,7 +23,7 @@ export i32 run() {
   // **The slot still chooses the width inside the family.** A float target keeps its own type, which
   // is the half that stops this rule making every float literal an `f64`. Written without a cast
   // into a float: a literal is already the target's width there, and `as~` where `as` would work is
-  // a compile error (`spec/spec/casts.md`) — which is how the *first* draft of this case was written,
+  // a compile error (spec/spec/casts.md) — which is how the *first* draft of this case was written,
   // and the reference refused it.
   f32 narrow = 1.5;
   if (narrow != 1.5) { return 8; }
@@ -34,7 +34,7 @@ export i32 run() {
 
   // And an integer literal is unaffected: it has no family to preserve and the slot is all there is.
   // Not `f64 sum = 1 + 2;` — an integer literal takes an *integer* type from its context and there
-  // are no implicit conversions (`spec/spec/types.md`), so that is an error the reference reports
+  // are no implicit conversions (spec/spec/types.md), so that is an error the reference reports
   // and this compiler does not. `issues/lang/0119`.
   if (1000000000000 as@ i32 != -727379968) { return 11; }
   if (6 * 7 != 42) { return 12; }

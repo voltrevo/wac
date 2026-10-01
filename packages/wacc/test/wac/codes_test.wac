@@ -267,7 +267,7 @@ export string test_a_unicode_escape_is_bounded_by_what_fromCodepoint_accepts() {
  * A character literal in a byte is a codepoint in a byte, and that is its own fault.
  *
  * **A plain number is not this rule.** `u8[](300)` truncating to `44` is deliberate and has a clause
- * of its own — `spec/spec/arrays.md`'s `[§wac-arr-i8-lit-trunc-i9g6kol]`, *"the fixed-element form
+ * of its own — spec/spec/arrays.md's `[§wac-arr-i8-lit-trunc-i9g6kol]`, *"the fixed-element form
  * takes `i32` values too, and truncates them the same way a write does"* — so a byte array can be
  * written as a literal list. A first version of this test refused those too; the spec's acceptance
  * corpus and `spec/tour.wac` both said no within a minute of each other.
@@ -416,7 +416,7 @@ export string test_a_missing_quote_reports_at_the_line_it_is_missing_from() {
  *
  * `issues/lang/0233a`. A shift is typed from the value being shifted, and a literal there has no
  * type of its own — so `1` takes `count`'s `i32` and the `i64` slot is never consulted.
- * `spec/spec/types.md` says a literal takes its type from what is expected of it, *"including as an
+ * spec/spec/types.md says a literal takes its type from what is expected of it, *"including as an
  * operand of an operator … the other operand counts as an expectation"*, and for a shift the other
  * operand is an *amount* rather than a second value of the same type. Both compilers refused this
  * and agreed; what it lacked was a reason.

@@ -224,7 +224,7 @@ closures:
    `c.inc` *is* a value — and the reference is not asked. Cheapest, and it makes `spec/cases` the
    home for every wacc-only rule, which `design/lang/0003` already implies.
 2. **Give `§tag`s a scope**, so a tag can say which compiler it binds. More machinery, and it puts
-   the answer where a reader of `spec/spec` will see it, which is the argument for tags existing.
+   the answer where a reader of spec/spec will see it, which is the argument for tags existing.
 3. **Leave the tag and narrow it**: `c.inc` is an error *when the slot is not a `fn[…]`*, which is
    still true and testable on both. Preserves the tag and says less than the feature does.
 
@@ -233,7 +233,7 @@ closures:
 The operator chose option 1. Implementing it found that the choice was between three options one of
 which did not need to exist: **`§tag`s are already scoped, by namespace.** `§wacc-` is documented in
 spec/spec/structs.md as "a clause the seed does not implement", against `§wac-` for "the language
-both compilers answer for", and `packages/wacc/test/wac/spectags_test.wac` guards that every such clause is
+both compilers answer for", and packages/wacc/test/wac/spectags_test.wac guards that every such clause is
 named by a case or a test. Two clauses already used it.
 
 So this note's *"a `§tag` cannot [be scoped]. There is no scoping in `wacSpec.test.ts`"* was true of
@@ -280,7 +280,7 @@ Not "should wac have closures" — the request is already made. It is:
 1. **Do tier one and tier two land separately?** I would argue yes: bound references are a
    representation change with no capture semantics, and shipping them first buys most of the
    ergonomics while the hard questions stay open.
-2. ~~**Does `spec/spec` change, or only `wacc`?**~~ **Answered, by `design/lang/0003` — the spec
+2. ~~**Does spec/spec change, or only `wacc`?**~~ **Answered, by `design/lang/0003` — the spec
    targets wacc and the reference becomes a seed.** So the specification is where a wacc-only feature
    gets written down, and `spec/cases` is its oracle rather than the differential. That decision
    landed while this document was being written and settles the question it was asking: closures are
@@ -331,7 +331,7 @@ from reading the same code came out opposite ways round.
 
 | # | step | state |
 |---|---|---|
-| 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **decided 2026-08-13** — separately, and every `fn[]` value becomes a pair. See *Decided* above for the scheme and the order |
+| 1 | decide whether the two tiers land separately, and whether spec/spec changes with them | **decided 2026-08-13** — separately, and every `fn[]` value becomes a pair. See *Decided* above for the scheme and the order |
 | 2 | bound method references: `c.inc` as a value, static methods referenceable | **done, 2026-08-15** — `c.inc` is a value of the receiver-less signature, inherited methods included, and a bound reference goes anywhere an `fn[…]` goes. `spec/cases/0176` is the oracle under `// only: wacc`, the clause is `[§wacc-fnref-bound]`, and a *static* reached through a value is still refused. Was: **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because spec/spec/funcrefs.md says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **done** — `0176` a bound reference, `0181` the by-hand closure lowering, `0188` a lambda as a value, `0189` two lambdas staying two functions, `0190` a lambda reading an enclosing local. All `// only: wacc`. Was *not started*, which was stale from the day `0176` landed |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **done, 2026-08-15.** `Shell` holds `fn[bool()]? askInterrupt` and nothing else; `sshd.wac` says `sh.askInterrupt = keys.arrived`. Two fields became one, the `anyref` and its `as!` downcast are gone, and five sites that asked `interruptCtx is null` ask the funcref itself. Canaried: an `arrived` that always answers false fails the ssh suite, so the path is exercised rather than merely compiled |

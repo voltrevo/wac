@@ -172,7 +172,7 @@ free function's parameter, so the read-only intent of the lookahead helpers here
 
 The operator's priorities, and they settle questions this package has got wrong before:
 
-1. **Implement the spec.** `spec/spec` is the contract; the reference is a guide and has been the
+1. **Implement the spec.** spec/spec is the contract; the reference is a guide and has been the
    one in the wrong.
 2. **Implement every tooling feature the reference implements.** Not just "compiles wac" — the
    toolchain around it.
@@ -185,10 +185,10 @@ have never appeared in a status line: they are invisible to every rung.
 | what the reference does | wacc |
 |---|---|
 | lex, parse | done — token- and node-identical on every file |
-| type check | **317 of 317** spec rejections and **371 of 371** acceptances one file at a time, 15 of 15 and 42 of 42 across files, and the ledger of known misses is empty. The row here said "303 of 304 … the one left is a multi-file case recorded with one file" until 2026-08-25; that case is gone and the number had moved. `test/wac/specsingle_test.wac` and `specmulti_test.wac` print these |
+| type check | **317 of 317** spec rejections and **371 of 371** acceptances one file at a time, 15 of 15 and 42 of 42 across files, and the ledger of known misses is empty. The row here said "303 of 304 … the one left is a multi-file case recorded with one file" until 2026-08-25; that case is gone and the number had moved. `test/wac/specsingle_test.wac` and specmulti_test.wac print these |
 | emit wasm | **every file in the repository** — 1077 of 1077 whole, 0 partial, 0 invalid, printed by `test/wac/corpusemit_test.wac`, read 2026-08-25. It was 702 of 729 on 2026-08-20 and 411 of 414 six days before that. The figure here was "356 of 359", which no test produced any more — a measurement nothing prints goes stale in the document that cites it |
 | self-host | done, and the reference cannot |
-| diagnostics: message | done, and the wording agrees where both speak — with the caveat that "speak" used to be doing real work in that sentence. `spec/spec/naming.md` requires a keyword in a name position to be *"an error that names the keyword"*; wacc answered `unexpected token` in all nine such positions, so it spoke without saying the thing, and the row read as agreement. Fixed 2026-08-25, along with `override` on an enum method and an enum method missing `this` — the second of which named the wrong fault rather than none. All eleven are pinned by `test/wac/specclauses_test.wac`, and their positions were identical to the reference's throughout and still are — `test/parse_errors.test.ts` is what compares those. `issues/lang/0156` holds what is left: six parse clauses where the spec, wacc and the reference put the same information in different fields |
+| diagnostics: message | done, and the wording agrees where both speak — with the caveat that "speak" used to be doing real work in that sentence. spec/spec/naming.md requires a keyword in a name position to be *"an error that names the keyword"*; wacc answered `unexpected token` in all nine such positions, so it spoke without saying the thing, and the row read as agreement. Fixed 2026-08-25, along with `override` on an enum method and an enum method missing `this` — the second of which named the wrong fault rather than none. All eleven are pinned by `test/wac/specclauses_test.wac`, and their positions were identical to the reference's throughout and still are — `test/parse_errors.test.ts` is what compares those. `issues/lang/0156` holds what is left: six parse clauses where the spec, wacc and the reference put the same information in different fields |
 | diagnostics: annotation, hint, span | operands on **82%** (562 of 689), help on 42% (292), a real span on **73%** (506) — the counts as well as the rates, because `test/wac/diagnosticgap_test.wac` prints both and a bare percentage cannot be checked against it — ratcheted, so they cannot fall back. The corpus was 697 until 2026-08-25, when `C.report` began comparing a new diagnostic against *every* recorded one rather than only the previous: twelve of these were the same complaint twice, all twelve carrying help, so the rates fell by a point while the diagnostics did not change. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/specclauses_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus. The population was 685 and help 285 earlier on 2026-08-25. It is 690 because `issues/lang/0157` and `0267c` made five imports report that were silent — a corpus that grows because the compiler stopped missing things is the one direction these counts can move without the rates meaning less. Before that, the keyword-name and enum-method rules moved nine diagnostics out of the `unexpected token` family — the one the note in that test says is deliberately hintless because its specifics travel in the annotation — and two of the new codes carry help. The *rates* did not move, which is the honest summary: this raised the floor of what those diagnostics say, not the share that say anything |
 | CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
 | CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
@@ -232,7 +232,7 @@ precedence level, `else if` chains, trailing commas, a nested `>>>` close, and t
 must *not* be read as type arguments.
 
 **Rung 3 now meets the spec**, and the figures are in the table above rather than repeated here.
-`test/wac/specsingle_test.wac` and `specmulti_test.wac` print the single- and multi-file counts;
+`test/wac/specsingle_test.wac` and specmulti_test.wac print the single- and multi-file counts;
 `test/wac/cases_test.wac` prints `spec/cases`, which is **236 of 236 met by wacc** — eleven more than earlier on 2026-08-25, because `issues/lang/0268c` added the checked-cast rows that had no case, and five of them were red until the emitter learned to trap.
 
 This paragraph carried its own copy of those numbers until 2026-08-25 — `303 of 304`, `367`, `41 of
@@ -410,7 +410,7 @@ comes out compiles them again, and the two are byte-identical — `fixpointEmit`
 ## The cases
 
 **A case can say a program traps** as of `issues/lang/0085`, alongside compiling, being refused and
-answering a value. Half of what `spec/spec/casts.md` promises is of that shape — `as!` is the checked
+answering a value. Half of what spec/spec/casts.md promises is of that shape — `as!` is the checked
 cast — and the nearest a case could get before was an answer, which was exactly the wrong answer the
 bug produced.
 
@@ -512,7 +512,7 @@ the first hour, neither of which needed a new test:
   nothing could have noticed. Writing the first thing that turns a code into a sentence noticed
   immediately.
 - **`report` carried a code and a position and nothing else**, so no diagnostic could say *expected
-  i32, found f64* — the operands were not kept anywhere. `spec/spec/errors.md` asks for `span`,
+  i32, found f64* — the operands were not kept anywhere. spec/spec/errors.md asks for `span`,
   `annotation` and `hint`.
 
 **The operands are carried now.** `reportWith` takes the annotation beside the triple, and the ten
@@ -552,7 +552,7 @@ Where wacc and the reference both speak, the output is now the same thing said t
        = help: use `as!` for a checked…        = help: use `as!` for a checked…
 
 The split differs and ours is the spec's: the message is the rule, the operands are the `annotation`,
-and the `hint` is advice about the rule rather than about the program. `spec/spec/errors.md` has all
+and the `hint` is advice about the rule rather than about the program. spec/spec/errors.md has all
 three fields, and the reference folds the operands into the message instead.
 
 What is left is the **checker's** span — 42% of diagnostics still underline one character, because a
@@ -570,7 +570,7 @@ at all.
 
 **Rung 3 (type checker) is the open one**, and what it is measured against changed on 2026-08-09.
 
-**The spec is the contract; the reference is a guide.** `spec/spec` states what the language is, and
+**The spec is the contract; the reference is a guide.** spec/spec states what the language is, and
 the `spec*` tests hold this checker to it. The TypeScript compiler is evidence about the language and
 a cheap source of cases, not an authority: where the two disagree the spec decides, and the reference
 has been the one in the wrong before — `issues/lang/0085`, where `as! i31ref` truncates there and
@@ -638,7 +638,7 @@ silent.
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,
 re-export, cross-file type identity and type-name scope cannot be stated in a single file, so the 56
 spec programs that state them sat outside every test here — `§wac-no-reexport-f7kn4wq` had nothing
-measuring it at all, and a rule written to satisfy it would have been unmeasurable. `specmulti_test.wac`
+measuring it at all, and a rule written to satisfy it would have been unmeasurable. specmulti_test.wac
 holds them now, and **every one of the 15 the spec calls illegal is refused**, with no exceptions —
 the same shape the single-file contract has. The list of known misses started at nine and is empty.
 
@@ -684,7 +684,7 @@ place exactly, and an integer literal too wide to call an `i32`.
 Everything above compares wacc to the reference *implementation*. `spec/` in the `wac` checkout is
 what the language *says* — 415 tagged assertions across 18 files. They were executed by
 `wacSpec.test.ts`, one test per tag, until that file went with the TypeScript compiler on 2026-08-28;
-`packages/wacc/test/wac/spectags_test.wac` is what holds every clause to a wac test now, and it
+packages/wacc/test/wac/spectags_test.wac is what holds every clause to a wac test now, and it
 refuses a tag that only the reference's own tests ever checked. The rejection ones call `err(...)` with a complete program the language declares
 illegal, so the spec already contains the corpus rung 3 needs, and a better one than anything written
 here: it is the language's own statement of what is illegal, it grows when the language does, and each
@@ -1843,7 +1843,7 @@ And then the sweep reported two mismatches, which is the answer this rung exists
 
 > `1073741824 as! i31ref as i32` — ours traps, the reference returns -1073741824.
 
-`spec/spec/casts.md` gives the rule for the whole family — *"`as!` — checked: exact or trap"* — and
+spec/spec/casts.md gives the rule for the whole family — *"`as!` — checked: exact or trap"* — and
 again for this cast in particular. `ref.i31` is a truncating instruction, so the check has to be
 emitted around it, and the reference emits none. wacc is right and the compiler it is measured
 against is wrong, which is `issues/lang/0085`.
@@ -2566,7 +2566,7 @@ The direction changed: implement the spec, treat the reference as a guide, and w
 disagree decide which is right rather than deferring. So the first question worth asking is one this
 package had never asked — **what does the language itself say this checker must refuse?**
 
-`spec/spec` answers it directly: 101 `err(…)` programs, each carrying the tag of the clause that
+spec/spec answers it directly: 101 `err(…)` programs, each carrying the tag of the clause that
 governs it. wacc refuses 97. The four it allowed are the only real gaps this rung has, and one of
 them was self-inflicted:
 
@@ -2644,7 +2644,7 @@ a program the spec ever ran. Reading the program a literal *holds* rather than t
 with fixed both. The rejection corpus is read the same way, and its 101 of 101 survived the
 correction, which is the check worth doing before believing a number that flatters you.
 
-Three more were a rule this checker had and the language does not. **`spec/spec/operators.md`: a
+Three more were a rule this checker had and the language does not. **spec/spec/operators.md: a
 compound operator has "same type rules as the underlying operator"**, and spells out the consequence
 — `i64 <<= i32` is allowed wherever `i64 << i32` is. A shift's right-hand side is a *count*, not the
 other half of a matched pair, and the same-type rule that is right for `+=` refused three programs
@@ -2662,7 +2662,7 @@ next entry is what was at the bottom of it.
 
 ### 262 of 262 — eight rules this checker had and the language does not
 
-**Four were one rule.** `spec/spec/control.md`: a ternary over references has the type of their
+**Four were one rule.** spec/spec/control.md: a ternary over references has the type of their
 *closest common ancestor*, and only branches with **no** common ancestor are an error. Asking
 assignability in both directions — which is what this checker did — answers "no" for every pair of
 siblings, so `flag ? c : r` on a `Circle` and a `Rect` was refused although their `Shape` is exactly
@@ -2740,7 +2740,7 @@ they now count what is there instead of what was there.
 
 ### A literal rounds once — issue 0124, closed
 
-`spec/spec/types.md` says a float literal rounds to *nearest*, and nearest is not something floating
+spec/spec/types.md says a float literal rounds to *nearest*, and nearest is not something floating
 point can be asked for while it is doing the asking. Scaling a mantissa by ten rounds at every step:
 `1e300` landed a unit in the last place away, `1.7976931348623157e308` three. I filed that against
 myself last slot rather than leave it silent; this closes it.
@@ -2792,7 +2792,7 @@ hundred and twenty-fifth is not a number — so the scale came out infinity and 
 zero. It is applied in steps of twenty-two now, which is the largest power an `f64` holds exactly.
 
 That last one is only *mostly* fixed, and the honest form of that is an issue rather than a silence:
-each step rounds, so `1e300` lands a unit in the last place from nearest and `spec/spec/types.md`
+each step rounds, so `1e300` lands a unit in the last place from nearest and spec/spec/types.md
 says nearest. Every literal in the spec suite is exact, and every one in the corpus is within the
 range where a single step suffices — **issues/system 0124** has the three that are not, and what a
 correctly-rounded conversion would take.
@@ -3090,7 +3090,7 @@ Three things it turned up, each of which the next attempt should start from:
 
 - **The call spelling is `Vec.create()`, not `Vec<i32>.create()`.** The latter parses as three
   comparisons — `Vec < i32 > .create()` — in *both* compilers, which is the language's own rule
-  (`spec/spec/generics.md` writes `Vec<i32> w = Vec.create();`). So a static on a template takes its
+  (spec/spec/generics.md writes `Vec<i32> w = Vec.create();`). So a static on a template takes its
   instantiation **from the slot the answer goes into**, which means the walk has to ask about that
   call where it has a `want` in hand, and `typeOfE` cannot answer it at all.
 - **Two type parameters break it and one does not.** `P2<A, B>` emits a call whose argument count
@@ -3629,7 +3629,7 @@ makes three problems disappear at once:
 The cost is space: a `Rect` carries the slot a `Circle` would have used. That is the trade a language
 with no unions makes anyway, and nothing here is measuring bytes yet.
 
-What is implemented is the whole of the feature as `spec/spec/enums.md` describes it, minus generics:
+What is implemented is the whole of the feature as spec/spec/enums.md describes it, minus generics:
 construction of payload-less and payload-carrying variants, `match` as a statement and as an
 expression, positional bindings and `_`, the `else` arm, narrowing, and `is`. Two decisions did the
 work.

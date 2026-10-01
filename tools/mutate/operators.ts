@@ -25,7 +25,7 @@ const api = await waccApi();
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-/** `\n`, `\t`, `\r`, `\0`, and `\x` for anything else — the escapes `spec/spec/grammar.md` lists. */
+/** `\n`, `\t`, `\r`, `\0`, and `\x` for anything else — the escapes spec/spec/grammar.md lists. */
 function unescaped(body: string): string {
   let out = "";
   for (let i = 0; i < body.length; i++) {

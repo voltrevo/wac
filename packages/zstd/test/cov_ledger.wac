@@ -54,7 +54,7 @@ string[] grants() { return string[]("--allow-read", "--allow-write", "--allow-ru
  * Every export `covdump` calls after `main`, and how many cases each holds.
  *
  * `name:<n>` is a **sweep**: `covdump` calls `name(0)` through `name(n-1)` with each trap caught
- * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`). A sweep is how this package is measured at
+ * (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`). A sweep is how this package is measured at
  * all — damaging a real frame at every byte under three masks is thousands of calls, and its own
  * predecessor recorded that sampling reaches about half because the checks are close enough together
  * that stepping over bytes steps over whole branches.

@@ -100,7 +100,7 @@ Fetched failed(string why) {
   // that checks `ok` never looks at.
   //
   // This said "wac has no nullable struct field worth using here", and the first half is wrong:
-  // `spec/spec/structs.md` `[§wacc-struct-nullable-optional]` has them, and a nullable field may
+  // spec/spec/structs.md `[§wacc-struct-nullable-optional]` has them, and a nullable field may
   // even be left out of a named construction. `Incoming? body` would say what this comment says.
   // The shape that says it properly is `Fetched` being an enum of two arms rather than a struct with
   // an `ok` flag, which is a change to the type every caller matches on.

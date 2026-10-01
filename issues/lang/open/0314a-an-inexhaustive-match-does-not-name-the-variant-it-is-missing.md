@@ -41,7 +41,7 @@ spec/spec/enums.md shows a three-variant `Shape` with `Rect` left out and says:
 
 > `[§enum-match-inexhaustive]` This is a compile error: `match does not cover 'Rect'`.
 
-`packages/wacc/test/specCases.json` carries the same string as that case's expected `message`,
+packages/wacc/test/specCases.json carries the same string as that case's expected `message`,
 beside `"ok": false`.
 
 ## Why nothing caught it

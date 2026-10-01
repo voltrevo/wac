@@ -13,7 +13,7 @@ spec/cli/main.md documents a CLI with four commands. There is no implementation:
 no atom, no `bin` entry, no npm script. The only occurrences of the string `wacx` in
 the repo are the four spec files that describe it.
 
-`spec/done.md` goes further and makes it a completion criterion:
+spec/done.md goes further and makes it a completion criterion:
 
 > The single entry point for this goal is `wacx` (see cli/main.md). All tags must be
 > covered by tests reachable from this entry point.
@@ -54,7 +54,7 @@ convention CONTRIBUTING describes.
 Two ways to close this, and it is a decision rather than a defect:
 
 1. **Build it.** Mostly assembly, since every piece exists somewhere. It gives the
-   spec's completion criterion something to refer to and gives `spec/examples.md` a
+   spec's completion criterion something to refer to and gives spec/examples.md a
    way to be executed rather than read.
 2. **Drop it from the spec.** If a library-only compiler driven by its embedders is
    the intent, then `cli/main.md` and the `done.md` criterion describe a plan that was
@@ -93,7 +93,7 @@ Decisions the spec left open, made and documented:
 Verified against a real filesystem as well as the fake one: all four commands, the diagnostic
 rendering with source context, and each exit code.
 
-`spec/done.md`'s criterion — that every tag be covered by tests reachable from this entry point — is
+spec/done.md's criterion — that every tag be covered by tests reachable from this entry point — is
 now satisfiable in principle. Whether it *is* satisfied is a separate question and a much larger one:
 the tags are covered by `wacSpec.test.ts`, not by anything reachable from `wacx`. Worth a new issue if
 that criterion is meant literally.

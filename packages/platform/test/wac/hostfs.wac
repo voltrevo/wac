@@ -215,7 +215,7 @@ string[] envStrings(Cli cli, string home) {
  *
  * Built as bytes because a string is bytes here, so saying so directly loses nothing.
  *
- * **This said "wac has no escape for a NUL in a string literal", and it has one.** `spec/spec/strings.md`
+ * **This said "wac has no escape for a NUL in a string literal", and it has one.** spec/spec/strings.md
  * lists `\0` beside `\n`, `\t`, `\\` and `\"` in a tagged example — `[§wac-str-esc-h9qm3v7]`, which
  * asserts each is a single byte — and `"a\0b".toBytes()` is three bytes with a zero in the middle,
  * checked. The code is unchanged because building bytes is the honest shape for a byte separator; only

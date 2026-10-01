@@ -10,7 +10,7 @@ Status: **taken** (the chapter follows it; say if wrong) · **needs you** (the c
 
 ### Needs you
 
-1. **Where `Vec` and the rest of core live in its public API.** `spec/spec/imports.md` and
+1. **Where `Vec` and the rest of core live in its public API.** spec/spec/imports.md and
    `vision/spec/imports.wac` reach them by file — `import { Vec } from "core/vec.wac"` — and say
    `import { Vec } from "core"` is an error. The design removes package subpaths entirely, so that
    form is gone. What replaces it is open: everything at core's root (`import { Vec } from "core"`),
@@ -18,7 +18,7 @@ Status: **taken** (the chapter follows it; say if wrong) · **needs you** (the c
    `toNode` and `fromNumber` at the root and the operator symbols in `core.operators`, which is
    evidence for "root unless it is a family". Chapters 01–03 use only `Read` and `operators`, which
    are settled. Decided in 37.
-2. **`std`'s shape.** `spec/spec/imports.md` says `std` has no root module and every name is reached
+2. **`std`'s shape.** spec/spec/imports.md says `std` has no root module and every name is reached
    by path (`std/platform.wac`) — `[§wac-std-no-root-2vp6xmk]`. Without subpaths that cannot hold,
    so `std` gets an entry module like any package. Its namespaces are 44's question, and the old tag
    is retired.
@@ -39,7 +39,7 @@ Status: **taken** (the chapter follows it; say if wrong) · **needs you** (the c
 6. **Spellings follow the design and vision over current spec**, everywhere in examples:
    `fn<…>` not `fn[…]`; match arms without `case` (`Data(b): …`); array literals `[7, 7, 7]` not
    `u8[](7, 7, 7)`.
-7. **One collision rule for every kind of declaration.** `spec/spec/naming.md` states function/struct
+7. **One collision rule for every kind of declaration.** spec/spec/naming.md states function/struct
    only (`[§wac-dup-kind-9h0mrly]`, kept); `vision/spec/naming.wac` says *"whatever the two things
    are"*. Added `[§wac-dup-any-kind-ctguh44]` for the general rule.
 8. **A namespace cannot be reopened.** The design says reopening and merging are *"not proposed
@@ -64,7 +64,7 @@ Status: **taken** (the chapter follows it; say if wrong) · **needs you** (the c
 
 ### Excluded as implementation, not language
 
-- `spec/spec/imports.md` *Name mangling* and *Import resolution*: how the compiler labels and indexes
+- spec/spec/imports.md *Name mangling* and *Import resolution*: how the compiler labels and indexes
   declarations. 01 states the observable rule they served — identity is the declaring file, not a
   spelling.
 

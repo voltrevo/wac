@@ -198,7 +198,7 @@ export bool fpEquals(i64[] a, i64[] b) {
  * shift of 63 then gives 0 or -1, and `& 1` gives 0 or 1.
  *
  * The point is what it is *not*: `acc == 0 ? 1 : 0` is a ternary, and wacc emits a branch for one —
- * `spec/spec` counts `ternary-then` and `ternary-else` as branch points, and
+ * spec/spec counts `ternary-then` and `ternary-else` as branch points, and
  * `packages/crypto/tools/ct.wac` records every branch. A predicate used to avoid leaking must not itself be a branch on the secret.
  */
 i32 zeroBit(i64 acc) {

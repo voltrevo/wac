@@ -81,7 +81,7 @@ string noProject(string spec, string from) {
 /**
  * What `Sources.why` says for a bare specifier that names no mapping — `issues/system/0234a`.
  *
- * **`spec/spec/imports.md` defines three kinds and this is none of them.** A path is relative, `@/`
+ * **spec/spec/imports.md defines three kinds and this is none of them.** A path is relative, `@/`
  * is the project root, and a bare name may name a mapping declared in the manifest. A bare name that
  * names no mapping names nothing — so the honest answer is to say so, and the two answers that were
  * given before were both worse.

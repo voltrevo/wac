@@ -11,7 +11,7 @@
 // class and checks the tag at the accessor. That is a property of the **generated class**, and in wac
 // there is no such object — `match` is exhaustive and a `Number` has no `Str_bytes` to ask for. The
 // test is not ported because the thing it guarded does not exist here; the protection it was
-// describing is the one the language gives, and `spec/spec/enums.md` is where that is stated.
+// describing is the one the language gives, and spec/spec/enums.md is where that is stated.
 //
 // Everything else moves as it was, with the last test — the one that checks the tree against a
 // *different* implementation — going through `test/oracle.ts`.

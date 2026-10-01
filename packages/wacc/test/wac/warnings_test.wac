@@ -145,7 +145,7 @@ export string test_a_downcast_that_can_never_hold_warns_and_one_that_can_does_no
           "warned about a generic: " + messagesOf(warningsIn(generic)));
 
   // **And `anyref` is the top of the hierarchy, so a cast out of it is the way back down.**
-  // `spec/spec/casts.md` gives `i31ref x = val as! i31ref;` as the documented spelling, and the
+  // spec/spec/casts.md gives `i31ref x = val as! i31ref;` as the documented spelling, and the
   // struct parent chain never reaches `anyref` — nothing declares it as a parent — so "no common
   // ancestor" was answered for a cast that always succeeds. It warned where the reference did not,
   // which made it a divergence and not only a false alarm (`issues/lang/0152`).
@@ -160,7 +160,7 @@ export string test_a_downcast_that_can_never_hold_warns_and_one_that_can_does_no
 }
 
 export string test_a_warning_carries_its_phase_as_well_as_its_severity() {
-  // `spec/spec/errors.md` gives a diagnostic both, and they answer different questions: *where it was
+  // spec/spec/errors.md gives a diagnostic both, and they answer different questions: *where it was
   // found* and *whether it stops the compile*. This wire carried severity in the phase field at
   // first, which reads fine for a type-checker warning and leaves a parse-time one unable to say
   // either thing truthfully.

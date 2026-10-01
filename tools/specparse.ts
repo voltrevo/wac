@@ -1,12 +1,12 @@
-// Parse real wac with the grammar in `spec/spec/grammar.md`, and with a vision delta on top of it.
+// Parse real wac with the grammar in spec/spec/grammar.md, and with a vision delta on top of it.
 //
 //     deno run --allow-read tools/specparse.ts packages          # the spec against the tree
 //     deno run --allow-read tools/specparse.ts vision            # the delta against vision/
 //     deno run --allow-read tools/specparse.ts <path> [...]      # anything
 //
 // `CONTRIBUTING` says the spec is the source of truth. Until now that was a claim checked by
-// samples: `specproductions_test.wac` probes constructs somebody has already been wrong about, and
-// `speckeywords_test.wac` checks the fence. **This runs the file.** If the grammar in the spec
+// samples: specproductions_test.wac probes constructs somebody has already been wrong about, and
+// speckeywords_test.wac checks the fence. **This runs the file.** If the grammar in the spec
 // parses every `.wac` in `packages/`, the spec is verified against reality in a way no list of
 // probes reaches — and where it does not, the failure names a token and a rule.
 //
@@ -75,7 +75,7 @@ import { GRAMMAR, parseRules, readGrammar, type Rule, type Term } from "./ebnf.t
 /**
  * The keywords, read from the fence rather than copied.
  *
- * A second copy of that list is a copy that drifts, and `speckeywords_test.wac` exists because the
+ * A second copy of that list is a copy that drifts, and speckeywords_test.wac exists because the
  * block *has* drifted three times. Reading it here means this tool cannot disagree with the spec
  * about what a keyword is — which matters, because everything not in it lexes as `IDENT`.
  */

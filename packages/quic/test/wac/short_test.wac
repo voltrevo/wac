@@ -211,7 +211,7 @@ export string test_a_packet_number_survives_being_written_and_read_back() {
  * `packet[at]` after checking that `headerMask` returned something — and `headerMask` bounds its
  * *sample* offset, `at + 5 + cidLen + 16`, not `at`. For a negative `at` the sample offset can land
  * back inside the packet while `at` itself does not, so the mask check passes and the read is out of
- * bounds. `spec/spec/arrays.md` `[§wac-arr-oob-7jby7f8]`: that traps, which ends the process.
+ * bounds. spec/spec/arrays.md `[§wac-arr-oob-7jby7f8]`: that traps, which ends the process.
  *
  * Nothing in this package passes a negative one — `client.wac:604` passes a literal zero — so this is
  * a hazard on an exported function rather than a live bug, and the reason it is worth a test is that

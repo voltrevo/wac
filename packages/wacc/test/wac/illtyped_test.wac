@@ -45,13 +45,13 @@ string[] names() {
     // an initialiser. `issues/lang/0242a`.
     "a23 string s = x++", "a24 string s = ++x", "a25 string s = x--", "a26 g(x++) for g(string)",
     // An **all-literal `match` expression in a slot no literal of that family can inhabit**.
-    // `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying *"exactly as a ternary's two
+    // spec/spec/enums.md §enum-match-expr-4wnq7bk has the arms unifying *"exactly as a ternary's two
     // branches are … and by the same code"*, and `litFamily` implemented that for the ternary and not
     // for the match — so the identical program was refused with `?:` and accepted with `match`. Every
     // family, because the arm serves them all. `issues/lang/0243a`.
     "a27 int arms -> string", "a28 int arms -> bool", "a29 string arms -> i32",
     "a30 bool arms -> i32", "a31 int arms -> f64",
-    // A **bare `null`** where a type is required. `spec/spec/types.md`: *"`null` is a keyword literal
+    // A **bare `null`** where a type is required. spec/spec/types.md: *"`null` is a keyword literal
     // with no type of its own … the compiler infers the type from context"* — and `null is null` has no
     // context to infer from. The rules were there and keyed on a type the operand does not have, so all
     // three reached the emitter, which declined the module with the reason *"null"*. The reference
@@ -278,7 +278,7 @@ export string test_a_string_in_an_arithmetic_operator_reports_once() {
 /**
  * A JSX attribute and a JSX child refuse a **nullable** as they refuse any other wrong type.
  *
- * `spec/spec/jsx.md` has an attribute's value being a `string` and a child being a `Node`, and both
+ * spec/spec/jsx.md has an attribute's value being a `string` and a child being a `Node`, and both
  * slots checked it with `assignable` alone — which answers *true* for `string?` into `string` by
  * design, that being what `nullableIntoNonNull` exists to report separately. So `<div class={s}>` for
  * a `string? s` and `<div>{kid}</div>` for a `Node? kid` were accepted, while an `i32` in either
@@ -290,7 +290,7 @@ export string test_a_string_in_an_arithmetic_operator_reports_once() {
 /**
  * A `match` expression's arms unify **exactly as a ternary's branches do**, which the spec requires.
  *
- * `spec/spec/enums.md` §enum-match-expr-4wnq7bk: the arms unify *"exactly as a ternary's two branches
+ * spec/spec/enums.md §enum-match-expr-4wnq7bk: the arms unify *"exactly as a ternary's two branches
  * are … and by the same code"*. It was not the same code. The ternary learned to unify a nullability
  * difference (`P` with `P?` is a `P?`) and a subtype pair (`Sub` with `Base` is a `Base`) on
  * 2026-08-25; the match kept requiring the arms to be *equal*, and unknown is silent — so
@@ -487,7 +487,7 @@ export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled
     "export u32 f(u32 n) { switch (n) { case 4294967295: { return 1; } case 0xFFFFFFFF: { return 2; } } return 0; }\n",
     // **Two spellings with opposite signs, which is the case the 32-bit reading is for.** Measured: a
     // `u32` holding `4294967295` matches `case -1:` and one holding `1` does not — which is
-    // `spec/spec/control.md`'s "signedness plays no part in an equality match" seen from the case side
+    // spec/spec/control.md's "signedness plays no part in an equality match" seen from the case side
     // rather than the scrutinee's.
     //
     // This row went in after a canary, and not the way canaries usually pay: replacing the checker's
@@ -576,8 +576,8 @@ export string test_a_duplicate_binding_and_a_duplicate_else_report_at_the_duplic
  * more because the failure is silent in the useful direction: a rule the reference implements
  * somewhere else reads exactly like a rule it does not implement at all.
  *
- * `spec/spec/naming.md` line 50 makes the duplicate method an error in as many words, and the switch
- * grammar in `spec/spec/control.md` carries a single `default`.
+ * spec/spec/naming.md line 50 makes the duplicate method an error in as many words, and the switch
+ * grammar in spec/spec/control.md carries a single `default`.
  */
 export string test_a_duplicate_method_and_a_second_default_are_refused() {
   T t = T.create();
@@ -713,7 +713,7 @@ export string test_a_relative_import_of_a_file_nobody_supplied_is_refused() {
  * reader to count arguments that are already correct. One argument, one parameter.
  *
  * Found by sweeping the spec's 317 single-file rejection programs and comparing positions against the
- * reference: `specsingle_test.wac` asserts that each is *refused* and nothing compares where or why,
+ * reference: specsingle_test.wac asserts that each is *refused* and nothing compares where or why,
  * so a diagnostic naming the wrong rule is invisible to it. The reference says *"cannot infer 'T' for
  * 'id'"*, which is the same complaint under a different name.
  */

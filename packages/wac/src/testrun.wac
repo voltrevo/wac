@@ -170,7 +170,7 @@ export string aggregateSource(string[] files, string[] texts, string up) {
                + "(" + argsOf(tests[k].params) + "); }\n";
     }
     // **`./` when `up` is empty, because a specifier without it is not a relative path.**
-    // `spec/spec/imports.md` says a path is relative *using* `./` or `../`; a bare `a_test.wac` is a
+    // spec/spec/imports.md says a path is relative *using* `./` or `../`; a bare `a_test.wac` is a
     // mapping name or nothing. It resolved anyway — every host joined a bare specifier to the
     // importing file's directory — and this generated one every time the aggregate was written
     // *beside* the files it imports, which is the `beside` path taken for a directory outside the

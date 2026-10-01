@@ -36,7 +36,7 @@ string shape(string[][] halves) {
  * records a kill for a mutant nothing ran and the score goes *up*.
  *
  * **The spec clause is named without its marker on purpose.** `wac-cli-status-8kz4rp6` is held by
- * `tools/mutate/native.test.ts`, and writing it here with the `§` claims it: `spectags_test.wac`
+ * `tools/mutate/native.test.ts`, and writing it here with the `§` claims it: spectags_test.wac
  * walks a list of directories in order and requires each to contribute a tag *no earlier directory
  * did*, so `tools/wac` coming before `tools/mutate` took the only clause that one holds and the guard
  * went red naming a file I had not touched. The claim moves here when the TypeScript goes and
