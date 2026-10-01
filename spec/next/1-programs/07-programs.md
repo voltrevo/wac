@@ -38,12 +38,16 @@ import { Ticket } from "core";
 
 export async i32 later(Ticket<i32> t) { return await t; }
 export gen<i32> void counting() { yield 1; }
+export T first<T>(T[] xs) { return xs[0]; }  // exported to wac importers; not a compiled export
 ```
 
-`[§wac-export-any-signature-9pdfi7d]` Any function that is not generic may be exported, whatever its
-signature — `async`, a generator, or taking a parameter no host could construct. Compiling does not
-judge what a host can call. A generic function is the exception — a host would call a name the author
-never wrote — and an instantiation of one is exported by naming it, `export { max<i32> as maxI32 };`
+`[§wac-export-any-signature-9pdfi7d]` Any function may be exported, whatever its signature — generic,
+`async`, a generator, or taking a parameter no host could construct. Compiling does not judge what a
+host can call. Every non-generic exported function of the entry is an export of the compiled module.
+
+A generic function is exported for other wac modules to instantiate, and is checked as an entry point,
+but it is not an export of the compiled module: a host would have to call a name the author never
+wrote. An instantiation of one becomes a compiled export by being named, `export { max<i32> as maxI32 };`
 ([02](02-modules-and-imports.md)).
 
 `export` in any other module is about modules naming each other ([02](02-modules-and-imports.md)).
