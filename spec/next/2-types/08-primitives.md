@@ -140,7 +140,8 @@ export i32 main() {
   i32 n = 0;
   if (inf > 1.0e308) { n += 1; }
   if (nan != nan) { n += 1; }              // NaN is unequal to everything, itself included
-  if (-0.0 == 0.0) { n += 1; }             // the two zeros compare equal
+  f64 negZero = -0.0;
+  if (negZero == 0.0) { n += 1; }          // the two zeros compare equal
   return n;
 }
 ```

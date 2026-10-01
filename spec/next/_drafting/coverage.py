@@ -83,7 +83,7 @@ RULES = [
     ("control.md", r"Hex literals", "08"), ("control.md", r"trap", "26"),
     ("control.md", None, "25"),
     ("enums.md", r"Result|try", "26"), ("enums.md", None, "13"),
-    ("errors.md", None, "26"), ("funcrefs.md", None, "20"),
+    ("errors.md", r"Soundness", "26"), ("errors.md", None, "B"), ("funcrefs.md", None, "20"),
     ("functions.md", r"^Export", "07"), ("functions.md", r"shadows a function", "01"),
     ("functions.md", None, "20"),
     ("generics.md", None, "19"), ("grammar.md", None, "A"),
