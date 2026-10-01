@@ -34,7 +34,7 @@ earlier ran `Base.fire`. Dispatch is by the declared type of the reference.
 ## Why this is filed rather than fixed
 
 **Because the spec does not say which it should be, and both answers are defensible.**
-`spec/spec/structs.md` defines `override` — a subtype's method with a parent's name must use the
+spec/spec/structs.md defines `override` — a subtype's method with a parent's name must use the
 keyword, using it without a parent method is an error, omitting it is an error — and then stops. It
 never states what a *call* through a parent-typed reference does. So today `override` means "may
 reuse the parent's name" and nothing more, which is a strange thing for the keyword to mean.

@@ -15,7 +15,7 @@ is valid UTF-8 by construction** and `string.fromBytes` is the single place
 invalid bytes can enter a program.
 
 That last property is the point. `string` is a byte sequence that is *taken to
-be* UTF-8 and never checked, which `spec/spec/strings.md` states deliberately:
+be* UTF-8 and never checked, which spec/spec/strings.md states deliberately:
 
 > **It does not validate.** … validating would cost a pass over every string
 > built this way, and the callers that need it — a decoder, a parser — are
@@ -267,8 +267,8 @@ it lexes the full language or only what wacc's own source uses.
 6. **Block strings.**
 7. **Interpolation.**
 
-Steps 1–3 move `spec/spec/strings.md`, `spec/spec/types.md` and
-`spec/spec/grammar.md` together: the grammar has one shared `escape` production
+Steps 1–3 move spec/spec/strings.md, spec/spec/types.md and
+spec/spec/grammar.md together: the grammar has one shared `escape` production
 including `'`, which is what makes wacc's current string behaviour
 grammar-conformant, and it splits in two.
 
@@ -336,7 +336,7 @@ it cannot go stale silently. Not free, and not blocked.
 **Only the character-literal half of it.** The implementation first refused *any* integer literal
 that did not fit a packed element — `u8[](300)`, `i16[](70000)` — on the reasoning that nothing about
 such a literal can be right. That is wrong, and the specification says so with a tag:
-`spec/spec/arrays.md`'s `[§wac-arr-i8-lit-trunc-i9g6kol]` states that `i8[](300)` returns `44`,
+spec/spec/arrays.md's `[§wac-arr-i8-lit-trunc-i9g6kol]` states that `i8[](300)` returns `44`,
 because *"the fixed-element form takes `i32` values too, and truncates them the same way a write
 does — so a byte array can be written as a literal list"*. `spec/tour.wac` teaches it as well.
 
@@ -375,7 +375,7 @@ synthesised `"a"` token has no `"a"` in the source to point at: the segment sits
 a `\{`, and `stringLiteralBytes` reads a span expecting a quote at each end.
 
 **There is a precedent in this repository and it should be followed.**
-`packages/wacc/src/wapyparse.wac` synthesises tokens for a surface whose source does not contain
+packages/wacc/src/wapyparse.wac synthesises tokens for a surface whose source does not contain
 them, and gives them spans by appending a `synthTail()` to the source it hands back — its own header
 explains the consequence at length: *"the `src` and `toks` handed back are not the caller's … a
 caller that parses with this and then checks against `lex(original)` will resolve every name to the
@@ -411,7 +411,7 @@ takes `"a"` and then meets a `+` it has no case for.
 | site | position | what an interpolated one must do |
 | --- | --- | --- |
 | `parse.wac` (import) | `import { x } from "…"` | be refused: a module path is resolved at compile time |
-| `wapyparse.wac` | the same, for `.wapy` | the same |
+| wapyparse.wac | the same, for `.wapy` | the same |
 | `files.wac` | reads the path token's bytes to resolve the module | would silently resolve the first segment |
 | `parse.wac` (JSX) | `<a href="…">` | be refused — `href={e}` is already how an expression goes there |
 
@@ -431,7 +431,7 @@ measurement makes that easier — it only says how much else is waiting behind i
 ## The spans need no synthesised source, and the reason is the measurement above
 
 The section on step 7's shape calls the spans "the hard half … where the design has to be decided
-rather than derived", and points at `wapyparse.wac`'s `synthTail()` as the precedent to follow: a
+rather than derived", and points at wapyparse.wac's `synthTail()` as the precedent to follow: a
 synthesised token needs source to point at, so append some. That is one answer. There is a cheaper
 one, and the measurement above is what makes it available.
 
@@ -509,7 +509,7 @@ round trip over 1,434 files failed on exactly the six that interpolate.
 
 The fix is not a span. **An operator's spelling is its kind**, and for every operator anybody has
 ever written the two agree exactly, so asking `kindName` instead of the source is right in general
-and only *visible* here. Same in `print.wac` and in `wapyprint.wac`.
+and only *visible* here. Same in `print.wac` and in wapyprint.wac.
 
 **The refusals are deliberate now, and no marker was needed for them either.** I had this down as
 the one thing still wanting a field on `Lexed`. It does not: the parenthesis the desugaring opens is
@@ -518,7 +518,7 @@ the only `(` in a file whose span is a **quote**, because a written `(` spans a 
 same shape as the segments' spans, and the third time this design has turned out to need no state.
 
 There were two positions rather than the four the table counts. `files.wac` reads a path token the
-parser now refuses to produce, and `wapyparse` lexes its own strings — `wapylex.wac` never calls
+parser now refuses to produce, and `wapyparse` lexes its own strings — wapylex.wac never calls
 `lexString`, so `\{` in a `.wapy` file is not interpolation and its import path was never at risk.
 
 What it was worth: an interpolated import path reported **six** diagnostics, every one of them at
@@ -575,7 +575,7 @@ asking it or answering it: a blocker nobody can read is indistinguishable from w
 
 So I went looking for what it could have been, and the two candidates are both already answered:
 
-- **"Is `s.isUtf8()` meaningful, or a constant `true`?"** `spec/spec/strings.md` settles it in the
+- **"Is `s.isUtf8()` meaningful, or a constant `true`?"** spec/spec/strings.md settles it in the
   `fromBytes` clause: *"The bytes are taken to be UTF-8 and are not checked, so a string can hold
   sequences that are not valid UTF-8. That is deliberate."* A string can be ill-formed, so asking one
   is a real question. `[§wac-str-isutf8-value-r2nk8fq]` is that case.

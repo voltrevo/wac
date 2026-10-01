@@ -65,7 +65,7 @@ taken back to back on one machine with the box otherwise quiet; `deno task test`
 
 This issue's first suggestion is *"what is missing is a way to run a built module — `wac exec
 prog.wasm [args…]`"*. It is not missing. **`wac app` writes exactly that**, and `wac app-run` is what
-the executable it writes then execs — both are in `spec/cli/wac.md`'s command list. Measured on this
+the executable it writes then execs — both are in spec/cli/wac.md's command list. Measured on this
 issue's own two cases, back to back, same machine, both producing identical output:
 
 | program | `wac app` | `build.ts --target deno` | artefact sizes |

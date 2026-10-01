@@ -155,7 +155,7 @@ version existed to avoid in the first place.
 The frontend also moved into `atoms/wac/`, since the earlier note that "nothing in `atoms/wac/`
 was touched" described a constraint that no longer applies. tools/wapyRead.ts,
 tools/wapyLoad.ts and their tests are gone; the frontend is `wapyLex.ts` + `wapyParse.ts`, the
-printer is `wapyPrint.ts`, and the surface is specified in `spec/spec/wapy.md`.
+printer is `wapyPrint.ts`, and the surface is specified in spec/spec/wapy.md.
 
 One thing the sketch got wrong: it described `wapyRead` as a frontend. It was a transliterator —
 it rewrote wapy tokens into wac's shape without validating wapy's own grammar, so `class P` with

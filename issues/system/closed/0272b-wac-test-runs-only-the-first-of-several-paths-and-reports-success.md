@@ -10,7 +10,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer — a green result for a fraction of what was asked
 
-`spec/cli/wac.md` documents the plural:
+spec/cli/wac.md documents the plural:
 
     wac test    [path…] [--ignore p,…]   # every `test*` export under each path
 

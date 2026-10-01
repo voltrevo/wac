@@ -34,7 +34,7 @@ fetch, and `std/nope.wac` would then be that repository's file. The same holds f
 
 > `core`, `core/`, `std` and `std/` are reserved, cannot be remapped, and never appear in `wac.lock`.
 
-`spec/spec/imports.md` states it as `§wac-std-reserved-5kt8nqw`. Both say the *prefix*.
+spec/spec/imports.md states it as `§wac-std-reserved-5kt8nqw`. Both say the *prefix*.
 
 ## Why it happens
 

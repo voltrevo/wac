@@ -13,7 +13,7 @@
 export i32 digit(string s) { return s[0] - '0'; }
 ```
 
-`s[0]` is a one-character **string** (`spec/spec/strings.md` §Indexing), so this is `string - string`,
+`s[0]` is a one-character **string** (spec/spec/strings.md §Indexing), so this is `string - string`,
 which no operator table defines. Neither compiler says so.
 
 ```
@@ -97,7 +97,7 @@ not an *array*, so `s[0]` had no type and every rule that needed one went quiet:
     i32 n = s;      →  error: initialiser does not match the declared type   ← the rule exists
     i32 n = s[0];   →  1 file(s), no diagnostics                             ← it could not see it
 
-`spec/spec/strings.md` §Indexing: *"`s[i]` decodes the UTF-8 codepoint starting at byte index `i` and
+spec/spec/strings.md §Indexing: *"`s[i]` decodes the UTF-8 codepoint starting at byte index `i` and
 returns it as a single-character string"*. The emitter's twin has said so for a while, in the same
 words. Adding the case to the checker refuses both this issue and `i32 n = s[0];` with the existing
 messages:

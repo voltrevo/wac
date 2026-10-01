@@ -12,7 +12,7 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { tags } from "@lezer/highlight";
-import { wac as wacLang, wapy as wapyLang } from "./editor/wac-language";
+import { wac as wacLang } from "./editor/wac-language";
 
 export const GITHUB = "https://github.com/voltrevo/wac";
 
@@ -58,7 +58,7 @@ const cmTheme = EditorView.theme({
 
 /** The three things a code block on this page can be written in. */
 /** `text` is program output rather than source — no grammar, so nothing is coloured. */
-export type Lang = "wac" | "wapy" | "ts" | "text";
+export type Lang = "wac" | "ts" | "text";
 
 export function CodeBlock({ code, lang }: { code: string; lang: Lang }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -69,7 +69,7 @@ export function CodeBlock({ code, lang }: { code: string; lang: Lang }) {
     viewRef.current?.destroy();
     const langExt = lang === "ts"
       ? javascript({ typescript: true })
-      : lang === "wapy" ? wapyLang() : lang === "text" ? [] : wacLang();
+      : lang === "text" ? [] : wacLang();
     const state = EditorState.create({
       doc: code,
       extensions: [

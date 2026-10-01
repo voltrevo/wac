@@ -113,7 +113,7 @@ undecided.
 
 The operator's ruling, and it is the one option this page did not list: **wapy uses `this`, like wac.**
 `self` stops being a wapy keyword and becomes an ordinary identifier on both surfaces, so a wac local
-named `self` renders as itself and reads back as itself. `spec/spec/wapy.md`, `wapyLex.ts`'s
+named `self` renders as itself and reads back as itself. spec/spec/wapy.md, `wapyLex.ts`'s
 `SPELLINGS`, `wapyParse.ts` and `wapyPrint.ts`.
 
 **Why this rather than any of the workarounds above.** `self` was the only one of the six respellings

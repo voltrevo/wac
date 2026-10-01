@@ -21,8 +21,8 @@ export f64 d() { return 1 as~ f64; }     // ref: lossy cast not needed
 export f64 e() { f64 s = 1 + 2; return s; }  // ref: type mismatch: expected f64, got i32
 ```
 
-Expected: a compile error in each. `spec/spec/casts.md` — *"using `as~` where `as` would work is a
-compile error"*, and the same for `as!` and `as@`. `spec/spec/types.md` — an integer literal takes
+Expected: a compile error in each. spec/spec/casts.md — *"using `as~` where `as` would work is a
+compile error"*, and the same for `as!` and `as@`. spec/spec/types.md — an integer literal takes
 whatever **integer** type is expected of it, and *"no implicit conversions between any types"*, so
 `f64 s = 1 + 2` is not a float sum.
 

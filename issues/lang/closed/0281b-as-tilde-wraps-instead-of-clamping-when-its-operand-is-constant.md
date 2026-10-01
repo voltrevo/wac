@@ -22,7 +22,7 @@ export i32 castLocal() { i64 n = 4294967296; return n as~ i32; }   // 2147483647
 ```
 
 Expected: `2147483647` for the first three and `-2147483648` for the fourth —
-`spec/spec/casts.md` gives `i64 -> i32   clamp to i32 range` for `as~`, and
+spec/spec/casts.md gives `i64 -> i32   clamp to i32 range` for `as~`, and
 `[§wac-cast-matrix-6hkq4wz]` is about that clamping.
 
 Actual: all four are `0`, which is what `as@` gives — the low 32 bits of `2^32` and of `i64` min

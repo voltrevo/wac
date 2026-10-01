@@ -64,7 +64,7 @@ that refuses has to return an already-answered `Pending`. That is `ready`'s enti
 
 Monomorphisation in `packages/wacc/src/emit.wac`: the instantiation is recorded against the module
 that *defines* the generic rather than the one that needs it, or the caller's module is not asked to
-emit it. `spec/spec/generics.md` says nothing restricting a generic function to its own module, so the
+emit it. spec/spec/generics.md says nothing restricting a generic function to its own module, so the
 spec is on the side of this working.
 
 **The diagnostic is worth fixing beside it.** It names the function and says it "is not in the

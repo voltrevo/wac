@@ -33,7 +33,7 @@ parameters of its own.**
 
 ## Why the spec did not catch it
 
-`spec/spec/generics.md` documents the feature and tags it:
+spec/spec/generics.md documents the feature and tags it:
 
 > ### A method may take type parameters of its own
 >

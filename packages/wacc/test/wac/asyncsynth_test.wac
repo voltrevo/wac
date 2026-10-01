@@ -7,8 +7,8 @@
 //
 // Three things have to hold, and each is one test below: the spellings land in the source, a token
 // pointed at one reads back, and doing it twice does not do it twice. The third is not hypothetical —
-// `Lexed`'s own note says to lex again for a second parse, and wapy's tail was lexed as a line of
-// code the second time round, which is why this one hides behind a `//`.
+// `Lexed`'s own note says to lex again for a second parse, and an uncommented tail would be lexed as a
+// line of code the second time round, which is why this one hides behind a `//`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { lex, Lexed, tokenStride } from "../../src/lex.wac";

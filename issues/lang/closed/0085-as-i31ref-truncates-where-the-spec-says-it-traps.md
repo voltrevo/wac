@@ -17,7 +17,7 @@ export i32 f() {
 }
 ```
 
-Expected: a trap. `spec/spec/casts.md` gives the rule for the family — *"`as!` — checked: exact
+Expected: a trap. spec/spec/casts.md gives the rule for the family — *"`as!` — checked: exact
 or trap"* — and again for this cast: `42 as! i31ref` is "checked (i32 may not fit in 31 bits)".
 `spec/tour.wac:609` says the same in its comment.
 

@@ -197,7 +197,7 @@ ladder rather than a missing rule.
     reference  integer literal out of range
                ^^^^^^^^^^^^^^^^^^^^ 18446744073709551615 exceeds i64 — only u64 can hold it
 
-`spec/spec/types.md:223` says the error is "a decimal literal past **`u64`**'s range", and this value
+spec/spec/types.md:223 says the error is "a decimal literal past **`u64`**'s range", and this value
 is exactly `u64`'s maximum; two lines later, "where nothing is expected of it, a literal keeps the
 width its own notation gives it". Read together those say the literal is a `u64` and the complaint
 should be about `.nofield` — which is what both compilers say when the receiver is a `u64`
@@ -235,7 +235,7 @@ The reference **refuses the same program at typecheck**:
     error: decl.wac:1:25 [typecheck] integer literal out of range
 
 So wacc reaches its emitter here only because its checker does not range-check that literal where the
-reference does. The literal itself is fine — `spec/spec/types.md:124` has
+reference does. The literal itself is fine — spec/spec/types.md:124 has
 `export u64 max() { return 18446744073709551615; }` and both compilers take it — so the divergence is
 about the *context*: with no u64 expected, the reference bounds the literal and wacc does not.
 

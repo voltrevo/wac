@@ -47,7 +47,7 @@ question rather than an implementation one.
 
 ## Why the language's own rule cannot supply it
 
-`spec/spec/generics.md` is explicit, and the reasoning is good:
+spec/spec/generics.md is explicit, and the reasoning is good:
 
 > There is no `max<i32>(x, y)`. Angle brackets are type syntax only — the same ambiguity with
 > less-than — and a call is an expression, so **inference is the whole interface**. It is tractable
@@ -449,7 +449,7 @@ Box<i32> c = b.map<i32>((i32 x) => x + 1);
        |                         ^ expected Box<i32>, found bool
 
 `found bool` because the parse is a comparison chain — `(b.map < i32) > (…)` — which is exactly what
-`spec/spec/generics.md` says angle brackets are: *"type syntax only — the same ambiguity with
+spec/spec/generics.md says angle brackets are: *"type syntax only — the same ambiguity with
 less-than"*. So the message is not wrong. It is also the message a person gets for writing the thing
 this note's option C would introduce, and it names neither the rule nor the intent; `issues/lang/0235a`.
 

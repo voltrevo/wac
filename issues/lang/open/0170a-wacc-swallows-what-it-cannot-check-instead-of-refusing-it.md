@@ -171,7 +171,7 @@ pattern in them is the same one this issue is about — accommodating a wrong an
 where it came from.
 
 **Round 3 was wrong.** It concluded "`i32` and `u8` agree, so agreement is by *widened* type" and
-added a `widenedTy` helper. There is no `u8` value in wac: `spec/spec/types.md` says *array element
+added a `widenedTy` helper. There is no `u8` value in wac: spec/spec/types.md says *array element
 only — no locals, params, or struct fields*, and both compilers refuse `u8 x = 1;`. So `n + b[0]` is
 plain `i32 + i32` and no widening rule is needed.
 
@@ -809,7 +809,7 @@ answered both "does this name exist" and "what is this local's type". The discri
 Six lines, every one citing a written source rather than a round of calibration.
 
 **The literal rows are keyed on `isLiteral`, not on the literal's answer, and that distinction is a
-spec clause.** `spec/spec/types.md` says a literal *"keeps the width its own notation gives it —
+spec clause.** spec/spec/types.md says a literal *"keeps the width its own notation gives it —
 including as an operand of an operator, so an `i64` literal stays `i64` rather than narrowing"* — and
 then: *"The **other operand counts as an expectation**, in either order and whether or not the literal
 is negated"*, with `§wac-int-context-9wkq4mz` showing `f(i32 x) { return -2147483648 <= x; }` compiling
@@ -911,7 +911,7 @@ which is worth saying plainly, because reading the list top to bottom does not r
 1. **A declared export missing from the module is an error** — landed for `wac build`. What remains is
    the in-process API, and that is a decision this issue already states three options for.
 2. **`typeOfE` must not guess** — done today. The rule came out of `checkBinaryOp` and
-   `spec/spec/types.md` rather than out of calibration; `binaryoperands_test.wac` and
+   spec/spec/types.md rather than out of calibration; `binaryoperands_test.wac` and
    `spec/cases/0223` hold it, canaried both ways.
 3. **Give `""` a meaning callers cannot ignore** — open, and the only item that is still open. Its
    stated basis was already corrected above: the "38 unguarded call sites" figure counted an idiom, and

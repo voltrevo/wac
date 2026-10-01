@@ -9,7 +9,7 @@
 
 ## What we are aiming at
 
-Every import in wac was a relative file path — `spec/spec/imports.md` said, before step 1 of this
+Every import in wac was a relative file path — spec/spec/imports.md said, before step 1 of this
 landed: *"Import paths are relative, using `./` or `../` prefixes."* That was the whole of the module
 system, and it held up well for a single tree.
 
@@ -169,7 +169,7 @@ the ecosystem would stop composing with every other.
    which is closed — the capability layer stays here — so this is now the first half of *whackage*
    rather than something a package in this repo is blocked on. Done when a prefix can name a set of
    sources that is not a directory beside you.
-4. **`spec/spec/imports.md` gains the resolution rules**, with tags and tests, at which point steps 1
+4. **spec/spec/imports.md gains the resolution rules**, with tags and tests, at which point steps 1
    to 3 stop being design and become behaviour.
 
 Whackage is deliberately not on this list. It is a destination that this direction makes possible, and

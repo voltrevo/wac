@@ -7,7 +7,7 @@
 - **Kind:** missing feature
 - **Symptom:** compile error
 
-`spec/spec/enums.md` makes a variant name a file-scope name, so two enums in one file cannot share
+spec/spec/enums.md makes a variant name a file-scope name, so two enums in one file cannot share
 a variant and a variant cannot share a name with a struct or function:
 
 ```wac

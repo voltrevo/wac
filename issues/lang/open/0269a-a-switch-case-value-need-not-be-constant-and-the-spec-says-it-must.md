@@ -25,7 +25,7 @@ scrutinee and the case expression and compares them at run time.
 
 ## Why that is a problem rather than a feature
 
-`spec/spec/control.md`'s switch section states the type rule **and its reason**:
+spec/spec/control.md's switch section states the type rule **and its reason**:
 
 > The switch expression and case values must be a 32-bit integer, `i32` or `u32` — `br_table`
 > dispatches on 32 bits, and signedness plays no part in an equality match.

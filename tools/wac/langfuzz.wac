@@ -238,15 +238,8 @@ export i64 wrapTo(i64 v, i32 ty) {
 /**
  * The values the generated program's locals hold, as the oracle evaluates it.
  *
- * **A struct around a map, rather than the map itself, and that is not a style choice.** A lambda
- * whose parameter type carries type arguments does not survive the wapy round trip: the parameter
- * loses its name, the type loses its arguments, and the *body* is replaced by null — so the
- * rendering is a different program. `issues/lang/0307b`, found by this file failing
- * `packages/wacc/test/wac/wapyroundtrip_test.wac` on its first gate run.
- *
- * A lambda parameter of a plain named type round-trips identically, which is the control in that
- * issue and the reason this wrapper is enough. wac has no type aliases, so a one-field struct is how
- * a name is given to a type here.
+ * A struct around a map, rather than the map itself, so that the lambdas below take a parameter of
+ * a plain named type.
  */
 export struct Env {
   Map<string, i64> at;
@@ -331,13 +324,8 @@ export Ran runGraph(Cli cli, string[] paths, string[] texts) {
 
 // ── The evaluators the nodes' lambdas call ───────────────────────────────────────────────────────
 //
-// **Every `evalIn` below is a single call and contains no branching**, which is not a style
-// preference: neither a ternary nor an `if` survives inside a lambda through the wapy round trip.
-// The ternary case is `issues/lang/0297c`; the statement case is recorded in `issues/lang/0307b`,
-// where a lambda body of `if (c) { return x; } return y;` comes back as a bare expression followed
-// by a block, with the `if` and both `return`s gone.
-//
-// Keeping the branch in a named function sidesteps both and reads better anyway — the node builders
+// **Every `evalIn` below is a single call and contains no branching**: keeping the branch in a named
+// function reads better — the node builders
 // stay a line each, and the arithmetic is somewhere it can be pointed at.
 
 i64 evalAndOr(bool isAnd, Expr a, Expr b, Env e) {
@@ -383,10 +371,7 @@ i64 evalCall(Helper h, Vec<Expr> args, Env e) {
 /**
  * Whether a u32 local's value has its top bit set — the answer's u32 route.
  *
- * A named function rather than a ternary in the lambda, for the reason the other `eval*` helpers
- * here give: neither a ternary nor a statement survives inside a lambda through the wapy round trip
- * (`issues/lang/0297c`, `issues/lang/0307b`). I wrote one back in anyway and the gate caught it,
- * which is what that test is for.
+ * A named function rather than a ternary in the lambda, as the other `eval*` helpers here are.
  */
 /**
  * The high 32 bits of an i64 local, as an i32 — the answer's i64 route.

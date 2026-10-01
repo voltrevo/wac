@@ -8,7 +8,7 @@
 - **Symptom:** wrong answer
 
 `issues/lang/0033` — *no way to detect integer overflow* — was closed **documented, not built**. It
-weighed three shapes, chose the middle one, and wrote the idioms into `spec/spec/types.md`. Its own
+weighed three shapes, chose the middle one, and wrote the idioms into spec/spec/types.md. Its own
 notes said what it was short of:
 
 > No reproduction from the original shipped bug — the friction log records the cost without the
@@ -42,7 +42,7 @@ limb is `0xffffffff` and a remainder window just above it. Four hundred random o
 
 ## Notes
 
-**`spec/spec/types.md` documents two ways to detect overflow and says of the first that it does not
+**spec/spec/types.md documents two ways to detect overflow and says of the first that it does not
 reach here.** Widen and narrow with `as!`:
 
 > **Widen, then narrow with `as!`.** For any type narrower than 64 bits, compute in the wider type

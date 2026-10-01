@@ -48,7 +48,7 @@ code — `{ i32 q = 1; } { i32 q = 2; }` compiles and runs correctly today, sile
 Rung 3 reads **spec 83 of 83** and this bug is not among them, which is worth explaining rather than
 treating as a contradiction.
 
-`spec/spec/naming.md` states two rules about scope and wacc obeys the one it states positively:
+spec/spec/naming.md states two rules about scope and wacc obeys the one it states positively:
 
 > All name collisions at the same scope level are compile errors. **Block-scope shadowing is
 > allowed.**
@@ -57,7 +57,7 @@ with `§wac-shadow-8u8qh2j` — `i32 x = 1; { i32 x = 2; x = 3; } return x;` ret
 answer 1. `emit.wac` scopes locals correctly; it is `check.wac`'s name table that does not, and the
 spec's case exercises the emitter's half.
 
-**Written down, 2026-08-16.** `spec/spec/naming.md` now states it, untagged and with the reason:
+**Written down, 2026-08-16.** spec/spec/naming.md now states it, untagged and with the reason:
 a tag needs a case, a case is a program both compilers must agree on, and they do not. Tag it and
 add the three cases when the checker enforces it — that is the last step of this issue rather than a
 separate one.
@@ -259,7 +259,7 @@ rather than per name in the emitter" — and that turned out to be already true:
 wasm was not the emitter running out of locals, it was the checker having been silenced first.
 
 Cases `spec/cases/0177`-`0180`, met by both compilers; `§wac-block-scope-k3zqm41` in
-`spec/spec/naming.md`, which that paragraph had been waiting for. 0177 and 0178 were watched failing
+spec/spec/naming.md, which that paragraph had been waiting for. 0177 and 0178 were watched failing
 against the old checker; 0180 was watched failing against a depth-blind `findName`, and it needs a
 *typed* loop bound to do it — with `k < 3` an untyped literal compares happily against an `i64` and
 the case passes under either resolution.

@@ -57,7 +57,7 @@ Found while probing generic functions (`T orElse<T>(T? a, T d)`), but generics a
 involved: every reproduction above is plain wac. Worth checking whether the type checker
 should be rejecting these instead — a nullable primitive may be a shape the language does not
 mean to allow, in which case the fix is a diagnostic and a spec sentence rather than boxing.
-`spec/spec/types.md` currently documents `T?` without excluding primitives, so the
+spec/spec/types.md currently documents `T?` without excluding primitives, so the
 implementation and the spec disagree either way.
 
 ## Fixed (agent-a, 2026-07-31)
@@ -84,7 +84,7 @@ export i32? big() { return 2000000000; }   // came back as -147483648
 ```
 
 No diagnostic, at exactly the values a program is most careful about. The allocation is the
-price of that not happening, and it is documented in `spec/spec/types.md` along with the
+price of that not happening, and it is documented in spec/spec/types.md along with the
 cheaper alternative (a parallel `bool[]` of presence flags) for the case where it matters.
 
 Nine other things had to change, each revert-checked:

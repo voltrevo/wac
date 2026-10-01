@@ -176,23 +176,11 @@ void namedByCase(string text, Strs into) {
  * most and reported `span: 0` on four, which is what being unchecked looks like. Three more —
  * `§enum-variant-name-collision`, `§wac-bind-bulk-70zh5tg` and `§wac-diag-null-h6kp9wn` — turned out to be
  * *met* and merely unasserted, which is the same risk one lucky commit away.
- *
- * **`§wac-wapy-*` was an exception until 2026-08-28, and it is worth saying why it was one and why
- * it is not.** wapy was a Python-shaped surface written in TypeScript in the reference; wacc did not
- * implement it, so those nine clauses were skipped here — the reference's tests were the only place
- * they could be held, and counting them would have been this guard flattering itself by nine.
- *
- * wacc implements wapy now — `wapylex.wac`, `wapyparse.wac`, `wapyprint.wac`, `wapyrewrite.wac`,
- * `wapytok.wac` — and every one of the nine was already named by a test that checks it, eight in
- * `wapy_test.wac` beside this file and one in `wapyroundtrip_test.wac`. So the skip was not merely
- * out of date: it was excusing clauses that were held, on a premise that had stopped being true, and
- * the total it printed was nine short of the truth in the *pessimistic* direction. An exemption
- * costs nothing to keep and says nothing when it stops applying, which is the whole hazard.
  */
 /** This file, whose prose names tags it must not be read as covering. */
 string SELF() { return "packages/wacc/test/wac/spectags_test.wac"; }
 
-export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(Core core, Cli cli) {
+export string test_every_clause_is_held_outside_the_reference(Core core, Cli cli) {
   T t = T.create();
 
   Strs claimed = Strs.create();

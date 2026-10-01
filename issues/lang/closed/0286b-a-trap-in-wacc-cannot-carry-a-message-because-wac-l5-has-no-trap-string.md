@@ -13,7 +13,7 @@
 
 ## What
 
-`spec/spec/control.md` says **`trap` may carry a message**, which is what the host is told instead of
+spec/spec/control.md says **`trap` may carry a message**, which is what the host is told instead of
 the engine's own words, and `issues/lang/0147` built the machinery: the string survives the trap in a
 global, `$trap$message` hands it back, and `wac test` prints it — `FAIL name — trapped: the ring is
 full`. Tests across the repository use it.
@@ -73,7 +73,7 @@ only to reach it. Size it before promising: rung 5 is deliberately small and eve
 smaller, so the question is whether the string machinery (`$trap$message`, a mutable global holding
 a string) is reachable from where wac-L5 stops, or whether it needs a piece of that too.
 
-If it does need more than the parser, the honest alternative is to say in `spec/spec/control.md` that
+If it does need more than the parser, the honest alternative is to say in spec/spec/control.md that
 the message is not available to the compiler's own sources, which is a sentence the spec does not
 currently have and a reader hitting this would want.
 

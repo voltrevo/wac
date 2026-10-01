@@ -7,7 +7,7 @@
 
 ## The hole
 
-`spec/spec/variables.md` says `const` on a reference means no writes through it at any depth
+spec/spec/variables.md says `const` on a reference means no writes through it at any depth
 (`§wac-const-deep-j6b1nyg`). Four lines defeat it:
 
 ```wac
@@ -260,7 +260,7 @@ Two rounds were enough over the reference's AST, so the retained-program loop wo
 alternative — propagating only within each file as it is declared — would leave a chain that crosses
 a file boundary uncaught, and this note has already spent one stated hole on the funcref call. A
 second one, in the common direction rather than the rare one, is not worth the saving.
-3. `spec/spec/variables.md` states the funcref residue in the same paragraph as the guarantee, so
+3. spec/spec/variables.md states the funcref residue in the same paragraph as the guarantee, so
    the guarantee is not read as stronger than it is.
 
 ## What implementing it found — 2026-08-13
@@ -308,7 +308,7 @@ what it is for: "a feature the reference does not have — the spec targets wacc
 design/lang/0003, so those exist on purpose now". No case uses it yet, which is why grepping the
 corpus for it found nothing and I concluded the mechanism was absent. It is not.
 
-So the blocker is smaller than this note said. What is needed is `spec/spec/variables.md` to stop
+So the blocker is smaller than this note said. What is needed is spec/spec/variables.md to stop
 naming the hole and case 0083 to become `expect: refused` with `// only: wacc` — the reference is not
 asked, because the reference is a seed and its behaviour is not the specification. **The reference
 does not have to implement the analysis.**

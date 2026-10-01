@@ -7,7 +7,7 @@
 - **Kind:** bug
 - **Symptom:** trap — a null dereference on a field whose type has no null
 
-`spec/spec/enums.md` defines the bare form for **payload-less** variants only:
+spec/spec/enums.md defines the bare form for **payload-less** variants only:
 
 > A payload-less variant is a value, not a call — `Shape.Point`, not `Shape.Point()`.
 
@@ -68,7 +68,7 @@ So the two are coupled, and fixing this one raises the question it was hiding: *
 `Result<void, E>`, and how is its `Ok` written?** `Ok(void)` is not a value. Either `void` is
 special-cased as a type argument whose variant may be written bare, or the idiom needs a different
 spelling — `Ok(Unit())` with a one-member struct works today and is what the measurement showed
-(`probe3() = 30`, clean). `spec/spec/async.md` already special-cases the neighbouring case and says
+(`probe3() = 30`, clean). spec/spec/async.md already special-cases the neighbouring case and says
 *"`Vec<void>` remains an error — nothing can hold a value"*, so there is precedent for a rule and no
 rule for this.
 

@@ -34,11 +34,6 @@ import { Frontend, frontendOf } from "./frontend.wac";
  *
  * An import with a bare word rather than a string — `import { Read } from core;` — contributes
  * nothing, and deliberately: `core` is carried by the linker, so there is no file to read.
- *
- * **Prefer `importSpecsOf` when the path is in hand.** wapy spells an import `from "./m.wac" import
- * a, b`, which this reads as nothing at all — so a graph walked with this one stops at the first
- * wapy file and the edges beyond it do not exist. The checker resolved imports off such a walk and
- * reported `no file was supplied at that path` for a file that was right there.
  */
 export string[] importSpecs(u8[] src) {
   return importSpecsOf("x.wac", src);

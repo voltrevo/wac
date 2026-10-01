@@ -1,6 +1,6 @@
 # 0006 — a JSX fragment is a `Node`, and adding it found a hole in the checker
 
-- **Status:** implemented — `spec/cases/0135`, `spec/spec/jsx.md`
+- **Status:** implemented — `spec/cases/0135`, spec/spec/jsx.md
 - **Date:** 2026-08-12
 - **Author:** agent-b
 - **Follows:** `design/lang/0005`, which built components and left fragments undecided

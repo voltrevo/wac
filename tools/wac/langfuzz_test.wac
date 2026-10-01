@@ -52,8 +52,7 @@ export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
  * **A list here is derived from a run and goes stale when the generator changes.** That happened
  * twice: adding helpers, branches and loops moved the failures from 9/53/84/131 to ten different
  * seeds, because a seed names a sequence of draws and new arms consume different ones. Re-derive
- * rather than extend — a list that is not the list of actual failures reads as knowledge, which is
- * the mistake `wapyroundtrip_test.wac` records making.
+ * rather than extend — a list that is not the list of actual failures reads as knowledge.
  */
 /** Seeds whose disagreement is a known-open issue. Empty since `issues/lang/0306b` was fixed. */
 i32[] knownOpen() { return i32[0](fill: 0); }

@@ -15,7 +15,7 @@ underlying function with the receiver as an explicit first parameter — because
 method on this object" passes two things and the callee has to take two things. Static methods cannot
 be referenced at all.
 
-**A closure.** `fn[…]` values never capture. `spec/spec/funcrefs.md`: *"No closures — function
+**A closure.** `fn[…]` values never capture. spec/spec/funcrefs.md: *"No closures — function
 references cannot capture variables from enclosing scope."* Every piece of state a callback needs is
 a parameter it was handed.
 
@@ -202,7 +202,7 @@ collection pass is an optimisation to measure against it rather than a prerequis
 Everything the emitter needs for `c.inc` is built and green. What stops the checker being changed to
 accept it is not code.
 
-`spec/spec/funcrefs.md` carries `[§wac-fnref-nocapture-j4wk8pm]` — *"`c.inc` as a value is a compile
+spec/spec/funcrefs.md carries `[§wac-fnref-nocapture-j4wk8pm]` — *"`c.inc` as a value is a compile
 error"* — and `spec/tour.wac` says the same twice, at lines 777 and 791. A `§tag` is tested by
 compiler/wacSpec.test.ts, which runs against **the reference**, and the reference is bootstrap-bound
 and not to grow this feature. So:
@@ -232,14 +232,14 @@ closures:
 
 The operator chose option 1. Implementing it found that the choice was between three options one of
 which did not need to exist: **`§tag`s are already scoped, by namespace.** `§wacc-` is documented in
-`spec/spec/structs.md` as "a clause the seed does not implement", against `§wac-` for "the language
+spec/spec/structs.md as "a clause the seed does not implement", against `§wac-` for "the language
 both compilers answer for", and `packages/wacc/test/wac/spectags_test.wac` guards that every such clause is
 named by a case or a test. Two clauses already used it.
 
 So this note's *"a `§tag` cannot [be scoped]. There is no scoping in `wacSpec.test.ts`"* was true of
 that one file and false of the mechanism, and it made option 2 look like machinery to build when it
 was machinery to use. Option 1 was carried out in the better form it allows: the rule stays a tagged
-clause in `spec/spec/funcrefs.md`, inverted — `[§wacc-fnref-bound]`, "`c.inc` is a value of the
+clause in spec/spec/funcrefs.md, inverted — `[§wacc-fnref-bound]`, "`c.inc` is a value of the
 receiver-less signature" — with `spec/cases/0176` as its oracle. Nothing was deleted from the prose,
 which was the whole argument for option 2.
 
@@ -332,7 +332,7 @@ from reading the same code came out opposite ways round.
 | # | step | state |
 |---|---|---|
 | 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **decided 2026-08-13** — separately, and every `fn[]` value becomes a pair. See *Decided* above for the scheme and the order |
-| 2 | bound method references: `c.inc` as a value, static methods referenceable | **done, 2026-08-15** — `c.inc` is a value of the receiver-less signature, inherited methods included, and a bound reference goes anywhere an `fn[…]` goes. `spec/cases/0176` is the oracle under `// only: wacc`, the clause is `[§wacc-fnref-bound]`, and a *static* reached through a value is still refused. Was: **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because `spec/spec/funcrefs.md` says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
+| 2 | bound method references: `c.inc` as a value, static methods referenceable | **done, 2026-08-15** — `c.inc` is a value of the receiver-less signature, inherited methods included, and a bound reference goes anywhere an `fn[…]` goes. `spec/cases/0176` is the oracle under `// only: wacc`, the clause is `[§wacc-fnref-bound]`, and a *static* reached through a value is still refused. Was: **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because spec/spec/funcrefs.md says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **done** — `0176` a bound reference, `0181` the by-hand closure lowering, `0188` a lambda as a value, `0189` two lambdas staying two functions, `0190` a lambda reading an enclosing local. All `// only: wacc`. Was *not started*, which was stale from the day `0176` landed |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **done, 2026-08-15.** `Shell` holds `fn[bool()]? askInterrupt` and nothing else; `sshd.wac` says `sh.askInterrupt = keys.arrived`. Two fields became one, the `anyref` and its `as!` downcast are gone, and five sites that asked `interruptCtx is null` ask the funcref itself. Canaried: an `arrived` that always answers false fails the ssh suite, so the path is exercised rather than merely compiled |
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **decided 2026-08-16 — through a cell, reference semantics, primitives included**, and **half built**. The lambda syntax, the checker, the walk, the signatures and emission all landed; capture runs *read-only* in nine shapes, and a lambda capturing a name that anything assigns declines with "needs a cell". What is left is the cells themselves — see *The cells, worked out* |

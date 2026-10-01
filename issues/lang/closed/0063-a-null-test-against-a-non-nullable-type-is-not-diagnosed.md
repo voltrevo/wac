@@ -88,7 +88,7 @@ statically-decided branch is the same kind of thing.
 
 ## Fixed, as a warning rather than an error
 
-`§wac-nonnull-isnull-warn-2mkq7np`, in `spec/spec/types.md`.
+`§wac-nonnull-isnull-warn-2mkq7np`, in spec/spec/types.md.
 
 ```
 warning: 'is not null' on Box, which is never null

@@ -7,7 +7,7 @@
 - **Kind:** design question
 - **Symptom:** compile error — from the engine, naming an instruction the author never wrote
 
-`spec/spec/arrays.md` gives a sized array *"any `i32` expression"* for its length and states no limit
+spec/spec/arrays.md gives a sized array *"any `i32` expression"* for its length and states no limit
 on the literal form. V8 refuses `array.new_fixed` above **10,000** elements, and a program that
 crosses that finds out from the engine.
 

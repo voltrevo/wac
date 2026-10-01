@@ -11,7 +11,7 @@ wac ctcompare [--all] a.wasm b.wasm                    # where two traced runs f
 wac tracestat prog.wasm                                # one run's event count, and what it wanted
 ```
 
-`spec/cli/wac.md`'s `[§wac-cli-ctcompare-6knq4wp]` is the contract: `same <n>`, `differs <i> …`,
+spec/cli/wac.md's `[§wac-cli-ctcompare-6knq4wp]` is the contract: `same <n>`, `differs <i> …`,
 `truncated <a> <b>`, and with `--all` one `site` line per divergent site until a `split`. The
 reference compiler has the same instrument behind `wacCompile(files, entry, { ctTrace: true })`,
 which is what compiler/wacSpec.test.ts uses; everything in `packages/` goes through the CLI.

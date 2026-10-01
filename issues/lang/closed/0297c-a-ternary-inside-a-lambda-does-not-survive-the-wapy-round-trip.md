@@ -46,7 +46,7 @@ differently — which suggests the two are the same underlying gap seen from dif
 **A lambda body is rendered as wac statements whose expressions are in wapy form.** `wapyprint.wac`
 says the first half itself, and says why:
 
-> **wac's parameter spelling, not wapy's.** A lambda is an expression, and `spec/spec/wapy.md` says
+> **wac's parameter spelling, not wapy's.** A lambda is an expression, and spec/spec/wapy.md says
 > expressions are wac's unchanged — so it is `(i32 a)` here rather than `(a: i32)`.
 
 The body keeps wac's `{ … ; … }` and its `return`, but a ternary inside it comes out as wapy's

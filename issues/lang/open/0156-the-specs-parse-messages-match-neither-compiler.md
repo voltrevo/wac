@@ -8,7 +8,7 @@
 
 ## What the three say
 
-`spec/spec/errors.md` opens its diagnostic section with *"Each tag below specifies the exact diagnostic
+spec/spec/errors.md opens its diagnostic section with *"Each tag below specifies the exact diagnostic
 the compiler must emit, including span width, annotation text, and help text where shown"*, and then
 shows rendered blocks. For the parse clauses, the **message** in those blocks is the specific thing:
 
@@ -119,7 +119,7 @@ clauses of the `unexpected token` family rather than three. The check that would
 answers honest is still the one this issue names — read the rendered blocks out of `errors.md` and hold
 both compilers to them.## A seventh clause, outside `errors.md`, and not this decision — agent-c, 2026-08-25
 
-`§wac-keyword-name-8wnq4kp` in `spec/spec/naming.md` is a parse-message clause too, and it is **not**
+`§wac-keyword-name-8wnq4kp` in spec/spec/naming.md is a parse-message clause too, and it is **not**
 one of the six above. The six share a diagnosis this page states in a sentence: *"nobody is missing
 information; they disagree about which field it goes in."* On this one wacc was missing the
 information outright — all nine name positions answered `unexpected token`, naming no keyword in the

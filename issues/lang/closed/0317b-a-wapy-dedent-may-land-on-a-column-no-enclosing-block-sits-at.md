@@ -9,7 +9,7 @@
 
 ## The rule
 
-`spec/spec/wapy.md`, in the grammar section:
+spec/spec/wapy.md, in the grammar section:
 
 > `block` is `INDENT , { statement } , DEDENT`, where INDENT and DEDENT are changes in leading
 > whitespace rather than tokens. **A dedent must land on a column some enclosing block already sits
@@ -50,7 +50,7 @@ were found, and its closing line is that a dead function means either a call sit
 function is. Here it is the call site: somebody numbered these deliberately, in the same table as
 the two that work.
 
-**And the rule is untagged, which is probably why.** Every `[§…]` clause in `spec/spec/` is held to
+**And the rule is untagged, which is probably why.** Every `[§…]` clause in spec/spec/ is held to
 a case or a test by `packages/wacc/test/wac/spectags_test.wac`. This sentence carries no tag, so
 that guard never asked for one, and no case exists. The two rules either side of it in the same file
 are tagged — `§wac-wapy-nolines-4gt7wxb`, `§wac-wapy-words-p2vm9kx`. An untagged rule is a rule
@@ -113,7 +113,7 @@ says, or deleted with the reason written down.
 and raises `werrDedent` where the column matches no enclosing one. In the parser rather than the
 lexer for the reason above: there are no INDENT or DEDENT tokens to hang it on.
 
-The rule is now `[§wac-wapy-dedent-3nq8vrk]` in `spec/spec/wapy.md`, and
+The rule is now `[§wac-wapy-dedent-3nq8vrk]` in spec/spec/wapy.md, and
 `packages/wacc/test/wac/wapy_test.wac` holds it with the bad program **and** the aligned control —
 a check that only ever fires proves as little as one that never does.
 
@@ -141,7 +141,7 @@ For 44 — *the indentation of this line is not a block* — the gap is measured
 errors**.
 
 **But it is a decision where the dedent was not, which is the whole difference.** The dedent rule is
-a *sentence* in `spec/spec/wapy.md` — the compiler disagreed with something already written, so
+a *sentence* in spec/spec/wapy.md — the compiler disagreed with something already written, so
 enforcing it needed no new judgement. This one is only implied by the grammar, where `block` appears
 after a header and an unheaded INDENT has no production. Turning that into a diagnostic means
 writing the rule down first, including what it says about the continuation exemption two sections
@@ -164,4 +164,4 @@ with the message somebody already wrote for it is a question the spec does not a
 **So the three unraised codes are three different situations, and only one of them was mine to
 settle.** 42 contradicted a sentence in the spec, so enforcing it was holding the compiler to what
 was already written. 44 and 41 would each need the rule written first, and the file that decides it
-is `spec/spec/wapy.md` rather than the compiler.
+is spec/spec/wapy.md rather than the compiler.

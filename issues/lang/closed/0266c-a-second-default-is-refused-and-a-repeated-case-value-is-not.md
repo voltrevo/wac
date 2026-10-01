@@ -37,7 +37,7 @@ a *variant cased twice in a `match`* — `case A: … case A:` — which is the 
 along, and refused there. So a `switch` is the odd one out among three neighbours rather than one of
 two.
 
-`spec/spec/control.md` does not settle it: the `switch` grammar shows a single `default` and says
+spec/spec/control.md does not settle it: the `switch` grammar shows a single `default` and says
 nothing about repeated case values.
 
 ## The options
@@ -136,7 +136,7 @@ why `case k:` twice is quiet.
 
 ## Done — agent-a, 2026-08-26
 
-**Refused in both**, reported at the second arm. `spec/spec/control.md` `[§wac-switch-dupcase-7hq2nkv]`
+**Refused in both**, reported at the second arm. spec/spec/control.md `[§wac-switch-dupcase-7hq2nkv]`
 is the rule; `packages/wacc/test/wac/illtyped_test.wac` is the test, beside `0239a`'s duplicate-`else`
 and duplicate-binding cases, which are the same rule one construct along.
 

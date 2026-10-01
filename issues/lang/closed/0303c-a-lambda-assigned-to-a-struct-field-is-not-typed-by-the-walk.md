@@ -120,7 +120,7 @@ it. Finding this took bisecting a 15-line file by deletion.
 
 `packages/wacc/src/check.wac`'s typing walk over assignment targets. The `let`-with-explicit-type path
 already types a lambda against a declared function type; the field-assignment path needs the field's
-declared type used the same way. `spec/spec/lambdas.md` does not distinguish the two positions, so the
+declared type used the same way. spec/spec/lambdas.md does not distinguish the two positions, so the
 spec is on the side of this working.
 
 ## Fixed: the `Assign` case typed an identifier target and nothing else

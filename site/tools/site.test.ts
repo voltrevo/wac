@@ -38,11 +38,6 @@ import { compileWithWacc, type WaccModule } from "../src/editor/wacc-compile.ts"
 // **The compiler the page uses, which is wacc.** This test exists to catch an example that has
 // stopped compiling, and asking a different compiler than the page asks would catch the wrong thing
 // — an example using JSX would fail here and work in the playground, or the reverse.
-//
-// **`.wapy` included, since 2026-08-27.** It used to stay with the reference because that was the
-// only implementation of it; `packages/wacc/src/frontend.wac` reads it now and a wapy file compiles
-// to the module its wac twin does (`issues/lang/0279a`). Which means this test, and the page, ask
-// one compiler about every example rather than two about some.
 const dir = await Deno.makeTempDir({ prefix: "wac-sitetest-" });
 await Deno.writeTextFile(`${dir}/wacc-api.js`, await buildWaccAsset());
 const wacc = await import(`${dir}/wacc-api.js`) as unknown as WaccModule;
@@ -55,13 +50,12 @@ const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.
   .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
-  if (entry.endsWith(".wac") || entry.endsWith(".wapy")) {
-    // Both surfaces, and nothing else: `diagnoseFiles` lexes everything it is handed rather than only
-    // what the entry imports, so a file that is neither would be read as one. The page filters the
-    // same way, for the same reason.
+  if (entry.endsWith(".wac")) {
+    // `.wac` files and nothing else: `diagnoseFiles` lexes everything it is handed rather than only
+    // what the entry imports. The page filters the same way, for the same reason.
     const only: Record<string, string> = {};
     for (const [k, v] of Object.entries(files)) {
-      if (k.endsWith(".wac") || k.endsWith(".wapy")) only[k] = v;
+      if (k.endsWith(".wac")) only[k] = v;
     }
     const r = compileWithWacc(wacc, only, entry);
     return r.ok
@@ -73,7 +67,7 @@ function compile(files: Record<string, string>, entry: string) {
   // There is one compiler. This used to hand anything else to the TypeScript reference, which is
   // how a test could pass while exercising a compiler the page does not have — see the header on
   // `run` below, and `issues/system/0146`.
-  throw new Error(`${entry}: not a wac or wapy file, and there is nothing else to compile it with`);
+  throw new Error(`${entry}: not a wac file, and there is nothing else to compile it with`);
 }
 
 Deno.test("site: every playground example compiles", () => {
@@ -93,23 +87,6 @@ Deno.test("site: every example's entry is one of its own files", () => {
   for (const ex of EXAMPLES) {
     if (!(ex.entry in ex.files)) {
       throw new Error(`${ex.name}: entry ${ex.entry} is not among ${Object.keys(ex.files).join(", ")}`);
-    }
-  }
-});
-
-Deno.test("site: an example's extension matches the surface it is written in", () => {
-  // A `.wac` file full of `def` would compile as neither, but a `.wapy` file of braces very
-  // nearly parses as wapy and would fail somewhere obscure. Cheap to rule out.
-  for (const ex of EXAMPLES) {
-    for (const [path, src] of Object.entries(ex.files)) {
-      const looksWapy = /^\s*(@export\s*$|def |class )/m.test(src);
-      const looksWac = /^\s*(export\s+)?(struct|enum|i32|i64|f32|f64|bool|string|void)\s+\w+\s*[({]/m.test(src);
-      if (path.endsWith(".wapy") && looksWac && !looksWapy) {
-        throw new Error(`${ex.name}: ${path} is named .wapy but reads as wac`);
-      }
-      if (path.endsWith(".wac") && looksWapy && !looksWac) {
-        throw new Error(`${ex.name}: ${path} is named .wac but reads as wapy`);
-      }
     }
   }
 });
@@ -144,9 +121,6 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
     // embarrassing snippet on the site to have broken. `EX_FRONT` was its counterpart on the page
     // this replaced and went with it.
     ["EX_HELLO", "a.wac"],
-    ["EX_SURFACE_WAC", "a.wac"],
-    ["EX_SURFACE_WAPY", "a.wapy"],
-    ["EX_WAPY_LIVE", "a.wapy"],
     // The bootstrap page says this is "the shape `core/option.wac` is actually written in", which
     // is a claim about real source and therefore one this can check. The rungs' own snippets on
     // that page are not wac and are not here: L0 is wasm assembly text and L1 is s-expressions,
@@ -165,30 +139,6 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
   }
 });
 
-Deno.test("site: the two surface snippets emit byte-identical wasm, as the page says", async () => {
-  // The page prints this as its central claim about wapy. If the pair ever drifts — someone
-  // edits one side, or the printer changes — the sentence becomes false and this goes red.
-  //
-  // **Both sides through one compiler**, which is the whole content of the question: *are these two
-  // surfaces the same program*. Compiled by two different compilers the byte comparison measures the
-  // compilers instead, and it did — 1137 bytes from wac against 2493 from wapy, a red test about a
-  // true sentence (`issues/lang/0121`).
-  //
-  // That compiler used to have to be the reference, because it was the only one with both front
-  // ends. Since 2026-08-27 it is **wacc**, which is better: the page's claim is about the language,
-  // and wacc is the compiler the page uses for everything else — so this now compares what a reader
-  // of the page would get rather than what a third party would.
-  const a = compile({ "a.wac": await snippet("EX_SURFACE_WAC") }, "a.wac");
-  const b = compile({ "a.wapy": await snippet("EX_SURFACE_WAPY") }, "a.wapy");
-  if (!a.ok || !b.ok) throw new Error("a snippet did not compile; see the test above");
-
-  const x = a.compiled.wasm, y = b.compiled.wasm;
-  if (x.length !== y.length) throw new Error(`${x.length} bytes from wac, ${y.length} from wapy`);
-  for (let i = 0; i < x.length; i++) {
-    if (x[i] !== y[i]) throw new Error(`byte ${i} differs: ${x[i]} vs ${y[i]}`);
-  }
-});
-
 Deno.test("site: the core snippets are a real program, and share one Read", async () => {
   // The page's claim is that neither file declares `Read` and they still meet through it. A
   // compile is what checks that: if `core` stopped resolving, or the two sides got separate
@@ -198,21 +148,6 @@ Deno.test("site: the core snippets are a real program, and share one Read", asyn
     "report.wac": await snippet("EX_CORE_LIB"),
   };
   const r = compile(files, "main.wac");
-  if (!r.ok) {
-    const d = r.diagnostics[0];
-    throw new Error(`${d.file}:${d.line}:${d.col} ${d.message}`);
-  }
-});
-
-Deno.test("site: the mixed-import snippets are a real program", async () => {
-  // Printed side by side as `stats.wac` and `report.wapy`, with a `hist.wapy` the wac file
-  // imports. The page names those files, so they have to resolve to each other.
-  const files = {
-    "hist.wapy": await snippet("EX_SURFACE_WAPY"),
-    "stats.wac": await snippet("EX_MIXED_WAC"),
-    "report.wapy": await snippet("EX_MIXED_WAPY"),
-  };
-  const r = compile(files, "report.wapy");
   if (!r.ok) {
     const d = r.diagnostics[0];
     throw new Error(`${d.file}:${d.line}:${d.col} ${d.message}`);
@@ -354,9 +289,6 @@ import { createRunner, runnable, RUN_TIMEOUT_MS } from "../src/editor/wac-compil
  * Deno is nothing: the module fetches `wacc-api.js` from a deploy-root URL that only exists in a
  * browser, so its `wacc` stays null and it falls back to the reference. Every panel test here has
  * therefore been running the *reference's* output while claiming to be the panel's path.
- *
- * Invisible until 2026-08-27, when the reference stopped reading `.wapy` and the wapy demo answered
- * `unknown extension` — a test that had never exercised what it named.
  */
 async function run(src: string, file: string, fn: string, args: string[]): Promise<string> {
   const checked = compile({ [file]: src }, file);
@@ -399,13 +331,6 @@ Deno.test("site: the panel runs an export that takes and returns an array", asyn
   for (const typed of ["1, 2, 3", "[1, 2, 3]"]) {
     const got = await run(src, "m.wac", "doubled", [typed]);
     if (got !== "[2, 4, 6]") throw new Error(`${typed} → ${got}`);
-  }
-});
-
-Deno.test("site: the panel runs the landing page's wapy demo", async () => {
-  const got = await run(await snippet("EX_WAPY_LIVE"), "m.wapy", "fizzbuzz", ["15"]);
-  if (!got.startsWith("1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz")) {
-    throw new Error(got);
   }
 });
 
@@ -975,7 +900,7 @@ Deno.test("a wacc asset the page cannot use is refused rather than written", asy
 // directly; they agree because both agree with the document, which is the arrangement that also
 // catches the document being wrong.
 
-import { KEYWORDS, SPELLINGS } from "../src/editor/wac-vocabulary.ts";
+import { KEYWORDS } from "../src/editor/wac-vocabulary.ts";
 
 /** The words in grammar.md's `### Keywords` fence. */
 function specKeywords(md: string): Set<string> {
@@ -1016,26 +941,3 @@ Deno.test("site: the editor's keyword list is the one the spec prints", async ()
   }
 });
 
-Deno.test("site: the editor's wapy spellings are the ones the spec's table gives", async () => {
-  const md = await Deno.readTextFile(new URL("../../spec/spec/wapy.md", import.meta.url));
-
-  // The table's right-hand column, as backticked code. Each spelling has to appear there as its
-  // own word — `and` inside the prose word "command" is not the table saying anything.
-  const ticked = [...md.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-  const words = new Set(ticked.flatMap((t) => t.split(/[^A-Za-z_]+/)).filter(Boolean));
-
-  const absent = [...SPELLINGS.keys()].filter((w) => !words.has(w));
-  if (absent.length > 0) {
-    throw new Error(`the editor respells ${absent.join(", ")}, and wapy.md never mentions them`);
-  }
-
-  // Fixed at six, because this is the weaker direction: the check above cannot notice a seventh
-  // spelling the language grew, only one the editor invented. The count is what makes adding one
-  // to the language come past this test.
-  if (SPELLINGS.size !== 6) {
-    throw new Error(
-      `the editor has ${SPELLINGS.size} wapy spellings; wapy.md's table gives six — ` +
-        `and, or, not, True, False, None. If the language grew one, add it and update this number.`,
-    );
-  }
-});

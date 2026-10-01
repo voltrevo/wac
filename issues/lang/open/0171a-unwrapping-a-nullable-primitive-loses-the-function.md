@@ -33,7 +33,7 @@ export i32 f(S? s) { return s!.v; }        // builds, 2210 bytes
 
 ## Why
 
-`spec/spec/types.md`: a nullable primitive is **boxed**. The emitter's `Unwrap` arm is
+spec/spec/types.md: a nullable primitive is **boxed**. The emitter's `Unwrap` arm is
 
 ```wac
 case Unwrap(operand): {
@@ -108,7 +108,7 @@ between this and silence is the export-parity net.
 
 Swept every fenced `wac` block in `spec/spec/*.md` — 170 programs, 108 of which check clean — through
 `wac check` then `wac build`, looking for *check clean, build failed*. **Exactly one hit**, and it is
-this bug, at `spec/spec/types.md:455`:
+this bug, at spec/spec/types.md:455:
 
 ```wac
 export i32 read(i32? x) { return x is null ? -1 : x!; }
@@ -160,7 +160,7 @@ The comment above that line says a nullable primitive *"has no representation �
 
 ## What the spec says it should be, and the shortcut not to take
 
-`spec/spec/types.md:440` is unambiguous, and it rules out the cheap fix:
+spec/spec/types.md:440 is unambiguous, and it rules out the cheap fix:
 
 > `i32?` … a reference to a one-field struct the compiler synthesises, and `!` reads the field back. So
 > `i32?` costs an allocation per non-null value.
@@ -297,7 +297,7 @@ bool okType(G g, string t0) {
 ```
 
 `isScalar` is `i32 u32 i64 u64 f32 f64 bool void`, so **no signature mentioning a nullable primitive gets
-glue** — and that includes `export i32 read(i32? x)`, which is the accessor `spec/spec/types.md:449`
+glue** — and that includes `export i32 read(i32? x)`, which is the accessor spec/spec/types.md:449
 prescribes. The spec describes a host receiving an opaque reference and handing it back to a wac accessor;
 bindgen will not write glue for either end.
 

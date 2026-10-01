@@ -1,7 +1,7 @@
-// The language: how it reads, both surfaces, the boundary, and where WebAssembly runs out.
+// The language: how it reads, the boundary, and where WebAssembly runs out.
 //
 // The snippets are carried over unchanged from the page this replaces — they are checked by
-// `site/tools/site.test.ts`, which compiles them and holds the two-surface pair to byte identity, so
+// `site/tools/site.test.ts`, which compiles them, so
 // editing them here without editing that would be the drift the test exists to catch.
 
 import InlineDemo from "../editor/InlineDemo";
@@ -16,12 +16,7 @@ const GITHUB = "https://github.com/voltrevo/wac";
 import {
   EX_ENUM,
   EX_GENERIC,
-  EX_SURFACE_WAC,
-  EX_SURFACE_WAPY,
-  EX_WAPY_LIVE,
-  EX_MIXED_WAC,
   EX_BEWORD,
-  EX_MIXED_WAPY,
   EX_HELLO,
   EX_MATH,
   EX_ERROR,
@@ -152,57 +147,6 @@ export default function Language() {
             reference?</Lead> Containers and sum types do not — they live in a package. Today{" "}
             {m({ children: "Read" })} is the only thing that qualifies.
           </P>
-        </Sub>
-      </Section>
-
-      <Section id="surfaces" kicker="two surfaces" title="Braces or indentation, one language">
-        <P>
-          The same language has two ways of being written down. Not a transpiler and not a preset:
-          they share a parser for expressions and types, an AST, a resolver, a checker and an
-          emitter, and differ only in how a file is laid out.
-        </P>
-        <Pair leftLabel="histogram.wac" rightLabel="histogram.wapy" left={EX_SURFACE_WAC} right={EX_SURFACE_WAPY} rightLang="wapy" />
-        <P>
-          <Lead>Those two compile to byte-identical wasm</Lead>, which is the shortest way to say
-          that neither is a translation of the other — and a test in the compiler asserts it, so the
-          sentence cannot quietly stop being true. A {m({ children: ".wac" })} file may import a{" "}
-          {m({ children: ".wapy" })} file and the reverse, in any mixture.
-        </P>
-        <P>
-          <Lead>One compiler reads both surfaces.</Lead> This said the opposite until 2026-08-29 —
-          that wacc had no wapy front end, so a {m({ children: ".wapy" })} file went to the
-          reference. It has one, the reference was deleted, and{" "}
-          {m({ children: "wac build x.wapy" })} is an ordinary build. The two surfaces meeting in one
-          compiler is what makes the claim below checkable at all: the pair of programs on this page
-          is compiled by that one compiler, and a byte comparison of two front ends run by two
-          different compilers would be measuring the compilers.
-        </P>
-        <P>
-          <Lead>It is not Python.</Lead> It does not accept Python, and copying Python into a{" "}
-          {m({ children: ".wapy" })} file is an explicit anti-goal. It borrows Python&rsquo;s
-          shapes — {m({ children: "def" })}, {m({ children: "class" })},{" "}
-          {m({ children: "and" })}/{m({ children: "or" })}/{m({ children: "not" })} and{" "}
-          {m({ children: "None" })} — and keeps wac&rsquo;s types, its semantics and its errors.
-          The receiver is {m({ children: "this" })} on both surfaces: it was{" "}
-          {m({ children: "self" })} until 2026-08-27, and it was the one respelling that cost
-          something, because it was the only one whose wac spelling is also a legal identifier.
-          It has its own lexer and parser producing the same syntax tree, so a diagnostic names the
-          line its author actually wrote.
-        </P>
-        <P>
-          What stops a second surface becoming a permanent tax is a round trip:{" "}
-          {m({ children: "wac → wapy → wac" })} must give back the <em>same syntax tree</em>, over{" "}
-          {m({ children: "spec/tour.wac" })} and every wac source in the repository — 282 files. Trees
-          rather than text,
-          so the printer&rsquo;s canonicalisations are allowed and a change in meaning is not — and
-          a feature added to one surface and forgotten in the other turns the suite red instead of
-          drifting.
-        </P>
-        <Sub id="wapy-live" title="Editable, and running here">
-          <InlineDemo initialCode={EX_WAPY_LIVE} surface="wapy" />
-        </Sub>
-        <Sub id="mixed" title="Mixed freely, in one program">
-          <Pair leftLabel="stats.wac" rightLabel="report.wapy" left={EX_MIXED_WAC} right={EX_MIXED_WAPY} rightLang="wapy" />
         </Sub>
       </Section>
 

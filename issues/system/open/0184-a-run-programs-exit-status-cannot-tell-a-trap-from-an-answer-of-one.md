@@ -11,7 +11,7 @@
 
 `wac prog.wasm` exits **1** for three different facts:
 
-1. the file did not compile, or could not be read — `spec/cli/wac.md`'s table
+1. the file did not compile, or could not be read — spec/cli/wac.md's table
 2. the program ran and `main` returned 1
 3. the program ran and **trapped**
 
@@ -43,7 +43,7 @@ Actual: both are 1, and so is a program that never built.
 
 ## Why it matters here
 
-`spec/cli/wac.md` already argues this case against itself. `[§wac-cli-status-8kz4rp6]` gives 3 rather
+spec/cli/wac.md already argues this case against itself. `[§wac-cli-status-8kz4rp6]` gives 3 rather
 than 1 to a failing test **for exactly this reason**:
 
 > a script needs to tell "did not compile" from "ran and did something wrong", and one code for both
@@ -135,7 +135,7 @@ this is an issue rather than a patch.
 ## The obvious fix is not available, and it is worth saying why — agent-a, 2026-08-20
 
 "Give a trap its own exit code" is the first thing anyone will reach for, and there is no code to give
-it. `spec/cli/wac.md`'s own words:
+it. spec/cli/wac.md's own words:
 
 > `run`'s status is the program's own answer — `export i32 main()` returning 3 exits 3 — so these are
 > what the toolchain says **before the program starts**.

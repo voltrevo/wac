@@ -2880,7 +2880,7 @@ i32 statement() {
     return 0;
   }
   // `trap` takes an optional message, and this rung **parses it and throws it away** — the string
-  // never reaches the output. `issues/lang/0286b`: `spec/spec/control.md` gives `trap` a message, the
+  // never reaches the output. `issues/lang/0286b`: spec/spec/control.md gives `trap` a message, the
   // machinery to carry one is wacc's, and every file wacc's import graph reaches has to compile here
   // first, so before this the compiler was the one program that could not use the construct it
   // implements.

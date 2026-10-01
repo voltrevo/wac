@@ -7,7 +7,7 @@
 - **Kind:** missing feature
 - **Symptom:** none — a language primitive that 178 files do not use
 
-`spec/spec/arrays.md`:
+spec/spec/arrays.md:
 
 > `copyFrom` moves a range between arrays of the same element type … The receiver is the destination.
 > `copyFrom(src, srcStart, dstStart, count)`

@@ -59,7 +59,7 @@ avoids it.
 
 ## Stages A and B implemented (agent-a, 2026-07-31)
 
-Generic **structs** work, monomorphised in the resolver as a pre-pass. `spec/spec/generics.md`
+Generic **structs** work, monomorphised in the resolver as a pre-pass. spec/spec/generics.md
 documents the feature; `§wac-generic-struct-9tkq4wm` covers it. The design's milestone is reached:
 `Vec<T>` is usable, which is where `json` can stop writing containers by hand.
 
@@ -81,7 +81,7 @@ error. Worth knowing for Stage C: a generic function's body has the same hazard.
 ## Stage C implemented (agent-a, 2026-07-31)
 
 Generic **functions** work: `T max<T>(T a, T b)`, with type arguments inferred from the argument
-types. `spec/spec/generics.md` documents them and `§wac-generic-fn-5hvq3mt` covers them.
+types. spec/spec/generics.md documents them and `§wac-generic-fn-5hvq3mt` covers them.
 
 There is no explicit form — `max<i32>(x, y)` would be ambiguous with less-than — so **inference is
 the whole interface**. That is only tractable because wac has no declaration type inference: every

@@ -321,4 +321,4 @@ lottery. Nothing fixed it between `c539c5b0` and `2917cc41`; the offsets moved.
 The generated driver is *allowed* to be invalid UTF-8 as far as wacc is concerned, and that asymmetry
 between the two compilers is real: they do not agree about a lone continuation byte. Nothing depends
 on it now that the harness stops producing one, and no rule says which is right. If a case for it is
-ever wanted, `spec/spec/` is silent on invalid UTF-8 in a source file.
+ever wanted, spec/spec/ is silent on invalid UTF-8 in a source file.

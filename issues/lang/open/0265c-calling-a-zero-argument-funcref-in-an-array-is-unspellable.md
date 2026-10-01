@@ -31,7 +31,7 @@ reference's is the clearer of the two: there is no type called `a`.
 
 ## The one-argument form works, which is what makes this narrow
 
-`spec/spec/arrays.md` explains why the fill value is written `fill:` rather than bare:
+spec/spec/arrays.md explains why the fill value is written `fill:` rather than bare:
 
 > The value is written as `fill:` rather than as a bare `T[n](v)` because the bare form is genuinely
 > ambiguous: `arr[i](5)` **already means** index an array of funcrefs and call the result, and nothing

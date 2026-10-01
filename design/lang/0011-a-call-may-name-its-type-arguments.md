@@ -52,7 +52,7 @@ one option the repository's own rules argue against.
 
 ## What the spec says, and the distinction that is easy to miss
 
-`spec/spec/generics.md` has a section headed **"Type arguments are inferred, never written"**:
+spec/spec/generics.md has a section headed **"Type arguments are inferred, never written"**:
 
 > There is no `max<i32>(x, y)`. Angle brackets are type syntax only — the same ambiguity with
 > less-than — and a call is an expression, so **inference is the whole interface**.
@@ -213,7 +213,7 @@ build the more forgiving thing first.
 
 ## What it costs
 
-`spec/spec/generics.md`'s *"inference is the whole interface"* stops being true, and its section
+spec/spec/generics.md's *"inference is the whole interface"* stops being true, and its section
 heading — *"Type arguments are inferred, never written"* — stops being the rule. That is the real
 price: a reader currently learns one thing about where a type parameter comes from, and afterwards
 learns two. [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md) option A would have

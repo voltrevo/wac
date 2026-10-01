@@ -30,7 +30,7 @@ Three shapes, all the same:
 
 ## Why
 
-`spec/spec/types.md`: *"`null` is a keyword literal with **no type of its own**. It can be used anywhere
+spec/spec/types.md: *"`null` is a keyword literal with **no type of its own**. It can be used anywhere
 a nullable type (`T?`) is expected — the compiler infers the type from context."* In `null is null`
 there is no context to infer from, so the operand has no type — and both rules that would refuse it are
 keyed on the type it does not have:
@@ -69,7 +69,7 @@ unrunnable example is exactly the shape that gets "fixed" the wrong way.
 
 `null == null` and `null != null`: the **reference accepts them**, and wacc's emitter declines. So wacc
 is *stricter* than the reference here, which is the direction this package minds least but still a
-divergence, and it is not obvious who is right. `spec/spec/operators.md` refuses `==` on every nullable
+divergence, and it is not obvious who is right. spec/spec/operators.md refuses `==` on every nullable
 *reference* form — `N?`, `E?`, `i32[]?`, `string?` — on the grounds that they "would have to answer for
 null before [they] could compare anything", which reads as an argument for refusing two bare nulls too.
 Left as it stands rather than picked: the emitter already refuses them, so nothing ships, and making

@@ -17,10 +17,10 @@ Verified at three levels:
 every slot (`emitNull` where the variant has no field there) and then `struct.new`. There is no
 special case for zero arity — a bare `Shape.Point` takes the same path as `Shape.Rect(3.0, 4.0)`.
 
-**The semantics.** `spec/spec/structs.md`: *"`is` with a value (not a type or `null`) compares
+**The semantics.** spec/spec/structs.md: *"`is` with a value (not a type or `null`) compares
 reference identity — whether two references point to the same object. Maps to `ref.eq`."*
 
-**And the spec says it outright, while explaining something else.** `spec/spec/enums.md`, in the
+**And the spec says it outright, while explaining something else.** spec/spec/enums.md, in the
 paragraph on why `is` needs a qualified variant:
 
 > `Shape.Empty` on the right of `is` parses as an expression rather than a type, so the test became
@@ -67,7 +67,7 @@ reason to decide deliberately rather than a licence to change it quietly.
 ## Notes
 
 Found while writing `vision/core/order.wac`, which proposes exactly the `Ordering` enum above, and
-then reading `spec/spec/enums.md` to check the claim that nothing says what wac does. Something does,
+then reading spec/spec/enums.md to check the claim that nothing says what wac does. Something does,
 in a sentence about a different bug.
 
 No measurement here — the allocation is established from the emitted bytes rather than from a clock,

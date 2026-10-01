@@ -184,7 +184,7 @@ Step 1 alone is worth doing and strictly reduces silence. Step 2 is what closes 
 
 The reproduction at the top now compiles and answers 1, and the reference agrees.
 
-**And the spec required it, which the earlier notes here missed.** `spec/spec/generics.md`
+**And the spec required it, which the earlier notes here missed.** spec/spec/generics.md
 `[§wac-generic-instantiation-identity-6pnq4wj]` is exactly this shape:
 
 ```wac

@@ -91,7 +91,7 @@ Verified on the report's own example: the P-256 prime built from eight hex limbs
 2^256 − 2^224 + 2^192 + 2^96 − 1.
 
 `§wac-hex-width-3nkq7wm` covers every position a literal can occupy — both fix sites, and the
-32-bit readings that must not change. Reverting either half fails it. `spec/spec/types.md` states
+32-bit readings that must not change. Reverting either half fails it. spec/spec/types.md states
 the rule as it now is.
 
 **Binary literals:** the report asked. wac has none — `0b1111` does not lex — so there is nothing

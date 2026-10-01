@@ -30,7 +30,7 @@ But a power beyond 10^22 is not exactly representable and 10^309 is not represen
 scale is applied **in steps of 22**, and each step rounds. Fourteen steps for `1e300` is fourteen
 roundings, and the result lands a unit or two from the nearest.
 
-`spec/spec/types.md` says rounding is to nearest, so this is a deviation rather than a licence.
+spec/spec/types.md says rounding is to nearest, so this is a deviation rather than a licence.
 
 ## What it would take
 

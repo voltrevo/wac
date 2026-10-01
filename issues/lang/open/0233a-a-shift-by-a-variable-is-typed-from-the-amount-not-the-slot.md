@@ -31,7 +31,7 @@ not a differential either.
 
 ## Why it looks like it should compile
 
-`spec/spec/types.md` is explicit that a literal has no type of its own and takes one from what is
+spec/spec/types.md is explicit that a literal has no type of its own and takes one from what is
 expected of it:
 
 > Where nothing is expected of it, a literal keeps the width its own notation gives it — including as

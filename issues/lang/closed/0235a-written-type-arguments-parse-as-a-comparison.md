@@ -29,7 +29,7 @@ export i32 main() {
      7 |   Box<i32> c = b.map<i32>((i32 x) => x + 1);
        |                         ^ expected Box<i32>, found bool
 
-**The message is not wrong.** `spec/spec/generics.md` is explicit that there is no `max<i32>(x, y)`:
+**The message is not wrong.** spec/spec/generics.md is explicit that there is no `max<i32>(x, y)`:
 *"Angle brackets are type syntax only — the same ambiguity with less-than — and a call is an
 expression, so inference is the whole interface."* So `b.map<i32>(…)` is `(b.map < i32) > (…)`, a
 comparison chain, and its type really is `bool`.

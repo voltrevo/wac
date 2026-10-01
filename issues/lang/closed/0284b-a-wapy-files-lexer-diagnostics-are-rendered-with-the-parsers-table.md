@@ -29,7 +29,7 @@ def f() -> i32:
     wac   error: unknown escape
     wapy  error: the parser refused this
 
-Expected: the same diagnostic. `spec/spec/wapy.md` `[§wac-wapy-h3nq7fv]` — *"wapy is wac with a
+Expected: the same diagnostic. spec/spec/wapy.md `[§wac-wapy-h3nq7fv]` — *"wapy is wac with a
 different layout. Same types, same semantics, same AST, same compiler."*
 
 ## It is every lexer diagnostic, not this one

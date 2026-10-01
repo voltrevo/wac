@@ -10,7 +10,7 @@
 
 ## What
 
-`spec/spec/wapy.md` `[§wac-wapy-h3nq7fv]`: *"wapy is wac with a different layout. Same types, same
+spec/spec/wapy.md `[§wac-wapy-h3nq7fv]`: *"wapy is wac with a different layout. Same types, same
 semantics, same AST, same compiler."* String escapes are not. compiler/wapyLex.ts's `unescape` is a
 second, undocumented grammar:
 

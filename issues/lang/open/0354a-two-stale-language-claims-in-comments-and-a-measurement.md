@@ -38,7 +38,7 @@
 
 > Every one of these is a zero-argument function because wac has no module-level constants.
 
-wac has them — `spec/spec/variables.md`, landed 2026-07-31, `export const u32 POLY = 0xEDB88320;` as
+wac has them — spec/spec/variables.md, landed 2026-07-31, `export const u32 POLY = 0xEDB88320;` as
 the worked example, verified by compiling and running it. **wac-L5 does not**, and that is the
 constraint on this file. One clause: *"…because wac-L5, which must be able to compile this file, has
 no top-level `const` — see `issues/lang/0285b`."* That is the whole fix, and it converts a sentence
@@ -48,7 +48,7 @@ that will send the next reader to sweep into one that tells them why they cannot
 
 > Separate rather than shared because the two return different types and wac has no generics
 
-wac has generic functions — `spec/spec/generics.md` §Generic functions,
+wac has generic functions — spec/spec/generics.md §Generic functions,
 `packages/platform/src/frame.wac`'s `export Pending<T> ready<T>(…)` — and a type parameter may be a
 primitive. `packages/fmt` is not in `wacc`'s graph, so no L5 qualification applies.
 
@@ -62,7 +62,7 @@ compile. **Check each conclusion, not only each reason.**
 ## And the conversion buys nothing, measured
 
 `vision/bench/constcall.wac` times the shape these are consumed in — a chain of eight equality
-tests, which is `packages/wacc/src/wapyrewrite.wac:105` — with the eight spelled as `const`, as
+tests, which is packages/wacc/src/wapyrewrite.wac:105 — with the eight spelled as `const`, as
 private functions, and as exported functions:
 
         tests     konst     priv   export    again

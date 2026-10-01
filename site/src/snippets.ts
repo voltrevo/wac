@@ -38,91 +38,6 @@ export string leftStr(string x, string y) {
   return p.left();
 }`;
 
-// ── The two surfaces ─────────────────────────────────────────────────────────
-//
-// `EX_SURFACE_WAPY` is not hand-written. It is what `wapyPrint.ts` emits for `EX_SURFACE_WAC`,
-// pasted here — so the pair cannot drift into a claim the compiler would not make. Both were
-// compiled through `wacx` before being put here, and the two binaries are byte-identical, which
-// `wapySpec.test.ts` asserts so the sentence below stays true.
-
-export const EX_SURFACE_WAC = `export struct Histogram {
-  i32[] bins;
-
-  /// A histogram with \`n\` empty bins.
-  Histogram of(i32 n) { return Histogram(i32[n]()); }
-
-  void add(this, i32 v) {
-    i32 i = v < 0 ? 0 : v;
-    this.bins[i % this.bins.len()]++;
-  }
-
-  i32 peak(const this) {
-    i32 best = 0;
-    for (i32 i = 0; i < this.bins.len(); i++) {
-      if (this.bins[i] > best) { best = this.bins[i]; }
-    }
-    return best;
-  }
-}`;
-
-export const EX_SURFACE_WAPY = `@export
-class Histogram:
-    bins: i32[]
-
-    ## A histogram with \`n\` empty bins.
-    def of(n: i32) -> Histogram:
-        return Histogram(i32[n]())
-
-    def add(this, v: i32) -> void:
-        i: i32 = 0 if v < 0 else v
-        this.bins[i % this.bins.len()]++
-
-    def peak(const this) -> i32:
-        best: i32 = 0
-        for i in range(0, this.bins.len()):
-            if this.bins[i] > best:
-                best = this.bins[i]
-        return best`;
-
-// Editable and runnable, in wapy, compiled by the same `wacCompile` call as every other demo on
-// the page — the only difference is that the file is called `.wapy`. Run through `wacx` first;
-// `fizzbuzz(15)` gives `1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz`.
-export const EX_WAPY_LIVE = `@export
-def fizzbuzz(n: i32) -> string:
-    out: string = ""
-    for i in range(1, n + 1):
-        if i % 15 == 0:
-            out = out + "FizzBuzz "
-        elif i % 3 == 0:
-            out = out + "Fizz "
-        elif i % 5 == 0:
-            out = out + "Buzz "
-        else:
-            out = out + itoa(i) + " "
-    return out
-
-def itoa(v: i32) -> string:
-    if v == 0:
-        return "0"
-    s: string = ""
-    n: i32 = v
-    while n > 0:
-        s = DIGITS[n % 10] + s
-        n = n / 10
-    return s
-
-const DIGITS: string[] = string[]("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")`;
-
-export const EX_MIXED_WAC = `import { Histogram } from "./hist.wapy";
-
-export i32 tallest(i32[] xs, i32 n) {
-  Histogram h = Histogram.of(n);
-  for (i32 i = 0; i < xs.len(); i++) {
-    h.add(xs[i]);
-  }
-  return h.peak();
-}`;
-
 // From packages/crypto/src/layout.wac, unabridged. On the page because it is the shortest
 // illustration of the per-word tax entry 2 of the wishlist describes.
 export const EX_BEWORD = `// packages/crypto/src/layout.wac
@@ -130,12 +45,6 @@ export u32 beWord32(u8[] b, i32 i) {
   return ((b[i] << 24) | (b[i + 1] << 16)
         | (b[i + 2] << 8) | b[i + 3]) as@ u32;
 }`;
-
-export const EX_MIXED_WAPY = `from "./stats.wac" import tallest
-
-@export
-def busiest(xs: i32[]) -> i32:
-    return tallest(xs, 24)`;
 
 // ── Example code ─────────────────────────────────────────────────────────────
 

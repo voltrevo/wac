@@ -7,7 +7,7 @@
 // ## What a token is
 //
 // Flat quintuples — `(kind, start, len, line, col)` — in one `i32[]`, which is what
-// `packages/wacc/src/lex.wac` does and what `wapytok.wac` documents. A token here spans only
+// `packages/wacc/src/lex.wac` does. A token here spans only
 // *significant* text: whitespace and comments are skipped rather than emitted, because the consumer
 // blanks ranges of the original bytes rather than re-printing a token stream. Trivia therefore takes
 // care of itself, and nothing can accidentally reformat a file.

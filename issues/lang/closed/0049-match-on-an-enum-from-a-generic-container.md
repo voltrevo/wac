@@ -70,7 +70,7 @@ cross-file aliases alike.
 
 ## A rule went away with it
 
-`spec/spec/enums.md` said the enum's name had to be in scope in the file that matches on it, and
+spec/spec/enums.md said the enum's name had to be in scope in the file that matches on it, and
 there was a test asserting the *diagnostic* for when it was not. That rule is gone: an arm
 resolves its variants through the enum the subject is, so nothing about a `match` needs the name.
 It was an inconsistency rather than a decision — reading a field whose type you never imported

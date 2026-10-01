@@ -54,7 +54,7 @@ points into it.
 go:
 
 1. `parse.wac` and `ast.wac` — the syntax and the nodes. `vision/GRAMMAR.ebnf` is the grammar as a
-   patch over `spec/spec/grammar.md` and every one of the 104 files parses under it, so the shape is
+   patch over spec/spec/grammar.md and every one of the 104 files parses under it, so the shape is
    known; what it is not is a recursive-descent parser, which is the work.
 2. A pass per lowering. Each is a page of `vision/TECHNICAL.md` with a target that has been run.
 3. `check.wac` for injection, which is the one rule that needs types.

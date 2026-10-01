@@ -116,7 +116,7 @@ compiles the working tree and is the only probe that sees an unseeded change; th
 `illtyped_test` and `cases_test` do, and `cases_test` is what found this.
 
 One refusal in that ten is real and pre-existing either way: `u8 n = b[0]++;`, because a `u8` local is
-illegal whatever is on the right — `spec/spec/types.md` allows packed types as array elements only, and
+illegal whatever is on the right — spec/spec/types.md allows packed types as array elements only, and
 `u8 n = b[0];` gets the same message.
 
 Canaried the right way round in the end: with the widening removed, `cases_test` fails on exactly

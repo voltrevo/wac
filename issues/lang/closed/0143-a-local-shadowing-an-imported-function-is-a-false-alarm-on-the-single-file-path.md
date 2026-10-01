@@ -23,7 +23,7 @@ export i32 main() {
 
 ## The rule it breaks
 
-`spec/spec/functions.md`, `[§wac-param-shadows-func-5nkq2wp]`:
+spec/spec/functions.md, `[§wac-param-shadows-func-5nkq2wp]`:
 
 > A bare name in call position resolves to a local or parameter **of funcref type** before any
 > function.

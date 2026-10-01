@@ -9,7 +9,7 @@
 
 ## What the spec says
 
-`spec/spec/imports.md` says both halves plainly:
+spec/spec/imports.md says both halves plainly:
 
 > Import paths are relative, using `./` or `../` prefixes — except `core`, which is not a path
 

@@ -506,4 +506,4 @@ and two mappings at different commits coexist.
 ## Learning the language
 
 [`spec/tour.wac`](../spec/tour.wac) is the whole of wac in one annotated file that compiles and
-self-tests, and is much faster than reading [`spec/spec/`](../spec/spec/). Start there.
+self-tests, and is much faster than reading [spec/next/](../spec/next/). Start there.

@@ -97,7 +97,7 @@ The recommendation above was option 3, resolving the name first, on the grounds 
 speculative parsing. It does not: **both parsers already scan forward** to find the matching `>` and
 check what follows it. The only thing missing was asking whether what they scanned *could be a type*.
 
-The rule, now in `spec/spec/generics.md`: between the angles, only names, primitives, `fn[…]`, `[]`,
+The rule, now in spec/spec/generics.md: between the angles, only names, primitives, `fn[…]`, `[]`,
 `?`, nested angles and commas. A literal, an operator or another keyword means the `<` was a
 comparison. A whitelist rather than a blacklist, because "is this a type" has a closed answer and
 "is this an operator" does not.

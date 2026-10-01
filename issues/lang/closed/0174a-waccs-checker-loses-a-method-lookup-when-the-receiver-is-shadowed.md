@@ -77,9 +77,9 @@ export i32 f() { i32 a = 1; i32 a = 2; return a; }  // both accept
 ```
 
 Whether it *should* be — a redeclaration in the same scope with no intervening block, which
-`spec/spec/naming.md` only ever illustrates with a block — is a separate question and a decision
+spec/spec/naming.md only ever illustrates with a block — is a separate question and a decision
 rather than a bug. `issues/lang/0014` closed the parameter-against-parameter case as an error, which
-is an argument that this one is too, and `spec/spec/naming.md` says nothing either way. Not filed as
+is an argument that this one is too, and spec/spec/naming.md says nothing either way. Not filed as
 part of this: fixing the checker's lookup does not depend on it.
 
 ## Attempted, reverted, and now diagnosed — agent-a, 2026-08-20
@@ -207,7 +207,7 @@ Rung 3 of `corpuscheck_test.wac` is clean, `spec/cases` is 223 of 223, and the s
 ### Not fixed, and not part of this
 
 Whether a same-scope redeclaration should be *legal* at all. Both compilers accept
-`export i32 f(i32 a) { i32 a = 2; return a; }`, `spec/spec/naming.md` illustrates shadowing only with
+`export i32 f(i32 a) { i32 a = 2; return a; }`, spec/spec/naming.md illustrates shadowing only with
 a block, and `issues/lang/0014` closed the parameter-against-parameter case as an error — which is an
 argument that this one is too. That is a language decision and this issue was about a missing
 diagnostic, which is now present either way.

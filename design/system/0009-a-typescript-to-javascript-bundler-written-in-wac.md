@@ -112,7 +112,7 @@ depending on what preceded it; template literals nest arbitrarily; strings carry
 any of these wrong corrupts a string literal somewhere in six thousand lines and the failure appears
 at run time, far away.
 
-`packages/wacc/src/wapylex.wac` is 243 lines and `packages/wacc/src/wapyparse.wac` is 1,184, for a language with
+packages/wacc/src/wapylex.wac is 243 lines and packages/wacc/src/wapyparse.wac is 1,184, for a language with
 indentation-sensitive blocks. This is the same kind of work.
 
 ### D3 — the `<` ambiguity is solved properly, not by pattern

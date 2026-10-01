@@ -18,7 +18,7 @@ void bad(const S s) { mutate(s); }   // accepted — and it writes through a con
 export i32 f() { return 0; }
 ```
 
-`spec/spec/variables.md` says `const` on a reference means "no writes through that reference at
+spec/spec/variables.md says `const` on a reference means "no writes through that reference at
 any depth" (`§wac-const-deep-j6b1nyg`). This writes through one. No diagnostic.
 
 The same holds for a const field, a const array element, and `const this`:

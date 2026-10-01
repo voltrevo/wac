@@ -61,7 +61,7 @@ describing the maintenance cost is describing a cost the language stopped chargi
 in is exactly what `CLAUDE.md` says to file rather than do. `0314b` is the precedent — a measured
 duplication, recorded so it is findable, explicitly not swept.
 
-**Not a language defect.** `const_decl` is in `spec/spec/grammar.md`'s `program` production and works.
+**Not a language defect.** `const_decl` is in spec/spec/grammar.md's `program` production and works.
 If anything the finding is that it is *underused*, and worth knowing before somebody adds a
 thirty-second constant to `frame.wac` in the older spelling.
 

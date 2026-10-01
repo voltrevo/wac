@@ -3284,18 +3284,7 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
     if (filePaths.len() > sn - 1) { filePaths[sn - 1] = path; }
     outLines = outLines + countLines(body) + 1;
     u8[] b = body.toBytes();
-    // **A `.wapy` file is read by wapy's frontend and is a wac tree from here on.** The surface is
-    // the only thing that differs — `spec/spec/wapy.md`: *"Same types, same semantics, same AST,
-    // same compiler"* — so the dispatch belongs at the one place a file becomes a tree, and every
-    // phase after it is untouched.
-    //
-    // It reaches the emitter *because* the graph is parsed per file. While the emitter compiled a
-    // concatenation, a file arrived as text and there was nowhere to put a second reader:
-    // `issues/lang/0279a` is that argument, and this is its option B.
-    //
-    // The `src` and the tokens come back from `wapyParse` rather than being re-derived, because the
-    // tree's indices refer to *its* array — a rewritten one, with a `;` per line and a synthetic
-    // tail. Lexing the original again would resolve every name to the wrong token.
+    // Parsed per file, through the one place a file becomes a tree (`frontend.wac`).
     Frontend fe = frontendOf(path, b);
     b = fe.src;
     Lexed lexed = fe.lexed;
@@ -3411,14 +3400,7 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
   return sn > 0;
 }
 
-/**
- * How many declarations the entry file contributes, which is how far the exports reach.
- *
- * **It has to be read by the entry's own frontend.** Counting a `.wapy` entry with wac's parser
- * answered 0, and 0 here means "no declaration is the entry's", so a wapy program exported nothing
- * and `wac run` reported `exports no main` over a module with a `main` in it. It only bit the
- * *entry*: a wapy file imported by a wac one is counted by nobody.
- */
+/** How many declarations the entry file contributes, which is how far the exports reach. */
 i32 declCountOf(string path, string source) {
   return frontendOf(path, source.toBytes()).prog.decls.len();
 }

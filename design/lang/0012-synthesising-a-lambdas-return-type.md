@@ -28,7 +28,7 @@ program stays writable without it.
 
 ## The premise, which is sound
 
-`spec/spec/funcrefs.md` `[§wacc-lambda]`:
+spec/spec/funcrefs.md `[§wacc-lambda]`:
 
 > Parameters carry their types; the return type comes from the `fn[…]` it is used as, **which the
 > language always supplies because there is no `var`**.
@@ -37,7 +37,7 @@ A method with its own type parameter is exactly where the language cannot supply
 [0010](0010-a-method-type-parameter-has-to-come-from-the-slot.md)'s subject. But the *first* clause
 still holds: parameters always carry their types, so a lambda body is typeable on its own, and
 `Foo.create()` is *"a call to a function or method whose return type is declared"*, which
-`spec/spec/generics.md` already lists among the types that are evident.
+spec/spec/generics.md already lists among the types that are evident.
 
 So `(i64 at) => Foo.create()` has the type `fn[Foo(i64)]` from its own syntax, and `U` could be read
 off the argument by ordinary argument-directed inference.

@@ -102,7 +102,7 @@ program, and the error names the manifest they are looking straight at.
 
 ## What the behaviour should be
 
-`spec/spec/imports.md` `§wac-import-project-4hq7mnv` already says it, and says it in the words this
+spec/spec/imports.md `§wac-import-project-4hq7mnv` already says it, and says it in the words this
 violates:
 
 > `@/` is the root of the **project containing the importing file** — the nearest directory at or

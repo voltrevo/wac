@@ -264,7 +264,7 @@ export default function OutputPanel({ files, fileName }: Props) {
     // `data-compiler` says which compiler answered — wacc once its asset has loaded, the seed for
     // the moment before. A reader never needs it; it is here because "which one compiled this" was
     // otherwise unanswerable from outside the page, and that is exactly what a test has to ask.
-    <div data-compiler={withWacc && fileName.endsWith(".wac") && !/from\s+"[^"]*\.wapy"/.test(files[fileName] ?? "") ? "wacc" : "reference"} style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#1e1e2e", borderRadius: 4, border: "1px solid #2e2e3e" }}>
+    <div data-compiler={withWacc && fileName.endsWith(".wac") ? "wacc" : "reference"} style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#1e1e2e", borderRadius: 4, border: "1px solid #2e2e3e" }}>
       <div style={{ display: "flex", borderBottom: "1px solid #2e2e3e", flexShrink: 0, backgroundColor: "#181825" }}>
         {(["run", "wasm", "ts"] as const).map((t) => (
           <button

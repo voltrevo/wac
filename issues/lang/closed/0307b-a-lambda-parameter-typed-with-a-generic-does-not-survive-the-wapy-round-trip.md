@@ -1,6 +1,7 @@
 # 0307b — a lambda parameter typed with a generic loses its name, its type arguments and the lambda's body in wapy
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** nothing — wapy was deleted (`design/lang/0016`), so there is no rendering to lose anything in.
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
@@ -47,7 +48,7 @@ arguments**. The same type one node away, on the enclosing function or in the fu
 
 `wapy` is a second surface for the same language, and this makes a rendering that is a *different
 program* — the body is gone. `wapyroundtrip_test.wac`'s header is explicit that this comparison is the
-non-circular one, since the reader is a separate implementation written from `spec/spec/wapy.md`. A
+non-circular one, since the reader is a separate implementation written from spec/spec/wapy.md. A
 silent body loss is the worst shape it can find.
 
 ## How it was found
@@ -111,7 +112,7 @@ before handing the tokens over; or have `wapyparse` parse lambda parameter lists
 parses `def` parameter lists. That is a design choice about where the two surfaces diverge, which is
 why it is still filed rather than fixed.
 
-**And the mode flag is not a one-liner, because wapy overloads the bracket.** `spec/spec/wapy.md`'s
+**And the mode flag is not a one-liner, because wapy overloads the bracket.** spec/spec/wapy.md's
 own table gives both:
 
     | `i32[3](fill: v)` | `i32[3](fill=v)` |      an array keeps its brackets
@@ -146,3 +147,7 @@ reader.)
 The workaround in `tools/wac/langfuzz.wac` is worth knowing because it is cheap and general: keep
 every lambda a single call and put the branching in a named function. That file's `evalAndOr`,
 `evalDivMod`, `evalShift`, `evalTernary` and `evalCast` exist for this reason, and say so.
+
+## Resolution
+
+Closed 2026-10-01 without a fix. The operator decided wapy is outside the next specification and deleted it, along with its printer and the round-trip test that found this.

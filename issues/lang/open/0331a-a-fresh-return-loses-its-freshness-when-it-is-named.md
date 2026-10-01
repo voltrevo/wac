@@ -84,7 +84,7 @@ supported way to write a method handing back a fresh value is to not make it a m
 
 ### The spec still states the pre-`0060` rule
 
-`spec/spec/structs.md` has not been updated. Its prose:
+spec/spec/structs.md has not been updated. Its prose:
 
 > Deep const cannot be laundered through intermediate values. A reference obtained *through* a const
 > reference is itself const, **however it was obtained**

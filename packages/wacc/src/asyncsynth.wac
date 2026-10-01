@@ -3,18 +3,18 @@
 //
 // Every later phase learns what a token says by reading `tokenText`, which reads bytes out of the
 // source. So a node the rewrite invents — `Pending`, `.wait`, the machine's own state variable —
-// still needs a span, and the span has to point at real bytes. The answer, and the prior art, is
-// `wapytok.wac`: append the spellings once to the source and point synthetic tokens into them.
+// still needs a span, and the span has to point at real bytes. The answer is to append the spellings
+// once to the source and point synthetic tokens into them.
 //
 // **Behind a `//`, and that is not cosmetic.** `Lexed`'s own note says to lex again for a second
-// parse, so a source carrying this tail can be re-lexed; wapy hit exactly that and reported its tail
-// as a line of code the second time round. As a comment the lexer skips it, while `tokenText` reads
+// parse, so a source carrying this tail can be re-lexed, and an uncommented tail would come back as a
+// line of code the second time round. As a comment the lexer skips it, while `tokenText` reads
 // the bytes underneath — which is the whole trick, and it is why the tail is *appended* rather than
 // held beside the source. A separate buffer would need every `tokenText` in the compiler to know
 // about it.
 //
 // **The spans are honest about what they are.** A synthetic token takes the line and column of the
-// `async` that produced it, following `wapytok`'s rule: a diagnostic about lowered code then points
+// `async` that produced it: a diagnostic about lowered code then points
 // at the word the reader wrote, which is the closest thing to true available. Pointing into a
 // comment at the end of the file would be worse than useless.
 //
@@ -168,8 +168,7 @@ export i32 synthNumCount(i32 states) { return (states < 0 ? 0 : states) + 2; }
  * Every spelling the tail carries, for a file needing `ups` suspension slots.
  *
  * One list, because the byte offsets are walked from it rather than written down: a table of
- * hand-counted offsets is right until somebody adds a word in the middle, and `wapyparse.wac` keeps
- * four such offsets for exactly four synthetics. This has more, and a variable number of them.
+ * hand-counted offsets is right until somebody adds a word in the middle.
  */
 export string[] synthWords(i32 ups, i32 states, i32 args) {
   string[] fixed = fixedWords();

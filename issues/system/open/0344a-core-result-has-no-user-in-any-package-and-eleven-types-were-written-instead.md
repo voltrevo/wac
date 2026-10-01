@@ -68,7 +68,7 @@ it would want a replacement rather than a deletion.
 The argument against is not that something breaks. It is that the reason for the zero is a *missing
 propagation form*, not a wrong type: a `Result` that cannot be propagated is a `match` at every call
 site, and two authors priced that after it existed and declined —
-`packages/wacc/src/wapyparse.wac`, a parser whose errors are a flat `i32[]` and a count, and
+packages/wacc/src/wapyparse.wac, a parser whose errors are a flat `i32[]` and a count, and
 `packages/wac/src/grants.wac`, created 2026-08-25, whose `Parsed` carries `string bad`. The same
 price is what `packages/tls/src/wire.wac` and `packages/zstd/src/frame.wac` pay by trapping and what
 `packages/ssh/src/wire.wac` and `packages/fs/src/wire.wac` pay by latching a sticky flag.

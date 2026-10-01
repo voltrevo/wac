@@ -41,7 +41,6 @@ what that changes about how a claim here is checked.
 - [spec/funcrefs.md](spec/funcrefs.md) — function references, higher-order functions
 - [spec/async.md](spec/async.md) — async functions, await, and the tickets they are built on
 - [spec/grammar.md](spec/grammar.md) — formal EBNF grammar
-- [spec/wapy.md](spec/wapy.md) — wapy: the indentation surface, and how it corresponds
 - [spec/strings.md](spec/strings.md) — string type, literals, indexing, concatenation
 - [spec/bindgen.md](spec/bindgen.md) — TypeScript bindgen: type mapping, output examples
 - [spec/errors.md](spec/errors.md) — structured error reporting format

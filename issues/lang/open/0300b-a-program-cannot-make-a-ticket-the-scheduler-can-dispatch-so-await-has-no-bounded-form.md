@@ -17,7 +17,7 @@ Timed got = await within(core, cli.recv(sock), 30000);
 ```
 
 `design/lang/0014` gave wac `async`/`await` over the tickets that already exist. What it did not give
-is a bounded wait, and `spec/spec/async.md` does not mention a timeout, a deadline or a race. The only
+is a bounded wait, and spec/spec/async.md does not mention a timeout, a deadline or a race. The only
 deadline in the system is `core.waitAny(ids, millis)`, and that **blocks** — so inside an `async`
 function it stalls every other continuation.
 

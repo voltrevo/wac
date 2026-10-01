@@ -89,11 +89,6 @@ reference was deleted on 2026-08-28 and this line described it for a day.
 self-tests — much faster than reading the specification, and the right starting point before writing
 any wac.
 
-There is a second surface. `.wapy` is Python-flavoured — `def`, `class`, indentation, `and`/`or`/`not`
-— and is *not* Python: it does not accept Python, and copying Python into it is an explicit
-anti-goal. A `.wac` file may import a `.wapy` file and the reverse, and nothing after parsing can
-tell which produced a given declaration. See [`spec/spec/wapy.md`](spec/spec/wapy.md).
-
 ## The compiler, written in wac
 
 It replaced itself, and finished on 2026-08-28. `packages/wacc` is the compiler written in wac —
@@ -227,7 +222,7 @@ surprises you.
 | --- | --- |
 | [`docs/your-own-project.md`](docs/your-own-project.md) | Installing `wac` and using it outside this repository — every step run in an empty directory |
 | [`docs/`](docs/) | Integer overflow, constant-time checking, the wasm floor, development |
-| [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/spec/bindgen.md), [the command](spec/cli/wac.md) |
+| [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/next/8-tooling/48-bindgen.md), [the command](spec/next/8-tooling/45-cli.md) |
 | [`design/`](design/) | Why things are the way they are |
 | [`issues/`](issues/) | What is known to be wrong |
 | [`WASM-WISHLIST.md`](WASM-WISHLIST.md) | What wac wanted from WebAssembly and could not have |

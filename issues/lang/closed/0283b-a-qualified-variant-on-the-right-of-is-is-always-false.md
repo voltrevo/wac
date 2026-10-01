@@ -26,7 +26,7 @@ export i32 f() {
 }
 ```
 
-Expected: `1111` — `spec/spec/enums.md` says both spellings are the same test.
+Expected: `1111` — spec/spec/enums.md says both spellings are the same test.
 Actual: `101`. No diagnostic; both qualified forms are silently false.
 
 ## Notes
@@ -36,7 +36,7 @@ grammar: a `.` after a name makes a member access. On the right of `is` it meant
 parsed as an expression, so the test became reference identity against a freshly constructed
 variant — never the subject, so never true.
 
-**The spec already describes this bug, in the past tense.** `spec/spec/enums.md`:
+**The spec already describes this bug, in the past tense.** spec/spec/enums.md:
 
 > The qualified form is worth stating because it used to be silently wrong. `Shape.Empty` on the
 > right of `is` parses as an expression rather than a type, so the test became reference identity

@@ -2,7 +2,7 @@
 
 - **Status:** closed — unreachable, 2026-08-25
 - **Fixed in:** `71874f73` — nothing to fix: the checker refuses the collision first, which
-  `spec/spec/imports.md` specifies, so this closes as unreachable rather than as repaired
+  spec/spec/imports.md specifies, so this closes as unreachable rather than as repaired
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** bug
@@ -46,7 +46,7 @@ that directory declares the same name, and the directory is linked as a unit. Re
 
 ## The private half is fixed, and the spec had already answered it — 2026-08-19
 
-`spec/spec/imports.md` line 16 says "only `export`-marked functions and types can be imported", and
+spec/spec/imports.md line 16 says "only `export`-marked functions and types can be imported", and
 `[§wac-imp-coexist-p8km2v6]` that "imported names don't collide with same names in other (non-imported)
 files". `Env.keyAt` counted candidates without asking, so **a declaration its own file kept private was a
 candidate for every other file**. That is two defects, and `packages/wacc/test/wac/privatename_test.wac`
@@ -410,7 +410,7 @@ so its N files are being built one at a time"* whenever an aggregate fails, once
 first file — and it is not in the output. The aggregate for this directory builds today.
 
 That fits the history. This issue was filed on 2026-08-18; **`9b4f2c4b`, the next day**, made a file's
-private declarations stop being candidates for other files — `spec/spec/imports.md` line 16, "only
+private declarations stop being candidates for other files — spec/spec/imports.md line 16, "only
 export-marked functions and types can be imported". The trigger described above is
 *"`ast.wac` exports `Case`, `diagnosticgap_test.wac` declares a private one, a third file exports
 one"*, and one of those three stopped counting. Nobody re-measured the reproduction afterwards, so the
@@ -448,7 +448,7 @@ the name before the emitter sees it:
        = help: import the type, or check the spelling
 
 Measured with two candidates and with one: **both are refused**, so this is not the ambiguity rule, it is
-`spec/spec/imports.md`'s *"A written type name must be in scope"* — `[§wac-type-name-scope-8vqk3mn]`,
+spec/spec/imports.md's *"A written type name must be in scope"* — `[§wac-type-name-scope-8vqk3mn]`,
 whose own example is this exact shape. `issues/lang/0048` is the closed issue that established it, and it
 is the same defect one layer up: *"a type name resolves outside the file that wrote it, and picks wrong
 when two match"*.

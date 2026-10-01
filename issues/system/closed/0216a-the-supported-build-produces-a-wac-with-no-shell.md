@@ -14,7 +14,7 @@ $ ./native/v8/target/release/wac sh -c "echo hi"
 wacc: unknown command 'sh' — check, compile, build or bindgen
 ```
 
-Expected, from `spec/cli/wac.md`: `sh` is listed in the command table as one of "this host's own
+Expected, from spec/cli/wac.md: `sh` is listed in the command table as one of "this host's own
 commands", and the usage block shows `wac sh [-c script]` with no qualification.
 
 Actual: the command does not exist in a binary built the supported way.
@@ -44,7 +44,7 @@ named rather than going red, since the configuration is legal.
 
 ## The decision
 
-Either the shell belongs in the seeded binary, or `spec/cli/wac.md` should say `sh` is conditional and
+Either the shell belongs in the seeded binary, or spec/cli/wac.md should say `sh` is conditional and
 name what supplies it.
 
 The first is the one that matches `design/lang/0009`'s direction — one installable toolchain, and a

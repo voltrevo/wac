@@ -15,7 +15,7 @@
 export f64 f() { f64 s = 1 + 2; return s; }
 ```
 
-Expected: a compile error. `spec/spec/types.md` — an integer literal takes whatever **integer** type
+Expected: a compile error. spec/spec/types.md — an integer literal takes whatever **integer** type
 is expected of it, and *"no implicit conversions between any types"*. The reference says
 `type mismatch: expected f64, got i32`.
 

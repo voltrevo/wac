@@ -620,7 +620,7 @@ The verifiable facts, and they are the only ones worth planning against:
 
   - **The test runs what it compiles.** `wacc/i31Trap.test.ts` emitted a module and instantiated it
     with `WebAssembly.Module`. **26 of `packages/wacc`'s 61 tests do this**, which makes it the
-    largest single shape left — but it needs no new capability. `spec/cli/wac.md` says a first
+    largest single shape left — but it needs no new capability. spec/cli/wac.md says a first
     argument ending in `.wasm` is a program to run, `emitFilesSelfDescribing` writes a module with
     its manifest inside it, and `run`'s exit status is the program's own answer. So the route is
     emit, write, run: `packages/wacc/test/wac/artifacts_probe.wac`'s `runEmitted`, proved by
@@ -2220,7 +2220,7 @@ per slot. Parsing 20 MB of text per run in wac, twice per comparison, is the wro
 is fine for the hundreds of events `cttrace_test.wac` reads and wrong for a million.
 
 **Built, and it moved — later the same day.** `wac build --trace` and `wac ctcompare [--all]` are the
-two commands, `spec/cli/wac.md` states their contract, tools/wac/ctcompare_test.wac holds them to it,
+two commands, spec/cli/wac.md states their contract, tools/wac/ctcompare_test.wac holds them to it,
 and `packages/crypto/test/wac/constanttime_test.wac` is the port. It reproduces all three existing
 measurements: AES at `aes.wac` 113–116 and 149, every one an index and no branch to find; p256's
 ladder at `weierstrass.wac:120`; x25519 uniform over 1.6 million events. Two things it taught:
@@ -2431,7 +2431,7 @@ Two things came out of it that were not the port:
 
     | claim | probe | verdict |
     |---|---|---|
-    | `hostfs.wac`: no escape for a NUL in a string literal | `"a\0b".toBytes()` | **false** — three bytes, zero in the middle, and `spec/spec/strings.md` lists `\0` in a tagged example `[§wac-str-esc-h9qm3v7]` |
+    | `hostfs.wac`: no escape for a NUL in a string literal | `"a\0b".toBytes()` | **false** — three bytes, zero in the middle, and spec/spec/strings.md lists `\0` in a tagged example `[§wac-str-esc-h9qm3v7]` |
     | `gzip/tables.wac`: no top-level constants | `const i32[] T = i32[](…)` at file scope | **false**, and hoisted — measured above |
     | `bytes/buf.wac`: no generics | `Vec<i32>`, `Vec<u8[]>` | **false** — `core/vec.wac` is `Vec<T>` |
     | `json/stringify.wac`: no `\b` or `\f` character escape | `"a\bb"` | **accurate** — *unknown escape*, and the spec's list is `\n \t \0 \\ \"` |

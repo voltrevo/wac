@@ -128,7 +128,7 @@ the cursor and the event total as plain integers, which is four calls a module, 
 journals properly the moment they disagree**. Every `differs`, `site`, `split` and `longer` is
 therefore still exact and slot-derived; what the hash decides is `same`.
 
-That is the weakening, and it is stated in `spec/cli/wac.md`, in `emitCoverageHelpers`, and at the
+That is the weakening, and it is stated in spec/cli/wac.md, in `emitCoverageHelpers`, and at the
 call site: a wrong `same` is a 32-bit coincidence between two runs of our own code on our own vectors,
 with nobody choosing inputs against the function. `ctcompare_test.wac` has the case that a plausible
 fold fails — two journals holding the same numbers in a different order, where the cursor, the event

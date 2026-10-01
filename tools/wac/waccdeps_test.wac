@@ -5,7 +5,7 @@
 // **The rule already existed and was a comment.** `emit.wac`'s header says a helper is *"kept local
 // rather than imported because `packages/wacc` has no dependencies"*, and `CLAUDE.md` documents
 // `./bootstrap.sh` as the first command in a new checkout. Nothing checked it, so
-// the day the wapy frontend was wired into `api.wac` the compiler's graph gained
+// the day a second frontend was wired into `api.wac` the compiler's graph gained
 // `core/vec.wac` through four `import { Vec }` lines, and the bootstrap stopped working.
 //
 // ## Why that is fatal rather than untidy
@@ -33,7 +33,7 @@
 //
 // A new entry means a file under `packages/wacc/src` imported something outside it. Either
 //
-//   - copy what you need into the package, small — `wvec.wac` is that, six methods of `Vec`; or
+//   - copy what you need into the package, small — six methods of `Vec` written locally; or
 //   - check that the reference can parse the whole of what you are importing — `deno run -A
 //     packages/platform/native.ts packages/wacc/src/api.wac -o /tmp/w` is the question, and
 //     `./bootstrap.sh` is the answer that counts — then add it below with a reason.
@@ -128,12 +128,12 @@ export string test_the_walk_reaches_the_compilers_files(Core core, Cli cli) {
   t.isTrue(g.len() >= 15, "the walk found " + itoa(g.len()) + " files, which is too few to be the "
                         + "compiler — it has more than fifteen");
   bool sawEmit = false;
-  bool sawWapy = false;
+  bool sawFrontend = false;
   for (i32 i = 0; i < g.len(); i++) {
     if (g[i] == "packages/wacc/src/emit.wac") { sawEmit = true; }
-    if (g[i] == "packages/wacc/src/wapyparse.wac") { sawWapy = true; }
+    if (g[i] == "packages/wacc/src/frontend.wac") { sawFrontend = true; }
   }
   t.isTrue(sawEmit, "the walk reached `emit.wac`");
-  t.isTrue(sawWapy, "the walk reached `wapyparse.wac` — the frontend is wired in, `issues/lang/0279a`");
+  t.isTrue(sawFrontend, "the walk reached `frontend.wac`");
   return t.report();
 }

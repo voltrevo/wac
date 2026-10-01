@@ -22,7 +22,7 @@ filed rather than finished.
 
 ## Why it is not just the rest of the work
 
-`spec/spec/generics.md` says it, and says it as a limit rather than a gap:
+spec/spec/generics.md says it, and says it as a limit rather than a gap:
 
 > A return type alone does not determine `T`; that is a deliberate limit rather than an oversight, and
 > lifting it would mean propagating an expected type into a call, which is the same restriction the

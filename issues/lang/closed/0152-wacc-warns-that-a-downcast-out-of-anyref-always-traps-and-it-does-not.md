@@ -15,7 +15,7 @@
     warning: these types share no ancestor, so this cast always traps
 
 The cast succeeds. `anyref` is the **top** reference type, so every reference shares it as an
-ancestor, and `spec/spec/casts.md:358` documents this exact spelling as the way back down:
+ancestor, and spec/spec/casts.md:358 documents this exact spelling as the way back down:
 
     i31ref x = val as! i31ref;    // ref.cast — downcast from anyref
 

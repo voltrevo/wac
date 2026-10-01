@@ -4,7 +4,7 @@
 // AST in ast.wac. Structured as a `P` struct threaded through every function, since this package
 // cannot use closures to capture the position the way the reference does — the ladder's top rung
 // builds it and the rung below has no lambdas. The *language* has had them since 2026-08-16; see
-// `lex.wac`'s `Lexer` for the same note and `wvec.wac` for the rule it follows from.
+// `lex.wac`'s `Lexer` for the same note.
 //
 // The reference takes positions at very specific points — a binary node's position is
 // its *operator*, a ternary's is the `?`, not the start of the condition — and this
@@ -121,15 +121,6 @@ export struct P {
 
   P create(u8[] src, Lexed lexed) {
     return P(src, lexed, 0, i32[192](), string[64](), i32[64](), 0);
-  }
-
-  /**
-   * A parser over a bare token array, for a caller that has no `Lexed` and is not parsing a
-   * program with it — `wapyparse` opens one of these per statement over one file's tokens, which
-   * is deliberate and is why the guard is on `parseProgram` rather than here.
-   */
-  P overTokens(u8[] src, i32[] toks, i32 tokCount) {
-    return P.create(src, Lexed(toks, tokCount, i32[0](), 0, false));
   }
 
   // ── Token access ────────────────────────────────────────────────────────────

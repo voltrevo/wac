@@ -51,12 +51,12 @@ Three ways out, and the choice is the point of filing rather than fixing:
   Smallest, and leaves the silent case exactly as it is.
 
 The second and third together cover the papercut and the silent failure without breaking anything,
-which is the combination I would pick — but it is a CLI contract, and `spec/cli/main.md` is where
+which is the combination I would pick — but it is a CLI contract, and spec/cli/main.md is where
 it is written down.
 
 ## Not a defect, for the record
 
-`spec/cli/main.md`'s `run` section documents calling a **named exported function** —
+spec/cli/main.md's `run` section documents calling a **named exported function** —
 `wacx run math.wac gcd 48 18`. A `main(Core, Cli)` program runs too, with the arguments going to
 the program. Both work; the spec only describes the first, which is part of why the wrong order
 looked like "run cannot do this" rather than "the flag is in the wrong place".

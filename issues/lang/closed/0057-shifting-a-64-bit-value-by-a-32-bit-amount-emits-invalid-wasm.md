@@ -55,7 +55,7 @@ conspicuous than the algorithm.
 ## Fixed
 
 The emitter converts the amount to the operand's width, and the type checker accepts any
-integer for it — `§wac-shift-amount-3wkq7np`, in `spec/spec/operators.md`.
+integer for it — `§wac-shift-amount-3wkq7np`, in spec/spec/operators.md.
 
 The reporter's second suggestion, rather than the first. Rejecting the mismatch would have
 been honest but would have left every shift by a constant needing a cast that could not

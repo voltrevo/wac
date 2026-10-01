@@ -30,7 +30,7 @@ error: initialiser does not match the declared type
 Expected: accepted. Widening to `anyref` works and widening to `Point?` works, so neither widening
 nor nullability is the problem on its own — it is the pair.
 
-The reference compiles the file and emits a module. `spec/spec/types.md` shows the non-nullable form
+The reference compiles the file and emits a module. spec/spec/types.md shows the non-nullable form
 (`anyref val = small;`, `items[1] = Point(1, 2);`) and says nothing that would make the nullable form
 different.
 

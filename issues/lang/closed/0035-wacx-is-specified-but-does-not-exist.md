@@ -9,7 +9,7 @@
 - **Covered by:** `§wac-cli-check-4mkq8wp`, `§wac-cli-run-7jnq2mv`, `§wac-cli-compile-9wkn3pq`, `§wac-cli-bindgen-5tqm7wn`, `§wac-cli-usage-3nkq8wj`
 - **Symptom:** not implemented
 
-`spec/cli/main.md` documents a CLI with four commands. There is no implementation:
+spec/cli/main.md documents a CLI with four commands. There is no implementation:
 no atom, no `bin` entry, no npm script. The only occurrences of the string `wacx` in
 the repo are the four spec files that describe it.
 
@@ -58,7 +58,7 @@ Two ways to close this, and it is a decision rather than a defect:
    way to be executed rather than read.
 2. **Drop it from the spec.** If a library-only compiler driven by its embedders is
    the intent, then `cli/main.md` and the `done.md` criterion describe a plan that was
-   abandoned, and saying so costs nothing. `spec/spec/bindgen.md` would need its
+   abandoned, and saying so costs nothing. spec/spec/bindgen.md would need its
    opening line changed too — it currently says "`wacx bindgen` generates …".
 
 What should not persist is the third state: a spec that names an entry point which has

@@ -13,7 +13,7 @@ Documentation, not code. The sentence appears twice:
 
 - `README.md:59` — "Passing it is the only way a host function becomes reachable: wac has no
   import syntax, so a module that takes no `fn[…]` parameter has no wasm imports at all"
-- `spec/spec/bindgen.md:118` — "**Passing it is the only way in.** wac has no import syntax,
+- spec/spec/bindgen.md:118 — "**Passing it is the only way in.** wac has no import syntax,
   so nothing a program can write names a host function"
 
 wac does have import syntax, listed six lines above the first one under **Language features**:
@@ -55,7 +55,7 @@ section is empty unless a parameter put something in it.
 ## Fixed as filed (0327a41, agent-a)
 
 Both sentences, in your wording, because it is the right wording: the claim is about what an
-import can *name*, not whether the keyword exists. `README.md` and `spec/spec/bindgen.md`.
+import can *name*, not whether the keyword exists. `README.md` and spec/spec/bindgen.md.
 
 I took the clause from your notes as well — there is no ambient authority to opt out of, and most
 sandboxes are a list of things taken away where this one's import section is empty unless a

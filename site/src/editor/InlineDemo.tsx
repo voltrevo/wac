@@ -5,7 +5,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { syntaxHighlighting, bracketMatching, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { linter } from "@codemirror/lint";
-import { wac as wacLang, wapy as wapyLang } from "./wac-language";
+import { wac as wacLang } from "./wac-language";
 import { wacLintSource } from "./wac-lint";
 import { compile, runFunction, placeholderFor, onWaccReady, waccLoaded, type EditorCompileResult } from "./wac-compile";
 import type { WacExport } from "./wac-types.ts";
@@ -25,14 +25,8 @@ const highlight = HighlightStyle.define([
   { tag: tags.definition(tags.variableName), color: "#2dd4bf" },
 ]);
 
-/**
- * The demo file's name, which is not cosmetic: the extension selects the frontend, so a `.wapy`
- * demo compiles through `wapyParse` and a `.wac` one through `wacParse`. Same `wacCompile` call
- * either way — the runner below does not know which surface it just ran.
- */
-const FILE_FOR = { wac: "/demo/main.wac", wapy: "/demo/main.wapy" } as const;
-
-export type Surface = keyof typeof FILE_FOR;
+/** The demo file's name. */
+const FILE = "/demo/main.wac";
 
 function CompactRunner({ func, code, file }: { func: WacExport; code: string; file: string }) {
   const [args, setArgs] = useState<string[]>(() => func.params.map(() => ""));
@@ -108,12 +102,9 @@ function CompactRunner({ func, code, file }: { func: WacExport; code: string; fi
 
 interface Props {
   initialCode: string;
-  /** Which surface the code is written in. Defaults to wac. */
-  surface?: Surface;
 }
 
-export default function InlineDemo({ initialCode, surface = "wac" }: Props) {
-  const FILE = FILE_FOR[surface];
+export default function InlineDemo({ initialCode }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [code, setCode] = useState(initialCode);
@@ -141,7 +132,7 @@ export default function InlineDemo({ initialCode, surface = "wac" }: Props) {
         history(),
         bracketMatching(),
         syntaxHighlighting(highlight),
-        surface === "wapy" ? wapyLang() : wacLang(),
+        wacLang(),
         linter(wacLintSource(filesRef.current, fileNameRef.current), { delay: 300 }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.updateListener.of((update) => {

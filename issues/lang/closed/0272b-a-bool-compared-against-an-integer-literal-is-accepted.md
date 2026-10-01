@@ -32,7 +32,7 @@ and it runs, with the `bool` standing in for an integer:
     (x < 2) > 5     answers false    # true > 5
 
 So `true` is being compared as `1`. Nothing in the language says a `bool` has a numeric value —
-`spec/spec/types.md` gives it no conversion to an integer, and the variable form above is refused for
+spec/spec/types.md gives it no conversion to an integer, and the variable form above is refused for
 exactly that reason.
 
 ## The reference refuses it

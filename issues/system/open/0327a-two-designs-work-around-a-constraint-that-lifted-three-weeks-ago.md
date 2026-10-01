@@ -86,17 +86,17 @@ The nine stragglers, all fixed:
 |---|---|---|
 | `spec/tour.wac` §15 | `THERE ARE NO CLOSURES`, in capitals | §17 of the same file already said otherwise |
 | `spec/tour.wac` §17 | `async` is absent | it ships — `design/lang/0014` |
-| `spec/tour.wac` §16, `spec/spec/imports.md` | no closures means two enums cannot convert | true conclusion, gone premise: it is nominal typing |
+| `spec/tour.wac` §16, spec/spec/imports.md | no closures means two enums cannot convert | true conclusion, gone premise: it is nominal typing |
 | `std/platform.wac` ×3 | no closures | one of them was itself a correction that went stale |
 | `packages/fs/src/fs.wac` | a funcref cannot capture a filesystem | lambdas capture by reference |
-| `packages/wacc/src/lex.wac` ×2 | no generics; no closures | `wvec.wac` is `WVec<T>`, in that directory |
+| `packages/wacc/src/lex.wac` ×2 | no generics; no closures | wvec.wac is `WVec<T>`, in that directory |
 | `packages/wacc/src/check.wac` ×2 | no map and no growable array of structs | `Map<K, V>`, `Vec<T>`, `WVec<T>` |
 | `packages/wacc/src/parse.wac` | no closures | the *rung* has none; the language does |
 | `packages/git/src/repo.wac` | no hash map | three files in that package import `core` |
 | `tools/wac/mutatesample.wac`, `covledger.wac`, `langfuzz.wac` | no closures over a mutable; no growable array | `spec/cases/0194` writes through a captured array |
 
 **Two of them were right about the constraint and wrong about whose it is.** `packages/wacc` really
-cannot use `core/vec.wac`, and the reason is in `wvec.wac`'s own header — the top rung of the ladder
+cannot use `core/vec.wac`, and the reason is in wvec.wac's own header — the top rung of the ladder
 must read wacc's whole graph and the rung below has no lambdas. That is a fact about the bootstrap,
 and both comments stated it as a fact about wac. A reader who believes the second one carries it
 into a package where it is not true, which is how a wrong reason spreads: it is the *reason* that

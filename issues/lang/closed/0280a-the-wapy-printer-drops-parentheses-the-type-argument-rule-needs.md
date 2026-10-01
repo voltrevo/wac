@@ -80,7 +80,7 @@ It closes by saying *"whether it is worth fixing at all depends on whether `wapy
 `design/lang/0003`'s direction — it is the last thing the reference has that wacc does not"*.
 
 It did not survive. `compiler/` was deleted on 2026-08-28, and wacc has a wapy printer of its own —
-`packages/wacc/src/wapyprint.wac`, written from `spec/spec/wapy.md`. So the subject is gone.
+`packages/wacc/src/wapyprint.wac`, written from spec/spec/wapy.md. So the subject is gone.
 
 **And the port does not carry the defect**, which is the part worth checking rather than assuming.
 It brackets every compound subexpression instead of carrying a precedence table, so this page's own

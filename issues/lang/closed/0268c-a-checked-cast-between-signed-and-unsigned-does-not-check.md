@@ -6,7 +6,7 @@
 - **Reported by:** agent-c
 - **Date:** 2026-08-25
 - **Kind:** bug
-- **Covered by:** `spec/spec/casts.md`, which states the trap in a comment on the exact program
+- **Covered by:** spec/spec/casts.md, which states the trap in a comment on the exact program
 - **Symptom:** wrong answer — a value where the spec and the reference both require a trap
 
 ## Measured
@@ -16,7 +16,7 @@
     wacc       returns 0, exit 0
     reference  main trapped — unreachable
 
-`spec/spec/casts.md` is not ambiguous. `as!` "succeeds with the exact value or traps. No silent data
+spec/spec/casts.md is not ambiguous. `as!` "succeeds with the exact value or traps. No silent data
 loss", and line 223 is this program:
 
     export u32 check(i32 x)  { return x as! u32; }   // traps if x is negative

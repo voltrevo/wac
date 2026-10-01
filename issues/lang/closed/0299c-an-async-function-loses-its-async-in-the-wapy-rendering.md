@@ -46,7 +46,7 @@ landed and the round trip has been green over them the whole time.
    regression.
 2. **`wapyprint.wac` emits it, and `wapyparse.wac` reads it.** This is the part that is a decision
    rather than work: `def` is wapy's own declaration syntax and the reader dispatches on the bare
-   word, so `async def` has to be added to `wapyparse` *and* to `spec/spec/wapy.md`, which is what
+   word, so `async def` has to be added to `wapyparse` *and* to spec/spec/wapy.md, which is what
    says how wapy spells things. Python spells it `async def`, which is the obvious answer and is
    worth writing down rather than assuming.
 
@@ -88,7 +88,7 @@ three are a table of words rather than new machinery.
 
 It also **matches wac more closely**, which is wapy's whole job: wac writes `export i32 f()` and
 `const struct P`, so wapy writing `export def f()` and `const class P` is one correspondence rather
-than three special cases. `spec/spec/wapy.md`'s table loses three rows and gains one rule.
+than three special cases. spec/spec/wapy.md's table loses three rows and gains one rule.
 
 ### And it frees `@` on both surfaces
 
@@ -118,7 +118,7 @@ What that costs, measured rather than guessed:
 - **printer**: two sites, one line each;
 - **parser**: `wapyparse.wac` dispatches on `"def"` at `:1005` and `:1129`, so both need to accept a
   preceding `async`;
-- **spec**: `spec/spec/wapy.md` mentions async **zero** times — wapy has no async surface at all
+- **spec**: spec/spec/wapy.md mentions async **zero** times — wapy has no async surface at all
   today, so this is a new clause rather than an amendment, and a tagged one, which the site's
   claim count tracks;
 - a `spec/cases` entry, since the round trip is what the bug is about.
@@ -134,7 +134,7 @@ once that is settled.
 All four pieces, since the issue is explicit that 1 without 2 is a red suite and 2 without 1 is
 unverifiable:
 
-- **`spec/spec/wapy.md`** — `func_decl = [ "async" ] , "def" , …` in the EBNF, a row in the
+- **spec/spec/wapy.md** — `func_decl = [ "async" ] , "def" , …` in the EBNF, a row in the
   correspondence table, and `[§wac-wapy-asyncdef-9mk2xrt]`, which says it is a prefix keyword and
   not `@async` for the reason this issue's own last section gives about `@export`: a decorator in
   Python is a value applied to a function, and `async` is not a value.
@@ -166,5 +166,5 @@ not a regression; the bisect above was run afterwards, each step from a fresh `.
 
 **Not done here:** the `@export`/`@const`/`@override` change the last section proposes. It is the
 same production and would come "along for nothing", but it is a second spelling change to
-`spec/spec/wapy.md` with its own round-trip surface, and bundling it would make one of the two
+spec/spec/wapy.md with its own round-trip surface, and bundling it would make one of the two
 impossible to bisect if the suite went red. Left as filed.

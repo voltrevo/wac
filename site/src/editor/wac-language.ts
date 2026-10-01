@@ -1,4 +1,4 @@
-// CodeMirror highlighting for both of wac's surfaces.
+// CodeMirror highlighting for wac.
 //
 // **The vocabulary is a copy, and a test holds it to the spec.** It used to be imported from the
 // TypeScript reference's lexer, on the reasoning that a copy had already drifted once — this
@@ -12,14 +12,10 @@
 //
 // So the guard moves from "there is only one copy" to "the copies are checked against the
 // definition", which is where it should probably have been: `spec/spec/grammar.md` prints the
-// keywords and `spec/spec/wapy.md` prints the respellings, and both are what a reader is told.
+// keywords, and that is what a reader is told.
 // `site/tools/site.test.ts` compares this file against them, and
 // `packages/wacc/test/wac/speckeywords_test.wac` compares wacc's lexer against the same fence — so
 // the highlighter and the compiler agree by both agreeing with the document.
-//
-// Both surfaces share one tokeniser. They differ in three things — comment marker, block
-// structure, and how a declaration opens — and everything else about them is the same language,
-// which is the point being made on the page.
 
 import {
   StreamLanguage,
@@ -29,7 +25,7 @@ import {
 import { Tag } from "@lezer/highlight";
 
 
-import { KEYWORDS, SPELLINGS } from "./wac-vocabulary.ts";
+import { KEYWORDS } from "./wac-vocabulary.ts";
 
 export const trapTag = Tag.define();
 
@@ -38,17 +34,12 @@ const TYPES = new Set(
   "i32 i64 f32 f64 bool i31ref anyref string void".split(" ")
 );
 
-/** wapy's structural words. Not reserved by the language — see `spec/spec/wapy.md`. */
-const WAPY_WORDS = new Set("def class elif pass from in range scope".split(" "));
-
-/** The literals, whichever surface spells them. `True` and `None` are wapy's. */
-const LITERALS = new Set(["true", "false", "null", "True", "False", "None"]);
+const LITERALS = new Set(["true", "false", "null"]);
 
 type Context =
   | "normal"
   | "afterType"      // just saw a type, next identifier might be a definition
-  | "afterStruct"    // just saw `struct`/`class`, next identifier is a type name
-  | "afterDef"       // just saw wapy's `def`, next identifier is a function name
+  | "afterStruct"    // just saw `struct`/`enum`, next identifier is a type name
   | "afterImport"    // inside `import { ... }`
   | "params";        // inside `(` in function params
 
@@ -58,8 +49,8 @@ interface WacState {
   parenDepth: number;
 }
 
-function parserFor(surface: "wac" | "wapy"): StreamParser<WacState> {
-  const comment = surface === "wac" ? "//" : "#";
+function parser(): StreamParser<WacState> {
+  const comment = "//";
 
   return {
     tokenTable: { trap: trapTag },
@@ -107,9 +98,6 @@ function parserFor(surface: "wac" | "wapy"): StreamParser<WacState> {
       if (stream.match(/^[0-9][0-9_]*\.[0-9_]*/)) return "number";
       if (stream.match(/^[0-9][0-9_]*/)) return "number";
 
-      // `@export` and friends: wapy's decorators, one token so the sigil is not punctuation.
-      if (surface === "wapy" && stream.match(/^@[a-zA-Z_]\w*/)) return "keyword";
-
       // Identifiers and keywords
       if (stream.match(/^[a-zA-Z_]\w*/)) {
         const w = stream.current();
@@ -123,16 +111,14 @@ function parserFor(surface: "wac" | "wapy"): StreamParser<WacState> {
         if (w === "trap") return "trap";
         if (LITERALS.has(w)) return "bool";
         if (TYPES.has(w)) {
-          // In wapy a type follows a `:` or `->` and never introduces a declaration.
-          if (surface === "wac") state.context = "afterType";
+          state.context = "afterType";
           return "typeName";
         }
 
         // Context-sensitive classification
-        if (state.context === "afterStruct" || state.context === "afterDef") {
-          const wasDef = state.context === "afterDef";
+        if (state.context === "afterStruct") {
           state.context = "normal";
-          return wasDef ? "definition(function)" : "typeName";
+          return "typeName";
         }
         if (state.context === "afterType") {
           state.context = "normal";
@@ -146,15 +132,6 @@ function parserFor(surface: "wac" | "wapy"): StreamParser<WacState> {
           return "definition(variable)";
         }
 
-        // wapy respells five operators and literals as words; `and` is a `&&`.
-        if (surface === "wapy" && SPELLINGS.has(w)) return "operator";
-
-        if (surface === "wapy" && WAPY_WORDS.has(w)) {
-          if (w === "class") state.context = "afterStruct";
-          if (w === "def") state.context = "afterDef";
-          return "keyword";
-        }
-
         if (KEYWORDS.has(w) || w === "from") {
           if (w === "struct" || w === "enum") state.context = "afterStruct";
           if (w === "import") state.context = "afterImport";
@@ -165,7 +142,7 @@ function parserFor(surface: "wac" | "wapy"): StreamParser<WacState> {
         if (w[0] >= "A" && w[0] <= "Z") {
           // If followed by identifier or `(` or `[`, likely a type
           if (stream.match(/^\s*[a-zA-Z_(?\[]/, false)) {
-            if (surface === "wac") state.context = "afterType";
+            state.context = "afterType";
             return "typeName";
           }
           // If followed by `.`, likely a static call
@@ -236,13 +213,8 @@ function parserFor(surface: "wac" | "wapy"): StreamParser<WacState> {
   };
 }
 
-const wacLanguage = StreamLanguage.define(parserFor("wac"));
-const wapyLanguage = StreamLanguage.define(parserFor("wapy"));
+const wacLanguage = StreamLanguage.define(parser());
 
 export function wac(): LanguageSupport {
   return new LanguageSupport(wacLanguage);
-}
-
-export function wapy(): LanguageSupport {
-  return new LanguageSupport(wapyLanguage);
 }

@@ -157,7 +157,7 @@ different applets.
 
 That message is `platform.wac`'s own, quoted at the top of `Pending`: "a JS closure is not a wasm
 function, so bindgen registers one wasm function per host function and only *sixteen per signature*
-can be live at once — see `spec/spec/bindgen.md`". Every run builds a fresh `Core` and `Cli` over its
+can be live at once — see spec/spec/bindgen.md". Every run builds a fresh `Core` and `Cli` over its
 new bridge, so every run burns three more `fn[void(i32)]` registrations, and the table is full after
 five.
 

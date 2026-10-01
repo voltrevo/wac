@@ -32,12 +32,12 @@ export i32 len(Read r) {
        |   ^
        = help: add the missing arms, or an `else`
 
-Expected, per `spec/spec/enums.md`: `match does not cover 'Failed'`.
+Expected, per spec/spec/enums.md: `match does not cover 'Failed'`.
 Actual: `match does not cover every variant`, which names nothing.
 
 ## The spec states the better message and the case records it
 
-`spec/spec/enums.md` shows a three-variant `Shape` with `Rect` left out and says:
+spec/spec/enums.md shows a three-variant `Shape` with `Rect` left out and says:
 
 > `[§enum-match-inexhaustive]` This is a compile error: `match does not cover 'Rect'`.
 
@@ -74,4 +74,4 @@ about.
 - wherever the uncovered set is computed for the `match` totality check, so it reaches the message
 - the plural: two or more missing variants need a form, and the spec does not state one
 - a `t.eqStr` for this claim, so the message is held rather than recorded
-- `spec/spec/enums.md` only if the decided wording differs from what it already states
+- spec/spec/enums.md only if the decided wording differs from what it already states

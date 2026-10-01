@@ -26,7 +26,6 @@ import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsOf } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
-import { Wp, printWapy } from "./wapyprint.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -34,33 +33,7 @@ export string dump(u8[] src) {
   return dumpAs("x.wac", src);
 }
 
-/**
- * A wac source rendered as **wapy** — the direction wacc did not have.
- *
- * `dumpWapy` above reads wapy and this writes it, so a `.wac` file can be turned into the other
- * surface and read back. That round trip is what `packages/wacc/test/wac/wapyroundtrip_test.wac` does
- * over every tracked file, and it is not circular: `wapyprint.wac` and `wapyparse.wac` are both
- * written from `spec/spec/wapy.md` rather than from each other.
- */
-export string wapyOf(u8[] src) {
-  Frontend fe = frontendOf("x.wac", src);
-  Wp w = Wp.create(fe.src, fe.lexed.tokens, fe.lexed.tokenCount);
-  return printWapy(w, fe.prog);
-}
-
-/**
- * The same for a `.wapy` source, so the two surfaces can be compared as **trees**.
- *
- * `spec/spec/wapy.md` says the two are one language in two layouts, and the only way to hold that to
- * account is to read a program written both ways and compare what came back. This is the surface
- * that lets a caller outside wac do it — `packages/wacc/test/wac/wapyroundtrip_test.wac` renders every
- * tracked `.wac` file to wapy and asks for both.
- */
-export string dumpWapy(u8[] src) {
-  return dumpAs("x.wapy", src);
-}
-
-/** Whichever frontend `path` names, rendered — see `frontend.wac`. */
+/** `src` read as the file at `path`, rendered. */
 string dumpAs(string path, u8[] src) {
   Frontend fe = frontendOf(path, src);
   Pr w = Pr.create(fe.src, fe.lexed.tokens, fe.lexed.tokenCount);
@@ -535,10 +508,7 @@ export string tokenKindName(i32 kind) { return kindName(kind); }
 // another"*. That reasoning is the reason these are exported rather than reimplemented.
 
 /**
- * The import specifiers in `src`, read by whichever frontend `path` names.
- *
- * **The path matters.** wapy spells an import `from "./m.wac" import a, b`, so a walk that scanned
- * for wac's spelling alone stops at the first `.wapy` file and the edges beyond it do not exist.
+ * The import specifiers in `src`, the file at `path`.
  */
 export string[] importSpecsFor(string path, u8[] src) {
   return importSpecsOf(path, src);
@@ -804,8 +774,6 @@ Edges edgesOfIn(string[] paths, string[] sources, Res res) {
   i32 upper = 0;
   for (i32 i = 0; i < n; i++) {
     string src = i < sources.len() ? sources[i] : "";
-    // **By path**, because wapy spells an import differently and a graph walked as wac stops at the
-    // first `.wapy` file — see `importSpecsOf`.
     specsOf[i] = importSpecsOf(i < paths.len() ? paths[i] : "", src.toBytes());
     upper = upper + specsOf[i].len();
   }
@@ -1063,14 +1031,6 @@ void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
 /**
  * Whether some file *other* than `selfIndex` also declares a type called `name`.
  *
- * **`selfIndex` rather than `self`**, which is what it was called. A wac parameter named `self` had
- * no wapy rendering, so the reference's round trip (compiler/wapyRoundTrip.test.ts, deleted
- * 2026-08-27) refused this file — *"a parameter is written
- * `name: Type`"* — and the whole suite was red on it. That was `issues/lang/0077`, fixed on
- * 2026-08-27 by wapy spelling the receiver `this`: `self` is an ordinary identifier on both surfaces
- * now and this rename is no longer load-bearing. It stays because the name is no worse for it, and
- * because a parameter called `self` in a function that is not a method reads like a receiver.
- *
  * The question `issues/lang/0128`'s fix turns on. Renaming every type that reaches a file only
  * through a signature is wrong: `packages/tor` declares `Link` in `link.wac`, `bootstrap.wac` puts it
  * in `Session.link` without declaring it, and `hsfetch.wac` imports `fetchOverCircuit` without
@@ -1235,20 +1195,10 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
 i32[] declCountsInto(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs) {
   i32[] counts = i32[paths.len() + 1]();
   for (i32 i = 0; i < paths.len(); i++) {
-    // **Through the shared frontend**, so a `.wapy` file is the same tree here that the emitter
-    // links — see `frontend.wac`. The source comes back too because wapy's token indices refer to
-    // its own rewritten array.
+    // **Through the shared frontend**, so this tree is the one the emitter links — see `frontend.wac`.
     Frontend cfe = frontendOf(i < paths.len() ? paths[i] : "",
                               (i < sources.len() ? sources[i] : "").toBytes());
     u8[] csrc = cfe.src;
-    // **And the source goes back, because the tokens index *it*.** wapy's parse hands back a
-    // rewritten array whose synthetic tokens point past the file's last byte, into
-    // `wapyparse.wac`'s `synthTail`. The checker takes its bytes from `sources[i]` and its tokens
-    // from this cache, so leaving the original here pairs one file's tokens with another file's
-    // bytes and `tokenText` reads off the end — which is a trap in `declareStmt`, four frames from
-    // anything that mentions wapy. The tail is behind a `#` so re-reading what we wrote is a
-    // comment rather than a line of code.
-    if (i < sources.len()) { sources[i] = string.fromBytes(csrc); }
     Lexed clexed = cfe.lexed;
     Program cprog = cfe.prog;
     counts[i] = declarationsIn(csrc, clexed, cprog);

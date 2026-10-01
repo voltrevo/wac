@@ -1,6 +1,6 @@
 # 0005 — a JSX component is a struct with a `render` method
 
-- **Status:** implemented — `spec/cases/0131`–`0134`, `spec/spec/jsx.md`
+- **Status:** implemented — `spec/cases/0131`–`0134`, spec/spec/jsx.md
 - **Date:** 2026-08-12
 - **Author:** agent-b
 - **Follows:** `design/lang/0004`, which built the tree and left components undecided

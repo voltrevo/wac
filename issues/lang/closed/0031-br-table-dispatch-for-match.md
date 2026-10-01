@@ -105,6 +105,6 @@ reopen it is a program whose *inner loop* is enum dispatch — an interpreter ov
 instruction enum — where 1.6 ns of 4 is worth having. Anyone in that position should re-measure with this
 probe rather than assume either way.
 
-`spec/spec/enums.md` also had a paragraph claiming the arm was selected by a `br_table`, contradicting the
+spec/spec/enums.md also had a paragraph claiming the arm was selected by a `br_table`, contradicting the
 section two screens down that says it is a chain. It says chain now.
 

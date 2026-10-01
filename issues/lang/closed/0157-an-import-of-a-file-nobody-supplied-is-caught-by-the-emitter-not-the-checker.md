@@ -69,7 +69,7 @@ Three ways, and the third is the one the spec's own words point at:
    `Import` case, which already reports `unknown module` and `no such export`. Costs a signature change
    on the entry points and a wider `C`.
 2. **Report it from `api.wac`**, which already has `paths` and `sources` in hand when it builds the
-   fronts. Cheapest, and it puts a diagnostic in a layer `spec/spec/errors.md` says diagnostics must not
+   fronts. Cheapest, and it puts a diagnostic in a layer spec/spec/errors.md says diagnostics must not
    come from: *"These fields are populated by the compiler phases (lex, parse, resolve, typecheck) — not
    added after the fact by a formatting layer."*
 3. **Give wacc a resolve step.** The reference has four phases and wacc's wire has three — `lex`, `parse`,
@@ -427,7 +427,7 @@ to re-check the five.
 `issues/lang/0175a`), so the rule is four lines beside that resolution: a specifier whose target is no
 supplied path is recorded with `C.addUnresolved`, and the `Import` arm in `check.wac` — which has
 reported `errMissingImportFile` (77) at the import's own token since the single-file half — does the
-rest. Nothing new reports from `api.wac`, which is the layering `spec/spec/errors.md` asks for and the
+rest. Nothing new reports from `api.wac`, which is the layering spec/spec/errors.md asks for and the
 reason option 2 in "The decision" above was the wrong one.
 
 Measured before and after, through `dumpTypeErrorsFiles`:

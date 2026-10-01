@@ -69,7 +69,7 @@ would be simpler and would make constructors and copies unwritable as methods, w
 
 ## Two of them contradict a written claim
 
-`spec/spec/structs.md`, `[§wac-deep-const-alias-p6mk2wf]`, already says the reference "may not be
+spec/spec/structs.md, `[§wac-deep-const-alias-p6mk2wf]`, already says the reference "may not be
 stored into a struct field or array element (which would make it reachable as mutable)". So the
 array and field rows are gaps against the spec, not open questions. The argument rows are the same
 rule at a position the spec does not enumerate.

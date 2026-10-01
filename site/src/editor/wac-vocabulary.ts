@@ -26,14 +26,3 @@ export const KEYWORDS = new Set<string>([
   "is", "not", "as", "void", "fn", "enum", "match",
   "async", "await",
 ]);
-
-/**
- * wapy's word spellings of wac's operators and literals, from `spec/spec/wapy.md`'s table.
- *
- * The value is what the word means in wac, which is what makes `and` highlight as an operator
- * rather than as a keyword — it is a `&&`.
- */
-export const SPELLINGS = new Map<string, string>([
-  ["and", "&&"], ["or", "||"], ["not", "!"],
-  ["None", "null"], ["True", "true"], ["False", "false"],
-]);

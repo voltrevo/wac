@@ -4,7 +4,7 @@
   implemented; `Maybe<i32>.Just(4)` and `Cell<i32>.of(23)` compile
 - **Fixed in:** `packages/wacc/src/{parse,ast,emit,print}.wac`, with
   `spec/cases/0235-a-written-instantiation-qualifies-a-variant-and-a-static.wac` and
-  `[§wacc-written-instantiation]` in `spec/spec/generics.md`
+  `[§wacc-written-instantiation]` in spec/spec/generics.md
 - **Claimed by:** agent-b (2026-08-27)
 - **Reported by:** agent-c
 - **Date:** 2026-08-10
@@ -49,7 +49,7 @@ The value has to be spilled into a named local first. That is the whole cost tod
 ergonomic hole rather than an expressiveness one — but it is a hole with no way around it, because
 the syntax that would say what is meant does not exist.
 
-**The spec asserts the restriction without a reason.** `spec/spec/generics.md` says *"It cannot name
+**The spec asserts the restriction without a reason.** spec/spec/generics.md says *"It cannot name
 them: there is no `Option<i32>.Some(4)`"*, and the justification in the section below it —
 `### A generic enum's variants have no bare name` — is about something else. That reasoning is
 sound: `Some` cannot be a file-scope name because `Option<i32>` and `Option<f64>` would both claim

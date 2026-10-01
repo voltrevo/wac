@@ -42,7 +42,7 @@ So the wasmtime host, and any JavaScript host, silently take the uncached path.
 
 ## Why the spec makes this a bug rather than a gap
 
-`spec/cli/wac.md` `[§wac-cli-build-cache-7pk3mq9]` states it without a host qualifier — *"`build`
+spec/cli/wac.md `[§wac-cli-build-cache-7pk3mq9]` states it without a host qualifier — *"`build`
 remembers what it built, under `$WAC_HOME/cache/build`"* — and then enumerates the exceptions:
 `--coverage`, `--trace`, a build with no `$WAC_HOME`, one with no `-o`, and one that warned. The host
 is not among them, so on wasmtime a documented clause is false and nothing says so.

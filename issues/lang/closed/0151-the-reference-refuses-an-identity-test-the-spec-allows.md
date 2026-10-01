@@ -20,7 +20,7 @@ The reference answers, at the `A` on the last line:
 
     undefined type 'A'
 
-wacc is silent, which is what `spec/spec/imports.md` says to be:
+wacc is silent, which is what spec/spec/imports.md says to be:
 
 > Which side of `is` a bare name belongs to is decided by naming convention — an initial capital reads
 > as a type, lowercase as a value (see operators.md). **When the name has a capital but names a
@@ -28,7 +28,7 @@ wacc is silent, which is what `spec/spec/imports.md` says to be:
 > identity rather than reported as a missing type.** `[§wac-is-undefined-type-6qbn3wr]`
 
 `A` is a `const u64[]` in scope. So `g() is A` is an identity test between two `u64[]` references, and
-the spec's own tag covers the case: the neighbouring paragraph in `spec/spec/structs.md` uses the same
+the spec's own tag covers the case: the neighbouring paragraph in spec/spec/structs.md uses the same
 tag for the case that *is* an error — `p is Nonexistent`, a name that resolves nowhere.
 
 ## Why it is filed rather than fixed

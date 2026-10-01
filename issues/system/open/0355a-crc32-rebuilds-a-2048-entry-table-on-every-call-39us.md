@@ -54,7 +54,7 @@ Not carelessness. The author priced the table build, wrote the price into a comm
 of the API that obviously runs in a loop, and left it in the API that does not look like it does.
 What made that the only option is that **the language has nowhere to put a computed table.**
 
-`spec/spec/variables.md`: a `const` initialiser must be a compile-time constant expression —
+spec/spec/variables.md: a `const` initialiser must be a compile-time constant expression —
 *"literals, the operators over them, casts, other constants, and construction of a struct, an enum
 variant or an array out of those. Not a call — a call would have to run."* `crcTable8` is two nested
 loops.

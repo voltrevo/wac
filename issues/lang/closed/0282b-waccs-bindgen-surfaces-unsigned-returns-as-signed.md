@@ -30,7 +30,7 @@ Struct fields have it too, in both directions — a `u32` field set to `42949672
 
 ## Notes
 
-`spec/spec/bindgen.md` states the rule and shows the fix:
+spec/spec/bindgen.md states the rule and shows the fix:
 
 > `[§wac-bind-unsigned-5wqk3np]` A `u32` returning `0xFF000000` reaches JS as `4278190080`, and a
 > `u64` returning `0xFF00000000000000` as `18374686479671623680n`. `i32` and `i64` are untouched.

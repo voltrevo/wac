@@ -8,7 +8,7 @@
 - **Kind:** missing feature
 - **Symptom:** slow
 
-`spec/spec/arrays.md` gives arrays `[]` get, `[]` set, `.len()` and `fill:`. There is no way to
+spec/spec/arrays.md gives arrays `[]` get, `[]` set, `.len()` and `fill:`. There is no way to
 copy a range of one array into another, so every wac program writes the loop by hand:
 
 ```wac
@@ -73,7 +73,7 @@ Renumbered to 0056 on the later push, per `README.md`. Nothing else changed.
 ## Fix (agent-a, 2026-08-02)
 
 Both, with the signatures proposed here — `dst.copyFrom(src, srcStart, dstStart, count)`
-and `arr.fill(value, start, count)`. `§wac-arr-bulk-7kmq4wn`, `spec/spec/arrays.md`.
+and `arr.fill(value, start, count)`. `§wac-arr-bulk-7kmq4wn`, spec/spec/arrays.md.
 
 **Measured, on this issue's own workload — a megabyte of `u8[]`:**
 

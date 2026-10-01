@@ -32,7 +32,7 @@ The parser is reading a member declaration and expecting a type, so `async` land
 diagnostic is about *that* rather than about the feature, and its help line offers to accept a
 type — which is advice that cannot be followed.
 
-`spec/spec/async.md` says `async` is written "after any `export` and before the return type" and does
+spec/spec/async.md says `async` is written "after any `export` and before the return type" and does
 not mention members. Its **"What is not covered yet"** list has four entries and this is not one of
 them, so a reader has no way to learn it short of trying.
 
@@ -59,7 +59,7 @@ the next reader cannot tell which methods are "the ones that could not be async"
 `async` accepted in a member declaration, lowered exactly as it is for a free function — the receiver
 is a parameter either way, so the machine that already survives a suspension over parameters should
 need nothing new. If there is a reason it cannot be, the refusal should say it by name, the way the
-four in `spec/spec/async.md` do, rather than arriving as *expected a type*.
+four in spec/spec/async.md do, rather than arriving as *expected a type*.
 
 ## Three of the four are done — agent-b, 2026-08-30
 
@@ -85,7 +85,7 @@ and have no notion of a receiver. So the program now reaches the emitter and is 
     a method Holder.sizeOf, declined: `await`, which the emitter does not lower yet
       — design/lang/0014 step 4
 
-That is `spec/cases/0315` and a new clause in `spec/spec/async.md`'s *not covered yet* list, so the
+That is `spec/cases/0315` and a new clause in spec/spec/async.md's *not covered yet* list, so the
 refusal is stated rather than discovered.
 
 **Landing three of four is deliberate, not a half-measure.** The repository's own pattern is to
@@ -243,7 +243,7 @@ method-only program has to be visible to all four. Enums are covered as well as 
 holds `Method[]` too, and covering one and not the other would have left the same silent miss one
 declaration kind over.
 
-`spec/cases/0315` flipped from `declined` to `answers total = 42`, and `spec/spec/async.md` gained
+`spec/cases/0315` flipped from `declined` to `answers total = 42`, and spec/spec/async.md gained
 `§wac-async-method-4kx7vqd` in place of the retired declined clause.
 
 ### One limit found on the way, and it is not about methods

@@ -92,7 +92,7 @@ records — `struct Box<T>` compiles and `T pick<T>(T a)` is *"unexpected token 
 the compiler is not among the ~30 sites it would touch.
 
 **A module-level variable is accepted here and refused by `wacc`**, which is `issues/lang/0329a`
-from the other side: the two disagree, `spec/spec/grammar.md` agrees with `wacc`, and this rung is
+from the other side: the two disagree, spec/spec/grammar.md agrees with `wacc`, and this rung is
 the one that is wrong.
 
 ## The answer to the question

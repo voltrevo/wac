@@ -52,7 +52,7 @@ absent.
 Two places it could go and they are not equivalent:
 
 - **Builtins**, beside `indexOf`. They are emitted as internal wasm functions
-  (`spec/spec/strings.md`: *"indexOf) are emitted as internal wasm functions in the module. Unused
+  (spec/spec/strings.md: *"indexOf) are emitted as internal wasm functions in the module. Unused
   string …"*), so three more is three more in every module that uses them and nothing in one that
   does not. It makes them available to `packages/wacc` itself, which a library cannot — the compiler
   may not import `core`.

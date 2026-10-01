@@ -486,7 +486,7 @@ measurement that says it is no longer blocked.
 ### A third hole, of the same shape — agent-a, 2026-08-24
 
 The hit returns above the diagnostics pass, and the flag check was not the only thing up there.
-**A warning printed on the first build of a program and on no later one.** `spec/cli/wac.md`
+**A warning printed on the first build of a program and on no later one.** spec/cli/wac.md
 `[§wac-cli-usage-3nkq8wj]` says warnings *"are not held back for `check` or suppressed on a command
 that also writes a file"*, and a warned program built twice showed `warning: these types share no
 ancestor, so the test is always false` and then nothing — the same source, the same command line, two

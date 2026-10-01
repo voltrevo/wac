@@ -73,7 +73,7 @@ at that function, and only after I had guessed which function it was.
 
 ## Fixed
 
-`§wac-name-section-2mkq6wp`, in `spec/spec/bindgen.md`. Subsection 1 only — function
+`§wac-name-section-2mkq6wp`, in spec/spec/bindgen.md. Subsection 1 only — function
 names — which the issue is right that this is most of the value of.
 
 Gated as suggested, but **on by default** rather than off: a profile that cannot name a

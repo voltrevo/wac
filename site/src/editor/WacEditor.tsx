@@ -6,7 +6,7 @@ import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, HighlightSt
 import { tags } from "@lezer/highlight";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { linter, lintGutter } from "@codemirror/lint";
-import { wac, wapy, trapTag } from "./wac-language";
+import { wac, trapTag } from "./wac-language";
 import { wacLintSource } from "./wac-lint";
 import type { FileMap } from "./file-store";
 
@@ -27,12 +27,11 @@ const wacHighlight = HighlightStyle.define([
 ]);
 
 /**
- * The highlighter for a file, chosen by extension — the same way the compiler chooses its
- * frontend. Held in a compartment because the editor is created once and the document is
- * swapped underneath it, so switching files has to reconfigure rather than rebuild.
+ * The highlighter for a file. Held in a compartment because the editor is created once and the
+ * document is swapped underneath it, so switching files has to reconfigure rather than rebuild.
  */
-function langFor(fileName: string) {
-  return fileName.endsWith(".wapy") ? wapy() : wac();
+function langFor(_fileName: string) {
+  return wac();
 }
 
 interface Props {

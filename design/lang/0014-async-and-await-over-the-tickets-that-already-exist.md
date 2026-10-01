@@ -583,7 +583,7 @@ already the state slot.
 | 2 | **done 2026-08-30** — `packages/platform/test/wac/asynclower_test.wac` 4/4, and `Sched.detach` is what it needed. D7 landed too: `issues/lang/0147` closed while this was being written, so `trap "…"` carries a sentence, and `Pending` gained a `waitable` field to have something true to say — `spec/cases/0312` |
 | 3 | **done 2026-08-30** — `packages/wacc/test/wac/async_test.wac` 8/8. `async`/`await` lex, parse and check; both halves of D3 (the body against the written type, callers against `Pending<T>`); D4's help; A5's first two refusals as codes 211 and 212. The emitter declines an async function whole, by name |
 | 4 | **done 2026-08-30 for A1–A4** — `asyncsyntax_test.wac` 15/15 and `asyncserver_test.wac` 1/1. A1 runs: two clients accepted while the first is open, both echoed, under one `drain`, with `async void`, a suspending `while`, a `match`, and an early `return` out of the loop. Declined by name: a suspension in a loop or `if` **condition**, in a `match` subject or arm, nested in a larger expression, or one whose value is discarded |
-| 5 | **done 2026-08-30** — `spec/spec/async.md` (eleven clauses), seven cases in `spec/cases/`, and A6: `relayd`'s accept and read loops are `async`, with `network_tor_test` green |
+| 5 | **done 2026-08-30** — spec/spec/async.md (eleven clauses), seven cases in `spec/cases/`, and A6: `relayd`'s accept and read loops are `async`, with `network_tor_test` green |
 
 ## Open
 

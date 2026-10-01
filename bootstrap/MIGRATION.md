@@ -122,7 +122,7 @@ the old advice for as long as it exists; a stable URL is a much better thing to 
 long-lived file than a command in another subsystem, which has now changed spelling twice.
 
 The phrase appears in twelve places: `app.wac`, twice in `wac.wac`, `platform/build.ts`,
-`spec/cli/wac.md`, `CLAUDE.md`, the website's roadmap, and four lines of `tools/install.ts`'s own
+spec/cli/wac.md, `CLAUDE.md`, the website's roadmap, and four lines of `tools/install.ts`'s own
 header. The generated one gets a URL; the rest become `wac self install`, since they are documenting
 the toolchain to somebody who already has it.
 
@@ -322,7 +322,7 @@ The groups below are what is left, in the order they are being taken.
 | `lexcodes_test` | asks wacc's own `lexMessage` table, which is the one a reader's diagnostic comes from |
 | `jsxlex_test` | asserts the language directly: those programs lex, and none of them lexes as JSX |
 | `emit_test` | keeps its 222-call corpus, loses the value comparison; a call must still compile, type and run |
-| `typecheck_test`, `rung3_probe` | the caught/quiet lists were always authored; two grids state their rule; the cast grid reads `spec/spec/casts.md` |
+| `typecheck_test`, `rung3_probe` | the caught/quiet lists were always authored; two grids state their rule; the cast grid reads spec/spec/casts.md |
 | `corpuscheck_test` | the reference only decorated a failure message and never touched the verdict |
 | `projectspec_test` | both halves asserted the same written-down answer, so one comes out |
 | `stdspec_test` | its fourth case was about the reference's own refusal message |
@@ -337,7 +337,7 @@ to the wrong line now passes where it used to fail.
 **Two things were gained rather than lost**, both because the spec is a better oracle than a second
 implementation:
 
-- `spec/spec/casts.md`'s lossless table said **"Complete"** and gave 4 of 12 rows. Four were written
+- spec/spec/casts.md's lossless table said **"Complete"** and gave 4 of 12 rows. Four were written
   in a later section and four — `bool` to `i64`, `u64`, `f32`, `f64` — were documented nowhere at
   all while compiling fine. `[§wac-lossless-unsigned-4qmt8xv]`.
 - The spec's `// error:` fences had nothing checking them once `wacSpec.test.ts` went, so
@@ -424,7 +424,6 @@ refused now — `run` and `bindgen` keep theirs, which mean something.
 |---|---|---|
 | the import walk | `harness/wacFiles.ts` | `bootstrap/js/flatten.js` does the same walk in JavaScript and is load-bearing for the bootstrap, so it cannot drift unnoticed. |
 | the spec corpus | packages/wacc/tools/specCases.ts | extracts the spec's own programs with the reference's answers, which is what makes them an oracle — `issues/lang/0105`. |
-| the wapy printer | `packages/wacc/test/wac/wapyroundtrip_test.wac` | renders wac to wapy so wacc can read it back. The one thing the reference has and wacc has not. |
 | the tools | tools/fuzz.ts (now `tools/wac/langfuzz.wac`), `tools/fuzzBoundary.ts` | the fuzzer is repointed; `fuzzBoundary` fuzzes the reference's *own* bindgen, which is a different question. |
 | mutation | `tools/mutate.ts`, `tools/mutate/operators.ts` | needs **tokens**, and deliberately not a regex. Agreed: a wac program, not a subcommand. |
 | the sanctioned one | bootstrap/ts/same_fixed_point.ts | the `W1 == X1` comparison. It exists to compare against the reference and is the evidence for deleting it. Goes in the final commit. |

@@ -128,8 +128,8 @@ Node.Element(
    would fix by teaching the lexer the mode.
 3. The parser reads elements, attributes and children into one `Jsx` node — plus `JsxText` for a
    run of text — and the emitter lowers both. **Done**: `spec/cases/0121`–`0124`.
-4. Spec cases, and `spec/spec/` gains a page. The spec targets wacc (`design/lang/0003`), so the
-   text and the implementation land together. **Done** — `spec/spec/jsx.md`, whose examples were
+4. Spec cases, and spec/spec/ gains a page. The spec targets wacc (`design/lang/0003`), so the
+   text and the implementation land together. **Done** — spec/spec/jsx.md, whose examples were
    compiled before it was committed, because a spec that claims something the compiler refuses is
    worse than no page.
 

@@ -10,7 +10,7 @@
 
 ## The claim
 
-`spec/spec/async.md`:
+spec/spec/async.md:
 
 > `[§wac-async-drain-7cvj4bn]` A suspension on a ticket that carries a scheduler registers a
 > continuation, so `core.drain()` alone finishes the function and **two async calls in flight

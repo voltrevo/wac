@@ -24,8 +24,8 @@ Expected: one language, and this either is or is not in it.
 Actual: `wac-L5` compiles it as part of the ladder. `wacc` has no top-level case for it —
 `packages/wacc/src/parse.wac`'s declaration loop is `import`, `struct`, `enum`, `const`, function and
 an error, with nothing between — so the token stream falls into `parseFuncDecl` and fails.
-`spec/spec/grammar.md` agrees with `wacc`: `program = { import | struct_decl | enum_decl | func_decl
-| const_decl }`, and `spec/spec/variables.md` documents module-level `const` and no mutable form.
+spec/spec/grammar.md agrees with `wacc`: `program = { import | struct_decl | enum_decl | func_decl
+| const_decl }`, and spec/spec/variables.md documents module-level `const` and no mutable form.
 
 ## How it was found, and why nothing had found it
 
@@ -77,6 +77,6 @@ the ladder, and has been compiling for as long as the drivers have.
 
 ## Notes
 
-Not a spec bug. `spec/spec/grammar.md` and `packages/wacc/src/parse.wac` agree with each other, which
+Not a spec bug. spec/spec/grammar.md and `packages/wacc/src/parse.wac` agree with each other, which
 is the opposite of `0320a` and `0326a` — where the grammar was behind the parser. Here the grammar is
 right and there is a fourth party.

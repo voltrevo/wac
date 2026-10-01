@@ -53,7 +53,7 @@ One help string is attached to every site the error fires at, and at each one th
 | `void t(const this) { Inner x = this.inner; x.mutate(); }` | on `mutate` |
 | `void add(const Server s, Route r) { s.table().push(r); }` | on `push` |
 
-There is no destination in any of them. The second has an assignment, and `spec/spec/structs.md`
+There is no destination in any of them. The second has an assignment, and spec/spec/structs.md
 `[§wac-deep-const-alias-p6mk2wf]` explicitly *permits* it — "binding stays reassignable" — so
 declaring `x` const would not be the fix even there.
 

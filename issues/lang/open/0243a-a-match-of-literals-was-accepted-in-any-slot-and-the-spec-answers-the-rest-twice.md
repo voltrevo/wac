@@ -18,7 +18,7 @@ enum E { A, B }
 export i32 f(E e) { string s = match (e) { case A: 1, else: 2 }; return s.len(); }
 ```
 
-Expected: refused. `spec/spec/enums.md` `[§enum-match-expr-4wnq7bk]` says the arms unify *"exactly as a
+Expected: refused. spec/spec/enums.md `[§enum-match-expr-4wnq7bk]` says the arms unify *"exactly as a
 ternary's two branches are (see control.md), and by the same code"* — and the identical program written
 with `?:` **was** refused:
 
@@ -74,10 +74,10 @@ f64 d = b ? 1 : 2.5;                          // refused: "the two branches have
 i32 n = match (e) { case A: 1, else: 2.5 };   // accepted, by silence — and should not be
 ```
 
-* **`spec/spec/enums.md:513`** — *"an integer or float literal arm takes the type expected of the whole
+* **spec/spec/enums.md:513** — *"an integer or float literal arm takes the type expected of the whole
   expression"*. Under this, the first is legal (both arms are `f64`), the second should also be legal,
   and the third is an error.
-* **`spec/spec/control.md:256`** — *"A float literal in a ternary still types as `f64` regardless of
+* **spec/spec/control.md:256** — *"A float literal in a ternary still types as `f64` regardless of
   context, so `f32 x = cond ? 1.5 : 2.5;` is a type error and needs an explicit cast. That is a
   separate gap in literal typing, not in the ternary."* Under this, a float literal does not adapt, so
   the second is correctly refused and the first should be too.
@@ -94,7 +94,7 @@ that the reference then refuses two programs wacc accepts, which is already true
 `f64`/`2.5` row) and is what rung 3's known-divergence list is for.
 
 The alternative — make `control.md` the rule and refuse literal adaptation in both — is cheaper by one
-edit and makes `spec/spec/enums.md:513` wrong, so it needs that sentence changed rather than left.
+edit and makes spec/spec/enums.md:513 wrong, so it needs that sentence changed rather than left.
 
 ## Notes
 

@@ -49,4 +49,4 @@ literals already take their width from context. Doing it for floats means thread
 expected type into the ternary's branch inference.
 
 Found while writing a test for `§wac-ternary-null-3kx9ba2` and noted in
-`spec/spec/control.md` rather than left to be rediscovered.
+spec/spec/control.md rather than left to be rediscovered.

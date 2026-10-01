@@ -7,14 +7,14 @@
 - **Kind:** diagnostic
 - **Symptom:** compile error — for a rule no page states about this type
 
-`spec/spec/types.md`'s primitive table has fourteen rows. Two of them are:
+spec/spec/types.md's primitive table has fourteen rows. Two of them are:
 
 | wac type | Wasm type | Notes |
 |----------|-----------|-------|
 | i8       | i8 (packed) | Array element only — no locals, params, or struct fields |
 | i16      | i16 (packed) | Array element only — no locals, params, or struct fields |
 
-**There is no `u8` row, and no `u16` row.** `spec/spec/arrays.md` documents all four together —
+**There is no `u8` row, and no `u16` row.** spec/spec/arrays.md documents all four together —
 *"`u8[]`, `i8[]`, `u16[]` and `i16[]` are packed array types"*, with `u8`/`u16` zero-extending on
 read — and says nothing about where the element types themselves may appear, because that is the
 other page's job.

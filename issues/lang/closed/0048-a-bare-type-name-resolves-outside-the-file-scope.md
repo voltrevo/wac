@@ -90,7 +90,7 @@ where it was written. The same pass reports it, in a declaration, a parameter, a
 field, a cast target and an array element type.
 
 `§wac-type-name-scope-8vqk3mn` covers the rule, the wrong answer, the import that fixes it, and
-the two positions that are left alone. `spec/spec/imports.md` states it.
+the two positions that are left alone. spec/spec/imports.md states it.
 
 One line I wrote — re-annotating a type whose index was missing — survived its revert check and is
 gone. Where a name has no index it belongs to something the compiler invented, and those are

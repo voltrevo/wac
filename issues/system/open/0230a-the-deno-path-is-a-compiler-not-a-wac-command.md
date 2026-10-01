@@ -781,7 +781,7 @@ Done, and the three hosts now produce byte-identical `wac app` output:
   anybody revisiting this.
 - `packages/wac/src/app.wac`'s header says the blank is correct rather than describing a host that
   fills it.
-- `spec/cli/wac.md` `[§wac-cli-app-skew-3vq9mkt]` keeps the rule and adds the state: only two versions
+- spec/cli/wac.md `[§wac-cli-app-skew-3vq9mkt]` keeps the rule and adds the state: only two versions
   that both exist can differ, and today neither does.
 
 **The check is dormant, not deleted**, which is the one judgement call in here. "For now" is not

@@ -8,7 +8,7 @@
 - **Kind:** bug
 - **Symptom:** not implemented (the spec is wrong, not the compiler)
 
-`spec/spec/grammar.md` is the formal grammar, and CONTRIBUTING says the spec is the
+spec/spec/grammar.md is the formal grammar, and CONTRIBUTING says the spec is the
 source of truth. Four productions no longer describe what the parser accepts. Each is
 a one-line fix; they are grouped because they are the same drift, found while checking
 whether generics could reuse the type syntax.
@@ -26,7 +26,7 @@ export i32 d(Point?[] ps) { return 0; }             // 3. nullable element type
 ```
 
 1. **`program`** is `{ import | struct_decl | enum_decl | func_decl }`. Module-level
-   constants are missing entirely, though `spec/spec/variables.md` documents them.
+   constants are missing entirely, though spec/spec/variables.md documents them.
 
 2. **`primitive_type`** is `"i32" | "i64" | "f32" | "f64" | "bool" | "void"`. `u32`
    and `u64` are missing.
@@ -61,7 +61,7 @@ the one with a real consequence.
 
 ## Resolution
 
-All four fixed in `spec/spec/grammar.md`.
+All four fixed in spec/spec/grammar.md.
 
 1. `program` gains `const_decl`, and the production sits beside `func_decl` with a
    note that the compile-time restriction on the initialiser is not expressible in
