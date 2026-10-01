@@ -35,6 +35,7 @@ export i32 M_EMPTY_NAME()    { return 8; }   // a mapping name is "" or "/"
 export i32 M_OVERLAP()       { return 9; }   // two names where a specifier could match both
 export i32 M_SUBDIR_ESCAPE() { return 10; }  // a `subdir` that leaves its own checkout
 export i32 M_RESERVED_NAME()  { return 11; }  // a mapping of `core`, `std`, or anything under them
+export i32 M_EXPORTS_KIND()   { return 12; }  // `exports` is present and is not one module path
 
 /**
  * What a code means, as a sentence for somebody who has to act on it.
@@ -54,6 +55,7 @@ export string manifestWhy(i32 code) {
   if (code == M_EMPTY_NAME())    { return "a mapping name is empty"; }
   if (code == M_OVERLAP())       { return "two mappings could match one specifier"; }
   if (code == M_SUBDIR_ESCAPE()) { return "a `subdir` leaves its own checkout"; }
+  if (code == M_EXPORTS_KIND())  { return "`exports` is not one module path"; }
   if (code == M_RESERVED_NAME()) {
     return "`core` and `std` are the toolchain's own and cannot be mapped";
   }
@@ -99,9 +101,14 @@ export struct Manifest {
   i32 code;
   string detail;
   Mapping[] imports;
+  /**
+   * The module importers of this project get — spec/next ch04 `§wac-package-exports-qwtdfg5` — as
+   * written, relative to the manifest's directory; `""` when the manifest names none.
+   */
+  string exports;
 }
 
-Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, Mapping[]()); }
+Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, Mapping[](), ""); }
 
 /** The manifest in `src`, checked. An empty document — or one with no `imports` — is valid. */
 export Manifest readManifest(u8[] src) {
@@ -114,8 +121,19 @@ export Manifest readManifest(u8[] src) {
     default: { return failed(M_NOT_OBJECT(), ""); }
   }
 
+  // One module path and nothing else: a map of entry points is refused (`§wac-package-exports-single-c3mtr3y`).
+  string exports = "";
+  JsonValue? exportsVal = root.getStr("exports");
+  if (exportsVal is not null) {
+    match (exportsVal!) {
+      Str(bytes): { exports = string.fromBytes(bytes); }
+      default: { return failed(M_EXPORTS_KIND(), "exports"); }
+    }
+    if (exports == "") { return failed(M_EXPORTS_KIND(), "exports"); }
+  }
+
   JsonValue? importsVal = root.getStr("imports");
-  if (importsVal is null) { return Manifest(true, M_OK(), "", Mapping[]()); }
+  if (importsVal is null) { return Manifest(true, M_OK(), "", Mapping[](), exports); }
 
   JsonObject table = JsonObject.create();
   match (importsVal!) {
@@ -164,7 +182,7 @@ export Manifest readManifest(u8[] src) {
 
   string clash = firstOverlap(out);
   if (clash != "") { return failed(M_OVERLAP(), clash); }
-  return Manifest(true, M_OK(), "", out);
+  return Manifest(true, M_OK(), "", out, exports);
 }
 
 /** A member that has to be a string. A struct rather than an out-parameter: a `string` is a value

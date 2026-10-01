@@ -1,0 +1,118 @@
+// A path stays inside its project, and a nested project is entered by its directory — spec/next ch02,
+// `§wac-import-within-project-vnqu28r` and `§wac-import-nested-project-sd4s5n8`.
+//
+// Through the command, in a directory of its own, because the rule is about manifests on disk: the
+// compiler's in-process entry points are handed a file map and know nothing of `wac.json5`, so the walk
+// that reads files (`packages/wac/src/sources.wac`) is where both halves live.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, putFile, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Cli, Core, Exec } from "std";
+
+/** `wac <cmd> <args…>` with the working directory inside the fixture. */
+Exec wacIn(Cli cli, string dir, string cmd, string[] args) {
+  string line = "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd;
+  for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
+  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
+}
+
+/** A fixture: `files[i]` written with `texts[i]` under a fresh `dir`; "" when every write succeeded. */
+string fixture(Cli cli, string dir, string[] files, string[] texts) {
+  cli.remove(dir, true).wait();
+  for (i32 i = 0; i < files.len(); i++) {
+    string why = putFile(cli, dir + "/" + files[i], texts[i]);
+    if (why != "") { return why; }
+  }
+  return "";
+}
+
+export string test_a_nested_project_is_imported_by_its_directory(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "nested-ok");
+  string why = fixture(cli, dir,
+    ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/src/lib.wac", "vendored/src/one.wac"],
+    ["{}",
+     "import { width } from \"./vendored\";\n" +
+     "import { width as alsoWidth } from \"@/vendored\";\n" +
+     "export i32 main() { return width() + alsoWidth() * 20; }\n",
+     "{ exports: \"./src/lib.wac\" }",
+     // vendored's own `@/` is its own root, not the project around it
+     "import { one } from \"@/src/one.wac\";\nexport i32 width() { return one(); }\n",
+     "export i32 one() { return 1; }\n"]);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+  Exec r = wacIn(cli, dir, "run", ["main.wac"]);
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 21, "the nested project's exports — " + string.fromBytes(r.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** Each refused shape, and the boundary its sentence names. */
+export string test_every_other_path_across_a_project_boundary_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string[] names = ["no-exports", "into-a-file", "into-a-sub-project", "out-of-its-project"];
+  string[] want = ["names no `exports`", "inside the nested project", "nested inside another",
+                   "leaves its project"];
+  string[][] files = [
+    ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/lib.wac"],
+    ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/src/lib.wac"],
+    ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/lib.wac", "vendored/inner/wac.json5",
+     "vendored/inner/lib.wac"],
+    ["app/wac.json5", "app/main.wac", "shared.wac"]
+  ];
+  string[][] texts = [
+    ["{}", "import { width } from \"./vendored\";\nexport i32 main() { return width(); }\n", "{}",
+     "export i32 width() { return 1; }\n"],
+    ["{}", "import { width } from \"./vendored/src/lib.wac\";\nexport i32 main() { return width(); }\n",
+     "{ exports: \"./src/lib.wac\" }", "export i32 width() { return 1; }\n"],
+    ["{}", "import { depth } from \"./vendored/inner\";\nexport i32 main() { return depth(); }\n",
+     "{ exports: \"./lib.wac\" }", "export { depth } from \"./inner\";\n", "{ exports: \"./lib.wac\" }",
+     "export i32 depth() { return 2; }\n"],
+    ["{}", "import { shared } from \"../shared.wac\";\nexport i32 main() { return shared(); }\n",
+     "export i32 shared() { return 1; }\n"]
+  ];
+  string[] entries = ["main.wac", "main.wac", "main.wac", "app/main.wac"];
+  for (i32 i = 0; i < names.len(); i++) {
+    string dir = scratch(cli, "nested-" + names[i]);
+    string why = fixture(cli, dir, files[i], texts[i]);
+    t.isTrue(why == "", names[i] + ": " + why);
+    if (why != "") { continue; }
+    Exec r = wacIn(cli, dir, "check", [entries[i]]);
+    t.isTrue(r.ran(), names[i] + ": wac did not run — " + r.error);
+    if (r.ran()) {
+      string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+      t.isTrue(r.status != 0, names[i] + " was accepted: " + said);
+      t.isTrue(contains(said, want[i]), names[i] + " did not say \"" + want[i] + "\": " + said);
+    }
+    cli.remove(dir, true).wait();
+  }
+  core.log("    " + itoa(names.len()) + " boundaries refused");
+  return t.report();
+}
+
+/**
+ * The control: the project inside may reach its own nested project, which is what makes the third case
+ * above a refusal about *depth* rather than about nesting at all.
+ */
+export string test_a_nested_project_may_import_its_own_nested_project(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "nested-depth-ok");
+  string why = fixture(cli, dir,
+    ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/lib.wac", "vendored/inner/wac.json5",
+     "vendored/inner/lib.wac"],
+    ["{}", "import { depth } from \"./vendored\";\nexport i32 main() { return depth(); }\n",
+     "{ exports: \"./lib.wac\" }", "export { depth } from \"./inner\";\n", "{ exports: \"./lib.wac\" }",
+     "export i32 depth() { return 2; }\n"]);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+  Exec r = wacIn(cli, dir, "run", ["main.wac"]);
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) { t.eqI32(r.status, 2, "through vendored's re-export — " + string.fromBytes(r.stderr)); }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

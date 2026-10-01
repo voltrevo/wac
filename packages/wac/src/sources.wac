@@ -20,10 +20,10 @@ import { Cli, FileResult } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
-import { Res, normalisePath, resolveFromAt } from "../../wacc/src/path.wac";
+import { Res, normalisePath, relativeTo, resolveFromAt } from "../../wacc/src/path.wac";
 import { coreSource, isBuiltinSpec, stdSource }
   from "../../wacc/src/coretext.wac";
-import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
+import { MANIFEST_NAME, candidateRoots, dirOf, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Located, Manifest, Match, locate, manifestWhy, matchSpecifier, readManifest }
   from "../../wacpkg/src/manifest.wac";
 import { Lock, readLock } from "../../wacpkg/src/lock.wac";
@@ -315,7 +315,84 @@ string projectRootOf(Fs fs, string path) {
  * with a hole in it and reporting whatever the hole makes the checker say, which points at the
  * wrong file.
  */
+/** What `crossBoundary` decided: the file a path specifier reaches, or why it may not. */
+struct Boundary {
+  string target;
+  string why;
+}
+
+/** Each directory's project root, found once — a graph asks about the same few directories often. */
+struct RootCache {
+  string[] dirs;
+  string[] roots;
+  i32 n;
+
+  RootCache create() { return RootCache(string[].filled(256, ""), string[].filled(256, ""), 0); }
+
+  string rootOf(this, Fs fs, string base, string file) {
+    string dir = dirOf(file);
+    for (i32 i = 0; i < this.n; i++) { if (this.dirs[i] == dir) { return this.roots[i]; } }
+    string root = projectRootAbs(fs, base, file);
+    if (this.n < this.dirs.len()) {
+      this.dirs[this.n] = dir;
+      this.roots[this.n] = root;
+      this.n = this.n + 1;
+    }
+    return root;
+  }
+}
+
+/** `./…`, `../…` or `@/…` — the specifiers that are paths, and so have a project to stay in. */
+bool isPathSpecifier(string spec) {
+  return spec.len() >= 2 && (spec.slice(0, 2) == "./" || spec.slice(0, 2) == "@/")
+      || spec.len() >= 3 && spec.slice(0, 3) == "../";
+}
+
+/**
+ * Where the path specifier `spec`, written in `from` and resolved to `next`, may lead.
+ *
+ * A file in the importer's own project — one whose nearest `wac.json5` is the importer's, or neither
+ * has one — is reached as it is. A directory holding a `wac.json5` is a nested project, entered only
+ * through its `exports` and only when it is nested directly in the importer's project. Any other path
+ * is refused, and the sentence names the boundary.
+ */
+Boundary crossBoundary(Fs fs, string base, string from, string spec, string next, RootCache cache) {
+  string fromRoot = cache.rootOf(fs, base, from);
+  string nextAbs = next.len() > 0 && next.slice(0, 1) == "/" ? next : normalisePath(base + "/" + next);
+  if (fs.stat(nextAbs + "/" + MANIFEST_NAME()).exists) {
+    // The project the nested one sits in, which must be the importer's: one level, no deeper.
+    string around = projectRootAbs(fs, base, dirOf(next) + "/x.wac");
+    if (around != fromRoot) {
+      return Boundary(next, spec + " (from " + from + ") reaches a project nested inside another — " +
+                            "import the project that contains it");
+    }
+    FileResult mf = fs.readFile(nextAbs + "/" + MANIFEST_NAME());
+    if (!mf.ok) { return Boundary(next, "cannot read " + next + "/" + MANIFEST_NAME()); }
+    Manifest m = readManifest(mf.bytes);
+    if (!m.ok) {
+      return Boundary(next, next + "/" + MANIFEST_NAME() + ": " + manifestWhy(m.code) +
+                            (m.detail == "" ? "" : " (" + m.detail + ")"));
+    }
+    if (m.exports == "") {
+      return Boundary(next, spec + " (from " + from + ") is a project whose " + MANIFEST_NAME() +
+                            " names no `exports`, so it cannot be imported");
+    }
+    return Boundary(normalisePath(next + "/" + m.exports), "");
+  }
+  string toRoot = cache.rootOf(fs, base, next);
+  if (toRoot == fromRoot) { return Boundary(next, ""); }
+  // Below the importer's root means inside a nested project; anything else is outside its own.
+  bool inside = fromRoot == "" || (toRoot.len() > fromRoot.len() && toRoot.slice(0, fromRoot.len() + 1) == fromRoot + "/");
+  if (inside) {
+    return Boundary(next, spec + " (from " + from + ") reaches a file inside the nested project at " +
+                          relativeTo(base, toRoot) + " — import its directory, which gives its `exports`");
+  }
+  return Boundary(next, spec + " (from " + from + ") leaves its project" +
+                        (fromRoot == "" ? "" : " at " + relativeTo(base, fromRoot)));
+}
+
 export Sources gather(Fs fs, Cli cli, string entry) {
+  RootCache rootCache = RootCache.create();
   string[] paths = string[].filled(maxFiles(), "");
   string[] texts = string[].filled(maxFiles(), "");
   string[] roots = string[].filled(maxFiles(), "");
@@ -426,6 +503,24 @@ export Sources gather(Fs fs, Cli cli, string entry) {
                    : isMappingCandidate(specs[i]) ? noMapping(specs[i], path)
                    : noProject(specs[i], path);
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", why);
+      }
+      // **A path stays in its project, and a nested project is entered by its directory** —
+      // spec/next ch02 `§wac-import-within-project-vnqu28r`, `§wac-import-nested-project-sd4s5n8`.
+      if (isPathSpecifier(specs[i])) {
+        Boundary bd = crossBoundary(fs, base, path, specs[i], next, rootCache);
+        if (bd.why != "") {
+          return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", bd.why);
+        }
+        if (bd.target != next) {
+          // The compiler resolves this specifier through the map, as it does a package's.
+          if (mapN < mapFrom.len()) {
+            mapFrom[mapN] = path;
+            mapSpec[mapN] = specs[i];
+            mapTo[mapN] = bd.target;
+            mapN = mapN + 1;
+          }
+          next = bd.target;
+        }
       }
       // **A mapped subdirectory bounds its code, whatever form the specifier took.** Checked here
       // rather than in the `@/` branch because `@/outside/x.wac` and `../outside/x.wac` are the same

@@ -21,7 +21,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate,
          unsupportedTransport, M_OK, M_NOT_JSON5, M_NOT_OBJECT, M_IMPORTS_KIND, M_MAPPING_KIND,
          M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_OVERLAP, M_SUBDIR_ESCAPE,
-         M_RESERVED_NAME, manifestWhy }
+         M_RESERVED_NAME, M_EXPORTS_KIND, manifestWhy }
   from "../../src/manifest.wac";
 
 Manifest of(string src) { return readManifest(src.toBytes()); }
@@ -49,6 +49,29 @@ export string test_each_code_has_the_number_it_has_always_had() {
   t.eqI32(M_OVERLAP(), 9, "M_OVERLAP");
   t.eqI32(M_SUBDIR_ESCAPE(), 10, "M_SUBDIR_ESCAPE");
   t.eqI32(M_RESERVED_NAME(), 11, "M_RESERVED_NAME");
+  t.eqI32(M_EXPORTS_KIND(), 12, "M_EXPORTS_KIND");
+  return t.report();
+}
+
+/**
+ * `exports` is one module path — spec/next ch04 `§wac-package-exports-single-c3mtr3y` — read as written,
+ * and absent is valid: a project compiled from its own entry points needs none.
+ */
+export string test_exports_is_one_module_path() {
+  T t = T.create();
+  Manifest m = readManifest("{ exports: \"./src/lib.wac\" }".toBytes());
+  t.isTrue(m.ok, "a string exports was refused");
+  t.eqStr(m.exports, "./src/lib.wac", "exports as written");
+  Manifest none = readManifest("{}".toBytes());
+  t.isTrue(none.ok, "a manifest with no exports was refused");
+  t.eqStr(none.exports, "", "no exports");
+  string[] bad = ["{ exports: { \".\": \"./src/lib.wac\" } }", "{ exports: [\"./a.wac\"] }",
+                  "{ exports: 3 }", "{ exports: \"\" }"];
+  for (i32 i = 0; i < bad.len(); i++) {
+    Manifest b = readManifest(bad[i].toBytes());
+    t.isTrue(!b.ok, "accepted: " + bad[i]);
+    if (!b.ok) { t.eqI32(b.code, M_EXPORTS_KIND(), "code for: " + bad[i]); }
+  }
   return t.report();
 }
 
@@ -295,7 +318,7 @@ export string test_every_manifest_refusal_has_its_own_sentence() {
   i32[] codes = [
                       M_NOT_JSON5(), M_NOT_OBJECT(), M_IMPORTS_KIND(), M_MAPPING_KIND(),
                       M_NO_GIT(), M_NO_REF(), M_SUBDIR_KIND(), M_EMPTY_NAME(), M_OVERLAP(),
-                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME()
+                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME(), M_EXPORTS_KIND()
   ];
   string fallback = manifestWhy(-1);
   t.isTrue(fallback.len() > 0, "an unknown code renders to nothing at all");

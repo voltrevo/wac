@@ -140,26 +140,30 @@ export string test_a_mistake_behind_a_project_import_is_caught_in_a_non_entry_fi
 }
 
 export string test_the_root_is_the_importing_files_project_not_the_entrys(Core core, Cli cli) {
-  // **The case that distinguishes D7 from the easy reading of it.** `appA` imports a file from
-  // `libB` by relative path; that file writes `@/deep/five.wac`. Both projects have a
-  // `deep/five.wac`, and they answer different numbers, so which one arrives *is* the test. Taking
-  // the entry's root — or the working directory, or the first manifest found from the top — gives
-  // 999 + 2. Taking the importing file's gives 5 + 2.
+  // **The case that distinguishes D7 from the easy reading of it.** `appA` imports `libB`, a project
+  // nested inside it, by its directory; `libB`'s exports module writes `@/deep/five.wac`. Both projects
+  // have a `deep/five.wac`, and they answer different numbers, so which one arrives *is* the test.
+  // Taking the entry's root — or the working directory, or the first manifest found from the top —
+  // gives 999 + 2. Taking the importing file's gives 5 + 2.
+  //
+  // `libB` was a sibling reached by a relative path into it until spec/next made a path stay inside its
+  // project (`§wac-import-within-project-vnqu28r`); nested and entered by its directory, it asks the
+  // same question.
   T t = T.create();
   string dir = scratch(cli, "atspec-two");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
   t.isTrue(put(cli, dir + "/appA/wac.json5", "{}\n"), "appA manifest");
-  t.isTrue(put(cli, dir + "/libB/wac.json5", "{}\n"), "libB manifest");
-  t.isTrue(put(cli, dir + "/libB/deep/five.wac", "export i32 five() { return 5; }\n"), "libB five");
+  t.isTrue(put(cli, dir + "/appA/libB/wac.json5", "{ exports: \"./src/b.wac\" }\n"), "libB manifest");
+  t.isTrue(put(cli, dir + "/appA/libB/deep/five.wac", "export i32 five() { return 5; }\n"), "libB five");
   // The decoy: same relative path, under the *entry's* project, answering something unmistakable.
   t.isTrue(put(cli, dir + "/appA/deep/five.wac", "export i32 five() { return 999; }\n"), "the decoy");
-  t.isTrue(put(cli, dir + "/libB/src/b.wac",
+  t.isTrue(put(cli, dir + "/appA/libB/src/b.wac",
                "import { five } from \"@/deep/five.wac\";\n" +
                "export i32 seven() { return five() + 2; }\n"), "libB b");
   t.isTrue(put(cli, dir + "/appA/src/main.wac",
-               "import { seven } from \"../../libB/src/b.wac\";\n" +
+               "import { seven } from \"../libB\";\n" +
                "export i32 main() { return seven(); }\n"), "appA main");
 
   Exec w = wacc(cli, "run", [dir + "/appA/src/main.wac"]);
