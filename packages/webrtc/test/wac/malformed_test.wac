@@ -57,7 +57,7 @@ u8[] clientHello(i32 groupListLen) {
   u8[] b = u8[].filled(80, 0);
   i32 at = 0;
   b[at] = 0xFE; at++; b[at] = 0xFD; at++;              // version DTLS 1.2
-  for (i32 i = 0; i < 32; i++) { b[at] = i; at++; }    // random
+  for (i32 i = 0; i < 32; i++) { b[at] = i as@ u8; at++; }    // random
   b[at] = 0; at++;                                     // session_id, empty
   b[at] = 0; at++;                                     // cookie, empty
   b[at] = 0; at++; b[at] = 2; at++;                    // cipher_suites, one suite
@@ -66,8 +66,8 @@ u8[] clientHello(i32 groupListLen) {
   b[at] = 0; at++; b[at] = 8; at++;                    // extensions, 8 bytes
   b[at] = 0x00; at++; b[at] = 0x0A; at++;              // supported_groups
   b[at] = 0; at++; b[at] = 4; at++;                    // extension body, 4 bytes
-  b[at] = (groupListLen >> 8) & 0xFF; at++;            // list length
-  b[at] = groupListLen & 0xFF; at++;
+  b[at] = ((groupListLen >> 8) & 0xFF) as@ u8; at++;            // list length
+  b[at] = (groupListLen & 0xFF) as@ u8; at++;
   b[at] = 0x00; at++; b[at] = 0x17; at++;              // secp256r1
   return prefix(b, at);
 }
@@ -145,7 +145,7 @@ export string test_every_prefix_of_a_hello_is_survived_by_every_reader() {
   // it gets a message of its own here rather than a place in the sweep.
   u8[] server = u8[].filled(37, 0);
   server[0] = 0xFE; server[1] = 0xFD;
-  for (i32 i = 0; i < 32; i++) { server[2 + i] = i; }
+  for (i32 i = 0; i < 32; i++) { server[2 + i] = i as@ u8; }
   server[34] = 0;                                      // session_id, empty
   server[35] = 0xC0; server[36] = 0x2B;                // the chosen suite
   t.eqI32(chosenSuite(server), 0xC02B, "the ServerHello's suite is not the one written into it");
@@ -232,8 +232,8 @@ export string test_the_nested_lengths_that_were_already_checked_stay_checked() {
   // A Certificate message: list length, then one certificate's length, then its DER.
   u8[] der = u8[].filled(10, 0x30);
   u8[] cert = u8[].filled(6 + der.len(), 0);
-  cert[0] = 0; cert[1] = 0; cert[2] = 3 + der.len();
-  cert[3] = 0; cert[4] = 0; cert[5] = der.len();
+  cert[0] = 0; cert[1] = 0; cert[2] = (3 + der.len()) as@ u8;
+  cert[3] = 0; cert[4] = 0; cert[5] = der.len() as@ u8;
   for (i32 i = 0; i < der.len(); i++) { cert[6 + i] = der[i]; }
   t.eqI32(leafCertificate(cert).len(), der.len(), "a well-formed certificate did not come back");
 
@@ -249,7 +249,7 @@ export string test_the_nested_lengths_that_were_already_checked_stay_checked() {
   // A ServerKeyExchange: curve_type(3), named_curve(2), public key length + key, then the signature.
   u8[] ske = u8[].filled(4 + 4 + 4 + 8, 0);
   ske[0] = 3; ske[1] = 0x00; ske[2] = 0x17; ske[3] = 4;
-  for (i32 i = 0; i < 4; i++) { ske[4 + i] = 0xC0 + i; }
+  for (i32 i = 0; i < 4; i++) { ske[4 + i] = (0xC0 + i) as@ u8; }
   ske[8] = 4; ske[9] = 1;                              // signature algorithm
   ske[10] = 0; ske[11] = 8;                            // signature length
   for (i32 i = 0; i < 8; i++) { ske[12 + i] = 0x5A; }
@@ -270,7 +270,7 @@ export string test_the_nested_lengths_that_were_already_checked_stay_checked() {
   // ClientKeyExchange: one length byte and that many bytes of public key.
   u8[] cke = u8[].filled(5, 0);
   cke[0] = 4;
-  for (i32 i = 0; i < 4; i++) { cke[1 + i] = 0xB0 + i; }
+  for (i32 i = 0; i < 4; i++) { cke[1 + i] = (0xB0 + i) as@ u8; }
   t.eqI32(clientPublic(cke).len(), 4, "the client's public key did not come back");
   u8[] lyingCke = u8[].filled(5, 0);
   for (i32 i = 0; i < 5; i++) { lyingCke[i] = cke[i]; }

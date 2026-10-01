@@ -67,12 +67,12 @@ export u8[] signedDigest(u8[] doc, bool sha256Flavour) {
 /** The offset and length of the DER element at `at`, as `(contentStart << 16) | length`. */
 i32 derHeader(u8[] der, i32 at) {
   if (at + 2 > der.len()) { trap; }
-  i32 lenByte = der[at + 1];
+  i32 lenByte = der[at + 1] as i32;
   if (lenByte < 0x80) { return ((at + 2) << 16) | lenByte; }
   i32 count = lenByte & 0x7F;
   if (count == 0 || count > 2) { trap; }
   i32 len = 0;
-  for (i32 i = 0; i < count; i++) { len = (len << 8) | der[at + 2 + i]; }
+  for (i32 i = 0; i < count; i++) { len = (len << 8) | der[at + 2 + i] as i32; }
   return ((at + 2 + count) << 16) | len;
 }
 
@@ -129,7 +129,7 @@ export bool signatureMatches(u8[] n, u8[] e, u8[] digest, u8[] signature) {
   u8[] recovered = rsaRecoverPkcs1(n, e, signature);
   if (recovered.len() != digest.len()) { return false; }
   i32 diff = 0;
-  for (i32 i = 0; i < digest.len(); i++) { diff = diff | (recovered[i] ^ digest[i]); }
+  for (i32 i = 0; i < digest.len(); i++) { diff = diff | (recovered[i] as i32 ^ digest[i] as i32); }
   return diff == 0;
 }
 
@@ -228,8 +228,8 @@ export string toHex(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();
   u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
-    out[i * 2] = digits[(b[i] >> 4) & 15];
-    out[i * 2 + 1] = digits[b[i] & 15];
+    out[i * 2] = digits[(b[i] as i32 >> 4) & 15];
+    out[i * 2 + 1] = digits[b[i] as i32 & 15];
   }
   return string.fromBytes(out);
 }
@@ -248,14 +248,14 @@ u8[] pemBody(u8[] doc, i32 from, i32 to) {
       inside = true;
     } else if (inside) {
       for (i32 i = at; i < end; i++) {
-        if (doc[i] != '\r' && doc[i] != ' ') { chars.push(doc[i]); }
+        if (doc[i] != '\r' && doc[i] != ' ') { chars.push(doc[i] as i32); }
       }
     }
     at = end + 1;
   }
   i32[] cs = chars.toArray();
   u8[] b64 = u8[].filled(cs.len(), 0);
-  for (i32 i = 0; i < cs.len(); i++) { b64[i] = cs[i]; }
+  for (i32 i = 0; i < cs.len(); i++) { b64[i] = cs[i] as@ u8; }
   u8[]? d = decode(b64);
   if (d is null) { return u8[](); }
   return d!;

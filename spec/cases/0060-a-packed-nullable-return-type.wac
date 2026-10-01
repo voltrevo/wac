@@ -1,5 +1,9 @@
-// expect: refused
-// why: a nullable packed type has no representation, in a return type as in a field or a parameter
-// from: specSingle's §wac-packed-nullable cluster
-i8? g() { return null; }
-export i32 f() { return 0; }
+// expect: answers f = 7
+// why: a nullable packed type is a return type like any other — spec/next ch08 §wac-packed-ordinary-kawnzqm
+// from: specSingle's §wac-packed-nullable cluster, which refused it while a packed type was element-only
+i8? g(bool none) { return none ? null : 7; }
+export i32 f() {
+  i8? a = g(true);
+  i8? b = g(false);
+  return a is null && !(b is null) ? b! as i32 : -1;
+}

@@ -95,7 +95,7 @@ u8[][] corpus() {
   i32 s = 12345;
   for (i32 i = 0; i < noise.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7fffffff;
-    noise[i] = (s >> 16) & 0xff;
+    noise[i] = ((s >> 16) & 0xff) as@ u8;
   }
   return [
     u8[](),
@@ -173,7 +173,7 @@ export string test_frames_from_the_reference_encoder_which_are_not_the_shape_our
     u8[] frame = frameAt(a, i);
     t.isTrue(frame.len() > 5, "the reference produced no frame for case " + itoa(i));
     if (frame.len() <= 5) { continue; }
-    shapes[i] = frame[4];
+    shapes[i] = frame[4] as i32;
     u8[] want = decompress(frame);
     t.isTrue(sameBytes(want, inputs[i]),
              "the buffered decoder cannot read a reference frame either");
@@ -190,7 +190,7 @@ export string test_frames_from_the_reference_encoder_which_are_not_the_shape_our
   u8[] ours = compress("hello".toBytes());
   bool onlyOurs = true;
   for (i32 i = 0; i < shapes.len(); i++) {
-    if (shapes[i] >= 0 && shapes[i] != ours[4]) { onlyOurs = false; }
+    if (shapes[i] >= 0 && shapes[i] != ours[4] as i32) { onlyOurs = false; }
   }
   t.isFalse(onlyOurs,
             "the reference encoder emitted only the shape ours does — this test proves nothing");
@@ -258,7 +258,7 @@ u8[] farMatching(i32 size, i32 times) {
   i32 s = 987654321;
   for (i32 i = 0; i < size; i++) {
     s = (s * 1103515245 + 12345) & 0x7fffffff;
-    unit[i] = (s >> 16) & 0xff;
+    unit[i] = ((s >> 16) & 0xff) as@ u8;
   }
   u8[] out = u8[].filled(size * times, 0);
   for (i32 i = 0; i < times; i++) {

@@ -93,18 +93,18 @@ export ParsedResponse parseResponse(u8[] input, u8[] method, bool eof, i32 maxBo
   for (i32 i = 0; i < 7; i++) {
     if (input[i] != want[i]) { return ParsedResponse.Bad(ERR_VERSION()); }
   }
-  if (!isDigit(input[7])) { return ParsedResponse.Bad(ERR_VERSION()); }
-  i32 minor = input[7] - '0';
+  if (!isDigit(input[7] as i32)) { return ParsedResponse.Bad(ERR_VERSION()); }
+  i32 minor = input[7] as i32 - '0';
   if (input[8] != ' ') { return ParsedResponse.Bad(ERR_LINE()); }
 
   if (lineEnd < 12) { return ParsedResponse.Bad(ERR_STATUS()); }
   for (i32 i = 9; i < 12; i++) {
-    if (!isDigit(input[i])) { return ParsedResponse.Bad(ERR_STATUS()); }
+    if (!isDigit(input[i] as i32)) { return ParsedResponse.Bad(ERR_STATUS()); }
   }
   // Any three digits. The classes are 1xx to 5xx, but the grammar in RFC 9110 §15 says
   // three digits and nothing more, so a `099` is a status this does not understand rather than
   // a message it should refuse — that judgement belongs to the caller.
-  i32 status = (input[9] - '0') * 100 + (input[10] - '0') * 10 + (input[11] - '0');
+  i32 status = (input[9] as i32 - '0') * 100 + (input[10] as i32 - '0') * 10 + (input[11] as i32 - '0');
 
   // The reason phrase is optional and free-form, but a space must separate it if it is there.
   i32 reasonStart = 12;
@@ -113,7 +113,7 @@ export ParsedResponse parseResponse(u8[] input, u8[] method, bool eof, i32 maxBo
     reasonStart = 13;
   }
   for (i32 i = reasonStart; i < lineEnd; i++) {
-    if (!isFieldValueByte(input[i])) { return ParsedResponse.Bad(ERR_LINE()); }
+    if (!isFieldValueByte(input[i] as i32)) { return ParsedResponse.Bad(ERR_LINE()); }
   }
 
   Incoming res = Incoming(status, minor, slice(input, reasonStart, lineEnd), Headers.create(),
@@ -125,7 +125,7 @@ export ParsedResponse parseResponse(u8[] input, u8[] method, bool eof, i32 maxBo
     i32 end = findCrlf(input, at);
     if (end < 0) { return ParsedResponse.Incomplete; }
     if (end == at) { at = at + 2; break; }
-    if (isOws(input[at])) { return ParsedResponse.Bad(ERR_OBS_FOLD()); }
+    if (isOws(input[at] as i32)) { return ParsedResponse.Bad(ERR_OBS_FOLD()); }
 
     i32 colon = -1;
     for (i32 i = at; i < end; i++) {
@@ -133,14 +133,14 @@ export ParsedResponse parseResponse(u8[] input, u8[] method, bool eof, i32 maxBo
     }
     if (colon < 0 || colon == at) { return ParsedResponse.Bad(ERR_HEADER_NAME()); }
     for (i32 i = at; i < colon; i++) {
-      if (!isToken(input[i])) { return ParsedResponse.Bad(ERR_HEADER_NAME()); }
+      if (!isToken(input[i] as i32)) { return ParsedResponse.Bad(ERR_HEADER_NAME()); }
     }
     i32 vs = colon + 1;
-    while (vs < end && isOws(input[vs])) { vs++; }
+    while (vs < end && isOws(input[vs] as i32)) { vs++; }
     i32 ve = end;
-    while (ve > vs && isOws(input[ve - 1])) { ve--; }
+    while (ve > vs && isOws(input[ve - 1] as i32)) { ve--; }
     for (i32 i = vs; i < ve; i++) {
-      if (!isFieldValueByte(input[i])) { return ParsedResponse.Bad(ERR_HEADER_VALUE()); }
+      if (!isFieldValueByte(input[i] as i32)) { return ParsedResponse.Bad(ERR_HEADER_VALUE()); }
     }
     res.headers.push(slice(input, at, colon), slice(input, vs, ve));
     at = end + 2;
@@ -187,13 +187,13 @@ export ParsedResponse parseResponse(u8[] input, u8[] method, bool eof, i32 maxBo
     if (cl.len() == 0) { return ParsedResponse.Bad(ERR_FRAMING()); }
     i64 acc = 0;
     for (i32 i = 0; i < cl.len(); i++) {
-      if (!isDigit(cl[i])) { return ParsedResponse.Bad(ERR_FRAMING()); }
+      if (!isDigit(cl[i] as i32)) { return ParsedResponse.Bad(ERR_FRAMING()); }
       // Accumulated in i64, because the check below cannot work on a value that has already
       // wrapped: `Content-Length: 4294967296` overflowed an i32 to exactly zero, `length > maxBody`
       // was false, and an incomplete request was accepted as a complete one with an empty body.
       // The i64 cannot overflow in turn — every digit is followed by the check, so the largest it
       // ever holds is `maxBody * 10 + 9`.
-      acc = acc * 10 + ((cl[i] - '0') as i64);
+      acc = acc * 10 + ((cl[i] as i32 - '0') as i64);
       if (acc > (maxBody as i64)) { return ParsedResponse.Bad(ERR_TOO_LARGE()); }
     }
     // Known to be at most `maxBody`, so it fits — and `as!` says so rather than assuming it.
@@ -228,10 +228,10 @@ ParsedResponse readChunked(u8[] input, i32 start, Incoming res, i32 maxBody) {
     i64 acc = 0;
     i32 i = at;
     i32 digitsSeen = 0;
-    while (i < end && digitValue(input[i]) >= 0) {
+    while (i < end && digitValue(input[i] as i32) >= 0) {
       // In i64, for the reason given where `Content-Length` is parsed: a check against `maxBody`
       // is meaningless once the accumulation has wrapped.
-      acc = acc * 16 + (digitValue(input[i]) as i64);
+      acc = acc * 16 + (digitValue(input[i] as i32) as i64);
       digitsSeen++;
       if (acc > (maxBody as i64)) { return ParsedResponse.Bad(ERR_TOO_LARGE()); }
       i++;
@@ -265,21 +265,21 @@ ParsedResponse readChunked(u8[] input, i32 start, Incoming res, i32 maxBody) {
     i32 end = findCrlf(input, at);
     if (end < 0) { return ParsedResponse.Incomplete; }
     if (end == at) { at = at + 2; break; }
-    if (isOws(input[at])) { return ParsedResponse.Bad(ERR_OBS_FOLD()); }
+    if (isOws(input[at] as i32)) { return ParsedResponse.Bad(ERR_OBS_FOLD()); }
     i32 colon = -1;
     for (i32 k = at; k < end; k++) {
       if (input[k] == ':') { colon = k; break; }
     }
     if (colon < 0 || colon == at) { return ParsedResponse.Bad(ERR_HEADER_NAME()); }
     for (i32 k = at; k < colon; k++) {
-      if (!isToken(input[k])) { return ParsedResponse.Bad(ERR_HEADER_NAME()); }
+      if (!isToken(input[k] as i32)) { return ParsedResponse.Bad(ERR_HEADER_NAME()); }
     }
     i32 vs = colon + 1;
-    while (vs < end && isOws(input[vs])) { vs++; }
+    while (vs < end && isOws(input[vs] as i32)) { vs++; }
     i32 ve = end;
-    while (ve > vs && isOws(input[ve - 1])) { ve--; }
+    while (ve > vs && isOws(input[ve - 1] as i32)) { ve--; }
     for (i32 k = vs; k < ve; k++) {
-      if (!isFieldValueByte(input[k])) { return ParsedResponse.Bad(ERR_HEADER_VALUE()); }
+      if (!isFieldValueByte(input[k] as i32)) { return ParsedResponse.Bad(ERR_HEADER_VALUE()); }
     }
     res.headers.push(slice(input, at, colon), slice(input, vs, ve));
     at = end + 2;

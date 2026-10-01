@@ -151,14 +151,14 @@ string[] sources() {
     "i32 at(i32[] a, i32 i) { return a[i]; } export i32 f(i32 i) { return at([7, 8, 9] as i32[], i); }",
     "export i32 f() { i32[] a = i32[].filled(5, 0); i32 t = 0; for (i32 i = 0; i < a.len(); i++) { a[i] = i * i; } for (i32 i = 0; i < a.len(); i++) { t = t + a[i]; } return t; }",
     // A packed element: the getter has to zero-extend, which is the half a signed one gets wrong.
-    "export i32 f() { u8[] b = u8[].filled(3, 0); b[0] = 200; return b[0]; }",
-    "export i32 f() { i8[] b = i8[].filled(3, 0); b[0] = 200; return b[0]; }",
-    "export i32 f() { u8[] b = [1, 2, 250]; return b[2] + b.len(); }",
+    "export i32 f() { u8[] b = u8[].filled(3, 0); b[0] = 200; return b[0] as i32; }",
+    "export i32 f() { i8[] b = i8[].filled(3, 0); b[0] = 200 as@ i8; return b[0] as i32; }",
+    "export i32 f() { u8[] b = [1, 2, 250]; return b[2] as i32 + b.len(); }",
     // Wider elements, so the array type's storage type is not always i32.
     "export i64 f() { i64[] a = i64[].filled(2, 0); a[1] = 4294967296; return a[1]; }",
     "export f64 f() { f64[] a = f64[].filled(2, 1.5); return a[0] + a[1]; }",
     // Two array types in one module, so the indices have to be distinct and stable.
-    "export i32 f() { i32[] a = i32[].filled(2, 3); u8[] b = u8[].filled(2, 4); return a[0] + b[0]; }",
+    "export i32 f() { i32[] a = i32[].filled(2, 3); u8[] b = u8[].filled(2, 4); return a[0] + b[0] as i32; }",
     // An array through a call, which puts a reference type in a signature.
     "i32 first(i32[] xs) { return xs[0]; } export i32 f() { return first([11, 22] as i32[]); }",
     // ── Structs: the second GC type ────────────────────────────────────────────
@@ -196,7 +196,7 @@ string[] sources() {
     "static i32 A = 2; static i32 B = 5; export i32 f() { i32 t = 0; for (i32 i = 0; i < B; i++) { t = t + A; } return t; }",
     // ── Constants with identity, which live in a global ────────────────────────
     "static i32[] T = [4, 5, 6]; export i32 f() { return T[1] + T.len(); }",
-    "static u8[] B = [1, 2, 250]; export i32 f(i32 i) { return B[i]; }",
+    "static u8[] B = [1, 2, 250]; export i32 f(i32 i) { return B[i] as i32; }",
     "static i64[] W = i64[].filled(2, 4294967296); export i64 f() { return W[0] + W[1]; }",
     "static i32[] Z = i32[].filled(4, 0); export i32 f() { return Z[3] + Z.len(); }",
     // One array, not one per use: read twice in the same expression and once from a loop.
@@ -260,7 +260,7 @@ string[] sources() {
     // Multi-byte on both sides, since the join is over bytes.
     "export i32 f() { return (\"é\" + \"é\").len(); }",
     // The two conversions, and a round trip through them.
-    "export i32 f() { u8[] b = \"abc\".toBytes(); return b.len() + b[0]; }",
+    "export i32 f() { u8[] b = \"abc\".toBytes(); return b.len() + b[0] as i32; }",
     "export i32 f() { u8[] b = [104, 105]; string s = string.fromBytes(b); return s.len(); }",
     "export bool f() { return string.fromBytes(\"hi\".toBytes()) == \"hi\"; }",
     "export i32 f() { return string.fromBytes(u8[]()).len(); }",
@@ -272,7 +272,7 @@ string[] sources() {
     "export i32 f() { i32[] a = i32[].filled(4, 0); i32[] b = [7, 8]; a.copyFrom(b, 0, 2, 2); return a[2] * 10 + a[0]; }",
     // From the middle.
     "export i32 f() { i32[] a = i32[].filled(2, 0); i32[] b = [1, 2, 3]; a.copyFrom(b, 1, 0, 2); return a[0] * 10 + a[1]; }",
-    "export i32 f() { u8[] a = u8[].filled(3, 0); u8[] b = [200, 201]; a.copyFrom(b, 0, 1, 2); return a[1] + a[2]; }",
+    "export i32 f() { u8[] a = u8[].filled(3, 0); u8[] b = [200, 201]; a.copyFrom(b, 0, 1, 2); return a[1] as i32 + a[2] as i32; }",
     // A zero-length copy, which must touch nothing.
     "export i32 f() { i32[] a = [5, 6]; i32[] b = [9, 9]; a.copyFrom(b, 0, 0, 0); return a[0] + a[1]; }",
     // Overlapping within one array, where a naive forward loop would smear.

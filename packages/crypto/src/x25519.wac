@@ -134,7 +134,7 @@ export u8[]? x25519Shared(u8[] scalar, u8[] peer) {
   // depend on *where* a non-zero byte is. Which byte differs is not a secret here anyway — the
   // interesting fact is only whether the peer was honest.
   i32 acc = 0;
-  for (i32 i = 0; i < 32; i++) { acc = acc | k[i]; }
+  for (i32 i = 0; i < 32; i++) { acc = acc | k[i] as i32; }
   if (acc == 0) { return null; }
   return k;
 }

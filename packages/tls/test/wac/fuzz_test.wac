@@ -163,12 +163,12 @@ export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cl
     for (i32 k = 0; k < 4; k++) {
       i32 bodyLen = next(r) % 300;
       u8[] rec = u8[].filled(5 + bodyLen, 0);
-      rec[0] = (next(r) % 4) == 0 ? 22 : (next(r) & 0xFF);
+      rec[0] = ((next(r) % 4) == 0 ? 22 : (next(r) & 0xFF)) as@ u8;
       rec[1] = 3;
-      rec[2] = (next(r) % 2) == 0 ? 3 : (next(r) & 0xFF);
-      rec[3] = (bodyLen >> 8) & 0xFF;
-      rec[4] = bodyLen & 0xFF;
-      for (i32 j = 0; j < bodyLen; j++) { rec[5 + j] = next(r) & 0xFF; }
+      rec[2] = ((next(r) % 2) == 0 ? 3 : (next(r) & 0xFF)) as@ u8;
+      rec[3] = ((bodyLen >> 8) & 0xFF) as@ u8;
+      rec[4] = (bodyLen & 0xFF) as@ u8;
+      for (i32 j = 0; j < bodyLen; j++) { rec[5 + j] = (next(r) & 0xFF) as@ u8; }
       state = firstField(tlsClientFeed(state, rec));
       if (tlsClientFailure(state) != 0) { k = 4; }
     }
@@ -179,7 +179,7 @@ export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cl
 
 /** The state out of a `[state][toSend][appData]` blob. */
 u8[] firstField(u8[] blob) {
-  i32 n = (blob[0] << 24) | (blob[1] << 16) | (blob[2] << 8) | blob[3];
+  i32 n = (blob[0] as i32 << 24) | (blob[1] as i32 << 16) | (blob[2] as i32 << 8) | blob[3] as i32;
   u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = blob[4 + i]; }
   return out;
@@ -194,7 +194,7 @@ export string test_inner_plaintext_type_from_arbitrary_bytes() {
   Rng64 r = rng(14);
   for (i32 i = 0; i < 2000; i++) {
     u8[] inner = randomBytes(r, 1 + next(r) % 50);
-    inner[next(r) % inner.len()] = 1 + (next(r) % 255);
+    inner[next(r) % inner.len()] = (1 + (next(r) % 255)) as@ u8;
     recordType(inner);
   }
   return t.report();
@@ -279,7 +279,7 @@ export string test_a_certificate_parser_never_aborts(Core core, Cli cli) {
   }
   for (i32 i = 0; i < 1500; i++) {
     u8[] c = copyOf(real);
-    for (i32 k = 0; k < 3; k++) { c[next(r) % c.len()] = next(r) & 0xFF; }
+    for (i32 k = 0; k < 3; k++) { c[next(r) % c.len()] = (next(r) & 0xFF) as@ u8; }
     parseCert(c);
   }
   for (i32 i = 0; i < 1500; i++) { parseCert(randomBytes(r, next(r) % 400)); }

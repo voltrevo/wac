@@ -95,7 +95,7 @@ export struct Client {
 
     u8[] theirKexInit = this.conn.readPacket();
     if (this.conn.failed()) { return; }
-    if (theirKexInit[0] != msgKexInit()) { this.conn.fail("expected KEXINIT"); return; }
+    if (theirKexInit[0] as i32 != msgKexInit()) { this.conn.fail("expected KEXINIT"); return; }
     if (!this.agreed(theirKexInit)) { return; }
 
     u8[] secret = this.conn.core.randomBytes(32).wait();
@@ -104,7 +104,7 @@ export struct Client {
 
     u8[] replyPayload = this.conn.readPacket();
     if (this.conn.failed()) { return; }
-    if (replyPayload[0] != msgKexEcdhReply()) { this.conn.fail("expected the key exchange reply"); return; }
+    if (replyPayload[0] as i32 != msgKexEcdhReply()) { this.conn.fail("expected the key exchange reply"); return; }
     EcdhReply? reply = parseEcdhReply(replyPayload);
     if (reply is null) { this.conn.fail("the key exchange reply did not parse"); return; }
 
@@ -122,10 +122,10 @@ export struct Client {
     this.sessionId = h;
     this.hostKey = reply!.hostKey;
 
-    if (!this.conn.sendPacket([msgNewKeys()])) { this.conn.fail("cannot send NEWKEYS"); return; }
+    if (!this.conn.sendPacket([msgNewKeys() as@ u8])) { this.conn.fail("cannot send NEWKEYS"); return; }
     u8[] theirNewKeys = this.conn.readPacket();
     if (this.conn.failed()) { return; }
-    if (theirNewKeys[0] != msgNewKeys()) { this.conn.fail("expected NEWKEYS"); return; }
+    if (theirNewKeys[0] as i32 != msgNewKeys()) { this.conn.fail("expected NEWKEYS"); return; }
 
     // 'C' is client-to-server and 'D' the other way, so a client writes with C and reads with D.
     this.conn.startEncryption(deriveKey(shared!, h, h, 0x44, keyLength()),
@@ -156,7 +156,7 @@ export struct Client {
     if (!this.conn.sendPacket(serviceRequest())) { this.conn.fail("cannot request ssh-userauth"); return; }
     u8[] accept = this.conn.readPacket();
     if (this.conn.failed()) { return; }
-    if (accept[0] != msgServiceAccept()) { this.conn.fail("the server refused ssh-userauth"); return; }
+    if (accept[0] as i32 != msgServiceAccept()) { this.conn.fail("the server refused ssh-userauth"); return; }
 
     u8[] request = publicKeyRequest(this.sessionId, user, publicBlob, seed);
     if (!this.conn.sendPacket(request)) { this.conn.fail("cannot send the authentication request"); return; }
@@ -164,8 +164,8 @@ export struct Client {
     while (true) {
       u8[] reply = this.conn.readPacket();
       if (this.conn.failed()) { return; }
-      if (reply[0] == msgUserAuthSuccess()) { return; }
-      if (reply[0] == msgUserAuthFailure()) {
+      if (reply[0] as i32 == msgUserAuthSuccess()) { return; }
+      if (reply[0] as i32 == msgUserAuthFailure()) {
         this.conn.fail("the server rejected the key");
         return;
       }

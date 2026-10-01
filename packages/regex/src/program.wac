@@ -131,7 +131,7 @@ export i32 runAt(Program p, u8[] input, i32 at, i32[] caps, i32 budget) {
     bool ok = true;
 
     if (op == OP_CHAR()) {
-      if (sp < input.len() && input[sp] == a) { pc++; sp++; } else { ok = false; }
+      if (sp < input.len() && input[sp] as i32 == a) { pc++; sp++; } else { ok = false; }
     } else if (op == OP_ANY()) {
       // Without the `s` flag, `.` matches anything except a *line terminator*, and JavaScript has
       // four of them: LF, CR, U+2028 and U+2029. Only LF was excluded here, so `/a.b/` matched
@@ -145,7 +145,7 @@ export i32 runAt(Program p, u8[] input, i32 at, i32[] caps, i32 budget) {
       bool terminator = sp < input.len() && (input[sp] == 10 || input[sp] == 13);
       if (sp < input.len() && !terminator) { pc++; sp++; } else { ok = false; }
     } else if (op == OP_CLASS()) {
-      if (sp < input.len() && inClass(p, a, input[sp])) { pc++; sp++; } else { ok = false; }
+      if (sp < input.len() && inClass(p, a, input[sp] as i32)) { pc++; sp++; } else { ok = false; }
     } else if (op == OP_MATCH()) {
       return sp;
     } else if (op == OP_JMP()) {
@@ -178,8 +178,8 @@ export i32 runAt(Program p, u8[] input, i32 at, i32[] caps, i32 budget) {
     } else if (op == OP_EOL()) {
       if (sp == input.len()) { pc++; } else { ok = false; }
     } else if (op == OP_WORDB()) {
-      bool before = sp > 0 && isWordByte(input[sp - 1]);
-      bool after = sp < input.len() && isWordByte(input[sp]);
+      bool before = sp > 0 && isWordByte(input[sp - 1] as i32);
+      bool after = sp < input.len() && isWordByte(input[sp] as i32);
       // `\b` and `\B` ask whether this is a boundary; GNU's `\<` and `\>` ask *which* boundary, and
       // that is one more bit rather than another opcode. A `grep '\<a'` had no way to say it and
       // matched nothing at all, silently, because an unknown escape is a literal.

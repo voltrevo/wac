@@ -54,7 +54,7 @@ import { assertCaught, assertQuiet, caughtAndQuiet, complaint,
          joinedWith, ours, oursBesidesMissingImports }
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
-import { errPackedPosition, errWrongCastOp } from "../../src/check.wac";
+import { errWrongCastOp } from "../../src/check.wac";
 
 /**
  * Programs that are wrong in the one way this slice knows about.
@@ -210,7 +210,7 @@ string[] WRONG() {
     // so its checker — which is all this list compares against — says nothing, and adding them here
     // asserts that we invent a diagnostic. They are asserted directly in `illtyped_test.wac`, which is
     // also where the same split put a character literal.
-    "export i32 f() { u8 b = 1; return b as i32; }",
+    "export i32 f() { u8 b = 1; return b; }",
     "export void f() { return 1; }",
     // **The three match-coverage rules, all of which disagreed about position.** Each reported the
     // match's *subject* — the one part of a `match` none of them is complaining about. The reference
@@ -655,13 +655,15 @@ string[] LITERALS() { return ["1", "1.5", "\"x\"", "true"]; }
  * Whether `ty` accepts a literal of `kind`, indexing `LITERAL_KINDS`.
  *
  * **Written out, where the reference used to decide it.** The rule was already stated in the
- * assertion below — "an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean from
- * bool, a string from string", with the four packed types accepting nothing — so this is that
- * sentence made executable rather than a new claim. The cell counts still check it: a rule that
- * drifted would not give 8 and 40.
+ * assertion below — "an integer literal from any of the eight integer types, a float from f32/f64, a
+ * boolean from bool, a string from string" — so this is that sentence made executable rather than a
+ * new claim. The cell counts still check it: a rule that drifted would not give 12 and 36.
  */
 bool acceptsLiteral(string ty, i32 kind) {
-  if (kind == 0) { return ty == "i32" || ty == "i64" || ty == "u32" || ty == "u64"; }
+  if (kind == 0) {
+    return ty == "i32" || ty == "i64" || ty == "u32" || ty == "u64" || ty == "u8" || ty == "u16" ||
+           ty == "i8" || ty == "i16";
+  }
   if (kind == 1) { return ty == "f32" || ty == "f64"; }
   if (kind == 2) { return ty == "string"; }
   return ty == "bool";
@@ -696,13 +698,13 @@ export string test_rung3_every_primitive_against_every_literal_kind() {
       at = at + 1;
     }
   }
-  // 48 cells, 8 accepted: an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean
-  // from bool, a string from string. The four packed types accept nothing, which is why this is 8 and
-  // not 12 — the count was written as 10 first, against a ten-type list that was missing i8 and i16.
+  // 48 cells, 12 accepted: an integer literal from the eight integer types — the packed four are
+  // integers like any other (spec/next ch08 `§wac-packed-ordinary-kawnzqm`) — a float from f32/f64, a
+  // boolean from bool, a string from string.
   //
   // Asserting the shape rather than a bare "some failed": an `acceptsLiteral` that started calling
   // every cell acceptable would otherwise pass this silently.
-  t.eqI32(rejected, 40, "expected 40 rejected cells of 48");
+  t.eqI32(rejected, 36, "expected 36 rejected cells of 48");
   t.eqI32(caught, rejected, "the grid rejects " + itoa(rejected) + " cells and we catch " +
                             itoa(caught) + "; this slice is meant to catch every literal-return " +
                             "mismatch");
@@ -849,7 +851,7 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
   // where the accepted ones began was already here; it is the boundary now rather than a note.
   string[] caught = [
     "export void a() { i32 x = null; }",
-    "export void c() { i8 x = 5; }",
+    "export void c() { i8 x = 128; }",
     "export void d() { i32 x = \"s\"; }",
     "export void e() { f64 x = 1; }",
     "export void f(string s) { i32 x = s; }",
@@ -1527,58 +1529,29 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
 /**
  * **A packed type in every position it can be written in.**
  *
- * `u8 i8 u16 i16` exist as array elements and struct fields and nowhere default: no slot is one byte
- * wide, so a packed value has no representation of its own to be held in. `checkParams` says exactly
- * that in a comment — "it exists as an array element and nowhere else" — and enforced it for
- * parameters only. A local, a return type and a cast target are the other three positions, and a grid
- * over the four types by the places a type can be written found all of them.
- *
- * ## This one asks for completeness, which the other rungs deliberately do not
- *
- * Rung 3's contract is soundness and position: everything we report, the reference reports in the
- * same place, and nothing more is demanded, because demanding everything would fail until the whole
- * checker is finished. Here the rule is small enough to finish, so the assertion is the stronger one
- * — every position the reference complains at, we complain at too. A rule claimed to be implemented
- * in four positions and tested in one is how this got missed.
+ * `u8 i8 u16 i16` were array elements and nowhere else until spec/next ch08 made them integers like
+ * any other (`§wac-packed-ordinary-kawnzqm`): a parameter, a local, a return, a field, a nullable and
+ * an element. Every position is legal now, so the grid asks the opposite of what it used to — each
+ * position checks quiet — and keeps the one thing a packed position can still get wrong: a lossy cast
+ * into one written with plain `as`.
  */
 export string test_rung3_a_packed_type_in_every_position() {
   T t = T.create();
   string[] packed = ["u8", "i8", "u16", "i16"];
-  string[] places = [
-                             "parameter", "local", "return", "cast target", "struct field",
-                             // **The only positions a packed type is legal in.** A struct field is
-                             // not one — it is above — and that was assumed until this grid said
-                             // otherwise, which is the second time in one afternoon that reading a
-                             // rule's own words ("an array element and nowhere else") would have
-                             // been quicker than reasoning about it.
-                             "array element", "array field"
-  ];
-  string[] sources = string[].filled(places.len() * packed.len(), "");
-  string[] labels = string[].filled(places.len() * packed.len(), "");
-  bool[] legal = bool[].filled(places.len() * packed.len(), false);
-  i32 n = 0;
-  for (i32 p = 0; p < places.len(); p++) {
-    for (i32 k = 0; k < packed.len(); k++) {
-      string ty = packed[k];
-      string src = p == 0 ? "export void f(" + ty + " a) { }"
-                 : (p == 1 ? "export void f() { " + ty + " r = 0; }"
-                 : (p == 2 ? "export " + ty + " f() { return 0; }"
-                 : (p == 3 ? "export void f(i32 n) { i32 r = (n as " + ty + ") as i32; }"
-                 : (p == 4 ? "struct S { " + ty + " v; } export void f(S s) { }"
-                 : (p == 5 ? "export void f(" + ty + "[] a) { }"
-                           : "struct S { " + ty + "[] v; } export void f(S s) { }")))));
-      sources[n] = src;
-      labels[n] = places[p] + " " + ty;
-      legal[n] = p >= 5;
-      n = n + 1;
-    }
-  }
-  for (i32 i = 0; i < sources.len(); i++) {
-    if (legal[i]) {
-      assertQuiet(t, sources[i], labels[i] + ": a position packed types exist for");
-      continue;
-    }
-    assertCaught(t, sources[i], labels[i]);
+  for (i32 k = 0; k < packed.len(); k++) {
+    string ty = packed[k];
+    string[] legal = [
+      "export void f(" + ty + " a) { }",
+      "export void f() { " + ty + " r = 0; }",
+      "export " + ty + " f() { return 0; }",
+      "export i32 f(i32 n) { return (n as@ " + ty + ") as i32; }",
+      "struct S { " + ty + " v; } export void f(S s) { }",
+      "export void f(" + ty + "? a) { }",
+      "export void f(" + ty + "[] a) { }",
+      "struct S { " + ty + "[] v; } export void f(S s) { }"
+    ];
+    for (i32 i = 0; i < legal.len(); i++) { assertQuiet(t, legal[i], ty + ": every position is one"); }
+    assertCaught(t, "export void f(i32 n) { " + ty + " r = n as " + ty + "; }", ty + ": a lossy plain `as`");
   }
   return t.report();
 }
@@ -2140,8 +2113,8 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "struct Node { i32 v; Node next; } export void bad() { Node n = Node(); }",
     "enum E { A(i32 v), B } export i32 f() { E[] a = E[].defaulted(2); return a.len(); }",
     "enum E { A, B } struct S { E e; } export i32 f() { S s = S(); return 1; }",
-    // A packed type where there is no slot for one.
-    "export i32 process(i8 val) { return 0; }",
+    // A packed value where a wider one is wanted: nothing widens implicitly.
+    "export i32 process(i8 val) { return val; }",
     // A const struct makes every field const without any of them saying so.
     "const struct Config { i32 w; i32 h; } export void bad() { Config c = Config(8, 6); c.w = 1; }",
     // Immutable strings, and a downcast that can fail.
@@ -2204,10 +2177,6 @@ export string test_rung3_arity_loop_depth_representation_and_compile_time_consta
     "i32 g() { return 1; } export i32 f() { return g(1); }",
     "i32 g(i32 a) { return a; } export i32 f() { return g(); }",
     "i32 g(i32 a) { return a; } export i32 f() { return g(1, 2); }",
-    // A nullable packed type has no representation, in an array or on its own.
-    "export i32 f() { u8?[] xs = u8?[].defaulted(3); return xs.len(); }",
-    "export void f() { u8? x = null; }",
-    "export void f(i8? y) { }",
     // A constant computed by calling something.
     "i32 n() { return 3; } static i32 K = n(); export i32 f() { return K; }",
     "i32 n() { return 3; } static i32[] T = i32[].filled(n(), 0); export i32 f() { return T[0]; }"
@@ -2334,7 +2303,6 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     // Declaration positions that cannot hold a type.
     "struct Bad { void x; }",
     "void bad(void x) { }",
-    "struct S { i8 x; } export void f() { }",
     // A return that disagrees with the function's voidness, both directions.
     "export void bad() { return 1; }",
     "i32 bad() { return; }",
@@ -2418,36 +2386,20 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
 }
 
 /**
- * A cast to a packed type says which *rule*, not which operator — `issues/lang/0289b`.
+ * A cast into a packed type is a cast like any other — spec/next ch24 `§wac-cast-packed-ordinary-65bdykv`.
  *
- * **The advice was the defect, not the refusal.** `[a as u8]` was refused with *wrong cast
- * operator for these types* and the help *"`as` converts without loss, `as!` checks at runtime,
- * `as~` takes the nearest value"*. All three are refused with the same sentence, because `u8` is
- * packed and there is no conversion for any operator to spell — so a reader follows the advice three
- * times, learns nothing, and is one character away from `[a]`, which is accepted.
- *
- * **Asserted on the codes rather than the words**, which is what `dumpTypeErrors` hands back and
- * what survives a rewording. Both directions: checking only that the packed code appears would pass
- * if the cast-operator one appeared beside it, and two diagnostics for one mistake is the other half
- * of what this was for.
+ * It was refused in every spelling while a packed type could be nothing but an element (`0289b` named
+ * that rule rather than the operator). Now `i32 as u8` is a lossy pair: plain `as` is refused for its
+ * operator, and `as@`, `as!` and `as~` each say what to do with what does not fit.
  */
-export string test_a_cast_to_a_packed_type_names_the_rule_not_the_operator_0289b(Core core, Cli cli) {
+export string test_a_cast_into_a_packed_type_is_a_cast_like_any_other(Core core, Cli cli) {
   T t = T.create();
-  i32[] flat = dumpTypeErrors(("export i32 main() {\n  i32 a = 65;\n" +
-                               "  u8[] one = [a as u8];\n  return one[0];\n}\n").toBytes());
-  t.isTrue(flat.len() >= 3, "the cast is still refused");
-  bool rule = false;
-  bool operator = false;
-  string codes = "";
-  for (i32 i = 0; i * 3 < flat.len(); i++) {
-    i32 code = flat[i * 3];
-    codes = codes + (codes == "" ? "" : ", ") + itoa(code);
-    if (code == errPackedPosition()) { rule = true; }
-    if (code == errWrongCastOp()) { operator = true; }
+  i32[] lossy = dumpTypeErrors("export u8 f(i32 a) { return a as u8; }".toBytes());
+  t.isTrue(lossy.len() >= 3 && lossy[0] == errWrongCastOp(), "plain `as` into u8 is not the operator's");
+  string[] fine = ["export u8 f(i32 a) { return a as@ u8; }", "export u8 f(i32 a) { return a as! u8; }",
+                   "export u8 f(i32 a) { return a as~ u8; }", "export i32 f(u8 b) { return b as i32; }"];
+  for (i32 i = 0; i < fine.len(); i++) {
+    t.eqI32(dumpTypeErrors(fine[i].toBytes()).len(), 0, "refused: " + fine[i]);
   }
-  t.isTrue(rule, "it names the packed rule; codes were " + codes);
-  t.isTrue(!operator,
-           "it still asks which operator, and all three are refused for a packed target; codes were " +
-           codes);
   return t.report();
 }

@@ -78,7 +78,7 @@ export string test_push_bytes_grows_once_and_correctly() {
   // from the default capacity of 16.
   Buf b = Buf.create();
   u8[] src = u8[].filled(300, 0);
-  for (i32 i = 0; i < 300; i++) { src[i] = i & 0xFF; }
+  for (i32 i = 0; i < 300; i++) { src[i] = (i & 0xFF) as@ u8; }
   b.pushBytes(src, 0, 300);
   t.eqI32(b.len, 300, "all 300 arrived");
   t.eqI32(b.get(0), 0, "first");
@@ -181,13 +181,13 @@ export string test_take_avoids_the_copy_when_exactly_full() {
   for (i32 i = 0; i < 16; i++) { full.push(i); }
   u8[] taken = full.take();
   t.eqI32(taken.len(), 16, "exact length");
-  t.eqI32(taken[15], 15, "contents intact");
+  t.eqI32(taken[15] as i32, 15, "contents intact");
 
   // The buffer is emptied, so continuing to use it cannot write through the array
   // it just handed away — the failure mode the doc comment used to only warn about.
   t.eqI32(full.len, 0, "the taken buffer is empty");
   full.push('z');
-  t.eqI32(taken[0], 0, "a later push does not reach the taken array");
+  t.eqI32(taken[0] as i32, 0, "a later push does not reach the taken array");
   t.eqBytes(full.bytes(), ['z'] as u8[], "and lands in fresh storage");
 
   // Not exactly full: take() falls back to a copy, and the contents still match.
@@ -195,7 +195,7 @@ export string test_take_avoids_the_copy_when_exactly_full() {
   partial.push('q');
   u8[] copied = partial.take();
   t.eqI32(copied.len(), 1, "trimmed to length");
-  t.eqI32(copied[0], 'q', "contents intact");
+  t.eqI32(copied[0] as i32, 'q', "contents intact");
   return t.report();
 }
 
@@ -220,7 +220,7 @@ export string test_bulk_append_onto_a_partly_filled_buffer() {
   Buf b = Buf.create();
   b.pushAll(['a', 'b', 'c'] as u8[]);
   u8[] big = u8[].filled(100, 0);
-  for (i32 i = 0; i < 100; i++) { big[i] = i; }
+  for (i32 i = 0; i < 100; i++) { big[i] = i as@ u8; }
   b.pushAll(big);
   t.eqI32(b.len, 103, "both parts are there");
   t.eqI32(b.get(0), 'a', "the original bytes survived the growth");
@@ -377,8 +377,8 @@ export string test_push_repeat_grows_the_buffer() {
   }
   t.eqI32(b.len, 36, "every copy landed");
   u8[] out = b.bytes();
-  t.eqI32(out[35], 'd', "and the last byte is right after the growth");
-  t.eqI32(out[16], 'a', "as is one from the middle");
+  t.eqI32(out[35] as i32, 'd', "and the last byte is right after the growth");
+  t.eqI32(out[16] as i32, 'a', "as is one from the middle");
   return t.report();
 }
 

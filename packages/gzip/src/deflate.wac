@@ -73,7 +73,7 @@ i32 goodLength() { return 8; }      // beyond this, narrow the search
 i32 niceLength() { return 128; }    // beyond this, stop looking entirely
 
 i32 hash3(u8[] data, i32 pos) {
-  return ((data[pos] << 10) ^ (data[pos + 1] << 5) ^ data[pos + 2]) & 0x7FFF;
+  return ((data[pos] as i32 << 10) ^ (data[pos + 1] as i32 << 5) ^ data[pos + 2] as i32) & 0x7FFF;
 }
 
 void insertHash(u8[] data, i32[] head, i32[] prev, i32 pos) {
@@ -185,7 +185,7 @@ export Tokens lz77Range(u8[] data, Tables t, i32 start, i32 end) {
       }
       pos += bestLen;
     } else {
-      tok.a[tok.n] = data[pos];
+      tok.a[tok.n] = data[pos] as i32;
       tok.b[tok.n] = 0;
       tok.n++;
       tok.litFreq[data[pos]]++;

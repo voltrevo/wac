@@ -269,7 +269,7 @@ export u8[] g1Compress(G1 p) {
   for (i32 i = 0; i < 48; i++) { out[i] = xb[i]; }
   i32 flags = 0x80;
   if (fpIsLexicographicallyLarger(ay!)) { flags = flags | 0x20; }
-  out[0] = out[0] | flags;
+  out[0] = (out[0] as i32 | flags) as@ u8;
   return out;
 }
 
@@ -281,7 +281,7 @@ export u8[] g1Compress(G1 p) {
  */
 export G1? g1Decompress(u8[] s) {
   if (s.len() != 48) { return null; }
-  i32 b0 = s[0];
+  i32 b0 = s[0] as i32;
   if ((b0 & 0x80) == 0) { return null; }              // not compressed
   bool infinity = (b0 & 0x40) != 0;
   bool wantLarger = (b0 & 0x20) != 0;

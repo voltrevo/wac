@@ -136,7 +136,7 @@ export u8[] mixInLength(u8[] root, i32 length) {
   u8[] len = u8[].filled(CHUNK, 0);
   i32 v = length;
   for (i32 i = 0; i < 4; i++) {
-    len[i] = v & 0xFF;
+    len[i] = (v & 0xFF) as@ u8;
     v = v >> 8;
   }
   return hashPair(root, len);
@@ -181,7 +181,7 @@ export u8[] rootBitvector(u8[] serialized, i32 n) {
  */
 export i32 bitlistLength(u8[] serialized) {
   if (serialized.len() == 0) { return -1; }
-  i32 last = serialized[serialized.len() - 1];
+  i32 last = serialized[serialized.len() - 1] as i32;
   if (last == 0) { return -1; }                       // the final byte must carry the delimiter
   i32 top = 0;
   for (i32 b = 7; b >= 0; b--) {
@@ -204,7 +204,7 @@ export u8[]? rootBitlist(u8[] serialized, i32 limit) {
   if (spare != 0) {
     i32 mask = 1;
     for (i32 i = 0; i < spare; i++) { mask = mask * 2; }
-    data[bytes - 1] = data[bytes - 1] & (mask - 1);
+    data[bytes - 1] = (data[bytes - 1] as i32 & (mask - 1)) as@ u8;
   }
   return mixInLength(merkleize(padToChunks(data), chunkCount((limit + 7) / 8)), bits);
 }

@@ -37,7 +37,7 @@ string indexed(i32 secret) {
   return "static u8[] SBOX = [3, 1, 4, 1, 5, 9, 2, 6];\n" +
          "export i32 main() {\n" +
          "  i32 secret = " + itoa(secret) + ";\n" +
-         "  return SBOX[secret & 7];\n" +
+         "  return SBOX[secret & 7] as i32;\n" +
          "}\n";
 }
 
@@ -73,7 +73,7 @@ string branching(i32 secret) {
 string swapped(bool other) {
   return "static u8[] SBOX = [3, 1, 4, 1, 5, 9, 2, 6];\n" +
          "export i32 main() {\n" +
-         "  return SBOX[" + (other ? "5" : "2") + "] + SBOX[" + (other ? "2" : "5") + "];\n" +
+         "  return SBOX[" + (other ? "5" : "2") + "] as i32 + SBOX[" + (other ? "2" : "5") + "] as i32;\n" +
          "}\n";
 }
 
@@ -188,7 +188,7 @@ i32 atoiOf(string s) {
   i32 v = 0;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] < 48 || b[i] > 57) { return -1; }
-    v = v * 10 + (b[i] - 48);
+    v = v * 10 + (b[i] as i32 - 48);
   }
   return v;
 }

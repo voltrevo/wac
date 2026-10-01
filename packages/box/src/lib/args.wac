@@ -97,7 +97,7 @@ export struct Args {
 
 export bool has(Args a, i32 flag) {
   u8[] f = a.flags.toBytes();
-  for (i32 i = 0; i < f.len(); i++) { if (f[i] == flag) { return true; } }
+  for (i32 i = 0; i < f.len(); i++) { if (f[i] as i32 == flag) { return true; } }
   return false;
 }
 
@@ -144,7 +144,7 @@ string shortFormOf(string name, string s) {
   // becomes `-n5`. With no `=`, a flag that takes a value picks the next argument up on its own, which
   // is `--lines 5` and is what GNU does too.
   u8[] one = u8[].filled(1, 0);
-  one[0] = letter;
+  one[0] = letter as@ u8;
   string flag = "-" + string.fromBytes(one);
   return eq < 0 ? flag : flag + body.slice(eq + 1, body.len());
 }
@@ -195,7 +195,7 @@ export Args parseList(string[] argv, i32 first, string name) {
     } else {
       i32 k = 1;
       while (k < b.len()) {
-        i32 letter = b[k];
+        i32 letter = b[k] as i32;
         flags = flags + string.fromBytes(slice(b, k, k + 1));
         if (!takesValue(name, letter)) { k++; continue; }
 
@@ -339,7 +339,7 @@ export i32 longToShort(string name, string opt) {
     while (end < table.len() && table.slice(end, end + 1) != ",") { end++; }
     string entry = table.slice(from, end);
     i32 eq = entry.indexOf("=");
-    if (eq > 0 && entry.slice(0, eq) == opt) { return entry.toBytes()[eq + 1]; }
+    if (eq > 0 && entry.slice(0, eq) == opt) { return entry.toBytes()[eq + 1] as i32; }
     from = end + 1;
   }
   return -1;
@@ -416,7 +416,7 @@ export string badNumberMessage(Args a) {
 
 /** One entry of `Args.values`: the letter, then its value. */
 string valueOf(i32 letter, string value) {
-  return string.fromBytes(u8[].filled(1, letter)) + value;
+  return string.fromBytes(u8[].filled(1, letter as@ u8)) + value;
 }
 
 /**
@@ -433,13 +433,13 @@ string valueOf(i32 letter, string value) {
 export string flagValue(Args a, i32 letter) {
   for (i32 i = 0; i < a.values.len(); i++) {
     u8[] b = a.values[i].toBytes();
-    if (b.len() >= 1 && b[0] == letter) { return string.fromBytes(slice(b, 1, b.len())); }
+    if (b.len() >= 1 && b[0] as i32 == letter) { return string.fromBytes(slice(b, 1, b.len())); }
   }
   // From 0, which is safe under both layouts: an applet name never begins with a dash,
   // so `box`'s extra leading argument cannot be mistaken for a flag.
   for (i32 i = 0; i < a.argv.len(); i++) {
     u8[] b = a.argv[i].toBytes();
-    if (b.len() < 2 || b[0] != '-' || b[1] != letter) { continue; }
+    if (b.len() < 2 || b[0] != '-' || b[1] as i32 != letter) { continue; }
     if (b.len() > 2) { return string.fromBytes(slice(b, 2, b.len())); }
   }
   return "";

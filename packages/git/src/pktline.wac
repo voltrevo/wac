@@ -58,7 +58,7 @@ export Pkt readPkt(u8[] b, i32[] pos) {
 
   i32 n = 0;
   for (i32 i = 0; i < 4; i++) {
-    i32 v = hexVal(b[at + i]);
+    i32 v = hexVal(b[at + i] as i32);
     if (v < 0) { return Pkt.Broken("a length header is not four hex digits"); }
     n = n * 16 + v;
   }

@@ -47,7 +47,7 @@ static string FIXTURE = "packages/fs/test/fixtures/image-v1.wacimg";
 
 string oneByte(i32 c) {
   u8[] one = u8[].filled(1, 0);
-  one[0] = c;
+  one[0] = c as@ u8;
   return string.fromBytes(one);
 }
 
@@ -84,7 +84,7 @@ string describe(Fs fs, string[] mounts) {
       if (!st.isDir) {
         FileResult r = fs.readFile(paths[i]);
         for (i32 k = 0; k < r.bytes.len(); k++) {
-          body = body + (k == 0 ? " " : ",") + itoa(r.bytes[k]);
+          body = body + (k == 0 ? " " : ",") + itoa(r.bytes[k] as i32);
         }
       }
       out = out + "  " + (st.isDir ? "d" : "-") + " " + paths[i] + " size=" + itoa64(st.size) +
@@ -152,7 +152,7 @@ Built build(i32 seed) {
     } else {
       i32 len = rng.upto(200);
       u8[] data = u8[].filled(len, 0);
-      for (i32 j = 0; j < len; j++) { data[j] = rng.upto(256); }
+      for (i32 j = 0; j < len; j++) { data[j] = rng.upto(256) as@ u8; }
       fs.writeFile(path, data);
       // Modes and owners are the whole argument for a format of ours rather than tar, so vary them.
       if (rng.upto(2) == 0) { fs.chmod(path, rng.upto(512)); }
@@ -213,7 +213,7 @@ export string test_a_name_that_is_not_text_survives_an_image() {
     "/" + oneByte(0xED) + oneByte(0xA0) + oneByte(0x80)   // a surrogate, which UTF-8 forbids
   ];
   for (i32 i = 0; i < awkward.len(); i++) {
-    t.eqI32(fs.writeFile(awkward[i], [i]).fault, 0, "a byte name writes");
+    t.eqI32(fs.writeFile(awkward[i], [i as@ u8]).fault, 0, "a byte name writes");
   }
   Written w = write(fs);
   Loaded loaded = read(w.bytes, NOW);
@@ -222,7 +222,7 @@ export string test_a_name_that_is_not_text_survives_an_image() {
   for (i32 i = 0; i < awkward.len(); i++) {
     FileResult r = loaded.fs.readFile(awkward[i]);
     t.isTrue(r.ok, "name " + itoa(i) + " came back: " + r.error);
-    if (r.ok) { t.eqI32(r.bytes.len() == 1 ? r.bytes[0] : -1, i, "with its own contents"); }
+    if (r.ok) { t.eqI32(r.bytes.len() == 1 ? r.bytes[0] as i32 : -1, i, "with its own contents"); }
   }
   // And the bytes are canonical for these too, which is where a name normalised on the way through
   // would show.

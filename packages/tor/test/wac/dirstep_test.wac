@@ -49,7 +49,7 @@ export string test_the_sequences_can_show_the_rule(Core core, Cli cli) {
   for (i32 si = 0; si < n; si++) {
     u8[] stored = sequenceStored(cli, si);
     t.isTrue(stored.len() >= 2, "sequence " + itoa(si) + " is a sequence, not one upload");
-    t.eqI32(stored[0], 1, "sequence " + itoa(si) + " was refused from the start");
+    t.eqI32(stored[0] as i32, 1, "sequence " + itoa(si) + " was refused from the start");
     for (i32 pos = 0; pos < stored.len(); pos++) {
       if (stored[pos] == 0) { sawRefusal = true; }
     }
@@ -193,7 +193,7 @@ export string test_a_second_upload_follows_tors_rule(Core core, Cli cli) {
       DirAction a = dirStep(publishRequest(body), docs);
       t.isTrue(a.ready, "each upload is answered");
       bool kept = a.descriptor.len() > 0;
-      t.eqI32(kept ? 1 : 0, wanted[pos], "kept exactly when tor kept it");
+      t.eqI32(kept ? 1 : 0, wanted[pos] as i32, "kept exactly when tor kept it");
       if (kept) {
         docs = filed(docs, a.descriptor, a.blindedKey, 4);
         t.isTrue(contains(a.response, "200"), "and the service is told so");

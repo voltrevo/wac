@@ -30,7 +30,7 @@ import { decoded } from "../../../codec/src/hex.wac";
 /** A deterministic message of `n` bytes; no two lengths share a prefix pattern. */
 u8[] msg(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed * 11 + 3) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 37 + seed * 11 + 3) & 0xFF) as@ u8; }
   return out;
 }
 
@@ -196,12 +196,12 @@ export string test_every_length_through_two_blocks(Core core, Cli cli) {
   Lines lines = Lines.create();
   for (i32 n = 0; n <= 130; n++) {
     u8[] m = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { m[i] = (i * 37 + 11) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { m[i] = ((i * 37 + 11) & 0xFF) as@ u8; }
     claim(lines, 256, m, sha256(m));
   }
   for (i32 n = 0; n <= 260; n++) {
     u8[] m = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { m[i] = (i * 53 + 7) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { m[i] = ((i * 53 + 7) & 0xFF) as@ u8; }
     claim(lines, 512, m, sha512(m));
   }
   t.eqI32(lines.n, 131 + 261, "one claim per length, in both families");
@@ -227,7 +227,7 @@ export string test_random_inputs(Core core, Cli cli) {
     u8[] m = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) {
       s = (s * 1103515245 + 12345) & 2147483647;
-      m[i] = ((s >> 13) & 255) as! i32;
+      m[i] = (((s >> 13) & 255) as! i32) as@ u8;
     }
     claim(lines, 256, m, sha256(m));
     claim(lines, 512, m, sha512(m));

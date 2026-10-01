@@ -68,7 +68,7 @@ export i32 main(Core core, Cli cli) {
         core.warn("gitclone: " + d + " is not a depth");
         return 2;
       }
-      depth = depth * 10 + (digits[i] - '0');
+      depth = depth * 10 + (digits[i] as i32 - '0');
     }
   }
 

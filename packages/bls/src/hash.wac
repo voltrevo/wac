@@ -50,7 +50,7 @@ export u8[] expandMessageXmd(u8[] msg, u8[] dst, i32 len) {
   // DST_prime = DST || I2OSP(len(DST), 1)
   u8[] dstPrime = u8[].filled(dst.len() + 1, 0);
   for (i32 i = 0; i < dst.len(); i++) { dstPrime[i] = dst[i]; }
-  dstPrime[dst.len()] = dst.len();
+  dstPrime[dst.len()] = dst.len() as@ u8;
 
   // msg_prime = Z_pad || msg || I2OSP(len, 2) || I2OSP(0, 1) || DST_prime
   i32 n = SHA256_BLOCK + msg.len() + 2 + 1 + dstPrime.len();
@@ -58,8 +58,8 @@ export u8[] expandMessageXmd(u8[] msg, u8[] dst, i32 len) {
   i32 at = SHA256_BLOCK;                       // Z_pad is already zero
   for (i32 i = 0; i < msg.len(); i++) { msgPrime[at + i] = msg[i]; }
   at += msg.len();
-  msgPrime[at] = (len >> 8) & 0xFF;
-  msgPrime[at + 1] = len & 0xFF;
+  msgPrime[at] = ((len >> 8) & 0xFF) as@ u8;
+  msgPrime[at + 1] = (len & 0xFF) as@ u8;
   at += 2;
   msgPrime[at] = 0;
   at += 1;
@@ -81,7 +81,7 @@ export u8[] expandMessageXmd(u8[] msg, u8[] dst, i32 len) {
   for (i32 round = 2; round <= ell; round++) {
     u8[] block = u8[].filled(SHA256_OUT + 1 + dstPrime.len(), 0);
     for (i32 i = 0; i < SHA256_OUT; i++) { block[i] = b0[i] ^ bi[i]; }
-    block[SHA256_OUT] = round;
+    block[SHA256_OUT] = round as@ u8;
     for (i32 i = 0; i < dstPrime.len(); i++) { block[SHA256_OUT + 1 + i] = dstPrime[i]; }
     bi = sha256(block);
     for (i32 i = 0; i < SHA256_OUT && written < len; i++) { out[written] = bi[i]; written++; }

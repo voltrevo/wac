@@ -102,7 +102,7 @@ export struct Reader {
 
   i32 byte(this) {
     if (!this.need(1)) { return 0; }
-    i32 v = this.src[this.pos];
+    i32 v = this.src[this.pos] as i32;
     this.pos++;
     return v;
   }
@@ -111,8 +111,8 @@ export struct Reader {
 
   i32 u32(this) {
     if (!this.need(4)) { return 0; }
-    i32 v = (this.src[this.pos] << 24) | (this.src[this.pos + 1] << 16)
-          | (this.src[this.pos + 2] << 8) | this.src[this.pos + 3];
+    i32 v = (this.src[this.pos] as i32 << 24) | (this.src[this.pos + 1] as i32 << 16)
+          | (this.src[this.pos + 2] as i32 << 8) | this.src[this.pos + 3] as i32;
     this.pos += 4;
     return v;
   }

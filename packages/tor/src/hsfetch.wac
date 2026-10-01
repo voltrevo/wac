@@ -205,8 +205,8 @@ i32 report(Core core, Cli cli, u8[] second) {
     u8[] v4 = linkSpecifier(points[i].linkSpecifiers, LS_IPV4);
     string where = "?";
     if (v4.len() == 6) {
-      where = itoa(v4[0]) + "." + itoa(v4[1]) + "." + itoa(v4[2]) + "." + itoa(v4[3]) +
-              ":" + itoa((v4[4] * 256) + v4[5]);
+      where = itoa(v4[0] as i32) + "." + itoa(v4[1] as i32) + "." + itoa(v4[2] as i32) + "." + itoa(v4[3] as i32) +
+              ":" + itoa((v4[4] as i32 * 256) + v4[5] as i32);
     }
     cli.write(("introduction-point " + itoa(i) + " at " + where +
                "\n  auth-key   " + hex(points[i].authKey) +
@@ -220,8 +220,8 @@ string hex(u8[] b) {
   u8[] digits = "0123456789abcdef".toBytes();
   u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
-    out[i * 2] = digits[(b[i] >> 4) & 0xF];
-    out[i * 2 + 1] = digits[b[i] & 0xF];
+    out[i * 2] = digits[(b[i] as i32 >> 4) & 0xF];
+    out[i * 2 + 1] = digits[b[i] as i32 & 0xF];
   }
   return string.fromBytes(out);
 }

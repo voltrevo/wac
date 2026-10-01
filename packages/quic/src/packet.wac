@@ -66,7 +66,7 @@ export i32 MAX_CID() { return 20; }
 
 /** Whether the byte at `at` begins a long header. Cheap, and the only question answerable in one byte. */
 export bool isLong(u8[] b, i32 at) {
-  return at >= 0 && at < b.len() && (b[at] & FORM_LONG()) != 0;
+  return at >= 0 && at < b.len() && (b[at] as i32 & FORM_LONG()) != 0;
 }
 
 /** Copy `n` bytes from `at`, or an empty array if they are not all there. */
@@ -102,16 +102,16 @@ LongHeader no() {
  */
 export LongHeader parseLong(u8[] b, i32 at, bool greased) {
   if (at < 0 || at + 7 > b.len()) { return no(); }
-  i32 first = b[at];
+  i32 first = b[at] as i32;
   if ((first & FORM_LONG()) == 0) { return no(); }
   if (!greased && (first & FIXED_BIT()) == 0) { return no(); }
   i32 packetType = (first >> 4) & 3;
 
   i32 version = 0;
-  for (i32 i = 1; i <= 4; i++) { version = (version << 8) | b[at + i]; }
+  for (i32 i = 1; i <= 4; i++) { version = (version << 8) | b[at + i] as i32; }
 
   i32 p = at + 5;
-  i32 dlen = b[p];
+  i32 dlen = b[p] as i32;
   if (dlen > MAX_CID()) { return no(); }
   p++;
   u8[] dcid = slice(b, p, dlen);
@@ -119,7 +119,7 @@ export LongHeader parseLong(u8[] b, i32 at, bool greased) {
   p = p + dlen;
   if (p >= b.len()) { return no(); }
 
-  i32 slen = b[p];
+  i32 slen = b[p] as i32;
   if (slen > MAX_CID()) { return no(); }
   p++;
   u8[] scid = slice(b, p, slen);
@@ -183,8 +183,8 @@ export i32 nextPacketAt(u8[] b, i32 at, bool greased) {
  */
 export u8[] parseShortDcid(u8[] b, i32 at, i32 cidLen, bool greased) {
   if (at < 0 || at >= b.len()) { return u8[](); }
-  if ((b[at] & FORM_LONG()) != 0) { return u8[](); }
-  if (!greased && (b[at] & FIXED_BIT()) == 0) { return u8[](); }
+  if ((b[at] as i32 & FORM_LONG()) != 0) { return u8[](); }
+  if (!greased && (b[at] as i32 & FIXED_BIT()) == 0) { return u8[](); }
   if (cidLen < 0 || cidLen > MAX_CID()) { return u8[](); }
   return slice(b, at + 1, cidLen);
 }
@@ -199,7 +199,7 @@ export u8[] parseShortDcid(u8[] b, i32 at, i32 cidLen, bool greased) {
  */
 export bool isVersionNegotiation(u8[] b, i32 at) {
   if (at < 0 || at + 5 > b.len()) { return false; }
-  if ((b[at] & FORM_LONG()) == 0) { return false; }
+  if ((b[at] as i32 & FORM_LONG()) == 0) { return false; }
   return b[at + 1] == 0 && b[at + 2] == 0 && b[at + 3] == 0 && b[at + 4] == 0;
 }
 
@@ -217,11 +217,11 @@ export i32[] negotiationVersions(u8[] b, i32 at) {
   if (!isVersionNegotiation(b, at)) { return i32[](); }
   i32 p = at + 5;
   if (p >= b.len()) { return i32[](); }
-  i32 dlen = b[p];
+  i32 dlen = b[p] as i32;
   if (dlen > MAX_CID()) { return i32[](); }
   p = p + 1 + dlen;
   if (p >= b.len()) { return i32[](); }
-  i32 slen = b[p];
+  i32 slen = b[p] as i32;
   if (slen > MAX_CID()) { return i32[](); }
   p = p + 1 + slen;
   if (p > b.len()) { return i32[](); }
@@ -232,7 +232,7 @@ export i32[] negotiationVersions(u8[] b, i32 at) {
   i32[] out = i32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) {
     i32 v = 0;
-    for (i32 k = 0; k < 4; k++) { v = (v << 8) | b[p + i * 4 + k]; }
+    for (i32 k = 0; k < 4; k++) { v = (v << 8) | b[p + i * 4 + k] as i32; }
     out[i] = v;
   }
   return out;

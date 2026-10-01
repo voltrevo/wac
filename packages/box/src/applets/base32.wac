@@ -50,7 +50,7 @@ export i32 base32(Core core, Cli cli, Fs fs, Args a) {
 u8[] withoutSpace(u8[] text) {
   Buf out = Buf.create();
   for (i32 i = 0; i < text.len(); i++) {
-    i32 c = text[i];
+    i32 c = text[i] as i32;
     if (c == 32 || c == 9 || c == 10 || c == 13) { continue; }
     out.push(c);
   }

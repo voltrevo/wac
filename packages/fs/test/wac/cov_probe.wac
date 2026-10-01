@@ -47,7 +47,7 @@ import { Proc, Procs, SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signa
 
 u8[] fakeRandom(i32 n) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 7 + 11) & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 7 + 11) & 255) as@ u8; }
   return out;
 }
 
@@ -812,7 +812,7 @@ export string wireOps() {
   // A request is its opcode and nothing else until an argument is pushed onto it — the one line
   // that decides a frame's first byte, which every `ASK_*` above depends on.
   say(out, "request " + itoa(request(ASK_STAT()).take().len()) +
-           " " + itoa(request(ASK_STAT()).take()[0]));
+           " " + itoa(request(ASK_STAT()).take()[0] as i32));
 
   // The opcodes, which are a contract between two processes: a child sends a number and its parent
   // switches on it. `fs_test.wac` pins the values; touching them here is what measures them.

@@ -137,7 +137,7 @@ export Object parseFramed(u8[] raw) {
   if (space < 0) { return Object.Unreadable("no space in the header"); }
 
   Buf w = Buf.create();
-  for (i32 i = 0; i < space; i++) { w.push(raw[i]); }
+  for (i32 i = 0; i < space; i++) { w.push(raw[i] as i32); }
   Kind? kind = kindOf(w.toStr());
   if (kind is null) { return Object.Unreadable("unknown object kind '" + w.toStr() + "'"); }
 
@@ -146,7 +146,7 @@ export Object parseFramed(u8[] raw) {
   // silently — which for a tree is a shorter list of entries rather than an error.
   i32 want = 0;
   for (i32 i = space + 1; i < nul; i++) {
-    i32 d = raw[i] - 48;
+    i32 d = raw[i] as i32 - 48;
     if (d < 0 || d > 9) { return Object.Unreadable("length is not decimal"); }
     want = want * 10 + d;
   }

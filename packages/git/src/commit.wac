@@ -70,7 +70,7 @@ i32 lineEnd(u8[] b, i32 from) {
 
 string slice(u8[] b, i32 from, i32 to) {
   Buf out = Buf.create();
-  for (i32 i = from; i < to; i++) { out.push(b[i]); }
+  for (i32 i = from; i < to; i++) { out.push(b[i] as i32); }
   return out.toStr();
 }
 
@@ -96,7 +96,7 @@ Who? who(string s) {
   i64 secs = 0;
   bool any = false;
   for (i32 i = prevSp + 1; i < lastSp; i++) {
-    i32 d = b[i] - 48;
+    i32 d = b[i] as i32 - 48;
     if (d < 0 || d > 9) { return null; }
     secs = secs * 10 + (d as i64);
     any = true;
@@ -174,7 +174,7 @@ export Parsed parseCommit(u8[] content) {
   if (committer is null) { return Parsed.Malformed("no committer"); }
 
   Buf msg = Buf.create();
-  for (i32 i = at; i < content.len(); i++) { msg.push(content[i]); }
+  for (i32 i = at; i < content.len(); i++) { msg.push(content[i] as i32); }
   return Parsed.Understood(Commit(tree!, parents, author!, committer!, msg.toStr()));
 }
 
@@ -241,7 +241,7 @@ export ParsedTag parseTag(u8[] content) {
   if (kindWord == "") { return ParsedTag.Unreadable("no type"); }
 
   Buf msg = Buf.create();
-  for (i32 i = at; i < content.len(); i++) { msg.push(content[i]); }
+  for (i32 i = at; i < content.len(); i++) { msg.push(content[i] as i32); }
   return ParsedTag.Annotated(Tag(object!, kindWord, name, msg.toStr()));
 }
 

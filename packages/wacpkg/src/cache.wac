@@ -62,7 +62,7 @@ export string escapeRepo(string url) {
   u8[] b = url.toBytes();
   string out = "";
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     bool plain = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
                  || c == '.' || c == '_' || c == '-';
     if (plain) { out = out + string.fromCodepoint(c); continue; }
@@ -84,10 +84,10 @@ export string unescapeRepo(string name) {
   Buf out = Buf.create();
   i32 i = 0;
   while (i < b.len()) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c == '!') {
       if (i + 1 >= b.len()) { return ""; }
-      i32 n = b[i + 1];
+      i32 n = b[i + 1] as i32;
       if (n < 'a' || n > 'z') { return ""; }
       out.push(n - 32);
       i = i + 2;
@@ -95,8 +95,8 @@ export string unescapeRepo(string name) {
     }
     if (c == '%') {
       if (i + 2 >= b.len()) { return ""; }
-      i32 hi = hexVal(b[i + 1]);
-      i32 lo = hexVal(b[i + 2]);
+      i32 hi = hexVal(b[i + 1] as i32);
+      i32 lo = hexVal(b[i + 2] as i32);
       if (hi < 0 || lo < 0) { return ""; }
       out.push((hi << 4) | lo);
       i = i + 3;

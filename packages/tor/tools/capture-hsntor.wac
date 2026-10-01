@@ -88,8 +88,8 @@ string[] words(u8[] bytes) {
     if (space && start >= 0) {
       u8[] w = u8[].filled(i - start, 0);
       for (i32 j = 0; j < w.len(); j++) {
-        i32 c = bytes[start + j];
-        w[j] = c >= 'A' && c <= 'Z' ? c + 32 : c;
+        i32 c = bytes[start + j] as i32;
+        w[j] = (c >= 'A' && c <= 'Z' ? c + 32 : c) as@ u8;
       }
       out[at] = string.fromBytes(w);
       at = at + 1;
@@ -123,7 +123,7 @@ string[] runN(Core core, Cli cli, string prog, i32 want, string[] args) {
     if (lines[i].len() != 64) { ok = false; }
     u8[] b = lines[i].toBytes();
     for (i32 j = 0; j < b.len(); j++) {
-      if (!isHexDigit(b[j])) { ok = false; }
+      if (!isHexDigit(b[j] as i32)) { ok = false; }
     }
   }
   if (!ok) {

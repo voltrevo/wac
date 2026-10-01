@@ -51,7 +51,7 @@ LitHeader readLitHeader(u8[] src, i32 at, i32 end) {
   // inside the frame would otherwise be read happily, taking its sizes from whatever the next
   // block begins with.
   if (at >= end) { trap; }
-  i32 b0 = src[at];
+  i32 b0 = src[at] as i32;
   i32 kind = b0 & 3;
   i32 fmt = (b0 >>> 2) & 3;
 
@@ -63,37 +63,37 @@ LitHeader readLitHeader(u8[] src, i32 at, i32 end) {
     }
     if (fmt == 1) {
       if (at + 1 >= end) { trap; }
-      i32 regen = (b0 >>> 4) | (src[at + 1] << 4);
+      i32 regen = (b0 >>> 4) | (src[at + 1] as i32 << 4);
       return LitHeader(kind, 2, regen, kind == 1 ? 1 : regen, 1);
     }
     if (at + 2 >= end) { trap; }
-    i32 regen = (b0 >>> 4) | (src[at + 1] << 4) | (src[at + 2] << 12);
+    i32 regen = (b0 >>> 4) | (src[at + 1] as i32 << 4) | (src[at + 2] as i32 << 12);
     return LitHeader(kind, 3, regen, kind == 1 ? 1 : regen, 1);
   }
 
   i32 streams = fmt == 0 ? 1 : 4;
   if (fmt <= 1) {
     if (at + 2 >= end) { trap; }
-    i32 b1 = src[at + 1];
-    i32 b2 = src[at + 2];
+    i32 b1 = src[at + 1] as i32;
+    i32 b2 = src[at + 2] as i32;
     i32 regen = ((b0 >>> 4) | (b1 << 4)) & 1023;
     i32 comp = ((b1 >>> 6) | (b2 << 2)) & 1023;
     return LitHeader(kind, 3, regen, comp, streams);
   }
   if (fmt == 2) {
     if (at + 3 >= end) { trap; }
-    i32 b1 = src[at + 1];
-    i32 b2 = src[at + 2];
-    i32 b3 = src[at + 3];
+    i32 b1 = src[at + 1] as i32;
+    i32 b2 = src[at + 2] as i32;
+    i32 b3 = src[at + 3] as i32;
     i32 regen = ((b0 >>> 4) | (b1 << 4) | (b2 << 12)) & 16383;
     i32 comp = ((b2 >>> 2) | (b3 << 6)) & 16383;
     return LitHeader(kind, 4, regen, comp, streams);
   }
   if (at + 4 >= end) { trap; }
-  i32 b1 = src[at + 1];
-  i32 b2 = src[at + 2];
-  i32 b3 = src[at + 3];
-  i32 b4 = src[at + 4];
+  i32 b1 = src[at + 1] as i32;
+  i32 b2 = src[at + 2] as i32;
+  i32 b3 = src[at + 3] as i32;
+  i32 b4 = src[at + 4] as i32;
   i32 regen = ((b0 >>> 4) | (b1 << 4) | (b2 << 12)) & 262143;
   i32 comp = ((b2 >>> 6) | (b3 << 2) | (b4 << 10)) & 262143;
   return LitHeader(kind, 5, regen, comp, streams);
@@ -119,9 +119,9 @@ export void decodeCompressed(u8[] src, i32 at, i32 size, Buf out, Decoder d) {
   } else if (h.kind == 1) {
     // An RLE section always occupies one byte, so `p + 1 > end` above has already refused a
     // block that stops here.
-    i32 v = src[p];
+    i32 v = src[p] as i32;
     literals = u8[].filled(h.regenSize, 0);
-    literals.fill(v, 0, h.regenSize);
+    literals.fill(v as@ u8, 0, h.regenSize);
   } else if (h.kind == 2) {
     // The tree comes with the block, and is what a later treeless block will reuse.
     HuffTable t = readTable(src, p);

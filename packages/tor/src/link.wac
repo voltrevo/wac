@@ -33,7 +33,7 @@ Step unpack(u8[] r) {
   i32 at = 0;
   u8[][] parts = u8[][].filled(3, u8[]());
   for (i32 i = 0; i < 3; i++) {
-    i32 n = (r[at] << 24) | (r[at + 1] << 16) | (r[at + 2] << 8) | r[at + 3];
+    i32 n = (r[at] as i32 << 24) | (r[at + 1] as i32 << 16) | (r[at + 2] as i32 << 8) | r[at + 3] as i32;
     parts[i] = sliceOf(r, at + 4, at + 4 + n);
     at = at + 4 + n;
   }
@@ -346,12 +346,12 @@ export u8[] ipv4Of(string host) {
   for (i32 i = 0; i <= b.len(); i++) {
     if (i == b.len() || b[i] == '.') {
       if (digits == 0 || v > 255 || part > 3) { return [127, 0, 0, 1] as u8[]; }
-      out[part] = v;
+      out[part] = v as@ u8;
       part++;
       v = 0;
       digits = 0;
     } else if (b[i] >= '0' && b[i] <= '9') {
-      v = v * 10 + (b[i] - '0');
+      v = v * 10 + (b[i] as i32 - '0');
       digits++;
     } else { return [127, 0, 0, 1] as u8[]; }
   }
@@ -516,7 +516,7 @@ export string itoa(i32 v) {
   u8[] buf = u8[].filled(12, 0);
   i32 n = 0;
   while (x > 0) {
-    buf[n] = '0' + (x % 10);
+    buf[n] = ('0' + (x % 10)) as@ u8;
     n++;
     x = x / 10;
   }
@@ -556,10 +556,10 @@ export u8[] fromHex(string s) {
   if (h.len() % 2 != 0) { return u8[](); }
   u8[] out = u8[].filled(h.len() / 2, 0);
   for (i32 i = 0; i < out.len(); i++) {
-    i32 hi = hexDigit(h[2 * i]);
-    i32 lo = hexDigit(h[2 * i + 1]);
+    i32 hi = hexDigit(h[2 * i] as i32);
+    i32 lo = hexDigit(h[2 * i + 1] as i32);
     if (hi < 0 || lo < 0) { return u8[](); }
-    out[i] = hi * 16 + lo;
+    out[i] = (hi * 16 + lo) as@ u8;
   }
   return out;
 }

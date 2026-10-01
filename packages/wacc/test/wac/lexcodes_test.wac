@@ -89,7 +89,7 @@ export string test_lex_errors_the_code_table_itself_is_sound(Core core, Cli cli)
   for (i32 i = 0; i < lines2.len(); i++) {
     string l = trimmed(lines2[i]);
     if (!startsWith(l, "export i32 err")) { continue; }
-    i32 c = l.toBytes()[14];
+    i32 c = l.toBytes()[14] as i32;
     if (c < 'A' || c > 'Z') { continue; }
     i32 ret = l.indexOf("return ");
     if (ret < 0) { continue; }

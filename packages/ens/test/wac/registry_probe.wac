@@ -11,14 +11,14 @@ u8[][] unpack(u8[] packed) {
   i32 count = 0;
   i32 at = 0;
   while (at < packed.len()) {
-    i32 n = packed[at] | (packed[at + 1] << 8) | (packed[at + 2] << 16) | (packed[at + 3] << 24);
+    i32 n = packed[at] as i32 | (packed[at + 1] as i32 << 8) | (packed[at + 2] as i32 << 16) | (packed[at + 3] as i32 << 24);
     at = at + 4 + n;
     count++;
   }
   u8[][] out = u8[][].filled(count, u8[]());
   at = 0;
   for (i32 i = 0; i < count; i++) {
-    i32 n = packed[at] | (packed[at + 1] << 8) | (packed[at + 2] << 16) | (packed[at + 3] << 24);
+    i32 n = packed[at] as i32 | (packed[at + 1] as i32 << 8) | (packed[at + 2] as i32 << 16) | (packed[at + 3] as i32 << 24);
     u8[] node = u8[].filled(n, 0);
     for (i32 j = 0; j < n; j++) { node[j] = packed[at + 4 + j]; }
     out[i] = node;

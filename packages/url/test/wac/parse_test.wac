@@ -59,7 +59,7 @@ string href(string input, string base) {
 /** One byte as a string, for the control characters a wac literal has no escape for. */
 string oneByte(i32 c) {
   u8[] one = u8[].filled(1, 0);
-  one[0] = c;
+  one[0] = c as@ u8;
   return string.fromBytes(one);
 }
 

@@ -45,7 +45,7 @@ u8[] scid() { return decoded("a1b2c3d4"); }
 /** Fixed randomness, so a failing run is the same failing run twice. */
 u8[] ramp(i32 n, i32 mul, i32 add) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * mul + add) & 255) as@ u8; }
   return out;
 }
 u8[] scalar() { return ramp(32, 7, 11); }
@@ -167,8 +167,8 @@ u8[] fieldOf(string text, string name) {
 }
 
 i32 hexValue(string c) {
-  if (c >= "0" && c <= "9") { return c.toBytes()[0] - '0'; }
-  if (c >= "a" && c <= "f") { return c.toBytes()[0] - 'a' + 10; }
+  if (c >= "0" && c <= "9") { return c.toBytes()[0] as i32 - '0'; }
+  if (c >= "a" && c <= "f") { return c.toBytes()[0] as i32 - 'a' + 10; }
   return -1;
 }
 

@@ -255,7 +255,7 @@ string jsNumber(f64 x) { return ftoa(x); }
 string quoted(u8[] bytes) {
   string out = "\"";
   for (i32 i = 0; i < bytes.len(); i++) {
-    i32 c = bytes[i];
+    i32 c = bytes[i] as i32;
     if (c == '"') { out = out + "\\\""; }
     else if (c == '\\') { out = out + "\\\\"; }
     else if (c == 8) { out = out + "\\b"; }
@@ -276,6 +276,6 @@ string twoHex(i32 c) {
 
 string oneByte(i32 c) {
   u8[] one = u8[].filled(1, 0);
-  one[0] = c;
+  one[0] = c as@ u8;
   return string.fromBytes(one);
 }

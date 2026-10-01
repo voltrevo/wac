@@ -100,8 +100,8 @@ bool contains(string text, string needle) {
 string hexName(u8[] b) {
   string out = "";
   for (i32 i = 0; i < b.len(); i++) {
-    i32 hi = (b[i] >> 4) & 15;
-    i32 lo = b[i] & 15;
+    i32 hi = (b[i] as i32 >> 4) & 15;
+    i32 lo = b[i] as i32 & 15;
     out = out + "0123456789abcdef".slice(hi, hi + 1) + "0123456789abcdef".slice(lo, lo + 1);
   }
   return out;
@@ -110,7 +110,7 @@ string hexName(u8[] b) {
 u8[] decodedName(string hex) {
   u8[] out = u8[].filled(hex.len() / 2, 0);
   u8[] b = hex.toBytes();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = (nib(b[i * 2]) << 4) | nib(b[i * 2 + 1]); }
+  for (i32 i = 0; i < out.len(); i++) { out[i] = ((nib(b[i * 2] as i32) << 4) | nib(b[i * 2 + 1] as i32)) as@ u8; }
   return out;
 }
 
@@ -120,7 +120,7 @@ i32 nib(i32 c) {
   return c - 'A' + 10;
 }
 
-i32 packCount(u8[] p) { return (p[8] << 24) | (p[9] << 16) | (p[10] << 8) | p[11]; }
+i32 packCount(u8[] p) { return (p[8] as i32 << 24) | (p[9] as i32 << 16) | (p[10] as i32 << 8) | p[11] as i32; }
 
 Kind kindOfCode(i32 k) {
   return k == 1 ? Kind.Commit : k == 2 ? Kind.Tree : k == 4 ? Kind.Tag : Kind.Blob;
@@ -253,7 +253,7 @@ i64 atoi64(string s) {
   for (i32 i = at; i < s.len(); i++) {
     string c = s.slice(i, i + 1);
     if (c < "0" || c > "9") { break; }
-    v = v * 10 + ((c.toBytes()[0] - '0') as i64);
+    v = v * 10 + ((c.toBytes()[0] as i32 - '0') as i64);
   }
   return v;
 }

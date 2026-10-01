@@ -391,8 +391,8 @@ export string test_a_family_named_by_fingerprint_resolves() {
   T t = T.create();
   Relay a = mk("alpha", "10.0.0.1", 100, noFlags());
   Relay b = mk("beta", "20.0.0.1", 100, noFlags());
-  for (i32 i = 0; i < 20; i++) { a.identity[i] = i; }
-  for (i32 i = 0; i < 20; i++) { b.identity[i] = 100 + i; }
+  for (i32 i = 0; i < 20; i++) { a.identity[i] = i as@ u8; }
+  for (i32 i = 0; i < 20; i++) { b.identity[i] = (100 + i) as@ u8; }
   // A consensus writes `$FINGERPRINT`, sometimes with `=name` or `~name` after it.
   a.family = ["$" + hexOf(b.identity) + "=beta"];
   b.family = ["$" + hexOf(a.identity)];
@@ -457,8 +457,8 @@ string hexOf(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();
   u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
-    out[i * 2] = digits[(b[i] >> 4) & 15];
-    out[i * 2 + 1] = digits[b[i] & 15];
+    out[i * 2] = digits[(b[i] as i32 >> 4) & 15];
+    out[i * 2 + 1] = digits[b[i] as i32 & 15];
   }
   return string.fromBytes(out);
 }

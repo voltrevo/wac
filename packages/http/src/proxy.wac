@@ -84,7 +84,7 @@ export ProxyAt parseProxy(string url) {
   i32 port = 0;
   u8[] digits = portText.toBytes();
   for (i32 i = 0; i < digits.len(); i++) {
-    i32 c = digits[i];
+    i32 c = digits[i] as i32;
     if (c < '0' || c > '9') { return ProxyAt(false, "", 0); }
     port = port * 10 + (c - '0');
     if (port > 65535) { return ProxyAt(false, "", 0); }
@@ -241,7 +241,7 @@ i32 statusOf(u8[] b) {
   i32 v = 0;
   for (i32 i = at; i < at + 3; i++) {
     if (b[i] < '0' || b[i] > '9') { return -1; }
-    v = v * 10 + (b[i] - '0');
+    v = v * 10 + (b[i] as i32 - '0');
   }
   return v;
 }
@@ -251,7 +251,7 @@ string firstLine(u8[] b) {
   Buf out = Buf.create();
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] == 13 || b[i] == 10) { break; }
-    out.push(b[i]);
+    out.push(b[i] as i32);
   }
   return out.toStr();
 }

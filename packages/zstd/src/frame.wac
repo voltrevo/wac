@@ -41,7 +41,7 @@ export struct Reader {
 
   i32 byte(this) {
     if (this.pos >= this.src.len()) { trap; }
-    i32 v = this.src[this.pos];
+    i32 v = this.src[this.pos] as i32;
     this.pos++;
     return v;
   }

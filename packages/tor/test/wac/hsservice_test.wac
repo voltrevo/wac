@@ -280,7 +280,7 @@ u8[] rebuilt(u8[] cell, u8[] kh, u8[] seed, i32 keyType, i32 sigLen) {
   b.push(keyType);
   b.push(0);
   b.push(32);
-  for (i32 i = 3; i < 35; i++) { b.push(cell[i]); }
+  for (i32 i = 3; i < 35; i++) { b.push(cell[i] as i32); }
   b.push(0);
   u8[] macSpan = b.bytes();
   b.pushAll(hsMac(kh, macSpan));

@@ -59,7 +59,7 @@ i32 numberAfter(string text, string after) {
   i32 n = 0;
   i32 digits = 0;
   while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
-    n = n * 10 + (b[i] - '0');
+    n = n * 10 + (b[i] as i32 - '0');
     digits = digits + 1;
     i = i + 1;
   }

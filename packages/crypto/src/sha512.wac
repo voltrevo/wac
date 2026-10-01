@@ -157,7 +157,7 @@ u8[] serialize(u64[] h, i32 bytes) {
   for (i32 i = 0; i < bytes; i++) {
     u64 word = h[i / 8];
     u64 shift = ((7 - (i % 8)) * 8) as! u64;
-    out[i] = ((word >> shift) & 255) as! i32;
+    out[i] = (((word >> shift) & 255) as! i32) as@ u8;
   }
   return out;
 }

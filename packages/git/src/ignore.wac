@@ -120,7 +120,7 @@ export Vec<Rule> parseIgnore(u8[] text, string base) {
     }
 
     Buf p = Buf.create();
-    for (i32 i = from; i < stop; i++) { p.push(text[i]); }
+    for (i32 i = from; i < stop; i++) { p.push(text[i] as i32); }
     out.push(Rule(p.toStr(), negated, dirOnly, anchored, base));
   }
   return out;
@@ -148,10 +148,10 @@ bool inClass(u8[] pat, i32 at, i32 close, i32 c) {
   while (i < close - 1) {
     // A range, unless the `-` is last.
     if (i + 2 < close - 1 && pat[i + 1] == '-') {
-      if (c >= pat[i] && c <= pat[i + 2]) { hit = true; }
+      if (c >= pat[i] as i32 && c <= pat[i + 2] as i32) { hit = true; }
       i = i + 3;
     } else {
-      if (pat[i] == c) { hit = true; }
+      if (pat[i] as i32 == c) { hit = true; }
       i = i + 1;
     }
   }
@@ -169,7 +169,7 @@ bool matchFrom(u8[] pat, i32 p, u8[] name, i32 n) {
   i32 i = p;
   i32 j = n;
   while (i < pat.len()) {
-    i32 c = pat[i];
+    i32 c = pat[i] as i32;
     if (c == '*') {
       bool doubled = i + 1 < pat.len() && pat[i + 1] == '*';
       if (doubled) {
@@ -201,12 +201,12 @@ bool matchFrom(u8[] pat, i32 p, u8[] name, i32 n) {
       i32 close = classEnd(pat, i);
       if (close < 0) {
         // An unclosed `[` is a literal, which is what git does rather than refusing the file.
-        if (name[j] != c) { return false; }
+        if (name[j] as i32 != c) { return false; }
         i = i + 1;
         j = j + 1;
         continue;
       }
-      if (name[j] == '/' || !inClass(pat, i, close, name[j])) { return false; }
+      if (name[j] == '/' || !inClass(pat, i, close, name[j] as i32)) { return false; }
       i = close;
       j = j + 1;
       continue;
@@ -218,7 +218,7 @@ bool matchFrom(u8[] pat, i32 p, u8[] name, i32 n) {
       j = j + 1;
       continue;
     }
-    if (name[j] != c) { return false; }
+    if (name[j] as i32 != c) { return false; }
     i = i + 1;
     j = j + 1;
   }
@@ -282,7 +282,7 @@ export bool ignored(const Vec<Rule> rules, string path, bool isDir) {
     i32 cut = from;
     while (cut < p.len() && p[cut] != '/') { cut = cut + 1; }
     Buf prefix = Buf.create();
-    for (i32 i = 0; i < cut; i++) { prefix.push(p[i]); }
+    for (i32 i = 0; i < cut; i++) { prefix.push(p[i] as i32); }
     string sub = prefix.toStr();
     bool subIsDir = cut < p.len() ? true : isDir;
 

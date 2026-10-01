@@ -306,7 +306,7 @@ export bool streamWhole(u8[] payload) { return cryptoStream(payload).whole; }
 export i32 streamByte(u8[] payload, i32 i) {
   u8[] d = cryptoStream(payload).data;
   if (i < 0 || i >= d.len()) { return -1; }
-  return d[i];
+  return d[i] as i32;
 }
 
 // ── STREAM reassembly, which a fourteen-byte echo never exercises ─────────────

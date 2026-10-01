@@ -50,7 +50,7 @@ bool carriesKeyedName(string line) {
   u8[] b = line.toBytes();
   for (i32 i = 1; i < b.len(); i++) {
     if (b[i] != '@') { continue; }
-    i32 c = b[i - 1];
+    i32 c = b[i - 1] as i32;
     if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
       return true;
     }

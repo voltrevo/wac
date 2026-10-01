@@ -93,9 +93,9 @@ export string arithNotImplemented(string text) {
       // digit is a name byte because `x1` is a name. So the run is walked back to its first character,
       // which a number cannot start with.
       i32 k = i - 1;
-      while (k >= 0 && nameByte(s[k])) { k = k - 1; }
-      bool before = k < i - 1 && nameStart(s[k + 1]);
-      bool after = i + 2 < s.len() && nameStart(s[i + 2]);
+      while (k >= 0 && nameByte(s[k] as i32)) { k = k - 1; }
+      bool before = k < i - 1 && nameStart(s[k + 1] as i32);
+      bool after = i + 2 < s.len() && nameStart(s[i + 2] as i32);
       if (before || after) { return s[i] == '+' ? "++" : "--"; }
     }
   }
@@ -109,7 +109,7 @@ export string arithNotImplemented(string text) {
     if (j >= 0 && (s[j] == '+' || s[j] == '-' || s[j] == '*' || s[j] == '/' || s[j] == '%' ||
                    s[j] == '&' || s[j] == '|' || s[j] == '^')) { j = j - 1; }
     while (j >= 0 && s[j] == ' ') { j = j - 1; }
-    if (j >= 0 && nameByte(s[j])) { return "="; }
+    if (j >= 0 && nameByte(s[j] as i32)) { return "="; }
   }
   return "";
 }
@@ -339,13 +339,13 @@ i64 parsePrimary(Arith a, i32 op) {
     return v;
   }
 
-  i32 c = a.src[a.at];
+  i32 c = a.src[a.at] as i32;
   if (c >= 0x30 && c <= 0x39) {
     // **Accumulated in 64 bits**, which is what bash's arithmetic is: `9223372036854775807` used to
     // come back as `-1` because the digits were folded into an `i32`.
     i64 v = 0 as i64;
     while (a.at < a.src.len() && a.src[a.at] >= 0x30 && a.src[a.at] <= 0x39) {
-      v = v * 10 as i64 + ((a.src[a.at] - 0x30) as i64);
+      v = v * 10 as i64 + ((a.src[a.at] as i32 - 0x30) as i64);
       a.at++;
     }
     return v;

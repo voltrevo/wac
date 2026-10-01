@@ -50,7 +50,7 @@ string field(string line, i32 n) {
 
 i32 numOf(string s) {
   i32 v = 0;
-  for (i32 i = 0; i < s.len(); i++) { v = v * 10 + (s.toBytes()[i] - '0'); }
+  for (i32 i = 0; i < s.len(); i++) { v = v * 10 + (s.toBytes()[i] as i32 - '0'); }
   return v;
 }
 

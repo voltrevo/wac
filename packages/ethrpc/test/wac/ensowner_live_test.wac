@@ -53,13 +53,13 @@ string hexPlusOne(string word) {
   i32 carry = 1;
   string out = "";
   for (i32 i = digits.len() - 1; i >= 0; i--) {
-    i32 c = digits[i];
+    i32 c = digits[i] as i32;
     i32 v = c >= '0' && c <= '9' ? c - '0' : (c >= 'a' && c <= 'f' ? c - 'a' + 10 : c - 'A' + 10);
     i32 sum = v + carry;
     carry = sum > 15 ? 1 : 0;
     i32 low = sum & 15;
-    string d = low < 10 ? string.fromBytes(['0' + low])
-                        : string.fromBytes(['a' + (low - 10)]);
+    string d = low < 10 ? string.fromBytes([('0' + low) as@ u8])
+                        : string.fromBytes([('a' + (low - 10)) as@ u8]);
     out = d + out;
   }
   return "0x" + out;

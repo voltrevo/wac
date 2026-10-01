@@ -240,7 +240,7 @@ export u8[] feToBytes(i64[] hIn) {
       i32 bit = ((v >> b) & 1) as! i32;
       i32 byteIdx = (bitPos + b) / 8;
       if (byteIdx < 32) {
-        out[byteIdx] = out[byteIdx] | (bit << ((bitPos + b) % 8));
+        out[byteIdx] = (out[byteIdx] as i32 | (bit << ((bitPos + b) % 8))) as@ u8;
       }
     }
     bitPos += width;
@@ -338,7 +338,7 @@ export i32 feEquals(i64[] a, i64[] b) {
   u8[] x = feToBytes(a);
   u8[] y = feToBytes(b);
   i32 diff = 0;
-  for (i32 i = 0; i < 32; i++) { diff = diff | (x[i] ^ y[i]); }
+  for (i32 i = 0; i < 32; i++) { diff = diff | (x[i] as i32 ^ y[i] as i32); }
   return diff == 0 ? 1 : 0;
 }
 
@@ -351,7 +351,7 @@ export i32 feIsZero(i64[] a) { return feEquals(a, feZero()); }
  * -x differ in that bit for every x except zero, which is what lets a compressed point
  * carry the sign of its x-coordinate in one bit.
  */
-export i32 feIsNegative(i64[] a) { return feToBytes(a)[0] & 1; }
+export i32 feIsNegative(i64[] a) { return feToBytes(a)[0] as i32 & 1; }
 
 /**
  * a^((p-5)/8), the exponent square-root recovery needs.

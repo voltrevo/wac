@@ -81,10 +81,10 @@ export string test_the_signature_is_over_the_span_and_by_the_signing_key(Core co
   // chutney authority's own document, so this is not a rule invented here.
   i32 end = signedLength(cons);
   t.isTrue(end > 0, "the document announces its signature");
-  t.eqI32(cons[end - 1], 32, "the span ends on the space after directory-signature");
+  t.eqI32(cons[end - 1] as i32, 32, "the span ends on the space after directory-signature");
 
   // The fingerprints naming the signer sit outside the span, as in a vote.
-  t.neI32(cons[end], 10, "the fingerprints follow the space");
+  t.neI32(cons[end] as i32, 10, "the fingerprints follow the space");
   return t.report();
 }
 

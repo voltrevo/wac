@@ -66,7 +66,7 @@ export string test_a_real_quic_server_reads_a_stream_this_client_opened(Core cor
   u8[] packet = streamPacket(reply, dcid(), scid(), NAME, 0, body, true, 0);
   t.isTrue(packet.len() > 0, "the client produced a packet at all");
   if (packet.len() > 0) {
-    t.eqI32(packet[0] & 0x80, 0, "and it is a short header");
+    t.eqI32(packet[0] as i32 & 0x80, 0, "and it is a short header");
   }
   cli.sendTo(sock.handle, "127.0.0.1", s.port, packet).wait();
 

@@ -17,7 +17,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 export i32 cut(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string d = flagValue(a, 'd');
-  i32 delim = d == "" ? '\t' : d.toBytes()[0];
+  i32 delim = d == "" ? '\t' : d.toBytes()[0] as i32;
   // **`-b` and `-c` are the same selection over bytes**, which in the C locale is what a character is —
   // and this repo compares in the C locale everywhere. They were refused as unimplemented; the list
   // parser is the only thing they needed.
@@ -54,7 +54,7 @@ export i32 cut(Core core, Cli cli, Fs fs, Args a) {
  */
 u8[] fieldsOf(u8[] line, i32 delim, Ranges want) {
   bool hasDelim = false;
-  for (i32 i = 0; i < line.len(); i++) { if (line[i] == delim) { hasDelim = true; } }
+  for (i32 i = 0; i < line.len(); i++) { if (line[i] as i32 == delim) { hasDelim = true; } }
   if (!hasDelim) { return line; }
 
   Buf out = Buf.create();
@@ -62,7 +62,7 @@ u8[] fieldsOf(u8[] line, i32 delim, Ranges want) {
   i32 start = 0;
   bool wrote = false;
   for (i32 i = 0; i <= line.len(); i++) {
-    bool end = i == line.len() || line[i] == delim;
+    bool end = i == line.len() || line[i] as i32 == delim;
     if (!end) { continue; }
     if (want.has(n)) {
       if (wrote) { out.push(delim); }
@@ -79,7 +79,7 @@ u8[] fieldsOf(u8[] line, i32 delim, Ranges want) {
 u8[] bytesOf(u8[] line, Ranges want) {
   Buf out = Buf.create();
   for (i32 i = 0; i < line.len(); i++) {
-    if (want.has(i + 1)) { out.push(line[i]); }
+    if (want.has(i + 1)) { out.push(line[i] as i32); }
   }
   return out.take();
 }

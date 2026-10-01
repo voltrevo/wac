@@ -32,10 +32,10 @@ f32 parse32(string s) { return atof32Span(s.toBytes(), 0, s.len()); }
 string bits32(f32 x) {
   u32 b = f32.toBits(x);
   u8[] out = u8[].filled(4, 0);
-  out[0] = ((b >> 24) & 255) as@ i32;
-  out[1] = ((b >> 16) & 255) as@ i32;
-  out[2] = ((b >> 8) & 255) as@ i32;
-  out[3] = (b & 255) as@ i32;
+  out[0] = (((b >> 24) & 255) as@ i32) as@ u8;
+  out[1] = (((b >> 16) & 255) as@ i32) as@ u8;
+  out[2] = (((b >> 8) & 255) as@ i32) as@ u8;
+  out[3] = ((b & 255) as@ i32) as@ u8;
   return hex(out);
 }
 

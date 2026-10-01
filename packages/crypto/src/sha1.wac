@@ -164,9 +164,9 @@ export struct Sha1 {
     u8[] out = u8[].filled(96, 0);
     for (i32 i = 0; i < 5; i++) { storeBE32(this.h[i], out, i * 4); }
     for (i32 i = 0; i < 64; i++) { out[20 + i] = this.buf[i]; }
-    for (i32 i = 0; i < 4; i++) { out[84 + i] = (this.pending >> ((3 - i) * 8)) & 0xFF; }
+    for (i32 i = 0; i < 4; i++) { out[84 + i] = ((this.pending >> ((3 - i) * 8)) & 0xFF) as@ u8; }
     for (i32 i = 0; i < 8; i++) {
-      out[88 + i] = ((this.total >> (((7 - i) * 8) as i64)) & 255) as! i32;
+      out[88 + i] = (((this.total >> (((7 - i) * 8) as i64)) & 255) as! i32) as@ u8;
     }
     return out;
   }
@@ -192,7 +192,7 @@ export struct Sha1 {
     u8[] buf = u8[].filled(64, 0);
     for (i32 i = 0; i < 64; i++) { buf[i] = raw[20 + i]; }
     i32 pending = 0;
-    for (i32 i = 0; i < 4; i++) { pending = (pending << 8) | raw[84 + i]; }
+    for (i32 i = 0; i < 4; i++) { pending = (pending << 8) | raw[84 + i] as i32; }
     i64 total = 0;
     for (i32 i = 0; i < 8; i++) { total = (total << 8) | (raw[88 + i] as i64); }
     // Both bounds: four big-endian bytes can be read as a negative `i32` as easily as as a large one,
@@ -218,7 +218,7 @@ export struct Sha1 {
     }
     for (i32 i = this.pending; i < 56; i++) { this.buf[i] = 0; }
     for (i32 i = 0; i < 8; i++) {
-      this.buf[56 + i] = ((bits >> (((7 - i) * 8) as i64)) & 255) as! i32;
+      this.buf[56 + i] = (((bits >> (((7 - i) * 8) as i64)) & 255) as! i32) as@ u8;
     }
     block(this.h, this.buf, 0);
 

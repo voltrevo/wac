@@ -300,9 +300,9 @@ export string test_link_specifiers_are_read_without_being_rebuilt(Core core, Cli
   // address is known and this checks the offsets rather than merely the length.
   u8[] v4 = linkSpecifier(ls, LS_IPV4);
   t.eqI32(v4.len(), 6, "the IPv4 specifier is six bytes");
-  t.eqI32(v4[0], 127, "on loopback, as chutney runs everything");
-  t.eqI32(v4[3], 1, "127.0.0.1");
-  i32 port = (v4[4] * 256) + v4[5];
+  t.eqI32(v4[0] as i32, 127, "on loopback, as chutney runs everything");
+  t.eqI32(v4[3] as i32, 1, "127.0.0.1");
+  i32 port = (v4[4] as i32 * 256) + v4[5] as i32;
   t.isTrue(port > 1024, "the port is a real one, read big-endian");
 
   t.eqI32(linkSpecifier(ls, LS_LEGACY_ID).len(), 20, "the legacy identity is a 20-byte digest");
@@ -316,12 +316,12 @@ export string test_link_specifiers_are_read_without_being_rebuilt(Core core, Cli
   t.isFalse(linkSpecifiersValid(zero), "a list claiming zero entries is not valid");
   u8[] overrun = u8[].filled(4, 0);
   overrun[0] = 1;
-  overrun[1] = LS_IPV4;
+  overrun[1] = LS_IPV4 as@ u8;
   overrun[2] = 200;
   t.isFalse(linkSpecifiersValid(overrun), "an entry longer than the buffer is refused");
   u8[] trailing = u8[].filled(5, 0);
   trailing[0] = 1;
-  trailing[1] = LS_IPV4;
+  trailing[1] = LS_IPV4 as@ u8;
   trailing[2] = 1;
   t.isFalse(linkSpecifiersValid(trailing), "trailing bytes after the last entry are refused");
   return t.report();
@@ -337,32 +337,32 @@ export string test_the_cells_have_the_layout_the_spec_fixes(Core core, Cli cli) 
   i32 lsLen = ls.len();
 
   u8[] cookie = u8[].filled(20, 0);
-  for (i32 i = 0; i < 20; i++) { cookie[i] = (i * 9 + 1) & 0xFF; }
+  for (i32 i = 0; i < 20; i++) { cookie[i] = ((i * 9 + 1) & 0xFF) as@ u8; }
 
   u8[] plain = introduce1Plaintext(cookie, onion, ls);
   t.eqI32(plain.len(), 20 + 1 + 1 + 2 + 32 + lsLen, "the plaintext is exactly its fields");
   t.isTrue(equal(slice(plain, 0, 20), cookie), "the rendezvous cookie comes first");
-  t.eqI32(plain[20], 0, "no extensions");
-  t.eqI32(plain[21], 1, "ONION_KEY_TYPE is 1, ntor");
-  t.eqI32(plain[22], 0, "ONION_KEY_LEN is big-endian 32");
-  t.eqI32(plain[23], 32, "…and its low byte is 32");
+  t.eqI32(plain[20] as i32, 0, "no extensions");
+  t.eqI32(plain[21] as i32, 1, "ONION_KEY_TYPE is 1, ntor");
+  t.eqI32(plain[22] as i32, 0, "ONION_KEY_LEN is big-endian 32");
+  t.eqI32(plain[23] as i32, 32, "…and its low byte is 32");
   t.isTrue(equal(slice(plain, 24, 56), onion), "then the rendezvous point's onion key");
   t.isTrue(equal(slice(plain, 56, 56 + lsLen), ls), "then its link specifiers, verbatim");
 
   u8[] encrypted = u8[].filled(100, 0);
-  for (i32 i = 0; i < 100; i++) { encrypted[i] = (i * 3) & 0xFF; }
+  for (i32 i = 0; i < 100; i++) { encrypted[i] = ((i * 3) & 0xFF) as@ u8; }
   u8[] cell = introduce1Cell(auth, encrypted);
   t.eqI32(cell.len(), 20 + 1 + 2 + 32 + 1 + 100, "the cell is exactly its fields");
   // LEGACY_KEY_ID must be twenty zero bytes: that is how an introduction point tells a v3 cell from
   // a v2 one, and anything non-zero there is handled as legacy and dropped.
   i32 legacy = 0;
-  for (i32 i = 0; i < 20; i++) { legacy = legacy | cell[i]; }
+  for (i32 i = 0; i < 20; i++) { legacy = legacy | cell[i] as i32; }
   t.eqI32(legacy, 0, "LEGACY_KEY_ID is twenty zero bytes");
-  t.eqI32(cell[20], 2, "AUTH_KEY_TYPE is 2, ed25519");
-  t.eqI32(cell[21], 0, "AUTH_KEY_LEN is big-endian 32");
-  t.eqI32(cell[22], 32, "…and its low byte is 32");
+  t.eqI32(cell[20] as i32, 2, "AUTH_KEY_TYPE is 2, ed25519");
+  t.eqI32(cell[21] as i32, 0, "AUTH_KEY_LEN is big-endian 32");
+  t.eqI32(cell[22] as i32, 32, "…and its low byte is 32");
   t.isTrue(equal(slice(cell, 23, 55), auth), "then the auth key");
-  t.eqI32(cell[55], 0, "then no extensions");
+  t.eqI32(cell[55] as i32, 0, "then no extensions");
   t.isTrue(equal(slice(cell, 56, cell.len()), encrypted), "then the encrypted portion");
 
   // The MAC covers the whole cell — see `test_an_introduce1_cell_macs_the_right_span`, where the
@@ -370,7 +370,7 @@ export string test_the_cells_have_the_layout_the_spec_fixes(Core core, Cli cli) 
   // suggests.
   u8[] macInput = introduce1MacInput(cell);
   t.eqI32(macInput.len(), cell.len(), "the MAC input is the whole cell so far");
-  t.eqI32(macInput[0], 0, "beginning at LEGACY_KEY_ID's first zero byte");
+  t.eqI32(macInput[0] as i32, 0, "beginning at LEGACY_KEY_ID's first zero byte");
 
   // ESTABLISH_RENDEZVOUS is the cookie and nothing else.
   t.isTrue(equal(establishRendezvousCell(cookie), cookie), "ESTABLISH_RENDEZVOUS is just the cookie");
@@ -381,7 +381,7 @@ export string test_the_cells_have_the_layout_the_spec_fixes(Core core, Cli cli) 
 
   // RENDEZVOUS2 carries SERVER_PK | AUTH, and a short cell must not be read as a valid one.
   u8[] rend = u8[].filled(64, 0);
-  for (i32 i = 0; i < 64; i++) { rend[i] = (i * 5 + 2) & 0xFF; }
+  for (i32 i = 0; i < 64; i++) { rend[i] = ((i * 5 + 2) & 0xFF) as@ u8; }
   t.eqI32(rendezvous2HandshakeInfo(rend).len(), 64, "a 64-byte RENDEZVOUS2 body reads");
   t.eqI32(rendezvous2HandshakeInfo(slice(rend, 0, 63)).len(), 0, "a 63-byte one is refused");
   return t.report();
@@ -399,12 +399,12 @@ export string test_an_introduce1_cell_macs_the_right_span(Core core, Cli cli) {
   u8[] macKey = u8[].filled(32, 0);
   u8[] clientPub = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) {
-    encKey[i] = (i * 3 + 1) & 0xFF;
-    macKey[i] = (i * 5 + 2) & 0xFF;
-    clientPub[i] = (i * 7 + 3) & 0xFF;
+    encKey[i] = ((i * 3 + 1) & 0xFF) as@ u8;
+    macKey[i] = ((i * 5 + 2) & 0xFF) as@ u8;
+    clientPub[i] = ((i * 7 + 3) & 0xFF) as@ u8;
   }
   u8[] plaintext = u8[].filled(84, 0);
-  for (i32 i = 0; i < plaintext.len(); i++) { plaintext[i] = (i * 11) & 0xFF; }
+  for (i32 i = 0; i < plaintext.len(); i++) { plaintext[i] = ((i * 11) & 0xFF) as@ u8; }
 
   u8[] cell = buildIntroduce1(auth, encKey, macKey, clientPub, plaintext);
   t.eqI32(cell.len(), 56 + 32 + plaintext.len() + 32, "the cell is header, key, ciphertext and MAC");

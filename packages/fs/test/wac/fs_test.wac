@@ -175,7 +175,7 @@ export string test_names_are_bytes() {
   string[] names = fs.readDir("/")!;
   t.eqI32(names.len(), 1, "and lists as one name");
   t.eqI32(names[0].toBytes().len(), 4, "of four bytes, unchanged");
-  t.eqI32(names[0].toBytes()[1], 0xff, "including the one a decoder would have replaced");
+  t.eqI32(names[0].toBytes()[1] as i32, 0xff, "including the one a decoder would have replaced");
   return t.report();
 }
 

@@ -88,7 +88,7 @@ void relay(Grid g, string screen, string pending) {
  * well as the contents, so a longer sequence beginning the same way is not mistaken for this one.
  */
 bool isSeq(u8[] b, i32 n) {
-  return b.len() == 4 && b[0] == 27 && b[1] == 91 && b[2] == n && b[3] == 126;
+  return b.len() == 4 && b[0] == 27 && b[1] == 91 && b[2] as i32 == n && b[3] == 126;
 }
 
 /**
@@ -224,7 +224,7 @@ export i32 page(Core core, Cli cli, Page page) {
       // **And the selection goes.** Text that stays highlighted while you type reads as though it is
       // about to be replaced, which is what a text field does and not what a terminal does.
       g.clearSelection();
-      i32 first = kb[0];
+      i32 first = kb[0] as i32;
       if (first == 13) {
         // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
         // so the transcript reads the same on both.

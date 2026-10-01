@@ -41,7 +41,7 @@ u8[] withHeaderFields(u8[] payload, i32 flg, u8[] fields) {
   u8[] base = gzipBest(payload);
   u8[] out = u8[].filled(base.len() + fields.len(), 0);
   for (i32 i = 0; i < 10; i++) { out[i] = base[i]; }
-  out[3] = flg;
+  out[3] = flg as@ u8;
   for (i32 i = 0; i < fields.len(); i++) { out[10 + i] = fields[i]; }
   for (i32 i = 10; i < base.len(); i++) { out[fields.len() + i] = base[i]; }
   return out;
@@ -98,10 +98,10 @@ export string test_a_stream_carrying_a_filename_from_python(Core core, Cli cli) 
   if (r.status != 0) { return t.report(); }
 
   u8[] gz = r.stdout;
-  t.isTrue(gz.len() > 10 && (gz[3] & FNAME) != 0,
-           "python set FNAME; FLG=" + itoa(gz.len() > 3 ? gz[3] : -1) +
+  t.isTrue(gz.len() > 10 && (gz[3] as i32 & FNAME) != 0,
+           "python set FNAME; FLG=" + itoa(gz.len() > 3 ? gz[3] as i32 : -1) +
            " — otherwise the test would prove nothing");
-  if (gz.len() > 10 && (gz[3] & FNAME) != 0) { roundTrips(t, "python FNAME", gz, text); }
+  if (gz.len() > 10 && (gz[3] as i32 & FNAME) != 0) { roundTrips(t, "python FNAME", gz, text); }
   return t.report();
 }
 
@@ -161,7 +161,7 @@ export string test_traps_a_name_with_no_terminator() {
   u8[] tail = "name-with-no-terminator-at-all-running-to-the-very-end".toBytes();
   u8[] noNul = u8[].filled(10 + tail.len(), 0);
   for (i32 i = 0; i < 10; i++) { noNul[i] = base[i]; }
-  noNul[3] = FNAME;
+  noNul[3] = FNAME as@ u8;
   for (i32 i = 0; i < tail.len(); i++) { noNul[10 + i] = tail[i]; }
   gunzipBytes(noNul);
   return "a filename with no terminator was accepted";

@@ -231,7 +231,7 @@ export Reader answer(Chan c) {
 /** The length prefix at the cursor, or -1 if it does not fit in a signed i32. */
 i32 frameLength(Chan c) {
   u8[] all = c.held.bytes();
-  i32 v = all[c.at] | (all[c.at + 1] << 8) | (all[c.at + 2] << 16) | (all[c.at + 3] << 24);
+  i32 v = all[c.at] as i32 | (all[c.at + 1] as i32 << 8) | (all[c.at + 2] as i32 << 16) | (all[c.at + 3] as i32 << 24);
   return v;
 }
 
@@ -255,7 +255,7 @@ void compact(Chan c) {
   if (c.at == 0) { return; }
   u8[] all = c.held.bytes();
   Buf rest = Buf.create();
-  for (i32 i = c.at; i < all.len(); i++) { rest.push(all[i]); }
+  for (i32 i = c.at; i < all.len(); i++) { rest.push(all[i] as i32); }
   c.held = rest;
   c.at = 0;
 }

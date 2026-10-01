@@ -249,7 +249,7 @@ i32 sumOfStrings(string[] parts) {
   i32 h = 7;
   for (i32 i = 0; i < parts.len(); i++) {
     u8[] b = parts[i].toBytes();
-    for (i32 k = 0; k < b.len(); k++) { h = (h * 31 + b[k]) & 2147483647; }
+    for (i32 k = 0; k < b.len(); k++) { h = (h * 31 + b[k] as i32) & 2147483647; }
     h = (h * 31 + 255) & 2147483647;
   }
   return h;
@@ -291,7 +291,7 @@ void sweepOlder(Cli cli, string dir, string prefix, string keep) {
 /** A checksum of the whole payload, so a different question is a different key. */
 i32 sumOfBytes(u8[] b) {
   i32 h = 7;
-  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }
+  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i] as i32) & 2147483647; }
   return h;
 }
 
@@ -343,8 +343,8 @@ export string hex(u8[] b) {
   u8[] digits = "0123456789abcdef".toBytes();
   Buf out = Buf.withCapacity(b.len() * 2);
   for (i32 i = 0; i < b.len(); i++) {
-    out.push(digits[b[i] / 16]);
-    out.push(digits[b[i] % 16]);
+    out.push(digits[b[i] as i32 / 16] as i32);
+    out.push(digits[b[i] as i32 % 16] as i32);
   }
   return string.fromBytes(out.take());
 }

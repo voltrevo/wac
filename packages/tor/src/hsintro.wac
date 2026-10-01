@@ -68,12 +68,12 @@ bool wellFormed(IntroPoint p) {
 /** Whether a link-specifier blob is internally consistent: every entry inside the buffer. */
 export bool linkSpecifiersValid(u8[] ls) {
   if (ls.len() < 1) { return false; }
-  i32 n = ls[0];
+  i32 n = ls[0] as i32;
   if (n == 0) { return false; }
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
     if (at + 2 > ls.len()) { return false; }
-    i32 length = ls[at + 1];
+    i32 length = ls[at + 1] as i32;
     at = at + 2 + length;
     // The per-entry overrun check is redundant with the equality below — `at` only increases, so an
     // entry that runs past the end leaves `at > ls.len()` at the finish. Kept because it says what
@@ -94,11 +94,11 @@ export bool linkSpecifiersValid(u8[] ls) {
  */
 export u8[] linkSpecifier(u8[] ls, i32 type) {
   if (!linkSpecifiersValid(ls)) { return u8[](); }
-  i32 n = ls[0];
+  i32 n = ls[0] as i32;
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
-    i32 t = ls[at];
-    i32 length = ls[at + 1];
+    i32 t = ls[at] as i32;
+    i32 length = ls[at + 1] as i32;
     if (t == type) { return slice(ls, at + 2, at + 2 + length); }
     at = at + 2 + length;
   }

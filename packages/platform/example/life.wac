@@ -42,7 +42,7 @@ i32 around(u8[] cells, i32 x, i32 y) {
       // looks like a bug in the rule.
       i32 nx = (x + dx + W) % W;
       i32 ny = (y + dy + H) % H;
-      n = n + cells[ny * W + nx];
+      n = n + cells[ny * W + nx] as i32;
     }
   }
   return n;
@@ -53,7 +53,7 @@ void step(u8[] cells, u8[] next) {
   for (i32 y = 0; y < H; y++) {
     for (i32 x = 0; x < W; x++) {
       i32 n = around(cells, x, y);
-      i32 alive = cells[y * W + x];
+      i32 alive = cells[y * W + x] as i32;
       // B3/S23, which is the whole of Conway's rule.
       next[y * W + x] = (alive == 1 ? (n == 2 || n == 3) : (n == 3)) ? 1 : 0;
     }
@@ -88,8 +88,8 @@ void paint(Page page, u8[] cells, u8[] rgba) {
 void sow(u8[] cells, u8[] seed) {
   if (seed.len() == 0) { return; }
   for (i32 i = 0; i < W * H; i++) {
-    i32 byte = seed[(i / 8) % seed.len()];
-    cells[i] = (byte >> (i % 8)) & 1;
+    i32 byte = seed[(i / 8) % seed.len()] as i32;
+    cells[i] = ((byte >> (i % 8)) & 1) as@ u8;
   }
 }
 
@@ -174,7 +174,7 @@ export i32 page(Core core, Cli cli, Page page) {
         i64 took = (core.monotonicNanos().wait() - began) / 1000000;
         gen = gen + 1;
         i32 live = 0;
-        for (i32 i = 0; i < W * H; i++) { live = live + cells[i]; }
+        for (i32 i = 0; i < W * H; i++) { live = live + cells[i] as i32; }
         paint(page, cells, rgba);
         page.setText("gen", itoa(gen)).wait();
         page.setText("live", itoa(live)).wait();

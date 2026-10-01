@@ -83,29 +83,29 @@ bool isSlash(i32 c, bool special) { return c == '/' || (special && c == '\\'); }
 u8[] lowerAscii(u8[] s) {
   u8[] out = u8[].filled(s.len(), 0);
   for (i32 i = 0; i < s.len(); i++) {
-    i32 c = s[i];
-    out[i] = c >= 'A' && c <= 'Z' ? c + 32 : c;
+    i32 c = s[i] as i32;
+    out[i] = (c >= 'A' && c <= 'Z' ? c + 32 : c) as@ u8;
   }
   return out;
 }
 
 /** `c:` or `c|`, the shape that makes a file path a Windows drive letter. */
 bool isWindowsDrive(u8[] s) {
-  return s.len() == 2 && isAsciiAlpha(s[0]) && (s[1] == ':' || s[1] == '|');
+  return s.len() == 2 && isAsciiAlpha(s[0] as i32) && (s[1] == ':' || s[1] == '|');
 }
 
 /** The same, but only `c:` counts once a URL has been parsed. */
 bool isNormalizedWindowsDrive(u8[] s) {
-  return s.len() == 2 && isAsciiAlpha(s[0]) && s[1] == ':';
+  return s.len() == 2 && isAsciiAlpha(s[0] as i32) && s[1] == ':';
 }
 
 /** Whether `s` starts with a drive letter that is not followed by more path-ish bytes. */
 bool startsWithWindowsDrive(u8[] s, i32 at) {
   i32 n = s.len() - at;
   if (n < 2) { return false; }
-  if (!isAsciiAlpha(s[at]) || (s[at + 1] != ':' && s[at + 1] != '|')) { return false; }
+  if (!isAsciiAlpha(s[at] as i32) || (s[at + 1] != ':' && s[at + 1] != '|')) { return false; }
   if (n == 2) { return true; }
-  i32 c = s[at + 2];
+  i32 c = s[at + 2] as i32;
   return c == '/' || c == '\\' || c == '?' || c == '#';
 }
 
@@ -165,7 +165,7 @@ u8[] clean(u8[] input) {
   while (hi > lo && input[hi - 1] <= 0x20) { hi--; }
   Buf out = Buf.create();
   for (i32 i = lo; i < hi; i++) {
-    i32 c = input[i];
+    i32 c = input[i] as i32;
     if (c == 0x09 || c == 0x0A || c == 0x0D) { continue; }
     out.push(c);
   }
@@ -191,7 +191,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
   // `pointer == input.len()` is the standard's EOF code point, so the loop runs one past the
   // end. `c` is -1 there, which no branch matches by accident.
   while (pointer <= input.len()) {
-    i32 c = pointer < input.len() ? input[pointer] : -1;
+    i32 c = pointer < input.len() ? input[pointer] as i32 : -1;
     bool eof = c < 0;
 
     if (state == S_SCHEME_START()) {
@@ -335,7 +335,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         Buf pass = Buf.create();
         bool inPass = passwordSeen;
         for (i32 i = 0; i < buffered.len(); i++) {
-          i32 b = buffered[i];
+          i32 b = buffered[i] as i32;
           if (b == ':' && !inPass) {
             inPass = true;
             passwordSeen = true;
@@ -344,9 +344,9 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           Buf target = inPass ? pass : user;
           if (b == '%' || b == 0) {
             // `%` reaches here already encoded when it came from the re-encode above.
-            encodeInto(target, [b], SET_USERINFO());
+            encodeInto(target, [b as@ u8], SET_USERINFO());
           } else {
-            encodeInto(target, [b], SET_USERINFO());
+            encodeInto(target, [b as@ u8], SET_USERINFO());
           }
         }
         Buf u2 = Buf.create();
@@ -397,7 +397,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           u8[] digits = buffer.take();
           i32 value = 0;
           for (i32 i = 0; i < digits.len(); i++) {
-            value = value * 10 + (digits[i] - '0');
+            value = value * 10 + (digits[i] as i32 - '0');
             if (value > 65535) { return null; }
           }
           url.port = value == defaultPort(url.scheme) ? -1 : value;
@@ -529,7 +529,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           state = S_FRAGMENT();
         }
       } else {
-        encodeInto(buffer, [c], SET_PATH());
+        encodeInto(buffer, [c as@ u8], SET_PATH());
       }
 
     } else if (state == S_OPAQUE_PATH()) {
@@ -544,7 +544,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
       } else if (eof) {
         url.opaquePath = buffer.take();
       } else {
-        encodeInto(buffer, [c], SET_C0());
+        encodeInto(buffer, [c as@ u8], SET_C0());
       }
 
     } else if (state == S_QUERY()) {
@@ -555,7 +555,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
           state = S_FRAGMENT();
         }
       } else {
-        encodeInto(buffer, [c],
+        encodeInto(buffer, [c as@ u8],
                    isSpecial(url.scheme) ? SET_SPECIAL_QUERY() : SET_QUERY());
       }
 
@@ -563,7 +563,7 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
       if (eof) {
         url.fragment = buffer.take();
       } else {
-        encodeInto(buffer, [c], SET_FRAGMENT());
+        encodeInto(buffer, [c as@ u8], SET_FRAGMENT());
       }
     }
 
@@ -594,8 +594,8 @@ void writeDecimal(Buf out, i32 v) {
   u8[] tmp = u8[].filled(6, 0);
   i32 n = 0;
   i32 x = v;
-  while (x > 0) { tmp[n] = 48 + (x % 10); x = x / 10; n++; }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
+  while (x > 0) { tmp[n] = (48 + (x % 10)) as@ u8; x = x / 10; n++; }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
 }
 
 /** The href: scheme, authority if there is one, path, query, fragment. */

@@ -1,0 +1,4 @@
+// expect: refused
+// why: a packed value and a wider integer do not convert implicitly in either direction — widening is written `as`
+// from: spec/next ch08 §wac-packed-no-coercion-udspvhv
+export i32 f(u8 b) { return b; }

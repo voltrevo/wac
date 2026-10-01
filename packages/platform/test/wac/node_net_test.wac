@@ -110,7 +110,7 @@ Server start(Cli cli, string dir, string name, string prog, string[] args) {
   }
   u8[] b = r.stdout;
   i32 pid = 0;
-  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] - '0'); } }
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] as i32 - '0'); } }
   return Server(pid, log, status, pidfile, pid > 0 ? "" : "no pid from the shell");
 }
 
@@ -127,7 +127,7 @@ i32 numberAfter(string text, string marker) {
   i32 i = at + marker.len();
   i32 n = 0;
   i32 digits = 0;
-  while (i < b.len() && b[i] >= '0' && b[i] <= '9') { n = n * 10 + (b[i] - '0'); digits = digits + 1; i = i + 1; }
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') { n = n * 10 + (b[i] as i32 - '0'); digits = digits + 1; i = i + 1; }
   return digits == 0 ? -1 : n;
 }
 
@@ -184,7 +184,7 @@ i32 childPid(Core core, Cli cli, Server s) {
       u8[] b = f.bytes;
       i32 pid = 0;
       for (i32 i = 0; i < b.len(); i++) {
-        if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] - '0'); }
+        if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] as i32 - '0'); }
       }
       if (pid > 0) { return pid; }
     }

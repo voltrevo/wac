@@ -292,7 +292,7 @@ export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_mini
 /** A little-endian u64 slot, as decimal — the form the checks state it in. */
 string slotOf(u8[] eightBytes) {
   u64 v = 0 as! u64;
-  for (i32 i = 7; i >= 0; i--) { v = v * (256 as! u64) + (eightBytes[i] as! u64); }
+  for (i32 i = 7; i >= 0; i--) { v = v * (256 as! u64) + (eightBytes[i] as u64); }
   return utoa64(v);
 }
 

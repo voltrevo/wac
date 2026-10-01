@@ -33,7 +33,7 @@ export u8[] unhex(string s) {
   u8[] d = s.toBytes();
   if (d.len() % 2 != 0) { trap; }
   u8[] out = u8[].filled(d.len() / 2, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]); }
+  for (i32 i = 0; i < out.len(); i++) { out[i] = (nibble(d[i * 2] as i32) * 16 + nibble(d[i * 2 + 1] as i32)) as@ u8; }
   return out;
 }
 
@@ -94,7 +94,7 @@ i32 decimal(string s) {
   u8[] d = s.toBytes();
   for (i32 i = 0; i < d.len(); i++) {
     if (d[i] < '0' || d[i] > '9') { trap; }
-    v = v * 10 + (d[i] - '0');
+    v = v * 10 + (d[i] as i32 - '0');
   }
   return v;
 }

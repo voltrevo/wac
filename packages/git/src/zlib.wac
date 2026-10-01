@@ -25,7 +25,7 @@ export u32 adler32(u8[] data) {
   u32 a = 1;
   u32 b = 0;
   for (i32 i = 0; i < data.len(); i++) {
-    a = (a + (data[i] as@ u32)) % 65521;
+    a = (a + (data[i] as u32)) % 65521;
     b = (b + a) % 65521;
   }
   return (b << 16) | a;
@@ -81,10 +81,10 @@ export Unzipped zlibDecompress(u8[] stream) {
   if (stream.len() < 6) { return Unzipped.Bad("shorter than a zlib header and trailer"); }
   // `i32` rather than `u8`: a packed type is an array element type and not a variable type, so a
   // byte read out of one is an `i32` from here on.
-  i32 cmf = stream[0];
+  i32 cmf = stream[0] as i32;
   if ((cmf & 0x0f) != 8) { return Unzipped.Bad("compression method is not deflate"); }
   // The header's own check: the two bytes read big-endian are a multiple of 31.
-  if ((((cmf << 8) | stream[1]) as@ u32) % 31 != 0) {
+  if ((((cmf << 8) | stream[1] as i32) as@ u32) % 31 != 0) {
     return Unzipped.Bad("header check failed");
   }
   // FDICT — a preset dictionary the stream does not carry. git never sets it.
@@ -95,8 +95,8 @@ export Unzipped zlibDecompress(u8[] stream) {
   u8[] out = inflate(body);
 
   i32 t = stream.len() - 4;
-  u32 want = ((stream[t] as@ u32) << 24) | ((stream[t + 1] as@ u32) << 16)
-           | ((stream[t + 2] as@ u32) << 8) | (stream[t + 3] as@ u32);
+  u32 want = ((stream[t] as u32) << 24) | ((stream[t + 1] as u32) << 16)
+           | ((stream[t + 2] as u32) << 8) | (stream[t + 3] as u32);
   if (adler32(out) != want) { return Unzipped.Bad("Adler-32 does not match the inflated bytes"); }
   return Unzipped.Ok(out);
 }

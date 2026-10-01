@@ -55,7 +55,7 @@ Response json(i32 status, u8[] body) {
 void writeJsonString(Buf out, u8[] s) {
   out.push('"');
   for (i32 i = 0; i < s.len(); i++) {
-    i32 c = s[i];
+    i32 c = s[i] as i32;
     if (c == '"' || c == '\\') {
       out.push('\\');
       out.push(c);
@@ -77,8 +77,8 @@ void writeInt(Buf out, i32 v) {
   if (v == 0) { out.push('0'); return; }
   u8[] tmp = u8[].filled(12, 0);
   i32 n = 0;
-  while (v > 0) { tmp[n] = 48 + (v % 10); v = v / 10; n++; }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
+  while (v > 0) { tmp[n] = (48 + (v % 10)) as@ u8; v = v / 10; n++; }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
 }
 
 /**

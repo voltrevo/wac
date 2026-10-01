@@ -230,11 +230,11 @@ export string test_the_ack_body(Core core, Cli cli) {
   T t = T.create();
   u8[] ok = introduceAckBody(INTRO_ACK_SUCCESS);
   t.eqI32(ok.len(), 3, "two bytes of status and an extension count");
-  t.eqI32(ok[0], 0, "big-endian high byte");
-  t.eqI32(ok[1], 0, "success is zero");
-  t.eqI32(ok[2], 0, "and no extensions");
-  t.eqI32(introduceAckBody(INTRO_ACK_UNKNOWN_ID)[1], 1, "unknown id is one");
-  t.eqI32(introduceAckBody(INTRO_ACK_BAD_FORMAT)[1], 2, "bad format is two");
+  t.eqI32(ok[0] as i32, 0, "big-endian high byte");
+  t.eqI32(ok[1] as i32, 0, "success is zero");
+  t.eqI32(ok[2] as i32, 0, "and no extensions");
+  t.eqI32(introduceAckBody(INTRO_ACK_UNKNOWN_ID)[1] as i32, 1, "unknown id is one");
+  t.eqI32(introduceAckBody(INTRO_ACK_BAD_FORMAT)[1] as i32, 2, "bad format is two");
   return t.report();
 }
 

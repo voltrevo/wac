@@ -1,0 +1,4 @@
+// expect: refused
+// why: 'é' is 233, which fits a u8, and is still a codepoint rather than the byte the slot holds — the rule covers every byte slot, not only elements
+// from: spec/next ch15 §wac-arr-byte-codepoint-v8kq3nw, once a packed type could be a local
+export u8 f() { u8 b = 'é'; return b; }

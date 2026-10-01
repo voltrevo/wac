@@ -131,7 +131,7 @@ export bool looksLikeStun(u8[] b) {
 }
 
 /** The message length the header claims, which counts attributes and padding but not the header. */
-i32 claimedLength(u8[] b) { return (b[2] << 8) | b[3]; }
+i32 claimedLength(u8[] b) { return (b[2] as i32 << 8) | b[3] as i32; }
 
 /**
  * Parse a message.
@@ -158,7 +158,7 @@ export Message parse(u8[] b) {
   i32 at = 20;
   i32 end = 20 + len;
   while (at + 4 <= end) {
-    i32 alen = (b[at + 2] << 8) | b[at + 3];
+    i32 alen = (b[at + 2] as i32 << 8) | b[at + 3] as i32;
     i32 step = 4 + ((alen + 3) & ~3);
     if (at + step > end) { break; }
     n = n + 1;
@@ -169,15 +169,15 @@ export Message parse(u8[] b) {
   at = 20;
   i32 k = 0;
   while (k < n) {
-    i32 kind = (b[at] << 8) | b[at + 1];
-    i32 alen = (b[at + 2] << 8) | b[at + 3];
+    i32 kind = (b[at] as i32 << 8) | b[at + 1] as i32;
+    i32 alen = (b[at + 2] as i32 << 8) | b[at + 3] as i32;
     u8[] v = u8[].filled(alen, 0);
     for (i32 i = 0; i < alen; i++) { v[i] = b[at + 4 + i]; }
     attrs[k] = Attr(kind, v);
     at = at + 4 + ((alen + 3) & ~3);
     k = k + 1;
   }
-  return Message(true, (b[0] << 8) | b[1], tid, attrs);
+  return Message(true, (b[0] as i32 << 8) | b[1] as i32, tid, attrs);
 }
 
 /** How many bytes an attribute takes on the wire, its four-byte header and padding included. */
@@ -188,18 +188,18 @@ export u8[] encode(i32 kind, u8[] tid, Attr[] attrs) {
   i32 body = 0;
   for (i32 i = 0; i < attrs.len(); i++) { body = body + attrSize(attrs[i]); }
   u8[] out = u8[].filled(20 + body, 0);
-  out[0] = (kind >> 8) & 0xFF;
-  out[1] = kind & 0xFF;
-  out[2] = (body >> 8) & 0xFF;
-  out[3] = body & 0xFF;
+  out[0] = ((kind >> 8) & 0xFF) as@ u8;
+  out[1] = (kind & 0xFF) as@ u8;
+  out[2] = ((body >> 8) & 0xFF) as@ u8;
+  out[3] = (body & 0xFF) as@ u8;
   out[4] = 0x21; out[5] = 0x12; out[6] = 0xA4; out[7] = 0x42;
   for (i32 i = 0; i < 12 && i < tid.len(); i++) { out[8 + i] = tid[i]; }
   i32 at = 20;
   for (i32 i = 0; i < attrs.len(); i++) {
-    out[at] = (attrs[i].kind >> 8) & 0xFF;
-    out[at + 1] = attrs[i].kind & 0xFF;
-    out[at + 2] = (attrs[i].value.len() >> 8) & 0xFF;
-    out[at + 3] = attrs[i].value.len() & 0xFF;
+    out[at] = ((attrs[i].kind >> 8) & 0xFF) as@ u8;
+    out[at + 1] = (attrs[i].kind & 0xFF) as@ u8;
+    out[at + 2] = ((attrs[i].value.len() >> 8) & 0xFF) as@ u8;
+    out[at + 3] = (attrs[i].value.len() & 0xFF) as@ u8;
     for (i32 j = 0; j < attrs[i].value.len(); j++) { out[at + 4 + j] = attrs[i].value[j]; }
     // The padding is left zero. RFC 5389 says a receiver must ignore it, and RFC 8489 later says a
     // sender must make it zero — writing zeroes satisfies both and makes an encoding reproducible,
@@ -219,8 +219,8 @@ export u8[] encode(i32 kind, u8[] tid, Attr[] attrs) {
  */
 export Addr xorMapped(u8[] value, u8[] tid) {
   if (value.len() < 8) { return Addr(0, 0, u8[]()); }
-  i32 family = value[1];
-  i32 port = (((value[2] << 8) | value[3]) ^ 0x2112) & 0xFFFF;
+  i32 family = value[1] as i32;
+  i32 port = (((value[2] as i32 << 8) | value[3] as i32) ^ 0x2112) & 0xFFFF;
   if (family == 1) {
     if (value.len() < 8) { return Addr(0, 0, u8[]()); }
     u8[] ip = u8[].filled(4, 0);
@@ -250,10 +250,10 @@ export u8[] xorMappedValue(i32 family, i32 port, u8[] ip, u8[] tid) {
   if (family != 1 && family != 2) { return u8[](); }
   u8[] v = u8[].filled(4 + ip.len(), 0);
   v[0] = 0;
-  v[1] = family;
+  v[1] = family as@ u8;
   i32 x = (port ^ 0x2112) & 0xFFFF;
-  v[2] = (x >> 8) & 0xFF;
-  v[3] = x & 0xFF;
+  v[2] = ((x >> 8) & 0xFF) as@ u8;
+  v[3] = (x & 0xFF) as@ u8;
   v[4] = ip[0] ^ 0x21;
   v[5] = ip[1] ^ 0x12;
   v[6] = ip[2] ^ 0xA4;
@@ -275,8 +275,8 @@ u8[] withLengthFor(u8[] msg, i32 extra) {
   u8[] copy = u8[].filled(msg.len(), 0);
   for (i32 i = 0; i < msg.len(); i++) { copy[i] = msg[i]; }
   i32 len = claimedLength(msg) + extra;
-  copy[2] = (len >> 8) & 0xFF;
-  copy[3] = len & 0xFF;
+  copy[2] = ((len >> 8) & 0xFF) as@ u8;
+  copy[3] = (len & 0xFF) as@ u8;
   return copy;
 }
 
@@ -286,14 +286,14 @@ u8[] appended(u8[] msg, i32 kind, u8[] value) {
   u8[] out = u8[].filled(msg.len() + 4 + pad, 0);
   for (i32 i = 0; i < msg.len(); i++) { out[i] = msg[i]; }
   i32 at = msg.len();
-  out[at] = (kind >> 8) & 0xFF;
-  out[at + 1] = kind & 0xFF;
-  out[at + 2] = (value.len() >> 8) & 0xFF;
-  out[at + 3] = value.len() & 0xFF;
+  out[at] = ((kind >> 8) & 0xFF) as@ u8;
+  out[at + 1] = (kind & 0xFF) as@ u8;
+  out[at + 2] = ((value.len() >> 8) & 0xFF) as@ u8;
+  out[at + 3] = (value.len() & 0xFF) as@ u8;
   for (i32 i = 0; i < value.len(); i++) { out[at + 4 + i] = value[i]; }
   i32 len = claimedLength(msg) + 4 + pad;
-  out[2] = (len >> 8) & 0xFF;
-  out[3] = len & 0xFF;
+  out[2] = ((len >> 8) & 0xFF) as@ u8;
+  out[3] = (len & 0xFF) as@ u8;
   return out;
 }
 
@@ -317,12 +317,12 @@ export bool integrityOk(u8[] msg, u8[] key) {
   // Everything from the start of the attribute to the end of the message is not covered; the length
   // is set as though MESSAGE-INTEGRITY were the last thing in it, which is how the sender computed it.
   i32 len = at + 24 - 20;
-  prefix[2] = (len >> 8) & 0xFF;
-  prefix[3] = len & 0xFF;
+  prefix[2] = ((len >> 8) & 0xFF) as@ u8;
+  prefix[3] = (len & 0xFF) as@ u8;
   u8[] want = hmacSha1(key, prefix);
   if (want.len() != 20) { return false; }
   i32 diff = 0;
-  for (i32 i = 0; i < 20; i++) { diff = diff | (want[i] ^ msg[at + 4 + i]); }
+  for (i32 i = 0; i < 20; i++) { diff = diff | (want[i] as i32 ^ msg[at + 4 + i] as i32); }
   return diff == 0;
 }
 
@@ -333,8 +333,8 @@ i32 integrityAt(u8[] msg) {
   if (end > msg.len()) { return -1; }
   i32 at = 20;
   while (at + 4 <= end) {
-    i32 kind = (msg[at] << 8) | msg[at + 1];
-    i32 alen = (msg[at + 2] << 8) | msg[at + 3];
+    i32 kind = (msg[at] as i32 << 8) | msg[at + 1] as i32;
+    i32 alen = (msg[at + 2] as i32 << 8) | msg[at + 3] as i32;
     if (kind == attrMessageIntegrity()) { return alen == 20 && at + 24 <= end ? at : -1; }
     at = at + 4 + ((alen + 3) & ~3);
   }
@@ -345,10 +345,10 @@ i32 integrityAt(u8[] msg) {
 export u8[] withFingerprint(u8[] msg) {
   i32 c = (crc32(withLengthFor(msg, 8)) as@ i32) ^ 0x5354554E;
   u8[] v = u8[].filled(4, 0);
-  v[0] = (c >> 24) & 0xFF;
-  v[1] = (c >> 16) & 0xFF;
-  v[2] = (c >> 8) & 0xFF;
-  v[3] = c & 0xFF;
+  v[0] = ((c >> 24) & 0xFF) as@ u8;
+  v[1] = ((c >> 16) & 0xFF) as@ u8;
+  v[2] = ((c >> 8) & 0xFF) as@ u8;
+  v[3] = (c & 0xFF) as@ u8;
   return appended(msg, attrFingerprint(), v);
 }
 
@@ -364,18 +364,18 @@ export bool fingerprintOk(u8[] msg) {
   i32 end = 20 + claimedLength(msg);
   if (end > msg.len() || end < 28) { return false; }
   i32 at = end - 8;
-  if (((msg[at] << 8) | msg[at + 1]) != attrFingerprint()) { return false; }
-  if (((msg[at + 2] << 8) | msg[at + 3]) != 4) { return false; }
+  if (((msg[at] as i32 << 8) | msg[at + 1] as i32) != attrFingerprint()) { return false; }
+  if (((msg[at + 2] as i32 << 8) | msg[at + 3] as i32) != 4) { return false; }
   u8[] prefix = u8[].filled(at, 0);
   for (i32 i = 0; i < at; i++) { prefix[i] = msg[i]; }
   i32 len = at + 8 - 20;
-  prefix[2] = (len >> 8) & 0xFF;
-  prefix[3] = len & 0xFF;
+  prefix[2] = ((len >> 8) & 0xFF) as@ u8;
+  prefix[3] = (len & 0xFF) as@ u8;
   // **Reinterpreted rather than converted.** A CRC is a bit pattern, not a magnitude: `as@` is the
   // cast that says so, and the top bit being set is ordinary rather than an overflow to be squashed.
   i32 c = (crc32(prefix) as@ i32) ^ 0x5354554E;
-  return ((c >> 24) & 0xFF) == msg[at + 4]
-      && ((c >> 16) & 0xFF) == msg[at + 5]
-      && ((c >> 8) & 0xFF) == msg[at + 6]
-      && (c & 0xFF) == msg[at + 7];
+  return ((c >> 24) & 0xFF) == msg[at + 4] as i32
+      && ((c >> 16) & 0xFF) == msg[at + 5] as i32
+      && ((c >> 8) & 0xFF) == msg[at + 6] as i32
+      && (c & 0xFF) == msg[at + 7] as i32;
 }

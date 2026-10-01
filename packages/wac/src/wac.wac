@@ -716,7 +716,7 @@ i32 traceSlots(Cli cli, i32 argc) {
     i32 v = 0;
     for (i32 k = 0; k < d.len(); k++) {
       if (d[k] < 48 || d[k] > 57) { return 0; }
-      v = v * 10 + (d[k] - 48);
+      v = v * 10 + (d[k] as i32 - 48);
     }
     return v;
   }

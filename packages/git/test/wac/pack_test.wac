@@ -110,7 +110,7 @@ i64 atoi64(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     string c = s.slice(i, i + 1);
     if (c < "0" || c > "9") { continue; }
-    v = v * 10 + ((c.toBytes()[0] - '0') as i64);
+    v = v * 10 + ((c.toBytes()[0] as i32 - '0') as i64);
   }
   return v;
 }
@@ -304,7 +304,7 @@ u8[] decodedName(string hex) {
   u8[] out = u8[].filled(20, 0);
   u8[] b = hex.toBytes();
   for (i32 i = 0; i < 20; i++) {
-    out[i] = (nibble(b[i * 2]) << 4) | nibble(b[i * 2 + 1]);
+    out[i] = ((nibble(b[i * 2] as i32) << 4) | nibble(b[i * 2 + 1] as i32)) as@ u8;
   }
   return out;
 }
@@ -374,17 +374,17 @@ export string test_a_delta_that_does_not_describe_its_base_is_refused() {
   t.isTrue(applyDelta(base, [99, 4, 0x81, 0x41] as u8[]) is null,
            "a delta claiming the wrong base size is refused");
   // A command byte of zero is invalid rather than a no-op — it is what trailing zeroes look like.
-  t.isTrue(applyDelta(base, [base.len(), 1, 0x00] as u8[]) is null,
+  t.isTrue(applyDelta(base, [base.len() as@ u8, 1, 0x00] as u8[]) is null,
            "a zero command byte is refused");
   // A copy that runs past the end of the base.
-  t.isTrue(applyDelta(base, [base.len(), 5, 0x90, 0x00, 0xFF] as u8[]) is null,
+  t.isTrue(applyDelta(base, [base.len() as@ u8, 5, 0x90, 0x00, 0xFF] as u8[]) is null,
            "a copy past the end of the base is refused");
   // A literal whose length runs past the end of the delta.
-  t.isTrue(applyDelta(base, [base.len(), 9, 0x09, 0x61] as u8[]) is null,
+  t.isTrue(applyDelta(base, [base.len() as@ u8, 9, 0x09, 0x61] as u8[]) is null,
            "a literal longer than the delta is refused");
 
   // And one that works, so the refusals above are not a function that always says no.
-  u8[]? made = applyDelta(base, [base.len(), 3, 0x03, 0x61, 0x62, 0x63] as u8[]);
+  u8[]? made = applyDelta(base, [base.len() as@ u8, 3, 0x03, 0x61, 0x62, 0x63] as u8[]);
   t.isFalse(made is null, "a valid literal delta applies");
   if (!(made is null)) { t.eqStr(string.fromBytes(made!), "abc", "and produces its literal"); }
   return t.report();
@@ -457,7 +457,7 @@ export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core c
       i32 distinct = 0;
       i32[] seen = i32[].filled(256, 0);
       for (i32 i = 0; i < idx.count; i++) {
-        i32 b = idx.names[i * 20];
+        i32 b = idx.names[i * 20] as i32;
         if (seen[b] == 0) { distinct = distinct + 1; seen[b] = 1; }
       }
       t.isTrue(distinct >= 4,
@@ -503,7 +503,7 @@ export string test_an_index_with_offsets_past_two_gigabytes_round_trips() {
   i32 n = 3;
   u8[] names = u8[].filled(n * 20, 0);
   // Ascending and with distinct first bytes, so the fanout is not all in one bucket.
-  for (i32 i = 0; i < n; i++) { names[i * 20] = i * 64; }
+  for (i32 i = 0; i < n; i++) { names[i * 20] = (i * 64) as@ u8; }
   i64[] offs = i64[].filled(n, 0);
   offs[0] = 12;
   offs[1] = 2147483648;
@@ -513,7 +513,7 @@ export string test_an_index_with_offsets_past_two_gigabytes_round_trips() {
   crcs[1] = 2;
   crcs[2] = 3;
   u8[] checksum = u8[].filled(20, 0);
-  for (i32 i = 0; i < 20; i++) { checksum[i] = i + 1; }
+  for (i32 i = 0; i < 20; i++) { checksum[i] = (i + 1) as@ u8; }
 
   match (parseIdx(writeIdx(PackIndex(n, names, offs, crcs), checksum))) {
     Rejected(why): { t.isTrue(false, "the index we wrote did not read back: " + why); }

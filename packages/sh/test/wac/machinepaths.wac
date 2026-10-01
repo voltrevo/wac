@@ -32,7 +32,7 @@ bool opensAPath(string ch) {
 bool pathByte(string ch) {
   u8[] b = ch.toBytes();
   if (b.len() != 1) { return false; }
-  i32 c = b[0];
+  i32 c = b[0] as i32;
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
          c == '_' || c == '.' || c == '/' || c == '-';
 }

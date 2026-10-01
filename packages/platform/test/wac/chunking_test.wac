@@ -30,7 +30,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
 /** A pattern, not random: a truncation or a doubled chunk would visibly break it. */
 u8[] pattern(i32 size) {
   u8[] data = u8[].filled(size, 0);
-  for (i32 i = 0; i < size; i++) { data[i] = (i * 31 + (i >> 13)) & 0xFF; }
+  for (i32 i = 0; i < size; i++) { data[i] = ((i * 31 + (i >> 13)) & 0xFF) as@ u8; }
   return data;
 }
 
@@ -44,8 +44,8 @@ string firstDifference(u8[] got, u8[] want) {
   i32 n = got.len() > want.len() ? got.len() : want.len();
   for (i32 i = 0; i < n; i++) {
     if (i >= got.len() || i >= want.len() || got[i] != want[i]) {
-      string g = i < got.len() ? itoa(got[i]) : "<end>";
-      string w = i < want.len() ? itoa(want[i]) : "<end>";
+      string g = i < got.len() ? itoa(got[i] as i32) : "<end>";
+      string w = i < want.len() ? itoa(want[i] as i32) : "<end>";
       return "first difference at byte " + itoa(i) + ": got " + g + ", want " + w +
              " (lengths " + itoa(got.len()) + " and " + itoa(want.len()) + ")";
     }

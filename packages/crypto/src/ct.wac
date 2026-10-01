@@ -32,7 +32,7 @@
 export bool ctEqual(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }
   i32 diff = 0;
-  for (i32 i = 0; i < a.len(); i++) { diff = diff | (a[i] ^ b[i]); }
+  for (i32 i = 0; i < a.len(); i++) { diff = diff | (a[i] as i32 ^ b[i] as i32); }
   return diff == 0;
 }
 
@@ -46,6 +46,6 @@ export bool ctEqual(u8[] a, u8[] b) {
 export bool ctEqualN(u8[] a, u8[] b, i32 n) {
   if (a.len() < n || b.len() < n || n <= 0) { return false; }
   i32 diff = 0;
-  for (i32 i = 0; i < n; i++) { diff = diff | (a[i] ^ b[i]); }
+  for (i32 i = 0; i < n; i++) { diff = diff | (a[i] as i32 ^ b[i] as i32); }
   return diff == 0;
 }

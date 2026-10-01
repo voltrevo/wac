@@ -71,7 +71,7 @@ bool isValidTarget(u8[] s, i32 lo, i32 hi) {
     if (s[i] == ':' && s[i + 1] == '/' && s[i + 2] == '/') { return true; }
   }
   for (i32 i = lo + 1; i < hi - 1; i++) {
-    if (s[i] == ':' && isDigit(s[i + 1])) { return true; }
+    if (s[i] == ':' && isDigit(s[i + 1] as i32)) { return true; }
   }
   return false;
 }
@@ -101,7 +101,7 @@ export Parsed parseRequest(u8[] input, i32 maxBody) {
   if (sp1 < 0) { return Parsed.Bad(ERR_LINE()); }
   if (sp1 == begin) { return Parsed.Bad(ERR_METHOD()); }
   for (i32 i = begin; i < sp1; i++) {
-    if (!isToken(input[i])) { return Parsed.Bad(ERR_METHOD()); }
+    if (!isToken(input[i] as i32)) { return Parsed.Bad(ERR_METHOD()); }
   }
 
   i32 sp2 = -1;
@@ -129,7 +129,7 @@ export Parsed parseRequest(u8[] input, i32 maxBody) {
   for (i32 i = 0; i < 7; i++) {
     if (input[sp2 + 1 + i] != want[i]) { return Parsed.Bad(ERR_VERSION()); }
   }
-  i32 minorByte = input[sp2 + 8];
+  i32 minorByte = input[sp2 + 8] as i32;
   if (!isDigit(minorByte)) { return Parsed.Bad(ERR_VERSION()); }
 
   Request req = Request(slice(input, begin, sp1), slice(input, sp1 + 1, sp2), minorByte - '0',
@@ -145,7 +145,7 @@ export Parsed parseRequest(u8[] input, i32 maxBody) {
     // A line beginning with space or tab is obsolete line folding. RFC 9112 §5.2 says a server
     // must reject it: the folded text becomes part of the previous value, and a value that can
     // contain CRLF is a value that can contain a header.
-    if (isOws(input[at])) { return Parsed.Bad(ERR_OBS_FOLD()); }
+    if (isOws(input[at] as i32)) { return Parsed.Bad(ERR_OBS_FOLD()); }
 
     i32 colon = -1;
     for (i32 i = at; i < end; i++) {
@@ -155,15 +155,15 @@ export Parsed parseRequest(u8[] input, i32 maxBody) {
     for (i32 i = at; i < colon; i++) {
       // Whitespace before the colon included: `Host : a` is rejected, because some parsers read
       // the name as `Host` and others as `Host `, and that disagreement is the bug.
-      if (!isToken(input[i])) { return Parsed.Bad(ERR_HEADER_NAME()); }
+      if (!isToken(input[i] as i32)) { return Parsed.Bad(ERR_HEADER_NAME()); }
     }
 
     i32 vs = colon + 1;
-    while (vs < end && isOws(input[vs])) { vs++; }
+    while (vs < end && isOws(input[vs] as i32)) { vs++; }
     i32 ve = end;
-    while (ve > vs && isOws(input[ve - 1])) { ve--; }
+    while (ve > vs && isOws(input[ve - 1] as i32)) { ve--; }
     for (i32 i = vs; i < ve; i++) {
-      if (!isFieldValueByte(input[i])) { return Parsed.Bad(ERR_HEADER_VALUE()); }
+      if (!isFieldValueByte(input[i] as i32)) { return Parsed.Bad(ERR_HEADER_VALUE()); }
     }
 
     req.headers.push(slice(input, at, colon), slice(input, vs, ve));
@@ -192,13 +192,13 @@ export Parsed parseRequest(u8[] input, i32 maxBody) {
     for (i32 i = 0; i < cl.len(); i++) {
       // No sign, no whitespace, no hex, no `+5`: a value some parsers read as 5 and others
       // reject is precisely the ambiguity to refuse.
-      if (!isDigit(cl[i])) { return Parsed.Bad(ERR_FRAMING()); }
+      if (!isDigit(cl[i] as i32)) { return Parsed.Bad(ERR_FRAMING()); }
       // Accumulated in i64, because the check below cannot work on a value that has already
       // wrapped: `Content-Length: 4294967296` overflowed an i32 to exactly zero, `length > maxBody`
       // was false, and an incomplete request was accepted as a complete one with an empty body.
       // The i64 cannot overflow in turn — every digit is followed by the check, so the largest it
       // ever holds is `maxBody * 10 + 9`.
-      acc = acc * 10 + ((cl[i] - '0') as i64);
+      acc = acc * 10 + ((cl[i] as i32 - '0') as i64);
       if (acc > (maxBody as i64)) { return Parsed.Bad(ERR_TOO_LARGE()); }
     }
     // Known to be at most `maxBody`, so it fits — and `as!` says so rather than assuming it.
@@ -233,10 +233,10 @@ Parsed readChunked(u8[] input, i32 start, Request req, i32 maxBody) {
     i64 acc = 0;
     i32 i = at;
     i32 digitsSeen = 0;
-    while (i < end && digitValue(input[i]) >= 0) {
+    while (i < end && digitValue(input[i] as i32) >= 0) {
       // In i64, for the reason given where `Content-Length` is parsed: a check against `maxBody`
       // is meaningless once the accumulation has wrapped.
-      acc = acc * 16 + (digitValue(input[i]) as i64);
+      acc = acc * 16 + (digitValue(input[i] as i32) as i64);
       digitsSeen++;
       if (acc > (maxBody as i64)) { return Parsed.Bad(ERR_TOO_LARGE()); }
       i++;
@@ -271,21 +271,21 @@ Parsed readChunked(u8[] input, i32 start, Request req, i32 maxBody) {
     i32 end = findCrlf(input, at);
     if (end < 0) { return Parsed.Incomplete; }
     if (end == at) { at = at + 2; break; }
-    if (isOws(input[at])) { return Parsed.Bad(ERR_OBS_FOLD()); }
+    if (isOws(input[at] as i32)) { return Parsed.Bad(ERR_OBS_FOLD()); }
     i32 colon = -1;
     for (i32 k = at; k < end; k++) {
       if (input[k] == ':') { colon = k; break; }
     }
     if (colon < 0 || colon == at) { return Parsed.Bad(ERR_HEADER_NAME()); }
     for (i32 k = at; k < colon; k++) {
-      if (!isToken(input[k])) { return Parsed.Bad(ERR_HEADER_NAME()); }
+      if (!isToken(input[k] as i32)) { return Parsed.Bad(ERR_HEADER_NAME()); }
     }
     i32 vs = colon + 1;
-    while (vs < end && isOws(input[vs])) { vs++; }
+    while (vs < end && isOws(input[vs] as i32)) { vs++; }
     i32 ve = end;
-    while (ve > vs && isOws(input[ve - 1])) { ve--; }
+    while (ve > vs && isOws(input[ve - 1] as i32)) { ve--; }
     for (i32 k = vs; k < ve; k++) {
-      if (!isFieldValueByte(input[k])) { return Parsed.Bad(ERR_HEADER_VALUE()); }
+      if (!isFieldValueByte(input[k] as i32)) { return Parsed.Bad(ERR_HEADER_VALUE()); }
     }
     req.headers.push(slice(input, at, colon), slice(input, vs, ve));
     at = end + 2;

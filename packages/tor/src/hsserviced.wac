@@ -368,18 +368,18 @@ u8[] ipv4Bytes(string address) {
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] == '.') {
       if (part >= 3) { return u8[](); }
-      out[part] = value;
+      out[part] = value as@ u8;
       part = part + 1;
       value = 0;
     } else if (a[i] >= '0' && a[i] <= '9') {
-      value = value * 10 + (a[i] - '0');
+      value = value * 10 + (a[i] as i32 - '0');
       if (value > 255) { return u8[](); }
     } else {
       return u8[]();
     }
   }
   if (part != 3) { return u8[](); }
-  out[3] = value;
+  out[3] = value as@ u8;
   return out;
 }
 

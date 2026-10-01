@@ -121,12 +121,12 @@ i32 charValue(string raw) {
     if (c == "t") { return 9; }
     if (c == "r") { return 13; }
     if (c == "0") { return 0; }
-    return body.toBytes()[1];
+    return body.toBytes()[1] as i32;
   }
   // The first code point. ASCII in every character literal this repository has, and a multi-byte one
   // would be its leading byte — which is what the reference's `charCodeAt` gives for the same input.
   u8[] b = body.toBytes();
-  return b.len() == 0 ? 0 : b[0];
+  return b.len() == 0 ? 0 : b[0] as i32;
 }
 
 /**

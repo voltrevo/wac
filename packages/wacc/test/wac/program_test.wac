@@ -136,8 +136,8 @@ export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
       if (got.bytes[i] != want[i]) { first = i; }
     }
     t.eqI32(first, -1, first < 0 ? "" :
-            "byte " + itoa(first) + " differs: " + itoa(got.bytes[first]) + " vs " +
-            itoa(want[first]));
+            "byte " + itoa(first) + " differs: " + itoa(got.bytes[first] as i32) + " vs " +
+            itoa(want[first] as i32));
   }
   core.log("    program: " + itoa(got.bytes.len()) + " bytes for " + entry +
            ", identical to the library's");

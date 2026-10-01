@@ -150,7 +150,7 @@ bool isName(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     u8[] b = s.slice(i, i + 1).toBytes();
     if (b.len() != 1) { return false; }
-    i32 c = b[0];
+    i32 c = b[0] as i32;
     if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) { return false; }
   }
   return true;
@@ -190,14 +190,14 @@ i32 numberBefore(string src, string suffix) {
   while (from > 0 && isDigitAt(src, from - 1)) { from = from - 1; }
   if (from == at) { return 0 - 1; }
   i32 v = 0;
-  for (i32 i = from; i < at; i++) { v = v * 10 + (src.slice(i, i + 1).toBytes()[0] - '0'); }
+  for (i32 i = from; i < at; i++) { v = v * 10 + (src.slice(i, i + 1).toBytes()[0] as i32 - '0'); }
   return v;
 }
 
 bool isDigitAt(string s, i32 i) {
   u8[] b = s.slice(i, i + 1).toBytes();
   if (b.len() != 1) { return false; }
-  i32 c = b[0];
+  i32 c = b[0] as i32;
   return c >= '0' && c <= '9';
 }
 

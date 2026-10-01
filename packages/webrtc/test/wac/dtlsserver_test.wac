@@ -40,7 +40,7 @@ static i32 ECDSA_SHA256 = 0x0403;
 
 u8[] ramp(i32 n, i32 mul, i32 add) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * mul + add) & 255) as@ u8; }
   return out;
 }
 
@@ -50,7 +50,7 @@ u8[] serverScalar() { return ramp(32, 13, 2); }
 u8[] sigK() { return ramp(32, 17, 29); }
 u8[] cookie() {
   u8[] c = u8[].filled(8, 0);
-  for (i32 i = 0; i < 8; i++) { c[i] = 9 - i; }
+  for (i32 i = 0; i < 8; i++) { c[i] = (9 - i) as@ u8; }
   return c;
 }
 
@@ -74,14 +74,14 @@ u8[] slice(u8[] b, i32 at, i32 end) {
 /** A plaintext record header around a fragment. */
 u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
   u8[] out = u8[].filled(13 + fragment.len(), 0);
-  out[0] = kind;
+  out[0] = kind as@ u8;
   out[1] = 0xFE;
   out[2] = 0xFD;
-  out[3] = (epoch >> 8) & 255;
-  out[4] = epoch & 255;
-  for (i32 i = 0; i < 6; i++) { out[5 + i] = ((seq >> ((5 - i) * 8)) & 255) as i32; }
-  out[11] = (fragment.len() >> 8) & 255;
-  out[12] = fragment.len() & 255;
+  out[3] = ((epoch >> 8) & 255) as@ u8;
+  out[4] = (epoch & 255) as@ u8;
+  for (i32 i = 0; i < 6; i++) { out[5 + i] = (((seq >> ((5 - i) * 8)) & 255) as i32) as@ u8; }
+  out[11] = ((fragment.len() >> 8) & 255) as@ u8;
+  out[12] = (fragment.len() & 255) as@ u8;
   out.copyFrom(fragment, 0, 13, fragment.len());
   return out;
 }
@@ -133,8 +133,8 @@ Identity identity(Cli cli) {
 }
 
 i32 hexValue(string c) {
-  if (c >= "0" && c <= "9") { return c.toBytes()[0] - '0'; }
-  if (c >= "a" && c <= "f") { return c.toBytes()[0] - 'a' + 10; }
+  if (c >= "0" && c <= "9") { return c.toBytes()[0] as i32 - '0'; }
+  if (c >= "a" && c <= "f") { return c.toBytes()[0] as i32 - 'a' + 10; }
   return -1;
 }
 
@@ -212,7 +212,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   u8[] signature = signEcdsaDer(me.priv, signed, sigK());
   t.isTrue(signature.len() > 0, "the ECDSA nonce produced a usable signature");
   if (signature.len() > 0) {
-    t.eqI32(signature[0], 0x30, "and it is DER: a SEQUENCE of two INTEGERs");
+    t.eqI32(signature[0] as i32, 0x30, "and it is DER: a SEQUENCE of two INTEGERs");
   }
 
   // **The server's `message_seq` is one counter across the whole handshake**, and the
@@ -296,7 +296,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
            "their Finished did not authenticate under the keys we derived — the master secret, the " +
            "key block or the record protection");
   if (theirFinished.len() == 0) { finish(cli, sock, client); return t.report(); }
-  t.eqI32(theirFinished[0], 20, "and it is a Finished message");
+  t.eqI32(theirFinished[0] as i32, 20, "and it is a Finished message");
 
   u8[] wantClient = finishedMessage(master, transcript, 0, true);
   t.eqStr(hexOf(slice(theirFinished, 12, theirFinished.len())),

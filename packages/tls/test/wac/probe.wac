@@ -49,17 +49,17 @@ export u8[] tlsParseClientHello(u8[] body, i32 preferred) {
   i32 n = 2 + 1 + 1 + ch.sessionId.len() + 1 + ch.keyShare.len() + 2 + ch.serverName.len() + 32;
   u8[] out = u8[].filled(n, 0);
   i32 p = 0;
-  out[p] = (ch.suite >> 8) & 0xFF; p++;
-  out[p] = ch.suite & 0xFF; p++;
+  out[p] = ((ch.suite >> 8) & 0xFF) as@ u8; p++;
+  out[p] = (ch.suite & 0xFF) as@ u8; p++;
   out[p] = (ch.offersTls13 ? 1 : 0) | (ch.offersEd25519 ? 2 : 0); p++;
-  out[p] = ch.sessionId.len(); p++;
+  out[p] = ch.sessionId.len() as@ u8; p++;
   for (i32 i = 0; i < ch.sessionId.len(); i++) { out[p + i] = ch.sessionId[i]; }
   p += ch.sessionId.len();
-  out[p] = ch.keyShare.len(); p++;
+  out[p] = ch.keyShare.len() as@ u8; p++;
   for (i32 i = 0; i < ch.keyShare.len(); i++) { out[p + i] = ch.keyShare[i]; }
   p += ch.keyShare.len();
-  out[p] = (ch.serverName.len() >> 8) & 0xFF; p++;
-  out[p] = ch.serverName.len() & 0xFF; p++;
+  out[p] = ((ch.serverName.len() >> 8) & 0xFF) as@ u8; p++;
+  out[p] = (ch.serverName.len() & 0xFF) as@ u8; p++;
   for (i32 i = 0; i < ch.serverName.len(); i++) { out[p + i] = ch.serverName[i]; }
   p += ch.serverName.len();
   for (i32 i = 0; i < 32; i++) { out[p + i] = ch.random[i]; }
@@ -110,9 +110,9 @@ import { parseCert, Cert, certMatchesHost, certSignedBy, verifyChain, verifyPath
  */
 export u8[] x509Constants() {
   return [
-              keyEd25519(), keyP256(), keyRsa(), keyP384(),
-              sigEd25519Alg(), sigEcdsaSha256(), sigEcdsaSha384(),
-              sigRsaSha256(), sigRsaSha384(), sigRsaSha512(), sigRsaPss()
+              keyEd25519() as@ u8, keyP256() as@ u8, keyRsa() as@ u8, keyP384() as@ u8,
+              sigEd25519Alg() as@ u8, sigEcdsaSha256() as@ u8, sigEcdsaSha384() as@ u8,
+              sigRsaSha256() as@ u8, sigRsaSha384() as@ u8, sigRsaSha512() as@ u8, sigRsaPss() as@ u8
   ];
 }
 
@@ -127,22 +127,22 @@ export u8[] x509Parse(u8[] der) {
         + 2 + c.dnsNames.len();
   u8[] out = u8[].filled(n, 0);
   i32 p = 0;
-  for (i32 i = 0; i < 8; i++) { out[p + i] = ((c.notBefore >> (((7 - i) * 8) as i64)) & 255) as! i32; }
+  for (i32 i = 0; i < 8; i++) { out[p + i] = (((c.notBefore >> (((7 - i) * 8) as i64)) & 255) as! i32) as@ u8; }
   p += 8;
-  for (i32 i = 0; i < 8; i++) { out[p + i] = ((c.notAfter >> (((7 - i) * 8) as i64)) & 255) as! i32; }
+  for (i32 i = 0; i < 8; i++) { out[p + i] = (((c.notAfter >> (((7 - i) * 8) as i64)) & 255) as! i32) as@ u8; }
   p += 8;
   out[p] = c.isCa ? 1 : 0; p++;
-  out[p] = c.keyType; p++;
-  out[p] = c.sigAlg; p++;
-  out[p] = (c.publicKey.len() >> 8) & 0xFF; p++;
-  out[p] = c.publicKey.len() & 0xFF; p++;
+  out[p] = c.keyType as@ u8; p++;
+  out[p] = c.sigAlg as@ u8; p++;
+  out[p] = ((c.publicKey.len() >> 8) & 0xFF) as@ u8; p++;
+  out[p] = (c.publicKey.len() & 0xFF) as@ u8; p++;
   for (i32 i = 0; i < c.publicKey.len(); i++) { out[p + i] = c.publicKey[i]; }
   p += c.publicKey.len();
-  out[p] = c.rsaExponent.len(); p++;
+  out[p] = c.rsaExponent.len() as@ u8; p++;
   for (i32 i = 0; i < c.rsaExponent.len(); i++) { out[p + i] = c.rsaExponent[i]; }
   p += c.rsaExponent.len();
-  out[p] = (c.dnsNames.len() >> 8) & 0xFF; p++;
-  out[p] = c.dnsNames.len() & 0xFF; p++;
+  out[p] = ((c.dnsNames.len() >> 8) & 0xFF) as@ u8; p++;
+  out[p] = (c.dnsNames.len() & 0xFF) as@ u8; p++;
   for (i32 i = 0; i < c.dnsNames.len(); i++) { out[p + i] = c.dnsNames[i]; }
   return out;
 }
@@ -197,11 +197,11 @@ import {
 } from "../../src/record.wac";
 export u8[] alertCodes() {
   return [
-    alertCloseNotify(), alertUnexpectedMessage(), alertBadRecordMac(),
-    alertHandshakeFailure(), alertBadCertificate(), alertUnsupportedCertificate(),
-    alertCertificateExpired(), alertIllegalParameter(), alertUnknownCa(),
-    alertDecodeError(), alertDecryptError(), alertProtocolVersion(),
-    alertMissingExtension(), alertNoApplicationProtocol()
+    alertCloseNotify() as@ u8, alertUnexpectedMessage() as@ u8, alertBadRecordMac() as@ u8,
+    alertHandshakeFailure() as@ u8, alertBadCertificate() as@ u8, alertUnsupportedCertificate() as@ u8,
+    alertCertificateExpired() as@ u8, alertIllegalParameter() as@ u8, alertUnknownCa() as@ u8,
+    alertDecodeError() as@ u8, alertDecryptError() as@ u8, alertProtocolVersion() as@ u8,
+    alertMissingExtension() as@ u8, alertNoApplicationProtocol() as@ u8
   ];
 }
 export u8[] alertEncode(i32 description) { return alertBody(description); }

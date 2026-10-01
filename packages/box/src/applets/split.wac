@@ -121,9 +121,9 @@ string suffix(i32 n) {
   // base 25 because `z` there would be indistinguishable from the marker.
   i32 rest = remaining;
   for (i32 i = level + digits - 1; i > level; i--) {
-    out[i] = 'a' + (rest % 26);
+    out[i] = ('a' + (rest % 26)) as@ u8;
     rest = rest / 26;
   }
-  out[level] = 'a' + rest;
+  out[level] = ('a' + rest) as@ u8;
   return string.fromBytes(out);
 }

@@ -120,7 +120,7 @@ f64 decimalToF64(u8[] digits, i32 count, i32 exp10) {
   i32 dn = 1;
   bool any = false;
   for (i32 i = 0; i < count; i++) {
-    nn = bigMulSmall(num, nn, 10, digits[i] - 48);
+    nn = bigMulSmall(num, nn, 10, digits[i] as i32 - 48);
     if (digits[i] != 48) { any = true; }
   }
   if (!any) { return 0.0; }
@@ -216,26 +216,26 @@ export f64 floatLit(string s) {
   i32 frac = 0;
   i32 i = 0;
   while (i < a.len()) {
-    i32 c = a[i];
+    i32 c = a[i] as i32;
     if (c == 95) {
       i = i + 1;
       continue;
     }
     if (c < 48 || c > 57) { break; }
-    digits[count] = c;
+    digits[count] = c as@ u8;
     count = count + 1;
     i = i + 1;
   }
   if (i < a.len() && a[i] == 46) {
     i = i + 1;
     while (i < a.len()) {
-      i32 c2 = a[i];
+      i32 c2 = a[i] as i32;
       if (c2 == 95) {
         i = i + 1;
         continue;
       }
       if (c2 < 48 || c2 > 57) { break; }
-      digits[count] = c2;
+      digits[count] = c2 as@ u8;
       count = count + 1;
       frac = frac + 1;
       i = i + 1;
@@ -250,7 +250,7 @@ export f64 floatLit(string s) {
       i = i + 1;
     }
     while (i < a.len()) {
-      i32 c3 = a[i];
+      i32 c3 = a[i] as i32;
       if (c3 == 95) {
         i = i + 1;
         continue;
@@ -293,19 +293,19 @@ export i64 charValue(u8[] a) {
       i32 cp = unicodeEscapeValue(a, 2, a.len());
       if (cp >= 0) { return cp as i64; }
     }
-    return escapeValue(a[2]) as i64;
+    return escapeValue(a[2] as i32) as i64;
   }
   // Otherwise a UTF-8 sequence, decoded from its lead byte exactly as `str_idx` decodes one.
-  i32 b0 = a[1];
+  i32 b0 = a[1] as i32;
   if (b0 < 128) { return b0 as i64; }
   if (b0 < 224 && a.len() >= 4) {
-    return (((b0 & 31) * 64) + (a[2] & 63)) as i64;
+    return (((b0 & 31) * 64) + (a[2] as i32 & 63)) as i64;
   }
   if (b0 < 240 && a.len() >= 5) {
-    return (((b0 & 15) * 4096) + ((a[2] & 63) * 64) + (a[3] & 63)) as i64;
+    return (((b0 & 15) * 4096) + ((a[2] as i32 & 63) * 64) + (a[3] as i32 & 63)) as i64;
   }
   if (a.len() >= 6) {
-    return (((b0 & 7) * 262144) + ((a[2] & 63) * 4096) + ((a[3] & 63) * 64) + (a[4] & 63)) as i64;
+    return (((b0 & 7) * 262144) + ((a[2] as i32 & 63) * 4096) + ((a[3] as i32 & 63) * 64) + (a[4] as i32 & 63)) as i64;
   }
   return 0;
 }
@@ -330,7 +330,7 @@ export i64 parseInt(string s) {
   // exists to catch and which no differential case had, because every literal in them was plain.
   if (a.len() > 2 && a[0] == 48 && (a[1] == 120 || a[1] == 88)) {
     for (i32 i = 2; i < a.len(); i++) {
-      i32 c = a[i];
+      i32 c = a[i] as i32;
       if (c == 95) { continue; }
       i32 d = -1;
       if (c >= 48 && c <= 57) { d = c - 48; }
@@ -344,7 +344,7 @@ export i64 parseInt(string s) {
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] == 95) { continue; }
     if (a[i] < 48 || a[i] > 57) { break; }
-    v = v * 10 + (a[i] - 48) as i64;
+    v = v * 10 + (a[i] as i32 - 48) as i64;
   }
   return v;
 }

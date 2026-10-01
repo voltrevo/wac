@@ -80,8 +80,8 @@ export struct Surface {
   i32 at(const this, i32 x, i32 y) {
     if (x < 0 || y < 0 || x >= this.width || y >= this.height) { return 0; }
     i32 i = (y * this.width + x) * 4;
-    return (this.pixels[i] << 24) | (this.pixels[i + 1] << 16)
-         | (this.pixels[i + 2] << 8) | this.pixels[i + 3];
+    return (this.pixels[i] as i32 << 24) | (this.pixels[i + 1] as i32 << 16)
+         | (this.pixels[i + 2] as i32 << 8) | this.pixels[i + 3] as i32;
   }
 
   /**
@@ -105,10 +105,10 @@ export struct Surface {
       i32 row = py * this.width * 4;
       for (i32 px = x0; px < x1; px++) {
         i32 i = row + px * 4;
-        this.pixels[i] = r;
-        this.pixels[i + 1] = g;
-        this.pixels[i + 2] = b;
-        this.pixels[i + 3] = a;
+        this.pixels[i] = r as@ u8;
+        this.pixels[i + 1] = g as@ u8;
+        this.pixels[i + 2] = b as@ u8;
+        this.pixels[i + 3] = a as@ u8;
       }
     }
     this.damage(x0, y0, x1, y1);
@@ -158,10 +158,10 @@ export struct Surface {
         i32 px = x + col;
         if (px < 0 || px >= this.width) { continue; }
         i32 i = base + px * 4;
-        this.pixels[i] = r;
-        this.pixels[i + 1] = g;
-        this.pixels[i + 2] = b;
-        this.pixels[i + 3] = a;
+        this.pixels[i] = r as@ u8;
+        this.pixels[i + 1] = g as@ u8;
+        this.pixels[i + 2] = b as@ u8;
+        this.pixels[i + 3] = a as@ u8;
       }
     }
     this.damage(x, y, x + w, y + 16);

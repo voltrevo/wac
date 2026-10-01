@@ -80,7 +80,7 @@ export string test_crc32_matches_an_independently_computed_checksum(Core core, C
   }
   u32 crc = 0xFFFFFFFF;
   for (i32 i = 0; i < raw.len(); i++) {
-    crc = table[((crc ^ (raw[i] as@ u32)) & 0xFF) as@ i32] ^ (crc >> 8);
+    crc = table[((crc ^ (raw[i] as u32)) & 0xFF) as@ i32] ^ (crc >> 8);
   }
   crc = crc ^ 0xFFFFFFFF;
   string want = "";

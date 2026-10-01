@@ -54,9 +54,9 @@ export string test_a_real_servers_reply_has_the_fixed_bit_greased_to_zero(Core c
   if (reply.len() == 0) { return t.report(); }
 
   // The bit RFC 9000 calls fixed, in a packet from a real implementation.
-  t.neI32(reply[0] & 0x80, 0, "a long header");
-  t.eqI32(reply[0] & 0x40, 0, "the server greased the fixed bit");
-  t.eqI32((reply[0] >> 4) & 3, 0, "and it is an Initial");
+  t.neI32(reply[0] as i32 & 0x80, 0, "a long header");
+  t.eqI32(reply[0] as i32 & 0x40, 0, "the server greased the fixed bit");
+  t.eqI32((reply[0] as i32 >> 4) & 3, 0, "and it is an Initial");
 
   // **The bit is the only thing wrong with it.** Everything else is an ordinary version-1 Initial,
   // which is what makes refusing it a defect rather than caution: the version says 1, the ids are
@@ -82,7 +82,7 @@ export string test_greasing_is_something_the_caller_allows(Core core, Cli cli) {
             "without the transport parameter, a cleared fixed bit is not a version-1 packet");
 
   // And a client's own Initial has the bit set, so allowing greasing never has to mean ignoring it.
-  t.neI32(initial[0] & 0x40, 0, "quinn sets the bit on the packet it sends first");
+  t.neI32(initial[0] as i32 & 0x40, 0, "quinn sets the bit on the packet it sends first");
   t.isTrue(parseOk(initial, false), "which parses either way");
   t.isTrue(parseOk(initial, true), "…either way");
   return t.report();

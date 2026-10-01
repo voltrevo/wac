@@ -1255,7 +1255,7 @@ i32 procPid(Fs fs, string rest) {
     if (b[i] < '0' || b[i] > '9') { return -1; }
   }
   i32 pid = 0;
-  for (i32 i = 0; i < b.len(); i++) { pid = pid * 10 + (b[i] - '0'); }
+  for (i32 i = 0; i < b.len(); i++) { pid = pid * 10 + (b[i] as i32 - '0'); }
   return fs.procs.has(pid) ? pid : -1;
 }
 

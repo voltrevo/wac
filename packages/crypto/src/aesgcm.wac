@@ -32,8 +32,8 @@ export void gcmInc32(u8[] ctr) { inc32(ctr); }
 
 void inc32(u8[] ctr) {
   for (i32 i = 15; i >= 12; i--) {
-    i32 v = ctr[i] + 1;
-    ctr[i] = v & 0xFF;
+    i32 v = ctr[i] as i32 + 1;
+    ctr[i] = (v & 0xFF) as@ u8;
     if (v < 256) { return; }
   }
 }

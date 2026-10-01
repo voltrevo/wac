@@ -330,7 +330,7 @@ export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
     i64 seconds = 0 as i64;
     for (i32 d = ageFrom; d < at; d++) {
       if (b[d] < 48 || b[d] > 57) { seconds = 0 as i64; break; }
-      seconds = seconds * (10 as i64) + ((b[d] - 48) as i64);
+      seconds = seconds * (10 as i64) + ((b[d] as i32 - 48) as i64);
     }
     if (seconds * (1000 as i64) < staleMs) { continue; }
     cli.execWith("/bin/kill", ["-9", pid], u8[](), string[].filled(0, ""), false, false).wait();

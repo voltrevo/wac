@@ -71,7 +71,7 @@ string norm(string s) {
   string out = "";
   bool space = false;
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c == 32 || c == 9 || c == 10 || c == 13) { space = true; continue; }
     if (space && out.len() > 0) { out = out + " "; }
     space = false;
@@ -409,7 +409,7 @@ export string test_a_call_shaped_reference_in_a_readme_names_something_real(Core
       string name = inner.slice(0, paren);
       bool wordy = name.len() > 0;
       for (i32 k = 0; k < name.len(); k++) {
-        i32 c = name.toBytes()[k];
+        i32 c = name.toBytes()[k] as i32;
         bool ok = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57)
                || c == 95 || c == 46;
         if (!ok) { wordy = false; }

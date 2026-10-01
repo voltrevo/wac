@@ -15,7 +15,7 @@ export string test_table_agrees_with_definition_on_every_byte() {
   // 256 of them.
   for (i32 b = 0; b < 256; b++) {
     u8[] one = u8[].filled(1, 0);
-    one[0] = b;
+    one[0] = b as@ u8;
     t.eqU32(crc32(one), crc32Bitwise(one), "single byte " + itoa(b));
   }
   return t.report();
@@ -37,7 +37,7 @@ export string test_table_agrees_across_lengths() {
     // A deterministic spread rather than a constant, so state varies across the
     // whole table as the loop advances.
     for (i32 i = 0; i < n; i++) {
-      data[i] = (i * 37 + n * 11) & 0xFF;
+      data[i] = ((i * 37 + n * 11) & 0xFF) as@ u8;
     }
     t.eqU32(crc32(data), crc32Bitwise(data), "length " + itoa(n));
   }
@@ -78,7 +78,7 @@ export string test_known_vectors() {
 /** `n` bytes of the same ramp the long-input case uses, so one recipe covers every length here. */
 u8[] ramp(i32 n) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + 7) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 31 + 7) & 0xFF) as@ u8; }
   return out;
 }
 
@@ -96,7 +96,7 @@ export string test_every_single_byte() {
   i64 sum = 0 as i64;
   for (i32 b = 0; b < 256; b++) {
     u8[] one = u8[].filled(1, 0);
-    one[0] = b;
+    one[0] = b as@ u8;
     sum = sum + (crc32(one) as i64);
   }
   t.eqI64(sum, 549755813760, "the sum of crc32 over every single byte");

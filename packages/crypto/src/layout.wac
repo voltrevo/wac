@@ -16,35 +16,35 @@
 
 /** Little-endian u32 at byte offset `i`. */
 export u32 leWord32(u8[] b, i32 i) {
-  return (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) as@ u32;
+  return (b[i] as i32 | (b[i + 1] as i32 << 8) | (b[i + 2] as i32 << 16) | (b[i + 3] as i32 << 24)) as@ u32;
 }
 
 /** Write `v` little-endian into four bytes at `at`. */
 export void storeLE32(u32 v, u8[] out, i32 at) {
-  for (i32 j = 0; j < 4; j++) { out[at + j] = ((v >> ((j * 8) as@ u32)) & 255) as@ i32; }
+  for (i32 j = 0; j < 4; j++) { out[at + j] = (((v >> ((j * 8) as@ u32)) & 255) as@ i32) as@ u8; }
 }
 
 /** Big-endian u32 at byte offset `i`. */
 export u32 beWord32(u8[] b, i32 i) {
-  return ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) as@ u32;
+  return ((b[i] as i32 << 24) | (b[i + 1] as i32 << 16) | (b[i + 2] as i32 << 8) | b[i + 3] as i32) as@ u32;
 }
 
 /** Write `v` big-endian into four bytes at `at`. */
 export void storeBE32(u32 v, u8[] out, i32 at) {
-  for (i32 j = 0; j < 4; j++) { out[at + j] = ((v >> (((3 - j) * 8) as@ u32)) & 255) as@ i32; }
+  for (i32 j = 0; j < 4; j++) { out[at + j] = (((v >> (((3 - j) * 8) as@ u32)) & 255) as@ i32) as@ u8; }
 }
 
 /** Big-endian u64 at byte offset `i`. */
 export u64 beWord64(u8[] b, i32 i) {
   u64 v = 0;
-  for (i32 j = 0; j < 8; j++) { v = (v << 8) | (b[i + j] as! u64); }
+  for (i32 j = 0; j < 8; j++) { v = (v << 8) | (b[i + j] as u64); }
   return v;
 }
 
 /** Write `v` big-endian into eight bytes at `at`. */
 export void storeBE64(u64 v, u8[] out, i32 at) {
   for (i32 j = 0; j < 8; j++) {
-    out[at + j] = ((v >> (((7 - j) * 8) as! u64)) & 255) as! i32;
+    out[at + j] = (((v >> (((7 - j) * 8) as! u64)) & 255) as! i32) as@ u8;
   }
 }
 

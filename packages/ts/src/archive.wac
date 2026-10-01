@@ -29,10 +29,10 @@ export struct Archive {
   string error;
 }
 
-i32 u16At(u8[] b, i32 at) { return b[at] | (b[at + 1] << 8); }
+i32 u16At(u8[] b, i32 at) { return b[at] as i32 | (b[at + 1] as i32 << 8); }
 
 i32 u32At(u8[] b, i32 at) {
-  return b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24);
+  return b[at] as i32 | (b[at + 1] as i32 << 8) | (b[at + 2] as i32 << 16) | (b[at + 3] as i32 << 24);
 }
 
 /**
@@ -96,8 +96,8 @@ export u8[] write(Entry[] entries) {
     put32(out, entries[i].data.len());
     put16(out, name.len());
     put16(out, 0);                  // extra
-    for (i32 k = 0; k < name.len(); k++) { out.push(name[k]); }
-    for (i32 k = 0; k < entries[i].data.len(); k++) { out.push(entries[i].data[k]); }
+    for (i32 k = 0; k < name.len(); k++) { out.push(name[k] as i32); }
+    for (i32 k = 0; k < entries[i].data.len(); k++) { out.push(entries[i].data[k] as i32); }
   }
 
   i32 dirAt = out.len();
@@ -120,7 +120,7 @@ export u8[] write(Entry[] entries) {
     put16(out, 0);                  // internal attrs
     put32(out, 0);                  // external attrs
     put32(out, offsets.get(i));
-    for (i32 k = 0; k < name.len(); k++) { out.push(name[k]); }
+    for (i32 k = 0; k < name.len(); k++) { out.push(name[k] as i32); }
   }
 
   i32 dirSize = out.len() - dirAt;
@@ -134,7 +134,7 @@ export u8[] write(Entry[] entries) {
   put16(out, 0);                    // comment length
 
   u8[] b = u8[].filled(out.len(), 0);
-  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i); }
+  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i) as@ u8; }
   return b;
 }
 

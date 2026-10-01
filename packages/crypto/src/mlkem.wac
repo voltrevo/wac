@@ -183,8 +183,8 @@ void polyAdd(i32[] a, i32[] b) {
 i32[] sampleNtt(u8[] seed, i32 i, i32 j) {
   u8[] input = u8[].filled(34, 0);
   for (i32 t = 0; t < 32; t++) { input[t] = seed[t]; }
-  input[32] = i;
-  input[33] = j;
+  input[32] = i as@ u8;
+  input[33] = j as@ u8;
   u8[] stream = shake128(input, 1344);   // eight blocks; overwhelmingly enough
 
   i32[] a = i32[].filled(n(), 0);
@@ -192,9 +192,9 @@ i32[] sampleNtt(u8[] seed, i32 i, i32 j) {
   i32 at = 0;
   while (count < n()) {
     if (at + 3 > stream.len()) { trap; }
-    i32 b0 = stream[at];
-    i32 b1 = stream[at + 1];
-    i32 b2 = stream[at + 2];
+    i32 b0 = stream[at] as i32;
+    i32 b1 = stream[at + 1] as i32;
+    i32 b2 = stream[at + 2] as i32;
     at += 3;
     i32 d1 = b0 | ((b1 & 15) << 8);
     i32 d2 = (b1 >> 4) | (b2 << 4);
@@ -231,7 +231,7 @@ i32[] samplePolyCbd(u8[] bytes, i32 eta) {
 u8[] prf(u8[] s, i32 b, i32 eta) {
   u8[] input = u8[].filled(33, 0);
   for (i32 i = 0; i < 32; i++) { input[i] = s[i]; }
-  input[32] = b;
+  input[32] = b as@ u8;
   return shake256(input, 64 * eta);
 }
 
@@ -244,7 +244,7 @@ u8[] byteEncode(i32[] f, i32 d) {
   for (i32 i = 0; i < n(); i++) {
     for (i32 b = 0; b < d; b++) {
       i32 bit = (f[i] >> b) & 1;
-      out[bitPos / 8] = out[bitPos / 8] | (bit << (bitPos % 8));
+      out[bitPos / 8] = (out[bitPos / 8] as i32 | (bit << (bitPos % 8))) as@ u8;
       bitPos++;
     }
   }
@@ -573,7 +573,7 @@ export u8[] mlkemDecaps(u8[] dk, u8[] ct) {
 
   u8[] ctPrime = pkeEncrypt(ek, mPrime, rPrime);
   i32 diff = 0;
-  for (i32 i = 0; i < ctSize(); i++) { diff = diff | (ctPrime[i] ^ ct[i]); }
+  for (i32 i = 0; i < ctSize(); i++) { diff = diff | (ctPrime[i] as i32 ^ ct[i] as i32); }
 
   // **The select is a mask, not a ternary.** Its direction is exactly one bit — was this ciphertext
   // valid — which is the bit the Fujisaki-Okamoto transform exists to hide, as the comment on this
@@ -583,6 +583,6 @@ export u8[] mlkemDecaps(u8[] dk, u8[] ct) {
   // `issues/system/0226`.
   i32 mask = ((diff | (0 - diff)) >> 31) & 255;
   u8[] out = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { out[i] = (kPrime[i] ^ (mask & (kPrime[i] ^ kBar[i]))) & 255; }
+  for (i32 i = 0; i < 32; i++) { out[i] = ((kPrime[i] as i32 ^ (mask & (kPrime[i] as i32 ^ kBar[i] as i32))) & 255) as@ u8; }
   return out;
 }

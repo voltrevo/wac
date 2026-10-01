@@ -111,8 +111,8 @@ export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
   t.eqI32(r.status, 0, "it ran");
   t.eqI32(r.stdout.len(), 4, "four bytes came back, not a replacement character each: " +
                              itoa(r.stdout.len()));
-  t.eqI32(r.stdout[1], 255, "0xFF survived");
-  t.eqI32(r.stdout[2], 0, "and so did the zero byte, which is not a terminator here");
+  t.eqI32(r.stdout[1] as i32, 255, "0xFF survived");
+  t.eqI32(r.stdout[2] as i32, 0, "and so did the zero byte, which is not a terminator here");
   return t.report();
 }
 

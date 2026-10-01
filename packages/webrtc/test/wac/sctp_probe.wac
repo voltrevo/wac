@@ -168,10 +168,10 @@ export u8[] shutdownAckPacket(i32 tag) {
 }
 export u8[] shutdownPacket(i32 tag, i32 cum) {
   u8[] body = u8[].filled(4, 0);
-  body[0] = (cum >> 24) & 0xFF;
-  body[1] = (cum >> 16) & 0xFF;
-  body[2] = (cum >> 8) & 0xFF;
-  body[3] = cum & 0xFF;
+  body[0] = ((cum >> 24) & 0xFF) as@ u8;
+  body[1] = ((cum >> 16) & 0xFF) as@ u8;
+  body[2] = ((cum >> 8) & 0xFF) as@ u8;
+  body[3] = (cum & 0xFF) as@ u8;
   return packet(5000, 5000, tag, chunk(chunkShutdown(), 0, body));
 }
 

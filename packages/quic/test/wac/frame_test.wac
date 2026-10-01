@@ -25,7 +25,7 @@ static i32 EPOCH_1RTT = 3;
 /** Bytes from a list of small integers, which is how the hand-built frames below read. */
 u8[] bytesOf(i32[] vs) {
   u8[] out = u8[].filled(vs.len(), 0);
-  for (i32 i = 0; i < vs.len(); i++) { out[i] = vs[i] & 255; }
+  for (i32 i = 0; i < vs.len(); i++) { out[i] = (vs[i] & 255) as@ u8; }
   return out;
 }
 

@@ -75,7 +75,7 @@ i32 uleb(u8[] b, i32[] at) {
   i32 out = 0;
   i32 shift = 0;
   while (at[0] < b.len()) {
-    i32 c = b[at[0]];
+    i32 c = b[at[0]] as i32;
     at[0] = at[0] + 1;
     out = out | ((c & 127) << shift);
     if ((c & 128) == 0) { break; }
@@ -89,7 +89,7 @@ string wasmName(u8[] b, i32[] at) {
   i32 n = uleb(b, at);
   Buf out = Buf.create();
   for (i32 i = 0; i < n && at[0] < b.len(); i++) {
-    out.push(b[at[0]]);
+    out.push(b[at[0]] as i32);
     at[0] = at[0] + 1;
   }
   return out.toStr();
@@ -109,7 +109,7 @@ Vec<string> importsOf(u8[] wasm) {
   i32[] at = i32[].filled(1, 0);
   at[0] = 8;
   while (at[0] < wasm.len()) {
-    i32 id = wasm[at[0]];
+    i32 id = wasm[at[0]] as i32;
     at[0] = at[0] + 1;
     i32 size = uleb(wasm, at);
     i32 end = at[0] + size;
@@ -120,7 +120,7 @@ Vec<string> importsOf(u8[] wasm) {
         string field = wasmName(wasm, at);
         // The descriptor: a byte saying what kind, then its index. Only the byte is needed to walk
         // past it, and every import wac emits is a function.
-        i32 kind = wasm[at[0]];
+        i32 kind = wasm[at[0]] as i32;
         at[0] = at[0] + 1;
         uleb(wasm, at);
         names.push(mod + "." + field);

@@ -3,6 +3,6 @@
 // from: issues/lang/0084
 export i32 f() {
   u8[] a = u8[].filled(1, 255);
-  i32 v = a[0]++;
-  return v * 1000 + a[0];
+  i32 v = a[0]++ as i32;
+  return v * 1000 + a[0] as i32;
 }

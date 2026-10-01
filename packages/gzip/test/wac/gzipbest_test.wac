@@ -28,7 +28,7 @@ u8[] incompressible(i32 n, i32 alpha, i32 seed) {
   i32 s = seed;
   for (i32 i = 0; i < n; i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    out[i] = ((s >> 16) & 255) % alpha;
+    out[i] = (((s >> 16) & 255) % alpha) as@ u8;
   }
   return out;
 }

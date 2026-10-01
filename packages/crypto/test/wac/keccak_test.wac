@@ -34,7 +34,7 @@ static i32 SHAKE128 = 2;
 static i32 SHAKE256 = 3;
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 37 + seed) & 0xFF) as@ u8; }
   return out;
 }
 
@@ -53,7 +53,7 @@ export string test_the_permutation_of_an_all_zero_state() {
   keccakF(state);
   u8[] first = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) {
-    first[i] = ((state[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32;
+    first[i] = (((state[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32) as@ u8;
   }
   t.eqBytes(first, decoded("e7dde140798f25f18a47c033f9ccd584"), "keccakF over a zero state");
   return t.report();
@@ -220,7 +220,7 @@ export string test_the_running_sha3_agrees_with_the_one_shot() {
   for (i32 k = 0; k < lengths.len(); k++) {
     i32 n = lengths[k];
     u8[] msg = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { msg[i] = (i * 31 + 7) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { msg[i] = ((i * 31 + 7) & 0xFF) as@ u8; }
     Sha3_256 h = Sha3_256.create();
     h.update(msg);
     t.isTrue(sameBytes(h.peek(), sha3_256(msg)),
@@ -229,7 +229,7 @@ export string test_the_running_sha3_agrees_with_the_one_shot() {
 
   // Fed in pieces, at every split of a message that crosses two blocks.
   u8[] msg = u8[].filled(300, 0);
-  for (i32 i = 0; i < 300; i++) { msg[i] = (i * 13 + 5) & 0xFF; }
+  for (i32 i = 0; i < 300; i++) { msg[i] = ((i * 13 + 5) & 0xFF) as@ u8; }
   u8[] want = sha3_256(msg);
   i32 wrong = 0;
   for (i32 split = 0; split <= 300; split += 7) {

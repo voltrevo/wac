@@ -71,16 +71,16 @@ i32 epochsOf(i32[] which) {
 
 u8[] bytesOf(i32[] parts) {
   u8[] out = u8[].filled(parts.len(), 0);
-  for (i32 i = 0; i < parts.len(); i++) { out[i] = parts[i]; }
+  for (i32 i = 0; i < parts.len(); i++) { out[i] = parts[i] as@ u8; }
   return out;
 }
 
 u8[] concat(i32[] head, i32[] a, i32[] b) {
   u8[] out = u8[].filled(head.len() + a.len() + b.len(), 0);
   i32 at = 0;
-  for (i32 i = 0; i < head.len(); i++) { out[at] = head[i]; at = at + 1; }
-  for (i32 i = 0; i < a.len(); i++) { out[at] = a[i]; at = at + 1; }
-  for (i32 i = 0; i < b.len(); i++) { out[at] = b[i]; at = at + 1; }
+  for (i32 i = 0; i < head.len(); i++) { out[at] = head[i] as@ u8; at = at + 1; }
+  for (i32 i = 0; i < a.len(); i++) { out[at] = a[i] as@ u8; at = at + 1; }
+  for (i32 i = 0; i < b.len(); i++) { out[at] = b[i] as@ u8; at = at + 1; }
   return out;
 }
 

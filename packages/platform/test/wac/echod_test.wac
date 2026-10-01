@@ -108,7 +108,7 @@ i32 portIn(string said) {
   string rest = said.slice(at + 10, said.len());
   i32 v = -1;
   for (i32 i = 0; i < rest.len(); i++) {
-    i32 b = rest.toBytes()[i];
+    i32 b = rest.toBytes()[i] as i32;
     if (b < '0' || b > '9') { break; }
     v = (v < 0 ? 0 : v) * 10 + (b - '0');
   }
@@ -192,7 +192,7 @@ void echoAgrees(T t, Core core, Cli cli, string name, string line, string label)
   cases[2] = u8[]();
   // Larger than one MTU's worth, so the host's receive buffer is exercised rather than assumed.
   cases[3] = u8[].filled(1024, 0);
-  for (i32 i = 0; i < 1024; i++) { cases[3][i] = (i * 7) & 255; }
+  for (i32 i = 0; i < 1024; i++) { cases[3][i] = ((i * 7) & 255) as@ u8; }
 
   for (i32 i = 0; i < cases.len(); i++) {
     Echo got = echoed(cli, p, 0, s.port, cases[i]);
@@ -234,7 +234,7 @@ i32 numberIn(string json, string key) {
   string rest = json.slice(at + key.len() + 2, json.len());
   i32 v = -1;
   for (i32 i = 0; i < rest.len(); i++) {
-    i32 b = rest.toBytes()[i];
+    i32 b = rest.toBytes()[i] as i32;
     if (b >= '0' && b <= '9') { v = (v < 0 ? 0 : v) * 10 + (b - '0'); continue; }
     if (v >= 0) { break; }
   }

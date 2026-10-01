@@ -15,8 +15,8 @@ void writeDecimal(Buf out, i32 v) {
   u8[] tmp = u8[].filled(6, 0);
   i32 n = 0;
   i32 x = v;
-  while (x > 0) { tmp[n] = 48 + (x % 10); x = x / 10; n++; }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
+  while (x > 0) { tmp[n] = (48 + (x % 10)) as@ u8; x = x / 10; n++; }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
 }
 
 /**

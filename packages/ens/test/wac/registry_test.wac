@@ -107,7 +107,7 @@ u8[] unhex(string s) {
   if (d.len() % 2 != 0) { trap; }
   u8[] out = u8[].filled(d.len() / 2, 0);
   for (i32 i = 0; i < out.len(); i++) {
-    out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]);
+    out[i] = (nibble(d[i * 2] as i32) * 16 + nibble(d[i * 2 + 1] as i32)) as@ u8;
   }
   return out;
 }

@@ -163,7 +163,7 @@ export Loaded read(u8[] data, i64 now) {
   i32 end = data.len() - 4;
   u8[] body = u8[].filled(end, 0);
   body.copyFrom(data, 0, 0, end);
-  u32 want = (data[end] | (data[end + 1] << 8) | (data[end + 2] << 16) | (data[end + 3] << 24)) as@ u32;
+  u32 want = (data[end] as i32 | (data[end + 1] as i32 << 8) | (data[end + 2] as i32 << 16) | (data[end + 3] as i32 << 24)) as@ u32;
   if (crc32(body) != want) { return failed("the checksum does not match: the image is damaged"); }
 
   Fs fs = Fs.inMemory(now);

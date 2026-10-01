@@ -395,7 +395,7 @@ i32 lookupName(Map<string, i32> byName, Map<string, i32> byFingerprint, string t
       if ((t[i] == '=' || t[i] == '~') && end == t.len()) { end = i; }
     }
     u8[] hexPart = u8[].filled(end - 1, 0);
-    for (i32 i = 0; i < hexPart.len(); i++) { hexPart[i] = upperHex(t[1 + i]); }
+    for (i32 i = 0; i < hexPart.len(); i++) { hexPart[i] = upperHex(t[1 + i] as i32) as@ u8; }
     return byFingerprint.getOr(string.fromBytes(hexPart), -1);
   }
   return byName.getOr(token, -1);
@@ -406,8 +406,8 @@ string hexOf(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();
   u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
-    out[i * 2] = digits[(b[i] >> 4) & 15];
-    out[i * 2 + 1] = digits[b[i] & 15];
+    out[i * 2] = digits[(b[i] as i32 >> 4) & 15];
+    out[i * 2 + 1] = digits[b[i] as i32 & 15];
   }
   return string.fromBytes(out);
 }

@@ -76,9 +76,9 @@ void paint(Page page, i32[] now, u8[] rgba) {
       for (i32 sy = 0; sy < SCALE; sy++) {
         for (i32 sx = 0; sx < SCALE; sx++) {
           i32 at = (((y * SCALE + sy) * (W * SCALE)) + (x * SCALE + sx)) * 4;
-          rgba[at] = v / 5;
-          rgba[at + 1] = v;
-          rgba[at + 2] = (v * 3) / 4 + 30;
+          rgba[at] = (v / 5) as@ u8;
+          rgba[at + 1] = v as@ u8;
+          rgba[at + 2] = ((v * 3) / 4 + 30) as@ u8;
           rgba[at + 3] = 255;
         }
       }

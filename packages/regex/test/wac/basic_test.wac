@@ -162,7 +162,7 @@ i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool exten
         for (i32 k = from; k < from + colon; k++) {
           u8[] d = said.slice(k, k + 1).toBytes();
           if (d[0] < '0' || d[0] > '9') { ok = false; }
-          else { n = n * 10 + (d[0] - '0'); }
+          else { n = n * 10 + (d[0] as i32 - '0'); }
         }
         if (ok && n >= 1 && n <= out.len()) { out[n - 1] = MATCHED; }
       }
@@ -186,7 +186,7 @@ string showBytes(u8[] b) {
       one[0] = b[i];
       out = out + string.fromBytes(one);
     } else {
-      out = out + "<" + itoa(b[i]) + ">";
+      out = out + "<" + itoa(b[i] as i32) + ">";
     }
   }
   return out;
@@ -325,7 +325,7 @@ export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
   for (i32 byte = 1; byte <= 255; byte++) {
     if (byte == 10) { continue; }
     u8[] one = u8[].filled(1, 0);
-    one[0] = byte;
+    one[0] = byte as@ u8;
     lines[n] = one;
     bytes[n] = byte;
     n = n + 1;

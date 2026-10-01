@@ -23,7 +23,7 @@ export struct Scalar {
 /** Decode the scalar starting at `at`. */
 export Scalar decode(u8[] s, i32 at) {
   if (at >= s.len()) { return Scalar(TRUNCATED(), 0); }
-  i32 b0 = s[at];
+  i32 b0 = s[at] as i32;
   if (b0 < 0x80) { return Scalar(b0, 1); }
   if (b0 < 0xC2) { return Scalar(INVALID(), 1); }   // a continuation byte, or an over-long C0/C1
 
@@ -36,7 +36,7 @@ export Scalar decode(u8[] s, i32 at) {
 
   if (at + need >= s.len()) { return Scalar(TRUNCATED(), 0); }
   for (i32 i = 1; i <= need; i++) {
-    i32 b = s[at + i];
+    i32 b = s[at + i] as i32;
     if (b < 0x80 || b > 0xBF) { return Scalar(INVALID(), 1); }
     code = (code << 6) | (b & 0x3F);
   }
@@ -65,19 +65,19 @@ export i32 encodedLength(i32 cp) {
 export i32 encode(u8[] out, i32 at, i32 cp) {
   i32 n = encodedLength(cp);
   if (n == 1) {
-    out[at] = cp;
+    out[at] = cp as@ u8;
   } else if (n == 2) {
-    out[at] = 0xC0 | (cp >> 6);
-    out[at + 1] = 0x80 | (cp & 0x3F);
+    out[at] = (0xC0 | (cp >> 6)) as@ u8;
+    out[at + 1] = (0x80 | (cp & 0x3F)) as@ u8;
   } else if (n == 3) {
-    out[at] = 0xE0 | (cp >> 12);
-    out[at + 1] = 0x80 | ((cp >> 6) & 0x3F);
-    out[at + 2] = 0x80 | (cp & 0x3F);
+    out[at] = (0xE0 | (cp >> 12)) as@ u8;
+    out[at + 1] = (0x80 | ((cp >> 6) & 0x3F)) as@ u8;
+    out[at + 2] = (0x80 | (cp & 0x3F)) as@ u8;
   } else if (n == 4) {
-    out[at] = 0xF0 | (cp >> 18);
-    out[at + 1] = 0x80 | ((cp >> 12) & 0x3F);
-    out[at + 2] = 0x80 | ((cp >> 6) & 0x3F);
-    out[at + 3] = 0x80 | (cp & 0x3F);
+    out[at] = (0xF0 | (cp >> 18)) as@ u8;
+    out[at + 1] = (0x80 | ((cp >> 12) & 0x3F)) as@ u8;
+    out[at + 2] = (0x80 | ((cp >> 6) & 0x3F)) as@ u8;
+    out[at + 3] = (0x80 | (cp & 0x3F)) as@ u8;
   }
   return n;
 }

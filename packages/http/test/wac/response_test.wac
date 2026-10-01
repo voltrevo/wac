@@ -457,7 +457,7 @@ export string test_every_reason_phrase_is_the_one_node_writes(Core core, Cli cli
     i32 code = 0;
     for (i32 k = 0; k < sp; k++) {
       u8[] d = line.slice(k, k + 1).toBytes();
-      if (d[0] >= '0' && d[0] <= '9') { code = code * 10 + (d[0] - '0'); }
+      if (d[0] >= '0' && d[0] <= '9') { code = code * 10 + (d[0] as i32 - '0'); }
     }
     string theirs = line.slice(sp + 1, line.len());
     string ours = phraseOf(code);

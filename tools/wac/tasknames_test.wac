@@ -107,7 +107,7 @@ Named[] namesAfter(string text, string runner) {
       while (at < b.len() && b[at] == ' ') { at = at + 1; }
     }
     i32 start = at;
-    while (at < b.len() && isNameByte(b[at])) { at = at + 1; }
+    while (at < b.len() && isNameByte(b[at] as i32)) { at = at + 1; }
     // **A placeholder is not a claim about a task.** `wac task coverage:<pkg>` is how every page
     // spells the family, and `wac task <name>` is how they spell the general form; both stop the
     // scan at a `<`, and a name left ending in `:` is the first of those with the angle eaten.

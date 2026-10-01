@@ -128,10 +128,10 @@ export string test_compile_writes_a_module_and_bindgen_writes_the_glue_9wkn3pq_5
     // The magic number, so this is a real module rather than a stray string with the right name.
     t.isTrue(wasm.bytes.len() > 4, "and is not empty");
     if (wasm.bytes.len() > 4) {
-      t.eqI32(wasm.bytes[0], 0, "\\0");
-      t.eqI32(wasm.bytes[1], 'a', "a");
-      t.eqI32(wasm.bytes[2], 's', "s");
-      t.eqI32(wasm.bytes[3], 'm', "m");
+      t.eqI32(wasm.bytes[0] as i32, 0, "\\0");
+      t.eqI32(wasm.bytes[1] as i32, 'a', "a");
+      t.eqI32(wasm.bytes[2] as i32, 's', "s");
+      t.eqI32(wasm.bytes[3] as i32, 'm', "m");
     }
   }
 

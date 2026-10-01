@@ -135,8 +135,8 @@ export Introduced introduce1(IntroPoints m, u8[] cell, bool firstOnThisCircuit) 
 /** The two-byte body of an INTRODUCE_ACK: a status, big-endian, and no extensions. */
 export u8[] introduceAckBody(i32 status) {
   u8[] out = u8[].filled(3, 0);
-  out[0] = (status >> 8) & 0xFF;
-  out[1] = status & 0xFF;
+  out[0] = ((status >> 8) & 0xFF) as@ u8;
+  out[1] = (status & 0xFF) as@ u8;
   out[2] = 0;      // N_EXTENSIONS
   return out;
 }

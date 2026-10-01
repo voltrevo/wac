@@ -19,7 +19,7 @@ import { recordSeal, recordOpen, recordContent, maxPlaintext } from "../../src/r
 
 u8[] bytes(i32 n) {
   u8[] b = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { b[i] = (i * 5 + 1) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { b[i] = ((i * 5 + 1) & 0xFF) as@ u8; }
   return b;
 }
 
@@ -30,9 +30,9 @@ u8[] iv() { return bytes(12); }
 u8[] record(i32 len, i32 have) {
   u8[] r = u8[].filled(5 + have, 0);
   r[0] = 23; r[1] = 3; r[2] = 3;
-  r[3] = (len >> 8) & 0xFF;
-  r[4] = len & 0xFF;
-  for (i32 i = 0; i < have; i++) { r[5 + i] = (i * 3) & 0xFF; }
+  r[3] = ((len >> 8) & 0xFF) as@ u8;
+  r[4] = (len & 0xFF) as@ u8;
+  for (i32 i = 0; i < have; i++) { r[5 + i] = ((i * 3) & 0xFF) as@ u8; }
   return r;
 }
 
@@ -40,8 +40,8 @@ u8[] record(i32 len, i32 have) {
 void openWith(i32 len) {
   u8[] r = u8[].filled(5 + len, 0);
   r[0] = 23; r[1] = 3; r[2] = 3;
-  r[3] = (len >> 8) & 0xFF;
-  r[4] = len & 0xFF;
+  r[3] = ((len >> 8) & 0xFF) as@ u8;
+  r[4] = (len & 0xFF) as@ u8;
   recordOpen(0x1301, key(), iv(), 0, r);
 }
 

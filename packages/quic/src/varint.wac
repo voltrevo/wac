@@ -36,7 +36,7 @@ export struct Varint {
  */
 export Varint decode(u8[] b, i32 at) {
   if (at < 0 || at >= b.len()) { return Varint(0 as i64, 0); }
-  i32 first = b[at];
+  i32 first = b[at] as i32;
   // The two top bits are the length, and the rest of that byte is the value's most significant part.
   i32 len = 1 << ((first >> 6) & 3);
   if (at + len > b.len()) { return Varint(0 as i64, 0); }
@@ -80,8 +80,8 @@ export i32 encode(u8[] out, i32 at, i64 v) {
   // `packages/unicode`'s UTF-8 encoder writes `out[at] = 0xC0 | (cp >> 6)` with no cast at all. An
   // explicit `as~ u8` is what `wacc` declines, and it was never needed.
   for (i32 i = len - 1; i >= 0; i--) {
-    out[at + i] = ((v >> ((8 * (len - 1 - i)) as i64)) & (0xFF as i64)) as~ i32;
+    out[at + i] = (((v >> ((8 * (len - 1 - i)) as i64)) & (0xFF as i64)) as~ i32) as@ u8;
   }
-  out[at] = out[at] | (tag << 6);
+  out[at] = (out[at] as i32 | (tag << 6)) as@ u8;
   return len;
 }

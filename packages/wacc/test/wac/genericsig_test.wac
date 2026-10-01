@@ -45,7 +45,7 @@ i32 sectionStart(u8[] b, i32 want) {
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     if (id == want) { at = pos[0]; }

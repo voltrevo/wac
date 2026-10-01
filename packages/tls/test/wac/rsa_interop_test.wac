@@ -61,7 +61,7 @@ u8[] field(string text, string name) {
   // Every continuation line is indented; the first line that is not ends the field.
   bool startOfLine = false;
   while (i < b.len()) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c == '\n') {
       startOfLine = true;
       i = i + 1;
@@ -78,7 +78,7 @@ u8[] field(string text, string name) {
   }
   u8[] out = u8[].filled(count / 2, 0);
   for (i32 k = 0; k < out.len(); k++) {
-    out[k] = (nybbles[k * 2] << 4) | nybbles[k * 2 + 1];
+    out[k] = ((nybbles[k * 2] << 4) | nybbles[k * 2 + 1]) as@ u8;
   }
   // OpenSSL prints a leading zero byte on positive integers whose top bit is set.
   if (out.len() > 0 && out[0] == 0) {
@@ -156,7 +156,7 @@ string oneSize(Core core, Cli cli, i32 bits) {
   u8[] lb = log.toBytes();
   i32 port = 0;
   for (i32 i = log.indexOf(MARK) + MARK.len(); i < lb.len() && lb[i] >= '0' && lb[i] <= '9'; i++) {
-    port = port * 10 + (lb[i] - '0');
+    port = port * 10 + (lb[i] as i32 - '0');
   }
 
   Exec c = cli.exec("openssl",

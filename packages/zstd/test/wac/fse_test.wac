@@ -74,7 +74,7 @@ u8[][] samples() {
   string punctuation = "";
   for (i32 i = 0; i < 60; i++) {
     u8[] one = u8[].filled(1, 0);
-    one[0] = 33 + i;
+    one[0] = (33 + i) as@ u8;
     punctuation = punctuation + string.fromBytes(one);
   }
   string mixed = repeated("Lorem ipsum dolor sit amet 12345 " + punctuation, 300);

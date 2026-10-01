@@ -37,13 +37,13 @@ u8[] swapDirections(u8[] material) {
 
 u8[] material(i32 seed) {
   u8[] m = u8[].filled(72, 0);
-  for (i32 i = 0; i < 72; i++) { m[i] = (i * 61 + seed * 17) & 0xFF; }
+  for (i32 i = 0; i < 72; i++) { m[i] = ((i * 61 + seed * 17) & 0xFF) as@ u8; }
   return m;
 }
 
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { o[i] = (i * 37 + seed) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { o[i] = ((i * 37 + seed) & 0xFF) as@ u8; }
   return o;
 }
 
@@ -155,7 +155,7 @@ export string test_a_tampered_cell_is_refused_and_costs_nothing() {
   u8[] genuine = encryptRelay(client, relayData(), 3, fill(60, 2));
 
   u8[] junk = u8[].filled(509, 0);
-  for (i32 i = 0; i < 509; i++) { junk[i] = (i * 11 + 5) & 0xFF; }
+  for (i32 i = 0; i < 509; i++) { junk[i] = ((i * 11 + 5) & 0xFF) as@ u8; }
   u8[] junkBody = decryptRelay(relay, junk);
   t.isTrue(!relayRecognized(relay, junkBody), "junk is not recognised");
 
@@ -212,9 +212,9 @@ export string test_a_begin_body_is_a_string_and_four_zeros() {
   u8[] b = beginBody("example.com:80");
   t.eqI32(b.len(), 19, "fourteen characters, a NUL, and four flag bytes");
   t.eqBytes(relayPayloadOf(b, 0, 14), "example.com:80".toBytes(), "the address, as text");
-  t.eqI32(b[14], 0, "NUL-terminated");
-  t.eqI32(b[15], 0, "flags are zero");
-  t.eqI32(b[18], 0, "all four of them");
+  t.eqI32(b[14] as i32, 0, "NUL-terminated");
+  t.eqI32(b[15] as i32, 0, "flags are zero");
+  t.eqI32(b[18] as i32, 0, "all four of them");
   t.eqI32(relayBegin(), 1, "RELAY_BEGIN is command 1");
   return t.report();
 }
@@ -232,27 +232,27 @@ export string test_an_extend2_body_has_the_layout_the_spec_states() {
   T t = T.create();
   u8[] ip = [127, 0, 0, 1];
   u8[] id = u8[].filled(20, 0);
-  for (i32 i = 0; i < 20; i++) { id[i] = 0xA0 + i; }
+  for (i32 i = 0; i < 20; i++) { id[i] = (0xA0 + i) as@ u8; }
   u8[] hs = u8[].filled(84, 0);
-  for (i32 i = 0; i < 84; i++) { hs[i] = i & 0xFF; }
+  for (i32 i = 0; i < 84; i++) { hs[i] = (i & 0xFF) as@ u8; }
 
   u8[] b = extend2Body(ip, 9001, id, hs);
   t.eqI32(b.len(), 1 + 8 + 22 + 4 + 84, "NSPEC, two specifiers, HTYPE/HLEN, handshake");
-  t.eqI32(b[0], 2, "two link specifiers");
+  t.eqI32(b[0] as i32, 2, "two link specifiers");
 
-  t.eqI32(b[1], 0, "the first is type 0, TLS-over-TCP IPv4");
-  t.eqI32(b[2], 6, "six bytes: four of address and two of port");
-  t.eqI32(b[3], 127, "the address");
-  t.eqI32(b[6], 1, "...and its last octet");
-  t.eqI32((b[7] << 8) | b[8], 9001, "the port, big-endian");
+  t.eqI32(b[1] as i32, 0, "the first is type 0, TLS-over-TCP IPv4");
+  t.eqI32(b[2] as i32, 6, "six bytes: four of address and two of port");
+  t.eqI32(b[3] as i32, 127, "the address");
+  t.eqI32(b[6] as i32, 1, "...and its last octet");
+  t.eqI32((b[7] as i32 << 8) | b[8] as i32, 9001, "the port, big-endian");
 
-  t.eqI32(b[9], 2, "the second is type 2, the RSA identity fingerprint");
-  t.eqI32(b[10], 20, "twenty bytes of it");
-  t.eqI32(b[11], 0xA0, "the identity starts here");
-  t.eqI32(b[30], 0xB3, "and ends here");
+  t.eqI32(b[9] as i32, 2, "the second is type 2, the RSA identity fingerprint");
+  t.eqI32(b[10] as i32, 20, "twenty bytes of it");
+  t.eqI32(b[11] as i32, 0xA0, "the identity starts here");
+  t.eqI32(b[30] as i32, 0xB3, "and ends here");
 
-  t.eqI32((b[31] << 8) | b[32], 2, "HTYPE is ntor");
-  t.eqI32((b[33] << 8) | b[34], 84, "HLEN is the handshake length");
+  t.eqI32((b[31] as i32 << 8) | b[32] as i32, 2, "HTYPE is ntor");
+  t.eqI32((b[33] as i32 << 8) | b[34] as i32, 84, "HLEN is the handshake length");
   t.eqBytes(relayPayloadOf(b, 35, 35 + 84), hs, "and the handshake follows");
   return t.report();
 }
@@ -264,11 +264,11 @@ export string test_an_extended2_reply_is_cut_at_its_length() {
   u8[] data = u8[].filled(200, 0);
   data[0] = 0;
   data[1] = 64;
-  for (i32 i = 0; i < 64; i++) { data[2 + i] = (i * 3 + 1) & 0xFF; }
+  for (i32 i = 0; i < 64; i++) { data[2 + i] = ((i * 3 + 1) & 0xFF) as@ u8; }
   u8[] reply = extended2Reply(data);
   t.eqI32(reply.len(), 64, "cut at the length field, not at the end of the buffer");
-  t.eqI32(reply[0], 1, "first byte");
-  t.eqI32(reply[63], (63 * 3 + 1) & 0xFF, "last byte");
+  t.eqI32(reply[0] as i32, 1, "first byte");
+  t.eqI32(reply[63] as i32, (63 * 3 + 1) & 0xFF, "last byte");
   return t.report();
 }
 
@@ -296,7 +296,7 @@ export string test_a_request_longer_than_a_cell_is_split() {
   // reordered a byte would produce a request the directory answers 400 to, which reads as a
   // different bug entirely.
   u8[] req = u8[].filled(1000, 0);
-  for (i32 i = 0; i < req.len(); i++) { req[i] = (i * 7 + 3) & 0xFF; }
+  for (i32 i = 0; i < req.len(); i++) { req[i] = ((i * 7 + 3) & 0xFF) as@ u8; }
   u8[][] chunks = chunkRequest(req);
   i32 total = 0;
   i32 wrong = 0;
@@ -322,7 +322,7 @@ export string test_a_rendezvous_hop_carries_cells_both_ways() {
   // `relay_crypto_init(..., reverse)` does.
   T t = T.create();
   u8[] material = u8[].filled(128, 0);
-  for (i32 i = 0; i < 128; i++) { material[i] = (i * 37 + 11) & 0xFF; }
+  for (i32 i = 0; i < 128; i++) { material[i] = ((i * 37 + 11) & 0xFF) as@ u8; }
   u8[] swapped = u8[].filled(128, 0);
   for (i32 i = 0; i < 32; i++) {
     swapped[i] = material[32 + i];          // their Df is our Db
@@ -340,7 +340,7 @@ export string test_a_rendezvous_hop_carries_cells_both_ways() {
   i32 bad = 0;
   for (i32 n = 0; n < 4; n++) {
     u8[] payload = u8[].filled(100 + n, 0);
-    for (i32 i = 0; i < payload.len(); i++) { payload[i] = (i * 5 + n) & 0xFF; }
+    for (i32 i = 0; i < payload.len(); i++) { payload[i] = ((i * 5 + n) & 0xFF) as@ u8; }
     u8[] wire = encryptRelay(ours, relayData(), 7 + n, payload);
     u8[] body = decryptRelay(theirs, wire);
     if (!relayRecognized(theirs, body)) { bad = bad + 1; }

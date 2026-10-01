@@ -28,7 +28,7 @@ u8[] join(u8[] a, u8[] b) {
 /** `n` copies of one byte — the long, highly compressible payloads. */
 u8[] runOf(i32 n, i32 byte) {
   u8[] b = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { b[i] = byte; }
+  for (i32 i = 0; i < n; i++) { b[i] = byte as@ u8; }
   return b;
 }
 

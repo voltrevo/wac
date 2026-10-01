@@ -28,7 +28,7 @@ export i32 main(Core core, Cli cli) {
     return 2;
   }
   for (i32 i = 0; i < digits.len(); i++) {
-    i32 c = digits[i];
+    i32 c = digits[i] as i32;
     if (c < '0' || c > '9') {
       core.warn("tunnel: " + portText + " is not a port");
       return 2;

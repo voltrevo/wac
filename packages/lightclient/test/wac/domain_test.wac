@@ -100,12 +100,12 @@ u8[][] pubkeysOf(u8[] committee) {
 u8[][] participants(u8[][] keys, u8[] bits) {
   i32 n = 0;
   for (i32 i = 0; i < keys.len(); i++) {
-    if ((bits[i / 8] & (1 << (i % 8))) != 0) { n = n + 1; }
+    if ((bits[i / 8] as i32 & (1 << (i % 8))) != 0) { n = n + 1; }
   }
   u8[][] out = u8[][].filled(n, u8[]());
   i32 at = 0;
   for (i32 i = 0; i < keys.len(); i++) {
-    if ((bits[i / 8] & (1 << (i % 8))) != 0) {
+    if ((bits[i / 8] as i32 & (1 << (i % 8))) != 0) {
       out[at] = keys[i];
       at = at + 1;
     }

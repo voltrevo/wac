@@ -36,7 +36,7 @@ u64 mergeRound(u64 acc, u64 val) {
 u64 read64(u8[] d, i32 at) {
   u64 v = 0;
   for (i32 i = 0; i < 8; i++) {
-    v = v | ((d[at + i] as! u64) << (i * 8));
+    v = v | ((d[at + i] as u64) << (i * 8));
   }
   return v;
 }
@@ -45,7 +45,7 @@ u64 read64(u8[] d, i32 at) {
 u64 read32(u8[] d, i32 at) {
   u64 v = 0;
   for (i32 i = 0; i < 4; i++) {
-    v = v | ((d[at + i] as! u64) << (i * 8));
+    v = v | ((d[at + i] as u64) << (i * 8));
   }
   return v;
 }
@@ -93,7 +93,7 @@ export u64 xxh64(u8[] d, i32 start, i32 len) {
     at += 4;
   }
   while (at < end) {
-    acc = acc ^ ((d[at] as! u64) * prime5());
+    acc = acc ^ ((d[at] as u64) * prime5());
     acc = rotl(acc, 11) * prime1();
     at++;
   }
@@ -196,7 +196,7 @@ export struct Xxh64 {
       at += 4;
     }
     while (at < end) {
-      acc = acc ^ ((this.held[at] as! u64) * prime5());
+      acc = acc ^ ((this.held[at] as u64) * prime5());
       acc = rotl(acc, 11) * prime1();
       at++;
     }

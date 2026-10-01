@@ -123,7 +123,7 @@ u8[] opensslOid(T t, Cli cli, string dotted) {
   t.isTrue(b.len() > 2 && b[0] == 0x06,
            "openssl produced an OBJECT IDENTIFIER for " + dotted);
   if (b.len() <= 2 || b[0] != 0x06) { return u8[](); }
-  t.eqI32(b[1], b.len() - 2, "the length encoding for " + dotted + " is short form");
+  t.eqI32(b[1] as i32, b.len() - 2, "the length encoding for " + dotted + " is short form");
 
   u8[] out = u8[].filled(b.len() - 2, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = b[2 + i]; }

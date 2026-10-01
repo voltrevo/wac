@@ -27,7 +27,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   // accepted and does nothing there too — it means "unbuffered", and this is.
   u8[] flags = a.flags.toBytes();
   for (i32 i = 0; i < flags.len(); i++) {
-    if (!known(flags[i])) {
+    if (!known(flags[i] as i32)) {
       u8[] one = u8[].filled(1, flags[i]);
       core.warn(a.name + ": invalid option -- '" + string.fromBytes(one) + "'");
       core.warn("Try '" + a.name + " --help' for more information.");
@@ -90,7 +90,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
         line.pushAll(numberField(count).toBytes());
       }
       for (i32 i = 0; i < l.bytes.len(); i++) {
-        i32 c = l.bytes[i];
+        i32 c = l.bytes[i] as i32;
         if (c == 9) {
           // A tab is `-T`'s alone: `-v` leaves it, which is why this is asked first.
           if (tabs) { line.pushAll("^I".toBytes()); } else { line.push(9); }
@@ -137,7 +137,7 @@ i32 copy(Core core, Cli cli, Fs fs, Args a) {
 bool known(i32 letter) {
   u8[] letters = "AbeEnstTuv".toBytes();
   for (i32 i = 0; i < letters.len(); i++) {
-    if (letters[i] == letter) { return true; }
+    if (letters[i] as i32 == letter) { return true; }
   }
   return false;
 }

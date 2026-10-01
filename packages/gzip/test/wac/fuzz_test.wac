@@ -110,7 +110,7 @@ string nameOfCase(Case[] corpus, string line) {
   if (d.len() == 0) { return "?"; }
   for (i32 i = 0; i < d.len(); i++) {
     if (d[i] < 48 || d[i] > 57) { return "?"; }
-    at = at * 10 + (d[i] - 48);
+    at = at * 10 + (d[i] as i32 - 48);
   }
   return at >= 0 && at < corpus.len() ? corpus[at].name : "?";
 }

@@ -33,7 +33,7 @@ export Big fromBytes(u8[] b) {
   Big base = Big.fromU64(256);
   for (i32 i = 0; i < b.len(); i++) {
     acc = mul(acc, base);
-    acc = addSmall(acc, b[i]);
+    acc = addSmall(acc, b[i] as i32);
   }
   return acc;
 }
@@ -48,7 +48,7 @@ export u8[] toBytes(Big a, i32 len) {
   Big base = Big.fromU64(256);
   for (i32 i = len - 1; i >= 0; i--) {
     DivMod d = divmod(cur, base);
-    out[i] = smallValue(d.r);
+    out[i] = smallValue(d.r) as@ u8;
     cur = d.q;
   }
   if (!isZero(cur)) { trap; }   // the value needed more than `len` bytes
@@ -154,13 +154,13 @@ export bool rsaVerifyPkcs1(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen) {
   if (n.len() < tLen + 11) { return false; }
 
   i32 diff = 0;
-  diff = diff | (em[0] ^ 0x00);
-  diff = diff | (em[1] ^ 0x01);
+  diff = diff | (em[0] as i32 ^ 0x00);
+  diff = diff | (em[1] as i32 ^ 0x01);
   i32 padEnd = n.len() - tLen - 1;
-  for (i32 i = 2; i < padEnd; i++) { diff = diff | (em[i] ^ 0xFF); }
-  diff = diff | (em[padEnd] ^ 0x00);
-  for (i32 i = 0; i < prefix.len(); i++) { diff = diff | (em[padEnd + 1 + i] ^ prefix[i]); }
-  for (i32 i = 0; i < hashLen; i++) { diff = diff | (em[padEnd + 1 + prefix.len() + i] ^ h[i]); }
+  for (i32 i = 2; i < padEnd; i++) { diff = diff | (em[i] as i32 ^ 0xFF); }
+  diff = diff | (em[padEnd] as i32 ^ 0x00);
+  for (i32 i = 0; i < prefix.len(); i++) { diff = diff | (em[padEnd + 1 + i] as i32 ^ prefix[i] as i32); }
+  for (i32 i = 0; i < hashLen; i++) { diff = diff | (em[padEnd + 1 + prefix.len() + i] as i32 ^ h[i] as i32); }
   return diff == 0;
 }
 
@@ -228,10 +228,10 @@ u8[] mgf1(u8[] seed, i32 length, i32 hashLen) {
   while (at < length) {
     u8[] input = u8[].filled(seed.len() + 4, 0);
     for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
-    input[seed.len()] = (counter >> 24) & 0xFF;
-    input[seed.len() + 1] = (counter >> 16) & 0xFF;
-    input[seed.len() + 2] = (counter >> 8) & 0xFF;
-    input[seed.len() + 3] = counter & 0xFF;
+    input[seed.len()] = ((counter >> 24) & 0xFF) as@ u8;
+    input[seed.len() + 1] = ((counter >> 16) & 0xFF) as@ u8;
+    input[seed.len() + 2] = ((counter >> 8) & 0xFF) as@ u8;
+    input[seed.len() + 3] = (counter & 0xFF) as@ u8;
     u8[] block = digest(input, hashLen);
     for (i32 i = 0; i < hashLen && at < length; i++) {
       out[at] = block[i];
@@ -289,13 +289,13 @@ export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 sa
   u8[] dbMask = mgf1(hSeed, dbLen, hashLen);
   u8[] db = u8[].filled(dbLen, 0);
   for (i32 i = 0; i < dbLen; i++) { db[i] = maskedDb[i] ^ dbMask[i]; }
-  if (unusedBits > 0) { db[0] = db[0] & (0xFF >> unusedBits); }
+  if (unusedBits > 0) { db[0] = (db[0] as i32 & (0xFF >> unusedBits)) as@ u8; }
 
   // db must be zeros, then 0x01, then the salt.
   i32 zeroEnd = dbLen - saltLen - 1;
   i32 diff = 0;
-  for (i32 i = 0; i < zeroEnd; i++) { diff = diff | db[i]; }
-  diff = diff | (db[zeroEnd] ^ 0x01);
+  for (i32 i = 0; i < zeroEnd; i++) { diff = diff | db[i] as i32; }
+  diff = diff | (db[zeroEnd] as i32 ^ 0x01);
   if (diff != 0) { return false; }
 
   u8[] salt = u8[].filled(saltLen, 0);
@@ -311,7 +311,7 @@ export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 sa
   u8[] hPrime = digest(mPrime, hashLen);
 
   i32 diff2 = 0;
-  for (i32 i = 0; i < hashLen; i++) { diff2 = diff2 | (hPrime[i] ^ hSeed[i]); }
+  for (i32 i = 0; i < hashLen; i++) { diff2 = diff2 | (hPrime[i] as i32 ^ hSeed[i] as i32); }
   return diff2 == 0;
 }
 
@@ -482,7 +482,7 @@ export u8[] rsaSignPss(u8[] n, u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
   // the modulus, and `rawSign` would refuse the signature rather than produce a wrong one — which is
   // the good failure, but it would happen for about half of all keys.
   i32 unusedBits = 8 * emLen - emBits;
-  if (unusedBits > 0) { em[0] = em[0] & (0xFF >> unusedBits); }
+  if (unusedBits > 0) { em[0] = (em[0] as i32 & (0xFF >> unusedBits)) as@ u8; }
 
   // A modulus whose top byte is zero makes emLen one short of the modulus length; `rawSign` wants a
   // block it can turn into an integer, and a leading zero is what an integer does not mind.

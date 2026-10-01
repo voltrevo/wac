@@ -174,7 +174,7 @@ export Lexed lex(u8[] src) {
   i32 errAt = -1;
 
   while (i < src.len() && err == "") {
-    i32 c = src[i];
+    i32 c = src[i] as i32;
 
     // Whitespace, tracking position.
     if (isSpace(c)) {
@@ -189,7 +189,7 @@ export Lexed lex(u8[] src) {
 
     // Comments. Skipped, not emitted: the consumer works on the original bytes.
     if (c == '/' && i + 1 < src.len() && src[i + 1] == '/') {
-      while (i < src.len() && !isLineBreak(src[i])) { i = i + 1; col = col + 1; }
+      while (i < src.len() && !isLineBreak(src[i] as i32)) { i = i + 1; col = col + 1; }
       continue;
     }
     if (c == '/' && i + 1 < src.len() && src[i + 1] == '*') {
@@ -212,12 +212,12 @@ export Lexed lex(u8[] src) {
     i32 startCol = col;
     i32 kind = kPunct();
 
-    if (isIdentStart(c) || (c == '#' && i + 1 < src.len() && isIdentStart(src[i + 1]))) {
+    if (isIdentStart(c) || (c == '#' && i + 1 < src.len() && isIdentStart(src[i + 1] as i32))) {
       // A private name `#x` is one identifier token, so `this.#x` reads like any member access.
       if (c == '#') { i = i + 1; col = col + 1; }
-      while (i < src.len() && isIdentPart(src[i])) { i = i + 1; col = col + 1; }
+      while (i < src.len() && isIdentPart(src[i] as i32)) { i = i + 1; col = col + 1; }
       kind = kIdent();
-    } else if (isDigit(c) || (c == '.' && i + 1 < src.len() && isDigit(src[i + 1]))) {
+    } else if (isDigit(c) || (c == '.' && i + 1 < src.len() && isDigit(src[i + 1] as i32))) {
       kind = kNum();
       i32 n = scanNumber(src, i);
       col = col + (n - i);
@@ -331,21 +331,21 @@ i32 scanNumber(u8[] src, i32 i) {
       && (src[n + 1] == 'x' || src[n + 1] == 'X' || src[n + 1] == 'o' || src[n + 1] == 'O'
           || src[n + 1] == 'b' || src[n + 1] == 'B')) {
     n = n + 2;
-    while (n < src.len() && (isHex(src[n]) || src[n] == '_')) { n = n + 1; }
+    while (n < src.len() && (isHex(src[n] as i32) || src[n] == '_')) { n = n + 1; }
     if (n < src.len() && src[n] == 'n') { n = n + 1; }
     return n;
   }
-  while (n < src.len() && (isDigit(src[n]) || src[n] == '_')) { n = n + 1; }
+  while (n < src.len() && (isDigit(src[n] as i32) || src[n] == '_')) { n = n + 1; }
   if (n < src.len() && src[n] == '.') {
     n = n + 1;
-    while (n < src.len() && (isDigit(src[n]) || src[n] == '_')) { n = n + 1; }
+    while (n < src.len() && (isDigit(src[n] as i32) || src[n] == '_')) { n = n + 1; }
   }
   if (n < src.len() && (src[n] == 'e' || src[n] == 'E')) {
     i32 save = n;
     n = n + 1;
     if (n < src.len() && (src[n] == '+' || src[n] == '-')) { n = n + 1; }
-    if (n < src.len() && isDigit(src[n])) {
-      while (n < src.len() && (isDigit(src[n]) || src[n] == '_')) { n = n + 1; }
+    if (n < src.len() && isDigit(src[n] as i32)) {
+      while (n < src.len() && (isDigit(src[n] as i32) || src[n] == '_')) { n = n + 1; }
     } else {
       // `1e` with no exponent is not an exponent — back out, so `1e` lexes as `1` then `e`.
       n = save;
@@ -357,10 +357,10 @@ i32 scanNumber(u8[] src, i32 i) {
 
 /** Past a quoted string, or -1 if it does not close on its line. */
 i32 scanString(u8[] src, i32 i) {
-  i32 quote = src[i];
+  i32 quote = src[i] as i32;
   i32 n = i + 1;
   while (n < src.len()) {
-    i32 c = src[n];
+    i32 c = src[n] as i32;
     if (c == '\\') { n = n + 2; continue; }
     if (c == quote) { return n + 1; }
     // A raw line break ends a string literal and is an error rather than a continuation.
@@ -380,14 +380,14 @@ i32 scanString(u8[] src, i32 i) {
 i32 scanTemplate(u8[] src, i32 i) {
   i32 n = i + 1;
   while (n < src.len()) {
-    i32 c = src[n];
+    i32 c = src[n] as i32;
     if (c == '\\') { n = n + 2; continue; }
     if (c == '`') { return n + 1; }
     if (c == '$' && n + 1 < src.len() && src[n + 1] == '{') {
       n = n + 2;
       i32 depth = 1;
       while (n < src.len() && depth > 0) {
-        i32 d = src[n];
+        i32 d = src[n] as i32;
         if (d == '\\') { n = n + 2; continue; }
         if (d == '{') { depth = depth + 1; n = n + 1; continue; }
         if (d == '}') { depth = depth - 1; n = n + 1; continue; }
@@ -404,7 +404,7 @@ i32 scanTemplate(u8[] src, i32 i) {
           continue;
         }
         if (d == '/' && n + 1 < src.len() && src[n + 1] == '/') {
-          while (n < src.len() && !isLineBreak(src[n])) { n = n + 1; }
+          while (n < src.len() && !isLineBreak(src[n] as i32)) { n = n + 1; }
           continue;
         }
         if (d == '/' && n + 1 < src.len() && src[n + 1] == '*') {
@@ -433,14 +433,14 @@ i32 scanRegex(u8[] src, i32 i) {
   i32 n = i + 1;
   bool inClass = false;
   while (n < src.len()) {
-    i32 c = src[n];
+    i32 c = src[n] as i32;
     if (c == '\\') { n = n + 2; continue; }
     if (isLineBreak(c)) { return -1; }
     if (c == '[') { inClass = true; n = n + 1; continue; }
     if (c == ']') { inClass = false; n = n + 1; continue; }
     if (c == '/' && !inClass) {
       n = n + 1;
-      while (n < src.len() && isIdentPart(src[n])) { n = n + 1; }
+      while (n < src.len() && isIdentPart(src[n] as i32)) { n = n + 1; }
       return n;
     }
     n = n + 1;

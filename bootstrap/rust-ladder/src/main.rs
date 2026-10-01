@@ -290,6 +290,11 @@ fn main() {
         let (paths, sources) = flatten::file_set(std::path::Path::new(target))
             .unwrap_or_else(|e| panic!("{e}"));
         let key = flatten::key_of(std::path::Path::new(target)).unwrap_or_else(|e| panic!("{e}"));
+        // `--diagnose`: print what the checker says about the whole file set, and stop.
+        if args.iter().any(|a| a == "--diagnose") {
+            print!("{}", w.diagnose(scope, &paths, &sources, &key));
+            return;
+        }
         let module = w.emit_files(scope, &paths, &sources, &key);
         if module.len() <= 8 {
             eprintln!("wacc declined {target}: {}", w.decline(scope));

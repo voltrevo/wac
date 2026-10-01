@@ -379,11 +379,11 @@ u8[] ipv4Of(string address) {
     if (part == "") { return u8[].filled(4, 0); }
     i32 v = 0;
     for (i32 k = 0; k < part.len(); k++) {
-      i32 b = part.toBytes()[k];
+      i32 b = part.toBytes()[k] as i32;
       if (b < '0' || b > '9') { return u8[].filled(4, 0); }
       v = v * 10 + (b - '0');
     }
-    out[i] = v & 255;
+    out[i] = (v & 255) as@ u8;
     if (dot < 0) { break; }
     at = at + dot + 1;
   }

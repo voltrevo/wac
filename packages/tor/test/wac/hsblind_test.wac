@@ -27,8 +27,8 @@ u8[] bytesToHex(u8[] b) {
   u8[] digits = "0123456789abcdef".toBytes();
   u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
-    out[i * 2] = digits[(b[i] >> 4) & 0xF];
-    out[i * 2 + 1] = digits[b[i] & 0xF];
+    out[i * 2] = digits[(b[i] as i32 >> 4) & 0xF];
+    out[i * 2 + 1] = digits[b[i] as i32 & 0xF];
   }
   return out;
 }
@@ -100,7 +100,7 @@ u8[] periodBytes(Cli cli) {
 
 void putBe64(u8[] out, i32 at, i64 v) {
   for (i32 k = 0; k < 8; k++) {
-    out[at + k] = ((v >> ((7 - k) * 8)) & (0xFF as i64)) as~ i32;
+    out[at + k] = (((v >> ((7 - k) * 8)) & (0xFF as i64)) as~ i32) as@ u8;
   }
 }
 
@@ -151,7 +151,7 @@ export string test_every_address_in_the_specification_decodes(Core core, Cli cli
   t.eqI32(n, 3, "three real examples are quoted from the spec");
   for (i32 i = 0; i < n; i++) {
     u8[] idx = u8[].filled(1, 0);
-    idx[0] = i;
+    idx[0] = i as@ u8;
     u8[] addr = listAt(cli, "addressExamples", i);
     u8[] key = onionPubkey(addr);
     t.eqI32(key.len(), 32, "spec example " + itoa64(i as i64) + " decodes");
@@ -171,7 +171,7 @@ export string test_every_address_in_the_specification_decodes(Core core, Cli cli
   t.eqI32(bad, 1, "one illustrative address is quoted");
   for (i32 i = 0; i < bad; i++) {
     u8[] idx = u8[].filled(1, 0);
-    idx[0] = i;
+    idx[0] = i as@ u8;
     u8[] addr = listAt(cli, "invalidExamples", i);
     t.eqI32(addr.len(), 56, "it is a 56-character address");
     t.eqI32(onionPubkey(addr).len(), 0, "the spec's illustrative address is refused");
@@ -234,9 +234,9 @@ export string test_the_blinded_key_matches_the_one_tor_used(Core core, Cli cli) 
   // above would fail. Asserted directly as well, since it is one line to get wrong.
   u8[] h = blindingFactor(identity, tp, plen);
   t.eqI32(h.len(), 32, "the blinding factor is 32 bytes");
-  t.eqI32(h[0] & 7, 0, "the low three bits are cleared");
-  t.eqI32(h[31] & 128, 0, "the top bit is cleared");
-  t.eqI32(h[31] & 64, 64, "bit 254 is set");
+  t.eqI32(h[0] as i32 & 7, 0, "the low three bits are cleared");
+  t.eqI32(h[31] as i32 & 128, 0, "the top bit is cleared");
+  t.eqI32(h[31] as i32 & 64, 64, "bit 254 is set");
   return t.report();
 }
 

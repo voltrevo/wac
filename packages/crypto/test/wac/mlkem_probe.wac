@@ -46,7 +46,7 @@ export u8[] kemDecapsSecret(u8[] mix) {
   for (i32 i = 0; i < dkSize(); i++) { dk[i] = kp[ekSize() + i]; }
   for (i32 i = 0; i < 1152; i++) { dk[i] = dk[i] ^ mix[i % mix.len()]; }
   u8[] ct = u8[].filled(ctSize(), 0);
-  for (i32 i = 0; i < ctSize(); i++) { ct[i] = (i * 37) & 255; }
+  for (i32 i = 0; i < ctSize(); i++) { ct[i] = ((i * 37) & 255) as@ u8; }
   return mlkemDecaps(dk, ct);
 }
 

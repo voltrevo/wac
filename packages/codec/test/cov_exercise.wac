@@ -73,7 +73,7 @@ export i32 main() {
       x = x ^ (x << 13);
       x = x ^ (x >> 17);
       x = x ^ (x << 5);
-      data[i] = (x & 255) as~ i32;
+      data[i] = ((x & 255) as~ i32) as@ u8;
     }
     bool[] bools = [true, false];
     for (i32 p = 0; p < 2; p++) {

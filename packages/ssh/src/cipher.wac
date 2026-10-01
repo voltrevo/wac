@@ -63,10 +63,10 @@ export i32 aeadPaddingFor(i32 n, i32 block) {
  */
 u8[] nonceFor(i32 seq) {
   u8[] nonce = u8[].filled(12, 0);
-  nonce[8] = (seq >>> 24) & 255;
-  nonce[9] = (seq >>> 16) & 255;
-  nonce[10] = (seq >>> 8) & 255;
-  nonce[11] = seq & 255;
+  nonce[8] = ((seq >>> 24) & 255) as@ u8;
+  nonce[9] = ((seq >>> 16) & 255) as@ u8;
+  nonce[10] = ((seq >>> 8) & 255) as@ u8;
+  nonce[11] = (seq & 255) as@ u8;
   return nonce;
 }
 
@@ -133,10 +133,10 @@ export u8[] sealBody(u8[] key, i32 seq, u8[] body) {
   i32 packetLength = body.len();
 
   u8[] lengthPlain = u8[].filled(4, 0);
-  lengthPlain[0] = (packetLength >>> 24) & 255;
-  lengthPlain[1] = (packetLength >>> 16) & 255;
-  lengthPlain[2] = (packetLength >>> 8) & 255;
-  lengthPlain[3] = packetLength & 255;
+  lengthPlain[0] = ((packetLength >>> 24) & 255) as@ u8;
+  lengthPlain[1] = ((packetLength >>> 16) & 255) as@ u8;
+  lengthPlain[2] = ((packetLength >>> 8) & 255) as@ u8;
+  lengthPlain[3] = (packetLength & 255) as@ u8;
 
   u8[] encLength = chacha20(lengthKey(key), 0 as! u32, nonce, lengthPlain);
   u8[] encBody = chacha20(payloadKey(key), 1 as! u32, nonce, body);
@@ -162,7 +162,7 @@ export i32 peekLength(u8[] key, i32 seq, u8[] src, i32 at) {
   u8[] first = u8[].filled(4, 0);
   first.copyFrom(src, at, 0, 4);
   u8[] plain = chacha20(lengthKey(key), 0 as! u32, nonceFor(seq), first);
-  return (plain[0] << 24) | (plain[1] << 16) | (plain[2] << 8) | plain[3];
+  return (plain[0] as i32 << 24) | (plain[1] as i32 << 16) | (plain[2] as i32 << 8) | plain[3] as i32;
 }
 
 export enum Opened {
@@ -204,7 +204,7 @@ export Plain open(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
 
   i32 diff = 0;
   for (i32 i = 0; i < tagLength(); i++) {
-    diff = diff | (want[i] ^ src[at + 4 + packetLength + i]);
+    diff = diff | (want[i] as i32 ^ src[at + 4 + packetLength + i] as i32);
   }
   if (diff != 0) { return Plain(Opened.Bad, u8[](), 0); }
 
@@ -212,7 +212,7 @@ export Plain open(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
   encBody.copyFrom(src, at + 4, 0, packetLength);
   u8[] body = chacha20(payloadKey(key), 1 as! u32, nonceFor(seq), encBody);
 
-  i32 padLength = body[0];
+  i32 padLength = body[0] as i32;
   if (padLength < 4 || padLength + 1 > packetLength) { return Plain(Opened.Bad, u8[](), 0); }
   i32 payloadLength = packetLength - padLength - 1;
   u8[] payload = u8[].filled(payloadLength, 0);

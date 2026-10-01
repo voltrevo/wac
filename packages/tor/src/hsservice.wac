@@ -110,7 +110,7 @@ export u8[] introduceAuthKey(u8[] cell) {
   for (i32 i = 0; i < 20; i++) {
     if (cell[i] != 0) { return u8[](); }
   }
-  if (cell[20] != AUTH_KEY_TYPE_ED25519) { return u8[](); }
+  if (cell[20] as i32 != AUTH_KEY_TYPE_ED25519) { return u8[](); }
   if (cell[21] != 0 || cell[22] != 32) { return u8[](); }
   return sub(cell, 23, 55);
 }
@@ -147,7 +147,7 @@ export EstablishedIntro parseEstablishIntro(u8[] cell, u8[] circuitKH) {
   if (circuitKH.len() == 0) { return EstablishedIntro(false, u8[]()); }
   // AUTH_KEY_TYPE[1] AUTH_KEY_LEN[2] AUTH_KEY[32] N_EXT[1] ... MAC[32] SIG_LEN[2] SIG[64]
   if (cell.len() < 1 + 2 + 32 + 1 + 32 + 2 + 64) { return EstablishedIntro(false, u8[]()); }
-  if (cell[0] != AUTH_KEY_TYPE_ED25519) { return EstablishedIntro(false, u8[]()); }
+  if (cell[0] as i32 != AUTH_KEY_TYPE_ED25519) { return EstablishedIntro(false, u8[]()); }
   if (cell[1] != 0 || cell[2] != 32) { return EstablishedIntro(false, u8[]()); }
   u8[] authKey = sub(cell, 3, 35);
 
@@ -166,7 +166,7 @@ export EstablishedIntro parseEstablishIntro(u8[] cell, u8[] circuitKH) {
   // signature and padding the rest would otherwise verify against bytes nobody signed.
   i32 sigLenAt = sigSpan.len();
   if (sigLenAt + 2 > cell.len()) { return EstablishedIntro(false, u8[]()); }
-  i32 sigLen = (cell[sigLenAt] * 256) + cell[sigLenAt + 1];
+  i32 sigLen = (cell[sigLenAt] as i32 * 256) + cell[sigLenAt + 1] as i32;
   if (sigLen != 64 || sigLenAt + 2 + 64 > cell.len()) { return EstablishedIntro(false, u8[]()); }
   u8[] sig = sub(cell, sigLenAt + 2, sigLenAt + 2 + 64);
 
@@ -209,14 +209,14 @@ export u8[] sigSpanOf(u8[] cell) {
  */
 i32 macEnd(u8[] cell) {
   if (cell.len() < 4) { return -1; }
-  i32 keyLen = cell[1] * 256 + cell[2];
+  i32 keyLen = cell[1] as i32 * 256 + cell[2] as i32;
   i32 at = 3 + keyLen;
   if (at >= cell.len()) { return -1; }
-  i32 count = cell[at];
+  i32 count = cell[at] as i32;
   at = at + 1;
   for (i32 i = 0; i < count; i++) {
     if (at + 2 > cell.len()) { return -1; }
-    i32 len = cell[at + 1];
+    i32 len = cell[at + 1] as i32;
     at = at + 2 + len;
     if (at > cell.len()) { return -1; }
   }
@@ -264,11 +264,11 @@ Introduce2 noIntroduce2() {
 export i32 encryptedSectionFrom(u8[] cell) {
   if (cell.len() < 56) { return -1; }
   i32 at = 55;
-  i32 extensions = cell[at];
+  i32 extensions = cell[at] as i32;
   at = at + 1;
   for (i32 i = 0; i < extensions; i++) {
     if (at + 2 > cell.len()) { return -1; }
-    at = at + 2 + cell[at + 1];
+    at = at + 2 + cell[at + 1] as i32;
     if (at > cell.len()) { return -1; }
   }
   return at;
@@ -367,11 +367,11 @@ Introduce2 parseIntroducePlaintext(u8[] plain, u8[] authKey, u8[] clientPublic) 
   if (plain.len() < 20 + 1 + 1 + 2 + 32) { return noIntroduce2(); }
   u8[] cookie = sub(plain, 0, 20);
   i32 at = 20;
-  i32 extensions = plain[at];
+  i32 extensions = plain[at] as i32;
   at = at + 1;
   for (i32 i = 0; i < extensions; i++) {
     if (at + 2 > plain.len()) { return noIntroduce2(); }
-    at = at + 2 + plain[at + 1];
+    at = at + 2 + plain[at + 1] as i32;
     if (at > plain.len()) { return noIntroduce2(); }
   }
   if (at + 3 > plain.len()) { return noIntroduce2(); }
@@ -396,12 +396,12 @@ Introduce2 parseIntroducePlaintext(u8[] plain, u8[] authKey, u8[] clientPublic) 
   // asymmetric oracle, caught here in the act.
   i32 listFrom = at;
   if (at >= plain.len()) { return noIntroduce2(); }
-  i32 count = plain[at];
+  i32 count = plain[at] as i32;
   if (count == 0) { return noIntroduce2(); }
   at = at + 1;
   for (i32 i = 0; i < count; i++) {
     if (at + 2 > plain.len()) { return noIntroduce2(); }
-    at = at + 2 + plain[at + 1];
+    at = at + 2 + plain[at + 1] as i32;
     if (at > plain.len()) { return noIntroduce2(); }
   }
   return Introduce2(true, authKey, clientPublic, cookie, onionKey, sub(plain, listFrom, at));

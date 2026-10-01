@@ -144,7 +144,7 @@ i32 maskFor(i32 k) {
 export i32 countBits(u8[] bits) {
   i32 n = 0;
   for (i32 i = 0; i < bits.len() * 8; i++) {
-    if ((bits[i >> 3] & maskFor(i & 7)) != 0) { n = n + 1; }
+    if ((bits[i >> 3] as i32 & maskFor(i & 7)) != 0) { n = n + 1; }
   }
   return n;
 }
@@ -313,7 +313,7 @@ export bool validateUpdate(Store store, u8[] update, i64 currentSlot, u8[] genes
   u8[][] participants = u8[][].defaulted(n);
   i32 at = 0;
   for (i32 i = 0; i < SYNC_COMMITTEE_SIZE_MINIMAL; i++) {
-    if ((bits[i >> 3] & maskFor(i & 7)) != 0) {
+    if ((bits[i >> 3] as i32 & maskFor(i & 7)) != 0) {
       u8[] pk = u8[].filled(48, 0);
       for (i32 b = 0; b < 48; b++) { pk[b] = flat[i * 48 + b]; }
       participants[at] = pk;

@@ -22,8 +22,8 @@ export u8[] encode(u8[] data) {
   Buf out = Buf.create();
   out.reserveFor(data.len() * 2);
   for (i32 i = 0; i < data.len(); i++) {
-    out.push(lowerDigit((data[i] >> 4) & 15));
-    out.push(lowerDigit(data[i] & 15));
+    out.push(lowerDigit((data[i] as i32 >> 4) & 15));
+    out.push(lowerDigit(data[i] as i32 & 15));
   }
   return out.take();
 }
@@ -32,8 +32,8 @@ export u8[] encodeUpper(u8[] data) {
   Buf out = Buf.create();
   out.reserveFor(data.len() * 2);
   for (i32 i = 0; i < data.len(); i++) {
-    out.push(upperDigit((data[i] >> 4) & 15));
-    out.push(upperDigit(data[i] & 15));
+    out.push(upperDigit((data[i] as i32 >> 4) & 15));
+    out.push(upperDigit(data[i] as i32 & 15));
   }
   return out.take();
 }
@@ -49,10 +49,10 @@ export u8[]? decode(u8[] text) {
   if (text.len() % 2 != 0) { return null; }
   u8[] out = u8[].filled(text.len() / 2, 0);
   for (i32 i = 0; i < text.len(); i = i + 2) {
-    i32 hi = digitValue(text[i]);
-    i32 lo = digitValue(text[i + 1]);
+    i32 hi = digitValue(text[i] as i32);
+    i32 lo = digitValue(text[i + 1] as i32);
     if (hi < 0 || lo < 0) { return null; }
-    out[i / 2] = hi * 16 + lo;
+    out[i / 2] = (hi * 16 + lo) as@ u8;
   }
   return out;
 }

@@ -42,7 +42,7 @@ string[] producedBy(u8[] b) {
   i32[] pos = i32[].filled(1, 0);
   pos[0] = 8;
   while (pos[0] + 1 < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     i32 end = pos[0] + size;

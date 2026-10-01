@@ -1,3 +1,3 @@
-// expect: refused
-// why: the rule is about the element under every `[]`, not just the outermost one
+// expect: answers f = 0
+// why: a nullable packed element under more than one `[]` is as ordinary as one under a single `[]`
 export i32 f() { u8?[][] xs = u8?[][](); return xs.len(); }

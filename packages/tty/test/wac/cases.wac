@@ -25,7 +25,7 @@ export u8[] t(string s) { return s.toBytes(); }
 /** One byte, as a sequence, so a case reads as text with the key in the middle of it. */
 export u8[] k(i32 c) {
   u8[] one = u8[].filled(1, 0);
-  one[0] = c;
+  one[0] = c as@ u8;
   return one;
 }
 
@@ -50,7 +50,7 @@ export string show(u8[] b) {
       one[0] = b[i];
       out = out + string.fromBytes(one);
     } else {
-      out = out + "<" + itoa(b[i]) + ">";
+      out = out + "<" + itoa(b[i] as i32) + ">";
     }
   }
   return out + "\"";

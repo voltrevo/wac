@@ -28,14 +28,14 @@ static string THEIR_PWD = "peer-password-0123456";
 
 u8[] filled(i32 n, i32 v) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = v; }
+  for (i32 i = 0; i < n; i++) { out[i] = v as@ u8; }
   return out;
 }
 
 /** A distinct id per call site, so two checks in one test are not the same message. */
 u8[] tid(i32 seed) {
   u8[] out = u8[].filled(12, 0);
-  for (i32 i = 0; i < 12; i++) { out[i] = (i * 17 + seed * 31 + 5) & 0xFF; }
+  for (i32 i = 0; i < 12; i++) { out[i] = ((i * 17 + seed * 31 + 5) & 0xFF) as@ u8; }
   return out;
 }
 

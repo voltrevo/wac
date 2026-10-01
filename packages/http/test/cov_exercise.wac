@@ -94,14 +94,14 @@ u8[] wire(string s) {
   i32 n = 0;
   i32 i = 0;
   while (i < u.len()) {
-    i32 b = u[i];
+    i32 b = u[i] as i32;
     i32 cp = b;
     i32 size = 1;
     if (b >= 0xF0) { size = 4; cp = b & 0x07; }
     else if (b >= 0xE0) { size = 3; cp = b & 0x0F; }
     else if (b >= 0xC0) { size = 2; cp = b & 0x1F; }
-    for (i32 k = 1; k < size && i + k < u.len(); k++) { cp = (cp << 6) | (u[i + k] & 0x3F); }
-    out[n] = cp & 0xFF;
+    for (i32 k = 1; k < size && i + k < u.len(); k++) { cp = (cp << 6) | (u[i + k] as i32 & 0x3F); }
+    out[n] = (cp & 0xFF) as@ u8;
     n = n + 1;
     i = i + size;
   }
@@ -288,7 +288,7 @@ export i32 main(Core core, Cli cli) {
         i32 at = r.upto(len + 1);
         i32 v = interesting[r.upto(interesting.len())];
         for (i32 k = len; k > at; k--) { buf[k] = buf[k - 1]; }
-        buf[at] = v;
+        buf[at] = v as@ u8;
         len = len + 1;
       } else if (kind == 1 && len > 0) {
         i32 at = r.upto(len);
@@ -296,7 +296,7 @@ export i32 main(Core core, Cli cli) {
         len = len - 1;
       } else if (kind == 2 && len > 0) {
         i32 at = r.upto(len);
-        buf[at] = interesting[r.upto(interesting.len())];
+        buf[at] = interesting[r.upto(interesting.len())] as@ u8;
       } else {
         len = r.upto(len + 1);
       }

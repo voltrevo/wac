@@ -39,7 +39,7 @@ static i32 X_BASE = 3;
 static i32 X_SHARED = 4;
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 41 + seed * 7 + 13) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 41 + seed * 7 + 13) & 0xFF) as@ u8; }
   return out;
 }
 u8[] cat3(u8[] a, u8[] b) {
@@ -203,7 +203,7 @@ export string test_low_order_points_give_an_all_zero_secret() {
     "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
   ];
   u8[] scalar = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { scalar[i] = (i * 29 + 3) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { scalar[i] = ((i * 29 + 3) & 0xFF) as@ u8; }
   for (i32 i = 0; i < lowOrder.len(); i++) {
     t.eqBytes(x25519(scalar, decoded(lowOrder[i])), u8[].filled(32, 0),
               "low-order point " + itoa64(i as i64) + " gives an all-zero secret");
@@ -217,7 +217,7 @@ export string test_the_top_bit_of_a_u_coordinate_is_ignored() {
   // implementation that skips the mask disagrees with every peer on half its inputs.
   T t = T.create();
   u8[] scalar = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { scalar[i] = (i * 13 + 7) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { scalar[i] = ((i * 13 + 7) & 0xFF) as@ u8; }
   u8[] u = x25519Base(scalar);
   u8[] withTopBit = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { withTopBit[i] = u[i]; }
@@ -278,8 +278,8 @@ export string test_a_non_canonical_s_is_rejected() {
   for (i32 i = 0; i < 32; i++) { plusL[i] = sig[i]; }
   i32 carry = 0;
   for (i32 i = 0; i < 32; i++) {
-    i32 v = sig[32 + i] + L[i] + carry;
-    plusL[32 + i] = v & 0xFF;
+    i32 v = sig[32 + i] as i32 + L[i] as i32 + carry;
+    plusL[32 + i] = (v & 0xFF) as@ u8;
     carry = v >> 8;
   }
   t.isFalse(ed25519Verify(pub, msg, plusL), "S + L is refused");
@@ -487,8 +487,8 @@ export string test_a_small_order_point_has_no_shared_secret() {
   u8[] mineScalar = u8[].filled(32, 0);
   u8[] theirScalar = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) {
-    mineScalar[i] = (i * 29 + 3) & 0xFF;
-    theirScalar[i] = (i * 13 + 7) & 0xFF;
+    mineScalar[i] = ((i * 29 + 3) & 0xFF) as@ u8;
+    theirScalar[i] = ((i * 13 + 7) & 0xFF) as@ u8;
   }
   u8[]? a = x25519Shared(mineScalar, x25519Base(theirScalar));
   u8[]? b = x25519Shared(theirScalar, x25519Base(mineScalar));

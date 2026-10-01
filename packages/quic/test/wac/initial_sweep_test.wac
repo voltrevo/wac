@@ -40,9 +40,9 @@ import { Server } from "../../src/server.wac";
 /** A client Initial from our own client, which is the well-formed thing being damaged below. */
 u8[] clientInitial() {
   u8[] s = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
+  for (i32 i = 0; i < 32; i++) { s[i] = ((i * 13 + 7) & 255) as@ u8; }
   u8[] r = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
+  for (i32 i = 0; i < 32; i++) { r[i] = ((i * 31 + 3) & 255) as@ u8; }
   return Client.of(s, r, u8[].filled(8, 0), u8[].filled(4, 0), "localhost").initial();
 }
 
@@ -156,7 +156,7 @@ export string test_a_client_initial_whose_header_lies_is_refused() {
       u8[] bad = u8[].filled(whole.len(), 0);
       for (i32 i = 0; i < whole.len(); i++) { bad[i] = whole[i]; }
       if (at[k] >= bad.len()) { continue; }
-      bad[at[k]] = to[j];
+      bad[at[k]] = to[j] as@ u8;
       Server s = serverOn(bad);
       string what = "byte " + itoa(at[k]) + " set to " + itoa(to[j]);
       // Not asserted to be unreadable: byte 0's low bits are the packet number length and a

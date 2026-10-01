@@ -39,7 +39,7 @@ static string ORACLE = "packages/tls/test/oracle.mjs";
 
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * a + b) & 0xFF) as@ u8; }
   return out;
 }
 
@@ -54,11 +54,11 @@ u8[] fill(i32 n, i32 a, i32 b) {
 u8[] refInfo(string label, u8[] ctx, i32 len) {
   u8[] full = ("tls13 " + label).toBytes();
   u8[] info = u8[].filled(2 + 1 + full.len() + 1 + ctx.len(), 0);
-  info[0] = (len >> 8) & 0xFF;
-  info[1] = len & 0xFF;
-  info[2] = full.len();
+  info[0] = ((len >> 8) & 0xFF) as@ u8;
+  info[1] = (len & 0xFF) as@ u8;
+  info[2] = full.len() as@ u8;
   for (i32 i = 0; i < full.len(); i++) { info[3 + i] = full[i]; }
-  info[3 + full.len()] = ctx.len();
+  info[3 + full.len()] = ctx.len() as@ u8;
   for (i32 i = 0; i < ctx.len(); i++) { info[4 + full.len() + i] = ctx[i]; }
   return info;
 }
@@ -96,7 +96,7 @@ bool refExpand(T t, Cli cli, Expansion[] e) {
       u8[] input = u8[].filled(e[i].prev.len() + e[i].info.len() + 1, 0);
       for (i32 j = 0; j < e[i].prev.len(); j++) { input[j] = e[i].prev[j]; }
       for (i32 j = 0; j < e[i].info.len(); j++) { input[e[i].prev.len() + j] = e[i].info[j]; }
-      input[input.len() - 1] = e[i].block;
+      input[input.len() - 1] = e[i].block as@ u8;
       lines.add("hmac256 " + hex(e[i].secret) + " " + hex(input));
       which[n] = i;
       n = n + 1;

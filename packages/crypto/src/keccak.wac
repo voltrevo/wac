@@ -213,7 +213,7 @@ export u8[] sponge(u8[] input, i32 rate, i32 domain, i32 outLen) {
   u8[] block = u8[].filled(rate, 0);
   i32 tail = input.len() - at;
   block.copyFrom(input, at, 0, tail);
-  block[tail] = block[tail] | domain;
+  block[tail] = (block[tail] as i32 | domain) as@ u8;
   block[rate - 1] = block[rate - 1] | 0x80;
   absorb(state, block, 0, rate);
 
@@ -225,7 +225,7 @@ export u8[] sponge(u8[] input, i32 rate, i32 domain, i32 outLen) {
   i32 produced = 0;
   while (true) {
     for (i32 i = 0; i < rate && produced < outLen; i++) {
-      out[produced] = ((state[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32;
+      out[produced] = (((state[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32) as@ u8;
       produced++;
     }
     if (produced >= outLen) { return out; }
@@ -237,7 +237,7 @@ export u8[] sponge(u8[] input, i32 rate, i32 domain, i32 outLen) {
 /** Xor one rate-sized block into the state, little-endian by lane, then permute. */
 void absorb(u64[] state, u8[] block, i32 off, i32 rate) {
   for (i32 i = 0; i < rate; i++) {
-    state[i / 8] ^= (block[off + i] as! u64) << (((i % 8) * 8) as! u64);
+    state[i / 8] ^= (block[off + i] as u64) << (((i % 8) * 8) as! u64);
   }
   keccakF(state);
 }
@@ -331,7 +331,7 @@ export struct Sha3_256 {
     absorb(copy, block, 0, 136);
     u8[] out = u8[].filled(32, 0);
     for (i32 i = 0; i < 32; i++) {
-      out[i] = ((copy[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32;
+      out[i] = (((copy[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32) as@ u8;
     }
     return out;
   }

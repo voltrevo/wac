@@ -54,14 +54,14 @@ u8[] sequenceNonce(u8[] iv, i64 seq) {
   u8[] nonce = u8[].filled(12, 0);
   for (i32 i = 0; i < 12; i++) { nonce[i] = iv[i]; }
   for (i32 i = 0; i < 8; i++) {
-    nonce[11 - i] = nonce[11 - i] ^ (((seq >> ((i * 8) as i64)) & 255) as! i32);
+    nonce[11 - i] = (nonce[11 - i] as i32 ^ (((seq >> ((i * 8) as i64)) & 255) as! i32)) as@ u8;
   }
   return nonce;
 }
 
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + seed) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 31 + seed) & 0xFF) as@ u8; }
   return out;
 }
 
@@ -121,7 +121,7 @@ export string test_the_content_type_comes_from_inside_not_the_header() {
   i32[] types = [typeHandshake(), typeAlert(), typeApplicationData()];
   for (i32 i = 0; i < types.len(); i++) {
     u8[] rec = recordSeal(aes, key, iv, 3, types[i], fill(20, 13), 0);
-    t.eqI32(rec[0], typeApplicationData(), "the header always says application_data");
+    t.eqI32(rec[0] as i32, typeApplicationData(), "the header always says application_data");
     t.eqI32(recordType(recordOpen(aes, key, iv, 3, rec)), types[i], "the inner type survives");
   }
   return t.report();
@@ -144,7 +144,7 @@ export string test_padding_is_invisible_to_the_reader() {
 
   // Content whose own last byte is zero, which is the case a naive strip gets wrong.
   u8[] endsInZero = u8[].filled(8, 0);
-  for (i32 i = 0; i < 7; i++) { endsInZero[i] = i + 1; }
+  for (i32 i = 0; i < 7; i++) { endsInZero[i] = (i + 1) as@ u8; }
   u8[] rec = recordSeal(aes, key, iv, 0, typeHandshake(), endsInZero, 5);
   t.eqBytes(recordContent(recordOpen(aes, key, iv, 0, rec)), endsInZero,
             "content ending in a zero byte survives padding");
@@ -184,7 +184,7 @@ export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
       if (plain.len() > 0) {
         // The plaintext is the content, then the true type, then any padding.
         t.eqI32(plain.len(), content.len() + 1, "plaintext is content plus a type byte");
-        t.eqI32(plain[plain.len() - 1], typeHandshake(), "and the type byte is the real type");
+        t.eqI32(plain[plain.len() - 1] as i32, typeHandshake(), "and the type byte is the real type");
         bool sameContent = true;
         for (i32 i = 0; i < content.len(); i++) { if (plain[i] != content[i]) { sameContent = false; } }
         t.isTrue(sameContent, "and the content is unchanged");
@@ -245,9 +245,9 @@ export string test_the_alert_codes_are_the_ones_rfc_8446_assigns() {
   // Only close_notify is a warning. TLS 1.3 treats everything else as fatal whatever the
   // level says, so this is nearly decorative — but claiming a fatal condition is a
   // warning is a lie a peer may act on by carrying on.
-  t.eqI32(alertBody(alertCloseNotify())[0], 1, "close_notify is a warning");
-  t.eqI32(alertBody(alertUnknownCa())[0], 2, "unknown_ca is fatal");
-  t.eqI32(alertBody(alertUnknownCa())[1], 48, "and carries its own description");
+  t.eqI32(alertBody(alertCloseNotify())[0] as i32, 1, "close_notify is a warning");
+  t.eqI32(alertBody(alertUnknownCa())[0] as i32, 2, "unknown_ca is fatal");
+  t.eqI32(alertBody(alertUnknownCa())[1] as i32, 48, "and carries its own description");
   return t.report();
 }
 
@@ -268,7 +268,7 @@ u8[] cut(u8[] b, i32 n) {
 u8[] record(i32 bodyLen) {
   u8[] r = u8[].filled(5 + bodyLen, 0);
   r[0] = 23; r[1] = 3; r[2] = 3;
-  r[3] = bodyLen >> 8; r[4] = bodyLen & 255;
+  r[3] = (bodyLen >> 8) as@ u8; r[4] = (bodyLen & 255) as@ u8;
   return r;
 }
 

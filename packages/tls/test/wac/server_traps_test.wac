@@ -21,7 +21,7 @@ import { tlsServerInit, tlsServerFeed, tlsServerClose, tlsPhase, phaseFailed }
 
 u8[] bytes(i32 n) {
   u8[] b = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { b[i] = (i * 11 + 3) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { b[i] = ((i * 11 + 3) & 0xFF) as@ u8; }
   return b;
 }
 
@@ -36,7 +36,7 @@ u8[] fresh() { return tlsServerInit(bytes(64), bytes(32), bytes(32), bytes(32));
  * large`, which is how the first version of this file failed.
  */
 u8[] stateOf(u8[] answer) {
-  i32 n = (answer[0] << 24) | (answer[1] << 16) | (answer[2] << 8) | answer[3];
+  i32 n = (answer[0] as i32 << 24) | (answer[1] as i32 << 16) | (answer[2] as i32 << 8) | answer[3] as i32;
   u8[] out = u8[].filled(n, 0);
   out.copyFrom(answer, 4, 0, n);
   return out;

@@ -136,7 +136,7 @@ Opened opened(Core core, Cli cli, i32 proxy, i32 target) {
 
   cli.send(h, [
                    0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
-                   ((target / 256) & 0xFF), (target & 0xFF)
+                   (((target / 256) & 0xFF) as@ u8), ((target & 0xFF) as@ u8)
   ] as u8[]).wait();
   u8[] reply = readSome(core, cli, h, 10);
   if (reply.len() < 2 || reply[0] != 0x05) {
@@ -145,7 +145,7 @@ Opened opened(Core core, Cli cli, i32 proxy, i32 target) {
   }
   if (reply[1] != 0x00) {
     cli.closeSocket(h);
-    return Opened(false, "the proxy refused the CONNECT with reply code " + itoa(reply[1]), -1);
+    return Opened(false, "the proxy refused the CONNECT with reply code " + itoa(reply[1] as i32), -1);
   }
   return Opened(true, "", h);
 }
@@ -187,7 +187,7 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
   // VER, CONNECT, reserved, ATYP 1 (IPv4), 127.0.0.1, then the port big-endian.
   cli.send(h, [
                    0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
-                   ((target / 256) & 0xFF), (target & 0xFF)
+                   (((target / 256) & 0xFF) as@ u8), ((target & 0xFF) as@ u8)
   ] as u8[]).wait();
   u8[] reply = readSome(core, cli, h, 10);
   if (reply.len() < 2 || reply[0] != 0x05) {
@@ -198,7 +198,7 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
     cli.closeSocket(h);
     // The reply code is the *reason*, and it travels: `replyForEndReason` maps a relay's END byte
     // onto exactly these, so a failure here names which end refused rather than saying "no".
-    return Carried(false, "the proxy refused the CONNECT with reply code " + itoa(reply[1]), "");
+    return Carried(false, "the proxy refused the CONNECT with reply code " + itoa(reply[1] as i32), "");
   }
 
   cli.send(h, request.toBytes()).wait();
@@ -270,7 +270,7 @@ i32 portFrom(string log, string marker) {
   while (i < log.len()) {
     string c = log.slice(i, i + 1);
     if (c < "0" || c > "9") { break; }
-    got = got * 10 + (c.toBytes()[0] - 48);
+    got = got * 10 + (c.toBytes()[0] as i32 - 48);
     any = true;
     i = i + 1;
   }

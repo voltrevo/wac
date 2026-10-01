@@ -161,14 +161,14 @@ export struct Session {
       i32 ppid = dataPpid(value);
       i32 stream = dataStreamId(value);
       u8[] payload = dataPayload(value);
-      if (ppid == ppidDcep() && payload.len() > 0 && payload[0] == dcepOpen()) {
+      if (ppid == ppidDcep() && payload.len() > 0 && payload[0] as i32 == dcepOpen()) {
         // **Nothing flows until this is answered.** A browser opens the channel with DCEP and waits
         // for the ack before its `open` event fires, so a peer that ignores it looks like one that
         // never connected rather than one that ignored a message.
         this.channelOpen = 1;
         this.label = labelOf(payload);
         u8[] ack = u8[].filled(1, 0);
-        ack[0] = dcepAck();
+        ack[0] = dcepAck() as@ u8;
         out = append(out, this.peer.sealApplication(
           this.assoc.send(stream, ppidDcep(), ack, now)));
       } else if (ppid == ppidString()) {
@@ -265,7 +265,7 @@ u8[] transactionOf(u8[] msg) {
  */
 u8[] labelOf(u8[] msg) {
   if (msg.len() < 12) { return u8[](); }
-  i32 labelLen = (msg[8] << 8) | msg[9];
+  i32 labelLen = (msg[8] as i32 << 8) | msg[9] as i32;
   if (msg.len() < 12 + labelLen) { return u8[](); }
   u8[] out = u8[].filled(labelLen, 0);
   for (i32 i = 0; i < labelLen; i++) { out[i] = msg[12 + i]; }

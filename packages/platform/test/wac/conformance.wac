@@ -63,16 +63,16 @@ export string[] opcodes(Cli cli) {
   for (i32 i = 0; i < lines.len(); i++) {
     string line = lines[i];
     u8[] b = line.toBytes();
-    if (b.len() < 5 || b[0] != ' ' || b[1] != ' ' || !isUpper(b[2])) { continue; }
+    if (b.len() < 5 || b[0] != ' ' || b[1] != ' ' || !isUpper(b[2] as i32)) { continue; }
     i32 at = 2;
-    while (at < b.len() && (isUpper(b[at]) || isDigit(b[at]) || b[at] == '_')) { at = at + 1; }
+    while (at < b.len() && (isUpper(b[at] as i32) || isDigit(b[at] as i32) || b[at] == '_')) { at = at + 1; }
     if (at >= b.len() || b[at] != ':') { continue; }
     i32 name = at;
     at = at + 1;
     if (at >= b.len() || b[at] != ' ') { continue; }
     at = at + 1;
     i32 digits = 0;
-    while (at < b.len() && isDigit(b[at])) { at = at + 1; digits = digits + 1; }
+    while (at < b.len() && isDigit(b[at] as i32)) { at = at + 1; digits = digits + 1; }
     if (digits == 0 || at >= b.len() || b[at] != ',' || at + 1 != b.len()) { continue; }
     found[n] = line.slice(2, name);
     n = n + 1;
@@ -98,7 +98,7 @@ export string[] nativeCapabilities(Cli cli) {
       if (hit < 0) { break; }
       i32 start = at + hit + structs[s].len();
       i32 end = start;
-      while (end < b.len() && isWordByte(b[end])) { end = end + 1; }
+      while (end < b.len() && isWordByte(b[end] as i32)) { end = end + 1; }
       // `") => Cap::` is what makes it a capability arm rather than any other pair of strings.
       if (end < b.len() && src.slice(end, end + 11) == "\") => Cap::" && n < found.len()) {
         found[n] = src.slice(start, end);
@@ -144,7 +144,7 @@ export string[] declaredFields(Cli cli, string name) {
     i32 s = close + 1;
     while (s < b.len() && (b[s] == ' ' || b[s] == '\t')) { s = s + 1; }
     i32 e = s;
-    while (e < b.len() && isWordByte(b[e])) { e = e + 1; }
+    while (e < b.len() && isWordByte(b[e] as i32)) { e = e + 1; }
     if (e == s || e >= b.len() || b[e] != ';' || e + 1 != b.len()) { continue; }
     found[n] = line.slice(s, e);
     n = n + 1;
@@ -167,7 +167,7 @@ export string camel(string op) {
     if (upNext) {
       out = out + op.slice(i, i + 1);
       upNext = false;
-    } else if (isUpper(b[i])) {
+    } else if (isUpper(b[i] as i32)) {
       // Lowercase, by arithmetic: the byte is known to be A–Z here.
       u8[] one = u8[].filled(1, 0);
       one[0] = b[i] + 32;

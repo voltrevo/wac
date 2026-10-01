@@ -132,7 +132,7 @@ export Daemon start(Cli cli, string line, string logPath) {
   i32 pid = 0;
   i32 digits = 0;
   for (i32 i = 0; i < bytes.len(); i++) {
-    i32 b = bytes[i];
+    i32 b = bytes[i] as i32;
     if (b < '0' || b > '9') { continue; }
     pid = pid * 10 + (b - '0');
     digits = digits + 1;

@@ -51,7 +51,7 @@ export struct Reader {
 
   i32 byte(this) {
     if (this.bad || this.at >= this.end) { this.bad = true; return 0; }
-    i32 v = this.data[this.at];
+    i32 v = this.data[this.at] as i32;
     this.at++;
     return v;
   }

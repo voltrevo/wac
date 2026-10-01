@@ -371,7 +371,7 @@ export Next nextIn(u8[] b, i32 at, i32 epoch) {
     p = p + retire.size;
     // A one-byte length here, not a varint: an id is at most 20 bytes and the field is fixed width.
     if (p >= b.len()) { return stop(Frame.Incomplete); }
-    i32 cidLen = b[p];
+    i32 cidLen = b[p] as i32;
     p = p + 1;
     // RFC 9000 §19.15: 1 to 20. Zero is a protocol violation rather than an empty id, because a peer
     // that used zero-length ids cannot be given a new one.
@@ -504,7 +504,7 @@ export i32 writeCrypto(u8[] out, i32 at, i64 offset, u8[] data) {
   if (at < 0) { return 0; }
   if (at + need > room) { return 0; }
   i32 p = at;
-  out[p] = TYPE_CRYPTO();
+  out[p] = TYPE_CRYPTO() as@ u8;
   p = p + 1;
   p = p + encode(out, p, offset);
   p = p + encode(out, p, data.len() as i64);
@@ -525,7 +525,7 @@ export i32 writeStream(u8[] out, i32 at, i64 id, i64 offset, u8[] data, bool fin
   if (at < 0) { return 0; }
   if (at + need > out.len()) { return 0; }
   i32 p = at;
-  out[p] = TYPE_STREAM() | STREAM_OFF() | STREAM_LEN() | (fin ? STREAM_FIN() : 0);
+  out[p] = (TYPE_STREAM() | STREAM_OFF() | STREAM_LEN() | (fin ? STREAM_FIN() : 0)) as@ u8;
   p = p + 1;
   p = p + encode(out, p, id);
   p = p + encode(out, p, offset);
@@ -628,7 +628,7 @@ export i32 writeAck(u8[] out, i32 at, i64 largest, i64 delay, i64 firstRange) {
   if (at < 0) { return 0; }
   if (at + need > out.len()) { return 0; }
   i32 p = at;
-  out[p] = TYPE_ACK();
+  out[p] = TYPE_ACK() as@ u8;
   p = p + 1;
   p = p + encode(out, p, largest);
   p = p + encode(out, p, delay);

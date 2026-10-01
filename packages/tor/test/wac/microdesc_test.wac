@@ -219,7 +219,7 @@ string itoaLocal(i32 n) {
   i32 v = n;
   while (v > 0) {
     u8[] d = u8[].filled(1, 0);
-    d[0] = 48 + v % 10;
+    d[0] = (48 + v % 10) as@ u8;
     out = string.fromBytes(d) + out;
     v = v / 10;
   }

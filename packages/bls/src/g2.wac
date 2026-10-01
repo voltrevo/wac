@@ -256,13 +256,13 @@ export u8[] g2Compress(G2 p) {
   for (i32 i = 0; i < 48; i++) { out[i] = hi[i]; out[48 + i] = lo[i]; }
   i32 flags = 0x80;
   if (fp2IsLarger(ay!)) { flags = flags | 0x20; }
-  out[0] = out[0] | flags;
+  out[0] = (out[0] as i32 | flags) as@ u8;
   return out;
 }
 
 export G2? g2Decompress(u8[] s) {
   if (s.len() != 96) { return null; }
-  i32 b0 = s[0];
+  i32 b0 = s[0] as i32;
   if ((b0 & 0x80) == 0) { return null; }
   bool infinity = (b0 & 0x40) != 0;
   bool wantLarger = (b0 & 0x20) != 0;

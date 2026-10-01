@@ -226,7 +226,7 @@ struct Window {
 
   void push(this, i32 v) {
     if (this.len == this.data.len()) { this.grow(); }
-    this.data[this.len] = v;
+    this.data[this.len] = v as@ u8;
     this.len++;
     if (this.len >= this.flushLimit) { this.emit(); }
   }
@@ -714,11 +714,11 @@ export u8[] gunzipBytes(u8[] gz) {
   if (gz[0] != 0x1F || gz[1] != 0x8B) { trap; }   // magic
   if (gz[2] != 8) { trap; }                       // CM must be deflate
 
-  i32 flg = gz[3];
+  i32 flg = gz[3] as i32;
   i32 pos = 10;                                   // fixed header size
 
   if ((flg & 4) != 0) {                           // FEXTRA
-    i32 xlen = gz[pos] | (gz[pos + 1] << 8);
+    i32 xlen = gz[pos] as i32 | (gz[pos + 1] as i32 << 8);
     pos += 2 + xlen;
   }
   if ((flg & 8) != 0) {                           // FNAME, NUL-terminated
@@ -740,8 +740,8 @@ export u8[] gunzipBytes(u8[] gz) {
   i32 n = gz.len();
   // The trailer CRC is a bit pattern, so it is a u32 — which is also what
   // crc32 returns, so the comparison needs no cast either way.
-  u32 wantCrc = (gz[n - 8] | (gz[n - 7] << 8) | (gz[n - 6] << 16) | (gz[n - 5] << 24)) as@ u32;
-  i32 wantSize = gz[n - 4] | (gz[n - 3] << 8) | (gz[n - 2] << 16) | (gz[n - 1] << 24);
+  u32 wantCrc = (gz[n - 8] as i32 | (gz[n - 7] as i32 << 8) | (gz[n - 6] as i32 << 16) | (gz[n - 5] as i32 << 24)) as@ u32;
+  i32 wantSize = gz[n - 4] as i32 | (gz[n - 3] as i32 << 8) | (gz[n - 2] as i32 << 16) | (gz[n - 1] as i32 << 24);
 
   u8[] out = inflateFrom(gz, pos, wantSize);
   if (crc32(out) != wantCrc) { trap; }

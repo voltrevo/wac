@@ -24,7 +24,7 @@ i32 diffCount(u8[] a, u8[] b) {
 
 u8[] filled(i32 n, i32 v) {
   u8[] b = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { b[i] = v; }
+  for (i32 i = 0; i < n; i++) { b[i] = v as@ u8; }
   return b;
 }
 
@@ -39,7 +39,7 @@ u8[] filled(i32 n, i32 v) {
 export string test_sha256_streaming_matches_oneshot() {
   T t = T.create();
   u8[] msg = u8[].filled(200, 0);
-  for (i32 i = 0; i < 200; i++) { msg[i] = (i * 37 + 11) & 0xFF; }
+  for (i32 i = 0; i < 200; i++) { msg[i] = ((i * 37 + 11) & 0xFF) as@ u8; }
   u8[] want = sha256(msg);
 
   for (i32 cut = 0; cut <= 200; cut++) {
@@ -84,7 +84,7 @@ export string test_sha256_streaming_matches_oneshot() {
 export string test_sha512_streaming_matches_oneshot() {
   T t = T.create();
   u8[] msg = u8[].filled(400, 0);
-  for (i32 i = 0; i < 400; i++) { msg[i] = (i * 53 + 7) & 0xFF; }
+  for (i32 i = 0; i < 400; i++) { msg[i] = ((i * 53 + 7) & 0xFF) as@ u8; }
   u8[] want = sha512(msg);
 
   for (i32 cut = 0; cut <= 400; cut++) {
@@ -173,7 +173,7 @@ export string test_chacha_roundtrip_and_keystream() {
   u8[] nonce = filled(12, 4);
   // 197 bytes: three whole blocks and a partial one.
   u8[] msg = u8[].filled(197, 0);
-  for (i32 i = 0; i < 197; i++) { msg[i] = (i * 31 + 7) & 0xFF; }
+  for (i32 i = 0; i < 197; i++) { msg[i] = ((i * 31 + 7) & 0xFF) as@ u8; }
 
   u8[] ct = chacha20(key, 1, nonce, msg);
   u8[] back = chacha20(key, 1, nonce, ct);

@@ -93,7 +93,7 @@ export i32 main(Core core, Cli cli) {
             u8[] digits = secs.toBytes();
             for (i32 i = 0; i < digits.len(); i++) {
               if (digits[i] < '0' || digits[i] > '9') { ok = false; break; }
-              parsed = parsed * 10 + ((digits[i] - '0') as i64);
+              parsed = parsed * 10 + ((digits[i] as i32 - '0') as i64);
             }
             if (ok) { when = parsed; }
           }

@@ -182,7 +182,7 @@ i64 daysFromCivil(i32 y, i32 m, i32 d) {
 i32 twoDigits(u8[] s, i32 at) {
   if (at < 0 || at + 1 >= s.len()) { return -1; }
   if (s[at] < '0' || s[at] > '9' || s[at + 1] < '0' || s[at + 1] > '9') { return -1; }
-  return (s[at] - '0') * 10 + (s[at + 1] - '0');
+  return (s[at] as i32 - '0') * 10 + (s[at + 1] as i32 - '0');
 }
 
 /**
@@ -327,7 +327,7 @@ export Cert parseCert(u8[] der) {
           u8[] pl = seq.element(tagInteger()).rest();
           // A one- or two-byte integer in practice; anything larger is not a constraint
           // anyone means, so it is treated as absent rather than parsed heroically.
-          pathLen = pl.len() == 1 ? pl[0] : (pl.len() == 2 ? ((pl[0] << 8) | pl[1]) : -1);
+          pathLen = pl.len() == 1 ? pl[0] as i32 : (pl.len() == 2 ? ((pl[0] as i32 << 8) | pl[1] as i32) : -1);
         }
       } else if (oidEquals(id, oidKeyUsage())) {
         // A BIT STRING whose bit 5 is keyCertSign. The first content byte is the count
@@ -465,7 +465,7 @@ bool baseCovers(u8[] list, i32 s, i32 e, u8[] name) {
   if (name.len() < bl) { return false; }
   i32 off = name.len() - bl;
   for (i32 i = 0; i < bl; i++) {
-    if (lowerByte(name[off + i]) != lowerByte(list[s + i])) { return false; }
+    if (lowerByte(name[off + i] as i32) != lowerByte(list[s + i] as i32)) { return false; }
   }
   return off == 0 || name[off - 1] == '.';
 }
@@ -555,8 +555,8 @@ u8[] collectDnsNames(u8[] value) {
 bool eqHost(u8[] a, i32 aFrom, i32 aLen, u8[] b) {
   if (aLen != b.len()) { return false; }
   for (i32 i = 0; i < aLen; i++) {
-    i32 x = a[aFrom + i];
-    i32 y = b[i];
+    i32 x = a[aFrom + i] as i32;
+    i32 y = b[i] as i32;
     if (x >= 'A' && x <= 'Z') { x += 32; }
     if (y >= 'A' && y <= 'Z') { y += 32; }
     if (x != y) { return false; }
@@ -587,14 +587,14 @@ u8[] parseIpv4(u8[] host) {
       if (digits == 0 || digits > 3 || value > 255 || part > 3 || leadingZero) {
         return u8[]();
       }
-      out[part] = value;
+      out[part] = value as@ u8;
       part++;
       value = 0;
       digits = 0;
       leadingZero = false;
     } else if (host[i] >= '0' && host[i] <= '9') {
       if (digits == 1 && value == 0) { leadingZero = true; }
-      value = value * 10 + (host[i] - '0');
+      value = value * 10 + (host[i] as i32 - '0');
       digits++;
     } else {
       return u8[]();

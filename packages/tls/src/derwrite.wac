@@ -29,7 +29,7 @@ import {
 export u8[] derTlv(i32 tag, u8[] body) {
   u8[] length = derLength(body.len());
   u8[] out = u8[].filled(1 + length.len() + body.len(), 0);
-  out[0] = tag;
+  out[0] = tag as@ u8;
   for (i32 i = 0; i < length.len(); i++) { out[1 + i] = length[i]; }
   for (i32 i = 0; i < body.len(); i++) { out[1 + length.len() + i] = body[i]; }
   return out;
@@ -45,7 +45,7 @@ export u8[] derTlv(i32 tag, u8[] body) {
 export u8[] derLength(i32 n) {
   if (n < 128) {
     u8[] out = u8[].filled(1, 0);
-    out[0] = n;
+    out[0] = n as@ u8;
     return out;
   }
   // How many bytes the value needs, most significant first with no leading zero.
@@ -56,9 +56,9 @@ export u8[] derLength(i32 n) {
     v = v / 256;
   }
   u8[] out = u8[].filled(1 + bytes, 0);
-  out[0] = 0x80 | bytes;
+  out[0] = (0x80 | bytes) as@ u8;
   for (i32 i = 0; i < bytes; i++) {
-    out[1 + i] = (n / powOf256(bytes - 1 - i)) % 256;
+    out[1 + i] = ((n / powOf256(bytes - 1 - i)) % 256) as@ u8;
   }
   return out;
 }
@@ -97,7 +97,7 @@ export u8[] derIntegerSmall(i64 value) {
   if (value < 0) { return u8[](); }
   u8[] big = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
-    big[i] = ((value >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
+    big[i] = (((value >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32) as@ u8;
   }
   return derInteger(big);
 }
@@ -171,8 +171,8 @@ export u8[] derTime(i64 secondsSinceEpoch) {
 }
 
 void put2(u8[] out, i32 at, i64 v) {
-  out[at] = ('0' + ((v / 10) % 10)) as~ i32;
-  out[at + 1] = ('0' + (v % 10)) as~ i32;
+  out[at] = (('0' + ((v / 10) % 10)) as~ i32) as@ u8;
+  out[at + 1] = (('0' + (v % 10)) as~ i32) as@ u8;
 }
 
 /**

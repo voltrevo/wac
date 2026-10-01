@@ -491,7 +491,7 @@ export string test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal(
       clientHello(random, u8[](), 0x1301, groupP256(), notAPoint, HOST.toBytes(), u8[](), u8[]()))));
   t.eqI32(tlsPhase(no.state), phaseFailed(), "a key share that is not a point was accepted");
   t.isTrue(no.toSend.len() > 0, "the server refused without saying so");
-  t.eqI32(no.toSend[0], 21, "the refusal was not sent as an alert record");
+  t.eqI32(no.toSend[0] as i32, 21, "the refusal was not sent as an alert record");
 
   // A point whose prefix says uncompressed and whose coordinates are the curve's own b — on the
   // curve only by coincidence, which it is not.
@@ -554,7 +554,7 @@ export string test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused() 
       clientHello(random, u8[](), 0x1301, groupHybrid(), u8[].filled(1216, 0xFF), HOST.toBytes(),
                   u8[](), u8[]()))));
   t.eqI32(tlsPhase(no.state), phaseFailed(), "a hybrid share above q was accepted");
-  t.eqI32(no.toSend[0], 21, "the refusal was not sent as an alert record");
+  t.eqI32(no.toSend[0] as i32, 21, "the refusal was not sent as an alert record");
 
   // And the widths, for every group. Each of these trapped on a length check inside a primitive.
   i32[] widths = [1, 31, 33, 1215, 1217];
@@ -616,7 +616,7 @@ export string test_a_clienthello_the_server_will_not_answer_is_refused_in_the_cl
       clientHello(random, u8[](), 0x1303, groupHybrid(), hybridShare, HOST.toBytes(),
                   u8[](), u8[]()))));
   t.eqI32(tlsPhase(no1.state), phaseFailed(), "a hello offering only ChaCha20 was accepted");
-  t.eqI32(no1.toSend[0], 21, "the suite refusal was not sent as an alert record");
+  t.eqI32(no1.toSend[0] as i32, 21, "the suite refusal was not sent as an alert record");
 
   // A group nobody has heard of: `parseClientHello` answers an empty key share, which is what
   // `keyShare.len() < 3` is for. The source calls this the HelloRetryRequest case and says plainly
@@ -625,7 +625,7 @@ export string test_a_clienthello_the_server_will_not_answer_is_refused_in_the_cl
       clientHello(random, u8[](), 0x1301, 0x1234, u8[].filled(32, 9), HOST.toBytes(),
                   u8[](), u8[]()))));
   t.eqI32(tlsPhase(no2.state), phaseFailed(), "a hello offering an unknown group was accepted");
-  t.eqI32(no2.toSend[0], 21, "the group refusal was not sent as an alert record");
+  t.eqI32(no2.toSend[0] as i32, 21, "the group refusal was not sent as an alert record");
 
   // And the two groups that are *not* refused, so the assertions above are about what was varied.
   // Both are answered: x25519 is the classical fallback and P-256 is the third supported group.
@@ -649,16 +649,16 @@ export string test_a_clienthello_the_server_will_not_answer_is_refused_in_the_cl
 /** `inRecord` with the outer content type chosen, for the arms that are about the type. */
 u8[] inRecordTyped(i32 outer, u8[] msg) {
   u8[] out = inRecord(msg);
-  out[0] = outer;
+  out[0] = outer as@ u8;
   return out;
 }
 
 u8[] inRecord(u8[] msg) {
   u8[] out = u8[].filled(5 + msg.len(), 0);
-  out[0] = typeHandshake();
+  out[0] = typeHandshake() as@ u8;
   out[1] = 3; out[2] = 1;                       // the first record says 1.0, per RFC 8446 D.4
-  out[3] = (msg.len() >> 8) & 0xFF;
-  out[4] = msg.len() & 0xFF;
+  out[3] = ((msg.len() >> 8) & 0xFF) as@ u8;
+  out[4] = (msg.len() & 0xFF) as@ u8;
   for (i32 i = 0; i < msg.len(); i++) { out[5 + i] = msg[i]; }
   return out;
 }
@@ -950,9 +950,9 @@ export string test_the_first_record_back_is_refused_on_its_framing() {
   for (i32 i = 0; i < claims.len(); i++) {
     u8[] lying = u8[].filled(real.len(), 0);
     for (i32 k = 0; k < real.len(); k++) { lying[k] = real[k]; }
-    lying[1] = (claims[i] >> 16) & 0xFF;
-    lying[2] = (claims[i] >> 8) & 0xFF;
-    lying[3] = claims[i] & 0xFF;
+    lying[1] = ((claims[i] >> 16) & 0xFF) as@ u8;
+    lying[2] = ((claims[i] >> 8) & 0xFF) as@ u8;
+    lying[3] = (claims[i] & 0xFF) as@ u8;
     ClientStep r = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
                                             inRecord(lying)));
     t.eqI32(tlsClientPhase(r.state), 4,

@@ -70,7 +70,7 @@ u8[] hp(u8[] path, bool terminal) {
   i32 flag = (terminal ? 2 : 0) + (path.len() % 2);
   bool odd = path.len() % 2 == 1;
   u8[] out = u8[].filled(1 + (path.len() + (odd ? 1 : 0)) / 2, 0);
-  out[0] = (flag << 4) | (odd ? path[0] : 0);
+  out[0] = ((flag << 4) | (odd ? path[0] as i32 : 0)) as@ u8;
   i32 from = odd ? 1 : 0;
   for (i32 i = from; i + 1 < path.len() + 1 && i < path.len(); i = i + 2) {
     out[1 + (i - from) / 2] = (path[i] << 4) | path[i + 1];
@@ -113,7 +113,7 @@ Trie branchTrie(Item terminal) {
   built[nibs.len()] = last;
   u8[] ref = keccak256(last);
   for (i32 i = nibs.len() - 1; i >= 0; i--) {
-    u8[] node = encode(branchSlot(Item.Bytes(ref), nibs[i]));
+    u8[] node = encode(branchSlot(Item.Bytes(ref), nibs[i] as i32));
     built[i] = node;
     ref = keccak256(node);
   }
@@ -339,7 +339,7 @@ export string test_a_hex_prefix_header_must_be_canonical_not_merely_parseable() 
 
   // **A non-zero pad nibble on an even-length path.** Same path, same value, different bytes.
   u8[] padded = hp(path, true);
-  t.eqI32(padded[0] & 0x0F, 0, "the fixture's own header is not even-length-padded as expected");
+  t.eqI32(padded[0] as i32 & 0x0F, 0, "the fixture's own header is not even-length-padded as expected");
   padded[0] = padded[0] | 0x07;
   u8[] mal = leafWithHeader(padded);
   Proved m = verify(keccak256(mal), key(), one(mal));

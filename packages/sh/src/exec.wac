@@ -658,7 +658,7 @@ export struct Shell {
     if (name == "@" || name == "*") { return this.params.len() > 0; }
     if (name.len() == 1) {
       u8[] b = name.toBytes();
-      if (b[0] >= 0x31 && b[0] <= 0x39) { return (b[0] - 0x31) < this.params.len(); }
+      if (b[0] >= 0x31 && b[0] <= 0x39) { return (b[0] as i32 - 0x31) < this.params.len(); }
     }
     if (this.vars.has(name)) { return true; }
     // `.wait()` matters more than it looks: without it this asks whether the *ticket* is null,
@@ -700,7 +700,7 @@ export struct Shell {
     if (name.len() == 1) {
       u8[] b = name.toBytes();
       if (b[0] >= 0x31 && b[0] <= 0x39) {
-        i32 i = b[0] - 0x31;
+        i32 i = b[0] as i32 - 0x31;
         return i < this.params.len() ? this.params.get(i) : "";
       }
     }
@@ -2678,11 +2678,11 @@ Output readLine(Shell sh, Vec<string> argv) {
   while (joining) {
     joining = false;
     while (sh.stdinPos < sh.stdinBytes.len()) {
-      i32 c = sh.stdinBytes[sh.stdinPos];
+      i32 c = sh.stdinBytes[sh.stdinPos] as i32;
       sh.stdinPos++;
       if (c == 10) { sawNewline = true; break; }
       if (!raw && c == 0x5c && sh.stdinPos < sh.stdinBytes.len()) {
-        i32 n = sh.stdinBytes[sh.stdinPos];
+        i32 n = sh.stdinBytes[sh.stdinPos] as i32;
         sh.stdinPos++;
         // A backslash-newline is a continuation: the line goes on, and neither character shows.
         if (n == 10) { joining = true; break; }
@@ -2738,9 +2738,9 @@ bool isBlankAt(u8[] b, u8[] esc, i32 i) {
 }
 
 /** The same question about an `$IFS` character, and about the whitespace half of one. */
-bool ifsAt(string ifs, u8[] b, u8[] esc, i32 i) { return esc[i] == 0 && ifsHas(ifs, b[i]); }
+bool ifsAt(string ifs, u8[] b, u8[] esc, i32 i) { return esc[i] == 0 && ifsHas(ifs, b[i] as i32); }
 
-bool ifsSpaceAt(string ifs, u8[] b, u8[] esc, i32 i) { return esc[i] == 0 && ifsSpace(ifs, b[i]); }
+bool ifsSpaceAt(string ifs, u8[] b, u8[] esc, i32 i) { return esc[i] == 0 && ifsSpace(ifs, b[i] as i32); }
 
 /**
  * `set` — the positional parameters, and nothing else.
@@ -2848,7 +2848,7 @@ bool isName(string w) {
   if (b.len() == 0) { return false; }
   if (!(b[0] == '_' || (b[0] >= 'a' && b[0] <= 'z') || (b[0] >= 'A' && b[0] <= 'Z'))) { return false; }
   for (i32 i = 1; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     bool ok = c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
     if (!ok) { return false; }
   }
@@ -3023,7 +3023,7 @@ i32 octalMode(string spec) {
   i32 v = 0;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] < '0' || b[i] > '7') { return -1; }
-    v = v * 8 + (b[i] - '0');
+    v = v * 8 + (b[i] as i32 - '0');
   }
   return v;
 }
@@ -4205,7 +4205,7 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
               }
               break;
             }
-            if (!ifsHas(ifs, b[j])) { j++; continue; }
+            if (!ifsHas(ifs, b[j] as i32)) { j++; continue; }
             // **The delimiter, as POSIX describes it**: a run of IFS whitespace, at most one
             // non-whitespace IFS character, and then more IFS whitespace. That shape is what makes
             // `IFS=:` split `a::b` into three fields — the second `:` is its own delimiter — while a run
@@ -4216,8 +4216,8 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
             }
             bool hadNonSpace = false;
             for (i32 g2 = 0; g2 < b.len() + 1; g2++) {
-              if (j >= b.len() || !ifsHas(ifs, b[j])) { break; }
-              if (ifsSpace(ifs, b[j])) { j++; continue; }
+              if (j >= b.len() || !ifsHas(ifs, b[j] as i32)) { break; }
+              if (ifsSpace(ifs, b[j] as i32)) { j++; continue; }
               if (hadNonSpace) { break; }
               hadNonSpace = true;
               j++;
@@ -4257,7 +4257,7 @@ string ifsOf(Shell sh) {
 bool ifsHas(string ifs, i32 c) {
   u8[] b = ifs.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
-    if (b[i] == c) { return true; }
+    if (b[i] as i32 == c) { return true; }
   }
   return false;
 }
@@ -4331,11 +4331,11 @@ bool inBracket(u8[] pat, i32 at, i32 close, i32 c) {
   while (i < close) {
     // A `-` between two characters is a range; one at either end is a literal `-`.
     if (i + 2 < close && pat[i + 1] == 0x2d) {
-      if (c >= pat[i] && c <= pat[i + 2]) { hit = true; }
+      if (c >= pat[i] as i32 && c <= pat[i + 2] as i32) { hit = true; }
       i += 3;
       continue;
     }
-    if (pat[i] == c) { hit = true; }
+    if (pat[i] as i32 == c) { hit = true; }
     i++;
   }
   return hit != negated;
@@ -4404,7 +4404,7 @@ bool globMatch(u8[] pat, u8[] quoted, i32 p, u8[] name, i32 n) {
       i32 close = closingBracket(pat, quoted, i);
       if (close > 0) {
         if (j >= name.len()) { return false; }
-        if (!inBracket(pat, i, close, name[j])) { return false; }
+        if (!inBracket(pat, i, close, name[j] as i32)) { return false; }
         i = close + 1;
         j++;
         continue;
@@ -4485,13 +4485,13 @@ string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
   u8[] v = value.toBytes();
   Buf out = Buf.create();
   for (i32 i = 0; i < v.len(); i++) {
-    i32 c = v[i];
+    i32 c = v[i] as i32;
     // The single form looks at the first character and *only* the first: `${x^b}` of `abc` is
     // unchanged rather than reaching forward to the `b`. It is a position, not a search.
     bool eligible = all || i == 0;
     if (eligible && pat.len() > 0) {
       u8[] one = u8[].filled(1, 0);
-      one[0] = c;
+      one[0] = c as@ u8;
       eligible = globMatch(pat, mask, 0, one, 0);
     }
     if (eligible) {
@@ -4617,7 +4617,7 @@ string substitutePattern(Shell sh, string value, string arg, bool all) {
   while (at < raw.len() && !split) {
     if (raw[at] == 0x5c && at + 1 < raw.len() && raw[at + 1] == 0x2f) { patBuf.push(0x2f); at += 2; }
     else if (raw[at] == 0x2f) { split = true; at++; }
-    else { patBuf.push(raw[at]); at++; }
+    else { patBuf.push(raw[at] as i32); at++; }
   }
   string patText = string.fromBytes(patBuf.bytes());
   string repText = split ? string.fromBytes(sliceBytes(raw, at, raw.len())) : "";
@@ -4667,7 +4667,7 @@ string substitutePattern(Shell sh, string value, string arg, bool all) {
       i = end;
       if (!all) { more = false; }
     } else {
-      out.push(v[i]);
+      out.push(v[i] as i32);
       i++;
     }
   }
@@ -4705,7 +4705,7 @@ string applyReplacement(string rep, u8[] matched) {
   for (i32 i = 0; i < r.len(); i++) {
     if (r[i] == 0x5c && i + 1 < r.len() && r[i + 1] == 0x26) { out.push(0x26); i++; }
     else if (r[i] == 0x26) { out.pushAll(matched); }
-    else { out.push(r[i]); }
+    else { out.push(r[i] as i32); }
   }
   return string.fromBytes(out.bytes());
 }
@@ -4852,7 +4852,7 @@ string substituteNames(Shell sh, string text) {
       bool braced = j < b.len() && b[j] == 0x7b;
       if (braced) { j++; }
       i32 start = j;
-      while (j < b.len() && isArithNameChar(b[j])) { j++; }
+      while (j < b.len() && isArithNameChar(b[j] as i32)) { j++; }
       if (j > start) {
         string value = sh.lookUp(text.slice(start, j));
         out = out + (value == "" ? "0" : value);
@@ -4865,9 +4865,9 @@ string substituteNames(Shell sh, string text) {
       i++;
       continue;
     }
-    if (isArithNameStart(b[i])) {
+    if (isArithNameStart(b[i] as i32)) {
       i32 start = i;
-      while (i < b.len() && isArithNameChar(b[i])) { i++; }
+      while (i < b.len() && isArithNameChar(b[i] as i32)) { i++; }
       string name = text.slice(start, i);
       string value = sh.lookUp(name);
       out = out + (value == "" ? "0" : value);
@@ -4890,7 +4890,7 @@ string substituteNames(Shell sh, string text) {
 bool hasBareName(string text) {
   u8[] b = text.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
-    if (isArithNameStart(b[i])) { return true; }
+    if (isArithNameStart(b[i] as i32)) { return true; }
   }
   return false;
 }
@@ -5064,7 +5064,7 @@ string withHome(Shell sh, string text, bool startable, bool colons) {
 
   Buf out = Buf.create();
   for (i32 i = 0; i < b.len(); i++) {
-    if (homeTilde(b, i, startable, colons)) { out.pushAll(h); } else { out.push(b[i]); }
+    if (homeTilde(b, i, startable, colons)) { out.pushAll(h); } else { out.push(b[i] as i32); }
   }
   return string.fromBytes(out.bytes());
 }
@@ -5103,7 +5103,7 @@ i32 atoiOr(string s, i32 fallback) {
   for (i32 i = start; i < s.len(); i++) {
     u8[] b = s.slice(i, i + 1).toBytes();
     if (b.len() != 1 || b[0] < 0x30 || b[0] > 0x39) { return fallback; }
-    v = v * 10 + (b[0] - 0x30);
+    v = v * 10 + (b[0] as i32 - 0x30);
   }
   return negative ? -v : v;
 }

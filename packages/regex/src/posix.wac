@@ -73,13 +73,13 @@ export Rewritten toJs(u8[] pattern) {
   Buf out = Buf.create();
   i32 i = 0;
   while (i < pattern.len()) {
-    i32 c = pattern[i];
+    i32 c = pattern[i] as i32;
     // An escaped byte is not a bracket, whatever it is: `\[` is a literal `[`.
     if (c == '\\' && i + 1 < pattern.len()) {
-      i32 anchor = bufferAnchor(pattern[i + 1]);
+      i32 anchor = bufferAnchor(pattern[i + 1] as i32);
       if (anchor >= 0) { out.push(anchor); i = i + 2; continue; }
       out.push(c);
-      out.push(pattern[i + 1]);
+      out.push(pattern[i + 1] as i32);
       i = i + 2;
       continue;
     }
@@ -117,7 +117,7 @@ export i32 copyBracket(Buf out, u8[] p, i32 at) {
   // class of two characters; without this it is the empty class, which matches nothing and says nothing.
   bool first = true;
   while (i < p.len()) {
-    i32 c = p[i];
+    i32 c = p[i] as i32;
     if (c == ']' && !first) {
       out.push(']');
       return i + 1;
@@ -126,7 +126,7 @@ export i32 copyBracket(Buf out, u8[] p, i32 at) {
 
     // `[:alpha:]`, `[.x.]`, `[=x=]` — the three POSIX constructs that live inside a bracket.
     if (c == '[' && i + 1 < p.len() && (p[i + 1] == ':' || p[i + 1] == '=' || p[i + 1] == '.')) {
-      i32 mark = p[i + 1];
+      i32 mark = p[i + 1] as i32;
       i32 end = closerAt(p, i + 2, mark);
       if (end < 0) { return -1; }
       if (mark == ':') {
@@ -136,7 +136,7 @@ export i32 copyBracket(Buf out, u8[] p, i32 at) {
         // `[.ch.]` is a mistake here rather than a two-character element — there is no locale in this
         // program for which it would be one.
         if (end != i + 3) { return -1; }
-        writeMember(out, p[i + 2]);
+        writeMember(out, p[i + 2] as i32);
       }
       i = end + 2;
       continue;
@@ -147,7 +147,7 @@ export i32 copyBracket(Buf out, u8[] p, i32 at) {
     // `a-z`, where the `-` is neither first nor last. A `-` before `]` is a literal hyphen, which is the
     // rule every implementation shares and none of them writes down.
     if (after < p.len() && p[after] == '-' && after + 1 < p.len() && p[after + 1] != ']') {
-      i32 hi = p[after + 1];
+      i32 hi = p[after + 1] as i32;
       if (hi < lo) { return -3; }
       writeMember(out, lo);
       out.push('-');
@@ -244,7 +244,7 @@ export i32[] classRanges(string name) {
 /** Where a `[:name:]`, `[=c=]` or `[.c.]` ends — the index of its `mark` — or -1. */
 i32 closerAt(u8[] p, i32 from, i32 mark) {
   for (i32 i = from; i + 1 < p.len(); i++) {
-    if (p[i] == mark && p[i + 1] == ']') { return i; }
+    if (p[i] as i32 == mark && p[i + 1] == ']') { return i; }
   }
   return -1;
 }

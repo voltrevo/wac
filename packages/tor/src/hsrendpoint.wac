@@ -69,7 +69,7 @@ export RendPoint rendezvousPoint(u8[] linkSpecifiers, bool allowPrivate) {
   // client rather than an empty field.
   if (linkSpecifiers.len() == 1 && linkSpecifiers[0] == 0) { return rejected(REND_EMPTY); }
   if (!linkSpecifiersValid(linkSpecifiers)) { return rejected(REND_MALFORMED); }
-  i32 n = linkSpecifiers[0];
+  i32 n = linkSpecifiers[0] as i32;
 
   u8[] address = u8[]();
   i32 port = 0;
@@ -78,13 +78,13 @@ export RendPoint rendezvousPoint(u8[] linkSpecifiers, bool allowPrivate) {
 
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
-    i32 type = linkSpecifiers[at];
-    i32 length = linkSpecifiers[at + 1];
+    i32 type = linkSpecifiers[at] as i32;
+    i32 length = linkSpecifiers[at + 1] as i32;
     i32 from = at + 2;
 
     if (type == LS_IPV4 && address.len() == 0 && length == 6) {
       address = sub(linkSpecifiers, from, from + 4);
-      port = (linkSpecifiers[from + 4] << 8) | linkSpecifiers[from + 5];
+      port = (linkSpecifiers[from + 4] as i32 << 8) | linkSpecifiers[from + 5] as i32;
     } else if (type == LS_LEGACY_ID && length >= 20 && legacyId.len() == 0) {
       // Exactly twenty bytes are taken even if more were sent, matching tor's fixed-size copy: a
       // longer field is not a longer digest.
@@ -115,8 +115,8 @@ export RendPoint rendezvousPoint(u8[] linkSpecifiers, bool allowPrivate) {
  */
 export bool addressIsAllowed(u8[] a) {
   if (a.len() != 4) { return false; }
-  i32 b0 = a[0];
-  i32 b1 = a[1];
+  i32 b0 = a[0] as i32;
+  i32 b1 = a[1] as i32;
   if (b0 == 0) { return false; }                          // 0.0.0.0/8 — "this network"
   if (b0 == 127) { return false; }                        // loopback
   if (b0 == 10) { return false; }                         // RFC 1918

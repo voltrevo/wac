@@ -47,7 +47,7 @@ export string manifestIn(u8[] wasm) {
   if (wasm.len() < 8) { return ""; }
   i32 at = 8;
   while (at < wasm.len()) {
-    i32 id = wasm[at];
+    i32 id = wasm[at] as i32;
     at = at + 1;
     i32 size = ulebAt(wasm, at);
     at = at + ulebWidth(wasm, at);
@@ -98,7 +98,7 @@ export string hollowWhy(u8[] wasm, i32 promised) {
   i32 exports = 0;
   i32 at = 8;
   while (at < wasm.len()) {
-    i32 id = wasm[at];
+    i32 id = wasm[at] as i32;
     at = at + 1;
     i32 size = ulebAt(wasm, at);
     at = at + ulebWidth(wasm, at);
@@ -122,7 +122,7 @@ export string[] bindExportsOf(u8[] wasm) {
   if (wasm.len() < 8) { return exactlyN(out, 0); }
   i32 at = 8;
   while (at < wasm.len()) {
-    i32 id = wasm[at];
+    i32 id = wasm[at] as i32;
     at = at + 1;
     i32 size = ulebAt(wasm, at);
     at = at + ulebWidth(wasm, at);
@@ -165,7 +165,7 @@ i32 ulebAt(u8[] bytes, i32 at) {
   i32 shift = 0;
   i32 i = at;
   while (i < bytes.len()) {
-    i32 b = bytes[i];
+    i32 b = bytes[i] as i32;
     value = value | ((b & 0x7f) << shift);
     i = i + 1;
     if ((b & 0x80) == 0) { return value; }
@@ -568,7 +568,7 @@ u8[] uleb(i32 n) {
     i32 b = v & 0x7f;
     v = v >>> 7;
     if (v != 0) { b = b | 0x80; }
-    buf[len] = b;
+    buf[len] = b as@ u8;
     len = len + 1;
     more = v != 0;
   }

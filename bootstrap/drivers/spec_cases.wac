@@ -238,6 +238,18 @@ export i32 drv_declineFiles() {
   return declined.len();
 }
 
+/**
+ * Every diagnostic for the file set, one `file\tline\tcol\tphase\tmessage` per line — `diagnoseGraph`.
+ *
+ * For checking with a compiler wac-L5 just built, before any binary has one: a rule that refuses code
+ * the repository is full of has to say where, and the bootstrap's own fixed-point round is the first
+ * thing that would otherwise run it. Read back through `drv_declineByte`.
+ */
+export i32 drv_diagnose() {
+  declined = diagnoseGraph(paths, sources, string.fromBytes(namebuf)).toBytes();
+  return declined.len();
+}
+
 // **What a host needs to write a manifest.** `exportSigsFiles` answers `name\tret\tparam,param`
 // per line and `bindTypesFiles` answers the `S`/`E`/`M` lines describing every struct a host can
 // hold. Both are wacc's own answers about a program, which is the point: a bootstrap that wants a

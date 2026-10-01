@@ -92,7 +92,7 @@ u8[] upper(u8[] b) {
 string oneLine(u8[] b) {
   string out = "";
   for (i32 i = 0; i < b.len(); i++) {
-    out = out + (b[i] == 10 ? "\\n" : string.fromCodepoint(b[i]));
+    out = out + (b[i] == 10 ? "\\n" : string.fromCodepoint(b[i] as i32));
   }
   return out;
 }

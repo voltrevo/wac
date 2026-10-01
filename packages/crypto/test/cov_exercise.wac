@@ -109,7 +109,7 @@ import { fAdd, fSub, fMul, fSquare, fMulSmall, fInvert, fRoundTrip, fCSwap, x255
 /** Deterministic filler; `seed` varies the contents so repeats are not identical. */
 u8[] bytes(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + seed * 17 + 7) & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 31 + seed * 17 + 7) & 255) as@ u8; }
   return out;
 }
 
@@ -902,7 +902,7 @@ i32 nist(Core core, Cli cli) {
   u8[] rsaMsg = bytes(24, 80);
   u8[] modulus = u8[].filled(256, 0);
   modulus[0] = 0xC0;
-  for (i32 i = 1; i < 256; i++) { modulus[i] = (i * 7 + 3) & 255; }
+  for (i32 i = 1; i < 256; i++) { modulus[i] = ((i * 7 + 3) & 255) as@ u8; }
   i32[] hashLens = [32, 48, 64];
   for (i32 i = 0; i < hashLens.len(); i++) {
     verifyPkcs1(modulus, e, rsaMsg, u8[].filled(10, 0), hashLens[i]);      // a signature of the wrong length

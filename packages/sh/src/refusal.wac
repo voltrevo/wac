@@ -63,7 +63,7 @@ bool gnuHas(string name, i32 letter) {
   if (name == "ls") { letters = "1aAbBcCdDfFgGhHiIklLmnNopqQrRsStTuUvwxXZ"; }
   u8[] b = letters.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
-    if (b[i] == letter) { return true; }
+    if (b[i] as i32 == letter) { return true; }
   }
   return false;
 }
@@ -82,7 +82,7 @@ export string optionRefusal(string name, string letter) {
   if (b.len() > 1 && b[0] == '-' && b[1] == '-') {
     return name + ": long option not implemented: " + letter + "\n";
   }
-  if (b.len() == 1 && gnuHas(name, b[0])) {
+  if (b.len() == 1 && gnuHas(name, b[0] as i32)) {
     // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
     return name + ": -" + letter + " is not implemented\n";
   }

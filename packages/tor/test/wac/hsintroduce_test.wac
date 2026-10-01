@@ -28,7 +28,7 @@ static i64 NOW = 1785931200;
 /** A service ephemeral secret. Clamped, and fixed so a failure is reproducible. */
 u8[] ephemeral() {
   u8[] s = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { s[i] = (i * 37 + 11) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { s[i] = ((i * 37 + 11) & 0xFF) as@ u8; }
   s[0] = s[0] & 248;
   s[31] = (s[31] & 127) | 64;
   return s;
@@ -90,9 +90,9 @@ u8[] hexOf(Cli cli, i32 i, string key) { return decoded(fieldOf(cli, i, key)); }
 /** Whether these link specifiers name a 127.x or 10.x rendezvous point. */
 bool namesAPrivateAddress(u8[] ls) {
   i32 at = 1;
-  for (i32 k = 0; k < ls[0]; k++) {
-    i32 kind = ls[at];
-    i32 len = ls[at + 1];
+  for (i32 k = 0; k < ls[0] as i32; k++) {
+    i32 kind = ls[at] as i32;
+    i32 len = ls[at + 1] as i32;
     if (kind == 0 && len == 6 && (ls[at + 2] == 127 || ls[at + 2] == 10)) { return true; }
     at = at + 2 + len;
   }

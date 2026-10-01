@@ -108,14 +108,14 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
       i32 keep = corrupt.len();
       if (kind == 0) {                                 // flip one bit
         i32 at = rng.upto(corrupt.len());
-        corrupt[at] = corrupt[at] ^ (1 << rng.upto(8));
+        corrupt[at] = (corrupt[at] as i32 ^ (1 << rng.upto(8))) as@ u8;
       } else if (kind == 1) {                          // replace a byte
-        corrupt[rng.upto(corrupt.len())] = rng.next() & 0xFF;
+        corrupt[rng.upto(corrupt.len())] = (rng.next() & 0xFF) as@ u8;
       } else if (kind == 2) {                          // scramble a short span
         i32 at = rng.upto(corrupt.len());
         i32 len = 1 + rng.upto(8);
         i32 to = at + len < corrupt.len() ? at + len : corrupt.len();
-        for (i32 k = at; k < to; k++) { corrupt[k] = rng.next() & 0xFF; }
+        for (i32 k = at; k < to; k++) { corrupt[k] = (rng.next() & 0xFF) as@ u8; }
       } else {                                         // truncate
         keep = rng.upto(corrupt.len());
       }

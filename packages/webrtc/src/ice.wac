@@ -117,10 +117,10 @@ export u8[] checkFor(u8[] tid, string peerUfrag, string ourUfrag, u8[] peerPassw
   Attr[] attrs = Attr[].filled(n, Attr(0, u8[]()));
   attrs[0] = Attr(attrUsername(), checkUsername(peerUfrag, ourUfrag).toBytes());
   u8[] pri = u8[].filled(4, 0);
-  pri[0] = ((priority >> (24 as i64)) & (255 as i64)) as~ i32;
-  pri[1] = ((priority >> (16 as i64)) & (255 as i64)) as~ i32;
-  pri[2] = ((priority >> (8 as i64)) & (255 as i64)) as~ i32;
-  pri[3] = (priority & (255 as i64)) as~ i32;
+  pri[0] = (((priority >> (24 as i64)) & (255 as i64)) as~ i32) as@ u8;
+  pri[1] = (((priority >> (16 as i64)) & (255 as i64)) as~ i32) as@ u8;
+  pri[2] = (((priority >> (8 as i64)) & (255 as i64)) as~ i32) as@ u8;
+  pri[3] = ((priority & (255 as i64)) as~ i32) as@ u8;
   attrs[1] = Attr(attrPriority(), pri);
   // The tiebreaker is eight bytes of the agent's own choosing, compared numerically when both ends
   // think they are controlling. Carried as bytes rather than an `i64` because that comparison is

@@ -157,7 +157,7 @@ export i32 regionFirst(i32 rx, i32 ry) {
   s.fill(4, 4, 4, 4, 0x11223344);
   u8[] px = s.region(rx, ry, 2, 2);
   if (px.len() < 4) { return -1; }
-  return (px[0] << 24) | (px[1] << 16) | (px[2] << 8) | px[3];
+  return (px[0] as i32 << 24) | (px[1] as i32 << 16) | (px[2] as i32 << 8) | px[3] as i32;
 }
 
 /** An empty surface has no damaged pixels to send. */
@@ -367,7 +367,7 @@ export i32[] gridSelectionInk(i32 cols, i32 rows, i32[] cps, i32 c0, i32 r0, i32
   // The top-left pixel of each cell: white where the cell was filled for selection, black otherwise.
   i32[] out = i32[].filled(cols, 0);
   for (i32 c = 0; c < cols; c++) {
-    out[c] = s.pixels[((row * cellHeight()) * s.width + c * cellWidth()) * 4];
+    out[c] = s.pixels[((row * cellHeight()) * s.width + c * cellWidth()) * 4] as i32;
   }
   return out;
 }

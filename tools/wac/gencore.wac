@@ -141,7 +141,7 @@ string[] exportsOf(string text) {
     i32 end = 7;
     i32 depth = 0;
     while (end < b.len()) {
-      i32 c = b[end];
+      i32 c = b[end] as i32;
       if (c == 60) { depth = depth + 1; }
       if (c == 62) { depth = depth - 1; }
       if (depth == 0 && (c == 40 || c == 123 || c == 61 || c == 59)) { break; }
@@ -205,7 +205,7 @@ string quoted(string s) {
   u8[] b = s.toBytes();
   i32 from = 0;
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c != 92 && c != 34) { continue; }
     out = out + s.slice(from, i) + (c == 92 ? "\\\\" : "\\\"");
     from = i + 1;
@@ -225,7 +225,7 @@ string quotedLine(string l) {
   u8[] b = l.toBytes();
   i32 from = 0;
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c != 92 && c != 34) { continue; }
     out = out + l.slice(from, i) + (c == 92 ? "\\\\" : "\\\"");
     from = i + 1;

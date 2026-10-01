@@ -57,7 +57,7 @@ export static i32 MAC_LEN = 32;
 u8[] u64be(i64 v) {
   u8[] b = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
-    b[i] = ((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
+    b[i] = (((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32) as@ u8;
   }
   return b;
 }
@@ -126,7 +126,7 @@ export u8[] decryptLayer(u8[] blob, u8[] secretData, u8[] subcredential, i64 rev
 
   u8[] want = layerMac(macKey, salt, ciphertext);
   i32 diff = 0;
-  for (i32 i = 0; i < MAC_LEN; i++) { diff = diff | (want[i] ^ mac[i]); }
+  for (i32 i = 0; i < MAC_LEN; i++) { diff = diff | (want[i] as i32 ^ mac[i] as i32); }
   if (diff != 0) { return u8[](); }
 
   return aesCtr(clamped(keys, 0, S_KEY_LEN), clamped(keys, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), ciphertext);
@@ -230,7 +230,7 @@ export i64 keywordInt(u8[] doc, u8[] keyword) {
   i64 out = 0;
   for (i32 i = 0; i < v.len(); i++) {
     if (v[i] < 48 || v[i] > 57) { return -1; }
-    out = out * 10 + ((v[i] - 48) as i64);
+    out = out * 10 + ((v[i] as i32 - 48) as i64);
   }
   return out;
 }
@@ -249,12 +249,12 @@ export i64 keywordInt(u8[] doc, u8[] keyword) {
  */
 export u8[] certSignedWithKey(u8[] cert) {
   if (cert.len() < 40) { return u8[](); }
-  i32 n = cert[39];
+  i32 n = cert[39] as i32;
   i32 at = 40;
   for (i32 i = 0; i < n; i++) {
     if (at + 4 > cert.len()) { return u8[](); }
-    i32 length = (cert[at] * 256) + cert[at + 1];
-    i32 type = cert[at + 2];
+    i32 length = (cert[at] as i32 * 256) + cert[at + 1] as i32;
+    i32 type = cert[at + 2] as i32;
     if (at + 4 + length > cert.len()) { return u8[](); }
     if (type == 4 && length == 32) { return clamped(cert, at + 4, at + 36); }
     at = at + 4 + length;
@@ -271,5 +271,5 @@ export u8[] certCertifiedKey(u8[] cert) {
 /** A certificate's type byte: 8 for a descriptor signing cert, 9 for an intro auth key. */
 export i32 certType(u8[] cert) {
   if (cert.len() < 2) { return -1; }
-  return cert[1];
+  return cert[1] as i32;
 }

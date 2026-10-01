@@ -121,13 +121,11 @@ export string checkMessage(i32 code) {
   if (code == 24) { return "`>>>` is redundant on an unsigned type"; }
   if (code == 203) { return "this needs a nullable value"; }
   if (code == 25) { return "wrong number of arguments to the constructor"; }
-  if (code == 26) { return "a packed type cannot be used in this position"; }
   if (code == 27) { return "a string's characters cannot be written to"; }
   if (code == 28) { return "this type has no default value"; }
   if (code == 30) { return "this cast goes down the hierarchy and must be checked"; }
   if (code == 31) { return "there is no loop here to break out of or continue"; }
   if (code == 32) { return "wrong number of arguments"; }
-  if (code == 33) { return "a packed type cannot be nullable"; }
   if (code == 34) { return "a static initialiser must be computable at compile time"; }
   if (code == 35) { return "undefined name"; }
   if (code == 36) { return "void cannot be used as a type here"; }
@@ -234,7 +232,6 @@ export string hintFor(i32 code) {
   // this is the cause: recursion on the *same* type parameter is the commonest shape there is.
   if (code == 53) { return "a recursive generic must pass `T` along, not something that contains it"; }
   if (code == 30) { return "use `as!` — a cast down the hierarchy has to be checked"; }
-  if (code == 33) { return "store the packed value in a wider type, or drop the `?`"; }
   if (code == 40) { return "unwrap it with `!`, or test it with `is null` first"; }
   if (code == 29) { return "quote it — `core` included, since D5 removed the one bare spelling"; }
   if (code == 46) { return "the cast can be removed"; }
@@ -281,7 +278,6 @@ export string hintFor(i32 code) {
   // ones that would only have restated it were left alone. Counted over the spec's refused corpus
   // rather than guessed at — `waccx.test.ts` reports the percentage and holds a floor under it.
   if (code == 22) { return "check the parent declares it, with the same parameters"; }
-  if (code == 26) { return "a packed type is an array's element type — a variable or parameter is `i32`"; }
   if (code == 28) { return "give one: `T[].filled(n, v)` — a reference has no zero to start from"; }
   if (code == 31) { return "a `break` inside a `switch` leaves the switch, and there is no loop here"; }
   if (code == 47) { return "only a function, a funcref or a method is callable"; }

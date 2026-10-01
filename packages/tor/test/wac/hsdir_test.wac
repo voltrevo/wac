@@ -206,12 +206,12 @@ export string test_the_ring_wraps(Core core, Cli cli) {
   u8[][] indices = u8[][].defaulted(4);
   for (i32 i = 0; i < 4; i++) {
     u8[] idx = u8[].filled(32, 0);
-    idx[0] = (0x10 + i * 0x10);
+    idx[0] = ((0x10 + i * 0x10) as@ u8);
     indices[i] = idx;
   }
   // A blinded key is only a hash input here, so any 32 bytes do; what is being tested is the walk.
   u8[] blinded = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { blinded[i] = (i * 7 + 3) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { blinded[i] = ((i * 7 + 3) & 0xFF) as@ u8; }
 
   i32[] one = responsibleHsdirs(blinded, indices, 1, 4, 8, 100);
   t.eqI32(one.len(), 4, "one replica with a spread of four takes every relay");
@@ -243,7 +243,7 @@ export string test_the_ring_wraps(Core core, Cli cli) {
   i32 sawInside = 0;
   for (i32 k = 0; k < 24; k++) {
     u8[] key = u8[].filled(32, 0);
-    for (i32 i = 0; i < 32; i++) { key[i] = (i * 11 + k * 37 + 1) & 0xFF; }
+    for (i32 i = 0; i < 32; i++) { key[i] = ((i * 11 + k * 37 + 1) & 0xFF) as@ u8; }
     u8[] tgt = hsServiceIndex(key, 1, 8, 100);
     bool above = compareIndex(tgt, indices[3]) > 0;
     if (above) { sawWrap = sawWrap + 1; } else { sawInside = sawInside + 1; }
@@ -398,7 +398,7 @@ export string test_only_flagged_relays_with_an_identity_are_candidates(Core core
   // usually fails.
   T t = T.create();
   u8[] ed = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { ed[i] = (i * 3 + 1) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { ed[i] = ((i * 3 + 1) & 0xFF) as@ u8; }
 
   string[] withFlag = ["Fast", "HSDir", "Running"];
   string[] without = ["Fast", "Running"];

@@ -29,12 +29,12 @@ import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 u8[] rep(i32 byte, i32 n) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = byte; }
+  for (i32 i = 0; i < n; i++) { out[i] = byte as@ u8; }
   return out;
 }
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * a + b) & 0xFF) as@ u8; }
   return out;
 }
 
@@ -174,7 +174,7 @@ export string test_expand_chains_across_blocks(Core core, Cli cli) {
       u8[] input = u8[].filled(prev.len() + info.len() + 1, 0);
       for (i32 i = 0; i < prev.len(); i++) { input[i] = prev[i]; }
       for (i32 i = 0; i < info.len(); i++) { input[prev.len() + i] = info[i]; }
-      input[input.len() - 1] = n;
+      input[input.len() - 1] = n as@ u8;
       i32 take = len - done < 32 ? len - done : 32;
       u8[] block = u8[].filled(take, 0);
       for (i32 i = 0; i < take; i++) { block[i] = out[done + i]; }

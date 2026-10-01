@@ -21,8 +21,8 @@ export i32 uuid(Core core, Cli cli, Fs fs, Args a) {
     for (i32 i = 0; i < 16; i++) {
       // The dashes are already in place; step over them rather than tracking two indices.
       if (at == 8 || at == 13 || at == 18 || at == 23) { at++; }
-      out[at] = digits[(r[i] >> 4) & 15];
-      out[at + 1] = digits[r[i] & 15];
+      out[at] = digits[(r[i] as i32 >> 4) & 15];
+      out[at + 1] = digits[r[i] as i32 & 15];
       at = at + 2;
     }
     core.log(string.fromBytes(out));

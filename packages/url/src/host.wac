@@ -83,7 +83,7 @@ Part parseIpv4Number(u8[] s) {
   i64 value = 0;
   bool overflow = false;
   while (i < s.len()) {
-    i32 c = s[i];
+    i32 c = s[i] as i32;
     i32 d = -1;
     if (radix == 16) {
       if (!isHex(c)) { return Part(0, false, false); }
@@ -118,7 +118,7 @@ export bool endsInNumber(u8[] s) {
   // Either every byte is a digit, or it is a valid hex-prefixed number.
   bool allDigits = true;
   for (i32 i = 0; i < last.len(); i++) {
-    if (!isDigit(last[i])) { allDigits = false; }
+    if (!isDigit(last[i] as i32)) { allDigits = false; }
   }
   if (allDigits) { return true; }
   // Anything the number parser accepts counts, which is what makes `0x7f` and `0177` hosts
@@ -245,8 +245,8 @@ export Host? parseIpv6(u8[] s) {
 
     i32 value = 0;
     i32 length = 0;
-    while (length < 4 && i < s.len() && isHex(s[i])) {
-      value = value * 16 + hexVal(s[i]);
+    while (length < 4 && i < s.len() && isHex(s[i] as i32)) {
+      value = value * 16 + hexVal(s[i] as i32);
       i++;
       length++;
     }
@@ -262,9 +262,9 @@ export Host? parseIpv6(u8[] s) {
         if (numbersSeen > 0) {
           if (s[i] == '.' && numbersSeen < 4) { i++; } else { return null; }
         }
-        if (i >= s.len() || !isDigit(s[i])) { return null; }
-        while (i < s.len() && isDigit(s[i])) {
-          i32 d = s[i] - '0';
+        if (i >= s.len() || !isDigit(s[i] as i32)) { return null; }
+        while (i < s.len() && isDigit(s[i] as i32)) {
+          i32 d = s[i] as i32 - '0';
           if (ipv4Piece < 0) {
             ipv4Piece = d;
           } else if (ipv4Piece == 0) {
@@ -319,7 +319,7 @@ export Host? parseIpv6(u8[] s) {
 export Host? parseOpaqueHost(u8[] s) {
   if (s.len() > 0 && s[0] == '[') { return bracketedIpv6(s); }
   for (i32 i = 0; i < s.len(); i++) {
-    if (isForbiddenHost(s[i])) { return null; }
+    if (isForbiddenHost(s[i] as i32)) { return null; }
   }
   Buf out = Buf.create();
   encodeInto(out, s, SET_C0());
@@ -348,7 +348,7 @@ export HostResult parseHost(u8[] s, bool special) {
   Buf lowered = Buf.create();
   bool ascii = true;
   for (i32 i = 0; i < decoded.len(); i++) {
-    i32 c = decoded[i];
+    i32 c = decoded[i] as i32;
     if (c > 0x7F) { ascii = false; }
     lowered.push(c >= 'A' && c <= 'Z' ? c + 32 : c);
   }
@@ -356,7 +356,7 @@ export HostResult parseHost(u8[] s, bool special) {
 
   u8[] domain = lowered.take();
   for (i32 i = 0; i < domain.len(); i++) {
-    if (isForbiddenDomain(domain[i])) { return HostResult(null, false); }
+    if (isForbiddenDomain(domain[i] as i32)) { return HostResult(null, false); }
   }
   if (endsInNumber(domain)) { return HostResult(parseIpv4(domain), false); }
   return HostResult(Host.Named(domain), false);
@@ -370,11 +370,11 @@ void writeU32Decimal(Buf out, u32 v) {
   i32 n = 0;
   u32 x = v;
   while (x > 0) {
-    tmp[n] = 48 + ((x % 10) as@ i32);
+    tmp[n] = (48 + ((x % 10) as@ i32)) as@ u8;
     x = x / 10;
     n++;
   }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
 }
 
 void writeHexLower(Buf out, i32 v) {
@@ -384,11 +384,11 @@ void writeHexLower(Buf out, i32 v) {
   i32 x = v;
   while (x > 0) {
     i32 d = x & 15;
-    tmp[n] = d < 10 ? 48 + d : 87 + d;
+    tmp[n] = (d < 10 ? 48 + d : 87 + d) as@ u8;
     x = x >> 4;
     n++;
   }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
 }
 
 /** Append the host in its canonical form, brackets included for IPv6. */

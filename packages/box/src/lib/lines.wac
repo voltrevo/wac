@@ -38,8 +38,8 @@ export u8[] joinLines(u8[][] lines, i32 count) {
 export i32 cmpBytes(u8[] a, u8[] b) {
   i32 n = a.len() < b.len() ? a.len() : b.len();
   for (i32 i = 0; i < n; i++) {
-    i32 x = a[i];
-    i32 y = b[i];
+    i32 x = a[i] as i32;
+    i32 y = b[i] as i32;
     if (x != y) { return x < y ? -1 : 1; }
   }
   if (a.len() == b.len()) { return 0; }
@@ -141,7 +141,7 @@ i64 leadingNumber(u8[] b) {
   bool saturated = false;
   while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
     if (v > cap) { saturated = true; }
-    if (!saturated) { v = v * 10 + ((b[i] - '0') as i64); }
+    if (!saturated) { v = v * 10 + ((b[i] as i32 - '0') as i64); }
     i++;
   }
   if (saturated) { return negative ? -9223372036854775807 : 9223372036854775807; }

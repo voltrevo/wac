@@ -75,7 +75,7 @@ export u8[] clientPublicKey(u8[] secret) { return x25519Base(secret); }
 u8[] u64be(i64 v) {
   u8[] b = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
-    b[i] = ((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
+    b[i] = (((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32) as@ u8;
   }
   return b;
 }
@@ -94,7 +94,7 @@ u8[] concat(u8[][] parts) {
 
 bool isZero(u8[] b) {
   i32 acc = 0;
-  for (i32 i = 0; i < b.len(); i++) { acc = acc | b[i]; }
+  for (i32 i = 0; i < b.len(); i++) { acc = acc | b[i] as i32; }
   return acc == 0;
 }
 

@@ -121,7 +121,7 @@ struct Matcher {
 
   /** Three bytes into one bucket. The same mixing `packages/gzip` uses, which is enough here. */
   i32 hash(const this, i32 at) {
-    return ((this.data[at] << 10) ^ (this.data[at + 1] << 5) ^ this.data[at + 2])
+    return ((this.data[at] as i32 << 10) ^ (this.data[at + 1] as i32 << 5) ^ this.data[at + 2] as i32)
          & ((1 << hashBits()) - 1);
   }
 
@@ -407,7 +407,7 @@ void writeLiterals(Buf out, u8[] literals) {
       out.push((n >>> 4) & 255);
       out.push((n >>> 12) & 255);
     }
-    out.push(literals[0]);
+    out.push(literals[0] as i32);
     return;
   }
 

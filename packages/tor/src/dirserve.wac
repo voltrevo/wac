@@ -164,7 +164,7 @@ export i32 hsPublishVersion(u8[] target) {
   i32 start = i;
   i32 version = 0;
   while (i < target.len() && target[i] >= '0' && target[i] <= '9') {
-    version = version * 10 + (target[i] - '0');
+    version = version * 10 + (target[i] as i32 - '0');
     if (version > 65535) { return -1; }   // a version this large is a malformed request, not a v65536
     i++;
   }
@@ -272,9 +272,9 @@ bool mentions(u8[] list, u8[] digest) {
 /** Compare `want` against `list[at..]`, upper-casing the list's letters as it goes. */
 bool sameFold(u8[] list, i32 at, u8[] want) {
   for (i32 i = 0; i < want.len(); i++) {
-    i32 c = list[at + i];
+    i32 c = list[at + i] as i32;
     if (c >= 97 && c <= 122) { c = c - 32; }
-    if (c != want[i]) { return false; }
+    if (c != want[i] as i32) { return false; }
   }
   return true;
 }

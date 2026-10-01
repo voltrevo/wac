@@ -439,13 +439,13 @@ export string test_a_captured_local_whose_type_is_an_array_or_a_nullable(Core co
                            "a nullable array", "written by one lambda, read by another"
   ];
   string[] src = [
-    "export i32 f() { u8[] b = [40, 2]; fn<i32()> g = () => b[0] + b[1]; return g(); }",
+    "export i32 f() { u8[] b = [40, 2]; fn<i32()> g = () => b[0] as i32 + b[1] as i32; return g(); }",
     "export i32 f() { i32[] a = [1]; fn<void()> g = () => { a[0] = 42; }; g(); return a[0]; }",
-    "export i32 f() { u8[][] b = [[42] as u8[]]; fn<i32()> g = () => b[0][0]; return g(); }",
+    "export i32 f() { u8[][] b = [[42] as u8[]]; fn<i32()> g = () => b[0][0] as i32; return g(); }",
     "export i32 f() { u8[]? b = [42] as u8[]; fn<i32()> g = () => { if (b is null) { return 0; } " +
-    "return b![0]; }; return g(); }",
+    "return b![0] as i32; }; return g(); }",
     "export i32 f() { u8[] b = [0]; fn<void()> w = () => { b[0] = 42; }; " +
-    "fn<i32()> r = () => b[0]; w(); return r(); }"
+    "fn<i32()> r = () => b[0] as i32; w(); return r(); }"
   ];
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();

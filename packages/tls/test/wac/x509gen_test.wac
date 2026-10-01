@@ -49,7 +49,7 @@ static i64 NOT_AFTER = 1817424000;
 export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, Cli cli) {
   T t = T.create();
   u8[] seed = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { seed[i] = (i * 7 + 3) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { seed[i] = ((i * 7 + 3) & 0xFF) as@ u8; }
 
   // ── P-256, which is the one a WebRTC peer needs ───────────────────────────────────────────────
   //
@@ -58,7 +58,7 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, 
   // endpoint cannot make its own identity without this — and a WebRTC certificate is self-signed
   // per session by design, since the SDP fingerprint is the whole of the identity.
   u8[] ecKey = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { ecKey[i] = (i * 5 + 11) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { ecKey[i] = ((i * 5 + 11) & 0xFF) as@ u8; }
   u8[] ecDer = selfSignedP256("wac webrtc", 7, NOT_BEFORE, NOT_AFTER, ecKey, ecKey);
   t.isTrue(ecDer.len() > 100, "a P-256 certificate was produced");
   t.eqI32(selfSignedP256("x", 1, NOT_AFTER, NOT_BEFORE, ecKey, ecKey).len(), 0,
@@ -68,7 +68,7 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, 
 
   u8[] der = selfSignedEd25519("wac relay", 1, NOT_BEFORE, NOT_AFTER, seed);
   t.isTrue(der.len() > 100, "a certificate was produced");
-  t.eqI32(der[0], 0x30, "and it is a SEQUENCE");
+  t.eqI32(der[0] as i32, 0x30, "and it is a SEQUENCE");
 
   // Both certificates in one batch — openssl runs three times per `cert` line as it is.
   Lines lines = Lines.create();
@@ -190,37 +190,37 @@ export string test_der_lengths_and_integers_are_the_shortest_form(Core core, Cli
   // would accept either — so they are asserted against the rule, not against a round trip.
   T t = T.create();
   t.eqI32(derLength(0).len(), 1, "zero is one byte");
-  t.eqI32(derLength(127)[0], 127, "127 is short form");
+  t.eqI32(derLength(127)[0] as i32, 127, "127 is short form");
   t.eqI32(derLength(128).len(), 2, "128 needs long form");
-  t.eqI32(derLength(128)[0], 0x81, "one following length byte");
-  t.eqI32(derLength(128)[1], 128, "which is the length");
-  t.eqI32(derLength(255)[1], 255, "255 still fits one byte");
+  t.eqI32(derLength(128)[0] as i32, 0x81, "one following length byte");
+  t.eqI32(derLength(128)[1] as i32, 128, "which is the length");
+  t.eqI32(derLength(255)[1] as i32, 255, "255 still fits one byte");
   t.eqI32(derLength(256).len(), 3, "256 needs two");
-  t.eqI32(derLength(256)[0], 0x82, "so the header says two");
-  t.eqI32(derLength(256)[1], 1, "big-endian, high byte first");
-  t.eqI32(derLength(256)[2], 0, "and no leading zero beyond what is needed");
+  t.eqI32(derLength(256)[0] as i32, 0x82, "so the header says two");
+  t.eqI32(derLength(256)[1] as i32, 1, "big-endian, high byte first");
+  t.eqI32(derLength(256)[2] as i32, 0, "and no leading zero beyond what is needed");
 
   // INTEGER is signed: a top bit set needs a leading zero, and a redundant one is malformed.
   u8[] high = [0xFF, 0x01];
   u8[] enc = derInteger(high);
-  t.eqI32(enc[0], 0x02, "an INTEGER");
-  t.eqI32(enc[1], 3, "three content bytes");
-  t.eqI32(enc[2], 0, "a leading zero, because the top bit was set");
+  t.eqI32(enc[0] as i32, 0x02, "an INTEGER");
+  t.eqI32(enc[1] as i32, 3, "three content bytes");
+  t.eqI32(enc[2] as i32, 0, "a leading zero, because the top bit was set");
   u8[] low = [0x01, 0x00, 0x01];
   u8[] enc2 = derInteger(low);
-  t.eqI32(enc2[1], 3, "65537 needs no padding");
-  t.eqI32(enc2[2], 1, "and begins with its own first byte");
+  t.eqI32(enc2[1] as i32, 3, "65537 needs no padding");
+  t.eqI32(enc2[2] as i32, 1, "and begins with its own first byte");
   u8[] padded = [0x00, 0x00, 0x7F];
-  t.eqI32(derInteger(padded)[1], 1, "redundant leading zeros are stripped");
-  t.eqI32(derIntegerSmall(0)[1], 1, "zero is one zero byte, not none");
-  t.eqI32(derIntegerSmall(0)[2], 0, "and that byte is zero");
+  t.eqI32(derInteger(padded)[1] as i32, 1, "redundant leading zeros are stripped");
+  t.eqI32(derIntegerSmall(0)[1] as i32, 1, "zero is one zero byte, not none");
+  t.eqI32(derIntegerSmall(0)[2] as i32, 0, "and that byte is zero");
 
   // A BIT STRING's first content byte is the unused-bit count. Omitting it shifts the key.
   u8[] bits = derBitString([0xAB, 0xCD] as u8[]);
-  t.eqI32(bits[0], 0x03, "a BIT STRING");
-  t.eqI32(bits[1], 3, "three content bytes for two of data");
-  t.eqI32(bits[2], 0, "the first being the unused-bit count");
-  t.eqI32(bits[3], 0xAB, "then the data");
+  t.eqI32(bits[0] as i32, 0x03, "a BIT STRING");
+  t.eqI32(bits[1] as i32, 3, "three content bytes for two of data");
+  t.eqI32(bits[2] as i32, 0, "the first being the unused-bit count");
+  t.eqI32(bits[3] as i32, 0xAB, "then the data");
   return t.report();
 }
 
@@ -236,8 +236,8 @@ export string test_time_crosses_the_utc_boundary_correctly(Core core, Cli cli) {
 
   // A known instant, checked digit by digit: 2026-08-05T00:00:00Z.
   u8[] utc = derUtcTime(1785888000);
-  t.eqI32(utc[0], 0x17, "tag UTCTime");
-  t.eqI32(utc[1], 13, "thirteen characters");
+  t.eqI32(utc[0] as i32, 0x17, "tag UTCTime");
+  t.eqI32(utc[1] as i32, 13, "thirteen characters");
   t.isTrue(equal(slice(utc, 2, 15), "260805000000Z".toBytes()), "YYMMDDHHMMSSZ");
 
   // The epoch, and a leap day, since the month arithmetic is where a date routine goes wrong.
@@ -251,11 +251,11 @@ export string test_time_crosses_the_utc_boundary_correctly(Core core, Cli cli) {
   // The boundary is 2049/2050 and it is worth pinning from both sides, one day apart — the rule is
   // "through 2049", not "before 2050 minus a margin", and an off-by-one here writes a year that
   // reads as 1950.
-  t.eqI32(derTime(2524521600)[0], 0x17, "2049-12-31 is UTCTime");
-  t.eqI32(derTime(2524608000)[0], 0x18, "2050-01-01, one day later, is GeneralizedTime");
-  t.eqI32(derTime(2556144000)[0], 0x18, "and so is 2051");
+  t.eqI32(derTime(2524521600)[0] as i32, 0x17, "2049-12-31 is UTCTime");
+  t.eqI32(derTime(2524608000)[0] as i32, 0x18, "2050-01-01, one day later, is GeneralizedTime");
+  t.eqI32(derTime(2556144000)[0] as i32, 0x18, "and so is 2051");
   u8[] gen = derGeneralizedTime(2556144000);
-  t.eqI32(gen[1], 15, "fifteen characters, with a four-digit year");
+  t.eqI32(gen[1] as i32, 15, "fifteen characters, with a four-digit year");
   t.isTrue(equal(slice(gen, 2, 17), "20510101000000Z".toBytes()), "YYYYMMDDHHMMSSZ");
   t.eqI32(derUtcTime(2556144000).len(), 0, "and UTCTime refuses 2051 rather than writing 51");
   return t.report();

@@ -123,10 +123,10 @@ string trimHex(u8[] b, bool trim) {
 string hex(u8[] b) {
   u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
-    i32 hi = b[i] >> 4;
-    i32 lo = b[i] & 15;
-    out[i * 2] = hi < 10 ? '0' + hi : 'a' + (hi - 10);
-    out[i * 2 + 1] = lo < 10 ? '0' + lo : 'a' + (lo - 10);
+    i32 hi = b[i] as i32 >> 4;
+    i32 lo = b[i] as i32 & 15;
+    out[i * 2] = (hi < 10 ? '0' + hi : 'a' + (hi - 10)) as@ u8;
+    out[i * 2 + 1] = (lo < 10 ? '0' + lo : 'a' + (lo - 10)) as@ u8;
   }
   return string.fromBytes(out);
 }

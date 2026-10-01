@@ -163,10 +163,10 @@ export string test_a_run_that_ends_exactly_at_the_tables_end_is_valid() {
 
 u8[] storedWith(i32 len, i32 nlen) {
   u8[] tail = u8[].filled(4 + len, 0);
-  tail[0] = len & 0xFF;
-  tail[1] = (len >> 8) & 0xFF;
-  tail[2] = nlen & 0xFF;
-  tail[3] = (nlen >> 8) & 0xFF;
+  tail[0] = (len & 0xFF) as@ u8;
+  tail[1] = ((len >> 8) & 0xFF) as@ u8;
+  tail[2] = (nlen & 0xFF) as@ u8;
+  tail[3] = ((nlen >> 8) & 0xFF) as@ u8;
   for (i32 i = 0; i < len; i++) { tail[4 + i] = 0x41; }
   return withBytes(storedBlock(), tail);
 }
@@ -249,7 +249,7 @@ u8[] gzipWithCm(i32 cm) {
   u8[] gz = u8[].filled(20, 0);
   gz[0] = 0x1F;
   gz[1] = 0x8B;
-  gz[2] = cm;
+  gz[2] = cm as@ u8;
   return gz;
 }
 

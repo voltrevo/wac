@@ -84,7 +84,7 @@ export i32 atoi(string s) {
   }
   i32 v = 0;
   for (i32 i = at; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c < '0' || c > '9') { break; }
     v = v * 10 + (c - '0');
   }

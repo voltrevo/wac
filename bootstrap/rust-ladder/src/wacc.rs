@@ -109,6 +109,26 @@ impl<'s> Wacc<'s> {
     // wires so that `manifest.rs` could format the manifest from them. wacc formats it itself now,
     // through `seal`, so nothing needs the wires on this side of the boundary.
 
+    /// `diagnoseGraph(paths, sources, entry)` — every diagnostic for the file set, as wacc's wire.
+    pub fn diagnose(
+        &self,
+        scope: &mut v8::PinScope<'s, '_>,
+        paths: &[String],
+        sources: &[String],
+        entry: &str,
+    ) -> String {
+        self.call(scope, "drv_files", &[paths.len() as i32]);
+        for (p, src) in paths.iter().zip(sources) {
+            self.feed(scope, "drv_alloc", "drv_setByte", src);
+            self.feed(scope, "drv_allocName", "drv_setNameByte", p);
+            self.call(scope, "drv_pushFile", &[]);
+        }
+        self.feed(scope, "drv_allocName", "drv_setNameByte", entry);
+        let n = self.call(scope, "drv_diagnose", &[]);
+        let bytes: Vec<u8> = (0..n).map(|i| self.call(scope, "drv_declineByte", &[i]) as u8).collect();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
     /// Why a linked build declined, or `""`.
     pub fn decline(&self, scope: &mut v8::PinScope<'s, '_>) -> String {
         let n = self.call(scope, "drv_declineFiles", &[]);

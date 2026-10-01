@@ -252,15 +252,15 @@ export string test_malformed_offsets_are_refused_not_decoded(Core core, Cli cli)
 
 /** The little-endian u32 offset at bytes 2..6. */
 i32 readOffset(u8[] b) {
-  return b[2] | (b[3] << 8) | (b[4] << 16) | (b[5] << 24);
+  return b[2] as i32 | (b[3] as i32 << 8) | (b[4] as i32 << 16) | (b[5] as i32 << 24);
 }
 
 u8[] withOffset(u8[] good, i32 v) {
   u8[] b = u8[].filled(good.len(), 0);
   for (i32 i = 0; i < good.len(); i++) { b[i] = good[i]; }
-  b[2] = v & 0xff;
-  b[3] = (v >> 8) & 0xff;
-  b[4] = (v >> 16) & 0xff;
-  b[5] = (v >> 24) & 0xff;
+  b[2] = (v & 0xff) as@ u8;
+  b[3] = ((v >> 8) & 0xff) as@ u8;
+  b[4] = ((v >> 16) & 0xff) as@ u8;
+  b[5] = ((v >> 24) & 0xff) as@ u8;
   return b;
 }

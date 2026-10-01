@@ -212,7 +212,7 @@ export string test_the_crosscert_body_is_reproduced_byte_for_byte(Core core, Cli
     // The zero-extension byte is the difference between this certificate and every other one the
     // relay publishes, and it is one byte at the end of the body — so it is worth naming rather than
     // leaving to the comparison above.
-    t.eqI32(cert[39], 0, which + ": tor's crosscert carries no extension");
+    t.eqI32(cert[39] as i32, 0, which + ": tor's crosscert carries no extension");
     u8[] withExt = ed25519CertBody(CERT_TYPE_ONION_ID, be32At(cert, 2), KEY_TYPE_ED25519,
                                    master, master, true);
     t.eqI32(withExt.len(), 76, which + ": including the signing key makes it 76 bytes");
@@ -231,7 +231,7 @@ export string test_the_secret_derivation_is_tors(Core core, Cli cli) {
   // The certificates we sign with each derived key, judged in one batch at the end.
   Lines lines = Lines.create();
   u8[] identity = u8[].filled(32, 0);
-  for (i32 j = 0; j < 32; j++) { identity[j] = (200 - j * 3) & 0xFF; }
+  for (i32 j = 0; j < 32; j++) { identity[j] = ((200 - j * 3) & 0xFF) as@ u8; }
   for (i32 k = 0; k < n; k++) {
     u8[] expanded = curve25519ToEd25519Secret(decoded(strOf(objectOf(cases.get(k)),
                                                             "curve_secret")));
@@ -338,12 +338,12 @@ export string test_a_digest_span_stops_where_tor_stops(Core core, Cli cli) {
   // before the keyword; both are excluded by checking the exact offset.
   i32 end = pastLineStarting(text, "router-sig-ed25519 ".toBytes());
   t.isTrue(end > 0, "the keyword is present");
-  t.eqI32(text[end - 1], 32, "the span ends on the space after the keyword");
-  t.neI32(text[end], 10, "the span does not reach the newline");
+  t.eqI32(text[end - 1] as i32, 32, "the span ends on the space after the keyword");
+  t.neI32(text[end] as i32, 10, "the span does not reach the newline");
 
   i32 rsaEnd = pastLineStarting(text, "router-signature\n".toBytes());
   t.isTrue(rsaEnd > end, "router-signature comes after router-sig-ed25519");
-  t.eqI32(text[rsaEnd - 1], 10, "the RSA span includes the newline");
+  t.eqI32(text[rsaEnd - 1] as i32, 10, "the RSA span includes the newline");
 
   // A keyword that is not at a line start must not match, or a nickname or contact line could move
   // the span. `pastLineStarting` is given a needle that occurs only mid-line here.

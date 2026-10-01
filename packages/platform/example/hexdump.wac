@@ -63,10 +63,10 @@ u8[] dump(u8[] data) {
     for (i32 i = 0; i < 16; i++) {
       i32 k = base + i;
       if (k >= data.len()) { break; }
-      i32 b = data[k];
+      i32 b = data[k] as i32;
       out[at + 10 + i * 3] = HEX[(b >> 4) & 15];
       out[at + 11 + i * 3] = HEX[b & 15];
-      out[at + 59 + i] = b >= 32 && b < 127 ? b : '.';
+      out[at + 59 + i] = (b >= 32 && b < 127 ? b : '.') as@ u8;
     }
     out[at + width - 1] = '\n';
   }

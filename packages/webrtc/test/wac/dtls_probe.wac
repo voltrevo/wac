@@ -61,7 +61,7 @@ export i32 suiteAt(u8[] b, i32 at) {
 export i32 alertAt(u8[] b, i32 at) {
   Record r = parseRecord(b, at);
   if (!r.ok || r.kind != typeAlert() || r.fragment.len() < 2) { return -1; }
-  return (r.fragment[0] << 8) | r.fragment[1];
+  return (r.fragment[0] as i32 << 8) | r.fragment[1] as i32;
 }
 
 export i32 kHandshake() { return typeHandshake(); }
@@ -150,11 +150,11 @@ export i32[] fragInfoAt(u8[] b, i32 at) {
   Record r = parseRecord(b, at);
   if (!r.ok || r.kind != typeHandshake() || r.fragment.len() < 12) { return out; }
   u8[] f = r.fragment;
-  out[0] = f[0];
-  out[1] = (f[4] << 8) | f[5];
-  out[2] = (f[6] << 16) | (f[7] << 8) | f[8];
-  out[3] = (f[9] << 16) | (f[10] << 8) | f[11];
-  out[4] = (f[1] << 16) | (f[2] << 8) | f[3];
+  out[0] = f[0] as i32;
+  out[1] = (f[4] as i32 << 8) | f[5] as i32;
+  out[2] = (f[6] as i32 << 16) | (f[7] as i32 << 8) | f[8] as i32;
+  out[3] = (f[9] as i32 << 16) | (f[10] as i32 << 8) | f[11] as i32;
+  out[4] = (f[1] as i32 << 16) | (f[2] as i32 << 8) | f[3] as i32;
   return out;
 }
 

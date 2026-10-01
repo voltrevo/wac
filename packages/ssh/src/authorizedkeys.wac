@@ -103,7 +103,7 @@ i32 optionsFieldEnd(u8[] src, i32 at, i32 end) {
   i32 p = at;
   bool inQuotes = false;
   while (p < end) {
-    i32 c = src[p];
+    i32 c = src[p] as i32;
     if (c == 0x5c && inQuotes && p + 1 < end) {                        // '\' escapes inside quotes
       p += 2;
       continue;

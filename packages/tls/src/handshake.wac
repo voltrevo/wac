@@ -448,13 +448,13 @@ export u8[] finished(u8[] verifyData) {
 /** The type of a handshake message, from its header. */
 export i32 messageType(u8[] msg) {
   if (msg.len() < 4) { trap; }
-  return msg[0];
+  return msg[0] as i32;
 }
 
 /** The body of a handshake message, with the header removed. */
 export u8[] messageBody(u8[] msg) {
   if (msg.len() < 4) { trap; }
-  i32 len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
+  i32 len = (msg[1] as i32 << 16) | (msg[2] as i32 << 8) | msg[3] as i32;
   if (4 + len != msg.len()) { trap; }
   u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = msg[4 + i]; }
@@ -470,7 +470,7 @@ export u8[] messageBody(u8[] msg) {
  */
 export i32 messageLength(u8[] buf) {
   if (buf.len() < 4) { return -1; }
-  i32 len = (buf[1] << 16) | (buf[2] << 8) | buf[3];
+  i32 len = (buf[1] as i32 << 16) | (buf[2] as i32 << 8) | buf[3] as i32;
   if (buf.len() < 4 + len) { return -1; }
   return 4 + len;
 }

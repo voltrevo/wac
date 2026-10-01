@@ -325,7 +325,7 @@ export u8[] identityCerts(Identity id, i64 now) {
 u8[] tweak(u8[] seed, i32 label) {
   u8[] input = u8[].filled(seed.len() + 1, 0);
   for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
-  input[seed.len()] = label;
+  input[seed.len()] = label as@ u8;
   return sha256(input);
 }
 
@@ -639,7 +639,7 @@ Fed unpackFeed(u8[] packed) {
 
 u8[] takeVec(u8[] b, i32 at) {
   if (at + 4 > b.len()) { return u8[](); }
-  i32 n = (b[at] * 16777216) + (b[at + 1] * 65536) + (b[at + 2] * 256) + b[at + 3];
+  i32 n = (b[at] as i32 * 16777216) + (b[at + 1] as i32 * 65536) + (b[at + 2] as i32 * 256) + b[at + 3] as i32;
   if (at + 4 + n > b.len()) { return u8[](); }
   return slice(b, at + 4, at + 4 + n);
 }
@@ -1395,8 +1395,8 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
       if (command == cmdNetinfo()) {
         u8[] mine = netinfoOtherAddress(cell);
         if (mine.len() == 4) {
-          core.log("relayd: [" + itoa(c.id) + "]  the initiator sees us as " + itoa(mine[0]) + "." + itoa(mine[1]) +
-                   "." + itoa(mine[2]) + "." + itoa(mine[3]));
+          core.log("relayd: [" + itoa(c.id) + "]  the initiator sees us as " + itoa(mine[0] as i32) + "." + itoa(mine[1] as i32) +
+                   "." + itoa(mine[2] as i32) + "." + itoa(mine[3] as i32));
         }
         core.log("relayd: [" + itoa(c.id) + "]  link established");
         continue;
@@ -1855,9 +1855,9 @@ Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
     core.warn("relayd:   asked to extend to ourselves; refusing");
     return bad;
   }
-  string host = itoa(target[0]) + "." + itoa(target[1]) + "." + itoa(target[2]) + "." +
-                itoa(target[3]);
-  i32 port = target[4] * 256 + target[5];
+  string host = itoa(target[0] as i32) + "." + itoa(target[1] as i32) + "." + itoa(target[2] as i32) + "." +
+                itoa(target[3] as i32);
+  i32 port = target[4] as i32 * 256 + target[5] as i32;
   core.log("relayd:   extending to " + host + ":" + itoa(port));
 
   Link next = connectRelay(core, cli, host, port);
@@ -1876,7 +1876,7 @@ Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
   // namespace: the client's id and this one describe the same circuit and need not match, and tor-spec
   // requires the high bit set for the side that opened the connection.
   u8[] r = core.randomBytes(4).wait();
-  i32 nextCircId = (r[0] * 16777216 + r[1] * 65536 + r[2] * 256 + r[3]) | 0x80000000;
+  i32 nextCircId = (r[0] as i32 * 16777216 + r[1] as i32 * 65536 + r[2] as i32 * 256 + r[3] as i32) | 0x80000000;
   if (nextCircId == 0) { nextCircId = 0x80000001; }
 
   sendCells(next, encodeCreate2(nextCircId, want.handshakeType, want.handshake));
@@ -1936,12 +1936,12 @@ u8[] peerIpv4(string peer) {
     bool end = i == text.len() || text[i] == '.' || text[i] == ':';
     if (end) {
       if (value < 0 || value > 255) { return loopback(); }
-      out[part] = value;
+      out[part] = value as@ u8;
       part = part + 1;
       value = -1;
       if (i < text.len() && text[i] == ':') { break; }
     } else if (text[i] >= '0' && text[i] <= '9') {
-      value = (value < 0 ? 0 : value) * 10 + (text[i] - '0');
+      value = (value < 0 ? 0 : value) * 10 + (text[i] as i32 - '0');
     } else {
       return loopback();
     }
@@ -1963,8 +1963,8 @@ string hex(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();
   u8[] out = u8[].filled(b.len() * 2, 0);
   for (i32 i = 0; i < b.len(); i++) {
-    out[i * 2] = digits[(b[i] >> 4) & 0xF];
-    out[i * 2 + 1] = digits[b[i] & 0xF];
+    out[i * 2] = digits[(b[i] as i32 >> 4) & 0xF];
+    out[i * 2 + 1] = digits[b[i] as i32 & 0xF];
   }
   return string.fromBytes(out);
 }
@@ -1974,7 +1974,7 @@ i32 parseInt(string s) {
   i32 v = 0;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] < '0' || b[i] > '9') { return -1; }
-    v = v * 10 + (b[i] - '0');
+    v = v * 10 + (b[i] as i32 - '0');
   }
   return v;
 }
@@ -1987,7 +1987,7 @@ export u8[] endWith(i32 reason) {
   // `wacc` declines, and it was never needed". The diagnostic for trying is worth knowing, because it
   // reads backwards: `expected i32, found u8`, with a help line offering the two casts that do not
   // work either.
-  r[0] = reason;
+  r[0] = reason as@ u8;
   return r;
 }
 

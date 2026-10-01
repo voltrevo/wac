@@ -62,7 +62,7 @@ export string test_the_signed_data_length_prefixes_the_session_id() {
 
   t.eqI32(u32At(signed, 0), 32, "the session id is not length-prefixed");
   t.eqStr(spaced(slice(signed, 4, 36)), spaced(sessionId), "session id is not first");
-  t.eqI32(signed[36], msgUserAuthRequest(),
+  t.eqI32(signed[36] as i32, msgUserAuthRequest(),
           "SSH_MSG_USERAUTH_REQUEST does not follow the session id");
   t.eqI32(u32At(signed, 37), user.len(), "the user name is not next");
 
@@ -92,23 +92,23 @@ export string test_the_servers_messages_carry_the_fields_a_client_reads() {
   // OPEN_CONFIRMATION is the one message carrying both channel numbers, and they differ here so
   // reading the wrong one is visible.
   u8[] conf = openConfirmation(11, 22, 4096, 1024);
-  t.eqI32(conf[0], msgChannelOpenConfirmation(), "not an open confirmation");
+  t.eqI32(conf[0] as i32, msgChannelOpenConfirmation(), "not an open confirmation");
   t.eqI32(u32At(conf, 1), 11, "the client's number is not the recipient");
   t.eqI32(u32At(conf, 5), 22, "our number is not the sender");
   t.eqI32(u32At(conf, 9), 4096, "window wrong");
 
   // exit-status is a request with want_reply false, then the code.
   u8[] exit = exitStatus(7, 42);
-  t.eqI32(exit[0], msgChannelRequest(), "exit status is not a channel request");
+  t.eqI32(exit[0] as i32, msgChannelRequest(), "exit status is not a channel request");
   t.eqI32(u32At(exit, 1), 7, "exit status addresses the wrong channel");
   Reader er = Reader.create(exit, 5, exit.len());
   t.eqStr(string.fromBytes(er.str()), "exit-status", "wrong request name");
-  t.eqI32(exit[20], 0, "want_reply must be false — nothing answers it");
+  t.eqI32(exit[20] as i32, 0, "want_reply must be false — nothing answers it");
   t.eqI32(u32At(exit, 21), 42, "the status is wrong");
 
   // PK_OK echoes the algorithm and blob back, which is what makes the client sign.
   u8[] ok = pkOk(("ssh-ed25519").toBytes(), blob);
-  t.eqI32(ok[0], 60, "PK_OK has the wrong message number");
+  t.eqI32(ok[0] as i32, 60, "PK_OK has the wrong message number");
   Reader okr = Reader.create(ok, 1, ok.len());
   t.eqStr(string.fromBytes(okr.str()), "ssh-ed25519", "PK_OK type wrong");
 
@@ -252,7 +252,7 @@ export string test_a_channel_open_is_read_for_its_number_whatever_the_number_is(
 
   // A different message entirely.
   u8[] notOpen = slice(full, 0, full.len());
-  notOpen[0] = msgChannelRequest();
+  notOpen[0] = msgChannelRequest() as@ u8;
   t.eqI32(readOpenChannel(notOpen), -1, "a CHANNEL_REQUEST was read as a CHANNEL_OPEN");
   return t.report();
 }

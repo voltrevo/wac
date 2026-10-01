@@ -4,5 +4,5 @@
 export i32 f() {
   i8[] a = i8[].filled(1, -8);
   a[0] /= 2;
-  return a[0];
+  return a[0] as i32;
 }

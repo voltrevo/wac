@@ -1064,7 +1064,7 @@ bool looksLikeTypeHere(P p) {
  */
 bool startsLower(u8[] s, i32 start, i32 len) {
   if (len == 0) { return false; }
-  i32 c = s[start];
+  i32 c = s[start] as i32;
   return c >= 'a' && c <= 'z';
 }
 

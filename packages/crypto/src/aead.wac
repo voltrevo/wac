@@ -38,8 +38,8 @@ u8[] macInput(u8[] aad, u8[] ct) {
 
   i64 aLen = aad.len() as i64;
   i64 cLen = ct.len() as i64;
-  for (i32 i = 0; i < 8; i++) { m[p + i] = ((aLen >> ((i * 8) as i64)) & 255) as! i32; }
-  for (i32 i = 0; i < 8; i++) { m[p + 8 + i] = ((cLen >> ((i * 8) as i64)) & 255) as! i32; }
+  for (i32 i = 0; i < 8; i++) { m[p + i] = (((aLen >> ((i * 8) as i64)) & 255) as! i32) as@ u8; }
+  for (i32 i = 0; i < 8; i++) { m[p + 8 + i] = (((cLen >> ((i * 8) as i64)) & 255) as! i32) as@ u8; }
   return m;
 }
 

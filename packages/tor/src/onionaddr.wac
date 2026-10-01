@@ -44,7 +44,7 @@ export u8[] addressChecksum(u8[] pubkey) {
   u8[] buf = u8[].filled(pre.len() + ED25519_PUBKEY_LEN + 1, 0);
   for (i32 i = 0; i < pre.len(); i++) { buf[i] = pre[i]; }
   for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { buf[pre.len() + i] = pubkey[i]; }
-  buf[pre.len() + ED25519_PUBKEY_LEN] = VERSION;
+  buf[pre.len() + ED25519_PUBKEY_LEN] = VERSION as@ u8;
   u8[] h = sha3_256(buf);
   u8[] out = u8[].filled(2, 0);
   out[0] = h[0];
@@ -65,12 +65,12 @@ export u8[] onionAddress(u8[] pubkey) {
   for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { raw[i] = pubkey[i]; }
   raw[ED25519_PUBKEY_LEN] = ck[0];
   raw[ED25519_PUBKEY_LEN + 1] = ck[1];
-  raw[ED25519_PUBKEY_LEN + 2] = VERSION;
+  raw[ED25519_PUBKEY_LEN + 2] = VERSION as@ u8;
   u8[] upper = b32encode(raw, ALPHABET_STANDARD(), false);
   u8[] out = u8[].filled(upper.len(), 0);
   for (i32 i = 0; i < upper.len(); i++) {
-    i32 c = upper[i];
-    out[i] = (c >= 65 && c <= 90) ? (c + 32) : c;
+    i32 c = upper[i] as i32;
+    out[i] = ((c >= 65 && c <= 90) ? (c + 32) : c) as@ u8;
   }
   return out;
 }
@@ -92,13 +92,13 @@ export u8[] onionPubkey(u8[] address) {
   if (a.len() != ONION_ADDRESS_LEN) { return u8[](); }
   u8[] upper = u8[].filled(a.len(), 0);
   for (i32 i = 0; i < a.len(); i++) {
-    i32 c = a[i];
-    upper[i] = (c >= 97 && c <= 122) ? (c - 32) : c;
+    i32 c = a[i] as i32;
+    upper[i] = ((c >= 97 && c <= 122) ? (c - 32) : c) as@ u8;
   }
   u8[]? raw = b32decode(upper, ALPHABET_STANDARD());
   if (raw is null) { return u8[](); }
   if (raw!.len() != ED25519_PUBKEY_LEN + 3) { return u8[](); }
-  if (raw![ED25519_PUBKEY_LEN + 2] != VERSION) { return u8[](); }
+  if (raw![ED25519_PUBKEY_LEN + 2] as i32 != VERSION) { return u8[](); }
 
   u8[] pubkey = u8[].filled(ED25519_PUBKEY_LEN, 0);
   for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { pubkey[i] = raw![i]; }
@@ -116,9 +116,9 @@ u8[] stripSuffix(u8[] address) {
   if (address.len() < suffix.len()) { return address; }
   i32 at = address.len() - suffix.len();
   for (i32 i = 0; i < suffix.len(); i++) {
-    i32 c = address[at + i];
+    i32 c = address[at + i] as i32;
     i32 lower = (c >= 65 && c <= 90) ? (c + 32) : c;
-    if (lower != suffix[i]) { return address; }
+    if (lower != suffix[i] as i32) { return address; }
   }
   u8[] out = u8[].filled(at, 0);
   for (i32 i = 0; i < at; i++) { out[i] = address[i]; }

@@ -140,7 +140,7 @@ export Vec<Token> tokenize(string src) {
       return out;
     }
 
-    i32 c = s[at];
+    i32 c = s[at] as i32;
 
     if (c == 10) {
       out.push(Token.of(Kind.Newline));
@@ -207,7 +207,7 @@ export Vec<Token> tokenize(string src) {
       while (scan < s.len() && s[scan] >= 0x30 && s[scan] <= 0x39) { scan++; }
       if (scan < s.len() && (s[scan] == 0x3e || s[scan] == 0x3c)) {
         i32 fd = 0;
-        for (i32 i = at; i < scan; i++) { fd = fd * 10 + (s[i] - 0x30); }
+        for (i32 i = at; i < scan; i++) { fd = fd * 10 + (s[i] as i32 - 0x30); }
         if (s[scan] == 0x3c && scan + 2 < s.len() && s[scan + 1] == 0x3c && s[scan + 2] == 0x3c) {
           Token t = Token.of(Kind.TLess);
           t.fd = fd;
@@ -266,8 +266,8 @@ export Vec<Part> lexQuotedText(string text) {
   string lit = "";
   i32 p = 0;
   while (p < s.len()) {
-    if (s[p] == 0x5c && p + 1 < s.len() && escapableInDquote(s[p + 1])) {
-      lit = lit + charOf(s[p + 1]);
+    if (s[p] == 0x5c && p + 1 < s.len() && escapableInDquote(s[p + 1] as i32)) {
+      lit = lit + charOf(s[p + 1] as i32);
       p += 2;
       continue;
     }
@@ -286,7 +286,7 @@ export Vec<Part> lexQuotedText(string text) {
       else { p = after; }
       continue;
     }
-    lit = lit + charOf(s[p]);
+    lit = lit + charOf(s[p] as i32);
     p++;
   }
   if (lit != "") { holder.parts.push(Part.of(PartKind.Lit, lit, true)); }
@@ -388,12 +388,12 @@ i32 lexWord(u8[] s, i32 at, Token word) {
   bool haveLit = false;
 
   while (p < s.len()) {
-    i32 c = s[p];
+    i32 c = s[p] as i32;
     if (isDelimiter(c)) { break; }
 
     if (c == 0x5c) {                                        // '\'
       if (p + 1 >= s.len()) { p++; continue; }               // a trailing backslash is dropped
-      i32 n = s[p + 1];
+      i32 n = s[p + 1] as i32;
       // A backslash-newline is a line continuation and produces nothing at all.
       if (n == 10) { p += 2; continue; }
       // An escaped character never splits, so it belongs to a quoted part.
@@ -411,7 +411,7 @@ i32 lexWord(u8[] s, i32 at, Token word) {
       haveLit = true;
       p++;
       while (p < s.len() && s[p] != 0x27) {
-        lit = lit + charOf(s[p]);
+        lit = lit + charOf(s[p] as i32);
         p++;
       }
       if (p >= s.len()) { return -1; }                       // unterminated
@@ -425,10 +425,10 @@ i32 lexWord(u8[] s, i32 at, Token word) {
       haveLit = true;
       p++;
       while (p < s.len() && s[p] != 0x22) {
-        if (s[p] == 0x5c && p + 1 < s.len() && escapableInDquote(s[p + 1])) {
+        if (s[p] == 0x5c && p + 1 < s.len() && escapableInDquote(s[p + 1] as i32)) {
           // Inside double quotes a backslash only escapes these four; before anything else it
           // stays a literal backslash, which is why `"\n"` is a backslash and an n.
-          lit = lit + charOf(s[p + 1]);
+          lit = lit + charOf(s[p + 1] as i32);
           p += 2;
           continue;
         }
@@ -447,7 +447,7 @@ i32 lexWord(u8[] s, i32 at, Token word) {
           else { p = after; }
           continue;
         }
-        lit = lit + charOf(s[p]);
+        lit = lit + charOf(s[p] as i32);
         p++;
       }
       if (p >= s.len()) { return -1; }                       // unterminated
@@ -478,7 +478,7 @@ i32 lexWord(u8[] s, i32 at, Token word) {
           i32 after = ansiEscape(s, p + 1, body);
           if (after > 0) { p = after; continue; }
         }
-        body.push(s[p]);
+        body.push(s[p] as i32);
         p++;
       }
       if (p >= s.len()) { return -1; }                       // unterminated
@@ -522,7 +522,7 @@ i32 lexWord(u8[] s, i32 at, Token word) {
 i32 lexDollar(u8[] s, i32 at, Token word, bool quoted) {
   i32 p = at + 1;
   if (p >= s.len()) { return at; }
-  i32 c = s[p];
+  i32 c = s[p] as i32;
 
   if (c == 0x28) {                                          // '('
     // `$((…))` is arithmetic and `$(…)` is a command. They are told apart by the second
@@ -589,8 +589,8 @@ i32 lexDollar(u8[] s, i32 at, Token word, bool quoted) {
     }
     // The name runs until something that cannot be in one; whatever follows is the operator.
     i32 nameEnd = inner;
-    if (nameEnd < p && isSpecialName(s[nameEnd])) { nameEnd++; }
-    else { while (nameEnd < p && isNameChar(s[nameEnd])) { nameEnd++; } }
+    if (nameEnd < p && isSpecialName(s[nameEnd] as i32)) { nameEnd++; }
+    else { while (nameEnd < p && isNameChar(s[nameEnd] as i32)) { nameEnd++; } }
 
     string name = sliceOf(s, inner, nameEnd);
     if (nameEnd >= p) {
@@ -604,7 +604,7 @@ i32 lexDollar(u8[] s, i32 at, Token word, bool quoted) {
       // `-1`) apart from `${x: -1}` (the last character) — the space is the whole difference, and
       // bash needs it for exactly this reason.
       i32 after = opEnd + 1;
-      if (after >= p || !isColonOp(s[after])) {
+      if (after >= p || !isColonOp(s[after] as i32)) {
         word.parts.push(Part.expansion(name, quoted, ":", sliceOf(s, after, p)));
         return p + 1;
       }
@@ -616,9 +616,9 @@ i32 lexDollar(u8[] s, i32 at, Token word, bool quoted) {
     // value unchanged. `#` and `%` doubled mean *longest* match rather than shortest; `/` doubled
     // means *every* match rather than the first.
     if (opEnd < p && opEnd > nameEnd) {
-      i32 first = s[opEnd - 1];
+      i32 first = s[opEnd - 1] as i32;
       if ((first == 0x23 || first == 0x25 || first == 0x2f || first == 0x5e || first == 0x2c)
-          && s[opEnd] == first) { opEnd++; }
+          && s[opEnd] as i32 == first) { opEnd++; }
     }
     word.parts.push(Part.expansion(name, quoted, sliceOf(s, nameEnd, opEnd),
                                    sliceOf(s, opEnd, p)));
@@ -636,7 +636,7 @@ i32 lexDollar(u8[] s, i32 at, Token word, bool quoted) {
 
   if (isNameStart(c)) {
     i32 start = p;
-    while (p < s.len() && isNameChar(s[p])) { p++; }
+    while (p < s.len() && isNameChar(s[p] as i32)) { p++; }
     word.parts.push(Part.of(PartKind.Var, sliceOf(s, start, p), quoted));
     return p;
   }
@@ -657,12 +657,12 @@ i32 takeBackquote(u8[] s, i32 at, Token word, bool quoted) {
   i32 p = at + 1;
   string cmd = "";
   while (p < s.len() && s[p] != 0x60) {
-    if (s[p] == 0x5c && p + 1 < s.len() && escapableInBackquote(s[p + 1])) {
-      cmd = cmd + charOf(s[p + 1]);
+    if (s[p] == 0x5c && p + 1 < s.len() && escapableInBackquote(s[p + 1] as i32)) {
+      cmd = cmd + charOf(s[p + 1] as i32);
       p += 2;
       continue;
     }
-    cmd = cmd + charOf(s[p]);
+    cmd = cmd + charOf(s[p] as i32);
     p++;
   }
   if (p >= s.len()) { return -1; }                           // unterminated
@@ -683,9 +683,9 @@ bool isDelimiter(i32 c) {
 bool isNameRun(u8[] s, i32 from, i32 to) {
   if (to <= from) { return false; }
   if (to - from == 1 && (s[from] == 0x40 || s[from] == 0x2a)) { return true; }   // @ *
-  if (!isNameStart(s[from])) { return false; }
+  if (!isNameStart(s[from] as i32)) { return false; }
   for (i32 i = from + 1; i < to; i++) {
-    if (!isNameChar(s[i])) { return false; }
+    if (!isNameChar(s[i] as i32)) { return false; }
   }
   return true;
 }
@@ -718,7 +718,7 @@ bool isSpecialName(i32 c) {
  * A table that silently ate the backslash would quietly change strings nobody was looking at.
  */
 i32 ansiEscape(u8[] s, i32 at, Buf out) {
-  i32 c = s[at];
+  i32 c = s[at] as i32;
   if (c == 0x6e) { out.push(10); return at + 1; }            // \n
   if (c == 0x74) { out.push(9); return at + 1; }             // \t
   if (c == 0x72) { out.push(13); return at + 1; }            // \r
@@ -735,7 +735,7 @@ i32 ansiEscape(u8[] s, i32 at, Buf out) {
     i32 p = at + 1;
     i32 v = 0;
     i32 n = 0;
-    while (p < s.len() && n < 2 && hexValue(s[p]) >= 0) { v = v * 16 + hexValue(s[p]); p++; n++; }
+    while (p < s.len() && n < 2 && hexValue(s[p] as i32) >= 0) { v = v * 16 + hexValue(s[p] as i32); p++; n++; }
     if (n == 0) { return -1; }
     out.push(v & 0xFF);
     return p;
@@ -744,7 +744,7 @@ i32 ansiEscape(u8[] s, i32 at, Buf out) {
     i32 p = at;
     i32 v = 0;
     i32 n = 0;
-    while (p < s.len() && n < 3 && s[p] >= 0x30 && s[p] <= 0x37) { v = v * 8 + (s[p] - 0x30); p++; n++; }
+    while (p < s.len() && n < 3 && s[p] >= 0x30 && s[p] <= 0x37) { v = v * 8 + (s[p] as i32 - 0x30); p++; n++; }
     out.push(v & 0xFF);
     return p;
   }
@@ -765,7 +765,7 @@ bool escapableInDquote(i32 c) {
 
 string charOf(i32 c) {
   u8[] one = u8[].filled(1, 0);
-  one[0] = c;
+  one[0] = c as@ u8;
   return string.fromBytes(one);
 }
 

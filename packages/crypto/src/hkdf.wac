@@ -41,7 +41,7 @@ export u8[] hkdfExpand(u8[] prk, u8[] info, i32 length) {
     i32 p = 0;
     for (i32 j = 0; j < prev.len(); j++) { input[p] = prev[j]; p++; }
     for (i32 j = 0; j < info.len(); j++) { input[p] = info[j]; p++; }
-    input[p] = i + 1;
+    input[p] = (i + 1) as@ u8;
 
     prev = hmacSha256(prk, input);
 

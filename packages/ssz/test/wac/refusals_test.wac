@@ -98,10 +98,10 @@ u8[] goodVarStruct() {
 /** The same, with the four offset bytes at 2..6 replaced. */
 u8[] withOffset(i32 off) {
   u8[] b = goodVarStruct();
-  b[2] = off & 0xFF;
-  b[3] = (off >> 8) & 0xFF;
-  b[4] = (off >> 16) & 0xFF;
-  b[5] = (off >> 24) & 0xFF;
+  b[2] = (off & 0xFF) as@ u8;
+  b[3] = ((off >> 8) & 0xFF) as@ u8;
+  b[4] = ((off >> 16) & 0xFF) as@ u8;
+  b[5] = ((off >> 24) & 0xFF) as@ u8;
   return b;
 }
 
@@ -269,10 +269,10 @@ export string test_merkle_refuses_a_leaf_a_root_or_a_branch_of_the_wrong_length(
 u8[] listOfTwo(i32 first, i32 second) {
   u8[] one = goodVarStruct();                       // 11 bytes
   u8[] out = u8[].filled(8 + one.len() * 2, 0);
-  out[0] = first & 0xFF;   out[1] = (first >> 8) & 0xFF;
-  out[2] = (first >> 16) & 0xFF; out[3] = (first >> 24) & 0xFF;
-  out[4] = second & 0xFF;  out[5] = (second >> 8) & 0xFF;
-  out[6] = (second >> 16) & 0xFF; out[7] = (second >> 24) & 0xFF;
+  out[0] = (first & 0xFF) as@ u8;   out[1] = ((first >> 8) & 0xFF) as@ u8;
+  out[2] = ((first >> 16) & 0xFF) as@ u8; out[3] = ((first >> 24) & 0xFF) as@ u8;
+  out[4] = (second & 0xFF) as@ u8;  out[5] = ((second >> 8) & 0xFF) as@ u8;
+  out[6] = ((second >> 16) & 0xFF) as@ u8; out[7] = ((second >> 24) & 0xFF) as@ u8;
   for (i32 i = 0; i < one.len(); i++) {
     out[8 + i] = one[i];
     out[8 + one.len() + i] = one[i];

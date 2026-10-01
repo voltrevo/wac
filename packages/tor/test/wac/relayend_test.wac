@@ -112,9 +112,9 @@ export string test_every_reason_we_send_has_a_name() {
  */
 export string test_a_fault_with_no_network_meaning_says_nothing_about_the_network() {
   T t = T.create();
-  t.eqI32(endForFault(FAULT_NOT_GRANTED())[0], endMisc()[0],
+  t.eqI32(endForFault(FAULT_NOT_GRANTED())[0] as i32, endMisc()[0] as i32,
           "not granted is MISC — our problem, not a statement about the address");
-  t.eqI32(endForFault(FAULT_NONE())[0], endMisc()[0],
+  t.eqI32(endForFault(FAULT_NONE())[0] as i32, endMisc()[0] as i32,
           "and a fault we have no mapping for does not guess");
   t.eqBool(replyForEndReason(endForFault(FAULT_NOT_GRANTED())) != repNetUnreachable(), true,
            "so it never comes out as `network unreachable`");

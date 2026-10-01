@@ -395,7 +395,7 @@ export u8[] fpToBytes(i64[] a) {
   for (i32 i = 0; i < n; i++) {
     i64 v = h[n - 1 - i];
     for (i32 b = 0; b < 4; b++) {
-      out[i * 4 + b] = ((v >> (((3 - b) * 8) as i64)) & 255) as! i32;
+      out[i * 4 + b] = (((v >> (((3 - b) * 8) as i64)) & 255) as! i32) as@ u8;
     }
   }
   return out;

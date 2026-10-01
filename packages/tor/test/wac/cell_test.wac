@@ -23,7 +23,7 @@ import { slice } from "../../../bytes/src/slice.wac";
 
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { o[i] = (i * 37 + seed) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { o[i] = ((i * 37 + seed) & 0xFF) as@ u8; }
   return o;
 }
 
@@ -76,14 +76,14 @@ export string test_versions_uses_a_two_byte_circuit_id() {
   T t = T.create();
   u8[] cell = encodeVersions([3, 4, 5] as i32[]);
   t.eqI32(cell.len(), 2 + 1 + 2 + 6, "two id bytes, command, length, three versions");
-  t.eqI32(cell[2], cmdVersions(), "the command sits at offset 2, not 4");
+  t.eqI32(cell[2] as i32, cmdVersions(), "the command sits at offset 2, not 4");
   t.eqI32(cellCommand(cell, 0, ID_NARROW), cmdVersions(), "and is read back from there");
   t.eqI32(cellSize(cell, 0, ID_NARROW), cell.len(), "cellSize handles the narrow id");
 
   u8[] payload = cellPayload(cell, 0, ID_NARROW);
   t.eqI32(payload.len(), 6, "three versions, two bytes each");
-  t.eqI32((payload[0] << 8) | payload[1], 3, "big-endian, first version");
-  t.eqI32((payload[4] << 8) | payload[5], 5, "and last");
+  t.eqI32((payload[0] as i32 << 8) | payload[1] as i32, 3, "big-endian, first version");
+  t.eqI32((payload[4] as i32 << 8) | payload[5] as i32, 5, "and last");
   return t.report();
 }
 
@@ -181,8 +181,8 @@ export string test_create2_carries_the_handshake_and_created2_gives_it_back() {
   u8[] cell = encodeCreate2(42, handshakeNtor(), handshake);
   t.eqI32(cell.len(), 514, "CREATE2 is a fixed cell");
   u8[] payload = cellPayload(cell, 0, ID_WIDE);
-  t.eqI32((payload[0] << 8) | payload[1], handshakeNtor(), "the handshake type is ntor");
-  t.eqI32((payload[2] << 8) | payload[3], 84, "and its length is recorded");
+  t.eqI32((payload[0] as i32 << 8) | payload[1] as i32, handshakeNtor(), "the handshake type is ntor");
+  t.eqI32((payload[2] as i32 << 8) | payload[3] as i32, 84, "and its length is recorded");
 
   // CREATED2's payload is a full 509 bytes whatever the reply's length, so the length
   // field is the only thing marking the end — take the rest and ntor gets 445 bytes of
@@ -205,11 +205,11 @@ export string test_netinfo_tells_the_relay_nothing_about_us() {
   u8[] cell = encodeNetinfo(ip);
   t.eqI32(cell.len(), 514, "NETINFO is a fixed cell");
   u8[] p = cellPayload(cell, 0, ID_WIDE);
-  t.eqI32(p[0] | p[1] | p[2] | p[3], 0, "the timestamp is zero");
-  t.eqI32(p[4], 4, "the peer's address is typed IPv4");
-  t.eqI32(p[5], 4, "and four bytes long");
-  t.eqI32(p[6], 127, "and is the address we saw");
-  t.eqI32(p[10], 0, "we claim no addresses of our own");
+  t.eqI32(p[0] as i32 | p[1] as i32 | p[2] as i32 | p[3] as i32, 0, "the timestamp is zero");
+  t.eqI32(p[4] as i32, 4, "the peer's address is typed IPv4");
+  t.eqI32(p[5] as i32, 4, "and four bytes long");
+  t.eqI32(p[6] as i32, 127, "and is the address we saw");
+  t.eqI32(p[10] as i32, 0, "we claim no addresses of our own");
   return t.report();
 }
 
@@ -223,16 +223,16 @@ export string test_a_padding_negotiate_has_the_layout_the_spec_states() {
   t.eqI32(cellCircId(c, 0, ID_WIDE), 0, "circuit zero: this is about the link, not a circuit");
   t.eqI32(cellCommand(c, 0, ID_WIDE), cmdPaddingNegotiate(), "command 12");
   u8[] p = cellPayload(c, 0, ID_WIDE);
-  t.eqI32(p[0], 0, "version 0");
-  t.eqI32(p[1], 2, "START");
-  t.eqI32((p[2] << 8) | p[3], 1500, "the low end, big-endian");
-  t.eqI32((p[4] << 8) | p[5], 9500, "and the high end");
+  t.eqI32(p[0] as i32, 0, "version 0");
+  t.eqI32(p[1] as i32, 2, "START");
+  t.eqI32((p[2] as i32 << 8) | p[3] as i32, 1500, "the low end, big-endian");
+  t.eqI32((p[4] as i32 << 8) | p[5] as i32, 9500, "and the high end");
   for (i32 i = 6; i < 509; i++) {
     if (p[i] != 0) { t.isFalse(true, "the rest of the payload is zero padding"); }
   }
 
   u8[] stop = encodePaddingNegotiate(paddingCommandStop(), 0, 0);
-  t.eqI32(cellPayload(stop, 0, ID_WIDE)[1], 1, "STOP is command 1");
+  t.eqI32(cellPayload(stop, 0, ID_WIDE)[1] as i32, 1, "STOP is command 1");
   return t.report();
 }
 
@@ -273,12 +273,12 @@ export string test_the_padding_range_is_a_floor_not_a_setting() {
   T t = T.create();
   u8[] slower = encodePaddingNegotiate(paddingCommandStart(), 20000, 40000);
   u8[] p = cellPayload(slower, 0, ID_WIDE);
-  t.eqI32((p[2] << 8) | p[3], 20000, "a request for slower padding encodes as given");
-  t.eqI32((p[4] << 8) | p[5], 40000, "at both ends");
+  t.eqI32((p[2] as i32 << 8) | p[3] as i32, 20000, "a request for slower padding encodes as given");
+  t.eqI32((p[4] as i32 << 8) | p[5] as i32, 40000, "at both ends");
   // The wire format allows the full u16 range at both ends; the clamping is the peer's.
   u8[] widest = encodePaddingNegotiate(paddingCommandStart(), 0, 65535);
   u8[] q = cellPayload(widest, 0, ID_WIDE);
-  t.eqI32((q[2] << 8) | q[3], 0, "zero encodes");
-  t.eqI32((q[4] << 8) | q[5], 65535, "and so does the top of the range");
+  t.eqI32((q[2] as i32 << 8) | q[3] as i32, 0, "zero encodes");
+  t.eqI32((q[4] as i32 << 8) | q[5] as i32, 65535, "and so does the top of the range");
   return t.report();
 }

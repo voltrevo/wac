@@ -28,7 +28,7 @@ static string ORACLE = "packages/json/test/oracle.ts";
 
 string oneByte(i32 c) {
   u8[] one = u8[].filled(1, 0);
-  one[0] = c;
+  one[0] = c as@ u8;
   return string.fromBytes(one);
 }
 

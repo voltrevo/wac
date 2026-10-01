@@ -154,9 +154,9 @@ struct C {
     }
   }
 
-  i32 peek(const this) { return this.pos < this.src.len() ? this.src[this.pos] : -1; }
+  i32 peek(const this) { return this.pos < this.src.len() ? this.src[this.pos] as i32 : -1; }
   i32 peekAt(const this, i32 k) {
-    return this.pos + k < this.src.len() ? this.src[this.pos + k] : -1;
+    return this.pos + k < this.src.len() ? this.src[this.pos + k] as i32 : -1;
   }
   void bump(this) { this.pos++; }
   void fail(this) { this.failed = true; }

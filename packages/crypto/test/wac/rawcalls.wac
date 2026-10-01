@@ -15,13 +15,13 @@ import { keccak256 } from "../../src/keccak.wac";
 u8[] message(i32 n) {
   u8[] m = u8[].filled(n, 0);
   i32 x = 1;
-  for (i32 i = 0; i < n; i++) { x = (x * 1103515245 + 12345) & 0x7FFFFFFF; m[i] = x >> 16; }
+  for (i32 i = 0; i < n; i++) { x = (x * 1103515245 + 12345) & 0x7FFFFFFF; m[i] = (x >> 16) as@ u8; }
   return m;
 }
 
 i32 sum32(u8[] b) {
   i32 s = 0;
-  for (i32 i = 0; i < 32; i++) { s = s * 31 + b[i]; }
+  for (i32 i = 0; i < 32; i++) { s = s * 31 + b[i] as i32; }
   return s;
 }
 

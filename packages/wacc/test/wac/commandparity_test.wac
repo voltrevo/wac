@@ -169,7 +169,7 @@ string sameBytes(u8[] a, u8[] b) {
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] != b[i]) {
       return "byte " + itoa(i) + " of " + itoa(a.len()) + " differs: "
-             + itoa(a[i]) + " and " + itoa(b[i]);
+             + itoa(a[i] as i32) + " and " + itoa(b[i] as i32);
     }
   }
   return "";

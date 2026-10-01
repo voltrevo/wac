@@ -79,12 +79,12 @@ export string test_the_signed_span_is_tors(Core core, Cli cli) {
   // which rule broke rather than only that a digest differs.
   i32 end = signedLength(vote);
   t.isTrue(end > 0, "the keyword is present");
-  t.eqI32(vote[end - 1], 32, "the span ends on the space after directory-signature");
-  t.neI32(vote[end], 32, "and includes only that one space");
+  t.eqI32(vote[end - 1] as i32, 32, "the span ends on the space after directory-signature");
+  t.neI32(vote[end] as i32, 32, "and includes only that one space");
 
   // The fingerprints that follow are outside the span — an authority's signature does not cover the
   // claim about which authority made it.
-  t.neI32(vote[end], 10, "the fingerprints follow the space, and are not signed");
+  t.neI32(vote[end] as i32, 10, "the fingerprints follow the space, and are not signed");
 
   // The SHA-256 variant hashes the same span, which is what makes it a variant rather than a different
   // rule. Only the length is asserted: no vector here carries a sha256 signature to compare against.
@@ -241,6 +241,6 @@ export string test_the_vote_tor_accepted_is_reproduced(Core core, Cli cli) {
   u8[] built = voteDocument(info, k, cert, relays);
   i32 end = signedLength(built);
   t.isTrue(end > 0, "the built document announces its signature");
-  t.eqI32(built[end - 1], 32, "and the signed span ends on the space");
+  t.eqI32(built[end - 1] as i32, 32, "and the signed span ends on the space");
   return t.report();
 }

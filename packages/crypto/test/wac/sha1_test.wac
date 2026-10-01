@@ -39,7 +39,7 @@ void claim(Lines lines, u8[] msg, u8[] digest) {
 }
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { o[i] = (i * 37 + seed) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { o[i] = ((i * 37 + seed) & 0xFF) as@ u8; }
   return o;
 }
 

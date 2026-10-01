@@ -56,7 +56,7 @@ export struct HuffTable {
  */
 export HuffTable readTable(u8[] src, i32 at) {
   if (at >= src.len()) { trap; }
-  i32 header = src[at];
+  i32 header = src[at] as i32;
 
   i32[] weights = i32[].filled(256, 0);
   i32 count = 0;
@@ -69,7 +69,7 @@ export HuffTable readTable(u8[] src, i32 at) {
     i32 bytes = (count + 1) / 2;
     if (at + 1 + bytes > src.len()) { trap; }
     for (i32 i = 0; i < count; i++) {
-      i32 b = src[at + 1 + (i / 2)];
+      i32 b = src[at + 1 + (i / 2)] as i32;
       if (i % 2 == 0) {
         weights[i] = b >>> 4;
       } else {
@@ -192,9 +192,9 @@ void decodeStream(HuffTable t, u8[] src, i32 at, i32 len, i32 count, Buf out) {
  */
 void decodeFourStreams(HuffTable t, u8[] src, i32 at, i32 len, i32 count, Buf out) {
   if (len < 6) { trap; }
-  i32 s1 = src[at] | (src[at + 1] << 8);
-  i32 s2 = src[at + 2] | (src[at + 3] << 8);
-  i32 s3 = src[at + 4] | (src[at + 5] << 8);
+  i32 s1 = src[at] as i32 | (src[at + 1] as i32 << 8);
+  i32 s2 = src[at + 2] as i32 | (src[at + 3] as i32 << 8);
+  i32 s3 = src[at + 4] as i32 | (src[at + 5] as i32 << 8);
   i32 body = at + 6;
   i32 total = len - 6;
   i32 s4 = total - s1 - s2 - s3;

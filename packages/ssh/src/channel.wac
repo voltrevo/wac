@@ -169,7 +169,7 @@ Incoming none() { return Incoming(0, 0, 0, 0, 0, u8[](), false); }
  */
 export Incoming parse(u8[] payload) {
   if (payload.len() == 0) { return none(); }
-  i32 kind = payload[0];
+  i32 kind = payload[0] as i32;
   if (kind < msgChannelOpen() || kind > msgChannelFailure()) {
     return Incoming(0, 0, 0, 0, 0, u8[](), true);
   }

@@ -164,7 +164,7 @@ bool isBoundary(string ch) {
 bool isWordByte(string ch) {
   u8[] b = ch.toBytes();
   if (b.len() == 0) { return false; }
-  i32 c = b[0];   // a packed type is an array's element type; a local is `i32`
+  i32 c = b[0] as i32;   // a packed type is an array's element type; a local is `i32`
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
          c == '_' || c == '-' || c == '.';
 }

@@ -71,7 +71,7 @@ string[] words(string line) {
       if (word.len() > 0) { out.push(word); word = ""; }
       continue;
     }
-    word = word + string.fromCodepoint(b[i]);
+    word = word + string.fromCodepoint(b[i] as i32);
   }
   if (word.len() > 0) { out.push(word); }
   string[] made = string[].filled(out.len(), "");
@@ -85,7 +85,7 @@ Vec<string> lines(u8[] bytes) {
   string line = "";
   for (i32 i = 0; i < bytes.len(); i++) {
     if (bytes[i] == 10) { out.push(line); line = ""; continue; }
-    line = line + string.fromCodepoint(bytes[i]);
+    line = line + string.fromCodepoint(bytes[i] as i32);
   }
   if (line.len() > 0) { out.push(line); }
   return out;

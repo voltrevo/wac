@@ -32,7 +32,7 @@ export struct Reader {
 
   i32 u8(this) {
     if (this.pos >= this.end) { trap; }
-    i32 v = this.buf[this.pos];
+    i32 v = this.buf[this.pos] as i32;
     this.pos++;
     return v;
   }
@@ -82,7 +82,7 @@ export struct Writer {
 
   void u8(this, i32 v) {
     this.reserve(1);
-    this.buf[this.len] = v & 0xFF;
+    this.buf[this.len] = (v & 0xFF) as@ u8;
     this.len++;
   }
 

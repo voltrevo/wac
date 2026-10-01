@@ -88,7 +88,7 @@ export string test_a_relay_cell_body_with_a_hostile_length() {
   i32 refused = 0;
   for (i32 i = 0; i < 2000; i++) {
     u8[] body = randomBytes(r, 509);
-    i32 len = (body[9] << 8) | body[10];
+    i32 len = (body[9] as i32 << 8) | body[10] as i32;
     if (len > relayDataLen()) {
       // The parser traps on this rather than returning short. Recording it as refused here
       // documents the contract; the test that it is *reachable* is the point.
@@ -160,7 +160,7 @@ export string test_a_consensus_shaped_document_with_wrong_fields() {
     for (i32 j = 0; j < doc.len(); j++) {
       u8[] m = u8[].filled(doc.len(), 0);
       for (i32 k = 0; k < doc.len(); k++) { m[k] = doc[k]; }
-      m[j] = next(r) & 0xFF;
+      m[j] = (next(r) & 0xFF) as@ u8;
       parseConsensus(m);
       refreshAt(m, 5000);
     }
@@ -267,7 +267,7 @@ export string test_fuzz_socks_requests() {
   for (i32 iter = 0; iter < 4000; iter++) {
     i32 n = next(r) % 40;
     u8[] req = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { req[i] = next(r) % 256; }
+    for (i32 i = 0; i < n; i++) { req[i] = (next(r) % 256) as@ u8; }
     string out = targetOf(req);
     // `requestLength` reads fields `targetOf` has already bounds-checked, and is only ever
     // called after a target comes back — so the pairing is what is being fuzzed, not the
@@ -307,8 +307,8 @@ export string test_fuzz_socks_requests_arriving_in_pieces() {
     req[0] = 5;
     req[1] = 1;
     req[2] = 0;
-    req[3] = next(r) % 4 + 1;
-    for (i32 i = 4; i < n; i++) { req[i] = next(r) % 256; }
+    req[3] = (next(r) % 4 + 1) as@ u8;
+    for (i32 i = 4; i < n; i++) { req[i] = (next(r) % 256) as@ u8; }
 
     string whole = targetOf(req);
     bool settled = false;
@@ -333,7 +333,7 @@ export string test_fuzz_end_reason_mapping() {
   for (i32 iter = 0; iter < 2000; iter++) {
     i32 n = next(r) % 6;
     u8[] body = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { body[i] = next(r) % 256; }
+    for (i32 i = 0; i < n; i++) { body[i] = (next(r) % 256) as@ u8; }
     i32 code = replyForEndReason(body);
     // RFC 1928 defines 0 through 8. A code outside that is one no client can interpret.
     t.isTrue(code >= 0 && code <= 8, "the reply code must be one RFC 1928 defines");

@@ -213,7 +213,7 @@ i32 introduceVia(Core core, Cli cli, Network net, IntroPoint p, u8[] subcred, u8
   // INTRODUCE_ACK's status is two bytes; anything but zero is a refusal with a reason.
   if (ack.data.len() >= 2 && (ack.data[0] != 0 || ack.data[1] != 0)) {
     core.warn("tor: the introduction point refused the cell, status " +
-              itoa((ack.data[0] * 256) + ack.data[1]));
+              itoa((ack.data[0] as i32 * 256) + ack.data[1] as i32));
     return 1;
   }
   core.log("introduction acknowledged");
@@ -238,7 +238,7 @@ i32 introduceVia(Core core, Cli cli, Network net, IntroPoint p, u8[] subcred, u8
   // **The service is authenticated here and nowhere else.** Without this comparison the circuit
   // completes with whoever answered the rendezvous point, which is anybody who guessed the cookie.
   i32 diff = 0;
-  for (i32 i = 0; i < 32; i++) { diff = diff | (out[i] ^ handshake[32 + i]); }
+  for (i32 i = 0; i < 32; i++) { diff = diff | (out[i] as i32 ^ handshake[32 + i] as i32); }
   if (diff != 0) {
     core.warn("tor: the service did not authenticate — AUTH does not match");
     return 1;
@@ -282,7 +282,7 @@ u8[] readStream(Core core, Link l, Circuit c, i32 sid, i32 port) {
       // means the service's own target port is not listening, which is a problem at the far end and
       // not with the circuit that just took four hops to build.
       core.warn("tor: the service refused the stream, reason " +
-                (got.data.len() > 0 ? itoa(got.data[0]) : "unstated"));
+                (got.data.len() > 0 ? itoa(got.data[0] as i32) : "unstated"));
       break;
     }
     if (got.kind == gotConnected() && !connected) {
@@ -324,8 +324,8 @@ u8[] linkSpecifiersFor(Relay r) {
   out[at] = 0;                     // TLS-over-TCP, IPv4
   out[at + 1] = 6;
   for (i32 i = 0; i < 4; i++) { out[at + 2 + i] = ip[i]; }
-  out[at + 6] = (r.orPort >> 8) & 0xFF;
-  out[at + 7] = r.orPort & 0xFF;
+  out[at + 6] = ((r.orPort >> 8) & 0xFF) as@ u8;
+  out[at + 7] = (r.orPort & 0xFF) as@ u8;
   at = at + 8;
   out[at] = 2;                     // legacy identity
   out[at + 1] = 20;
@@ -346,11 +346,11 @@ u8[] parseIpv4(string address) {
   for (i32 i = 0; i <= text.len(); i++) {
     if (i == text.len() || text[i] == '.') {
       if (value < 0 || value > 255 || part > 3) { return u8[](); }
-      out[part] = value;
+      out[part] = value as@ u8;
       part = part + 1;
       value = -1;
     } else if (text[i] >= '0' && text[i] <= '9') {
-      value = (value < 0 ? 0 : value) * 10 + (text[i] - '0');
+      value = (value < 0 ? 0 : value) * 10 + (text[i] as i32 - '0');
       if (value > 255) { return u8[](); }
     } else {
       return u8[]();
@@ -397,7 +397,7 @@ i32 parsePort(string s) {
   i32 v = 0;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] < '0' || b[i] > '9') { return -1; }
-    v = v * 10 + (b[i] - '0');
+    v = v * 10 + (b[i] as i32 - '0');
     if (v > 65535) { return -1; }
   }
   return v;

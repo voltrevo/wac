@@ -64,10 +64,10 @@ bool someBlockIsWrapped(u8[] pem) {
     if (!matchesAt(pem, i, begin)) { continue; }
     i32 at = i + begin.toBytes().len();
     i32 run = 0;
-    while (at + run < pem.len() && isBase64Byte(pem[at + run])) { run = run + 1; }
+    while (at + run < pem.len() && isBase64Byte(pem[at + run] as i32)) { run = run + 1; }
     if (run == 0) { continue; }
     i32 nl = at + run;
-    if (nl + 1 < pem.len() && pem[nl] == '\n' && isBase64Byte(pem[nl + 1])) { return true; }
+    if (nl + 1 < pem.len() && pem[nl] == '\n' && isBase64Byte(pem[nl + 1] as i32)) { return true; }
   }
   return false;
 }

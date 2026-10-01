@@ -164,7 +164,7 @@ u8[] noise(i32 n, i32 seed) {
   i32 s = seed;
   for (i32 i = 0; i < n; i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    out[i] = (s >> 16) & 0xFF;
+    out[i] = ((s >> 16) & 0xFF) as@ u8;
   }
   return out;
 }
@@ -322,12 +322,12 @@ export string test_traps_a_corrupted_payload_fails_its_checksum() {
 u8[] isizeOffBy(i32 delta) {
   u8[] gz = gzipBest(repeated("length matters too. ", 60));
   i32 n = gz.len();
-  i32 isize = gz[n - 4] | (gz[n - 3] << 8) | (gz[n - 2] << 16) | (gz[n - 1] << 24);
+  i32 isize = gz[n - 4] as i32 | (gz[n - 3] as i32 << 8) | (gz[n - 2] as i32 << 16) | (gz[n - 1] as i32 << 24);
   i32 changed = (isize + delta) & 0xFFFFFFF;   // stays well inside i32; the member is tiny
-  gz[n - 4] = changed & 0xFF;
-  gz[n - 3] = (changed >> 8) & 0xFF;
-  gz[n - 2] = (changed >> 16) & 0xFF;
-  gz[n - 1] = (changed >> 24) & 0xFF;
+  gz[n - 4] = (changed & 0xFF) as@ u8;
+  gz[n - 3] = ((changed >> 8) & 0xFF) as@ u8;
+  gz[n - 2] = ((changed >> 16) & 0xFF) as@ u8;
+  gz[n - 1] = ((changed >> 24) & 0xFF) as@ u8;
   return gz;
 }
 

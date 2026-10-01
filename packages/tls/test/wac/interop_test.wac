@@ -71,7 +71,7 @@ Ours serveOnce(Core core, Cli cli, string name) {
   u8[] b = log.toBytes();
   i32 port = 0;
   for (i32 i = log.indexOf(MARK) + MARK.len(); i < b.len() && b[i] >= '0' && b[i] <= '9'; i++) {
-    port = port * 10 + (b[i] - '0');
+    port = port * 10 + (b[i] as i32 - '0');
   }
   return Ours(d, port, dir, "");
 }

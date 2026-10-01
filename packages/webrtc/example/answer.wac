@@ -50,7 +50,7 @@ i32 atoi(string s) {
   i32 n = 0;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] < 0x30 || b[i] > 0x39) { return n; }
-    n = n * 10 + (b[i] - 0x30);
+    n = n * 10 + (b[i] as i32 - 0x30);
   }
   return n;
 }
@@ -65,12 +65,12 @@ u8[] ipv4(string s) {
   for (i32 i = 0; i <= b.len(); i++) {
     if (i == b.len() || b[i] == 0x2E) {
       if (!any || part > 3) { return u8[](); }
-      out[part] = value & 0xFF;
+      out[part] = (value & 0xFF) as@ u8;
       part = part + 1;
       value = 0;
       any = false;
     } else if (b[i] >= 0x30 && b[i] <= 0x39) {
-      value = value * 10 + (b[i] - 0x30);
+      value = value * 10 + (b[i] as i32 - 0x30);
       any = true;
     } else {
       return u8[]();
@@ -84,7 +84,7 @@ string fragment(Core core, i32 n) {
   u8[] raw = core.randomBytes(n).wait();
   u8[] out = u8[].filled(n, 0);
   u8[] alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toBytes();
-  for (i32 i = 0; i < n; i++) { out[i] = alphabet[raw[i] % alphabet.len()]; }
+  for (i32 i = 0; i < n; i++) { out[i] = alphabet[raw[i] as i32 % alphabet.len()]; }
   return string.fromBytes(out);
 }
 

@@ -228,7 +228,7 @@ export string spacedFingerprint(u8[] digest) {
   Buf out = Buf.create();
   for (i32 i = 0; i < h.len(); i++) {
     if (i != 0 && i % 4 == 0) { out.push(32); }
-    out.push(h[i]);
+    out.push(h[i] as i32);
   }
   return string.fromBytes(out.bytes());
 }
@@ -446,7 +446,7 @@ u8[][] splitSpaces(u8[] s) {
 u8[] fingerprintBytes(u8[] text) {
   Buf packed = Buf.create();
   for (i32 i = 0; i < text.len(); i++) {
-    if (text[i] != 32) { packed.push(text[i]); }
+    if (text[i] != 32) { packed.push(text[i] as i32); }
   }
   u8[]? raw = decode(packed.take());
   return raw is null ? u8[]() : raw!;

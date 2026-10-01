@@ -196,7 +196,7 @@ u8[] stream(u8[] seed, i64 counter, i32 outLen) {
   u8[] input = u8[].filled(seed.len() + 8, 0);
   for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
   for (i32 i = 0; i < 8; i++) {
-    input[seed.len() + i] = ((counter >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
+    input[seed.len() + i] = (((counter >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32) as@ u8;
   }
   return shake256(input, outLen);
 }

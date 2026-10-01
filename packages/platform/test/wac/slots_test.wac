@@ -48,7 +48,7 @@ i32 numberAfter(string src, string marker) {
   i32 v = -1;
   for (i32 i = at; i < b.len(); i++) {
     if (b[i] < 48 || b[i] > 57) { break; }
-    v = (v < 0 ? 0 : v) * 10 + (b[i] - 48);
+    v = (v < 0 ? 0 : v) * 10 + (b[i] as i32 - 48);
   }
   return v;
 }

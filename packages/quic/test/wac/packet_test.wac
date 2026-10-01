@@ -32,7 +32,7 @@ u8[] withCid(i32 len) {
   u8[] out = u8[].filled(6 + len + 4, 0);
   out[0] = 0xC0;              // long header, fixed bit, Initial
   out[4] = 1;                 // version 1
-  out[5] = len & 255;         // DCID length
+  out[5] = (len & 255) as@ u8;         // DCID length
   for (i32 i = 0; i < len; i++) { out[6 + i] = 0xAB; }
   out[6 + len] = 0;           // no source id
   out[6 + len + 1] = 0;       // token length: a one-byte varint of 0
@@ -55,7 +55,7 @@ export string test_a_real_initial_parses_to_the_fields_it_has(Core core, Cli cli
   // quinn picks its own connection ids; what matters is that they are within the 20 bytes RFC 9000
   // allows and that the parse agrees with the length byte the packet itself carries.
   i32 dlen = dcidLen(packet, false);
-  t.eqI32(dlen, packet[5], "the DCID length matches the packet's own byte");
+  t.eqI32(dlen, packet[5] as i32, "the DCID length matches the packet's own byte");
   t.isTrue(dlen <= 20, "a connection id is at most 20 bytes, got " + itoa(dlen));
   t.isTrue(scidLen(packet, false) <= 20, "and so is the source id");
 

@@ -34,7 +34,7 @@ export i32[] mappedAddress(u8[] b) {
   i32[] out = i32[].filled(2 + a.ip.len(), 0);
   out[0] = a.family;
   out[1] = a.port;
-  for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }
+  for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i] as i32; }
   return out;
 }
 
@@ -44,7 +44,7 @@ export i32[] roundTripAddress(i32 family, i32 port, u8[] ip, u8[] tid) {
   i32[] out = i32[].filled(2 + a.ip.len(), 0);
   out[0] = a.family;
   out[1] = a.port;
-  for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }
+  for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i] as i32; }
   return out;
 }
 

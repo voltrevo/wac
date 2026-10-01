@@ -179,7 +179,7 @@ export struct Conn {
       u8[] payload = this.tryOnePacket();
       if (this.failed()) { return u8[](); }
       if (payload.len() > 0) {
-        i32 kind = payload[0];
+        i32 kind = payload[0] as i32;
         if (kind == msgIgnore() || kind == msgDebug() || kind == msgExtInfo()) { continue; }
         if (kind == msgDisconnect()) {
           this.fail("the peer disconnected");
@@ -204,7 +204,7 @@ export struct Conn {
           this.seqIn++;
           // A zero-length payload is a legal packet and not "nothing yet", so it is reported as a
           // one-byte NOOP rather than as an empty buffer the caller would wait on forever.
-          return p.payload.len() == 0 ? [msgIgnore()] : p.payload;
+          return p.payload.len() == 0 ? [msgIgnore() as@ u8] : p.payload;
         }
         Incomplete: { return u8[](); }
         default: {
@@ -218,7 +218,7 @@ export struct Conn {
       Ok: {
         this.buf.dropFront(f.used);
         this.seqIn++;
-        return f.payload.len() == 0 ? [msgIgnore()] : f.payload;
+        return f.payload.len() == 0 ? [msgIgnore() as@ u8] : f.payload;
       }
       Incomplete: { return u8[](); }
       default: {

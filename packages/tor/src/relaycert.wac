@@ -79,7 +79,7 @@ export static i32 EXT_SIGNED_WITH_KEY = 4;
 u8[] be32(i64 v) {
   u8[] b = u8[].filled(4, 0);
   for (i32 i = 0; i < 4; i++) {
-    b[i] = ((v >> (((3 - i) * 8) as@ u32)) & 0xFF) as~ i32;
+    b[i] = (((v >> (((3 - i) * 8) as@ u32)) & 0xFF) as~ i32) as@ u8;
   }
   return b;
 }
@@ -136,10 +136,10 @@ export u8[] ed25519CertBody(
   i32 bodyLen = includeSigningKey ? fixed + 4 + 32 : fixed;
   u8[] body = u8[].filled(bodyLen, 0);
   body[0] = 1;
-  body[1] = certType;
+  body[1] = certType as@ u8;
   u8[] exp = be32(expirationHours);
   for (i32 i = 0; i < 4; i++) { body[2 + i] = exp[i]; }
-  body[6] = certKeyType;
+  body[6] = certKeyType as@ u8;
   for (i32 i = 0; i < 32; i++) { body[7 + i] = certifiedKey[i]; }
   if (!includeSigningKey) {
     body[39] = 0;                     // N_EXTENSIONS = 0
@@ -148,7 +148,7 @@ export u8[] ed25519CertBody(
   body[39] = 1;                       // one extension
   body[40] = 0;                       // ExtLength, big-endian 32
   body[41] = 32;
-  body[42] = EXT_SIGNED_WITH_KEY;
+  body[42] = EXT_SIGNED_WITH_KEY as@ u8;
   body[43] = 0;                       // ExtFlags
   for (i32 i = 0; i < 32; i++) { body[44 + i] = signingKey[i]; }
   return body;
@@ -286,7 +286,7 @@ export u8[] rsaCrossCert(u8[] ed25519Identity, i64 expirationHours, u8[] rsaModu
   u8[] cert = u8[].filled(32 + 4 + 1 + sig.len(), 0);
   for (i32 i = 0; i < 32; i++) { cert[i] = ed25519Identity[i]; }
   for (i32 i = 0; i < 4; i++) { cert[32 + i] = exp[i]; }
-  cert[36] = sig.len();
+  cert[36] = sig.len() as@ u8;
   for (i32 i = 0; i < sig.len(); i++) { cert[37 + i] = sig[i]; }
   return cert;
 }
@@ -314,12 +314,12 @@ export u8[] certsCell(i32[] types, u8[][] certs) {
   i32 n = 1;
   for (i32 i = 0; i < certs.len(); i++) { n = n + 3 + certs[i].len(); }
   u8[] out = u8[].filled(n, 0);
-  out[0] = types.len();
+  out[0] = types.len() as@ u8;
   i32 at = 1;
   for (i32 i = 0; i < certs.len(); i++) {
-    out[at] = types[i];
-    out[at + 1] = (certs[i].len() >> 8) & 0xFF;
-    out[at + 2] = certs[i].len() & 0xFF;
+    out[at] = types[i] as@ u8;
+    out[at + 1] = ((certs[i].len() >> 8) & 0xFF) as@ u8;
+    out[at + 2] = (certs[i].len() & 0xFF) as@ u8;
     for (i32 j = 0; j < certs[i].len(); j++) { out[at + 3 + j] = certs[i][j]; }
     at = at + 3 + certs[i].len();
   }
@@ -329,12 +329,12 @@ export u8[] certsCell(i32[] types, u8[][] certs) {
 /** The certificate of type `want` in a CERTS cell body, or empty. */
 export u8[] certOfType(u8[] cell, i32 want) {
   if (cell.len() < 1) { return u8[](); }
-  i32 n = cell[0];
+  i32 n = cell[0] as i32;
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
     if (at + 3 > cell.len()) { return u8[](); }
-    i32 type = cell[at];
-    i32 length = (cell[at + 1] * 256) + cell[at + 2];
+    i32 type = cell[at] as i32;
+    i32 length = (cell[at + 1] as i32 * 256) + cell[at + 2] as i32;
     if (at + 3 + length > cell.len()) { return u8[](); }
     if (type == want) {
       u8[] out = u8[].filled(length, 0);

@@ -120,7 +120,7 @@ export i32 main(Core core, Cli cli) {
   for (i32 t = 0; t < 4000; t++) {
     i32 n = r.upto(12);
     u8[] b = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { b[i] = (r.next() & (0xff as@ u32)) as@ i32; }
+    for (i32 i = 0; i < n; i++) { b[i] = ((r.next() & (0xff as@ u32)) as@ i32) as@ u8; }
     if (valid(b)) { seen = seen + 1; }
     seen = seen + lower(b).len();
     if (equalFold(b, test)) { seen = seen + 1; }

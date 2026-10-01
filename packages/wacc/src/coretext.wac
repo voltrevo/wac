@@ -194,7 +194,7 @@ export string coreSource() {
           + "export i32 hashBytes(u8[] b) {\n"
           + "  u32 h = 2166136261;\n"
           + "  for (i32 i = 0; i < b.len(); i++) {\n"
-          + "    h = h ^ (b[i] as@ u32);\n"
+          + "    h = h ^ (b[i] as u32);\n"
           + "    h = h * 16777619;\n"
           + "  }\n"
           + "  return h as@ i32;\n";

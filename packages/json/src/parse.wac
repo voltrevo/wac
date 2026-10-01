@@ -52,7 +52,7 @@ export struct Parser {
   // value anyway, and no real byte is negative.
   i32 peek(const this) {
     if (this.pos >= this.src.len()) { return -1; }
-    return this.src[this.pos];
+    return this.src[this.pos] as i32;
   }
 
   void fail(this, i32 code) {
@@ -65,7 +65,7 @@ export struct Parser {
 
   void skipWs(this) {
     while (this.pos < this.src.len()) {
-      i32 c = this.src[this.pos];
+      i32 c = this.src[this.pos] as i32;
       if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
         this.pos++;
         continue;
@@ -90,14 +90,14 @@ export struct Parser {
    */
   i32 spaceLen(const this) {
     i32 n = this.src.len();
-    i32 c = this.src[this.pos];
+    i32 c = this.src[this.pos] as i32;
     if (c == 0x0B || c == 0x0C) { return 1; }                   // VT, FF
     if (c == 0xC2 && this.pos + 1 < n && this.src[this.pos + 1] == 0xA0) { return 2; }  // U+00A0
     if (c == 0xE1 && this.pos + 2 < n
         && this.src[this.pos + 1] == 0x9A && this.src[this.pos + 2] == 0x80) { return 3; }  // U+1680
     if (c == 0xE2 && this.pos + 2 < n) {
-      i32 b1 = this.src[this.pos + 1];
-      i32 b2 = this.src[this.pos + 2];
+      i32 b1 = this.src[this.pos + 1] as i32;
+      i32 b2 = this.src[this.pos + 2] as i32;
       // U+2000-200A, U+2028, U+2029, U+202F
       if (b1 == 0x80 && ((b2 >= 0x80 && b2 <= 0x8A) || b2 == 0xA8 || b2 == 0xA9 || b2 == 0xAF)) { return 3; }
       if (b1 == 0x81 && b2 == 0x9F) { return 3; }               // U+205F
@@ -120,11 +120,11 @@ export struct Parser {
    */
   bool skipComment(this) {
     if (this.pos + 1 >= this.src.len()) { return false; }
-    i32 k = this.src[this.pos + 1];
+    i32 k = this.src[this.pos + 1] as i32;
     if (k == '/') {
       this.pos += 2;
       while (this.pos < this.src.len()) {
-        i32 c = this.src[this.pos];
+        i32 c = this.src[this.pos] as i32;
         if (c == '\n' || c == '\r') { return true; }
         // U+2028 and U+2029 are line terminators as well, so they end a `//` comment.
         if (c == 0xE2 && this.pos + 2 < this.src.len() && this.src[this.pos + 1] == 0x80
@@ -320,7 +320,7 @@ export struct Parser {
     if (!isIdentStart(c)) { this.fail(ERR_UNEXPECTED()); return null; }
     Buf name = Buf.create();
     while (this.pos < this.src.len()) {
-      i32 b = this.src[this.pos];
+      i32 b = this.src[this.pos] as i32;
       // A non-ASCII byte here is either a character this parser cannot classify or the whitespace
       // *after* the name — `{a : 1}` is an ordinary key followed by a space. Ending the name
       // is only right for the second, so the two are told apart rather than one being assumed.
@@ -340,12 +340,12 @@ export struct Parser {
   // Returns the unescaped UTF-8 bytes of a string, cursor left after the closing quote. In JSON5
   // the opening quote may be a single one, and the same character has to close it.
   u8[]? parseStringBytes(this) {
-    i32 quote = this.src[this.pos];
+    i32 quote = this.src[this.pos] as i32;
     this.pos++;                                        // consume opening quote
     Buf out = Buf.create();
     while (true) {
       if (this.pos >= this.src.len()) { this.fail(ERR_EOF()); return null; }
-      i32 c = this.src[this.pos];
+      i32 c = this.src[this.pos] as i32;
       if (c == quote) {
         this.pos++;
         return out.bytes();
@@ -369,7 +369,7 @@ export struct Parser {
       // string every legal byte is ASCII, so a bad one already fails structurally.
       i32 seq = this.utf8SeqLen();
       if (seq < 0) { this.fail(ERR_UTF8()); return null; }
-      for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
+      for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k] as i32); }
       this.pos += seq;
     }
   }
@@ -384,7 +384,7 @@ export struct Parser {
    */
   i32 utf8SeqLen(const this) {
     i32 n = this.src.len();
-    i32 b0 = this.src[this.pos];
+    i32 b0 = this.src[this.pos] as i32;
 
     if (b0 < 0xC2) { return -1; }          // continuation byte, or an overlong lead
 
@@ -406,10 +406,10 @@ export struct Parser {
     }
 
     if (this.pos + need >= n) { return -1; }
-    i32 c1 = this.src[this.pos + 1];
+    i32 c1 = this.src[this.pos + 1] as i32;
     if (c1 < lo || c1 > hi) { return -1; }
     for (i32 i = 2; i <= need; i++) {
-      i32 ci = this.src[this.pos + i];
+      i32 ci = this.src[this.pos + i] as i32;
       if (ci < 0x80 || ci > 0xBF) { return -1; }
     }
     return need + 1;
@@ -460,8 +460,8 @@ export struct Parser {
     if (e == 'x') {
       this.pos++;
       if (this.pos + 2 > this.src.len()) { this.fail(ERR_EOF()); return false; }
-      i32 hi = hexDigit(this.src[this.pos]);
-      i32 lo = hexDigit(this.src[this.pos + 1]);
+      i32 hi = hexDigit(this.src[this.pos] as i32);
+      i32 lo = hexDigit(this.src[this.pos + 1] as i32);
       if (hi < 0 || lo < 0) { this.fail(ERR_ESCAPE()); return false; }
       this.pos += 2;
       out.pushCodepoint((hi << 4) | lo);
@@ -482,7 +482,7 @@ export struct Parser {
     if (e < 0x80) { out.push(e); this.pos++; return true; }
     i32 seq = this.utf8SeqLen();
     if (seq < 0) { this.fail(ERR_UTF8()); return false; }
-    for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
+    for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k] as i32); }
     this.pos += seq;
     return true;
   }
@@ -539,7 +539,7 @@ export struct Parser {
     if (this.pos + 4 > this.src.len()) { this.fail(ERR_EOF()); return -1; }
     i32 v = 0;
     for (i32 i = 0; i < 4; i++) {
-      i32 d = hexDigit(this.src[this.pos + i]);
+      i32 d = hexDigit(this.src[this.pos + i] as i32);
       if (d < 0) { this.fail(ERR_ESCAPE()); return -1; }
       v = (v << 4) | d;
     }

@@ -120,7 +120,7 @@ export string literalOf(string text) {
   Buf out = Buf.withCapacity(b.len() + 16);
   out.push('"');
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c == '\\') { out.push('\\'); out.push('\\'); }
     else if (c == '"') { out.push('\\'); out.push('"'); }
     else if (c == '\n') { out.push('\\'); out.push('n'); }

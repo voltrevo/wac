@@ -38,7 +38,7 @@ u32 chunked(u8[] d, i32 step) {
 /** `(i * 37 + 11) & 0xff`, the same filling the host-side version used. */
 u8[] filled(i32 n) {
   u8[] d = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { d[i] = (i * 37 + 11) & 0xff; }
+  for (i32 i = 0; i < n; i++) { d[i] = ((i * 37 + 11) & 0xff) as@ u8; }
   return d;
 }
 

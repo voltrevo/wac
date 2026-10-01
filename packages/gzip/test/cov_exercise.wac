@@ -124,7 +124,7 @@ u8[] repeat(string s, i32 times) {
 
 u8[] filledWith(i32 n, i32 byte) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = byte; }
+  for (i32 i = 0; i < n; i++) { out[i] = byte as@ u8; }
   return out;
 }
 
@@ -197,7 +197,7 @@ export i32 main() {
   i32 s = 3;
   for (i32 i = 0; i < noisy5k.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7fffffff;
-    noisy5k[i] = ((s >> 16) & 255) % 246;
+    noisy5k[i] = (((s >> 16) & 255) % 246) as@ u8;
   }
   gzipBest(noisy5k);
   gzipDynamic(noisy5k);
@@ -284,7 +284,7 @@ export i32 main() {
   i32[] sizes = [0, 1, 2, 255, 256, 4096];
   for (i32 i = 0; i < sizes.len(); i++) {
     u8[] d = u8[].filled(sizes[i], 0);
-    for (i32 k = 0; k < d.len(); k++) { d[k] = (k * 37 + sizes[i]) & 0xFF; }
+    for (i32 k = 0; k < d.len(); k++) { d[k] = ((k * 37 + sizes[i]) & 0xFF) as@ u8; }
     if (crc32(d) != crc32Bitwise(d)) { trap; }
   }
 
@@ -319,7 +319,7 @@ export i32 main() {
   stream(gzipBest(repetitive), 512, true, false);
   stream(gzipBest(repetitive), 1 << 20, true, false);
   u8[] patterned = u8[].filled(200000, 0);
-  for (i32 i = 0; i < patterned.len(); i++) { patterned[i] = (i * 2654435761) & 0xFF; }
+  for (i32 i = 0; i < patterned.len(); i++) { patterned[i] = ((i * 2654435761) & 0xFF) as@ u8; }
   stream(gzipStored(patterned), 999, true, false);
   stream(gzipStored(patterned), 1 << 20, true, false);
   // The same length again but Huffman-coded, so it arrives as literals rather than as a bulk copy.
@@ -334,7 +334,7 @@ export i32 main() {
     ns = ns ^ (ns << 13);
     ns = ns ^ ((ns >> 17) & 0x7FFF);
     ns = ns ^ (ns << 5);
-    noise[i] = ns & 0xFF;
+    noise[i] = (ns & 0xFF) as@ u8;
   }
   stream(gzipDynamic(noise), 999, true, false);
   stream(gzipDynamic(noise), 1 << 20, true, false);
@@ -395,7 +395,7 @@ export i32 main() {
   // Incompressible, so the per-block comparison picks stored — including a length that needs more than
   // one 64 KiB piece within a single block.
   u8[] random = u8[].filled(300000, 0);
-  for (i32 i = 0; i < random.len(); i++) { random[i] = ((i * 2654435761) >> 13) & 0xFF; }
+  for (i32 i = 0; i < random.len(); i++) { random[i] = (((i * 2654435761) >> 13) & 0xFF) as@ u8; }
   compressStream(random, 1 << 16, false);
   compressStream(random, 1 << 20, false);
 
@@ -408,7 +408,7 @@ u8[] withFields(u8[] base, i32 flg, u8[] fields) {
   for (i32 i = 0; i < tail.len(); i++) { tail[i] = base[10 + i]; }
   u8[] header = u8[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { header[i] = base[i]; }
-  header[3] = flg;
+  header[3] = flg as@ u8;
   return joinBytes(joinBytes(header, fields), tail);
 }
 
@@ -417,7 +417,7 @@ void streamFields(u8[] body, i32 flg, u8[] extras) {
   u8[] plain = gzipBest(body);
   u8[] tail = u8[].filled(plain.len() - 10, 0);
   for (i32 i = 0; i < tail.len(); i++) { tail[i] = plain[10 + i]; }
-  u8[] built = joinBytes(joinBytes([0x1F, 0x8B, 8, flg, 0, 0, 0, 0, 0, 3] as u8[], extras), tail);
+  u8[] built = joinBytes(joinBytes([0x1F, 0x8B, 8, flg as@ u8, 0, 0, 0, 0, 0, 3] as u8[], extras), tail);
   stream(built, 1, true, false);
   stream(built, 1 << 20, true, false);
 }

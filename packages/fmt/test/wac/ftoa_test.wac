@@ -48,7 +48,7 @@ string bits64(f64 x) {
   u64 b = f64.toBits(x);
   u8[] out = u8[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
-    out[i] = ((b >> ((7 - i) * 8)) & 255) as@ i32;
+    out[i] = (((b >> ((7 - i) * 8)) & 255) as@ i32) as@ u8;
   }
   return hex(out);
 }

@@ -29,7 +29,7 @@ export i32 leb(u8[] b, i32[] pos) {
   i32 shift = 0;
   i32 x = 0x80;
   while ((x & 0x80) != 0 && pos[0] < b.len()) {
-    x = b[pos[0]];
+    x = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     r = r | ((x & 0x7F) << shift);
     shift = shift + 7;
@@ -50,7 +50,7 @@ export string[] allExportNames(u8[] b) {
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     if (id == 7) { at = pos[0]; }
@@ -88,7 +88,7 @@ export Exports exportedFunctions(u8[] b) {
   pos[0] = 8;                       // past the magic and the version
   i32 at = -1;
   while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     if (id == 7) { at = pos[0]; }
@@ -105,7 +105,7 @@ export Exports exportedFunctions(u8[] b) {
     i32 len = leb(b, pos);
     string name = string.fromBytes(slice(b, pos[0], pos[0] + len));
     pos[0] = pos[0] + len;
-    i32 kind = b[pos[0]];
+    i32 kind = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 idx = leb(b, pos);
     if (kind != 0) { continue; }    // 0 is a function; a memory or a global is not one
@@ -131,7 +131,7 @@ export i32 importedFunctions(u8[] b) {
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     if (id == 2) { at = pos[0]; }
@@ -147,7 +147,7 @@ export i32 importedFunctions(u8[] b) {
     pos[0] = pos[0] + l1;
     i32 l2 = leb(b, pos);            // the field name
     pos[0] = pos[0] + l2;
-    i32 kind = b[pos[0]];
+    i32 kind = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     leb(b, pos);                     // the type or limits that follow, whatever the kind
     if (kind == 0) { funcs = funcs + 1; }
@@ -161,7 +161,7 @@ export i32 declaredFunctions(u8[] b) {
   pos[0] = 8;
   i32 own = 0;
   while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     i32 end = pos[0] + size;
@@ -190,7 +190,7 @@ export Names nameSection(u8[] b) {
   i32 at = -1;
   i32 secEnd = 0;
   while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     i32 end = pos[0] + size;
@@ -215,7 +215,7 @@ export Names nameSection(u8[] b) {
     p2[0] = at;
     i32 seen = 0;
     while (p2[0] < secEnd) {
-      i32 sub = b[p2[0]];
+      i32 sub = b[p2[0]] as i32;
       p2[0] = p2[0] + 1;
       i32 size = leb(b, p2);
       i32 end = p2[0] + size;
@@ -271,7 +271,7 @@ export struct Arities {
 
 /** A value type is one byte unless it is a reference, which carries a signed heap type. */
 void skipValType(u8[] b, i32[] pos) {
-  i32 t = b[pos[0]];
+  i32 t = b[pos[0]] as i32;
   pos[0] = pos[0] + 1;
   if (t == 0x63 || t == 0x64) {
     while (pos[0] < b.len() && (b[pos[0]] & 0x80) != 0) { pos[0] = pos[0] + 1; }
@@ -285,7 +285,7 @@ i32 sectionAt(u8[] b, i32 want) {
   pos[0] = 8;
   i32 at = -1;
   while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
+    i32 id = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     i32 size = leb(b, pos);
     if (id == want) { at = pos[0]; }
@@ -312,7 +312,7 @@ export Arities exportArities(u8[] b) {
   i32 typeCount = leb(b, pos);
   i32[] params = i32[].filled(typeCount, 0);
   for (i32 i = 0; i < typeCount; i++) {
-    i32 tag = b[pos[0]];
+    i32 tag = b[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     if (tag == 0x5E) {                                  // array
       skipValType(b, pos);

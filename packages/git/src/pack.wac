@@ -100,11 +100,11 @@ export Opened openPack(u8[] pack, u8[] idxBytes) {
   if (pack[0] != 'P' || pack[1] != 'A' || pack[2] != 'C' || pack[3] != 'K') {
     return Opened.Refused("not a pack: the magic is missing");
   }
-  i32 version = (pack[4] << 24) | (pack[5] << 16) | (pack[6] << 8) | pack[7];
+  i32 version = (pack[4] as i32 << 24) | (pack[5] as i32 << 16) | (pack[6] as i32 << 8) | pack[7] as i32;
   if (version != 2 && version != 3) {
     return Opened.Refused("pack version " + itoa(version) + " is not 2 or 3");
   }
-  i32 count = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
+  i32 count = (pack[8] as i32 << 24) | (pack[9] as i32 << 16) | (pack[10] as i32 << 8) | pack[11] as i32;
 
   match (parseIdx(idxBytes)) {
     Rejected(why): { return Opened.Refused("index: " + why); }
@@ -153,14 +153,14 @@ i64 endOf(const Pack p, i64 off) {
 export Raw rawAt(const Pack p, i64 off) {
   if (off < 12 || off >= (p.bytes.len() - 20) as i64) { return Raw.Damaged("offset is outside the pack"); }
   i32 at = off as~ i32;
-  i32 b = p.bytes[at];
+  i32 b = p.bytes[at] as i32;
   i32 kind = (b >> 4) & 7;
   i32 size = b & 0x0f;
   i32 shift = 4;
   at = at + 1;
   while ((b & 0x80) != 0) {
     if (at >= p.bytes.len()) { return Raw.Damaged("size runs off the end"); }
-    b = p.bytes[at];
+    b = p.bytes[at] as i32;
     size = size | ((b & 0x7f) << shift);
     shift = shift + 7;
     at = at + 1;
@@ -170,12 +170,12 @@ export Raw rawAt(const Pack p, i64 off) {
   i64 base = 0;
   u8[] baseName = u8[]();
   if (kind == 6) {
-    i32 c = p.bytes[at];
+    i32 c = p.bytes[at] as i32;
     at = at + 1;
     i64 ofs = (c & 0x7f) as i64;
     while ((c & 0x80) != 0) {
       if (at >= p.bytes.len()) { return Raw.Damaged("a delta offset runs off the end"); }
-      c = p.bytes[at];
+      c = p.bytes[at] as i32;
       at = at + 1;
       // Not the size varint's function: each further byte adds one before shifting, so there is no
       // encoding of zero and every length is used exactly once.
@@ -220,7 +220,7 @@ i32 deltaSize(u8[] d, i32[] pos) {
   i32 shift = 0;
   i32 c = 0x80;
   while ((c & 0x80) != 0 && pos[0] < d.len()) {
-    c = d[pos[0]];
+    c = d[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     v = v | ((c & 0x7f) << shift);
     shift = shift + 7;
@@ -245,27 +245,27 @@ export u8[]? applyDelta(u8[] base, u8[] delta) {
 
   Buf out = Buf.create();
   while (pos[0] < delta.len()) {
-    i32 cmd = delta[pos[0]];
+    i32 cmd = delta[pos[0]] as i32;
     pos[0] = pos[0] + 1;
     if ((cmd & 0x80) != 0) {
       i32 cpOff = 0;
       i32 cpSize = 0;
-      if ((cmd & 0x01) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | delta[pos[0]]; pos[0] = pos[0] + 1; }
-      if ((cmd & 0x02) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] << 8); pos[0] = pos[0] + 1; }
-      if ((cmd & 0x04) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] << 16); pos[0] = pos[0] + 1; }
-      if ((cmd & 0x08) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] << 24); pos[0] = pos[0] + 1; }
-      if ((cmd & 0x10) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | delta[pos[0]]; pos[0] = pos[0] + 1; }
-      if ((cmd & 0x20) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | (delta[pos[0]] << 8); pos[0] = pos[0] + 1; }
-      if ((cmd & 0x40) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | (delta[pos[0]] << 16); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x01) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | delta[pos[0]] as i32; pos[0] = pos[0] + 1; }
+      if ((cmd & 0x02) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] as i32 << 8); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x04) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] as i32 << 16); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x08) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] as i32 << 24); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x10) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | delta[pos[0]] as i32; pos[0] = pos[0] + 1; }
+      if ((cmd & 0x20) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | (delta[pos[0]] as i32 << 8); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x40) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | (delta[pos[0]] as i32 << 16); pos[0] = pos[0] + 1; }
       // Zero means 65536, which is the one special case in the encoding: a three-byte length field
       // cannot say 0x10000 and a copy of nothing would be pointless, so the value is reused.
       if (cpSize == 0) { cpSize = 0x10000; }
       if (cpOff < 0 || cpOff + cpSize > base.len()) { return null; }
-      for (i32 i = 0; i < cpSize; i++) { out.push(base[cpOff + i]); }
+      for (i32 i = 0; i < cpSize; i++) { out.push(base[cpOff + i] as i32); }
     } else {
       if (cmd == 0) { return null; }
       if (pos[0] + cmd > delta.len()) { return null; }
-      for (i32 i = 0; i < cmd; i++) { out.push(delta[pos[0] + i]); }
+      for (i32 i = 0; i < cmd; i++) { out.push(delta[pos[0] + i] as i32); }
       pos[0] = pos[0] + cmd;
     }
   }
@@ -358,7 +358,7 @@ export Indexed indexPack(u8[] pack) {
   if (pack[0] != 'P' || pack[1] != 'A' || pack[2] != 'C' || pack[3] != 'K') {
     return Indexed.Unindexable("not a pack: the magic is missing");
   }
-  i32 count = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
+  i32 count = (pack[8] as i32 << 24) | (pack[9] as i32 << 16) | (pack[10] as i32 << 8) | pack[11] as i32;
   if (count < 0 || count > 10000000) { return Indexed.Unindexable("implausible object count"); }
 
   i64[] offsets = i64[].filled(count, 0);
@@ -372,14 +372,14 @@ export Indexed indexPack(u8[] pack) {
   for (i32 i = 0; i < count; i++) {
     if (at >= stop) { return Indexed.Unindexable("the pack ended before its object count"); }
     i64 here = at as i64;
-    i32 b = pack[at];
+    i32 b = pack[at] as i32;
     i32 kind = (b >> 4) & 7;
     i32 size = b & 0x0f;
     i32 shift = 4;
     at = at + 1;
     while ((b & 0x80) != 0) {
       if (at >= stop) { return Indexed.Unindexable("a size runs off the end"); }
-      b = pack[at];
+      b = pack[at] as i32;
       size = size | ((b & 0x7f) << shift);
       shift = shift + 7;
       at = at + 1;
@@ -389,12 +389,12 @@ export Indexed indexPack(u8[] pack) {
     i64 base = 0;
     u8[] refName = u8[]();
     if (kind == 6) {
-      i32 c = pack[at];
+      i32 c = pack[at] as i32;
       at = at + 1;
       i64 ofs = (c & 0x7f) as i64;
       while ((c & 0x80) != 0) {
         if (at >= stop) { return Indexed.Unindexable("a delta offset runs off the end"); }
-        c = pack[at];
+        c = pack[at] as i32;
         at = at + 1;
         ofs = ((ofs + 1) << 7) | ((c & 0x7f) as i64);
       }
@@ -568,8 +568,8 @@ void siftName(i32[] order, u8[] names, i32 root0, i32 end) {
 
 bool nameGreater(u8[] names, i32 a, i32 b) {
   for (i32 k = 0; k < 20; k++) {
-    i32 x = names[a * 20 + k];
-    i32 y = names[b * 20 + k];
+    i32 x = names[a * 20 + k] as i32;
+    i32 y = names[b * 20 + k] as i32;
     if (x != y) { return x > y; }
   }
   return false;
@@ -650,12 +650,12 @@ export u8[] writePack(i32[] kinds, Vec<u8[]> contents) {
  */
 export u8[] completePack(u8[] pack, i32[] kinds, Vec<u8[]> contents) {
   if (pack.len() < 32) { return pack; }
-  i32 was = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
+  i32 was = (pack[8] as i32 << 24) | (pack[9] as i32 << 16) | (pack[10] as i32 << 8) | pack[11] as i32;
   Buf out = Buf.create();
-  for (i32 i = 0; i < 8; i++) { out.push(pack[i]); }
+  for (i32 i = 0; i < 8; i++) { out.push(pack[i] as i32); }
   packU32(out, was + contents.len());
   // Everything between the header and the old trailing checksum, verbatim.
-  for (i32 i = 12; i < pack.len() - 20; i++) { out.push(pack[i]); }
+  for (i32 i = 12; i < pack.len() - 20; i++) { out.push(pack[i] as i32); }
   for (i32 i = 0; i < contents.len(); i++) { pushObject(out, kinds[i], contents.get(i)); }
   out.pushAll(sha1(out.bytes()));
   return out.take();

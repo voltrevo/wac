@@ -52,7 +52,7 @@ export string test_the_serverhello_answers_in_the_group_we_offered(Core core, Cl
 
   u8[] hello = serverHelloMessage(datagram, dcid());
   t.isTrue(hello.len() > 40, "a ServerHello is tens of bytes: " + itoa(hello.len()));
-  if (hello.len() > 0) { t.eqI32(hello[0], 2, "handshake type 2 is server_hello"); }
+  if (hello.len() > 0) { t.eqI32(hello[0] as i32, 2, "handshake type 2 is server_hello"); }
 
   t.isTrue(serverIsTls13(datagram, dcid()), "TLS 1.3, from supported_versions");
   t.eqI32(serverGroup(datagram, dcid()), 0x001d, "x25519, the group we offered");
@@ -78,8 +78,8 @@ export string test_the_server_coalesced_a_handshake_packet_behind_its_initial(Co
   t.isTrue(at > 0, "a second packet begins inside the datagram: " + itoa(at));
   t.isTrue(at < datagram.len(), "and inside it, not past the end");
   if (at > 0 && at < datagram.len()) {
-    t.neI32(datagram[at] & 0x80, 0, "the second packet is a long header");
-    t.eqI32((datagram[at] >> 4) & 3, 2, "and type 2 is Handshake");
+    t.neI32(datagram[at] as i32 & 0x80, 0, "the second packet is a long header");
+    t.eqI32((datagram[at] as i32 >> 4) & 3, 2, "and type 2 is Handshake");
   }
   return t.report();
 }
@@ -156,7 +156,7 @@ export string test_the_servers_certificateverify_signs_this_handshake(Core core,
   if (der.len() == 0) { return t.report(); }
   // A DER SEQUENCE, which is the shape of every certificate and the cheapest evidence that what came
   // out is a certificate rather than an offset into one.
-  t.eqI32(der[0], 0x30, "the leaf starts with a SEQUENCE");
+  t.eqI32(der[0] as i32, 0x30, "the leaf starts with a SEQUENCE");
 
   t.isTrue(identityVerifies(reply, dcid(), scid(), "localhost"),
            "quinn's CertificateVerify does not verify against the certificate it sent. The " +

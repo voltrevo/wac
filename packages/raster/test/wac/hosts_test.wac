@@ -94,7 +94,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   i32 distinct = 0;
   i32[] seen = i32[].filled(8, -1);
   for (i32 i = header.len(); i + 2 < a.len() && distinct <= 4; i = i + 3) {
-    i32 colour = (a[i] << 16) | (a[i + 1] << 8) | a[i + 2];
+    i32 colour = (a[i] as i32 << 16) | (a[i + 1] as i32 << 8) | a[i + 2] as i32;
     bool known = false;
     for (i32 k = 0; k < distinct; k++) { if (seen[k] == colour) { known = true; } }
     if (known) { continue; }
@@ -134,8 +134,8 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   i32 first = -1;
   for (i32 i = 0; i < a.len() && first < 0; i++) { if (a[i] != b[i]) { first = i; } }
   t.eqI32(first, -1, first < 0 ? "" :
-          "the two hosts disagree at byte " + itoa(first) + ": javascript " + itoa(a[first]) +
-          ", native " + itoa(b[first]));
+          "the two hosts disagree at byte " + itoa(first) + ": javascript " + itoa(a[first] as i32) +
+          ", native " + itoa(b[first] as i32));
 
   // **The images go; the build stays.** Removing the directory used to take the compiled artefact
   // with it — cranelift spends about three seconds producing one and twenty milliseconds reusing it —

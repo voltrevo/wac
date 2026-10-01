@@ -263,7 +263,7 @@ export struct BackBits {
   /** Position on `src[start, start+len)`, and find the padding marker. */
   BackBits create(u8[] src, i32 start, i32 len) {
     if (len <= 0) { trap; }
-    i32 last = src[start + len - 1];
+    i32 last = src[start + len - 1] as i32;
     if (last == 0) { trap; }           // the marker bit must be somewhere in the last byte
     i32 marker = highBit(last);
     // The bits below the marker are the first data; everything above it is padding.
@@ -274,7 +274,7 @@ export struct BackBits {
   /** Pull bytes into the window until it holds enough, or the array runs out. */
   void fill(this, i32 n) {
     while (this.have < n && this.next >= 0) {
-      this.window = (this.window << 8) | this.src[this.start + this.next];
+      this.window = (this.window << 8) | this.src[this.start + this.next] as i32;
       this.have += 8;
       this.next--;
     }

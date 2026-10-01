@@ -34,7 +34,7 @@ export i32 crc32c(u8[] data) {
   // nothing to reinterpret.
   i32 crc = 0xFFFFFFFF;
   for (i32 i = 0; i < data.len(); i++) {
-    crc = crc ^ data[i];
+    crc = crc ^ data[i] as i32;
     for (i32 bit = 0; bit < 8; bit++) {
       // The reflected polynomial. `>>>` because the register is a bit pattern rather than a number:
       // an arithmetic shift would smear the top bit down and produce a checksum that is wrong only
@@ -73,7 +73,7 @@ export struct Chunk {
 /** How many bytes the chunk at `at` occupies, padding included, or -1. */
 export i32 chunkSize(u8[] b, i32 at) {
   if (at < 0 || at + 4 > b.len()) { return -1; }
-  i32 len = (b[at + 2] << 8) | b[at + 3];
+  i32 len = (b[at + 2] as i32 << 8) | b[at + 3] as i32;
   // **A length under four is a malformed chunk and not a small one.** Without this a zero length is
   // a step of zero and the walk below never terminates, which is the classic way a packet parser
   // hangs on input somebody else chose.
@@ -84,20 +84,20 @@ export i32 chunkSize(u8[] b, i32 at) {
 /** Parse the chunk at `at`. Its value excludes the four-byte header and any padding. */
 export Chunk parseChunk(u8[] b, i32 at) {
   if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[]()); }
-  i32 len = (b[at + 2] << 8) | b[at + 3];
+  i32 len = (b[at + 2] as i32 << 8) | b[at + 3] as i32;
   u8[] v = u8[].filled(len - 4, 0);
   for (i32 i = 0; i < v.len(); i++) { v[i] = b[at + 4 + i]; }
-  return Chunk(true, b[at], b[at + 1], v);
+  return Chunk(true, b[at] as i32, b[at + 1] as i32, v);
 }
 
 /** A chunk with its header, padded to a multiple of four. */
 export u8[] chunk(i32 kind, i32 flags, u8[] value) {
   i32 len = 4 + value.len();
   u8[] out = u8[].filled((len + 3) & ~3, 0);
-  out[0] = kind;
-  out[1] = flags;
-  out[2] = (len >> 8) & 0xFF;
-  out[3] = len & 0xFF;
+  out[0] = kind as@ u8;
+  out[1] = flags as@ u8;
+  out[2] = ((len >> 8) & 0xFF) as@ u8;
+  out[3] = (len & 0xFF) as@ u8;
   for (i32 i = 0; i < value.len(); i++) { out[4 + i] = value[i]; }
   return out;
 }
@@ -105,7 +105,7 @@ export u8[] chunk(i32 kind, i32 flags, u8[] value) {
 /** The verification tag a packet carries — zero in an INIT and the peer's tag in everything else. */
 export i32 verificationTag(u8[] b) {
   if (b.len() < 12) { return 0; }
-  return (b[4] << 24) | (b[5] << 16) | (b[6] << 8) | b[7];
+  return (b[4] as i32 << 24) | (b[5] as i32 << 16) | (b[6] as i32 << 8) | b[7] as i32;
 }
 
 /** Where the chunks start. The common header is twelve bytes and never varies. */
@@ -121,24 +121,24 @@ export i32 chunksAt() { return 12; }
  */
 export u8[] packet(i32 sourcePort, i32 destPort, i32 tag, u8[] chunks) {
   u8[] out = u8[].filled(12 + chunks.len(), 0);
-  out[0] = (sourcePort >> 8) & 0xFF;
-  out[1] = sourcePort & 0xFF;
-  out[2] = (destPort >> 8) & 0xFF;
-  out[3] = destPort & 0xFF;
-  out[4] = (tag >> 24) & 0xFF;
-  out[5] = (tag >> 16) & 0xFF;
-  out[6] = (tag >> 8) & 0xFF;
-  out[7] = tag & 0xFF;
+  out[0] = ((sourcePort >> 8) & 0xFF) as@ u8;
+  out[1] = (sourcePort & 0xFF) as@ u8;
+  out[2] = ((destPort >> 8) & 0xFF) as@ u8;
+  out[3] = (destPort & 0xFF) as@ u8;
+  out[4] = ((tag >> 24) & 0xFF) as@ u8;
+  out[5] = ((tag >> 16) & 0xFF) as@ u8;
+  out[6] = ((tag >> 8) & 0xFF) as@ u8;
+  out[7] = (tag & 0xFF) as@ u8;
   // Bytes 8..11 stay zero while the checksum is computed, which is what makes the value verifiable.
   for (i32 i = 0; i < chunks.len(); i++) { out[12 + i] = chunks[i]; }
   i32 c = crc32c(out);
   // **Little-endian**, alone among every other field in the protocol. RFC 4960 §6.8 says so and
   // gives no reason; a big-endian checksum is the mistake that makes a packet verify against your
   // own code and nobody else's.
-  out[8] = c & 0xFF;
-  out[9] = (c >> 8) & 0xFF;
-  out[10] = (c >> 16) & 0xFF;
-  out[11] = (c >> 24) & 0xFF;
+  out[8] = (c & 0xFF) as@ u8;
+  out[9] = ((c >> 8) & 0xFF) as@ u8;
+  out[10] = ((c >> 16) & 0xFF) as@ u8;
+  out[11] = ((c >> 24) & 0xFF) as@ u8;
   return out;
 }
 
@@ -149,8 +149,8 @@ export bool checksumOk(u8[] b) {
   for (i32 i = 0; i < b.len(); i++) { copy[i] = b[i]; }
   copy[8] = 0; copy[9] = 0; copy[10] = 0; copy[11] = 0;
   i32 c = crc32c(copy);
-  return (c & 0xFF) == b[8] && ((c >> 8) & 0xFF) == b[9]
-      && ((c >> 16) & 0xFF) == b[10] && ((c >> 24) & 0xFF) == b[11];
+  return (c & 0xFF) == b[8] as i32 && ((c >> 8) & 0xFF) == b[9] as i32
+      && ((c >> 16) & 0xFF) == b[10] as i32 && ((c >> 24) & 0xFF) == b[11] as i32;
 }
 
 /**
@@ -164,22 +164,22 @@ export bool checksumOk(u8[] b) {
 export u8[] initValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i32 initialTsn,
                       u8[] params) {
   u8[] out = u8[].filled(16 + params.len(), 0);
-  out[0] = (initiateTag >> 24) & 0xFF;
-  out[1] = (initiateTag >> 16) & 0xFF;
-  out[2] = (initiateTag >> 8) & 0xFF;
-  out[3] = initiateTag & 0xFF;
-  out[4] = (window >> 24) & 0xFF;
-  out[5] = (window >> 16) & 0xFF;
-  out[6] = (window >> 8) & 0xFF;
-  out[7] = window & 0xFF;
-  out[8] = (outbound >> 8) & 0xFF;
-  out[9] = outbound & 0xFF;
-  out[10] = (inbound >> 8) & 0xFF;
-  out[11] = inbound & 0xFF;
-  out[12] = (initialTsn >> 24) & 0xFF;
-  out[13] = (initialTsn >> 16) & 0xFF;
-  out[14] = (initialTsn >> 8) & 0xFF;
-  out[15] = initialTsn & 0xFF;
+  out[0] = ((initiateTag >> 24) & 0xFF) as@ u8;
+  out[1] = ((initiateTag >> 16) & 0xFF) as@ u8;
+  out[2] = ((initiateTag >> 8) & 0xFF) as@ u8;
+  out[3] = (initiateTag & 0xFF) as@ u8;
+  out[4] = ((window >> 24) & 0xFF) as@ u8;
+  out[5] = ((window >> 16) & 0xFF) as@ u8;
+  out[6] = ((window >> 8) & 0xFF) as@ u8;
+  out[7] = (window & 0xFF) as@ u8;
+  out[8] = ((outbound >> 8) & 0xFF) as@ u8;
+  out[9] = (outbound & 0xFF) as@ u8;
+  out[10] = ((inbound >> 8) & 0xFF) as@ u8;
+  out[11] = (inbound & 0xFF) as@ u8;
+  out[12] = ((initialTsn >> 24) & 0xFF) as@ u8;
+  out[13] = ((initialTsn >> 16) & 0xFF) as@ u8;
+  out[14] = ((initialTsn >> 8) & 0xFF) as@ u8;
+  out[15] = (initialTsn & 0xFF) as@ u8;
   for (i32 i = 0; i < params.len(); i++) { out[16 + i] = params[i]; }
   return out;
 }
@@ -198,8 +198,8 @@ export u8[] initAckValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound,
   i32 paramLen = 4 + cookie.len();
   u8[] param = u8[].filled((paramLen + 3) & ~3, 0);
   param[0] = 0x00; param[1] = 0x07;              // state cookie
-  param[2] = (paramLen >> 8) & 0xFF;
-  param[3] = paramLen & 0xFF;
+  param[2] = ((paramLen >> 8) & 0xFF) as@ u8;
+  param[3] = (paramLen & 0xFF) as@ u8;
   for (i32 i = 0; i < cookie.len(); i++) { param[4 + i] = cookie[i]; }
   return initValue(initiateTag, window, outbound, inbound, initialTsn, param);
 }
@@ -207,19 +207,19 @@ export u8[] initAckValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound,
 /** The advertised receiver window an INIT or INIT-ACK carries. */
 export i32 initWindow(u8[] value) {
   if (value.len() < 8) { return 0; }
-  return (value[4] << 24) | (value[5] << 16) | (value[6] << 8) | value[7];
+  return (value[4] as i32 << 24) | (value[5] as i32 << 16) | (value[6] as i32 << 8) | value[7] as i32;
 }
 
 /** The initial TSN an INIT or INIT-ACK carries — the first data it will send. */
 export i32 initTsn(u8[] value) {
   if (value.len() < 16) { return 0; }
-  return (value[12] << 24) | (value[13] << 16) | (value[14] << 8) | value[15];
+  return (value[12] as i32 << 24) | (value[13] as i32 << 16) | (value[14] as i32 << 8) | value[15] as i32;
 }
 
 /** The initiate tag out of an INIT or INIT-ACK value — what our packets must carry back. */
 export i32 initiateTag(u8[] value) {
   if (value.len() < 4) { return 0; }
-  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+  return (value[0] as i32 << 24) | (value[1] as i32 << 16) | (value[2] as i32 << 8) | value[3] as i32;
 }
 
 // ── DATA, SACK, and what a data channel puts inside them ─────────────────────────────────────────
@@ -257,18 +257,18 @@ export i32 ppidBinaryEmpty() { return 57; }
 /** A DATA chunk's value: TSN, stream id, stream sequence, protocol identifier, then the payload. */
 export u8[] dataValue(i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] payload) {
   u8[] out = u8[].filled(12 + payload.len(), 0);
-  out[0] = (tsn >> 24) & 0xFF;
-  out[1] = (tsn >> 16) & 0xFF;
-  out[2] = (tsn >> 8) & 0xFF;
-  out[3] = tsn & 0xFF;
-  out[4] = (streamId >> 8) & 0xFF;
-  out[5] = streamId & 0xFF;
-  out[6] = (streamSeq >> 8) & 0xFF;
-  out[7] = streamSeq & 0xFF;
-  out[8] = (ppid >> 24) & 0xFF;
-  out[9] = (ppid >> 16) & 0xFF;
-  out[10] = (ppid >> 8) & 0xFF;
-  out[11] = ppid & 0xFF;
+  out[0] = ((tsn >> 24) & 0xFF) as@ u8;
+  out[1] = ((tsn >> 16) & 0xFF) as@ u8;
+  out[2] = ((tsn >> 8) & 0xFF) as@ u8;
+  out[3] = (tsn & 0xFF) as@ u8;
+  out[4] = ((streamId >> 8) & 0xFF) as@ u8;
+  out[5] = (streamId & 0xFF) as@ u8;
+  out[6] = ((streamSeq >> 8) & 0xFF) as@ u8;
+  out[7] = (streamSeq & 0xFF) as@ u8;
+  out[8] = ((ppid >> 24) & 0xFF) as@ u8;
+  out[9] = ((ppid >> 16) & 0xFF) as@ u8;
+  out[10] = ((ppid >> 8) & 0xFF) as@ u8;
+  out[11] = (ppid & 0xFF) as@ u8;
   for (i32 i = 0; i < payload.len(); i++) { out[12 + i] = payload[i]; }
   return out;
 }
@@ -276,19 +276,19 @@ export u8[] dataValue(i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] paylo
 /** The TSN a DATA chunk carries. */
 export i32 dataTsn(u8[] value) {
   if (value.len() < 12) { return 0; }
-  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+  return (value[0] as i32 << 24) | (value[1] as i32 << 16) | (value[2] as i32 << 8) | value[3] as i32;
 }
 
 /** Its stream id, stream sequence and protocol identifier. */
 export i32 dataStreamId(u8[] value) {
-  return value.len() < 12 ? -1 : (value[4] << 8) | value[5];
+  return value.len() < 12 ? -1 : (value[4] as i32 << 8) | value[5] as i32;
 }
 export i32 dataStreamSeq(u8[] value) {
-  return value.len() < 12 ? -1 : (value[6] << 8) | value[7];
+  return value.len() < 12 ? -1 : (value[6] as i32 << 8) | value[7] as i32;
 }
 export i32 dataPpid(u8[] value) {
   if (value.len() < 12) { return -1; }
-  return (value[8] << 24) | (value[9] << 16) | (value[10] << 8) | value[11];
+  return (value[8] as i32 << 24) | (value[9] as i32 << 16) | (value[10] as i32 << 8) | value[11] as i32;
 }
 
 /** Its payload, which is everything after the twelve-byte prologue. */
@@ -364,23 +364,23 @@ export u8[] sackValue(i32 cumulativeTsn, i32 window) {
  */
 export u8[] sackValueGaps(i32 cumulativeTsn, i32 window, i32[] starts, i32[] ends, i32 runs) {
   u8[] out = u8[].filled(12 + runs * 4, 0);
-  out[0] = (cumulativeTsn >> 24) & 0xFF;
-  out[1] = (cumulativeTsn >> 16) & 0xFF;
-  out[2] = (cumulativeTsn >> 8) & 0xFF;
-  out[3] = cumulativeTsn & 0xFF;
-  out[4] = (window >> 24) & 0xFF;
-  out[5] = (window >> 16) & 0xFF;
-  out[6] = (window >> 8) & 0xFF;
-  out[7] = window & 0xFF;
-  out[8] = (runs >> 8) & 0xFF;
-  out[9] = runs & 0xFF;
+  out[0] = ((cumulativeTsn >> 24) & 0xFF) as@ u8;
+  out[1] = ((cumulativeTsn >> 16) & 0xFF) as@ u8;
+  out[2] = ((cumulativeTsn >> 8) & 0xFF) as@ u8;
+  out[3] = (cumulativeTsn & 0xFF) as@ u8;
+  out[4] = ((window >> 24) & 0xFF) as@ u8;
+  out[5] = ((window >> 16) & 0xFF) as@ u8;
+  out[6] = ((window >> 8) & 0xFF) as@ u8;
+  out[7] = (window & 0xFF) as@ u8;
+  out[8] = ((runs >> 8) & 0xFF) as@ u8;
+  out[9] = (runs & 0xFF) as@ u8;
   // Duplicate TSNs are not reported. A peer uses them to tell a spurious retransmission from a
   // necessary one; nothing here changes its behaviour on the answer, so claiming none is honest.
   for (i32 i = 0; i < runs; i++) {
-    out[12 + i * 4] = (starts[i] >> 8) & 0xFF;
-    out[13 + i * 4] = starts[i] & 0xFF;
-    out[14 + i * 4] = (ends[i] >> 8) & 0xFF;
-    out[15 + i * 4] = ends[i] & 0xFF;
+    out[12 + i * 4] = ((starts[i] >> 8) & 0xFF) as@ u8;
+    out[13 + i * 4] = (starts[i] & 0xFF) as@ u8;
+    out[14 + i * 4] = ((ends[i] >> 8) & 0xFF) as@ u8;
+    out[15 + i * 4] = (ends[i] & 0xFF) as@ u8;
   }
   return out;
 }
@@ -388,25 +388,25 @@ export u8[] sackValueGaps(i32 cumulativeTsn, i32 window, i32[] starts, i32[] end
 /** How many gap blocks a SACK carries. */
 export i32 sackGaps(u8[] value) {
   if (value.len() < 12) { return 0; }
-  return (value[8] << 8) | value[9];
+  return (value[8] as i32 << 8) | value[9] as i32;
 }
 
 /** The start offset of gap block `i`, counted from the cumulative TSN. */
 export i32 sackGapStart(u8[] value, i32 i) {
   if (i < 0 || i >= sackGaps(value) || value.len() < 16 + i * 4) { return 0; }
-  return (value[12 + i * 4] << 8) | value[13 + i * 4];
+  return (value[12 + i * 4] as i32 << 8) | value[13 + i * 4] as i32;
 }
 
 /** The end offset of gap block `i`, counted from the cumulative TSN. */
 export i32 sackGapEnd(u8[] value, i32 i) {
   if (i < 0 || i >= sackGaps(value) || value.len() < 16 + i * 4) { return 0; }
-  return (value[14 + i * 4] << 8) | value[15 + i * 4];
+  return (value[14 + i * 4] as i32 << 8) | value[15 + i * 4] as i32;
 }
 
 /** The cumulative TSN a SACK acknowledges. */
 export i32 sackCumulative(u8[] value) {
   if (value.len() < 12) { return -1; }
-  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+  return (value[0] as i32 << 24) | (value[1] as i32 << 16) | (value[2] as i32 << 8) | value[3] as i32;
 }
 
 // ── The association: the counters, in one place, because forgetting one loses a message ──────────
@@ -1163,10 +1163,10 @@ export struct Association {
   u8[] shutdown(this) {
     this.shuttingDown = 1;
     u8[] body = u8[].filled(4, 0);
-    body[0] = (this.cumulativeTsn >> 24) & 0xFF;
-    body[1] = (this.cumulativeTsn >> 16) & 0xFF;
-    body[2] = (this.cumulativeTsn >> 8) & 0xFF;
-    body[3] = this.cumulativeTsn & 0xFF;
+    body[0] = ((this.cumulativeTsn >> 24) & 0xFF) as@ u8;
+    body[1] = ((this.cumulativeTsn >> 16) & 0xFF) as@ u8;
+    body[2] = ((this.cumulativeTsn >> 8) & 0xFF) as@ u8;
+    body[3] = (this.cumulativeTsn & 0xFF) as@ u8;
     return packet(5000, 5000, this.theirTag, chunk(chunkShutdown(), 0, body));
   }
 
@@ -1211,18 +1211,18 @@ export u8[] dcepOpenMessage(i32 channelType, i32 priority, i32 reliability, stri
   u8[] lab = label.toBytes();
   u8[] pro = protocol.toBytes();
   u8[] out = u8[].filled(12 + lab.len() + pro.len(), 0);
-  out[0] = dcepOpen();
-  out[1] = channelType;
-  out[2] = (priority >> 8) & 0xFF;
-  out[3] = priority & 0xFF;
-  out[4] = (reliability >> 24) & 0xFF;
-  out[5] = (reliability >> 16) & 0xFF;
-  out[6] = (reliability >> 8) & 0xFF;
-  out[7] = reliability & 0xFF;
-  out[8] = (lab.len() >> 8) & 0xFF;
-  out[9] = lab.len() & 0xFF;
-  out[10] = (pro.len() >> 8) & 0xFF;
-  out[11] = pro.len() & 0xFF;
+  out[0] = dcepOpen() as@ u8;
+  out[1] = channelType as@ u8;
+  out[2] = ((priority >> 8) & 0xFF) as@ u8;
+  out[3] = (priority & 0xFF) as@ u8;
+  out[4] = ((reliability >> 24) & 0xFF) as@ u8;
+  out[5] = ((reliability >> 16) & 0xFF) as@ u8;
+  out[6] = ((reliability >> 8) & 0xFF) as@ u8;
+  out[7] = (reliability & 0xFF) as@ u8;
+  out[8] = ((lab.len() >> 8) & 0xFF) as@ u8;
+  out[9] = (lab.len() & 0xFF) as@ u8;
+  out[10] = ((pro.len() >> 8) & 0xFF) as@ u8;
+  out[11] = (pro.len() & 0xFF) as@ u8;
   for (i32 i = 0; i < lab.len(); i++) { out[12 + i] = lab[i]; }
   for (i32 i = 0; i < pro.len(); i++) { out[12 + lab.len() + i] = pro[i]; }
   return out;
@@ -1231,14 +1231,14 @@ export u8[] dcepOpenMessage(i32 channelType, i32 priority, i32 reliability, stri
 /** A DATA_CHANNEL_ACK, which is one byte and says the channel is open. */
 export u8[] dcepAckMessage() {
   u8[] out = u8[].filled(1, 0);
-  out[0] = dcepAck();
+  out[0] = dcepAck() as@ u8;
   return out;
 }
 
 /** The label out of a DATA_CHANNEL_OPEN, or empty. */
 export string dcepLabel(u8[] msg) {
-  if (msg.len() < 12 || msg[0] != dcepOpen()) { return ""; }
-  i32 n = (msg[8] << 8) | msg[9];
+  if (msg.len() < 12 || msg[0] as i32 != dcepOpen()) { return ""; }
+  i32 n = (msg[8] as i32 << 8) | msg[9] as i32;
   if (12 + n > msg.len()) { return ""; }
   u8[] lab = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { lab[i] = msg[12 + i]; }
@@ -1249,8 +1249,8 @@ export string dcepLabel(u8[] msg) {
 export u8[] stateCookie(u8[] value) {
   i32 at = 16;
   while (at + 4 <= value.len()) {
-    i32 kind = (value[at] << 8) | value[at + 1];
-    i32 len = (value[at + 2] << 8) | value[at + 3];
+    i32 kind = (value[at] as i32 << 8) | value[at + 1] as i32;
+    i32 len = (value[at + 2] as i32 << 8) | value[at + 3] as i32;
     if (len < 4 || at + len > value.len()) { return u8[](); }
     if (kind == 7) {
       u8[] c = u8[].filled(len - 4, 0);

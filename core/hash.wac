@@ -22,7 +22,7 @@
 export i32 hashBytes(u8[] b) {
   u32 h = 2166136261;
   for (i32 i = 0; i < b.len(); i++) {
-    h = h ^ (b[i] as@ u32);
+    h = h ^ (b[i] as u32);
     h = h * 16777619;
   }
   return h as@ i32;

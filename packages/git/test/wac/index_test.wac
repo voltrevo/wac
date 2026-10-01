@@ -231,12 +231,12 @@ export string test_a_zeroed_stat_cache_still_leaves_git_clean(Core core, Cli cli
   if (!f.ok) { return t.report(); }
   u8[] b = f.bytes;
 
-  i32 n = (b[8] << 24) | (b[9] << 16) | (b[10] << 8) | b[11];
+  i32 n = (b[8] as i32 << 24) | (b[9] as i32 << 16) | (b[10] as i32 << 8) | b[11] as i32;
   i32 at = 12;
   for (i32 e = 0; e < n; e++) {
     for (i32 i = 0; i < 24; i++) { b[at + i] = 0; }     // ctime, mtime, dev, ino
     for (i32 i = 28; i < 36; i++) { b[at + i] = 0; }    // uid, gid
-    i32 nameLen = ((b[at + 60] << 8) | b[at + 61]) & 0x0FFF;
+    i32 nameLen = ((b[at + 60] as i32 << 8) | b[at + 61] as i32) & 0x0FFF;
     i32 used = 62 + nameLen;
     at = at + used + (8 - (used % 8));
   }

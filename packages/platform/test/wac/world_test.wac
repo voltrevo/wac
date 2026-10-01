@@ -396,7 +396,7 @@ i32 runsWithNoPrintable(u8[] b) {
   bool inRun = false;
   bool printable = false;
   for (i32 i = 0; i < b.len(); i++) {
-    i32 x = b[i];
+    i32 x = b[i] as i32;
     bool space = x == ' ' || x == '\n' || x == '\t' || x == '\r';
     if (space) {
       if (inRun && !printable) { runs++; }
@@ -417,7 +417,7 @@ i32 atoi(string s) {
   i32 n = 0;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] < '0' || b[i] > '9') { continue; }
-    n = n * 10 + (b[i] - '0');
+    n = n * 10 + (b[i] as i32 - '0');
   }
   return n;
 }

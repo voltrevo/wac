@@ -209,7 +209,7 @@ export string test_the_certificate_stands_on_its_own_key(Core core, Cli cli) {
 u8[] edit(u8[] b, i32 at, i32 to) {
   u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
-  out[at] = out[at] == to ? to + 1 : to;
+  out[at] = (out[at] as i32 == to ? to + 1 : to) as@ u8;
   return out;
 }
 

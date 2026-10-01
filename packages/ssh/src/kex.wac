@@ -80,7 +80,7 @@ export u8[]? sharedSecret(u8[] secret, u8[] peerPublic) {
   if (secret.len() != 32 || peerPublic.len() != 32) { return null; }
   u8[] k = x25519(secret, peerPublic);
   i32 acc = 0;
-  for (i32 i = 0; i < 32; i++) { acc = acc | k[i]; }
+  for (i32 i = 0; i < 32; i++) { acc = acc | k[i] as i32; }
   if (acc == 0) { return null; }
   return k;
 }

@@ -23,7 +23,7 @@ i32 sum(string s) {
   u8[] b = s.toBytes();
   i32 h = 7;
   for (i32 i = 0; i < b.len(); i++) {
-    h = (h * 31 + b[i]) & 2147483647;
+    h = (h * 31 + b[i] as i32) & 2147483647;
   }
   return h;
 }
@@ -92,7 +92,7 @@ export i32 literalBytes() {
 i32 sumBytes(u8[] b) {
   i32 h = 7;
   for (i32 i = 0; i < b.len(); i++) {
-    h = (h * 31 + b[i]) & 2147483647;
+    h = (h * 31 + b[i] as i32) & 2147483647;
   }
   return h;
 }

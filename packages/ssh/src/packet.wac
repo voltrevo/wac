@@ -94,14 +94,14 @@ export Framed unframe(u8[] src, i32 at, i32 end) {
   if (at < 0 || end > src.len() || at > end) { return Framed(Status.Malformed, u8[](), 0); }
   if (end - at < 4) { return Framed(Status.Incomplete, u8[](), 0); }
 
-  i32 packetLength = (src[at] << 24) | (src[at + 1] << 16) | (src[at + 2] << 8) | src[at + 3];
+  i32 packetLength = (src[at] as i32 << 24) | (src[at + 1] as i32 << 16) | (src[at + 2] as i32 << 8) | src[at + 3] as i32;
   // A packet has to carry a padding-length byte and at least the 4 bytes of padding it promises.
   if (packetLength < 5 || packetLength > maxPacket()) {
     return Framed(Status.Malformed, u8[](), 0);
   }
   if (end - at < 4 + packetLength) { return Framed(Status.Incomplete, u8[](), 0); }
 
-  i32 padLength = src[at + 4];
+  i32 padLength = src[at + 4] as i32;
   if (padLength < 4) { return Framed(Status.Malformed, u8[](), 0); }
   i32 payloadLength = packetLength - padLength - 1;
   if (payloadLength < 0) { return Framed(Status.Malformed, u8[](), 0); }

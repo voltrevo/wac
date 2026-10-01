@@ -135,7 +135,7 @@ u8[] mutate(Rng rng, u8[] base) {
   i32 kind = rng.upto(6);
   if (kind == 0) {
     // Insert an interesting byte somewhere.
-    return spliced(base, rng.upto(base.len() + 1), [bytes[rng.upto(bytes.len())]], 0);
+    return spliced(base, rng.upto(base.len() + 1), [bytes[rng.upto(bytes.len())] as@ u8], 0);
   }
   if (kind == 1) {
     if (base.len() == 0) { return base; }
@@ -143,7 +143,7 @@ u8[] mutate(Rng rng, u8[] base) {
   }
   if (kind == 2) {
     if (base.len() == 0) { return base; }
-    return spliced(base, rng.upto(base.len()), [bytes[rng.upto(bytes.len())]], 1);
+    return spliced(base, rng.upto(base.len()), [bytes[rng.upto(bytes.len())] as@ u8], 1);
   }
   if (kind == 3) {
     // Truncate, which should produce "incomplete" far more often than "bad".

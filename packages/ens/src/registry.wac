@@ -43,8 +43,8 @@ export u8[] ownerSlot(u8[] node) {
   // The slot number, big-endian in the low bytes — zero here, and written out rather than left implicit so
   // that a second mapping in this file would only have to change the number.
   i32 slot = RECORDS_SLOT();
-  joined[63] = slot & 0xFF;
-  joined[62] = (slot >> 8) & 0xFF;
+  joined[63] = (slot & 0xFF) as@ u8;
+  joined[62] = ((slot >> 8) & 0xFF) as@ u8;
   return keccak256(joined);
 }
 

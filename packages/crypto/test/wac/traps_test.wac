@@ -147,7 +147,7 @@ export string test_the_legal_widths_do_not_trap() {
 /** A buffer of `n` bytes holding the first `n` of a genuine value, or that value then zeros. */
 u8[] padded(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n && i < 64; i++) { out[i] = (i + seed) & 0xFF; }
+  for (i32 i = 0; i < n && i < 64; i++) { out[i] = ((i + seed) & 0xFF) as@ u8; }
   return out;
 }
 

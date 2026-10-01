@@ -42,9 +42,9 @@ export static i32 NTOR_REPLY_LEN = 64;
  */
 export u8[] create2Handshake(u8[] payload) {
   if (payload.len() < 4) { return u8[](); }
-  i32 hType = (payload[0] * 256) + payload[1];
+  i32 hType = (payload[0] as i32 * 256) + payload[1] as i32;
   if (hType != handshakeNtor()) { return u8[](); }
-  i32 hLen = (payload[2] * 256) + payload[3];
+  i32 hLen = (payload[2] as i32 * 256) + payload[3] as i32;
   if (hLen != NTOR_REQUEST_LEN) { return u8[](); }
   if (4 + hLen > payload.len()) { return u8[](); }
   u8[] out = u8[].filled(hLen, 0);
@@ -56,8 +56,8 @@ export u8[] create2Handshake(u8[] payload) {
 export u8[] created2Cell(i32 circId, u8[] reply) {
   if (reply.len() == 0 || reply.len() > 507) { return u8[](); }
   u8[] payload = u8[].filled(2 + reply.len(), 0);
-  payload[0] = (reply.len() >> 8) & 0xFF;
-  payload[1] = reply.len() & 0xFF;
+  payload[0] = ((reply.len() >> 8) & 0xFF) as@ u8;
+  payload[1] = (reply.len() & 0xFF) as@ u8;
   for (i32 i = 0; i < reply.len(); i++) { payload[2 + i] = reply[i]; }
   return encodeFixed(circId, cmdCreated2(), payload);
 }
@@ -119,7 +119,7 @@ export Created answerCreate2(
 /** A DESTROY cell with a reason byte, tor-spec §5.4. */
 export u8[] destroyCell(i32 circId, i32 reason) {
   u8[] payload = u8[].filled(1, 0);
-  payload[0] = reason;
+  payload[0] = reason as@ u8;
   return encodeFixed(circId, cmdDestroy(), payload);
 }
 
@@ -195,7 +195,7 @@ export struct Extend {
 export Extend parseExtend2(u8[] payload) {
   Extend bad = Extend(false, u8[](), -1, u8[]());
   if (payload.len() < 1) { return bad; }
-  i32 n = payload[0];
+  i32 n = payload[0] as i32;
   if (n == 0) { return bad; }
 
   // Walk the specifiers to find where they end, then keep the whole run. They are forwarded as
@@ -206,8 +206,8 @@ export Extend parseExtend2(u8[] payload) {
   i32 edCount = 0;
   for (i32 i = 0; i < n; i++) {
     if (at + 2 > payload.len()) { return bad; }
-    i32 type = payload[at];
-    i32 length = payload[at + 1];
+    i32 type = payload[at] as i32;
+    i32 length = payload[at + 1] as i32;
     // Redundant with the header check below — if a specifier overran, `at` ends past the payload and
     // `at + 4 > payload.len()` catches it, so `specs` can never be allocated longer than the input.
     // Kept because it says what the loop maintains, and removing it survives the tests, as it should.
@@ -229,13 +229,13 @@ export Extend parseExtend2(u8[] payload) {
 
   i32 specEnd = at;
   if (at + 4 > payload.len()) { return bad; }
-  i32 hType = (payload[at] * 256) + payload[at + 1];
-  i32 hLen = (payload[at + 2] * 256) + payload[at + 3];
+  i32 hType = (payload[at] as i32 * 256) + payload[at + 1] as i32;
+  i32 hLen = (payload[at + 2] as i32 * 256) + payload[at + 3] as i32;
   at = at + 4;
   if (at + hLen > payload.len()) { return bad; }
 
   u8[] specs = u8[].filled(specEnd, 0);
-  specs[0] = n;
+  specs[0] = n as@ u8;
   for (i32 i = 1; i < specEnd; i++) { specs[i] = payload[i]; }
   u8[] handshake = u8[].filled(hLen, 0);
   for (i32 i = 0; i < hLen; i++) { handshake[i] = payload[at + i]; }
@@ -256,12 +256,12 @@ export static i32 LS_ED25519_IDENTITY = 3;
  */
 export u8[] extendTarget(u8[] linkSpecifiers) {
   if (linkSpecifiers.len() < 1) { return u8[](); }
-  i32 n = linkSpecifiers[0];
+  i32 n = linkSpecifiers[0] as i32;
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
     if (at + 2 > linkSpecifiers.len()) { return u8[](); }
-    i32 type = linkSpecifiers[at];
-    i32 length = linkSpecifiers[at + 1];
+    i32 type = linkSpecifiers[at] as i32;
+    i32 length = linkSpecifiers[at + 1] as i32;
     if (at + 2 + length > linkSpecifiers.len()) { return u8[](); }
     if (type == LS_IPV4 && length == 6) {
       u8[] out = u8[].filled(6, 0);
@@ -295,18 +295,18 @@ export bool mayExtendTo(u8[] linkSpecifiers, u8[] ourFingerprint) {
   u8[] wants = extendIdentity(linkSpecifiers);
   if (wants.len() != 20 || ourFingerprint.len() != 20) { return true; }
   i32 diff = 0;
-  for (i32 i = 0; i < 20; i++) { diff = diff | (wants[i] ^ ourFingerprint[i]); }
+  for (i32 i = 0; i < 20; i++) { diff = diff | (wants[i] as i32 ^ ourFingerprint[i] as i32); }
   return diff != 0;
 }
 
 export u8[] extendIdentity(u8[] linkSpecifiers) {
   if (linkSpecifiers.len() < 1) { return u8[](); }
-  i32 n = linkSpecifiers[0];
+  i32 n = linkSpecifiers[0] as i32;
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
     if (at + 2 > linkSpecifiers.len()) { return u8[](); }
-    i32 type = linkSpecifiers[at];
-    i32 length = linkSpecifiers[at + 1];
+    i32 type = linkSpecifiers[at] as i32;
+    i32 length = linkSpecifiers[at + 1] as i32;
     if (at + 2 + length > linkSpecifiers.len()) { return u8[](); }
     if (type == LS_LEGACY_IDENTITY && length == 20) {
       u8[] out = u8[].filled(20, 0);
@@ -327,8 +327,8 @@ export u8[] extendIdentity(u8[] linkSpecifiers) {
 export u8[] extended2Body(u8[] reply) {
   if (reply.len() == 0 || reply.len() > 65535) { return u8[](); }
   u8[] out = u8[].filled(2 + reply.len(), 0);
-  out[0] = (reply.len() >> 8) & 0xFF;
-  out[1] = reply.len() & 0xFF;
+  out[0] = ((reply.len() >> 8) & 0xFF) as@ u8;
+  out[1] = (reply.len() & 0xFF) as@ u8;
   for (i32 i = 0; i < reply.len(); i++) { out[2 + i] = reply[i]; }
   return out;
 }
@@ -367,7 +367,7 @@ export u8[] kdfTor(u8[] k0, i32 outLen) {
   while (produced < outLen) {
     u8[] input = u8[].filled(k0.len() + 1, 0);
     for (i32 i = 0; i < k0.len(); i++) { input[i] = k0[i]; }
-    input[k0.len()] = counter;
+    input[k0.len()] = counter as@ u8;
     u8[] block = sha1(input);
     for (i32 i = 0; i < block.len() && produced < outLen; i++) {
       out[produced] = block[i];
@@ -452,7 +452,7 @@ export Begin parseBegin(u8[] body) {
   i32 port = 0;
   for (i32 i = colon + 1; i < nul; i++) {
     if (body[i] < 48 || body[i] > 57) { return bad; }
-    port = port * 10 + (body[i] - 48);
+    port = port * 10 + (body[i] as i32 - 48);
     if (port > 65535) { return bad; }
   }
   if (port < 1) { return bad; }

@@ -83,7 +83,7 @@ export Rewritten toExtended(u8[] pattern) {
   // literal plus, which is a different pattern that happens to look reasonable.
   bool quantifiable = false;
   while (i < pattern.len()) {
-    i32 c = pattern[i];
+    i32 c = pattern[i] as i32;
 
     // A bracket expression is a POSIX bracket expression in both dialects — none of the six operators is
     // special inside one, and `[|]` must not become `[\|]` — so it is handed to `posix.wac` whole. That
@@ -109,7 +109,7 @@ export Rewritten toExtended(u8[] pattern) {
     }
 
     if (c == '\\' && i + 1 < pattern.len()) {
-      i32 next = pattern[i + 1];
+      i32 next = pattern[i + 1] as i32;
       i32 anchor = bufferAnchor(next);
       if (anchor >= 0) {
         unitStart = out.len;
@@ -142,7 +142,7 @@ export Rewritten toExtended(u8[] pattern) {
           out.push('{');
           i = i + 2;
           while (i < pattern.len() && !(pattern[i] == '\\' && i + 1 < pattern.len() && pattern[i + 1] == '}')) {
-            out.push(pattern[i]);
+            out.push(pattern[i] as i32);
             i++;
           }
           if (i + 1 >= pattern.len()) {

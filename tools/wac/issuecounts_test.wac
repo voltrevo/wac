@@ -70,7 +70,7 @@ i32 atoiAt(string s, i32 from, i32 to) {
   i32 v = 0;
   for (i32 i = from; i < to; i++) {
     if (b[i] < '0' || b[i] > '9') { return 0 - 1; }
-    v = v * 10 + (b[i] - '0');
+    v = v * 10 + (b[i] as i32 - '0');
   }
   return v;
 }

@@ -26,7 +26,7 @@ export i32 repBadAddress() { return 8; }
  * is all of them, for CONNECT — do not look.
  */
 export u8[] socksReply(i32 code) {
-  return [0x05, code, 0x00, 0x01, 0, 0, 0, 0, 0, 0] as u8[];
+  return [0x05, code as@ u8, 0x00, 0x01, 0, 0, 0, 0, 0, 0] as u8[];
 }
 
 /**
@@ -38,7 +38,7 @@ export u8[] socksReply(i32 code) {
  */
 export i32 replyForEndReason(u8[] body) {
   if (body.len() == 0) { return repFailure(); }
-  i32 reason = body[0];
+  i32 reason = body[0] as i32;
   if (reason == 2) { return repUnreachable(); }   // RESOLVEFAILED
   if (reason == 3) { return repRefused(); }       // CONNECTREFUSED
   if (reason == 4) { return repNotAllowed(); }    // EXITPOLICY
@@ -53,7 +53,7 @@ export i32 replyForEndReason(u8[] body) {
 /** The reason, named, for the log. A number here sends someone to tor-spec for no reason. */
 export string endReasonName(u8[] body) {
   if (body.len() == 0) { return "no reason given"; }
-  i32 r = body[0];
+  i32 r = body[0] as i32;
   if (r == 1) { return "misc"; }
   if (r == 2) { return "could not resolve the name"; }
   if (r == 3) { return "connection refused"; }
@@ -74,15 +74,15 @@ export string endReasonName(u8[] body) {
 /** `host:port` from a SOCKS5 request, or "" if the request is not yet whole. */
 export string targetOf(u8[] r) {
   if (r.len() < 5) { return ""; }
-  i32 atyp = r[3];
+  i32 atyp = r[3] as i32;
   i32 at = 4;
   string host = "";
   if (atyp == 0x01) {
     if (r.len() < 10) { return ""; }
-    host = itoa(r[4]) + "." + itoa(r[5]) + "." + itoa(r[6]) + "." + itoa(r[7]);
+    host = itoa(r[4] as i32) + "." + itoa(r[5] as i32) + "." + itoa(r[6] as i32) + "." + itoa(r[7] as i32);
     at = 8;
   } else if (atyp == 0x03) {
-    i32 n = r[4];
+    i32 n = r[4] as i32;
     if (r.len() < 5 + n + 2) { return ""; }
     host = string.fromBytes(sliceOf(r, 5, 5 + n));
     at = 5 + n;
@@ -93,12 +93,12 @@ export string targetOf(u8[] r) {
   } else {
     return "!";
   }
-  i32 port = (r[at] << 8) | r[at + 1];
+  i32 port = (r[at] as i32 << 8) | r[at + 1] as i32;
   return host + ":" + itoa(port);
 }
 
 /** How many bytes the whole request occupies, once `targetOf` has said it is whole. */
 export i32 requestLength(u8[] r) {
   if (r[3] == 0x01) { return 10; }
-  return 5 + r[4] + 2;
+  return 5 + r[4] as i32 + 2;
 }

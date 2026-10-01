@@ -1,0 +1,4 @@
+// expect: refused
+// why: an unsigned integer has no negation, and u8 and u16 are unsigned integers like u32
+// from: spec/next ch22, applied to the packed types once they became ordinary
+export u8 f(u8 b) { return -b; }

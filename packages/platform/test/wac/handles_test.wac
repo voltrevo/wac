@@ -51,7 +51,7 @@ i32 digitsAt(string s, i32 from) {
   i32 count = 0;
   i32 i = from;
   while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
-    n = n * 10 + (b[i] - '0');
+    n = n * 10 + (b[i] as i32 - '0');
     count = count + 1;
     i = i + 1;
   }

@@ -136,7 +136,7 @@ export string test_json_array_growth() {
 JsonObject manyMembers(i32 n) {
   JsonObject o = JsonObject.create();
   for (i32 i = 0; i < n; i++) {
-    o.push([65 + i], numberOf(i as f64));
+    o.push([(65 + i) as@ u8], numberOf(i as f64));
   }
   // A duplicate of the first key, with a different value. Lookup must still find the first.
   o.push([65] as u8[], numberOf(999.0));
@@ -166,7 +166,7 @@ export string test_lookup_agrees_across_the_index_threshold() {
   f64 sum = 0.0;
   for (i32 round = 0; round < 40; round++) {
     for (i32 i = 0; i < n; i++) {
-      sum = sum + numValue(o.get([65 + i])!);
+      sum = sum + numValue(o.get([(65 + i) as@ u8])!);
     }
   }
   // 0+1+..+19 per round. The duplicate of key "A" holds 999, so a lookup resolving to it

@@ -86,10 +86,10 @@ export string test_a_real_signature_still_verifies() {
   // And the encodings of the two identities are the ones the format specifies, which every refusal
   // below depends on being an input the decoder accepts rather than one it rejects as malformed.
   t.eqI32(infinitySig().len(), 96, "the G2 identity is not 96 bytes");
-  t.eqI32(infinitySig()[0], 0xc0, "the G2 identity does not begin 0xc0");
-  t.eqI32(infinitySig()[1], 0, "the G2 identity is not otherwise zero");
+  t.eqI32(infinitySig()[0] as i32, 0xc0, "the G2 identity does not begin 0xc0");
+  t.eqI32(infinitySig()[1] as i32, 0, "the G2 identity is not otherwise zero");
   t.eqI32(infinityKey().len(), 48, "the G1 identity is not 48 bytes");
-  t.eqI32(infinityKey()[0], 0xc0, "the G1 identity does not begin 0xc0");
+  t.eqI32(infinityKey()[0] as i32, 0xc0, "the G1 identity does not begin 0xc0");
   return t.report();
 }
 
@@ -309,7 +309,7 @@ export string test_a_batch_weight_is_two_words_and_never_zero() {
   u8[] tr = batchTranscript(pks, msgs, sigs, [9, 9] as u8[]);
   // Everything the batch commits to: the entropy and then each term's three fields in order.
   t.eqI32(tr.len(), 2 + (48 + 32 + 96) * 2, "the transcript is not the concatenation it claims to be");
-  t.eqI32(tr[0], 9, "the transcript does not begin with the entropy");
+  t.eqI32(tr[0] as i32, 9, "the transcript does not begin with the entropy");
 
   bool allZero = true;
   bool allSame = true;

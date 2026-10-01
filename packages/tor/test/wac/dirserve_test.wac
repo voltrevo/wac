@@ -125,9 +125,9 @@ export string test_microdescriptors_are_batched_with_a_hyphen(Core core, Cli cli
   // Two digests, one of them deliberately containing a `+` — which real ones do, roughly half the
   // time, and which a fixture chosen from a small sample can easily fail to include.
   u8[] withPlus = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { withPlus[i] = (i * 7 + 251) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { withPlus[i] = ((i * 7 + 251) & 0xFF) as@ u8; }
   u8[] other = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { other[i] = (i * 13 + 5) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { other[i] = ((i * 13 + 5) & 0xFF) as@ u8; }
   string a = b64Unpadded(withPlus);
   string b = b64Unpadded(other);
   t.isTrue(hasPlus(a), "the fixture digest really does contain a + character");
@@ -175,9 +175,9 @@ string swapCase(string s) {
   u8[] b = s.toBytes();
   u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c >= 65 && c <= 90) { c = c + 32; } else if (c >= 97 && c <= 122) { c = c - 32; }
-    out[i] = c;
+    out[i] = c as@ u8;
   }
   return string.fromBytes(out);
 }
@@ -227,8 +227,8 @@ string lower(string s) {
   u8[] b = s.toBytes();
   u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
-    out[i] = (c >= 65 && c <= 90) ? c + 32 : c;
+    i32 c = b[i] as i32;
+    out[i] = ((c >= 65 && c <= 90) ? c + 32 : c) as@ u8;
   }
   return string.fromBytes(out);
 }

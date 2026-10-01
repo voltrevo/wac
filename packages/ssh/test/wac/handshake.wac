@@ -215,7 +215,7 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   if (!c.ok) { return failed(c, c.error); }
   if (serverKexInit.len() == 0 || serverKexInit[0] != 20) {
     return failed(c, "expected KEXINIT, got message " +
-                     itoa(serverKexInit.len() == 0 ? -1 : serverKexInit[0]));
+                     itoa(serverKexInit.len() == 0 ? -1 : serverKexInit[0] as i32));
   }
 
   // Key exchange.
@@ -244,7 +244,7 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   if (!c.ok) { return failed(c, c.error); }
   if (theirNewKeys.len() == 0 || theirNewKeys[0] != 21) {
     return failed(c, "expected NEWKEYS, got message " +
-                     itoa(theirNewKeys.len() == 0 ? -1 : theirNewKeys[0]));
+                     itoa(theirNewKeys.len() == 0 ? -1 : theirNewKeys[0] as i32));
   }
 
   // 'C' is client-to-server and 'D' server-to-client, RFC 4253 §7.2. The session id is H for the
@@ -261,7 +261,7 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
     u8[] p = c.next(cli);
     if (p.len() == 0) { continue; }
     if (p[0] == 7) { sawExtInfo = true; }
-    if (p[0] == msgServiceAccept()) { accepted = true; }
+    if (p[0] as i32 == msgServiceAccept()) { accepted = true; }
   }
   if (!c.ok) { return failed(c, c.error); }
   if (!accepted) { return failed(c, "never received SSH_MSG_SERVICE_ACCEPT"); }
@@ -278,10 +278,10 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   for (i32 i = 0; i < 8 && !authed && c.ok; i++) {
     u8[] p = c.next(cli);
     if (p.len() == 0) { continue; }
-    if (p[0] == msgUserAuthFailure()) {
+    if (p[0] as i32 == msgUserAuthFailure()) {
       return failed(c, "the server rejected our signature");
     }
-    if (p[0] == msgUserAuthSuccess()) { authed = true; }
+    if (p[0] as i32 == msgUserAuthSuccess()) { authed = true; }
   }
   if (!c.ok) { return failed(c, c.error); }
   if (!authed) { return failed(c, "never received SSH_MSG_USERAUTH_SUCCESS"); }

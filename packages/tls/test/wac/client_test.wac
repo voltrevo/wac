@@ -72,7 +72,7 @@ Ours ourServer(T t, Cli cli, Core core, string dir) {
   u8[] b = log.toBytes();
   i32 at = log.indexOf(MARK) + MARK.len();
   i32 port = 0;
-  for (i32 i = at; i < b.len() && b[i] >= '0' && b[i] <= '9'; i++) { port = port * 10 + (b[i] - '0'); }
+  for (i32 i = at; i < b.len() && b[i] >= '0' && b[i] <= '9'; i++) { port = port * 10 + (b[i] as i32 - '0'); }
   return Ours(d, port, "");
 }
 
@@ -193,15 +193,15 @@ export string test_client_sends_a_client_hello_a_real_server_understands(Core co
   ClientStep st = fixedFirstFlight("wac.test", noRoots(), seed);
   u8[] hello = st.toSend;
 
-  t.eqI32(hello[0], 22, "the first record is a handshake record");
-  i32 recLen = (hello[3] << 8) | hello[4];
+  t.eqI32(hello[0] as i32, 22, "the first record is a handshake record");
+  i32 recLen = (hello[3] as i32 << 8) | hello[4] as i32;
   t.eqI32(5 + recLen, hello.len(), "the record length matches");
-  t.eqI32(hello[5], 1, "the first message is a ClientHello");
-  i32 msgLen = (hello[6] << 16) | (hello[7] << 8) | hello[8];
+  t.eqI32(hello[5] as i32, 1, "the first message is a ClientHello");
+  i32 msgLen = (hello[6] as i32 << 16) | (hello[7] as i32 << 8) | hello[8] as i32;
   t.eqI32(9 + msgLen, hello.len(), "the message length matches");
   // legacy_version must say 1.2 whatever we actually support.
-  t.eqI32(hello[9], 3, "legacy_version's first byte is 3");
-  t.eqI32(hello[10], 3, "and its second is 3 — 0x0303");
+  t.eqI32(hello[9] as i32, 3, "legacy_version's first byte is 3");
+  t.eqI32(hello[10] as i32, 3, "and its second is 3 — 0x0303");
   return t.report();
 }
 

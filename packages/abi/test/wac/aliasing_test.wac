@@ -32,10 +32,10 @@ import { T_UINT, T_BOOL, T_BYTES, T_ARRAY, T_FIXED, unhex } from "./descriptor.w
 /** A 32-byte big-endian word holding `v`. */
 u8[] word(i32 v) {
   u8[] w = u8[].filled(32, 0);
-  w[28] = (v >> 24) & 0xFF;
-  w[29] = (v >> 16) & 0xFF;
-  w[30] = (v >> 8) & 0xFF;
-  w[31] = v & 0xFF;
+  w[28] = ((v >> 24) & 0xFF) as@ u8;
+  w[29] = ((v >> 16) & 0xFF) as@ u8;
+  w[30] = ((v >> 8) & 0xFF) as@ u8;
+  w[31] = (v & 0xFF) as@ u8;
   return w;
 }
 
@@ -217,13 +217,13 @@ export string test_an_accessor_asked_for_the_wrong_variant_answers_an_empty_defa
   Value list = Value.List(Value[].filled(1, word));
 
   // Each accessor for the variant it is for.
-  t.eqI32(wordOfValue(word)[0], 7, "wordOfValue did not answer the word");
+  t.eqI32(wordOfValue(word)[0] as i32, 7, "wordOfValue did not answer the word");
   t.eqI32(bytesOfValue(bytes).len(), 3, "bytesOfValue did not answer the bytes");
   t.eqI32(listOf(list).len(), 1, "listOf did not answer the items");
 
   // And for the two it is not: a zero word, no bytes, no items — never a trap.
   t.eqI32(wordOfValue(bytes).len(), 32, "wordOfValue on Bytes did not answer a zero word");
-  t.eqI32(wordOfValue(bytes)[0], 0, "wordOfValue on Bytes answered something non-zero");
+  t.eqI32(wordOfValue(bytes)[0] as i32, 0, "wordOfValue on Bytes answered something non-zero");
   t.eqI32(wordOfValue(list).len(), 32, "wordOfValue on List did not answer a zero word");
   t.eqI32(bytesOfValue(word).len(), 32, "bytesOfValue on Word did not answer the word's bytes");
   t.eqI32(bytesOfValue(list).len(), 0, "bytesOfValue on List answered bytes");

@@ -24,14 +24,14 @@ import { sha256 } from "../../../crypto/src/sha256.wac";
 /** A relay identity: twenty bytes from a seed, as the consensus writes them. */
 string identity(i32 seed) {
   u8[] b = u8[].filled(20, 0);
-  for (i32 i = 0; i < 20; i++) { b[i] = (seed * 37 + i * 11) & 0xFF; }
+  for (i32 i = 0; i < 20; i++) { b[i] = ((seed * 37 + i * 11) & 0xFF) as@ u8; }
   return base64NoPad(b);
 }
 
 /** An ntor onion key: thirty-two bytes from a seed. */
 string onionKey(i32 seed) {
   u8[] b = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { b[i] = (seed * 53 + i * 7) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { b[i] = ((seed * 53 + i * 7) & 0xFF) as@ u8; }
   return base64NoPad(b);
 }
 

@@ -18,7 +18,7 @@ import {
 
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * a + b) & 0xFF) as@ u8; }
   return out;
 }
 

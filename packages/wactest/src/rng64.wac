@@ -36,6 +36,6 @@ export i32 next(Rng64 r) {
 /** `n` bytes, one draw each — the low eight bits, which for this generator are as good as any. */
 export u8[] randomBytes(Rng64 r, i32 n) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = next(r) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = (next(r) & 0xFF) as@ u8; }
   return out;
 }

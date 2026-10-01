@@ -41,7 +41,7 @@ i32 readyIn(u8[] buf) {
     u8[] rest = u8[].filled(buf.len() - consumed, 0);
     for (i32 i = consumed; i < buf.len(); i++) { rest[i - consumed] = buf[i]; }
     if (tlsRecordNeeded(rest) != 0) { break; }
-    consumed = consumed + 5 + ((buf[consumed + 3] << 8) | buf[consumed + 4]);
+    consumed = consumed + 5 + ((buf[consumed + 3] as i32 << 8) | buf[consumed + 4] as i32);
   }
   return consumed;
 }
@@ -138,7 +138,7 @@ export i32 main(Core core, Cli cli) {
     u8[] b = a.toBytes();
     port = 0;
     for (i32 k = 0; k < b.len() && b[k] >= '0' && b[k] <= '9'; k++) {
-      port = port * 10 + (b[k] - '0');
+      port = port * 10 + (b[k] as i32 - '0');
     }
   }
 

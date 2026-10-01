@@ -128,7 +128,7 @@ i32 numberAt(string s, i32 from) {
   i32 digits = 0;
   for (i32 i = from; i < b.len(); i++) {
     if (b[i] < '0' || b[i] > '9') { break; }
-    v = v * 10 + (b[i] - '0');
+    v = v * 10 + (b[i] as i32 - '0');
     digits = digits + 1;
   }
   return digits == 0 ? -1 : v;

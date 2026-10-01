@@ -53,7 +53,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
       if (members.len() == 0) {
         return TrSet(false, u8[](), who + ": invalid character class '" + name + "'\n");
       }
-      for (i32 k = 0; k < members.len(); k++) { out.push(members[k]); plain.push(0); }
+      for (i32 k = 0; k < members.len(); k++) { out.push(members[k] as i32); plain.push(0); }
       i = end + 2;
       continue;
     }
@@ -66,7 +66,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
         return TrSet(false, u8[](), who + ": " + string.fromBytes(sliceOf(raw, i + 2, end)) +
           ": equivalence class operand must be a single character\n");
       }
-      out.push(raw[i + 2]);
+      out.push(raw[i + 2] as i32);
       plain.push(1);
       i = end + 2;
       continue;
@@ -158,8 +158,8 @@ struct Read { i32 value; i32 at; }
 
 Read readByte(u8[] raw, i32 at) {
   if (at >= raw.len()) { return Read(0, at); }
-  if (raw[at] != '\\' || at + 1 >= raw.len()) { return Read(raw[at], at + 1); }
-  i32 c = raw[at + 1];
+  if (raw[at] != '\\' || at + 1 >= raw.len()) { return Read(raw[at] as i32, at + 1); }
+  i32 c = raw[at + 1] as i32;
   if (c == '\\') { return Read('\\', at + 2); }
   if (c == 'a') { return Read(7, at + 2); }
   if (c == 'b') { return Read(8, at + 2); }
@@ -174,7 +174,7 @@ Read readByte(u8[] raw, i32 at) {
     i32 i = at + 1;
     i32 digits = 0;
     while (i < raw.len() && digits < 3 && raw[i] >= '0' && raw[i] <= '7') {
-      v = v * 8 + (raw[i] - '0');
+      v = v * 8 + (raw[i] as i32 - '0');
       i++;
       digits++;
     }
@@ -188,7 +188,7 @@ Read readByte(u8[] raw, i32 at) {
 /** Where a `[:name:]` or `[=c=]` ends, or -1. `mark` is the `:` or `=`. */
 i32 closerAt(u8[] raw, i32 from, i32 mark) {
   for (i32 i = from; i + 1 < raw.len(); i++) {
-    if (raw[i] == mark && raw[i + 1] == ']') { return i; }
+    if (raw[i] as i32 == mark && raw[i + 1] == ']') { return i; }
   }
   return -1;
 }
@@ -225,7 +225,7 @@ Count countOf(u8[] raw, i32 from, i32 to) {
   for (i32 i = from; i < to; i++) {
     if (raw[i] < '0' || raw[i] > '9') { return Count(false, 0); }
     if (octal && raw[i] > '7') { return Count(false, 0); }
-    v = v * base + (raw[i] - '0');
+    v = v * base + (raw[i] as i32 - '0');
   }
   return Count(true, v);
 }
@@ -236,7 +236,7 @@ u8[] sliceOf(u8[] raw, i32 from, i32 to) {
   return out;
 }
 
-string charOf(i32 c) { return string.fromBytes(u8[].filled(1, c)); }
+string charOf(i32 c) { return string.fromBytes(u8[].filled(1, c as@ u8)); }
 
 /**
  * The twelve POSIX classes, in the C locale, as the bytes they name.

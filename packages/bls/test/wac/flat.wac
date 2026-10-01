@@ -223,7 +223,7 @@ export u8[] chainA(u32[] seed, i32 n) {
   for (i32 i = 0; i < n; i++) { acc = mulA(acc, seed); }
   u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
-    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
+    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = (((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32) as@ u8; }
   }
   return out;
 }
@@ -235,7 +235,7 @@ export u8[] chainB(u32[] seed, i32 n) {
   for (i32 i = 0; i < n; i++) { acc = mulB(acc, seed, t, p); }
   u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
-    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
+    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = (((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32) as@ u8; }
   }
   return out;
 }
@@ -248,7 +248,7 @@ export u8[] chainC(u32[] seed, i32 n) {
   for (i32 i = 0; i < n; i++) { mulC(buf, 0, N, 0, 24, t); }
   u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
-    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((buf[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
+    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = (((buf[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32) as@ u8; }
   }
   return out;
 }
@@ -321,7 +321,7 @@ export u8[] chainAddA(u32[] seed, i32 n) {
   for (i32 i = 0; i < n; i++) { acc = addA(acc, seed); }
   u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
-    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
+    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = (((acc[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32) as@ u8; }
   }
   return out;
 }
@@ -333,7 +333,7 @@ export u8[] chainAddC(u32[] seed, i32 n) {
   for (i32 i = 0; i < n; i++) { addC(buf, 0, N, 0, 24); }
   u8[] out = u8[].filled(N * 4, 0);
   for (i32 i = 0; i < N; i++) {
-    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = ((buf[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32; }
+    for (i32 k = 0; k < 4; k++) { out[i * 4 + k] = (((buf[i] >> ((k * 8) as@ u32)) & 0xFF) as! i32) as@ u8; }
   }
   return out;
 }

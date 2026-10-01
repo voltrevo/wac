@@ -18,17 +18,17 @@ import { Buf } from "../../../bytes/src/buf.wac";
 /** A uint32, big-endian — RFC 4251 §5. */
 export u8[] u32be(i32 n) {
   u8[] out = u8[].filled(4, 0);
-  out[0] = (n >>> 24) & 255;
-  out[1] = (n >>> 16) & 255;
-  out[2] = (n >>> 8) & 255;
-  out[3] = n & 255;
+  out[0] = ((n >>> 24) & 255) as@ u8;
+  out[1] = ((n >>> 16) & 255) as@ u8;
+  out[2] = ((n >>> 8) & 255) as@ u8;
+  out[3] = (n & 255) as@ u8;
   return out;
 }
 
 /** The uint32 at `at`, as a signed i32 — so a length with the top bit set arrives negative. */
 export i32 u32At(u8[] b, i32 at) {
   if (at < 0 || at + 4 > b.len()) { return -1; }
-  return (b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
+  return (b[at] as i32 << 24) | (b[at + 1] as i32 << 16) | (b[at + 2] as i32 << 8) | b[at + 3] as i32;
 }
 
 /** A length-prefixed string, from bytes. */
@@ -52,14 +52,14 @@ export u8[] cat(u8[][] parts) {
 /** `n` bytes of `(i * mul + add) & 255` — a filler that is not all one value. */
 export u8[] ramp(i32 n, i32 mul, i32 add) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * mul + add) & 255) as@ u8; }
   return out;
 }
 
 /** `n` bytes of `v`. */
 export u8[] filled(i32 n, i32 v) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = v & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = (v & 255) as@ u8; }
   return out;
 }
 
@@ -77,6 +77,6 @@ export u8[] slice(u8[] b, i32 at, i32 end) {
 export u8[] flipped(u8[] b, i32 at, i32 mask) {
   u8[] out = u8[].filled(b.len(), 0);
   out.copyFrom(b, 0, 0, b.len());
-  out[at] = out[at] ^ mask;
+  out[at] = (out[at] as i32 ^ mask) as@ u8;
   return out;
 }

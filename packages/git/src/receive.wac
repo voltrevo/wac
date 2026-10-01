@@ -173,7 +173,7 @@ export struct Report {
 
 string textOf(u8[] b, i32 from, i32 to) {
   Buf out = Buf.create();
-  for (i32 i = from; i < to; i++) { out.push(b[i]); }
+  for (i32 i = from; i < to; i++) { out.push(b[i] as i32); }
   return out.toStr();
 }
 

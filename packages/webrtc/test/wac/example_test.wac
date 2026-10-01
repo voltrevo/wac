@@ -117,7 +117,7 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   }
 
   u8[] tid = u8[].filled(12, 0);
-  for (i32 i = 0; i < 12; i++) { tid[i] = (i * 37 + 11) & 255; }
+  for (i32 i = 0; i < 12; i++) { tid[i] = ((i * 37 + 11) & 255) as@ u8; }
   u8[] request = iceCheck(tid, ourUfrag, OFFER_UFRAG, ourPwd.toBytes(),
                           priorityOf(hostPref(), 65535, 1), true, u8[].filled(8, 7), false);
 

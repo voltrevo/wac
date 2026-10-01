@@ -24,7 +24,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Reader, Writer } from "../../src/wire.wac";
 
-u8[] bytes3(i32 a, i32 b, i32 c) { u8[] o = u8[].filled(3, 0); o[0] = a; o[1] = b; o[2] = c; return o; }
+u8[] bytes3(i32 a, i32 b, i32 c) { u8[] o = u8[].filled(3, 0); o[0] = a as@ u8; o[1] = b as@ u8; o[2] = c as@ u8; return o; }
 
 export string test_fixed_width_reads_are_big_endian() {
   // Every length and code point in TLS is big-endian, and a reader that assembled them
@@ -79,7 +79,7 @@ export string test_the_writer_round_trips_through_the_reader() {
   T t = T.create();
   for (i32 n = 0; n < 300; n++) {
     u8[] payload = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { payload[i] = (i * 31 + n) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { payload[i] = ((i * 31 + n) & 0xFF) as@ u8; }
     Writer w = Writer.create();
     w.vec16(payload);
     u8[] wire = w.take();
@@ -89,7 +89,7 @@ export string test_the_writer_round_trips_through_the_reader() {
   // vec8 has a byte of prefix and the same obligation.
   for (i32 n = 0; n < 256; n++) {
     u8[] payload = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { payload[i] = (i * 17 + 5) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { payload[i] = ((i * 17 + 5) & 0xFF) as@ u8; }
     Writer w = Writer.create();
     w.vec8(payload);
     t.eqBytes(Reader.create(w.take()).vec8(), payload, "vec8 round trip at " + itoa64(n as i64));
@@ -106,7 +106,7 @@ export string test_the_writer_grows_without_losing_anything() {
   u8[] out = w.take();
   t.eqI32(out.len(), 5000, "everything written is present");
   bool intact = true;
-  for (i32 i = 0; i < 5000; i++) { if (out[i] != (i & 0xFF)) { intact = false; } }
+  for (i32 i = 0; i < 5000; i++) { if (out[i] as i32 != (i & 0xFF)) { intact = false; } }
   t.isTrue(intact, "and unchanged across every reallocation");
   return t.report();
 }

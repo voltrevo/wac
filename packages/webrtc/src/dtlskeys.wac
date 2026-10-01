@@ -99,16 +99,16 @@ export u8[] verifyData(u8[] master, string label, u8[] transcript) {
  */
 export u8[] aad(i32 epoch, i64 sequence, i32 kind, i32 version, i32 plaintextLength) {
   u8[] a = u8[].filled(13, 0);
-  a[0] = (epoch >> 8) & 0xFF;
-  a[1] = epoch & 0xFF;
+  a[0] = ((epoch >> 8) & 0xFF) as@ u8;
+  a[1] = (epoch & 0xFF) as@ u8;
   for (i32 i = 0; i < 6; i++) {
-    a[2 + i] = ((sequence >> (((5 - i) * 8) as i64)) & (255 as i64)) as~ i32;
+    a[2 + i] = (((sequence >> (((5 - i) * 8) as i64)) & (255 as i64)) as~ i32) as@ u8;
   }
-  a[8] = kind;
-  a[9] = (version >> 8) & 0xFF;
-  a[10] = version & 0xFF;
-  a[11] = (plaintextLength >> 8) & 0xFF;
-  a[12] = plaintextLength & 0xFF;
+  a[8] = kind as@ u8;
+  a[9] = ((version >> 8) & 0xFF) as@ u8;
+  a[10] = (version & 0xFF) as@ u8;
+  a[11] = ((plaintextLength >> 8) & 0xFF) as@ u8;
+  a[12] = (plaintextLength & 0xFF) as@ u8;
   return a;
 }
 
@@ -130,10 +130,10 @@ u8[] nonce(u8[] fixedIv, u8[] explicitPart) {
 export u8[] seal(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 version,
                  u8[] plaintext) {
   u8[] explicitPart = u8[].filled(8, 0);
-  explicitPart[0] = (epoch >> 8) & 0xFF;
-  explicitPart[1] = epoch & 0xFF;
+  explicitPart[0] = ((epoch >> 8) & 0xFF) as@ u8;
+  explicitPart[1] = (epoch & 0xFF) as@ u8;
   for (i32 i = 0; i < 6; i++) {
-    explicitPart[2 + i] = ((sequence >> (((5 - i) * 8) as i64)) & (255 as i64)) as~ i32;
+    explicitPart[2 + i] = (((sequence >> (((5 - i) * 8) as i64)) & (255 as i64)) as~ i32) as@ u8;
   }
   u8[] n = nonce(fixedIv, explicitPart);
   u8[] a = aad(epoch, sequence, kind, version, plaintext.len());
@@ -177,7 +177,7 @@ export u8[] open(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 
   u8[] want = gcmTag(key, n, a, ct);
   if (want.len() != 16) { return u8[](); }
   i32 diff = 0;
-  for (i32 i = 0; i < 16; i++) { diff = diff | (want[i] ^ tag[i]); }
+  for (i32 i = 0; i < 16; i++) { diff = diff | (want[i] as i32 ^ tag[i] as i32); }
   if (diff != 0) { return u8[](); }
   return gcmDecrypt(key, n, a, ct, tag);
 }

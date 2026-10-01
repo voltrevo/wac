@@ -61,8 +61,8 @@ u8[] bcryptHash(u8[] sha2pass, u8[] sha2salt) {
   // 64-bit halves.
   i32[] cdata = i32[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) {
-    cdata[i] = (MAGIC[i * 4] << 24) | (MAGIC[i * 4 + 1] << 16)
-             | (MAGIC[i * 4 + 2] << 8) | MAGIC[i * 4 + 3];
+    cdata[i] = (MAGIC[i * 4] as i32 << 24) | (MAGIC[i * 4 + 1] as i32 << 16)
+             | (MAGIC[i * 4 + 2] as i32 << 8) | MAGIC[i * 4 + 3] as i32;
   }
   for (i32 i = 0; i < 64; i++) {
     for (i32 b = 0; b < 4; b++) {
@@ -73,10 +73,10 @@ u8[] bcryptHash(u8[] sha2pass, u8[] sha2salt) {
   // Little-endian, against the big-endian read above. Not a typo.
   u8[] out = u8[].filled(hashSize(), 0);
   for (i32 i = 0; i < 8; i++) {
-    out[i * 4] = cdata[i] & 255;
-    out[i * 4 + 1] = (cdata[i] >>> 8) & 255;
-    out[i * 4 + 2] = (cdata[i] >>> 16) & 255;
-    out[i * 4 + 3] = (cdata[i] >>> 24) & 255;
+    out[i * 4] = (cdata[i] & 255) as@ u8;
+    out[i * 4 + 1] = ((cdata[i] >>> 8) & 255) as@ u8;
+    out[i * 4 + 2] = ((cdata[i] >>> 16) & 255) as@ u8;
+    out[i * 4 + 3] = ((cdata[i] >>> 24) & 255) as@ u8;
   }
   return out;
 }
@@ -109,10 +109,10 @@ export u8[] bcryptPbkdf(u8[] pass, u8[] salt, i32 keylen, i32 rounds) {
     // Round one salts with `salt || count`, big-endian.
     u8[] counted = u8[].filled(salt.len() + 4, 0);
     counted.copyFrom(salt, 0, 0, salt.len());
-    counted[salt.len()] = (count >>> 24) & 255;
-    counted[salt.len() + 1] = (count >>> 16) & 255;
-    counted[salt.len() + 2] = (count >>> 8) & 255;
-    counted[salt.len() + 3] = count & 255;
+    counted[salt.len()] = ((count >>> 24) & 255) as@ u8;
+    counted[salt.len() + 1] = ((count >>> 16) & 255) as@ u8;
+    counted[salt.len() + 2] = ((count >>> 8) & 255) as@ u8;
+    counted[salt.len() + 3] = (count & 255) as@ u8;
 
     tmpout = bcryptHash(sha2pass, sha512(counted));
     out.copyFrom(tmpout, 0, 0, hashSize());

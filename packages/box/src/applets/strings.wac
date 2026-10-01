@@ -33,7 +33,7 @@ export i32 strings(Core core, Cli cli, Fs fs, Args a) {
     if (!got.more) { break; }
     u8[] data = got.bytes;
     for (i32 i = 0; i < data.len(); i++) {
-      i32 b = data[i];
+      i32 b = data[i] as i32;
       if (b >= 32 && b < 127) { run.push(b); continue; }
       emit(out, run, min);
     }

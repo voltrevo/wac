@@ -53,7 +53,7 @@ u8[] head(u8[] b, i32 n) {
 
 u8[] filledWith(i32 n, i32 byte) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = byte; }
+  for (i32 i = 0; i < n; i++) { out[i] = byte as@ u8; }
   return out;
 }
 
@@ -68,7 +68,7 @@ u8[] repeated(string s, i32 times) {
 
 /** A four-byte big-endian length, which is how every string on this wire is prefixed. */
 u8[] be32(i32 v) {
-  return [(v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255];
+  return [((v >> 24) & 255) as@ u8, ((v >> 16) & 255) as@ u8, ((v >> 8) & 255) as@ u8, (v & 255) as@ u8];
 }
 
 // ── The probe's shapes ────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ void framing() {
     i32 n = ns[i];
     for (i32 k = 0; k < blocks.len(); k++) { sshPaddingFor(n, blocks[k]); }
     u8[] payload = u8[].filled(n, 0);
-    for (i32 k = 0; k < n; k++) { payload[k] = k & 255; }
+    for (i32 k = 0; k < n; k++) { payload[k] = (k & 255) as@ u8; }
     u8[] packet = sshFrame(payload, filledWith(sshPaddingFor(n, block), 7), block);
     sshUnframeStatus(packet);
     sshUnframeUsed(packet);
@@ -283,7 +283,7 @@ u8[] wireStr(u8[] b) { return joinBytes(be32(b.len()), b); }
 
 u8[] kexSecret() {
   u8[] out = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { out[i] = i + 1; }
+  for (i32 i = 0; i < 32; i++) { out[i] = (i + 1) as@ u8; }
   return out;
 }
 
@@ -357,7 +357,7 @@ import { sshCipherKeyLength, sshCipherTagLength, sshAeadPaddingFor, sshSeal, ssh
 
 u8[] cipherKey() {
   u8[] out = u8[].filled(64, 0);
-  for (i32 i = 0; i < 64; i++) { out[i] = (i * 7 + 1) & 255; }
+  for (i32 i = 0; i < 64; i++) { out[i] = ((i * 7 + 1) & 255) as@ u8; }
   return out;
 }
 
@@ -371,7 +371,7 @@ void cipher() {
     i32 n = ns[i];
     for (i32 k = 0; k < blocks.len(); k++) { sshAeadPaddingFor(n, blocks[k]); }
     u8[] payload = u8[].filled(n, 0);
-    for (i32 k = 0; k < n; k++) { payload[k] = k & 255; }
+    for (i32 k = 0; k < n; k++) { payload[k] = (k & 255) as@ u8; }
     u8[] packet = sshSeal(ckey, n, payload, filledWith(sshAeadPaddingFor(n, 8), 1), 8);
     sshPeekLength(ckey, n, packet, 0);
     sshOpenStatus(ckey, n, packet, 0, packet.len(), 35000);
@@ -396,7 +396,7 @@ void cipher() {
   i32[] padBytes = [200, 0, 3];
   for (i32 i = 0; i < padBytes.len(); i++) {
     u8[] body = u8[].filled(8, 0);
-    body[0] = padBytes[i];
+    body[0] = padBytes[i] as@ u8;
     u8[] forged = sshSealBody(ckey, 0, body);
     sshOpenStatus(ckey, 0, forged, 0, forged.len(), 35000);
   }
@@ -547,12 +547,12 @@ import { sshKnownHost } from "./wac/probe.wac";
 
 u8[] khBlob() {
   u8[] out = u8[].filled(51, 0);
-  for (i32 i = 0; i < 51; i++) { out[i] = (i * 3) & 255; }
+  for (i32 i = 0; i < 51; i++) { out[i] = ((i * 3) & 255) as@ u8; }
   return out;
 }
 u8[] khOther() {
   u8[] out = u8[].filled(51, 0);
-  for (i32 i = 0; i < 51; i++) { out[i] = (i * 5) & 255; }
+  for (i32 i = 0; i < 51; i++) { out[i] = ((i * 5) & 255) as@ u8; }
   return out;
 }
 string b64Of(u8[] b) { return string.fromBytes(b64encode(b, ALPHABET_STANDARD(), true)); }
@@ -745,7 +745,7 @@ import { sshAuthorized, sshServerProposalField, sshHostKeyBlob, sshParseEcdhInit
 
 u8[] srvSeed() {
   u8[] out = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { out[i] = (i * 9 + 1) & 255; }
+  for (i32 i = 0; i < 32; i++) { out[i] = ((i * 9 + 1) & 255) as@ u8; }
   return out;
 }
 
@@ -797,7 +797,7 @@ void serverHalf() {
   u8[] ks = sshHostKeyBlob(point);
 
   u8[] peer = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { peer[i] = i + 2; }
+  for (i32 i = 0; i < 32; i++) { peer[i] = (i + 2) as@ u8; }
   u8[] q = sshEphemeralPublic(peer);
   sshParseEcdhInit(joinBytes([30] as u8[], wireStr(q)));
   sshParseEcdhInit(joinBytes([31] as u8[], wireStr(q)));                  // the wrong message number
@@ -809,7 +809,7 @@ void serverHalf() {
   sshEcdhReply(ks, q, h, seed);
 
   u8[] session = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { session[i] = (i * 13) & 255; }
+  for (i32 i = 0; i < 32; i++) { session[i] = ((i * 13) & 255) as@ u8; }
   u8[] user = "claude".toBytes();
   u8[] genuine = sshPublicKeyRequest(session, user, ks, seed);
   for (i32 which = 0; which < 4; which++) { sshAuthRequestField(genuine, which); }
@@ -859,7 +859,7 @@ void serverHalf() {
 
   // The server's own curve operations, which are separate functions from the client's.
   u8[] secret = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { secret[i] = i + 3; }
+  for (i32 i = 0; i < 32; i++) { secret[i] = (i + 3) as@ u8; }
   u8[] pub = sshServerEphemeral(secret);
   sshServerShared(secret, pub);
   sshServerShared(secret, u8[].filled(32, 0));                                  // an all-zero point

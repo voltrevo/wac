@@ -24,7 +24,7 @@ import { equal, slice } from "../../../bytes/src/slice.wac";
 
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { o[i] = (i * 31 + seed * 7 + 5) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { o[i] = ((i * 31 + seed * 7 + 5) & 0xFF) as@ u8; }
   return o;
 }
 
@@ -69,8 +69,8 @@ export string test_the_reply_is_four_cells_in_the_order_the_spec_fixes() {
 
   // The challenge must be the one supplied, not a copy of anything else in the reply.
   t.isTrue(equal(slice(auth, 0, 32), challenge), "the challenge is passed through verbatim");
-  t.eqI32((auth[32] * 256) + auth[33], 1, "one authentication method is offered");
-  t.eqI32((auth[34] * 256) + auth[35], AUTH_METHOD_ED25519_SHA256_RFC5705, "and it is ed25519");
+  t.eqI32((auth[32] as i32 * 256) + auth[33] as i32, 1, "one authentication method is offered");
+  t.eqI32((auth[34] as i32 * 256) + auth[35] as i32, AUTH_METHOD_ED25519_SHA256_RFC5705, "and it is ed25519");
   return t.report();
 }
 
@@ -104,18 +104,18 @@ export string test_a_relays_netinfo_states_what_a_clients_does_not() {
   i64 stamp = ((payload[0] as i64) << 24) | ((payload[1] as i64) << 16) |
               ((payload[2] as i64) << 8) | (payload[3] as i64);
   t.eqI64(stamp, 1785900000, "the timestamp is big-endian seconds");
-  t.eqI32(payload[4], 4, "OTHERADDR is IPv4");
-  t.eqI32(payload[5], 4, "four bytes long");
+  t.eqI32(payload[4] as i32, 4, "OTHERADDR is IPv4");
+  t.eqI32(payload[5] as i32, 4, "four bytes long");
   t.isTrue(equal(slice(payload, 6, 10), theirs), "and is the initiator's address");
-  t.eqI32(payload[10], 1, "one address of our own");
-  t.eqI32(payload[11], 4, "IPv4");
-  t.eqI32(payload[12], 4, "four bytes");
+  t.eqI32(payload[10] as i32, 1, "one address of our own");
+  t.eqI32(payload[11] as i32, 4, "IPv4");
+  t.eqI32(payload[12] as i32, 4, "four bytes");
   t.isTrue(equal(slice(payload, 13, 17), mine), "and it is ours");
 
   // Without one — a relay that does not yet know its own address.
   u8[] without = relayNetinfo(theirs, u8[]());
   u8[] p2 = cellPayload(without, 0, ID_WIDE);
-  t.eqI32(p2[10], 0, "no addresses of our own");
+  t.eqI32(p2[10] as i32, 0, "no addresses of our own");
   i64 zero = ((p2[0] as i64) << 24) | ((p2[1] as i64) << 16) | ((p2[2] as i64) << 8) | (p2[3] as i64);
   t.eqI64(zero, 0, "and no timestamp when none is given");
 

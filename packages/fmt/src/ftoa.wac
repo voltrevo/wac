@@ -183,7 +183,7 @@ Decimal decomposeFloat(bool neg, i32 be, u64 frac, i32 maxBe, u64 implicitBit, i
     bool high = boundaryOk ? cHigh >= 0 : cHigh > 0;
 
     if (!low && !high) {
-      digits[count] = '0' + digit;
+      digits[count] = ('0' + digit) as@ u8;
       count++;
       continue;
     }
@@ -206,7 +206,7 @@ Decimal decomposeFloat(bool neg, i32 be, u64 frac, i32 maxBe, u64 implicitBit, i
       last = digit + 1;
     }
     if (last < 10) {
-      digits[count] = '0' + last;
+      digits[count] = ('0' + last) as@ u8;
       count++;
       return Decimal.Digits(digits, count, exp10, neg);
     }
@@ -305,15 +305,15 @@ void writeDigits(Buf out, u8[] digits, i32 count, i32 exp10) {
 
   if (k <= n && n <= 21) {
     // Integer with trailing zeros: 1e3 prints as 1000.
-    for (i32 i = 0; i < k; i++) { out.push(digits[i]); }
+    for (i32 i = 0; i < k; i++) { out.push(digits[i] as i32); }
     for (i32 i = 0; i < n - k; i++) { out.push('0'); }
     return;
   }
   if (0 < n && n <= 21) {
     // Decimal point inside the digits.
-    for (i32 i = 0; i < n; i++) { out.push(digits[i]); }
+    for (i32 i = 0; i < n; i++) { out.push(digits[i] as i32); }
     out.push('.');
-    for (i32 i = n; i < k; i++) { out.push(digits[i]); }
+    for (i32 i = n; i < k; i++) { out.push(digits[i] as i32); }
     return;
   }
   if (-6 < n && n <= 0) {
@@ -321,15 +321,15 @@ void writeDigits(Buf out, u8[] digits, i32 count, i32 exp10) {
     out.push('0');
     out.push('.');
     for (i32 i = 0; i < -n; i++) { out.push('0'); }
-    for (i32 i = 0; i < k; i++) { out.push(digits[i]); }
+    for (i32 i = 0; i < k; i++) { out.push(digits[i] as i32); }
     return;
   }
 
   // Exponential. The exponent is n-1 because the point sits after the first digit.
-  out.push(digits[0]);
+  out.push(digits[0] as i32);
   if (k > 1) {
     out.push('.');
-    for (i32 i = 1; i < k; i++) { out.push(digits[i]); }
+    for (i32 i = 1; i < k; i++) { out.push(digits[i] as i32); }
   }
   out.push('e');
   i32 exp = n - 1;
@@ -344,9 +344,9 @@ void writeSmallInt(Buf out, i32 v) {
   i32 n = 0;
   i32 m = v;
   while (m > 0) {
-    tmp[n] = '0' + (m % 10);
+    tmp[n] = ('0' + (m % 10)) as@ u8;
     n++;
     m = m / 10;
   }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
+  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i] as i32); }
 }

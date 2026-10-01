@@ -97,8 +97,8 @@ export string[] codeLines(string text) {
   u8[] out = u8[].filled(b.len(), ' ');
   i32 i = 0;
   while (i < b.len()) {
-    i32 c = b[i];
-    if (c == '\n') { out[i] = c; i = i + 1; continue; }
+    i32 c = b[i] as i32;
+    if (c == '\n') { out[i] = c as@ u8; i = i + 1; continue; }
     // A line comment: everything to the newline is not code.
     if (c == '/' && i + 1 < b.len() && b[i + 1] == '/') {
       while (i < b.len() && b[i] != '\n') { i = i + 1; }
@@ -116,7 +116,7 @@ export string[] codeLines(string text) {
     }
     // A string literal cannot span lines, so its contents are blanked and the quotes are kept.
     if (c == '"') {
-      out[i] = c;
+      out[i] = c as@ u8;
       i = i + 1;
       while (i < b.len() && b[i] != '"' && b[i] != '\n') {
         if (b[i] == '\\' && i + 1 < b.len()) { i = i + 1; }
@@ -125,7 +125,7 @@ export string[] codeLines(string text) {
       if (i < b.len() && b[i] == '"') { out[i] = b[i]; i = i + 1; }
       continue;
     }
-    out[i] = c;
+    out[i] = c as@ u8;
     i = i + 1;
   }
   return splitKeepingEmpty(string.fromBytes(out));
@@ -236,7 +236,7 @@ bool returnBefore(u8[] b, i32 at) {
   if (at < 6) { return false; }
   if (!(b[at - 6] == 'r' && b[at - 5] == 'e' && b[at - 4] == 't' && b[at - 3] == 'u'
         && b[at - 2] == 'r' && b[at - 1] == 'n')) { return false; }
-  return at == 6 || !isWordByte(b[at - 7]);
+  return at == 6 || !isWordByte(b[at - 7] as i32);
 }
 
 /**
@@ -258,12 +258,12 @@ void namesUsedOn(string line, Vec<string> out) {
   u8[] b = line.toBytes();
   i32 i = 0;
   while (i < b.len()) {
-    if (!isWordByte(b[i]) || (b[i] >= '0' && b[i] <= '9')) { i = i + 1; continue; }
+    if (!isWordByte(b[i] as i32) || (b[i] >= '0' && b[i] <= '9')) { i = i + 1; continue; }
     i32 start = i;
-    while (i < b.len() && isWordByte(b[i])) { i = i + 1; }
+    while (i < b.len() && isWordByte(b[i] as i32)) { i = i + 1; }
     i32 end = i;
     // What is immediately before the name, and what follows the spaces after it.
-    bool wordOrDotBefore = start > 0 && (isWordByte(b[start - 1]) || b[start - 1] == '.');
+    bool wordOrDotBefore = start > 0 && (isWordByte(b[start - 1] as i32) || b[start - 1] == '.');
     i32 after = end;
     while (after < b.len() && (b[after] == ' ' || b[after] == '\t')) { after = after + 1; }
     bool callsIt = !wordOrDotBefore && after < b.len() && b[after] == '(';
@@ -273,7 +273,7 @@ void namesUsedOn(string line, Vec<string> out) {
     bool delimited = before > 0 && (b[before - 1] == '=' || b[before - 1] == ',' || b[before - 1] == '('
                                     || b[before - 1] == '[' || b[before - 1] == '?'
                                     || b[before - 1] == ':');
-    bool afterOk = end >= b.len() || !(isWordByte(b[end]) || b[end] == '(');
+    bool afterOk = end >= b.len() || !(isWordByte(b[end] as i32) || b[end] == '(');
     bool valuesIt = (delimited || returnBefore(b, before)) && afterOk;
     if (callsIt || valuesIt) { out.push(line.slice(start, end)); }
   }
@@ -288,14 +288,14 @@ bool holds(Vec<string> haystack, string needle) {
 /** The word ending at `end`, or `""`. */
 string wordEndingAt(u8[] b, i32 end) {
   i32 a = end;
-  while (a > 0 && isWordByte(b[a - 1])) { a = a - 1; }
+  while (a > 0 && isWordByte(b[a - 1] as i32)) { a = a - 1; }
   return a == end ? "" : string.fromBytes(b).slice(a, end);
 }
 
 /** The word starting at `at`, or `""`. */
 string wordStartingAt(u8[] b, i32 at) {
   i32 e = at;
-  while (e < b.len() && isWordByte(b[e])) { e = e + 1; }
+  while (e < b.len() && isWordByte(b[e] as i32)) { e = e + 1; }
   return e == at ? "" : string.fromBytes(b).slice(at, e);
 }
 
@@ -423,7 +423,7 @@ bool hasDotName(string text, string name) {
     if (at < 0) { return false; }
     i32 abs = from + at;
     i32 end = abs + want.len();
-    if (end >= text.len() || !isWordByte(text.toBytes()[end])) { return true; }
+    if (end >= text.len() || !isWordByte(text.toBytes()[end] as i32)) { return true; }
     from = abs + 1;
   }
   return false;

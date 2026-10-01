@@ -50,7 +50,7 @@ struct Rd {
 }
 
 i32 rdU32(Rd r) {
-  i32 v = (r.b[r.p] << 24) | (r.b[r.p + 1] << 16) | (r.b[r.p + 2] << 8) | r.b[r.p + 3];
+  i32 v = (r.b[r.p] as i32 << 24) | (r.b[r.p + 1] as i32 << 16) | (r.b[r.p + 2] as i32 << 8) | r.b[r.p + 3] as i32;
   r.p = r.p + 4;
   return v;
 }
@@ -240,7 +240,7 @@ export string test_the_second_block_interleaves_with_the_first_rather_than_follo
   for (i32 i = 0; i < 32; i++) {
     if (longOut[i * 2] == shortOut[i]) { continue; }
     t.fail("byte " + itoa(i) + " of block 1 landed at " + itoa(i * 2) + " as " +
-           itoa(longOut[i * 2]) + ", expected " + itoa(shortOut[i]) + " — the output is not striped");
+           itoa(longOut[i * 2] as i32) + ", expected " + itoa(shortOut[i] as i32) + " — the output is not striped");
     break;
   }
 

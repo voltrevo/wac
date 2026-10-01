@@ -30,7 +30,7 @@ export Bytes glyph(u8 b) {
   if (b == 127) { return pair('?'); }
   if (b == 9 || b >= 32) { return oneByte(b); }
   // `^@` for NUL through `^_` for 0x1f: the character sixty-four along.
-  return pair((b + 64) as@ u8);
+  return pair((b + 64));
 }
 
 /**

@@ -261,7 +261,7 @@ i32 atoi(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     string ch = s[i];
     if (ch < "0" || ch > "9") { return -1; }
-    v = v * 10 + (ch.toBytes()[0] - 0x30);
+    v = v * 10 + (ch.toBytes()[0] as i32 - 0x30);
     if (v > 65535) { return -1; }
   }
   return s.len() == 0 ? -1 : v;

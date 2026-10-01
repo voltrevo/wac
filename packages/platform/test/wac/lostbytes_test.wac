@@ -140,7 +140,7 @@ static string ACCEPT_PROGRAM =
   "    // The port arrives as the second argument.\n" +
   "    i32 port = 0;\n" +
   "    u8[] p = cli.arg(1).wait();\n" +
-  "    for (i32 i = 0; i < p.len(); i++) { port = port * 10 + (p[i] - 48); }\n" +
+  "    for (i32 i = 0; i < p.len(); i++) { port = port * 10 + (p[i] as i32 - 48); }\n" +
   "    core.delay(300).wait();\n" +
   "    Socket s = cli.connect(\"127.0.0.1\", port).wait();\n" +
   "    if (s.handle < 0) { return 1; }\n" +

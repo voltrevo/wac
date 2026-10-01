@@ -117,7 +117,7 @@ u8[] randomBytes(Rng rng, i32 n) {
   u8[] out = u8[].filled(n, 0);
   // `next()` answers `u32` now — the low byte is the same low byte, so the mask happens there and
   // the result is reinterpreted rather than converted.
-  for (i32 i = 0; i < n; i++) { out[i] = (rng.next() & (255 as@ u32)) as@ i32; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((rng.next() & (255 as@ u32)) as@ i32) as@ u8; }
   return out;
 }
 
@@ -178,10 +178,10 @@ string[] externalBase64(Cli cli, u8[][] items) {
   i32 at = 0;
   for (i32 i = 0; i < items.len(); i++) {
     i32 n = items[i].len();
-    stdin[at] = n & 0xFF;
-    stdin[at + 1] = (n >> 8) & 0xFF;
-    stdin[at + 2] = (n >> 16) & 0xFF;
-    stdin[at + 3] = (n >> 24) & 0xFF;
+    stdin[at] = (n & 0xFF) as@ u8;
+    stdin[at + 1] = ((n >> 8) & 0xFF) as@ u8;
+    stdin[at + 2] = ((n >> 16) & 0xFF) as@ u8;
+    stdin[at + 3] = ((n >> 24) & 0xFF) as@ u8;
     at = at + 4;
     for (i32 k = 0; k < n; k++) { stdin[at + k] = items[i][k]; }
     at = at + n;

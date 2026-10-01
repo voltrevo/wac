@@ -81,6 +81,6 @@ export string test_the_counted_form() {
 /** `n` bytes, offset by `role` so two sequences differ everywhere rather than in a prefix. */
 u8[] seq(i32 n, i32 role) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (role * 97 + i * 13 + 5) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((role * 97 + i * 13 + 5) & 0xFF) as@ u8; }
   return out;
 }

@@ -759,10 +759,10 @@ i32 assignmentAt(Token t) {
   if (first.quoted) { return -1; }
   u8[] s = first.text.toBytes();
   if (s.len() == 0) { return -1; }
-  if (!isNameStart(s[0])) { return -1; }
+  if (!isNameStart(s[0] as i32)) { return -1; }
   for (i32 i = 1; i < s.len(); i++) {
     if (s[i] == 0x3d) { return i; }
-    if (!isNameChar(s[i])) { return -1; }
+    if (!isNameChar(s[i] as i32)) { return -1; }
   }
   return -1;
 }

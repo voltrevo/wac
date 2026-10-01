@@ -136,7 +136,7 @@ bool safe(u8[] t) {
 bool endsWithSlash(u8[] t) { return t.len() > 0 && t[t.len() - 1] == '/'; }
 
 u8[] upTo(u8[] s, i32 stop) {
-  for (i32 i = 0; i < s.len(); i++) { if (s[i] == stop) { return slice(s, 0, i); } }
+  for (i32 i = 0; i < s.len(); i++) { if (s[i] as i32 == stop) { return slice(s, 0, i); } }
   return s;
 }
 

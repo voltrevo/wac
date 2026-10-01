@@ -23,7 +23,7 @@ import { Reader, Writer } from "../../src/wire.wac";
 
 u8[] bytes(i32 n) {
   u8[] b = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { b[i] = (i * 13 + 5) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { b[i] = ((i * 13 + 5) & 0xFF) as@ u8; }
   return b;
 }
 

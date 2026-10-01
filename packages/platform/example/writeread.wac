@@ -74,7 +74,7 @@ export i32 main(Core core, Cli cli) {
   // Now write, in the same shape a relay forwards cells: several sends, one after another, with that
   // read still in flight. 498 bytes each, which is a relay cell's payload.
   u8[] payload = u8[].filled(498, 0);
-  for (i32 i = 0; i < 498; i++) { payload[i] = (i * 7 + 13) & 0xFF; }
+  for (i32 i = 0; i < 498; i++) { payload[i] = ((i * 7 + 13) & 0xFF) as@ u8; }
 
   // Whether the peer consumes. Both ends are in this process, so the read can be driven by hand
   // rather than hoped for.
@@ -156,7 +156,7 @@ i32 parsePort(u8[] text) {
   i32 v = 0;
   for (i32 i = 0; i < text.len(); i++) {
     if (text[i] < 48 || text[i] > 57) { return -1; }
-    v = v * 10 + (text[i] - 48);
+    v = v * 10 + (text[i] as i32 - 48);
     if (v > 65535) { return -1; }
   }
   return v;
@@ -167,7 +167,7 @@ string itoa(i32 n) {
   i32 v = n < 0 ? 0 - n : n;
   u8[] digits = u8[].filled(12, 0);
   i32 at = 12;
-  while (v > 0) { at--; digits[at] = '0' + (v % 10); v = v / 10; }
+  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
   u8[] used = u8[].filled(12 - at, 0);
   used.copyFrom(digits, at, 0, 12 - at);
   return (n < 0 ? "-" : "") + string.fromBytes(used);

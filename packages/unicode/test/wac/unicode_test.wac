@@ -451,7 +451,7 @@ export string test_random_byte_strings_never_crash_the_decoder(Core core, Cli cl
   for (i32 trial = 0; trial < 5000; trial++) {
     i32 n = rng.upto(12);
     u8[] bytes = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { bytes[i] = (rng.next() & (0xFF as@ u32)) as@ i32; }
+    for (i32 i = 0; i < n; i++) { bytes[i] = ((rng.next() & (0xFF as@ u32)) as@ i32) as@ u8; }
     lines.add("valid " + hex(bytes) + " " + (isValid(bytes) ? "1" : "0"));
   }
   checkDeno(t, cli, ORACLE, lines, "random bytes");

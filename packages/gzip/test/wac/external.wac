@@ -114,8 +114,8 @@ export string roundTrip(Cli cli, u8[] gz, string name, u8[] input) {
            itoa(input.len());
   }
   if (diff >= 0) {
-    return name + ": byte " + itoa(diff) + " differs — got " + itoa(out.bytes[diff]) +
-           ", expected " + itoa(input[diff]);
+    return name + ": byte " + itoa(diff) + " differs — got " + itoa(out.bytes[diff] as i32) +
+           ", expected " + itoa(input[diff] as i32);
   }
   return "";
 }

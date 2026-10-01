@@ -59,7 +59,7 @@ u8[] prng(i32 n, i32 seed) {
     s = s ^ (s << 13);
     s = s ^ ((s >> 17) & 0x7FFF);
     s = s ^ (s << 5);
-    out[i] = s & 0xff;
+    out[i] = (s & 0xff) as@ u8;
   }
   return out;
 }
@@ -114,7 +114,7 @@ u8[] jsonItems(i32 n) {
 /** Inputs chosen for the decoder paths they reach rather than for realism. */
 u8[][] corpus() {
   u8[] allBytes = u8[].filled(100000, 0);
-  for (i32 i = 0; i < allBytes.len(); i++) { allBytes[i] = i & 0xff; }
+  for (i32 i = 0; i < allBytes.len(); i++) { allBytes[i] = (i & 0xff) as@ u8; }
   // Long matches at long distances, which is what the repeat-offset slots are for.
   u8[] unit = prng(40000, 3);
   u8[] distant = concat([unit, prng(40000, 9), unit]);
@@ -410,12 +410,12 @@ export string test_traps_a_frame_declaring_a_dictionary_id(Core core, Cli cli) {
 export string test_a_match_that_overlaps_what_it_is_writing(Core core, Cli cli) {
   T t = T.create();
   u8[] offset3 = u8[].filled(60000, 0);
-  for (i32 i = 0; i < offset3.len(); i++) { offset3[i] = 97 + (i % 3); }
+  for (i32 i = 0; i < offset3.len(); i++) { offset3[i] = (97 + (i % 3)) as@ u8; }
   u8[] offset2 = u8[].filled(50000, 0);
-  for (i32 i = 0; i < offset2.len(); i++) { offset2[i] = 88 + (i % 2); }
+  for (i32 i = 0; i < offset2.len(); i++) { offset2[i] = (88 + (i % 2)) as@ u8; }
   // A run broken up, so runs and ordinary matches alternate within one block.
   u8[] broken = u8[].filled(40000, 7);
-  for (i32 i = 0; i < broken.len(); i = i + 997) { broken[i] = i & 255; }
+  for (i32 i = 0; i < broken.len(); i = i + 997) { broken[i] = (i & 255) as@ u8; }
 
   u8[][] inputs = [u8[].filled(70000, 65), offset3, offset2, broken];
   u8[][] frames = framesFor(t, cli, inputs, -1, false, "the reference encoder, overlapping runs");

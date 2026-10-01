@@ -89,11 +89,11 @@ export u8[] encodeFixed(i32 circId, i32 command, u8[] payload) {
   if (isVarLength(command)) { trap; }
   if (payload.len() > PAYLOAD_LEN) { trap; }
   u8[] out = u8[].filled(CELL_LEN, 0);
-  out[0] = (circId >> 24) & 0xFF;
-  out[1] = (circId >> 16) & 0xFF;
-  out[2] = (circId >> 8) & 0xFF;
-  out[3] = circId & 0xFF;
-  out[4] = command;
+  out[0] = ((circId >> 24) & 0xFF) as@ u8;
+  out[1] = ((circId >> 16) & 0xFF) as@ u8;
+  out[2] = ((circId >> 8) & 0xFF) as@ u8;
+  out[3] = (circId & 0xFF) as@ u8;
+  out[4] = command as@ u8;
   for (i32 i = 0; i < payload.len(); i++) { out[5 + i] = payload[i]; }
   return out;
 }
@@ -111,17 +111,17 @@ export u8[] encodeVar(i32 circId, i32 command, u8[] payload) {
   i32 idLen = command == cmdVersions() ? 2 : 4;
   u8[] out = u8[].filled(idLen + 3 + payload.len(), 0);
   if (idLen == 2) {
-    out[0] = (circId >> 8) & 0xFF;
-    out[1] = circId & 0xFF;
+    out[0] = ((circId >> 8) & 0xFF) as@ u8;
+    out[1] = (circId & 0xFF) as@ u8;
   } else {
-    out[0] = (circId >> 24) & 0xFF;
-    out[1] = (circId >> 16) & 0xFF;
-    out[2] = (circId >> 8) & 0xFF;
-    out[3] = circId & 0xFF;
+    out[0] = ((circId >> 24) & 0xFF) as@ u8;
+    out[1] = ((circId >> 16) & 0xFF) as@ u8;
+    out[2] = ((circId >> 8) & 0xFF) as@ u8;
+    out[3] = (circId & 0xFF) as@ u8;
   }
-  out[idLen] = command;
-  out[idLen + 1] = (payload.len() >> 8) & 0xFF;
-  out[idLen + 2] = payload.len() & 0xFF;
+  out[idLen] = command as@ u8;
+  out[idLen + 1] = ((payload.len() >> 8) & 0xFF) as@ u8;
+  out[idLen + 2] = (payload.len() & 0xFF) as@ u8;
   for (i32 i = 0; i < payload.len(); i++) { out[idLen + 3 + i] = payload[i]; }
   return out;
 }
@@ -137,7 +137,7 @@ export u8[] encodeVar(i32 circId, i32 command, u8[] payload) {
 export i32 cellSize(u8[] buf, i32 at, i32 idLen) {
   i32 have = buf.len() - at;
   if (have < idLen + 1) { return -1; }
-  i32 command = buf[at + idLen];
+  i32 command = buf[at + idLen] as i32;
   if (!isVarLength(command)) {
     return have < CELL_LEN ? -1 : CELL_LEN;
   }
@@ -145,18 +145,18 @@ export i32 cellSize(u8[] buf, i32 at, i32 idLen) {
   // header is the id, the command and those two.
   i32 header = idLen + 3;
   if (have < header) { return -1; }
-  i32 len = (buf[at + idLen + 1] << 8) | buf[at + idLen + 2];
+  i32 len = (buf[at + idLen + 1] as i32 << 8) | buf[at + idLen + 2] as i32;
   return have < header + len ? -1 : header + len;
 }
 
 /** The command of the cell at `at`. Assumes `cellSize` has already said it is complete. */
 export i32 cellCommand(u8[] buf, i32 at, i32 idLen) {
-  return buf[at + idLen];
+  return buf[at + idLen] as i32;
 }
 
 export i32 cellCircId(u8[] buf, i32 at, i32 idLen) {
-  if (idLen == ID_NARROW) { return (buf[at] << 8) | buf[at + 1]; }
-  return (buf[at] << 24) | (buf[at + 1] << 16) | (buf[at + 2] << 8) | buf[at + 3];
+  if (idLen == ID_NARROW) { return (buf[at] as i32 << 8) | buf[at + 1] as i32; }
+  return (buf[at] as i32 << 24) | (buf[at + 1] as i32 << 16) | (buf[at + 2] as i32 << 8) | buf[at + 3] as i32;
 }
 
 /** The cell's payload: 509 bytes for a fixed cell, or exactly Length for a variable one. */
@@ -167,7 +167,7 @@ export u8[] cellPayload(u8[] buf, i32 at, i32 idLen) {
     for (i32 i = 0; i < PAYLOAD_LEN; i++) { out[i] = buf[at + idLen + 1 + i]; }
     return out;
   }
-  i32 len = (buf[at + idLen + 1] << 8) | buf[at + idLen + 2];
+  i32 len = (buf[at + idLen + 1] as i32 << 8) | buf[at + idLen + 2] as i32;
   u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = buf[at + idLen + 3 + i]; }
   return out;
@@ -179,8 +179,8 @@ export u8[] cellPayload(u8[] buf, i32 at, i32 idLen) {
 export u8[] encodeVersions(i32[] versions) {
   u8[] payload = u8[].filled(versions.len() * 2, 0);
   for (i32 i = 0; i < versions.len(); i++) {
-    payload[i * 2] = (versions[i] >> 8) & 0xFF;
-    payload[i * 2 + 1] = versions[i] & 0xFF;
+    payload[i * 2] = ((versions[i] >> 8) & 0xFF) as@ u8;
+    payload[i * 2 + 1] = (versions[i] & 0xFF) as@ u8;
   }
   return encodeVar(0, cmdVersions(), payload);
 }
@@ -194,7 +194,7 @@ export u8[] encodeVersions(i32[] versions) {
 export i32 negotiateVersion(u8[] theirPayload, i32[] ours) {
   i32 best = 0;
   for (i32 i = 0; i + 1 < theirPayload.len(); i += 2) {
-    i32 v = (theirPayload[i] << 8) | theirPayload[i + 1];
+    i32 v = (theirPayload[i] as i32 << 8) | theirPayload[i + 1] as i32;
     for (i32 j = 0; j < ours.len(); j++) {
       if (ours[j] == v && v > best) { best = v; }
     }
@@ -230,10 +230,10 @@ export i32 handshakeNtor() { return 2; }
 /** CREATE2: HTYPE (2) | HLEN (2) | HDATA. */
 export u8[] encodeCreate2(i32 circId, i32 hType, u8[] handshake) {
   u8[] payload = u8[].filled(4 + handshake.len(), 0);
-  payload[0] = (hType >> 8) & 0xFF;
-  payload[1] = hType & 0xFF;
-  payload[2] = (handshake.len() >> 8) & 0xFF;
-  payload[3] = handshake.len() & 0xFF;
+  payload[0] = ((hType >> 8) & 0xFF) as@ u8;
+  payload[1] = (hType & 0xFF) as@ u8;
+  payload[2] = ((handshake.len() >> 8) & 0xFF) as@ u8;
+  payload[3] = (handshake.len() & 0xFF) as@ u8;
   for (i32 i = 0; i < handshake.len(); i++) { payload[4 + i] = handshake[i]; }
   return encodeFixed(circId, cmdCreate2(), payload);
 }
@@ -247,7 +247,7 @@ export u8[] encodeCreate2(i32 circId, i32 hType, u8[] handshake) {
  */
 export u8[] decodeCreated2(u8[] payload) {
   if (payload.len() < 2) { return u8[](); }
-  i32 len = (payload[0] << 8) | payload[1];
+  i32 len = (payload[0] as i32 << 8) | payload[1] as i32;
   // Empty rather than a trap: the relay chose this length, and an empty handshake reply
   // fails ntor's AUTH check, which is the right outcome and does not abort the process.
   if (2 + len > payload.len()) { return u8[](); }
@@ -268,11 +268,11 @@ export u8[] decodeCreated2(u8[] payload) {
  */
 export i32 certsCount(u8[] payload) {
   if (payload.len() < 1) { return -1; }
-  i32 n = payload[0];
+  i32 n = payload[0] as i32;
   i32 at = 1;
   for (i32 i = 0; i < n; i++) {
     if (at + 3 > payload.len()) { return -1; }
-    i32 len = (payload[at + 1] << 8) | payload[at + 2];
+    i32 len = (payload[at + 1] as i32 << 8) | payload[at + 2] as i32;
     at += 3 + len;
     if (at > payload.len()) { return -1; }
   }
@@ -318,11 +318,11 @@ export u8[] encodePaddingNegotiate(i32 command, i32 lowMs, i32 highMs) {
   if (highMs < lowMs) { trap; }
   u8[] payload = u8[].filled(6, 0);
   payload[0] = 0;             // version
-  payload[1] = command;
-  payload[2] = (lowMs >> 8) & 0xFF;
-  payload[3] = lowMs & 0xFF;
-  payload[4] = (highMs >> 8) & 0xFF;
-  payload[5] = highMs & 0xFF;
+  payload[1] = command as@ u8;
+  payload[2] = ((lowMs >> 8) & 0xFF) as@ u8;
+  payload[3] = (lowMs & 0xFF) as@ u8;
+  payload[4] = ((highMs >> 8) & 0xFF) as@ u8;
+  payload[5] = (highMs & 0xFF) as@ u8;
   return encodeFixed(0, cmdPaddingNegotiate(), payload);
 }
 
@@ -344,7 +344,7 @@ export i32 cmdPaddingNegotiate() { return 12; }
  * each time.
  */
 export u8[] encodeDestroy(i32 circId, i32 reason) {
-  return encodeFixed(circId, cmdDestroy(), [reason]);
+  return encodeFixed(circId, cmdDestroy(), [reason as@ u8]);
 }
 
 /** REASON_REQUESTED — we are done with it, nothing went wrong. */

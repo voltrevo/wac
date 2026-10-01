@@ -21,7 +21,7 @@ u8[] prng(i32 n, i32 seed) {
     s = s ^ (s << 13);
     s = s ^ ((s >> 17) & 0x7FFF);
     s = s ^ (s << 5);
-    out[i] = s & 0xff;
+    out[i] = (s & 0xff) as@ u8;
   }
   return out;
 }
@@ -149,27 +149,27 @@ u8[] rleFrame(i32 value, i32 count) {
   i32 at = 5;
   if (sizeBytes == 1) {
     out[4] = 0x20;                                   // single segment, 1-byte content size
-    out[at] = count;
+    out[at] = count as@ u8;
     at = at + 1;
   } else if (sizeBytes == 2) {
     out[4] = 0x20 | (1 << 6);                        // single segment, 2-byte content size
     i32 v = count - 256;
-    out[at] = v & 0xff;
-    out[at + 1] = (v >> 8) & 0xff;
+    out[at] = (v & 0xff) as@ u8;
+    out[at + 1] = ((v >> 8) & 0xff) as@ u8;
     at = at + 2;
   } else {
     out[4] = 0x20 | (2 << 6);                        // single segment, 4-byte content size
-    out[at] = count & 0xff;
-    out[at + 1] = (count >> 8) & 0xff;
-    out[at + 2] = (count >> 16) & 0xff;
-    out[at + 3] = (((count as@ u32) >> (24 as@ u32)) as@ i32) & 0xff;
+    out[at] = (count & 0xff) as@ u8;
+    out[at + 1] = ((count >> 8) & 0xff) as@ u8;
+    out[at + 2] = ((count >> 16) & 0xff) as@ u8;
+    out[at + 3] = ((((count as@ u32) >> (24 as@ u32)) as@ i32) & 0xff) as@ u8;
     at = at + 4;
   }
   i32 header = (count << 3) | (1 << 1) | 1;          // size, type RLE, last block
-  out[at] = header & 0xff;
-  out[at + 1] = (header >> 8) & 0xff;
-  out[at + 2] = (header >> 16) & 0xff;
-  out[at + 3] = value;
+  out[at] = (header & 0xff) as@ u8;
+  out[at + 1] = ((header >> 8) & 0xff) as@ u8;
+  out[at + 2] = ((header >> 16) & 0xff) as@ u8;
+  out[at + 3] = value as@ u8;
   return out;
 }
 
@@ -247,10 +247,10 @@ export string test_a_skippable_frame_is_stepped_over_not_decoded(Core core, Cli 
   skip[1] = 0x2A;
   skip[2] = 0x4D;
   skip[3] = 0x18;
-  skip[4] = payload.len() & 0xff;
-  skip[5] = (payload.len() >> 8) & 0xff;
-  skip[6] = (payload.len() >> 16) & 0xff;
-  skip[7] = (payload.len() >> 24) & 0xff;
+  skip[4] = (payload.len() & 0xff) as@ u8;
+  skip[5] = ((payload.len() >> 8) & 0xff) as@ u8;
+  skip[6] = ((payload.len() >> 16) & 0xff) as@ u8;
+  skip[7] = ((payload.len() >> 24) & 0xff) as@ u8;
   for (i32 i = 0; i < payload.len(); i++) { skip[8 + i] = payload[i]; }
 
   u8[] got = decompress(concat(skip, frame));

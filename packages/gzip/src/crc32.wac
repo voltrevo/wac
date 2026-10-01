@@ -64,22 +64,22 @@ export u32 crc32(u8[] data) {
   i32 i = 0;
 
   while (i + 8 <= n) {
-    u32 a = crc ^ (data[i] as@ u32) ^ ((data[i + 1] << 8) as@ u32)
-          ^ ((data[i + 2] << 16) as@ u32) ^ ((data[i + 3] << 24) as@ u32);
+    u32 a = crc ^ (data[i] as u32) ^ ((data[i + 1] as i32 << 8) as@ u32)
+          ^ ((data[i + 2] as i32 << 16) as@ u32) ^ ((data[i + 3] as i32 << 24) as@ u32);
     crc = t[1792 + ((a & 0xFF) as@ i32)]
         ^ t[1536 + (((a >> 8) & 0xFF) as@ i32)]
         ^ t[1280 + (((a >> 16) & 0xFF) as@ i32)]
         ^ t[1024 + (((a >> 24) & 0xFF) as@ i32)]
-        ^ t[768 + data[i + 4]]
-        ^ t[512 + data[i + 5]]
-        ^ t[256 + data[i + 6]]
-        ^ t[data[i + 7]];
+        ^ t[768 + data[i + 4] as i32]
+        ^ t[512 + data[i + 5] as i32]
+        ^ t[256 + data[i + 6] as i32]
+        ^ t[data[i + 7] as i32];
     i += 8;
   }
 
   // Whatever is left over, one byte at a time.
   while (i < n) {
-    crc = t[((crc ^ (data[i] as@ u32)) & 0xFF) as@ i32] ^ (crc >> 8);
+    crc = t[((crc ^ (data[i] as u32)) & 0xFF) as@ i32] ^ (crc >> 8);
     i++;
   }
 
@@ -94,7 +94,7 @@ export u32 crc32(u8[] data) {
 export u32 crc32Bitwise(u8[] data) {
   u32 crc = 0xFFFFFFFF;
   for (i32 i = 0; i < data.len(); i++) {
-    crc ^= data[i] as@ u32;
+    crc ^= data[i] as u32;
     for (i32 k = 0; k < 8; k++) {
       bool low = (crc & 1) != 0;
       crc >>= 1;
@@ -131,21 +131,21 @@ export u32 crc32Update(u32[] t, u32 crc, u8[] data) {
   i32 i = 0;
 
   while (i + 8 <= n) {
-    u32 a = acc ^ (data[i] as@ u32) ^ ((data[i + 1] << 8) as@ u32)
-          ^ ((data[i + 2] << 16) as@ u32) ^ ((data[i + 3] << 24) as@ u32);
+    u32 a = acc ^ (data[i] as u32) ^ ((data[i + 1] as i32 << 8) as@ u32)
+          ^ ((data[i + 2] as i32 << 16) as@ u32) ^ ((data[i + 3] as i32 << 24) as@ u32);
     acc = t[1792 + ((a & 0xFF) as@ i32)]
         ^ t[1536 + (((a >> 8) & 0xFF) as@ i32)]
         ^ t[1280 + (((a >> 16) & 0xFF) as@ i32)]
         ^ t[1024 + (((a >> 24) & 0xFF) as@ i32)]
-        ^ t[768 + data[i + 4]]
-        ^ t[512 + data[i + 5]]
-        ^ t[256 + data[i + 6]]
-        ^ t[data[i + 7]];
+        ^ t[768 + data[i + 4] as i32]
+        ^ t[512 + data[i + 5] as i32]
+        ^ t[256 + data[i + 6] as i32]
+        ^ t[data[i + 7] as i32];
     i += 8;
   }
 
   while (i < n) {
-    acc = t[((acc ^ (data[i] as@ u32)) & 0xFF) as@ i32] ^ (acc >> 8);
+    acc = t[((acc ^ (data[i] as u32)) & 0xFF) as@ i32] ^ (acc >> 8);
     i++;
   }
 

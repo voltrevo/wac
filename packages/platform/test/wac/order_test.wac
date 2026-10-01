@@ -58,7 +58,7 @@ Split splitArgs(string src, i32 open) {
   i32 at = open + 1;
   i32 i = open + 1;
   while (i < b.len()) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c == '/' && i + 1 < b.len() && b[i + 1] == '/') {
       i32 nl = src.slice(i, src.len()).indexOf("\n");
       if (nl < 0) { break; }
@@ -73,7 +73,7 @@ Split splitArgs(string src, i32 open) {
     }
     if (c == '"' || c == '\'' || c == '`') {
       i = i + 1;
-      while (i < b.len() && b[i] != c) {
+      while (i < b.len() && b[i] as i32 != c) {
         if (b[i] == '\\') { i = i + 1; }
         i = i + 1;
       }
@@ -118,7 +118,7 @@ string trailingName(string part) {
   i32 end = b.len();
   if (end == 0) { return ""; }
   i32 start = end;
-  while (start > 0 && isWordByte(b[start - 1])) { start = start - 1; }
+  while (start > 0 && isWordByte(b[start - 1] as i32)) { start = start - 1; }
   return s.slice(start, end);
 }
 

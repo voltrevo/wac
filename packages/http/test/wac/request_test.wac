@@ -399,7 +399,7 @@ u8[] withByte(string before, i32 b, string after) {
   u8[] tail = after.toBytes();
   u8[] out = u8[].filled(head.len() + 1 + tail.len(), 0);
   for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
-  out[head.len()] = b;
+  out[head.len()] = b as@ u8;
   for (i32 i = 0; i < tail.len(); i++) { out[head.len() + 1 + i] = tail[i]; }
   return out;
 }

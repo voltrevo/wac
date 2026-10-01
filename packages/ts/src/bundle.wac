@@ -127,7 +127,7 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
     pushString(out, "\nreturn { " + exportList(texts[m]) + " };\n})();\n\n");
   }
   u8[] bytes = u8[].filled(out.len(), 0);
-  for (i32 i = 0; i < out.len(); i++) { bytes[i] = out.get(i); }
+  for (i32 i = 0; i < out.len(); i++) { bytes[i] = out.get(i) as@ u8; }
   return Bundled(bytes, "");
 }
 
@@ -328,7 +328,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
   copyThrough(out, src, written, src.len());
 
   u8[] b = u8[].filled(out.len(), 0);
-  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i); }
+  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i) as@ u8; }
 
   // `import * as ns from "./x.ts"` becomes `const ns = $m3;` — the IIFE's return value *is* the
   // namespace object, so there is nothing to construct. Written over the blanked statement, which
@@ -529,16 +529,16 @@ i32 indexOfVec(Vec<string> xs, string want) {
 }
 
 void copyThrough(Vec<i32> out, u8[] src, i32 written, i32 to) {
-  for (i32 i = written; i < to && i < src.len(); i++) { out.push(src[i]); }
+  for (i32 i = written; i < to && i < src.len(); i++) { out.push(src[i] as i32); }
 }
 
 void blankInto(Vec<i32> out, u8[] src, i32 from, i32 to) {
   for (i32 i = from; i < to && i < src.len(); i++) {
-    out.push(src[i] == '\n' || src[i] == '\r' ? src[i] : ' ');
+    out.push(src[i] == '\n' || src[i] == '\r' ? src[i] as i32 : ' ');
   }
 }
 
 void pushString(Vec<i32> out, string s) {
   u8[] b = s.toBytes();
-  for (i32 i = 0; i < b.len(); i++) { out.push(b[i]); }
+  for (i32 i = 0; i < b.len(); i++) { out.push(b[i] as i32); }
 }

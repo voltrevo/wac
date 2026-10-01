@@ -129,7 +129,7 @@ u8[] header(string path, i32 size, i64 mtimeMillis, i32 kind) {
   putOctal(h, 116, 8, 0);                         // gid
   putOctal(h, 124, 12, size);
   putOctal(h, 136, 12, (mtimeMillis / 1000) as~ i32);
-  h[156] = kind;                                  // '0' a file, '5' a directory
+  h[156] = kind as@ u8;                                  // '0' a file, '5' a directory
 
   // "ustar" and version "00", which is what makes it the POSIX format rather than the
   // older one every extractor still has to guess at.
@@ -140,7 +140,7 @@ u8[] header(string path, i32 size, i64 mtimeMillis, i32 kind) {
 
   for (i32 i = 148; i < 156; i++) { h[i] = ' '; }
   i32 sum = 0;
-  for (i32 i = 0; i < 512; i++) { sum = sum + h[i]; }
+  for (i32 i = 0; i < 512; i++) { sum = sum + h[i] as i32; }
   // Six octal digits, a NUL, then a space — the one field that is not simply left-padded.
   putOctal(h, 148, 7, sum);
   h[154] = 0;
@@ -152,7 +152,7 @@ u8[] header(string path, i32 size, i64 mtimeMillis, i32 kind) {
 void putOctal(u8[] h, i32 at, i32 width, i32 v) {
   i32 n = v;
   for (i32 i = width - 2; i >= 0; i--) {
-    h[at + i] = '0' + (n % 8);
+    h[at + i] = ('0' + (n % 8)) as@ u8;
     n = n / 8;
   }
   h[at + width - 1] = 0;

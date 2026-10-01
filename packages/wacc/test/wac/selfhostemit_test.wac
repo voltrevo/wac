@@ -93,7 +93,7 @@ static string DRIVER = ".cache/_selfhost.wac";
 /** The same checksum the driver computes, so the two can be compared at all. */
 i32 checksum(u8[] b) {
   i32 h = 7;
-  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }
+  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i] as i32) & 2147483647; }
   return h;
 }
 
@@ -119,7 +119,7 @@ string driverFor(string[] paths, string[] sources) {
   }
   out.pushAll(("i32 sumBytes(u8[] b) {\n" +
                "  i32 h = 7;\n" +
-               "  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }\n" +
+               "  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i] as i32) & 2147483647; }\n" +
                "  return h;\n" +
                "}\n\n").toBytes());
 

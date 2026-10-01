@@ -51,7 +51,7 @@ u8[][] samples() {
   string punctuation = "";
   for (i32 i = 0; i < 60; i++) {
     u8[] one = u8[].filled(1, 0);
-    one[0] = 33 + i;
+    one[0] = (33 + i) as@ u8;
     punctuation = punctuation + string.fromBytes(one);
   }
   string mixed = repeated("Lorem ipsum dolor sit amet 12345 " + punctuation, 300);
@@ -151,9 +151,9 @@ i32 lastWeight(i32[] weights, i32 maxBits) {
 /** A directly-written tree description: `128 + n` then the weights as nibbles. */
 u8[] directTree(i32[] weights) {
   u8[] out = u8[].filled(1 + (weights.len() + 1) / 2, 0);
-  out[0] = 128 + weights.len();
+  out[0] = (128 + weights.len()) as@ u8;
   for (i32 i = 0; i < weights.len(); i = i + 2) {
-    out[1 + i / 2] = (weights[i] << 4) | (i + 1 < weights.len() ? weights[i + 1] : 0);
+    out[1 + i / 2] = ((weights[i] << 4) | (i + 1 < weights.len() ? weights[i + 1] : 0)) as@ u8;
   }
   return out;
 }

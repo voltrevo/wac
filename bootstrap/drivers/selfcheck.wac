@@ -13,7 +13,7 @@ export i32 selfcheck() {
   u8[] out = emit("export i32 answer() { return 6 * 7; }".toBytes());
   i32 h = 0;
   for (i32 i = 0; i < out.len(); i++) {
-    h = (h * 31 + out[i]) & 65535;
+    h = (h * 31 + out[i] as i32) & 65535;
   }
   return out.len() * 100000 + h;
 }

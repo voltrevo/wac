@@ -34,7 +34,7 @@ static i32 CTR = 1;
 static i32 GCM = 2;
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * a + b) & 0xFF) as@ u8; }
   return out;
 }
 u8[] cat(u8[] a, u8[] b) {
@@ -172,13 +172,13 @@ export string test_the_gcm_counter_wraps_at_32_bits() {
   bool topIntact = true;
   for (i32 i = 0; i < 12; i++) { if (ctr[i] != 0xAA) { topIntact = false; } }
   t.isTrue(topIntact, "the wrap does not touch the first twelve bytes");
-  for (i32 i = 12; i < 16; i++) { t.eqI32(ctr[i], 0, "and the low word is zero"); }
+  for (i32 i = 12; i < 16; i++) { t.eqI32(ctr[i] as i32, 0, "and the low word is zero"); }
 
   // An ordinary increment, so this is not merely testing that nothing happens.
   u8[] plain = u8[].filled(16, 0);
   plain[15] = 7;
   gcmInc32(plain);
-  t.eqI32(plain[15], 8, "an ordinary increment advances the last byte");
+  t.eqI32(plain[15] as i32, 8, "an ordinary increment advances the last byte");
   return t.report();
 }
 
@@ -197,11 +197,11 @@ export string test_a_ctr_stream_in_pieces_matches_the_one_shot() {
   T t = T.create();
   u8[] key = u8[].filled(16, 0);
   u8[] iv = u8[].filled(16, 0);
-  for (i32 i = 0; i < 16; i++) { key[i] = (i * 13 + 1) & 0xFF; }
-  for (i32 i = 0; i < 16; i++) { iv[i] = (i * 7) & 0xFF; }
+  for (i32 i = 0; i < 16; i++) { key[i] = ((i * 13 + 1) & 0xFF) as@ u8; }
+  for (i32 i = 0; i < 16; i++) { iv[i] = ((i * 7) & 0xFF) as@ u8; }
 
   u8[] data = u8[].filled(1000, 0);
-  for (i32 i = 0; i < 1000; i++) { data[i] = (i * 31 + 7) & 0xFF; }
+  for (i32 i = 0; i < 1000; i++) { data[i] = ((i * 31 + 7) & 0xFF) as@ u8; }
   u8[] want = aesCtr(key, iv, data);
 
   // Chunk sizes that are not multiples of the 16-byte block, because that is the case a
@@ -231,7 +231,7 @@ export string test_a_ctr_stream_never_repeats_its_keystream() {
   T t = T.create();
   u8[] key = u8[].filled(16, 0);
   u8[] iv = u8[].filled(16, 0);
-  for (i32 i = 0; i < 16; i++) { key[i] = (i * 5 + 3) & 0xFF; }
+  for (i32 i = 0; i < 16; i++) { key[i] = ((i * 5 + 3) & 0xFF) as@ u8; }
 
   CtrStream cs = CtrStream.create(key, iv);
   u8[] first = cs.apply(u8[].filled(509, 0));
@@ -268,7 +268,7 @@ u8[] gcmAad() { return decoded("feedfacedeadbeeffeedfacedeadbeefabaddad2"); }
 /** 97 bytes, so the last block is partial — the case a whole-block-only flaw would miss. */
 u8[] gcmPlain() {
   u8[] p = u8[].filled(97, 0);
-  for (i32 i = 0; i < 97; i++) { p[i] = (i * 29 + 11) & 0xFF; }
+  for (i32 i = 0; i < 97; i++) { p[i] = ((i * 29 + 11) & 0xFF) as@ u8; }
   return p;
 }
 

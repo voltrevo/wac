@@ -117,7 +117,7 @@ export string test_channel_messages_address_the_recipients_channel_number() {
   // asserted with a number that could only have come from the right place.
   T t = T.create();
   u8[] open = openSession(7, 8192, 32768);
-  t.eqI32(open[0], msgChannelOpen(), "not a CHANNEL_OPEN");
+  t.eqI32(open[0] as i32, msgChannelOpen(), "not a CHANNEL_OPEN");
   // "session", then *our* number, since the server has not chosen one yet.
   Reader r = Reader.create(open, 1, open.len());
   t.eqStr(string.fromBytes(r.str()), "session", "channel type wrong");
@@ -135,6 +135,6 @@ export string test_channel_messages_address_the_recipients_channel_number() {
   for (i32 i = 0; i < msgs.len(); i++) {
     t.eqI32(u32At(msgs[i], 1), 42, names[i] + " does not address the server's number");
   }
-  t.eqI32(channelData(42, ("x").toBytes())[0], msgChannelData(), "channelData's message number");
+  t.eqI32(channelData(42, ("x").toBytes())[0] as i32, msgChannelData(), "channelData's message number");
   return t.report();
 }

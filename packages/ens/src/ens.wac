@@ -91,7 +91,7 @@ export u8[] dnsEncode(u8[] name) {
   start = 0;
   for (i32 i = 0; i <= name.len(); i++) {
     if (i == name.len() || name[i] == '.') {
-      out[at] = i - start;
+      out[at] = (i - start) as@ u8;
       at++;
       for (i32 j = start; j < i; j++) { out[at] = name[j]; at++; }
       start = i + 1;

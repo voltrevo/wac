@@ -69,7 +69,7 @@ export struct Pr {
     if (t < 0 || t >= this.tokCount) { this.out.push('?'); return; }
     i32 start = this.toks[t * tokenStride() + 1];
     i32 len = this.toks[t * tokenStride() + 2];
-    for (i32 i = 0; i < len; i++) { this.out.push(this.src[start + i]); }
+    for (i32 i = 0; i < len; i++) { this.out.push(this.src[start + i] as i32); }
   }
 
   /**
@@ -114,7 +114,7 @@ export struct Pr {
     // the modules do not have. `design/lang/0013` D5, D6.
     if (isBlockLiteral(this.src, start, len)) {
       u8[] bytes = blockValue(this.src, start, len);
-      for (i32 k = 0; k < bytes.len(); k++) { this.escByte(bytes[k]); }
+      for (i32 k = 0; k < bytes.len(); k++) { this.escByte(bytes[k] as i32); }
       this.out.push('"');
       return;
     }
@@ -124,10 +124,10 @@ export struct Pr {
     i32 i = literalBodyStart(this.src, start, len);
     i32 end = literalBodyEnd(this.src, start, len);
     while (i < end) {
-      i32 c = this.src[i];
+      i32 c = this.src[i] as i32;
       if (c == '\\' && i + 1 < end) {
         i32 escAt = i + 1;
-        i32 e = this.src[escAt];
+        i32 e = this.src[escAt] as i32;
         i += 2;
         // **Decoded and re-escaped, like every other escape here.** This printer's contract above is
         // "unescape and then re-escape by the same rule, which makes the comparison exact", so
@@ -139,7 +139,7 @@ export struct Pr {
           if (cp >= 0) {
             u8[] enc = u8[].filled(4, 0);
             i32 got = utf8Into(enc, 0, cp);
-            for (i32 k = 0; k < got; k++) { this.escByte(enc[k]); }
+            for (i32 k = 0; k < got; k++) { this.escByte(enc[k] as i32); }
             i = unicodeEscapeEnd(this.src, escAt, end);
             continue;
           }
@@ -185,20 +185,20 @@ i32 charLitValue(u8[] s, i32 start, i32 len) {
       i32 cp = unicodeEscapeValue(s, i + 1, end);
       if (cp >= 0) { return cp; }
     }
-    return escapeValue(s[i + 1]);
+    return escapeValue(s[i + 1] as i32);
   }
   // A literal character, decoded from UTF-8 so a non-ASCII one gives its codepoint.
-  i32 c = s[i];
+  i32 c = s[i] as i32;
   if (c < 0x80) { return c; }
   if ((c & 0xE0) == 0xC0 && i + 1 < end) {
-    return ((c & 0x1F) << 6) | (s[i + 1] & 0x3F);
+    return ((c & 0x1F) << 6) | (s[i + 1] as i32 & 0x3F);
   }
   if ((c & 0xF0) == 0xE0 && i + 2 < end) {
-    return ((c & 0x0F) << 12) | ((s[i + 1] & 0x3F) << 6) | (s[i + 2] & 0x3F);
+    return ((c & 0x0F) << 12) | ((s[i + 1] as i32 & 0x3F) << 6) | (s[i + 2] as i32 & 0x3F);
   }
   if ((c & 0xF8) == 0xF0 && i + 3 < end) {
-    return ((c & 0x07) << 18) | ((s[i + 1] & 0x3F) << 12)
-         | ((s[i + 2] & 0x3F) << 6) | (s[i + 3] & 0x3F);
+    return ((c & 0x07) << 18) | ((s[i + 1] as i32 & 0x3F) << 12)
+         | ((s[i + 2] as i32 & 0x3F) << 6) | (s[i + 3] as i32 & 0x3F);
   }
   return c;
 }

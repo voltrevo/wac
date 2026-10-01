@@ -457,7 +457,7 @@ export i32 relayByEd25519(Network net, u8[] want) {
     u8[] have = net.relays[i].ed25519Identity;
     if (have.len() == 32) {
       i32 diff = 0;
-      for (i32 j = 0; j < 32; j++) { diff = diff | (have[j] ^ want[j]); }
+      for (i32 j = 0; j < 32; j++) { diff = diff | (have[j] as i32 ^ want[j] as i32); }
       if (diff == 0) { return i; }
     }
   }

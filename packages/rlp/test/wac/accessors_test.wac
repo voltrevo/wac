@@ -50,7 +50,7 @@ export string test_the_accessors_answer_for_the_variant_they_are_for() {
 
   u8[] got = bytesOf(bytes);
   t.eqI32(got.len(), 3, "bytesOf answered the wrong length");
-  t.eqI32(got[0], 1, "bytesOf answered the wrong bytes");
+  t.eqI32(got[0] as i32, 1, "bytesOf answered the wrong bytes");
 
   Item[] items = itemsOf(list);
   t.eqI32(items.len(), 2, "itemsOf answered the wrong count");
@@ -61,8 +61,8 @@ export string test_the_accessors_answer_for_the_variant_they_are_for() {
   t.isTrue(isList(Item.List(Item[].filled(0, bytes))), "an empty list is still a list");
   t.eqI32(itemsOf(Item.List(Item[].filled(0, bytes))).len(), 0, "an empty list has items");
   t.eqI32(bytesOf(Item.Bytes(u8[]())).len(), 0, "an empty string has bytes");
-  t.eqI32(encode(Item.List(Item[].filled(0, bytes)))[0], 0xC0, "an empty list is not 0xC0");
-  t.eqI32(encode(Item.Bytes(u8[]()))[0], 0x80, "an empty string is not 0x80");
+  t.eqI32(encode(Item.List(Item[].filled(0, bytes)))[0] as i32, 0xC0, "an empty list is not 0xC0");
+  t.eqI32(encode(Item.Bytes(u8[]()))[0] as i32, 0x80, "an empty string is not 0x80");
   return t.report();
 }
 

@@ -122,8 +122,8 @@ export Index parseIdx(u8[] b) {
   for (i32 i = 1; i < n; i++) {
     i32 cmp = 0;
     for (i32 k = 0; k < 20; k++) {
-      i32 a = names[(i - 1) * 20 + k];
-      i32 c = names[i * 20 + k];
+      i32 a = names[(i - 1) * 20 + k] as i32;
+      i32 c = names[i * 20 + k] as i32;
       if (a != c) { cmp = a < c ? -1 : 1; break; }
     }
     if (cmp >= 0) { return Index.Rejected("object names are not in ascending order at " + itoa(i)); }
@@ -148,8 +148,8 @@ export i32 find(const PackIndex idx, u8[] name) {
     i32 mid = lo + (hi - lo) / 2;
     i32 cmp = 0;
     for (i32 k = 0; k < 20; k++) {
-      i32 a = idx.names[mid * 20 + k];
-      i32 c = name[k];
+      i32 a = idx.names[mid * 20 + k] as i32;
+      i32 c = name[k] as i32;
       if (a != c) { cmp = a < c ? -1 : 1; break; }
     }
     if (cmp == 0) { return mid; }
@@ -196,7 +196,7 @@ export u8[] writeIdx(const PackIndex idx, u8[] packChecksum) {
   // The cumulative fanout, from the first byte of each name.
   i32[] upto = i32[].filled(256, 0);
   for (i32 i = 0; i < idx.count; i++) {
-    i32 first = idx.names[i * 20];
+    i32 first = idx.names[i * 20] as i32;
     upto[first] = upto[first] + 1;
   }
   i32 running = 0;
@@ -205,7 +205,7 @@ export u8[] writeIdx(const PackIndex idx, u8[] packChecksum) {
     u32be(out, running);
   }
 
-  for (i32 i = 0; i < idx.count * 20; i++) { out.push(idx.names[i]); }
+  for (i32 i = 0; i < idx.count * 20; i++) { out.push(idx.names[i] as i32); }
   for (i32 i = 0; i < idx.count; i++) { u32be(out, idx.crcs[i] as@ i32); }
 
   // Offsets, and the table the big ones live in. Built alongside, because the flag in the small slot is
@@ -234,7 +234,7 @@ export u8[] writeIdx(const PackIndex idx, u8[] packChecksum) {
   }
   out.pushAll(large.bytes());
 
-  for (i32 i = 0; i < 20; i++) { out.push(packChecksum[i]); }
+  for (i32 i = 0; i < 20; i++) { out.push(packChecksum[i] as i32); }
   // The trailer is over everything above it, this file's own bytes — not over the pack.
   out.pushAll(sha1(out.bytes()));
   return out.take();

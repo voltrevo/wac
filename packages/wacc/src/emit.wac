@@ -34,7 +34,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString, kAsAt, kAsBang, kAsTilde,
+  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde,
 } from "./kinds.wac";
 
 /**
@@ -56,18 +56,18 @@ export struct B {
       for (i32 i = 0; i < this.len; i++) { bigger[i] = this.data[i]; }
       this.data = bigger;
     }
-    this.data[this.len] = v;
+    this.data[this.len] = v as@ u8;
     this.len = this.len + 1;
   }
 
   /** Every byte of another buffer, which is how a section is spliced in once its length is known. */
   void bytes(this, B other) {
-    for (i32 i = 0; i < other.len; i++) { this.byte(other.data[i]); }
+    for (i32 i = 0; i < other.len; i++) { this.byte(other.data[i] as i32); }
   }
 
   /** Every byte of a raw array — a string literal's bytes on their way into the data segment. */
   void raw(this, u8[] src) {
-    for (i32 i = 0; i < src.len(); i++) { this.byte(src[i]); }
+    for (i32 i = 0; i < src.len(); i++) { this.byte(src[i] as i32); }
   }
 
   /**
@@ -150,7 +150,7 @@ export struct B {
   void name(this, string s) {
     u8[] b = s.toBytes();
     this.u32leb(b.len());
-    for (i32 i = 0; i < b.len(); i++) { this.byte(b[i]); }
+    for (i32 i = 0; i < b.len(); i++) { this.byte(b[i] as i32); }
   }
 }
 
@@ -223,7 +223,7 @@ bool isUnresolvedBareName(Env env, string t) {
   if (t == "" || t == "void" || t == "never" || t == "string") { return false; }
   u8[] b = t.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];   // a packed element reads as i32 — spec/cases/0210
+    i32 c = b[i] as i32;   // a packed element reads as i32 — spec/cases/0210
     if (c == 91 || c == 93 || c == 60 || c == 62 || c == 40 || c == 41 || c == 44 || c == 63) {
       return false;
     }
@@ -232,7 +232,7 @@ bool isUnresolvedBareName(Env env, string t) {
 }
 
 bool isWritableValType(string t) {
-  return t == "i32" || t == "u32" || t == "u8" || t == "u16" || t == "bool"
+  return t == "i32" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "bool"
       || t == "i64" || t == "u64" || t == "f32" || t == "f64"
       || t == "anyref" || t == "i31ref";
 }
@@ -4420,7 +4420,7 @@ string cellStructName(string ty) {
   string out = "";
   u8[] tb = ty.toBytes();
   for (i32 i = 0; i < tb.len(); i++) {
-    i32 c = tb[i];
+    i32 c = tb[i] as i32;
     if (c == '[') { continue; }
     if (c == ']') { out = out + "$a"; continue; }
     if (c == '?') { out = out + "$n"; continue; }
@@ -4522,8 +4522,8 @@ string replaceWord(string s, string name, string with) {
   while (i < a.len()) {
     bool hit = i + n.len() <= a.len();
     for (i32 k = 0; hit && k < n.len(); k++) { if (a[i + k] != n[k]) { hit = false; } }
-    if (hit && i > 0 && isWordByte(a[i - 1])) { hit = false; }
-    if (hit && i + n.len() < a.len() && isWordByte(a[i + n.len()])) { hit = false; }
+    if (hit && i > 0 && isWordByte(a[i - 1] as i32)) { hit = false; }
+    if (hit && i + n.len() < a.len() && isWordByte(a[i + n.len()] as i32)) { hit = false; }
     if (hit) { out = out + with; i = i + n.len(); }
     else { out = out + s.slice(i, i + 1); i = i + 1; }
   }
@@ -6434,11 +6434,10 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
           // number. This answered `""` — the emitter's "I don't know" — which is why `canEmit` approved
           // these functions and the emitter then dropped them (`issues/lang/0171a`).
           //
-          // `u8` and `u16` are deliberately absent: a *packed* type cannot be nullable, which is
-          // `spec/cases/0025` and is the checker's rule, so widening this list would accept something
-          // the spec refuses.
+          // The packed types box too, now that they are ordinary (spec/next ch08, `spec/cases/0025`):
+          // the box's field is the `i32` carrier, which already holds the value normalised.
           if (pn == "i32" || pn == "u32" || pn == "i64" || pn == "u64"
-              || pn == "f32" || pn == "f64" || pn == "bool") {
+              || pn == "f32" || pn == "f64" || pn == "bool" || isPackedValue(pn)) {
             return pn + "?";
           }
           return "";
@@ -6836,7 +6835,7 @@ void emitRawString(B fb, Env env, string text) {
   u8[] bytes = text.toBytes();
   for (i32 i = 0; i < bytes.len(); i++) {
     fb.byte(65);
-    fb.i32leb(bytes[i]);
+    fb.i32leb(bytes[i] as i32);
   }
   fb.byte(251);
   fb.u32leb(8);   // array.new_fixed
@@ -6887,7 +6886,7 @@ void emitJsxText(B fb, u8[] src, Env env, i32 startOff, i32 endOff) {
     if (k == 0) {
       for (i32 i = from; i < to; i++) {
         fb.byte(65);
-        fb.i32leb(src[i]);
+        fb.i32leb(src[i] as i32);
       }
       fb.byte(251);
       fb.u32leb(8);   // array.new_fixed
@@ -8307,7 +8306,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       u8[] bytes = stringLiteralBytes(src, lexed, tok);
       if (env.inConstExpr) {
         // A constant expression cannot name a data segment — see `Env.inConstExpr`.
-        for (i32 i = 0; i < bytes.len(); i++) { fb.byte(65); fb.i32leb(bytes[i]); }
+        for (i32 i = 0; i < bytes.len(); i++) { fb.byte(65); fb.i32leb(bytes[i] as i32); }
         fb.byte(251);
         fb.u32leb(8);   // array.new_fixed
         fb.u32leb(env.arrayType("i8[]"));
@@ -8435,12 +8434,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         else { fb.byte(65); fb.i32leb(0); }
         emitExprAt(fb, src, lexed, env, operand, ut);
         fb.byte(valType(ut) == 126 ? 125 : 107);
+        emitNormalize(fb, ut);
         return;
       }
       if (k == kTilde()) {
         emitExprAt(fb, src, lexed, env, operand, ut);
         if (valType(ut) == 126) { fb.byte(66); fb.i32leb(-1); fb.byte(133); }
         else { fb.byte(65); fb.i32leb(-1); fb.byte(115); }
+        emitNormalize(fb, ut);
         return;
       }
     }
@@ -11043,7 +11044,89 @@ void emitCheckedArith(B fb, Env env, i32 k, string t) {
   fb.byte(32); fb.u32leb(sres);
 }
 
+/**
+ * `k` on two `t`s. **A packed type computes in its carrier and is brought back to its width** — spec/next
+ * ch08 `§wac-packed-arith-ctd4aqd`: `u8 + u8` is a `u8`, wrapped at 8 bits. A packed value is held in an
+ * `i32` already reduced to its range (zero-extended for `u8`/`u16`, sign-extended for `i8`/`i16`), so a
+ * comparison, `&`, `|`, `^` and `>>` keep it there and only the operators that can leave it re-reduce.
+ */
 void emitBinary(B fb, Env env, i32 k, string t) {
+  if (!isPackedValue(t)) { emitBinaryAt(fb, env, k, t); return; }
+  emitBinaryAt(fb, env, k, packedCarrier(t));
+  if (k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() || k == kPercent() || k == kShl()) {
+    emitNormalize(fb, t);
+  }
+}
+
+/** `i8`, `u8`, `i16`, `u16` — the integers narrower than their `i32` carrier. */
+bool isPackedValue(string t) { return t == "i8" || t == "u8" || t == "i16" || t == "u16"; }
+
+/** The 32-bit type a packed one computes in: signed for the signed ones, unsigned for the others. */
+string packedCarrier(string t) { return t == "i8" || t == "i16" ? "i32" : "u32"; }
+
+/** Reduce the `i32` on the stack to `t`'s range, when `t` is packed; nothing otherwise. */
+void emitNormalize(B fb, string t) {
+  if (t == "u8") { fb.byte(65); fb.i32leb(255); fb.byte(113); return; }            // i32.and
+  if (t == "u16") { fb.byte(65); fb.i32leb(65535); fb.byte(113); return; }
+  if (t == "i8") { fb.byte(192); return; }                                         // i32.extend8_s
+  if (t == "i16") { fb.byte(193); return; }                                        // i32.extend16_s
+}
+
+/** The smallest and largest value of a packed type. */
+i32 packedMin(string t) { return t == "i8" ? -128 : t == "i16" ? -32768 : 0; }
+i32 packedMax(string t) { return t == "i8" ? 127 : t == "u8" ? 255 : t == "i16" ? 32767 : 65535; }
+
+/**
+ * A cast where either side is packed — spec/next ch24 `§wac-cast-packed-ordinary-65bdykv`.
+ *
+ * Out of a packed type, the value is already exact in its carrier, so the cast is the carrier's. Into
+ * one, the value is first cast to the carrier with the same operator and then brought into range the way
+ * that operator says: `as@` keeps the low bits (a float saturates, as it does into any integer), `as!`
+ * traps on a value that has no reading in it, `as~` clamps, and plain `as` — which only a narrower
+ * packed type reaches — has nothing to do.
+ */
+void emitPackedCast(B fb, Env env, string from, string to, i32 op) {
+  string src = isPackedValue(from) ? packedCarrier(from) : from;
+  if (!isPackedValue(to)) {
+    emitCast(fb, env, src, to, op);
+    return;
+  }
+  string carrier = packedCarrier(to);
+  if (src != carrier) { emitCast(fb, env, src, carrier, op == kAs() ? kAsAt() : op); }
+  if (op == kAs()) { return; }
+  bool floatSource = isFloat(from);
+  if (op == kAsAt() && !floatSource) { emitNormalize(fb, to); return; }
+  i32 v = env.scratchNamed("packed", "i32");
+  fb.byte(34); fb.u32leb(v);                                  // local.tee
+  fb.byte(65); fb.i32leb(packedMin(to));
+  fb.byte(72);                                                // i32.lt_s
+  fb.byte(32); fb.u32leb(v);
+  fb.byte(65); fb.i32leb(packedMax(to));
+  fb.byte(74);                                                // i32.gt_s
+  fb.byte(114);                                               // i32.or — outside the range
+  if (op == kAsBang()) {
+    fb.byte(4); fb.byte(64);                                  // if
+    fb.byte(0);                                               // unreachable
+    fb.byte(11);
+    fb.byte(32); fb.u32leb(v);
+    return;
+  }
+  // `as~`, and `as@` from a float: the nearest value in range.
+  fb.byte(4); fb.byte(127);                                   // if (result i32)
+  fb.byte(32); fb.u32leb(v);
+  fb.byte(65); fb.i32leb(0);
+  fb.byte(72);                                                // i32.lt_s
+  fb.byte(4); fb.byte(127);
+  fb.byte(65); fb.i32leb(packedMin(to));
+  fb.byte(5);
+  fb.byte(65); fb.i32leb(packedMax(to));
+  fb.byte(11);
+  fb.byte(5);
+  fb.byte(32); fb.u32leb(v);
+  fb.byte(11);
+}
+
+void emitBinaryAt(B fb, Env env, i32 k, string t) {
   bool u = isUnsigned(t);
   // **`--checked`**: `+`, `-` and `*` on an integer trap instead of wrapping. Everything else is
   // unchanged, and with the flag off not a byte moves — the instrument must not disturb what it is
@@ -11189,6 +11272,10 @@ void emitSignRangeTrap(B fb, Env env, string from, string to) {
 }
 
 void emitCast(B fb, Env env, string from, string to, i32 op) {
+  if (from != to && (isPackedValue(from) || isPackedValue(to))) {
+    emitPackedCast(fb, env, from, to, op);
+    return;
+  }
   // **One width, two ranges** — see `emitSignRangeTrap`. This has to come before the bail below,
   // which declines on `valType(from) == valType(to)` and so declined on exactly this.
   if (op == kAsBang() && from != to && isNumericTy(from) && isNumericTy(to) &&
@@ -12521,7 +12608,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string t = typeOfTyName(env, src, lexed, target);
       bool known = isArrayType(t) || env.isStructName(t) || t == "i32" || t == "u32" ||
                    t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool" ||
-                   t == "anyref" || t == "i31ref";
+                   t == "anyref" || t == "i31ref" || isPackedValue(t);
       if (!known) { return "cast to an unsupported type"; }
       // `[a, b] as T[]` is asked about at `T[]`, which is the type it is built at.
       match (operand.kind) {
@@ -14764,7 +14851,7 @@ export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
           continue;
         }
       }
-      out[n] = escapeValue(src[i + 1]);
+      out[n] = escapeValue(src[i + 1] as i32) as@ u8;
       n = n + 1;
       i = i + 2;
       continue;
@@ -14790,7 +14877,7 @@ bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
   while (i < end) {
     if (src[i] != 92) { i = i + 1; continue; }
     if (i + 1 >= end) { return false; }
-    i32 c = src[i + 1];
+    i32 c = src[i + 1] as i32;
     if (c == 'u') {
       if (unicodeEscapeValue(src, i + 1, end) < 0) { return false; }
       i = unicodeEscapeEnd(src, i + 1, end);
@@ -15305,9 +15392,9 @@ string fileTagOf(string path) {
   }
   u8[] out = u8[].filled(end, 0);
   for (i32 i = 0; i < end; i++) {
-    i32 c = a[i];
+    i32 c = a[i] as i32;
     bool ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
-    out[i] = ok ? c : 95;                                     // `_`
+    out[i] = (ok ? c : 95) as@ u8;                                     // `_`
   }
   return string.fromBytes(out);
 }
@@ -15360,7 +15447,7 @@ string bindTypeSpelling(Env env, string t, string templatePath) {
   i32 depth = 0;
   i32 start = -1;
   for (i32 i = 0; i < a.len(); i++) {
-    i32 c = a[i];
+    i32 c = a[i] as i32;
     if (c == 60) {                                            // `<`
       depth = depth + 1;
       if (depth == 1) { start = i + 1; }
@@ -15510,7 +15597,7 @@ string metaTypeSpelling(Env env, string t) {
   string out = "";
   string cur = "";
   for (i32 i = 0; i < a.len(); i++) {
-    i32 c = a[i];
+    i32 c = a[i] as i32;
     // The characters a key can hold: an identifier, plus the `@` a second declaration carries, plus
     // `$` and `.` from the names this compiler mints. Everything else separates one name from the
     // next and is copied through.
@@ -15537,12 +15624,12 @@ string bindNameOf(string spelling) {
   i32 n = 0;
   bool pending = false;
   for (i32 i = 0; i < a.len(); i++) {
-    i32 c = a[i];
+    i32 c = a[i] as i32;
     bool ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95;
     if (ok) {
       if (pending && n > 0) { tmp[n] = 36; n = n + 1; }        // `$`, one per run
       pending = false;
-      tmp[n] = c;
+      tmp[n] = c as@ u8;
       n = n + 1;
     } else {
       pending = true;

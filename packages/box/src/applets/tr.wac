@@ -27,7 +27,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   u8[] flags = a.flags.toBytes();
   for (i32 i = 0; i < flags.len(); i++) {
-    if (!known(flags[i])) {
+    if (!known(flags[i] as i32)) {
       core.warn(a.name + ": invalid option -- '" + string.fromBytes(u8[].filled(1, flags[i])) + "'");
       core.warn("Try '" + a.name + " --help' for more information.");
       return 1;
@@ -89,7 +89,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
 
   u8[] deleted = u8[].filled(256, 0);
   u8[] map = u8[].filled(256, 0);
-  for (i32 i = 0; i < 256; i++) { map[i] = i; }
+  for (i32 i = 0; i < 256; i++) { map[i] = i as@ u8; }
   if (del) {
     for (i32 i = 0; i < from.len(); i++) { deleted[from[i]] = 1; }
   } else {
@@ -124,13 +124,13 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
     u8[] out = u8[].filled(chunk.len(), 0);
     i32 at = 0;
     for (i32 i = 0; i < chunk.len(); i++) {
-      i32 c = chunk[i];
+      i32 c = chunk[i] as i32;
       if (del && deleted[c] == 1) { continue; }
-      i32 v = map[c];
+      i32 v = map[c] as i32;
       // The squeeze runs across chunk boundaries, which is the whole of this program's state.
       if (squeeze && squeezed[v] == 1 && v == last) { continue; }
       last = v;
-      out[at] = v;
+      out[at] = v as@ u8;
       at++;
     }
     u8[] send = u8[].filled(at, 0);

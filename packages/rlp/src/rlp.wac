@@ -132,14 +132,14 @@ u8[] encodeBytes(u8[] v) {
  */
 u8[] header(i32 len, i32 short, i32 long) {
   if (len < 0) { trap; }
-  if (len <= 55) { return [short + len]; }
+  if (len <= 55) { return [(short + len) as@ u8]; }
   // Minimal big-endian length: no leading zero, because a decoder must reject one.
   u8[] be = u8[].filled(4, 0);
   i32 n = 0;
   i32 x = len;
-  while (x > 0) { be[n] = x & 0xFF; n++; x = x / 256; }
+  while (x > 0) { be[n] = (x & 0xFF) as@ u8; n++; x = x / 256; }
   u8[] out = u8[].filled(1 + n, 0);
-  out[0] = long + n;
+  out[0] = (long + n) as@ u8;
   for (i32 i = 0; i < n; i++) { out[1 + i] = be[n - 1 - i]; }
   return out;
 }
@@ -151,7 +151,7 @@ export u8[] fromI64(i64 v) {
   u8[] be = u8[].filled(8, 0);
   i32 n = 0;
   i64 x = v;
-  while (x > 0) { be[n] = (x & 255) as~ i32; n++; x = x / 256; }
+  while (x > 0) { be[n] = ((x & 255) as~ i32) as@ u8; n++; x = x / 256; }
   u8[] out = u8[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { out[i] = be[n - 1 - i]; }
   return out;
@@ -207,14 +207,14 @@ Item item(Cursor c) {
     c.error = "input ended where an item was expected";
     return empty;
   }
-  i32 tag = c.src[c.at];
+  i32 tag = c.src[c.at] as i32;
   c.at++;
 
   if (tag < 0x80) {
     // The byte is itself. Written before the length forms because it is the case a decoder gets wrong by
     // treating 0x00..0x7f as a zero-length prefix.
     u8[] one = u8[].filled(1, 0);
-    one[0] = tag;
+    one[0] = tag as@ u8;
     return Item.Bytes(one);
   }
   if (tag <= 0xB7) { return Item.Bytes(take(c, tag - 0x80, true)); }

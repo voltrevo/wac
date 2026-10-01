@@ -284,11 +284,11 @@ export struct Peer {
   u8[][] handshakeRecord(this, u8[][] out, Record r) {
     u8[] f = r.fragment;
     if (f.len() < 12) { return out; }
-    i32 kind = f[0];
-    i32 total = (f[1] << 16) | (f[2] << 8) | f[3];
-    i32 seq = (f[4] << 8) | f[5];
-    i32 offset = (f[6] << 16) | (f[7] << 8) | f[8];
-    i32 fragLen = (f[9] << 16) | (f[10] << 8) | f[11];
+    i32 kind = f[0] as i32;
+    i32 total = (f[1] as i32 << 16) | (f[2] as i32 << 8) | f[3] as i32;
+    i32 seq = (f[4] as i32 << 8) | f[5] as i32;
+    i32 offset = (f[6] as i32 << 16) | (f[7] as i32 << 8) | f[8] as i32;
+    i32 fragLen = (f[9] as i32 << 16) | (f[10] as i32 << 8) | f[11] as i32;
     u8[] piece = u8[].filled(f.len() - 12, 0);
     for (i32 i = 0; i < piece.len(); i++) { piece[i] = f[12 + i]; }
     u8[] body = this.reassemble(kind, seq, offset, fragLen, total, piece);
@@ -429,8 +429,8 @@ export struct Peer {
    */
   bool verifyPeer(const this, u8[] body) {
     if (body.len() < 4 || this.peerCertDer.len() == 0) { return false; }
-    i32 scheme = (body[0] << 8) | body[1];
-    i32 sigLen = (body[2] << 8) | body[3];
+    i32 scheme = (body[0] as i32 << 8) | body[1] as i32;
+    i32 sigLen = (body[2] as i32 << 8) | body[3] as i32;
     if (sigLen <= 0 || 4 + sigLen > body.len()) { return false; }
     u8[] sig = u8[].filled(sigLen, 0);
     for (i32 i = 0; i < sigLen; i++) { sig[i] = body[4 + i]; }

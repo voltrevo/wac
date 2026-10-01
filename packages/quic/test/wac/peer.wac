@@ -136,7 +136,7 @@ export i32 numberIn(string json, string key) {
   string rest = json.slice(at + key.len() + 2, json.len());
   i32 v = -1;
   for (i32 i = 0; i < rest.len(); i++) {
-    i32 b = rest.toBytes()[i];
+    i32 b = rest.toBytes()[i] as i32;
     if (b >= '0' && b <= '9') { v = (v < 0 ? 0 : v) * 10 + (b - '0'); continue; }
     if (v >= 0) { break; }
   }

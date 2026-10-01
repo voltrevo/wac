@@ -37,6 +37,6 @@ export i32 f() {
 
   // Written from the enclosing side, through the same cell — the array `buf` names is one array.
   i32 total = 0;
-  fn<i32()> sum = () => buf[0] + buf[1];
+  fn<i32()> sum = () => buf[0] as i32 + buf[1] as i32;
   return sum() + total;
 }

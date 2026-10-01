@@ -29,7 +29,7 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-writepath"; }
  */
 u8[] pattern(i32 n) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + (i / 8192)) & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 31 + (i / 8192)) & 255) as@ u8; }
   return out;
 }
 

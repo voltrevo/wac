@@ -150,7 +150,7 @@ i64 numberAfter(string text, string after) {
   i64 n = 0 as i64;
   i32 digits = 0;
   while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
-    n = n * (10 as i64) + ((b[i] - '0') as i64);
+    n = n * (10 as i64) + ((b[i] as i32 - '0') as i64);
     digits = digits + 1;
     i = i + 1;
   }

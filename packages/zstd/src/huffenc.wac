@@ -202,7 +202,7 @@ void writeTree(Buf out, HuffEnc h) {
 u8[] encodeStream(HuffEnc h, u8[] data, i32 begin, i32 end) {
   BitOut o = BitOut.create();
   for (i32 i = end - 1; i >= begin; i--) {
-    i32 s = data[i];
+    i32 s = data[i] as i32;
     o.write(h.code[s], h.nbBits[s]);
   }
   return o.finish();

@@ -194,7 +194,7 @@ export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core c
     u8[] body = u8[].filled(len, 0);
     bool usable = true;
     for (i32 j = 0; j < len; j++) {
-      body[j] = pick(rng);
+      body[j] = pick(rng) as@ u8;
       // A quote or a backslash would end the string or start an escape, and a control byte has its
       // own error; none of those are this test's subject.
       if (body[j] == 0x22 || body[j] == 0x5C || body[j] < 0x20) { usable = false; }

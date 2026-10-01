@@ -111,7 +111,7 @@ export i32 main(Core core, Cli cli) {
     u8[] mls = u8[].filled(9, 0);
     mls[0] = 1; mls[1] = 0; mls[2] = 6;
     mls[3] = 127; mls[4] = 0; mls[5] = 0; mls[6] = 1;
-    mls[7] = 0x23; mls[8] = (0x29 + mi) & 0xFF;
+    mls[7] = 0x23; mls[8] = ((0x29 + mi) & 0xFF) as@ u8;
     many[mi] = IntroPoint(mls, x25519Base(clamped(seedFor(40 + mi))), seedFor(50 + mi),
                           clamped(seedFor(60 + mi)));
   }
@@ -121,14 +121,14 @@ export i32 main(Core core, Cli cli) {
   u8[][] clients = u8[][].defaulted(16);
   for (i32 ci = 0; ci < 16; ci++) {
     u8[] one = u8[].filled(40, 0);
-    for (i32 i = 0; i < 40; i++) { one[i] = (ci * 97 + i * 11 + 3) & 0xFF; }
+    for (i32 i = 0; i < 40; i++) { one[i] = ((ci * 97 + i * 11 + 3) & 0xFF) as@ u8; }
     clients[ci] = one;
   }
   u8[] ephemeral = seedFor(23);
   u8[] innerSalt = u8[].filled(16, 0);
-  for (i32 i = 0; i < 16; i++) { innerSalt[i] = (i * 29 + 5) & 0xFF; }
+  for (i32 i = 0; i < 16; i++) { innerSalt[i] = ((i * 29 + 5) & 0xFF) as@ u8; }
   u8[] salt = u8[].filled(16, 0);
-  for (i32 i = 0; i < 16; i++) { salt[i] = (i * 23 + 11) & 0xFF; }
+  for (i32 i = 0; i < 16; i++) { salt[i] = ((i * 23 + 11) & 0xFF) as@ u8; }
 
   Built b = buildDescriptor(identitySeed, signSeed, intros, periodNum, periodLength, REVISION,
                             LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
@@ -249,13 +249,13 @@ string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
 string jsonText(u8[] body) {
   string out = "";
   for (i32 i = 0; i < body.len(); i++) {
-    i32 ch = body[i];
+    i32 ch = body[i] as i32;
     if (ch == 10) { out = out + "\\n"; }
     else if (ch == 34) { out = out + "\\\""; }
     else if (ch == 92) { out = out + "\\\\"; }
     else {
       u8[] one = u8[].filled(1, 0);
-      one[0] = ch;
+      one[0] = ch as@ u8;
       out = out + string.fromBytes(one);
     }
   }
@@ -275,6 +275,6 @@ u8[] clamped(u8[] s) {
 /** A deterministic 32-byte seed, distinct per role. The same shape `gendesc.wac` uses. */
 u8[] seedFor(i32 role) {
   u8[] s = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { s[i] = (role * 61 + i * 7 + 3) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { s[i] = ((role * 61 + i * 7 + 3) & 0xFF) as@ u8; }
   return s;
 }

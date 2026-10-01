@@ -139,7 +139,7 @@ export string hexColons(u8[] digest) {
   string s = "";
   for (i32 i = 0; i < digest.len(); i++) {
     if (i > 0) { s = s + ":"; }
-    s = s + hexByte(digest[i]);
+    s = s + hexByte(digest[i] as i32);
   }
   return s;
 }

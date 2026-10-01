@@ -99,7 +99,7 @@ export u8[] nonce(u8[] iv, i64 packetNumber) {
   for (i32 i = 0; i < 8; i++) {
     i32 shift = 8 * (7 - i);
     i32 byte = ((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32;
-    out[4 + i] = out[4 + i] ^ byte;
+    out[4 + i] = (out[4 + i] as i32 ^ byte) as@ u8;
   }
   return out;
 }
@@ -208,7 +208,7 @@ export u8[] openAt(u8[] packet, i32 at, InitialKeys keys, bool greased, bool ini
   if (mask.len() == 0) { return u8[](); }
 
   // A long header's low four bits are protected; the top four are not.
-  i32 first = packet[at] ^ (mask[0] & 0x0F);
+  i32 first = packet[at] as i32 ^ (mask[0] as i32 & 0x0F);
   i32 pnLen = (first & 3) + 1;
   i32 room = packet.len();
   if (h.numberAt + pnLen > room) { return u8[](); }
@@ -217,10 +217,10 @@ export u8[] openAt(u8[] packet, i32 at, InitialKeys keys, bool greased, bool ini
   i32 headerLen = (h.numberAt - at) + pnLen;
   u8[] aad = u8[].filled(headerLen, 0);
   for (i32 i = at; i < h.numberAt; i++) { aad[i - at] = packet[i]; }
-  aad[0] = first;
+  aad[0] = first as@ u8;
   for (i32 i = 0; i < pnLen; i++) {
-    i32 b = packet[h.numberAt + i] ^ mask[1 + i];
-    aad[(h.numberAt - at) + i] = b;
+    i32 b = packet[h.numberAt + i] as i32 ^ mask[1 + i] as i32;
+    aad[(h.numberAt - at) + i] = b as@ u8;
     number = (number << (8 as i64)) | (b as i64);
   }
 
@@ -309,15 +309,15 @@ export u8[] sealLong(i32 packetType, u8[] dcid, u8[] scid, u8[] frames, i64 pack
   // Long header, fixed bit set, the type, and the packet number length in the low two bits. The
   // fixed bit is set because a client has negotiated nothing — there is no `grease_quic_bit` from a
   // peer it has not heard from. See `parseLong`'s `greased`.
-  header[p] = FORM_LONG() | FIXED_BIT() | (packetType << 4) | (pnLen - 1);
+  header[p] = (FORM_LONG() | FIXED_BIT() | (packetType << 4) | (pnLen - 1)) as@ u8;
   p = p + 1;
-  header[p] = 0; header[p + 1] = 0; header[p + 2] = 0; header[p + 3] = VERSION_1();
+  header[p] = 0; header[p + 1] = 0; header[p + 2] = 0; header[p + 3] = VERSION_1() as@ u8;
   p = p + 4;
-  header[p] = dcid.len();
+  header[p] = dcid.len() as@ u8;
   p = p + 1;
   for (i32 i = 0; i < dcid.len(); i++) { header[p + i] = dcid[i]; }
   p = p + dcid.len();
-  header[p] = scid.len();
+  header[p] = scid.len() as@ u8;
   p = p + 1;
   for (i32 i = 0; i < scid.len(); i++) { header[p + i] = scid[i]; }
   p = p + scid.len();
@@ -328,13 +328,13 @@ export u8[] sealLong(i32 packetType, u8[] dcid, u8[] scid, u8[] frames, i64 pack
   // The length counts the packet number, the payload and the tag, as a two-byte varint whatever the
   // value — which is what let `headerLen` be computed before any of this.
   i64 lengthField = (pnLen + payloadLen + 16) as i64;
-  header[p] = 0x40 | ((lengthField >> (8 as i64)) as~ i32);
-  header[p + 1] = (lengthField & (0xFF as i64)) as~ i32;
+  header[p] = (0x40 | ((lengthField >> (8 as i64)) as~ i32)) as@ u8;
+  header[p + 1] = ((lengthField & (0xFF as i64)) as~ i32) as@ u8;
   p = p + 2;
   i32 numberAt = p;
   for (i32 i = 0; i < pnLen; i++) {
     i32 shift = 8 * (pnLen - 1 - i);
-    header[p + i] = ((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32;
+    header[p + i] = (((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32) as@ u8;
   }
 
   u8[] iv = nonce(keys.iv, packetNumber);
@@ -378,15 +378,15 @@ export u8[] openShort(u8[] packet, i32 at, InitialKeys keys, i32 cidLen, bool gr
   if (cidLen < 0 || cidLen > MAX_CID()) { return u8[](); }
   // The header form bit must be clear, and the fixed bit set unless the caller allows greasing —
   // the same rule `parseLong` applies, and the reason `greased` is threaded this far.
-  if ((packet[at] & FORM_LONG()) != 0) { return u8[](); }
-  if (!greased && (packet[at] & FIXED_BIT()) == 0) { return u8[](); }
+  if ((packet[at] as i32 & FORM_LONG()) != 0) { return u8[](); }
+  if (!greased && (packet[at] as i32 & FIXED_BIT()) == 0) { return u8[](); }
 
   i32 numberAt = at + 1 + cidLen;
   if (numberAt > packet.len()) { return u8[](); }
   u8[] mask = headerMask(keys.hp, packet, numberAt + 4);
   if (mask.len() == 0) { return u8[](); }
 
-  i32 first = packet[at] ^ (mask[0] & 0x1F);
+  i32 first = packet[at] as i32 ^ (mask[0] as i32 & 0x1F);
   i32 pnLen = (first & 3) + 1;
   if (numberAt + pnLen > packet.len()) { return u8[](); }
 
@@ -396,10 +396,10 @@ export u8[] openShort(u8[] packet, i32 at, InitialKeys keys, i32 cidLen, bool gr
   i32 headerLen = (numberAt - at) + pnLen;
   u8[] aad = u8[].filled(headerLen, 0);
   for (i32 i = at; i < numberAt; i++) { aad[i - at] = packet[i]; }
-  aad[0] = first;
+  aad[0] = first as@ u8;
   for (i32 i = 0; i < pnLen; i++) {
-    i32 b = packet[numberAt + i] ^ mask[1 + i];
-    aad[(numberAt - at) + i] = b;
+    i32 b = packet[numberAt + i] as i32 ^ mask[1 + i] as i32;
+    aad[(numberAt - at) + i] = b as@ u8;
     number = (number << (8 as i64)) | (b as i64);
   }
 
@@ -430,7 +430,7 @@ export i32 shortKeyPhase(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) {
   i32 numberAt = at + 1 + cidLen;
   u8[] mask = headerMask(keys.hp, packet, numberAt + 4);
   if (mask.len() == 0) { return -1; }
-  return ((packet[at] ^ (mask[0] & 0x1F)) >> 2) & 1;
+  return ((packet[at] as i32 ^ (mask[0] as i32 & 0x1F)) >> 2) & 1;
 }
 
 /**
@@ -472,12 +472,12 @@ export u8[] sealShort(u8[] dcid, u8[] frames, i64 packetNumber, InitialKeys keys
 
   u8[] header = u8[].filled(headerLen, 0);
   // Form bit clear, fixed bit set, spin 0, reserved 0, key phase 0, and the number length.
-  header[0] = FIXED_BIT() | (pnLen - 1);
+  header[0] = (FIXED_BIT() | (pnLen - 1)) as@ u8;
   for (i32 i = 0; i < dcid.len(); i++) { header[1 + i] = dcid[i]; }
   i32 numberAt = 1 + dcid.len();
   for (i32 i = 0; i < pnLen; i++) {
     i32 shift = 8 * (pnLen - 1 - i);
-    header[numberAt + i] = ((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32;
+    header[numberAt + i] = (((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32) as@ u8;
   }
 
   u8[] iv = nonce(keys.iv, packetNumber);
@@ -516,11 +516,11 @@ export i64 shortPacketNumber(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) 
   i32 numberAt = at + 1 + cidLen;
   u8[] mask = headerMask(keys.hp, packet, numberAt + 4);
   if (mask.len() == 0) { return -1 as i64; }
-  i32 pnLen = ((packet[at] ^ (mask[0] & 0x1F)) & 3) + 1;
+  i32 pnLen = ((packet[at] as i32 ^ (mask[0] as i32 & 0x1F)) & 3) + 1;
   if (numberAt + pnLen > packet.len()) { return -1 as i64; }
   i64 number = 0 as i64;
   for (i32 i = 0; i < pnLen; i++) {
-    number = (number << (8 as i64)) | ((packet[numberAt + i] ^ mask[1 + i]) as i64);
+    number = (number << (8 as i64)) | ((packet[numberAt + i] as i32 ^ mask[1 + i] as i32) as i64);
   }
   return number;
 }
@@ -561,7 +561,7 @@ export bool retryIntegrityOk(u8[] packet, u8[] originalDcid) {
   if (originalDcid.len() > MAX_CID()) { return false; }
   i32 bodyLen = packet.len() - 16;
   u8[] pseudo = u8[].filled(1 + originalDcid.len() + bodyLen, 0);
-  pseudo[0] = originalDcid.len();
+  pseudo[0] = originalDcid.len() as@ u8;
   for (i32 i = 0; i < originalDcid.len(); i++) { pseudo[1 + i] = originalDcid[i]; }
   for (i32 i = 0; i < bodyLen; i++) { pseudo[1 + originalDcid.len() + i] = packet[i]; }
 

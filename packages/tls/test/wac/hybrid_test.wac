@@ -32,7 +32,7 @@ static i32 CT_LEN = 1088;
 
 u8[] pattern(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + seed) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 31 + seed) & 0xFF) as@ u8; }
   return out;
 }
 

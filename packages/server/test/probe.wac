@@ -19,12 +19,12 @@ export u8[] handle(u8[] input, i64 nowMillis) {
   i32 c = s.consumed;
   if (c == 0) { digits[n] = '0'; n++; }
   i32 lo = n;
-  while (c > 0) { digits[n] = 48 + (c % 10); c = c / 10; n++; }
+  while (c > 0) { digits[n] = (48 + (c % 10)) as@ u8; c = c / 10; n++; }
   // Reverse the digits written above.
   for (i32 i = 0; i < (n - lo) / 2; i++) {
-    i32 t = digits[lo + i];
+    i32 t = digits[lo + i] as i32;
     digits[lo + i] = digits[n - 1 - i];
-    digits[n - 1 - i] = t;
+    digits[n - 1 - i] = t as@ u8;
   }
   u8[] out = u8[].filled(head.len() + 1 + n + 1 + 1 + 1 + s.response.len(), 0);
   i32 at = 0;

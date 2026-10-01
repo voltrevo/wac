@@ -72,7 +72,7 @@ export string test_slice_returns_the_bytes_when_the_range_is_inside() {
   T t = T.create();
   t.eqI32(slice(five(), 5, 5).len(), 0, "slice(s, 5, 5) is empty, not a trap and not a byte");
   t.eqI32(slice(five(), 0, 5).len(), 5, "the whole array");
-  t.eqI32(slice(five(), 1, 3)[0], 0x62, "slice(s, 1, 3)[0] is 'b'");
+  t.eqI32(slice(five(), 1, 3)[0] as i32, 0x62, "slice(s, 1, 3)[0] is 'b'");
   return t.report();
 }
 
@@ -89,7 +89,7 @@ export string test_clamped_answers_every_range_slice_refuses() {
   t.eqI32(clamped(five(), 4, 1).len(), 0, "backwards contains nothing");
   t.eqI32(clamped(five(), 9, 12).len(), 0, "both ends past the end");
   t.eqI32(clamped(five(), 0 - 9, 0 - 2).len(), 0, "both ends before the start");
-  t.eqI32(clamped(five(), 0 - 3, 1)[0], 0x61, "clamped(s, -3, 1)[0] is 'a'");
+  t.eqI32(clamped(five(), 0 - 3, 1)[0] as i32, 0x61, "clamped(s, -3, 1)[0] is 'a'");
   return t.report();
 }
 

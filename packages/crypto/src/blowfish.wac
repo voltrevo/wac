@@ -136,7 +136,7 @@ i32 streamWord(u8[] src, i32[] j) {
   i32 v = 0;
   for (i32 k = 0; k < 4; k++) {
     if (j[0] >= src.len()) { j[0] = 0; }
-    v = (v << 8) | src[j[0]];
+    v = (v << 8) | src[j[0]] as i32;
     j[0]++;
   }
   return v;

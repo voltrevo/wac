@@ -237,13 +237,13 @@ export string test_the_rendezvous1_cell_is_cookie_then_handshake(Core core, Cli 
   T t = T.create();
   u8[] cookie = field(cli, 0, "rendCookie");
   u8[] handshake = u8[].filled(64, 0);
-  for (i32 i = 0; i < 64; i++) { handshake[i] = i; }
+  for (i32 i = 0; i < 64; i++) { handshake[i] = i as@ u8; }
 
   u8[] cell = rendezvous1Cell(cookie, handshake);
   t.eqI32(cell.len(), 84, "twenty bytes of cookie and sixty-four of handshake");
   t.eqBytes(head(cell, 20), cookie, "the cookie comes first, which is all the relay reads");
   for (i32 i = 0; i < 64; i++) {
-    t.eqI32(cell[20 + i], handshake[i], "then Y and AUTH, forwarded to the client untouched");
+    t.eqI32(cell[20 + i] as i32, handshake[i] as i32, "then Y and AUTH, forwarded to the client untouched");
   }
 
   t.eqI32(rendezvous1Cell(u8[].filled(19, 0), handshake).len(), 0, "a nineteen-byte cookie is not one");

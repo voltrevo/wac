@@ -217,7 +217,7 @@ i32 portOf(string target) {
   i32 v = 0;
   for (i32 i = colon + 1; i < b.len(); i++) {
     if (b[i] < '0' || b[i] > '9') { return -1; }
-    v = v * 10 + (b[i] - '0');
+    v = v * 10 + (b[i] as i32 - '0');
   }
   return v;
 }
@@ -470,10 +470,10 @@ async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
  */
 bool greeted(Core core, Cli cli, Proxy x, Client c) {
   if (c.pending.len() < 2) { return true; }
-  i32 need = 2 + c.pending[1];
+  i32 need = 2 + c.pending[1] as i32;
   if (c.pending.len() < need) { return true; }
   if (c.pending[0] != 0x05) {
-    core.warn("tor: a client spoke SOCKS version " + itoa(c.pending[0]));
+    core.warn("tor: a client spoke SOCKS version " + itoa(c.pending[0] as i32));
     dropClient(cli, x, c);
     return false;
   }
@@ -595,7 +595,7 @@ export i32 main(Core core, Cli cli) {
   u8[] pb = string.fromBytes(cli.arg(2).wait()).toBytes();
   for (i32 i = 0; i < pb.len(); i++) {
     if (pb[i] < '0' || pb[i] > '9') { core.warn("tor: the port must be a number"); return 1; }
-    port = port * 10 + (pb[i] - '0');
+    port = port * 10 + (pb[i] as i32 - '0');
   }
 
   Network net = bootstrap(core, cli, seedFile.bytes, authFile.bytes, true);

@@ -323,7 +323,7 @@ u8[] handshake(Conn conn, PrivateKey host) {
 
   u8[] theirKexInit = conn.readPacket();
   if (conn.failed()) { return u8[](); }
-  if (theirKexInit[0] != msgKexInit()) { conn.fail("expected KEXINIT"); return u8[](); }
+  if (theirKexInit[0] as i32 != msgKexInit()) { conn.fail("expected KEXINIT"); return u8[](); }
 
   // The *client's* order decides. A server that picked its own favourite would use an algorithm
   // the client is not using, and every packet after NEWKEYS would fail its tag.
@@ -362,11 +362,11 @@ u8[] handshake(Conn conn, PrivateKey host) {
     conn.fail("cannot send the key exchange reply");
     return u8[]();
   }
-  if (!conn.sendPacket([msgNewKeys()])) { conn.fail("cannot send NEWKEYS"); return u8[](); }
+  if (!conn.sendPacket([msgNewKeys() as@ u8])) { conn.fail("cannot send NEWKEYS"); return u8[](); }
 
   u8[] theirNewKeys = conn.readPacket();
   if (conn.failed()) { return u8[](); }
-  if (theirNewKeys[0] != msgNewKeys()) { conn.fail("expected NEWKEYS"); return u8[](); }
+  if (theirNewKeys[0] as i32 != msgNewKeys()) { conn.fail("expected NEWKEYS"); return u8[](); }
 
   // 'C' is client-to-server, so the server reads with C and writes with D — the opposite way
   // round from the client, and the one asymmetry that produces a connection where nothing
@@ -754,7 +754,7 @@ export struct Keystrokes {
       if (m.kind == msgChannelClose()) { return true; }
       if (m.kind != msgChannelData()) { continue; }
       for (i32 i = 0; i < m.data.len(); i++) {
-        Typed t = this.tty.feed(m.data[i]);
+        Typed t = this.tty.feed(m.data[i] as i32);
         if (t.echo.len() > 0) { this.conn.sendPacket(channelData(this.channel, t.echo)); }
         if (t.interrupted()) {
           this.conn.sendPacket(channelData(this.channel, crlf()));
@@ -829,7 +829,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
       // Keystroke by keystroke, through the discipline. Everything it says to echo goes straight back
       // — before the line is run, so what is typed appears as it is typed.
       for (i32 i = 0; i < m.data.len(); i++) {
-        Typed t = tty.feed(m.data[i]);
+        Typed t = tty.feed(m.data[i] as i32);
         if (t.echo.len() > 0) { conn.sendPacket(channelData(channel, t.echo)); }
         if (t.interrupted()) { conn.sendPacket(channelData(channel, crlf())); continue; }
         // A line the *poll* completed while a command was running is held in the same `Line`, so it
@@ -913,7 +913,7 @@ u8[] forTerminal(u8[] bytes) {
   Buf out = Buf.create();
   for (i32 i = 0; i < bytes.len(); i++) {
     if (bytes[i] == 10) { out.push(13); }
-    out.push(bytes[i]);
+    out.push(bytes[i] as i32);
   }
   return out.take();
 }
@@ -1033,7 +1033,7 @@ i32 atoi(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     string ch = s[i];
     if (ch < "0" || ch > "9") { return -1; }
-    v = v * 10 + (ch.toBytes()[0] - 0x30);
+    v = v * 10 + (ch.toBytes()[0] as i32 - 0x30);
     if (v > 65535) { return -1; }
   }
   return s.len() == 0 ? -1 : v;

@@ -78,7 +78,7 @@ export string test_mpint_is_minimal_and_signed() {
     t.eqI32(input[i].len() % 2, 0, "test vector " + input[i] + " is not whole bytes");
     u8[] magnitude = u8[].filled(input[i].len() / 2, 0);
     for (i32 k = 0; k < magnitude.len(); k++) {
-      magnitude[k] = digit(input[i], k * 2) * 16 + digit(input[i], k * 2 + 1);
+      magnitude[k] = (digit(input[i], k * 2) * 16 + digit(input[i], k * 2 + 1)) as@ u8;
     }
     Writer w = Writer.create();
     w.mpint(magnitude);
@@ -90,8 +90,8 @@ export string test_mpint_is_minimal_and_signed() {
 
 i32 digit(string s, i32 at) {
   string c = s.slice(at, at + 1);
-  if (c >= "0" && c <= "9") { return c.toBytes()[0] - '0'; }
-  return c.toBytes()[0] - 'a' + 10;
+  if (c >= "0" && c <= "9") { return c.toBytes()[0] as i32 - '0'; }
+  return c.toBytes()[0] as i32 - 'a' + 10;
 }
 
 export string test_a_string_carries_arbitrary_binary_including_nuls() {

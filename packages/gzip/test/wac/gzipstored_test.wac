@@ -28,7 +28,7 @@ export string test_the_header_is_a_well_formed_gzip_header() {
   // Magic, CM=8 (deflate), no flags, no mtime, XFL=0, OS=255 (unknown).
   u8[] want = [0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 255];
   for (i32 i = 0; i < want.len(); i++) {
-    t.eqI32(gz[i], want[i], "header byte " + itoa(i));
+    t.eqI32(gz[i] as i32, want[i] as i32, "header byte " + itoa(i));
   }
   return t.report();
 }
@@ -49,7 +49,7 @@ export string test_gunzip_accepts_it(Core core, Cli cli) {
   u8[] hw = "hello world".toBytes();
   t.eqStr(same(cli, hw, "hello world"), "", "a short string");
   u8[] all = u8[].filled(256, 0);
-  for (i32 i = 0; i < 256; i++) { all[i] = i; }
+  for (i32 i = 0; i < 256; i++) { all[i] = i as@ u8; }
   t.eqStr(same(cli, all, "all 256 byte values"), "", "every byte value");
   return t.report();
 }
@@ -64,7 +64,7 @@ export string test_multi_block_input_crosses_the_65535_boundary(Core core, Cli c
   for (i32 k = 0; k < sizes.len(); k++) {
     i32 n = sizes[k];
     u8[] input = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { input[i] = (i * 131 + 17) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { input[i] = ((i * 131 + 17) & 0xFF) as@ u8; }
     t.eqStr(same(cli, input, itoa(n) + " bytes"), "", itoa(n) + " bytes");
   }
   return t.report();
@@ -81,7 +81,7 @@ export string test_incompressible_and_repetitive_data_both_survive(Core core, Cl
   i32 s = 12345;
   for (i32 i = 0; i < random.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    random[i] = (s >> 16) & 0xFF;
+    random[i] = ((s >> 16) & 0xFF) as@ u8;
   }
   t.eqStr(same(cli, random, "pseudo-random"), "", "incompressible");
   return t.report();

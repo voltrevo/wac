@@ -62,7 +62,7 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
     i32 i = 0;
     while (i < f.len() && !fatal && !stopped) {
       if (f[i] == 0x5c) { i = escapeInto(out, f, i); continue; }
-      if (f[i] != 0x25) { out.push(f[i]); i++; continue; }
+      if (f[i] != 0x25) { out.push(f[i] as i32); i++; continue; }
 
       i32 j = i + 1;
       if (j < f.len() && f[j] == 0x25) { out.push(0x25); i = j + 1; continue; }
@@ -74,12 +74,12 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
         j++;
       }
       i32 width = 0;
-      while (j < f.len() && f[j] >= 0x30 && f[j] <= 0x39) { width = width * 10 + (f[j] - 0x30); j++; }
+      while (j < f.len() && f[j] >= 0x30 && f[j] <= 0x39) { width = width * 10 + (f[j] as i32 - 0x30); j++; }
       i32 prec = -1;
       if (j < f.len() && f[j] == 0x2e) {
         j++;
         prec = 0;
-        while (j < f.len() && f[j] >= 0x30 && f[j] <= 0x39) { prec = prec * 10 + (f[j] - 0x30); j++; }
+        while (j < f.len() && f[j] >= 0x30 && f[j] <= 0x39) { prec = prec * 10 + (f[j] as i32 - 0x30); j++; }
       }
       // A `%` with nothing after it is a format error, not a literal `%`.
       if (j >= f.len()) {
@@ -89,7 +89,7 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
         continue;
       }
 
-      i32 conv = f[j];
+      i32 conv = f[j] as i32;
       string a = arg < argv.len() ? argv.get(arg) : "";
       string text = "";
       bool numeric = false;
@@ -119,7 +119,7 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
           // `\c`: stop, and produce nothing more anywhere.
           if (ab[k] == 0x5c && k + 1 < ab.len() && ab[k + 1] == 0x63) { stopped = true; break; }
           if (ab[k] == 0x5c) { k = escapeInto(decoded, ab, k); continue; }
-          decoded.push(ab[k]);
+          decoded.push(ab[k] as i32);
           k++;
         }
         text = string.fromBytes(decoded.take());
@@ -162,7 +162,7 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
 /** One backslash escape from the format, appended. Returns the index after it. */
 i32 escapeInto(Buf out, u8[] f, i32 at) {
   if (at + 1 >= f.len()) { out.push(0x5c); return at + 1; }
-  i32 c = f[at + 1];
+  i32 c = f[at + 1] as i32;
   if (c == 0x6e) { out.push(10); return at + 2; }            // \n
   if (c == 0x74) { out.push(9); return at + 2; }             // \t
   if (c == 0x72) { out.push(13); return at + 2; }            // \r
@@ -176,7 +176,7 @@ i32 escapeInto(Buf out, u8[] f, i32 at) {
     i32 p = at + 2;
     i32 v = 0;
     i32 n = 0;
-    while (p < f.len() && n < 2 && digitValue(f[p]) >= 0) { v = v * 16 + digitValue(f[p]); p++; n++; }
+    while (p < f.len() && n < 2 && digitValue(f[p] as i32) >= 0) { v = v * 16 + digitValue(f[p] as i32); p++; n++; }
     if (n == 0) { out.push(0x5c); out.push(0x78); return at + 2; }
     out.push(v);
     return p;
@@ -186,7 +186,7 @@ i32 escapeInto(Buf out, u8[] f, i32 at) {
     if (f[p] == 0x30 && p + 1 < f.len() && f[p + 1] >= 0x30 && f[p + 1] <= 0x37) { p++; }
     i32 v = 0;
     i32 n = 0;
-    while (p < f.len() && n < 3 && f[p] >= 0x30 && f[p] <= 0x37) { v = v * 8 + (f[p] - 0x30); p++; n++; }
+    while (p < f.len() && n < 3 && f[p] >= 0x30 && f[p] <= 0x37) { v = v * 8 + (f[p] as i32 - 0x30); p++; n++; }
     out.push(v & 0xFF);
     return p;
   }
@@ -212,7 +212,7 @@ string inBase(i32 v, i32 base, bool upper) {
 
 string charFor(i32 c) {
   u8[] one = u8[].filled(1, 0);
-  one[0] = c;
+  one[0] = c as@ u8;
   return string.fromBytes(one);
 }
 
@@ -230,7 +230,7 @@ void padInto(Buf out, string text, i32 width, bool left, bool zero) {
   i32 from = 0;
   if (zero && b.len() > 0 && b[0] == 0x2d) { out.push(0x2d); from = 1; }
   for (i32 i = 0; i < gap; i++) { out.push(zero ? 0x30 : 32); }
-  for (i32 i = from; i < b.len(); i++) { out.push(b[i]); }
+  for (i32 i = from; i < b.len(); i++) { out.push(b[i] as i32); }
 }
 
 

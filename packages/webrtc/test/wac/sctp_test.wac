@@ -122,7 +122,7 @@ export string test_and_refuses_one_whose_checksum_we_corrupt(Core core, Cli cli)
 export string test_a_cookie_echo_carries_the_peers_tag_and_the_cookie_unchanged(Core core, Cli cli) {
   T t = T.create();
   u8[] cookie = u8[].filled(37, 0);
-  for (i32 i = 0; i < 37; i++) { cookie[i] = (i * 3 + 1) & 255; }
+  for (i32 i = 0; i < 37; i++) { cookie[i] = ((i * 3 + 1) & 255) as@ u8; }
   u8[] packet = cookieEchoPacket(0xDEADBEEF, cookie);
   t.isTrue(crcVerifies(packet), "our own check agrees first");
   t.eqStr(h32(tagOf(packet)), "deadbeef",
@@ -217,7 +217,7 @@ export string test_a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chun
   // And the ACK, which is one byte.
   u8[] ackValue = firstChunkValue(ackChannelPacket(1, 2, 0));
   t.eqI32(dataPayload(ackValue).len(), 1, "the ACK is one byte");
-  t.eqI32(dataPayload(ackValue)[0], 0x02, "DATA_CHANNEL_ACK");
+  t.eqI32(dataPayload(ackValue)[0] as i32, 0x02, "DATA_CHANNEL_ACK");
   return t.report();
 }
 

@@ -78,7 +78,7 @@ export string test_the_servers_first_application_packet_opens_under_keys_we_deri
   t.isTrue(h.ok, h.error);
   if (!h.ok) { return t.report(); }
 
-  t.eqI32(h.after[0] & 0x80, 0, "the server's next packet is a short header");
+  t.eqI32(h.after[0] as i32 & 0x80, 0, "the server's next packet is a short header");
 
   u8[] payload = openApplication(h.reply, h.after, dcid(), scid(), "localhost");
   t.isTrue(payload.len() > 0,

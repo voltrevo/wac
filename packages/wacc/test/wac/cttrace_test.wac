@@ -245,7 +245,7 @@ export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_f
   T t = T.create();
   const string BODY = "static u8[] SBOX = [3, 1, 4, 1, 5, 9, 2, 6];\n" +
     "export i32 f(i32 secret) {\n" +
-    "  i32 v = SBOX[secret & 7];\n" +
+    "  i32 v = SBOX[secret & 7] as i32;\n" +
     "  return v;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
@@ -338,8 +338,8 @@ export string test_the_journal_is_a_journal_order_is_what_it_records(Core core, 
   T t = T.create();
   const string BODY = "static u8[] TBL = [0, 1, 2, 3];\n" +
     "export i32 f(i32 secret) {\n" +
-    "  i32 a = TBL[secret & 1];\n" +
-    "  i32 b = TBL[(secret + 1) & 1];\n" +
+    "  i32 a = TBL[secret & 1] as i32;\n" +
+    "  i32 b = TBL[(secret + 1) & 1] as i32;\n" +
     "  return a + b;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(0); }\n");

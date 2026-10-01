@@ -100,7 +100,7 @@ i32 statusOf(string s, i32 n) {
         for (i32 i = 0; i < 3; i++) {
           u8[] d = s.slice(at + MARK.len() + i, at + MARK.len() + i + 1).toBytes();
           if (d.len() != 1 || d[0] < 48 || d[0] > 57) { return -1; }
-          v = v * 10 + (d[0] - 48);
+          v = v * 10 + (d[0] as i32 - 48);
         }
         return v;
       }

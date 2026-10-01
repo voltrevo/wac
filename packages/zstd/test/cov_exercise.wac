@@ -95,13 +95,13 @@ u8[] head(u8[] b, i32 n) {
 u8[] damaged(u8[] b, i32 at, i32 mask) {
   u8[] out = u8[].filled(b.len(), 0);
   for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
-  if (at >= 0 && at < out.len()) { out[at] = out[at] ^ mask; }
+  if (at >= 0 && at < out.len()) { out[at] = (out[at] as i32 ^ mask) as@ u8; }
   return out;
 }
 
 u8[] filledWith(i32 n, i32 byte) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = byte; }
+  for (i32 i = 0; i < n; i++) { out[i] = byte as@ u8; }
   return out;
 }
 
@@ -117,12 +117,12 @@ u8[] repeated(string s, i32 times) {
 /** A three-byte block header: `size` and `type`, and whether it is the frame's last. */
 u8[] blockHeader(i32 kind, i32 size, bool last) {
   i32 h = (size << 3) | (kind << 1) | (last ? 1 : 0);
-  return [h & 255, (h >> 8) & 255, (h >> 16) & 255];
+  return [(h & 255) as@ u8, ((h >> 8) & 255) as@ u8, ((h >> 16) & 255) as@ u8];
 }
 
 u8[] rawBlock(u8[] bytes, bool last) { return joinBytes(blockHeader(0, bytes.len(), last), bytes); }
 u8[] rleBlock(i32 value, i32 count, bool last) {
-  return joinBytes(blockHeader(1, count, last), [value]);
+  return joinBytes(blockHeader(1, count, last), [value as@ u8]);
 }
 
 /**
@@ -135,16 +135,16 @@ u8[] frameOf(bool singleSegment, i32 fcsFlag, i64 contentSize, bool checksum, i3
              i32 dictId, i32 windowDescriptor, u8[] block) {
   u8[] out = [0x28, 0xB5, 0x2F, 0xFD];
   i32 fhd = (fcsFlag << 6) | ((singleSegment ? 1 : 0) << 5) | ((checksum ? 1 : 0) << 2) | didFlag;
-  out = joinBytes(out, [fhd]);
-  if (!singleSegment) { out = joinBytes(out, [windowDescriptor]); }
+  out = joinBytes(out, [fhd as@ u8]);
+  if (!singleSegment) { out = joinBytes(out, [windowDescriptor as@ u8]); }
   i32[] didSize = [0, 1, 2, 4];
   for (i32 i = 0; i < didSize[didFlag]; i++) {
-    out = joinBytes(out, [(dictId >> (8 * i)) & 255]);
+    out = joinBytes(out, [((dictId >> (8 * i)) & 255) as@ u8]);
   }
   i32[] fcsSize = [1, 2, 4, 8];
   i32 width = fcsFlag == 0 ? (singleSegment ? 1 : 0) : fcsSize[fcsFlag];
   for (i32 i = 0; i < width; i++) {
-    out = joinBytes(out, [((contentSize >> ((8 * i) as i64)) & (255 as i64)) as~ i32]);
+    out = joinBytes(out, [(((contentSize >> ((8 * i) as i64)) & (255 as i64)) as~ i32) as@ u8]);
   }
   out = joinBytes(out, block);
   if (checksum) { out = joinBytes(out, [0, 0, 0, 0] as u8[]); }
@@ -165,8 +165,8 @@ u8[] oneBlock(u8[] body) {
 /** A skippable frame: one of the sixteen magics, a length, and whatever follows. */
 u8[] skippable(i32 magic, i32 size, u8[] extra) {
   return joinBytes([
-                        magic & 255, (magic >> 8) & 255, (magic >> 16) & 255, (magic >> 24) & 255,
-                        size & 255, (size >> 8) & 255, (size >> 16) & 255, (size >> 24) & 255
+                        (magic & 255) as@ u8, ((magic >> 8) & 255) as@ u8, ((magic >> 16) & 255) as@ u8, ((magic >> 24) & 255) as@ u8,
+                        (size & 255) as@ u8, ((size >> 8) & 255) as@ u8, ((size >> 16) & 255) as@ u8, ((size >> 24) & 255) as@ u8
   ],
                    extra);
 }
@@ -270,7 +270,7 @@ u8[] noise2(i32 n, i32 seed) {
     x = x ^ (x << 13);
     x = x ^ ((x >> 17) & 0x7FFF);
     x = x ^ (x << 5);
-    out[i] = x & 255;
+    out[i] = (x & 255) as@ u8;
   }
   return out;
 }
@@ -288,7 +288,7 @@ u8[] records(i32 n) {
   for (i32 i = 0; i < n; i++) {
     string rec = "{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) + "\"},";
     u8[] r = rec.toBytes();
-    for (i32 k = 0; k < r.len(); k++) { b.push(r[k]); }
+    for (i32 k = 0; k < r.len(); k++) { b.push(r[k] as i32); }
   }
   return b.take();
 }
@@ -300,7 +300,7 @@ u8[] logLines(i32 n) {
     string line = "2026-08-02T10:00:00Z INFO id=" + itoa(i) + " path=/api status=200 ms=" +
                   itoa(i % 97) + "\n";
     u8[] r = line.toBytes();
-    for (i32 k = 0; k < r.len(); k++) { b.push(r[k]); }
+    for (i32 k = 0; k < r.len(); k++) { b.push(r[k] as i32); }
   }
   return b.take();
 }
@@ -462,7 +462,7 @@ export i32 main(Core core, Cli cli) {
     "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzabcdefghijklmnopqrstuvwxyz", 60)));
   // A byte that cycles, so matches are found at every distance.
   u8[] cycle = u8[].filled(100000, 0);
-  for (i32 i = 0; i < cycle.len(); i++) { cycle[i] = i & 255; }
+  for (i32 i = 0; i < cycle.len(); i++) { cycle[i] = (i & 255) as@ u8; }
   decompress(compress(cycle));
 
   // ## The streaming decoder over frames that decode
@@ -491,7 +491,7 @@ export i32 main(Core core, Cli cli) {
   // multiple of 32 reaches it. Lengths 0..140 cover every tail: the eight-byte loop, the four-byte
   // step and the byte-at-a-time remainder.
   u8[] d200 = u8[].filled(200, 0);
-  for (i32 i = 0; i < d200.len(); i++) { d200[i] = (i * 37 + 11) & 255; }
+  for (i32 i = 0; i < d200.len(); i++) { d200[i] = ((i * 37 + 11) & 255) as@ u8; }
   for (i32 n = 0; n <= 140; n++) { xxh64(d200, 0, n); }
   i32[] cuts = [1, 7, 31, 32, 33, 64, 200, 0];
   for (i32 i = 0; i < cuts.len(); i++) { hashStreamed(d200, cuts[i]); }
@@ -740,7 +740,7 @@ export void header(i32 i) {
  */
 export void hashBound(i32 i) {
   u8[] d = u8[].filled(200, 0);
-  for (i32 k = 0; k < d.len(); k++) { d[k] = (k * 37 + 11) & 255; }
+  for (i32 k = 0; k < d.len(); k++) { d[k] = ((k * 37 + 11) & 255) as@ u8; }
   i32[] starts = [0, 1, 0 - 1, 0, 200, 0, 201];
   i32[] lens = [201, 200, 1, 0 - 1, 1, 0 - 200, 0];
   if (i < starts.len()) { xxh64(d, starts[i], lens[i]); return; }
@@ -858,7 +858,7 @@ export void blockBody(i32 i) {
     u8[] claim = claims[i / 7];
     i32 extra = i % 7;
     Buf b = Buf.create();
-    for (i32 k = 0; k < claim.len(); k++) { b.push(claim[k]); }
+    for (i32 k = 0; k < claim.len(); k++) { b.push(claim[k] as i32); }
     for (i32 k = 0; k < extra; k++) { b.push(0x11); }
     decompress(oneBlock(b.take()));
     return;
@@ -1009,10 +1009,10 @@ export void encCase(i32 i) {
       x = x ^ (x << 13);
       x = x ^ ((x >> 17) & 0x7FFF);
       x = x ^ (x << 5);
-      b.push(alphabet.toBytes()[((x >> 8) & 0x7FFFFFFF) % 64]);
+      b.push(alphabet.toBytes()[((x >> 8) & 0x7FFFFFFF) % 64] as i32);
       if ((k % 64) == 63) {
         u8[] key = "\nkey ".toBytes();
-        for (i32 q = 0; q < key.len(); q++) { b.push(key[q]); }
+        for (i32 q = 0; q < key.len(); q++) { b.push(key[q] as i32); }
       }
     }
     decompress(compress(b.take()));
@@ -1030,7 +1030,7 @@ export void encCase(i32 i) {
       x = x ^ (x << 13);
       x = x ^ ((x >> 17) & 0x7FFF);
       x = x ^ (x << 5);
-      out[k] = ((x >> 8) & 0x7FFFFFFF) % width;
+      out[k] = (((x >> 8) & 0x7FFFFFFF) % width) as@ u8;
     }
     u8[] mark = "a marker phrase that repeats here    ".toBytes();
     for (i32 k = 0; k + 40 < out.len(); k = k + 500) {
@@ -1048,7 +1048,7 @@ export void encCase(i32 i) {
     Buf b = Buf.create();
     u8[] mark = "MARKERPHRASE".toBytes();
     for (i32 k = 0; k < reps[i]; k++) {
-      for (i32 q = 0; q < mark.len(); q++) { b.push(mark[q]); }
+      for (i32 q = 0; q < mark.len(); q++) { b.push(mark[q] as i32); }
       b.push(0x78);
     }
     decompress(compress(b.take()));
@@ -1060,7 +1060,7 @@ export void encCase(i32 i) {
     u8[] far = u8[].filled(1300000, 0);
     u8[] mark = "a distinctive phrase that will be looked for later. ".toBytes();
     for (i32 k = 0; k < mark.len(); k++) { far[k] = mark[k]; }
-    for (i32 k = mark.len(); k < far.len() - mark.len(); k++) { far[k] = 0x41 + (k % 23); }
+    for (i32 k = mark.len(); k < far.len() - mark.len(); k++) { far[k] = (0x41 + (k % 23)) as@ u8; }
     for (i32 k = 0; k < mark.len(); k++) { far[far.len() - mark.len() + k] = mark[k]; }
     compress(far);
     return;

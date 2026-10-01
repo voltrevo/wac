@@ -38,7 +38,7 @@ import { Dtls, startServer, stopServer, waitForBind } from "./openssl.wac";
 /** Fixed inputs, so a failing run and the one before it print the same bytes. */
 u8[] ramp(i32 n, i32 mul, i32 add) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * mul + add) & 255) as@ u8; }
   return out;
 }
 
@@ -61,14 +61,14 @@ u8[] slice(u8[] b, i32 at, i32 end) {
 /** A plaintext record header around a fragment — the epoch-0 case, with nothing to seal. */
 u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
   u8[] out = u8[].filled(13 + fragment.len(), 0);
-  out[0] = kind;
+  out[0] = kind as@ u8;
   out[1] = 0xFE;
   out[2] = 0xFD;
-  out[3] = (epoch >> 8) & 255;
-  out[4] = epoch & 255;
-  for (i32 i = 0; i < 6; i++) { out[5 + i] = ((seq >> ((5 - i) * 8)) & 255) as i32; }
-  out[11] = (fragment.len() >> 8) & 255;
-  out[12] = fragment.len() & 255;
+  out[3] = ((epoch >> 8) & 255) as@ u8;
+  out[4] = (epoch & 255) as@ u8;
+  for (i32 i = 0; i < 6; i++) { out[5 + i] = (((seq >> ((5 - i) * 8)) & 255) as i32) as@ u8; }
+  out[11] = ((fragment.len() >> 8) & 255) as@ u8;
+  out[12] = (fragment.len() & 255) as@ u8;
   out.copyFrom(fragment, 0, 13, fragment.len());
   return out;
 }
@@ -244,7 +244,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
 
   u8[] leaf = leafOf(certBody);
   t.isTrue(leaf.len() > 0, "a leaf certificate came out of the Certificate message");
-  if (leaf.len() > 0) { t.eqI32(leaf[0], 0x30, "and it starts with a DER SEQUENCE"); }
+  if (leaf.len() > 0) { t.eqI32(leaf[0] as i32, 0x30, "and it starts with a DER SEQUENCE"); }
 
   string expected = opensslFingerprint(cli);
   t.isTrue(expected != "", "openssl printed no fingerprint for the certificate file");
@@ -333,7 +333,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   // **And its verify_data over our transcript plus our Finished**, which is the other direction: the
   // first half proves it believed us, this proves we believe it.
   if (serverFinished.len() > 0) {
-    t.eqI32(serverFinished[0], 20, "a Finished message");
+    t.eqI32(serverFinished[0] as i32, 20, "a Finished message");
     u8[] want = finishedMessage(master, cat([transcript, finished]), 0, false);
     t.eqStr(hexOf(slice(serverFinished, 12, serverFinished.len())),
             hexOf(slice(want, 12, want.len())),

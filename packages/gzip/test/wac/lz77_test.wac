@@ -20,7 +20,7 @@ u8[] repeated(string s, i32 times) {
   return out.toBytes();
 }
 
-u8[] filled(i32 n, i32 byte) { return u8[].filled(n, byte); }
+u8[] filled(i32 n, i32 byte) { return u8[].filled(n, byte as@ u8); }
 
 /** gunzip's answer against `input`, as a message or "". */
 string same(Cli cli, u8[] input, string what) {
@@ -71,8 +71,8 @@ export string test_every_length_code(Core core, Cli cli) {
     u8[] input = u8[].filled(len * 2 + 1, 0);
     for (i32 i = 0; i < len; i++) {
       i32 b = (i * 7 + len) & 0xFF;
-      input[i] = b;
-      input[len + i] = b;
+      input[i] = b as@ u8;
+      input[len + i] = b as@ u8;
     }
     input[len * 2] = 0xAA;
     External out = gunzip(cli, gzipFixed(input));
@@ -120,7 +120,7 @@ export string test_distances_across_the_whole_window(Core core, Cli cli) {
     i32 s = gap + 1;
     for (i32 i = 0; i < gap; i++) {
       s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-      input[pattern.len() + i] = 0x80 | ((s >> 16) & 0x3F);
+      input[pattern.len() + i] = (0x80 | ((s >> 16) & 0x3F)) as@ u8;
     }
     string why = roundTrip(cli, gzipFixed(input), "gap " + itoa(gap), input);
     if (why == "") { continue; }
@@ -139,7 +139,7 @@ export string test_input_larger_than_the_window(Core core, Cli cli) {
   for (i32 i = 0; i < input.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
     // Structure and noise mixed, so there are matches at many distances.
-    input[i] = i % 997 == 0 ? (s >> 16) & 0xFF : i % 251;
+    input[i] = (i % 997 == 0 ? (s >> 16) & 0xFF : i % 251) as@ u8;
   }
   t.eqStr(same(cli, input, "200000 mixed bytes"), "", "past the window");
   return t.report();

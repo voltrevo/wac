@@ -183,13 +183,13 @@ export string test_the_identity_has_no_affine_coordinates() {
   // Compressing the identity takes the same branch and does have an answer: the canonical `0xc0`
   // encoding, which round-trips.
   u8[] c1 = g1Compress(g1Infinity());
-  t.eqI32(c1[0], 0xc0, "the compressed identity does not begin 0xc0");
+  t.eqI32(c1[0] as i32, 0xc0, "the compressed identity does not begin 0xc0");
   G1? back = g1Decompress(c1);
   t.isTrue(!(back is null), "the compressed identity does not decompress");
   if (!(back is null)) { t.isTrue(g1IsInfinity(back!), "the identity did not round-trip through bytes"); }
 
   u8[] c2 = g2Compress(g2Infinity());
-  t.eqI32(c2[0], 0xc0, "the compressed G2 identity does not begin 0xc0");
+  t.eqI32(c2[0] as i32, 0xc0, "the compressed G2 identity does not begin 0xc0");
   G2? back2 = g2Decompress(c2);
   t.isTrue(!(back2 is null), "the compressed G2 identity does not decompress");
   if (!(back2 is null)) { t.isTrue(g2IsInfinity(back2!), "the G2 identity did not round-trip"); }

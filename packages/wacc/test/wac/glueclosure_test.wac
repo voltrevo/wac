@@ -48,7 +48,7 @@ string wordBefore(u8[] b, i32 to) {
   i32 end = to;
   while (end > 0 && (b[end - 1] == ' ' || b[end - 1] == '\t')) { end = end - 1; }
   i32 from = end;
-  while (from > 0 && isIdent(b[from - 1])) { from = from - 1; }
+  while (from > 0 && isIdent(b[from - 1] as i32)) { from = from - 1; }
   return string.fromBytes(slice(b, from, end));
 }
 
@@ -66,9 +66,9 @@ export string test_every_helper_the_glue_calls_is_one_the_glue_defines() {
 
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] != '$') { continue; }
-    if (i > 0 && isIdent(b[i - 1])) { continue; }   // mid-identifier, not the start of a name
+    if (i > 0 && isIdent(b[i - 1] as i32)) { continue; }   // mid-identifier, not the start of a name
     i32 end = i + 1;
-    while (end < b.len() && isIdent(b[end])) { end = end + 1; }
+    while (end < b.len() && isIdent(b[end] as i32)) { end = end + 1; }
     string name = string.fromBytes(slice(b, i, end));
 
     // `function $x`, `const $x =`, `let $x =`, `var $x =` — a declaration, whatever precedes it.

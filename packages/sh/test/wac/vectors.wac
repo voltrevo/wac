@@ -70,7 +70,7 @@ i32 numberIn(string line, string tag) {
   for (i32 i = 0; i < rest.len(); i++) {
     u8[] c = rest.slice(i, i + 1).toBytes();
     if (c.len() == 0) { return 0 - 1; }
-    i32 d = c[0];
+    i32 d = c[0] as i32;
     if (d < '0' || d > '9') { return 0 - 1; }
     v = v * 10 + (d - '0');
   }

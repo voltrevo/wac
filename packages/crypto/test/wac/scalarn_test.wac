@@ -41,10 +41,10 @@ import {
 /** The `i`th test value, `len` bytes. */
 u8[] sample(i32 i, i32 len) {
   u8[] seed = u8[].filled(4, 0);
-  seed[0] = (i >> 24) & 255;
-  seed[1] = (i >> 16) & 255;
-  seed[2] = (i >> 8) & 255;
-  seed[3] = i & 255;
+  seed[0] = ((i >> 24) & 255) as@ u8;
+  seed[1] = ((i >> 16) & 255) as@ u8;
+  seed[2] = ((i >> 8) & 255) as@ u8;
+  seed[3] = (i & 255) as@ u8;
   u8[] a = sha256(seed);
   if (len <= 32) {
     u8[] out = u8[].filled(len, 0);

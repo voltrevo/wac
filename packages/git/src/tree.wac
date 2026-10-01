@@ -65,9 +65,9 @@ export Tree parseTree(u8[] content) {
     if (nul + 20 >= content.len()) { return Tree.Bad("entry with fewer than twenty hash bytes"); }
 
     Buf m = Buf.create();
-    for (i32 i = at; i < space; i++) { m.push(content[i]); }
+    for (i32 i = at; i < space; i++) { m.push(content[i] as i32); }
     Buf nm = Buf.create();
-    for (i32 i = space + 1; i < nul; i++) { nm.push(content[i]); }
+    for (i32 i = space + 1; i < nul; i++) { nm.push(content[i] as i32); }
     u8[] h = u8[].filled(20, 0);
     for (i32 i = 0; i < 20; i++) { h[i] = content[nul + 1 + i]; }
 

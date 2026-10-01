@@ -35,7 +35,7 @@ i32 BG() { return 0x1E2528FF; }
 i32[] letters(string s) {
   u8[] b = s.toBytes();
   i32[] out = i32[].filled(b.len(), 0);
-  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i] as i32; }
   return out;
 }
 

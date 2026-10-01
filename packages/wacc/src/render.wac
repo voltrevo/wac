@@ -40,7 +40,7 @@ i32 numOf(string s) {
   for (i32 i = 0; i < s.len(); i++) {
     string ch = s.slice(i, i + 1);
     if (ch < "0" || ch > "9") { return 0; }
-    v = v * 10 + (ch.toBytes()[0] - 48);
+    v = v * 10 + (ch.toBytes()[0] as i32 - 48);
   }
   return s == "" ? 0 : v;
 }

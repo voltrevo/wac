@@ -55,7 +55,7 @@ string cols(string s) {
     while (i < b.len() && (b[i] == 0x20 || b[i] == 0x09 || b[i] == 0x0a)) { i++; }
     if (i >= b.len()) { break; }
     if (found > 0) { out.push(0x20); }
-    while (i < b.len() && b[i] != 0x20 && b[i] != 0x09 && b[i] != 0x0a) { out.push(b[i]); i++; }
+    while (i < b.len() && b[i] != 0x20 && b[i] != 0x09 && b[i] != 0x0a) { out.push(b[i] as i32); i++; }
     found++;
   }
   return out.toStr();
@@ -130,7 +130,7 @@ export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
   u8[] text = spanningText();
   Buf want = Buf.create();
   for (i32 i = 0; i < text.len(); i++) {
-    i32 c = text[i];
+    i32 c = text[i] as i32;
     want.push(c >= 0x61 && c <= 0x7a ? c - 32 : c);
   }
 
@@ -170,7 +170,7 @@ export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
   }
   u32 crc = 0xFFFFFFFF;
   for (i32 i = 0; i < text.len(); i++) {
-    crc = table[((crc ^ (text[i] as@ u32)) & 0xFF) as@ i32] ^ (crc >> 8);
+    crc = table[((crc ^ (text[i] as u32)) & 0xFF) as@ i32] ^ (crc >> 8);
   }
   crc = crc ^ 0xFFFFFFFF;
 

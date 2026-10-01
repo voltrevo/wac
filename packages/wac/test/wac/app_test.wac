@@ -188,7 +188,7 @@ export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli
   if (!got.ok) { return t.report(); }
   i32 cut = magicAt(got.bytes);
   string head = "";
-  for (i32 i = 0; i < cut; i++) { head = head + string.fromCodepoint(got.bytes[i]); }
+  for (i32 i = 0; i < cut; i++) { head = head + string.fromCodepoint(got.bytes[i] as i32); }
   i32 mark = indexOf(head, "# wac-app ");
   t.isTrue(mark >= 0, "the artefact carries no version line");
   if (mark < 0) { return t.report(); }
@@ -264,7 +264,7 @@ export string test_an_app_stamped_with_no_version_still_runs(Core core, Cli cli)
   if (!got.ok) { return t.report(); }
   i32 cut = magicAt(got.bytes);
   string head = "";
-  for (i32 i = 0; i < cut; i++) { head = head + string.fromCodepoint(got.bytes[i]); }
+  for (i32 i = 0; i < cut; i++) { head = head + string.fromCodepoint(got.bytes[i] as i32); }
   i32 mark = indexOf(head, "# wac-app ");
   t.isTrue(mark >= 0, "the artefact carries no version line");
   if (mark < 0) { return t.report(); }

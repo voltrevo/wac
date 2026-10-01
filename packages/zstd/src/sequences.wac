@@ -169,14 +169,14 @@ struct SeqCount {
  */
 SeqCount readCount(u8[] src, i32 at, i32 end) {
   if (at >= end) { trap; }
-  i32 b0 = src[at];
+  i32 b0 = src[at] as i32;
   if (b0 < 128) { return SeqCount(b0, 1); }
   if (b0 < 255) {
     if (at + 1 >= end) { trap; }
-    return SeqCount(((b0 - 128) << 8) + src[at + 1], 2);
+    return SeqCount(((b0 - 128) << 8) + src[at + 1] as i32, 2);
   }
   if (at + 2 >= end) { trap; }
-  return SeqCount(src[at + 1] + (src[at + 2] << 8) + 32512, 3);
+  return SeqCount(src[at + 1] as i32 + (src[at + 2] as i32 << 8) + 32512, 3);
 }
 
 /** Build one of the three tables according to its two-bit mode. */
@@ -195,7 +195,7 @@ FseTable tableFor(
     // One symbol, given as the next byte, and no table.
     if (at >= end) { trap; }
     used[0] = 1;
-    return rleTable(src[at]);
+    return rleTable(src[at] as i32);
   }
   if (mode == 2) {
     FseTable t = readTable(src, at, maxSymbol, maxLog);
@@ -240,7 +240,7 @@ export SeqTables decodeAndExecute(
   }
 
   if (p >= end) { trap; }
-  i32 modes = src[p];
+  i32 modes = src[p] as i32;
   p++;
   if ((modes & 3) != 0) { trap; }              // the low two bits are reserved
   i32 llMode = (modes >>> 6) & 3;

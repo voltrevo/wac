@@ -83,7 +83,7 @@ export string test_the_master_secret_and_the_key_block_with_their_labels_and_the
   u8[] pms = decoded("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
   u8[] cr = u8[].filled(32, 0);
   u8[] sr = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { cr[i] = i; sr[i] = 255 - i; }
+  for (i32 i = 0; i < 32; i++) { cr[i] = i as@ u8; sr[i] = (255 - i) as@ u8; }
 
   u8[] m = master(pms, cr, sr);
   t.eqI32(m.len(), 48, "a master secret is forty-eight bytes");

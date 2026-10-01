@@ -29,7 +29,7 @@ export string test_the_clienthello_we_write_is_one_we_can_read() {
   // hello and an unacceptable one both look like a server that did not answer.
   T t = T.create();
   u8[] hello = helloOnly(scid(), "localhost");
-  t.eqI32(hello[0], 1, "handshake type 1 is client_hello");
+  t.eqI32(hello[0] as i32, 1, "handshake type 1 is client_hello");
   t.isTrue(hello.len() > 150, "and it is a real message: " + itoa(hello.len()) + " bytes");
 
   // A key share whose private half we hold. x25519 public keys are 32 bytes, and a wrong length here

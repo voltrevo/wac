@@ -84,8 +84,8 @@ string tempName(Core core, string path) {
   u8[] out = u8[].filled(12, '0');
   u8[] digits = "0123456789abcdef".toBytes();
   for (i32 i = 0; i < 6; i++) {
-    out[i * 2] = digits[(r[i] >> 4) & 15];
-    out[i * 2 + 1] = digits[r[i] & 15];
+    out[i * 2] = digits[(r[i] as i32 >> 4) & 15];
+    out[i * 2 + 1] = digits[r[i] as i32 & 15];
   }
   return path + ".tmp" + string.fromBytes(out);
 }

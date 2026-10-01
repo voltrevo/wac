@@ -68,8 +68,8 @@ export Vec<Setting> parseConfig(u8[] text) {
     i32 stop = end;
     at = end + 1;
 
-    while (from < stop && isSpace(text[from])) { from = from + 1; }
-    while (stop > from && isSpace(text[stop - 1])) { stop = stop - 1; }
+    while (from < stop && isSpace(text[from] as i32)) { from = from + 1; }
+    while (stop > from && isSpace(text[stop - 1] as i32)) { stop = stop - 1; }
     if (stop <= from) { continue; }
     if (text[from] == '#' || text[from] == ';') { continue; }
 
@@ -77,18 +77,18 @@ export Vec<Setting> parseConfig(u8[] text) {
       // `[section]` or `[section "subsection"]`. The subsection keeps its case and its spaces.
       Buf name = Buf.create();
       i32 i = from + 1;
-      while (i < stop && text[i] != ']' && text[i] != '"' && !isSpace(text[i])) {
-        name.push(lower(text[i]));
+      while (i < stop && text[i] != ']' && text[i] != '"' && !isSpace(text[i] as i32)) {
+        name.push(lower(text[i] as i32));
         i = i + 1;
       }
       string sec = name.toStr();
-      while (i < stop && isSpace(text[i])) { i = i + 1; }
+      while (i < stop && isSpace(text[i] as i32)) { i = i + 1; }
       if (i < stop && text[i] == '"') {
         Buf sub = Buf.create();
         i = i + 1;
         while (i < stop && text[i] != '"') {
           if (text[i] == 92 && i + 1 < stop) { i = i + 1; }
-          sub.push(text[i]);
+          sub.push(text[i] as i32);
           i = i + 1;
         }
         sec = sec + "." + sub.toStr();
@@ -105,12 +105,12 @@ export Vec<Setting> parseConfig(u8[] text) {
       if (!quoted && text[i] == '=') { eq = i; break; }
     }
     i32 keyEnd = eq < 0 ? stop : eq;
-    while (keyEnd > from && isSpace(text[keyEnd - 1])) { keyEnd = keyEnd - 1; }
+    while (keyEnd > from && isSpace(text[keyEnd - 1] as i32)) { keyEnd = keyEnd - 1; }
     Buf key = Buf.create();
     for (i32 i = from; i < keyEnd; i++) {
       // A comment can follow a bare key, and there is no value to hide it in.
       if (eq < 0 && (text[i] == '#' || text[i] == ';')) { break; }
-      key.push(lower(text[i]));
+      key.push(lower(text[i] as i32));
     }
     if (key.len == 0) { continue; }
     string full = section == "" ? key.toStr() : section + "." + key.toStr();
@@ -121,12 +121,12 @@ export Vec<Setting> parseConfig(u8[] text) {
     }
 
     i32 v = eq + 1;
-    while (v < stop && isSpace(text[v])) { v = v + 1; }
+    while (v < stop && isSpace(text[v] as i32)) { v = v + 1; }
     Buf value = Buf.create();
     bool inQuotes = false;
     i32 lastReal = 0;
     while (v < stop) {
-      i32 c = text[v];
+      i32 c = text[v] as i32;
       if (c == '"') {
         inQuotes = !inQuotes;
         v = v + 1;
@@ -134,7 +134,7 @@ export Vec<Setting> parseConfig(u8[] text) {
       }
       if (!inQuotes && (c == '#' || c == ';')) { break; }
       if (c == 92 && v + 1 < stop) {
-        i32 e = text[v + 1];
+        i32 e = text[v + 1] as i32;
         if (e == 'n') { value.push(10); }
         else if (e == 't') { value.push(9); }
         else { value.push(e); }
@@ -149,7 +149,7 @@ export Vec<Setting> parseConfig(u8[] text) {
     }
     u8[] all = value.bytes();
     Buf trimmed = Buf.create();
-    for (i32 i = 0; i < lastReal; i++) { trimmed.push(all[i]); }
+    for (i32 i = 0; i < lastReal; i++) { trimmed.push(all[i] as i32); }
     out.push(Setting(full, trimmed.toStr(), true));
   }
   return out;

@@ -351,7 +351,7 @@ export struct Circuit {
   }
 
   u8[] endCell(this, i32 streamId, i32 reason) {
-    return this.sendToEnd(relayEnd(), streamId, [reason]);
+    return this.sendToEnd(relayEnd(), streamId, [reason as@ u8]);
   }
 
   /**

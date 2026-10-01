@@ -1,0 +1,4 @@
+// expect: refused
+// why: an integer literal takes a packed type from its slot like any other integer type, and has to fit it — 256 has no u8
+// from: spec/next ch09; the old truncating literal list (spec/spec arrays.md) went with element-only packed types
+export void f(u8[] xs) { xs[0] = 256; }

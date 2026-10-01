@@ -99,9 +99,9 @@ export string test_encapsulation_is_deterministic_in_its_randomness(Core core, C
   u8[] seed = all[0].seed;
   u8[] ek = slice(mlkemKeyGen(seed), 0, EK);
   u8[] m1 = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { m1[i] = i; }
+  for (i32 i = 0; i < 32; i++) { m1[i] = i as@ u8; }
   u8[] m2 = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { m2[i] = i; }
+  for (i32 i = 0; i < 32; i++) { m2[i] = i as@ u8; }
   m2[31] = m2[31] ^ 1;
   t.eqBytes(mlkemEncaps(ek, m1), mlkemEncaps(ek, m1), "encapsulation is deterministic");
   t.isFalse(equal(mlkemEncaps(ek, m1), mlkemEncaps(ek, m2)),
@@ -118,7 +118,7 @@ export string test_our_ciphertext_round_trips(Core core, Cli cli) {
   u8[] ek = slice(both, 0, EK);
   u8[] dk = slice(both, EK, EK + DK);
   u8[] m = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { m[i] = (i * 3) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { m[i] = ((i * 3) & 0xFF) as@ u8; }
   u8[] out = mlkemEncaps(ek, m);
   t.eqI32(out.len(), SS + CT, "encaps returns the secret then the ciphertext");
   t.eqBytes(mlkemDecaps(dk, slice(out, SS, SS + CT)), slice(out, 0, SS),
@@ -140,7 +140,7 @@ export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure
   u8[] ek = slice(both, 0, EK);
   u8[] dk = slice(both, EK, EK + DK);
   u8[] m = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { m[i] = (i * 7) & 0xFF; }
+  for (i32 i = 0; i < 32; i++) { m[i] = ((i * 7) & 0xFF) as@ u8; }
   u8[] out = mlkemEncaps(ek, m);
   u8[] real = slice(out, 0, SS);
   u8[] ct = slice(out, SS, SS + CT);

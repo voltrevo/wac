@@ -226,7 +226,7 @@ i32 atoiSafe(u8[] text) {
   i32 v = 0;
   for (i32 i = 0; i < text.len(); i++) {
     if (text[i] < 48 || text[i] > 57) { return -1; }
-    v = v * 10 + (text[i] - 48);
+    v = v * 10 + (text[i] as i32 - 48);
     if (v > 65535) { return -1; }
   }
   return v;

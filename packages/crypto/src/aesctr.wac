@@ -16,8 +16,8 @@ import { aesExpandKey, aesEncryptBlock, aesRounds } from "./aes.wac";
 /** Increment a 16-byte big-endian counter in place, wrapping at 2^128. */
 void increment(u8[] ctr) {
   for (i32 i = 15; i >= 0; i--) {
-    i32 v = ctr[i] + 1;
-    ctr[i] = v & 0xFF;
+    i32 v = ctr[i] as i32 + 1;
+    ctr[i] = (v & 0xFF) as@ u8;
     if (v < 256) { return; }
   }
 }

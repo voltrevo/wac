@@ -44,7 +44,7 @@ static i32 P384 = 384;
 
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * 41 + seed * 7 + 13) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * 41 + seed * 7 + 13) & 0xFF) as@ u8; }
   // Keep it well inside the group order: the top byte cleared is enough for both curves.
   out[0] = out[0] & 0x7F;
   return out;
@@ -62,9 +62,9 @@ export string test_the_group_orders() {
   T t = T.create();
   t.eqI32(p256Order().len(), 32, "P-256's order is 32 bytes");
   t.eqI32(p384Order().len(), 48, "P-384's order is 48 bytes");
-  t.eqI32(p256Order()[0], 0xFF, "P-256's order starts 0xFF");
-  t.eqI32(p256Order()[31], 0x51, "and ends 0x51");
-  t.eqI32(p384Order()[47], 0x73, "P-384's order ends 0x73");
+  t.eqI32(p256Order()[0] as i32, 0xFF, "P-256's order starts 0xFF");
+  t.eqI32(p256Order()[31] as i32, 0x51, "and ends 0x51");
+  t.eqI32(p384Order()[47] as i32, 0x73, "P-384's order ends 0x73");
   return t.report();
 }
 
@@ -240,7 +240,7 @@ struct FieldRng {
     u8[] o = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) {
       this.s = (this.s * 6364136223846793005 + 1442695040888963407);
-      o[i] = ((this.s >> 33) & 255) as! i32;
+      o[i] = (((this.s >> 33) & 255) as! i32) as@ u8;
     }
     return o;
   }
@@ -309,7 +309,7 @@ string[] edgesFor(string curve) {
 u8[] powerOfTwo(i32 width, i32 bit) {
   u8[] o = u8[].filled(width, 0);
   i32 idx = width - 1 - bit / 8;
-  if (idx >= 0) { o[idx] = 1 << (bit % 8); }
+  if (idx >= 0) { o[idx] = (1 << (bit % 8)) as@ u8; }
   return o;
 }
 
@@ -318,14 +318,14 @@ u8[] powerOfTwoLess(i32 width, i32 bit) {
   u8[] o = u8[].filled(width, 0);
   for (i32 b = 0; b < bit; b++) {
     i32 idx = width - 1 - b / 8;
-    if (idx >= 0) { o[idx] = o[idx] | (1 << (b % 8)); }
+    if (idx >= 0) { o[idx] = (o[idx] as i32 | (1 << (b % 8))) as@ u8; }
   }
   return o;
 }
 
 u8[] oneAt(i32 width, i32 v) {
   u8[] o = u8[].filled(width, 0);
-  o[width - 1] = v + 1;
+  o[width - 1] = (v + 1) as@ u8;
   return o;
 }
 
@@ -539,7 +539,7 @@ export string test_a_point_is_recognised_as_on_the_curve_or_not() {
 
   // Real points, from this file's own generator.
   for (i32 k = 1; k < 6; k++) {
-    u8[] pub = p256PublicKey(u8[].filled(32, k));
+    u8[] pub = p256PublicKey(u8[].filled(32, k as@ u8));
     t.eqI32(pub.len(), 65, "a public key is not 65 uncompressed bytes");
     t.isTrue(p256Decodes(pub), "a point this package generated was not recognised, k = " + itoa64(k as i64));
   }

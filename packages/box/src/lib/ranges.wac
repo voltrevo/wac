@@ -57,13 +57,13 @@ export Ranges parseRanges(string who, string text) {
   while (i < b.len()) {
     i32 lo = 0;
     bool sawLo = false;
-    while (i < b.len() && b[i] >= '0' && b[i] <= '9') { lo = lo * 10 + (b[i] - '0'); sawLo = true; i++; }
+    while (i < b.len() && b[i] >= '0' && b[i] <= '9') { lo = lo * 10 + (b[i] as i32 - '0'); sawLo = true; i++; }
     i32 hi = lo;
     if (i < b.len() && b[i] == '-') {
       i++;
       i32 upper = 0;
       bool sawHi = false;
-      while (i < b.len() && b[i] >= '0' && b[i] <= '9') { upper = upper * 10 + (b[i] - '0'); sawHi = true; i++; }
+      while (i < b.len() && b[i] >= '0' && b[i] <= '9') { upper = upper * 10 + (b[i] as i32 - '0'); sawHi = true; i++; }
       // `-N` is "from the first", `N-` is "to the last", and `-` alone is neither.
       if (!sawLo && !sawHi) { return Ranges(false, who + ": invalid range with no endpoint: -", i32[]()); }
       if (!sawLo) { lo = 1; }
@@ -91,13 +91,13 @@ export Ranges parseRanges(string who, string text) {
   while (at < b.len()) {
     i32 lo = 0;
     bool sawLo = false;
-    while (at < b.len() && b[at] >= '0' && b[at] <= '9') { lo = lo * 10 + (b[at] - '0'); sawLo = true; at++; }
+    while (at < b.len() && b[at] >= '0' && b[at] <= '9') { lo = lo * 10 + (b[at] as i32 - '0'); sawLo = true; at++; }
     i32 hi = lo;
     if (at < b.len() && b[at] == '-') {
       at++;
       i32 upper = 0;
       bool sawHi = false;
-      while (at < b.len() && b[at] >= '0' && b[at] <= '9') { upper = upper * 10 + (b[at] - '0'); sawHi = true; at++; }
+      while (at < b.len() && b[at] >= '0' && b[at] <= '9') { upper = upper * 10 + (b[at] as i32 - '0'); sawHi = true; at++; }
       if (!sawLo) { lo = 1; }
       hi = sawHi ? upper : 0;
     }

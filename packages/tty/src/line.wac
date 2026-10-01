@@ -236,7 +236,7 @@ export struct Line {
     u8[] drawn = this.echo ? render(b) : u8[]();
     if (b == INTR()) { return Typed(drawn, u8[](), false, false, SIGINT()); }
     if (b == QUIT()) { return Typed(drawn, u8[](), false, false, SIGQUIT()); }
-    return Typed(drawn, u8[].filled(1, b), true, false, 0);
+    return Typed(drawn, u8[].filled(1, b as@ u8), true, false, 0);
   }
 
   /** The canonical rules, unchanged — what `feed` was before there were modes. */
@@ -321,7 +321,7 @@ export struct Line {
   /** A run of bytes, as one arrival — an ssh payload rather than a keystroke. */
   Typed[] feedAll(this, u8[] bytes) {
     Typed[] out = Typed[].filled(bytes.len(), Typed.nothing());
-    for (i32 i = 0; i < bytes.len(); i++) { out[i] = this.feed(bytes[i]); }
+    for (i32 i = 0; i < bytes.len(); i++) { out[i] = this.feed(bytes[i] as i32); }
     return out;
   }
 
@@ -329,7 +329,7 @@ export struct Line {
   void dropLast(this) {
     u8[] all = this.held.take();
     Buf keep = Buf.create();
-    for (i32 i = 0; i < all.len() - 1; i++) { keep.push(all[i]); }
+    for (i32 i = 0; i < all.len() - 1; i++) { keep.push(all[i] as i32); }
     this.held = keep;
   }
 
@@ -351,8 +351,8 @@ export struct Line {
   i32 wordStart(const this) {
     u8[] all = this.held.bytes();
     i32 at = all.len();
-    while (at > 0 && !isWordChar(all[at - 1])) { at = at - 1; }
-    while (at > 0 && isWordChar(all[at - 1])) { at = at - 1; }
+    while (at > 0 && !isWordChar(all[at - 1] as i32)) { at = at - 1; }
+    while (at > 0 && isWordChar(all[at - 1] as i32)) { at = at - 1; }
     return at;
   }
 
@@ -360,7 +360,7 @@ export struct Line {
   i32 widthFrom(const this, i32 from) {
     u8[] all = this.held.bytes();
     i32 w = 0;
-    for (i32 i = from; i < all.len(); i++) { w = w + columns(all[i]); }
+    for (i32 i = from; i < all.len(); i++) { w = w + columns(all[i] as i32); }
     return w;
   }
 }
@@ -403,11 +403,11 @@ u8[] render(i32 b) {
     del[1] = 63;
     return del;
   }
-  if (b == 9 || b >= 32) { return u8[].filled(1, b); }
+  if (b == 9 || b >= 32) { return u8[].filled(1, b as@ u8); }
   u8[] out = u8[].filled(2, '^');
   // `^@` for NUL through `^_` for 0x1f: the character sixty-four along, which is the pair the terminal
   // shows and the arithmetic every terminal does.
-  out[1] = b + 64;
+  out[1] = (b + 64) as@ u8;
   return out;
 }
 

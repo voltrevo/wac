@@ -33,7 +33,7 @@ string js(string src) {
   i32 last = 0;
   u8[] b = s.out;
   for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
+    i32 c = b[i] as i32;
     if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { space = true; continue; }
     // A space is kept only where it *separates* two words. Anywhere else it is formatting, and an
     // erased type leaves exactly one — so without this every case would be asserting where the

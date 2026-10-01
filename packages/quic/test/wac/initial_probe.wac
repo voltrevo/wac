@@ -43,5 +43,5 @@ export i32 firstCryptoHandshakeType(u8[] frames) {
   Varint len = varint(frames, at);
   if (len.size == 0) { return -1; }
   at = at + len.size;
-  return at < frames.len() ? frames[at] : -1;
+  return at < frames.len() ? frames[at] as i32 : -1;
 }

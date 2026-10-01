@@ -43,7 +43,7 @@ export struct Buf {
 
   i32 get(const this, i32 i) {
     if (i < 0 || i >= this.len) { trap; }
-    return this.data[i];
+    return this.data[i] as i32;
   }
 
   // Make room for at least one more byte.
@@ -93,7 +93,7 @@ export struct Buf {
 
   void push(this, i32 v) {
     this.reserve();
-    this.data[this.len] = v;
+    this.data[this.len] = v as@ u8;
     this.len++;
   }
 
@@ -130,8 +130,8 @@ export struct Buf {
     if (x < 0) { this.push('-'); x = 0 - x; }
     u8[] tmp = u8[].filled(12, 0);
     i32 n = 0;
-    while (x > 0) { tmp[n] = 48 + ((x % 10) as! i32); x = x / 10; n++; }
-    for (i32 i = n - 1; i >= 0; i--) { this.push(tmp[i]); }
+    while (x > 0) { tmp[n] = (48 + ((x % 10) as! i32)) as@ u8; x = x / 10; n++; }
+    for (i32 i = n - 1; i >= 0; i--) { this.push(tmp[i] as i32); }
   }
 
   // `start`, not `from` — `from` is a keyword (import ... from "...").

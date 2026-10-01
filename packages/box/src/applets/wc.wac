@@ -133,7 +133,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
         u8[] head = u8[].filled(pend.len() + take, 0);
         for (i32 k = 0; k < pend.len(); k++) { head[k] = pend[k]; }
         for (i32 k = 0; k < take; k++) { head[pend.len() + k] = data[k]; }
-        Scalar sc = utf8 ? decode(head, 0) : Scalar(head[0], 1);
+        Scalar sc = utf8 ? decode(head, 0) : Scalar(head[0] as i32, 1);
         if (sc.code == TRUNCATED()) {
           // A chunk of one or two continuation bytes, which is possible however large the reads are:
           // hold the lot and ask for more.
@@ -153,7 +153,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
         }
       }
       while (i < data.len()) {
-        Scalar sc = utf8 ? decode(data, i) : Scalar(data[i], 1);
+        Scalar sc = utf8 ? decode(data, i) : Scalar(data[i] as i32, 1);
         if (sc.code == TRUNCATED()) {
           u8[] rest = u8[].filled(data.len() - i, 0);
           for (i32 k = 0; k < rest.len(); k++) { rest[k] = data[i + k]; }

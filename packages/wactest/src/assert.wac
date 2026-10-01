@@ -196,8 +196,8 @@ export struct T {
     }
     for (i32 i = 0; i < got.len(); i++) {
       if (got[i] != want[i]) {
-        this.fail(what + ": byte " + itoa(i) + " is " + itoa(got[i])
-          + ", want " + itoa(want[i]));
+        this.fail(what + ": byte " + itoa(i) + " is " + itoa(got[i] as i32)
+          + ", want " + itoa(want[i] as i32));
         return;
       }
     }

@@ -54,8 +54,8 @@ export string test_a_sealed_initial_is_1200_bytes_and_opens_with_our_own_reader(
   u8[] packet = seal(dcid(), b.scid, b.hello, 0);
 
   t.eqI32(packet.len(), 1200, "padded to the anti-amplification minimum");
-  t.neI32(packet[0] & 0x80, 0, "a long header");
-  t.neI32(packet[0] & 0x40, 0,
+  t.neI32(packet[0] as i32 & 0x80, 0, "a long header");
+  t.neI32(packet[0] as i32 & 0x40, 0,
           "with the fixed bit set — a client has negotiated nothing, so there is nothing to grease");
 
   // Reading back what we wrote is the cheap check, not the real one: both halves share every key, so
@@ -80,9 +80,9 @@ export string test_a_real_quic_server_accepts_a_packet_we_built(Core core, Cli c
 
   // The reply is addressed to the source id we sent from, which says the server read our header
   // rather than answering out of a cache: RFC 9000 §17.2 puts the destination id length at byte 5.
-  t.eqI32(reply[5], b.scid.len(), "the reply's destination id is as long as the source we sent");
+  t.eqI32(reply[5] as i32, b.scid.len(), "the reply's destination id is as long as the source we sent");
   for (i32 i = 0; i < b.scid.len(); i++) {
-    t.eqI32(reply[6 + i], b.scid[i], "byte " + itoa(i) + " of the reply's destination id is ours");
+    t.eqI32(reply[6 + i] as i32, b.scid[i] as i32, "byte " + itoa(i) + " of the reply's destination id is ours");
   }
 
   // **Both directions, now.** The server's Initial is protected with keys derived from the id *we*

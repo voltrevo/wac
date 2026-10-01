@@ -23,19 +23,19 @@ import { openClientInitial, sealClientInitial } from "../../src/initial.wac";
 
 u8[] body() {
   u8[] m = u8[].filled(64, 0);
-  for (i32 i = 0; i < 64; i++) { m[i] = (i * 7 + 1) & 255; }
+  for (i32 i = 0; i < 64; i++) { m[i] = ((i * 7 + 1) & 255) as@ u8; }
   return m;
 }
 
 u8[] dcid() {
   u8[] d = u8[].filled(8, 0);
-  for (i32 i = 0; i < 8; i++) { d[i] = (i * 3 + 2) & 255; }
+  for (i32 i = 0; i < 8; i++) { d[i] = ((i * 3 + 2) & 255) as@ u8; }
   return d;
 }
 
 u8[] scid() {
   u8[] s = u8[].filled(4, 0);
-  for (i32 i = 0; i < 4; i++) { s[i] = (i * 5 + 9) & 255; }
+  for (i32 i = 0; i < 4; i++) { s[i] = ((i * 5 + 9) & 255) as@ u8; }
   return s;
 }
 
@@ -44,7 +44,7 @@ u8[] sealed() { return sealClientInitial(dcid(), scid(), body(), 0 as i64); }
 /** A copy of a freshly sealed packet with byte `i` xored by `mask`. */
 u8[] damaged(i32 i, i32 mask) {
   u8[] p = sealed();
-  p[i] = p[i] ^ mask;
+  p[i] = (p[i] as i32 ^ mask) as@ u8;
   return p;
 }
 

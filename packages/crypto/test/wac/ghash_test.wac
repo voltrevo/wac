@@ -29,7 +29,7 @@ struct Rng {
     u8[] o = u8[].filled(16, 0);
     for (i32 i = 0; i < 16; i++) {
       this.s = (this.s * 1103515245 + 12345) & 2147483647;
-      o[i] = ((this.s >> 13) & 255) as! i32;
+      o[i] = (((this.s >> 13) & 255) as! i32) as@ u8;
     }
     return o;
   }
@@ -111,7 +111,7 @@ export string test_it_is_associative_over_three_blocks() {
 
 u8[] filled(i32 n, i32 v) {
   u8[] b = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { b[i] = v; }
+  for (i32 i = 0; i < n; i++) { b[i] = v as@ u8; }
   return b;
 }
 

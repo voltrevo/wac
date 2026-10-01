@@ -24,7 +24,7 @@ import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
+  for (i32 i = 0; i < n; i++) { out[i] = ((i * a + b) & 0xFF) as@ u8; }
   return out;
 }
 u8[] cat(u8[] a, u8[] b) {
@@ -311,7 +311,7 @@ struct Rng {
   }
   u8[] bytes(this, i32 n) {
     u8[] o = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { o[i] = (this.next() >> 11) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { o[i] = ((this.next() >> 11) & 0xFF) as@ u8; }
     return o;
   }
 }
@@ -327,7 +327,7 @@ export string test_poly1305_agrees_with_the_reference_at_every_length_to_three_b
   Lines lines = Lines.create();
   for (i32 n = 0; n <= 49; n++) {
     u8[] m = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { m[i] = (i * 53 + 17) & 0xFF; }
+    for (i32 i = 0; i < n; i++) { m[i] = ((i * 53 + 17) & 0xFF) as@ u8; }
     claim(lines, key, m);
   }
   check(t, cli, "node", [CRYPTO_ORACLE], lines, "every length to three blocks");

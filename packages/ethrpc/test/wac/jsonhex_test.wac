@@ -28,8 +28,8 @@ export string test_data_decodes_an_even_number_of_digits() {
   T t = T.create();
   u8[] four = fromHexData("0xdeadbeef".toBytes());
   t.eqI32(four.len(), 4, "four bytes from eight digits");
-  t.eqI32(four[0], 0xDE, "and the first byte is the first two digits");
-  t.eqI32(four[3], 0xEF, "and the last is the last two");
+  t.eqI32(four[0] as i32, 0xDE, "and the first byte is the first two digits");
+  t.eqI32(four[3] as i32, 0xEF, "and the last is the last two");
   t.eqI32(fromHexData("0x".toBytes()).len(), 0, "`0x` is empty, which extraData legitimately is");
   t.eqI32(fromHexData("0xzz".toBytes()).len(), 0, "and a non-hex digit is refused");
   return t.report();
@@ -41,11 +41,11 @@ export string test_a_quantity_may_be_odd_and_is_padded_at_the_front() {
   // same mistake pointing the other way.
   u8[] q = fromHexQuantity("0x1a2".toBytes());
   t.eqI32(q.len(), 2, "three digits make two bytes");
-  t.eqI32(q[0], 0x01, "padded at the front, not the back");
-  t.eqI32(q[1], 0xA2, "so the value is 418 rather than 6688");
+  t.eqI32(q[0] as i32, 0x01, "padded at the front, not the back");
+  t.eqI32(q[1] as i32, 0xA2, "so the value is 418 rather than 6688");
 
   u8[] zero = fromHexQuantity("0x0".toBytes());
   t.eqI32(zero.len(), 1, "zero is one byte");
-  t.eqI32(zero[0], 0, "and it is zero");
+  t.eqI32(zero[0] as i32, 0, "and it is zero");
   return t.report();
 }

@@ -178,7 +178,7 @@ u8[] decimal(i32 v) {
   i32 n = 0;
   i32 x = v;
   while (x > 0) {
-    tmp[n] = 0x30 + (x % 10);
+    tmp[n] = (0x30 + (x % 10)) as@ u8;
     x = x / 10;
     n++;
   }
@@ -221,7 +221,7 @@ bool globFrom(u8[] pat, i32 p, i32 pEnd, u8[] host, i32 h) {
   i32 i = p;
   i32 j = h;
   while (i < pEnd) {
-    i32 c = pat[i];
+    i32 c = pat[i] as i32;
     if (c == 0x2a) {                                                   // '*'
       // Try every split. The pattern after a star is short and hosts are short, so the naive
       // backtrack is fine and the alternative is a state machine nobody will read.
@@ -231,7 +231,7 @@ bool globFrom(u8[] pat, i32 p, i32 pEnd, u8[] host, i32 h) {
       return false;
     }
     if (j >= host.len()) { return false; }
-    if (c != 0x3f && c != host[j]) { return false; }                   // '?' matches anything
+    if (c != 0x3f && c != host[j] as i32) { return false; }                   // '?' matches anything
     i++;
     j++;
   }

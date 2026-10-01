@@ -105,7 +105,7 @@ export Store pemBundle(u8[] pem) {
         closed = true;
         break;
       }
-      i32 c = pem[at];
+      i32 c = pem[at] as i32;
       if (c != 10 && c != 13 && c != 32 && c != 9) { digits.push(c); }
       at = at + 1;
     }

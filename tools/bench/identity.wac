@@ -12,7 +12,7 @@ export u8[] identity(u8[] data) {
 export i32 checksum(u8[] data) {
   i32 sum = 0;
   for (i32 i = 0; i < data.len(); i++) {
-    sum += data[i];
+    sum += data[i] as i32;
   }
   return sum;
 }

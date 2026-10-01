@@ -81,7 +81,7 @@ string driverFor(string text) {
   out.pushAll(("; }\n\n" +
     "i32 sumBytes(u8[] b) {\n" +
     "  i32 h = 7;\n" +
-    "  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }\n" +
+    "  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i] as i32) & 2147483647; }\n" +
     "  return h;\n" +
     "}\n\n" +
     "export i32 targetLen() { return target().len(); }\n" +

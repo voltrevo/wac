@@ -25,7 +25,7 @@ u8[] repeated(string s, i32 times) {
 export string test_the_block_header_is_bfinal_one_btype_two() {
   T t = T.create();
   u8[] gz = gzipDynamic("A".toBytes());
-  i32 first = gz[10];
+  i32 first = gz[10] as i32;
   t.eqI32(first & 1, 1, "BFINAL is set");
   t.eqI32((first >> 1) & 3, 2, "BTYPE is 10, dynamic Huffman");
   return t.report();
@@ -61,13 +61,13 @@ export string test_degenerate_inputs(Core core, Cli cli) {
 export string test_no_matches_at_all(Core core, Cli cli) {
   T t = T.create();
   u8[] ascending = u8[].filled(256, 0);
-  for (i32 i = 0; i < ascending.len(); i++) { ascending[i] = i; }
+  for (i32 i = 0; i < ascending.len(); i++) { ascending[i] = i as@ u8; }
   t.eqStr(same(cli, ascending, "0..255 ascending"), "", "no three-byte sequence repeats");
   u8[] noRepeat = u8[].filled(3000, 0);
   i32 s = 7;
   for (i32 i = 0; i < noRepeat.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    noRepeat[i] = (s >> 16) & 0xFF;
+    noRepeat[i] = ((s >> 16) & 0xFF) as@ u8;
   }
   t.eqStr(same(cli, noRepeat, "pseudo-random 3000"), "", "nothing to match");
   return t.report();
@@ -94,16 +94,16 @@ export string test_skewed_frequencies_force_the_fifteen_bit_limit(Core core, Cli
   for (i32 sym = 0; sym < counts.len(); sym++) {
     i32 n = counts[sym] < 4000 ? counts[sym] : 4000;
     // Interleaved rather than run-length, so LZ77 does not collapse them first.
-    for (i32 k = 0; k < n; k++) { parts[at] = (sym * 7 + 1) & 0xFF; at = at + 1; }
+    for (i32 k = 0; k < n; k++) { parts[at] = ((sym * 7 + 1) & 0xFF) as@ u8; at = at + 1; }
   }
   // Shuffled deterministically to break up runs.
   i32 s = 424242;
   for (i32 i = parts.len() - 1; i > 0; i--) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
     i32 j = ((s >> 8) & 0x7FFFFF) % (i + 1);
-    i32 tmp = parts[i];
+    i32 tmp = parts[i] as i32;
     parts[i] = parts[j];
-    parts[j] = tmp;
+    parts[j] = tmp as@ u8;
   }
   t.eqStr(same(cli, parts, "fibonacci-skewed"), "", "code lengths past fifteen bits");
   return t.report();
@@ -123,12 +123,12 @@ export string test_the_code_length_rle_symbols(Core core, Cli cli) {
   t.eqStr(same(cli, two, "two byte values"), "", "long zero runs — symbols 17 and 18");
 
   u8[] flat = u8[].filled(256 * 12, 0);
-  for (i32 i = 0; i < flat.len(); i++) { flat[i] = i % 256; }
+  for (i32 i = 0; i < flat.len(); i++) { flat[i] = (i % 256) as@ u8; }
   t.eqStr(same(cli, flat, "flat over 256 values"), "", "equal lengths — symbol 16");
 
   // A gap in the middle of the alphabet, forcing zero runs between used symbols.
   u8[] sparse = u8[].filled(3000, 0);
-  for (i32 i = 0; i < sparse.len(); i++) { sparse[i] = (i % 8) * 32; }
+  for (i32 i = 0; i < sparse.len(); i++) { sparse[i] = ((i % 8) * 32) as@ u8; }
   t.eqStr(same(cli, sparse, "sparse alphabet"), "", "zero runs between used symbols");
   return t.report();
 }
@@ -154,7 +154,7 @@ export string test_larger_payloads_round_trip(Core core, Cli cli) {
   i32 s = 31337;
   for (i32 i = 0; i < mixed.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    mixed[i] = i % 1009 == 0 ? (s >> 16) & 0xFF : i % 97;
+    mixed[i] = (i % 1009 == 0 ? (s >> 16) & 0xFF : i % 97) as@ u8;
   }
   t.eqStr(same(cli, mixed, "150000 mixed"), "", "structure and noise together");
   return t.report();
