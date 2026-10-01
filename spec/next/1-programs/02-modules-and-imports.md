@@ -325,34 +325,35 @@ export i32 area(i32 w, i32 h) { return w * h; }
 `[§wac-export-list-collision-unxcmkj]` An export list naming a name the module already exports, under that name,
 is refused.
 
-### A namespace member needs a name of its own
+### A namespace member is exported under its own name
 
-A member reached through a namespace is exported under a name the list gives it. Its path is not a name:
+A member reached through a namespace is exported under its own name, as `import { ns.member }` binds it — or
+under another, with `as`:
 
 ```wac
 // expect: answers good = 7
+// expect: answers fine = 7
 // expect: answers lifted = 7
 namespace helpers {
   i32 base() { return 3; }
   export i32 good() { return base() + 4; }
 }
 
-export { helpers.good as good };
-
-// ERROR: a namespace member is exported under a name — write helpers.good as good
-// export { helpers.good };
+export { helpers.good, helpers.good as fine };
 
 // ERROR: 'base' is not exported from namespace 'helpers'
-// export { helpers.base as base };
+// export { helpers.base };
 
 export i32 lifted() { return helpers.good(); }
 ```
 
-`[§wac-export-member-as-dvjgbhc]` `export { ns.member as name };` exports a namespace member under `name`, where
-the member is visible: exported within its namespace, and the namespace visible in this module
-([03](03-namespaces.md)). `export { ns.member };` without `as` is refused.
+`[§wac-export-member-jruhjdw]` `export { ns.member };` exports a namespace member under the member's own name, and
+`export { ns.member as name };` under `name`. The member must be visible: exported within its namespace, and the
+namespace visible in this module ([03](03-namespaces.md)).
 
-This is how a module lifts one member out of a namespace it does not export.
+The name is the last segment of the path, the same name `import { ns.member }` would bind, so the two directions
+agree: what a module exports as `export { a.b.c }` is imported as `c`. This is how a module lifts one member out
+of a namespace it does not export.
 
 ### An instantiation is exported by naming it
 
@@ -378,7 +379,7 @@ export i32 boxedValue() {
 
 `[§wac-export-instantiation-wuh2wxp]` `export { G<T…> as name };` exports the instantiation of the generic `G` at
 `T…` under `name`: a function that a host can call, or a type that importers name. `export { G<T…> };` without
-`as` is refused.
+`as` is refused: an instantiation has no name of its own to be exported under.
 
 The generic itself is exported by its plain name, like any other declaration — `export { Box };` makes `Box`
 importable, and importers instantiate it as they need. Only an instantiation needs a name of its own.
