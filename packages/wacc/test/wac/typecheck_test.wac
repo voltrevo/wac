@@ -2109,6 +2109,10 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     // Positional construction, parents included in the count.
     "struct Point { i32 x; i32 y; } export void bad() { Point p = Point(3); }",
     "struct A { i32 a; } struct B : A { i32 b; } export void bad() { B x = B(1); }",
+    // `P()` is a positional construction short of every field, and a number has no default
+    // (spec/next ch08, ch12).
+    "struct P { i32 v; } export void f() { P p = P(); }",
+    "struct Node { i32 v; Node? next; } export void f() { Node n = Node { }; }",
     // Nothing to default-construct from: a recursive struct, an enum, a struct containing one.
     "struct Node { i32 v; Node next; } export void bad() { Node n = Node(); }",
     "enum E { A(i32 v), B } export i32 f() { E[] a = E[].defaulted(2); return a.len(); }",
@@ -2141,9 +2145,9 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "export i64 ok2(i64 x) { return x >>> 1; }",
     // The right number of arguments, parents first.
     "struct A { i32 a; } struct B : A { i32 b; } export void f() { B x = B(1, 2); }",
-    // Defaults that do exist: primitives, a nullable recursive field, an enum with a fill.
-    "struct P { i32 v; } export void f() { P p = P(); }",
-    "struct Node { i32 v; Node? next; } export void f() { Node n = Node(); }",
+    // Defaults that do exist: an initialiser, a nullable recursive field, an enum with a fill.
+    "struct P { i32 v = 0; } export void f() { P p = P { }; }",
+    "struct Node { i32 v = 0; Node? next; } export void f() { Node n = Node { }; }",
     "enum E { A, B } export i32 f() { E[] a = E[].filled(2, E.A); return a.len(); }",
     // Reading a string index is ordinary; only writing is refused. **And it reads as a `string`** —
     // spec/spec/strings.md §Indexing: "returns it as a single-character string". This entry
