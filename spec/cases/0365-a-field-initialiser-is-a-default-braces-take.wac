@@ -1,0 +1,12 @@
+// expect: answers f = 3
+// why: braces may leave out a field that has a default, and an initialiser is one — the field takes it
+// from: spec/next ch12 §wac-struct-named-defaults-y5em4qj, §wac-field-initialiser-default-28c4ffw
+struct Conn {
+  i32 retries = 3;
+  i32[] log;
+  Conn? fallback;
+}
+export i32 f() {
+  Conn c = Conn { };
+  return c.retries + c.log.len() + (c.fallback is null ? 0 : 100);
+}

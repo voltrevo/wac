@@ -45,8 +45,8 @@ export struct ConsensusVoter {
   u8[] identityDigest;      // 20 bytes
   string address;
   string ip;
-  i32 dirPort;
-  i32 orPort;
+  i32 dirPort = 0;
+  i32 orPort = 0;
   string contact;
   u8[] voteDigest;          // 20 bytes: the digest of the vote this authority cast
 }

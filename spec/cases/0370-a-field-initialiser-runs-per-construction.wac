@@ -1,0 +1,10 @@
+// expect: answers f = 0
+// why: a field initialiser is evaluated once for each construction that uses it, so two defaults share nothing
+// from: spec/next ch12 §wac-field-initialiser-each-8upxvn7
+struct Counter { i32[] seen = [0]; }
+export i32 f() {
+  Counter c1 = Counter { };
+  Counter c2 = Counter { };
+  c1.seen[0] = 5;
+  return c2.seen[0];
+}

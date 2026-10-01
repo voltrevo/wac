@@ -1,0 +1,5 @@
+// expect: refused
+// why: a field initialiser is an expression of the field's type, checked as a local's initialiser is
+// from: spec/next ch12
+struct Bad { i32 a = "one"; }
+export i32 f() { Bad x = Bad { }; return x.a; }

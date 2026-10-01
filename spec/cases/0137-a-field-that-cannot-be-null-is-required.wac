@@ -1,14 +1,14 @@
 // expect: refused
-// why: absence needs a value to mean, and a non-nullable field has none
+// why: a field may be left out of braces only when it has a default, and a number has none — zero is a number somebody might have meant
 // from: design/lang/0007
 
 struct Opts {
-  string name;
+  i32 width;
   string? title;
 }
 
 export i32 run() {
-  // `title` may be left out; `name` may not, and this leaves out `name`.
+  // `title` may be left out; `width` may not, and this leaves out `width`.
   Opts a = Opts { title: "t" };
   return 0;
 }

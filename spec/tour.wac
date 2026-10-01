@@ -460,8 +460,8 @@ export i32 packedSigned() {
 
 // WasmGC struct types: heap-allocated, GC'd. Fields mutable by default.
 export struct Point {
-  f64 x;
-  f64 y;
+  f64 x = 0.0;
+  f64 y = 0.0;
 
   // No `this` parameter => STATIC method. Called as Point.create(...).
   Point create(f64 x, f64 y) { return Point(x, y); }
@@ -486,15 +486,15 @@ const struct Config {          // `const struct` — every field immutable
   i32 height;
 }
 
-// Three construction forms. All of them initialise ALL fields; there is no
-// partial initialisation.
+// Two construction forms. Parentheses supply every field in order; braces name
+// fields in any order and may leave out the ones that have a default.
 export i32 construction() {
   Point p = Point(3.0, 4.0);              // positional, declaration order
   Point q = Point { y: 4.0, x: 3.0 };     // named, any order
-  Point r = Point();                       // struct.new_default — all zero/null
+  Point r = Point { };                    // every field its default: x and y are 0.0
   return (p.x == q.x ? 1 : 0) + (r.x == 0.0 ? 1 : 0);   // -> 2
 }
-// ERROR: Point(3.0);   // must supply every field
+// ERROR: Point(3.0);   // parentheses supply every field; defaults never fill in
 
 // Field access is struct.get / struct.set. Assignment ALIASES — a struct
 // variable holds a reference, so this returns 99, not 1.
@@ -514,24 +514,25 @@ export i32 structAlias() {
 
 // ── 10. DEFAULT VALUES ──────────────────────────────────────────────────────
 
-// `T()` and `T[].defaulted(N)` need T to have a default. A struct does if every field
-// does:
-//   primitives -> 0 / 0.0 / false      nullable T? -> null
-//   non-null struct T -> T() if T itself has a default (recursive)
-//   array T[] -> an empty array, always — no elements need constructing
-struct Line { Point start; Point end; }      // Line() nests default Points
-struct Bag  { i32[] items; }                 // Bag().items.len() is 0
+// A default is an absence: a value that means "nothing yet". `T { }`,
+// `T[].defaulted(N)` and a local read before it is assigned need T to have one.
+//   nullable T? -> null       array T[] -> empty       string -> ""
+//   a number and bool -> NONE: zero is a number somebody might have meant
+//   a field with an initialiser (`f64 x = 0.0;`) -> that value, built per construction
+//   non-null struct T -> T { } if every field has a default (recursive)
+struct Line { Point start; Point end; }      // Line { } nests default Points
+struct Bag  { i32[] items; }                 // Bag { }.items.len() is 0
 
 // A non-null recursive field has no default — constructing it would not
 // terminate. Make it nullable instead. This is why linked structures in wac use
 // `T?` for their links.
 // ERROR: struct Bad { i32 v; Bad next; }
-struct Node { i32 val; Node? next; }         // fine: next defaults to null
+struct Node { i32 val = 0; Node? next; }         // fine: next defaults to null
 
 export i32 defaults() {
-  Line l = Line();
-  Bag  b = Bag();
-  return (l.start.x == 0.0 ? 1 : 0) + b.items.len() + Node().val;   // -> 1
+  Line l = Line { };
+  Bag  b = Bag { };
+  return (l.start.x == 0.0 ? 1 : 0) + b.items.len() + Node { }.val;   // -> 1
 }
 
 // ── 11. SUBTYPING, OVERRIDE, AND DEEP const ─────────────────────────────────
@@ -636,11 +637,11 @@ struct Pair<A, B> {
 }
 
 export i32 cells() {
-  Cell<i32> n = Cell<i32>();
+  Cell<i32> n = Cell<i32>(0);           // i32 has no default, so the value is given
   n.set(7);
-  Cell<string> s = Cell<string>();
+  Cell<string> s = Cell<string> { };     // string does: ""
   s.set("wac");
-  Pair<i32, string> p = Pair<i32, string>();
+  Pair<i32, string> p = Pair<i32, string> { first: 0 };
   p.first = 3;
   p.second = "abc";
   return n.get() + s.get().len() + p.first + p.second.len();   // -> 16

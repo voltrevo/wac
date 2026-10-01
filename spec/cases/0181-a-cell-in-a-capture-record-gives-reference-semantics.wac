@@ -22,7 +22,7 @@ struct Env {
 }
 
 export i32 f() {
-  Cell<i32> n = Cell<i32>();
+  Cell<i32> n = Cell<i32>(0);
   n.set(0);
   Env e = Env(n);
   fn<i32()> g = e.body;

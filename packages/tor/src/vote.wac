@@ -148,7 +148,7 @@ export struct VoteInfo {
 export struct RelayOpinion {
   u8[] descriptor;
   string flags;                // the `s` line, space separated, in the order known-flags gives
-  i64 bandwidth;              // the `w` line's Bandwidth=
+  i64 bandwidth = 0;              // the `w` line's Bandwidth=
   string exitPolicy;          // the `p` line, e.g. "reject 1-65535"
 }
 

@@ -1,0 +1,5 @@
+// expect: refused
+// why: `P()` is a positional construction with no arguments, short of every field; `P { }` is the spelling that takes defaults
+// from: spec/next ch12; the old language read `P()` as every field's zero
+struct P { i32 x = 0; i32 y = 0; }
+export i32 f() { P p = P(); return p.x; }

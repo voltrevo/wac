@@ -41,11 +41,11 @@ export struct Relay {
   /** 20 bytes: SHA-1 of its RSA identity key. */
   u8[] identity;
   string address;
-  i32 orPort;
+  i32 orPort = 0;
   string[] flags;
   /** Unpadded base64, the key into the microdescriptor set. */
   string microdescDigest;
-  i32 bandwidth;
+  i32 bandwidth = 0;
 
   /** Empty until a microdescriptor is matched up. */
   u8[] ntorOnionKey;

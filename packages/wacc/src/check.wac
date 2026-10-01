@@ -40,6 +40,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
+  kLbrace,
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
@@ -450,12 +451,14 @@ bool hasDefaultValue(C c, string t, i32 depth) {
   if (t == typeNone() || t == "") { return true; }
   if (isNullableName(t) || isArrayName(t) || t == "string") { return true; }
   if (depth > 16) { return false; }
-  if (c.isStruct(templateOf(t)) && !c.isGeneric(templateOf(t))) {
+  string tmpl = templateOf(t);
+  if (c.isStruct(tmpl)) {
     for (i32 i = 0; i < c.fieldCount; i++) {
-      if (c.fieldOwners[i] != t) { continue; }
-      if (!hasDefaultValue(c, c.fieldTypes[i], depth + 1)) { return false; }
+      if (c.fieldOwners[i] != tmpl) { continue; }
+      if (i < c.fieldInits.len() && c.fieldInits[i]) { continue; }
+      if (!hasDefaultValue(c, substituteType(c, t, c.fieldTypes[i]), depth + 1)) { return false; }
     }
-    string parent = c.parentOf(t);
+    string parent = c.parentOf(tmpl);
     return parent == "" || hasDefaultValue(c, parent, depth + 1);
   }
   return false;
@@ -626,7 +629,8 @@ void daRead(C c, string name, i32 line, i32 col, DA st) {
       for (i32 i = 0; i < c.fieldCount; i++) {
         if (c.fieldOwners[i] != at) { continue; }
         if (st.hasPart(name + "." + c.fieldNames[i])) { continue; }
-        if (hasDefaultValue(c, c.fieldTypes[i], 0)) { continue; }
+        if (i < c.fieldInits.len() && c.fieldInits[i]) { continue; }
+        if (hasDefaultValue(c, substituteType(c, t, c.fieldTypes[i]), 0)) { continue; }
         if (missing == "") { missing = c.fieldNames[i]; }
       }
       at = c.parentOf(at);
@@ -2199,6 +2203,8 @@ export struct C {
   i32 privateCount;
   /** The struct or enum whose body is being checked, or `""` outside every body. */
   string bodyOf;
+  /** Whether each field (by index, as `fieldNames`) has an initialiser — spec/next ch12. */
+  bool[] fieldInits;
 
   void notePrivate(this, string owner, string name) {
     if (this.privateCount >= this.privateKeys.len()) {
@@ -2279,7 +2285,7 @@ export struct C {
              string[].defaulted(decls), string[].defaulted(decls), 0,
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
-             string[](), 0, "");
+             string[](), 0, "", bool[].filled(decls, false));
   }
 
   /**
@@ -5758,11 +5764,23 @@ void checkExpr(C c, Expr e) {
             // `Box(x, 1)` is two arguments too many in every instantiation. `Box.of` writing
             // `Box(x, 1)` inside the generic's own method was silent while the same mistake in a plain
             // struct was reported, at the same position, by the line below.
-            if (args.len() > 0 && named.len() == 0 && args.len() != fieldArity(c, name)) {
+            // **Positional construction supplies every field**, defaults included — spec/next ch12
+            // `§wac-struct-positional-no-defaults-e74g4rk`. `P()` with fields is a construction
+            // short of all of them; `P { }` is the spelling that takes every default.
+            if (named.len() == 0 && args.len() != fieldArity(c, name) && !isBraceConstruct(c, tok)) {
               c.report(errCtorArity(), e.line, e.col);
-            } else if (!c.isGeneric(name)
-                       && args.len() == 0 && named.len() == 0 && !hasDefault(c, name, 0)) {
-              c.report(errNoDefault(), e.line, e.col);
+            }
+            // **`T { }` names nothing, so every field must have a default** — the same rule as a
+            // brace construction that names some of them, which `checkConstruct` asks only when
+            // there is a name to start from. `S { }` for a struct holding an enum is refused, since
+            // an enum has none (spec/next ch13 `§enum-no-default`).
+            if (named.len() == 0 && args.len() == 0 && isBraceConstruct(c, tok)) {
+              for (i32 fi = 0; fi < c.fieldCount; fi++) {
+                if (c.fieldOwners[fi] != name) { continue; }
+                if (fieldHasDefault(c, fi, substituteType(c, spelled, c.fieldTypes[fi]))) { continue; }
+                c.report(errNamedField(), e.line, e.col);
+                break;
+              }
             }
           }
           else { checkCallee(c, name, args, named, e); }
@@ -6807,14 +6825,14 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
         return;
       }
     }
-    // **A field may be left out when its type is nullable, and not otherwise.** The strict rule was
-    // right about the danger — a construction that quietly defaults a field it forgot is a wrong
-    // value with no diagnostic — and wrong about which fields have that danger: `string? note` says
-    // *absent is one of the values*, and `null` is what absent means. A non-nullable field has no
-    // such value, so leaving it out is still refused. `design/lang/0007`.
+    // **A field may be left out when it has a default, and not otherwise** — spec/next ch12
+    // `§wac-struct-named-defaults-y5em4qj`. A default is an initialiser or a type whose value means
+    // "nothing yet" (`null`, an empty array, `""`); a number has none, so leaving one out with no
+    // initialiser is still refused — a construction that quietly zeroed a field it forgot would be a
+    // wrong value with no diagnostic.
     for (i32 fi = 0; fi < c.fieldCount; fi++) {
       if (c.fieldOwners[fi] != tmpl) { continue; }
-      if (withoutNull(c.fieldTypes[fi]) != "") { continue; }
+      if (fieldHasDefault(c, fi, substituteType(c, name, c.fieldTypes[fi]))) { continue; }
       bool set = false;
       for (i32 i = 0; i < named.len(); i++) {
         if (tokenText(c, named[i].nameTok) == c.fieldNames[fi]) { set = true; }
@@ -7496,18 +7514,51 @@ bool hasDefault(C c, string t, i32 depth) {
   if (depth > 16) { return false; }
   // A struct that needs itself to be built has no default — an uninhabited one (spec/next ch11).
   if (c.isStruct(t) && !c.isGeneric(t) && depth == 0 && reachesStructThroughField(c, t)) { return false; }
-  if (isNullableName(t) || isArrayName(t)) { return true; }
+  if (isNullableName(t) || isArrayName(t) || t == "string") { return true; }
+  // **A number and a `bool` have none** — zero is a number somebody might have meant (spec/next ch08
+  // `§wac-default-absence-8mxpz7y`).
+  if (primWithoutDefault(t)) { return false; }
   // A funcref has no zero: there is no function to point at until something points it somewhere.
   if (startsWithFn(t)) { return false; }
   if (c.isEnum(t)) { return false; }
   if (!c.isStruct(t) || c.isGeneric(t)) { return true; }
   for (i32 i = 0; i < c.fieldCount; i++) {
     if (c.fieldOwners[i] != t) { continue; }
+    if (i < c.fieldInits.len() && c.fieldInits[i]) { continue; }
     if (!hasDefault(c, c.fieldTypes[i], depth + 1)) { return false; }
   }
   string parent = c.parentOf(t);
   if (parent != "") { return hasDefault(c, parent, depth + 1); }
   return true;
+}
+
+/**
+ * Whether a construction with no arguments was written `T { }` rather than `T()`.
+ *
+ * The two parse to the same node — no positional arguments, no named ones — and mean different
+ * things: braces take every field's default, parentheses supply every field. So the token after the
+ * type name decides, with any type arguments after the name skipped by depth.
+ */
+bool isBraceConstruct(C c, i32 nameTok) {
+  i32 t = nameTok + 1;
+  if (t < c.toks.len() / tokenStride() && tokenKind(c, t) == kLt()) {
+    i32 depth = 0;
+    while (t < c.toks.len() / tokenStride()) {
+      i32 k = tokenKind(c, t);
+      if (k == kLt()) { depth = depth + 1; }
+      if (k == kGt()) { depth = depth - 1; }
+      if (k == kShr()) { depth = depth - 2; }
+      t = t + 1;
+      if (depth <= 0) { break; }
+    }
+  }
+  return t < c.toks.len() / tokenStride() && tokenKind(c, t) == kLbrace();
+}
+
+/** Whether field `fi`, of type `ft` as instantiated, may be left out of a construction. */
+bool fieldHasDefault(C c, i32 fi, string ft) {
+  if (fi < c.fieldInits.len() && c.fieldInits[fi]) { return true; }
+  return hasDefault(c, ft, 1);
 }
 
 /** Whether one of `t`'s non-null fields reaches `t` again — an uninhabited struct. */
@@ -10746,6 +10797,9 @@ export void declareModule(C c, Program prog, string[] only) {
           // which is the whole point of the spelling: one word instead of one per field.
           c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
                               typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
+          if (!(fields[i].init is null) && c.fieldCount - 1 < c.fieldInits.len()) {
+            c.fieldInits[c.fieldCount - 1] = true;
+          }
           if (fields[i].isPrivate) { c.notePrivate(name, tokenText(c, fields[i].nameTok)); }
         }
         for (i32 i = 0; i < methods.len(); i++) {
@@ -11384,6 +11438,22 @@ export void checkModule(C c, Program prog) {
         for (i32 fi = 0; fi < fields.len(); fi++) {
           string ft = typeOfTy(c, fields[fi].type);
           if (ft == "void") { c.report(errVoidType(), fields[fi].type.line, fields[fi].type.col); }
+          // **A field initialiser is an expression of the field's type**, checked as a local's
+          // initialiser is — spec/next ch12. It runs with no object yet built, so there is no `this`
+          // and no other field in scope: neither is a name here, and the checker says so as it would
+          // of any name nothing declares (`§wac-field-initialiser-no-this-tvimw93`).
+          if (!(fields[fi].init is null) && ft != "void") {
+            Expr init = fields[fi].init!;
+            if (litKindOf(init) != litNone()) {
+              reportLiteral(c, ft, init, errInitTypeMismatch(), init.line, init.col);
+            }
+            c.expected = ft;
+            checkExpr(c, init);
+            string got = typeOfExpr(c, init);
+            if (litKindOf(init) == litNone() && got != typeNone() && got != "" && !assignable(c, ft, got)) {
+              reportExpr(c, errInitTypeMismatch(), init, expectedFound(ft, got));
+            }
+          }
         }
         checkMethodBodies(c, owner, c.parentOf(owner), methods);
         c.activeParamCount = 0;

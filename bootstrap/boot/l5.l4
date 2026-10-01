@@ -1544,6 +1544,14 @@ i32 construct(i32 t) {
     }
     return at;
   }
+  // `T { }` — every field its default, which on this rung is `zero_of`'s. Named fields inside the
+  // braces are not needed by anything this rung compiles, so only the empty form is read.
+  if (ispunct(123)) {
+    next();
+    want(125);
+    zero_of(t);
+    return t;
+  }
   want(40);
   args(A_FIELD, types[t].fstart, types[t].nfields);
   word("struct.new"); tyname(t); nl();
@@ -1922,7 +1930,7 @@ i32 primary() {
     // $s162` — the declared return type from one instantiation and the constructed value from the
     // other. Nothing refused; the engine did, six hundred functions later.
     if (tmc != 0 - 1) { st = 0 - 1; }
-    if (st != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63))) { return postfix(construct(st)); }
+    if (st != 0 - 1 & (ispunct(40) | ispunct(91) | ispunct(63) | ispunct(123))) { return postfix(construct(st)); }
     if (tmc != 0 - 1) {
       // `Option.Some(v)` — the enum names the variant. Which *instantiation* comes from the slot,
       // which for a `return` is the function's declared return type.
@@ -3276,6 +3284,18 @@ i32 struct_decl(i32 emitting, i32 out) {
         fields[nfield] = Field(mp, mn, ft);
         nfield = nfield + 1;
         count = count + 1;
+      }
+      // **A field initialiser, when it is the zero this rung builds anyway** — `i32 n = 0;`. A
+      // default here is `zero_of`, so `0`, `false` and `null` cost nothing to accept, and any other
+      // value would need running at every construction: refused rather than silently ignored.
+      if (ispunct(61)) {
+        next();
+        if (texteq(tstart(), tlen(), "0") | texteq(tstart(), tlen(), "false")
+            | texteq(tstart(), tlen(), "null") | texteq(tstart(), tlen(), "0.0")) {
+          next();
+        } else {
+          oops();
+        }
       }
       want(59);
     }

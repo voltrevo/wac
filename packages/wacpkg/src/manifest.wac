@@ -85,7 +85,7 @@ export struct Mapping {
   string git;
   string ref;
   string subdir;    // "" when the mapping is the whole repository
-  bool isPrefix;    // derived from `name`, never stored separately in the file
+  bool isPrefix = false;    // derived from `name`, never stored separately in the file
 }
 
 /**

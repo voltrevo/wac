@@ -36,10 +36,10 @@ import { decodePacketNumber } from "./packet.wac";
 
 /** One packet in flight: what it carried, and what it was numbered. */
 export struct InFlight {
-  i64 number;
+  i64 number = 0;
   u8[] frames;
   /** False once an acknowledgement covers it. Kept rather than removed, so numbering stays honest. */
-  bool live;
+  bool live = false;
 }
 
 /**

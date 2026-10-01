@@ -2545,7 +2545,13 @@ Decl parseStructDecl(P p, bool exported) {
 
     if (p.at1(kSemi())) {
       p.advance();
-      fields.push(Field(memberTok, memberType, fieldConst, memberPrivate));
+      fields.push(Field(memberTok, memberType, fieldConst, memberPrivate, null));
+    } else if (p.at1(kAssign())) {
+      // `i32 retries = 3;` — a field initialiser, spec/next ch12.
+      p.advance();
+      Expr init = parseExpr(p);
+      p.expect(kSemi());
+      fields.push(Field(memberTok, memberType, fieldConst, memberPrivate, init));
     } else if (p.at1(kLparen()) || p.at1(kLt())) {
       // **A method may introduce its own letters**: `Pending<U> then<U>(…)`. The owner's are already
       // in scope; these are the ones that appear nowhere but here. Empty for almost every method.

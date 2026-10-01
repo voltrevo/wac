@@ -348,6 +348,11 @@ export struct Field {
   bool isConst;
   /** `private i32 cents;` — visible only inside the struct's body. spec/next ch12. */
   bool isPrivate;
+  /**
+   * `i32 retries = 3;` — the field's initialiser, which gives it a default (spec/next ch12
+   * `§wac-field-initialiser-default-28c4ffw`). Evaluated at each construction that leaves the field out.
+   */
+  Expr? init;
 }
 
 export struct Method {

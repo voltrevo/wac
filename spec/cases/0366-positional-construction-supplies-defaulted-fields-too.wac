@@ -1,0 +1,5 @@
+// expect: refused
+// why: positional construction supplies every field — a default never fills a missing positional argument
+// from: spec/next ch12 §wac-struct-positional-no-defaults-e74g4rk
+struct Link { i32 value; Link? next = null; }
+export i32 f() { Link d = Link(3); return d.value; }
