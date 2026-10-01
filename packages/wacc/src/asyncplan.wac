@@ -164,6 +164,7 @@ export bool awaitInStmt(Stmt s) {
       return awaitInExpr(cond) || awaitInBody(then) || awaitInBody(els);
     }
     While(cond, body): { return awaitInExpr(cond) || awaitInBody(body); }
+    ForIn(elemTy, nameTok, iterable, body): { return awaitInExpr(iterable) || awaitInBody(body); }
     For(init, cond, update, body): {
       if ((init is not null) && awaitInStmt(init!)) { return true; }
       if ((cond is not null) && awaitInExpr(cond!)) { return true; }

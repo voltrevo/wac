@@ -3090,6 +3090,14 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         if (!(update is null)) { collectArrayTypes(env, src, lexed, [update!] as Stmt[]); }
         collectArrayTypes(env, src, lexed, inner);
       }
+      // `for (T x in [1, 2])` — the literal's array type comes from the written element type, which
+      // nothing else names before the body is emitted.
+      ForIn(elemTy, nameTok, iterable, inner): {
+        collectArrayTypesOfExpr(env, src, lexed, iterable);
+        string fit = forInIterableType(src, lexed, env, elemTy, iterable);
+        if (isArrayType(fit)) { registerNamed(env, fit); }
+        collectArrayTypes(env, src, lexed, inner);
+      }
       Switch(subject, cases): {
         collectArrayTypesOfExpr(env, src, lexed, subject);
         for (i32 c = 0; c < cases.len(); c++) {
@@ -3142,6 +3150,10 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
             default: { }
           }
         }
+        collectLocals(env, src, lexed, inner);
+      }
+      ForIn(elemTy, nameTok, iterable, inner): {
+        env.addLocal(tokenTextOf(src, lexed, nameTok), forInElemType(src, lexed, env, elemTy, iterable));
         collectLocals(env, src, lexed, inner);
       }
       // An arm's *bindings* are not collected here — they are added while the arm is emitted and
@@ -7862,6 +7874,11 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       emitLoop(fb, src, lexed, env, cond is null ? null : cond, inner, update, s.line, s.col);
       retireFrom(env, savedFor);
     }
+    ForIn(elemTy, nameTok, iterable, inner): {
+      i32 savedForIn = env.localCount;
+      emitForIn(fb, src, lexed, env, elemTy, nameTok, iterable, inner, s.line, s.col);
+      retireFrom(env, savedForIn);
+    }
     Break: { emitBreak(fb, env); }
     Continue: { emitContinue(fb, env); }
     // `emitBody` takes a `defer` with the rest of its block, so one reaching here alone has nothing
@@ -8085,6 +8102,100 @@ void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, St
   if (!(update is null)) { emitStmt(fb, src, lexed, env, update!); }
   fb.byte(12);
   fb.u32leb(0);
+  fb.byte(11);
+  fb.byte(11);
+  env.depth = env.depth - 2;
+  env.breakAt = savedB;
+  env.continueAt = savedC;
+}
+
+/** The variable's type in `for (T x in e)`: as written, or `e`'s element type for `auto`. */
+string forInElemType(u8[] src, Lexed lexed, Env env, Ty? elemTy, Expr iterable) {
+  if (!(elemTy is null)) { return typeOfTyName(env, src, lexed, elemTy!); }
+  string it = typeOfE(src, lexed, env, iterable);
+  if (isArrayType(it)) { return elemOf(it); }
+  i32 get = env.methodAt(it, "get");
+  return get >= 0 ? env.funcReturns[get] : "";
+}
+
+/** The iterable's type: its own, or the written element type's array for a literal with none. */
+string forInIterableType(u8[] src, Lexed lexed, Env env, Ty? elemTy, Expr iterable) {
+  string it = typeOfE(src, lexed, env, iterable);
+  if (it == "" && !(elemTy is null)) { return typeOfTyName(env, src, lexed, elemTy!) + "[]"; }
+  return it;
+}
+
+/** Whether `for … in` can walk a value of type `t`: an array, or a type with `len()` and `get(i)`. */
+bool forInWalkable(Env env, string t) {
+  if (isArrayType(t)) { return true; }
+  i32 len = env.methodAt(t, "len");
+  i32 get = env.methodAt(t, "get");
+  return len >= 0 && get >= 0;
+}
+
+/**
+ * `for (T x in xs) { … }` over an array — spec/next ch25 `§wac-for-in-qkcbmxf`.
+ *
+ * The array is evaluated once into a hidden local, and so is its length; a hidden index walks it.
+ * The shape is `emitLoop`'s — a block `break` leaves, a loop, and a block round the body whose end
+ * is where `continue` goes — with the condition and the step written here rather than parsed.
+ */
+void emitForIn(B fb, u8[] src, Lexed lexed, Env env, Ty? elemTy, i32 nameTok, Expr iterable,
+               Stmt[] inner, i32 line, i32 col) {
+  string it = forInIterableType(src, lexed, env, elemTy, iterable);
+  string et = forInElemType(src, lexed, env, elemTy, iterable);
+  string tag = numText(env.depth) + " " + numText(line) + ":" + numText(col);
+  i32 held = env.scratchNamed("forin arr " + tag, it);
+  i32 at = env.scratchNamed("forin at " + tag, "i32");
+  i32 len = env.scratchNamed("forin len " + tag, "i32");
+  bool array = isArrayType(it);
+  // A `Vec` — or anything with `len()` and `get(i)` — is walked through those two methods.
+  i32 lenFn = array ? -1 : env.methodAt(it, "len");
+  i32 getFn = array ? -1 : env.methodAt(it, "get");
+  emitExprAt(fb, src, lexed, env, iterable, it);
+  fb.byte(34); fb.u32leb(held);                 // local.tee
+  if (array) {
+    fb.byte(251); fb.u32leb(15);                // array.len
+  } else {
+    fb.byte(16); fb.u32leb(env.funcIndex[lenFn]);   // call len
+  }
+  fb.byte(33); fb.u32leb(len);                  // local.set
+  fb.byte(65); fb.i32leb(0);
+  fb.byte(33); fb.u32leb(at);                   // the index starts at 0
+  env.addLocal(tokenTextOf(src, lexed, nameTok), et);
+  i32 x = env.localCount - 1;
+
+  i32 savedB = env.breakAt;
+  i32 savedC = env.continueAt;
+  fb.byte(2); fb.byte(64);                      // block — what `break` leaves
+  env.depth = env.depth + 1;
+  env.breakAt = env.depth;
+  fb.byte(3); fb.byte(64);                      // loop
+  env.depth = env.depth + 1;
+  fb.byte(32); fb.u32leb(at);
+  fb.byte(32); fb.u32leb(len);
+  fb.byte(78);                                  // i32.ge_s
+  fb.byte(13); fb.u32leb(1);                    // br_if out
+  fb.byte(32); fb.u32leb(held);
+  fb.byte(32); fb.u32leb(at);
+  if (array) {
+    emitArrayGet(fb, env, it);
+  } else {
+    fb.byte(16); fb.u32leb(env.funcIndex[getFn]);   // call get
+  }
+  fb.byte(33); fb.u32leb(x);                    // x = xs[at]
+  fb.byte(2); fb.byte(64);                      // the body's block — where `continue` goes
+  env.depth = env.depth + 1;
+  env.continueAt = env.depth;
+  covPoint(fb, env, "loop", line, col);
+  emitBody(fb, src, lexed, env, inner);
+  fb.byte(11);
+  env.depth = env.depth - 1;
+  fb.byte(32); fb.u32leb(at);
+  fb.byte(65); fb.i32leb(1);
+  fb.byte(106);                                 // i32.add
+  fb.byte(33); fb.u32leb(at);
+  fb.byte(12); fb.u32leb(0);                    // br loop
   fb.byte(11);
   fb.byte(11);
   env.depth = env.depth - 2;
@@ -10459,6 +10570,13 @@ LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
       if (!(update is null)) { findLambdasStmt(env, src, lexed, update!, ret); }
       findLambdas(env, src, lexed, fbody, ret);
     }
+    ForIn(elemTy, nameTok, iterable, fibody): {
+      findLambdasExpr(env, src, lexed, iterable, "");
+      i32 savedFl = env.localCount;
+      env.addLocal(tokenTextOf(src, lexed, nameTok), forInElemType(src, lexed, env, elemTy, iterable));
+      findLambdas(env, src, lexed, fibody, ret);
+      env.localCount = savedFl;
+    }
     DoWhile(dbody, cond): {
       findLambdas(env, src, lexed, dbody, ret);
       findLambdasExpr(env, src, lexed, cond, "bool");
@@ -12203,6 +12321,17 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       if (r2 == "") { r2 = unsupportedIn(src, lexed, env, inner); }
       env.localCount = savedFor;
       return r2;
+    }
+    ForIn(elemTy, nameTok, iterable, inner): {
+      string ri = unsupportedExpr(src, lexed, env, iterable);
+      if (ri != "") { return ri; }
+      string it = forInIterableType(src, lexed, env, elemTy, iterable);
+      if (!forInWalkable(env, it)) { return "a `for … in` over " + (it == "" ? "something of no known type" : it); }
+      i32 savedFi = env.localCount;
+      env.addLocal(tokenTextOf(src, lexed, nameTok), forInElemType(src, lexed, env, elemTy, iterable));
+      string rb = unsupportedIn(src, lexed, env, inner);
+      env.localCount = savedFi;
+      return rb;
     }
     Block(inner): { return unsupportedIn(src, lexed, env, inner); }
     Defer(inner): { return unsupportedIn(src, lexed, env, [inner] as Stmt[]); }

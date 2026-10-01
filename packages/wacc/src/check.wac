@@ -316,6 +316,26 @@ export i32 errNeverReturns() { return 226; }
 export i32 errNeverVariant() { return 227; }
 /** `p?.m` or `p ?? q` where `p` can never be absent — spec/next ch10. */
 export i32 errAbsenceOperand() { return 228; }
+/** `for (T x in e)` where `e` is neither an array nor a `Vec` — spec/next ch25. */
+export i32 errForInIterable() { return 229; }
+
+/** What `for (… in e)` binds each time round: `e`'s element type, or `typeNone` when it has none. */
+string forInElemOf(C c, Expr iterable) {
+  string it = typeOfExpr(c, iterable);
+  if (it == typeNone() || it == "") { return typeNone(); }
+  if (isArrayName(it)) { return dropLast(it, 2); }
+  if (templateOf(it) == "Vec") {
+    string[] args = genericArgs(it);
+    return args.len() == 1 ? args[0] : typeNone();
+  }
+  return typeNone();
+}
+
+/** The loop variable's type: as written, or the element type for `auto`. */
+string forInVarType(C c, Ty? elemTy, Expr iterable) {
+  if (!(elemTy is null)) { return typeOfTy(c, elemTy!); }
+  return forInElemOf(c, iterable);
+}
 
 /** Whether an expression is the literal `null`. */
 bool isNullLiteralExpr(Expr e) {
@@ -618,6 +638,14 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
       DA after = daBody(c, inner, st.copy(), here);
       if (update is not null && !after.dead) { daStmt(c, update!, after, here); }
       return cond is null ? here.breaks : daJoin(st, here.breaks);
+    }
+    ForIn(elemTy, nameTok, iterable, inner): {
+      // The variable is assigned by the loop; the body may run no times at all.
+      daExpr(c, iterable, st);
+      DAExit hereIn = DAExit(DA.fresh());
+      hereIn.breaks.dead = true;
+      daBody(c, inner, st.copy(), hereIn);
+      return daJoin(st, hereIn.breaks);
     }
     Switch(subject, cases): {
       daExpr(c, subject, st);
@@ -972,6 +1000,7 @@ Stmt? deferLeaves(Stmt s, i32 loops) {
     While(cond, body): { return deferLeavesAll(body, loops + 1); }
     DoWhile(body, cond): { return deferLeavesAll(body, loops + 1); }
     For(init, cond, update, body): { return deferLeavesAll(body, loops + 1); }
+    ForIn(elemTy, nameTok, iterable, body): { return deferLeavesAll(body, loops + 1); }
     // A `break` in a switch case leaves the switch, which is inside the deferred statement.
     Switch(subject, cases): {
       for (i32 i = 0; i < cases.len(); i++) {
@@ -9464,6 +9493,12 @@ void declareStmt(C c, Stmt s) {
       declareAll(c, body);
       c.popScope();
     }
+    ForIn(elemTy, nameTok, iterable, body): {
+      c.pushScope(body);
+      c.declare(tokenText(c, nameTok), forInVarType(c, elemTy, iterable));
+      declareAll(c, body);
+      c.popScope();
+    }
     Switch(subject, cases): {
       for (i32 i = 0; i < cases.len(); i++) { declareScoped(c, cases[i].body); }
     }
@@ -10066,6 +10101,29 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkAll(c, body, want);
       c.loopDepth = c.loopDepth - 1;
       c.popScope();
+      c.popScope();
+    }
+    ForIn(elemTy, nameTok, iterable, body): {
+      // **A written element type is the iterable's slot**, so `for (i32 x in [1, 2, 3])` has an
+      // array type to give its literal, as `i32[] xs = [1, 2, 3];` does.
+      string savedExpected = c.expected;
+      if (!(elemTy is null)) { c.expected = typeOfTy(c, elemTy!) + "[]"; }
+      checkExpr(c, iterable);
+      c.expected = savedExpected;
+      string et = forInElemOf(c, iterable);
+      string it = typeOfExpr(c, iterable);
+      if (et == typeNone() && it != typeNone() && it != "") {
+        c.reportWith(errForInIterable(), iterable.line, iterable.col, it + " is not an array or a Vec");
+      }
+      string vt = forInVarType(c, elemTy, iterable);
+      if (!(elemTy is null) && et != typeNone() && vt != typeNone() && !assignable(c, vt, et)) {
+        c.reportWith(errInitTypeMismatch(), elemTy!.line, elemTy!.col, expectedFound(vt, et));
+      }
+      c.pushScope(body);
+      c.declare(tokenText(c, nameTok), vt);
+      c.loopDepth = c.loopDepth + 1;
+      checkAll(c, body, want);
+      c.loopDepth = c.loopDepth - 1;
       c.popScope();
     }
     Switch(subject, cases): {

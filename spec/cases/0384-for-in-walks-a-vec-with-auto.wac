@@ -1,0 +1,13 @@
+// expect: answers f = 8
+// why: a `Vec` is walked as an array is, and `auto` takes the element type
+// from: spec/next ch25 §wac-for-in-qkcbmxf, ch38
+import { Vec } from "core";
+export i32 f() {
+  Vec<string> lines;
+  for (string line in ["ab", "", "cdef", "gh"]) {
+    if (line.len() > 0) { lines.push(line); }
+  }
+  i32 n = 0;
+  for (auto line in lines) { n += line.len(); }
+  return n;
+}

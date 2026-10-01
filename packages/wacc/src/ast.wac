@@ -314,6 +314,11 @@ export enum StmtKind {
   While(Expr cond, Stmt[] body),
   /** Four references, which the pool could not hold without bit-packing. */
   For(Stmt? init, Expr? cond, Stmt? update, Stmt[] body),
+  /**
+   * `for (T x in e) { … }` — spec/next ch25. `type` is null for `auto`, which takes the element type;
+   * `e` is an array or a `Vec` (a generator, when there are generators).
+   */
+  ForIn(Ty? type, i32 nameTok, Expr iterable, Stmt[] body),
   DoWhile(Stmt[] body, Expr cond),
   Switch(Expr subject, Case[] cases),
   Return(Expr? value),

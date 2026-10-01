@@ -541,6 +541,13 @@ void printStmt(Pr w, Stmt s) {
       printStmtList(w, body);
       w.close();
     }
+    ForIn(elemTy, nameTok, iterable, body): {
+      w.open("for-in", s.line, s.col);
+      w.sp(); w.tok(nameTok);
+      w.sp(); printExpr(w, iterable);
+      printStmtList(w, body);
+      w.close();
+    }
     For(init, cond, update, body): {
       w.open("for", s.line, s.col);
       w.sp();

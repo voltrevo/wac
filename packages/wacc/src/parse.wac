@@ -2188,11 +2188,47 @@ Stmt? parseForClause(P p) {
   return null;
 }
 
+/**
+ * Where the name sits in a `for (T x in e)` head, or -1 when this is the three-clause form.
+ *
+ * `in` and `auto` are not keywords — a variable may be called either — so the head is recognised by
+ * its shape: a type (or `auto`), a name, then the word `in`. The type is scanned the way
+ * `looksLikeVarDecl` scans one.
+ */
+i32 forInNameAt(P p) {
+  if (p.kindAt(0) == kIdent() && p.textAt(0) == "auto" && p.kindAt(1) == kIdent() && p.textAt(2) == "in") {
+    return 1;
+  }
+  if (p.kindAt(0) != kIdent() && p.kindAt(0) != kString()) { return -1; }
+  i32 j = 1;
+  i32 afterArgs = afterTypeArgs(p, j);
+  if (afterArgs > 0) { j = afterArgs; }
+  while (true) {
+    if (p.kindAt(j) == kLbrack() && p.kindAt(j + 1) == kRbrack()) { j += 2; }
+    else if (p.kindAt(j) == kQuestion()) { j++; }
+    else { break; }
+  }
+  if (p.kindAt(j) == kIdent() && p.kindAt(j + 1) == kIdent() && p.textAt(j + 1) == "in") { return j; }
+  return -1;
+}
+
 Stmt parseForStmt(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
   p.advance();
   p.expect(kLparen());
+
+  // `for (T x in e)` — spec/next ch25.
+  i32 at = forInNameAt(p);
+  if (at >= 0) {
+    Ty? elemType = null;
+    if (p.textAt(0) == "auto") { p.advance(); } else { elemType = parseType(p); }
+    i32 nameTok = p.advance();
+    p.advance();                       // `in`
+    Expr iterable = parseExpr(p);
+    p.expect(kRparen());
+    return Stmt(StmtKind.ForIn(elemType, nameTok, iterable, parseBlock(p)), line, col);
+  }
 
   Stmt? init = null;
   if (!p.at1(kSemi())) {

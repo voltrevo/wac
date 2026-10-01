@@ -17,7 +17,9 @@
 
 export struct Vec<T> {
   T[] data;
-  i32 n;
+  // A default, so `Vec<i32> v;` is an empty Vec (spec/next ch38 `§wac-vec-create-8zprdms`) — the
+  // array beside it defaults to empty already.
+  i32 n = 0;
 
   /** An empty Vec. Zero capacity, so the first push allocates. */
   Vec<T> create() {

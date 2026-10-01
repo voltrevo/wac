@@ -1,0 +1,4 @@
+// expect: refused
+// why: the loop variable is declared the way any local is, so the element has to fit its type
+// from: spec/next ch25
+export i32 f(string[] xs) { i32 s = 0; for (i32 x in xs) { s += x; } return s; }

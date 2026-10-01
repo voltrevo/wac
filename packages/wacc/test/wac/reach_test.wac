@@ -54,7 +54,9 @@ string joinedWith(string[] all, i32 n, string sep) {
 string[] statementLabels() {
   return [
     "Var", "Assign", "IncrStmt", "If", "If-else", "While", "For", "For-init", "DoWhile", "Switch",
-    "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt", "Defer"
+    "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt", "Defer",
+    // `for (T x in e)` — spec/next ch25. The body holds the fault.
+    "ForIn"
   ];
 }
 
@@ -75,7 +77,8 @@ string[] statementSources() {
     "enum E { A, B } void f(E e) { match (e) { A: { " + BAD + " } B: { } } }",
     "void f() { { " + BAD + " } }",
     "void g(i32 n) { } void f() { g(1); " + BAD + " }",
-    "void f() { defer { " + BAD + " } }"
+    "void f() { defer { " + BAD + " } }",
+    "void f(i32[] xs) { for (i32 x in xs) { " + BAD + " } }"
   ];
 }
 

@@ -481,6 +481,10 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     While(cond, body): {
       return Stmt(StmtKind.While(subExpr(c, cond), subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
     }
+    ForIn(elemTy, nameTok, iterable, body): {
+      return Stmt(StmtKind.ForIn(elemTy, nameTok, subExpr(c, iterable),
+                                 subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
+    }
     For(init, cond, update, body): {
       Stmt? i2 = (init is null) ? null : subStmt(c, init!, inLambda, 0 - 1, 0 - 1);
       Expr? c2 = (cond is null) ? null : subExpr(c, cond!);

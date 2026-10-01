@@ -1,0 +1,4 @@
+// expect: refused
+// why: `for … in` walks an array or a Vec, and a number is neither
+// from: spec/next ch25
+export i32 f(i32 n) { i32 s = 0; for (i32 x in n) { s += x; } return s; }
