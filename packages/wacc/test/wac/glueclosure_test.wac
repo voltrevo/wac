@@ -2,7 +2,7 @@
 //
 // wacc's generator writes conversion helpers for the types that cross the boundary, and it works out
 // that set from the exported signatures and from each crossing type's fields, variants and methods.
-// A funcref field is one string — `fn[Pending<Child>(string,u8[][],i32,…)]` — so the types *inside*
+// A funcref field is one string — `fn<Pending<Child>(string,u8[][],i32,…)>` — so the types *inside*
 // it were never added, and a `u8[][]` that appears nowhere else produced glue that called
 // `$arrFrom_u8Arr` without defining it. `packages/platform`'s spawn tests failed with
 // `$arrFrom_u8Arr is not defined`, seventeen of them, none of which mentions arrays [issue 0106].
@@ -27,7 +27,7 @@ const string ENTRY = "/t/main.wac";
 
 /** `u8[][]` is named **only** inside the callback signature, exactly as `Cli.spawn` names it. */
 const string SOURCE = "export struct Runner {\n" +
-                      "  fn[i32(u8[][])] run;\n" +
+                      "  fn<i32(u8[][])> run;\n" +
                       "}\n" +
                       "export i32 drive(Runner r) { return r.run(u8[][](u8[1](), u8[2]())); }\n";
 

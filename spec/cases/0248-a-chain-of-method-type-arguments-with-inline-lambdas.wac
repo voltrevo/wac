@@ -15,7 +15,7 @@
 // from: design/lang/0010
 struct Cell<T> {
   T v;
-  Cell<U> then<U>(const this, fn[U(T)] f) { return Cell<U>(f(this.v)); }
+  Cell<U> then<U>(const this, fn<U(T)> f) { return Cell<U>(f(this.v)); }
   T get(const this) { return this.v; }
 }
 export i32 f() {

@@ -1,5 +1,5 @@
 //
-// `boundedAgain` takes a `fn[void()]` and the call sites pass a lambda literal, which the reference
+// `boundedAgain` takes a `fn<void()>` and the call sites pass a lambda literal, which the reference
 // compiler does not have. The marker above must be that line and nothing else — `isWaccOnly`
 // compares the whole comment.
 //

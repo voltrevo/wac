@@ -3,7 +3,7 @@
 // It was a TypeScript wrapper until 2026-08-17, and that wrapper packed the fields into flat byte
 // arrays — the four keys and a revision counter concatenated into 136 bytes, a layer's salt, keys,
 // IV, MAC key, digest and length into 136 more — because it handed them over one
-// `fn[u8[](i32, u8[], u8[])]` seam. The seam is gone, so the packing is too. `issues/system/0161`.
+// `fn<u8[](i32, u8[], u8[])>` seam. The seam is gone, so the packing is too. `issues/system/0161`.
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 

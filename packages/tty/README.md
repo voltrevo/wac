@@ -103,7 +103,7 @@ failed for different reasons, which is why they were finished separately and by 
   blocks, so nothing reads the channel until the command has finished, and nothing else *can* read
   it, because the bytes are encrypted and `Conn` holds the cipher state. What was wrong is that this
   needs another thread. It needs the shell to be able to **ask while it is busy**:
-  `Shell.askInterrupt` is one `fn[bool()]` the session hands over, and `Conn.ready` is
+  `Shell.askInterrupt` is one `fn<bool()>` the session hands over, and `Conn.ready` is
   `waitAny(ids, 0)` over a read the connection already has outstanding, which costs one look in this
   worker's own memory. (This said "a funcref and an `anyref` context — the session itself, since wac
   has no closures" from 2026-08-11 until 2026-09-04, and **both halves were true when written**.

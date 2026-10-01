@@ -110,7 +110,7 @@ export string test_await_inside_a_plain_lambda_is_refused() {
   // to exist in the meantime.
   string out = diagnose(TICKET
     + "async i32 f(Pending<i32> p) {\n"
-    + "  fn[void()] g = () => { i32 z = await p; };\n"
+    + "  fn<void()> g = () => { i32 z = await p; };\n"
     + "  g();\n"
     + "  return 0;\n"
     + "}\n"

@@ -14,7 +14,7 @@
 //       R[] __wacRes = R[1]();
 //       T[] x = T[1]();
 //       Pending<T>? __wacUp0 = null;
-//       fn[bool()] __wacStep = () => {
+//       fn<bool()> __wacStep = () => {
 //         while (true) {
 //           switch (__wacState[0]) {
 //             case 0: { __wacUp0 = e; __wacState[0] = 1; return false; }
@@ -25,12 +25,12 @@
 //         }
 //       };
 //       __wacStep();                     // eager — D1: runs to the first await and stops
-//       fn[R(i32)] __wacResolve = (i32 id) => {
+//       fn<R(i32)> __wacResolve = (i32 id) => {
 //         while (!__wacDone[0]) { __wacStep(); }
 //         return __wacRes[0];
 //       };
-//       fn[bool(i32)] __wacSettled = (i32 id) => __wacDone[0];
-//       fn[void(i32)] __wacDrop = (i32 id) => { };
+//       fn<bool(i32)> __wacSettled = (i32 id) => __wacDone[0];
+//       fn<void(i32)> __wacDrop = (i32 id) => { };
 //       return Pending<R>(0 - 1, __wacResolve, __wacSettled, __wacDrop, null, true);
 //     }
 //
@@ -952,7 +952,7 @@ export struct Lowered {
 //
 // **Where `R` comes from.** This pass runs on the tree with no type information at all, and
 // `machineBody` needs `R` to declare the cell the answer lands in. A function writes it; a lambda
-// takes it from the `fn[…]` it is assigned to. So the lowering takes an `async` lambda that is the
+// takes it from the `fn<…>` it is assigned to. So the lowering takes an `async` lambda that is the
 // initialiser of a declaration whose type spells `Pending<R>` out, because that is the one place `R`
 // is present in the AST — and the emitter declines the rest by name. That is less of a restriction
 // than it sounds: `async` is only *legal* on a slot naming a ticket, so the type has to be written
@@ -965,14 +965,14 @@ export struct Lowered {
 // its cell keeps the written one, which turns the capture into an ordinary hoisted local and needs
 // no change to the substitution:
 //
-//     fn[Pending<i32>(string)] f = async (string p) => { … p … };
-//     fn[Pending<i32>(string)] f = (string __wacArg0) => {
+//     fn<Pending<i32>(string)> f = async (string p) => { … p … };
+//     fn<Pending<i32>(string)> f = (string __wacArg0) => {
 //       string[] p = string[1](fill: __wacArg0);   // `p` is a hoisted local now
 //       …                                          // and every read of it is `p[0]`
 //     };
 
 /**
- * The `R` of a `fn[Pending<R>(…)]`, or null when the type is not one.
+ * The `R` of a `fn<Pending<R>(…)>`, or null when the type is not one.
  *
  * Read off the written type rather than resolved, so a slot spelled through an alias is not one this
  * finds. That is the honest limit of a pass with no types: it can read what the program says.
@@ -993,7 +993,7 @@ Ty? slotTicketTy(u8[] src, Lexed lexed, Ty t) {
   }
 }
 
-/** The `async` lambda `s` declares, or null — `fn[Pending<R>(…)] n = async (…) => { … };`. */
+/** The `async` lambda `s` declares, or null — `fn<Pending<R>(…)> n = async (…) => { … };`. */
 Expr? asyncLambdaOf(u8[] src, Lexed lexed, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
@@ -1319,7 +1319,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   Lexed lexed2 = synthTokens(lexed, src2, ups, states, args, line, col);
 
   // **One extra declaration per file**: the no-op a step cell is filled with before the machine
-  // exists. A top-level function rather than a lambda, because it is what an `fn[bool()][1](fill: …)`
+  // exists. A top-level function rather than a lambda, because it is what an `fn<bool()>[1](fill: …)`
   // needs and a lambda cannot be a fill.
   Decl[] out = Decl[prog.decls.len() + 1](fill: prog.decls[0]);
   for (i32 d = 0; d < prog.decls.len(); d++) {

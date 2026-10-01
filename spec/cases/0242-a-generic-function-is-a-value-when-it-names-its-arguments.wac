@@ -6,4 +6,4 @@
 //      them, and the value is the ordinary pair every funcref is, pointing at the instance.
 // from: design/lang/0011
 i32 id<T>(T x) { return 1; }
-export i32 f() { fn[i32(i32)] g = id<i32>; return g(7) + 5; }
+export i32 f() { fn<i32(i32)> g = id<i32>; return g(7) + 5; }

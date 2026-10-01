@@ -672,7 +672,7 @@ bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  *   anything has arrived. `Conn.ready` is the non-blocking half — `waitAny(ids, 0)` over a read this
  *   connection already has outstanding — and `Keystrokes.arrived` below is the answer.
  *
- *   **It is one `fn[bool()]` now.** It was a funcref *and* an `anyref` context, threaded through two
+ *   **It is one `fn<bool()>` now.** It was a funcref *and* an `anyref` context, threaded through two
  *   fields and rejoined by a downcast at each call, because the language had no way to say "this
  *   method on this object" — and before that the note here proposed a funcref plus a token, which
  *   would have needed a registry to turn the token back into a connection. `design/lang/0002` tier
@@ -788,7 +788,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
     // **One value, not a funcref and a context.** This was `Keystrokes.arrived` plus `keys` threaded
     // through two fields of `Shell`, because wac had no way to say "this method on this object".
     // `design/lang/0002` tier one gave it one: `keys.arrived` is a bound reference, an ordinary
-    // `fn[bool()]`, and the receiver rides inside it.
+    // `fn<bool()>`, and the receiver rides inside it.
     sh.askInterrupt = keys.arrived;
   }
 

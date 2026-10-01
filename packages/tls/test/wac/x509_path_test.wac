@@ -305,7 +305,7 @@ string fixtureName(i32 n) {
 /**
  * Fixture `n`, read and decoded here rather than handed in.
  *
- * This file took a `fn[u8[](i32)] load` from the host until 2026-08-16, and its wrapper explained
+ * This file took a `fn<u8[](i32)> load` from the host until 2026-08-16, and its wrapper explained
  * why: *"this callback is not an oracle but a **loader**. Nothing here supplies an answer — the
  * fixtures are inputs, and wac cannot read a file."* It can now — the test names `Cli` and the run
  * grants `--allow-read`, which is `issues/system/0161` step 4 — and `pemBundle` was already here to

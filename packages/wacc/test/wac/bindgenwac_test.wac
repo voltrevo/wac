@@ -272,7 +272,7 @@ export string test_the_two_generators_write_the_same_glue_for_whole_programs(Cor
  * that since 2026-08-18. One in *return* position is JavaScript handing wac a function it built, which
  * needs a registration this generator does not write — `usableSig` says so and the dispatcher throws.
  *
- * What it did not do was leave the member out. For `fn[fn[i32(i32)](bool)]` — takes a bool, answers a
+ * What it did not do was leave the member out. For `fn<fn<i32(i32)>(bool)>` — takes a bool, answers a
  * function — the generated accessor was typed `(a0: boolean) => number`: the returned function
  * flattened to its own return type. A caller writes `(b) => 3`, TypeScript agrees, and the boundary
  * throws. `bindgenDeclined` said nothing either, because it walked exported signatures and never
@@ -286,10 +286,10 @@ export string test_a_callback_returning_a_function_is_left_out_and_named(Core co
   string[] paths = string[]("/t/main.wac");
   string[] sources = string[](
       "export struct Chooser {\n" +
-      "  fn[fn[i32(i32)](bool)] pick;\n" +
+      "  fn<fn<i32(i32)>(bool)> pick;\n" +
       "}\n" +
       "export i32 use(Chooser c, bool which, i32 n) {\n" +
-      "  fn[i32(i32)] f = c.pick(which);\n" +
+      "  fn<i32(i32)> f = c.pick(which);\n" +
       "  return f(n);\n" +
       "}\n");
 
@@ -298,7 +298,7 @@ export string test_a_callback_returning_a_function_is_left_out_and_named(Core co
   string declined = bindgenDeclinedFiles(paths, sources, "/t/main.wac");
   t.isTrue(contains(declined, "Chooser.pick"),
            "the declined report does not name the field: " + declined);
-  t.isTrue(contains(declined, "fn[fn[i32(i32)](bool)]"),
+  t.isTrue(contains(declined, "fn<fn<i32(i32)>(bool)>"),
            "the declined report does not name the type it could not carry: " + declined);
 
   // And left out, rather than emitted with a type that flattens the returned function.

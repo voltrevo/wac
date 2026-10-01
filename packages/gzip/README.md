@@ -26,7 +26,7 @@ Complete, both directions.
 `gunzipStream` does neither:
 
 ```wac
-export i32 gunzipStream(fn[Read()] read, fn[bool(u8[])] write)
+export i32 gunzipStream(fn<Read()> read, fn<bool(u8[])> write)
 ```
 
 It pulls input through `read` and hands output to `write` as it is produced, holding only a

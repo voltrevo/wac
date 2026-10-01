@@ -782,7 +782,7 @@ export i32 anyrefs() {
 
 // ── 15. FUNCTION REFERENCES ─────────────────────────────────────────────────
 
-// `fn[Ret(Params)]` — return type first, mirroring declarations. Maps to wasm's
+// `fn<Ret(Params)>` — return type first, mirroring declarations. Maps to wasm's
 // typed function refs: `ref.func` to obtain, `call_ref` to invoke.
 // A bare name is the whole of the syntax — there is no `&f`.
 //
@@ -796,41 +796,41 @@ bool ascending(i32 a, i32 b) { return a < b; }
 bool descending(i32 a, i32 b) { return a > b; }
 
 export i32 funcrefs() {
-  fn[i32(i32)] f = square;           // reference a function by bare name
-  fn[bool(i32, i32)] cmp = descending;
+  fn<i32(i32)> f = square;           // reference a function by bare name
+  fn<bool(i32, i32)> cmp = descending;
   return f(5) + (cmp(3, 5) ? 0 : 1); // -> 26
 }
 
 // As parameters, as return values, as struct fields, as array elements.
-i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }
-fn[bool(i32, i32)] comparator(bool reverse) {
+i32 apply(fn<i32(i32)> f, i32 x) { return f(x); }
+fn<bool(i32, i32)> comparator(bool reverse) {
   if (reverse) { return descending; }
   return ascending;
 }
-struct Handler { fn[i32(i32)] cb; }
+struct Handler { fn<i32(i32)> cb; }
 
 export i32 funcrefUses() {
-  fn[i32(i32)][] fs = fn[i32(i32)][](double, square, negate);
+  fn<i32(i32)>[] fs = fn<i32(i32)>[](double, square, negate);
   i32 total = 0;
   for (i32 i = 0; i < fs.len(); i++) { total += fs[i](5); }   // 10 + 25 - 5
   Handler h = Handler(square);
-  fn[i32(i32)]? maybe = null;                                  // nullable form
+  fn<i32(i32)>? maybe = null;                                  // nullable form
   if (maybe is not null) { total += maybe!(1); }
   return total + apply(double, 5) + h.cb(2) + (comparator(true)(3, 5) ? 0 : 1);
 }
 
 // Method references. `Counter.inc` is the underlying function with the receiver
 // as an explicit first parameter, and a static is just its own signature — both
-// are ordinary `fn[...]` values, as the two lines below show.
+// are ordinary `fn<...>` values, as the two lines below show.
 //
 // A BOUND reference — `c.inc`, the method with that receiver already in it — is
-// an `fn[void()]` in wacc, `[§wacc-fnref-bound]`. It is not a closure: it
-// captures a receiver and nothing else, and `fn[...]` values still do not
+// an `fn<void()>` in wacc, `[§wacc-fnref-bound]`. It is not a closure: it
+// captures a receiver and nothing else, and `fn<...>` values still do not
 // capture locals.
 //
 // **wacc has it; the line below stays commented because the REFERENCE does not.**
 // This said "the SEED, which does not have it", and the seed is wacc: `wac run`
-// on `fn[i32()] r = s.next; r()` answers today. What compiles this file twice is
+// on `fn<i32()> r = s.next; r()` answers today. What compiles this file twice is
 // compiler/wacSpec.test.ts, with the reference, which refuses it as `cannot use
 // method 'inc' as a value` — so a tour that used it would stop compiling for the
 // oracle rather than for wacc. Use it in your own code; it works.
@@ -841,13 +841,13 @@ struct Counter {
   void inc(this) { this.count++; }
 }
 export i32 methodRefs() {
-  fn[void(Counter)] bump = Counter.inc;      // `this` becomes a parameter
-  fn[Counter(i32)] make = Counter.create;    // static: just its own signature
+  fn<void(Counter)> bump = Counter.inc;      // `this` becomes a parameter
+  fn<Counter(i32)> make = Counter.create;    // static: just its own signature
   Counter c = make(0);
   bump(c);
   bump(c);
   (Counter.inc)(c);                          // inline form, same as c.inc()
-  // In wacc: fn[void()] f = c.inc;         // bound to c; the seed refuses it
+  // In wacc: fn<void()> f = c.inc;         // bound to c; the seed refuses it
   return c.count;                            // -> 3
 }
 
@@ -883,7 +883,7 @@ export i32 methodRefs() {
 // - NO implicit re-export. If b.wac imports `foo` from a.wac, another file
 //   cannot import `foo` from b.wac — go to the file that declares it.
 // - An alias is a new NAME, not a new TYPE. `import { Box as B }` gives a name
-//   for the same struct, so `fn[i32(B)] f = B.get;` matches lib's `Box.get`.
+//   for the same struct, so `fn<i32(B)> f = B.get;` matches lib's `Box.get`.
 //
 // Naming rules, in and out of imports:
 // - Any collision at the same scope is an error: two functions, two structs, a
@@ -929,7 +929,7 @@ export i32 shadowing() {
 //     fourth place for state to live: it shares one of the three.
 //   - `void` functions taking a struct or array mutate through the reference —
 //     that is the idiomatic way to return "several" things.
-//   - No host imports means a module that takes no `fn[...]` parameter has an
+//   - No host imports means a module that takes no `fn<...>` parameter has an
 //     empty wasm import section and cannot call out at all. That is the whole
 //     sandbox: there is no ambient authority to opt out of.
 //

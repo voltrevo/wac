@@ -3,7 +3,7 @@
 //     wac test --allow-read packages/wacc/test/wac/genericsig_test.wac
 //
 // Declaring a generic *method* registered a signature-table entry for it, and that entry mentions the
-// method's own parameter — `Box<U> map<U>(const this, fn[U(T)] f)` puts `fn[U(T)]` in the type
+// method's own parameter — `Box<U> map<U>(const this, fn<U(T)> f)` puts `fn<U(T)>` in the type
 // section, where `U` is not a type. It never mattered because `valType` answered `127` for anything it
 // did not recognise, so `U` was written as an `i32` and nothing references the entry.
 //
@@ -35,7 +35,7 @@ const string BOX =
   "struct Box<T> {\n" +
   "  T v;\n" +
   "  Box<T> of(T v) { return Box(v); }\n" +
-  "  Box<U> map<U>(const this, fn[U(T)] f) { return Box.of(f(this.v)); }\n" +
+  "  Box<U> map<U>(const this, fn<U(T)> f) { return Box.of(f(this.v)); }\n" +
   "}\n" +
   "export i32 f() { Box<i32> a = Box.of(21); return a.v * 2; }\n";
 

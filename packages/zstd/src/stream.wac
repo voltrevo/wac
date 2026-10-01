@@ -44,12 +44,12 @@ import { decodeCompressed, Decoder } from "./block.wac";
  * than one file.
  */
 export struct Pull {
-  fn[Read()] read;
+  fn<Read()> read;
   Buf held;
   i32 pos;
   bool ended;
 
-  Pull create(fn[Read()] read) { return Pull(read, Buf.create(), 0, false); }
+  Pull create(fn<Read()> read) { return Pull(read, Buf.create(), 0, false); }
 
   /** Bytes available without reading more. */
   i32 have(const this) { return this.held.len - this.pos; }
@@ -115,7 +115,7 @@ export struct Pull {
  * Returns the number of bytes written. `write` answering false means the far end stopped listening, and
  * the decode stops there — the same contract `gunzipStream` has.
  */
-export i64 unzstdStream(fn[Read()] read, fn[bool(u8[])] write) {
+export i64 unzstdStream(fn<Read()> read, fn<bool(u8[])> write) {
   Pull p = Pull.create(read);
   i64 written = 0;
 
@@ -154,7 +154,7 @@ export i64 unzstdStream(fn[Read()] read, fn[bool(u8[])] write) {
 }
 
 /** One frame's blocks, retaining a window's worth of output and writing the rest away. */
-i64 decodeFrame(Pull p, FrameHeader h, fn[bool(u8[])] write) {
+i64 decodeFrame(Pull p, FrameHeader h, fn<bool(u8[])> write) {
   Buf out = Buf.create();
   Decoder d = Decoder.create();
   Xxh64 sum = Xxh64.create();
@@ -213,7 +213,7 @@ i64 decodeFrame(Pull p, FrameHeader h, fn[bool(u8[])] write) {
 }
 
 /** Send `n` bytes from the front of `out`, hashing them on the way past. */
-bool flush(Buf out, i32 n, Xxh64 sum, fn[bool(u8[])] write) {
+bool flush(Buf out, i32 n, Xxh64 sum, fn<bool(u8[])> write) {
   if (n <= 0) { return true; }
   u8[] piece = u8[n]();
   piece.copyFrom(out.data, 0, 0, n);

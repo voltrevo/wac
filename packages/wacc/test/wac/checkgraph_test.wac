@@ -81,7 +81,7 @@ export string test_a_correct_graph_stays_silent_private_declarations_and_all() {
 //
 // `checkFiles` declares, from each imported file, exactly the names the entry wrote in its import
 // list. That is right for what a file may *write*, and wrong for what it may *reach*: a struct's
-// field can hold `fn[Pending<i32>()]`, and calling it gives a `Pending<i32>` whether or not the entry
+// field can hold `fn<Pending<i32>()>`, and calling it gives a `Pending<i32>` whether or not the entry
 // ever names `Pending`. Undeclared, that type has no methods, so `.wait()` answers nothing and every
 // rule downstream of it goes quiet.
 //
@@ -97,11 +97,11 @@ export string test_a_correct_graph_stays_silent_private_declarations_and_all() {
 const string CAP =
   "export struct Pending<T> {\n" +
   "  i32 id;\n" +
-  "  fn[T(i32)] resolve;\n" +
+  "  fn<T(i32)> resolve;\n" +
   "  T wait(const this) { return this.resolve(this.id); }\n" +
   "}\n" +
   "export struct Cli {\n" +
-  "  fn[Pending<i32>()] argCount;\n" +
+  "  fn<Pending<i32>()> argCount;\n" +
   "}\n";
 const string REACHES =
   "import { Cli } from \"./lib.wac\";\n" +

@@ -25,7 +25,7 @@ export i32 f() {
   Cell<i32> n = Cell<i32>();
   n.set(0);
   Env e = Env(n);
-  fn[i32()] g = e.body;
+  fn<i32()> g = e.body;
   // 1 + 2, and then the outer binding reads 2 as well — which is what "by reference" means and what
   // a by-value capture would get wrong, answering 1 + 2 + 0.
   return g() + g() + n.get();

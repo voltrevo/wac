@@ -233,7 +233,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   // the sentence that was wrong. `issues/lang/0262c` is about what that leaves untested.
   string caps = "export i32 f() {\n";
   for (i32 i = 0; i < 33; i++) { caps = caps + "  i32 v" + itoa(i) + " = " + itoa(i) + ";\n"; }
-  caps = caps + "  fn[i32()] g = () => v0";
+  caps = caps + "  fn<i32()> g = () => v0";
   for (i32 i = 1; i < 33; i++) { caps = caps + " + v" + itoa(i); }
   caps = caps + ";\n  return g();\n}\n";
   string canaryWhy = blockedFiles(string[]("/canary/m.wac"), string[](caps), "/canary/m.wac");

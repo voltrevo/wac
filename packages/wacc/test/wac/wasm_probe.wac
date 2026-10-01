@@ -326,7 +326,7 @@ export Arities exportArities(u8[] b) {
       for (i32 f = 0; f < fc; f++) { skipValType(b, pos); pos[0] = pos[0] + 1; }
       params[i] = -1;
     } else if (tag == 0x5F) {                           // a plain struct
-      // A `fn[...]` value is a `{funcref, env}` pair — `design/lang/0002` — and the pairs share the
+      // A `fn<...>` value is a `{funcref, env}` pair — `design/lang/0002` — and the pairs share the
       // type section's range, so a struct appears where this used to see only functions and arrays.
       i32 fc = leb(b, pos);
       for (i32 f = 0; f < fc; f++) { skipValType(b, pos); pos[0] = pos[0] + 1; }

@@ -61,7 +61,7 @@ export i32 cmpBytes(u8[] a, u8[] b) {
  * identical — the alternative was a second copy of a recursive sort differing in one call, which
  * is where the stability bug would eventually have gone.
  */
-export u8[][] mergeSortWith(u8[][] xs, i32 n, fn[i32(u8[], u8[])] cmp) {
+export u8[][] mergeSortWith(u8[][] xs, i32 n, fn<i32(u8[], u8[])> cmp) {
   if (n <= 1) { return xs; }
   i32 mid = n / 2;
   i32 right = n - mid;

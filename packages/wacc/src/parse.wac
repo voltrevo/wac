@@ -46,6 +46,8 @@ export i32 perrFieldName()   { return 25; }
 export i32 perrMethodName()  { return 26; }
 export i32 perrCtorBrace()   { return 27; }
 export i32 perrFnArray()     { return 28; }
+/** `fn<R(P)>`, the spelling a function type had before it was `fn<R(P)>`. */
+export i32 perrFnBracket()   { return 35; }
 export i32 perrBareSpec()    { return 29; }
 /**
  * A keyword where a name belongs — `[§wac-keyword-name-8wnq4kp]`.
@@ -817,7 +819,7 @@ i32[] parseTypeParams(P p) {
  * Shared by the two lookaheads that need it — a declaration against an expression statement, and a
  * construction against a comparison — because they ask the same question about the same shape and the
  * reference had a bug in each of them separately. Parentheses and brackets are tracked, since
- * `Box<fn[i32(i32)]>` contains both and a scan that stopped at the funcref's own `)` read the whole
+ * `Box<fn<i32(i32)>>` contains both and a scan that stopped at the funcref's own `)` read the whole
  * declaration as an expression. A `;` or `{` ends the scan: neither can appear inside a type.
  */
 i32 afterTypeArgs(P p, i32 from) {
@@ -835,14 +837,14 @@ i32 afterTypeArgs(P p, i32 from) {
     // cannot see a shared mistake. `issues/lang/0113`.
     //
     // A whitelist rather than a blacklist of operators, because the question is *is this a type* and
-    // the answer is closed: names, `fn[…]`, `[]`, `?`, a nested `<…>` and the commas between them.
+    // the answer is closed: names, `fn<…>`, `[]`, `?`, a nested `<…>` and the commas between them.
     // Anything else — a literal, an operator, a keyword — means this was a comparison all along.
     if (!typeToken(kind)) { return -1; }
     // **An angle inside a group closes nothing**, which the closers below have to agree with. A
     // `>` between parentheses is a comparison in somebody's expression, not this list's end:
     // `a < (a >> 1)` read the `>>` as the close, took the whole thing for a generic call, and
     // complained *expected a type* about a line with no type in it — `issues/lang/0308b`. `group`
-    // was already tracked for `Box<fn[i32(i32)]>` and already consulted by the `)` arm; the angle
+    // was already tracked for `Box<fn<i32(i32)>>` and already consulted by the `)` arm; the angle
     // arms simply did not ask.
     if (kind == kLparen() || kind == kLbrack()) { group++; }
     else if (kind == kRparen() || kind == kRbrack()) {
@@ -893,7 +895,13 @@ export Ty parseType(P p) {
 
   if (p.at1(kFn())) {
     p.advance();
-    p.expect(kLbrack());
+    if (p.at1(kLbrack())) {
+      // The old spelling, refused by name rather than as an unexpected token, so the reader is told
+      // what to write. Nothing is consumed: the parser recovers the way it does from any bad type.
+      p.fail(perrFnBracket());
+      return node;
+    }
+    p.expect(kLt());
     Ty ret = parseType(p);
     p.expect(kLparen());
     TyList params = TyList.create();
@@ -905,7 +913,8 @@ export Ty parseType(P p) {
       }
     }
     p.expect(kRparen());
-    p.expect(kRbrack());
+    // `>>` closes this and an enclosing list at once — `Vec<fn<i32()>>` — so take one `>` worth.
+    if (p.at1(kShr()) || p.at1(kShrU())) { splitGt(p); } else { p.expect(kGt()); }
     node = tyFuncref(ret, params.take(), line, col);
   } else if (p.at1(kIdent()) || p.at1(kVoid())) {
     bool prim = identIsPrim(p, 0);
@@ -1299,7 +1308,7 @@ Expr parsePostfix(P p) {
  * The tail of an array construction, from the `[` that opens it.
  *
  * `T[](a, b)` is the fixed literal and `T[N]()` / `T[N](fill: v)` the sized form. Shared because a
- * funcref element type arrives by another road — `parseType` eats the brackets of `fn[R(P)]`
+ * funcref element type arrives by another road — `parseType` eats the brackets of `fn<R(P)>`
  * itself — and only the fixed literal was reachable that way [issue 0079].
  */
 Expr parseArrayCtorTail(P p, Ty elem, i32 line, i32 col) {
@@ -1471,7 +1480,7 @@ Expr parsePrimary(P p) {
     return e;
   }
 
-  // `fn[R(P)][](args)` — an array of funcrefs.
+  // `fn<R(P)>[](args)` — an array of funcrefs.
   if (p.at1(kFn())) {
     Ty t = parseType(p);
     match (t.kind) {
@@ -1482,7 +1491,7 @@ Expr parsePrimary(P p) {
           p.expect(kRparen());
           return Expr(ExprKind.ArrNew(elem, null, null, args), line, col);
         }
-        // `fn[R(P)][][2](fill: v)` — the element is the whole array type, not its element.
+        // `fn<R(P)>[][2](fill: v)` — the element is the whole array type, not its element.
         if (p.at1(kLbrack())) { return parseArrayCtorTail(p, t, line, col); }
         p.fail(perrFnArray());
         return Expr(ExprKind.NullLit, line, col);
@@ -2208,7 +2217,7 @@ bool atLambdaFrom(P p, i32 from) {
  * `(i32 a, i32 b) => a + b`, and `() => { … }` — `design/lang/0002` tier two.
  *
  * Parameters carry their types, as every declared thing in wac does; the return type is not written
- * because it comes from the `fn[…]` this is checked against. An expression body is desugared here
+ * because it comes from the `fn<…>` this is checked against. An expression body is desugared here
  * into a single `return`, so nothing downstream sees two shapes — the note defines `() => e` as
  * `() => { return e; }` and this is where that definition lives. The synthesised statement takes the
  * arrow's own line and column, which is a position the lexer already produced rather than a new

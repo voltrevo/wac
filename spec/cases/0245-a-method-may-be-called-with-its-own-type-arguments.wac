@@ -2,7 +2,7 @@
 // spec:  §wacc-method-type-args
 // why: `design/lang/0010` option C, and `fold` is the example that document leads with — the letter
 //      is the seed's type, the accumulator's, and the callback's return, so the slot written
-//      `fn[U(U, T)]` has to reach the lambda with the owner's `T` bound from the receiver and the
+//      `fn<U(U, T)>` has to reach the lambda with the owner's `T` bound from the receiver and the
 //      method's `U` from what the call wrote. An **inline** lambda is the operator's stated
 //      constraint and is what this case is for; a named function argument exercises none of the slot
 //      machinery.
@@ -10,7 +10,7 @@
 struct Vec<T> {
   T[] items;
   i32 n;
-  U fold<U>(const this, U seed, fn[U(U, T)] f) {
+  U fold<U>(const this, U seed, fn<U(U, T)> f) {
     U acc = seed;
     for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.items[i]); }
     return acc;

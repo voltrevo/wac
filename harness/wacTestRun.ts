@@ -17,7 +17,7 @@
 // tests here were written in TypeScript rather than in wac. wac has no import syntax and
 // no mutable module-level state, so the only way in is as an argument:
 //
-//   export string test_sha256(fn[u8[](u8[], i32)] ref) { … }
+//   export string test_sha256(fn<u8[](u8[], i32)> ref) { … }
 //
 //   await wacTestRun(entry, "hash", [ (bytes, bits) => nodeHash(bytes, bits) ]);
 //

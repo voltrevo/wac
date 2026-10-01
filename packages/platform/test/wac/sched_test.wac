@@ -2,7 +2,7 @@
 // Lambdas — `design/lang/0002` — which the reference compiler does not have. The marker is not a
 // skip: the corpus tests that read it assert the two front ends genuinely disagree here.
 //
-// `Sched` itself, driven by a **fake `Core`**. A capability is a struct of `fn[…]` fields, so a
+// `Sched` itself, driven by a **fake `Core`**. A capability is a struct of `fn<…>` fields, so a
 // `Core` whose `waitAny` answers from a script is an ordinary value — the same thing `src/frame.wac`
 // does for a child's world, and the reason none of this needs a host.
 //
@@ -10,7 +10,7 @@
 // without them does. This covers the dispatch underneath: which handler runs for which ticket, what a
 // handler may do while it runs, and what is left afterwards.
 //
-// It needs no host: a `Core` is a struct of `fn[…]` fields, so one whose `waitAny` answers from a
+// It needs no host: a `Core` is a struct of `fn<…>` fields, so one whose `waitAny` answers from a
 // script is an ordinary value.
 
 import { T } from "../../../wactest/src/assert.wac";
@@ -101,7 +101,7 @@ export string test_a_handler_can_register_more() {
   Sched s = Sched.create();
   i32[] rounds = i32[1]();
 
-  fn[void(i32)] again = (i32 id) => { };
+  fn<void(i32)> again = (i32 id) => { };
   again = (i32 id) => {
     rounds[0] = rounds[0] + 1;
     if (rounds[0] < 3) { s.on(id + 1, again, (i32 x) => { }); }
@@ -241,7 +241,7 @@ export string test_drop_all_clears_before_it_drops() {
   i32[] dropped = i32[8]();
   i32[] n = i32[1]();
 
-  fn[void(i32)] recordAndRearm = (i32 id) => {
+  fn<void(i32)> recordAndRearm = (i32 id) => {
     dropped[n[0]] = id;
     n[0] = n[0] + 1;
     s.on(id + 100, (i32 x) => { }, (i32 x) => { dropped[n[0]] = x; n[0] = n[0] + 1; });

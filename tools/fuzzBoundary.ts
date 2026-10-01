@@ -299,7 +299,7 @@ export async function fuzzBoundary(
     const fns = types
       .map((t, i) =>
         `export ${wacType(t)} id${i}(${wacType(t)} x) { return x; }\n` +
-        `export ${wacType(t)} cb${i}(fn[${wacType(t)}(${wacType(t)})] f, ${wacType(t)} x) { return f(x); }`
+        `export ${wacType(t)} cb${i}(fn<${wacType(t)}(${wacType(t)})> f, ${wacType(t)} x) { return f(x); }`
       )
       .join("\n");
     const src = `${decls}\n${fns}\n`;

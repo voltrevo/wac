@@ -114,7 +114,7 @@ export string test_an_await_in_a_nested_lambda_is_not_this_machines() {
   // different function, so an `await` in it can never be a suspension of this one. Counting it would
   // have produced a machine with a state nothing reaches.
   t.eqStr(planOf("async i32 f(Cli cli) {\n"
-                 + "  fn[void()] g = () => { FileResult a = await cli.readFile(\"x\"); };\n"
+                 + "  fn<void()> g = () => { FileResult a = await cli.readFile(\"x\"); };\n"
                  + "  return 0;\n"
                  + "}\n"),
           "ok suspends=0 hoist=1\n", "the lambda's await belongs to the lambda");

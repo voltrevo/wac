@@ -1,0 +1,19 @@
+// expect: answers f = 42
+// why: `<` straight after `fn` opens a function type's parameters, never a markup tag, wherever it appears
+// from: the fn<R(P)> spelling (design/lang/0016) — the lexer read `fn<i32(i32)> g` as a tag and the parameter vanished
+export enum Backing {
+  Memory,
+  Synth(fn<i32(i32)> f),
+}
+
+struct Op { fn<i32(i32)> g; }
+
+i32 twice(i32 x) { return x * 2; }
+i32 apply(fn<i32(i32)> g, i32 n) { return g(n); }
+
+export i32 f() {
+  Op o = Op(twice);
+  Backing b = Backing.Synth(twice);
+  i32 viaVariant = match (b) { case Memory: 0, case Synth(h): h(1) };
+  return apply(o.g, 10) + viaVariant + 20;
+}

@@ -2,7 +2,7 @@
 // digests tor computed over those.
 //
 // Host-side until 2026-08-17. The wrapper read the file and hex- and base64-decoded it; the wac side
-// asked for fields by number through one `fn[u8[](i32, u8[], u8[])]`. `issues/system/0161`.
+// asked for fields by number through one `fn<u8[](i32, u8[], u8[])>`. `issues/system/0161`.
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 

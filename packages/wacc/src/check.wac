@@ -279,8 +279,8 @@ export i32 errAwaitNotPending() { return 212; }
  * `async` on a lambda whose slot does not want a ticket — `issues/lang/0294c`.
  *
  * A function writes its own return type, so `async i32 f()` says both things at once. A lambda never
- * writes one: the `fn[…]` it is assigned to supplies it, so `fn[Pending<i32>(…)]` is what both
- * permits `async` and says what the ticket carries. `fn[i32(…)] g = async () => …;` is asking for a
+ * writes one: the `fn<…>` it is assigned to supplies it, so `fn<Pending<i32>(…)>` is what both
+ * permits `async` and says what the ticket carries. `fn<i32(…)> g = async () => …;` is asking for a
  * value from something that answers with a ticket, and the honest place to say so is the lambda
  * rather than the `await` inside it.
  */
@@ -620,7 +620,7 @@ string commaAt(string joined, i32 want) {
  *
  * `design/lang/0010` option C. `substituteType` binds the owner's — `T` from `Box<i32>` — and stops
  * there, because until now a method's own letters were never bound at all. Without this second step
- * the parameter `fn[U(T)]` reaches a lambda argument as `fn[U(i32)]`, `U` names no type, and the
+ * the parameter `fn<U(T)>` reaches a lambda argument as `fn<U(i32)>`, `U` names no type, and the
  * lambda is told *"nothing here wants a function"* — which is the diagnostic the old refusal existed
  * to pre-empt, and the reason it had to go away in the same change that binds them.
  */
@@ -740,13 +740,13 @@ string substituteType(C c, string owner, string written) {
     return args[i] + suffix;
   }
   // **And inside a funcref**, which is a type holding one just as much as `Option<V>` is. A generic
-  // whose method takes an `fn[T(i32)]`, or whose field is an `fn[T()]`, kept its `T` here and every
+  // whose method takes an `fn<T(i32)>`, or whose field is an `fn<T()>`, kept its `T` here and every
   // question about it was asked against a type nobody wrote. `issues/lang/0141` is where it showed:
   // a lambda handed to `Pending.of` was offered `fn(i32) -> T` as its target and could not match it.
   if (startsWithFn(core)) {
     string fret = funcrefReturn(core);
     if (fret != "") {
-      // **A `void` argument erases the parameter it stood in for**, so a `fn[void(T)]` field of a
+      // **A `void` argument erases the parameter it stood in for**, so a `fn<void(T)>` field of a
       // `Pending<void>` offers a lambda `fn() -> void` as its target rather than `fn(void) -> void`,
       // which nothing can be written to satisfy. The emitter drops it from the spelling for the same
       // reason and the two have to agree. `design/lang/0014` D5.
@@ -1315,7 +1315,7 @@ export struct C {
    * Types declared for their *members* and not for their *name*.
    *
    * A file may only write the type names it imported, and it may reach further than that: `Cli`'s
-   * fields hold `fn[Pending<i32>()]`, so calling one gives a `Pending<i32>` in a file that never
+   * fields hold `fn<Pending<i32>()>`, so calling one gives a `Pending<i32>` in a file that never
    * named `Pending`. Both facts are true at once, and declaring the reachable type the ordinary way
    * makes only the first one false — `knownTypeName` would then accept `Pending<i32> p`, which the
    * reference refuses with *"undefined type 'Pending'"*.
@@ -1361,7 +1361,7 @@ export struct C {
    * The return type a `return` inside a lambda answers to, or `""` when not inside one.
    *
    * `checkStmt` takes the enclosing function's return as an AST `Ty`, and a lambda has no return type
-   * written — `design/lang/0002` takes it from the `fn[…]` the lambda is checked against, which is a
+   * written — `design/lang/0002` takes it from the `fn<…>` the lambda is checked against, which is a
    * *string*. Every `Ty` variant carries a token, so one cannot be synthesised from a name, and this
    * is the seam that avoids needing to: the `Return` case prefers this when it is set.
    *
@@ -1416,7 +1416,7 @@ export struct C {
   /**
    * Each name's funcref **arity**, taken from the type as *written*, or -1.
    *
-   * `typeOfTy` answers unknown for `fn[U(T)]` as soon as one component is unknown, so a parameter of
+   * `typeOfTy` answers unknown for `fn<U(T)>` as soon as one component is unknown, so a parameter of
    * that type inside a generic has no resolved type at all — and three separate rules then read "cannot
    * name it" as "not a funcref", which is how a call to a parameter `f` reached a module-level `f`
    * instead. The arity needs no resolution: it is the number of parameters in the written type, and it
@@ -2464,7 +2464,7 @@ string tokenText(C c, i32 t) {
  * binding with a real type behind it is not that case.
  *
  * Returns true when it reported, so the caller answers `typeNone()` and nothing invents a spelling.
- * **Two positions of four.** `fn[i32(zz)]` and `Box<zz>` have the same root and are not silent — they
+ * **Two positions of four.** `fn<i32(zz)>` and `Box<zz>` have the same root and are not silent — they
  * report a downstream mismatch against an invented `fn(zz) -> i32` — so they are a worse message
  * rather than a missing one, and are left for a change that can be checked against the reference's
  * wording.
@@ -3251,7 +3251,7 @@ export string typeOfLvalue(C c, Lvalue lv) {
 /**
  * The type of a **declared function used as a value** — `fn(i32) -> bool`.
  *
- * `design/lang/0002` tier one made every `fn[…]` a value, and a bare function name is how one is
+ * `design/lang/0002` tier one made every `fn<…>` a value, and a bare function name is how one is
  * written: there is no `&f`. The checker had no type for that name at all, so every mismatch through
  * it was silent — `i32 x = bytes;` and `return bytes;` in an `i32` function both type-checked, and the
  * emitter then produced a module wasm rejects. `issues/system/0170` is that, found through `wac build`
@@ -3392,7 +3392,7 @@ export string typeOfExpr(C c, Expr e) {
           string recvT = receiverType(c, obj);
           if (recvT == typeNone() || recvT == "") { return typeNone(); }
           // **A field holding a funcref answers what its signature says.** `Cli`'s members are
-          // `fn[Pending<i32>()] argCount` and friends — fields, not methods — so `cli.readFile(p)`
+          // `fn<Pending<i32>()> argCount` and friends — fields, not methods — so `cli.readFile(p)`
           // had no type at all, and `.wait(1)` on the result had no receiver to be wrong about. Three
           // files' worth of missed diagnostics were downstream of this one unknown.
           string fref = c.isStruct(recvT) ? c.fieldType(recvT, tokenText(c, nameTok)) : "";
@@ -3675,7 +3675,7 @@ export string typeOfExpr(C c, Expr e) {
       if (c.isStruct(name)) { return c.isGeneric(name) ? typeNone() : name; }
       // **A funcref whose type cannot be named is still a funcref**, and the call is still *its* call.
       // Answering with a same-named module function's return type is how `Box.of(f(this.v))` inside
-      // `Box<U> map<U>(const this, fn[U(T)] f)` came back `i32` and was then reported against `U`.
+      // `Box<U> map<U>(const this, fn<U(T)> f)` came back `i32` and was then reported against `U`.
       // Unknown is the honest answer, and the silent one. `issues/lang/0145`.
       if (c.isDeclaredName(name)) {
         string declHeld = c.typeOfName(name);
@@ -3685,7 +3685,7 @@ export string typeOfExpr(C c, Expr e) {
       }
       i32 at = c.funcAt(name);
       if (at < 0) {
-        // **A name holding a funcref is callable, and says what it answers.** `fn[Read()] read` is a
+        // **A name holding a funcref is callable, and says what it answers.** `fn<Read()> read` is a
         // parameter, not a declared function, so `read()` fell out of here with no type — and the
         // arm above says a funcref call "has no name to look up and stays unknown", which is true of
         // `(f())()` and not of this. There is a name, and `typeOfName` has it.
@@ -4485,7 +4485,7 @@ void checkExpr(C c, Expr e) {
         else: { }
       }
       // **A generic function named with its type arguments is a value** — `design/lang/0011`
-      // criterion 3. `fn[i32(i32)] g = id<i32>;` is how one is written, since there is no `&f`, and
+      // criterion 3. `fn<i32(i32)> g = id<i32>;` is how one is written, since there is no `&f`, and
       // the letters are what stopped the bare name from having a type at all.
       i32 gat = genericFuncOfTypeName(c, qual);
       if (gat >= 0) {
@@ -4939,13 +4939,13 @@ void checkExpr(C c, Expr e) {
             if (!c.isGeneric(mrecv)) {
               methodOwner = mrecv;
               // **A receiver that names an instantiation carries its own `T`.** `methodAt` collapses
-              // `Vec<fn[i32(i32)]>` to the template it was declared in, so a parameter written `T`
+              // `Vec<fn<i32(i32)>>` to the template it was declared in, so a parameter written `T`
               // arrives spelled `T` — and an argument checked against `T` is checked against a type
               // nobody wrote. `issues/lang/0141` bound `T` for a *static* from the slot the call lands
               // in; an instance method needs no slot, because the receiver already says which
               // instantiation this is.
               //
-              // `Vec<fn[i32(i32)]> hs; hs.push((i32 n) => n);` is what found it: a lambda has no type
+              // `Vec<fn<i32(i32)>> hs; hs.push((i32 n) => n);` is what found it: a lambda has no type
               // of its own, so *expected T, found a lambda* is the whole diagnostic, and a container
               // of continuations could not be filled.
               if (templateOf(mrecv) != mrecv) { methodInst = mrecv; }
@@ -5206,7 +5206,7 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
   // **The local of funcref type is asked about first, because that is the rule** —
   // `[§wac-param-shadows-func-5nkq2wp]`, "before any function". Asking `funcAt` first applied the rule
   // only when the shadowed function was *imported*, which is how `issues/lang/0143` left it: a
-  // same-file function of the same name won, so `void run(fn[void(i32)] f)` calling `f(x)` beside a
+  // same-file function of the same name won, so `void run(fn<void(i32)> f)` calling `f(x)` beside a
   // module-level `f()` was refused for the module function's arity. It is the same defect 0143 names,
   // one lookup earlier.
   //
@@ -5219,7 +5219,7 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
   if (c.isDeclaredName(name)) {
     string dty = c.typeOfName(name);
     localFuncref = dty != typeNone() && dty != "" && funcrefArity(dty) >= 0;
-    // **A type this checker cannot name is not evidence that it is not a funcref.** `fn[U(T)] f` inside
+    // **A type this checker cannot name is not evidence that it is not a funcref.** `fn<U(T)> f` inside
     // a generic resolves to nothing, so asking only the resolved type answered *no* and the call fell
     // through to a module-level `f` — the same defect this order was written to fix, arriving through
     // the condition instead. The arity was recorded from the type as *written*, which needs no
@@ -5417,7 +5417,7 @@ string funcrefReturn(string t) {
 }
 
 /**
- * A lambda against the `fn[…]` the context wants — `design/lang/0002` tier two.
+ * A lambda against the `fn<…>` the context wants — `design/lang/0002` tier two.
  *
  * **The target is the whole of its type.** A lambda writes its parameters and nothing else, so its
  * signature is only complete once something says what it is being used as. wac always does: there is
@@ -5459,7 +5459,7 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   }
 
   // **An `async` lambda's slot is the permission and the type.** The signature comparison above is
-  // untouched, because `fn[Pending<R>(…)]` is genuinely what the value is — what changes is only
+  // untouched, because `fn<Pending<R>(…)>` is genuinely what the value is — what changes is only
   // what the *body* answers with, which is `R`. That is D3's rule for functions read backwards: a
   // function writes the body's type and the caller derives the ticket, and a lambda derives the
   // body's type from the ticket the slot names, because a lambda's return type is never written.
@@ -5489,7 +5489,7 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   //
   // It is the lambda's **own** flag rather than the enclosing function's, which is what makes
   // `async` on the lambda the thing that grants `await` in it. Set to `false` for a plain one, and
-  // the enclosing function being async does not leak in: `async i32 f(Pending<i32> p) { fn[void()]
+  // the enclosing function being async does not leak in: `async i32 f(Pending<i32> p) { fn<void()>
   // g = () => { i32 z = await p; }; … }` was accepted while this read the outer answer, and would
   // have reached the lowering as a program it has no way to lower.
   bool outerAsync = c.inAsync;
@@ -5507,7 +5507,7 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   declareAll(c, body);
   for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], tyPrim(-1, e.line, e.col)); }
   // **A lambda owes its slot a value, which a plain function is already held to.** `export i32 f() {
-  // }` is *not every path returns a value*; `fn[i32(i32)] g = (i32 a) => { };` was accepted, and the
+  // }` is *not every path returns a value*; `fn<i32(i32)> g = (i32 a) => { };` was accepted, and the
   // failure arrived as `unreachable` at runtime, from a call site that looks fine. The rule is the
   // function's, applied to the return type the funcref names. `issues/lang/0170a`.
   //
@@ -5515,7 +5515,7 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   // known" rather than "returns nothing" — the same exemption every rule here takes.
   //
   // **`bodyRet`, not `ret`**, or an `async void` lambda is told it owes a value: its slot is
-  // `fn[Pending<void>()]`, and a `Pending<void>` is a value even though the body answers with
+  // `fn<Pending<void>()>`, and a `Pending<void>` is a value even though the body answers with
   // nothing. The rule is about what the body returns, so it asks what the body returns.
   if (bodyRet != "" && returnsAValue(bodyRet) && !alwaysLeaves(body)) {
     c.report(errMissingReturn(), e.line, e.col);
@@ -5668,12 +5668,12 @@ string writtenTy(C c, Ty t) {
     case Arr(elem): { return writtenTy(c, elem) + "[]"; }
     case Nullable(inner): { return writtenTy(c, inner) + "?"; }
     // **A funcref, in the same spelling `typeOfTy` produces.** There was no arm for one, so a
-    // parameter written `fn[U(U, T)]` came back as the empty string — which reads as "no slot" and
+    // parameter written `fn<U(U, T)>` came back as the empty string — which reads as "no slot" and
     // told a perfectly good lambda that *"nothing here wants a function"*. It mattered from the day
     // a method could be called with its type arguments written (`design/lang/0010` option C), since
     // that is the only way such a parameter reaches a call site with its letters bindable.
     //
-    // `fn(P, Q) -> R` rather than the source's `fn[R(P, Q)]`, because every other producer of a
+    // `fn(P, Q) -> R` rather than the source's `fn<R(P, Q)>`, because every other producer of a
     // funcref type name in this file writes the first and `startsWithFn` looks for it.
     case Funcref(ret, params): {
       string out = "fn(";
@@ -5689,7 +5689,7 @@ string writtenTy(C c, Ty t) {
 /**
  * How many parameters a written funcref type takes, or -1 when it is not one.
  *
- * The **written** type, so a `fn[U(T)]` inside a generic answers 1 where `typeOfTy` answers unknown for
+ * The **written** type, so a `fn<U(T)>` inside a generic answers 1 where `typeOfTy` answers unknown for
  * the whole thing. That is the only question the shadowing rule needs: whether a name in call position
  * is a funcref, and how many arguments it takes.
  */
@@ -5806,7 +5806,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     // one because *its* question is what the call returns, where a literal must not pin the answer.
     // Two questions, one argument, and the fourth time this session that "a literal has no type of
     // its own" has been the wrong half of the rule to reach for.
-    // **A call through a funcref says nothing about `T`.** `id(g(1))` for `fn[i32(i32)] g` is a
+    // **A call through a funcref says nothing about `T`.** `id(g(1))` for `fn<i32(i32)> g` is a
     // compile error the spec spells out — *"a call through a funcref, whose return type is not read
     // here"* — and this checker could name the type, which is not the same as the language reading
     // it. Bound by nothing, so `T` reaches the unbound report below exactly as `null` does.
@@ -5815,7 +5815,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     string got = foundType(c, args[i]);
     bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
   }
-  // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn[U(T)] f)` binds `U`
+  // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn<U(T)> f)` binds `U`
   // through the *shape* of a function type, and `bindTypeParams` decomposes arrays, nullables and
   // generic instances but not `fn(…) -> …`. Reporting an unbound `U` here refused
   // `core/test/option_test.wac`, which is correct code. Silence until the binder can
@@ -6949,12 +6949,12 @@ bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, E
 /**
  * `c.inc` — an **instance** method already bound to that object, as a value.
  *
- * The receiver-less signature: `i32 inc(this)` bound to a `Counter` is an `fn[i32()]`, which is the
- * whole point of the feature — a bound reference is interchangeable with every `fn[…]` a program
+ * The receiver-less signature: `i32 inc(this)` bound to a `Counter` is an `fn<i32()>`, which is the
+ * whole point of the feature — a bound reference is interchangeable with every `fn<…>` a program
  * already passes around, so `Shell.askInterrupt`'s funcref-plus-context pair can collapse into one.
  *
  * `design/lang/0002`, tier one. The emitter has carried this since the pair representation landed: a
- * `fn[…]` value is `{funcref, env}`, and the bound wrapper casts the env to the receiver rather than
+ * `fn<…>` value is `{funcref, env}`, and the bound wrapper casts the env to the receiver rather than
  * dropping it. What was missing was the language admitting the value.
  *
  * Generics stay out, as they do for a static: the instantiation is what this checker does not model,
@@ -6985,7 +6985,7 @@ string staticMethodType(C c, Expr obj, string name) {
   i32 at = c.methodAt(owner, name);
   if (at < 0) { return typeNone(); }
   // **An instance method reached through its type is an *unbound* reference**, whose first parameter
-  // is the receiver: `Base.get` is an `fn[i32(Base)]`, and rung 4's corpus passes those around. This
+  // is the receiver: `Base.get` is an `fn<i32(Base)>`, and rung 4's corpus passes those around. This
   // answered `typeNone()` for them, so `return P.m;` in an `i32` function compared nothing against
   // nothing and stayed quiet where the reference says *"expected i32, found fn(P) -> i32"*. The
   // slot-driven paths typed these all along, which is why the corpus compiles and only a slot that
@@ -7108,8 +7108,8 @@ void bindTypeParams(C c, string written, string actual, string[] names, string[]
     return;
   }
   // **And through a funcref**, which holds a letter as readily as `Option<V>` does — and is where a
-  // method's own letter usually lives, since `fn[U(T)]` is what a continuation looks like. Without
-  // this arm `U map<U>(const this, fn[U(T)] f)` could not be inferred from `widen`: the parameter
+  // method's own letter usually lives, since `fn<U(T)>` is what a continuation looks like. Without
+  // this arm `U map<U>(const this, fn<U(T)> f)` could not be inferred from `widen`: the parameter
   // matched, nothing was bound, and the call came back `U`. `applyBindings` and `substituteType` both
   // have this arm; the binder was the one that did not. `design/lang/0010` criterion 2.
   if (startsWithFn(written) && startsWithFn(actual)) {
@@ -7150,7 +7150,7 @@ string applyBindings(string written, string[] names, string[] bound) {
   }
   // **And inside a funcref**, which is a type holding a letter just as much as `Option<V>` is.
   // `substituteType` gained this arm for the owner's letters and this function never had it, because
-  // until `design/lang/0010` option C no method's own letter ever reached a slot: `fn[U(U, T)]` came
+  // until `design/lang/0010` option C no method's own letter ever reached a slot: `fn<U(U, T)>` came
   // out as `fn(U, i32) -> U` with `T` bound and `U` untouched, and the lambda was told *expected
   // fn(U, i32) -> U, found fn(i32, i32) -> U* — a mismatch between two spellings of the same thing.
   if (startsWithFn(core)) {
@@ -7332,7 +7332,7 @@ void checkMember(C c, Expr at, Expr obj, string name) {
       // mismatch, which is why it must be let through here rather than caught.
       //
       // **Any method of the type is a value here**, static or not: `Counter.inc` is an *unbound*
-      // method reference, an `fn[void(Counter)]` that takes the receiver as its first argument, and
+      // method reference, an `fn<void(Counter)>` that takes the receiver as its first argument, and
       // the corpus passes them to functions and stores them in arrays. So this rule is only about a
       // name the type does not have — a field named through the type, or nothing at all — and
       // `methodAt` rather than `ownMethodAt` because `Derived.get` inherits one.
@@ -7392,8 +7392,8 @@ void checkMember(C c, Expr at, Expr obj, string name) {
     // callee of a call — the `Call` arm walks the object instead — so a method name arriving here is
     // one that was named without being called, which the language does not allow.
     // **An instance method named without being called is a value now** — `design/lang/0002` tier one,
-    // decided 2026-08-15. It denotes the method bound to this receiver, an `fn[…]` of the
-    // receiver-less signature, interchangeable with every other `fn[…]` a program passes around.
+    // decided 2026-08-15. It denotes the method bound to this receiver, an `fn<…>` of the
+    // receiver-less signature, interchangeable with every other `fn<…>` a program passes around.
     //
     // A *static* reached through a value is still not one: `c.make` where `make` takes no `this` is
     // a function that has nothing to do with `c`, and naming it through an instance says something
@@ -7926,7 +7926,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     // **Or inferred from the arguments** — `design/lang/0010` criterion 2. A method's own letters are
     // argument-directed in the same way a generic function's are, and the only reason they were not
     // is that no call to such a method could be emitted at all. `substituteType` puts the declared
-    // parameter in the receiver's world first, so `fn[U(U, T)]` is matched as `fn[U(U, i32)]` and
+    // parameter in the receiver's world first, so `fn<U(U, T)>` is matched as `fn<U(U, i32)>` and
     // only `U` is left to find.
     i32 want = commaCount(c.methodTypeParams[tpAt]);
     string[] inames = string[want]();
@@ -8318,7 +8318,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // `i32` is redundant.
   //
   // **A funcref cast to itself is a standing disagreement, parked here on purpose.** The reference
-  // refuses `a as fn[i32(i32)]` for an `a` of that type — *"cast from 'fn(i32) -> i32' to
+  // refuses `a as fn<i32(i32)>` for an `a` of that type — *"cast from 'fn(i32) -> i32' to
   // 'fn(i32) -> i32' is redundant"* — and allows a `string`, a struct and an array cast to
   // themselves, which this allows too. spec/spec/casts.md says nothing about a cast to the same
   // type at all, so there is no authority to settle it: matching the reference for funcrefs alone
@@ -9829,7 +9829,7 @@ export void declareModule(C c, Program prog, string[] only) {
           i32 savedActive = addActiveParams(c, methods[i].typeParams);
           // **A method with its own letters records its types as *written*.** `typeOfTy` answers
           // unknown for an active parameter — deliberately, since `U` is not a type any question can
-          // be asked about at the declaration — so `fn[U(U, T)]` came back as nothing at all, and a
+          // be asked about at the declaration — so `fn<U(U, T)>` came back as nothing at all, and a
           // lambda argument to `v.fold<i32>(0, …)` had no target: *"nothing here wants a function"*
           // about a lambda that is fine.
           //
@@ -10187,7 +10187,7 @@ void checkDeclaredTypeNames(C c, Program prog) {
  * Add a method\'s **own** type parameters to the ones already active, and answer the count to restore.
  *
  * A struct\'s letters are set by `setActiveParams`, which resets. A method may introduce its own on
- * top of those — `Pending<U> then<U>(fn[U(T)] f)`, where `U` appears nowhere but that method — so this
+ * top of those — `Pending<U> then<U>(fn<U(T)> f)`, where `U` appears nowhere but that method — so this
  * appends and the caller puts the count back.
  *
  * Without it the *declaration* is an error: `U` is a type nobody declared, and the checker says

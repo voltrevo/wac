@@ -24,7 +24,7 @@ The observation here is that **the transform does not have to be the thing that 
 host blocks instead, wac can stay an ordinary nested loop:
 
 ```wac
-export i32 upperCase(fn[Read()] read, fn[bool(u8[])] write) {
+export i32 upperCase(fn<Read()> read, fn<bool(u8[])> write) {
   while (true) {
     match (read()) {              // <- blocks in the host until an answer exists
       case Data(bytes): { ... }
@@ -82,7 +82,7 @@ A callback with an array in its signature used to throw `ReferenceError` on firs
 bindgen called two conversion helpers it never emitted; `harness/wacBind.ts` patched them in
 meanwhile. That is `wac` issue 0055, now fixed, and the shim has been removed.
 
-The bridge is generic: any export shaped `i32 f(fn[u8[]()] read, fn[bool(u8[])] write)` can be
+The bridge is generic: any export shaped `i32 f(fn<u8[]()> read, fn<bool(u8[])> write)` can be
 streamed through it. [`packages/gzip`](../gzip/README.md) now exports `gunzipStream` in exactly that
 shape, so a gzip file becomes a `DecompressionStream` by naming a different module:
 

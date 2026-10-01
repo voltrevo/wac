@@ -281,7 +281,7 @@ export string test_a_private_function_passed_as_a_value_counts(Core core, Cli cl
   t.eqStr(deadPrivateNames(t, core, cli,
       string[]("packages/demo/src/lib.wac"),
       string[]("i32 double(i32 x) { return x * 2; }\n"
-             + "export i32 run(i32 x) { fn[i32(i32)] f = double; return f(x); }\n")),
+             + "export i32 run(i32 x) { fn<i32(i32)> f = double; return f(x); }\n")),
       "", "a private function passed as a value is called");
   return t.report();
 }

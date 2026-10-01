@@ -62,7 +62,7 @@ parameter compiles to a module with **no wasm imports at all** — checkable on 
 binary rather than promised.
 
 ```wac
-export string test_sha256(fn[u8[](u8[], i32)] ref) { … }
+export string test_sha256(fn<u8[](u8[], i32)> ref) { … }
 ```
 ```ts
 await wacTestRun(entry, "hash", [ (bytes, bits) => nodeHash(bytes, bits) ]);
@@ -167,7 +167,7 @@ was checked, and that is the same answer an oracle-taking test gets, because it 
 situation.
 
 **Nothing is ambient.** A test gets what it names and only if the run was granted it, which is the
-same rule `main` follows. A parameter list this host does not build — a `fn[…]` oracle — is still
+same rule `main` follows. A parameter list this host does not build — a `fn<…>` oracle — is still
 named and skipped, as before.
 
 **In the Deno lane it is registered *ignored*, with the flag in its name.** That lane binds plain

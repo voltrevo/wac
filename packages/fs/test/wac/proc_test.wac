@@ -111,7 +111,7 @@ string[] keysOf(string status) {
 }
 
 // `/proc` never asks for randomness — `/dev/urandom` does — but `mountSynth` takes a plain
-// `fn[Pending<u8[]>(i32)]`, not a nullable one, so there is no way to say "none" and this supplies
+// `fn<Pending<u8[]>(i32)>`, not a nullable one, so there is no way to say "none" and this supplies
 // one that is never called. `test/wac/cov_probe.wac` has had the same three helpers for the same
 // reason; they are duplicated rather than shared because a test file that imports another test
 // file's internals is worse than eight lines.
@@ -135,13 +135,13 @@ Pending<u8[]> pendingRandom(i32 n) {
  * is what keeps this test about `/proc` rather than about how a session is built.
  *
  * **This passed `null` and that made master red for everyone.** `mountSynth`'s parameter is
- * `fn[Pending<u8[]>(i32)]`, which is not nullable, so **neither** compiler accepts the call:
+ * `fn<Pending<u8[]>(i32)>`, which is not nullable, so **neither** compiler accepts the call:
  * `wac build` says "argument does not match the parameter's type" and `wac test` reported the file
  * as "did not run". `corpusCheck`'s rung 3 caught it when it stopped excusing files only wacc
  * compiles — the label on that list is the corpus category, not a claim that wacc compiled this.
  *
  * Worth saying because the first reading is the interesting one and it is wrong: this is not a
- * checker hole. `apply(null, 21)` for a plain `fn[i32(i32)]`, for a method, and for one returning a
+ * checker hole. `apply(null, 21)` for a plain `fn<i32(i32)>`, for a method, and for one returning a
  * generic are all rejected by wacc as well. The file was committed in a state no compiler here
  * accepts, which is only possible because nothing ran it between writing and pushing.
  */

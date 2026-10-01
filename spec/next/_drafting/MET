@@ -1,8 +1,10 @@
 spec/next/1-programs/01-names-and-identity.md#1
 spec/next/1-programs/01-names-and-identity.md#2
+spec/next/1-programs/01-names-and-identity.md#3
 spec/next/1-programs/01-names-and-identity.md#4
 spec/next/1-programs/01-names-and-identity.md#5
 spec/next/1-programs/01-names-and-identity.md#6
+spec/next/1-programs/01-names-and-identity.md#7
 spec/next/1-programs/01-names-and-identity.md#9
 spec/next/1-programs/01-names-and-identity.md#11
 spec/next/1-programs/01-names-and-identity.md#12
@@ -96,6 +98,7 @@ spec/next/2-types/19-generics.md#5
 spec/next/2-types/19-generics.md#6
 spec/next/2-types/19-generics.md#9
 spec/next/2-types/19-generics.md#11
+spec/next/2-types/19-generics.md#12
 spec/next/2-types/19-generics.md#16
 spec/next/2-types/19-generics.md#17
 spec/next/2-types/19-generics.md#18
@@ -104,6 +107,12 @@ spec/next/2-types/19-generics.md#20
 spec/next/2-types/20-functions-and-funcrefs.md#2
 spec/next/2-types/20-functions-and-funcrefs.md#3
 spec/next/2-types/20-functions-and-funcrefs.md#4
+spec/next/2-types/20-functions-and-funcrefs.md#5
+spec/next/2-types/20-functions-and-funcrefs.md#9
+spec/next/2-types/20-functions-and-funcrefs.md#10
+spec/next/2-types/20-functions-and-funcrefs.md#11
+spec/next/2-types/20-functions-and-funcrefs.md#12
+spec/next/2-types/20-functions-and-funcrefs.md#14
 spec/next/3-expressions/22-operators.md#1
 spec/next/3-expressions/22-operators.md#2
 spec/next/3-expressions/22-operators.md#3
@@ -142,6 +151,7 @@ spec/next/8-tooling/48-bindgen.md#1
 spec/next/8-tooling/48-bindgen.md#2
 spec/next/8-tooling/48-bindgen.md#3
 spec/next/8-tooling/48-bindgen.md#5
+spec/next/8-tooling/48-bindgen.md#9
 spec/next/README.md#1
 spec/next/README.md#3
 spec/next/README.md#4

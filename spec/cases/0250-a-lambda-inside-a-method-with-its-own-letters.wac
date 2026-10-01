@@ -16,7 +16,7 @@ struct Cell<T> {
   T v;
   Cell<T> of(T v) { return Cell<T>(v); }
   U pick<U>(const this, U a) {
-    fn[U(i32)] g = (i32 i) => a;
+    fn<U(i32)> g = (i32 i) => a;
     return g(0);
   }
 }

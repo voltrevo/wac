@@ -7,7 +7,8 @@
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
 import { kindName } from "./kinds.wac";
-import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor } from "./diag.wac";
+import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
+         displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
@@ -934,8 +935,10 @@ string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string ent
     string own = e / 3 < hints.len() ? hints[e / 3] : "";
     i32 from = e / 3 < contexts.len() ? contexts[e / 3] : 0;
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
-        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note
-        + "\t" + (own == "" ? hintFor(terrs[e]) : own)
+        // **Spelled as a program writes them**: the checker's own notation for a function type is not
+        // wac, and a reader shown it would be taught a syntax the parser refuses.
+        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + displayTypes(note)
+        + "\t" + displayTypes(own == "" ? hintFor(terrs[e]) : own)
         + "\t" + numText(w)
         // **Only where there is one, which keeps every line that has none byte-identical.** The wire
         // is positional and already asymmetric on purpose — an error carries eight fields and a
@@ -1077,7 +1080,7 @@ bool listHas(string[] list, i32 n, string name) {
  * The names a file must declare so that what the entry asked for is fully typed.
  *
  * `only` is what the entry wrote in its import list, and that is not enough: a struct's field can
- * hold `fn[Pending<i32>()]`, so calling it answers a `Pending<i32>` in a file that never named
+ * hold `fn<Pending<i32>()>`, so calling it answers a `Pending<i32>` in a file that never named
  * `Pending`. Undeclared, that type has no members — `.wait()` on it answers nothing and every rule
  * downstream goes quiet, which built a module the engine refused to load (`issues/lang/0132`).
  *

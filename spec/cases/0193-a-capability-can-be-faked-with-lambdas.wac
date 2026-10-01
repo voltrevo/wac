@@ -7,12 +7,12 @@
 // have nowhere to put what it collected."* So `platform` grew `pushChild`/`popChild` and the host
 // holds the child's world for the duration.
 //
-// A capability in this repo is a struct of `fn[…]` fields. With lambdas that capture, a substitute is
+// A capability in this repo is a struct of `fn<…>` fields. With lambdas that capture, a substitute is
 // an ordinary value: the collected state is a local, and the operations share it. `run` below is
 // written against the capability and knows nothing about where its bytes go.
 struct Sink {
-  fn[bool(u8[])] write;
-  fn[i32()] count;
+  fn<bool(u8[])> write;
+  fn<i32()> count;
 }
 
 i32 run(Sink out) {

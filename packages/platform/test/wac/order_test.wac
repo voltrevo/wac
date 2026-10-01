@@ -47,7 +47,7 @@ struct Split {
  * Split a call's argument list at depth zero.
  *
  * Strings and comments are skipped rather than scanned, because both contain commas: a parameter type
- * like `fn[bool(string, u8[])]` has one inside brackets, and the prose above `spawn` has one in a line
+ * like `fn<bool(string, u8[])>` has one inside brackets, and the prose above `spawn` has one in a line
  * comment. A scan that ignored either produces phantom capabilities named `string` and `i32`.
  */
 Split splitArgs(string src, i32 open) {

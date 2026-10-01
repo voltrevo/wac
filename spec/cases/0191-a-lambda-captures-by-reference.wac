@@ -12,7 +12,7 @@
 // lambda, and the write into it from the function afterwards.
 export i32 f() {
   i32 n = 0;
-  fn[void()] bump = () => { n = n + 20; };
+  fn<void()> bump = () => { n = n + 20; };
   bump();
   n = n + 1;
   bump();

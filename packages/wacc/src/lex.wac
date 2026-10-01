@@ -1084,7 +1084,10 @@ bool startsTag(Lexer lx, i32 offset) {
  */
 void jsxAfterOperator(Modes md, Lexer lx, i32 kind, i32 prevKind) {
   if (md.mode == mNormal()) {
-    if (kind == kLt() && !endsExpression(prevKind) && startsTag(lx, 0)) {
+    // **`fn<` is a function type, never a tag.** `fn` cannot end an expression, so without this the
+    // `<` after it read as markup opening — `fn<i32(i32)> g` lexed `i32(i32)` as a tag and everything
+    // after the `>` as text.
+    if (kind == kLt() && !endsExpression(prevKind) && prevKind != kFn() && startsTag(lx, 0)) {
       md.push(cTag(), mNormal(), 0);
       md.mode = mTag();
       return;

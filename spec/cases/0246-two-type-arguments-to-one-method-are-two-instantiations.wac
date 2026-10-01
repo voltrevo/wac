@@ -8,7 +8,7 @@
 struct Vec<T> {
   T[] items;
   i32 n;
-  U fold<U>(const this, U seed, fn[U(U, T)] f) {
+  U fold<U>(const this, U seed, fn<U(U, T)> f) {
     U acc = seed;
     for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.items[i]); }
     return acc;

@@ -42,9 +42,9 @@ import { Cli, Core, FileResult, Pending, Sched } from "std/platform.wac";
  */
 Pending<T> ready<T>(T v) {
   T[] cell = T[1](fill: v);
-  fn[T(i32)] res = (i32 id) => cell[0];
-  fn[bool(i32)] set = (i32 id) => true;
-  fn[void(i32)] drp = (i32 id) => { };
+  fn<T(i32)> res = (i32 id) => cell[0];
+  fn<bool(i32)> set = (i32 id) => true;
+  fn<void(i32)> drp = (i32 id) => { };
   return Pending<T>(0 - 1, res, set, drp, null, true);
 }
 
@@ -56,34 +56,34 @@ Pending<T> ready<T>(T v) {
  * blocking in a continuation, and two chains interleave. Only when `p` carries no scheduler is there
  * nothing to register, and the chain then advances under `wait` alone — D2's *host-backed → block*.
  */
-Pending<U> flatMap<T, U>(Pending<T> p, fn[Pending<U>(T)] f) {
+Pending<U> flatMap<T, U>(Pending<T> p, fn<Pending<U>(T)> f) {
   Pending<U>?[] inner = Pending<U>?[1](fill: null);
 
-  fn[Pending<U>()] force = () => {
+  fn<Pending<U>()> force = () => {
     if (inner[0] is null) { inner[0] = f(p.resolve(p.id)); }
     return inner[0]!;
   };
 
   if (p.sched is not null) {
     Sched s = p.sched!;
-    fn[void(i32)] armSecond = (i32 id) => {
+    fn<void(i32)> armSecond = (i32 id) => {
       Pending<U> nxt = force();
       // The second stage, registered from inside the first — which is why this is a combinator and
       // not a composition. `ready` carries no scheduler, so a chain that ends in one stops here.
       if (nxt.sched is not null) {
-        fn[void(i32)] fin = (i32 id2) => { };
+        fn<void(i32)> fin = (i32 id2) => { };
         nxt.sched!.on(nxt.id, fin, nxt.drop);
       }
     };
     s.on(p.id, armSecond, p.drop);
   }
 
-  fn[U(i32)] res = (i32 id) => {
+  fn<U(i32)> res = (i32 id) => {
     Pending<U> got = force();
     return got.wait();
   };
-  fn[bool(i32)] set = (i32 id) => !(inner[0] is null) && inner[0]!.isDone();
-  fn[void(i32)] drp = (i32 id) => {
+  fn<bool(i32)> set = (i32 id) => !(inner[0] is null) && inner[0]!.isDone();
+  fn<void(i32)> drp = (i32 id) => {
     if (inner[0] is null) { p.drop(p.id); } else { inner[0]!.cancel(); }
   };
   return Pending<U>(p.id, res, set, drp, p.sched, p.waitable);

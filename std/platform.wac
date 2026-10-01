@@ -22,7 +22,7 @@
 // reader can see the difference between "reads the clock" and "reads your filesystem".
 //
 // Every capability returns a value; none fills a buffer. Arrays *copy* across the
-// boundary, so a `fn[void(u8[])] fill` type-checks and quietly does nothing — the host's
+// boundary, so a `fn<void(u8[])> fill` type-checks and quietly does nothing — the host's
 // writes land on a copy. Returning is the only shape that works.
 //
 // Capabilities are also coarse on purpose. Behind each one may be a thread parking and
@@ -59,7 +59,7 @@
  *
  * **The same table caught the host out a second time**, which is worth knowing before anyone
  * economises on either side of it: a worker that runs a *second* program used to build a second
- * `Core` and `Cli`, three more `fn[void(i32)]` each time, and failed on the fifth run with the
+ * `Core` and `Cli`, three more `fn<void(i32)>` each time, and failed on the fifth run with the
  * message this paragraph predicts. `host/entry.ts` builds them once and re-points the bridge
  * instead (wac-mono 0076). Registration is by identity, so the fix is exactly "pass the same
  * function again".
@@ -72,7 +72,7 @@
  * context in wac, which cost agent-b an hour of threading it by hand. Corrected on their
  * report.
  *
- * **And it can travel *inside* one now**: `c.inc` is a bound reference, an `fn[…]` of the
+ * **And it can travel *inside* one now**: `c.inc` is a bound reference, an `fn<…>` of the
  * receiver-less signature, as of `design/lang/0002` tier one — `[§wacc-fnref-bound]`. So a
  * funcref-plus-context pair is no longer the only spelling, which is what `Shell.askInterrupt`
  * exists to stop being.
@@ -111,20 +111,20 @@ i64 millisToNanos(i32 millis) { return (millis as i64) * (1000000 as i64); }
  */
 export struct Sched {
   i32[] ids;
-  fn[void(i32)][] handlers;
+  fn<void(i32)>[] handlers;
   /** Each ticket's own `drop`, so abandoning releases the host's slot rather than forgetting it. */
-  fn[void(i32)][] drops;
+  fn<void(i32)>[] drops;
   i32 n;
 
   Sched create() {
-    return Sched(i32[8](), fn[void(i32)][8](fill: schedIdle), fn[void(i32)][8](fill: schedIdle), 0);
+    return Sched(i32[8](), fn<void(i32)>[8](fill: schedIdle), fn<void(i32)>[8](fill: schedIdle), 0);
   }
 
   /** How much work is outstanding — what the host asks before deciding a clean exit. */
   i32 pending(const this) { return this.n; }
 
   /** Run `handler` when `id` answers. Registering the same id twice runs both, in order. */
-  void on(this, i32 id, fn[void(i32)] handler, fn[void(i32)] drop) {
+  void on(this, i32 id, fn<void(i32)> handler, fn<void(i32)> drop) {
     if (this.n == this.ids.len()) { this.grow(); }
     this.ids[this.n] = id;
     this.handlers[this.n] = handler;
@@ -135,8 +135,8 @@ export struct Sched {
   void grow(this) {
     i32 want = this.ids.len() * 2;
     i32[] ni = i32[want]();
-    fn[void(i32)][] nh = fn[void(i32)][want](fill: schedIdle);
-    fn[void(i32)][] nd = fn[void(i32)][want](fill: schedIdle);
+    fn<void(i32)>[] nh = fn<void(i32)>[want](fill: schedIdle);
+    fn<void(i32)>[] nd = fn<void(i32)>[want](fill: schedIdle);
     for (i32 i = 0; i < this.n; i++) {
       ni[i] = this.ids[i];
       nh[i] = this.handlers[i];
@@ -163,7 +163,7 @@ export struct Sched {
   bool off(this, i32 id) {
     i32 at = this.indexOf(id);
     if (at < 0) { return false; }
-    fn[void(i32)] go = this.drops[at];
+    fn<void(i32)> go = this.drops[at];
     this.removeAt(at);
     go(id);
     return true;
@@ -256,7 +256,7 @@ export struct Sched {
       waits = waits + 1;
       if (which < 0) { return ran; }
       i32 id = this.ids[which];
-      fn[void(i32)] handler = this.handlers[which];
+      fn<void(i32)> handler = this.handlers[which];
       this.removeAt(which);
       handler(id);
       ran = ran + 1;
@@ -278,7 +278,7 @@ export struct Sched {
     // forgets whatever the drops registered while still reporting a clean exit.
     i32 had = this.n;
     i32[] ids = i32[had]();
-    fn[void(i32)][] drops = fn[void(i32)][had](fill: schedIdle);
+    fn<void(i32)>[] drops = fn<void(i32)>[had](fill: schedIdle);
     for (i32 i = 0; i < had; i++) {
       ids[i] = this.ids[i];
       drops[i] = this.drops[i];
@@ -291,9 +291,9 @@ export struct Sched {
 
 export struct Pending<T> {
   i32 id;
-  fn[T(i32)] resolve;
-  fn[bool(i32)] settled;
-  fn[void(i32)] drop;
+  fn<T(i32)> resolve;
+  fn<bool(i32)> settled;
+  fn<void(i32)> drop;
   /**
    * Where a continuation goes, or null for a ticket nobody linked.
    *
@@ -327,7 +327,7 @@ export struct Pending<T> {
    * A ticket the host will answer. Every capability's is made through here, which is why this sets
    * `waitable`: being waited on is how the host is asked.
    */
-  Pending<T> of(i32 id, fn[T(i32)] resolve, fn[bool(i32)] settled, fn[void(i32)] drop) {
+  Pending<T> of(i32 id, fn<T(i32)> resolve, fn<bool(i32)> settled, fn<void(i32)> drop) {
     return Pending<T>(id, resolve, settled, drop, null, true);
   }
 
@@ -338,7 +338,7 @@ export struct Pending<T> {
    * The counterpart is no static at all: a ticket only a continuation can answer is built with the
    * constructor and `false`, and saying so is the point.
    */
-  Pending<T> driven(i32 id, fn[T(i32)] resolve, fn[bool(i32)] settled, fn[void(i32)] drop) {
+  Pending<T> driven(i32 id, fn<T(i32)> resolve, fn<bool(i32)> settled, fn<void(i32)> drop) {
     return Pending<T>(id, resolve, settled, drop, null, true);
   }
 
@@ -393,13 +393,13 @@ export struct Pending<T> {
    *     cli.readFile(p).linkedTo(core).map<i32>((string s) => s.len()).then((i32 n) => …)
    *
    * **Not named `then`, and that is not a preference.** wac has no overloading, `then` has five real
-   * callers all passing a void lambda, and a void-bodied lambda cannot satisfy `fn[U(T)]`. So the
+   * callers all passing a void lambda, and a void-bodied lambda cannot satisfy `fn<U(T)>`. So the
    * consumer keeps the name it has and the transform takes the one it would have in any case.
    *
    * **Two chains from one ticket resolve one host slot twice**, which is the pre-existing property of
    * `resolve` rather than something this adds — a ticket answers once, and `map` does not copy it.
    */
-  Pending<U> map<U>(const this, fn[U(T)] f) {
+  Pending<U> map<U>(const this, fn<U(T)> f) {
     return Pending<U>(this.id, (i32 id) => f(this.resolve(id)), this.settled, this.drop, this.sched,
                       this.waitable);
   }
@@ -407,7 +407,7 @@ export struct Pending<T> {
   /**
    * Run `f` with the answer once it is here, and return **now**.
    *
-   * The scheduler holding the continuation never learns `T`: what is registered is a `fn[void(i32)]`,
+   * The scheduler holding the continuation never learns `T`: what is registered is a `fn<void(i32)>`,
    * and the wrapper closing over `resolve` is what carries the type across. That wrapper is a lambda
    * written inside a generic, which is why this could not exist before `issues/lang/0142`.
    *
@@ -418,7 +418,7 @@ export struct Pending<T> {
    * The ticket's own `drop` is registered beside the handler, so `Sched.dropAll` can release the
    * host's slot rather than merely forgetting the callback.
    */
-  void then(this, fn[void(T)] f) {
+  void then(this, fn<void(T)> f) {
     // **A bare trap, and it should not be.** This is the one mistake the API invites — `delay` hands
     // back a linked ticket and every other capability hands back an unlinked one — so `then` on a
     // `readFile` is where a reader arrives, and what they get is *Uncaught RuntimeError: unreachable*.
@@ -629,7 +629,7 @@ export struct Picked {
  */
 export struct Page {
   /** Replace the application root's markup. The application builds it; nothing escapes it. */
-  fn[Pending<bool>(string)] render;
+  fn<Pending<bool>(string)> render;
   /**
    * Set an element's *text*, by id.
    *
@@ -637,9 +637,9 @@ export struct Page {
    * lands as those characters. `render` is the one that parses, and the difference is where
    * every injection bug in a page like this would come from.
    */
-  fn[Pending<bool>(string, string)] setText;
+  fn<Pending<bool>(string, string)> setText;
   /** Set an input's value, by id. */
-  fn[Pending<bool>(string, string)] setValue;
+  fn<Pending<bool>(string, string)> setValue;
   /**
    * Replace an element's inline style, by id.
    *
@@ -654,9 +654,9 @@ export struct Page {
    * markup it rendered, and the host does not merge. Merging would need a parser here and would make
    * what the element ends up with depend on what it had before.
    */
-  fn[Pending<bool>(string, string)] setStyle;
+  fn<Pending<bool>(string, string)> setStyle;
   /** Read an input's value, by id. Empty if there is no such element. */
-  fn[Pending<string>(string)] getValue;
+  fn<Pending<string>(string)> getValue;
   /**
    * Ask for an event kind on everything matching a CSS selector.
    *
@@ -664,11 +664,11 @@ export struct Page {
    * was asked about — which it otherwise would not, and the bug would look like "the second
    * click does nothing".
    */
-  fn[Pending<bool>(string, string)] on;
+  fn<Pending<bool>(string, string)> on;
   /** The next event, waiting for one. */
-  fn[Pending<Event>()] nextEvent;
+  fn<Pending<Event>()> nextEvent;
   /** The document title. */
-  fn[Pending<bool>(string)] title;
+  fn<Pending<bool>(string)> title;
   /**
    * Blit a pixel buffer into a `<canvas>`, by id: width, height, then `w * h * 4` bytes of
    * RGBA. The canvas is resized to match.
@@ -679,7 +679,7 @@ export struct Page {
    * filling a buffer. Anything a drawing API would do — lines, text, sprites, a plot, a
    * fractal, a decoded image — is a loop over bytes here, and that loop is compiled.
    */
-  fn[Pending<bool>(string, i32, i32, u8[])] drawPixels;
+  fn<Pending<bool>(string, i32, i32, u8[])> drawPixels;
   /**
    * Blit a `w` by `h` buffer **into** a canvas at `x`, `y`, without resizing it.
    *
@@ -700,7 +700,7 @@ export struct Page {
    * not an error, because a partial blit into an unsized canvas is a caller's mistake about its own
    * layout rather than something this layer can diagnose.
    */
-  fn[Pending<bool>(string, i32, i32, i32, i32, u8[])] drawPixelsIn;
+  fn<Pending<bool>(string, i32, i32, i32, i32, u8[])> drawPixelsIn;
   /**
    * The next file the user hands over, waiting for one.
    *
@@ -710,28 +710,28 @@ export struct Page {
    * has crossed to the worker and back that gesture is over — an `openDialog` would work when
    * tested by hand and fail in the field, which is the worst kind of capability.
    */
-  fn[Pending<Picked>()] nextFile;
+  fn<Pending<Picked>()> nextFile;
   /**
    * Offer bytes to the user as a download, under a name.
    *
    * The counterpart to `nextFile`, and the reason both are needed: a page that can read the
    * user's file but cannot give one back can only ever be a viewer.
    */
-  fn[Pending<bool>(string, u8[])] offerDownload;
+  fn<Pending<bool>(string, u8[])> offerDownload;
 
   Page of(
-    fn[Pending<bool>(string)] render,
-    fn[Pending<bool>(string, string)] setText,
-    fn[Pending<bool>(string, string)] setValue,
-    fn[Pending<bool>(string, string)] setStyle,
-    fn[Pending<string>(string)] getValue,
-    fn[Pending<bool>(string, string)] on,
-    fn[Pending<Event>()] nextEvent,
-    fn[Pending<bool>(string)] title,
-    fn[Pending<bool>(string, i32, i32, u8[])] drawPixels,
-    fn[Pending<bool>(string, i32, i32, i32, i32, u8[])] drawPixelsIn,
-    fn[Pending<Picked>()] nextFile,
-    fn[Pending<bool>(string, u8[])] offerDownload
+    fn<Pending<bool>(string)> render,
+    fn<Pending<bool>(string, string)> setText,
+    fn<Pending<bool>(string, string)> setValue,
+    fn<Pending<bool>(string, string)> setStyle,
+    fn<Pending<string>(string)> getValue,
+    fn<Pending<bool>(string, string)> on,
+    fn<Pending<Event>()> nextEvent,
+    fn<Pending<bool>(string)> title,
+    fn<Pending<bool>(string, i32, i32, u8[])> drawPixels,
+    fn<Pending<bool>(string, i32, i32, i32, i32, u8[])> drawPixelsIn,
+    fn<Pending<Picked>()> nextFile,
+    fn<Pending<bool>(string, u8[])> offerDownload
   ) {
     return Page(
       render, setText, setValue, setStyle, getValue, on, nextEvent, title,
@@ -748,9 +748,9 @@ export struct Page {
  */
 export struct Core {
   /** Wall clock, milliseconds since the epoch. Moves backwards; do not measure with it. */
-  fn[Pending<i64>()] nowMillis;
+  fn<Pending<i64>()> nowMillis;
   /** Monotonic nanoseconds from an arbitrary origin. For measuring, never for dating. */
-  fn[Pending<i64>()] monotonicNanos;
+  fn<Pending<i64>()> monotonicNanos;
   /**
    * A ticket that settles once the given milliseconds have passed, resolving to the
    * monotonic nanoseconds at which it did — so `.wait()` is a sleep that tells you how far
@@ -767,7 +767,7 @@ export struct Core {
    * retry backoff, a poll interval, a deliberate pause. It stays in `Core` because a clock
    * is not authority and all three hosts have one.
    */
-  fn[Pending<i64>(i32)] sleepMillis;
+  fn<Pending<i64>(i32)> sleepMillis;
   /**
    * Cryptographically secure random bytes, from one byte to a megabyte.
    *
@@ -778,11 +778,11 @@ export struct Core {
    * everything above that while the third chunked and did not (0122). `example/entropy.wac` walks
    * the range on both hosts, one byte past that cap included.
    */
-  fn[Pending<u8[]>(i32)] randomBytes;
+  fn<Pending<u8[]>(i32)> randomBytes;
   /** A line of output. */
-  fn[void(string)] log;
+  fn<void(string)> log;
   /** A line of output on the error channel. */
-  fn[void(string)] warn;
+  fn<void(string)> warn;
 
   /**
    * Block until one of these calls has an answer, and say which — for at most `millis`.
@@ -838,7 +838,7 @@ export struct Core {
    * interactive page unable to wait on a click *or* a dropped file, and that is exactly the
    * question this exists to answer.
    */
-  fn[i32(i32[], i32)] waitAny;
+  fn<i32(i32[], i32)> waitAny;
 
   /**
    * Whether the user has asked to interrupt what is running — `^C`, and nothing else.
@@ -860,7 +860,7 @@ export struct Core {
    *
    * `i32` because that is what crosses; `interrupted()` is the read.
    */
-  fn[i32()] askInterrupt;
+  fn<i32()> askInterrupt;
 
   /**
    * The world\'s scheduler — where a continuation registered with `then` waits its turn.
@@ -968,14 +968,14 @@ export struct Core {
   bool interrupted(const this) { return this.askInterrupt() != 0; }
 
   Core of(
-    fn[Pending<i64>()] nowMillis,
-    fn[Pending<i64>()] monotonicNanos,
-    fn[Pending<i64>(i32)] sleepMillis,
-    fn[Pending<u8[]>(i32)] randomBytes,
-    fn[void(string)] log,
-    fn[void(string)] warn,
-    fn[i32(i32[], i32)] waitAny,
-    fn[i32()] askInterrupt,
+    fn<Pending<i64>()> nowMillis,
+    fn<Pending<i64>()> monotonicNanos,
+    fn<Pending<i64>(i32)> sleepMillis,
+    fn<Pending<u8[]>(i32)> randomBytes,
+    fn<void(string)> log,
+    fn<void(string)> warn,
+    fn<i32(i32[], i32)> waitAny,
+    fn<i32()> askInterrupt,
     Sched sched
   ) {
     // **Linked here, once, rather than by every caller.** These four are the only capabilities
@@ -1475,7 +1475,7 @@ export struct Stat {
  * A socket, or why there isn't one.
  *
  * A handle rather than a current-socket, unlike `openInput` and `openOutput`. Those are
- * one-at-a-time because the transforms take `fn[u8[]()]`, which has no parameter to
+ * one-at-a-time because the transforms take `fn<u8[]()>`, which has no parameter to
  * carry a handle *in* — not because wac cannot pass context beside a funcref, which it
  * can;
  * an `i32` in a struct has no such problem, and a server needs a listener and a
@@ -1837,7 +1837,7 @@ export struct CallResult {
 }
 
 export struct Cli {
-  fn[Pending<i32>()] argCount;
+  fn<Pending<i32>()> argCount;
   /**
    * One argument, **as bytes**.
    *
@@ -1851,17 +1851,17 @@ export struct Cli {
    * it is honest about where the interpretation happens — the alternative was a clever codec smuggling
    * bytes through a type that should not have been there.
    */
-  fn[Pending<u8[]>(i32)] arg;
+  fn<Pending<u8[]>(i32)> arg;
   /**
    * One environment value, as bytes. Null when the variable is unset, which is not the same as empty.
    *
    * Bytes for the same reason as `arg`: an environment value is not text on any system here, and this is
    * how a path in `$HOME` or `$WACPATH` survives being one.
    */
-  fn[Pending<u8[]?>(string)] env;
+  fn<Pending<u8[]?>(string)> env;
 
   /** All of standard input, to the end. Empty when there is none. */
-  fn[Pending<u8[]>()] readStdin;
+  fn<Pending<u8[]>()> readStdin;
   /**
    * Exactly these bytes on standard output — no newline, no encoding.
    *
@@ -1869,11 +1869,11 @@ export struct Cli {
    * nothing could emit binary, which ruled out every compressor and encoder as a filter.
    *
    * Answers with whether the write succeeded, which most callers discard. The type is not
-   * for them: `fn[bool(u8[])]` is the shape every streaming transform in this repo takes
+   * for them: `fn<bool(u8[])>` is the shape every streaming transform in this repo takes
    * for its sink, so `write` can be handed to one directly instead of through an adapter
-   * — and `fn[bool(u8[])]` has no spare parameter, so an adapter has nowhere to keep one.
+   * — and `fn<bool(u8[])>` has no spare parameter, so an adapter has nowhere to keep one.
    */
-  fn[bool(u8[])] write;
+  fn<bool(u8[])> write;
   /**
    * Exactly these bytes on standard error, with the same shape and the same absence of a grant.
    *
@@ -1889,9 +1889,9 @@ export struct Cli {
    *
    * No grant, for the reason `write` has none: what a program prints is the user's own doing.
    */
-  fn[bool(u8[])] writeErr;
+  fn<bool(u8[])> writeErr;
 
-  fn[Pending<FileResult>(string)] readFile;
+  fn<Pending<FileResult>(string)> readFile;
   /**
    * **Answers a `Change`**: a fault category and the host's message. A `bool` could say that a write
    * failed and never why, and a bare message could say why to a person but not to a program.
@@ -1902,9 +1902,9 @@ export struct Cli {
    * `writeFile` diagnostic in this repo was the applet's guess at what had gone wrong. The message
    * is the host's own, which is the only one that knows.
    */
-  fn[Pending<Change>(string, u8[])] writeFile;
+  fn<Pending<Change>(string, u8[])> writeFile;
   /** What a path is. `exists` is false where the filesystem was not granted. */
-  fn[Pending<Stat>(string)] stat;
+  fn<Pending<Stat>(string)> stat;
   /**
    * `stat` without following the last component: the link, not its target.
    *
@@ -1921,9 +1921,9 @@ export struct Cli {
    * A host with no links answers exactly as `stat` does, `isSymlink` false — that is true rather
    * than a stand-in, since the Origin Private File System has none.
    */
-  fn[Pending<Stat>(string)] linkStat;
+  fn<Pending<Stat>(string)> linkStat;
   /** Names within a directory, or null if it is not one — or not permitted. */
-  fn[Pending<string[]?>(string)] readDir;
+  fn<Pending<string[]?>(string)> readDir;
 
   /**
    * Making, unmaking and moving. All three answer a `Change`, as `writeFile` does.
@@ -1938,9 +1938,9 @@ export struct Cli {
    * caller has to ask for the recursive form, because the recursive form is the one that
    * can destroy something it was not pointed at.
    */
-  fn[Pending<Change>(string, bool)] mkdir;
-  fn[Pending<Change>(string, bool)] remove;
-  fn[Pending<Change>(string, string)] rename;
+  fn<Pending<Change>(string, bool)> mkdir;
+  fn<Pending<Change>(string, bool)> remove;
+  fn<Pending<Change>(string, string)> rename;
 
   /**
    * Make a file executable, or stop it being one.
@@ -1961,7 +1961,7 @@ export struct Cli {
    * `Stat.isExecutable` is the reading half, and the two together are what let a checkout produce a
    * working tree `git status` calls clean.
    */
-  fn[Pending<Change>(string, bool)] setExecutable;
+  fn<Pending<Change>(string, bool)> setExecutable;
 
   /**
    * Set a file's permission bits — `issues/system/0296c`.
@@ -1985,7 +1985,7 @@ export struct Cli {
    * and `du` do with one — `box.test.ts` builds that fixture with `Deno.chmod` and could not be
    * written in wac at all.
    */
-  fn[Pending<Change>(string, i32)] chmod;
+  fn<Pending<Change>(string, i32)> chmod;
 
   /**
    * Streaming input: `openInput` chooses the source, `readChunk` pulls from it.
@@ -1999,9 +1999,9 @@ export struct Cli {
    * instead, and the previous source is closed.
    *
    * There is one current input rather than a handle per file because the transforms take
-   * `fn[u8[]()]`, which has no parameter to carry a handle in. That is a choice in those
+   * `fn<u8[]()>`, which has no parameter to carry a handle in. That is a choice in those
    * packages, not a limit of the language — wac can pass context beside a funcref, and a
-   * transform taking `fn[u8[](i32)]` could be handed a real file handle. Worth knowing
+   * transform taking `fn<u8[](i32)>` could be handed a real file handle. Worth knowing
    * before anyone repeats the design: `recv(handle)` is what it looks like done that way,
    * and standard input has a handle now precisely so `waitAny` can watch it.
    *
@@ -2019,7 +2019,7 @@ export struct Cli {
    * depending on whether the applet happened to stream. That is the drift `faultWords` exists to
    * end, and it survived in the streaming half until a differential test against `cat` caught it.
    */
-  fn[Pending<Change>(string)] openInput;
+  fn<Pending<Change>(string)> openInput;
   /**
    * **Blocking, unlike its neighbours**, and so is `write`.
    *
@@ -2027,12 +2027,12 @@ export struct Cli {
    * which the world keeps in order regardless, so there is nothing to overlap: two
    * `readChunk`s in flight is not a faster read, it is an undefined one. And they are
    * passed as bare function references to the streaming transforms in this repo —
-   * `gzipStream(cli.readChunk, cli.write)` — which expect `fn[u8[]()]` and `fn[bool(u8[])]`.
-   * A ticket-returning capability does not match those, and `fn[u8[]()]` takes no
+   * `gzipStream(cli.readChunk, cli.write)` — which expect `fn<u8[]()>` and `fn<bool(u8[])>`.
+   * A ticket-returning capability does not match those, and `fn<u8[]()>` takes no
    * parameter, so there is nowhere for an adapter to carry a ticket either.
    *
    * Note what that does *not* say. Context can travel beside a funcref in wac, as an
-   * unbound method reference — `fn[u8[](Reader)]` would work fine. What forbids it here is
+   * unbound method reference — `fn<u8[](Reader)>` would work fine. What forbids it here is
    * the transforms' own signature, which is a choice in `packages/gzip` and
    * `packages/stream` rather than anything about the language.
    *
@@ -2040,7 +2040,7 @@ export struct Cli {
    * `stat(path)`, `recv(handle)`, `connect(host)`. Those are the ones a program has reason
    * to have several of at once.
    */
-  fn[Read()] readChunk;
+  fn<Read()> readChunk;
   /**
    * Why the last `write` or `writeErr` answered false: the empty string when the other end simply
    * went away, and the host's message when the write itself failed.
@@ -2054,7 +2054,7 @@ export struct Cli {
    * 0 — so the two have to be distinguishable. Without this a full disk and a departed reader were
    * the same `false`, and every filter treated both as "my work here is done".
    */
-  fn[Pending<string>()] outputError;
+  fn<Pending<string>()> outputError;
 
   /**
    * Where `write` goes. `openOutput("")` is standard output, which is where it starts.
@@ -2076,7 +2076,7 @@ export struct Cli {
    * changes something — `writeFile`, `mkdir`, `remove`, `rename` — has carried a fault category since
    * wac-mono 0062, and this one was left behind because nothing had needed to word its failure yet.
    */
-  fn[Pending<Change>(string)] openOutput;
+  fn<Pending<Change>(string)> openOutput;
 
 
   /**
@@ -2103,12 +2103,12 @@ export struct Cli {
    * that is the shape to add" — it was left behind when the shape was added, twenty lines
    * further down, and contradicting it.
    */
-  fn[Pending<Socket>(string, i32)] connect;
-  fn[Pending<Socket>(string, i32)] listen;
-  fn[Pending<Socket>(i32)] accept;
-  fn[Pending<Read>(i32)] recv;
-  fn[Pending<bool>(i32, u8[])] send;
-  fn[void(i32)] closeSocket;
+  fn<Pending<Socket>(string, i32)> connect;
+  fn<Pending<Socket>(string, i32)> listen;
+  fn<Pending<Socket>(i32)> accept;
+  fn<Pending<Read>(i32)> recv;
+  fn<Pending<bool>(i32, u8[])> send;
+  fn<void(i32)> closeSocket;
 
   /**
    * **Say "that is all" without saying "goodbye"**: end the outbound direction and keep reading.
@@ -2133,7 +2133,7 @@ export struct Cli {
    * side. Under `--allow-net` with everything else here: the authority is "speak to something that
    * is not this process", and stopping speaking is not a second question.
    */
-  fn[void(i32)] closeSend;
+  fn<void(i32)> closeSend;
 
   /**
    * Datagrams, under the same one `--allow-net` grant.
@@ -2156,11 +2156,11 @@ export struct Cli {
    * There is no `connect` for datagrams and no `accept`. The peer is named on every `sendTo` and
    * arrives with every `receiveFrom`, which is what makes one socket serve many.
    */
-  fn[Pending<Socket>(string, i32)] bindDatagram;
+  fn<Pending<Socket>(string, i32)> bindDatagram;
   /** One datagram with its sender — see `Datagram` for why those are one answer and not two. */
-  fn[Pending<Datagram>(i32)] receiveFrom;
+  fn<Pending<Datagram>(i32)> receiveFrom;
   /** A datagram to a peer named in this call, which is the half that makes one socket serve many. */
-  fn[Pending<bool>(i32, string, i32, u8[])] sendTo;
+  fn<Pending<bool>(i32, string, i32, u8[])> sendTo;
 
 
   /**
@@ -2252,7 +2252,7 @@ export struct Cli {
    * relaying two queues cannot know which stream was written first, so `echo one; nope; echo two`
    * put the complaint after both lines. `issues/system/0282c`.
    */
-  fn[Pending<Child>(u8[], u8[][], i32, string, i32, bool)] spawn;
+  fn<Pending<Child>(u8[], u8[][], i32, string, i32, bool)> spawn;
 
   /**
    * **This same program again, as a child**, with these arguments and at most these grants.
@@ -2287,7 +2287,7 @@ export struct Cli {
    * exactly as it did. A parent that passes true and then does not serve parks its child, which is
    * the one failure this cannot make safe and the reason it is stated rather than assumed.
    */
-  fn[Pending<Child>(u8[][], i32, string, bool, bool)] spawnSelf;
+  fn<Pending<Child>(u8[][], i32, string, bool, bool)> spawnSelf;
 
   /**
    * End a spawned worker's standard input without stopping it.
@@ -2296,10 +2296,10 @@ export struct Cli {
    * end before answering — `wc` is the obvious one — needs the end to arrive while it is
    * still running, and killing it instead means it never speaks.
    */
-  fn[void(i32)] closeFeed;
+  fn<void(i32)> closeFeed;
 
   /** Wait for a spawned worker to finish. Negative if it failed to run at all. */
-  fn[Pending<i32>(i32)] exitCode;
+  fn<Pending<i32>(i32)> exitCode;
   /**
    * Where relative paths are resolved from, as the host sees it.
    *
@@ -2313,7 +2313,7 @@ export struct Cli {
    * in a browser it is `/`, the root of the Origin Private File System, because that is the
    * honest answer rather than a fiction.
    */
-  fn[Pending<string>()] cwd;
+  fn<Pending<string>()> cwd;
 
   /**
    * Run a program *inside* this one: the world a child sees, pushed and then popped.
@@ -2366,8 +2366,8 @@ export struct Cli {
    * still open any file the parent could. A real boundary is `spawn`, which is a separate worker
    * with its own grants — and which a browser cannot do yet.
    */
-  fn[Pending<bool>(string[], u8[], string, bool)] pushChild;
-  fn[Pending<Captured>()] popChild;
+  fn<Pending<bool>(string[], u8[], string, bool)> pushChild;
+  fn<Pending<Captured>()> popChild;
 
   /**
    * Run a program on the host, to completion, and hand back what it said.
@@ -2420,7 +2420,7 @@ export struct Cli {
    * caller having to read it. What it is *not* is capturable — an inherited stream goes to the real
    * file descriptor, so `pushChild`'s capture does not see it.
    */
-  fn[Pending<Exec>(string, string[], u8[], string[], bool, bool, string)] execWithIn;
+  fn<Pending<Exec>(string, string[], u8[], string[], bool, bool, string)> execWithIn;
 
   /**
    * `execWithIn` with no directory — the child runs wherever this program is.
@@ -2473,7 +2473,7 @@ export struct Cli {
    * **On this thread.** See `LoadedModule`: nothing can stop a running export, so an export that loops
    * forever hangs the caller.
    */
-  fn[LoadedModule(u8[], i32)] load;
+  fn<LoadedModule(u8[], i32)> load;
 
   /**
    * Call `name` on a loaded module, and answer what it did — including trapping.
@@ -2487,7 +2487,7 @@ export struct Cli {
    * and it is safe for the same reason `test_traps_*` has always been able to run beside its
    * neighbours, which is that wac has no module-level state for a trap to leave behind.
    */
-  fn[CallResult(i32, string, i32)] call;
+  fn<CallResult(i32, string, i32)> call;
 
   /**
    * Let a loaded module go.
@@ -2496,7 +2496,7 @@ export struct Cli {
    * have to know how far it got. Not required for correctness — a program that exits releases
    * everything — but a runner that loads a module per file would otherwise hold every one of them.
    */
-  fn[void(i32)] unload;
+  fn<void(i32)> unload;
 
   /**
    * Would the engine accept these bytes as a module? "" if it would, and why not if it would not.
@@ -2518,55 +2518,55 @@ export struct Cli {
    * the same as "these bytes are bad", so the sentence has to say which — `FAULT_UNSUPPORTED`'s words
    * rather than a bare "rejected".
    */
-  fn[string(u8[])] validated;
+  fn<string(u8[])> validated;
 
 
   /** Where this `Cli`'s tickets send their continuations — as `Core.of` does for its four. */
   Sched sched;
 
   Cli of(
-    fn[Pending<i32>()] argCount,
-    fn[Pending<u8[]>(i32)] arg,
-    fn[Pending<u8[]?>(string)] env,
-    fn[Pending<u8[]>()] readStdin,
-    fn[bool(u8[])] write,
-    fn[bool(u8[])] writeErr,
-    fn[Pending<FileResult>(string)] readFile,
-    fn[Pending<Change>(string, u8[])] writeFile,
-    fn[Pending<Stat>(string)] stat,
-    fn[Pending<Stat>(string)] linkStat,
-    fn[Pending<string[]?>(string)] readDir,
-    fn[Pending<Change>(string, bool)] mkdir,
-    fn[Pending<Change>(string, bool)] remove,
-    fn[Pending<Change>(string, string)] rename,
-    fn[Pending<Change>(string, bool)] setExecutable,
-    fn[Pending<Change>(string, i32)] chmod,
-    fn[Pending<Change>(string)] openInput,
-    fn[Read()] readChunk,
-    fn[Pending<string>()] outputError,
-    fn[Pending<Change>(string)] openOutput,
-    fn[Pending<Socket>(string, i32)] connect,
-    fn[Pending<Socket>(string, i32)] listen,
-    fn[Pending<Socket>(i32)] accept,
-    fn[Pending<Read>(i32)] recv,
-    fn[Pending<bool>(i32, u8[])] send,
-    fn[void(i32)] closeSocket,
-    fn[void(i32)] closeSend,
-    fn[Pending<Socket>(string, i32)] bindDatagram,
-    fn[Pending<Datagram>(i32)] receiveFrom,
-    fn[Pending<bool>(i32, string, i32, u8[])] sendTo,
-    fn[Pending<Child>(u8[], u8[][], i32, string, i32, bool)] spawn,
-    fn[Pending<Child>(u8[][], i32, string, bool, bool)] spawnSelf,
-    fn[void(i32)] closeFeed,
-    fn[Pending<i32>(i32)] exitCode,
-    fn[Pending<string>()] cwd,
-    fn[Pending<bool>(string[], u8[], string, bool)] pushChild,
-    fn[Pending<Captured>()] popChild,
-    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool, string)] execWithIn,
-    fn[LoadedModule(u8[], i32)] load,
-    fn[CallResult(i32, string, i32)] call,
-    fn[void(i32)] unload,
-    fn[string(u8[])] validated,
+    fn<Pending<i32>()> argCount,
+    fn<Pending<u8[]>(i32)> arg,
+    fn<Pending<u8[]?>(string)> env,
+    fn<Pending<u8[]>()> readStdin,
+    fn<bool(u8[])> write,
+    fn<bool(u8[])> writeErr,
+    fn<Pending<FileResult>(string)> readFile,
+    fn<Pending<Change>(string, u8[])> writeFile,
+    fn<Pending<Stat>(string)> stat,
+    fn<Pending<Stat>(string)> linkStat,
+    fn<Pending<string[]?>(string)> readDir,
+    fn<Pending<Change>(string, bool)> mkdir,
+    fn<Pending<Change>(string, bool)> remove,
+    fn<Pending<Change>(string, string)> rename,
+    fn<Pending<Change>(string, bool)> setExecutable,
+    fn<Pending<Change>(string, i32)> chmod,
+    fn<Pending<Change>(string)> openInput,
+    fn<Read()> readChunk,
+    fn<Pending<string>()> outputError,
+    fn<Pending<Change>(string)> openOutput,
+    fn<Pending<Socket>(string, i32)> connect,
+    fn<Pending<Socket>(string, i32)> listen,
+    fn<Pending<Socket>(i32)> accept,
+    fn<Pending<Read>(i32)> recv,
+    fn<Pending<bool>(i32, u8[])> send,
+    fn<void(i32)> closeSocket,
+    fn<void(i32)> closeSend,
+    fn<Pending<Socket>(string, i32)> bindDatagram,
+    fn<Pending<Datagram>(i32)> receiveFrom,
+    fn<Pending<bool>(i32, string, i32, u8[])> sendTo,
+    fn<Pending<Child>(u8[], u8[][], i32, string, i32, bool)> spawn,
+    fn<Pending<Child>(u8[][], i32, string, bool, bool)> spawnSelf,
+    fn<void(i32)> closeFeed,
+    fn<Pending<i32>(i32)> exitCode,
+    fn<Pending<string>()> cwd,
+    fn<Pending<bool>(string[], u8[], string, bool)> pushChild,
+    fn<Pending<Captured>()> popChild,
+    fn<Pending<Exec>(string, string[], u8[], string[], bool, bool, string)> execWithIn,
+    fn<LoadedModule(u8[], i32)> load,
+    fn<CallResult(i32, string, i32)> call,
+    fn<void(i32)> unload,
+    fn<string(u8[])> validated,
     Sched sched
   ) {
     return Cli(

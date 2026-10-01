@@ -21,10 +21,10 @@
 struct Box<T> {
   T v;
   Box<T> of(T v) { return Box<T>(v); }
-  Box<U> mapish<U>(const this, fn[U(T)] f) { return Box<U>(f(this.v)); }
+  Box<U> mapish<U>(const this, fn<U(T)> f) { return Box<U>(f(this.v)); }
 }
 export i32 f() {
   Box<i32> b = Box.of(1);
-  fn[bool()] c = () => b.mapish<bool>((i32 x) => x > 0).v;
+  fn<bool()> c = () => b.mapish<bool>((i32 x) => x > 0).v;
   return c() ? 1 : 0;
 }

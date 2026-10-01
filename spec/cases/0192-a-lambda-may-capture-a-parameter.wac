@@ -11,7 +11,7 @@
 // parameter itself and calls one that does, so the value under test is written here rather than
 // depending on how the runner calls an exported function that has one.
 i32 twice(i32 start) {
-  fn[void()] bump = () => { start = start + 20; };
+  fn<void()> bump = () => { start = start + 20; };
   bump();
   bump();
   return start;

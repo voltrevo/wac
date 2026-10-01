@@ -788,18 +788,18 @@ export i32 bitsOfFloat(f32 f) { return f as@ i32; }
     category: 'Functions',
     entry: p('callbacks.wac'),
     files: {
-      [p('callbacks.wac')]: `// A function can be a value: \`fn[i32(i32, i32)]\` is "takes two i32s, returns an i32".
+      [p('callbacks.wac')]: `// A function can be a value: \`fn<i32(i32, i32)>\` is "takes two i32s, returns an i32".
 //
 // This is the whole of how wac reaches outside itself. There is no \`extern\` and no declaration
 // form, so a module can only call what it was handed — and when the caller is JavaScript, what
-// it hands over is an ordinary closure. A module that takes no \`fn[…]\` parameter has no wasm
+// it hands over is an ordinary closure. A module that takes no \`fn<…>\` parameter has no wasm
 // imports at all.
 
 // Not exported, on purpose: a funcref is not something the panel on the right can build a
 // value for, so fold is called by the two exports below instead. From JavaScript it *is*
 // callable — that is what bindgen is for, and the site's landing page shows this same
 // function taking an ordinary closure.
-i32 fold(fn[i32(i32, i32)] f, i32[] xs) {
+i32 fold(fn<i32(i32, i32)> f, i32[] xs) {
   i32 acc = 0;
   for (i32 i = 0; i < xs.len(); i++) { acc = f(acc, xs[i]); }
   return acc;

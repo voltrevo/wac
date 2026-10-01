@@ -3,7 +3,7 @@
 // It began in `packages/tor/test/wac/`, over the JSON captures under `tor/test/data/` that the tools
 // in `packages/tor/tools/` write, and moved here when `packages/tls` wanted it too. The reason it is
 // one file is the same reason it is now one file for two packages: until 2026-08-17 each fixture was
-// parsed by a TypeScript wrapper that handed the fields over an `fn[u8[](i32, u8[], u8[])]` seam, and
+// parsed by a TypeScript wrapper that handed the fields over an `fn<u8[](i32, u8[], u8[])>` seam, and
 // removing the seam left the same six accessors written out three times, one per fixture — which is
 // how two of them quietly stop agreeing about what a missing field means. `issues/system/0161` step 4.
 //

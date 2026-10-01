@@ -19,7 +19,7 @@
  * `design/system/0001` asks for and it did not compile.
  */
 struct Holder {
-  fn[i32(i32)] f;
+  fn<i32(i32)> f;
 }
 
 export i32 f() {

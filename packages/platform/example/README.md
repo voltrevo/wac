@@ -28,7 +28,7 @@ chooses what it may do and whoever runs it cannot widen that. The shebang is exa
 head -1 wc      # #!/usr/bin/env -S deno run --allow-read
 ```
 
-A program given no grants has no capability to read a file, and a module that takes no `fn[…]`
+A program given no grants has no capability to read a file, and a module that takes no `fn<…>`
 parameter has no wasm imports at all — not "none that it uses", none in the binary.
 
 ### The two that build for a browser

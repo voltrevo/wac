@@ -330,13 +330,13 @@ string[] sources() {
     // zero-argument funcref in an array — is read by both compilers as constructing an array of the
     // type `a`, so the call needs a local first. That local is what this pins: if the collision is
     // ever resolved, this case keeps working and the issue's reproduction is what changes.
-    "i32 five() { return 5; } export i32 f() { fn[i32()][] a = fn[i32()][1](fill: five); fn[i32()] g = a[0]; return g(); }",
+    "i32 five() { return 5; } export i32 f() { fn<i32()>[] a = fn<i32()>[1](fill: five); fn<i32()> g = a[0]; return g(); }",
     // **And the form the spec argues from.** `arrays.md` justifies spelling the fill value `fill:` by
     // saying `arr[i](5)` *already means* index an array of funcrefs and call the result. That sentence
     // is load-bearing for the syntax and was not pinned anywhere: it is one argument that separates
     // this from the construction reading, so it is the case that decides whether the justification is
     // still true. `issues/lang/0265c`.
-    "i32 twice(i32 n) { return n * 2; } export i32 f() { fn[i32(i32)][] arr = fn[i32(i32)][1](fill: twice); return arr[0](5); }",
+    "i32 twice(i32 n) { return n * 2; } export i32 f() { fn<i32(i32)>[] arr = fn<i32(i32)>[1](fill: twice); return arr[0](5); }",
     // **A `match` expression whose arms are a subtype pair.** spec/spec/enums.md has the arms
     // unifying exactly as a ternary's branches do, and the *emitter* took the first arm's type as the
     // block's result and never looked at the rest — so the `else` arm's `Base` landed where a `Sub`

@@ -196,13 +196,13 @@ export enum ExprKind {
    * emitter — then has a body that is a statement list, exactly as a function does, rather than two
    * shapes each of which could be forgotten in a different pass.
    *
-   * There is no return type and no name. The return type comes from the `fn[…]` this is checked
+   * There is no return type and no name. The return type comes from the `fn<…>` this is checked
    * against, which the language always supplies: wac has no `var`, so a lambda is written into an
    * assignment, an argument or a `return`, and never floats.
    *
    * `isAsync` is `async (T x) => { … }`, and it means here what it means on a function: the body may
    * `await`, and the value handed to the slot is a `Pending<R>` rather than an `R`. The slot is what
-   * says whether that is allowed — a lambda's return type is never written, so `fn[Pending<R>(…)]` is
+   * says whether that is allowed — a lambda's return type is never written, so `fn<Pending<R>(…)>` is
    * both the permission and the type. `issues/lang/0294c`.
    */
   Lambda(Param[] params, Stmt[] body, bool isAsync),
@@ -356,7 +356,7 @@ export struct Method {
    * The method's **own** type parameters, empty for almost every method.
    *
    * A struct's letters are in scope already; these are the ones a method introduces for itself —
-   * `Pending<U> then<U>(fn[U(T)] f)`, where `U` appears only in the callback's return and so cannot
+   * `Pending<U> then<U>(fn<U(T)> f)`, where `U` appears only in the callback's return and so cannot
    * come from the owner. Inferred at the call site like a generic function's, never written.
    *
    * **Appended last**, because `Method` is built positionally in two places and a field inserted

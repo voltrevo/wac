@@ -282,42 +282,42 @@ export Cli childCliGranted(Frame f, const Cli parent, Grants g) {
   Cli c = childCli(f, parent);
 
   if (!g.read) {
-    fn[Pending<FileResult>(string)] noRead =
+    fn<Pending<FileResult>(string)> noRead =
       (string p) => readyFile(FileResult(false, u8[0](), notGranted(), FAULT_NOT_GRANTED()));
     c.readFile = noRead;
     // **`fault`, not `exists`.** `Stat` says to check the fault before trusting `exists`, precisely so
     // that "there is nothing here" and "I could not look" stay different answers — which is the whole
     // distinction a withheld capability is about.
-    fn[Pending<Stat>(string)] noStat =
+    fn<Pending<Stat>(string)> noStat =
       (string p) => readyStat(Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED()));
     c.stat = noStat;
     c.linkStat = noStat;
     string[]? nothingListed = null;
-    fn[Pending<string[]?>(string)] noDir = (string p) => readyNames(nothingListed);
+    fn<Pending<string[]?>(string)> noDir = (string p) => readyNames(nothingListed);
     c.readDir = noDir;
-    fn[Pending<Change>(string)] noOpen =
+    fn<Pending<Change>(string)> noOpen =
       (string p) => readyChange(Change.of(FAULT_NOT_GRANTED(), notGranted()));
     c.openInput = noOpen;
-    fn[Read()] noChunk = () => Read.Failed(notGranted());
+    fn<Read()> noChunk = () => Read.Failed(notGranted());
     c.readChunk = noChunk;
   }
 
   if (!g.write) {
-    fn[Pending<Change>(string, u8[])] noWrite =
+    fn<Pending<Change>(string, u8[])> noWrite =
       (string p, u8[] bytes) => readyChange(Change.of(FAULT_NOT_GRANTED(), notGranted()));
     c.writeFile = noWrite;
-    fn[Pending<Change>(string, bool)] noFlagged =
+    fn<Pending<Change>(string, bool)> noFlagged =
       (string p, bool flag) => readyChange(Change.of(FAULT_NOT_GRANTED(), notGranted()));
     c.mkdir = noFlagged;
     c.remove = noFlagged;
     c.setExecutable = noFlagged;
-    fn[Pending<Change>(string, string)] noRename =
+    fn<Pending<Change>(string, string)> noRename =
       (string a, string b) => readyChange(Change.of(FAULT_NOT_GRANTED(), notGranted()));
     c.rename = noRename;
-    fn[Pending<Change>(string, i32)] noChmod =
+    fn<Pending<Change>(string, i32)> noChmod =
       (string p, i32 mode) => readyChange(Change.of(FAULT_NOT_GRANTED(), notGranted()));
     c.chmod = noChmod;
-    fn[Pending<Change>(string)] noOut =
+    fn<Pending<Change>(string)> noOut =
       (string p) => readyChange(Change.of(FAULT_NOT_GRANTED(), notGranted()));
     c.openOutput = noOut;
   }
@@ -327,7 +327,7 @@ export Cli childCliGranted(Frame f, const Cli parent, Grants g) {
     // it: `env` cannot say whether a variable is unset or withheld. Answering anything else here would
     // invent a distinction the capability does not have.
     u8[]? unset = null;
-    fn[Pending<u8[]?>(string)] noEnv = (string name) => readyBytesOpt(unset);
+    fn<Pending<u8[]?>(string)> noEnv = (string name) => readyBytesOpt(unset);
     c.env = noEnv;
   }
 

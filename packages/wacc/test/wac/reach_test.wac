@@ -142,8 +142,8 @@ string[] expressionSources() {
     ")}/>; } string itoa(i32 v) { return \"\"; }",
     "", "", "", "", "", "", "",
     "",                                   // TypeName — a leaf here; see the label list above
-    "void f(i32 p, f64 q) { fn[i32()] g = () => " + SUB + "; }",
-    "void f(i32 p, f64 q) { fn[i32()] g = () => { return " + SUB + "; }; }");
+    "void f(i32 p, f64 q) { fn<i32()> g = () => " + SUB + "; }",
+    "void f(i32 p, f64 q) { fn<i32()> g = () => { return " + SUB + "; }; }");
 }
 
 /**

@@ -176,12 +176,12 @@ input and a path selects that file; `readChunk` pulls up to 64K and answers empt
 end.
 
 There is one *current input* rather than a handle per file, and that is forced rather than
-chosen: the transforms take `fn[u8[]()]`, which has no parameter to carry a handle into. A
+chosen: the transforms take `fn<u8[]()>`, which has no parameter to carry a handle into. A
 transform expects. The state has to live somewhere and the world is the honest place for
 it.
 
 The signatures are the reason this composes at all. `gzipStream` takes
-`fn[u8[]()]` and `fn[bool(u8[])]`, which is exactly what `readChunk` and `write` are, so
+`fn<u8[]()>` and `fn<bool(u8[])>`, which is exactly what `readChunk` and `write` are, so
 the whole of `box gzip` is:
 
 ```wac
@@ -243,7 +243,7 @@ writes exact bytes, and `hexdump <dir>` lists a directory through `stat` and `re
 ### Sockets
 
 **Sockets are handles, not a current-socket.** `openInput` and `openOutput` are
-one-at-a-time because the transforms take `fn[u8[]()]`, which has no parameter to carry a
+one-at-a-time because the transforms take `fn<u8[]()>`, which has no parameter to carry a
 handle into — that is the shape a transform expects; an `i32` in a struct has no such problem, and a server needs a
 listener and a connection open at the same time, so a current-socket could not express it.
 
@@ -400,8 +400,8 @@ Two capabilities are **not** tickets, and the second reason is the binding one. 
 something no program will overlap. `readChunk` and `write` stay blocking because they act
 on the *current* stream, which the world keeps in order anyway, and because they are handed
 to this repo's streaming transforms as bare function references —
-`gzipStream(cli.readChunk, cli.write)` wants `fn[u8[]()]` and `fn[bool(u8[])]`. A
-ticket-returning capability does not match those, and `fn[u8[]()]` has no parameter, so
+`gzipStream(cli.readChunk, cli.write)` wants `fn<u8[]()>` and `fn<bool(u8[])>`. A
+ticket-returning capability does not match those, and `fn<u8[]()>` has no parameter, so
 be no adapter to write.
 
 The rule that fell out: the capabilities worth a ticket are the ones that **name their
@@ -627,7 +627,7 @@ which is `issues/lang/0147` — `trap "…"` is the language's answer and wacc d
 
 What a continuation receives is the ticket's own value at its own type — `then` on a `Pending<i64>`
 hands the handler an `i64` — while the scheduler holding it never learns that type. It holds a
-`fn[void(i32)]`, and the wrapper closing over the ticket's `resolve` is what carries the type across.
+`fn<void(i32)>`, and the wrapper closing over the ticket's `resolve` is what carries the type across.
 That wrapper is a lambda written inside a generic, which is why none of this existed before
 `issues/lang/0142` closed.
 
@@ -818,7 +818,7 @@ of thing.
 
 The `Cli` and `Core` structs are the complete list of what an application can reach, and
 for a **wac** application that is enforced by the language: wac has no ambient anything, so
-the only way out of a module is the `fn[…]` capabilities it was handed. A wac program
+the only way out of a module is the `fn<…>` capabilities it was handed. A wac program
 cannot call `Deno.readFile` because there is no way to write it.
 
 It is *not* enforced by the runtime. The launcher spawns its worker as
@@ -1033,7 +1033,7 @@ rebuilt for the second call.** A JS closure is not a wasm function, so bindgen r
 wasm function per host function and [only sixteen per signature can be
 live](../../spec/next/8-tooling/48-bindgen.md) — registration is by identity, so passing the *same*
 closures costs one slot each, and building a new `Core` and `Cli` per run burns three more
-every time and fails on the fifth with `at most 16 distinct fn[void(i32)] functions can be
+every time and fails on the fifth with `at most 16 distinct fn<void(i32)> functions can be
 passed to this module`. So `entry.ts` builds the world once and `Bridge.rebind` points it at
 each run's buffer.
 
@@ -1044,7 +1044,7 @@ makes an application a pure function of its world.
 ## Rules that are not style
 
 **Capabilities return values; they never fill buffers.** Arrays *copy* across the
-boundary, so `fn[void(u8[])] fill` type-checks and quietly does nothing — the host's writes
+boundary, so `fn<void(u8[])> fill` type-checks and quietly does nothing — the host's writes
 land on a copy.
 
 **Capabilities are coarse.** Behind each is a thread parking and unparking: nothing per

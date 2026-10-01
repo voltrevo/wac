@@ -68,6 +68,7 @@ export string parseMessage(i32 code) {
   if (code == 31) { return "'override' is not allowed on an enum method"; }
   if (code == 32) { return "an enum method must take 'this'"; }
   if (code == 34) { return "this string cannot interpolate"; }
+  if (code == 35) { return "a function type is written fn<R(P)>"; }
   if (code == 33) { return "type arguments, and a value cannot follow them — parenthesise to compare"; }
   return "the parser refused this";
 }
@@ -267,10 +268,127 @@ export string hintFor(i32 code) {
  */
 export string parseHintFor(i32 code) {
   if (code == 21) { return "a type is a name like `i32`, `string`, or one this file declares"; }
+  if (code == 35) { return "angle brackets, the return type first: `fn<i32(i32)>`"; }
   if (code == 25) { return "a field is `type name;` — the name comes after the type"; }
   // No hint for 30: the annotation already names the keyword and the position, and this file's rule
   // is that a hint with nothing to add is filler.
   if (code == 31) { return "an enum's variants are the compiler's own subtypes, so there is nothing to override"; }
   if (code == 32) { return "`E.name()` is already how a variant is constructed, so a static method would be ambiguous"; }
   return "";
+}
+
+// ── Spelling a type for a reader ─────────────────────────────────────────────────────────────────
+
+/**
+ * `s` with every function type in it spelled the way a program writes one: `fn<R(A, B)>`.
+ *
+ * The checker keys a function type as `fn(A, B) -> R` and the emitter and the manifest wire as
+ * `fn<R(A, B)>`. Both are this compiler's own notation and neither is wac, so a diagnostic or a report
+ * that showed either would be teaching a reader a syntax the language refuses. Everything leaving the
+ * compiler for a person goes through here; the internal keys are left as they are.
+ */
+export string displayTypes(string s) {
+  return checkerFnTypes(wireFnTypes(s));
+}
+
+/** `fn<R(A)>` → `fn<R(A)>`, matching brackets so a nested or array-typed parameter survives. */
+string wireFnTypes(string s) {
+  if (s.indexOf("fn[") < 0) { return s; }
+  string out = "";
+  bool[] isFn = bool[s.len() + 1](fill: false);
+  i32 depth = 0;
+  i32 i = 0;
+  while (i < s.len()) {
+    if (i + 3 <= s.len() && s.slice(i, i + 3) == "fn[" && (i == 0 || !wordByte(s.slice(i - 1, i)))) {
+      out = out + "fn<";
+      isFn[depth] = true;
+      depth = depth + 1;
+      i = i + 3;
+      continue;
+    }
+    string c = s.slice(i, i + 1);
+    if (c == "[") {
+      isFn[depth] = false;
+      depth = depth + 1;
+      out = out + c;
+    } else if (c == "]" && depth > 0) {
+      depth = depth - 1;
+      out = out + (isFn[depth] ? ">" : "]");
+    } else {
+      out = out + c;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+/** `fn(A, B) -> R` → `fn<R(A, B)>`, recursing into both halves. */
+string checkerFnTypes(string s) {
+  if (s.indexOf("fn(") < 0) { return s; }
+  string out = "";
+  i32 i = 0;
+  while (i < s.len()) {
+    if (i + 3 <= s.len() && s.slice(i, i + 3) == "fn(" && (i == 0 || !wordByte(s.slice(i - 1, i)))) {
+      i32 close = matchingParen(s, i + 2);
+      if (close > 0 && close + 5 <= s.len() && s.slice(close + 1, close + 5) == " -> ") {
+        i32 retEnd = typeEnd(s, close + 5);
+        string params = s.slice(i + 3, close);
+        string ret = s.slice(close + 5, retEnd);
+        out = out + "fn<" + checkerFnTypes(ret) + "(" + checkerFnTypes(params) + ")>";
+        i = retEnd;
+        continue;
+      }
+    }
+    out = out + s.slice(i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+/** The index of the `)` closing the `(` at `open`, or -1. */
+i32 matchingParen(string s, i32 open) {
+  i32 depth = 0;
+  for (i32 i = open; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c == "(") { depth = depth + 1; }
+    else if (c == ")") {
+      depth = depth - 1;
+      if (depth == 0) { return i; }
+    }
+  }
+  return -1;
+}
+
+/** Where the type starting at `k` ends: a function type, or a name with its arguments and suffixes. */
+i32 typeEnd(string s, i32 k) {
+  if (k + 3 <= s.len() && s.slice(k, k + 3) == "fn(") {
+    i32 close = matchingParen(s, k + 2);
+    if (close < 0) { return s.len(); }
+    if (close + 5 <= s.len() && s.slice(close + 1, close + 5) == " -> ") { return typeEnd(s, close + 5); }
+    return close + 1;
+  }
+  i32 i = k;
+  while (i < s.len() && (wordByte(s.slice(i, i + 1)) || s.slice(i, i + 1) == ".")) { i = i + 1; }
+  if (i < s.len() && s.slice(i, i + 1) == "<") {
+    i32 depth = 0;
+    while (i < s.len()) {
+      string c = s.slice(i, i + 1);
+      if (c == "<") { depth = depth + 1; }
+      if (c == ">") {
+        depth = depth - 1;
+        if (depth == 0) { i = i + 1; break; }
+      }
+      i = i + 1;
+    }
+  }
+  while (i < s.len()) {
+    if (s.slice(i, i + 1) == "?") { i = i + 1; continue; }
+    if (i + 2 <= s.len() && s.slice(i, i + 2) == "[]") { i = i + 2; continue; }
+    break;
+  }
+  return i;
+}
+
+bool wordByte(string c) {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
 }

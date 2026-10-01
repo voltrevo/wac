@@ -17,9 +17,9 @@ import { T } from "../../src/assert.wac";
 
 export string test_a_lambda_is_a_value() {
   T t = T.create();
-  fn[i32()] answer = () => 42;
-  fn[i32(i32)] inc = (i32 a) => a + 1;
-  fn[i32(i32,i32)] mul = (i32 a, i32 b) => { return a * b; };
+  fn<i32()> answer = () => 42;
+  fn<i32(i32)> inc = (i32 a) => a + 1;
+  fn<i32(i32,i32)> mul = (i32 a, i32 b) => { return a * b; };
   t.eqI32(answer(), 42, "an expression body");
   t.eqI32(inc(41), 42, "one parameter");
   t.eqI32(mul(6, 7), 42, "a block body");
@@ -31,7 +31,7 @@ export string test_a_lambda_captures_by_reference() {
   // The lambda's write is seen out here, and the write out here is seen by the lambda. A copy would
   // answer 0 and then 20 — this is the distinction cells exist for.
   i32 n = 0;
-  fn[void()] bump = () => { n = n + 20; };
+  fn<void()> bump = () => { n = n + 20; };
   bump();
   t.eqI32(n, 20, "the lambda's write is visible outside");
   n = n + 1;
@@ -40,8 +40,8 @@ export string test_a_lambda_captures_by_reference() {
 
   // Two closures over one local share it rather than each holding a copy.
   i32 shared = 0;
-  fn[void()] add = () => { shared = shared + 21; };
-  fn[i32()] read = () => shared;
+  fn<void()> add = () => { shared = shared + 21; };
+  fn<i32()> read = () => shared;
   add();
   add();
   t.eqI32(read(), 42, "two closures, one cell");
@@ -58,7 +58,7 @@ export string test_a_lambda_captures_a_parameter() {
 // a different piece of the emitter from a captured local and is worth its own case.
 i32 twice(i32 start) {
   i32 v = start;
-  fn[void()] bump = () => { v = v + 20; };
+  fn<void()> bump = () => { v = v + 20; };
   bump();
   bump();
   return v;

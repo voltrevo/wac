@@ -33,8 +33,8 @@ struct MapEntry<K, V> {
 export struct Map<K, V> {
   MapEntry<K, V>?[] slots;
   i32 n;
-  fn[i32(K)] hash;
-  fn[bool(K, K)] eq;
+  fn<i32(K)> hash;
+  fn<bool(K, K)> eq;
 
   /**
    * An empty Map.
@@ -45,12 +45,12 @@ export struct Map<K, V> {
    *
    * The type arguments come from the declared type; the funcrefs say how K behaves.
    */
-  Map<K, V> create(fn[i32(K)] hash, fn[bool(K, K)] eq) {
+  Map<K, V> create(fn<i32(K)> hash, fn<bool(K, K)> eq) {
     return Map(MapEntry<K, V>?[8](), 0, hash, eq);
   }
 
   /** An empty Map with room for `capacity` entries before it has to grow. */
-  Map<K, V> withCapacity(i32 capacity, fn[i32(K)] hash, fn[bool(K, K)] eq) {
+  Map<K, V> withCapacity(i32 capacity, fn<i32(K)> hash, fn<bool(K, K)> eq) {
     // Slots are a power of two so the mask replaces a modulo, and the load factor is 3/4, so
     // the array has to be a third larger than the capacity asked for.
     // In i64, because both lines wrapped in i32: a large `capacity` made `want` negative, and once

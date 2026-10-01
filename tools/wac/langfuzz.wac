@@ -443,7 +443,7 @@ i64 evalCast(bool truncates, Expr a, Env e) {
 export struct Expr {
   string src;
   i32 ty;
-  fn[i64(Env)] evalIn;
+  fn<i64(Env)> evalIn;
 }
 
 /** A local in scope: its name, its type, and the block depth it was declared at. */
@@ -963,7 +963,7 @@ export struct Gen {
    * is popping back to the mark — the inner names are exactly the ones pushed after it. That avoids
    * needing to iterate the environment, which `Map` does not offer.
    */
-  void block(this, fn[void()] body) {
+  void block(this, fn<void()> body) {
     i32 mark = this.locals.len();
     string savedIndent = this.indent;
     this.depth = this.depth + 1;

@@ -138,7 +138,7 @@ export default function Language() {
             {m({ children: "Read" })}. That matters because wac has <em>nominal</em> types and no
             closures: two identical declarations are two types, and nothing can convert between
             them. Within one project that costs nothing. Across two published libraries it is fatal
-            — so a streaming transform naming {m({ children: "fn[Read()]" })} could never be handed
+            — so a streaming transform naming {m({ children: "fn<Read()>" })} could never be handed
             a reader built anywhere else.
           </P>
           <P>

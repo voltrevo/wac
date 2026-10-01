@@ -7,4 +7,4 @@ export i32 helper() { return 7; }
 // ---- main.wac ----
 import { helper } from "./a.wac";
 i32 three() { return 3; }
-export i32 f() { fn[i32()] helper = three; return helper(); }
+export i32 f() { fn<i32()> helper = three; return helper(); }

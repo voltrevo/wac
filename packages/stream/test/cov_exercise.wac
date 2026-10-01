@@ -13,7 +13,7 @@
 //
 // ## Bound method references are what make this a wac file at all — `issues/system/0161`
 //
-// `passthrough` and `upperCase` take `fn[Read()]` and `fn[bool(u8[])]`, and a driver has to supply a
+// `passthrough` and `upperCase` take `fn<Read()>` and `fn<bool(u8[])>`, and a driver has to supply a
 // pair that shares mutable state — where the reader has got to, how big a chunk is, whether the sink
 // is accepting. `Feeder` below is that state and `f.read` / `f.write` are **bound references**: the
 // receiver is in the value and nothing else is captured.
@@ -111,8 +111,8 @@ u8[][] malformed() {
 export i32 main() {
   i32 seen = 0;
   Feeder f = Feeder.create();
-  fn[Read()] read = f.read;
-  fn[bool(u8[])] write = f.write;
+  fn<Read()> read = f.read;
+  fn<bool(u8[])> write = f.write;
 
   // 1 exercises the held-fragment path at every position; a size past the end is the
   // whole-input-in-one-read case; the middle sizes land inside sequences of each width.

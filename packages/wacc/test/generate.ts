@@ -40,7 +40,7 @@ export const TYPES = [
   "Sub",
   "E",
   "Box<i32>",
-  "fn[i32(i32)]",
+  "fn<i32(i32)>",
 ];
 
 /** Binary operators, which differ in what they demand of their operands and in what they produce. */
@@ -97,7 +97,7 @@ export function generate(): Cell[] {
     add("ok-len", `export i32 f(${a}[] xs) { return xs.len(); }`);
     add("ok-call", `${a} g(${a} b) { return b; } export ${a} f(${a} a) { return g(a); }`);
     add("ok-funcref",
-      `${a} g(${a} b) { return b; } export ${a} f(${a} a) { fn[${a}(${a})] h = g; return h(a); }`);
+      `${a} g(${a} b) { return b; } export ${a} f(${a} a) { fn<${a}(${a})> h = g; return h(a); }`);
     add("ok-ternary", `export ${a} f(bool c, ${a} x, ${a} y) { return c ? x : y; }`);
     add("ok-widen", `export void f(${a} a) { ${a}? v = a; }`);
     add("ok-return-widen", `export ${a}? f(${a} a) { return a; }`);

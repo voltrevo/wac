@@ -65,7 +65,7 @@ Deno.test("a partly-run file's profile names the tests it could not run", async 
 
   const p = await profileOf(`
 export string test_runs_here() { return ""; }
-export string test_wants_an_oracle(fn[i32(i32)] ref) { return ref(1) == 1 ? "" : "no"; }
+export string test_wants_an_oracle(fn<i32(i32)> ref) { return ref(1) == 1 ? "" : "no"; }
 `);
   if (p === null) throw new Error("no profile was written for a file with a runnable test");
 
@@ -89,8 +89,8 @@ Deno.test("a file whose tests all want an oracle still writes a profile, and say
   // was asked and answered nothing or never asked, and guessing the second way is the
   // under-selection the profile exists to prevent.
   const p = await profileOf(`
-export string test_one(fn[i32(i32)] ref) { return ref(1) == 1 ? "" : "no"; }
-export string test_two(fn[i32(i32)] ref) { return ref(2) == 2 ? "" : "no"; }
+export string test_one(fn<i32(i32)> ref) { return ref(1) == 1 ? "" : "no"; }
+export string test_two(fn<i32(i32)> ref) { return ref(2) == 2 ? "" : "no"; }
 `);
   if (p === null) throw new Error("a file whose tests all want an oracle wrote no profile at all");
   if (Object.keys(p.tests).length !== 0) throw new Error(`tests: ${JSON.stringify(p.tests)}`);

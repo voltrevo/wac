@@ -12,7 +12,7 @@
 // parsed fine, because nothing there has to be disambiguated.
 //
 // **Then it was an emitter refusal, for a better reason.** `Pending<T>` puts `T` in *parameter*
-// position twice — `then(fn[void(T)] f)` and `map<U>(fn[U(T)] f)` — and `fn[void(void)]` is a
+// position twice — `then(fn<void(T)> f)` and `map<U>(fn<U(T)> f)` — and `fn<void(void)>` is a
 // callback taking a value of a type that has none. So a `void` argument now erases the parameter it
 // stood in for, which is also what you would want written by hand: a continuation on a ticket that
 // answers nothing takes no argument.
@@ -60,7 +60,7 @@ export string test_a_void_argument_erases_the_parameter_it_stood_in_for(Core cor
   string src = "struct Box<T> {\n"
              + "  i32 n;\n"
              + "  Box<T> of() { return Box<T>(0); }\n"
-             + "  void on(const this, fn[void(T)] g) { }\n"
+             + "  void on(const this, fn<void(T)> g) { }\n"
              + "}\n"
              + "export i32 main() {\n"
              + "  Box<void> b = Box.of();\n"
@@ -68,9 +68,9 @@ export string test_a_void_argument_erases_the_parameter_it_stood_in_for(Core cor
              + "  return 0;\n"
              + "}\n";
   string out = diagnoseGraph(string[](ENTRY), string[](src), ENTRY);
-  t.isTrue(contains(out, "fn() -> void"),
+  t.isTrue(contains(out, "expected fn<void()>"),
            "the target offered should have no parameter — got \"" + out + "\"");
-  t.isFalse(contains(out, "fn(void)"),
+  t.isFalse(contains(out, "fn<void(void)>"),
             "and must not offer one of type void, which nothing can satisfy — got \"" + out + "\"");
   return t.report();
 }

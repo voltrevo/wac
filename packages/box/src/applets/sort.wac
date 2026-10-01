@@ -29,7 +29,7 @@ export i32 sort(Core core, Cli cli, Fs fs, Args a) {
   // stability. `-u` is the exception, and the reason the comparison is chosen here rather than inside
   // `cmpNumeric`: uniqueness is the key's alone, so `1` and `01` are one line and the survivor is the
   // first in input order — which is the stable sort's answer with no last resort applied.
-  fn[i32(u8[], u8[])] order = cmpBytes;
+  fn<i32(u8[], u8[])> order = cmpBytes;
   if (numeric) { order = unique ? cmpNumeric : cmpNumericThenBytes; }
   u8[][] sorted = mergeSortWith(lines, n, order);
 

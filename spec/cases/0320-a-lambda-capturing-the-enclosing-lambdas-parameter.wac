@@ -22,8 +22,8 @@
  */
 export i32 f() {
   i32[] n = i32[1]();
-  fn[void(i32)] outer = (i32 a) => {
-    fn[void()] inner = () => { n[0] = a + 1; };
+  fn<void(i32)> outer = (i32 a) => {
+    fn<void()> inner = () => { n[0] = a + 1; };
     inner();
   };
   outer(41);

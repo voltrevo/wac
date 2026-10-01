@@ -625,7 +625,7 @@ export string test_a_duplicate_method_and_a_second_default_are_refused() {
  * is not — a criticism worth acting on rather than copying.
  *
  * `P.m` is deliberately absent from this test: an instance method reached through its type is a legal
- * **unbound** reference, an `fn[i32(P)]` taking the receiver first, and rung 4 has seven programs
+ * **unbound** reference, an `fn<i32(P)>` taking the receiver first, and rung 4 has seven programs
  * passing those around. It is refused in an `i32` slot by the ordinary mismatch rule, not by this one.
  */
 export string test_a_name_through_a_struct_says_which_of_the_two_it_is() {
@@ -644,7 +644,7 @@ export string test_a_name_through_a_struct_says_which_of_the_two_it_is() {
   }
   // A static method through the type is a value, so neither row above is met by refusing `P.<name>`.
   i32 fine = dumpTypeErrors(
-      "struct P { i32 v; i32 s() { return 1; } } export i32 f() { fn[i32()] g = P.s; return g(); }\n"
+      "struct P { i32 v; i32 s() { return 1; } } export i32 f() { fn<i32()> g = P.s; return g(); }\n"
           .toBytes()).len() / 3;
   t.eqI32(fine, 0, "refused a static method taken as a value");
   return t.report();
@@ -800,7 +800,7 @@ string[] names2() {
     "b01 take(MESSAGE), imported funcref as i32", "b02 i32 x = MESSAGE, imported",
     "b03 dbl(s) for imported dbl(i32)", "b04 return imported i32 from a string function",
     "b05 dbl(1, 2) for imported dbl(i32)", "b06 p.v() for an imported struct's field",
-    "b07 fn[i32(string)] g = imported dbl(i32)");
+    "b07 fn<i32(string)> g = imported dbl(i32)");
 }
 
 /** The imported file for each row, parallel to `names2`. */
@@ -828,7 +828,7 @@ string[] imps2() {
     // **The signature is compared now, which it was not.** Before `issues/lang/0180a` an imported
     // name had no type at all, so no funcref declaration could disagree with it; the message names
     // both sides — `expected fn(string) -> i32, found fn(i32) -> i32`.
-    "import { dbl } from \"./lib.wac\";\nexport i32 f() { fn[i32(string)] g = dbl; return 0; }\n");
+    "import { dbl } from \"./lib.wac\";\nexport i32 f() { fn<i32(string)> g = dbl; return 0; }\n");
 }
 
 export string test_every_two_file_ill_typed_program_is_refused_by_the_checker() {

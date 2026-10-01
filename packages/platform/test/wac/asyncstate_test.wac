@@ -64,12 +64,12 @@ Pending<i32> fileSize(Cli cli, string path) {
   Frame fr = Frame(0, cli, path, null, 0, false);
   // Eager — D1. The call runs the body as far as the first await and no further.
   step(fr);
-  fn[i32(i32)] res = (i32 id) => {
+  fn<i32(i32)> res = (i32 id) => {
     while (!fr.done) { step(fr); }
     return fr.result;
   };
-  fn[bool(i32)] set = (i32 id) => fr.done;
-  fn[void(i32)] drp = (i32 id) => { };
+  fn<bool(i32)> set = (i32 id) => fr.done;
+  fn<void(i32)> drp = (i32 id) => { };
   // `waitable` — this resolver drives the machine, so waiting on it advances it.
   return Pending<i32>(0 - 1, res, set, drp, null, true);
 }
@@ -129,9 +129,9 @@ bool lstep(LFrame fr) {
 Pending<i32> sumOf(Cli cli, string[] paths) {
   LFrame fr = LFrame(0, cli, paths, 0, 0, null, 0, false);
   lstep(fr);
-  fn[i32(i32)] res = (i32 id) => { while (!fr.done) { lstep(fr); } return fr.result; };
-  fn[bool(i32)] set = (i32 id) => fr.done;
-  fn[void(i32)] drp = (i32 id) => { };
+  fn<i32(i32)> res = (i32 id) => { while (!fr.done) { lstep(fr); } return fr.result; };
+  fn<bool(i32)> set = (i32 id) => fr.done;
+  fn<void(i32)> drp = (i32 id) => { };
   // `waitable` — this resolver drives the machine, so waiting on it advances it.
   return Pending<i32>(0 - 1, res, set, drp, null, true);
 }

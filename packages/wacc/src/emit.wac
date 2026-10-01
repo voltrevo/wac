@@ -1,5 +1,10 @@
 // Rung 4, first slice: a wasm module that runs.
 //
+// **A function type is keyed `fn[R(P)]` in this file**, and in the manifest wire it writes, while the
+// language writes it `fn<R(P)>`. The key is this emitter's own notation — a string whose identity is the
+// type's — and the comments below use it where they describe a key. What a reader is shown goes through
+// `diag.wac`'s `displayTypes`, which spells it as a program does.
+//
 // The ladder's oracle for this rung is deliberately *not* byte identity with the reference — see the
 // README — but a canonical module form beside the one already sitting in this repository for nothing:
 // **compile a program and run it**. That oracle needs something to run, and nothing here emitted a

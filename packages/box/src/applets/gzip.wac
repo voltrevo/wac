@@ -1,8 +1,8 @@
 // Compress standard input, or a file, to standard output.
 //
-// The whole applet is one call. `gzipStream` wants `fn[u8[]()]` and `fn[bool(u8[])]`, which
+// The whole applet is one call. `gzipStream` wants `fn<u8[]()>` and `fn<bool(u8[])>`, which
 // is exactly what `readChunk` and `write` are — so the capabilities are handed over
-// directly. `fn[u8[]()]` has no parameter, so an adapter would have nowhere to keep a
+// directly. `fn<u8[]()>` has no parameter, so an adapter would have nowhere to keep a
 // ticket or a handle — which is why those two capabilities stayed blocking rather than
 // joining the rest on the ticket surface.
 //

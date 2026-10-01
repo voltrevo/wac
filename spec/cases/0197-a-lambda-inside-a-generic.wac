@@ -19,8 +19,8 @@
 
 T hold<T>(T v, i32 bump) {
   // Captures both `v`, whose type is the parameter, and `bump`, whose type is not.
-  fn[T()] get = () => v;
-  fn[i32()] extra = () => bump;
+  fn<T()> get = () => v;
+  fn<i32()> extra = () => bump;
   return extra() == 0 ? get() : get();
 }
 

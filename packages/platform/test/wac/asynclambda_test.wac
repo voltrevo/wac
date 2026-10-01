@@ -1,12 +1,12 @@
 // `async` lambdas — `issues/lang/0294c`, the increment after `design/lang/0014`.
 //
-// A lambda never writes a return type: the `fn[…]` it is assigned to supplies one. So the slot is
-// both the permission and the type — `fn[Pending<R>(…)]` is what allows `async` here and what says
+// A lambda never writes a return type: the `fn<…>` it is assigned to supplies one. So the slot is
+// both the permission and the type — `fn<Pending<R>(…)>` is what allows `async` here and what says
 // what the ticket carries. That is D3's rule for functions read backwards, and it is why there is no
 // new syntax for the return type and no inference to argue about.
 //
 // **The issue's own motivating example does not typecheck**, which was worth finding out before
-// building for it: it was `p.then(async (Socket s) => …)`, and `then` takes `fn[void(T)]` — a slot
+// building for it: it was `p.then(async (Socket s) => …)`, and `then` takes `fn<void(T)>` — a slot
 // that wants no ticket. An `async` lambda has to be written into a slot that names one, which in
 // practice means a declaration, and a declaration is exactly where the type is available.
 
@@ -27,7 +27,7 @@ export string test_an_async_lambda_answers_its_ticket(Core core, Cli cli) {
   // The whole feature in four lines: `async` on a lambda, an `await` in its body, and a slot that
   // says the value is a ticket. `cli` is captured, which is the thing a lambda has and a top-level
   // `async` function has to be handed.
-  fn[Pending<i32>(string)] size = async (string p) => {
+  fn<Pending<i32>(string)> size = async (string p) => {
     FileResult f = await cli.readFile(p);
     if (!f.ok) { return 0 - 1; }
     return f.bytes.len();
@@ -43,7 +43,7 @@ export string test_an_async_lambda_answers_its_ticket(Core core, Cli cli) {
 export string test_an_async_lambda_completes_under_drain(Core core, Cli cli) {
   T t = T.create();
   i32 want = sizeOf(cli, "README.md");
-  fn[Pending<i32>(string)] size = async (string p) => {
+  fn<Pending<i32>(string)> size = async (string p) => {
     FileResult f = await cli.readFile(p);
     if (!f.ok) { return 0 - 1; }
     return f.bytes.len();
@@ -64,7 +64,7 @@ export string test_a_parameter_survives_the_suspension(Core core, Cli cli) {
   // directly; in a lambda that is an inner lambda capturing the enclosing lambda's parameter, which
   // emits a module the engine rejects — `issues/lang/0296c`. The lowering copies the parameter into
   // a declared cell first, so what is captured is a declaration.
-  fn[Pending<string>(string)] describe = async (string p) => {
+  fn<Pending<string>(string)> describe = async (string p) => {
     FileResult f = await cli.readFile(p);
     if (!f.ok) { return p + "=no"; }
     return p + "=ok";
@@ -76,7 +76,7 @@ export string test_a_parameter_survives_the_suspension(Core core, Cli cli) {
 export string test_two_async_lambdas_overlap(Core core, Cli cli) {
   T t = T.create();
   i32 want = sizeOf(cli, "README.md");
-  fn[Pending<i32>(string)] size = async (string p) => {
+  fn<Pending<i32>(string)> size = async (string p) => {
     FileResult f = await cli.readFile(p);
     if (!f.ok) { return 0 - 1; }
     return f.bytes.len();
@@ -99,7 +99,7 @@ export string test_an_async_lambda_with_a_loop(Core core, Cli cli) {
 
   // A suspension inside a loop, in a lambda — the same shape A1 needed from a function, and the one
   // a continuation-passing lowering cannot express without hoisting every step by hand.
-  fn[Pending<i32>(string[])] total = async (string[] paths) => {
+  fn<Pending<i32>(string[])> total = async (string[] paths) => {
     i32 sum = 0;
     for (i32 i = 0; i < paths.len(); i++) {
       FileResult f = await cli.readFile(paths[i]);

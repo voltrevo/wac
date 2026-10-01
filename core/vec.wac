@@ -182,7 +182,7 @@ export struct Vec<T> {
    *
    * Left, and by index, so the order is the vector's and a caller may rely on it.
    */
-  U fold<U>(const this, U seed, fn[U(U, T)] f) {
+  U fold<U>(const this, U seed, fn<U(U, T)> f) {
     U acc = seed;
     for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.data[i]); }
     return acc;

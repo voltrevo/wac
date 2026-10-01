@@ -8,7 +8,7 @@
 // This is not a test file and is not discovered as one: `wac test` walks `*_test.wac`.
 //
 // It was a TypeScript wrapper in each of those files until 2026-08-17, doing exactly this and
-// handing the result over an `fn[u8[](i32, u8[], u8[])]` seam. `issues/system/0161` step 4.
+// handing the result over an `fn<u8[](i32, u8[], u8[])>` seam. `issues/system/0161` step 4.
 
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";

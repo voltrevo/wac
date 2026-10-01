@@ -519,7 +519,7 @@ struct TestExport {
   /**
    * **Whether it declares a parameter this runner cannot supply**, which means it wants an *oracle*.
    *
-   * A test taking `fn[i32(i32)]` — or any type that is not `Core` or `Cli` — is asking for an
+   * A test taking `fn<i32(i32)>` — or any type that is not `Core` or `Cli` — is asking for an
    * independent implementation to compare against, and a *host* is what has one. 31 of this
    * repository's wac test files are entirely of that kind and 17 more are mixed. `Cli.call` reports
    * such a call as status 3, "a signature this cannot call", and treating that as a failure is the

@@ -87,7 +87,7 @@ export enum Object {
    *
    * It was renamed because it had to be: wacc resolved a struct field's written type as it walked,
    * before the file that declared the type had been walked, so declaring this `Read` retyped every
-   * `fn[Read()]` in `packages/platform` as this enum and emitted a module no engine would load. That
+   * `fn<Read()>` in `packages/platform` as this enum and emitted a module no engine would load. That
    * is `issues/lang/0097`, now **closed** — fields are re-resolved in a second pass, and the
    * three-file reduction of it emits valid wasm again, so the name is no longer forced.
    *

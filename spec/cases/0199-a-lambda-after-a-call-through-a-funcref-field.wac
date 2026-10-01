@@ -6,7 +6,7 @@
 // **`w.make(21).run((i32 v) => …)`.** The walk that gives every lambda a target type asked one question
 // about a receiver that is itself a call — *which method is this?* — and a capability call is not a
 // method call. `core.delay(1)` is a method on `Core` and worked; `core.randomBytes(8)` reads a
-// `fn[Pending<u8[]>(i32)]` field and calls it, so the answer's type was unknown, so the method on it
+// `fn<Pending<u8[]>(i32)>` field and calls it, so the answer's type was unknown, so the method on it
 // was unknown, so a lambda argument had no target and the whole module was declined by name.
 //
 // The consequence was the shape of the fix rather than its size: every capability in
@@ -16,15 +16,15 @@
 
 struct Box<T> {
   i32 seed;
-  fn[T(i32)] get;
+  fn<T(i32)> get;
 
-  Box<T> of(i32 seed, fn[T(i32)] get) { return Box<T>(seed, get); }
+  Box<T> of(i32 seed, fn<T(i32)> get) { return Box<T>(seed, get); }
 
   /** Answers the owner instantiated, so this is a receiver a further method can be called on. */
   Box<T> bumped(const this, i32 by) { return Box<T>(this.seed + by, this.get); }
 
-  /** The lambda's target type is `fn[void(T)]`, which is the thing the walk has to know. */
-  void run(const this, fn[void(T)] take) { take(this.get(this.seed)); }
+  /** The lambda's target type is `fn<void(T)>`, which is the thing the walk has to know. */
+  void run(const this, fn<void(T)> take) { take(this.get(this.seed)); }
 }
 
 i32 twice(i32 x) { return x * 2; }
@@ -33,8 +33,8 @@ Box<i32> boxAt(i32 seed) { return Box.of(seed, twice); }
 
 /** A world that answers through a funcref field, which is what every capability does. */
 struct World {
-  fn[Box<i32>(i32)] make;
-  World of(fn[Box<i32>(i32)] make) { return World(make); }
+  fn<Box<i32>(i32)> make;
+  World of(fn<Box<i32>(i32)> make) { return World(make); }
 }
 
 export i32 f() {

@@ -372,20 +372,20 @@ const programs: [string, string, number][] = [
 
   ["a funcref parameter, called", `
     i32 add(i32 a, i32 b) { return a + b; }
-    i32 apply(fn[i32(i32, i32)] f, i32 x, i32 y) { return f(x, y); }
-    i32 main() { fn[i32(i32, i32)] g = add; return apply(g, 40, 2); }`, 42],
+    i32 apply(fn<i32(i32, i32)> f, i32 x, i32 y) { return f(x, y); }
+    i32 main() { fn<i32(i32, i32)> g = add; return apply(g, 40, 2); }`, 42],
 
   // The funcref is on the stack before its arguments and `call_ref` wants it after, so it is parked
   // in a slot while they are emitted.
   ["a funcref in a struct field, called", `
     i32 dbl(i32 n) { return n * 2; }
-    struct Op { fn[i32(i32)] f; }
-    i32 main() { fn[i32(i32)] d = dbl; Op o = Op(d); return o.f(21); }`, 42],
+    struct Op { fn<i32(i32)> f; }
+    i32 main() { fn<i32(i32)> d = dbl; Op o = Op(d); return o.f(21); }`, 42],
 
   ["a funcref returned", `
     i32 dbl(i32 n) { return n * 2; }
-    fn[i32(i32)] pick() { return dbl; }
-    i32 main() { fn[i32(i32)] f = pick(); return f(21); }`, 42],
+    fn<i32(i32)> pick() { return dbl; }
+    i32 main() { fn<i32(i32)> f = pick(); return f(21); }`, 42],
 
   // --- what real wac needed
 
@@ -526,7 +526,7 @@ const programs: [string, string, number][] = [
 
   ["a generic free function, declared and not called", `
     enum Option<T> { Some(T v), None }
-    Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) { return Option.None; }
+    Option<U> mapOption<T, U>(Option<T> o, fn<U(T)> f) { return Option.None; }
     i32 main() { Option<i32> a = Some(4); return match (a) { case Some(v): v, case None: 0 }; }`, 4],
 
   // **Three features that went in on a throwaway probe and were never pinned.** Each was checked

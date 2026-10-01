@@ -88,7 +88,7 @@ Deno.test("bindgen: the generated glue calls the module and answers what wac ans
 /**
  * A callback that itself takes a wac function — the case the reference covers and this did not.
  *
- * `higher(fn[i32(fn[i32(i32)])] h)` hands JavaScript a *function* it must be able to call. The
+ * `higher(fn<i32(fn<i32(i32)>)> h)` hands JavaScript a *function* it must be able to call. The
  * reference's generator does it by handing over the funcref's slot and wrapping it:
  * `$cbs1[$slot](((_f) => (a0) => $exports.$bind$callref_0(_f, a0))(a0))`, so what crosses is a handle
  * and a call back into the module, not a WasmGC reference — which is what `design/lang/0002` gave as
@@ -99,7 +99,7 @@ Deno.test("bindgen: the generated glue calls the module and answers what wac ans
  * calls it with 41, and the answer has to be what the wac program computes.
  */
 Deno.test("bindgen: a callback that takes a wac function crosses, and the function it is handed works", async () => {
-  const src = `export i32 higher(fn[i32(fn[i32(i32)])] h) { return h(inc); }
+  const src = `export i32 higher(fn<i32(fn<i32(i32)>)> h) { return h(inc); }
 i32 inc(i32 a) { return a + 1; }
 `;
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
@@ -174,9 +174,9 @@ Deno.test("bindgen: what it cannot bind is named, not silently skipped", () => {
   const src = `struct P { i32 x; }
 export i32 fine(i32 n) { return n; }
 export P makeP(i32 n) { return P(n); }
-export i32 viaCallback(fn[i32(i32)] cb) { return cb(1); }
-export fn[i32(i32)] handOut() { return fine; }
-export i32 higher(fn[i32(fn[i32(i32)])] h) { return 0; }
+export i32 viaCallback(fn<i32(i32)> cb) { return cb(1); }
+export fn<i32(i32)> handOut() { return fine; }
+export i32 higher(fn<i32(fn<i32(i32)>)> h) { return 0; }
 `;
   const sigs = parseSigs(exportSigs(["m.wac"], [src], "m.wac"));
   const wire = bindTypes(["m.wac"], [src], "m.wac");
@@ -197,7 +197,7 @@ export i32 higher(fn[i32(fn[i32(i32)])] h) { return 0; }
   // The shape that is still declined, kept here because "nothing is declined" is a claim that needs a
   // boundary: a callback that *returns* a wac function is JavaScript handing one in, which needs a
   // registration this generator does not write. `unsupported` must still say so.
-  const retSrc = `export i32 backwards(fn[fn[i32(i32)](i32)] h) { return 0; }\n`;
+  const retSrc = `export i32 backwards(fn<fn<i32(i32)>(i32)> h) { return 0; }\n`;
   const retSigs = parseSigs(exportSigs(["r.wac"], [retSrc], "r.wac"));
   const retWire = bindTypes(["r.wac"], [retSrc], "r.wac");
   const retDeclined = unsupported(
@@ -273,9 +273,9 @@ Deno.test("bindgen: a struct and an enum cross as classes holding the reference"
 });
 
 Deno.test("bindgen: a JavaScript function crosses as a callback wac can call", async () => {
-  const src = `export i32 twice(fn[i32(i32)] cb) { return cb(1) + cb(2); }
-export i32 apply(fn[i32(i32)] f, i32 n) { return f(f(n)); }
-export bool anyOf(fn[bool(i32)] p, i32 a, i32 b) { return p(a) || p(b); }
+  const src = `export i32 twice(fn<i32(i32)> cb) { return cb(1) + cb(2); }
+export i32 apply(fn<i32(i32)> f, i32 n) { return f(f(n)); }
+export bool anyOf(fn<bool(i32)> p, i32 a, i32 b) { return p(a) || p(b); }
 `;
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
   const wire = bindTypes(["m.wac"], [src], "m.wac");
@@ -310,7 +310,7 @@ Deno.test("bindgen: the seventeenth distinct callback is a diagnosis, not a wron
   // Its own module, because the slots are per instance and per signature: a test that had already
   // passed two functions in was measuring 14 rather than 16, which is how this was written the
   // first time.
-  const src = `export i32 apply(fn[i32(i32)] f, i32 n) { return f(n); }\n`;
+  const src = `export i32 apply(fn<i32(i32)> f, i32 n) { return f(n); }\n`;
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
   const wire = bindTypes(["m.wac"], [src], "m.wac");
   const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
@@ -338,8 +338,8 @@ Deno.test("bindgen: the seventeenth distinct callback is a diagnosis, not a wron
 Deno.test("bindgen: a wac function crosses out as a closure, and back in as a callback", async () => {
   const src = `i32 double(i32 n) { return n * 2; }
 i32 negate(i32 n) { return 0 - n; }
-export fn[i32(i32)] pick(bool d) { return d ? double : negate; }
-export i32 twice(fn[i32(i32)] cb) { return cb(1) + cb(2); }
+export fn<i32(i32)> pick(bool d) { return d ? double : negate; }
+export i32 twice(fn<i32(i32)> cb) { return cb(1) + cb(2); }
 `;
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
   const wire = bindTypes(["m.wac"], [src], "m.wac");

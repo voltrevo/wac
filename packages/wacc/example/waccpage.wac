@@ -55,18 +55,18 @@ const string ONE_FN =
   "// One function parameter, and one import appears: `wac.cb0`, the dispatcher\n" +
   "// the host calls back through. Nothing else about the program changed.\n" +
   "\n" +
-  "export i32 twice(fn[i32(i32)] f) {\n" +
+  "export i32 twice(fn<i32(i32)> f) {\n" +
   "  return f(2) + f(3);\n" +
   "}\n";
 
 const string TWO_FN =
   "// Two exports, both taking a function of the same shape — and still *one*\n" +
   "// import. The dispatcher is per signature, not per parameter, which is the\n" +
-  "// part that surprises people. Change one to fn[i32(i32,i32)] and a second\n" +
+  "// part that surprises people. Change one to fn<i32(i32,i32)> and a second\n" +
   "// appears.\n" +
   "\n" +
-  "export i32 a(fn[i32(i32)] f) { return f(1); }\n" +
-  "export i32 b(fn[i32(i32)] g) { return g(2); }\n";
+  "export i32 a(fn<i32(i32)> f) { return f(1); }\n" +
+  "export i32 b(fn<i32(i32)> g) { return g(2); }\n";
 
 string hexOf(u8[] b) { return string.fromBytes(encode(b)); }
 

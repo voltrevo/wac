@@ -11,7 +11,7 @@
 import { Pending } from "std/platform.wac";
 
 export struct Cap1 {
-  fn[Pending<i32>()] f0;
+  fn<Pending<i32>()> f0;
 }
 
 export i32 main(Cap1 c) {

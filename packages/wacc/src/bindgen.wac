@@ -17,6 +17,7 @@
 // and is load-bearing — a helper used by a class has to exist before the class that calls it.
 
 import { orVoid, splitTop } from "./manifest.wac";
+import { displayTypes } from "./diag.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { field, linesOf } from "./text.wac";
 
@@ -1054,5 +1055,5 @@ export string bindgenDeclined(string sigs, string wire) {
       }
     }
   }
-  return out;
+  return displayTypes(out);
 }

@@ -74,7 +74,7 @@ export enum Backing {
    * rather than a grant, so a session built with no filesystem permissions at all still has one — which
    * is what lets `sealed` mount `/dev` without stopping being sealed.
    */
-  Synth(fn[Pending<u8[]>(i32)] randomBytes),
+  Synth(fn<Pending<u8[]>(i32)> randomBytes),
   /**
    * **Another process's filesystem**, reached by asking it — see `remote.wac`, and wac-mono 0116.
    *
@@ -281,7 +281,7 @@ export struct Fs {
    * Two mounts rather than one because mounts are longest-prefix and the two trees are unrelated; what
    * each holds is decided by `synthNames` from the mount point.
    */
-  void mountSynth(this, string at, fn[Pending<u8[]>(i32)] randomBytes) {
+  void mountSynth(this, string at, fn<Pending<u8[]>(i32)> randomBytes) {
     this.mounts.push(Mount(trimSlash(at), Backing.Synth(randomBytes), -1));
   }
 
@@ -412,7 +412,7 @@ export struct Fs {
    * reading it gives one line saying what it is. `ls /bin` is the truth; `cp /bin/wc elsewhere` gets a
    * sentence rather than a program, and says so in the sentence.
    */
-  void mountBin(this, Vec<string> programs, fn[Pending<u8[]>(i32)] randomBytes) {
+  void mountBin(this, Vec<string> programs, fn<Pending<u8[]>(i32)> randomBytes) {
     this.programs = programs;
     // **No programs, no `/bin`.** A build that wired no applets — `packages/ssh`'s server is one —
     // would otherwise show an empty directory where the programs are meant to be, which claims more
@@ -1204,7 +1204,7 @@ string[] withMountsUnder(Fs fs, string path, string[] own) {
  * `packages/box`'s `Args.name` problem in another place — so each entry point states what it is. Pass
  * the arguments alone and `ps` shows a shell called `-c`.
  */
-export i32 mountSystem(Fs fs, fn[Pending<u8[]>(i32)] randomBytes, Vec<string> argv,
+export i32 mountSystem(Fs fs, fn<Pending<u8[]>(i32)> randomBytes, Vec<string> argv,
                       Vec<string> programs) {
   fs.mountSynth("/dev", randomBytes);
   fs.mountSynth("/proc", randomBytes);
@@ -1323,7 +1323,7 @@ string procStatus(Proc p) {
  * The refusal names the file and the way to read it, because "is a directory"-style categories cannot
  * carry it: a caller that gets `FAULT_OTHER` with no sentence learns nothing it can act on.
  */
-FileResult synthRead(Fs fs, Mount m, string path, fn[Pending<u8[]>(i32)] randomBytes, i32 n) {
+FileResult synthRead(Fs fs, Mount m, string path, fn<Pending<u8[]>(i32)> randomBytes, i32 n) {
   i32 kind = synthKind(fs, m, path);
   if (kind == SYNTH_NONE()) {
     return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());

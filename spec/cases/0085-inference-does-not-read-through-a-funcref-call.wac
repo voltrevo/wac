@@ -3,4 +3,4 @@
 // why: nothing a reader can name — `T` is not evident here
 T id<T>(T a) { return a; }
 i32 inc(i32 a) { return a + 1; }
-export i32 f() { fn[i32(i32)] g = inc; return id(g(1)); }
+export i32 f() { fn<i32(i32)> g = inc; return id(g(1)); }

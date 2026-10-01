@@ -4,7 +4,7 @@
 //
 // **A receiver that names an instantiation carries its own `T`.** `0141` made a lambda reach a
 // generic *static* by binding `T` from the slot the call lands in. An instance method has no such
-// slot and does not need one — `hs` is a `Vec<fn[i32(i32)]>` and says so — but the method table is
+// slot and does not need one — `hs` is a `Vec<fn<i32(i32)>>` and says so — but the method table is
 // keyed by the template it was declared in, so the parameter arrived spelled `T` and the diagnostic
 // was *expected T, found a lambda*.
 //
@@ -30,7 +30,7 @@ struct Box<T> {
 
 export i32 f() {
   // `create` is a generic *static*, and binds `T` from the slot — `issues/lang/0141`.
-  Box<fn[i32(i32)]> hs = Box.create((i32 n) => n);
+  Box<fn<i32(i32)>> hs = Box.create((i32 n) => n);
   i32 base = 40;
 
   // `push` is an instance method, and binds `T` from the receiver, which is what this case is about.

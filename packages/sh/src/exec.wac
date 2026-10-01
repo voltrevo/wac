@@ -218,7 +218,7 @@ export struct Shell {
    * has to read the one the shell is talking to, or a session on an image lists one filesystem and reads
    * another (wac-mono 0109).
    */
-  fn[Output(Core, Cli, Fs, string, Vec<string>, u8[], bool)] external;
+  fn<Output(Core, Cli, Fs, string, Vec<string>, u8[], bool)> external;
 
   /**
    * What `external` will answer to, for `help` to list.
@@ -230,7 +230,7 @@ export struct Shell {
    * `help` existing and being wrong is worse than `help` being short: the browser terminal
    * advertised sixty programs while this listed twelve and blamed a closed issue for it.
    */
-  fn[string[]()] externalNames;
+  fn<string[]()> externalNames;
 
   /**
    * Whether `externalNames` are applets of *this very program*, so they can be spawned rather than
@@ -260,7 +260,7 @@ export struct Shell {
    * **One value, since `design/lang/0002` tier one.** This was a funcref *and* an `anyref` context,
    * threaded through two fields and rejoined by a downcast at every call — a closure spelled out by
    * hand, which is what the language had no way to say. `keys.arrived` is a bound method reference
-   * now: an ordinary `fn[bool()]` with the receiver inside it, and the shell holds one field.
+   * now: an ordinary `fn<bool()>` with the receiver inside it, and the shell holds one field.
    *
    * The thing to ask is still not the shell's, which is why it is a funcref at all:
    * over ssh the keystrokes arrive on an encrypted socket that only `packages/ssh`'s `Conn` can
@@ -271,7 +271,7 @@ export struct Shell {
    *
    * Null is the ordinary case and costs nothing: a shell with no terminal has nobody to ask.
    */
-  fn[bool()]? askInterrupt;
+  fn<bool()>? askInterrupt;
   /**
    * Whether an interrupt is unwinding the current script.
    *

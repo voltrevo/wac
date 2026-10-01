@@ -229,7 +229,7 @@ string[] WRONG() {
     // position and no message. The reference refuses all three here.
     //
     // The fourth member of the family is not in this list because it is **legal**: `Base.get` is an
-    // unbound method reference, an `fn[i32(Base)]` taking the receiver first, and rung 4 has seven
+    // unbound method reference, an `fn<i32(Base)>` taking the receiver first, and rung 4 has seven
     // programs passing them to functions and storing them in arrays. The first version of this rule
     // refused those, and that corpus is what said so.
     "struct P { i32 v; } export i32 f() { return P.nope; }",
@@ -297,7 +297,7 @@ string[] CLEAN() {
     // *nullable* funcref is the ordinary way to ask whether one was supplied, which is why the rule was
     // written to skip funcrefs in the first place. A legal compound assignment and a widening cast are
     // the other two, so none of those fixes can be satisfied by refusing the construct outright.
-    "export void n(fn[i32(i32)]? a) { bool r = a is null; }",
+    "export void n(fn<i32(i32)>? a) { bool r = a is null; }",
     "export void p(i32 a, i32 b) { a += b; }",
     "export void q(i32 a) { i64 v = a as i64; }",
     "export f64 g() { return 1.5; }",
@@ -420,7 +420,7 @@ export string test_a_local_used_as_a_type_name_is_reported_in_every_position() {
     "export void g() { i32 zz = 1; zz[1](); }",
     "export i32 g() { i32 zz = 1; return zz[1](); }",
     "export void g() { i32 zz = 1; zz? q = null; }",
-    "i32 h(i32 n) { return n; } export void g() { i32 zz = 1; fn[i32(zz)] f = h; }",
+    "i32 h(i32 n) { return n; } export void g() { i32 zz = 1; fn<i32(zz)> f = h; }",
     "struct Box<T> { T v; } export void g() { i32 zz = 1; Box<zz> b = Box<zz>(zz); }");
   for (i32 i = 0; i < bad.len(); i++) {
     t.isTrue(ours(bad[i]).len() > 0, "no diagnostic for " + bad[i]);
@@ -435,8 +435,8 @@ export string test_a_local_used_as_a_type_name_is_reported_in_every_position() {
     "export i32 f() { i32? q = null; return q is null ? 0 : q!; }",
     // `issues/lang/0265c`'s workaround: the funcref comes out of the array through a local, which is
     // the spelling that works while `a[0]()` reads as a construction.
-    "i32 five() { return 5; } export i32 f() { fn[i32()][] a = fn[i32()][1](fill: five); " +
-      "fn[i32()] g = a[0]; return g(); }");
+    "i32 five() { return 5; } export i32 f() { fn<i32()>[] a = fn<i32()>[1](fill: five); " +
+      "fn<i32()> g = a[0]; return g(); }");
   for (i32 i = 0; i < fine.len(); i++) {
     string[] mine = ours(fine[i]);
     t.eqI32(mine.len(), 0, "invented " + itoa(mine.len()) + " diagnostic(s) at " +
@@ -1640,7 +1640,7 @@ export string test_rung3_an_index_and_an_array_size_are_i32_exactly() {
  */
 export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core core, Cli cli) {
   T t = T.create();
-  string d = "struct H { fn[i32(i32, u8[])] f; } struct G<T> { fn[i32(T)] g; } ";
+  string d = "struct H { fn<i32(i32, u8[])> f; } struct G<T> { fn<i32(T)> g; } ";
   caughtAndQuiet(t, string[](
     // The swap that started this: both arguments wrong, each its own diagnostic.
     d + "export i32 a(H h, u8[] b) { return h.f(b, 7); }",
@@ -1649,11 +1649,11 @@ export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core cor
     d + "export i32 c(H h) { return h.f(1, 2); }",
     // And through a local of funcref type, which is the other way to reach one.
     d + "i32 t(i32 n, u8[] b) { return n; } export i32 d(u8[] b) { " +
-        "fn[i32(i32, u8[])] k = t; return k(b, 1); }"),
+        "fn<i32(i32, u8[])> k = t; return k(b, 1); }"),
   string[](
     d + "export i32 e(H h, u8[] b) { return h.f(7, b); }",
     d + "i32 t2(i32 n, u8[] b) { return n; } export i32 f2(u8[] b) { " +
-        "fn[i32(i32, u8[])] k = t2; return k(1, b); }",
+        "fn<i32(i32, u8[])> k = t2; return k(1, b); }",
     // A generic's funcref parameter is a spelling this checker cannot compare, so it says nothing
     // rather than guessing — the skip that keeps correct code quiet.
     d + "export i32 g2(G<i32> g) { return g.g(1); }"),
@@ -1862,8 +1862,8 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
   string sh = "struct Shape { f64 x; } struct Circle : Shape { f64 r; } ";
   caughtAndQuiet(t, string[](
     // A funcref is a type: two of them agree only when their spellings do, and it is not a number.
-    "export void bad(fn[i32(i32)] f) { fn[i32(bool)] g = f; }",
-    "export void bad(fn[i32(i32)] f) { i32 x = f + 1; }",
+    "export void bad(fn<i32(i32)> f) { fn<i32(bool)> g = f; }",
+    "export void bad(fn<i32(i32)> f) { i32 x = f + 1; }",
     // **A declared function used as a value has a type**, and it is a funcref. It had none at all
     // here, so every mismatch through a bare function name was silent — and the emitter then made a
     // module wasm rejects, which `wac build` reported as a byte count. `issues/system/0170`.
@@ -1871,16 +1871,16 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     "u8[] bytes() { return u8[4](); } export i32 bad() { i32 x = bytes; return x; }",
     "u8[] bytes() { return u8[4](); } void t(i32 n) { } export void bad() { t(bytes); }",
     // The same name in a slot that wants a *different* funcref.
-    "u8[] bytes() { return u8[4](); } export fn[i32()] bad() { return bytes; }",
+    "u8[] bytes() { return u8[4](); } export fn<i32()> bad() { return bytes; }",
     // Calling: through a funcref with the wrong count, through something that is not one, and a name
     // that is nothing at all.
-    "export void bad(fn[void(i32)] f) { f(1, 2); }",
+    "export void bad(fn<void(i32)> f) { f(1, 2); }",
     "export void bad(i32 x) { x(); }",
     "export void bad() { missing(); }",
     // Named-argument syntax belongs to struct construction and nothing else.
-    "export void bad(fn[void(i32)] f) { f { x: 1 }; }",
+    "export void bad(fn<void(i32)> f) { f { x: 1 }; }",
     // A funcref has no zero, so a struct holding one has no default.
-    "struct S { fn[void()] cb; } export void bad() { S s = S(); }",
+    "struct S { fn<void()> cb; } export void bad() { S s = S(); }",
     // Values that are not values: a struct's name, and a method named without being called.
     "struct P { i32 x; } export void bad() { i32 x = P; }",
     "struct Counter { i32 count; i32 get(const this) { return this.count; } } " +
@@ -1902,11 +1902,11 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     "export i31ref bad(i32 x) { return x as i31ref; }"),
   string[](
     // The same funcref, and a call through one with the right count.
-    "export void ok(fn[i32(i32)] f) { fn[i32(i32)] g = f; }",
+    "export void ok(fn<i32(i32)> f) { fn<i32(i32)> g = f; }",
     // And the shape that must stay quiet: the funcref a function's name actually is.
-    "u8[] bytes() { return u8[4](); } export i32 ok() { fn[u8[]()] g = bytes; return g().len(); }",
-    "export void ok(fn[void(i32)] f) { f(1); }",
-    "export void ok(fn[void()] f) { f(); }",
+    "u8[] bytes() { return u8[4](); } export i32 ok() { fn<u8[]()> g = bytes; return g().len(); }",
+    "export void ok(fn<void(i32)> f) { f(1); }",
+    "export void ok(fn<void()> f) { f(); }",
     // A declared function called normally, and a struct constructed with named arguments.
     "i32 g(i32 a) { return a; } export i32 ok() { return g(1); }",
     "struct P { i32 x; } export void ok() { P p = P { x: 1 }; }",
@@ -2035,9 +2035,9 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
     inner + "struct O3 { Inner inner; Inner get(const this) { return this.inner; } " +
             "i32 t(const this) { return this.get().val; } }",
     // A static assigned to a funcref of its own signature.
-    "struct S { S make() { return S(); } } export void f() { fn[S()] g = S.make; }",
+    "struct S { S make() { return S(); } } export void f() { fn<S()> g = S.make; }",
     "struct S { i32 n; i32 twice(i32 a) { return a + a; } } " +
-    "export void f() { fn[i32(i32)] g = S.twice; }",
+    "export void f() { fn<i32(i32)> g = S.twice; }",
     // A method call whose result is used at its own type.
     "struct C { i32 n; i32 get(const this) { return this.n; } } " +
     "export i32 f(C c) { return c.get(); }",
@@ -2299,7 +2299,7 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     "struct P { i32 x; } export bool ok(P? p) { return p is null; }",
     "enum E { A, B } export bool ok(E? e) { return e is null; }",
     "export bool ok(i32[]? a) { return a is null; }",
-    "export bool ok(fn[void()]? f) { return f is null; }",
+    "export bool ok(fn<void()>? f) { return f is null; }",
     "struct Box<T> { T v; } export bool ok(Box<i32>? b) { return b is null; }",
     "struct P { i32 x; } export bool ok(P a, P b) { return a is b; }",
     // Unwrapping something that is nullable, including the kinds above.

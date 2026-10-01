@@ -41,7 +41,7 @@ const string ENTRY = "/t/main.wac";
 /** The reproduction, parameterised by the array element `Pending` is instantiated at. */
 string program(string elem) {
   return "import { Pending } from \"std/platform.wac\";\n" +
-         "export struct C { fn[Pending<" + elem + "[]>(string)] f0; }\n" +
+         "export struct C { fn<Pending<" + elem + "[]>(string)] f0; }\n" +
          "export i32 main(C c) { return 0; }\n";
 }
 
@@ -100,7 +100,7 @@ export string test_the_reason_the_build_path_reports_is_the_one_the_emitter_reco
   // **The subject is a program the emitter genuinely cannot take.** A funcref nested inside another
   // signature is declined by `supported()` and is not going to become legal, where the array case
   // above now builds — so this asserts the plumbing without pinning a bug in place.
-  string src = "export struct C { fn[fn[i32(i32)](bool)] f0; }\n" +
+  string src = "export struct C { fn<fn<i32(i32)>(bool)> f0; }\n" +
                "export i32 main(C c) { return 0; }\n";
   Built b = buildFiles(string[](ENTRY), string[](src), ENTRY);
   string sep = describeSeparator();

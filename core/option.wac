@@ -52,7 +52,7 @@ export enum Option<T> {
  * of its own: `U` is not the enum's. Inference reads `T` from the Option and `U` from the
  * function's return type, so the call site names neither.
  */
-export Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) {
+export Option<U> mapOption<T, U>(Option<T> o, fn<U(T)> f) {
   return match (o) {
     case Some(v): Option.Some(f(v)),
     case None: Option.None,

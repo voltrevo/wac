@@ -150,7 +150,7 @@ Three pieces, and the awkwardness is all in the third:
   `>>>` closes three. `P.toks` being mutable is what makes that possible.
 - **Two lookaheads.** `Vec<i32> v = …` is a declaration and `a < b > c` is not; `Vec<i32>(…)` is a
   construction and `a < b` is not. Both scan for a *balanced* `<…>` followed by something that settles
-  it, and both track parentheses and brackets, because `Box<fn[i32(i32)]>` contains both and a scan
+  it, and both track parentheses and brackets, because `Box<fn<i32(i32)>>` contains both and a scan
   that stopped at the funcref's own `)` read the declaration as an expression. The reference has had a
   bug in each of them separately, which is why `afterTypeArgs` is one function here.
 
@@ -193,7 +193,7 @@ have never appeared in a status line: they are invisible to every rung.
 | CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
 | CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
-| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in*, a wac function handed *out*, and since 2026-08-18 a funcref **nested inside a callback's parameters** — what is left is one in a callback's *return* position. It is **skipped and named** as of 2026-08-25, which it was not: the accessor was generated with the returned function flattened to its own return type — `fn[fn[i32(i32)](bool)]` typed `(a0: boolean) => number` — and `bindgenDeclined` said nothing, because it walked exported signatures and never struct fields. The reference omits the member; this now omits it, explains the omission in the file, and names the field and the type in the declined report. `test/wac/bindgenwac_test.wac` |
+| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in*, a wac function handed *out*, and since 2026-08-18 a funcref **nested inside a callback's parameters** — what is left is one in a callback's *return* position. It is **skipped and named** as of 2026-08-25, which it was not: the accessor was generated with the returned function flattened to its own return type — `fn<fn<i32(i32)>(bool)>` typed `(a0: boolean) => number` — and `bindgenDeclined` said nothing, because it walked exported signatures and never struct fields. The reference omits the member; this now omits it, explains the omission in the file, and names the field and the type in the declined report. `test/wac/bindgenwac_test.wac` |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
 | coverage instrumentation | done — a counter per branch point, `__cov_init/_len/_get`, and a table saying what each counter is |
 | constant folding | **not needed** — the same programs work by another route; see below |
@@ -351,7 +351,7 @@ static on a generic instance, which binds under the reference's mangling:
 `$bind$sm_Vec__packages_std_src_vec$string_create`, with `Vec<u8[]>` spelled `…$u8_arr`.
 
 **The callbacks are done too**, which was the one family that needed a section rather than more
-helper bodies: a module whose export takes `fn[i32(i32)]` imports `wac.cb0`, defines sixteen
+helper bodies: a module whose export takes `fn<i32(i32)>` imports `wac.cb0`, defines sixteen
 trampolines of that type, and answers `$bind$fnref_0(slot)` with the one for that slot. What is left
 is one name: a static on a *generic instance* binds as
 `$bind$sm_Vec__packages_std_src_vec$string_create`, so wacc would have to reproduce the reference's
@@ -1503,7 +1503,7 @@ type in a declaration that makes the use legal *whatever the type is* — a stru
 an array of it, a function taking and returning it, a nullable widened from it. That is still a
 generated axis rather than a curated one, which was the point of the file. Accepted grew **495 → 834**.
 
-**The first thing the new family found was not a wacc bug.** `fn[i32(i32)][2](fill: a)` is the one
+**The first thing the new family found was not a wacc bug.** `fn<i32(i32)>[2](fill: a)` is the one
 hole in a seventeen-type row: the reference's *parser* reported seven errors and its checker then said
 *"type 'null' is not an array"*, a type nothing in the program mentions. Sized array construction with
 a funcref element did not parse, while the unsized form, the parameter form, and every other element
@@ -1870,7 +1870,7 @@ needed this.
 The work was one distinction. A method is *registered* with its declared parameters, because a call
 site pushes the object itself and then walks the arguments; a **reference** to one has to say the
 other thing, since the function that was actually emitted takes the receiver first. One table
-recording which functions have a `this` is the difference between `fn[void()]` and `fn[void(Counter)]`,
+recording which functions have a `this` is the difference between `fn<void()>` and `fn<void(Counter)>`,
 and the second is the type the program declares.
 
 The decline it replaced is worth keeping in mind: *"unresolved name Counter"*. That was a true
@@ -1879,7 +1879,7 @@ member as an expression. A name that resolves to a type is not an expression, an
 that question before descending rather than to soften the answer.
 
 Nine programs went into the sweep: called twice, called inline, with an argument, passed to a
-function that takes a `fn[…]`, beside a bare function of the same signature, in an array of them,
+function that takes a `fn<…>`, beside a bare function of the same signature, in an array of them,
 and through a parent — where the reference's type is the parent's, because that is the function that
 exists. All nine compare, none mismatch.
 
@@ -2409,7 +2409,7 @@ the platform, and the trace ran three steps before it found anything worth chang
 `Pending` is imported by name, so it is declared. The method-call check gates on `isStruct`, and a
 `Pending<FileResult>` is not one — the table holds `Pending` — so an instantiation now answers to its
 template there, which is right and fixed nothing. The step that mattered was one further back:
-**`Cli`'s members are `fn[Pending<i32>()] argCount` and friends — fields holding funcrefs, not
+**`Cli`'s members are `fn<Pending<i32>()> argCount` and friends — fields holding funcrefs, not
 methods.** So `cli.readFile(path)` had no type at all, and `.wait(1)` on the result had no receiver
 to be wrong about. Everything downstream of that unknown was invisible.
 
@@ -3015,7 +3015,7 @@ comes from the slot — and a payload-less `Option.None` reaches the walk throug
 
 **Then the bug that had been waiting two slots.** Two type parameters failed while one worked, and
 the reduction never explained why. It is the *signature strings*: a function's type is spelled
-`fn[bool(Result<i32,string>)]`, the scanners that read those count `[` and `(` as nesting — and not
+`fn<bool(Result<i32,string>)>`, the scanners that read those count `[` and `(` as nesting — and not
 `<`. So the comma **inside** the instantiation reads as a parameter separator, the function declares
 one parameter while its type says two, and wasm reports it as a `struct.get` on a number in a method
 several functions away.
@@ -3377,7 +3377,7 @@ block scoping (14).
 ### Function references, and a type that is the right shape and the wrong type
 
 The largest feature the emitter lacked: `ref.func` to obtain one, `call_ref` to invoke it, and a
-`fn[R(A,B)]` type in between. All of it works now — a reference taken by name, passed as a parameter,
+`fn<R(A,B)>` type in between. All of it works now — a reference taken by name, passed as a parameter,
 returned, stored in a struct field or an array, compared against null, and called through every one
 of those.
 
@@ -3392,7 +3392,7 @@ local.set[0] expected type (ref null 12), found ref.func of type (ref 27)
 
 Type 27 was that function's private copy of exactly the shape type 12 describes. A function and a
 reference to it have to name **one** index, so every function's type is now its entry in the shared
-signature table — the same table the `fn[...]` types the source writes go into. The five string
+signature table — the same table the `fn<...>` types the source writes go into. The five string
 helpers share it too.
 
 Three smaller things the feature needed:

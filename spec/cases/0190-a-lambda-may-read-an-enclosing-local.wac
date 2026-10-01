@@ -13,6 +13,6 @@
 export i32 f() {
   i32 base = 40;
   i32 step = 1;
-  fn[i32(i32)] add = (i32 k) => base + step + k;
+  fn<i32(i32)> add = (i32 k) => base + step + k;
   return add(1);
 }

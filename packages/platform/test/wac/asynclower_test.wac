@@ -48,14 +48,14 @@ Pending<i32> fileSize(Core core, Cli cli, string path) {
   i32[] slot = i32[1](fill: 0);
   bool[] done = bool[1](fill: false);
   i32[] armed = i32[1](fill: 0 - 1);
-  fn[bool()][] step = fn[bool()][1](fill: neverSteps);
+  fn<bool()>[] step = fn<bool()>[1](fill: neverSteps);
 
   // Eager: the call to the capability happens now, at the point of the `await` — D1.
   Pending<FileResult> up = cli.readFile(path);
 
   // **The body after the await, written once.** Both drivers run this same closure, which is the
   // property that makes "advanced exactly once" checkable rather than hoped for.
-  fn[void(FileResult)] resume = (FileResult f) => {
+  fn<void(FileResult)> resume = (FileResult f) => {
     slot[0] = f.ok ? f.bytes.len() : 0 - 1;
     done[0] = true;
   };
@@ -73,13 +73,13 @@ Pending<i32> fileSize(Core core, Cli cli, string path) {
   // together. Binding each to a local of a stated funcref type is the way through, and it is a real
   // constraint on step 4: the emitted lowering must not put a lambda where a hand-written one is
   // refused.
-  fn[bool()] advance = () => {
+  fn<bool()> advance = () => {
     resume(up.wait());
     return true;
   };
   step[0] = advance;
 
-  fn[i32(i32)] doResolve = (i32 ignored) => {
+  fn<i32(i32)> doResolve = (i32 ignored) => {
     while (!done[0]) {
       // **`detach`, not `cancel`.** Taking over is not giving up: `cancel` calls the ticket's `drop`
       // and releases the host's slot, so the `up.wait()` on the next line would be a wait on a
@@ -91,13 +91,13 @@ Pending<i32> fileSize(Core core, Cli cli, string path) {
       // after `]` is array construction, so the parser reads `step` as a type name and says
       // *unknown type 'step'* — `issues/lang/0265c`. A state machine keeps its resumption point in
       // exactly this shape, so step 4 meets that issue rather than merely coexisting with it.
-      fn[bool()] next = step[0];
+      fn<bool()> next = step[0];
       if (!next()) { trap; }
     }
     return slot[0];
   };
-  fn[bool(i32)] doSettled = (i32 ignored) => done[0];
-  fn[void(i32)] doDrop = (i32 ignored) => {
+  fn<bool(i32)> doSettled = (i32 ignored) => done[0];
+  fn<void(i32)> doDrop = (i32 ignored) => {
     if (armed[0] >= 0) { core.cancel(armed[0]); armed[0] = 0 - 1; }
   };
 

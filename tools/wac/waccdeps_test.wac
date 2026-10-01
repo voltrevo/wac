@@ -13,7 +13,7 @@
 // The bootstrap builds wacc **with the reference compiler**, which is the only way to get a binary
 // when the seed is gitignored and there is nothing to run `wac task` with. So every file wacc's
 // graph reaches has to be inside the subset the reference can read — and the reference has no
-// lambdas, while `core/vec.wac`'s `fold` takes an `fn[U(U, T)]`. One import was enough to make the
+// lambdas, while `core/vec.wac`'s `fold` takes an `fn<U(U, T)>`. One import was enough to make the
 // compiler unbuildable from nothing.
 //
 // The failure does not look like this rule. It is nine parse errors in `core/vec.wac`, a file

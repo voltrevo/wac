@@ -7,7 +7,7 @@
 export i32 f() {
   i32 a = 5;
   // The existing case for this rule has a literal after the `<`, which the whitelist rejects
-  // outright. A `(` is a legitimate type token — `fn[i32(i32)]` contains one — so the scan enters
+  // outright. A `(` is a legitimate type token — `fn<i32(i32)>` contains one — so the scan enters
   // here and has to get the *close* right instead.
   bool shifted = (a < (a >> 1));            // 5 < 2, false
   bool nested  = (a < (a > 1 ? 9 : 0));     // 5 < 9, true

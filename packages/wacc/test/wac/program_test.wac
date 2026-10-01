@@ -205,9 +205,9 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
     ("struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n" +
      "export Point origin(i32 x, i32 y) { return Point(x, y); }\n" +
      "export string greet(string who) { return \"hi \" + who; }\n" +
-     "export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }\n" +
-     "export i32 pair(fn[i32(i32, i32)] g, i32 a, i32 b) { return g(a, b); }\n" +
-     "export i32 nilary(fn[i32()] h) { return h(); }\n").toBytes()).wait();
+     "export i32 apply(fn<i32(i32)> f, i32 x) { return f(x); }\n" +
+     "export i32 pair(fn<i32(i32, i32)> g, i32 a, i32 b) { return g(a, b); }\n" +
+     "export i32 nilary(fn<i32()> h) { return h(); }\n").toBytes()).wait();
 
   Exec js = runProgram(cli, program, string[]("bindgen", dir + "/m.wac", "--js"));
   t.eqI32(js.status, 0, "bindgen failed: " + string.fromBytes(js.stderr) +

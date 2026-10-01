@@ -14,7 +14,7 @@
 struct Box<U> { U w; U get(const this) { return this.w; } }
 struct Cell<T> {
   T v;
-  Box<U> wrap<U>(const this, fn[U(T)] f) { return Box<U>(f(this.v)); }
+  Box<U> wrap<U>(const this, fn<U(T)> f) { return Box<U>(f(this.v)); }
 }
 export i32 f() {
   Cell<i32> c = Cell<i32>(2);

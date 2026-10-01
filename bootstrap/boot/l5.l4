@@ -1064,11 +1064,11 @@ i32 instantiate(i32 tm) {
 // rather than a flag: `expand_types` reaches `struct_decl` through `expand_one`, so these nest.
 i32 defer_expand = 0;
 
-// `fn[R(A, B)]`. The result comes first in wac and last in wasm, which is the only thing to get
+// `fn<R(A, B)>`. The result comes first in wac and last in wasm, which is the only thing to get
 // right here. Deduplicated by shape, so two parameters of the same funcref type are one wasm type.
 i32 parse_functype() {
   next();
-  want(91);
+  want(60);
   i32 ret = parse_type();
   want(40);
   i32 fstart = nfparam;
@@ -1082,7 +1082,8 @@ i32 parse_functype() {
     if (ispunct(44)) { next(); }
   }
   want(41);
-  want(93);
+  // `>>` closes this and an enclosing type-argument list at once: `Vec<fn<i32()>>`.
+  if (eat_gt() == 0) { want(62); }
   // Same shape, same type — a funcref is structural, unlike a struct.
   i32 i = 0;
   i32 found = 0 - 1;
@@ -1190,19 +1191,10 @@ i32 skip_type(i32 i) {
   if (toks[i].kind != K_NAME) { return 0 - 1; }
   if (texteq(toks[i].start, toks[i].len, "fn")) {
     i = i + 1;
-    if ((toks[i].kind == K_PUNCT & toks[i].val == 91) == 0) { return 0 - 1; }
-    i32 depth = 0;
-    while (1) {
-      if (toks[i].kind == K_EOF) { return 0 - 1; }
-      if (toks[i].kind == K_PUNCT) {
-        if (toks[i].val == 91) { depth = depth + 1; }
-        if (toks[i].val == 93) { depth = depth - 1; }
-      }
-      i = i + 1;
-      if (depth <= 0) { return i; }
-    }
+    if ((toks[i].kind == K_PUNCT & toks[i].val == 60) == 0) { return 0 - 1; }
+  } else {
+    i = i + 1;
   }
-  i = i + 1;
   i = skip_targs(i);
   i32 more = 1;
   while (more) {

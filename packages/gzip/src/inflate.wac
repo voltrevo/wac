@@ -35,7 +35,7 @@ struct BitReader {
   // it. This is the only difference between decoding a buffer and decoding a stream: the
   // decoder above never asks where a bit came from, so nothing else in the file changes
   // shape. `drained` remembers that the source said "no more", so it is asked once.
-  fn[Read()]? source;
+  fn<Read()>? source;
   bool drained;
   /** Empty unless a read failed: the host's message, so a caller can say why it stopped. */
   string broken;
@@ -45,7 +45,7 @@ struct BitReader {
   }
 
   /** A reader fed by `source`, which says whether it ended or broke. */
-  BitReader streaming(fn[Read()] source) {
+  BitReader streaming(fn<Read()> source) {
     return BitReader(u8[0](), 0, 0, 0, source, false, "");
   }
 
@@ -204,7 +204,7 @@ struct Window {
   i32 len;                   // bytes held in `data`
   i32 base;                  // absolute position of data[0]
   i32 flushLimit;            // `len` at which to hand the front over
-  fn[bool(u8[])]? sink;      // null for a whole-buffer decode
+  fn<bool(u8[])>? sink;      // null for a whole-buffer decode
   u32[] crcTable;
   u32 crc;
 
@@ -217,7 +217,7 @@ struct Window {
   }
 
   /** A window that hands its front to `sink` as it fills, and keeps only what it must. */
-  Window streaming(fn[bool(u8[])] sink) {
+  Window streaming(fn<bool(u8[])> sink) {
     return Window(u8[flushAt()](), 0, 0, flushAt(), sink, crcTable8(), crc32Start());
   }
 
@@ -772,7 +772,7 @@ export u8[] gunzipBytes(u8[] gz) {
  * The shape is the one `packages/stream` drives, so this streams through a
  * `wacTransformStream` with no glue.
  */
-export i32 gunzipStream(fn[Read()] read, fn[bool(u8[])] write) {
+export i32 gunzipStream(fn<Read()> read, fn<bool(u8[])> write) {
   BitReader br = BitReader.streaming(read);
 
   if (br.readByte() != 0x1F || br.readByte() != 0x8B) { trap; }   // magic

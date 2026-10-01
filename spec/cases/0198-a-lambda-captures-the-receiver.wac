@@ -18,14 +18,14 @@ struct Counter {
   void bump(this, i32 by) { this.n = this.n + by; }
 
   /** Hands back a funcref that still writes to *this* counter. */
-  fn[void(i32)] adder(this) { return (i32 by) => { this.bump(by); }; }
-  fn[i32()] reader(const this) { return () => this.n; }
+  fn<void(i32)> adder(this) { return (i32 by) => { this.bump(by); }; }
+  fn<i32()> reader(const this) { return () => this.n; }
 }
 
 export i32 f() {
   Counter c = Counter.create();
-  fn[void(i32)] add = c.adder();
-  fn[i32()] read = c.reader();
+  fn<void(i32)> add = c.adder();
+  fn<i32()> read = c.reader();
 
   add(40);
   add(2);

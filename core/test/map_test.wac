@@ -319,7 +319,7 @@ struct Naive {
 /** One step of an LCG — the same constants as `rand()` in Numerical Recipes. */
 u32 nextRand(u32 seed) { return seed * 1664525 + 1013904223; }
 
-string differential(fn[i32(i32)] hash, i32 keySpace, i32 steps, u32 seed0) {
+string differential(fn<i32(i32)> hash, i32 keySpace, i32 steps, u32 seed0) {
   T t = T.create();
   Map<i32, i32> m = Map.create(hash, i32Eq);
   Naive naive = Naive.create();

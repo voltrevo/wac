@@ -87,7 +87,7 @@ Ran once(Core core, Cli cli, i32 seconds, string cwd, string home, string prog, 
  * experiment.
  */
 export Ran boundedAgain(Core core, Cli cli, string cwd, string home, string prog, string[] args,
-                        u8[] stdin, fn[void()] refresh) {
+                        u8[] stdin, fn<void()> refresh) {
   Ran first = once(core, cli, DEFAULT_SECONDS, cwd, home, prog, args, stdin);
   if (!first.hung) { return first; }
   refresh();

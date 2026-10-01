@@ -120,17 +120,17 @@ export string test_a_generic_function_is_a_value_when_it_names_its_type_argument
   T t = T.create();
 
   string ok = said("i32 id<T>(T x) { return 1; }\n" +
-                   "export i32 f() { fn[i32(i32)] g = id<i32>; return g(7); }");
+                   "export i32 f() { fn<i32(i32)> g = id<i32>; return g(7); }");
   t.isTrue(!contains(ok, "error"),
            "a generic function with its arguments written is assignable to a funcref — got " + ok);
 
   string plain = said("i32 id(i32 x) { return 1; }\n" +
-                      "export i32 f() { fn[i32(i32)] g = id<i32>; return g(7); }");
+                      "export i32 f() { fn<i32(i32)> g = id<i32>; return g(7); }");
   t.isTrue(contains(plain, "not a generic one, so it takes no type arguments"),
            "a non-generic function is told it has no letters to supply — got " + plain);
 
   string many = said("i32 id<T>(T x) { return 1; }\n" +
-                     "export i32 f() { fn[i32(i32)] g = id<i32, f64>; return g(7); }");
+                     "export i32 f() { fn<i32(i32)> g = id<i32, f64>; return g(7); }");
   t.isTrue(contains(many, "takes 1 type argument, and 2 were written"),
            "and a wrong count is a wrong count here too — got " + many);
 
@@ -181,7 +181,7 @@ export string test_a_method_may_be_called_with_its_own_type_arguments() {
   T t = T.create();
   string decl = "struct Box<T> {\n" +
                 "  T v;\n" +
-                "  U map<U>(const this, fn[U(T)] f) { return f(this.v); }\n" +
+                "  U map<U>(const this, fn<U(T)> f) { return f(this.v); }\n" +
                 "}\n" +
                 "i64 widen(i32 x) { return 7; }\n";
 
@@ -190,8 +190,8 @@ export string test_a_method_may_be_called_with_its_own_type_arguments() {
   t.isTrue(!contains(with, "error"), "writing them compiles — got " + with);
 
   // **And they are inferred when the arguments say what they are** — `design/lang/0010` criterion 2,
-  // which landed after this test first asserted the opposite. `widen` is a `fn[i64(i32)]` and the
-  // parameter is `fn[U(T)]`, so `U` is `i64` and nothing needs writing. The letter lives inside a
+  // which landed after this test first asserted the opposite. `widen` is a `fn<i64(i32)>` and the
+  // parameter is `fn<U(T)>`, so `U` is `i64` and nothing needs writing. The letter lives inside a
   // *funcref* here, which is where a method's own letter usually lives and which the binder could
   // not see into until this criterion.
   string without = said(decl + "export i32 f() { Box<i32> b = Box<i32>(3);\n" +
@@ -218,12 +218,12 @@ export string test_a_method_may_be_called_with_its_own_type_arguments() {
  *
  * `fold` is the example that document leads with, and it is the one that exercises every piece: the
  * letter is the *seed's* type and the accumulator's and the callback's return, so a slot written
- * `fn[U(U, T)]` has to arrive at the lambda with both letters bound — the owner's `T` from the
+ * `fn<U(U, T)>` has to arrive at the lambda with both letters bound — the owner's `T` from the
  * receiver and the method's `U` from what the call wrote.
  *
  * Four things had to be true at once for this line to compile, and each failed differently on the
  * way: the parameter's type had to be recorded *as written* (`typeOfTy` answers unknown for a letter
- * that is active, so `fn[U(U, T)]` was recorded as nothing); `writtenTy` had to know how to spell a
+ * that is active, so `fn<U(U, T)>` was recorded as nothing); `writtenTy` had to know how to spell a
  * funcref (it had no arm and returned `""`, which reads as "no slot"); `applyBindings` had to reach
  * *inside* one (it bound `T` and left `U`, so the lambda was told `expected fn(U, i32) -> U, found
  * fn(i32, i32) -> U` — two spellings of one type); and the emitter's lambda-target walk had to read
@@ -235,7 +235,7 @@ export string test_a_written_method_type_argument_gives_an_inline_lambda_its_tar
   string src = "struct Vec<T> {\n" +
                "  T[] items;\n" +
                "  i32 n;\n" +
-               "  U fold<U>(const this, U seed, fn[U(U, T)] f) {\n" +
+               "  U fold<U>(const this, U seed, fn<U(U, T)> f) {\n" +
                "    U acc = seed;\n" +
                "    for (i32 i = 0; i < this.n; i++) { acc = f(acc, this.items[i]); }\n" +
                "    return acc;\n" +

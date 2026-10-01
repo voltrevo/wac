@@ -11,11 +11,11 @@
 import { Pending } from "std/platform.wac";
 
 export struct Cap5 {
-  fn[Pending<i32>()] f0;
-  fn[Pending<u8[]>(i32)] f1;
-  fn[Pending<string>()] f2;
-  fn[Pending<bool>(i32, u8[])] f3;
-  fn[Pending<i64>()] f4;
+  fn<Pending<i32>()> f0;
+  fn<Pending<u8[]>(i32)> f1;
+  fn<Pending<string>()> f2;
+  fn<Pending<bool>(i32, u8[])> f3;
+  fn<Pending<i64>()> f4;
 }
 
 export i32 main(Cap5 c) {

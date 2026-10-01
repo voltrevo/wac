@@ -2,7 +2,7 @@
 //
 // A probe rather than direct binding, for two reasons that are both about capabilities:
 //
-//   * a **synth** mount takes `fn[Pending<u8[]>(i32)]`, and building one of those from TypeScript means
+//   * a **synth** mount takes `fn<Pending<u8[]>(i32)>`, and building one of those from TypeScript means
 //     building a `Pending` from TypeScript — three funcrefs and an id — where building it here is four
 //     lines and deterministic, which is what a coverage run wants;
 //   * a **host** mount takes a whole `Cli`, which only a built program has. Those branches are driven by

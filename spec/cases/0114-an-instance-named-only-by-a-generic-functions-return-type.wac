@@ -5,7 +5,7 @@ enum Opt<T> {
   Some(T v), None
   T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
 }
-Opt<U> mapOpt<T, U>(Opt<T> o, fn[U(T)] f) {
+Opt<U> mapOpt<T, U>(Opt<T> o, fn<U(T)> f) {
   return match (o) { case Some(v): Opt.Some(f(v)), case None: Opt.None };
 }
 string d2(i32 x) { return "n"; }

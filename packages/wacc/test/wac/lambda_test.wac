@@ -83,15 +83,15 @@ export string test_a_correct_lambda_checks_clean_in_both_body_forms_and_when_it_
     "a local declared inside the body", "a lambda inside a lambda",
     "a parameter shadowing an outer local");
   string[] src = string[](
-    "export i32 f() { fn[i32()] g = () => 42; return g(); }",
-    "export i32 f() { fn[i32(i32)] g = (i32 a) => a + 1; return g(1); }",
-    "export i32 f() { fn[i32(i32)] g = (i32 a) => { return a + 1; }; return g(1); }",
-    "export i32 f() { fn[i32(i32,i32)] g = (i32 a, i32 b) => a + b; return g(1, 2); }",
-    "export i32 f() { fn[void()] g = () => { }; g(); return 0; }",
-    "export i32 f() { i32 n = 1; fn[i32()] g = () => n + 1; return g(); }",
-    "export i32 f() { fn[i32()] g = () => { i32 x = 2; return x; }; return g(); }",
-    "export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 2; return h(); }; return g(); }",
-    "export i32 f() { i32 a = 5; fn[i32(i32)] g = (i32 a) => a + 1; return g(1) + a; }");
+    "export i32 f() { fn<i32()> g = () => 42; return g(); }",
+    "export i32 f() { fn<i32(i32)> g = (i32 a) => a + 1; return g(1); }",
+    "export i32 f() { fn<i32(i32)> g = (i32 a) => { return a + 1; }; return g(1); }",
+    "export i32 f() { fn<i32(i32,i32)> g = (i32 a, i32 b) => a + b; return g(1, 2); }",
+    "export i32 f() { fn<void()> g = () => { }; g(); return 0; }",
+    "export i32 f() { i32 n = 1; fn<i32()> g = () => n + 1; return g(); }",
+    "export i32 f() { fn<i32()> g = () => { i32 x = 2; return x; }; return g(); }",
+    "export i32 f() { fn<i32()> g = () => { fn<i32()> h = () => 2; return h(); }; return g(); }",
+    "export i32 f() { i32 a = 5; fn<i32(i32)> g = (i32 a) => a + 1; return g(1) + a; }");
   for (i32 i = 0; i < src.len(); i++) {
     string[] ds = messagesOf(src[i]);
     t.eqI32(ds.len(), 0, what[i] + ": refused a correct lambda — " + joined(ds, "; "));
@@ -135,10 +135,10 @@ export string test_every_wrong_lambda_gets_its_own_diagnostic_not_a_shared_one()
   string[] what = string[]("wrong arity", "wrong parameter type", "wrong return type",
                            "undeclared name in the body", "assigned to a non-funcref");
   string[] src = string[](
-    "export i32 f() { fn[i32(i32)] g = () => 42; return g(1); }",
-    "export i32 f() { fn[i32(i32)] g = (f64 a) => 1; return g(1); }",
-    "export i32 f() { fn[i32()] g = () => \"x\"; return g(); }",
-    "export i32 f() { fn[i32()] g = () => nope; return g(); }",
+    "export i32 f() { fn<i32(i32)> g = () => 42; return g(1); }",
+    "export i32 f() { fn<i32(i32)> g = (f64 a) => 1; return g(1); }",
+    "export i32 f() { fn<i32()> g = () => \"x\"; return g(); }",
+    "export i32 f() { fn<i32()> g = () => nope; return g(); }",
     "export i32 f() { i32 g = () => 42; return g; }");
   string[] expect = string[]("parameters do not match", "parameters do not match", "return type",
                              "undefined name", "nothing here wants a function");
@@ -201,7 +201,7 @@ export string test_two_lambdas_in_one_program_stay_two_functions() {
   // about which is which. If they did, both of these would answer the same thing — and it would
   // compile, which is what makes the bug quiet.
   T t = T.create();
-  string src = "export i32 f() {\n  fn[i32()] a = () => 1;\n  fn[i32()] b = () => 2;\n" +
+  string src = "export i32 f() {\n  fn<i32()> a = () => 1;\n  fn<i32()> b = () => 2;\n" +
                "  return a() * 10 + b();\n}\n";
   t.eqStr(diagnoseGraph(string[](ENTRY), string[](src), ENTRY), "", "the checker objected");
   return t.report();
@@ -220,27 +220,27 @@ export string test_a_lambda_runs_in_every_position_that_can_hold_one(Core core, 
     "a module constant's initialiser", "assigned over an existing local",
     "a shadowed name around a lambda", "a float signature");
   string[] src = string[](
-    "export i32 f() { fn[i32()] g = () => 42; return g(); }",
-    "export i32 f() { fn[i32(i32)] g = (i32 a) => a + 1; return g(41); }",
-    "export i32 f() { fn[i32(i32,i32)] g = (i32 a, i32 b) => a * b; return g(6, 7); }",
-    "export i32 f() { fn[i32(i32)] g = (i32 a) => { i32 t = a * 2; return t + 2; }; return g(20); }",
+    "export i32 f() { fn<i32()> g = () => 42; return g(); }",
+    "export i32 f() { fn<i32(i32)> g = (i32 a) => a + 1; return g(41); }",
+    "export i32 f() { fn<i32(i32,i32)> g = (i32 a, i32 b) => a * b; return g(6, 7); }",
+    "export i32 f() { fn<i32(i32)> g = (i32 a) => { i32 t = a * 2; return t + 2; }; return g(20); }",
     // Twice, because a wrapper that consumed something it should not would work once.
-    "export i32 f() { fn[i32(i32)] g = (i32 a) => a + a; return g(10) + g(11); }",
-    "i32 use(fn[i32(i32)] h) { return h(21); } export i32 f() { return use((i32 a) => a * 2); }",
-    "struct H { fn[i32()] on; } export i32 f() { H h = H(() => 42); return h.on(); }",
+    "export i32 f() { fn<i32(i32)> g = (i32 a) => a + a; return g(10) + g(11); }",
+    "i32 use(fn<i32(i32)> h) { return h(21); } export i32 f() { return use((i32 a) => a * 2); }",
+    "struct H { fn<i32()> on; } export i32 f() { H h = H(() => 42); return h.on(); }",
     // Two lambdas that must stay distinct: the wrong wrapper index gives 0.
-    "export i32 f() { bool p = true; fn[i32()] g = p ? () => 42 : () => 0; return g(); }",
-    "export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 42; return h(); }; return g(); }",
-    "fn[i32()] mk() { return () => 42; } export i32 f() { return mk()(); }",
+    "export i32 f() { bool p = true; fn<i32()> g = p ? () => 42 : () => 0; return g(); }",
+    "export i32 f() { fn<i32()> g = () => { fn<i32()> h = () => 42; return h(); }; return g(); }",
+    "fn<i32()> mk() { return () => 42; } export i32 f() { return mk()(); }",
     // **A module-level constant**, whose initialiser is emitted in `__wac_start` rather than in any
     // function body. The walk did not visit constants at all.
-    "const fn[i32()] ANSWER = () => 42;\nexport i32 f() { fn[i32()] g = ANSWER; return g(); }",
+    "const fn<i32()> ANSWER = () => 42;\nexport i32 f() { fn<i32()> g = ANSWER; return g(); }",
     // **Assigned to a local that already exists** — the last position with no wanted type.
-    "export i32 f() { fn[i32()] g = () => 1; g = () => 42; return g(); }",
+    "export i32 f() { fn<i32()> g = () => 1; g = () => 42; return g(); }",
     // Shadowing, which is what makes the scope a stack rather than a table.
-    "export i32 f() { i32 n = 1; { i32 n2 = 2; } fn[i32(i32)] g = (i32 n) => n * 42; return g(n); }",
+    "export i32 f() { i32 n = 1; { i32 n2 = 2; } fn<i32(i32)> g = (i32 n) => n * 42; return g(n); }",
     // A non-i32 signature, so the hoisted function's type is not the one every other row shares.
-    "export i32 f() { fn[f64(f64)] g = (f64 x) => x * 2.0; return (g(21.0) as~ i32); }");
+    "export i32 f() { fn<f64(f64)> g = (f64 x) => x * 2.0; return (g(21.0) as~ i32); }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();
 }
@@ -253,16 +253,16 @@ export string test_a_lambda_can_be_passed_to_a_method_and_where_it_still_cannot(
   T t = T.create();
   string dir = scratchDir(cli);
   answers(t, cli, dir, "a lambda to a static and to an instance method",
-    "struct Box {\n  i32 v;\n  Box make(fn[i32()] g) { return Box(g()); }\n" +
-    "  i32 apply(this, fn[i32(i32)] g) { return g(this.v); }\n}\n" +
-    "i32 plain(fn[i32()] g) { return g(); }\n" +
+    "struct Box {\n  i32 v;\n  Box make(fn<i32()> g) { return Box(g()); }\n" +
+    "  i32 apply(this, fn<i32(i32)> g) { return g(this.v); }\n}\n" +
+    "i32 plain(fn<i32()> g) { return g(); }\n" +
     "export i32 f() {\n  i32 a = plain(() => 1);\n  Box b = Box.make(() => 2);\n" +
     "  i32 c = b.apply((i32 x) => x + 3);\n  return a + b.v + c;\n}", "f()", 8);
 
   // **A generic static, which the checker now types.** `Slot.of` returns the owner instantiated, so
   // the wanted type of the call *is* the instantiation and `T` can be read straight off it.
   string generic = "struct Slot<T> {\n  T v;\n" +
-                   "  Slot<T> of(T seed, fn[T(i32)] make) { return Slot<T>(make(0)); }\n}\n" +
+                   "  Slot<T> of(T seed, fn<T(i32)> make) { return Slot<T>(make(0)); }\n}\n" +
                    "export i32 f() { Slot<i32> s = Slot.of(1, (i32 k) => k + 41); return s.v; }";
   string[] ds = messagesOf(generic);
   t.eqI32(ds.len(), 0,
@@ -271,7 +271,7 @@ export string test_a_lambda_can_be_passed_to_a_method_and_where_it_still_cannot(
   // **And it runs**, with a capture through it — the shape `issues/lang/0137` needs.
   answers(t, cli, dir, "a capturing lambda through a generic static",
     "struct Slot<T> {\n  T v;\n" +
-    "  Slot<T> of(T seed, fn[T(i32)] make) { return Slot<T>(make(2)); }\n}\n" +
+    "  Slot<T> of(T seed, fn<T(i32)> make) { return Slot<T>(make(2)); }\n}\n" +
     "export i32 f() {\n  i32 base = 40;\n  Slot<i32> s = Slot.of(0, (i32 k) => k + base);\n" +
     "  return s.v;\n}", "f()", 42);
   return t.report();
@@ -311,18 +311,18 @@ export string test_what_a_lambda_captures_and_what_it_does_not() {
     "a name it assigns to", "once, however often it is read",
     "through a nested lambda, for both of them");
   string[] src = string[](
-    "export i32 f() { fn[i32()] g = () => 42; return g(); }",
-    "export i32 f() { i32 n = 1; fn[i32()] g = () => n + 1; return g(); }",
-    "export i32 f(i32 p) { fn[i32()] g = () => p * 2; return g(); }",
-    "export i32 f() { fn[i32(i32)] g = (i32 a) => a + 1; return g(1); }",
-    "export i32 f() { fn[i32()] g = () => { i32 t = 2; return t; }; return g(); }",
-    "i32 h() { return 1; } export i32 f() { fn[i32()] g = () => h(); return g(); }",
-    "export i32 f() { i32 a = 1; string s = \"x\"; fn[i32()] g = () => a + s.len(); return g(); }",
-    "export i32 f() { i32 n = 1; fn[void()] g = () => { n = 5; }; g(); return n; }",
-    "export i32 f() { i32 n = 1; fn[i32()] g = () => n + n; return g(); }",
+    "export i32 f() { fn<i32()> g = () => 42; return g(); }",
+    "export i32 f() { i32 n = 1; fn<i32()> g = () => n + 1; return g(); }",
+    "export i32 f(i32 p) { fn<i32()> g = () => p * 2; return g(); }",
+    "export i32 f() { fn<i32(i32)> g = (i32 a) => a + 1; return g(1); }",
+    "export i32 f() { fn<i32()> g = () => { i32 t = 2; return t; }; return g(); }",
+    "i32 h() { return 1; } export i32 f() { fn<i32()> g = () => h(); return g(); }",
+    "export i32 f() { i32 a = 1; string s = \"x\"; fn<i32()> g = () => a + s.len(); return g(); }",
+    "export i32 f() { i32 n = 1; fn<void()> g = () => { n = 5; }; g(); return n; }",
+    "export i32 f() { i32 n = 1; fn<i32()> g = () => n + n; return g(); }",
     // **Capture is transitive, and this is the case that proves it.** The outer lambda never reads
     // `a` itself — only the lambda inside it does. It still has to carry `a`.
-    "export i32 f() { i32 a = 1; fn[i32()] g = () => { i32 b = 2; fn[i32()] h = () => a + b; " +
+    "export i32 f() { i32 a = 1; fn<i32()> g = () => { i32 b = 2; fn<i32()> h = () => a + b; " +
     "return h(); }; return g(); }");
   // One expected capture set per lambda line, joined with `;` where a case has two.
   string[] want = string[]("", "n:i32", "p:i32", "", "", "", "a:i32,s:string", "n:i32", "n:i32",
@@ -359,16 +359,16 @@ export string test_a_lambda_that_captures_runs_and_reads_what_it_captured(Core c
     "called more than once", "a struct, reached through the capture", "a string",
     "escaping as an argument", "through a nested lambda");
   string[] src = string[](
-    "export i32 f() { i32 n = 41; fn[i32()] g = () => n + 1; return g(); }",
-    "export i32 f() { i32 a = 40; i32 b = 2; fn[i32()] g = () => a + b; return g(); }",
+    "export i32 f() { i32 n = 41; fn<i32()> g = () => n + 1; return g(); }",
+    "export i32 f() { i32 a = 40; i32 b = 2; fn<i32()> g = () => a + b; return g(); }",
     // The receiver is local 0 and the parameter is local 1, so a lambda that mixed them up would
     // answer with the wrong one.
-    "export i32 f() { i32 n = 40; fn[i32(i32)] g = (i32 k) => n + k; return g(2); }",
-    "export i32 f() { i32 n = 21; fn[i32()] g = () => n; return g() + g(); }",
-    "struct P { i32 v; } export i32 f() { P p = P(42); fn[i32()] g = () => p.v; return g(); }",
-    "export i32 f() { string s = \"abcd\"; fn[i32()] g = () => s.len() * 10 + 2; return g(); }",
-    "i32 use(fn[i32()] h) { return h(); } export i32 f() { i32 n = 42; return use(() => n); }",
-    "export i32 f() { i32 a = 42; fn[i32()] g = () => { fn[i32()] h = () => a; return h(); }; " +
+    "export i32 f() { i32 n = 40; fn<i32(i32)> g = (i32 k) => n + k; return g(2); }",
+    "export i32 f() { i32 n = 21; fn<i32()> g = () => n; return g() + g(); }",
+    "struct P { i32 v; } export i32 f() { P p = P(42); fn<i32()> g = () => p.v; return g(); }",
+    "export i32 f() { string s = \"abcd\"; fn<i32()> g = () => s.len() * 10 + 2; return g(); }",
+    "i32 use(fn<i32()> h) { return h(); } export i32 f() { i32 n = 42; return use(() => n); }",
+    "export i32 f() { i32 a = 42; fn<i32()> g = () => { fn<i32()> h = () => a; return h(); }; " +
     "return g(); }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();
@@ -386,17 +386,17 @@ export string test_capture_is_by_reference_a_write_on_either_side_is_seen(Core c
     "a counter, called repeatedly", "compound assignment inside", "increment inside",
     "two closures over one local");
   string[] src = string[](
-    "export i32 f() { i32 n = 0; fn[void()] g = () => { n = 42; }; g(); return n; }",
-    "export i32 f() { i32 n = 0; fn[i32()] g = () => n; n = 42; return g(); }",
-    "export i32 f() { i32 n = 0; fn[void()] g = () => { n = n + 2; }; n = 40; g(); return n; }",
-    "export i32 f() { i32 n = 0; fn[void()] tick = () => { n = n + 1; }; tick(); tick(); tick(); " +
+    "export i32 f() { i32 n = 0; fn<void()> g = () => { n = 42; }; g(); return n; }",
+    "export i32 f() { i32 n = 0; fn<i32()> g = () => n; n = 42; return g(); }",
+    "export i32 f() { i32 n = 0; fn<void()> g = () => { n = n + 2; }; n = 40; g(); return n; }",
+    "export i32 f() { i32 n = 0; fn<void()> tick = () => { n = n + 1; }; tick(); tick(); tick(); " +
     "return n * 14; }",
-    "export i32 f() { i32 n = 40; fn[void()] g = () => { n += 2; }; g(); return n; }",
+    "export i32 f() { i32 n = 40; fn<void()> g = () => { n += 2; }; g(); return n; }",
     // `++` is its own emission path, and it was the last one still writing to a slot that no longer
     // holds the value.
-    "export i32 f() { i32 n = 41; fn[void()] g = () => { n++; }; g(); return n; }",
+    "export i32 f() { i32 n = 41; fn<void()> g = () => { n++; }; g(); return n; }",
     // **The one that proves it is a shared cell rather than two copies that happen to agree.**
-    "export i32 f() { i32 n = 0; fn[void()] inc = () => { n = n + 21; }; fn[i32()] get = () => n; " +
+    "export i32 f() { i32 n = 0; fn<void()> inc = () => { n = n + 21; }; fn<i32()> get = () => n; " +
     "inc(); inc(); return get(); }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();
@@ -412,13 +412,13 @@ export string test_a_captured_local_whose_type_is_an_array_or_a_nullable(Core co
   string[] what = string[]("a byte array", "an i32 array, written through", "an array of arrays",
                            "a nullable array", "written by one lambda, read by another");
   string[] src = string[](
-    "export i32 f() { u8[] b = u8[](40, 2); fn[i32()] g = () => b[0] + b[1]; return g(); }",
-    "export i32 f() { i32[] a = i32[](1); fn[void()] g = () => { a[0] = 42; }; g(); return a[0]; }",
-    "export i32 f() { u8[][] b = u8[][](u8[](42)); fn[i32()] g = () => b[0][0]; return g(); }",
-    "export i32 f() { u8[]? b = u8[](42); fn[i32()] g = () => { if (b is null) { return 0; } " +
+    "export i32 f() { u8[] b = u8[](40, 2); fn<i32()> g = () => b[0] + b[1]; return g(); }",
+    "export i32 f() { i32[] a = i32[](1); fn<void()> g = () => { a[0] = 42; }; g(); return a[0]; }",
+    "export i32 f() { u8[][] b = u8[][](u8[](42)); fn<i32()> g = () => b[0][0]; return g(); }",
+    "export i32 f() { u8[]? b = u8[](42); fn<i32()> g = () => { if (b is null) { return 0; } " +
     "return b![0]; }; return g(); }",
-    "export i32 f() { u8[] b = u8[](0); fn[void()] w = () => { b[0] = 42; }; " +
-    "fn[i32()] r = () => b[0]; w(); return r(); }");
+    "export i32 f() { u8[] b = u8[](0); fn<void()> w = () => { b[0] = 42; }; " +
+    "fn<i32()> r = () => b[0]; w(); return r(); }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();
 }
@@ -435,20 +435,20 @@ export string test_writing_through_a_captured_array_or_struct_from_either_side(C
     "struct field, compound", "a mutating method on a captured receiver",
     "an element of a captured array of arrays");
   string[] src = string[](
-    "export i32 f() { i32[] a = i32[](1); fn[void()] g = () => { a[0] = 42; }; g(); return a[0]; }",
-    "export i32 f() { i32[] a = i32[](1); fn[i32()] g = () => a[0]; a[0] = 42; return g(); }",
-    "export i32 f() { i32[] a = i32[](40); fn[void()] g = () => { a[0] += 2; }; g(); return a[0]; }",
-    "export i32 f() { i32[] a = i32[](41); fn[void()] g = () => { a[0]++; }; g(); return a[0]; }",
-    "struct S { i32 v; } export i32 f() { S s = S(1); fn[void()] g = () => { s.v = 42; }; g(); " +
+    "export i32 f() { i32[] a = i32[](1); fn<void()> g = () => { a[0] = 42; }; g(); return a[0]; }",
+    "export i32 f() { i32[] a = i32[](1); fn<i32()> g = () => a[0]; a[0] = 42; return g(); }",
+    "export i32 f() { i32[] a = i32[](40); fn<void()> g = () => { a[0] += 2; }; g(); return a[0]; }",
+    "export i32 f() { i32[] a = i32[](41); fn<void()> g = () => { a[0]++; }; g(); return a[0]; }",
+    "struct S { i32 v; } export i32 f() { S s = S(1); fn<void()> g = () => { s.v = 42; }; g(); " +
     "return s.v; }",
-    "struct S { i32 v; } export i32 f() { S s = S(1); fn[i32()] g = () => s.v; s.v = 42; " +
+    "struct S { i32 v; } export i32 f() { S s = S(1); fn<i32()> g = () => s.v; s.v = 42; " +
     "return g(); }",
-    "struct S { i32 v; } export i32 f() { S s = S(40); fn[void()] g = () => { s.v += 2; }; g(); " +
+    "struct S { i32 v; } export i32 f() { S s = S(40); fn<void()> g = () => { s.v += 2; }; g(); " +
     "return s.v; }",
     // A method that mutates was the one shape that always worked — it is a *read* of the receiver.
     "struct S { i32 v; void set(this, i32 n) { this.v = n; } } export i32 f() { S s = S(1); " +
-    "fn[void()] g = () => { s.set(42); }; g(); return s.v; }",
-    "export i32 f() { i32[][] a = i32[][](i32[](1)); fn[void()] g = () => { a[0][0] = 42; }; g(); " +
+    "fn<void()> g = () => { s.set(42); }; g(); return s.v; }",
+    "export i32 f() { i32[][] a = i32[][](i32[](1)); fn<void()> g = () => { a[0][0] = 42; }; g(); " +
     "return a[0][0]; }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();
@@ -463,12 +463,12 @@ export string test_a_captured_parameter_gets_its_cell_at_entry(Core core, Cli cl
   string[] what = string[]("read", "written through the lambda", "beside a captured local",
                            "a method's parameter");
   string[] src = string[](
-    "export i32 f(i32 q) { fn[i32()] g = () => q * 2; return g(); }",
-    "export i32 f(i32 q) { fn[void()] g = () => { q = q + 21; }; g(); return q; }",
-    "export i32 f(i32 q) { i32 n = 21; fn[i32()] g = () => q + n; return g(); }",
+    "export i32 f(i32 q) { fn<i32()> g = () => q * 2; return g(); }",
+    "export i32 f(i32 q) { fn<void()> g = () => { q = q + 21; }; g(); return q; }",
+    "export i32 f(i32 q) { i32 n = 21; fn<i32()> g = () => q + n; return g(); }",
     // A method's parameter, where slot 0 is the receiver — so an entry cell built at the wrong
     // offset would capture `this` instead.
-    "struct S { i32 v; i32 m(this, i32 q) { fn[i32()] g = () => q * 2; return g(); } }\n" +
+    "struct S { i32 v; i32 m(this, i32 q) { fn<i32()> g = () => q * 2; return g(); } }\n" +
     "export i32 f(i32 q) { return S(1).m(q); }");
   for (i32 i = 0; i < src.len(); i++) { answers(t, cli, dir, what[i], src[i], "f(21)", 42); }
   return t.report();
@@ -481,11 +481,11 @@ export string test_which_declarations_must_become_cells() {
   string[] what = string[]("one captured local", "not the local next to it",
                            "both, when both are captured", "nothing, for a captured parameter");
   string[] src = string[](
-    "export i32 f() {\n  i32 n = 41;\n  fn[i32()] g = () => n + 1;\n  return g();\n}",
-    "export i32 f() {\n  i32 keep = 1;\n  i32 n = 41;\n  fn[i32()] g = () => n;\n" +
+    "export i32 f() {\n  i32 n = 41;\n  fn<i32()> g = () => n + 1;\n  return g();\n}",
+    "export i32 f() {\n  i32 keep = 1;\n  i32 n = 41;\n  fn<i32()> g = () => n;\n" +
     "  return g() + keep;\n}",
-    "export i32 f() {\n  i32 a = 40;\n  i32 b = 2;\n  fn[i32()] g = () => a + b;\n  return g();\n}",
-    "export i32 f(i32 p) {\n  fn[i32()] g = () => p;\n  return g();\n}");
+    "export i32 f() {\n  i32 a = 40;\n  i32 b = 2;\n  fn<i32()> g = () => a + b;\n  return g();\n}",
+    "export i32 f(i32 p) {\n  fn<i32()> g = () => p;\n  return g();\n}");
   string[] want = string[]("2:3", "3:3", "2:3 3:3", "");
   for (i32 i = 0; i < src.len(); i++) {
     string[] lines = splitLines(lambdaReportFiles(string[](ENTRY), string[](src[i] + "\n"), ENTRY));
@@ -525,7 +525,7 @@ export string test_a_lambda_in_a_module_that_also_imports_a_real_package(Core co
   string src = "import { Vec } from \"core/vec.wac\";\n" +
                "import { itoa } from \"../packages/fmt/src/itoa.wac\";\n" +
                "export i32 f() {\n  Vec<i32> v = Vec.create();\n  v.push(20);\n  i32 n = 1;\n" +
-               "  fn[i32()] g = () => n + 21;\n  n = n + 0;\n" +
+               "  fn<i32()> g = () => n + 21;\n  n = n + 0;\n" +
                "  return v.get(0) + g() + itoa(n).len() - 1;\n}\n" +
                "export i32 main() { return f(); }\n";
   string[] all = string[c.paths.len() + 1](fill: "");
@@ -572,16 +572,16 @@ export string test_a_captured_funcref_is_callable_and_calling_one_counts_as_read
   string[] what = string[]("a captured local funcref", "a captured funcref parameter",
                            "through a captured receiver as well", "inside a generic");
   string[] src = string[](
-    "export i32 f() { i32 seen = 0; fn[void(i32)] g = (i32 v) => { seen = v; }; " +
-    "fn[void()] w = () => { g(42); }; w(); return seen; }",
-    "void give(fn[void(i32)] g) { fn[void()] w = () => { g(42); }; w(); }\n" +
+    "export i32 f() { i32 seen = 0; fn<void(i32)> g = (i32 v) => { seen = v; }; " +
+    "fn<void()> w = () => { g(42); }; w(); return seen; }",
+    "void give(fn<void(i32)> g) { fn<void()> w = () => { g(42); }; w(); }\n" +
     "export i32 f() { i32 seen = 0; give((i32 v) => { seen = v; }); return seen; }",
     // The shape `then` has: a method's lambda calling the callback it was handed, through `this`.
     "struct B { i32 v; B of(i32 v) { return B(v); } " +
-    "void give(const this, fn[void(i32)] g) { fn[void()] w = () => { g(this.v); }; w(); } }\n" +
+    "void give(const this, fn<void(i32)> g) { fn<void()> w = () => { g(this.v); }; w(); } }\n" +
     "export i32 f() { i32 seen = 0; B b = B.of(42); b.give((i32 v) => { seen = v; }); return seen; }",
     "struct B<T> { T v; B<T> of(T v) { return B(v); } " +
-    "void give(const this, fn[void(T)] g) { fn[void()] w = () => { g(this.v); }; w(); } }\n" +
+    "void give(const this, fn<void(T)> g) { fn<void()> w = () => { g(this.v); }; w(); } }\n" +
     "export i32 f() { i32 seen = 0; B<i32> b = B.of(42); b.give((i32 v) => { seen = v; }); " +
     "return seen; }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
@@ -599,19 +599,19 @@ export string test_a_lambda_captures_the_receiver_and_it_is_the_callers(Core cor
                            "two lambdas over one receiver");
   string[] src = string[](
     "struct S { i32 v; S create(i32 v) { return S(v); } " +
-    "fn[i32()] reader(const this) { return () => this.v; } }\n" +
-    "export i32 f() { S s = S.create(42); fn[i32()] r = s.reader(); return r(); }",
+    "fn<i32()> reader(const this) { return () => this.v; } }\n" +
+    "export i32 f() { S s = S.create(42); fn<i32()> r = s.reader(); return r(); }",
     "struct S { i32 v; S create(i32 v) { return S(v); } i32 get(const this) { return this.v; } " +
-    "fn[i32()] reader(const this) { return () => this.get(); } }\n" +
-    "export i32 f() { S s = S.create(42); fn[i32()] r = s.reader(); return r(); }",
+    "fn<i32()> reader(const this) { return () => this.get(); } }\n" +
+    "export i32 f() { S s = S.create(42); fn<i32()> r = s.reader(); return r(); }",
     // **The receiver is shared, not copied** — the caller's object is the one that changed.
     "struct C { i32 n; C create() { return C(0); } void bump(this, i32 by) { this.n = this.n + by; } " +
-    "fn[void(i32)] adder(this) { return (i32 by) => { this.bump(by); }; } }\n" +
-    "export i32 f() { C c = C.create(); fn[void(i32)] add = c.adder(); add(40); add(2); return c.n; }",
+    "fn<void(i32)> adder(this) { return (i32 by) => { this.bump(by); }; } }\n" +
+    "export i32 f() { C c = C.create(); fn<void(i32)> add = c.adder(); add(40); add(2); return c.n; }",
     "struct C { i32 n; C create() { return C(0); } " +
-    "fn[void(i32)] adder(this) { return (i32 by) => { this.n = this.n + by; }; } " +
-    "fn[i32()] reader(const this) { return () => this.n; } }\n" +
-    "export i32 f() { C c = C.create(); fn[void(i32)] add = c.adder(); fn[i32()] read = c.reader(); " +
+    "fn<void(i32)> adder(this) { return (i32 by) => { this.n = this.n + by; }; } " +
+    "fn<i32()> reader(const this) { return () => this.n; } }\n" +
+    "export i32 f() { C c = C.create(); fn<void(i32)> add = c.adder(); fn<i32()> read = c.reader(); " +
     "add(42); return read(); }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();
@@ -626,17 +626,17 @@ export string test_a_lambda_handed_to_a_funcref_rather_than_a_declared_function(
   string[] what = string[]("a local funcref", "two arguments, one a lambda", "a funcref field",
                            "a funcref a method handed back");
   string[] src = string[](
-    "export i32 f() { i32 seen = 0; fn[void(fn[void(i32)])] run = (fn[void(i32)] h) => { h(42); }; " +
+    "export i32 f() { i32 seen = 0; fn<void(fn<void(i32)>)> run = (fn<void(i32)> h) => { h(42); }; " +
     "run((i32 n) => { seen = n; }); return seen; }",
-    "export i32 f() { i32 seen = 0; fn[void(i32, fn[void(i32)])] reg = " +
-    "(i32 id, fn[void(i32)] h) => { h(id); }; reg(42, (i32 n) => { seen = n; }); return seen; }",
+    "export i32 f() { i32 seen = 0; fn<void(i32, fn<void(i32)>)> reg = " +
+    "(i32 id, fn<void(i32)> h) => { h(id); }; reg(42, (i32 n) => { seen = n; }); return seen; }",
     // The shape every capability in this repository has: a funcref in a struct field.
-    "struct Caps { fn[void(fn[void(i32)])] each; }\n" +
-    "export i32 f() { i32 seen = 0; Caps c = Caps((fn[void(i32)] h) => { h(42); }); " +
+    "struct Caps { fn<void(fn<void(i32)>)> each; }\n" +
+    "export i32 f() { i32 seen = 0; Caps c = Caps((fn<void(i32)> h) => { h(42); }); " +
     "c.each((i32 n) => { seen = n; }); return seen; }",
     "struct S { i32 v; S create() { return S(0); } " +
-    "fn[void(i32, fn[void(i32)])] link(const this) { return (i32 id, fn[void(i32)] h) => { h(id); }; } }\n" +
-    "export i32 f() { S s = S.create(); i32 seen = 0; fn[void(i32, fn[void(i32)])] reg = s.link(); " +
+    "fn<void(i32, fn<void(i32)>)> link(const this) { return (i32 id, fn<void(i32)> h) => { h(id); }; } }\n" +
+    "export i32 f() { S s = S.create(); i32 seen = 0; fn<void(i32, fn<void(i32)>)> reg = s.link(); " +
     "reg(42, (i32 n) => { seen = n; }); return seen; }");
   for (i32 i = 0; i < src.len(); i++) { answers42(t, cli, dir, what[i], src[i]); }
   return t.report();
@@ -654,21 +654,21 @@ export string test_a_lambda_inside_a_generic_once_per_instantiation(Core core, C
                            "a generic struct's method");
   string[] call = string[]("f()", "two()", "caps()", "byType()", "onlyInside()", "methods()");
   string[] src = string[](
-    "T pick<T>(T a, T b) { fn[bool()] first = () => true; return first() ? a : b; }\n" +
+    "T pick<T>(T a, T b) { fn<bool()> first = () => true; return first() ? a : b; }\n" +
     "export i32 f() { return pick(42, 0); }",
     // Two instantiations of one generic: the case a position key cannot tell apart.
-    "T pick<T>(T a, T b) { fn[bool()] first = () => true; return first() ? a : b; }\n" +
+    "T pick<T>(T a, T b) { fn<bool()> first = () => true; return first() ? a : b; }\n" +
     "export i32 two() { i32 a = pick(40, 0); i64 b = pick(2 as i64, 0 as i64); " +
     "return a + (b as~ i32); }",
-    "i32 addBase<T>(T v, i32 base) { fn[i32()] get = () => base; return get(); }\n" +
+    "i32 addBase<T>(T v, i32 base) { fn<i32()> get = () => base; return get(); }\n" +
     "export i32 caps() { i32 base = 42; return addBase(1, base); }",
-    "T held<T>(T v) { fn[T()] get = () => v; return get(); }\n" +
+    "T held<T>(T v) { fn<T()> get = () => v; return get(); }\n" +
     "export i32 byType() { i32 a = held(40); string b = held(\"xx\"); return a + b.len(); }",
     // **A generic called only from inside a lambda**, discovered by a walk that had no `Lambda` arm.
     "T id<T>(T v) { return v; }\n" +
-    "export i32 onlyInside() { fn[i32()] get = () => id(42); return get(); }",
+    "export i32 onlyInside() { fn<i32()> get = () => id(42); return get(); }",
     "struct Cell<T> {\n  T v;\n  Cell<T> of(T v) { return Cell(v); }\n" +
-    "  T get(const this) { fn[bool()] yes = () => true; return yes() ? this.v : this.v; }\n}\n" +
+    "  T get(const this) { fn<bool()> yes = () => true; return yes() ? this.v : this.v; }\n}\n" +
     "export i32 methods() { Cell<i32> a = Cell.of(40); Cell<i64> b = Cell.of(2 as i64); " +
     "return a.get() + (b.get() as~ i32); }");
   for (i32 i = 0; i < src.len(); i++) { answers(t, cli, dir, what[i], src[i], call[i], 42); }
@@ -677,14 +677,14 @@ export string test_a_lambda_inside_a_generic_once_per_instantiation(Core core, C
 
 export string test_a_method_may_declare_its_own_type_parameters_and_a_call_says_what_is_missing(
     Core core, Cli cli) {
-  // **The syntax parses; the call does not work yet.** `Pending<U> then<U>(fn[U(T)] f)` is the shape
+  // **The syntax parses; the call does not work yet.** `Pending<U> then<U>(fn<U(T)> f)` is the shape
   // the promise API wants for chaining, and `map<U>(…)` used to answer `unexpected token` at the `<`.
   // What is missing is inference and monomorphisation, so a *call* is refused and the refusal names
   // the feature.
   T t = T.create();
   string dir = scratchDir(cli);
   string decl = "struct Box<T> {\n  T v;\n  Box<T> of(T v) { return Box(v); }\n" +
-                "  Box<U> map<U>(const this, fn[U(T)] f) { return Box.of(f(this.v)); }\n}\n";
+                "  Box<U> map<U>(const this, fn<U(T)> f) { return Box.of(f(this.v)); }\n}\n";
 
   // Declaring one is harmless: nothing is emitted for a method nobody calls, so the module loads.
   answers(t, cli, dir, "declaring a generic method changes no unrelated answer",
@@ -703,12 +703,12 @@ export string test_a_method_may_declare_its_own_type_parameters_and_a_call_says_
 }
 
 export string test_a_generic_taking_a_funcref_parameter_is_still_declined(Core core, Cli cli) {
-  // **Not part of `issues/lang/0142` and not fixed by it.** `T twice<T>(T v, fn[T(T)] f)` has no
+  // **Not part of `issues/lang/0142` and not fixed by it.** `T twice<T>(T v, fn<T(T)> f)` has no
   // lambda in it at all — the funcref arrives as a parameter. Pinned here so the two are not
   // confused: a lambda *inside* a generic works now, a funcref *parameter* of one does not.
   T t = T.create();
-  string src = "T twice<T>(T v, fn[T(T)] f) { return f(f(v)); }\n" +
-               "export i32 viaParam() { fn[i32(i32)] inc = (i32 n) => n + 21; return twice(0, inc); }\n";
+  string src = "T twice<T>(T v, fn<T(T)> f) { return f(f(v)); }\n" +
+               "export i32 viaParam() { fn<i32(i32)> inc = (i32 n) => n + 21; return twice(0, inc); }\n";
   Ran r = runEmittedOne(cli, ENTRY, src + "export i32 main() { return viaParam(); }\n",
                         scratchDir(cli), "genfnparam.wasm");
   t.isFalse(r.ok && !r.trapped && r.status == 42,

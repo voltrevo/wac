@@ -7,7 +7,7 @@ struct Counter { i32 n;
 }
 export i32 f() {
   Counter c = Counter(0);
-  fn[i32()] g = c.inc;
+  fn<i32()> g = c.inc;
   g();
   g();
   return g();
