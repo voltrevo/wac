@@ -131,8 +131,13 @@ async Result<never> main(Sys sys) {
   sys.log("listening on \{listener.addr}");
 
   while (true) {
-    Socket sock = try await listener.accept();
-    echo(sock);                // not awaited — the loop goes straight back to accept
+    match (await listener.accept()) {
+      Ok(sock): { echo(sock); }      // not awaited — the loop goes straight back to accept
+      Err(why): {                    // the listener is short of something: wait, then try again
+        sys.warn("accept failed; retrying");
+        await sys.sleepMillis(100);
+      }
+    }
   }
 }
 
@@ -149,6 +154,14 @@ async void echo(Socket sock) {
 
 `[§wac-std-socket-gs9parx]` A `Socket`'s `recv` answers a `Read` ([41](41-read.md)) — data, the end, or a failure — and `send`
 answers whether the bytes went.
+
+`[§wac-std-accept-tkafecv]` `accept` answers `Err` only when the listener itself cannot go on accepting — it has run out
+of a resource, or become unusable. A connection that ends before it is accepted is never reported: `accept` goes on
+waiting for the next one.
+
+So an `Err` from `accept` is about the listener, not about any client, and it is usually worth waiting out rather than
+ending the program — which is why the loop above matches it instead of passing it up with `try`. Failing to `listen`
+at all is different, and `try` is right there.
 
 ## Narrowing authority
 
@@ -180,4 +193,3 @@ No file is written and no toolchain is looked up: the compiler is a library call
 - **The rest of the host.** Directories and file metadata, processes and their output, the environment, the terminal,
   datagrams and the page are capabilities `std` provides today, through types not yet given their `Sys` form here.
   Their shape — methods on `Sys`, or handles a `Sys` hands out — is to be written down.
-- **Whether `accept` can fail.** Written with `try` above.

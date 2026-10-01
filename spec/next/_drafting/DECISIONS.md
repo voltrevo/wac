@@ -197,3 +197,4 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   Enums have no static methods (13 refuses them), so `private` there covers instance methods only.
 - **`main` is ordinary (operator):** its return-type and status rules apply only when building a program (`wac build`/`run`/`app`); `wac compile` and other modules treat it as any export.
 - **A program's `main` takes nothing or one `Sys` (operator).** Arguments arrive through `sys.args()`, added to 44 (no grant), since 45 already promised them to the program.
+- **`accept` (agreed):** `Result<Socket>`; `Err` only for listener-level failure; connections that die before acceptance are retried by the host, never reported. The server example matches and backs off instead of `try`. A `close` on `Listener` would need a third outcome.
