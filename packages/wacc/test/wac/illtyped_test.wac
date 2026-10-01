@@ -51,12 +51,10 @@ string[] names() {
     // family, because the arm serves them all. `issues/lang/0243a`.
     "a27 int arms -> string", "a28 int arms -> bool", "a29 string arms -> i32",
     "a30 bool arms -> i32", "a31 int arms -> f64",
-    // A **bare `null`** where a type is required. spec/spec/types.md: *"`null` is a keyword literal
-    // with no type of its own … the compiler infers the type from context"* — and `null is null` has no
-    // context to infer from. The rules were there and keyed on a type the operand does not have, so all
-    // three reached the emitter, which declined the module with the reason *"null"*. The reference
-    // refuses all three by name. `issues/lang/0249a`.
-    "a32 null is null", "a33 null is not null", "a34 null!",
+    // A **bare `null`** unwrapped. `null is null` was here too, refused for having no type
+    // (`issues/lang/0249a`); spec/next ch10 gives the literal the type `never?` and the test the answer
+    // `true` (`§wac-isnull-kxsqi4g`), so only the unwrap is left — there is nothing present to assert.
+    "a34 null!",
     // A `bool` compared against an integer **literal**. `b > y` for two variables was refused and
     // this was not: a literal takes the other operand's type without anything asking whether that
     // type is one an integer literal may be, so it compiled and ran with `true` standing in for 1 —
@@ -101,8 +99,6 @@ string[] programs() {
     "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { A: \"x\", default: \"y\" }; return n; }\n",
     "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { A: true, default: false }; return n; }\n",
     "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { A: 1, default: 2 }; return d; }\n",
-    "export bool f() { return null is null; }\n",
-    "export bool f() { return null is not null; }\n",
     "export i32 f() { return null!; }\n",
     "export i32 f(i32 x) { return (x < 2) > 0 ? 1 : 0; }\n",
     "export i32 f(i32 x) { return (x < 2) == 1 ? 1 : 0; }\n",

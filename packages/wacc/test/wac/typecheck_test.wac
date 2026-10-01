@@ -2342,7 +2342,6 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     "struct Point { i32 x; i32 y; } export void bad() { Point p = Point { x: 1 }; }",
     "export i32 bad(i32 x) { return x as i32; }",
     // `is` and `!` on something the question does not fit.
-    "export bool bad(i32 x) { return x is null; }",
     "export bool bad(i32 a, i32 b) { return a is b; }",
     "struct P { i32 x; } export P bad(P p) { return p!; }"
   ],

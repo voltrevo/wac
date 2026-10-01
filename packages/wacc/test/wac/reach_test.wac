@@ -86,7 +86,10 @@ string[] expressionLabels() {
     // operand *before* deciding whether it is a ticket — so a fault buried in one is reported even
     // when the await itself is also wrong. `design/lang/0014`.
     "Await",
-    "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member", "Call", "Call-method",
+    "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member",
+    // `p?.m` — spec/next ch10. The fault is buried in the object, which is the only sub-expression.
+    "SafeMember",
+    "Call", "Call-method",
     "Construct", "Assign-rhs", "Return-value", "Condition",
     // Added after `Incr` turned out to be unwalked in its expression form: `p.n++;` was checked and
     // `return x++;` was not. The grid had a Return-value cell and it passed, because the fault it
@@ -128,6 +131,7 @@ string[] expressionSources() {
     "void f(i32 p, f64 q, bool c) { i32 r = (" + SUB + " > 0) ? 1 : 0; }",
     "void f(i32 p, f64 q, i32[] a) { i32 r = a[" + SUB + "]; }",
     "struct P { i32 x; } void f(i32 p, f64 q, P s) { i32 r = s.x + " + SUB + "; }",
+    "struct P { i32 x; } P? mk(i32 n) { return null; } void f(i32 p, f64 q) { i32? r = mk(" + SUB + ")?.x; }",
     "void g(i32 n) { } void f(i32 p, f64 q) { g(" + SUB + "); }",
     "struct P { i32 x; void m(this, i32 n) { } } void f(i32 p, f64 q, P s) { s.m(" + SUB + "); }",
     "struct P { i32 x; } void f(i32 p, f64 q) { P s = P(" + SUB + "); }",
