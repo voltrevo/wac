@@ -391,8 +391,14 @@ Boundary crossBoundary(Fs fs, string base, string from, string spec, string next
                         (fromRoot == "" ? "" : " at " + relativeTo(base, fromRoot)));
 }
 
-export Sources gather(Fs fs, Cli cli, string entry) {
+export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
   RootCache rootCache = RootCache.create();
+  // **A file that cannot be read is an error when something needs it** — spec/next ch05
+  // `§wac-reach-import-lazy-2jhptfk`. A build (`lazy`) leaves it out and carries on: if a declaration
+  // the entry reaches imports from it, the import survives reachability and the checker says the file
+  // was not supplied; if none does, the import is dropped with the declarations that used it. `check`
+  // reads every import whether or not its names are used (ch06), so it stops here as it always did.
+  bool[] absent = bool[].filled(maxFiles(), false);
   string[] paths = string[].filled(maxFiles(), "");
   string[] texts = string[].filled(maxFiles(), "");
   string[] roots = string[].filled(maxFiles(), "");
@@ -436,6 +442,11 @@ export Sources gather(Fs fs, Cli cli, string entry) {
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
       FileResult r = fs.readFile(path);
+      if (!r.ok && lazy && at > 0) {
+        absent[at] = true;
+        at = at + 1;
+        continue;
+      }
       if (!r.ok) {
         // `why` carries the whole sentence when there is an importer to name; `missing` stays set
         // either way, so the entry file's own failure still reads `cannot read <entry>`.
@@ -572,7 +583,17 @@ export Sources gather(Fs fs, Cli cli, string entry) {
     }
     at = at + 1;
   }
-  return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", "");
+  // The absent files out, every parallel array with them.
+  i32 kept = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (absent[i]) { continue; }
+    paths[kept] = paths[i];
+    texts[kept] = texts[i];
+    roots[kept] = roots[i];
+    confine[kept] = confine[i];
+    kept = kept + 1;
+  }
+  return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, kept, "", "");
 }
 
 /**

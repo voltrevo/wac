@@ -27,6 +27,7 @@ import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsOf } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
+import { Pruned, pruneFor } from "./reach.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -647,6 +648,23 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * 0.9s and 9.9s — predate `issues/lang/0133` and were a good deal further out than they look, which
  * is the usual fate of a figure in a comment nothing checks.
  */
+/**
+ * The graph a build of `entry` compiles — spec/next ch05.
+ *
+ * Every declaration no export of the entry reaches is blanked, and every file no retained declaration
+ * needs is left out, so what remains is checked and emitted as it stands. `wac check` does not come
+ * here: checking a project retains everything (ch06).
+ */
+export Pruned pruneForBuild(string[] paths, string[] sources, Res res, string entry) {
+  return pruneFor(paths, sources, res, entry);
+}
+
+/** A build's diagnostics: the pruned graph, every remaining declaration checked in full. */
+export string diagnoseBuildIn(string[] paths, string[] sources, Res res, string entry) {
+  Pruned p = pruneFor(paths, sources, res, entry);
+  return diagnoseGraphIn(p.paths, p.sources, p.res, entry);
+}
+
 export string diagnoseGraph(string[] paths, string[] sources, string entry) {
   return diagnoseGraphIn(paths, sources, Res.empty(), entry);
 }

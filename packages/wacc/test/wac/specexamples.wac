@@ -15,10 +15,11 @@ import { Change, Cli, FileResult, Exec } from "std";
 import { Vec } from "core";
 import { itoa, utoa64 } from "../../../fmt/src/itoa.wac";
 import { startsWith, endsWith, trimmed, splitKeepingEmpty, splitLines } from "../../../wactest/src/strings.wac";
-import { diagnoseFilesIn, wireHasErrors, blockedFilesIn, emitFilesSelfDescribingIn,
+import { diagnoseBuildIn, pruneForBuild, diagnoseGraphIn, wireHasErrors, blockedFilesIn, emitFilesSelfDescribingIn,
          importSpecsFor } from "../../src/api.wac";
 import { renderDiagnostics } from "../../src/render.wac";
 import { Res } from "../../src/path.wac";
+import { Pruned } from "../../src/reach.wac";
 
 /** One thing a fence says must happen. */
 export struct ExExpect {
@@ -376,7 +377,7 @@ export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
     ExVariant var = fence.variants[v];
     string[] ps = wacOnly(var.paths, var.paths);
     string[] ss = wacOnly(var.paths, var.sources);
-    string wire = diagnoseFilesIn(ps, ss, resolutionFor(var.paths, var.sources), fence.entry);
+    string wire = diagnoseBuildIn(ps, ss, resolutionFor(var.paths, var.sources), fence.entry);
     if (!wireHasErrors(wire)) {
       return ExVerdict(fence, "missed", "line " + itoa(var.errorLine) + " uncommented is accepted — ERROR: "
                      + var.reason);
@@ -391,9 +392,16 @@ bool commandSupported(string c) {
 }
 
 /** Why `x` does not hold, or "". */
-string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] paths, string[] sources, Res res,
+string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenPaths, string[] givenSources,
+             Res givenRes,
              i32 id) {
-  string wire = diagnoseFilesIn(paths, sources, res, fence.entry);
+  // **What a build compiles**: the graph reachability retains — spec/next ch05. A build in the
+  // command does exactly this, so the probe judges the program the command would build.
+  Pruned pruned = pruneForBuild(givenPaths, givenSources, givenRes, fence.entry);
+  string[] paths = pruned.paths;
+  string[] sources = pruned.sources;
+  Res res = pruned.res;
+  string wire = diagnoseGraphIn(paths, sources, res, fence.entry);
   bool refused = wireHasErrors(wire);
   if (x.kind == "refused") { return refused ? "" : "accepted, and it must be refused"; }
   if (refused) { return "refused: " + firstDiagnostic(wire, paths, sources); }

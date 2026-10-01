@@ -97,7 +97,7 @@ struct Loaded {
 }
 
 Loaded load(Fs fs, Cli cli, string entry) {
-  Sources src = gather(fs, cli, entry);
+  Sources src = gather(fs, cli, entry, false);
   if (src.why != "") {
     return Loaded(false, string[].filled(0, ""), string[].filled(0, ""), resOf(src), 0);
   }

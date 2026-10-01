@@ -60,7 +60,7 @@ i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 t
 
   i32 emitted = 0;
   for (i32 fi = 0; fi < files.len(); fi++) {
-    Sources src = gather(fs, cli, files[fi]);
+    Sources src = gather(fs, cli, files[fi], false);
     if (src.why != "") {
       core.warn("  cannot gather " + files[fi] + ": " + src.why);
       continue;

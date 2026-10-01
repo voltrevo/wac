@@ -1,0 +1,394 @@
+// Reachability — spec/next ch05.
+//
+// A program is compiled from its entry points outward: a declaration no entry point reaches is dropped
+// before it is checked, and a file no retained declaration needs is never read. This is the step
+// between parsing and checking in a *build*; `wac check` deliberately retains everything (ch06) and
+// does not come here.
+//
+// ## What it computes
+//
+// Starting from every export of the entry module — a function, a struct, an enum, a static, an export
+// list — it follows **declaration references**: each identifier inside a retained declaration is
+// looked up as a top-level name of its file, and as an import of it. That is the "minimal binding" the
+// chapter asks for, and it is token-level on purpose: reachability runs before types are known, so it
+// cannot tell a local that shadows a top-level name from the name itself, and answering "retained" for
+// both errs toward checking more, never less. A struct is retained whole, methods and all, because its
+// members are reached through types this step cannot see (`§wac-reach-struct-whole-3wx2wun`).
+//
+// ## What it hands on
+//
+// The files a retained declaration needs, with every dropped declaration **blanked** — replaced by
+// spaces, newlines kept, so every line and column after it is where it was. The checker and the emitter
+// downstream need no notion of reachability at all: a dropped declaration is simply not there, and an
+// import nothing retained uses is gone with it, which is what makes a missing file an error exactly
+// when it is needed (`§wac-reach-import-lazy-2jhptfk`).
+
+import { Res } from "./path.wac";
+import { resolveVia } from "./path.wac";
+import { kConst, kExport, kIdent } from "./kinds.wac";
+import { tokenStride } from "./lex.wac";
+import { Frontend, frontendOf } from "./frontend.wac";
+import { Decl, DeclKind, ImportItem } from "./ast.wac";
+
+/** The build's view of a graph: the files it needs, dropped declarations blanked. */
+export struct Pruned {
+  string[] paths;
+  string[] sources;
+  Res res;
+}
+
+/** One file's declarations as reachability sees them. */
+struct Unit {
+  Frontend fe;
+  /** Each declaration's first token, `export` included, and the token after its last. */
+  i32[] starts;
+  i32[] ends;
+  /** The name a declaration declares, or "" for an import or an export list. */
+  string[] names;
+  bool[] exported;
+  bool[] retained;
+  bool[] scanned;
+  /** The names this file has already resolved: the answer depends only on the name and the file. */
+  Names done;
+}
+
+/** A set of strings, open-addressed — one per file, so each distinct name is resolved once. */
+struct Names {
+  string[] keys;
+  bool[] used;
+  i32 count;
+
+  /** Adds `k`, answering whether it was new. */
+  bool add(this, string k) {
+    if ((this.count + 1) * 2 > this.keys.len()) { this.grow(); }
+    i32 mask = this.keys.len() - 1;
+    i32 h = hashOf(k) & mask;
+    while (this.used[h]) {
+      if (this.keys[h] == k) { return false; }
+      h = (h + 1) & mask;
+    }
+    this.used[h] = true;
+    this.keys[h] = k;
+    this.count = this.count + 1;
+    return true;
+  }
+
+  void grow(this) {
+    string[] oldKeys = this.keys;
+    bool[] oldUsed = this.used;
+    this.keys = string[].filled(oldKeys.len() * 2, "");
+    this.used = bool[].filled(oldKeys.len() * 2, false);
+    this.count = 0;
+    for (i32 i = 0; i < oldKeys.len(); i++) { if (oldUsed[i]) { this.add(oldKeys[i]); } }
+  }
+}
+
+i32 hashOf(string k) {
+  i32 h = 5381;
+  u8[] b = k.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { h = h * 33 + b[i] as i32; }
+  return h & 2147483647;
+}
+
+/** The text of token `t`. */
+string textOf(Frontend fe, i32 t) {
+  i32 at = fe.lexed.tokens[t * tokenStride() + 1];
+  i32 len = fe.lexed.tokens[t * tokenStride() + 2];
+  u8[] b = u8[].filled(len, 0);
+  for (i32 i = 0; i < len; i++) { b[i] = fe.src[at + i]; }
+  return string.fromBytes(b);
+}
+
+i32 kindOf(Frontend fe, i32 t) { return fe.lexed.tokens[t * tokenStride()]; }
+
+/** The token at `line:col`, searching forward from `from`; -1 when none is. */
+i32 tokenAt(Frontend fe, i32 from, i32 line, i32 col) {
+  for (i32 t = from; t < fe.lexed.tokenCount; t++) {
+    i32 l = fe.lexed.tokens[t * tokenStride() + 3];
+    if (l > line) { return -1; }
+    if (l == line && fe.lexed.tokens[t * tokenStride() + 4] == col) { return t; }
+  }
+  return -1;
+}
+
+string declaredName(Frontend fe, Decl d) {
+  return match (d.kind) {
+    Func(nameTok, ret, params, body, exported, tps, isAsync): nameTok >= 0 ? textOf(fe, nameTok) : "",
+    StructDecl(nameTok, parentTok, fields, methods, exported, isConst, tps):
+      nameTok >= 0 ? textOf(fe, nameTok) : "",
+    EnumDecl(nameTok, variants, exported, methods, tps): nameTok >= 0 ? textOf(fe, nameTok) : "",
+    StaticDecl(nameTok, type, init, exported): nameTok >= 0 ? textOf(fe, nameTok) : "",
+    default: ""
+  };
+}
+
+bool declExported(Decl d) {
+  return match (d.kind) {
+    Func(nameTok, ret, params, body, exported, tps, isAsync): exported,
+    StructDecl(nameTok, parentTok, fields, methods, exported, isConst, tps): exported,
+    EnumDecl(nameTok, variants, exported, methods, tps): exported,
+    StaticDecl(nameTok, type, init, exported): exported,
+    default: false
+  };
+}
+
+Unit unitOf(string path, string source) {
+  Frontend fe = frontendOf(path, source.toBytes());
+  Decl[] ds = fe.prog.decls;
+  i32 n = ds.len();
+  i32[] starts = i32[].filled(n, 0);
+  i32[] ends = i32[].filled(n, 0);
+  string[] names = string[].filled(n, "");
+  bool[] exported = bool[].filled(n, false);
+  i32 cursor = 0;
+  for (i32 i = 0; i < n; i++) {
+    i32 t = tokenAt(fe, cursor, ds[i].line, ds[i].col);
+    if (t < 0) { t = cursor; }
+    cursor = t;
+    // A struct, an enum and a static are positioned after the `export` the loop consumed for them,
+    // and a `const struct` may be positioned after its `const`: both belong to the declaration.
+    while (t > 0 && (kindOf(fe, t - 1) == kExport() || kindOf(fe, t - 1) == kConst())) { t = t - 1; }
+    starts[i] = t;
+    names[i] = declaredName(fe, ds[i]);
+    exported[i] = declExported(ds[i]);
+  }
+  // The token stream ends with an end-of-file token, which belongs to no declaration.
+  for (i32 i = 0; i < n; i++) {
+    ends[i] = i + 1 < n ? starts[i + 1] : fe.lexed.tokenCount - 1;
+  }
+  return Unit(fe, starts, ends, names, exported, bool[].filled(n, false), bool[].filled(n, false),
+              Names(string[].filled(64, ""), bool[].filled(64, false), 0));
+}
+
+/** Whether a specifier names one of the built-in trees rather than a file. */
+bool builtinKey(string key) {
+  return key == "core" || key == "std" || key == " core" || key == " std";
+}
+
+/** A quoted specifier naming a path below a built-in tree: `"core/x.wac"`, `"std/y.wac"`. */
+bool builtinSubpath(string quoted) {
+  return (quoted.len() > 6 && quoted.slice(0, 6) == "\"core/") ||
+         (quoted.len() > 5 && quoted.slice(0, 5) == "\"std/");
+}
+
+/** A reachability walk over one graph. */
+struct Walk {
+  string[] paths;
+  string[] sources;
+  Res res;
+  Unit?[] units;
+  bool[] needed;
+
+  Unit unit(this, i32 f) {
+    if (this.units[f] is null) { this.units[f] = unitOf(this.paths[f], this.sources[f]); }
+    return this.units[f]!;
+  }
+
+  i32 indexOf(this, string path) {
+    for (i32 i = 0; i < this.paths.len(); i++) { if (this.paths[i] == path) { return i; } }
+    return -1;
+  }
+
+  /** The file an import or re-export in file `f` names, or -1 for a built-in or a missing file. */
+  i32 target(this, i32 f, Frontend fe, i32 pathTok) {
+    string quoted = textOf(fe, pathTok);
+    if (quoted.len() < 2) { return -1; }
+    string key = resolveVia(this.res, this.paths, this.paths[f], quoted.slice(1, quoted.len() - 1));
+    if (builtinKey(key)) { return -1; }
+    return this.indexOf(key);
+  }
+
+  void retain(this, i32 f, i32 d) {
+    Unit u = this.unit(f);
+    u.retained[d] = true;
+  }
+
+  /** A name as file `f` sees it: its own top-level declarations, then its imports. */
+  void resolveName(this, i32 f, string name, i32 depth) {
+    if (depth > 64) { return; }
+    Unit u = this.unit(f);
+    if (!u.done.add(name)) { return; }
+    Decl[] ds = u.fe.prog.decls;
+    for (i32 d = 0; d < ds.len(); d++) {
+      if (u.names[d] == name) { u.retained[d] = true; }
+      match (ds[d].kind) {
+        Import(pathTok, prefixTok, items): {
+          for (i32 i = 0; i < items.len(); i++) {
+            if (textOf(u.fe, items[i].aliasTok) != name) { continue; }
+            u.retained[d] = true;
+            if (prefixTok >= 0) { continue; }
+            i32 g = this.target(f, u.fe, pathTok);
+            if (g < 0) { continue; }
+            this.needed[g] = true;
+            this.resolveExport(g, textOf(u.fe, items[i].nameTok), depth + 1);
+          }
+        }
+        default: { }
+      }
+    }
+  }
+
+  /** What file `g` exports as `name`: a declaration of its own, or an export list's item. */
+  void resolveExport(this, i32 g, string name, i32 depth) {
+    if (depth > 64) { return; }
+    Unit u = this.unit(g);
+    Decl[] ds = u.fe.prog.decls;
+    for (i32 d = 0; d < ds.len(); d++) {
+      if (u.names[d] == name) { u.retained[d] = true; }
+      match (ds[d].kind) {
+        ExportList(pathTok, items): {
+          for (i32 i = 0; i < items.len(); i++) {
+            if (textOf(u.fe, items[i].aliasTok) != name) { continue; }
+            u.retained[d] = true;
+            this.forward(g, u.fe, pathTok, items[i], depth + 1);
+          }
+        }
+        default: { }
+      }
+    }
+  }
+
+  /** An export list's item: what this file sees by that name, or what its source module exports. */
+  void forward(this, i32 f, Frontend fe, i32 pathTok, ImportItem item, i32 depth) {
+    string named = textOf(fe, item.nameTok);
+    if (pathTok < 0) {
+      this.resolveName(f, named, depth);
+      return;
+    }
+    i32 h = this.target(f, fe, pathTok);
+    if (h < 0) { return; }
+    this.needed[h] = true;
+    this.resolveExport(h, named, depth);
+  }
+
+  /** Every identifier inside declaration `d` of file `f`, looked up as a declaration reference. */
+  void scan(this, i32 f, i32 d) {
+    Unit u = this.unit(f);
+    u.scanned[d] = true;
+    for (i32 t = u.starts[d]; t < u.ends[d]; t++) {
+      if (kindOf(u.fe, t) == kIdent()) { this.resolveName(f, textOf(u.fe, t), 0); }
+    }
+  }
+}
+
+/**
+ * The graph a build of `entry` compiles: the files it needs, with dropped declarations blanked.
+ *
+ * Answers the graph unchanged where it cannot do better — no entry among the paths, or a file that does
+ * not parse, whose diagnostics belong to the checker downstream and which reachability must not hide.
+ */
+export Pruned pruneFor(string[] paths, string[] sources, Res res, string entry) {
+  i32 n = paths.len();
+  Walk w = Walk(paths, sources, res, Unit?[].defaulted(n), bool[].filled(n, false));
+  i32 e = w.indexOf(entry);
+  if (e < 0) { return Pruned(paths, sources, res); }
+  w.needed[e] = true;
+  Unit eu = w.unit(e);
+  if (eu.fe.errorCount > 0 || eu.fe.lexed.errorCount > 0) { return Pruned(paths, sources, res); }
+
+  // The roots: every export of the entry module, `§wac-reach-export-type-root-svpqwtw`.
+  Decl[] eds = eu.fe.prog.decls;
+  for (i32 d = 0; d < eds.len(); d++) {
+    if (eu.exported[d]) { eu.retained[d] = true; }
+    match (eds[d].kind) {
+      ExportList(pathTok, items): {
+        eu.retained[d] = true;
+        for (i32 i = 0; i < items.len(); i++) { w.forward(e, eu.fe, pathTok, items[i], 0); }
+      }
+      default: { }
+    }
+  }
+
+  // To a fixed point: scanning a retained declaration can retain others, in this file or another.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (i32 f = 0; f < n; f++) {
+      if (!w.needed[f] || builtinKey(paths[f])) { continue; }
+      Unit u = w.unit(f);
+      for (i32 d = 0; d < u.retained.len(); d++) {
+        if (u.retained[d] && !u.scanned[d]) {
+          w.scan(f, d);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // **A specifier's form needs no file to judge**, so an import naming a path inside `core` or `std`
+  // stays to be refused whether or not anything uses it — spec/next ch02 `§wac-no-subpath-wqatc72`.
+  for (i32 f = 0; f < n; f++) {
+    if (!w.needed[f] || builtinKey(paths[f])) { continue; }
+    Unit u = w.unit(f);
+    Decl[] ds = u.fe.prog.decls;
+    for (i32 d = 0; d < ds.len(); d++) {
+      match (ds[d].kind) {
+        Import(pathTok, prefixTok, items): {
+          if (pathTok >= 0 && builtinSubpath(textOf(u.fe, pathTok))) { u.retained[d] = true; }
+        }
+        default: { }
+      }
+    }
+  }
+
+  // The needed files, the built-ins kept whole. A file that does not parse is handed on unblanked, so
+  // the checker reports what is wrong with it.
+  i32 count = 0;
+  for (i32 f = 0; f < n; f++) { if (w.needed[f] || builtinKey(paths[f])) { count = count + 1; } }
+  string[] outPaths = string[].filled(count, "");
+  string[] outSources = string[].filled(count, "");
+  string[] outRoots = string[].filled(count, "");
+  i32 k = 0;
+  for (i32 f = 0; f < n; f++) {
+    if (!w.needed[f] && !builtinKey(paths[f])) { continue; }
+    outPaths[k] = paths[f];
+    outRoots[k] = f < res.roots.len() ? res.roots[f] : "";
+    if (builtinKey(paths[f])) {
+      outSources[k] = sources[f];
+    } else {
+      Unit u = w.unit(f);
+      outSources[k] = u.fe.errorCount > 0 || u.fe.lexed.errorCount > 0 ? sources[f] : blanked(u);
+    }
+    k = k + 1;
+  }
+  return Pruned(outPaths, outSources, Res(outRoots, res.mapFrom, res.mapSpec, res.mapTo, res.base));
+}
+
+/**
+ * The file's text with every unretained declaration replaced by spaces.
+ *
+ * **Spaces in UTF-16 units, newlines kept**, because a column counts UTF-16 code units (`lex.wac`): a
+ * continuation byte contributes nothing, a four-byte sequence two units, and anything else one. So a
+ * declaration that shares a line with a dropped one keeps its column, and every diagnostic downstream
+ * points where the source says.
+ */
+string blanked(Unit u) {
+  u8[] src = u.fe.src;
+  bool any = false;
+  for (i32 d = 0; d < u.retained.len(); d++) { if (!u.retained[d]) { any = true; } }
+  if (!any) { return string.fromBytes(src); }
+  bool[] drop = bool[].filled(src.len(), false);
+  for (i32 d = 0; d < u.retained.len(); d++) {
+    if (u.retained[d]) { continue; }
+    i32 from = u.fe.lexed.tokens[u.starts[d] * tokenStride() + 1];
+    i32 to = u.ends[d] < u.fe.lexed.tokenCount - 1
+        ? u.fe.lexed.tokens[u.ends[d] * tokenStride() + 1] : src.len();
+    for (i32 i = from; i < to && i < src.len(); i++) { drop[i] = true; }
+  }
+  i32 size = 0;
+  for (i32 i = 0; i < src.len(); i++) {
+    if (!drop[i] || src[i] == '\n') { size = size + 1; continue; }
+    if (src[i] >= 0x80 && src[i] < 0xC0) { continue; }
+    size = size + (src[i] >= 0xF0 ? 2 : 1);
+  }
+  u8[] out = u8[].filled(size, 0);
+  i32 at = 0;
+  for (i32 i = 0; i < src.len(); i++) {
+    if (!drop[i] || src[i] == '\n') { out[at] = src[i]; at = at + 1; continue; }
+    if (src[i] >= 0x80 && src[i] < 0xC0) { continue; }
+    out[at] = ' ';
+    at = at + 1;
+    if (src[i] >= 0xF0) { out[at] = ' '; at = at + 1; }
+  }
+  return string.fromBytes(out);
+}

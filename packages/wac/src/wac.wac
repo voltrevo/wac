@@ -40,10 +40,11 @@ import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
          capReachFiles,
          covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn, missingImportFilesIn,
-         wireHasErrors,
+         wireHasErrors, pruneForBuild,
          emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
          manifestWire } from "../../wacc/src/api.wac";
 import { Built } from "../../wacc/src/emit.wac";
+import { Pruned } from "../../wacc/src/reach.wac";
 import { field, linesOf } from "../../wacc/src/text.wac";
 import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
@@ -1349,7 +1350,7 @@ export i32 main(Core core, Cli cli) {
     generated = aggregate;
   }
 
-  Sources src = gather(fs, cli, entry);
+  Sources src = gather(fs, cli, entry, cmd != "check" && cmd != "audit");
   // **The aggregate is scratch, and this is the only place that has to know it.** `gather` has its
   // bytes now and every later use of `entry` is as a *name* — a cache key, a diagnostic, a report
   // heading — so nothing below reads the file again and it can go here, once, instead of at the
@@ -1489,6 +1490,17 @@ export i32 main(Core core, Cli cli) {
   // So the wire is taken once, rendered for the reader, and asked whether anything in it was an
   // error. One pass: rendering and deciding from the same string is what stops this being the second
   // whole-graph walk `issues/lang/0133` was about.
+  //
+  // **A build compiles what its entry reaches, and nothing else** — spec/next ch05. A declaration no
+  // export of the entry names is dropped before it is checked, and a file no retained declaration
+  // needs is not compiled at all, so a missing one is an error exactly when something needs it.
+  // `check` and `audit` are questions about the whole source and keep every file (ch06).
+  if (cmd != "check" && cmd != "audit") {
+    Pruned pruned = pruneForBuild(paths, texts, res, entry);
+    paths = pruned.paths;
+    texts = pruned.sources;
+    res = pruned.res;
+  }
   string wire = diagnoseGraphIn(paths, texts, res, entry);
   string diags = renderDiagnostics(wire, paths, texts);
   if (diags != "") { core.warn(diags); }

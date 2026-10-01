@@ -26,7 +26,9 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { emitFiles } from "../../src/api.wac";
+import { emitFiles, pruneForBuild } from "../../src/api.wac";
+import { Pruned } from "../../src/reach.wac";
+import { Res } from "../../src/path.wac";
 import { Graph, graphOf } from "./graph.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
@@ -120,11 +122,13 @@ export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
                        string.fromBytes(r.stdout));
   if (r.status != 0) { return t.report(); }
 
-  // The same program through the library.
+  // The same program through the library — the graph a build compiles, which is what reachability
+  // retains of the import graph (spec/next ch05).
   Graph g = graphOf(cli, entry);
   t.isTrue(g.ok, "the import graph — " + g.error);
   if (!g.ok) { return t.report(); }
-  u8[] want = emitFiles(g.paths, g.sources, entry);
+  Pruned pruned = pruneForBuild(g.paths, g.sources, Res.empty(), entry);
+  u8[] want = emitFiles(pruned.paths, pruned.sources, entry);
   FileResult got = cli.readFile(out).wait();
   t.isTrue(got.ok, "the program wrote a module — " + got.error);
   if (!got.ok) { return t.report(); }

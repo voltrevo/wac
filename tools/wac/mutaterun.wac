@@ -199,7 +199,7 @@ string keyFor(Fs fs, Cli cli, string[] testFiles) {
   Vec<string> paths = Vec.create();
   Vec<string> texts = Vec.create();
   for (i32 i = 0; i < testFiles.len(); i++) {
-    Sources src = gather(fs, cli, testFiles[i]);
+    Sources src = gather(fs, cli, testFiles[i], false);
     if (src.why != "") { return ""; }
     for (i32 j = 0; j < src.paths.len(); j++) {
       bool have = false;
@@ -382,7 +382,7 @@ export i32 main(Core core, Cli cli) {
     // not happen — so asking makes the run faster as well as making three of `scoreOf`'s six inputs
     // real numbers rather than the constant zero. `mutatelist --triage` is the same composition
     // without the running.
-    Sources gathered = gather(fs, cli, files[fi]);
+    Sources gathered = gather(fs, cli, files[fi], false);
     bool blind = gathered.why != "";
     if (blind) { core.warn("  cannot gather " + files[fi] + ": " + gathered.why + " — running its"
                            + " mutants untriaged rather than discarding them"); }
