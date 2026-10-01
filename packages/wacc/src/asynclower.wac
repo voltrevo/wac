@@ -502,6 +502,10 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     }
     Block(body): { return sBlock(c, subBody(c, body, inLambda, brkTo, contTo)); }
     ExprStmt(expr): { return sExpr(c, subExpr(c, expr)); }
+    // Only ever inside a lambda: `planBody` declines a machine whose own body holds one.
+    Defer(body): {
+      return Stmt(StmtKind.Defer(subStmt(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
+    }
     // **An arm's body is code.** Returning the `match` unchanged left every assignment inside an arm
     // writing to a name that had become a cell — silently, because the checker ran on the original
     // tree and the emitter was handed a write it could not mean. What it produced was an `echo` that

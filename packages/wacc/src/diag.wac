@@ -150,6 +150,7 @@ export string checkMessage(i32 code) {
   if (code == 216) { return "a package is named whole"; }
   if (code == 217) { return "a private member is visible only inside its type's body"; }
   if (code == 218) { return "positional construction of a struct with private fields is for its own body"; }
+  if (code == 219) { return "a deferred statement runs on the way out and cannot leave its block"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -249,6 +250,7 @@ export string hintFor(i32 code) {
   if (code == 216) { return "import from `\"core\"` or `\"std\"` — everything a package exports is at its root"; }
   if (code == 217) { return "reach it through one of the type's own methods"; }
   if (code == 218) { return "name the fields — `S { a: 1 }` — or call one of the struct's own static methods"; }
+  if (code == 219) { return "no `return` or `defer` in it, and `break` or `continue` only inside a loop of its own"; }
   // Added where the help is real. A hint that only restates the message is worse than none: it
   // costs a line of everybody's terminal and teaches nothing, and the percentage it moves is a
   // measurement of itself.

@@ -2512,6 +2512,15 @@ export struct Env {
   Decl[] mergedDecls;
   i32[] mergedFiles;
 
+  /**
+   * The innermost `defer` region: the depth of its `block`, and the locals an exit through it records
+   * — what kind of exit (1 return, 2 break, 3 continue) and a `return`'s value. -1 outside every one.
+   * See `emitDeferred`.
+   */
+  i32 deferAt;
+  i32 deferKind;
+  i32 deferVal;
+
   /** The file declaration `d` of the merged tree came from, or -1 when there is no merged tree. */
   i32 declFile(const this, i32 d) {
     return d >= 0 && d < this.mergedFiles.len() ? this.mergedFiles[d] : 0 - 1;
@@ -2773,7 +2782,7 @@ export struct Env {
                i32[].filled(4096, 0), i32[].filled(4096, 0), i32[].filled(4096, 0), 0,
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
-               Decl[](), i32[]());
+               Decl[](), i32[](), 0 - 1, 0 - 1, 0 - 1);
   }
 
   
@@ -3011,6 +3020,7 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       }
       Assign(target, op, rhs): { collectArrayTypesOfExpr(env, src, lexed, rhs); }
       Block(inner): { collectArrayTypes(env, src, lexed, inner); }
+      Defer(inner): { collectArrayTypes(env, src, lexed, [inner] as Stmt[]); }
       If(cond, then, els): {
         collectArrayTypesOfExpr(env, src, lexed, cond);
         collectArrayTypes(env, src, lexed, then);
@@ -3066,6 +3076,7 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(env, src, lexed, type));
       }
       Block(inner): { collectLocals(env, src, lexed, inner); }
+      Defer(inner): { collectLocals(env, src, lexed, [inner] as Stmt[]); }
       If(cond, then, els): {
         collectLocals(env, src, lexed, then);
         collectLocals(env, src, lexed, els);
@@ -6931,8 +6942,126 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
  */
 void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
   i32 saved = env.localCount;
-  for (i32 i = 0; i < body.len(); i++) { emitStmt(fb, src, lexed, env, body[i]); }
+  emitFrom(fb, src, lexed, env, body, 0);
   retireFrom(env, saved);
+}
+
+/** `body` from statement `from` on — where a `defer` takes the rest of its block with it. */
+void emitFrom(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from) {
+  for (i32 i = from; i < body.len(); i++) {
+    match (body[i].kind) {
+      Defer(deferred): {
+        emitDeferred(fb, src, lexed, env, body, i + 1, deferred);
+        return;
+      }
+      default: { emitStmt(fb, src, lexed, env, body[i]); }
+    }
+  }
+}
+
+/**
+ * `defer s;` and the rest of its block — spec/next ch25 `§wac-defer-7tf59c7`.
+ *
+ *     block                  ;; the region: everything after the `defer`, to the end of the block
+ *       …                    ;; a `return` stores its value and kind 1 and branches out here; a
+ *                            ;; `break`/`continue` whose loop is outside does the same with 2 or 3
+ *     end
+ *     s                      ;; the deferred statement, in the scope it was written in
+ *     kind == 1 ? return     ;; and the exit the region recorded, taken again from here — through
+ *     kind == 2 ? break      ;; any enclosing region in turn, since those three go through
+ *     kind == 3 ? continue   ;; `emitLeave` and the `Break`/`Continue` arms like any other exit
+ *
+ * **The statement is emitted once, after the block**, rather than copied to every exit. A copy would
+ * sit wherever the exit is — inside an inner block, where a local of the same name shadows what the
+ * deferred statement reads. A second `defer` in the region is a region inside this one, so the later
+ * one runs first.
+ */
+void emitDeferred(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from, Stmt deferred) {
+  i32 kind = env.scratchNamed("defer kind " + numText(env.depth), "i32");
+  bool valued = env.returnType != "void" && env.returnType != "";
+  i32 val = valued ? env.scratchNamed("defer value " + numText(env.depth), env.returnType) : 0 - 1;
+  fb.byte(65); fb.i32leb(0);                 // i32.const 0
+  fb.byte(33); fb.u32leb(kind);              // local.set — no exit yet
+  i32 savedAt = env.deferAt;
+  i32 savedKind = env.deferKind;
+  i32 savedVal = env.deferVal;
+  fb.byte(2); fb.byte(64);                   // block
+  env.depth = env.depth + 1;
+  env.deferAt = env.depth;
+  env.deferKind = kind;
+  env.deferVal = val;
+  emitFrom(fb, src, lexed, env, body, from);
+  fb.byte(11);                               // end
+  env.depth = env.depth - 1;
+  env.deferAt = savedAt;
+  env.deferKind = savedKind;
+  env.deferVal = savedVal;
+  emitBody(fb, src, lexed, env, [deferred] as Stmt[]);
+  emitDeferExit(fb, env, kind, 1);
+  if (valued) { fb.byte(32); fb.u32leb(val); }
+  emitLeave(fb, env, valued);
+  fb.byte(11);
+  env.depth = env.depth - 1;
+  if (env.breakAt >= 0) {
+    emitDeferExit(fb, env, kind, 2);
+    emitBreak(fb, env);
+    fb.byte(11);
+    env.depth = env.depth - 1;
+  }
+  if (env.continueAt >= 0) {
+    emitDeferExit(fb, env, kind, 3);
+    emitContinue(fb, env);
+    fb.byte(11);
+    env.depth = env.depth - 1;
+  }
+}
+
+/** `if (kind == k) {` — opened, with the depth counted; the caller closes it. */
+void emitDeferExit(B fb, Env env, i32 kind, i32 k) {
+  fb.byte(32); fb.u32leb(kind);              // local.get
+  fb.byte(65); fb.i32leb(k);                 // i32.const
+  fb.byte(70);                               // i32.eq
+  fb.byte(4); fb.byte(64);                   // if
+  env.depth = env.depth + 1;
+}
+
+/**
+ * Leave the function, with its value on the stack when `valued` — or, inside a `defer` region, record
+ * the exit and branch to the region's end, where the deferred statement runs first.
+ */
+void emitLeave(B fb, Env env, bool valued) {
+  if (env.deferAt < 0) {
+    fb.byte(15);                             // return
+    return;
+  }
+  if (valued) { fb.byte(33); fb.u32leb(env.deferVal); }
+  fb.byte(65); fb.i32leb(1);
+  fb.byte(33); fb.u32leb(env.deferKind);
+  fb.byte(12); fb.u32leb(env.depth - env.deferAt);
+}
+
+/** `break` — through a `defer` region first when the loop it leaves is outside one. */
+void emitBreak(B fb, Env env) {
+  if (env.deferAt >= 0 && env.breakAt < env.deferAt) {
+    fb.byte(65); fb.i32leb(2);
+    fb.byte(33); fb.u32leb(env.deferKind);
+    fb.byte(12); fb.u32leb(env.depth - env.deferAt);
+    return;
+  }
+  fb.byte(12);
+  fb.u32leb(env.depth - env.breakAt);
+}
+
+/** `continue`, the same way. */
+void emitContinue(B fb, Env env) {
+  if (env.deferAt >= 0 && env.continueAt < env.deferAt) {
+    fb.byte(65); fb.i32leb(3);
+    fb.byte(33); fb.u32leb(env.deferKind);
+    fb.byte(12); fb.u32leb(env.depth - env.deferAt);
+    return;
+  }
+  fb.byte(12);
+  fb.u32leb(env.depth - env.continueAt);
 }
 
 /**
@@ -7126,7 +7255,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       // one that had no way to know: `return 1;` in an `i64` function is an `i64` constant, and
       // emitting it at the literal's own guess made seven corpus files invalid at once.
       if (!(value is null)) { emitExprAt(fb, src, lexed, env, value!, env.returnType); }
-      fb.byte(15);   // return
+      emitLeave(fb, env, !(value is null));
     }
     If(cond, then, els): {
       emitExpr(fb, src, lexed, env, cond);
@@ -7209,14 +7338,11 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       emitLoop(fb, src, lexed, env, cond is null ? null : cond, inner, update, s.line, s.col);
       retireFrom(env, savedFor);
     }
-    Break: {
-      fb.byte(12);
-      fb.u32leb(env.depth - env.breakAt);
-    }
-    Continue: {
-      fb.byte(12);
-      fb.u32leb(env.depth - env.continueAt);
-    }
+    Break: { emitBreak(fb, env); }
+    Continue: { emitContinue(fb, env); }
+    // `emitBody` takes a `defer` with the rest of its block, so one reaching here alone has nothing
+    // after it and runs on the spot.
+    Defer(deferred): { emitBody(fb, src, lexed, env, [deferred] as Stmt[]); }
     Trap(tvalue): {
       // **The message first**, because after `unreachable` there is nothing left to run. Emitted at
       // `string`, which is what the checker already required of it.
@@ -9708,6 +9834,7 @@ LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
       for (i32 i = 0; i < arms.len(); i++) { findLambdas(env, src, lexed, arms[i].body, ret); }
     }
     Block(bbody): { findLambdas(env, src, lexed, bbody, ret); }
+    Defer(dbody): { findLambdas(env, src, lexed, [dbody] as Stmt[], ret); }
     ExprStmt(expr): { findLambdasExpr(env, src, lexed, expr, ""); }
   }
 }
@@ -11053,6 +11180,9 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
 
   env.returnType = ret;
   env.localCount = 0;
+  // A function's body starts outside every `defer` region, whatever was being emitted around it.
+  i32 savedDeferAt = env.deferAt;
+  env.deferAt = 0 - 1;
   if (receiver != "") { env.addLocal("this", receiver); }
   for (i32 i = 0; i < params.len(); i++) {
     env.addLocal(tokenTextOf(src, lexed, params[i].nameTok),
@@ -11127,6 +11257,7 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   // Every wac function that returns a value returns on all paths — the checker says so — so the
   // fall-through is unreachable rather than missing.
   if (returnsValue) { fb.byte(0); }
+  env.deferAt = savedDeferAt;
   fb.byte(11);    // `end`
   code.u32leb(fb.len);
   code.bytes(fb);
@@ -11329,6 +11460,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       return r2;
     }
     Block(inner): { return unsupportedIn(src, lexed, env, inner); }
+    Defer(inner): { return unsupportedIn(src, lexed, env, [inner] as Stmt[]); }
     Switch(subject, cases): {
       string sj = unsupportedExpr(src, lexed, env, subject);
       if (sj != "") { return sj; }

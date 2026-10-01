@@ -178,6 +178,7 @@ export bool awaitInStmt(Stmt s) {
       return false;
     }
     Return(value): { return (value is not null) && awaitInExpr(value!); }
+    Defer(body): { return awaitInStmt(body); }
     Break: { return false; }
     Continue: { return false; }
     Trap(value): { return (value is not null) && awaitInExpr(value!); }
@@ -220,6 +221,11 @@ bool isAwait(Expr e) {
  */
 export AsyncPlan planBody(Stmt[] body) {
   if (body.len() == 0) { return AsyncPlan(true, "", i32[](), i32[](), Ty[]()); }
+  // **A machine's `return` is not a `return`**: it records an answer and stops stepping, so a deferred
+  // statement keyed to leaving the function would run at the wrong moment, or every time it suspends.
+  if (deferInBody(body)) {
+    return AsyncPlan(false, "a `defer` in an `async` function", i32[](), i32[](), Ty[]());
+  }
   Walked w = Walked(i32[].filled(256, 0), 0, i32[].filled(256, 0), Ty[].filled(256, planAnyTy(body)), 0, "");
   walkPlan(body, w);
   if (w.why != "") { return AsyncPlan(false, w.why, i32[](), i32[](), Ty[]()); }
@@ -229,6 +235,28 @@ export AsyncPlan planBody(Stmt[] body) {
   Ty[] outT = Ty[].filled(w.h, planAnyTy(body));
   for (i32 i = 0; i < w.h; i++) { outH[i] = w.hoist[i]; outT[i] = w.hoistTy[i]; }
   return AsyncPlan(true, "", outAt, outH, outT);
+}
+
+/** Whether a `defer` is anywhere in `body` outside a lambda. */
+bool deferInBody(Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Defer(b): { return true; }
+      Block(b): { if (deferInBody(b)) { return true; } }
+      If(cond, then, els): { if (deferInBody(then) || deferInBody(els)) { return true; } }
+      While(cond, b): { if (deferInBody(b)) { return true; } }
+      DoWhile(b, cond): { if (deferInBody(b)) { return true; } }
+      For(init, cond, update, b): { if (deferInBody(b)) { return true; } }
+      Switch(subject, cases): {
+        for (i32 j = 0; j < cases.len(); j++) { if (deferInBody(cases[j].body)) { return true; } }
+      }
+      Match(subject, arms): {
+        for (i32 j = 0; j < arms.len(); j++) { if (deferInBody(arms[j].body)) { return true; } }
+      }
+      default: { }
+    }
+  }
+  return false;
 }
 
 /** The running answer while the body is walked. */

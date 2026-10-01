@@ -295,6 +295,8 @@ export i32 errBuiltinSubpath() { return 216; }
 export i32 errPrivateMember() { return 217; }
 /** `Account(5, 0)` outside `Account`'s body, when it has a private field. */
 export i32 errPrivateConstruction() { return 218; }
+/** `defer return x;` — a deferred statement cannot leave its block. */
+export i32 errDeferLeaves() { return 219; }
 
 /** The first type up `name`'s chain that has a private field and is not the body being checked, or `""`. */
 string privateFieldOwnerElsewhere(C c, string name) {
@@ -307,6 +309,48 @@ string privateFieldOwnerElsewhere(C c, string name) {
     at = c.parentOf(at);
   }
   return "";
+}
+
+/** `return`, a `defer`, or a `break`/`continue` with no loop of its own around it inside `s`, or null. */
+Stmt? deferLeaves(Stmt s, i32 loops) {
+  match (s.kind) {
+    Return(value): { return s; }
+    Defer(body): { return s; }
+    Break: { return loops == 0 ? s : null; }
+    Continue: { return loops == 0 ? s : null; }
+    Block(body): { return deferLeavesAll(body, loops); }
+    If(cond, then, els): {
+      Stmt? t = deferLeavesAll(then, loops);
+      return t is null ? deferLeavesAll(els, loops) : t;
+    }
+    While(cond, body): { return deferLeavesAll(body, loops + 1); }
+    DoWhile(body, cond): { return deferLeavesAll(body, loops + 1); }
+    For(init, cond, update, body): { return deferLeavesAll(body, loops + 1); }
+    // A `break` in a switch case leaves the switch, which is inside the deferred statement.
+    Switch(subject, cases): {
+      for (i32 i = 0; i < cases.len(); i++) {
+        Stmt? got = deferLeavesAll(cases[i].body, loops + 1);
+        if (!(got is null)) { return got; }
+      }
+      return null;
+    }
+    Match(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        Stmt? got = deferLeavesAll(arms[i].body, loops);
+        if (!(got is null)) { return got; }
+      }
+      return null;
+    }
+    default: { return null; }
+  }
+}
+
+Stmt? deferLeavesAll(Stmt[] body, i32 loops) {
+  for (i32 i = 0; i < body.len(); i++) {
+    Stmt? got = deferLeaves(body[i], loops);
+    if (!(got is null)) { return got; }
+  }
+  return null;
 }
 
 /** `name` private to the type that declares it, refused unless this is that type's own body. */
@@ -8700,6 +8744,8 @@ void declareStmt(C c, Stmt s) {
       declareMatchBindings(c, init);
     }
     Block(body): { declareScoped(c, body); }
+    // A deferred statement is a scope of its own: what it declares lives only while it runs.
+    Defer(body): { declareScoped(c, [body] as Stmt[]); }
     If(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
     While(cond, body): { declareScoped(c, body); }
     DoWhile(body, cond): { declareScoped(c, body); }
@@ -9188,6 +9234,14 @@ void checkStmt(C c, Stmt s, Ty want) {
     // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
     // else", and `Switch`/`Match` hold their bodies one level deeper, inside cases and arms.
     Block(body): { checkScoped(c, body, want); }
+    Defer(body): {
+      // **A deferred statement runs on the way out**, so it cannot itself choose where control goes:
+      // a `return` in it would replace the answer being returned, and a `break` would leave a loop
+      // that is already being left. A loop of its own may break and continue inside it.
+      Stmt? bad = deferLeaves(body, 0);
+      if (!(bad is null)) { c.report(errDeferLeaves(), bad!.line, bad!.col); }
+      checkScoped(c, [body] as Stmt[], want);
+    }
     If(cond, then, els): {
       checkCond(c, cond);
       // `if (s is Circle) { s.radius }` — the guard is what makes the payload reachable, so the then

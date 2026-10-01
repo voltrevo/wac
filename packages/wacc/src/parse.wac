@@ -25,7 +25,7 @@ import {
   kInt, kFloat, kString, kIdent, kEof, kTrue, kFalse, kNull, kVoid, kFn, kThis,
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
   kConst, kExport, kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
-  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate, kImport,
+  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate, kDefer, kImport,
   kOverride, kAssign,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq,
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
@@ -302,7 +302,7 @@ export struct P {
  * what found it.
  */
 bool isKeywordKind(i32 k) {
-  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait() || k == kStatic() || k == kPrivate();
+  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait() || k == kStatic() || k == kPrivate() || k == kDefer();
 }
 
 bool atKeyword(P p) {
@@ -1905,6 +1905,11 @@ export Stmt parseStatement(P p) {
     return Stmt(StmtKind.Trap(msg), line, col);
   }
   if (p.at1(kLbrace()))   { return Stmt(StmtKind.Block(parseBlock(p)), line, col); }
+  // `defer s;` — the statement carries its own `;`, or is a block.
+  if (p.at1(kDefer())) {
+    p.advance();
+    return Stmt(StmtKind.Defer(parseStatement(p)), line, col);
+  }
 
   if (looksLikeVarDecl(p)) { return parseVarDecl(p, false); }
 

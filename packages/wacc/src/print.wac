@@ -574,6 +574,12 @@ void printStmt(Pr w, Stmt s) {
       w.close();
     }
     Break:    { w.open("break", s.line, s.col); w.close(); }
+    Defer(body): {
+      w.open("defer", s.line, s.col);
+      w.sp();
+      printStmt(w, body);
+      w.close();
+    }
     Continue: { w.open("continue", s.line, s.col); w.close(); }
     Trap(value): {
       w.open("trap", s.line, s.col);

@@ -1,0 +1,14 @@
+// expect: answers f = 1
+// why: the deferred statement reads the names in scope where it was written, not those where the block is left from
+// from: `defer` (design/lang/0016) — the emitter runs it once, after the region, rather than copying it to each exit
+struct Log { i32 n; }
+
+export i32 f() {
+  i32 x = 1;
+  Log l = Log(0);
+  for (i32 k = 0; k < 1; k++) {
+    defer l.n = x;
+    { i32 x = 9; if (x > 0) { break; } }
+  }
+  return l.n;
+}

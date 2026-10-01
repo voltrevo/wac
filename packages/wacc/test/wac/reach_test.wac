@@ -54,7 +54,7 @@ string joinedWith(string[] all, i32 n, string sep) {
 string[] statementLabels() {
   return [
     "Var", "Assign", "IncrStmt", "If", "If-else", "While", "For", "For-init", "DoWhile", "Switch",
-    "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt"
+    "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt", "Defer"
   ];
 }
 
@@ -74,7 +74,8 @@ string[] statementSources() {
     "", "", "",
     "enum E { A, B } void f(E e) { match (e) { A: { " + BAD + " } B: { } } }",
     "void f() { { " + BAD + " } }",
-    "void g(i32 n) { } void f() { g(1); " + BAD + " }"
+    "void g(i32 n) { } void f() { g(1); " + BAD + " }",
+    "void f() { defer { " + BAD + " } }"
   ];
 }
 
@@ -240,8 +241,11 @@ export string test_reach_every_statement_kind_is_walked() {
     if (!reports(sources[i])) { missed[n] = labels[i]; n = n + 1; }
   }
   // One entry per kind of the AST, plus the two extra placements (`If-else`, `For-init`) that are the
-  // same kind reached by a different field — which is exactly where a walk tends to be partial.
-  t.eqI32(considered, 17, "placements");
+  // same kind reached by a different field — which is exactly where a walk tends to be partial. That
+  // every kind has a label is `test_reach_the_grids_cover_every_kind_the_ast_has`, read off the AST;
+  // what this says is that every label has a source to go with it.
+  t.eqI32(considered, labels.len(), "a source for every placement");
+  t.eqI32(sources.len(), labels.len(), "as many sources as placements");
   t.eqI32(n, 0, "a bad initialiser inside these statement kinds is not reported, so the walk does " +
                 "not descend into them: " + joinedWith(missed, n, ", "));
   return t.report();
