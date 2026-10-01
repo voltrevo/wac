@@ -7,10 +7,10 @@ inhabit is still a valid type.
 ## `void` answers nothing
 
 ```wac
-// expect: answers main = 1
+// expect: emits
 void greet() { }
 
-export i32 main() {
+export void caller() {
   greet();
 
   // ERROR: void has no values to store
@@ -18,8 +18,6 @@ export i32 main() {
 
   // ERROR: void cannot be nullable
   // void? maybe = null;
-
-  return 1;
 }
 ```
 
@@ -35,8 +33,8 @@ A call whose type is `never` does not return to its caller. Since no value ever 
 expression may stand where any type is expected:
 
 ```wac
-// expect: answers main = 1
-i32 pick(bool b) {
+// expect: answers pick(true) = 1
+export i32 pick(bool b) {
   if (b) { return 1; }
   return spin();                           // never satisfies i32
 }
@@ -44,8 +42,6 @@ i32 pick(bool b) {
 never spin() {
   while (true) { }
 }
-
-export i32 main() { return pick(true); }
 ```
 
 `[§wac-never-satisfies-any-pp3fvr6]` A `never` expression is accepted wherever a value of any type is
@@ -53,17 +49,15 @@ expected.
 
 ```wac
 // expect: emits
-never spin() {
+export never spin() {
   while (true) { }
 }
 
 // ERROR: a never function cannot return
-// never early(bool once) {
+// export never early(bool once) {
 //   if (once) { return; }
 //   while (true) { }
 // }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-never-cannot-return-eaffw52]` A `never` function may not return, and control may not reach its end.
@@ -73,12 +67,10 @@ completion, so a function that always traps or loops forever is a valid `never` 
 
 ```wac
 // expect: emits
-never fail(string why) { trap why; }
+export never fail(string why) { trap why; }
 
-never forever() { return forever(); }      // a normally returning call needs its inner call to
-                                           // have returned first, indefinitely
-
-export i32 main() { return 0; }
+export never forever() { return forever(); }   // a normally returning call needs its inner call
+                                               // to have returned first, indefinitely
 ```
 
 Code after a call that cannot return is unreachable, and an implementation may warn about it:
@@ -91,12 +83,10 @@ never spin() {
 
 void more() { }
 
-void example() {
+export void example() {
   spin();
   more();                                  // may warn: unreachable — spin() does not return
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-never-unreachable-may-warn-5cnwyt5]` An implementation may warn that code following a `never`
@@ -111,22 +101,20 @@ checked against the function's type ([34](../5-inference/34-recursive-inference.
 A recursive type can be such that no finite value inhabits it. That does not make it invalid:
 
 ```wac
-// expect: answers main = 1
+// expect: answers emptyIsNull = true
 struct X { Y y; }
 struct Y { X x; }
 
 static X? EMPTY = null;                    // allowed, though X has no value
 
-export i32 main() { return EMPTY is null ? 1 : 0; }
+export bool emptyIsNull() { return EMPTY is null; }
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers none = null
 struct Node { Node next; }                 // a mandatory field of its own type
 
-Node? none() { return null; }
-
-export i32 main() { return none() is null ? 1 : 0; }
+export Node? none() { return null; }
 ```
 
 `[§wac-uninhabited-valid-2f9cxmt]` A type that no finite value can inhabit — such as a struct with a
@@ -140,10 +128,10 @@ Nothing manufactures a value of an uninhabited type. In particular there is no d
 one from:
 
 ```wac
-// expect: emits
+// expect: answers emptyNodes = 0
 struct Node { Node next; }
 
-export i32 main() {
+export i32 emptyNodes() {
   // ERROR: Node has no default value
   // Node[] some = Node[].defaulted(1);
 
@@ -162,10 +150,10 @@ collection, or another variant is such an end; a mandatory field of the type its
 Recursion through a nullable field, a tuple or an enum is allowed precisely because it provides one:
 
 ```wac
-// expect: answers main = 2
+// expect: answers secondHead = 2
 struct List { i32 head; List? tail; }      // ends at null
 
-export i32 main() {
+export i32 secondHead() {
   List l = List(1, List(2, null));
   return l.tail!.head;
 }
@@ -186,7 +174,7 @@ A variant with a required `never` payload is uninhabited. This is a general enum
 exception, and an exhaustive `match` need not cover such a variant:
 
 ```wac
-// expect: answers main = 4
+// expect: answers yieldedFour = 4
 import { Step } from "core";
 
 i32 value(Step<never, i32, never> s) {
@@ -195,7 +183,7 @@ i32 value(Step<never, i32, never> s) {
   }                                        // exhaustive: Waiting and Done are impossible
 }
 
-export i32 main() { return value(Step.Yielded(4)); }
+export i32 yieldedFour() { return value(Step.Yielded(4)); }
 ```
 
 `[§wac-never-payload-uninhabited-c4j35nq]` A variant with a payload of type `never` has no values, and a
@@ -208,12 +196,11 @@ refused in every spelling — with an argument, or with none.
 // expect: emits
 import { Step } from "core";
 
-export i32 main() {
+export void constructible() {
   // ERROR: Step.Waiting carries a never payload, which has no value
   // Step<never, i32, i32> a = Step.Waiting;
 
   Step<never, i32, i32> b = Step.Done(1);
-  return 0;
 }
 ```
 

@@ -18,9 +18,9 @@ point. No `--all` flag is needed.
 // ---- wac.json5 ----
 {}
 // ---- src/unused.wac ----
-i32 broken() { return nonexistent(); }    // a normal build never reads this file
+i32 broken() { return nonexistent(); }    // a normal build never reads this file: dropped
 // ---- main.wac ----
-export i32 main() { return 0; }
+export i32 zero() { return 0; }
 ```
 
 `[§wac-check-project-x9xt4fg]` `wac check` with no arguments checks every declaration in every
@@ -63,7 +63,7 @@ With no files supplied, the project discovery rules below apply.
 // ---- src/lib.wac ----
 export i32 answer() { return 42; }
 // ---- src/neighbour.wac ----
-i32 broken() { return nonexistent(); }    // not reached from src/lib.wac, so not checked
+i32 broken() { return nonexistent(); }    // not reached from src/lib.wac: dropped, not checked
 ```
 
 `[§wac-check-files-no-discovery-km2e8t2]` Supplying files turns off discovery: a project file that the
@@ -91,12 +91,12 @@ even when that file was excluded from discovery.
 // ---- wac.json5 ----
 { check: { exclude: ["./fixtures/**"] } }
 // ---- fixtures/invalid.wac ----
-i32 broken() { return nonexistent(); }    // excluded, and nothing imports it: not checked
+i32 broken() { return nonexistent(); }    // excluded, and nothing imports it: dropped, not checked
 // ---- fixtures/used.wac ----
-export i32 alsoBroken() { return nonexistent(); }   // excluded, but imported: checked
+export i32 alsoBroken() { return nonexistent(); }   // excluded, but imported: checked (a build would have dropped it)
 // ---- main.wac ----
 import { alsoBroken } from "./fixtures/used.wac";
-export i32 main() { return 0; }
+export i32 zero() { return 0; }
 ```
 
 `[§wac-check-exclude-2ixx2cu]` A file matching `check.exclude` is not discovered. It is still checked
@@ -120,7 +120,7 @@ are unused. Namespace re-exports are validated too.
 {}
 // ---- main.wac ----
 import { helper } from "./missing.wac";   // never referenced
-export i32 main() { return 0; }
+export i32 zero() { return 0; }
 ```
 
 ```wac
@@ -129,10 +129,10 @@ export i32 main() { return 0; }
 // ---- wac.json5 ----
 {}
 // ---- existing.wac ----
-export i32 something() { return 1; }
+export i32 something() { return 1; }        // a build never needs it: dropped
 // ---- main.wac ----
 import { nonexistent } from "./existing.wac";   // existing.wac does not export it
-export i32 main() { return 0; }
+export i32 zero() { return 0; }
 ```
 
 ```wac
@@ -143,7 +143,7 @@ export i32 main() { return 0; }
 // ---- lib.wac ----
 export * as optional from "./missing.wac";   // nothing imports lib.wac
 // ---- main.wac ----
-export i32 main() { return 0; }
+export i32 zero() { return 0; }
 ```
 
 `[§wac-check-unused-imports-tdqy2m2]` `wac check` refuses an import whose file is missing, an import

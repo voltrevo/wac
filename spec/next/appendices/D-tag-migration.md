@@ -30,6 +30,7 @@ not have.
 | `§wac-modconst-sized-5wnq8kt` | `§wac-static-eval-ordinary-ba8c628` | a static initialiser is ordinary code; no special case for sized arrays ([28](../4-static/28-static-evaluation.md)) |
 | `§wac-async-drain-7cvj4bn` | `§wac-drain-cs2v9rf` | continuations are run by `drain`, on the scheduler a ticket names ([35](../6-concurrency/35-tickets-and-await.md)) |
 | `§wac-async-unwaitable-4hpx2vn` | `§wac-wait-refuses-jj8u2ie` | waiting on a ticket nothing can advance answers `Err` instead of trapping |
+| `§wac-precedence-x7mj5mk` | `§wac-precedence-tests-78cupm3` | `is`, `is not` and `matches` bind as comparisons, tighter than `&&`, instead of loosest of all ([22](../3-expressions/22-operators.md)) |
 | `§wac-grammar-keywords-h4mq7wn` | `§wac-keywords-reserved-w9tpxmx` | the rule is now that the words are reserved, not that a list matches the lexer ([A](A-grammar.md)) |
 | `§wac-diag-assign-j3qm7xf` | `§wac-diag-literal-fraction-33zp6u3` | a literal has no type of its own, so the diagnostic is about the literal, not about an `f64` ([B](B-diagnostics.md)) |
 

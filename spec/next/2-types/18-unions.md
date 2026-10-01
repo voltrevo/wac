@@ -6,7 +6,10 @@ union value as it is. A union is taken apart by matching on its members' types.
 ## A member is a union value as itself
 
 ```wac
-// expect: answers main = 3
+// expect: answers renderText("true") = "yes"
+// expect: answers renderText("false") = "no"
+// expect: answers renderText("pi") = "number"
+// expect: answers renderText("abc") = "abc"
 union<f64, string, bool> parseCell(string text) {
   if (text == "true")  { return true; }
   if (text == "false") { return false; }
@@ -22,9 +25,7 @@ string render(union<f64, string, bool> cell) {
   };
 }
 
-export i32 main() {
-  return render(parseCell("true")).len();  // "yes"
-}
+export string renderText(string text) { return render(parseCell(text)); }
 ```
 
 `[§wac-union-member-is-value-86cfwkp]` A value of a member type is a value of the union, with nothing to
@@ -56,7 +57,7 @@ union<const Rect, Shape>       // keep both
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers normalised = 1
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 
@@ -66,7 +67,7 @@ i32 width(union<Rect, Shape> s) {          // the same type as union<Shape>
   };
 }
 
-export i32 main() {
+export i32 normalised() {
   union<f64, string> a = "x";
   union<string, f64> b = a;                // order does not make a different type
   return width(Rect(1, 2));
@@ -90,17 +91,20 @@ For concrete alternatives, insertion selects the unique most specific compatible
 source's static type. If none or more than one best candidate exists, reject:
 
 ```wac
-// expect: emits
+// expect: answers enteredAsShape = 1
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 
-export i32 main() {
+export i32 enteredAsShape() {
   union<Shape, string> a = Rect(1, 2);     // enters as Shape: the only compatible alternative
 
   // ERROR: f64 fits no alternative of union<Shape, string>
   // union<Shape, string> b = 1.5;
 
-  return 0;
+  return match (a) {
+    Shape:  a.x,
+    string: 0,
+  };
 }
 ```
 
@@ -121,8 +125,8 @@ union<i32, string>? f = null;  // OK: the outer nullable layer.
 ```
 
 ```wac
-// expect: emits
-export i32 main() {
+// expect: answers literalTargets = true
+export bool literalTargets() {
   // ERROR: ambiguous — two numeric alternatives, even though 300 does not fit u8
   // union<u8, u64> a = 300;
 
@@ -134,7 +138,7 @@ export i32 main() {
 
   union<i32, f64> c = 1.5 as f64;
   union<i32, string>? f = null;            // the outer nullable layer
-  return 0;
+  return f is null;
 }
 ```
 
@@ -161,11 +165,11 @@ element by element. This also limits which concrete generic instantiations can b
 inference; collecting a union does not itself establish that such an assignment is valid.
 
 ```wac
-// expect: emits
+// expect: answers viewLen = 1
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 
-export i32 main() {
+export i32 viewLen() {
   Rect[] rects = [Rect(1, 2)];
   const Rect[] view = rects;               // const added at the outside
 
@@ -175,7 +179,7 @@ export i32 main() {
   // ERROR: nor is it a const Shape[]
   // const Shape[] shapesView = rects;
 
-  return 0;
+  return view.len();
 }
 ```
 
@@ -230,21 +234,21 @@ type U = union<i32, U?>; // Valid: the union remains a recursive aggregate.
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers recursive = true
 struct Box<T> { T value; }
 type A = union<i32, Box<A>>;
 type U = union<i32, U?>;
 
 // ERROR: simplifies to A2 = A2
-// type A2 = union<A2>;
+// export type A2 = union<A2>;
 
 // ERROR: simplifies to U2 = U2?
-// type U2 = union<null, U2?>;
+// export type U2 = union<null, U2?>;
 
-export i32 main() {
+export bool recursive() {
   A nested = Box<A>(Box<A>(7 as i32));
   U wrapped = (7 as i32) as U?;
-  return 1;
+  return wrapped is not null;
 }
 ```
 
@@ -341,7 +345,7 @@ The runtime object's mutability does not grant permission. The reference used to
 the recorded permission. An ordinary const reference cannot be tested back into mutable access.
 
 ```wac
-// expect: answers main = 1
+// expect: answers byPermission = 1
 struct Rect { i32 w; void grow(this) { this.w += 1; } }
 
 i32 tryGrow(union<Rect, const Rect> value) {
@@ -352,7 +356,7 @@ i32 tryGrow(union<Rect, const Rect> value) {
   return 0;                                // entered const
 }
 
-export i32 main() {
+export i32 byPermission() {
   Rect r = Rect(1);
   const Rect c = r;                        // the same object
   return tryGrow(r) - tryGrow(c);          // 1 - 0
@@ -416,7 +420,7 @@ All possible source cases must fit the destination, even if this initializer hap
 accepted conversion to `union<const Rect, const Circle>` discards mutable permission where needed.
 
 ```wac
-// expect: answers main = 0
+// expect: answers stillConst = 0
 struct Rect { i32 w; }
 struct Circle { i32 r; }
 
@@ -427,7 +431,7 @@ i32 mutableIn(union<Rect, const Rect> v) {
   };
 }
 
-export i32 main() {
+export i32 stillConst() {
   union<Rect, const Rect> a = Rect(1);
   union<const Rect> b = a;                 // discards mutable access
   union<Rect, const Rect> c = b;           // still const: widening restores nothing

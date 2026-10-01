@@ -10,14 +10,15 @@ A coroutine is a function that can stop partway and be resumed. wac has three co
 nothing, and answers a `Generator<Y, R>`; `for … in` steps one:
 
 ```wac
-// expect: answers main = 6
+// expect: answers sumUpTo(3) = 6
+// expect: answers sumUpTo(0) = 0
 gen<i32> void upTo(i32 n) {
   for (i32 i = 1; i <= n; i++) { yield i; }
 }
 
-export i32 main() {
+export i32 sumUpTo(i32 n) {
   i32 total = 0;
-  for (i32 v in upTo(3)) { total += v; }
+  for (i32 v in upTo(n)) { total += v; }
   return total;
 }
 ```
@@ -31,7 +32,7 @@ discards its return value.
 Writing an iterator is writing a loop:
 
 ```wac
-// expect: answers main = 6
+// expect: answers sumOfTree = 6
 enum Tree {
   Leaf(i32 value),
   Node(Tree left, Tree right)
@@ -55,7 +56,7 @@ i32 sum(Tree t) {
   return total;
 }
 
-export i32 main() {
+export i32 sumOfTree() {
   return sum(Tree.Node(Tree.Leaf(1), Tree.Node(Tree.Leaf(2), Tree.Leaf(3))));
 }
 ```
@@ -129,7 +130,7 @@ completion and gives a payload-free `Done`.
 ## `coroutine` answers the machine and runs nothing
 
 ```wac
-// expect: answers main = 1
+// expect: answers runsWhenStepped = true
 import { Coroutine, TicketBase } from "core";
 
 struct Slot {
@@ -142,7 +143,7 @@ struct Slot {
   }
 }
 
-export i32 main() {
+export bool runsWhenStepped() {
   Slot s = Slot(0);
   Coroutine<TicketBase, never, void> c = coroutine s.tick();
 
@@ -150,7 +151,7 @@ export i32 main() {
   c.step();                                // Waiting
   bool middle = s.n == 1;
   c.step();                                // Done
-  return before && middle && s.n == 11 ? 1 : 0;
+  return before && middle && s.n == 11;
 }
 ```
 
@@ -161,14 +162,14 @@ or to its end.
 ticket, and the next step continues:
 
 ```wac
-// expect: answers main = 1
+// expect: answers bareAwaitIsOneStep = true
 import { Coroutine, TicketBase } from "core";
 
 async void tick() {
   await;
 }
 
-export i32 main() {
+export bool bareAwaitIsOneStep() {
   Coroutine<TicketBase, never, void> c = coroutine tick();
   bool settled = match (c.step()) {
     Waiting(t): t.settled(),               // true
@@ -178,7 +179,7 @@ export i32 main() {
     Done:    true,
     default: false,
   };
-  return settled && done ? 1 : 0;
+  return settled && done;
 }
 ```
 
@@ -205,14 +206,14 @@ nothing to its type.
 An `await` is a boundary because it is written:
 
 ```wac
-// expect: answers main = 42
+// expect: answers settledAwaitStillSteps = 42
 import { Coroutine, Ticket, TicketBase } from "core";
 
 async i32 doubled(Ticket<i32> t) {
   return (await t) * 2;
 }
 
-export i32 main() {
+export i32 settledAwaitStillSteps() {
   Ticket<i32> t;
   t.resolve(21);
   Coroutine<TicketBase, never, i32> c = coroutine doubled(t);
@@ -234,16 +235,16 @@ A step after `Done` does nothing, and answers `Done` again. A scheduler may stil
 somebody else drove to completion, and there is no way to withdraw a registration:
 
 ```wac
-// expect: answers main = 1
+// expect: answers doneAgain = true
 gen<i32> void one() { yield 1; }
 
-export i32 main() {
+export bool doneAgain() {
   auto g = one();
   g.step();                                // Yielded(1)
   g.step();                                // Done
   return match (g.step()) {                // Done again: a no-op
-    Done:    1,
-    default: 0,
+    Done:    true,
+    default: false,
   };
 }
 ```
@@ -255,7 +256,7 @@ export i32 main() {
 An async generator yields and waits:
 
 ```wac
-// expect: answers main = 1
+// expect: answers yieldsAndWaits = true
 import { Coroutine, Ticket, TicketBase } from "core";
 
 async gen<i32> void counter(Ticket<i32> t) {
@@ -263,7 +264,7 @@ async gen<i32> void counter(Ticket<i32> t) {
   yield await t;
 }
 
-export i32 main() {
+export bool yieldsAndWaits() {
   Ticket<i32> t;
   t.resolve(2);
   Coroutine<TicketBase, i32, void> c = coroutine counter(t);
@@ -272,14 +273,14 @@ export i32 main() {
   bool b = match (c.step()) { Waiting(w): true,  default: false };
   bool d = match (c.step()) { Yielded(v): v == 2, default: false };
   bool e = match (c.step()) { Done:       true,  default: false };
-  return a && b && d && e ? 1 : 0;
+  return a && b && d && e;
 }
 ```
 
 `for await` iterates one — awaiting on `Waiting`, binding on `Yielded`, stopping on `Done`:
 
 ```wac
-// expect: answers main = 3
+// expect: answers forAwaitTotal = 3
 import { Ticket } from "core";
 
 async gen<i32> void counter(Ticket<i32> t) {
@@ -293,7 +294,7 @@ async i32 total(Ticket<i32> t) {
   return n;
 }
 
-export i32 main() {
+export i32 forAwaitTotal() {
   Ticket<i32> t;
   t.resolve(2);
   return total(t).wait()!;
@@ -314,17 +315,17 @@ import { Ticket } from "core";
 
 async gen<i32> void counter(Ticket<i32> t) { yield 1; }
 
-async void bad(Ticket<i32> t) {
+export async void bad(Ticket<i32> t) {
   // ERROR: iterating an async generator needs for await
   // for (i32 x in counter(t)) { }
+
+  for await (i32 x in counter(t)) { }
 }
 
-void alsoBad(Ticket<i32> t) {
+export void alsoBad(Ticket<i32> t) {
   // ERROR: await outside an async function
   // for await (i32 x in counter(t)) { }
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-for-await-required-4bxqy83]` A plain `for … in` over an async generator is refused; `for await` is required, and is
@@ -341,18 +342,16 @@ is `wait`'s job.
 // expect: emits
 import { Ticket } from "core";
 
-gen<i32> void g(Ticket<i32> t) {
+export gen<i32> void g(Ticket<i32> t) {
   // ERROR: await in a generator — declare it async gen
   // yield await t;
   yield 1;
 }
 
-async void f() {
+export async void f() {
   // ERROR: yield in an async function — declare it async gen
   // yield 1;
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-yield-await-placement-sjuvqc6]` `yield` is allowed only in a generator, and `await` only in something `async`. A

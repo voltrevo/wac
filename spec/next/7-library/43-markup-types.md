@@ -24,7 +24,7 @@ rendered as `<>` in every renderer that had not heard of them.
 A tree is an ordinary value, built and walked like any other:
 
 ```wac
-// expect: answers main = 2
+// expect: answers textNodes = 2
 import { Node, Attr } from "core";
 
 i32 countText(Node n) {
@@ -41,7 +41,7 @@ i32 sumKids(Node[] kids) {
   return total;
 }
 
-export i32 main() {
+export i32 textNodes() {
   Node tree = Node.Element("p", [Attr("class", "hi")], [Node.Text("a"), Node.Fragment([Node.Text("b")])]);
   return countText(tree);
 }
@@ -56,14 +56,14 @@ struct of `name` and `value`.
 parameters, and its children are its `kids`:
 
 ```wac
-// expect: answers main = 1
+// expect: answers paragraph = true
 import { Node, html.p } from "core";
 
-export i32 main() {
+export bool paragraph() {
   Node n = <p class="hi">Hello</p>;
   return match (n) {
-    Element(tag, attrs, kids): tag == "p" && attrs.len() == 1 && kids.len() == 1 ? 1 : 0,
-    default: 0,
+    Element(tag, attrs, kids): tag == "p" && attrs.len() == 1 && kids.len() == 1,
+    default: false,
   };
 }
 ```

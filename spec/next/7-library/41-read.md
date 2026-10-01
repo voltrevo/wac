@@ -17,7 +17,7 @@ conflated the two produced truncated output that looked successful. `match` is e
 `Failed` does not compile:
 
 ```wac
-// expect: answers main = 3
+// expect: answers bytesUntilEnd = 3
 import { Read } from "core";
 
 struct Source {
@@ -41,7 +41,7 @@ i32 total(Source s) {
   }
 }
 
-export i32 main() { return total(Source(0)); }
+export i32 bytesUntilEnd() { return total(Source(0)); }
 ```
 
 `[§wac-core-read-6kv4pnx]` `Read` has three variants — `Data` with a non-empty byte array, `End`, and `Failed` with a reason —

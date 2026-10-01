@@ -6,13 +6,13 @@ is made, so a caller can hash a key case-insensitively, or on one field of a str
 ## Making one
 
 ```wac
-// expect: answers main = 1
+// expect: answers startEmpty = true
 import { Map, hashString, stringEq } from "core";
 
-export i32 main() {
+export bool startEmpty() {
   Map<string, i32> m = Map.create(hashString, stringEq);
   Map<string, i32> big = Map.withCapacity(1000, hashString, stringEq);
-  return m.isEmpty() && big.len() == 0 ? 1 : 0;
+  return m.isEmpty() && big.len() == 0;
 }
 ```
 
@@ -24,24 +24,39 @@ The two functions must agree: keys that `eq` calls equal must have equal hashes.
 ## Reading and writing
 
 ```wac
-// expect: answers main = 1
+// expect: answers setTwice = true
+// expect: answers getOf("a") = 2
+// expect: answers getOf("z") = null
+// expect: answers getOrOf("z") = -1
+// expect: answers hasOf("b") = true
+// expect: answers removeOf("b") = true
+// expect: answers removeOf("z") = false
 import { Map, hashString, stringEq } from "core";
 
-export i32 main() {
+Map<string, i32> sample() {                // {"a": 2, "b": 3}
   Map<string, i32> m = Map.create(hashString, stringEq);
-  bool fresh = !m.set("a", 1);             // false: "a" was not present
-  bool again = m.set("a", 2);              // true: overwritten
+  m.set("a", 2);
   m.set("b", 3);
+  return m;
+}
 
-  i32? a = m.get("a");                     // 2
-  i32? z = m.get("z");                     // null
-  i32 zOr = m.getOr("z", -1);              // -1
-  bool has = m.has("b");
-  bool removed = m.remove("b");            // true
-  bool gone = !m.has("b") && !m.remove("b");
+export bool setTwice() {
+  Map<string, i32> m = Map.create(hashString, stringEq);
+  bool first = m.set("a", 1);              // false: "a" was not present
+  bool second = m.set("a", 2);             // true: overwritten
+  return !first && second && m.get("a")! == 2;
+}
 
-  return fresh && again && a! == 2 && z is null && zOr == -1 && has && removed && gone && m.len() == 1
-      ? 1 : 0;
+export i32? getOf(string k) { return sample().get(k); }
+
+export i32 getOrOf(string k) { return sample().getOr(k, -1); }
+
+export bool hasOf(string k) { return sample().has(k); }
+
+export bool removeOf(string k) {
+  Map<string, i32> m = sample();
+  bool removed = m.remove(k);
+  return removed && !m.has(k);
 }
 ```
 
@@ -60,16 +75,16 @@ calls on an unchanged map. `clear()` empties it.
 `core` provides the common pairs:
 
 ```wac
-// expect: answers main = 1
+// expect: answers consistentPairs = true
 import { hashBytes, bytesEq, hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq } from "core";
 
-export i32 main() {
+export bool consistentPairs() {
   bool a = bytesEq([1, 2], [1, 2]) && hashBytes([1, 2]) == hashBytes([1, 2]);
   bool b = stringEq("x", "x") && hashString("x") == hashString("x");
   bool c = i32Eq(4, 4) && hashI32(4) == hashI32(4);
   i64 big = 4;
   bool d = i64Eq(big, big) && hashI64(big) == hashI64(big);
-  return a && b && c && d ? 1 : 0;
+  return a && b && c && d;
 }
 ```
 
@@ -86,7 +101,7 @@ object.
 A type that wants to be a key carries that field itself:
 
 ```wac
-// expect: answers main = 7
+// expect: answers keyedByIdentity = 7
 import { Map } from "core";
 
 struct Keyed {
@@ -97,7 +112,7 @@ struct Keyed {
 i32 hashKeyed(Keyed k) { return k.id; }
 bool sameKeyed(Keyed a, Keyed b) { return a is b; }
 
-export i32 main() {
+export i32 keyedByIdentity() {
   Map<Keyed, i32> m = Map.create(hashKeyed, sameKeyed);
   Keyed k = Keyed(1, "first");
   m.set(k, 7);

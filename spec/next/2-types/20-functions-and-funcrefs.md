@@ -7,18 +7,16 @@ value, of type `fn<R(A, B, …)>`, and a lambda writes one inline.
 ## Declaring and returning
 
 ```wac
-// expect: answers main = 5
+// expect: answers pointX = 1.0
+// expect: answers arrayLength(5) = 5
 struct Point { f64 x; f64 y; }
 
-void greet() { }                           // void: no return statement needed
+export void greet() { }                    // void: no return statement needed
 Point makePoint(f64 x, f64 y) { return Point(x, y); }
 i32[] makeArray(i32 n) { return i32[].filled(n, 0); }
 
-export i32 main() {
-  greet();
-  Point p = makePoint(1.0, 2.0);
-  return makeArray(5).len();
-}
+export f64 pointX() { return makePoint(1.0, 2.0).x; }
+export i32 arrayLength(i32 n) { return makeArray(n).len(); }
 ```
 
 `[§wac-ret-void-ezw2lqp]` A `void` function with no return statement compiles.
@@ -30,13 +28,15 @@ export i32 main() {
 A function may call one declared after it, and functions may call each other:
 
 ```wac
-// expect: answers main = 3628801
-i32 factorial(i32 n) {
+// expect: answers factorial(10) = 3628800
+// expect: answers isEven(42) = 1
+// expect: answers isEven(17) = 0
+export i32 factorial(i32 n) {
   if (n <= 1) { return 1; }
   return n * factorial(n - 1);
 }
 
-i32 isEven(i32 n) {
+export i32 isEven(i32 n) {
   if (n == 0) { return 1; }
   return isOdd(n - 1);
 }
@@ -45,8 +45,6 @@ i32 isOdd(i32 n) {
   if (n == 0) { return 0; }
   return isEven(n - 1);
 }
-
-export i32 main() { return factorial(10) + isEven(42) + isEven(17); }
 ```
 
 `[§wac-factorial-lzkw61q]` `factorial(10)` answers `3628800`.
@@ -60,25 +58,20 @@ A `void` function may return early with `return;`, or fall off its end. Any othe
 value on every path:
 
 ```wac
-// expect: answers main = 1
-void earlyReturn(bool flag) {
+// expect: answers ok(true) = 1
+export void earlyReturn(bool flag) {
   if (flag) { return; }
 }
 
-i32 ok(bool x) {
+export i32 ok(bool x) {
   if (x) { return 1; }
   else { return 0; }
 }
 
 // ERROR: not every path returns a value
-// i32 bad(bool x) {
+// export i32 bad(bool x) {
 //   if (x) { return 1; }
 // }
-
-export i32 main() {
-  earlyReturn(true);
-  return ok(true);
-}
 ```
 
 `[§wac-void-return-h7qm4xf]` `return;` in a `void` function compiles.
@@ -97,14 +90,14 @@ An argument's type must be the parameter's type. There is no widening at a call 
 else:
 
 ```wac
-// expect: emits
+// expect: answers taken = 2
 struct A { i32 x; }
 struct B { i32 y; }
 struct P { i32 take(const this, A a) { return a.x; } }
 
 f64 root(f64 x) { return x; }
 
-export i32 main() {
+export i32 taken() {
   f32 approx = 3.14;
 
   // ERROR: expected f64, got f32
@@ -113,11 +106,12 @@ export i32 main() {
   f64 r = root(approx as f64);
 
   P p = P();
+  B b = B(1);
 
   // ERROR: expected A, got B
-  // i32 n = p.take(B(1));
+  // i32 n = p.take(b);
 
-  return 0;
+  return p.take(A(2));
 }
 ```
 
@@ -135,18 +129,21 @@ parameters hand it ([07](../1-programs/07-programs.md)).
 value position is a value of that type, and calling a value calls the function:
 
 ```wac
-// expect: answers main = 10
+// expect: answers compared = false
+// expect: answers doubled(5) = 10
 bool ascending(i32 a, i32 b) { return a < b; }
 bool descending(i32 a, i32 b) { return a > b; }
 i32 double(i32 x) { return x * 2; }
 
-export i32 main() {
+export bool compared() {
   fn<bool(i32, i32)> cmp = ascending;
   cmp = descending;
-  bool b = cmp(3, 5);                      // false
+  return cmp(3, 5);                        // descending: 3 > 5
+}
 
+export i32 doubled(i32 n) {
   fn<i32(i32)> f = double;
-  return f(5);
+  return f(n);
 }
 ```
 
@@ -158,7 +155,11 @@ function of that type.
 Function values go everywhere values go — parameters, returns, fields, arrays, nullables:
 
 ```wac
-// expect: answers main = 75
+// expect: answers applied = 35
+// expect: answers reversed = false
+// expect: answers throughField = 10
+// expect: answers throughArray = 30
+// expect: answers absentNotCalled = true
 i32 double(i32 x) { return x * 2; }
 i32 square(i32 x) { return x * x; }
 i32 negate(i32 x) { return -x; }
@@ -174,24 +175,34 @@ fn<bool(i32, i32)> getComparator(bool reverse) {
 
 struct Handler { fn<i32(i32)> callback; }
 
-export i32 main() {
-  i32 total = apply(double, 5) + apply(square, 5);                   // 10 + 25
+export i32 applied() { return apply(double, 5) + apply(square, 5); }   // 10 + 25
+
+export bool reversed() {
   fn<bool(i32, i32)> c = getComparator(true);
-  bool d = c(3, 5);                                                   // false
+  return c(3, 5);                                                       // descending
+}
 
+export i32 throughField() {
   Handler h = Handler(double);
-  total += h.callback(5);                                             // 10
+  return h.callback(5);
+}
 
+export i32 throughArray() {
+  i32 total = 0;
   fn<i32(i32)>[] transforms = [double, square, negate];
-  for (fn<i32(i32)> t in transforms) { total += t(5); }               // 10 + 25 - 5
+  for (fn<i32(i32)> t in transforms) { total += t(5); }                 // 10 + 25 - 5
+  return total;
+}
 
+export bool absentNotCalled() {
   fn<void(i32)>? none = null;
   if (none is not null) { none!(42); }
-  return total;
+  return none is null;
 }
 ```
 
-`[§wac-fnref-param-k5fn2jq]` A function value may be a parameter: `apply(double, 5)` answers `10`.
+`[§wac-fnref-param-k5fn2jq]` A function value may be a parameter: `apply(double, 5)` answers `10`, so `applied()`
+answers `10 + 25`.
 
 `[§wac-fnref-ret-p7hd4wn]` A function value may be returned: `getComparator(true)(3, 5)` is `false`.
 
@@ -203,7 +214,7 @@ negate]` to `5` sums to `30`.
 `[§wac-fnref-null-w3qn5jk]` A function type may be nullable, and absent is not a function that does nothing.
 
 ```wac
-// expect: answers main = 30
+// expect: answers doubledThenSummed = 30
 i32 double(i32 x) { return x * 2; }
 i32 add(i32 a, i32 b) { return a + b; }
 
@@ -219,7 +230,7 @@ i32 reduce(i32[] arr, i32 init, fn<i32(i32, i32)> f) {
   return acc;
 }
 
-export i32 main() { return reduce(map([1, 2, 3, 4, 5], double), 0, add); }
+export i32 doubledThenSummed() { return reduce(map([1, 2, 3, 4, 5], double), 0, add); }
 ```
 
 `[§wac-fnref-higher-p4jn7wq]` Functions taking functions compose: doubling `[1, 2, 3, 4, 5]` and summing gives
@@ -228,7 +239,7 @@ export i32 main() { return reduce(map([1, 2, 3, 4, 5], double), 0, add); }
 A generic function may take a function parameter whose type mentions its type parameters:
 
 ```wac
-// expect: answers main = 3
+// expect: answers firstBig = 3
 T? find<T>(T[] xs, fn<bool(T)> p) {
   for (T x in xs) {
     if (p(x)) { return x; }
@@ -238,9 +249,9 @@ T? find<T>(T[] xs, fn<bool(T)> p) {
 
 bool big(i32 x) { return x > 2; }
 
-export i32 main() {
+export i32 firstBig() {
   i32[] xs = [1, 3, 5];
-  return find(xs, big)!;
+  return find(xs, big)!;                   // T = i32, from xs and from big
 }
 ```
 
@@ -253,7 +264,7 @@ A method is a value too. Through the type, its receiver is its first parameter; 
 receiver is bound and the value takes the remaining parameters:
 
 ```wac
-// expect: answers main = 11
+// expect: answers incrementedThreeWays = 10
 struct Counter {
   i32 count;
 
@@ -261,7 +272,7 @@ struct Counter {
   void inc(this) { this.count++; }
 }
 
-export i32 main() {
+export i32 incrementedThreeWays() {
   fn<Counter(i32)> factory = Counter.create;      // no receiver
   Counter c = factory(7);
 
@@ -272,7 +283,7 @@ export i32 main() {
   g();
 
   (Counter.inc)(c);                               // the same as c.inc()
-  return c.count + 1;                             // 7 + 3 + 1
+  return c.count;                                 // 7 + 3
 }
 ```
 
@@ -293,15 +304,25 @@ A lambda writes a function value inline. Its parameters carry their types; its r
 function type it is written into. An expression body is sugar for a block that returns it:
 
 ```wac
-// expect: answers main = 47
-export i32 main() {
-  fn<i32()> answer = () => 42;
-  fn<i32(i32, i32)> add = (i32 a, i32 b) => a + b;
+// expect: answers answer = 42
+// expect: answers sum(1, 1) = 2
+// expect: answers absolute(-3) = 3
+export i32 answer() {
+  fn<i32()> f = () => 42;
+  return f();
+}
+
+export i32 sum(i32 a, i32 b) {
+  fn<i32(i32, i32)> add = (i32 x, i32 y) => x + y;
+  return add(a, b);
+}
+
+export i32 absolute(i32 n) {
   fn<i32(i32)> abs = (i32 x) => {
     if (x < 0) { return -x; }              // returns from the lambda
     return x;
   };
-  return answer() + add(1, 1) + abs(-3);
+  return abs(n);
 }
 ```
 
@@ -312,8 +333,8 @@ A lambda captures by reference, primitives included: a captured local is shared 
 so a write on either side is seen by the other:
 
 ```wac
-// expect: answers main = 2
-export i32 main() {
+// expect: answers bumpedTwice = 2
+export i32 bumpedTwice() {
   i32 n = 0;
   fn<void()> bump = () => { n = n + 1; };
   bump();
@@ -326,14 +347,14 @@ export i32 main() {
 through nesting, and two lambdas capturing one local share it.
 
 ```wac
-// expect: answers main = 5
+// expect: answers addedThroughReceiver = 5
 struct Counter {
   i32 n;
   void bump(this, i32 by) { this.n = this.n + by; }
   fn<void(i32)> adder(this) { return (i32 by) => { this.bump(by); }; }
 }
 
-export i32 main() {
+export i32 addedThroughReceiver() {
   Counter c = Counter(0);
   fn<void(i32)> add = c.adder();
   add(2);
@@ -348,13 +369,13 @@ hands back still acts on the receiver its caller holds.
 A lambda may be written inside a generic, and closes over that instantiation's types:
 
 ```wac
-// expect: answers main = 42
+// expect: answers heldTwice = 42
 T hold<T>(T v) {
   fn<T()> get = () => v;
   return get();
 }
 
-export i32 main() {
+export i32 heldTwice() {
   i32 a = hold(40 as i32);
   string b = hold("xx");
   return a + b.len();
@@ -368,15 +389,15 @@ A lambda passed as an argument takes its type from the parameter it fills, howev
 through a method, or through a function value held in a field:
 
 ```wac
-// expect: answers main = 6
+// expect: answers fetchThenDouble(3) = 6
 struct Pending { i32 v; i32 then(const this, fn<i32(i32)> k) { return k(this.v); } }
 struct Source { fn<Pending(i32)> fetch; }
 
 Pending make(i32 n) { return Pending(n); }
 
-export i32 main() {
+export i32 fetchThenDouble(i32 n) {
   Source s = Source(make);
-  return s.fetch(3).then((i32 x) => x * 2);   // a call through a field, then a method
+  return s.fetch(n).then((i32 x) => x * 2);   // a call through a field, then a method
 }
 ```
 

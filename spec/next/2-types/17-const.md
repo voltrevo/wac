@@ -10,8 +10,8 @@ runs, like any other. A value computed at compile time is `static`
 ## A const binding cannot be rebound
 
 ```wac
-// expect: answers main = 12
-export i32 main() {
+// expect: answers rebinding = 12
+export i32 rebinding() {
   i32 x = 1;
   x = 2;
   const i32 y = 10;
@@ -28,14 +28,14 @@ export i32 main() {
 ## Const on a reference is deep
 
 ```wac
-// expect: answers main = 1
+// expect: answers rootVal = 1
 struct Tree {
   i32 val;
   Tree? left;
   Tree? right;
 }
 
-export i32 main() {
+export i32 rootVal() {
   const Tree t = Tree(1, Tree(2, null, null), null);
   const i32[] xs = [1, 2, 3];
 
@@ -90,7 +90,7 @@ struct Outer {
   }
 }
 
-export i32 main() { return 0; }
+export void inspect(const Outer o) { o.tryMutate(); }
 ```
 
 `[§wac-deep-const-j4fn2xq]` Calling a method that takes `this` through a `const` reference is refused.
@@ -103,7 +103,7 @@ cursors depend on it — but the constness comes with it: writes and `this`-taki
 binding are refused, and it may not be stored where it would be reachable as mutable.
 
 ```wac
-// expect: answers main = 2
+// expect: answers twoNodes = 2
 struct Node { i32 v; Node? next; }
 
 i32 length(const Node head) {
@@ -116,14 +116,14 @@ i32 length(const Node head) {
   return n;
 }
 
-export i32 main() { return length(Node(1, Node(2, null))); }
+export i32 twoNodes() { return length(Node(1, Node(2, null))); }
 ```
 
 A method that hands back what it holds hands back the real thing, not a copy, so its constness comes too.
 Reading it is allowed; writing is where it is caught:
 
 ```wac
-// expect: answers main = 2
+// expect: answers twoRoutes = 2
 struct Route { string path; }
 
 struct Server {
@@ -135,12 +135,12 @@ i32 count(const Server s) {
   return s.table().len();                  // reading through it is fine
 }
 
-void add(const Server s) {
+export void add(const Server s) {
   // ERROR: s.table() is const, and writing an element writes through it
   // s.table()[0] = Route("/");
 }
 
-export i32 main() { return count(Server([Route("/a"), Route("/b")])); }
+export i32 twoRoutes() { return count(Server([Route("/a"), Route("/b")])); }
 ```
 
 ## A fresh allocation is not const
@@ -149,7 +149,7 @@ export i32 main() { return count(Server([Route("/a"), Route("/b")])); }
 const: an object the method allocates is new, and the caller may write to it:
 
 ```wac
-// expect: answers main = 8
+// expect: answers freshResults = 8
 struct Point { i32 x; }
 
 struct Holder {
@@ -165,7 +165,7 @@ struct Holder {
   }
 }
 
-export i32 main() {
+export i32 freshResults() {
   const Holder h = Holder(Point(3));
   Point p = h.fresh();                     // accepted: the result is not reached through h
   p.x = 7;
@@ -190,13 +190,13 @@ container does not make the references it contains mutable: a fresh array holdin
 becomes a `T`:
 
 ```wac
-// expect: answers main = 1
+// expect: answers widening = 1
 struct S { i32 v; }
 
 void mutate(S s) { s.v = 1; }
 i32 peek(const S s) { return s.v; }
 
-export i32 main() {
+export i32 widening() {
   S s = S(0);
   const S c = s;                           // S widens to const S
   i32 a = peek(s);                         // a mutable reference is accepted where const is wanted
@@ -207,8 +207,9 @@ export i32 main() {
   // ERROR: a const S cannot be assigned to an S
   // S back = c;
 
+  mutate(s);                               // s itself is still mutable: c now reads 1
   fn<i32(const S)> reader = peek;
-  return reader(c) + 1;
+  return reader(c) + a;                    // 1 + 0
 }
 ```
 
@@ -227,12 +228,12 @@ making arrays covariant, and a union records the permission each value arrived w
 A parameter may be `const`, which forbids reassigning it and, for a reference, writing through it:
 
 ```wac
-// expect: answers main = 2
+// expect: answers twoParams = 2
 struct P { i32 v; }
 
 i32 peek(const P p) { return p.v; }
 
-void bad(const P p) {
+export void bad(const P p) {
   // ERROR: cannot write through a const reference
   // p.v = 1;
 
@@ -245,7 +246,7 @@ i32 mixed(const P a, P b) {
   return b.v;
 }
 
-export i32 main() { return peek(P(1)) + mixed(P(1), P(0)); }
+export i32 twoParams() { return peek(P(1)) + mixed(P(1), P(0)); }
 ```
 
 `[§wac-const-param-2vhk7dq]` Reads through a `const` parameter compile, and writing through it or

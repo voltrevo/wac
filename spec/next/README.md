@@ -104,51 +104,83 @@ Unless its first line says otherwise, a ` ```wac ` fence is a complete program t
 as written. Its first lines state what happens to it:
 
 ```wac
-// expect: answers main = 7
-export i32 main() { return 7; }
+// expect: answers gcd(48, 18) = 6
+// expect: answers gcd(7, 0) = 7
+export i32 gcd(i32 a, i32 b) {
+  while (b != 0) {
+    i32 t = b;
+    b = a % b;
+    a = t;
+  }
+  return a;
+}
 ```
 
 | Expectation | Meaning |
 |---|---|
 | `// expect: emits` | It compiles. |
 | `// expect: refused` | It does not compile. Which phase refuses it is not the language's business. |
-| `// expect: answers f = v` | It compiles, `f()` runs, and the result is `v`. |
-| `// expect: traps f` | It compiles, and `f()` traps. |
+| `// expect: answers f(args) = v` | It compiles, the export `f` called with `args` returns `v`. `f = v` is `f() = v`. |
+| `// expect: traps f(args)` | It compiles, and calling the export `f` with `args` traps. |
 | `// expect: exits n` | It compiles, runs as a program from its `main` ([07](1-programs/07-programs.md)), and exits with status `n`. |
 | `// expect: prints …` | As `exits`, and what follows is what it writes to its output, one line per `// …` line beneath. |
+
+A fence may carry several `answers` and `traps` lines, each a separate call. Arguments and results
+are written as wac literals — `true`, `"text"`, `2.5` — taking their types from the export's
+signature.
+
+### What an example exports is what it tests
+
+Only declarations the entry's exports reach are checked: everything else is dropped after parsing
+([05](1-programs/05-reachability.md)). So an example exports the declarations it is about, and
+everything else in it is reached from those exports. A declaration nothing reaches appears only
+where being dropped is the point.
+
+Every export of the entry is an entry point, an exported struct or enum included: retaining a type
+retains all its members ([05](1-programs/05-reachability.md)), so `export struct` is how an example
+has a type checked that no function uses.
+
+The same holds for a refused line. An `// ERROR:` line sits in exported code, or in code an export
+reaches, and a commented-out declaration under one is written `export` — otherwise uncommenting it
+would add a declaration that is dropped unchecked, and the claim would test nothing.
+
+`main` is not special to the language: a module is a set of exports, and calling one named `main`
+to start a program is a convention of the toolchain ([07](1-programs/07-programs.md)). Examples use
+`main` only when they are a program in that sense — run by `wac run`, handed a `Sys`, expected to
+exit or print. Everywhere else the export is named for what it answers.
 
 An expectation about one command of the toolchain names it, and may sit beside the build's:
 
 ```wac
 // expect: emits
 // expect (wac check): refused
-i32 unused() { return nonexistent(); }
-export i32 main() { return 0; }
+i32 unused() { return nonexistent(); }     // dropped by the build; wac check checks it
+export i32 used() { return 0; }
 ```
 
 A program of several files marks each one, and its entry is `main.wac`:
 
 ```wac
-// expect: answers main = 6
+// expect: answers six = 6
 // ---- lib.wac ----
 export i32 twice(i32 x) { return x * 2; }
 // ---- main.wac ----
 import { twice } from "./lib.wac";
-export i32 main() { return twice(3); }
+export i32 six() { return twice(3); }
 ```
 
 A program may include its manifest, `wac.json5`, and paths may name directories. JSON5 takes `//`
 comments, so the same marker works there:
 
 ```wac
-// expect: answers main = 4
+// expect: answers eight = 8
 // ---- wac.json5 ----
 {}
 // ---- src/lib.wac ----
 export i32 four() { return 4; }
 // ---- main.wac ----
 import { four } from "@/src/lib.wac";
-export i32 main() { return four(); }
+export i32 eight() { return four() * 2; }
 ```
 
 A file inside a dependency is shown under the dependency's name in angle brackets. `<geometry>/`
@@ -156,7 +188,7 @@ is the root of the checkout that the manifest's `geometry` entry resolves to —
 ref and lock entry that takes, which a test supplies rather than the example:
 
 ```wac
-// expect: answers main = 2
+// expect: answers twoViaGeometry = 2
 // ---- wac.json5 ----
 { imports: { geometry: { git: "https://example.com/geometry", ref: "v1" } } }
 // ---- <geometry>/wac.json5 ----
@@ -165,7 +197,7 @@ ref and lock entry that takes, which a test supplies rather than the example:
 export i32 two() { return 2; }
 // ---- main.wac ----
 import { two } from "geometry";
-export i32 main() { return two(); }
+export i32 twoViaGeometry() { return two(); }
 ```
 
 A fence that is not a whole program says so on its first line, with what it assumes:
@@ -190,10 +222,10 @@ a + 100;                     // 44 — u8 arithmetic wraps
 
 ```wac
 // expect: emits
-i32 f() { return 1; }
+export i32 f() { return 1; }
 
 // ERROR: duplicate function 'f'
-// i32 f() { return 2; }
+// export i32 f() { return 2; }
 ```
 
 The program compiles as written. **Uncommenting any one `// ERROR:` line, and nothing else, makes it
@@ -205,8 +237,8 @@ refused** — that is the claim the line makes, and each is checkable on its own
 A tag names one behaviour that a test can check:
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
+// expect: answers outer = 1
+export i32 outer() {
   i32 x = 1;
   { i32 x = 2; }
   return x;

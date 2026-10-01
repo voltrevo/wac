@@ -6,7 +6,7 @@ package selects its entry module.
 ## The consumer selects the package; the package selects its entry module
 
 ```wac
-// expect: answers main = 12
+// expect: answers circleArea = 12
 // ---- wac.json5 ----
 {
   imports: {
@@ -31,11 +31,11 @@ export * as transforms from "./transforms.wac";
 export struct Circle { i32 r; }
 export i32 area(Circle c) { return 3 * c.r * c.r; }
 // ---- <geometry>/packages/geometry/src/transforms.wac ----
-export i32 scale(i32 x, i32 by) { return x * by; }
+export i32 scale(i32 x, i32 by) { return x * by; }   // nothing reaches it: dropped
 // ---- main.wac ----
 import { shapes.Circle, shapes.area } from "geometry";
 
-export i32 main() { return area(Circle(2)); }
+export i32 circleArea() { return area(Circle(2)); }
 ```
 
 `subdir` selects the package directory inside the dependency checkout. If omitted, the package
@@ -63,7 +63,7 @@ and namespaces ([03](03-namespaces.md)).
 export i32 two() { return 2; }
 // ---- main.wac ----
 import { two } from "geometry";
-export i32 main() { return two(); }
+export i32 viaGeometry() { return two(); }
 ```
 
 `[§wac-package-exports-single-c3mtr3y]` `exports` is one module path. Any other value is refused when
@@ -89,7 +89,7 @@ mapping above, `"geometry/shapes.wac"` does not resolve through `"geometry"`
 // ---- wac.json5 ----
 { imports: { "geometry/": { git: "https://example.com/geometry", ref: "v1" } } }
 // ---- main.wac ----
-export i32 main() { return 0; }
+export i32 zero() { return 0; }
 ```
 
 `[§wac-package-key-exact-rme93fh]` A manifest `imports` key is a complete package name. A key ending
@@ -128,10 +128,10 @@ There is no implicit `index.wac` or other filename fallback.
 // ---- <geometry>/index.wac ----
 export i32 two() { return 2; }           // not found by any convention
 // ---- <geometry>/src/lib.wac ----
-export i32 three() { return 3; }         // nor this
+export i32 three() { return 3; }         // nor this: dropped
 // ---- main.wac ----
 import { two } from "geometry";
-export i32 main() { return two(); }
+export i32 viaGeometry() { return two(); }
 ```
 
 `[§wac-package-no-fallback-thup5ns]` Importing a package whose manifest has no `exports` is refused.
@@ -141,7 +141,7 @@ An import dropped by reachability need not load or validate the target package
 ([05](05-reachability.md)):
 
 ```wac
-// expect: answers main = 0
+// expect: answers zero = 0
 // ---- wac.json5 ----
 { imports: { geometry: { git: "https://example.com/geometry", ref: "v1" } } }
 // ---- <geometry>/wac.json5 ----
@@ -149,7 +149,7 @@ An import dropped by reachability need not load or validate the target package
 // ---- main.wac ----
 import { two } from "geometry";
 i32 unused() { return two(); }           // dropped, so geometry is never resolved
-export i32 main() { return 0; }
+export i32 zero() { return 0; }
 ```
 
 `[§wac-package-lazy-j3nmf2p]` A package is resolved only when a retained declaration needs a name from
@@ -207,7 +207,7 @@ and lazy loading provide selective access through the single public entry. The f
 this chapter compiles even if `transforms.wac` is missing:
 
 ```wac
-// expect: answers main = 12
+// expect: answers circleArea = 12
 // ---- wac.json5 ----
 { imports: { geometry: { git: "https://example.com/geometry", ref: "v1" } } }
 // ---- <geometry>/wac.json5 ----
@@ -220,7 +220,7 @@ export struct Circle { i32 r; }
 export i32 area(Circle c) { return 3 * c.r * c.r; }
 // ---- main.wac ----
 import { shapes.Circle, shapes.area } from "geometry";
-export i32 main() { return area(Circle(2)); }
+export i32 circleArea() { return area(Circle(2)); }
 ```
 
 `[§wac-package-selective-un8citz]` Reaching one namespace of a package's entry module does not read
@@ -233,7 +233,7 @@ Two manifest entries naming one repository at one commit reach one module; two c
 ([46](../8-tooling/46-manifest-and-lock.md)).
 
 ```wac
-// expect: answers main = 5
+// expect: answers oneCircle = 5
 // ---- wac.json5 ----
 {
   imports: {
@@ -257,7 +257,7 @@ export i32 radius(Circle c) { return c.r; }
 // ---- main.wac ----
 import { Circle } from "shapes";
 import { radius } from "draw";
-export i32 main() { return radius(Circle(5)); }   // one Circle
+export i32 oneCircle() { return radius(Circle(5)); }   // one Circle
 ```
 
 `[§wac-package-identity-uskz3mi]` Two manifests that resolve to the same repository, commit and path

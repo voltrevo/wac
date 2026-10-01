@@ -6,8 +6,8 @@ its member types, written in parentheses.
 ## A tuple is a fixed-length heterogeneous type
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
+// expect: answers secondMember = 1
+export i32 secondMember() {
   (string, i32) pair = ("a", 1);
   string first = pair.0;                   // "a"
   i32 second = pair.1;                     // 1
@@ -21,11 +21,11 @@ read its members by position, each at its own type.
 Identity is the ordered list of member types, so a tuple type written in two places is one type:
 
 ```wac
-// expect: answers main = 3
+// expect: answers totalOfMade = 3
 (i32, i32) make() { return (1, 2); }
 i32 total((i32, i32) t) { return t.0 + t.1; }
 
-export i32 main() { return total(make()); }   // two spellings, one type
+export i32 totalOfMade() { return total(make()); }   // two spellings, one type
 ```
 
 `[§wac-tuple-structural-wq9swfa]` Two tuple types are the same type exactly when they have the same member
@@ -37,8 +37,8 @@ anonymous struct would add names, and with them width and order.
 ## Tuples of zero and one
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
+// expect: answers oneTupleMember = 1
+export i32 oneTupleMember() {
   ()         unit = ();
   (i32,)     one  = (1,);
   string     s    = ("a");                 // grouping, not a 1-tuple
@@ -57,8 +57,8 @@ accepted wherever a list is, and carries meaning only at length one.
 ## A member index must be known statically
 
 ```wac
-// expect: answers main = 7
-export i32 main() {
+// expect: answers staticSelect = 7
+export i32 staticSelect() {
   (string, i32) t = ("hello", 7);
   static i32 i = 1;
 
@@ -82,7 +82,8 @@ The member's type depends on the index, so the index has to be known when the pr
 ([31](../4-static/31-static-control.md)):
 
 ```wac
-// expect: answers main = 1
+// expect: answers sameAsLiteral = true
+// expect: answers sameAsOther = false
 bool same<Ts>(Ts a, Ts b) {
   static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
     if (a.[i] != b.[i]) { return false; }  // a string at 0, an i32 at 1
@@ -90,12 +91,15 @@ bool same<Ts>(Ts a, Ts b) {
   return true;
 }
 
-export i32 main() {
+export bool sameAsLiteral() {
+  (string, i32) p = ("a", 1);
+  return same(p, ("a", 1));                // Ts is (string, i32), from p
+}
+
+export bool sameAsOther() {
   (string, i32) p = ("a", 1);
   (string, i32) q = ("a", 2);
-  bool x = same(p, ("a", 1));              // true: Ts is (string, i32), from p
-  bool y = same(p, q);                     // false
-  return x && !y ? 1 : 0;
+  return same(p, q);
 }
 ```
 
@@ -105,8 +109,8 @@ member, a symbol selects a symbol-named member.
 ## A tuple is a reference
 
 ```wac
-// expect: answers main = 5
-export i32 main() {
+// expect: answers sharedTuple = 5
+export i32 sharedTuple() {
   (i32, i32) a = (1, 2);
   (i32, i32) b = a;
   b.0 = 5;
@@ -120,13 +124,18 @@ written.
 `==` compares members; `is` compares objects:
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
+// expect: answers membersEqual = true
+// expect: answers sameObject = false
+export bool membersEqual() {
   (i32, i32) a = (1, 2);
   (i32, i32) b = (1, 2);
-  bool equal = a == b;                     // true: the members are equal
-  bool same = a is b;                      // false: two objects
-  return equal && !same ? 1 : 0;
+  return a == b;                           // the members are equal
+}
+
+export bool sameObject() {
+  (i32, i32) a = (1, 2);
+  (i32, i32) b = (1, 2);
+  return a is b;                           // two objects
 }
 ```
 
@@ -146,10 +155,10 @@ auto (q, r)       = divmod(n, d);
 ```
 
 ```wac
-// expect: answers main = 3
+// expect: answers quotient = 3
 (u32, u32) divmod(u32 n, u32 d) { return (n / d, n % d); }
 
-export i32 main() {
+export i32 quotient() {
   (u32 q, u32 r) = divmod(17, 5);          // q = 3, r = 2
   ((i32 a, i32 b), i32 c) = ((1, 2), 0);   // nested
   return q as! i32;
@@ -162,10 +171,10 @@ pattern may nest.
 Without types, the same shape assigns to locals that already exist — the form a round function wants:
 
 ```wac
-// expect: answers main = 21
+// expect: answers swapped = 21
 (u32, u32) swap(u32 a, u32 b) { return (b, a); }
 
-export i32 main() {
+export i32 swapped() {
   u32 a = 1;
   u32 b = 2;
   (a, b) = swap(a, b);                     // existing locals, not a declaration
@@ -201,17 +210,16 @@ time has a different one at every step. Computed tuple types are
 ## A variadic parameter is a tuple the call site fills
 
 ```wac
-// expect: answers main = 3
+// expect: answers countTwo = 2
+// expect: answers countOne = 1
+// expect: answers countZero = 0
 i32 count<Ts>(Ts ...items) {
   return typeref(Ts).members().len();
 }
 
-export i32 main() {
-  i32 two = count(1 as i32, "a");          // Ts is (i32, string)
-  i32 one = count(1 as i32);               // Ts is (i32,)
-  i32 zero = count();                      // Ts is ()
-  return two + one + zero;
-}
+export i32 countTwo() { return count(1 as i32, "a"); }    // Ts is (i32, string)
+export i32 countOne() { return count(1 as i32); }         // Ts is (i32,)
+export i32 countZero() { return count(); }                // Ts is ()
 ```
 
 `[§wac-variadic-tuple-sfevn82]` A parameter written `Ts ...name` receives the remaining arguments as one

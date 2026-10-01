@@ -28,14 +28,14 @@ There is no parallel construct and nothing to join: two tickets started one afte
 ticket made directly is settled by calling `resolve`:
 
 ```wac
-// expect: answers main = 20
+// expect: answers doubledTen = 20
 import { Ticket } from "core";
 
 async i32 doubled(Ticket<i32> t) {
   return (await t) * 2;
 }
 
-export i32 main() {
+export i32 doubledTen() {
   Ticket<i32> input;
   Ticket<i32> r = doubled(input);          // runs as far as its await
   input.resolve(10);
@@ -49,7 +49,7 @@ call returns one that its body settles.
 ## Declaring an `async` function
 
 ```wac
-// expect: answers main = 3
+// expect: answers sizeOfAbc = 3
 import { Ticket } from "core";
 
 async i32 size(Ticket<string> name) {
@@ -57,7 +57,7 @@ async i32 size(Ticket<string> name) {
   return n.len();
 }
 
-export i32 main() {
+export i32 sizeOfAbc() {
   Ticket<string> t;
   Ticket<i32> s = size(t);                 // size is declared i32; the call is a Ticket<i32>
   t.resolve("abc");
@@ -75,7 +75,7 @@ Ticket<i32>` declares a body that hands back a ticket, not a second spelling of 
 `override`, before the return type. The receiver crosses a suspension the way any other parameter does.
 
 ```wac
-// expect: answers main = 1
+// expect: answers runsToFirstAwait = 1
 import { Ticket } from "core";
 
 struct Slot {
@@ -88,7 +88,7 @@ struct Slot {
   }
 }
 
-export i32 main() {
+export i32 runsToFirstAwait() {
   Slot s = Slot(0);
   s.tick();                                // runs to its first suspension now
   return s.n;                              // 1
@@ -106,19 +106,17 @@ returns a ticket for the rest. It does not wait to be driven.
 // expect: emits
 import { Ticket } from "core";
 
-async i32 bad() {
+export async i32 bad() {
   // ERROR: await needs a ticket, and 5 is an i32
   // return await 5;
   return 0;
 }
 
-i32 plain(Ticket<i32> t) {
+export i32 plain(Ticket<i32> t) {
   // ERROR: await outside an async function
   // return await t;
   return 0;
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-await-pending-9km2xtr]` `await e` requires `e` to be a `Ticket<T>`, and has type `T`. Anything else is
@@ -140,14 +138,12 @@ continues:
 
 ```wac
 // expect: emits
-async void example() {
+export async void example() {
   await;                                   // one step boundary, no waiting
 
   // ERROR: null has no type here
   // await null;
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-await-bare-ge5p75p]` `await;` suspends once on an already-settled ticket. `await null;` is refused: `null` has
@@ -162,10 +158,10 @@ A lambda writes no return type, so its slot is both the permission and the type:
 is `fn<Ticket<R>(…)>`, and `R` is what the body is checked against:
 
 ```wac
-// expect: answers main = 4
+// expect: answers capturedAcrossAwait = 4
 import { Ticket } from "core";
 
-export i32 main() {
+export i32 capturedAcrossAwait() {
   i32 base = 3;
   Ticket<i32> input;
   fn<Ticket<i32>(Ticket<i32>)> add = async (Ticket<i32> t) => {
@@ -193,13 +189,11 @@ import { Ticket } from "core";
 
 async i32 size(Ticket<i32> t) { return await t; }
 
-async i32 total(Ticket<i32> t) {
+export async i32 total(Ticket<i32> t) {
   // ERROR: total returns i32, and size(t) is a Ticket<i32> — write return await size(t);
   // return size(t);
   return await size(t);
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-async-mismatch-8dxr5va]` Returning a `Ticket<U>` from an `async T` whose `T` is not that ticket is a return
@@ -230,7 +224,7 @@ An unawaited call runs to its first suspension and hands its **continuation** to
 `schedule` statement sets the target, from that point to the end of its block:
 
 ```wac
-// expect: answers main = 1
+// expect: answers scheduledToTarget = true
 import { Continuation, Vec } from "core";
 
 struct Slot {
@@ -243,14 +237,14 @@ struct Slot {
   }
 }
 
-export i32 main() {
+export bool scheduledToTarget() {
   Vec<Continuation> pending;
   schedule pending.push;
 
   Slot s = Slot(0);
   s.tick();
 
-  return s.n == 1 && pending.len() == 1 ? 1 : 0;
+  return s.n == 1 && pending.len() == 1;
 }
 ```
 
@@ -262,7 +256,7 @@ suspended call was made.
 one `sys.drain()` runs, and the one a program's exit inspects for work left over ([07](../1-programs/07-programs.md)).
 
 ```wac
-// expect: answers main = 1
+// expect: answers targetEndsWithBlock = true
 import { Continuation, Vec } from "core";
 
 struct Slot {
@@ -270,7 +264,7 @@ struct Slot {
   async void tick(this) { this.n += 1; await; this.n += 10; }
 }
 
-export i32 main() {
+export bool targetEndsWithBlock() {
   Vec<Continuation> outer;
   Vec<Continuation> inner;
   schedule outer.push;
@@ -281,7 +275,7 @@ export i32 main() {
     s.tick();                              // to inner
   }
   s.tick();                                // to outer again
-  return inner.len() == 1 && outer.len() == 1 ? 1 : 0;
+  return inner.len() == 1 && outer.len() == 1;
 }
 ```
 
@@ -292,7 +286,7 @@ The target belongs to the suspended scope, not to whoever resumes it. A coroutin
 in force where it suspended, and it is restored when the coroutine resumes:
 
 ```wac
-// expect: answers main = 1
+// expect: answers targetRestoredOnResume = true
 import { Continuation, Generator, Vec } from "core";
 
 struct Slot {
@@ -306,7 +300,7 @@ gen<void> void capture(Vec<Continuation> inner, Slot s) {
   s.tick();
 }
 
-export i32 main() {
+export bool targetRestoredOnResume() {
   Vec<Continuation> outer;
   Vec<Continuation> inner;
   schedule outer.push;
@@ -317,7 +311,7 @@ export i32 main() {
   g.step();                                // runs to the yield, installing inner
   s.tick();                                // outer
   g.step();                                // resumes inside capture's scope: inner
-  return outer.len() == 1 && inner.len() == 1 ? 1 : 0;
+  return outer.len() == 1 && inner.len() == 1;
 }
 ```
 
@@ -339,14 +333,14 @@ struct Continuation {
 ```
 
 ```wac
-// expect: answers main = 20
+// expect: answers continuationResumes = 20
 import { Continuation, Ticket, Vec } from "core";
 
 async i32 doubled(Ticket<i32> t) {
   return (await t) * 2;
 }
 
-export i32 main() {
+export i32 continuationResumes() {
   Vec<Continuation> pending;
   schedule pending.push;
 
@@ -365,19 +359,18 @@ export i32 main() {
 and a `call` that resumes it.
 
 ```wac
-// expect: traps main
+// expect: traps callsTooEarly
 import { Continuation, Ticket, Vec } from "core";
 
 async i32 doubled(Ticket<i32> t) { return (await t) * 2; }
 
-export i32 main() {
+export void callsTooEarly() {
   Vec<Continuation> pending;
   schedule pending.push;
 
   Ticket<i32> t;
   doubled(t);
   pending[0].call();                       // traps: t has not settled
-  return 0;
 }
 ```
 
@@ -445,22 +438,24 @@ A program does not end while work it started remains ([07](../1-programs/07-prog
 because unlike `await` it can be refused:
 
 ```wac
-// expect: answers main = 1
+// expect: answers viaWait = 2
+// expect: answers orphanRefused = -1
 import { Ticket } from "core";
 
 async i32 job(Ticket<i32> t) { return (await t) + 1; }
 
-export i32 main() {
+export i32 viaWait() {
   Ticket<i32> t;
   t.resolve(1);
-  i32 viaWait = job(t).wait()!;            // 2
+  return job(t).wait()!;
+}
 
+export i32 orphanRefused() {
   Ticket<i32> orphan;                      // nothing will ever resolve it
-  i32 refused = match (orphan.wait()) {
+  return match (orphan.wait()) {
     Ok(v):  v,
     Err(_): -1,                            // nothing can advance it, so wait refuses at once
   };
-  return viaWait == 2 && refused == -1 ? 1 : 0;
 }
 ```
 
@@ -532,10 +527,10 @@ siblings where they are.
 `Ticket.all` answers a tuple when every ticket has, so two reads cost one wait and the results keep their own types:
 
 ```wac
-// expect: answers main = 5
+// expect: answers allSettled = 5
 import { Ticket } from "core";
 
-export i32 main() {
+export i32 allSettled() {
   Ticket<string> a;
   Ticket<i32> b;
   a.resolve("abc");
@@ -585,13 +580,11 @@ import { Ticket, Vec } from "core";
 
 async void tick() { await; }
 
-export i32 main() {
+export void voidTypeArgument() {
   Ticket<void> t = tick();                 // async void has a call-site type
 
   // ERROR: Vec<void> — nothing can hold a value of a type that has none
   // Vec<void> v;
-
-  return 0;
 }
 ```
 

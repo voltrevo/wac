@@ -6,13 +6,12 @@ ternary, `match`, and `matches`, which tests a pattern and binds a name in one e
 ## `if`
 
 ```wac
-// expect: answers main = 49
-i32 abs(i32 n) {
+// expect: answers abs(-42) = 42
+// expect: answers abs(7) = 7
+export i32 abs(i32 n) {
   if (n < 0) { return -n; }
   else { return n; }
 }
-
-export i32 main() { return abs(-42) + abs(7); }
 ```
 
 `[§wac-abs-djo90kx]` `if` runs its block when its `bool` condition holds, and its `else` block otherwise:
@@ -23,8 +22,11 @@ Braces are required: there is no statement form without them.
 ## Loops
 
 ```wac
-// expect: answers main = 6881
-i32 collatz(i32 n) {
+// expect: answers collatz(27) = 111
+// expect: answers fib(20) = 6765
+// expect: answers digitCount(0) = 1
+// expect: answers digitCount(9999) = 4
+export i32 collatz(i32 n) {
   i32 steps = 0;
   while (n != 1) {
     if (n % 2 == 0) { n = n / 2; }
@@ -34,7 +36,7 @@ i32 collatz(i32 n) {
   return steps;
 }
 
-i32 fib(i32 n) {
+export i32 fib(i32 n) {
   if (n < 2) { return n; }
   i32 a = 0;
   i32 b = 1;
@@ -46,7 +48,7 @@ i32 fib(i32 n) {
   return b;
 }
 
-i32 digitCount(i32 n) {
+export i32 digitCount(i32 n) {
   if (n < 0) { n = -n; }
   i32 count = 0;
   do {
@@ -55,8 +57,6 @@ i32 digitCount(i32 n) {
   } while (n > 0);
   return count;
 }
-
-export i32 main() { return collatz(27) + fib(20) + digitCount(0) + digitCount(9999); }   // 111 + 6765 + 1 + 4
 ```
 
 `[§wac-collatz-k1chom8]` `while` repeats its block while its condition holds: `collatz(27)` is `111`.
@@ -73,7 +73,7 @@ export i32 main() { return collatz(27) + fib(20) + digitCount(0) + digitCount(99
 only to be a cursor:
 
 ```wac
-// expect: answers main = 8
+// expect: answers lengthOfNonEmpty(["ab", "", "cdef", "gh"]) = 8
 import { Vec } from "core";
 
 Vec<string> nonEmpty(string[] lines) {
@@ -90,7 +90,7 @@ i32 totalLength(Vec<string> lines) {
   return n;
 }
 
-export i32 main() { return totalLength(nonEmpty(["ab", "", "cdef", "gh"])); }
+export i32 lengthOfNonEmpty(string[] lines) { return totalLength(nonEmpty(lines)); }
 ```
 
 `[§wac-for-in-qkcbmxf]` `for (T x in e)` binds each element of `e` in turn and runs the block. `e` may be an array,
@@ -106,8 +106,11 @@ A loop whose condition is literally `true`, or a `for` with no condition, finish
 leave it. If none can, control never reaches the end of the loop, and nothing need follow it:
 
 ```wac
-// expect: answers main = 22
-i32 firstMultiple(i32 step, i32 floor) {
+// expect: answers firstMultiple(4, 10) = 12
+// expect: answers countTo(7) = 7
+// expect: answers nestedBreak(3) = 3
+// expect: answers nestedBreak(0) = 1
+export i32 firstMultiple(i32 step, i32 floor) {
   i32 n = 0;
   while (true) {
     n += step;
@@ -115,13 +118,13 @@ i32 firstMultiple(i32 step, i32 floor) {
   }
 }
 
-i32 countTo(i32 target) {
+export i32 countTo(i32 target) {
   for (i32 i = 0; ; i++) {
     if (i == target) { return i; }
   }
 }
 
-i32 nestedBreak(i32 n) {
+export i32 nestedBreak(i32 n) {
   while (true) {
     switch (n) {
       case 1: { break; }                   // leaves the switch, not the loop
@@ -131,8 +134,6 @@ i32 nestedBreak(i32 n) {
     n++;
   }
 }
-
-export i32 main() { return firstMultiple(4, 10) + countTo(7) + nestedBreak(3); }   // 12 + 7 + 3
 ```
 
 `[§wac-infloop-while-zvvoovg]` A `while (true)` with no `break` that leaves it needs no `return` after it.
@@ -144,15 +145,21 @@ finite.
 
 ```wac
 // expect: emits
+export i32 returnsAfter(i32 n) {
+  while (true) {
+    if (n > 0) { break; }
+    n++;
+  }
+  return n;
+}
+
 // ERROR: not every path returns a value
-// i32 needsReturn(i32 n) {
+// export i32 needsReturn(i32 n) {
 //   while (true) {
 //     if (n > 0) { break; }
 //     n++;
 //   }
 // }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-infloop-break-hiomizo]` When a `break` can leave the loop, a non-`void` function must still return after
@@ -161,8 +168,10 @@ it.
 ### `break` and `continue`
 
 ```wac
-// expect: answers main = 35
-i32 findFirst(i32[] arr, i32 target) {
+// expect: answers findFirst([10, 20, 30], 20) = 1
+// expect: answers sumOdd([1, 2, 3, 4, 5]) = 9
+// expect: answers oddsToTen = 25
+export i32 findFirst(i32[] arr, i32 target) {
   i32 result = -1;
   for (i32 i = 0; i < arr.len(); i++) {
     if (arr[i] == target) {
@@ -173,7 +182,7 @@ i32 findFirst(i32[] arr, i32 target) {
   return result;
 }
 
-i32 sumOdd(i32[] arr) {
+export i32 sumOdd(i32[] arr) {
   i32 total = 0;
   for (i32 i = 0; i < arr.len(); i++) {
     if (arr[i] % 2 == 0) { continue; }
@@ -182,7 +191,7 @@ i32 sumOdd(i32[] arr) {
   return total;
 }
 
-export i32 main() {
+export i32 oddsToTen() {
   i32 i = 0;
   i32 sum = 0;
   do {
@@ -190,7 +199,7 @@ export i32 main() {
     if (i % 2 == 0) { continue; }          // goes to the condition, not the top
     sum = sum + i;
   } while (i < 10);
-  return findFirst([10, 20, 30], 20) + sumOdd([1, 2, 3, 4, 5]) + sum;   // 1 + 9 + 25
+  return sum;                              // 1 + 3 + 5 + 7 + 9
 }
 ```
 
@@ -201,7 +210,7 @@ export i32 main() {
 
 ```wac
 // expect: emits
-export i32 main() {
+export i32 outsideLoops() {
   // ERROR: break outside a loop
   // break;
 
@@ -237,8 +246,11 @@ A `match` arm counts for neither: `break` and `continue` in an arm act on the en
 fallthrough:
 
 ```wac
-// expect: answers main = 21
-i32 dayType(i32 day) {
+// expect: answers dayType(0) = 0
+// expect: answers dayType(6) = 0
+// expect: answers dayType(3) = 1
+// expect: answers noFallthrough = 21
+export i32 dayType(i32 day) {
   switch (day) {
     case 0:  { return 0; }                 // Sunday
     case 6:  { return 0; }                 // Saturday
@@ -246,7 +258,7 @@ i32 dayType(i32 day) {
   }
 }
 
-export i32 main() {
+export i32 noFallthrough() {
   i32 x = 0;
   i32 one = 1;
   switch (one) {
@@ -259,7 +271,7 @@ export i32 main() {
     case 4294967295: { x += 1; }
     default: { }
   }
-  return x + dayType(0) + dayType(6) * 10;  // 21 + 0 + 0
+  return x;                                // 20 + 1
 }
 ```
 
@@ -271,7 +283,7 @@ export i32 main() {
 
 ```wac
 // expect: emits
-export i32 main() {
+export i32 cases() {
   i32 n = 1;
   switch (n) {
     case 1: { }
@@ -300,16 +312,18 @@ depth, over the nearest common ancestor of the non-nullable forms. `anyref` is n
 allowed to reach it could refuse nothing:
 
 ```wac
-// expect: answers main = 18
+// expect: answers max(3, 7) = 7
+// expect: answers max(10, 2) = 10
+// expect: answers combined = 9
 struct Shape { i32 x; }
 struct Circle : Shape { i32 r; }
 struct Rect : Shape { i32 w; }
 
-i32 max(i32 a, i32 b) { return a > b ? a : b; }
+export i32 max(i32 a, i32 b) { return a > b ? a : b; }
 
 Shape? pick(bool y) { return y ? Circle(1, 2) : null; }
 
-export i32 main() {
+export i32 combined() {
   bool c = true;
   Shape s = c ? Circle(3, 1) : Rect(4, 1);   // siblings meet at Shape
   Shape t = c ? Circle(5, 1) : Shape(6);     // a subtype and its parent
@@ -318,7 +332,7 @@ export i32 main() {
   // ERROR: the two branches have unrelated types
   // auto e = c ? s : "red";
 
-  return max(3, 7) + s.x + t.x + (u is null ? 1 : 0) + max(10, 2) - 8;   // 7 + 3 + 5 + 1 + 10 - 8
+  return s.x + t.x + (u is null ? 1 : 0);   // 3 + 5 + 1
 }
 ```
 
@@ -345,7 +359,7 @@ In a `match` that gives a value, an arm that leaves — `return`, `break`, `cont
 gives none, and is not asked to agree with the others:
 
 ```wac
-// expect: answers main = 13
+// expect: answers skipsPoints = 13
 enum Shape { Circle(f64 r), Rect(f64 w, f64 h), Point }
 
 i32 total(Shape[] shapes) {
@@ -361,7 +375,7 @@ i32 total(Shape[] shapes) {
   return n;
 }
 
-export i32 main() { return total([Shape.Circle(1.0), Shape.Point, Shape.Rect(2.0, 5.0)]); }
+export i32 skipsPoints() { return total([Shape.Circle(1.0), Shape.Point, Shape.Rect(2.0, 5.0)]); }   // 3 + 10
 ```
 
 `[§wac-match-arm-leaves-y33uzzi]` An arm of a value-giving `match` may leave instead of giving a value; its type is
@@ -373,10 +387,12 @@ export i32 main() { return total([Shape.Circle(1.0), Shape.Point, Shape.Rect(2.0
 sees a non-null subject:
 
 ```wac
-// expect: answers main = 4
+// expect: answers area(null) = null
+// expect: answers round(null) = null
+// expect: answers squareArea = 4.0
 enum Shape { Circle(f64 r), Square(f64 side) }
 
-f64? area(Shape? s) {
+export f64? area(Shape? s) {
   return match (s) {
     Circle(r):  3.0 * r * r,
     Square(sd): sd * sd,
@@ -384,22 +400,18 @@ f64? area(Shape? s) {
   };
 }
 
-f64? round(Shape? s) {
+export f64? round(Shape? s) {
   return match (s) {
     Circle(r): 3.0 * r * r,
     default:   null,                       // Square, and null
   };
 }
 
-export i32 main() {
-  f64? a = area(Shape.Square(2.0));
-  f64? b = area(null);
-  f64? c = round(null);
-
+export f64? squareArea() {
   // ERROR: match does not cover null
   // f64 d = match (Shape.Square(1.0) as Shape?) { Circle(r): r, Square(sd): sd };
 
-  return a is not null && b is null && c is null ? a! as~ i32 : 0;
+  return area(Shape.Square(2.0));
 }
 ```
 
@@ -415,7 +427,7 @@ null test ran above it, and exhaustiveness would then prove something about only
 // expect: emits
 enum Shape { Circle(f64 r), Square(f64 side) }
 
-export i32 main() {
+export i32 defaultIsArm() {
   Shape s = Shape.Circle(1.0);
 
   // ERROR: default is an arm, not a pattern — expected an expression
@@ -434,7 +446,11 @@ expected.
 `bool`. A pattern is a match arm's: a variant with its payload, a type with a name, `is` inside a payload:
 
 ```wac
-// expect: answers main = 1
+// expect: answers missingNotFound = true
+// expect: answers missingDenied = false
+// expect: answers configuredThree = true
+// expect: answers bindingRed = 1
+// expect: answers binding(null) = 0
 struct Rgb { i32 r; i32 g; i32 b; }
 enum Fault { NotFound, Denied }
 enum Outcome { Ok(i32 v), Err(Fault e) }
@@ -443,7 +459,7 @@ bool missing(Outcome res) { return Err(is NotFound) matches res; }
 
 bool configured(Outcome res) { return Ok(v) matches res && v > 0; }
 
-i32 binding(Rgb? maybe) {
+export i32 binding(Rgb? maybe) {
   if (Rgb p matches maybe) { return p.r; }
 
   // ERROR: undefined name 'p' — it is scoped to the if statement
@@ -452,12 +468,10 @@ i32 binding(Rgb? maybe) {
   return 0;
 }
 
-export i32 main() {
-  bool a = missing(Outcome.Err(Fault.NotFound));
-  bool b = configured(Outcome.Ok(3));
-  i32 c = binding(Rgb(1, 2, 3));
-  return a && b && c == 1 ? 1 : 0;
-}
+export bool missingNotFound() { return missing(Outcome.Err(Fault.NotFound)); }
+export bool missingDenied() { return missing(Outcome.Err(Fault.Denied)); }
+export bool configuredThree() { return configured(Outcome.Ok(3)); }
+export i32 bindingRed() { return binding(Rgb(1, 2, 3)); }
 ```
 
 `[§wac-matches-pattern-q76z7yq]` `p matches e` is `true` when `e` matches the match-arm pattern `p`, and binds `p`'s
@@ -468,7 +482,9 @@ reach them: the right operand of `&&`, the then-arm of `?:`, the block of an `if
 update of a `for`. They do not outlive the statement, whether or not the match plainly succeeded:
 
 ```wac
-// expect: answers main = 12
+// expect: answers circlesOverTwo = 1
+// expect: answers radius(null) = null
+// expect: answers drained = 10
 import { Vec } from "core";
 
 struct Circle { f64 r; }
@@ -481,7 +497,7 @@ i32 circles(Circle?[] shapes, f64 min) {
   return n;
 }
 
-f64? radius(Circle? s) {
+export f64? radius(Circle? s) {
   return Circle c matches s ? c.r : null;
 }
 
@@ -491,11 +507,13 @@ i32 drain(Vec<i32> q) {
   return n;
 }
 
-export i32 main() {
+export i32 circlesOverTwo() { return circles([Circle(1.0), null, Circle(3.0)], 2.0); }
+
+export i32 drained() {
   Vec<i32> q;
   q.push(4);
   q.push(6);
-  return circles([Circle(1.0), null, Circle(3.0)], 2.0) + drain(q) + 1;   // 1 + 10 + 1
+  return drain(q);                         // 4 + 6
 }
 ```
 
@@ -506,7 +524,7 @@ and update of a `for` — and nowhere after the statement.
 A pattern whose answer is already known is still a question, so it is not refused:
 
 ```wac
-// expect: answers main = 3
+// expect: answers certainBlue = 3
 struct Rgb { i32 r; i32 g; i32 b; }
 
 i32 alwaysTrue(Rgb certain) {
@@ -514,7 +532,7 @@ i32 alwaysTrue(Rgb certain) {
   return 0;
 }
 
-export i32 main() { return alwaysTrue(Rgb(1, 2, 3)); }
+export i32 certainBlue() { return alwaysTrue(Rgb(1, 2, 3)); }
 ```
 
 `matches` cannot be overloaded, and binds looser than `&&` ([22](22-operators.md)).
@@ -524,7 +542,7 @@ export i32 main() { return alwaysTrue(Rgb(1, 2, 3)); }
 `defer s;` runs `s` when the enclosing block exits, however it exits:
 
 ```wac
-// expect: answers main = 2
+// expect: answers releasesAfterTwoCalls = 2
 struct Log { i32 releases; }
 
 i32 cleanup(Log log, i32 n) {
@@ -534,7 +552,7 @@ i32 cleanup(Log log, i32 n) {
   return n;                                // and here
 }
 
-export i32 main() {
+export i32 releasesAfterTwoCalls() {
   Log log = Log(0);
   cleanup(log, -5);
   cleanup(log, 5);

@@ -6,10 +6,10 @@ on the heap: assigning it, passing it or storing it shares the object rather tha
 ## A struct value is a reference
 
 ```wac
-// expect: answers main = 99
+// expect: answers sharedWrite = 99
 struct Point { i32 x; i32 y; }
 
-export i32 main() {
+export i32 sharedWrite() {
   Point a = Point(1, 2);
   Point b = a;
   b.x = 99;
@@ -29,7 +29,7 @@ an operator like any other, and a struct has it only if it implements it
 Fields are mutable unless marked `const`. A `const struct` has only `const` fields:
 
 ```wac
-// expect: answers main = 15
+// expect: answers constFields = 15
 struct IdPoint {
   const i32 id;                            // fixed at construction
   i32 x;
@@ -41,7 +41,7 @@ const struct Config {                      // every field is const
   i32 height;
 }
 
-export i32 main() {
+export i32 constFields() {
   IdPoint p = IdPoint(7, 1, 2);
   Config c = Config(5, 3);
   p.x = 3;
@@ -63,13 +63,13 @@ export i32 main() {
 `export` and `const` are independent, and may be written together:
 
 ```wac
-// expect: answers main = 6
+// expect: answers frozenSum = 6
 // ---- frozen.wac ----
 export const struct Frozen { i32 w; i32 h; }
 // ---- main.wac ----
 import { Frozen } from "./frozen.wac";
 
-export i32 main() {
+export i32 frozenSum() {
   Frozen f = Frozen(2, 4);
 
   // ERROR: Frozen is a const struct
@@ -91,13 +91,13 @@ Parentheses supply every field, in declaration order. Braces name fields, in any
 out the ones that have a default:
 
 ```wac
-// expect: answers main = 1
+// expect: answers constructions = true
 struct Link {
   i32 value;
   Link? next = null;
 }
 
-export i32 main() {
+export bool constructions() {
   Link a = Link(3, null);                  // every field
   Link b = Link { value: 3 };              // next uses its default
   Link c = Link { next: a, value: 4 };     // any order
@@ -105,7 +105,7 @@ export i32 main() {
   // ERROR: positional construction supplies every field, defaults included
   // Link d = Link(3);
 
-  return a.value == 3 && b.next is null && c.next is a ? 1 : 0;
+  return a.value == 3 && b.next is null && c.next is a;
 }
 ```
 
@@ -127,10 +127,10 @@ A nullable field's default is `null`, so it may always be left out of braces. `n
 positional argument:
 
 ```wac
-// expect: answers main = 42
+// expect: answers nullNext = 42
 struct Node { i32 val; Node? next; }
 
-export i32 main() {
+export i32 nullNext() {
   Node n = Node(42, null);
   Node m = Node { val: 1 };                // next is null
 
@@ -151,14 +151,14 @@ an array type's is empty — or when it has an initialiser. A struct has a defau
 field does:
 
 ```wac
-// expect: answers main = 3
+// expect: answers defaulted = 3
 struct Conn {
   i32 retries = 3;
   i32[] log;                               // empty by default
   Conn? fallback;                          // null by default
 }
 
-export i32 main() {
+export i32 defaulted() {
   Conn c;                                  // every field has a default, so Conn does
   Conn d = Conn { };                       // the same, written as a construction
   return c.retries + d.log.len();
@@ -177,11 +177,11 @@ defaults when declared without an initialiser; `T { }` constructs the same value
 Defaults nest. A field of struct type has a default when that struct does:
 
 ```wac
-// expect: answers main = 0
+// expect: answers nestedDefault = 0
 struct Point { i32 x = 0; i32 y = 0; }
 struct Line { Point start; Point end; }
 
-export i32 main() {
+export i32 nestedDefault() {
   Line l;                                  // start and end are default Points
   return l.start.x + l.end.y;
 }
@@ -195,23 +195,23 @@ A field initialiser runs at each construction, not once. It cannot read another 
 capability in scope:
 
 ```wac
-// expect: answers main = 1
+// expect: answers freshPerConstruction = true
 struct Counter {
   i32[] seen = [0];                        // a fresh array per construction
 }
 
-struct Bad {
+export struct Bad {
   i32 a = 1;
 
   // ERROR: a field initialiser cannot read `this`
   // i32 b = this.a + 1;
 }
 
-export i32 main() {
+export bool freshPerConstruction() {
   Counter c1;
   Counter c2;
   c1.seen[0] = 5;
-  return c2.seen[0] == 0 ? 1 : 0;          // c2 has its own array
+  return c2.seen[0] == 0;                  // c2 has its own array
 }
 ```
 
@@ -225,7 +225,7 @@ A declaration of a struct without a default leaves the fields that have none una
 written before the object is used:
 
 ```wac
-// expect: answers main = 7
+// expect: answers assignedLater = 7
 struct Half {
   i32 retries = 3;
   i32 port;                                // no default
@@ -233,7 +233,7 @@ struct Half {
 
 i32 use(Half h) { return h.retries + h.port; }
 
-export i32 main() {
+export i32 assignedLater() {
   Half h;
   h.port = 4;                              // retries is already 3
 
@@ -259,7 +259,7 @@ access that may write, `const this` for access that may not. A method with no re
 type:
 
 ```wac
-// expect: answers main = 1
+// expect: answers countAfterInc = 1
 struct Counter {
   i32 count;
   const i32 id;
@@ -276,7 +276,7 @@ struct Counter {
   Counter create(i32 id) { return Counter(0, id); }   // no receiver: Counter.create
 }
 
-export i32 main() {
+export i32 countAfterInc() {
   Counter c = Counter.create(1);
   c.inc();
   return c.getCount();
@@ -296,7 +296,7 @@ Fields and methods are reached through `this`. A bare field name inside a method
 
 ```wac
 // expect: emits
-struct Foo {
+export struct Foo {
   i32 count;
 
   i32 getCount(const this) {
@@ -305,8 +305,6 @@ struct Foo {
     return this.count;
   }
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-bare-field-q3wn8v5]` A bare field name inside a method is refused; fields are reached through
@@ -315,7 +313,7 @@ export i32 main() { return 0; }
 Methods work alike on fields of every kind:
 
 ```wac
-// expect: answers main = 2
+// expect: answers stackLen = 2
 struct Node { i32 val; Node? next; }
 
 struct Stack {
@@ -330,7 +328,7 @@ struct Stack {
   i32 len(const this) { return this.count; }
 }
 
-export i32 main() {
+export i32 stackLen() {
   Stack s = Stack(null, 0);
   s.push(10);
   s.push(20);
@@ -350,7 +348,7 @@ A struct may extend one other struct with `: Parent`. It inherits the parent's f
 adds fields after them. A subtype value may be used wherever its parent is expected:
 
 ```wac
-// expect: answers main = 5.0
+// expect: answers inheritedX = 5.0
 struct Shape {
   f64 x;
   f64 y;
@@ -363,7 +361,7 @@ struct Rect : Shape {
   f64 h;
 }
 
-export f64 main() {
+export f64 inheritedX() {
   Rect r = Rect(5.0, 0.0, 10.0, 20.0);     // x, y, then w, h
   Shape s = r;                             // a Rect is a Shape
   i32 t = r.tag() + 1;                     // an inherited method keeps its result type
@@ -390,16 +388,15 @@ struct Base {
   Base make() { return Base(); }
 }
 
-struct Sub : Base {
+export struct Sub : Base {
   i32 extra;
 }
 
-export i32 main() {
+export Base viaBase() {
   // ERROR: Sub has no method 'make'
   // Sub s = Sub.make();
 
-  Base b = Base.make();
-  return 0;
+  return Base.make();
 }
 ```
 
@@ -412,7 +409,7 @@ A method declared `virtual` may be overridden by a subtype, and a call to it dis
 runtime type of the receiver:
 
 ```wac
-// expect: answers main = 80
+// expect: answers dispatch = 80
 struct Base {
   virtual i32 fire(const this) { return 0; }
 }
@@ -421,7 +418,7 @@ struct Kid : Base {
   override i32 fire(const this) { return 40; }
 }
 
-export i32 main() {
+export i32 dispatch() {
   Kid  k = Kid();
   Base b = k;
   return k.fire() + b.fire();              // 40 + 40: dispatch is on the runtime type
@@ -443,7 +440,7 @@ struct Base {
   virtual i32 aim(const this) { return 0; }
 }
 
-struct Kid : Base {
+export struct Kid : Base {
   // ERROR: Base.fire is not virtual
   // i32 fire(const this) { return 40; }
 
@@ -456,8 +453,6 @@ struct Kid : Base {
   // ERROR: nothing to override
   // override i32 missing(const this) { return 1; }
 }
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-nonvirtual-final-7a4kz3t]` A subtype may not declare a method with the name of a parent method
@@ -479,12 +474,12 @@ parent, which cannot fail; `as!` narrows to a subtype, and traps if the object i
 ([24](../3-expressions/24-casts.md)):
 
 ```wac
-// expect: traps main
+// expect: traps downcast
 struct Shape { f64 x; f64 y; }
 struct Rect : Shape { f64 w; f64 h; }
 struct Circle : Shape { f64 radius; }
 
-export i32 main() {
+export i32 downcast() {
   Circle c = Circle(0.0, 0.0, 5.0);
   Shape s = c as Shape;                    // widening: always succeeds
   i32 n = 0;
@@ -507,13 +502,13 @@ The type named in a test must exist:
 // expect: emits
 struct Point { i32 x; }
 
-export i32 main() {
+export i32 typeTest() {
   Point p = Point(1);
 
   // ERROR: undefined type 'Nonexistent'
   // bool b = p is Nonexistent;
 
-  return 0;
+  return p.x;
 }
 ```
 
@@ -524,7 +519,7 @@ export i32 main() {
 Inside the block a test guards, the tested name has the narrower type, so no cast is needed:
 
 ```wac
-// expect: answers main = 200.0
+// expect: answers rectArea = 200.0
 struct Shape { f64 x; f64 y; }
 struct Rect : Shape { f64 w; f64 h; }
 struct Circle : Shape { f64 radius; }
@@ -538,7 +533,7 @@ f64 area(Shape s) {
   return 0.0;
 }
 
-export f64 main() { return area(Rect(0.0, 0.0, 10.0, 20.0)); }
+export f64 rectArea() { return area(Rect(0.0, 0.0, 10.0, 20.0)); }
 ```
 
 `[§wac-narrow-if-2mkq8vp]` `if (x is T)` narrows the name `x` to `T` within the block it guards, and in
@@ -555,14 +550,14 @@ name is `matches` ([25](../3-expressions/25-control-flow.md)).
 the same object.
 
 ```wac
-// expect: answers main = 1
+// expect: answers identity = true
 struct Point { i32 x; i32 y; }
 
-export i32 main() {
+export bool identity() {
   Point a = Point(1, 2);
   Point b = a;
   Point c = Point(1, 2);
-  return a is b && a is not c ? 1 : 0;
+  return a is b && a is not c;
 }
 ```
 
@@ -581,7 +576,7 @@ be a hash key carries its own ([39](../7-library/39-map-and-hash.md)).
 ## A worked example
 
 ```wac
-// expect: answers main = 3010
+// expect: answers reversedEnds = 3010
 struct Node { i32 val; Node? next; }
 
 struct LinkedList {
@@ -619,7 +614,7 @@ struct LinkedList {
   i32 back(const this) { return this.tail!.val; }
 }
 
-export i32 main() {
+export i32 reversedEnds() {
   LinkedList l = LinkedList.create();
   l.pushBack(10);
   l.pushBack(20);

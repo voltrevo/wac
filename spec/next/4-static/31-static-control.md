@@ -18,7 +18,8 @@ T get(const this, i32 i) {
 ```
 
 ```wac
-// expect: answers main = 9
+// expect: answers fromI32Slot = 5
+// expect: answers fromNodeSlot = 4
 typeref slot(typeref t) { return t.isRef() && !t.isNullable() ? t.pushNull() : t; }
 type Slot<T> = type(slot(typeref(T)));
 
@@ -32,9 +33,12 @@ T fromSlot<T>(Slot<T> s) {
   }
 }
 
-export i32 main() {
+// T is written: it cannot be read back out of Slot<T>
+export i32 fromI32Slot() { return fromSlot<i32>(5); }
+
+export i32 fromNodeSlot() {
   Slot<Node> n = Node(4);
-  return fromSlot<i32>(5) + fromSlot<Node>(n).v;   // T cannot be read back out of Slot<T>
+  return fromSlot<Node>(n).v;
 }
 ```
 
@@ -45,7 +49,7 @@ The dropped branch is checked at the definition like any generic body. Only the 
 so what a drop can hide is a type error that needed a `T` to see:
 
 ```wac
-// expect: emits
+// expect: answers pickI32 = 1
 i32 pick<T>() {
   static_if (typeref(T) == typeref(i32)) {
     return 1;
@@ -59,7 +63,7 @@ i32 pick<T>() {
   }
 }
 
-export i32 main() { return pick<i32>(); }
+export i32 pickI32() { return pick<i32>(); }
 ```
 
 `[§wac-static-if-checks-all-ifec63p]` Every branch of a `static_if` is checked at its definition, with type parameters
@@ -74,14 +78,12 @@ And a static branch that is not taken still retains what it names ([05](../1-pro
 ## A `static_` condition must be known statically
 
 ```wac
-// expect: emits
-i32 f(i32 n) {
+// expect: answers f(1) = 0
+export i32 f(i32 n) {
   // ERROR: condition is not known statically — n is a runtime value
   // static_if (n > 0) { return 1; }
   return 0;
 }
-
-export i32 main() { return f(1); }
 ```
 
 `[§wac-static-cond-known-bfmhguj]` A `static_if`, `static_for` or `static_match` whose condition, bounds or subject
@@ -106,8 +108,8 @@ same(("a", 1 as i32), ("a", 2 as i32));    // false
 `i` would leave it with no type at all.
 
 ```wac
-// expect: answers main = 10
-export i32 main() {
+// expect: answers unrolledTotal = 10
+export i32 unrolledTotal() {
   i32 total = 0;
   static_for (i32 i = 1; i <= 4; i++) {
     static i32 square = i * i;             // i is static in each unrolled copy
@@ -126,7 +128,7 @@ the unrolling, and is refused:
 
 ```wac
 // expect: emits
-export i32 main() {
+export i32 noBreak() {
   static_for (i32 i = 0; i < 3; i++) {
     // ERROR: break cannot leave a static_for
     // break;
@@ -140,7 +142,8 @@ export i32 main() {
 ## `static_match` chooses an arm
 
 ```wac
-// expect: answers main = 12
+// expect: answers widthU32 = 4
+// expect: answers widthU64 = 8
 i32 width<T>() {
   return static_match (T) {
     u32:     4,
@@ -149,7 +152,8 @@ i32 width<T>() {
   };
 }
 
-export i32 main() { return width<u32>() + width<u64>(); }
+export i32 widthU32() { return width<u32>(); }
+export i32 widthU64() { return width<u64>(); }
 ```
 
 `[§wac-static-match-ybv9j9x]` `static_match (T) { … }` selects, at compile time, the arm whose type is `T`, or
@@ -168,7 +172,7 @@ i32 width<T>() {
   };
 }
 
-export i32 main() { return width<f64>(); }
+export i32 widthF64() { return width<f64>(); }
 ```
 
 `[§wac-static-trap-37c96dy]` A `static_trap "message"` that is compiled — in a selected branch or arm — is a compile
@@ -180,13 +184,13 @@ An ordinary `if` whose condition is constant is folded and its dead branch remov
 branches are checked at every instantiation:
 
 ```wac
-// expect: emits
+// expect: answers sizeOfAb = 2
 i32 size<T>(T x) {
   if (typeref(T).isRef()) { return x.len(); }
   return 0;
 }
 
-export i32 main() {
+export i32 sizeOfAb() {
   i32 a = size("ab");                      // 2
 
   // ERROR: no method 'len' on i32 — the branch is dead here, and still checked
@@ -205,13 +209,13 @@ A condition that is constant regardless of type parameters may warn; one that is
 instantiation does not:
 
 ```wac
-// expect: emits
+// expect: answers tagOfI32 = 1
 i32 tag<T>() {
   if (typeref(T).isRef()) { return 0; }    // constant per instantiation: no warning
   return 1;
 }
 
-export i32 main() {
+export i32 tagOfI32() {
   if (false) { return 9; }                 // may warn: always false
   return tag<i32>();
 }

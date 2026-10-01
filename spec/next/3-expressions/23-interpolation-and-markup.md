@@ -11,7 +11,8 @@ syntax.
 converted once through core's `toString` symbol, and the result is concatenated with the text around it:
 
 ```wac
-// expect: answers main = 1
+// expect: answers converted = "hello"
+// expect: answers interpolated = "label: hello"
 import { toString } from "core";
 
 struct Label {
@@ -19,11 +20,11 @@ struct Label {
   string [toString](const this) { return this.text; }
 }
 
-export i32 main() {
+export string converted() { return Label("hello").[toString](); }
+
+export string interpolated() {
   Label label = Label("hello");
-  string a = label.[toString]();           // "hello"
-  string b = "label: \{label}";            // "label: hello"
-  return a == "hello" && b == "label: hello" ? 1 : 0;
+  return "label: \{label}";
 }
 ```
 
@@ -33,24 +34,23 @@ the result with the surrounding text. The conversion used must return `string`.
 For a string value the conversion is the string itself, so interpolating strings means exactly what `+` does:
 
 ```wac
-// expect: answers main = 10
+// expect: answers around = "axyb"
+// expect: answers alone = "xy"
+// expect: answers nested = "xyxy"
 string two() { return "xy"; }
 
-export i32 main() {
-  i32 a = "a\{two()}b".len();              // 4: "a" + "xy" + "b"
-  i32 b = "\{two()}".len();                // 2
-  i32 c = "\{two() + "\{two()}"}".len();   // 4
-  return a + b + c;
-}
+export string around() { return "a\{two()}b"; }           // "a" + "xy" + "b"
+export string alone() { return "\{two()}"; }
+export string nested() { return "\{two() + "\{two()}"}"; }
 ```
 
 `[§wac-str-interp-sugar-k3nq7wm]` For a string expression, `"a\{e}b"` is the same as `"a" + e + "b"`:
-`"a\{two()}b".len()` is `4`.
+`"a\{two()}b"` is `"axyb"`.
 
-`[§wac-str-interp-alone-d8mf2xq]` A literal may be nothing but an interpolation: `"\{two()}".len()` is `2`.
+`[§wac-str-interp-alone-d8mf2xq]` A literal may be nothing but an interpolation: `"\{two()}"` is `"xy"`.
 
 `[§wac-str-interp-nest-r4kw9np]` The braces are matched, so an interpolated expression may contain string
-literals that interpolate in turn: `"\{two() + "\{two()}"}".len()` is `4`.
+literals that interpolate in turn: `"\{two() + "\{two()}"}"` is `"xyxy"`.
 
 `\{` is the only new spelling. A literal backslash before a brace is `\\{` — an escaped backslash followed by
 an ordinary `{`.
@@ -58,19 +58,18 @@ an ordinary `{`.
 A method merely spelled `toString` does not implement the conversion:
 
 ```wac
-// expect: emits
+// expect: answers named = "hello"
 struct Other {
   string toString(const this) { return "hello"; }
 }
 
-export i32 main() {
+export string named() {
   Other value = Other();
-  string s = value.toString();             // "hello": an ordinary named method
 
   // ERROR: Other has no implementation of core's toString symbol
   // string t = "\{value}";
 
-  return 0;
+  return value.toString();                 // an ordinary named method
 }
 ```
 
@@ -101,7 +100,8 @@ its children are its `kids` parameter. So nothing here is a thing the language k
 ([43](../7-library/43-markup-types.md)).
 
 ```wac
-// expect: answers main = 1
+// expect: answers pageTag = "div"
+// expect: answers pageChildren = 1
 import { Node, html.div, html.p } from "core";
 
 Node greeting(string who, Node[] kids) {
@@ -112,11 +112,17 @@ Node page(string who) {
   return <div><greeting who={who} /></div>;
 }
 
-export i32 main() {
-  Node n = page("wac");
-  return match (n) {
-    Element(tag, attrs, kids): tag == "div" && kids.len() == 1 ? 1 : 0,
-    default: 0,
+export string pageTag() {
+  return match (page("wac")) {
+    Element(tag, attrs, kids): tag,
+    default: "",
+  };
+}
+
+export i32 pageChildren() {
+  return match (page("wac")) {
+    Element(tag, attrs, kids): kids.len(),
+    default: -1,
   };
 }
 ```
@@ -133,23 +139,25 @@ A tag written as a string is not looked up: it builds `Node.Element` with that n
 name, which is how a custom element or a namespaced one is written:
 
 ```wac
-// expect: answers main = 1
+// expect: answers icon = "my-widget"
+// expect: answers one = "label"
+// expect: answers two = "label"
+// expect: answers three = "caption"
 import { Node } from "core";
 
-Node icon() { return <"my-widget" data-size="8" />; }
-
-Node caption(Node[] kids) { return <"label">{kids}</"label">; }
-
-Node one()   { return <caption>Name</caption>; }       // calls caption
-Node two()   { return <@"caption">Name</@"caption">; } // calls caption: a verbatim name
-Node three() { return <"caption">Name</"caption">; }   // the caption element
-
-export i32 main() {
-  return match (three()) {
-    Element(tag, attrs, kids): tag == "caption" ? 1 : 0,
-    default: 0,
+string tagOf(Node n) {
+  return match (n) {
+    Element(tag, attrs, kids): tag,
+    default: "",
   };
 }
+
+Node caption(Node[] kids) { return Node.Element("label", [], kids); }
+
+export string icon()  { return tagOf(<"my-widget" data-size="8" />); }
+export string one()   { return tagOf(<caption>Name</caption>); }       // calls caption
+export string two()   { return tagOf(<@"caption">Name</@"caption">); } // calls caption: a verbatim name
+export string three() { return tagOf(<"caption">Name</"caption">); }   // the caption element
 ```
 
 `[§wac-markup-quoted-tag-3dnrvxj]` A tag written as a string literal builds `Node.Element` with that name, its
@@ -164,22 +172,32 @@ escaping. A name a parameter could not otherwise have — a keyword, a hyphenate
 written as a verbatim name ([01](../1-programs/01-names-and-identity.md)):
 
 ```wac
-// expect: answers main = 1
-import { Node } from "core";
+// expect: answers labelFor = "name"
+// expect: answers widgetSize = "8"
+import { Node, Attr } from "core";
 
 Node label(string id, string @"for", Node[] kids) {
-  return <"label" id={id} for={@"for"}>{kids}</"label">;
+  return Node.Element("label", [Attr("id", id), Attr("for", @"for")], kids);
 }
 
 Node widget(string @"data-size", Node[] kids) {
   return <"my-widget" data-size={@"data-size"} />;
 }
 
-export i32 main() {
-  Node a = <label id="who" for="name">Name</label>;
-  Node b = <widget data-size="8" />;
-  return 1;
+string attr(Node n, string name) {
+  match (n) {
+    Element(tag, attrs, kids): {
+      for (Attr a in attrs) {
+        if (a.name == name) { return a.value; }
+      }
+    }
+    default: { }
+  }
+  return "";
 }
+
+export string labelFor() { return attr(<label id="who" for="name">Name</label>, "for"); }
+export string widgetSize() { return attr(<widget data-size="8" />, "data-size"); }
 ```
 
 `[§wac-markup-attr-verbatim-param-yd3farv]` An attribute whose name is a keyword or contains a hyphen fills the
@@ -192,13 +210,11 @@ An attribute is written once:
 // expect: emits
 import { Node } from "core";
 
-export i32 main() {
-  Node ok = <"div" class="card" />;
-
+export Node card() {
   // ERROR: an attribute is written once
   // Node bad = <"div" class="a" class="b" />;
 
-  return 0;
+  return <"div" class="card" />;
 }
 ```
 
@@ -233,7 +249,7 @@ void example() {
 ```
 
 ```wac
-// expect: answers main = 4
+// expect: answers childCount = 4
 import { Node, toNode, html.div } from "core";
 
 struct Label {
@@ -241,13 +257,13 @@ struct Label {
   Node [toNode](const this) { return Node.Text(this.text); }
 }
 
-export i32 main() {
+export i32 childCount() {
   Label label = Label("hello");
   Node existing = Node.Text("already a node");
-  Node n = <div>text {label}{"hello"}{existing}</div>;
+  Node n = <div>text {label}{"hello"}{existing}</div>;   // "text ", then three conversions
   return match (n) {
     Element(tag, attrs, kids): kids.len(),
-    default: 0,
+    default: -1,
   };
 }
 ```
@@ -266,18 +282,20 @@ An element nests wherever an expression does, and inside `{…}` the text is wac
 means there:
 
 ```wac
-// expect: answers main = 2
+// expect: answers asArgument = 2
 import { Node } from "core";
 
-i32 take(Node n) { return 1; }
-
-export i32 main() {
-  i32 x = 2;
-  Node cmp = <"div" a={x > 1 ? "y" : "n"} />;   // a comparison
-  Node inner = <"div">{<"b" />}</"div">;         // an element in an expression in an element
-  Node chosen = x > 1 ? <"a" /> : <"b" />;       // a ternary's branches
-  return take(<"p"><"i" /><"i" /></"p">) + 1;    // an argument
+i32 kidCount(Node n) {
+  return match (n) {
+    Element(tag, attrs, kids): kids.len(),
+    default: -1,
+  };
 }
+
+export Node comparison(i32 x) { return <"div" a={x > 1 ? "y" : "n"} />; }   // a comparison
+export Node inner() { return <"div">{<"b" />}</"div">; }         // an element in an expression in an element
+export Node chosen(i32 x) { return x > 1 ? <"a" /> : <"b" />; }  // a ternary's branches
+export i32 asArgument() { return kidCount(<"p"><"i" /><"i" /></"p">); }   // an argument
 ```
 
 `[§jsx-nests-in-expressions]` An element may stand anywhere an expression may, and `>` inside `{…}` is an
@@ -289,12 +307,11 @@ A closing tag names the element it closes:
 // expect: emits
 import { Node } from "core";
 
-export i32 main() {
+export Node closed() {
   // ERROR: </"span"> does not close <"div">
   // Node bad = <"div"></"span">;
 
-  Node ok = <"div"></"div">;
-  return 0;
+  return <"div"></"div">;
 }
 ```
 
@@ -307,14 +324,22 @@ Between an element's tags the lexer reads text, so nothing there starts a string
 or an operator. A run ends at `{`, or at a `<` that begins a tag:
 
 ```wac
-// expect: answers main = 1
+// expect: answers quotes = "it's here, a \" b, see http://x"
+// expect: answers lessThan = "1 < 2 and 3 > 2"
 import { Node } from "core";
 
-export i32 main() {
-  Node a = <"p">it's here, a " b, see http://x</"p">;
-  Node b = <"p">1 < 2 and 3 > 2</"p">;           // a < before neither a name nor / is text
-  return 1;
+string text(Node n) {
+  return match (n) {
+    Element(tag, attrs, kids): match (kids[0]) {
+      Text(t): t,
+      default: "",
+    },
+    default: "",
+  };
 }
+
+export string quotes() { return text(<"p">it's here, a " b, see http://x</"p">); }
+export string lessThan() { return text(<"p">1 < 2 and 3 > 2</"p">); }   // a < before neither a name nor / is text
 ```
 
 `[§jsx-text-is-not-wac-source]` Text between tags is not read as wac: quotes, `//` and operators there are text.
@@ -326,7 +351,8 @@ A run of text is trimmed at an end only where the whitespace there contains a ne
 several lines loses its indentation, and a space within a line is kept, because it is part of the sentence:
 
 ```wac
-// expect: answers main = 1
+// expect: answers sameLine = 3
+// expect: answers twoLines = 2
 import { Node } from "core";
 
 i32 count(Node n) {
@@ -336,13 +362,15 @@ i32 count(Node n) {
   };
 }
 
-export i32 main() {
-  Node sameLine = <"div"><"b">a</"b"> <"b">b</"b"></"div">;   // three children: the space is text
-  Node twoLines = <"div">
+export i32 sameLine() {
+  return count(<"div"><"b">a</"b"> <"b">b</"b"></"div">);     // the space is text
+}
+
+export i32 twoLines() {
+  return count(<"div">
     <"b">a</"b">
     <"b">b</"b">
-  </"div">;                                                     // two: the breaks are layout
-  return count(sameLine) == 3 && count(twoLines) == 2 ? 1 : 0;
+  </"div">);                                                    // the breaks are layout
 }
 ```
 
@@ -356,15 +384,15 @@ a newline.
 `<>…</>` is an element with no tag. It evaluates to `Node.Fragment(kids)` — several nodes where one is wanted:
 
 ```wac
-// expect: answers main = 2
+// expect: answers pairSize = 2
 import { Node } from "core";
 
 Node pair(Node a, Node b) { return <>{a}{b}</>; }
 
-export i32 main() {
+export i32 pairSize() {
   return match (pair(Node.Text("x"), Node.Text("y"))) {
     Fragment(kids): kids.len(),
-    default: 0,
+    default: -1,
   };
 }
 ```
@@ -397,14 +425,17 @@ struct Label {
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers interpolated = "hello"
 import { toString as text } from "core";
 
 struct Label {
   string [text](const this) { return "hello"; }
 }
 
-export i32 main() { return "\{Label()}" == "hello" ? 1 : 0; }
+export string interpolated() {
+  Label label = Label();
+  return "\{label}";                       // through the alias, still core's toString
+}
 ```
 
 `[§wac-conversion-symbol-identity-4ga8txc]` A conversion is implemented by a method named by core's symbol, under
@@ -429,18 +460,28 @@ implementations from the compiler and core; no external implementation mechanism
 Float special spellings are `"NaN"`, `"Infinity"`, `"-Infinity"`, and `"-0"`.
 
 ```wac
-// expect: answers main = 1
+// expect: answers spelled = "answer: 42 -7 false 0.5 -0"
+// expect: answers childText = "42"
 import { Node, html.div } from "core";
 
-export i32 main() {
+export string spelled() {
   i32 n = 42;
   i32 m = -7;
   bool flag = false;
   f64 half = 0.5;
   f64 negZero = -0.0;
-  string s = "answer: \{n} \{m} \{flag} \{half} \{negZero}";
-  Node node = <div>{n}</div>;              // child: Node.Text("42")
-  return s == "answer: 42 -7 false 0.5 -0" ? 1 : 0;
+  return "answer: \{n} \{m} \{flag} \{half} \{negZero}";
+}
+
+export string childText() {
+  i32 n = 42;
+  return match (<div>{n}</div>) {
+    Element(tag, attrs, kids): match (kids[0]) {
+      Text(t): t,
+      default: "",
+    },
+    default: "",
+  };
 }
 ```
 
@@ -475,19 +516,14 @@ identity implementation is the specified exception among enum types.
 // expect: emits
 import { Node, html.div } from "core";
 
-export i32 main() {
-  string? name = null;
-  Node a = <div>{name ?? "unknown"}</div>;
-
+export Node greeting(string? name, i32[] xs) {
   // ERROR: string? has no toNode conversion
   // Node b = <div>{name}</div>;
-
-  i32[] xs = [1, 2];
 
   // ERROR: i32[] has no toString conversion
   // string c = "\{xs}";
 
-  return 0;
+  return <div>{name ?? "unknown"}</div>;
 }
 ```
 

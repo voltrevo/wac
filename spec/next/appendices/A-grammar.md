@@ -29,10 +29,10 @@ export i32 demo() {
 and the call.
 
 ```wac
-// expect: emits
+// expect: answers trailing = 1
 i32 f(i32 a) { return a; }
 
-export i32 main() {
+export i32 trailing() {
   // ERROR: a comma needs something before it
   // return f(,);
   return f(1,);

@@ -7,23 +7,23 @@ importing file.
 ## A module holds declarations
 
 ```wac
-// expect: answers main = 64
-static i32 SIZE = square(8);
+// expect: answers size = 64
+export static i32 SIZE = square(8);
 
 i32 square(i32 x) { return x * x; }
 
-struct Point { i32 x; i32 y; }
-enum Shape { Circle(f64 r), Square(f64 side) }
-symbol describe;
-type Pair = (i32, i32);
-namespace geometry {
+export struct Point { i32 x; i32 y; }
+export enum Shape { Circle(f64 r), Square(f64 side) }
+export symbol describe;
+export type Pair = (i32, i32);
+export namespace geometry {
   export i32 origin() { return 0; }
 }
 
 // ERROR: a module-level variable must be static
-// i32 counter = 0;
+// export i32 counter = 0;
 
-export i32 main() { return SIZE; }
+export i32 size() { return SIZE; }
 ```
 
 `[§wac-module-declarations-only-6ac43nm]` The top level of a module holds only declarations:
@@ -37,7 +37,7 @@ not initialisation that happens on import.
 ## `export` decides what other modules may name
 
 ```wac
-// expect: answers main = 15
+// expect: answers visibleTotal = 15
 // ---- lib.wac ----
 export i32 visible(i32 x) { return hidden(x) + 1; }
 i32 hidden(i32 x) { return x * 2; }
@@ -48,14 +48,23 @@ export enum Edge { Top, Bottom }
 // ---- main.wac ----
 import { visible, LIMIT, Point, Edge } from "./lib.wac";
 
-// ERROR: lib.wac does not export 'hidden'
-// import { hidden } from "./lib.wac";
-
-export i32 main() {
+export i32 visibleTotal() {
   Point p = Point(1, 2);
   Edge e = Edge.Top;
   return visible(LIMIT) + p.x + p.y + 3;     // 9 + 1 + 2 + 3
 }
+```
+
+A name the module does not export cannot be imported, once something needs it
+([05](05-reachability.md)):
+
+```wac
+// expect: refused
+// ---- lib.wac ----
+i32 hidden(i32 x) { return x * 2; }
+// ---- main.wac ----
+import { hidden } from "./lib.wac";          // lib.wac does not export 'hidden'
+export i32 viaHidden() { return hidden(1); }
 ```
 
 `[§wac-export-importable-dn79iqg]` A declaration marked `export` can be imported by another module,
@@ -71,7 +80,7 @@ is a different question, answered by its entry module ([07](07-programs.md)).
 ## Importing names
 
 ```wac
-// expect: answers main = 230
+// expect: answers diamond = 230
 // ---- shared.wac ----
 export i32 base() { return 100; }
 // ---- left.wac ----
@@ -84,17 +93,17 @@ export i32 right() { return base() + 20; }
 import { left } from "./left.wac";
 import { right } from "./right.wac";
 
-export i32 main() { return left() + right(); }
+export i32 diamond() { return left() + right(); }
 ```
 
 `[§wac-diamond-79emza1]` Two modules may import the same module, and a third may import both:
-`main()` answers 230.
+`diamond()` answers 230.
 
 Importing a struct brings everything that belongs to it — its constructors, fields and methods — and
 importing an enum brings its variants' construction through the enum's name:
 
 ```wac
-// expect: answers main = 25.0
+// expect: answers distanceSq = 25.0
 // ---- geometry.wac ----
 export struct Point {
   f64 x;
@@ -108,7 +117,7 @@ export struct Point {
 // ---- main.wac ----
 import { Point } from "./geometry.wac";
 
-export f64 main() {
+export f64 distanceSq() {
   Point a = Point(0.0, 0.0);
   return a.distanceSq(Point(3.0, 4.0));
 }
@@ -120,7 +129,7 @@ An import is for the importing file alone. It does not make the name available t
 *that* file:
 
 ```wac
-// expect: answers main = 42
+// expect: answers throughB = 42
 // ---- a.wac ----
 export i32 foo() { return 42; }
 // ---- b.wac ----
@@ -128,11 +137,18 @@ import { foo } from "./a.wac";
 export i32 viaB() { return foo(); }
 // ---- main.wac ----
 import { viaB } from "./b.wac";
+export i32 throughB() { return viaB(); }
+```
 
-// ERROR: b.wac does not export 'foo'
-// import { foo } from "./b.wac";
-
-export i32 main() { return viaB(); }
+```wac
+// expect: refused
+// ---- a.wac ----
+export i32 foo() { return 42; }
+// ---- b.wac ----
+import { foo } from "./a.wac";
+// ---- main.wac ----
+import { foo } from "./b.wac";               // b.wac imports foo; it does not export it
+export i32 fooViaB() { return foo(); }
 ```
 
 `[§wac-no-reexport-f7kn4wq]` Importing a name from a module that imports it, rather than declaring
@@ -143,7 +159,7 @@ Re-exporting is explicit, and takes the form of a namespace ([03](03-namespaces.
 Modules may import each other in a cycle:
 
 ```wac
-// expect: answers main = 5
+// expect: answers pingFrom(5) = 5
 // ---- ping.wac ----
 import { pong } from "./pong.wac";
 export i32 ping(i32 n) {
@@ -158,7 +174,7 @@ export i32 pong(i32 n) {
 }
 // ---- main.wac ----
 import { ping } from "./ping.wac";
-export i32 main() { return ping(5); }
+export i32 pingFrom(i32 n) { return ping(n); }
 ```
 
 `[§wac-circular-m7jx3p4]` Circular imports are allowed: `ping(5)` answers 5.
@@ -172,7 +188,7 @@ are computed in the order their computations demand, not the order modules are r
 A specifier is always a quoted string, and it is one of three things:
 
 ```wac
-// expect: answers main = 7
+// expect: answers seven = 7
 // ---- wac.json5 ----
 {}
 // ---- src/num.wac ----
@@ -185,7 +201,7 @@ import { three } from "./src/num.wac";       // relative to this file
 import { four } from "@/src/deep/four.wac";  // from the project root
 import { operators } from "core";            // a package
 
-export i32 main() { return three() + four(); }
+export i32 seven() { return three() + four(); }
 ```
 
 | Specifier | Names |
@@ -206,8 +222,6 @@ occasionally present is the worse failure.
 // expect: emits
 // ERROR: a specifier is a quoted string — write from "core"
 // import { operators } from core;
-
-export i32 main() { return 0; }
 ```
 
 `[§wac-core-unquoted-3nqk7vd]` Every specifier is quoted, `core` included. A bare word after `from`
@@ -220,7 +234,7 @@ it that holds a `wac.json5`. Not the directory the compiler was started in, and 
 project — a program may span two projects, and each file's `@/` means its own:
 
 ```wac
-// expect: answers main = 21
+// expect: answers widths = 21
 // ---- wac.json5 ----
 {}
 // ---- src/fmt.wac ----
@@ -239,7 +253,7 @@ export i32 extra() { return width(); }
 import { report } from "./tools/report.wac";
 import { extra } from "./vendored/tools/extra.wac";
 
-export i32 main() { return report() + extra(); }
+export i32 widths() { return report() + extra(); }
 ```
 
 The same header works in every file of a project, wherever the file is.
@@ -248,7 +262,7 @@ The same header works in every file of a project, wherever the file is.
 // expect: refused
 // ---- main.wac ----
 import { parse } from "@/src/parse.wac";     // no wac.json5 at or above this file
-export i32 main() { return parse(); }
+export i32 parsed() { return parse(); }
 ```
 
 `[§wac-import-project-4hq7mnv]` `@/` resolves against the nearest `wac.json5` at or above the
@@ -265,15 +279,29 @@ ship with the toolchain, `core` and `std`. Its public names come from its one en
 no way to name a file inside it:
 
 ```wac
-// expect: emits
+// expect: answers product = 7
 import { operators } from "core";            // the package
-import { operators.add } from "core";        // one member of a namespace it exports
+import { operators.multiply } from "core";   // one member of a namespace it exports
 
-// ERROR: "core/operators.wac" names no package — import from "core"
-// import { add } from "core/operators.wac";
+export struct Cents {
+  i32 n;
+  Cents [operators.add](const this, const Cents o) { return Cents(this.n + o.n); }
+  Cents [multiply](const this, const Cents o) { return Cents(this.n * o.n); }
+}
 
-export i32 main() { return 0; }
+export i32 product() {
+  Cents c = Cents(2) * Cents(3) + Cents(1);
+  return c.n;
+}
 ```
+
+```wac
+// expect: refused
+import { subtract } from "core/operators.wac";   // names no package — import from "core"
+export i32 viaSubtract() { return 0; }
+```
+
+A specifier's form needs no file to judge, so this one is refused whether or not anything uses `subtract`.
 
 `[§wac-no-subpath-wqatc72]` A package specifier names the package and nothing else. Appending a path
 to it is refused; the package's public structure is expressed by its exports and namespaces
@@ -288,7 +316,7 @@ A module's identity is its file. Two specifiers that reach the same file reach t
 everything in it is the same thing to both:
 
 ```wac
-// expect: answers main = 9
+// expect: answers tokenKind = 9
 // ---- lib.wac ----
 export struct Token { i32 kind; }
 // ---- parse/make.wac ----
@@ -298,7 +326,7 @@ export Token make() { return Token(9); }
 import { Token } from "./lib.wac";
 import { make } from "./parse/make.wac";
 
-export i32 main() {
+export i32 tokenKind() {
   Token t = make();                          // one Token, reached two ways
   return t.kind;
 }
@@ -315,7 +343,7 @@ The same holds for the built-in packages, which is why their types can cross bet
 mention each other:
 
 ```wac
-// expect: answers main = 3
+// expect: answers totalOfThree = 3
 // ---- producer.wac ----
 import { Read } from "core";
 export Read three() { return Read.Data([7, 7, 7]); }
@@ -332,13 +360,13 @@ export i32 total(fn<Read()> source) {
 import { three } from "./producer.wac";
 import { total } from "./consumer.wac";
 
-export i32 main() { return total(three); }
+export i32 totalOfThree() { return total(three); }
 ```
 
 `[§wac-core-one-key-5jm2qhx]` However `core` is reached, it is one module, so `Read` obtained in one
 file is the same type as `Read` obtained in another.
 
-`[§wac-core-one-type-8fjm2wq]` `main()` answers 3: two files that never mention each other name the
+`[§wac-core-one-type-8fjm2wq]` `totalOfThree()` answers 3: two files that never mention each other name the
 same `Read`, and a function value carries it between them.
 
 Types are nominal, so this is not a nicety. Two copies of `Read` would be two types with nothing to
@@ -350,13 +378,13 @@ convert between them.
 them, and their version is the toolchain's:
 
 ```wac
-// expect: answers main = 1
+// expect: answers builtInRead = 1
 // ---- core/lib.wac ----
-export i32 answer() { return 99; }           // an ordinary directory of this project
+export i32 answer() { return 99; }           // dropped: an ordinary file nothing imports
 // ---- main.wac ----
 import { Read } from "core";                 // still the built-in package
 
-export i32 main() {
+export i32 builtInRead() {
   Read r = Read.End;
   return match (r) {
     End:     1,

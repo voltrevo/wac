@@ -6,15 +6,15 @@ amortised constant time.
 ## Making one
 
 ```wac
-// expect: answers main = 6
+// expect: answers lengths = 3
 import { Vec } from "core";
 
-export i32 main() {
+export i32 lengths() {
   Vec<i32> a;                              // empty: a Vec has a default
   Vec<i32> b = Vec.create();               // the same
   Vec<i32> c = Vec.withCapacity(100);      // room for 100 before it grows; still empty
   Vec<i32> d = Vec.fromArray([1, 2, 3]);   // takes the array as its storage
-  return a.len() + b.len() + c.len() + d.len() + 3;
+  return a.len() + b.len() + c.len() + d.len();
 }
 ```
 
@@ -27,18 +27,26 @@ nothing observable has to be put there.
 ## Reading and writing
 
 ```wac
-// expect: traps main
+// expect: answers getAt(1) = 25
+// expect: traps getAt(7)
+// expect: answers atOrNull(1) = 25
+// expect: answers atOrNull(7) = null
+// expect: answers ends = 40
 import { Vec } from "core";
 
-export i32 main() {
+Vec<i32> sample() {
   Vec<i32> v = Vec.fromArray([10, 20, 30]);
   v.set(1, 25);
-  i32 a = v.get(1);                        // 25
-  i32? b = v.at(7);                        // null: no element 7
-  i32? f = v.first();                      // 10
-  i32? l = v.last();                       // 30
-  bool empty = v.isEmpty();                // false
-  return v.get(7);                         // traps
+  return v;
+}
+
+export i32 getAt(i32 i) { return sample().get(i); }
+
+export i32? atOrNull(i32 i) { return sample().at(i); }
+
+export i32 ends() {
+  Vec<i32> v = sample();
+  return v.first()! + v.last()!;           // 10 + 30
 }
 ```
 
@@ -50,10 +58,10 @@ bounds.
 ## Growing and shrinking
 
 ```wac
-// expect: answers main = 1
+// expect: answers growAndShrink = true
 import { Vec } from "core";
 
-export i32 main() {
+export bool growAndShrink() {
   Vec<i32> v;
   v.push(1);
   v.push(2);
@@ -65,7 +73,7 @@ export i32 main() {
   v.extend(more);                          // [4, 3, 5, 6]
   i32[] arr = v.toArray();                 // a copy
   v.clear();
-  return removed == 1 && swapped == 2 && arr.len() == 4 && arr[2] == 5 && v.len() == 0 ? 1 : 0;
+  return removed == 1 && swapped == 2 && arr.len() == 4 && arr[2] == 5 && v.len() == 0;
 }
 ```
 
@@ -77,16 +85,19 @@ elements.
 ## `pop` answers an absence rather than trapping
 
 ```wac
-// expect: answers main = 1
+// expect: answers popEmpty = true
+// expect: answers popLast = 3
 import { Vec } from "core";
 
-export i32 main() {
+export bool popEmpty() {
   Vec<i32> v;
-  bool a = v.pop() is null;                // empty
-  v.push(3);
-  i32 b = v.pop()!;                        // 3
-  bool c = v.pop() is null;
-  return a && b == 3 && c ? 1 : 0;
+  return v.pop() is null;
+}
+
+export i32 popLast() {
+  Vec<i32> v = Vec.fromArray([1, 3]);
+  i32 last = v.pop()!;                     // 3
+  return v.len() == 1 ? last : 0;
 }
 ```
 
@@ -96,7 +107,8 @@ Because `pop` answers `T?` for any `T`, it separates an empty `Vec` from a `null
 `Node??`, and a popped `null` arrives present ([10](../2-types/10-nullability.md)):
 
 ```wac
-// expect: answers main = 1
+// expect: answers poppedNullElement = 1
+// expect: answers poppedEmptyVec = 0
 import { Vec } from "core";
 
 struct Node { i32 v; }
@@ -108,9 +120,14 @@ i32 example(Vec<Node?> v) {
   return 2;
 }
 
-export i32 main() {
+export i32 poppedNullElement() {
   Vec<Node?> v;
   v.push(null);
+  return example(v);
+}
+
+export i32 poppedEmptyVec() {
+  Vec<Node?> v;
   return example(v);
 }
 ```
@@ -128,10 +145,10 @@ value alive.
 A `Vec` can be walked with `for … in` ([25](../3-expressions/25-control-flow.md)):
 
 ```wac
-// expect: answers main = 6
+// expect: answers sumVec = 6
 import { Vec } from "core";
 
-export i32 main() {
+export i32 sumVec() {
   Vec<i32> v = Vec.fromArray([1, 2, 3]);
   i32 total = 0;
   for (i32 x in v) { total += x; }

@@ -16,7 +16,7 @@ Allocations have identity too, which is what `is` compares; that is
 ## A name is resolved in the file that writes it
 
 ```wac
-// expect: answers main = 111222
+// expect: answers bothHelpers = 111222
 // ---- a.wac ----
 i32 helper() { return 111; }
 export i32 fromA() { return helper(); }
@@ -27,14 +27,14 @@ export i32 fromB() { return helper(); }
 import { fromA } from "./a.wac";
 import { fromB } from "./b.wac";
 
-export i32 main() { return fromA() * 1000 + fromB(); }
+export i32 bothHelpers() { return fromA() * 1000 + fromB(); }
 ```
 
 `[§wac-private-same-name-69wbdid]` Two files may each declare a private name with the same spelling.
 They are two declarations, and each file's uses of the name reach its own.
 
 ```wac
-// expect: answers main = 31
+// expect: answers threeComputes(5) = 31
 // ---- utils_a.wac ----
 export i32 compute(i32 x) { return x + 1; }
 // ---- utils_b.wac ----
@@ -45,8 +45,8 @@ import { compute as computeB } from "./utils_b.wac";
 
 i32 compute(i32 x) { return x * 3; }
 
-export i32 main() {
-  return computeA(5) + computeB(5) + compute(5);   // 6 + 10 + 15
+export i32 threeComputes(i32 x) {
+  return computeA(x) + computeB(x) + compute(x);   // for 5: 6 + 10 + 15
 }
 ```
 
@@ -59,7 +59,7 @@ file it merely imports from: `main.wac`'s own `compute` coexists with both.
 A function value is a use like any other, and reaches the function the writing file means:
 
 ```wac
-// expect: answers main = 12
+// expect: answers twoHelpers = 12
 // ---- a.wac ----
 i32 helper() { return 10; }
 export fn<i32()> pickA() {
@@ -71,7 +71,7 @@ import { pickA } from "./a.wac";
 
 i32 helper() { return 2; }
 
-export i32 main() {
+export i32 twoHelpers() {
   fn<i32()> f = pickA();
   fn<i32()> g = helper;           // main.wac's helper
   return f() + g();               // 10 + 2
@@ -87,7 +87,7 @@ Structs are no different. Two files may each declare a `Box`, and each keeps its
 methods:
 
 ```wac
-// expect: answers main = 103
+// expect: answers fieldOrders = 103
 // ---- a.wac ----
 export struct Box { i32 x; i32 y; }
 // ---- b.wac ----
@@ -96,7 +96,7 @@ export struct Box { i32 y; i32 x; }      // the same name, the other field order
 import { Box as BoxA } from "./a.wac";
 import { Box as BoxB } from "./b.wac";
 
-export i32 main() {
+export i32 fieldOrders() {
   BoxA a = BoxA(1, 2);                   // a.x = 1, a.y = 2
   BoxB b = BoxB(3, 4);                   // b.y = 3, b.x = 4
   return a.x * 100 + b.y;
@@ -110,7 +110,7 @@ The case that matters in practice is the one where the reader sees only one of t
 other arrives through a function:
 
 ```wac
-// expect: answers main = 15
+// expect: answers boxes = 15
 // ---- a.wac ----
 export struct Box { i32 v; }
 export Box makeA() { return Box(1); }
@@ -124,7 +124,7 @@ export i32 sumB() {
 import { Box, makeA } from "./a.wac";
 import { sumB } from "./b.wac";
 
-export i32 main() {
+export i32 boxes() {
   Box a = makeA();                       // a.wac's Box; main.wac never names b.wac's
   return a.v * 10 + sumB();
 }
@@ -137,7 +137,7 @@ other an enum.
 Nothing about this depends on file names being unique:
 
 ```wac
-// expect: answers main = 12
+// expect: answers pairs = 12
 // ---- left/util.wac ----
 export struct Pair { i32 a; i32 b; }
 export i32 left() {
@@ -154,7 +154,7 @@ export i32 right() {
 import { left } from "./left/util.wac";
 import { right } from "./right/util.wac";
 
-export i32 main() { return left() + right(); }
+export i32 pairs() { return left() + right(); }
 ```
 
 `[§wac-samename-stem-3xr7ktn]` Two files with the same name in different directories declare
@@ -166,7 +166,7 @@ from it.
 The converse: an alias is a new name, not a new thing.
 
 ```wac
-// expect: answers main = 7
+// expect: answers viaAlias = 7
 // ---- lib.wac ----
 export struct Box {
   i32 v;
@@ -175,7 +175,7 @@ export struct Box {
 // ---- main.wac ----
 import { Box as BoxA } from "./lib.wac";
 
-export i32 main() {
+export i32 viaAlias() {
   BoxA b = BoxA(7);
   fn<i32(BoxA)> f = BoxA.get;            // BoxA is lib.wac's Box, so the signature matches
   return f(b);
@@ -183,7 +183,7 @@ export i32 main() {
 ```
 
 ```wac
-// expect: answers main = 3
+// expect: answers aliasSum = 3
 // ---- p.wac ----
 export struct Point { i32 x; i32 y; }
 // ---- main.wac ----
@@ -191,7 +191,7 @@ import { Point, Point as P } from "./p.wac";
 
 P widen(Point p) { return p; }           // one type, two names
 
-export i32 main() {
+export i32 aliasSum() {
   Point a = Point(1, 2);
   P b = widen(a);
   return b.x + b.y;
@@ -212,17 +212,17 @@ Within one scope, two declarations may not share a name, whatever they are:
 
 ```wac
 // expect: emits
-struct Point { i32 x; }
-i32 area() { return 1; }
+export struct Point { i32 x; }
+export i32 area() { return 1; }
 
 // ERROR: duplicate function 'area'
-// i32 area() { return 2; }
+// export i32 area() { return 2; }
 
 // ERROR: duplicate struct 'Point'
-// struct Point { i32 y; }
+// export struct Point { i32 y; }
 
 // ERROR: 'Point' is already declared as a struct
-// i32 Point() { return 1; }
+// export i32 Point() { return 1; }
 ```
 
 `[§wac-dup-func-ohfg5bi]` Two functions with the same name are refused.
@@ -233,24 +233,24 @@ i32 area() { return 1; }
 
 ```wac
 // expect: emits
-static i32 LIMIT = 10;
-enum Shape { Circle(f64 r), Square(f64 side) }
-symbol describe;
-namespace geometry {
+export static i32 LIMIT = 10;
+export enum Shape { Circle(f64 r), Square(f64 side) }
+export symbol describe;
+export namespace geometry {
   export i32 origin() { return 0; }
 }
 
 // ERROR: 'LIMIT' is already declared
-// i32 LIMIT() { return 1; }
+// export i32 LIMIT() { return 1; }
 
 // ERROR: 'Shape' is already declared
-// struct Shape { i32 x; }
+// export struct Shape { i32 x; }
 
 // ERROR: 'describe' is already declared
-// static i32 describe = 1;
+// export static i32 describe = 1;
 
 // ERROR: 'geometry' is already declared
-// namespace geometry { export i32 other() { return 1; } }
+// export namespace geometry { export i32 other() { return 1; } }
 ```
 
 `[§wac-dup-any-kind-ctguh44]` Any two declarations at the top level of one file are refused if they
@@ -261,7 +261,7 @@ Inside a struct, fields and methods share one scope, and a function's parameters
 
 ```wac
 // expect: emits
-struct Holder {
+export struct Holder {
   i32 v;
   i32 get(const this) { return this.v; }
 
@@ -279,7 +279,7 @@ struct Holder {
 }
 
 // ERROR: duplicate parameter 'a'
-// i32 twice(i32 a, i32 a) { return a; }
+// export i32 twice(i32 a, i32 a) { return a; }
 ```
 
 `[§wac-dup-field-oa60dpa]` Two fields with the same name are refused.
@@ -297,7 +297,7 @@ An imported name occupies the importing file's top-level scope like any declarat
 like one — and `as` is how a collision is resolved:
 
 ```wac
-// expect: answers main = 13
+// expect: answers collisions = 13
 // ---- a.wac ----
 export i32 foo() { return 1; }
 export struct Point { i32 x; }
@@ -312,9 +312,9 @@ import { foo as fooB, Point as PointB } from "./b.wac";
 // import { foo } from "./b.wac";
 
 // ERROR: 'foo' is already imported
-// i32 foo() { return 3; }
+// export i32 foo() { return 3; }
 
-export i32 main() {
+export i32 collisions() {
   Point p = Point(10);
   PointB q = PointB(1, 2);
   return p.x + q.y + fooB() - foo();     // 10 + 2 + 2 - 1
@@ -335,8 +335,8 @@ Importing one member of a namespace binds the member's own name — `import { op
 ## Scopes nest, and an inner name may shadow an outer one
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
+// expect: answers outer = 1
+export i32 outer() {
   i32 x = 1;
   {
     i32 x = 2;                           // a separate variable
@@ -350,19 +350,18 @@ export i32 main() {
 is a separate variable, and the outer one is untouched.
 
 ```wac
-// expect: answers main = 106
-i32 shadowParam(i32 x) {
+// expect: answers shadowParam(7) = 7
+// expect: answers loopShadow = 99
+export i32 shadowParam(i32 x) {
   { i32 x = 99; }
   return x;                              // the parameter
 }
 
-i32 loopShadow() {
+export i32 loopShadow() {
   i32 i = 99;
   for (i32 i = 0; i < 10; i++) { }
   return i;                              // the outer i
 }
-
-export i32 main() { return shadowParam(7) + loopShadow(); }   // 7 + 99
 ```
 
 `[§wac-shadow-param-7apc0wt]` A local may shadow a parameter; the parameter is unchanged once the
@@ -375,7 +374,7 @@ Shadowing works because the inner name expires:
 
 ```wac
 // expect: emits
-export void main() {
+export void expired() {
   { i32 q = 1; }
   for (i32 i = 0; i < 3; i++) { }
 
@@ -394,8 +393,8 @@ A local or parameter shadows a top-level name in the same way — including a fu
 is itself something that can be called:
 
 ```wac
-// expect: answers main = 2
-i32 write(u8[] bytes) { return 99; }
+// expect: answers pumpCount = 2
+export i32 write(u8[] bytes) { return 99; }
 
 i32 pump(fn<i32(u8[])> write) {
   return write([1, 2]);                  // the parameter, not the function above
@@ -403,7 +402,7 @@ i32 pump(fn<i32(u8[])> write) {
 
 i32 count(u8[] bytes) { return bytes.len(); }
 
-export i32 main() { return pump(count); }
+export i32 pumpCount() { return pump(count); }
 ```
 
 `[§wac-param-shadows-func-5nkq2wp]` A bare name in call position resolves to a local or parameter of
@@ -412,14 +411,12 @@ function type before any top-level function.
 A local that cannot be called does not hide a function from a call:
 
 ```wac
-// expect: answers main = 6
+// expect: answers resolution(100) = 6
 i32 twice(i32 x) { return x * 2; }
 
-i32 resolution(i32 twice) {
+export i32 resolution(i32 twice) {
   return twice(3);                       // the function: the parameter is an i32
 }
-
-export i32 main() { return resolution(100); }
 ```
 
 `[§wac-call-skips-noncallable-local-shut2xc]` In call position, a local or parameter whose type is not a
@@ -431,14 +428,14 @@ Every type name a file writes must be declared or imported by that file. A type 
 only as the result of a call has no name there:
 
 ```wac
-// expect: answers main = 1
+// expect: answers matchWithoutImport = 1
 // ---- k.wac ----
 export enum K { A(i32 n), B }
 export K mk() { return K.A(1); }
 // ---- main.wac ----
 import { mk } from "./k.wac";            // K is not imported
 
-export i32 main() {
+export i32 matchWithoutImport() {
   // ERROR: undefined type 'K'
   // K k = mk();
 
@@ -462,19 +459,17 @@ matched, not through the file's scope ([25](../3-expressions/25-control-flow.md)
 ## Keywords are not names
 
 ```wac
-// expect: answers main = 4
+// expect: answers go(4) = 4
 // ERROR: 'match' is a keyword and cannot be a parameter name
-// i32 echo(i32 match) { return match; }
+// export i32 echo(i32 match) { return match; }
 
 // ERROR: 'match' is a keyword and cannot be a name
-// static i32 match = 1;
+// export static i32 match = 1;
 
 // ERROR: 'match' is a keyword and cannot be a struct name
-// struct match { i32 x; }
+// export struct match { i32 x; }
 
-i32 go(i32 @"match") { return @"match"; }    // a verbatim name, below
-
-export i32 main() { return go(4); }
+export i32 go(i32 @"match") { return @"match"; }    // a verbatim name, below
 ```
 
 `[§wac-keyword-name-8wnq4kp]` A keyword in a name position is refused, and the diagnostic names the
@@ -490,16 +485,15 @@ position.
 `@"…"` writes a name verbatim. It may hold anything, including a keyword, a hyphen or a space:
 
 ```wac
-// expect: answers main = 14
-i32 double(i32 @"n") {                   // may warn: `@"n"` is just `n`
+// expect: answers double(5) = 10
+// expect: answers pick(1, 3) = 4
+export i32 double(i32 @"n") {                   // may warn: `@"n"` is just `n`
   return n * 2;
 }
 
-i32 pick(i32 @"for", i32 @"data-size") {
+export i32 pick(i32 @"for", i32 @"data-size") {
   return @"for" + @"data-size";
 }
-
-export i32 main() { return double(5) + pick(1, 3); }
 ```
 
 `[§wac-verbatim-name-jzwznre]` `@"…"` is a name whose spelling is the quoted text, which may be any
@@ -525,12 +519,13 @@ export void @"test: an empty read returns End"() {
 more than once, because it names nothing. Reading it is an error:
 
 ```wac
-// expect: answers main = 1
+// expect: answers first(1, 2, 3) = 1
+// expect: answers discards = 1
 i32 sideEffect() { return 3; }
 
-i32 first(i32 a, i32 _, i32 _) { return a; }
+export i32 first(i32 a, i32 _, i32 _) { return a; }
 
-export i32 main() {
+export i32 discards() {
   i32 _ = sideEffect();                  // call it, discard the answer
   i32 _ = sideEffect();                  // again: no collision, nothing is named
 
@@ -557,15 +552,15 @@ These are conventions, not rules: nothing is refused for breaking them.
 
 ```wac
 // expect: emits
-struct HttpRequest { i32 status; }      // types: PascalCase
-enum Shape { Circle(f64 r) }            // variants too
-static i32 MAX_HEADERS = 64;            // static declarations: UPPER_SNAKE
-symbol describe;                        // symbols, like functions and locals: camelCase
-namespace geometry {                    // namespaces: camelCase
+export struct HttpRequest { i32 status; }     // types: PascalCase
+export enum Shape { Circle(f64 r) }           // variants too
+export static i32 MAX_HEADERS = 64;           // static declarations: UPPER_SNAKE
+export symbol describe;                       // symbols, like functions and locals: camelCase
+export namespace geometry {                   // namespaces: camelCase
   export i32 origin() { return 0; }
 }
 
-i32 headerCount(HttpRequest request) {  // functions, parameters and locals: camelCase
+export i32 headerCount(HttpRequest request) { // functions, parameters and locals: camelCase
   i32 seen = 0;
   return seen;
 }

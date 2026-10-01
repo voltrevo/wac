@@ -24,7 +24,7 @@ These alternatives expose the same API shape. Inside an inline namespace, `expor
 members. A re-export preserves the original declaration's identity.
 
 ```wac
-// expect: answers main = 7
+// expect: answers areaPlusFour = 7
 // ---- shapes.wac ----
 export struct Circle { i32 r; }
 export i32 area(Circle c) { return 3 * c.r * c.r; }
@@ -33,7 +33,7 @@ export * as shapes from "./shapes.wac";
 // ---- main.wac ----
 import { shapes } from "./lib.wac";
 
-export i32 main() {
+export i32 areaPlusFour() {
   shapes.Circle c = shapes.Circle(1);
   return shapes.area(c) + 4;
 }
@@ -43,7 +43,7 @@ export i32 main() {
 namespace called `name`.
 
 ```wac
-// expect: answers main = 7
+// expect: answers areaPlusFour = 7
 // ---- lib.wac ----
 export namespace shapes {
   export struct Circle { i32 r; }
@@ -52,7 +52,7 @@ export namespace shapes {
 // ---- main.wac ----
 import { shapes } from "./lib.wac";
 
-export i32 main() {
+export i32 areaPlusFour() {
   shapes.Circle c = shapes.Circle(1);
   return shapes.area(c) + 4;
 }
@@ -67,12 +67,12 @@ exports give their importers the same API: `main.wac` is identical in the two pr
 A namespace without `export` is private to its module, like any other declaration:
 
 ```wac
-// expect: answers main = 7
+// expect: answers viaHelpers = 7
 namespace helpers {
   export i32 good() { return 7; }
 }
 
-export i32 main() { return helpers.good(); }
+export i32 viaHelpers() { return helpers.good(); }
 ```
 
 `[§wac-namespace-private-ezix2ix]` A namespace declared without `export` is usable only in its own
@@ -91,7 +91,7 @@ import * as core from "core";
 ```
 
 ```wac
-// expect: answers main = 17
+// expect: answers areas = 17
 // ---- shapes.wac ----
 export struct Circle { i32 r; }
 export i32 area(Circle c) { return 3 * c.r * c.r; }
@@ -102,7 +102,7 @@ import { shapes.Circle } from "./lib.wac";
 import { shapes.area as circleArea } from "./lib.wac";
 import * as lib from "./lib.wac";
 
-export i32 main() {
+export i32 areas() {
   Circle c = Circle(2);                      // the member, bound by its own name
   lib.shapes.Circle d = c;                   // the same type, reached through the module
   return circleArea(d) + lib.shapes.area(Circle(0)) + 5;   // 12 + 0 + 5
@@ -131,7 +131,7 @@ Namespace qualification also selects exported types, functions, static declarati
 namespaces:
 
 ```wac
-// expect: answers main = 15
+// expect: answers qualified = 15
 // ---- geometry.wac ----
 export struct Point { i32 x; i32 y; }
 export Point origin() { return Point(0, 0); }
@@ -142,7 +142,7 @@ export namespace units {
 // ---- main.wac ----
 import * as geometry from "./geometry.wac";
 
-export i32 main() {
+export i32 qualified() {
   geometry.Point p = geometry.origin();
   i32 limit = geometry.LIMIT;
   return p.x + limit + geometry.units.SCALE;
@@ -161,9 +161,9 @@ export i32 origin() { return 0; }
 // ---- main.wac ----
 import * as geometry from "./geometry.wac";
 
-void consume(i32 x) {}
+export void consume(i32 x) {}
 
-export i32 main() {
+export i32 viaNamespace() {
   // ERROR: a namespace is not a value
   // auto ns = geometry;
 
@@ -180,7 +180,7 @@ cannot be stored, passed, returned or compared.
 ## A re-export preserves identity
 
 ```wac
-// expect: answers main = 4
+// expect: answers radiusBothRoutes = 4
 // ---- shapes.wac ----
 export struct Circle { i32 r; }
 // ---- lib.wac ----
@@ -191,7 +191,7 @@ import { shapes } from "./lib.wac";
 
 i32 radius(shapes.Circle c) { return c.r; }
 
-export i32 main() { return radius(Circle(4)); }   // one Circle, two routes
+export i32 radiusBothRoutes() { return radius(Circle(4)); }   // one Circle, two routes
 ```
 
 `[§wac-namespace-reexport-identity-85athgr]` A declaration reached through a namespace is the same
@@ -201,14 +201,12 @@ declaration as when it is reached directly. Re-exporting creates no new type, fu
 
 ```wac
 // expect: emits
-namespace geometry {
+export namespace geometry {
   export i32 origin() { return 0; }
 }
 
 // ERROR: 'geometry' is already declared
-// namespace geometry { export i32 unit() { return 1; } }
-
-export i32 main() { return geometry.origin(); }
+// export namespace geometry { export i32 unit() { return 1; } }
 ```
 
 `[§wac-namespace-once-7ar5jqz]` A namespace cannot be reopened. A second declaration with the same

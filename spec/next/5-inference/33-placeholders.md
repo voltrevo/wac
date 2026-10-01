@@ -25,13 +25,13 @@ alternatives and normalises them; it does not use ordinary widening to reject in
 placeholder changes type at runtime.
 
 ```wac
-// expect: answers main = 2
+// expect: answers placeholders(true) = 2
+// expect: answers placeholders(false) = 0
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 struct Circle : Shape { i32 r; }
 
-export i32 main() {
-  bool cond = true;
+export i32 placeholders(bool cond) {
   auto a = cond ? Rect(1, 2) : Circle(1, 3);    // Shape
   union b = cond ? Rect(1, 2) : Circle(1, 3);   // union<Rect, Circle>
 
@@ -67,9 +67,9 @@ void example(bool cond) {
 ```
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
-  bool cond = true;
+// expect: answers gathered(true) = 1
+// expect: answers gathered(false) = 0
+export i32 gathered(bool cond) {
   union value = 1 as i32;
   if (cond) {
     value = "hello";                       // contributes to the same placeholder

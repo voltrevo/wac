@@ -24,11 +24,11 @@ It is reached like any package — by its name, through its entry module — and
 | `Step`, `Coroutine`, `Generator`, `AsyncGenerator` | the machine under `async` and `gen` | [36](../6-concurrency/36-coroutines-and-generators.md) |
 
 ```wac
-// expect: answers main = 2
+// expect: answers fromCoreRoot = 2
 import { Vec, Result, operators, toString } from "core";
 import { operators.add } from "core";
 
-export i32 main() {
+export i32 fromCoreRoot() {
   Vec<i32> v;
   v.push(1);
   v.push(2);

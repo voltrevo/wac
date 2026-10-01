@@ -19,7 +19,8 @@ Module-level variables require `static`. Mutable module state is unavailable
 ([02](../1-programs/02-modules-and-imports.md)).
 
 ```wac
-// expect: answers main = 192
+// expect: answers twoBlocks = 128
+// expect: answers squareOfEight = 64
 static i32 BLOCK = 64;
 static i32 TWO_BLOCKS = BLOCK * 2;         // a static may read another
 static i32 SIZE = square(8);               // and call a function
@@ -29,7 +30,8 @@ i32 square(i32 x) { return x * x; }
 // ERROR: a module-level variable must be static
 // i32 counter = 0;
 
-export i32 main() { return TWO_BLOCKS + SIZE; }
+export i32 twoBlocks() { return TWO_BLOCKS; }
+export i32 squareOfEight() { return SIZE; }
 ```
 
 `[§wac-modconst-h3kq8wn]` A static declaration is its value wherever it is read: `BLOCK` reads as `64` and
@@ -39,18 +41,17 @@ export i32 main() { return TWO_BLOCKS + SIZE; }
 ([28](28-static-evaluation.md)).
 
 ```wac
-// expect: answers main = 100
+// expect: answers limit = 100
 // ---- limits.wac ----
-export static u32 POLY = 0xEDB88320;
-export static i32 LIMIT = 100;
 static i32 PRIVATE = 1;
+export static i32 LIMIT = 100 * PRIVATE;
 // ---- main.wac ----
 import { LIMIT } from "./limits.wac";
 
 // ERROR: limits.wac does not export 'PRIVATE'
 // import { PRIVATE } from "./limits.wac";
 
-export i32 main() { return LIMIT; }
+export i32 limit() { return LIMIT; }
 ```
 
 `[§wac-modconst-import-p7fm2wj]` An exported static declaration can be imported by name; one that is not
@@ -84,8 +85,8 @@ evaluation order; ordinary locals retain statement ordering. Placing a static de
 not make its initialisation depend on runtime execution reaching that statement.
 
 ```wac
-// expect: answers main = 7
-i32 example(i32 input) {
+// expect: answers example(5) = 7
+export i32 example(i32 input) {
   static i32 TWO = ONE + ONE;              // a forward reference within the scope
   static i32 ONE = 1;
 
@@ -100,8 +101,6 @@ i32 example(i32 input) {
 
   return TWO + copy;
 }
-
-export i32 main() { return example(5); }
 ```
 
 `[§wac-static-local-mpg3rw7]` A static declaration in a function is visible throughout its enclosing block,
@@ -135,7 +134,7 @@ belongs to the type and does not participate in instance construction. Type atta
 meaning of `static`.
 
 ```wac
-// expect: answers main = 16
+// expect: answers offsetPlusY = 16
 struct Foo {
   static i32 x = calculateX();
   i32 y;
@@ -143,7 +142,7 @@ struct Foo {
 
 i32 calculateX() { return 8; }
 
-export i32 main() {
+export i32 offsetPlusY() {
   static i32 offset = Foo.x + 1;           // 9
   Foo a = Foo(7);                          // only y is an instance field
 
@@ -164,10 +163,10 @@ A static field may be named by a symbol: `static i32 [size] = 7;`, read as `Foo.
 ## Static values are const, deeply
 
 ```wac
-// expect: answers main = 2
+// expect: answers second = 2
 static i32[] T = [1, 2];
 
-export i32 main() {
+export i32 second() {
   // ERROR: cannot write through a const reference
   // T[0] = 9;
 
@@ -231,7 +230,9 @@ Materialising static values preserves observable allocation identity and aliasin
 merge distinct allocations.
 
 ```wac
-// expect: answers main = 1
+// expect: answers oneValueForEveryCall = true
+// expect: answers onePerInstantiation = true
+// expect: answers allocationsStayDistinct = true
 struct Box { i32 value; }
 
 struct Cache<T> {
@@ -249,13 +250,13 @@ const Box shared() {
   return value;
 }
 
-export i32 main() {
-  bool calls = shared() is shared();                       // one static, however many calls
-  bool inst = Cache<i32>.marker is Cache<i32>.marker
-           && Cache<i32>.marker is not Cache<string>.marker; // one per instantiation
-  bool alloc = A is not B && A is C;                       // distinct allocations stay distinct
-  return calls && inst && alloc ? 1 : 0;
+export bool oneValueForEveryCall() { return shared() is shared(); }
+
+export bool onePerInstantiation() {
+  return Cache<i32>.marker is Cache<i32>.marker && Cache<i32>.marker is not Cache<string>.marker;
 }
+
+export bool allocationsStayDistinct() { return A is not B && A is C; }
 ```
 
 `[§wac-modconst-ref-9jvq2mt]` A static declaration of reference type is one value, built once: every read of

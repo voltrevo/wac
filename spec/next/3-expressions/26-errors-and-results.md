@@ -10,15 +10,11 @@ returned like any other; `try` passes an error on to the caller.
 satisfies any return type:
 
 ```wac
-// expect: traps main
-i32 mustBePositive(i32 n) {
+// expect: answers mustBePositive(5) = 5
+// expect: traps mustBePositive(-1)
+export i32 mustBePositive(i32 n) {
   if (n <= 0) { trap; }
   return n;
-}
-
-export i32 main() {
-  i32 a = mustBePositive(5);               // 5
-  return mustBePositive(-1);               // traps
 }
 ```
 
@@ -30,15 +26,11 @@ A `trap` may carry a message — any `string` expression, so it can be built at 
 host is told it instead of the engine's bare report:
 
 ```wac
-// expect: traps main
-i32 half(i32 n) {
+// expect: answers half(8) = 4
+// expect: traps half(7)
+export i32 half(i32 n) {
   if (n % 2 != 0) { trap "half needs an even number, not \{n}"; }
   return n / 2;
-}
-
-export i32 main() {
-  i32 ok = half(8);                        // 4
-  return half(7);                          // traps with the message
 }
 ```
 
@@ -68,7 +60,10 @@ enum Result<T, E = union> {
 A function that can fail returns one, and a caller takes it apart like any enum:
 
 ```wac
-// expect: answers main = 3
+// expect: answers digitOr("3") = 3
+// expect: answers digitOr("x") = -1
+// expect: answers digitOr("42") = -1
+// expect: answers orElseZero("x") = 0
 import { Result } from "core";
 
 Result<i32, string> parseDigit(string s) {
@@ -78,14 +73,14 @@ Result<i32, string> parseDigit(string s) {
   return Result.Ok(c - '0');
 }
 
-export i32 main() {
-  i32 a = match (parseDigit("3")) {
+export i32 digitOr(string s) {
+  return match (parseDigit(s)) {
     Ok(v):  v,
     Err(e): -1,
   };
-  i32 b = parseDigit("x").orElse(0);
-  return a + b;
 }
+
+export i32 orElseZero(string s) { return parseDigit(s).orElse(0); }
 ```
 
 `[§wac-result-enum-mk5axe4]` `Result<T, E>` is an enum with variants `Ok(T v)` and `Err(E e)`, matched like any
@@ -102,7 +97,8 @@ subject.
 enclosing function:
 
 ```wac
-// expect: answers main = 2
+// expect: answers sumOr("a", "b") = 2
+// expect: answers sumOr("", "b") = 0
 import { Result } from "core";
 
 Result<i32, string> digit(string s) {
@@ -116,10 +112,8 @@ Result<i32, string> sum(string a, string b) {
   return Result.Ok(x + y);
 }
 
-export i32 main() {
-  i32 good = sum("a", "b").orElse(0);      // 2
-  i32 bad = sum("", "b").orElse(0);        // 0: digit("") returned its Err from sum
-  return good + bad;
+export i32 sumOr(string a, string b) {
+  return sum(a, b).orElse(0);              // sumOr("", "b"): digit("") returned its Err from sum
 }
 ```
 
@@ -134,10 +128,10 @@ import { Result } from "core";
 
 Result<i32, string> digit(string s) { return Result.Ok(1); }
 
-// ERROR: try needs a function that returns a Result
-// i32 plain() { return try digit("1"); }
+export i32 viaOrElse() { return digit("1").orElse(0); }
 
-export i32 main() { return 0; }
+// ERROR: try needs a function that returns a Result
+// export i32 plain() { return try digit("1"); }
 ```
 
 `[§wac-try-needs-result-nqim9be]` `try` in a function that does not return a `Result` is refused.
@@ -148,7 +142,8 @@ A function's error type may be a union, and an error passes through `try` when i
 members:
 
 ```wac
-// expect: emits
+// expect: answers loaded("data") = 1
+// expect: answers narrow("data") = 1
 import { Result } from "core";
 
 enum NotFound { Missing }
@@ -172,7 +167,8 @@ Result<i32, union<NotFound>> tooNarrow(string path) {
   return Result.Ok(bytes);
 }
 
-export i32 main() { return 0; }
+export i32 loaded(string path) { return load(path).orElse(-1); }
+export i32 narrow(string path) { return tooNarrow(path).orElse(-1); }
 ```
 
 `[§wac-try-error-in-set-44qtqmu]` `try e` requires `e`'s error type to fit the enclosing function's error type —
@@ -204,7 +200,8 @@ An error that is a union or an enum is taken apart with `match`, and `is` in a p
 ([13](../2-types/13-enums.md)):
 
 ```wac
-// expect: answers main = 1
+// expect: answers adviceForDir = "that path is a directory"
+// expect: answers adviceForMissing = "no such file"
 import { Result } from "core";
 
 enum Fault { NotFound, IsDir, Denied }
@@ -218,9 +215,8 @@ string advice(Result<i32, Fault> r) {
   };
 }
 
-export i32 main() {
-  return advice(Result.Err(Fault.IsDir)) == "that path is a directory" ? 1 : 0;
-}
+export string adviceForDir() { return advice(Result.Err(Fault.IsDir)); }
+export string adviceForMissing() { return advice(Result.Err(Fault.NotFound)); }
 ```
 
 `try` works with `await` — `try await t` awaits a ticket of a `Result` and passes its error on — which is the

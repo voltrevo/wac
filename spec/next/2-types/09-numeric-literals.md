@@ -19,17 +19,15 @@ u8 x = 2 * 3 * 4;            // all operations use u8; result 24
 ```
 
 ```wac
-// expect: answers main = 0
-u32 twice(u32 x) { return x * 2; }          // 2 is a u32 here
-
-export i32 main() {
+// expect: answers twice(2147483648) = 0
+export u32 twice(u32 x) {
   // ERROR: unresolved numeric type
   // auto unknown = 7;
 
   // ERROR: literal outside u8 range
   // u8 tooLarge = 256;
 
-  return twice(2147483648) as! i32;          // 0: the multiply wraps at 32 bits
+  return x * 2;                              // 2 is a u32 here, and the multiply wraps at 32 bits
 }
 ```
 
@@ -44,30 +42,25 @@ Typed primitive numeric operands constrain the unresolved operands of their buil
 Already-typed operands never change type to meet a context.
 
 ```wac
-// expect: answers main = 1
+// expect: answers aboveMin(7) = true
+// expect: answers belowMin(7) = false
+// expect: answers isBig = true
 i64 big() { return 1000000000000; }
 
-export i32 main() {
-  i32 x = 7;
-  bool a = -2147483648 <= x;                 // the literal takes i32 from x
-  bool b = x >= -2147483648;                 // in either order
-  bool c = big() == 1000000000000;           // and i64 from big()
-  return a && b && c ? 1 : 0;
-}
+export bool aboveMin(i32 x) { return -2147483648 <= x; }   // the literal takes i32 from x
+export bool belowMin(i32 x) { return x < -2147483648; }    // in either order
+export bool isBig() { return big() == 1000000000000; }     // and i64 from big()
 ```
 
 `[§wac-int-context-9wkq4mz]` A literal operand of a built-in operator takes its type from the other
 operand, in either order and whether or not it is negated.
 
-`[§wac-i64lit-operand-4k1n3ev]` `big() == 1000000000000` is `true`: the literal is an `i64` because
+`[§wac-i64lit-operand-4k1n3ev]` `isBig()` is `true`: the literal is an `i64` because
 `big()` is.
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
-  i64 x = 5;
-  return x < 1000000000000 ? 1 : 0;
-}
+// expect: answers belowTrillion(5) = true
+export bool belowTrillion(i64 x) { return x < 1000000000000; }
 ```
 
 `[§wac-i64lit-cmp-hnbz7ev]` `x < 1000000000000` with `x` an `i64` is `true`.
@@ -77,10 +70,10 @@ Arithmetic takes place in the inferred type, including its ordinary overflow beh
 by a single conversion:
 
 ```wac
-// expect: answers main = 72
-export i32 main() {
+// expect: answers halveDouble = 72
+export u8 halveDouble() {
   u8 x = 200 * 2 / 2;                        // 400 wraps to 144, then 144 / 2
-  return x as i32;
+  return x;
 }
 ```
 
@@ -93,30 +86,30 @@ Adopting a type is only ever a reading of the same written value, never a conver
 
 ```wac
 // expect: emits
-// ERROR: -1 has no u32 reading
-// u32 a = -1;
+export void readings(i32 x) {
+  // ERROR: -1 has no u32 reading
+  // u32 a = -1;
 
-// ERROR: 5000000000 does not fit i32
-// i32 b = 5000000000;
+  // ERROR: 5000000000 does not fit i32
+  // i32 b = 5000000000;
 
-// ERROR: expected u32, got i32 — a variable is not a literal
-// u32 c(i32 x) { return x; }
-
-export i32 main() { return 0; }
+  // ERROR: expected u32, got i32 — a variable is not a literal
+  // u32 c = x;
+}
 ```
 
 `[§wac-litctx-nofit-k3mq8wl]` A literal with no reading in its type is refused, and a variable never
 takes on another type the way a literal does.
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
-  i32 x = 42;
-  i64 y = 1000000000000;
-  f32 z = 3.14;
-  f64 w = 2.718281828459045;
-  return x == 42 && y == 1000000000000 && z == 3.14 && w == 2.718281828459045 ? 1 : 0;
-}
+// expect: answers int32 = 42
+// expect: answers int64 = 1000000000000
+// expect: answers float32 = 3.14
+// expect: answers float64 = 2.718281828459045
+export i32 int32() { return 42; }
+export i64 int64() { return 1000000000000; }
+export f32 float32() { return 3.14; }
+export f64 float64() { return 2.718281828459045; }
 ```
 
 `[§wac-int32-dfkqg8u]` `42` read as an `i32` is `42`.
@@ -133,16 +126,16 @@ inherit wrapping arithmetic semantics. Unary minus on a numeric literal is inclu
 value before range checking, so signed minima remain expressible:
 
 ```wac
-// expect: answers main = -2147483648
-export i32 main() { return -2147483648; }
+// expect: answers minInt = -2147483648
+export i32 minInt() { return -2147483648; }
 ```
 
 `[§wac-litctx-minint-p9fk4wq]` `-2147483648` is a valid `i32` literal: the minus is part of the
 literal's value.
 
 ```wac
-// expect: answers main = 6.5
-export f64 main() {
+// expect: answers floatContexts = 6.5
+export f64 floatContexts() {
   f32 a = 1.5;                               // f32 by context
   f64 b = 1.5;
   f32 c = 3.14159;                           // rounded, as decimal notation always is
@@ -167,14 +160,14 @@ A decimal literal may carry an exponent, and the point is then optional. Spellin
 the type: an exponent is part of the value, and `i64 n = 1e9;` is a billion.
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
-  f64 a = 1e9;
-  f64 b = 1E10;
-  f64 c = 2e-3;
-  f64 d = 1.5e+10;
-  return a == 1000000000.0 && c == 0.002 ? 1 : 0;
-}
+// expect: answers billion = 1000000000.0
+// expect: answers tenBillion = 10000000000.0
+// expect: answers twoThousandths = 0.002
+// expect: answers fifteenBillion = 15000000000.0
+export f64 billion() { return 1e9; }
+export f64 tenBillion() { return 1E10; }
+export f64 twoThousandths() { return 2e-3; }
+export f64 fifteenBillion() { return 1.5e+10; }
 ```
 
 `[§wac-float-exponent-7mkq3wv]` `1e9`, `1E10`, `2e-3`, `1.5e10` and `1.5e+10` are literals with
@@ -184,8 +177,8 @@ exponents, with or without a point. A bare `e` with no digits after it is not an
 Underscores may separate digits anywhere after the first, and carry no meaning:
 
 ```wac
-// expect: answers main = 1000000
-export i32 main() { return 1_000_000; }
+// expect: answers million = 1000000
+export i32 million() { return 1_000_000; }
 ```
 
 `[§wac-numsep-qpeegkw]` `1_000_000` is `1000000`. Underscores are removed before a literal is read.
@@ -193,12 +186,10 @@ export i32 main() { return 1_000_000; }
 A literal may be written in hex:
 
 ```wac
-// expect: answers main = 16711935
-export i32 main() {
-  i32 mask = 0xFF;                           // 255
-  i32 color = 0xFF00FF;
-  return color;
-}
+// expect: answers mask = 255
+// expect: answers color = 16711935
+export i32 mask() { return 0xFF; }
+export i32 color() { return 0xFF00FF; }
 ```
 
 `[§wac-hex-cs4i9ht]` `0xFF` is `255` and `0xFF00FF` is `16711935`.
@@ -212,21 +203,25 @@ mathematical value — is open; see the end of this chapter.
 numeric literal it takes its type from its context:
 
 ```wac
-// expect: answers main = 1
-i32 letterA() { return 'a'; }               // 97
-i32 newline() { return '\n'; }              // 10
-i32 quote()   { return '\''; }              // 39
-i32 emoji()   { return '😀'; }              // 128512
-
-export i32 main() {
+// expect: answers letterA = 97
+// expect: answers newline = 10
+// expect: answers quote = 39
+// expect: answers emoji = 128512
+// expect: answers emojiEscaped = 128512
+export i32 letterA() {
   // ERROR: an empty character literal
   // i32 e = '';
 
   // ERROR: a character literal holds one character
   // i32 two = 'ab';
 
-  return letterA() == 97 && emoji() == '\u{1F600}' ? 1 : 0;
+  return 'a';
 }
+
+export i32 newline()      { return '\n'; }
+export i32 quote()        { return '\''; }
+export i32 emoji()        { return '😀'; }
+export i32 emojiEscaped() { return '\u{1F600}'; }
 ```
 
 `[§wac-charlit-p4kn8wq]` `'a'` is `97`.
@@ -270,10 +265,10 @@ participate in the collection rules of [32](../5-inference/32-widening.md) to
 its later uses cannot repair it.
 
 ```wac
-// expect: answers main = 72
+// expect: answers echoes = 72
 T echo<T>(T x) { return x; }
 
-export i32 main() {
+export i32 echoes() {
   u8 x = echo(200 * 2 / 2);                 // T = u8, from the result
   u64 y = 3;
   u64 w = echo(2 * y);                      // T = u64, from y
@@ -325,7 +320,7 @@ Intrinsic numeric types provide this same operation. No ordinary name is reserve
 implementations are introduced.
 
 ```wac
-// expect: answers main = 5.0
+// expect: answers realParts = 5.0
 import { NumberLiteral, fromNumber, Result } from "core";
 
 struct Complex {
@@ -338,7 +333,7 @@ struct Complex {
   }
 }
 
-export f64 main() {
+export f64 realParts() {
   Complex x = 3;
   Complex y = 2;
   return x.real + y.real;
@@ -368,7 +363,7 @@ struct Even {
   }
 }
 
-export i64 main() {
+export i64 three() {
   Even e = 3;                                // refused here: the conversion answered Err
   return e.value;
 }
@@ -416,7 +411,7 @@ struct Complex {
   }
 }
 
-export i32 main() {
+export f64 literalsOnly() {
   // ERROR: unresolved numeric type — fromNumber does not make 3 a Complex
   // auto x = 3;
 
@@ -425,7 +420,8 @@ export i32 main() {
   // ERROR: expected Complex, got f64 — a typed value is not a literal
   // Complex c = r;
 
-  return 0;
+  Complex one = 1;                           // a literal whose target is Complex
+  return one.real + r;
 }
 ```
 

@@ -142,3 +142,14 @@ All **taken**. Where one reverses something written in chapters 01–03, it says
   no type of their own. Soundness stays in 26.
 - **D** lists every current tag not carried, replaced or retired, with the reason. Nine pairs of current tags share a
   suffix; both are carried, and D says so.
+
+## Exports and `main` (after review)
+
+- **An example exports what it tests** (README). `main` appears only in programs (Sys, exits, prints).
+  `answers f(args) = v` takes arguments, and a fence may carry several.
+- **Every export of the entry is an entry point**, types and statics included (05,
+  `wac-reach-export-type-root`). Any non-generic function may be exported whatever its signature (07).
+- **Import-shaped ERROR lines** became `refused` fences that use the imported name: under 05's lazy reading,
+  an unused import of a missing name is not an error, so the commented line tested nothing.
+- **`is`, `is not` and `matches` bind as comparisons**, tighter than `&&`: every example, appendix A and
+  vision/TECHNICAL's `Ok(cfg) matches res && …` assume it, against spec/spec's table. Retagged (D).

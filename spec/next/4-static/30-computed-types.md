@@ -20,7 +20,8 @@ binds the type a `typeref` names, and `pushNull` adds one level of nullability r
 not flatten, so neither does the method standing for it.
 
 ```wac
-// expect: answers main = 1
+// expect: answers nodeSlotHoldsNull = true
+// expect: answers i32Slot = 5
 struct Node { i32 v; }
 
 typeref slot(typeref t) {
@@ -29,10 +30,14 @@ typeref slot(typeref t) {
 
 type Slot<T> = type(slot(typeref(T)));
 
-export i32 main() {
+export bool nodeSlotHoldsNull() {
   Slot<Node> a = null;                     // Node?
+  return a is null;
+}
+
+export i32 i32Slot() {
   Slot<i32> b = 5;                         // i32: not a reference, left alone
-  return a is null && b == 5 ? 1 : 0;
+  return b;
 }
 ```
 
@@ -42,7 +47,7 @@ type that the `typeref` value `e` stands for. `e` is evaluated statically.
 `type(…)` is the only expression a type position takes:
 
 ```wac
-// expect: emits
+// expect: answers holderLength = 2
 typeref slot(typeref t) { return t.pushNull(); }
 
 struct Holder<T> {
@@ -52,7 +57,10 @@ struct Holder<T> {
   type(slot(typeref(T)))[] data;
 }
 
-export i32 main() { return 0; }
+export i32 holderLength() {
+  Holder<i32> h = Holder(i32?[].defaulted(2));   // data is i32?[]
+  return h.data.len();
+}
 ```
 
 `[§wac-type-expr-only-vsprvyh]` In a type position, an expression must be written inside `type(…)`. A bare call there
@@ -63,7 +71,7 @@ is refused.
 A `typeref` supports the operations the language's own rules are written in:
 
 ```wac
-// expect: answers main = 1
+// expect: answers typerefOps = true
 struct Node { i32 v; }
 
 bool check() {
@@ -80,7 +88,7 @@ bool check() {
 
 static bool OK = check();                  // evaluated by the compiler
 
-export i32 main() { return OK ? 1 : 0; }
+export bool typerefOps() { return OK; }
 ```
 
 `[§wac-typeref-ops-u2h77nf]` A `typeref` supports `pushNull()` (one more nullable layer), `popNull()` (one fewer),
@@ -118,7 +126,7 @@ Both forms use the same static evaluation ([28](28-static-evaluation.md)), depen
 checking ([29](29-static-dependencies.md), [19](../2-types/19-generics.md)).
 
 ```wac
-// expect: answers main = 1
+// expect: answers sameType = true
 type Foo<T> {
   auto t = typeref(T);
   return t.pushNull();
@@ -126,10 +134,10 @@ type Foo<T> {
 
 type Bar<T> = type(typeref(T).pushNull());
 
-export i32 main() {
+export bool sameType() {
   Foo<i32> a = null;                       // i32?
   Bar<i32> b = a;                          // the same type
-  return b is null ? 1 : 0;
+  return b is null;
 }
 ```
 
@@ -144,12 +152,12 @@ general block expressions or implicit invocation of ordinary blocks.
 A type declaration may simply name another type:
 
 ```wac
-// expect: answers main = 3
+// expect: answers sumOfOneAndTwo = 3
 type Pair = (i32, i32);
 
 i32 sum(Pair p) { return p.0 + p.1; }
 
-export i32 main() { return sum((1, 2)); }
+export i32 sumOfOneAndTwo() { return sum((1, 2)); }
 ```
 
 `[§wac-type-alias-e4gvipb]` `type Name = T;` makes `Name` another spelling of `T`: the same type, not a new one.

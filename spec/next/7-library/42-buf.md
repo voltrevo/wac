@@ -9,18 +9,27 @@ and the single-byte `push` checks for exactly one byte of room.
 ## Building bytes
 
 ```wac
-// expect: answers main = 1
+// expect: answers built = "hi wac!"
+// expect: answers builtLen = 7
+// expect: answers byteAt(0) = 'h'
+// expect: traps byteAt(7)
 import { Buf } from "core";
 
-export i32 main() {
+Buf sample() {
   Buf b = Buf.create();
   b.push('h');
   b.push('i');
   b.pushAll([' ', 'w']);
   b.pushBytes(['x', 'a', 'c', 'y'], 1, 2);       // "ac"
   b.pushStr("!");
-  return b.len == 7 && b.get(0) == 'h' && b.toStr() == "hi wac!" ? 1 : 0;
+  return b;
 }
+
+export string built() { return sample().toStr(); }
+
+export i32 builtLen() { return sample().len; }
+
+export u8 byteAt(i32 i) { return sample().get(i); }
 ```
 
 `[§wac-buf-push-pw83mxx]` `push(byte)` appends one byte; `pushAll(bytes)` appends an array; `pushBytes(bytes, start, count)`
@@ -33,16 +42,16 @@ known.
 ## Text
 
 ```wac
-// expect: answers main = 1
+// expect: answers text = "-2147483648 é\u{FFFD}"
 import { Buf } from "core";
 
-export i32 main() {
+export string text() {
   Buf b = Buf.create();
   b.pushDecimal(-2147483648);              // the minimum, which negation cannot write
   b.push(' ');
   b.pushCodepoint(0xE9);                   // é, two bytes of UTF-8
   b.pushCodepoint(0xD800);                 // a surrogate: U+FFFD instead
-  return b.toStr() == "-2147483648 é\u{FFFD}" ? 1 : 0;
+  return b.toStr();
 }
 ```
 
@@ -58,17 +67,17 @@ and `toStr()` is the linear way.
 ## Taking the result
 
 ```wac
-// expect: answers main = 1
+// expect: answers takeEmpties = true
 import { Buf } from "core";
 
-export i32 main() {
+export bool takeEmpties() {
   Buf b = Buf.create();
   b.pushAll([1, 2, 3]);
   u8[] copy = b.bytes();                   // a copy: b is still usable
   b.push(4);
   string s = b.toStr();                    // a copy, as a string
   u8[] owned = b.take();                   // the contents, possibly without a copy; b is now empty
-  return copy.len() == 3 && owned.len() == 4 && b.len == 0 ? 1 : 0;
+  return copy.len() == 3 && owned.len() == 4 && b.len == 0;
 }
 ```
 
@@ -78,15 +87,15 @@ own storage when it is exactly full — and empties the buffer, so nothing can w
 ## Back-references and dropping
 
 ```wac
-// expect: answers main = 1
+// expect: answers backReference = "cabcab"
 import { Buf } from "core";
 
-export i32 main() {
+export string backReference() {
   Buf b = Buf.create();
   b.pushAll(['a', 'b', 'c']);
   b.pushRepeat(0, 5);                      // copy 5 bytes from position 0, overlapping: "abcab"
   b.dropFront(2);                          // remove the first 2 bytes
-  return b.toStr() == "cabcab" ? 1 : 0;
+  return b.toStr();
 }
 ```
 

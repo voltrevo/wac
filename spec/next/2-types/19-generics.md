@@ -8,7 +8,7 @@ with its parameters opaque and again at each instantiation.
 ## Generic structs
 
 ```wac
-// expect: answers main = 30
+// expect: answers instantiations = 30
 struct Vec<T> {
   T[] data;
   i32 n;
@@ -25,7 +25,7 @@ struct Vec<T> {
 
 struct P { i32 v; }
 
-export i32 main() {
+export i32 instantiations() {
   Vec<i32> v = Vec([], 0);
   v.push(10);
   v.push(20);
@@ -44,18 +44,18 @@ Each instantiation has its own concrete representation, which is why a type para
 **invariant** — `Vec<Rect>` is not a `Vec<Shape>`, since a mutable container cannot be covariant soundly:
 
 ```wac
-// expect: emits
+// expect: answers invariant = 1
 struct Box<T> { T v; }
 struct Shape { i32 x; }
 struct Square : Shape { i32 side; }
 
-export i32 main() {
+export i32 invariant() {
   Box<Square> b = Box(Square(1, 2));
 
   // ERROR: Box<Square> is not a Box<Shape>
   // Box<Shape> s = b;
 
-  return 0;
+  return b.v.x;
 }
 ```
 
@@ -64,13 +64,13 @@ export i32 main() {
 A construction of a generic struct takes its type arguments from where its value goes:
 
 ```wac
-// expect: answers main = 0
+// expect: answers fromSlots = 0
 struct Vec<T> { T[] data; i32 n; i32 len(const this) { return this.n; } }
 struct Holder { Vec<i32> v; }
 
 void take(Vec<i32> v) {}
 
-export i32 main() {
+export i32 fromSlots() {
   Vec<i32> v = Vec([], 0);                 // a declaration
   v = Vec([], 0);                          // an assignment
   Holder h = Holder(Vec([], 0));           // a construction's argument
@@ -96,7 +96,9 @@ has no expected type, and the fix is the two statements idiomatic wac already wr
 one place that cannot be rewritten that way, so there an instantiation may be written out:
 
 ```wac
-// expect: answers main = 34
+// expect: answers just = 4
+// expect: answers absent = 7
+// expect: answers cell = 23
 struct Cell<T> {
   T v;
   Cell<T> of(T v) { return Cell(v); }
@@ -114,12 +116,9 @@ enum Maybe<T> {
   }
 }
 
-export i32 main() {
-  i32 a = Maybe<i32>.Just(4).orElse(0);
-  i32 b = Maybe<i32>.Absent.orElse(7);
-  i32 c = Cell<i32>.of(23).get();
-  return a + b + c;
-}
+export i32 just() { return Maybe<i32>.Just(4).orElse(0); }
+export i32 absent() { return Maybe<i32>.Absent.orElse(7); }
+export i32 cell() { return Cell<i32>.of(23).get(); }
 ```
 
 `[§wacc-written-instantiation]` `Ty<Args>` may be written as the object of a `.` — to construct a variant or
@@ -132,12 +131,11 @@ name.
 whatever follows:
 
 ```wac
-// expect: answers main = 0
-i32 g(bool a, bool b) { return 0; }
+// expect: answers both(1, 2, 3, 4) = 1
+// expect: answers both(1, 2, 5, 4) = 2
+i32 g(bool a, bool b) { return (a ? 1 : 0) + (b ? 1 : 0); }
 
-export i32 main() {
-  i32 a = 1; i32 b = 2; i32 c = 3; i32 e = 4;
-
+export i32 both(i32 a, i32 b, i32 c, i32 e) {
   // ERROR: type arguments, and a value cannot follow them
   // i32 r = g(a < b, c > e);
 
@@ -153,16 +151,16 @@ What decides whether it parses is whether the span between the angles can be a t
 was a comparison all along — and an angle inside parentheses or brackets closes nothing:
 
 ```wac
-// expect: answers main = 1
-i32 inRange(i32 n, i32 cap) {
+// expect: answers inRange(5, 9) = 0
+// expect: answers inRange(-1, 9) = 1
+// expect: answers shifted(8) = 1
+export i32 inRange(i32 n, i32 cap) {
   if (n < 0 || n > (cap + 1)) { return 1; }   // `0 || n` is not a type
   return 0;
 }
 
-export i32 main() {
-  i32 a = 8;
-  i32 shifted = a < (a >> 1) ? 0 : 1;      // the >> is in parentheses: a shift
-  return inRange(5, 9) + inRange(-1, 9) * shifted;
+export i32 shifted(i32 a) {
+  return a < (a >> 1) ? 0 : 1;             // the >> is in parentheses: a shift
 }
 ```
 
@@ -172,7 +170,8 @@ comparison: `inRange(5, 9)` answers `0` and `inRange(-1, 9)` answers `1`.
 ## Generic enums
 
 ```wac
-// expect: answers main = 13
+// expect: answers some = 4
+// expect: answers none = 9
 enum Option<T> {
   Some(T v), None
 
@@ -184,10 +183,14 @@ enum Option<T> {
   }
 }
 
-export i32 main() {
+export i32 some() {
   Option<i32> a = Option.Some(4);
+  return a.orElse(0);
+}
+
+export i32 none() {
   Option<i32> b = Option.None;
-  return a.orElse(0) + b.orElse(9);
+  return b.orElse(9);
 }
 ```
 
@@ -198,10 +201,10 @@ A generic enum's variants have no bare name. `Option<i32>` and `Option<f64>` wou
 neither has a better claim:
 
 ```wac
-// expect: answers main = 1
+// expect: answers throughSubject = 1
 enum Option<T> { Some(T v), None }
 
-export i32 main() {
+export i32 throughSubject() {
   Option<i32> a = Option.Some(1);
 
   // ERROR: Some is a variant of the generic Option, and has no name of its own
@@ -220,16 +223,12 @@ written as a type or tested with a bare `is`. `match` reaches it through the sub
 ## Generic functions
 
 ```wac
-// expect: answers main = 10
+// expect: answers maxInt(3, 7) = 7
+// expect: answers maxFloat(1.5, 3.0) = 3.0
 T max<T>(T a, T b) { return a > b ? a : b; }
 
-export i32 main() {
-  i32 x = 3;
-  i32 y = 7;
-  f64 p = 1.5;
-  f64 q = 3.0;
-  return max(x, y) + max(p, q) as~ i32;    // T is i32, then f64
-}
+export i32 maxInt(i32 x, i32 y) { return max(x, y); }      // T is i32
+export f64 maxFloat(f64 p, f64 q) { return max(p, q); }    // T is f64
 ```
 
 `[§wac-generic-fn-5hvq3mt]` A function may take type parameters, inferred from its arguments and its expected
@@ -239,7 +238,7 @@ A type parameter is inferred from the arguments structurally — the parameter's
 argument's type is matched against it — and from the type expected of the result:
 
 ```wac
-// expect: answers main = 6
+// expect: answers inferred = 6
 struct Box<T> { T v; }
 struct Vec<T> { T[] data; }
 
@@ -252,7 +251,7 @@ Vec<T> empty<T>() { return Vec([]); }
 
 i32 keep(i32 x) { return x * 0; }
 
-export i32 main() {
+export i32 inferred() {
   i32 z = zero();                          // T = i32, from the declaration
   Vec<i32> e = empty();                    // T = i32, likewise
   i32[] xs = [1, 2];
@@ -269,17 +268,14 @@ Constraints flow both ways within an expression ([09](09-numeric-literals.md)). 
 different types for one parameter are an error:
 
 ```wac
-// expect: emits
+// expect: answers agreeing(1, 2.0) = 1
 T max<T>(T a, T b) { return a > b ? a : b; }
 
-export i32 main() {
-  i32 x = 1;
-  f64 y = 2.0;
-
+export i32 agreeing(i32 x, f64 y) {
   // ERROR: x and y imply different types for T
   // max(x, y);
 
-  return 0;
+  return max(x, x);
 }
 ```
 
@@ -288,10 +284,10 @@ The types are compared by identity, not spelling ([01](../1-programs/01-names-an
 ### Type arguments may be written
 
 ```wac
-// expect: answers main = 9
+// expect: answers written = 9
 T identity<T>(T x) { return x; }
 
-export i32 main() {
+export i32 written() {
   i32 a = identity<i32>(4);
   i32 b = identity(5);                     // the same instantiation as identity<i32>
   fn<i32(i32)> g = identity<i32>;          // a generic function as a value
@@ -302,7 +298,7 @@ export i32 main() {
   // ERROR: unknown type 'Typoo'
   // i32 d = identity<Typoo>(1);
 
-  return a + b;
+  return a + g(b);
 }
 ```
 
@@ -315,7 +311,8 @@ always written with its arguments.
 ### A method may take type parameters of its own
 
 ```wac
-// expect: answers main = 6
+// expect: answers total = 6
+// expect: answers wide = 6
 struct Vec<T> {
   T[] items;
 
@@ -326,11 +323,14 @@ struct Vec<T> {
   }
 }
 
-export i32 main() {
+export i32 total() {
   Vec<i32> v = Vec([1, 2, 3]);
-  i32 total = v.fold(0, (i32 acc, i32 x) => acc + x);        // U = i32, from the seed
-  i64 wide = v.fold<i64>(0, (i64 a, i32 x) => a + x as i64);
-  return total;
+  return v.fold(0, (i32 acc, i32 x) => acc + x);             // U = i32, from the seed
+}
+
+export i64 wide() {
+  Vec<i32> v = Vec([1, 2, 3]);
+  return v.fold<i64>(0, (i64 a, i32 x) => a + x as i64);     // U = i64, written
 }
 ```
 
@@ -346,7 +346,8 @@ enough.
 A type parameter may have a default, used when the argument is omitted:
 
 ```wac
-// expect: answers main = 1
+// expect: answers parsed("x") = 1
+// expect: answers parsed("") = 0
 enum Result<T, E = union> {
   Ok(T v), Err(E e)
 }
@@ -356,8 +357,8 @@ Result<i32> parse(string s) {              // Result<i32, union>: E is a fresh p
   return Result.Ok(1);
 }
 
-export i32 main() {
-  return match (parse("x")) {
+export i32 parsed(string s) {
+  return match (parse(s)) {
     Ok(v):   v,
     Err(e):  0,
   };
@@ -376,7 +377,7 @@ There are no constraints and no traits. A template is checked at its definition 
 opaque, and again at each instantiation with them substituted:
 
 ```wac
-// expect: emits
+// expect: answers lengths = 3
 struct Vec<T> {
   T[] data;
 
@@ -390,7 +391,9 @@ struct Vec<T> {
 
 i32 lengthOf<T>(T x) { return x.len(); }   // nothing asks T for a len…
 
-export i32 main() {
+export i32 lengths() {
+  Vec<i32> v = Vec([]);
+  v.oops();
   i32 a = lengthOf("abc");                 // …and string has one
 
   // ERROR: no method 'len' on i32 — reported at this instantiation
@@ -407,7 +410,7 @@ checked at each instantiation.
 This holds for every kind of template — struct, enum, function and method alike:
 
 ```wac
-// expect: emits
+// expect: answers emptyBox = 0
 enum Box<T> {
   Full(T v), Empty
 
@@ -418,7 +421,10 @@ enum Box<T> {
   }
 }
 
-export i32 main() { return 0; }
+export i32 emptyBox() {
+  Box<i32> b = Box.Empty;
+  return b.broken();
+}
 ```
 
 `[§wac-generic-enum-checked-vqc8iab]` A generic enum's methods are checked at the definition with its parameters
@@ -439,7 +445,7 @@ i32 example<T>() {
   }
 }
 
-export i32 main() { return example<i32>(); }
+export i32 one() { return example<i32>(); }
 ```
 
 `[§wac-generic-static-branch-check-tp3uc4n]` Every branch of a `static_if` in a template receives the
@@ -455,11 +461,21 @@ an implementation chooses:
 ```wac
 // expect: refused
 struct Box<T> { T v; }
-struct Rec<T> { Rec<Box<T>>? next; }
 
 i32 grow<T>(T a) { Box<T> b = Box(a); return grow(b); }
 
-export i32 main() { return grow(1 as i32); }
+export i32 start() { return grow(1 as i32); }
+```
+
+```wac
+// expect: refused
+struct Box<T> { T v; }
+struct Rec<T> { Rec<Box<T>>? next; }
+
+export bool empty() {
+  Rec<i32> r = Rec(null);
+  return r.next is null;
+}
 ```
 
 `[§wac-generic-unbounded-aymiatd]` A template whose instantiations would require ever-larger type arguments is
@@ -471,7 +487,7 @@ An instantiation belongs to the template's module, and importing the template is
 instantiate `Box<i32>` share one instantiation, and a type argument need not be exported:
 
 ```wac
-// expect: answers main = 3
+// expect: answers shared = 3
 // ---- box.wac ----
 export struct Box<T> { T v; T get(const this) { return this.v; } }
 // ---- other.wac ----
@@ -483,7 +499,7 @@ import { make } from "./other.wac";
 
 struct Local { i32 v; }                    // not exported
 
-export i32 main() {
+export i32 shared() {
   Box<i32> b = make();                     // the same Box<i32> as other.wac's
   Box<Local> l = Box(Local(1));
   return b.get() + l.get().v;

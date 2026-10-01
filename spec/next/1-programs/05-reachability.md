@@ -22,9 +22,9 @@ Checking a whole project is a different operation, which retains everything
 ## Dropped declarations need only parse
 
 ```wac
-// expect: answers main = 0
-i32 unused() { return nonexistent(); }
-export i32 main() { return 0; }
+// expect: answers used = 0
+i32 unused() { return nonexistent(); }   // dropped
+export i32 used() { return 0; }
 ```
 
 `[§wac-reach-dropped-cmkjyyd]` A declaration no entry point reaches is dropped, and is not checked: it
@@ -32,7 +32,7 @@ need only parse. `unused` is dropped, so its call to a name that does not exist 
 
 ```wac
 // expect: refused
-export i32 main() {
+export i32 retained() {
   if (false) { return nonexistent(); }
   return 0;
 }
@@ -47,7 +47,7 @@ including branches that can never run.
 // expect: refused
 i32 broken() { return nonexistent(); }
 
-export i32 main() {
+export i32 chooses() {
   static_if (false) {
     return broken();
   } else {
@@ -57,7 +57,7 @@ export i32 main() {
 ```
 
 `[§wac-reach-static-branch-uqdrahd]` A reference in a static branch that is not taken still retains
-what it names. `main` references `broken`, so `broken` is retained and must compile.
+what it names. `chooses` references `broken`, so `broken` is retained and must compile.
 
 If the retained code compiles successfully, the compiler should still eliminate the dead branch and
 declarations left unused by that elimination. Retention requires checking; it does not require dead
@@ -73,7 +73,7 @@ struct Widget {
   i32 broken(const this) { return nonexistent(); }
 }
 
-export i32 main() {
+export i32 readWidget() {
   Widget w = Widget(7);
   return w.read();
 }
@@ -83,13 +83,27 @@ export i32 main() {
 references. `Widget` is retained with every method, so `broken`'s error is reported though nothing
 calls it.
 
+An exported type is an entry point of its own, as an exported function is:
+
+```wac
+// expect: refused
+export struct Gauge {
+  i32 level;
+  i32 broken(const this) { return nonexistent(); }
+}
+```
+
+`[§wac-reach-export-type-root-svpqwtw]` Every export of the entry module is an entry point — a struct, an
+enum, a `type` or a static as much as a function — so an exported type is retained, and checked whole, whether or
+not any function names it.
+
 Reachability is computed before types are known. It cannot determine which generic instantiations
 will occur, and therefore cannot determine which struct members will be reached through them, so it
 does not prune methods by type:
 
 ```wac
-// expect: answers main = 7
-export i32 main() { return readValue(Widget(7)); }
+// expect: answers viaGeneric = 7
+export i32 viaGeneric() { return readValue(Widget(7)); }
 
 i32 readValue<T>(T value) { return value.read(); }
 
@@ -105,13 +119,13 @@ Namespaces are neither types nor values. Their member references are resolved st
 selecting one member need not retain its siblings:
 
 ```wac
-// expect: answers main = 7
+// expect: answers viaHelpers = 7
 namespace helpers {
   export i32 good() { return 7; }
   export i32 bad() { return nonexistent(); }
 }
 
-export i32 main() { return helpers.good(); }
+export i32 viaHelpers() { return helpers.good(); }
 ```
 
 `[§wac-reach-namespace-member-vde62x5]` Qualifying a namespace member retains that member, not its
@@ -128,7 +142,7 @@ later optimisation ([28](../4-static/28-static-evaluation.md)).
 static i32 BROKEN = 1 / zero();
 i32 zero() { return 0; }
 
-export i32 main() {
+export i32 guarded() {
   if (false) { return BROKEN; }    // retains BROKEN; its evaluation traps
   return 0;
 }
@@ -142,25 +156,25 @@ A static declaration nothing reaches is dropped like any other, so the same init
 error when nothing refers to it:
 
 ```wac
-// expect: answers main = 0
+// expect: answers used = 0
 static i32 BROKEN = 1 / zero();    // dropped: never evaluated
-i32 zero() { return 0; }
+i32 zero() { return 0; }           // dropped with it
 
-export i32 main() { return 0; }
+export i32 used() { return 0; }
 ```
 
 ## An import is a route, not an instruction to read immediately
 
 ```wac
-// expect: answers main = 0
+// expect: answers used = 0
 // ---- main.wac ----
 import { helper } from "./optional.wac";   // this file does not exist
 
-i32 unused() { return helper(); }
-export i32 main() { return 0; }
+i32 unused() { return helper(); }          // dropped
+export i32 used() { return 0; }
 ```
 
-With `main` as the only root:
+With `used` as the only root:
 
 - `unused` is dropped.
 - `optional.wac` is never read.
@@ -170,7 +184,7 @@ With `main` as the only root:
 // expect: refused
 // ---- main.wac ----
 import { helper } from "./optional.wac";   // this file does not exist
-export i32 main() { return helper(); }
+export i32 viaHelper() { return helper(); }
 ```
 
 Now `optional.wac` must be loaded; a missing file or missing export is an error.
@@ -184,7 +198,7 @@ dependency routes.
 ## Namespace exports can preserve laziness
 
 ```wac
-// expect: answers main = 42
+// expect: answers viaBasic = 42
 // ---- library.wac ----
 export * as basic from "./basic.wac";
 export * as optional from "./missing.wac";   // this file does not exist
@@ -192,7 +206,7 @@ export * as optional from "./missing.wac";   // this file does not exist
 export i32 answer() { return 42; }
 // ---- main.wac ----
 import { basic.answer } from "./library.wac";
-export i32 main() { return answer(); }
+export i32 viaBasic() { return answer(); }
 ```
 
 `[§wac-reach-namespace-lazy-pxz4t63]` Reaching a member of one namespace re-export reads that

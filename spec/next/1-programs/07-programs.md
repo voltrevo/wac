@@ -6,9 +6,9 @@ answer but cannot reach anything.
 
 ## The entry module's exports are the program's interface
 
-The module passed to the compiler is the program's **entry**. Its exported functions are the entry
-points: reachability starts from them ([05](05-reachability.md)), and they are what the compiled
-module exposes to its host.
+The module passed to the compiler is the program's **entry**. Its exports are the entry
+points: reachability starts from them ([05](05-reachability.md)), and its exported functions are what
+the compiled module exposes to its host.
 
 ```wac
 // expect: answers test = 16
@@ -28,6 +28,22 @@ export is `test`. `test()` answers 16.
 
 `[§wac-export-no-collision-m4fn9rk]` Two imported modules may export functions with the same name
 without colliding: only the entry module's exports become the compiled module's exports.
+
+Exported types, statics and type declarations are entry points too, retained and checked whole
+([05](05-reachability.md)); they are not functions, so the compiled module does not expose them.
+
+```wac
+// expect: emits
+import { Ticket } from "core";
+
+export async i32 later(Ticket<i32> t) { return await t; }
+export gen<i32> void counting() { yield 1; }
+```
+
+`[§wac-export-any-signature-9pdfi7d]` Any function that is not generic may be exported, whatever its
+signature — `async`, a generator, or taking a parameter no host could construct. Compiling does not
+judge what a host can call; generic functions are the exception, since a host would call a name the
+author never wrote ([19](../2-types/19-generics.md)).
 
 `export` in any other module is about modules naming each other ([02](02-modules-and-imports.md)).
 How an export crosses to a host language — what a `string` or an enum becomes in JavaScript — is
@@ -68,7 +84,7 @@ without being given the means, and nothing a static initialiser can acquire
 what it can do:
 
 ```wac
-// expect: answers main = 3
+// expect: answers firstOverTwo = 3
 /** The first element `p` accepts, or nothing. */
 T? find<T>(T[] xs, fn<bool(T)> p) {
   for (T x in xs) {
@@ -79,7 +95,7 @@ T? find<T>(T[] xs, fn<bool(T)> p) {
   return null;
 }
 
-export i32 main() { return find([1, 3, 5], (i32 x) => x > 2)!; }
+export i32 firstOverTwo() { return find([1, 3, 5], (i32 x) => x > 2)!; }
 ```
 
 `find` takes no capability, so it cannot reach the world — whatever its body does, and whatever it
@@ -142,13 +158,10 @@ export Result<i32> main(Sys sys) {
 `Result.Ok(v)` exits as `v` would; answering `Result.Err(…)` exits 1.
 
 ```wac
-// expect: emits
+// expect: refused
 import { Sys } from "std";
 
-// ERROR: not a return type for main
-// export string main(Sys sys) { return "hi"; }
-
-export void main(Sys sys) { }
+export string main(Sys sys) { return "hi"; }   // not a return type for main
 ```
 
 `[§wac-main-return-types-jtjuda4]` `main` returns `void`, `never`, `i32`, or a `Result` of `void` or

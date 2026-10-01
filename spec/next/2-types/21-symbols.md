@@ -37,7 +37,9 @@ void update(Point p) {
 ```
 
 ```wac
-// expect: answers main = 12
+// expect: answers fieldAfterWrite = 7
+// expect: answers described = "point"
+// expect: answers aliasIsSameMember = true
 // ---- names.wac ----
 export symbol describe;
 export symbol metadata;
@@ -52,12 +54,17 @@ struct Point {
   string [describe](const this) { return "point"; }
 }
 
-export i32 main() {
+export i32 fieldAfterWrite() {
   Point p = Point(1, 2, 0);
-  p.[metadata] = 7;
-  string a = p.[describe]();
-  string b = p.[sameName]();               // the same member
-  return p.[metadata] + a.len();           // 7 + 5
+  p.[metadata] = 7;                        // an ordinary mutable field
+  return p.[metadata];
+}
+
+export string described() { return Point(1, 2, 0).[describe](); }
+
+export bool aliasIsSameMember() {
+  Point p = Point(1, 2, 0);
+  return p.[sameName]() == p.[describe]();
 }
 ```
 
@@ -83,7 +90,7 @@ void wrong(Point p) {
 ```
 
 ```wac
-// expect: emits
+// expect: answers described = "point"
 // ---- names.wac ----
 export symbol describe;
 // ---- unrelated.wac ----
@@ -96,13 +103,13 @@ struct Point {
   string [describe](const this) { return "point"; }
 }
 
-export i32 main() {
+export string described() {
   Point p = Point();
 
   // ERROR: Point has no member named by this symbol
   // string s = p.[unrelated]();
 
-  return 0;
+  return p.[describe]();
 }
 ```
 
@@ -130,15 +137,15 @@ t.[i];                      // i32: selector known statically
 mutability and method receiver rules remain ordinary rules.
 
 ```wac
-// expect: answers main = 7
+// expect: answers sizeOf(7) = 7
 symbol size;
 
 struct Box {
   i32 [size];
 }
 
-export i32 main() {
-  Box b = Box(7);
+export i32 sizeOf(i32 n) {
+  Box b = Box(n);
   return b.[size];
 }
 ```
@@ -162,7 +169,7 @@ Point q = Point(3, 4, 7);      // positional fields follow declaration order
 ```
 
 ```wac
-// expect: answers main = 14
+// expect: answers namedPlusPositional = 14
 symbol metadata;
 
 struct Point {
@@ -171,7 +178,7 @@ struct Point {
   i32 [metadata];
 }
 
-export i32 main() {
+export i32 namedPlusPositional() {
   Point p = Point { x: 3, y: 4, [metadata]: 7 };
   Point q = Point(3, 4, 7);
   return p.[metadata] + q.[metadata];
@@ -184,7 +191,7 @@ positionally in its declaration order.
 ## Inheritance and overriding
 
 ```wac
-// expect: answers main = 5
+// expect: answers describedThroughBase = "child"
 symbol describe;
 
 struct Base {
@@ -195,9 +202,9 @@ struct Child : Base {
   override string [describe](const this) { return "child"; }
 }
 
-export i32 main() {
+export string describedThroughBase() {
   Base b = Child();
-  return b.[describe]().len();             // "child"
+  return b.[describe]();                   // dispatches on the runtime type
 }
 ```
 
@@ -233,7 +240,7 @@ at runtime or during static evaluation. Literal conversion specifically requires
 ([09](09-numeric-literals.md)).
 
 ```wac
-// expect: answers main = 7
+// expect: answers throughType = 7
 symbol size;
 symbol make;
 
@@ -242,7 +249,7 @@ struct Foo {
   Foo [make]() { return Foo(); }
 }
 
-export i32 main() {
+export i32 throughType() {
   Foo value = Foo.[make]();
   return Foo.[size];
 }

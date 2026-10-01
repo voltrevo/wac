@@ -14,19 +14,23 @@ enum Option<T> {
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers isSomeOf(true) = true
+// expect: answers isSomeOf(false) = false
+// expect: answers orElseOf(true) = 4
+// expect: answers orElseOf(false) = 9
+// expect: answers mappedOf(true) = 8
+// expect: traps mappedOf(false)
 import { Option, mapOption } from "core";
 
 i32 twice(i32 x) { return x * 2; }
 
-export i32 main() {
-  Option<i32> a = Option.Some(4);
-  Option<i32> b = Option.None;
-  bool some = a.isSome() && b.isNone();
-  bool orElse = a.orElse(0) == 4 && b.orElse(9) == 9;
-  bool mapped = mapOption(a, twice).unwrap() == 8;
-  return some && orElse && mapped ? 1 : 0;
-}
+Option<i32> maybe(bool present) { return present ? Option.Some(4) : Option.None; }
+
+export bool isSomeOf(bool present) { return maybe(present).isSome() && !maybe(present).isNone(); }
+
+export i32 orElseOf(bool present) { return maybe(present).orElse(9); }
+
+export i32 mappedOf(bool present) { return mapOption(maybe(present), twice).unwrap(); }
 ```
 
 `[§wac-option-methods-s4r3cci]` `isSome()`, `isNone()`, `orElse(d)` — the value or `d` — and `unwrap()` — the value, or a trap —
@@ -42,19 +46,28 @@ enum Result<T, E = union> {
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers isOkOf(true) = true
+// expect: answers isOkOf(false) = false
+// expect: answers orElseOf(true) = 3
+// expect: answers orElseOf(false) = 0
+// expect: answers unwrapOf(true) = 3
+// expect: traps unwrapOf(false)
+// expect: answers okIsSome(true) = true
+// expect: answers okIsSome(false) = false
+// expect: answers theError = "no"
 import { Result, Option } from "core";
 
-export i32 main() {
-  Result<i32, string> good = Result.Ok(3);
-  Result<i32, string> bad = Result.Err("no");
+Result<i32, string> parsed(bool good) { return good ? Result.Ok(3) : Result.Err("no"); }
 
-  bool ok = good.isOk() && bad.isErr();
-  bool orElse = good.orElse(0) == 3 && bad.orElse(0) == 0;
-  bool unwrap = good.unwrap() == 3;
-  bool okErr = good.ok().isSome() && bad.ok().isNone() && bad.err().unwrap() == "no";
-  return ok && orElse && unwrap && okErr ? 1 : 0;
-}
+export bool isOkOf(bool good) { return parsed(good).isOk() && !parsed(good).isErr(); }
+
+export i32 orElseOf(bool good) { return parsed(good).orElse(0); }
+
+export i32 unwrapOf(bool good) { return parsed(good).unwrap(); }
+
+export bool okIsSome(bool good) { return parsed(good).ok().isSome(); }
+
+export string theError() { return parsed(false).err().unwrap(); }
 ```
 
 `[§wac-result-methods-t7523pd]` `isOk()`, `isErr()`, `orElse(d)`, `unwrap()` — the value, or a trap — `ok()` — the value as an

@@ -10,24 +10,18 @@ other type gets an operator only by implementing it: `a + b` on a struct calls a
 there is no mixing of types:
 
 ```wac
-// expect: answers main = 300
-export i32 main() {
-  i64 a = 100;
-  i64 b = 200;
-  f64 m = 2.5 * 4.0;                       // 10.0
+// expect: answers sum64(100, 200) = 300
+// expect: answers product(2.5, 4.0) = 10.0
+export i64 sum64(i64 a, i64 b) { return a + b; }
 
-  i32 x = 5;
-  f64 y = 1.0;
+export f64 product(f64 a, f64 b) { return a * b; }
 
+export void mixed(i32 x, f64 y, bool flag) {
   // ERROR: i32 + f64: the operands' types differ
   // f64 z = x + y;
 
-  bool flag = true;
-
   // ERROR: arithmetic is not defined on bool
   // i32 w = flag + 1;
-
-  return (a + b) as! i32;
 }
 ```
 
@@ -46,26 +40,33 @@ and `%` trap on a zero divisor, and on the signed minimum divided by `-1`.
 operand's, and it satisfies `a % b == a - trunc(a/b) * b` computed exactly — C's `fmod`, JavaScript's `%`:
 
 ```wac
-// expect: answers main = 1
-f64 m(f64 a, f64 b) { return a % b; }
+// expect: answers rem(7.0, 2.0) = 1.0
+// expect: answers rem(1.0, 0.1) = 0.09999999999999995
+// expect: answers rem(-7.0, 2.0) = -1.0
+// expect: answers rem(7.0, -2.0) = 1.0
+// expect: answers rem(1e300, 3.0) = 0.0
+// expect: answers remByZeroIsNaN(7.0) = true
+// expect: answers remByInfinity(7.0) = 7.0
+// expect: answers rem32(5.5, 1.5) = 1.0
+export f64 rem(f64 a, f64 b) { return a % b; }
 
-export i32 main() {
-  bool a = m(7.0, 2.0) == 1.0;
-  bool b = m(1.0, 0.1) == 0.09999999999999995;  // exact, not -2.220446049250313e-16
-  bool c = m(-7.0, 2.0) == -1.0 && m(7.0, -2.0) == 1.0;
-  bool d = m(1e300, 3.0) == 0.0;
-  f64 nan = m(7.0, 0.0);
-  bool e = nan != nan && m(7.0, 1.0 / 0.0) == 7.0;
-  f32 g = 5.5;
-  bool f = g % 1.5 == 1.0;
-  return a && b && c && d && e && f ? 1 : 0;
+export bool remByZeroIsNaN(f64 a) {
+  f64 nan = rem(a, 0.0);
+  return nan != nan;
 }
+
+export f64 remByInfinity(f64 a) {
+  f64 zero = 0.0;
+  return rem(a, 1.0 / zero);
+}
+
+export f32 rem32(f32 a, f32 b) { return a % b; }
 ```
 
 `[§wac-fmod-ox2ga90]` `7.0 % 2.0` is `1.0`.
 
 `[§wac-fmod-round-lji73wg]` `1.0 % 0.1` is `0.09999999999999995`: the remainder is exact, so it is not
-`a - trunc(a/b) * b` computed in floating point.
+`a - trunc(a/b) * b` computed in floating point, which would give `-2.220446049250313e-16`.
 
 `[§wac-fmod-sign-l3ief80]` The sign follows the left operand: `-7.0 % 2.0` is `-1.0` and `7.0 % -2.0` is
 `1.0`.
@@ -79,14 +80,12 @@ export i32 main() {
 Unary `-` wants a type with a negation, so it is refused on an unsigned integer:
 
 ```wac
-// expect: emits
-export i32 main() {
-  u32 u = 3;
-
+// expect: answers negate(3, 3) = -3
+export i32 negate(i32 i, u32 u) {
   // ERROR: unary minus is not defined on u32
   // u32 n = -u;
 
-  return 0;
+  return -i;
 }
 ```
 
@@ -98,12 +97,13 @@ export i32 main() {
 and on `string`, which compares and orders by its bytes:
 
 ```wac
-// expect: answers main = 1
+// expect: answers equal(1.0, 1.0) = true
+// expect: answers distinctObjects = true
 struct Point { i32 x; i32 y; }
 
-export i32 main() {
-  f64 one = 1.0;
-  bool a = one == 1.0;
+export bool equal(f64 a, f64 b) { return a == b; }
+
+export bool distinctObjects() {
   Point p = Point(1, 2);
   Point q = Point(1, 2);
 
@@ -115,7 +115,7 @@ export i32 main() {
   // ERROR: string? has no ==; test for null first
   // bool t = s == "x";
 
-  return a && p is not q ? 1 : 0;
+  return p is not q;                       // equal fields, two objects
 }
 ```
 
@@ -134,28 +134,26 @@ value compares and orders. Tuples compare member by member ([14](../2-types/14-t
 type, and the left operand's type decides the result:
 
 ```wac
-// expect: answers main = 1
-u64 rotl(u64 v, i32 n) { return (v << n) | (v >> (64 - n)); }
-
-export i32 main() {
-  i64 one = 1;
-  bool a = one << 32 == 4294967296;
-  i32 m16 = -16;
-  bool b = m16 >> 1 == -8;                 // arithmetic: copies the sign bit
-  bool c = m16 >>> 1 == 2147483640;        // logical: fills with zeros
-  i32 m1 = -1;
-  bool d = m1 >>> 28 == 15;
-  i64 w = -16;
-  bool e = w >>> 4 == 1152921504606846975;
-  bool f = rotl(1, 1) == 2;
-  return a && b && c && d && e && f ? 1 : 0;
-}
+// expect: answers shl64(1, 32) = 4294967296
+// expect: answers shlByU8(1, 3) = 8
+// expect: answers shlByU8(1, 35) = 8
+// expect: answers shr(-16, 1) = -8
+// expect: answers ushr(-16, 1) = 2147483640
+// expect: answers ushr(-1, 28) = 15
+// expect: answers ushr64(-16, 4) = 1152921504606846975
+// expect: answers rotl(1, 1) = 2
+export i64 shl64(i64 v, i32 n) { return v << n; }
+export i32 shlByU8(i32 v, u8 n) { return v << n; }        // the amount's type is any integer
+export i32 shr(i32 v, i32 n) { return v >> n; }           // arithmetic: copies the sign bit
+export i32 ushr(i32 v, i32 n) { return v >>> n; }         // logical: fills with zeros
+export i64 ushr64(i64 v, i32 n) { return v >>> n; }
+export u64 rotl(u64 v, i32 n) { return (v << n) | (v >> (64 - n)); }
 ```
 
 `[§wac-shift64-rhgzpth]` An `i64` may be shifted by an `i32` amount: `1 << 32` is `4294967296`.
 
 `[§wac-shift-amount-3wkq7np]` A shift amount may be any integer type. The left operand's type decides the
-result, and the amount is taken modulo its width.
+result, and the amount is taken modulo its width: `shlByU8(1, 35)` shifts by `3`.
 
 `[§wac-shr-s-z073930]` `>>` on a signed integer is arithmetic: `-16 >> 1` is `-8`.
 
@@ -166,20 +164,15 @@ result, and the amount is taken modulo its width.
 `[§wac-shr-u64-2jujzws]` `>>>` on an `i64`: `-16 >>> 4` is `1152921504606846975`.
 
 ```wac
-// expect: emits
-export i32 main() {
-  u32 x = 8;
-  u32 good = x >> 1;                       // logical, because x is unsigned
-
+// expect: answers halve(8, 1.0) = 4
+export u32 halve(u32 x, f64 f) {
   // ERROR: '>>>' is redundant on u32 — '>>' is already logical
   // u32 bad = x >>> 1;
-
-  f64 f = 1.0;
 
   // ERROR: '>>>' requires an integer type, got f64
   // f64 g = f >>> 1;
 
-  return 0;
+  return x >> 1;                           // logical, because x is unsigned
 }
 ```
 
@@ -194,16 +187,19 @@ There is no `<<<`: a left shift discards high bits either way.
 Every integer has five methods, each one instruction that no operator reaches:
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
-  u32 x = 0x00F0;
-  u32 zero = 0;
-  bool a = x.leadingZeros() == 24 && zero.leadingZeros() == 32;
-  bool b = x.trailingZeros() == 4 && zero.trailingZeros() == 32;
-  bool c = x.onesCount() == 4;
-  bool d = x.rotateLeft(28) == 0x0F && x.rotateRight(4) == 0x0F && x.rotateLeft(32) == x;
-  return a && b && c && d ? 1 : 0;
-}
+// expect: answers leading(0x00F0) = 24
+// expect: answers leading(0) = 32
+// expect: answers trailing(0x00F0) = 4
+// expect: answers trailing(0) = 32
+// expect: answers ones(0x00F0) = 4
+// expect: answers rotateLeft(0x00F0, 28) = 0x0F
+// expect: answers rotateLeft(0x00F0, 32) = 0x00F0
+// expect: answers rotateRight(0x00F0, 4) = 0x0F
+export u32 leading(u32 x) { return x.leadingZeros(); }
+export u32 trailing(u32 x) { return x.trailingZeros(); }
+export u32 ones(u32 x) { return x.onesCount(); }
+export u32 rotateLeft(u32 x, i32 n) { return x.rotateLeft(n); }
+export u32 rotateRight(u32 x, i32 n) { return x.rotateRight(n); }
 ```
 
 `[§wacc-int-bit-methods]` Every integer type has `leadingZeros`, `trailingZeros`, `onesCount`, `rotateLeft` and
@@ -216,7 +212,9 @@ rotation's count is taken modulo the width.
 answer:
 
 ```wac
-// expect: answers main = 1
+// expect: answers bothPositive(3, 5) = true
+// expect: answers bothPositive(3, -1) = false
+// expect: answers callsMade = 0
 struct Box { i32 val; }
 
 bool incr(Box b) {
@@ -224,14 +222,13 @@ bool incr(Box b) {
   return true;
 }
 
-export i32 main() {
+export bool bothPositive(i32 x, i32 y) { return x > 0 && y > 0; }
+
+export i32 callsMade() {
   Box b = Box(0);
   bool r1 = false && incr(b);              // incr is not called
   bool r2 = true || incr(b);               // nor here
-  i32 x = 3;
-  i32 y = -1;
-  bool both = x > 0 && y > 0;              // false
-  return b.val == 0 && !both ? 1 : 0;
+  return b.val;
 }
 ```
 
@@ -252,34 +249,56 @@ statement, not an expression. `++` and `--` work on any integer, prefix or postf
 expressions — postfix answering the old value, prefix the new:
 
 ```wac
-// expect: answers main = 162
+// expect: answers compound = 40
+// expect: answers postfix = 56
+// expect: answers prefix = 66
+// expect: answers shiftedLocal = 1152921504606846975
+// expect: answers shiftedField = 16
+// expect: answers shiftedElement = 16
 struct Bits { i64 v; }
 
-export i32 main() {
+export i32 compound() {
   i32 x = 10;
   x += 5;
   x -= 2;
   x *= 3;
-  x++;                                     // 40
+  x++;
+  return x;                                // ((10 + 5 - 2) * 3) + 1
+}
 
+export i32 postfix() {
   i32 a = 5;
   i32 post = a++;                          // 5, and a is 6
+  return post * 10 + a;
+}
+
+export i32 prefix() {
   i32 b = 5;
   i32 pre = ++b;                           // 6, and b is 6
+  return pre * 10 + b;
+}
 
+export i64 shiftedLocal() {
   i64 local = -16;
   local >>>= 4;
-  Bits bits = Bits(1);
-  bits.v <<= 4;                            // 16
-  i64[] arr = [1];
-  arr[0] <<= 4;                            // 16
+  return local;
+}
 
-  return x + post * 10 + a + pre * 10 + b + (bits.v + arr[0]) as! i32 - 32;   // 40 + 56 + 66
+export i64 shiftedField() {
+  Bits bits = Bits(1);
+  bits.v <<= 4;
+  return bits.v;
+}
+
+export i64 shiftedElement() {
+  i64[] arr = [1];
+  arr[0] <<= 4;
+  return arr[0];
 }
 ```
 
-`[§wac-compound-pw7qq7v]` Compound assignment applies its operator and assigns: the sequence above leaves `x`
-at `40`.
+`[§wac-compound-pw7qq7v]` Compound assignment applies its operator and assigns: the sequence in `compound` leaves
+`x` at `40`.
 
 `[§wac-postincr-expr-n4kx8wq]` Postfix `x++` answers the value before the change: `y = x++` from 5 leaves `y` 5
 and `x` 6.
@@ -304,7 +323,7 @@ and `x` 6.
 | 4 | `*` `/` `%` | left |
 | 5 | `+` `-` | left |
 | 6 | `<<` `>>` `>>>` | left |
-| 7 | `<` `<=` `>` `>=` | left |
+| 7 | `<` `<=` `>` `>=` `is` `is not` `matches` | left |
 | 8 | `==` `!=` | left |
 | 9 | `&` | left |
 | 10 | `^` | left |
@@ -312,25 +331,25 @@ and `x` 6.
 | 12 | `&&` | left |
 | 13 | `\|\|` | left |
 | 14 | `??` | right |
-| 15 | `is` `is not` `matches` | left |
-| 16 | `?:` | right |
+| 15 | `?:` | right |
 
-`is` binds looser than `&&`, so a test combined with another condition is parenthesised: `(s is Circle) &&
-s.r > 0.0`.
+`is` and `matches` bind as comparisons do, so a test combines with another condition unparenthesised:
+`s is null || n == 0`, and `Circle c matches s && c.r > 0.0` binds `c` for the right operand.
 
 ```wac
-// expect: answers main = 1
-export i32 main() {
+// expect: answers arithmeticFirst(1, 8) = true
+// expect: answers coalesceLast = 5
+export bool arithmeticFirst(i32 one, i32 eight) {
+  return one + 2 * 3 == 7 && eight >> 1 + 1 == 2;   // * before +, + before >>
+}
+
+export i32 coalesceLast() {
   i32? a = null;
-  i32 one = 1;
-  i32 eight = 8;
-  bool b = one + 2 * 3 == 7 && eight >> 1 + 1 == 2;   // * before +, + before >>
-  i32 c = a ?? 4 + 1;                            // ?? binds looser than +: 5
-  return b && c == 5 ? 1 : 0;
+  return a ?? 4 + 1;                        // ?? binds looser than +: a ?? 5
 }
 ```
 
-`[§wac-precedence-x7mj5mk]` Operators bind as the table above says.
+`[§wac-precedence-tests-78cupm3]` Operators bind as the table above says; `is`, `is not` and `matches` bind as tightly as `<`.
 
 ## The left operand selects the implementation
 
@@ -359,7 +378,7 @@ types. There is no fallback search. An unresolved numeric left operand has a sep
 below.
 
 ```wac
-// expect: answers main = 6.0
+// expect: answers addedY = 6.0
 import { operators } from "core";
 
 struct Vec2 {
@@ -371,7 +390,7 @@ struct Vec2 {
   }
 }
 
-export f64 main() {
+export f64 addedY() {
   Vec2 c = Vec2(1.0, 2.0) + Vec2(3.0, 4.0);
   return c.y;
 }
@@ -455,7 +474,7 @@ void example() {
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers maskOfComparison = true
 import { operators } from "core";
 
 struct EqualityMask { bool x; bool y; }
@@ -469,7 +488,7 @@ struct Pair {
   }
 }
 
-export i32 main() {
+export bool maskOfComparison() {
   Pair a = Pair(1, 2);
   Pair b = Pair(1, 3);
   EqualityMask m = a == b;
@@ -480,7 +499,7 @@ export i32 main() {
   // ERROR: a condition requires bool, not EqualityMask
   // if (a == b) { }
 
-  return m.x && !m.y ? 1 : 0;
+  return m.x && !m.y;                      // x equal, y not
 }
 ```
 
@@ -505,7 +524,7 @@ bool [operators.notEqual](const this, const Foo rhs) {
 ### Compound assignment is its own operation
 
 ```wac
-// expect: answers main = 1
+// expect: answers mutatedInPlace = 3
 import { operators } from "core";
 
 struct Counter {
@@ -516,11 +535,11 @@ struct Counter {
   }
 }
 
-export i32 main() {
+export i32 mutatedInPlace() {
   Counter a = Counter(1);
   Counter alias = a;
   a += 2;                     // a.[operators.addAssign](2)
-  return alias.value == 3 && a is alias ? 1 : 0;   // the same object was mutated
+  return a is alias ? alias.value : -1;    // a still names the same object, now 3
 }
 ```
 
@@ -625,7 +644,7 @@ does not change operand evaluation order or duplicate evaluation.
 ### User-defined operators constrain arguments through their signatures
 
 ```wac
-// expect: answers main = 30.0
+// expect: answers constrained = 16.0
 import { operators } from "core";
 
 struct Vec3 {
@@ -642,12 +661,12 @@ struct Vec3 {
   }
 }
 
-export f64 main() {
+export f64 constrained() {
   Vec3 v = Vec3(1.0, 1.0, 1.0);
   Vec3 a = v * 5;                          // multiply's parameter constrains 5 to f32
   Vec3 b = 5 * v;                          // multiplyFromLeft constrains 5 to f32
   Vec3 c = (2 * 3) * v;                    // the left expression receives f32
-  return (a.x + b.y + c.z) as f64 + 14.0;  // 5 + 5 + 6 + 14
+  return (a.x + b.y + c.z) as f64;         // 5 + 5 + 6
 }
 ```
 

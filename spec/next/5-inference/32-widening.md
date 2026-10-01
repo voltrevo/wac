@@ -22,13 +22,13 @@ widen(union<Rect>, anyref) = anyref
 ```
 
 ```wac
-// expect: answers main = 3
+// expect: answers widened(true) = 3
+// expect: answers widened(false) = 4
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 struct Circle : Shape { i32 r; }
 
-export i32 main() {
-  bool c = true;
+export i32 widened(bool c) {
   Shape s = c ? Rect(1, 2) : Circle(2, 3);      // widen(Rect, Circle) = Shape
   Shape[] all = [Rect(1, 2), Circle(2, 3)];     // the same, for array elements
 
@@ -53,8 +53,8 @@ their order, and a combination that succeeds as a whole is not refused because s
 widen.
 
 ```wac
-// expect: answers main = 3
-export i32 main() {
+// expect: answers absorbed = 3
+export i32 absorbed() {
   i32 a = 1;
   string b = "s";
   union<i32, string> c = 2;
@@ -103,12 +103,11 @@ independently inferred helper is checked in its own context; a caller's union do
 body.
 
 ```wac
-// expect: answers main = 1
+// expect: answers expectedUnion(true) = true
+// expect: answers expectedUnion(false) = false
 i32 makeI32() { return 4; }
 
-export i32 main() {
-  bool cond = true;
-
+export bool expectedUnion(bool cond) {
   // ERROR: i32 and string do not widen
   // auto a = cond ? makeI32() : "foo";
 
@@ -118,7 +117,7 @@ export i32 main() {
   // ERROR: 5 has no numeric target
   // union d = cond ? 5 : "foo";
 
-  return 1;
+  return b is i32 && c is i32;
 }
 ```
 
@@ -149,13 +148,12 @@ auto nothing() { return null; } // null, meaning never?
 ```
 
 ```wac
-// expect: answers main = 1
+// expect: answers widenedNull(false) = true
 struct Shape { i32 x; }
 struct Square : Shape { i32 s; }
 struct Circle : Shape { i32 r; }
 
-export i32 main() {
-  bool c = false;
+export bool widenedNull(bool c) {
   Square? sq = null;
   Circle? ci = Circle(1, 2);
 
@@ -163,7 +161,7 @@ export i32 main() {
   auto b = c ? sq : ci;                    // Shape?: the common ancestor, one layer
   i32?? deep = null;
   auto d = c ? deep : null;                // i32??: the greater depth
-  return a is null && b is not null && d is null ? 1 : 0;
+  return a is null && b is not null && d is null;
 }
 ```
 

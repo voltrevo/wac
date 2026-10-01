@@ -8,13 +8,11 @@ that every variant is handled.
 
 ```wac
 // expect: emits
-enum Shape {
+export enum Shape {
   Point,
   Circle(f64 radius),
   Rect(f64 width, f64 height),
 }
-
-export i32 main() { return 0; }
 ```
 
 Payload fields are named, like struct fields, because positional-only payloads make a three-field
@@ -28,12 +26,10 @@ may share a field name, because they are different types:
 
 ```wac
 // expect: emits
-enum Ok { A(i32 x), B(i32 x) }
+export enum Ok { A(i32 x), B(i32 x) }
 
 // ERROR: duplicate payload field 'x'
-// enum Bad { A(i32 x, i32 x) }
-
-export i32 main() { return 0; }
+// export enum Bad { A(i32 x, i32 x) }
 ```
 
 `[§enum-dup-payload-field]` Two payload fields of one variant with the same name are refused; two
@@ -45,12 +41,10 @@ two enums in one file cannot share a variant name:
 
 ```wac
 // expect: emits
-enum Shape { Circle(f64 r) }
+export enum Shape { Circle(f64 r) }
 
 // ERROR: duplicate name 'Circle'
-// enum Hole { Circle(f64 r) }
-
-export i32 main() { return 0; }
+// export enum Hole { Circle(f64 r) }
 ```
 
 `[§enum-variant-name-collision]` A variant name that collides with another top-level name of its file is
@@ -67,14 +61,14 @@ by identity rather than by name ([01](../1-programs/01-names-and-identity.md)).
 A variant is built through its enum. A variant with no payload is a value, not a call:
 
 ```wac
-// expect: answers main = 3
+// expect: answers built = 3
 enum Shape {
   Point,
   Circle(f64 radius),
   Rect(f64 width, f64 height),
 }
 
-export i32 main() {
+export i32 built() {
   Shape a = Shape.Point;
   Shape b = Shape.Circle(2.0);
   Shape c = Shape.Rect(3.0, 4.0);
@@ -88,7 +82,8 @@ export i32 main() {
   // ERROR: Rect carries two fields
   // Shape f = Shape.Rect(3.0);
 
-  return 3;
+  Shape[] all = [a, b, c];
+  return all.len();
 }
 ```
 
@@ -102,7 +97,8 @@ missing payload.
 ## Matching
 
 ```wac
-// expect: answers main = 12.0
+// expect: answers rectArea = 12.0
+// expect: answers pointArea = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -117,7 +113,8 @@ f64 area(Shape s) {
   }
 }
 
-export f64 main() { return area(Shape.Rect(3.0, 4.0)) + area(Shape.Point); }
+export f64 rectArea() { return area(Shape.Rect(3.0, 4.0)); }
+export f64 pointArea() { return area(Shape.Point); }
 ```
 
 An arm is a pattern, a colon, and a block. Bindings are positional and take their types from the
@@ -131,7 +128,7 @@ runs, with its payload bound.
 `match` is also an expression. Its arms give a value after the colon and are comma-separated:
 
 ```wac
-// expect: answers main = 12.0
+// expect: answers rectArea = 12.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -146,7 +143,7 @@ f64 area(Shape s) {
   };
 }
 
-export f64 main() { return area(Shape.Rect(3.0, 4.0)); }
+export f64 rectArea() { return area(Shape.Rect(3.0, 4.0)); }
 ```
 
 `[§enum-match-expr-4wnq7bk]` A `match` used as an expression answers its selected arm's value. Its arms'
@@ -161,7 +158,8 @@ control flow are [25](../3-expressions/25-control-flow.md)'s subject.
 Omit the parentheses to ignore every payload field, or bind `_` to ignore one:
 
 ```wac
-// expect: answers main = 1
+// expect: answers circleIsRound = true
+// expect: answers squareIsRound = false
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -176,7 +174,8 @@ bool isRound(Shape s) {
   };
 }
 
-export i32 main() { return isRound(Shape.Circle(1.0)) ? 1 : 0; }
+export bool circleIsRound() { return isRound(Shape.Circle(1.0)); }
+export bool squareIsRound() { return isRound(Shape.Rect(1.0, 1.0)); }
 ```
 
 `[§enum-match-ignore]` A pattern with no parentheses ignores the payload, and `_` ignores one field.
@@ -184,7 +183,7 @@ export i32 main() { return isRound(Shape.Circle(1.0)) ? 1 : 0; }
 A pattern binds all of a variant's payload or none of it:
 
 ```wac
-// expect: emits
+// expect: answers rectWidth = 2.0
 enum Shape {
   Point,
   Rect(f64 width, f64 height),
@@ -203,7 +202,7 @@ f64 width(Shape s) {
   };
 }
 
-export i32 main() { return 0; }
+export f64 rectWidth() { return width(Shape.Rect(2.0, 5.0)); }
 ```
 
 `[§enum-match-arity-4jq7wnm]` A payload pattern whose length differs from the variant's payload is
@@ -214,7 +213,8 @@ refused. A name in the wrong position would silently be a different field.
 In a payload position, `is Variant` tests the payload's variant instead of binding it:
 
 ```wac
-// expect: answers main = 2
+// expect: answers denied = 2
+// expect: answers notFound = 1
 enum Fault { NotFound, IsDir, Denied }
 enum Outcome { Ok(i32 v), Err(Fault e) }
 
@@ -226,7 +226,8 @@ i32 describe(Outcome r) {
   };
 }
 
-export i32 main() { return describe(Outcome.Err(Fault.Denied)); }
+export i32 denied() { return describe(Outcome.Err(Fault.Denied)); }
+export i32 notFound() { return describe(Outcome.Err(Fault.NotFound)); }
 ```
 
 `[§enum-payload-is-pattern-mec7vyh]` `is V` in a payload position matches when that payload field holds the
@@ -242,14 +243,14 @@ A `match` must cover every variant. This is the point of the feature: the compil
 was forgotten when a variant is added.
 
 ```wac
-// expect: emits
+// expect: answers pointValue = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
   Rect(f64 width, f64 height),
 }
 
-f64 bad(Shape s) {
+f64 partial(Shape s) {
   // ERROR: match does not cover 'Rect'
   // match (s) {
   //   Point:     { return 0.0; }
@@ -258,7 +259,7 @@ f64 bad(Shape s) {
   return 0.0;
 }
 
-export i32 main() { return 0; }
+export f64 pointValue() { return partial(Shape.Point); }
 ```
 
 `[§enum-match-inexhaustive]` A `match` that names neither every variant nor a `default` is refused, and
@@ -267,7 +268,7 @@ the diagnostic names a missing variant.
 A `default` arm covers every variant not named:
 
 ```wac
-// expect: answers main = 1.5
+// expect: answers pointRadius = 1.5
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -281,7 +282,7 @@ f64 radiusOr(Shape s, f64 fallback) {
   };
 }
 
-export f64 main() { return radiusOr(Shape.Point, 1.5); }
+export f64 pointRadius() { return radiusOr(Shape.Point, 1.5); }
 ```
 
 `[§enum-match-else]` A `default` arm takes every variant the other arms do not name.
@@ -292,7 +293,7 @@ naming*, and `Err(_)` and `default` sit one bracket apart in the same match mean
 A `default` that can never be reached, and a variant named twice, are errors rather than dead code:
 
 ```wac
-// expect: emits
+// expect: answers pointCovered = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -311,7 +312,7 @@ f64 covering(Shape s) {
   };
 }
 
-export i32 main() { return 0; }
+export f64 pointCovered() { return covering(Shape.Point); }
 ```
 
 `[§enum-match-else-unreachable]` A `default` arm in a `match` that already names every variant is
@@ -326,13 +327,13 @@ A variant whose payload has no values need not be covered ([11](11-never-and-uni
 `is` accepts a variant, bare or qualified by its enum:
 
 ```wac
-// expect: answers main = 2
+// expect: answers circleTests = 2
 enum Shape {
   Point,
   Circle(f64 radius),
 }
 
-export i32 main() {
+export i32 circleTests() {
   Shape a = Shape.Circle(1.0);
   i32 n = 0;
   if (a is Circle) { n += 1; }
@@ -354,7 +355,8 @@ Inside an arm, the subject has the arm's variant type, so its payload fields are
 directly:
 
 ```wac
-// expect: answers main = 7.0
+// expect: answers rectWidth = 3.0
+// expect: answers circleWidth = 4.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -369,7 +371,8 @@ f64 widthOf(Shape s) {
   };
 }
 
-export f64 main() { return widthOf(Shape.Rect(3.0, 4.0)) + widthOf(Shape.Circle(2.0)); }
+export f64 rectWidth() { return widthOf(Shape.Rect(3.0, 4.0)); }
+export f64 circleWidth() { return widthOf(Shape.Circle(2.0)); }
 ```
 
 `[§enum-narrow]` In an arm, a subject that is a plain name has the arm's variant type:
@@ -383,7 +386,8 @@ variant type, for exactly the arm's extent ([01](../1-programs/01-names-and-iden
 follow from it being a binding:
 
 ```wac
-// expect: answers main = 2.0
+// expect: answers firstRadius = 2.0
+// expect: answers pointReassigned = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -408,7 +412,8 @@ f64 reassign(Shape s) {
   };
 }
 
-export f64 main() { return first([Shape.Circle(2.0)]); }
+export f64 firstRadius() { return first([Shape.Circle(2.0)]); }
+export f64 pointReassigned() { return reassign(Shape.Point); }
 ```
 
 `[§enum-narrow-nonvariable]` When the subject is not a plain name, nothing narrows; payload bindings still
@@ -427,13 +432,13 @@ Outside `match`, `if (x is V)` narrows in the same way ([12](12-structs.md)).
 A variant value is an enum value, so it can be matched directly; the arms still cover the enum:
 
 ```wac
-// expect: answers main = 2.5
+// expect: answers circleRadius = 2.5
 enum Shape {
   Point,
   Circle(f64 radius),
 }
 
-export f64 main() {
+export f64 circleRadius() {
   Circle c = Shape.Circle(2.5);
   return match (c) {
     Circle(r): r,
@@ -454,10 +459,10 @@ Anything legal in a block is legal in an arm — locals, constructions, nested c
 or `continue` in an arm acts on the enclosing loop:
 
 ```wac
-// expect: answers main = 3
+// expect: answers totalBeforeDone = 3
 enum Step { Work(i32 n), Done }
 
-export i32 main() {
+export i32 totalBeforeDone() {
   Step[] steps = [Step.Work(1), Step.Work(2), Step.Done, Step.Work(100)];
   i32 total = 0;
   i32 i = 0;
@@ -482,7 +487,7 @@ such a `break` is not infinite for the purpose of checking that a function retur
 A payload may name the enum being declared, which makes trees expressible:
 
 ```wac
-// expect: answers main = 3
+// expect: answers treeSum = 3
 enum Tree {
   Leaf(i32 value),
   Node(Tree left, Tree right),
@@ -495,7 +500,7 @@ i32 sum(Tree t) {
   };
 }
 
-export i32 main() { return sum(Tree.Node(Tree.Leaf(1), Tree.Leaf(2))); }
+export i32 treeSum() { return sum(Tree.Node(Tree.Leaf(1), Tree.Leaf(2))); }
 ```
 
 `[§enum-recursive]` A payload may have the type of its own enum: `sum(Tree.Node(Tree.Leaf(1),
@@ -504,7 +509,7 @@ Tree.Leaf(2)))` answers `3`.
 Recursion may also go through a struct, which is what a container with methods needs:
 
 ```wac
-// expect: answers main = 2
+// expect: answers nestedDepth = 2
 enum Val { Nil, Num(f64 v), Arr(ArrData a) }
 
 struct ArrData {
@@ -520,7 +525,7 @@ i32 depth(Val v) {
   };
 }
 
-export i32 main() {
+export i32 nestedDepth() {
   Val inner = Val.Arr(ArrData([Val.Num(1.0)], 1));
   return depth(Val.Arr(ArrData([inner], 1)));
 }
@@ -540,22 +545,22 @@ whose every variant requires itself is uninhabited, and still valid ([11](11-nev
 There is no default variant, so an enum value cannot be produced without saying which variant it is:
 
 ```wac
-// expect: answers main = 3
+// expect: answers withoutDefaults = 6
 enum E { A(i32 n), B }
 struct S { E e; }
 
-export i32 main() {
+export i32 withoutDefaults() {
   // ERROR: E has no default value
   // E[] a = E[].defaulted(2);
 
   // ERROR: S has no default value — its field e has none
-  // S s = S { };
+  // S t = S { };
 
   E[] b = [E.A(1), E.B];                   // a literal needs no default
   E[] c = E[].filled(2, E.B);              // nor does a fill value
   E?[] d = E?[].defaulted(2);              // nullable elements default to null
   S s = S(E.A(1));                         // positional construction supplies the field
-  return b.len() + 1;
+  return b.len() + c.len() + d.len();
 }
 ```
 
@@ -570,10 +575,10 @@ Two variants of one enum combine to the enum, so a ternary or array literal of v
 type:
 
 ```wac
-// expect: answers main = 2
+// expect: answers combined = 2
 enum E { A(i32 n), B }
 
-export i32 main() {
+export i32 combined() {
   bool cond = true;
   E e = cond ? E.A(9) : E.B;
   E[] all = [E.A(1), E.B];
@@ -587,7 +592,7 @@ including when both are the same variant.
 Variants may appear in every position a struct may:
 
 ```wac
-// expect: answers main = 1
+// expect: answers oneRect = 1
 enum Shape {
   Point,
   Rect(f64 width, f64 height),
@@ -604,7 +609,7 @@ i32 countRects(Shape[] shapes) {
   return n;
 }
 
-export i32 main() { return countRects([Shape.Rect(1.0, 2.0), Shape.Point, Shape.Point]); }
+export i32 oneRect() { return countRects([Shape.Rect(1.0, 2.0), Shape.Point, Shape.Point]); }
 ```
 
 `[§enum-array]` An array of an enum, iterated and matched, answers `1` for one `Rect` and two `Point`s.
@@ -615,7 +620,7 @@ An enum may declare methods after its variants. `this` is the enum, and `match (
 variant:
 
 ```wac
-// expect: answers main = 24.0
+// expect: answers twiceRect = 24.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -632,7 +637,7 @@ enum Shape {
   f64 twiceArea(const this) { return this.area() * 2.0; }
 }
 
-export f64 main() { return Shape.Rect(3.0, 4.0).twiceArea(); }
+export f64 twiceRect() { return Shape.Rect(3.0, 4.0).twiceArea(); }
 ```
 
 `[§enum-methods-6vkq2wn]` An enum's methods take `this` as the enum, may take further parameters, and may
@@ -649,7 +654,7 @@ variant is constructed, so that spelling has to keep meaning one thing.
 ## Across files
 
 ```wac
-// expect: answers main = 1
+// expect: answers kindOf = 1
 // ---- k.wac ----
 export enum Kind { A, B }
 export struct Holder { Kind kind; }
@@ -657,7 +662,7 @@ export Holder mk() { return Holder(Kind.A); }
 // ---- main.wac ----
 import { Holder, mk } from "./k.wac";          // Kind itself is not imported
 
-export i32 main() {
+export i32 kindOf() {
   Holder h = mk();
   return match (h.kind) {
     A: 1,

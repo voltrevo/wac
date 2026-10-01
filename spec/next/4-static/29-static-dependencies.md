@@ -29,7 +29,7 @@ Completion is shallow: a type can contain references to incomplete types. Comple
 during other type computations; it does not recursively complete every referenced type.
 
 ```wac
-// expect: answers main = 2
+// expect: answers secondValue = 2
 type Optional<T> {
   return typeref(T).pushNull();
 }
@@ -39,7 +39,7 @@ struct Node {
   Optional<Node> next;                     // Node? — needs only Node's identity
 }
 
-export i32 main() {
+export i32 secondValue() {
   Node n = Node(1, Node(2, null));
   return n.next!.value;
 }
@@ -100,20 +100,22 @@ enum X { A(X?), } // Allowed: recursion through an enum.
 
 ```wac
 // expect: emits
-type W = (W?,);                            // through a tuple
-enum E { A(E? next) }                      // through an enum
+export type W = (W?,);                     // through a tuple
+export enum E { A(E? next) }               // through an enum
 
 // ERROR: X is its own nullable — a cycle through nullability alone
-// type X = X?;
+// export type X = X?;
 
 // ERROR: a cycle through nullability alone
-// type X2 = X2??;
+// export type X2 = X2??;
+```
 
-// ERROR: a cycle through an alias and nullability
-// type Y = Z;
-// type Z = Y?;
+A cycle may run through more than one alias:
 
-export i32 main() { return 0; }
+```wac
+// expect: refused
+export type Y = Z;                         // a cycle through an alias and nullability
+export type Z = Y?;
 ```
 
 `[§wac-static-dep-recursion-guard-va5yec4]` A type declaration whose definition reaches itself through aliases and
@@ -178,7 +180,8 @@ i32 example() {
 ```
 
 ```wac
-// expect: answers main = 44
+// expect: answers copy = 42
+// expect: answers two = 2
 static i32 COPY = getAnswer();             // 42, though ANSWER is declared below
 
 i32 getAnswer() { return ANSWER; }
@@ -188,7 +191,8 @@ static i32 ANSWER = 42;
 static i32 TWO = ONE + ONE;
 static i32 ONE = 1;
 
-export i32 main() { return COPY + TWO; }
+export i32 copy() { return COPY; }
+export i32 two() { return TWO; }
 ```
 
 `[§wac-static-dep-order-free-au43dhv]` Source order does not decide evaluation order: a static may read one declared
@@ -208,7 +212,7 @@ static i32 ANSWER = getAnswer();
 
 i32 getAnswer() { return ANSWER; }
 
-export i32 main() { return ANSWER; }
+export i32 answer() { return ANSWER; }
 ```
 
 `[§wac-static-dep-cycle-ucebvke]` A static whose value is demanded, however indirectly, by its own evaluation is
@@ -249,7 +253,8 @@ i32 choose(bool first) {
 Checking `choose` needs `B`'s type; this invocation never reads `B`'s value.
 
 ```wac
-// expect: answers main = 15
+// expect: answers a = 7
+// expect: answers b = 8
 static i32 A = choose(true);
 static i32 B = A + 1;
 
@@ -258,7 +263,8 @@ i32 choose(bool first) {
   return B;
 }
 
-export i32 main() { return A + B; }        // 7 + 8
+export i32 a() { return A; }
+export i32 b() { return B; }
 ```
 
 `[§wac-static-dep-demand-erw7x5a]` A dependency is a value actually read during evaluation, not a name merely
@@ -274,7 +280,7 @@ i32 choose(bool first) {
   return B;
 }
 
-export i32 main() { return A; }
+export i32 a() { return A; }
 // Computing A succeeds with 7.
 // Overall compilation fails: B survives reachability and its value is cyclic.
 ```
@@ -289,7 +295,7 @@ i32 choose(bool first) {
   return B;
 }
 
-export i32 main() { return A; }
+export i32 a() { return A; }
 ```
 
 Demand determines dependency order, not whether a retained declaration must compile. `B` is retained — `choose`
