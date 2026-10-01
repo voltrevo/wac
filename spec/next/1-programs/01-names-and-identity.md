@@ -409,6 +409,22 @@ export i32 main() { return pump(count); }
 `[§wac-param-shadows-func-5nkq2wp]` A bare name in call position resolves to a local or parameter of
 function type before any top-level function.
 
+A local that cannot be called does not hide a function from a call:
+
+```wac
+// expect: answers main = 6
+i32 twice(i32 x) { return x * 2; }
+
+i32 resolution(i32 twice) {
+  return twice(3);                       // the function: the parameter is an i32
+}
+
+export i32 main() { return resolution(100); }
+```
+
+`[§wac-call-skips-noncallable-local-shut2xc]` In call position, a local or parameter whose type is not a
+function type is passed over, and the name resolves to the function.
+
 ## A type name must be in scope where it is written
 
 Every type name a file writes must be declared or imported by that file. A type that reaches a file
