@@ -20,7 +20,7 @@
 // whatever the host writes descriptors with, rather than reconstructed by a parent that never had it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

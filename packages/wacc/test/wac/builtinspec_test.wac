@@ -8,24 +8,24 @@
 // suite runs from the repository root.
 //
 // So the shape of every case below is the same: a file map that contains **only the entry**. If a
-// spelling needs `core/option.wac` to be on disk, `blockedFiles` says the file was not supplied, and
-// that is the failure this test is for.
+// program needs a `core/` directory on disk, `blockedFiles` says the file was not supplied, and that
+// is the failure this test is for.
 //
-// D5 is why the quoted spellings are here rather than only the bare one. It makes every specifier
-// quoted — `from "core"` rather than `from core` — and a migration to a spelling the compiler
-// cannot resolve is a migration that breaks 65 files at once.
+// **Each built-in is named whole** — `from "core"`, `from "std"` — and a path below either is refused
+// (`§wac-no-subpath-wqatc72`). `core`'s files are concatenated into its one module, so `Option` is at
+// its root beside `Read`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
-import { Change, Cli, Core, Exec } from "std/platform.wac";
+import { Change, Cli, Core, Exec } from "std";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
-import { coreFile, coreFiles, isBuiltinSpec, stdFile, stdFiles } from "../../src/coretext.wac";
+import { isBuiltinSpec } from "../../src/coretext.wac";
 
 /** Only the entry. Whatever the tree contributes has to come from inside the compiler. */
 string[] paths() { return ["main.wac"]; }
 
-/** A program that uses the root of the tree — `Read` is what bare `core` gets. */
+/** A program that uses `Read`, which `core` has always had at its root. */
 string[] rootUsing(string importLine) {
   return [
                   importLine + "\nexport i32 main() { Read r = Read.End; " +
@@ -33,7 +33,7 @@ string[] rootUsing(string importLine) {
   ];
 }
 
-/** A program that uses a sibling: its own module, reached by its own specifier. */
+/** A program that uses `Option` — one of `core`'s data structures, which are at its root too. */
 string[] siblingUsing(string importLine) {
   return [
                   importLine + "\nexport i32 main() { Option<i32> o = Option.Some(7); " +
@@ -49,11 +49,9 @@ string refusal(string[] sources) {
   return "";
 }
 
-export string test_the_root_is_reachable_by_every_spelling() {
-  // The bare form is the one in use today, and it is here as the canary: if it fails, the file map
-  // or the program is wrong and the quoted cases below say nothing.
+export string test_the_root_is_reachable_without_a_filesystem() {
   T t = T.create();
-  string[] lines = ["import { Read } from core;", "import { Read } from \"core\";"];
+  string[] lines = ["import { Read } from \"core\";"];
   string[] wrong = string[].filled(lines.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
@@ -66,24 +64,24 @@ export string test_the_root_is_reachable_by_every_spelling() {
   return t.report();
 }
 
-export string test_a_sibling_is_reachable_without_being_supplied() {
-  // `core/option.wac` is a module inside the compiler exactly as the root is. Nothing here supplies
-  // it, and from any directory but this repository's own root there would be nothing to supply.
+export string test_cores_data_structures_are_at_its_root() {
+  // `core/option.wac` is a file of `core`, not a module anyone imports: its declarations are in the one
+  // module `"core"` reaches. Nothing here supplies it, and from any directory but this repository's own
+  // root there would be nothing to supply.
   T t = T.create();
-  string why = refusal(siblingUsing("import { Option } from \"core/option.wac\";"));
-  t.isTrue(why == "", "core/option.wac was not served from inside the compiler: " + why);
+  string why = refusal(siblingUsing("import { Option } from \"core\";"));
+  t.isTrue(why == "", "Option was not served from core's root: " + why);
   return t.report();
 }
 
-export string test_a_name_the_tree_does_not_have_is_still_refused() {
+export string test_a_path_below_a_builtin_is_refused() {
   // The canary for both: a change that served *any* `core/...` specifier out of the tree would pass
-  // every case above while accepting names that do not exist. This one has to stay refused, and for
-  // the reason that it was not supplied rather than by emitting an empty module.
+  // every case above. The file exists on disk and in the compiler's copy, and the specifier is still
+  // refused, because a package is named whole.
   T t = T.create();
-  string why = blockedFiles(paths(), siblingUsing("import { Option } from \"core/nope.wac\";"),
+  string why = blockedFiles(paths(), siblingUsing("import { Option } from \"core/option.wac\";"),
                             "main.wac");
-  t.isTrue(why != "", "an absent member of the tree was accepted");
-  t.isTrue(contains(why, "not supplied"), "refused for the wrong reason: " + why);
+  t.isTrue(why != "", "a path below core was accepted");
   return t.report();
 }
 
@@ -116,12 +114,14 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   // now. The case did not disappear — it moved to `test_a_bare_specifier_is_refused_the_same_way_by
   // _both_compilers` below, where it asserts the refusal instead. Deleting it here and not adding it
   // there would have turned a rule into an untested one at the moment it started being enforced.
-  string[] names = ["root_quoted.wac", "sibling.wac"];
+  string[] names = ["root_quoted.wac", "core_root.wac", "std_root.wac"];
   string[] progs = [
     "import { Read } from \"core\";\n" +
     "export i32 main() { Read r = Read.End; return match (r) { End: 0, default: 1 }; }\n",
-    "import { Option } from \"core/option.wac\";\n" +
-    "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n"
+    "import { Option } from \"core\";\n" +
+    "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n",
+    "import { Core, Cli } from \"std\";\n" +
+    "export i32 main(Core core, Cli cli) { return 0; }\n"
   ];
   for (i32 i = 0; i < names.len(); i++) {
     Change w = cli.writeFile(dir + "/" + names[i], progs[i].toBytes()).wait();
@@ -139,8 +139,8 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   }
 
   // The canary, and it is the one that matters here: a walk that answered *every* unreadable path
-  // out of the tree would pass all three cases above and accept a specifier naming nothing. This
-  // one has to still fail, from the same directory, by the same command.
+  // out of the tree would pass the cases above and accept a specifier naming nothing. This one has to
+  // still fail, from the same directory, by the same command.
   Change w = cli.writeFile(dir + "/absent.wac",
                            ("import { Nope } from \"core/nope.wac\";\n" +
                             "export i32 main() { return 0; }\n").toBytes()).wait();
@@ -151,7 +151,7 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   }
 
   cli.remove(dir, true).wait();
-  core.log("    checked two spellings from " + dir);
+  core.log("    checked three programs from " + dir);
   return t.report();
 }
 
@@ -220,85 +220,55 @@ export string test_a_bare_specifier_is_refused_the_same_way_by_both_compilers(Co
 }
 
 /**
- * `isBuiltinSpec` answers for exactly the files `coreFile` and `stdFile` serve.
+ * `isBuiltinSpec` answers for the two names and nothing below them.
  *
- * **It used to ask them, and that was the cost.** `coreFile(spec) != "" || stdFile(spec) != ""` was the
- * whole implementation, and those two *build* a file's source by concatenating hundreds of literals — so
- * a membership test reconstructed up to 107 KB of `std/platform.wac` and discarded it. `resolveFromAt`
- * asks this once per import specifier and this repository has 603 imports of that one file: taking the
- * question to the name lists instead cut a whole-corpus check from 21.1s to 10.2s.
- *
- * The point of this test is that the cheap answer is the *same* answer. Both are generated from one pair
- * of lists, so they cannot drift while that holds — and this is what says it holds, in both directions:
- * every served file is a built-in, and a near-miss is not.
+ * `resolveFromAt` asks this once per import specifier, so it is a comparison rather than a fetch; what
+ * this says is that the comparison is the rule — the names are built-ins, and a path below either or a
+ * near-miss is not, so the resolver never reserves a specifier nothing can supply.
  */
-export string test_the_cheap_builtin_test_agrees_with_the_files_served() {
+export string test_the_builtin_test_answers_for_the_two_names() {
   T t = T.create();
-  string[] core = coreFiles();
-  for (i32 i = 0; i < core.len(); i++) {
-    t.isTrue(isBuiltinSpec(core[i]), core[i] + " is listed and not a built-in");
-    t.isTrue(coreFile(core[i]) != "", core[i] + " is listed and `coreFile` serves nothing");
-  }
-  string[] std = stdFiles();
-  for (i32 i = 0; i < std.len(); i++) {
-    t.isTrue(isBuiltinSpec(std[i]), std[i] + " is listed and not a built-in");
-    t.isTrue(stdFile(std[i]) != "", std[i] + " is listed and `stdFile` serves nothing");
-  }
-  t.isTrue(isBuiltinSpec("core"), "the core root");
-  t.isTrue(isBuiltinSpec("std"), "the std root");
-
-  // **The other direction, which is what a list can get wrong.** A name the fetchers do not serve must
-  // not be called a built-in — otherwise the resolver reserves a specifier nothing can supply, which is
-  // a module the graph reads and the linker cannot find.
+  t.isTrue(isBuiltinSpec("core"), "core");
+  t.isTrue(isBuiltinSpec("std"), "std");
   string[] near = [
-                           "core/nope.wac", "std/nope.wac", "./core/option.wac", "option.wac",
-                           "core/option", "std/platform.wac.bak"
+    "core/option.wac", "std/platform.wac", "core/nope.wac", "./core/option.wac", "option.wac",
+    "core/", "cores", "std.wac"
   ];
   for (i32 i = 0; i < near.len(); i++) {
-    t.isTrue(!isBuiltinSpec(near[i]), near[i] + " is not served and is called a built-in");
-    t.isTrue(coreFile(near[i]) == "" && stdFile(near[i]) == "",
-             near[i] + " is served after all, so the lists are short");
+    t.isTrue(!isBuiltinSpec(near[i]), near[i] + " is called a built-in");
   }
   return t.report();
 }
 
 /**
- * A built-in *prefix* that names no built-in says which ones there are.
- *
- * **The set is closed, so the set is the answer.** `core` and `std` are served from text inside the
- * compiler — there is no file to look for and no manifest that could declare one — so a mistyped one
- * is a typo with exactly five alternatives, and printing them is the whole of the help a reader
- * needs.
+ * A path below a built-in says to import the package by its name.
  *
  * Written when `issues/system/0234a` stopped bare specifiers falling through to path arithmetic. That
  * refusal is right, but its message is about mappings, and for a `core/` prefix a mapping is not the
- * question — before the change this said *"cannot read …/core/nope.wac"*, which named a path nobody
- * wrote and yet pointed nearer the truth. Losing that would have been a step back, so this asserts
- * the replacement rather than trusting it.
+ * question. Since `core` and `std` are named whole, the fix is the same for every path below them.
  */
-export string test_a_builtin_prefix_that_names_no_builtin_lists_the_ones_there_are(Core core, Cli cli) {
+export string test_a_path_below_a_builtin_names_the_package_to_import(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "builtin-typo");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
   Change w = cli.writeFile(dir + "/m.wac",
-      ("import { x } from \"core/nope.wac\";\nexport i32 main() { return x(); }\n").toBytes()).wait();
+      ("import { Option } from \"core/option.wac\";\nexport i32 main() { return 0; }\n").toBytes()).wait();
   t.isTrue(w.ok(), "wrote the program — " + w.message);
 
   Exec r = cli.exec(binaryPath(cli), ["check", dir + "/m.wac"], u8[]()).wait();
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
-    t.isTrue(r.status != 0, "core/nope.wac was accepted: " + said);
-    t.isTrue(contains(said, "core/option.wac"),
-             "the refusal did not name the modules there are: " + said);
+    t.isTrue(r.status != 0, "core/option.wac was accepted: " + said);
+    t.isTrue(contains(said, "import from \"core\""),
+             "the refusal did not name the package to import: " + said);
     t.isTrue(!contains(said, "names no mapping"),
              "a built-in prefix was refused as a mapping candidate: " + said);
   }
   cli.remove(dir, true).wait();
   return t.report();
 }
-
 
 /**
  * A name the compiler's copy does not have is not "that file does not export this name".
@@ -309,7 +279,7 @@ export string test_a_builtin_prefix_that_names_no_builtin_lists_the_ones_there_a
  * file you are looking at. `issues/system/0291b`.
  *
  * Through the command rather than through `diagnoseFiles`, for the reason the test above gives: a
- * caller can supply any text it likes for `std/platform.wac`, and what is being checked here is that
+ * caller can supply any text it likes for `std`, and what is being checked here is that
  * the *embedded* copy is what answers. So the name is one no version of that file has ever had.
  */
 export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_the_file(
@@ -321,7 +291,7 @@ export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_t
   if (!made.ok()) { return t.report(); }
   Change w = cli.writeFile(dir + "/stale.wac",
                            ("import { Core, Cli, notInAnyVersionOfPlatform } "
-                            + "from \"std/platform.wac\";\n"
+                            + "from \"std\";\n"
                             + "export i32 main(Core core, Cli cli) { return 0; }\n").toBytes()).wait();
   t.isTrue(w.ok(), "could not write stale.wac — " + w.message);
   if (w.ok()) {

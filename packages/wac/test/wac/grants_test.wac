@@ -13,7 +13,7 @@
 // would fail here rather than pass.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FAULT_NOT_GRANTED, FAULT_NONE } from "std/platform.wac";
+import { Cli, Core, FAULT_NOT_GRANTED, FAULT_NONE } from "std";
 import { Asked, Parsed, askedFrom, forCommand, narrowed } from "../../src/grants.wac";
 
 /** The flags are read in order and stop at the first word that is not one. */

@@ -18,11 +18,11 @@
 // `reachableExcluding` — the difference — and for a fast-forward onto a long history that is a few objects
 // rather than all of them.
 
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { decode } from "../../codec/src/hex.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Ad, Advertised, parseAdvertisement } from "../src/fetch.wac";
 import { Update, absentName, advertisedTargets, noRefsYet, oldFor, updateRequest } from "../src/receive.wac";
 import { Reachable, RepoAt, head, openRepo, reachableExcluding, readObject } from "../src/repo.wac";

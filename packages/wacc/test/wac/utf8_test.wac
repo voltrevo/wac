@@ -25,7 +25,7 @@
 // ones `fromBytes` already declined to help. Each rejection below is paired with the value one step
 // inside the boundary, so what is checked is a range and not a blanket.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 
 export string test_isutf8_accepts_well_formed_bytes_and_rejects_the_rest_k4mq7vn(Core core, Cli cli) {

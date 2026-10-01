@@ -22,7 +22,7 @@
 // were dropped and the parameter kept.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Pending } from "std/platform.wac";
+import { Core, Cli, Pending } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { diagnoseGraph } from "../../src/api.wac";
 

@@ -26,7 +26,7 @@
  *
  * Adding the import and nothing else makes this file build:
  *
- *     import { Pending } from "std/platform.wac";
+ *     import { Pending } from "std";
  *
  * which is both the workaround and the proof. Every earlier probe that appeared to fix it — a
  * declaration, an unused parameter — worked by bringing that import with it, and none of them was

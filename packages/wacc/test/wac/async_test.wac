@@ -11,7 +11,7 @@
 // and needs a message `trap` cannot carry yet (`issues/lang/0147`).
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { diagnoseGraph } from "../../src/api.wac";
 

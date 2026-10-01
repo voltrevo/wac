@@ -46,7 +46,7 @@
 // has used since it moved. One run after this lands dispatches alphabetically, which is what a fresh
 // checkout has always done, and the stale `.json` is removed rather than left looking live.
 
-import { Core, Cli, Exec, Pending, FileResult, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, Pending, FileResult, Stat } from "std";
 import { itoa, itoa64, atoi } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, joined, splitLines }
        from "../../packages/wactest/src/strings.wac";

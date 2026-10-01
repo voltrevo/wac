@@ -10,38 +10,30 @@
 // module has no filesystem. So it keeps a literal, and de-duplicating means generating that literal
 // from the tree rather than teaching the compiler to open a file.
 //
-// **Which declarations wacc gets is said by which file they are in.** `core/read.wac` and
-// `core/jsx.wac` are the root; the five siblings and `std/platform.wac` are named by path. The
-// alternative was a marker inside one shared file — `// @wacc-only` or similar — which is a third
-// thing to invent, to parse, and to keep true, for a distinction the directory already draws. D3
-// makes `core` an embedded source *tree* regardless, so this is on that path rather than beside it.
+// **`core` is one module and `std` is another**, each reached by its name alone — spec/next ch02,
+// `§wac-no-subpath-wqatc72`. `core`'s files are a way of keeping it readable on disk, not a structure
+// anyone imports: they are concatenated into the one module, with the imports between them dropped,
+// so everything they export is at `core`'s root (spec/next ch37). `std` is `std/platform.wac`.
 //
 // There were two outputs until 2026-08-28: this also wrote the TypeScript reference's copy of the
 // same declarations, and generating both from one tree was how they were kept from drifting. There
 // is one compiler now, so there is one copy and nothing to drift from — but the *lists* below are
-// still what `coreFile`, `stdFile` and `isBuiltinSpec` are generated from, which is what stops
-// those three answering for different sets.
+// still what `coreSource`, `coreExports` and the banner are generated from, which is what stops
+// them answering for different sets.
 //
 // **In wac since 2026-08-30**, from tools/genCore.ts. Deno is a bootstrap host and a test oracle;
 // it was on the build path here, which is the one place it should not be — a generated file whose
 // generator needs a second runtime is a file a fresh checkout cannot regenerate.
 
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { joined, splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
-/** The root: what `import … from core;` gets. Both files, because wacc does have a JSX frontend. */
-string[] waccRoot() { return ["core/read.wac", "core/jsx.wac"]; }
-
-/**
- * The siblings: files in the tree that are named by path and are *not* part of the root.
- *
- * Each is its own module, so a sibling costs nothing until something imports it.
- */
-string[] siblings() {
+/** Every file of `core`, in the order the module carries them. */
+string[] coreTree() {
   return [
-                  "core/option.wac", "core/result.wac", "core/hash.wac", "core/map.wac",
-                  "core/vec.wac"
+    "core/read.wac", "core/jsx.wac", "core/option.wac", "core/result.wac", "core/hash.wac",
+    "core/map.wac", "core/vec.wac"
   ];
 }
 
@@ -55,44 +47,128 @@ string[] siblings() {
  *
  * That distinction is also the one the mechanism can enforce. **A built-in cannot import a
  * package**, because the compiler carries its text and there is no `../../bytes/src/buf.wac` inside
- * a wasm module. `platform.wac` imports `"core"` and nothing else, so it embeds exactly; both of the
- * others import `Buf` from `packages/bytes`, so neither could, whatever D4 had said.
- *
- * Siblings only, with no root module: D4's own example reaches it by path
- * (`import { Core, Cli } from "std/platform.wac";`) and there is no declaration that wants to be in
- * a `std` root. `"std"` is still reserved, so a project cannot define one and have it mean something
- * other than a built-in.
+ * a wasm module. `platform.wac` imports `"core"` and nothing else, so it embeds exactly.
  */
-string[] std() { return ["std/platform.wac"]; }
+string stdPath() { return "std/platform.wac"; }
 
 /** The one file this writes. */
 string waccOut() { return "packages/wacc/src/coretext.wac"; }
 
 /**
- * Every input read once, in the order the generated file names them: root, then siblings, then std.
+ * Every input read once, in the order the generated file names them: `core`'s files, then `std`.
  *
- * One read rather than one per use, because `coreSource`, the `coreFile` arms and the banner all
- * want the same bytes and a file that changed between two of those reads would produce an embedding
- * that never existed on disk.
+ * One read rather than one per use, because `coreSource`, `coreExports` and the banner all want the
+ * same bytes and a file that changed between two of those reads would produce an embedding that never
+ * existed on disk.
  */
 struct Tree {
   string[] paths;
   string[] texts;
-  i32 roots;
-  i32 sibs;
   string why;
 
   bool ok(const this) { return this.why == ""; }
 
-  /** The root's text, as `coreSource` embeds it. */
-  string rootText(const this) {
-    string[] out = string[].filled(this.roots, "");
-    for (i32 i = 0; i < this.roots; i++) { out[i] = this.texts[i]; }
+  /** `core` as one module: its files in order, each without its imports of the others. */
+  string coreText(const this) {
+    string[] out = string[].filled(this.paths.len() - 1, "");
+    for (i32 i = 0; i < out.len(); i++) { out[i] = withoutSiblingImports(this.texts[i]); }
     return joined(out, "\n");
   }
 
-  string sibText(const this, i32 i) { return this.texts[this.roots + i]; }
-  string stdText(const this, i32 i) { return this.texts[this.roots + this.sibs + i]; }
+  string stdText(const this) { return this.texts[this.paths.len() - 1]; }
+
+  /**
+   * The line of `coreText` each of `core`'s files starts on, counting from 1.
+   *
+   * Each file ends in exactly one newline (`readTree` makes it so) and the join adds another, so a file
+   * of `k` lines takes `k + 1`.
+   */
+  string starts(const this) {
+    string out = "";
+    i32 at = 1;
+    for (i32 i = 0; i < this.paths.len() - 1; i++) {
+      out = out + (i == 0 ? "" : ", ") + itoa(at);
+      at = at + splitKeepingEmpty(this.texts[i]).len();
+    }
+    return out;
+  }
+}
+
+/**
+ * A `core` file's text with its imports of `core` blanked: in one module they name nothing new.
+ *
+ * Blanked rather than removed, so every line keeps its number and `coreFileStarts` can say where a
+ * line of the module came from. Only an import of `core` itself, by any of its spellings, goes. Anything
+ * else is a `core` file reaching outside `core`, which a built-in cannot do, so it is left in to be
+ * refused where it is.
+ */
+string withoutSiblingImports(string text) {
+  string[] ls = splitKeepingEmpty(text);
+  string[] kept = string[].filled(ls.len(), "");
+  i32 n = 0;
+  for (i32 i = 0; i < ls.len(); i++) {
+    string l = ls[i];
+    bool sibling = startsWith(l, "import ")
+        && (l.indexOf("from \"core\"") >= 0 || l.indexOf("from \"./") >= 0
+            || l.indexOf("from \"core/") >= 0);
+    kept[n] = sibling ? "" : l;
+    n = n + 1;
+  }
+  string[] out = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { out[i] = kept[i]; }
+  return joined(out, "\n");
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+/**
+ * The names `core` exports, from its text: every top-level `export` declaration's name.
+ *
+ * Read from the declarations rather than listed, because a list is a second statement of what the files
+ * already say. A top-level declaration starts in column 0, and its name is the word before the first
+ * `(`, `{`, `=` or `;` once a generic parameter list there is stepped over — `export struct Vec<T> {`,
+ * `export Option<B> mapOption<A, B>(`, `export static i32 N = 1;`.
+ */
+string[] exportsOf(string text) {
+  string[] ls = splitKeepingEmpty(text);
+  string[] found = string[].filled(ls.len(), "");
+  i32 n = 0;
+  for (i32 i = 0; i < ls.len(); i++) {
+    if (!startsWith(ls[i], "export ")) { continue; }
+    u8[] b = ls[i].toBytes();
+    i32 end = 7;
+    i32 depth = 0;
+    while (end < b.len()) {
+      i32 c = b[end];
+      if (c == 60) { depth = depth + 1; }
+      if (c == 62) { depth = depth - 1; }
+      if (depth == 0 && (c == 40 || c == 123 || c == 61 || c == 59)) { break; }
+      end = end + 1;
+    }
+    while (end > 7 && b[end - 1] == 32) { end = end - 1; }
+    if (end > 7 && b[end - 1] == 62) {
+      // `mapOption<A, B>` — step back over the parameter list to the name.
+      i32 d = 0;
+      while (end > 7) {
+        end = end - 1;
+        if (b[end] == 62) { d = d + 1; }
+        if (b[end] == 60) { d = d - 1; }
+        if (d == 0) { break; }
+      }
+      while (end > 7 && b[end - 1] == 32) { end = end - 1; }
+    }
+    i32 start = end;
+    while (start > 7 && b[start - 1] != 32 && b[start - 1] != 62) { start = start - 1; }
+    if (start < end) {
+      found[n] = ls[i].slice(start, end);
+      n = n + 1;
+    }
+  }
+  string[] out = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
 }
 
 /**
@@ -102,14 +178,10 @@ struct Tree {
  * a file is the file, and only the ragged blank lines a text editor leaves are normalised away.
  */
 Tree readTree(Cli cli) {
-  string[] root = waccRoot();
-  string[] sib = siblings();
-  string[] st = std();
-  string[] paths = string[].filled(root.len() + sib.len() + st.len(), "");
-  i32 at = 0;
-  for (i32 i = 0; i < root.len(); i++) { paths[at] = root[i]; at = at + 1; }
-  for (i32 i = 0; i < sib.len(); i++) { paths[at] = sib[i]; at = at + 1; }
-  for (i32 i = 0; i < st.len(); i++) { paths[at] = st[i]; at = at + 1; }
+  string[] tree = coreTree();
+  string[] paths = string[].filled(tree.len() + 1, "");
+  for (i32 i = 0; i < tree.len(); i++) { paths[i] = tree[i]; }
+  paths[tree.len()] = stdPath();
 
   string[] texts = string[].filled(paths.len(), "");
   string why = "";
@@ -124,7 +196,7 @@ Tree readTree(Cli cli) {
     while (e > 0 && t.slice(e - 1, e) == "\n") { e = e - 1; }
     texts[i] = e < t.len() ? t.slice(0, e) + "\n" : t;
   }
-  return Tree(paths, texts, root.len(), sib.len(), why);
+  return Tree(paths, texts, why);
 }
 
 /** A path or specifier as a wac string literal. */
@@ -200,23 +272,6 @@ string asWac(string text) {
   return out + "  return s;";
 }
 
-/** Every line of `body` prefixed with two spaces — the arms of `coreFile` and `stdFile` are nested. */
-string indented(string body) {
-  string[] ls = splitKeepingEmpty(body);
-  string[] out = string[].filled(ls.len(), "");
-  for (i32 i = 0; i < ls.len(); i++) { out[i] = "  " + ls[i]; }
-  return joined(out, "\n");
-}
-
-/** One `if (path == "…") { … }` arm per file. */
-string arms(string[] paths, string[] texts) {
-  string[] out = string[].filled(paths.len(), "");
-  for (i32 i = 0; i < paths.len(); i++) {
-    out[i] = "  if (path == " + quoted(paths[i]) + ") {\n" + indented(asWac(texts[i])) + "\n  }";
-  }
-  return joined(out, "\n");
-}
-
 /** `"a", "b"` — the body of a `[…]` literal. */
 string quotedList(string[] paths) {
   string[] out = string[].filled(paths.len(), "");
@@ -226,146 +281,57 @@ string quotedList(string[] paths) {
 
 string blk(string[] ls) { return joined(ls, "\n"); }
 
-/**
- * The eight fixed pieces of the generated file, in order, with the seven computed pieces between
- * them. One list so this reads in the order the file is written.
- */
-string[] fixed() {
-  return [
-    // 0
-    blk(["// "]),
-    // 1
-    blk([
-      "",
-      "//",
-      "// wacc's embedding of `core`. `core/README.md` says why anything is in there; this file is only the",
-      "// text, kept apart from `emit.wac` so that a generator owns a whole file rather than splicing into",
-      "// one that is also in the seed.",
-      "",
-      "export string coreSource() {",
-      ""
-    ]),
-    // 2
-    blk([
-      "",
-      "}",
-      "",
-      "/**",
-      " * A sibling of the tree by the specifier that names it, or \"\" when there is no such file.",
-      " *",
-      " * `coreSource` above is the *root* — what `import … from core;` gets. These are files in the tree,",
-      " * each its own module, reached as `import { Option } from \"core/option.wac\";`. \"\" rather than a trap",
-      " * because the caller has to tell \"not a built-in\" from \"a built-in that is broken\": the first falls",
-      " * through to the filesystem and the second is this generator's bug.",
-      " */",
-      "export string coreFile(string path) {",
-      ""
-    ]),
-    // 3
-    blk([
-      "",
-      "  return \"\";",
-      "}",
-      "",
-      "/**",
-      " * Does this specifier name a module inside the compiler rather than a file on disk?",
-      " *",
-      " * This had a twin — `isBuiltinSpecifier` in the TypeScript reference — and the sentence here was",
-      " * that the two must agree, because a built-in one resolver knows about and the other does not is a",
-      " * module the graph reads and the linker cannot find. The reference is deleted, so there is one",
-      " * resolver and nothing to disagree with; the list is still generated rather than typed, which is",
-      " * what made the agreement hold while there were two.",
-      " */",
-      "/**",
-      " * A file of the `std` tree by the specifier that names it, or \"\" when there is no such file.",
-      " *",
-      " * The capability half of the built-ins — `design/lang/0009` D4. Separate from `coreFile` because the",
-      " * two trees admit different things and the admission tests are different: `core` needs no capability",
-      " * and `std` is nothing but capability. `\"\"` on a miss for the same reason as `coreFile`.",
-      " */",
-      "export string stdFile(string path) {",
-      ""
-    ]),
-    // 4
-    blk([
-      "",
-      "  return \"\";",
-      "}",
-      "",
-      "/** Every `std` specifier, so a caller can reserve them without guessing the list. */",
-      "export string[] stdFiles() {",
-      "  return ["
-    ]),
-    // 5
-    blk([
-      "] as string[];",
-      "}",
-      "",
-      "/**",
-      " * **Named, not fetched.** This asked `coreFile(spec) != \"\" || stdFile(spec) != \"\"`, and those *build*",
-      " * the file's whole source by concatenating hundreds of literals — so a membership test reconstructed up",
-      " * to 107 KB of `std/platform.wac` and threw it away. `resolveFromAt` calls this once per import",
-      " * specifier, and this repository has 603 imports of that one file: measured at **4.7s of a 21.1s",
-      " * whole-corpus check**, by doubling the resolve loop and subtracting.",
-      " *",
-      " * The comparisons below are generated from the same two lists that generate `coreFile` and",
-      " * `stdFile`, so they cannot fall out of step with what those answer for — which is the whole reason",
-      " * this file is generated.",
-      " */",
-      "export bool isBuiltinSpec(string spec) {",
-      "  if (spec == \"core\" || spec == \"std\") { return true; }",
-      "  return "
-    ]),
-    // 6
-    blk([
-      ";",
-      "}",
-      "",
-      "/** Every sibling's specifier, so a caller can reserve them without guessing the list. */",
-      "export string[] coreFiles() {",
-      "  return ["
-    ]),
-    // 7
-    blk([
-      "] as string[];",
-      "}"
-    ])
-  ];
-}
-
 /** The whole of `packages/wacc/src/coretext.wac`. */
 string waccFile(Tree tree) {
-  string[] f = fixed();
-  string[] sib = siblings();
-  string[] st = std();
-
-  // **Every input, not only the root.** This named `waccRoot` alone, so the one line stating where
-  // the file comes from listed `core/read.wac, core/jsx.wac` and omitted the five siblings and
-  // `std/platform.wac` — which `stdFile` below embeds in full. Somebody editing `std/platform.wac`
-  // therefore had nothing telling them a generated file had gone stale, and the banner they would
-  // check said the file was made from two files they had not touched.
-  string s = f[0] + "Generated by `wac task gen:core` from " + joined(tree.paths, ", ")
-           + ". Do not edit.";
-
-  string[] sibTexts = string[].filled(sib.len(), "");
-  for (i32 i = 0; i < sib.len(); i++) { sibTexts[i] = tree.sibText(i); }
-  string[] stdTexts = string[].filled(st.len(), "");
-  for (i32 i = 0; i < st.len(); i++) { stdTexts[i] = tree.stdText(i); }
-
-  string[] both = string[].filled(sib.len() + st.len(), "");
-  for (i32 i = 0; i < sib.len(); i++) { both[i] = sib[i]; }
-  for (i32 i = 0; i < st.len(); i++) { both[sib.len() + i] = st[i]; }
-  string[] tests = string[].filled(both.len(), "");
-  for (i32 i = 0; i < both.len(); i++) { tests[i] = "spec == " + quoted(both[i]); }
-
-  s = s + f[1] + asWac(tree.rootText());
-  s = s + f[2] + arms(sib, sibTexts);
-  s = s + f[3] + arms(st, stdTexts);
-  s = s + f[4] + quotedList(st);
-  s = s + f[5] + joined(tests, "\n      || ");
-  s = s + f[6] + quotedList(sib);
-  s = s + f[7] + "\n";
-  return s;
+  // **Every input, not only the root.** The banner once named two of `core`'s files and omitted the rest
+  // and `std/platform.wac`, so somebody editing one of those had nothing telling them a generated file
+  // had gone stale.
+  string core = tree.coreText();
+  return blk([
+    "// Generated by `wac task gen:core` from " + joined(tree.paths, ", ") + ". Do not edit.",
+    "//",
+    "// wacc's embedding of `core` and `std`. `core/README.md` says why anything is in there; this file is",
+    "// only the text, kept apart from `emit.wac` so that a generator owns a whole file rather than splicing",
+    "// into one that is also in the seed.",
+    "",
+    "/** `core`, as the one module `import { … } from \"core\"` reaches: its files, concatenated. */",
+    "export string coreSource() {",
+    asWac(core),
+    "}",
+    "",
+    "/** `std`, the module `import { … } from \"std\"` reaches. */",
+    "export string stdSource() {",
+    asWac(tree.stdText()),
+    "}",
+    "",
+    "/** `core`'s files, in the order `coreSource` carries them. */",
+    "export string[] coreFileNames() {",
+    "  return [" + quotedList(coreTree()) + "] as string[];",
+    "}",
+    "",
+    "/**",
+    " * The line of `coreSource` each of `core`'s files starts on, counting from 1 — so a line of the",
+    " * module can be reported as the file and line a reader has open.",
+    " */",
+    "export i32[] coreFileStarts() {",
+    "  return [" + tree.starts() + "] as i32[];",
+    "}",
+    "",
+    "/**",
+    " * Every name `core` exports, read from its declarations — so a check with no files in hand can still",
+    " * say *no such export* about a name `core` does not have.",
+    " */",
+    "export string[] coreExports() {",
+    "  return [" + quotedList(exportsOf(core)) + "] as string[];",
+    "}",
+    "",
+    "/**",
+    " * Does this specifier name a module inside the compiler rather than a file on disk? Only the two",
+    " * names do: a path below either is refused, since a package is named whole (`§wac-no-subpath-wqatc72`).",
+    " */",
+    "export bool isBuiltinSpec(string spec) { return spec == \"core\" || spec == \"std\"; }",
+    ""
+  ]);
 }
 
 export i32 main(Core core, Cli cli) {
@@ -394,7 +360,7 @@ export i32 main(Core core, Cli cli) {
     core.warn("1 generated file(s) do not match `core/`:\n  " + what + "\n\n"
               + "Run `wac task gen:core`. Editing the embedding by hand is what this replaces — it "
               + "is generated from the list of files in the generator, and that list is also what "
-              + "`coreFile`, `stdFile` and `isBuiltinSpec` answer for.");
+              + "`coreSource`, `stdSource` and `coreExports` answer for.");
     return 1;
   }
 

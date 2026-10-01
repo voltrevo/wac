@@ -36,7 +36,7 @@
 // somehow true of a module whose exports were all missing, this would still have to be 42.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { selfTest, double, strOps, strIndex, staticDispatch } from "../../../../spec/tour.wac";
 
 /**

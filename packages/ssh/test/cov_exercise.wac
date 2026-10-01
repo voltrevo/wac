@@ -24,7 +24,7 @@
 // an offset, and the traps only for a caller that got an argument wrong — neither is reachable through
 // the whole-buffer forms, which is why the offset forms exist and are driven separately.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { decoded } from "../../codec/src/hex.wac";
 

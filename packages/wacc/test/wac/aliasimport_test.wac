@@ -17,7 +17,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { dumpTypeErrorsFiles, emitFilesChecked } from "../../src/api.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 string LIB() { return "export enum E { A, B }\n"; }
 

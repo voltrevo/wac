@@ -5,10 +5,9 @@
 // asserts the shape of what came back rather than trusting `ok`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, endsWith, contains } from "../../../wactest/src/strings.wac";
-import { FileResult } from "std/platform.wac";
 import { Corpus, loadCorpus, waccSources } from "./corpus_probe.wac";
 
 export string test_the_walk_finds_the_repositorys_wac_and_reads_all_of_it(Core core, Cli cli) {

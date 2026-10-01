@@ -26,7 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { capReachFiles } from "../../src/api.wac";
 import { field, linesOf } from "../../src/text.wac";
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 
 /** The status `capReachFiles` gave one path — `reaches`, `sealed`, or "" if it said nothing. */
 string statusOf(string table, string path) {
@@ -54,7 +54,7 @@ export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not(C
   string table = capReachFiles(
     paths2("pure.wac", "uses.wac"),
     paths2("export i32 twice(i32 n) { return n * 2; }\n",
-           "import { Cli } from \"std/platform.wac\";\nexport i32 go(Cli c) { return 0; }\n"));
+           "import { Cli } from \"std\";\nexport i32 go(Cli c) { return 0; }\n"));
   t.eqStr(statusOf(table, "pure.wac"), "sealed", "a file with no capability in any signature");
   t.eqStr(statusOf(table, "uses.wac"), "reaches", "a file taking a `Cli`");
   t.eqStr(viaOf(table, "uses.wac"), "Cli", "and it should say through what");
@@ -70,7 +70,7 @@ export string test_a_capability_inside_a_struct_reaches_the_file_that_takes_the_
   T t = T.create();
   string table = capReachFiles(
     paths2("holder.wac", "user.wac"),
-    paths2("import { Cli } from \"std/platform.wac\";\nexport struct Holder { Cli cli; i32 n; }\n",
+    paths2("import { Cli } from \"std\";\nexport struct Holder { Cli cli; i32 n; }\n",
            "import { Holder } from \"./holder.wac\";\nexport i32 use(Holder h) { return h.n; }\n"));
   t.eqStr(statusOf(table, "holder.wac"), "reaches", "the struct that holds it");
   t.eqStr(statusOf(table, "user.wac"), "reaches",
@@ -85,7 +85,7 @@ export string test_an_enum_variant_carries_a_capability_as_a_field_does(Core cor
   T t = T.create();
   string table = capReachFiles(
     paths2("backing.wac", "caller.wac"),
-    paths2("import { Cli } from \"std/platform.wac\";\n"
+    paths2("import { Cli } from \"std\";\n"
            + "export enum Backing { Host(Cli cli), Memory(i32 size) }\n",
            "import { Backing } from \"./backing.wac\";\nexport i32 pick(Backing b) { return 0; }\n"));
   t.eqStr(statusOf(table, "caller.wac"), "reaches", "a variant's field is a way in");
@@ -98,7 +98,7 @@ export string test_a_method_that_answers_a_capability_makes_its_type_bearing(Cor
   T t = T.create();
   string table = capReachFiles(
     paths2("vend.wac", "taker.wac"),
-    paths2("import { Cli } from \"std/platform.wac\";\n"
+    paths2("import { Cli } from \"std\";\n"
            + "export struct Vend { i32 n;\n  Cli give(this) { return this.n as~ Cli; }\n}\n",
            "import { Vend } from \"./vend.wac\";\nexport i32 t(Vend v) { return 0; }\n"));
   t.eqStr(statusOf(table, "taker.wac"), "reaches", "a method's return is a way out");
@@ -147,7 +147,7 @@ export string test_the_analysis_can_say_sealed_at_all(Core core, Cli cli) {
   string table = capReachFiles(
     paths3("pure.wac", "uses.wac", "alsopure.wac"),
     paths3("export i32 twice(i32 n) { return n * 2; }\n",
-           "import { Cli } from \"std/platform.wac\";\nexport i32 go(Cli c) { return 0; }\n",
+           "import { Cli } from \"std\";\nexport i32 go(Cli c) { return 0; }\n",
            "export string name() { return \"x\"; }\n"));
   i32 sealed = 0;
   i32 reaches = 0;

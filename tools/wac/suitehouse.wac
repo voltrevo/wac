@@ -14,7 +14,7 @@
 // asks `/bin/chmod` for it, through the capability that runs a host program, and says so where it
 // happens. That is a real gap rather than a translation: three of these entries exist per week.
 
-import { Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
+import { Cli, Core, Exec, FileResult, Stat } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { startsWith, endsWith, splitLines } from "../../packages/wactest/src/strings.wac";
 import { envOf } from "./suitegate.wac";

@@ -9,7 +9,7 @@
 // should not. `issues/system/0161` step 6.
 
 import { dumpErrors, dumpTypeErrorsFiles, emitFiles } from "../../packages/wacc/src/api.wac";
-import { hashBytes } from "core/hash.wac";
+import { hashBytes } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /**

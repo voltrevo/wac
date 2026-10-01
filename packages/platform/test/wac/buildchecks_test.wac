@@ -21,7 +21,7 @@
 // names the file and line, because a refusal that cannot be located is a riddle.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec, Change } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 

@@ -22,7 +22,7 @@
 // and the day `Cli.exec` clears by default, the callers here that *want* the host's environment are
 // the ones that will have to say so.
 
-import { Cli, Exec } from "std/platform.wac";
+import { Cli, Exec } from "std";
 
 /**
  * One shell word.

@@ -11,7 +11,7 @@
 // **The symlink half of this stayed behind**, and not for want of an oracle: its fixture needs three
 // *links*, and `Cli` can read a link and cannot make one — `issues/system/0300c`.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
 import { Ran, joinWith, layFixtures, realOut, runApplet, runAppletIn, runCase, sortedOf, splitOn, trimEnd } from "./replay.wac";

@@ -28,7 +28,7 @@
 // once.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";

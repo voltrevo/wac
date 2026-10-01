@@ -19,7 +19,7 @@
 //
 // None of them expects a trap, so there is no `trapCase` sweep.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_container_spans_refuses_every_malformed_offset_table as rf__container_spans_refuses_every_malformed_offset_table,

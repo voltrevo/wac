@@ -7,10 +7,10 @@
 // This is what `bin/sealedsh.wac` builds — `Fs.inMemory` with the system mounts and no grants at all —
 // so a script run through it can reach nothing but what it made.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";

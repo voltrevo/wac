@@ -14,7 +14,7 @@
 //     for everything and letting a host narrow it, which is the difference between a capability hole
 //     and a program that runs with what it asked for.
 
-import { Child, Cli, Core, Exec, FileResult, INHERIT_IN, INHERIT_OUT, Pending, faultWords } from "std/platform.wac";
+import { Child, Cli, Core, Exec, FileResult, INHERIT_IN, INHERIT_OUT, Pending, faultWords } from "std";
 import { Read } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";

@@ -22,7 +22,7 @@
 // sweep to run. `packages/zstd/test/cov_exercise.wac` is the other shape, where most of the file is
 // exports because most of the workload is refusals.
 
-import { Core } from "std/platform.wac";
+import { Core } from "std";
 import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mountOps, edgeOps,
          pathOps, procOps, streamOps, wireOps, permissionOps } from "./wac/cov_probe.wac";
 

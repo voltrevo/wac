@@ -28,7 +28,7 @@
 // last case asserts the same string against the same artefact as before.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec, Change } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
@@ -106,7 +106,7 @@ export string test_a_built_app_reports_the_message_the_program_gave(Core core, C
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
   Change wrote = cli.writeFile(dir + "/p.wac",
-    ("import { Cli, Core } from \"std/platform.wac\";\n\n" +
+    ("import { Cli, Core } from \"std\";\n\n" +
      "export i32 main(Core core, Cli cli) {\n" +
      "  core.log(\"about to fail\");\n  trap \"the ring is full\";\n}\n").toBytes()).wait();
   t.isTrue(wrote.ok(), "could not write the program — " + wrote.message);

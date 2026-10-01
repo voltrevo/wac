@@ -26,7 +26,7 @@
 // still *works* with the colliding name in the link rather than merely compiling.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { putFile } from "../../../wactest/src/host.wac";
 

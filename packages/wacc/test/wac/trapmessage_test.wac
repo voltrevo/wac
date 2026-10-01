@@ -13,7 +13,7 @@
 // module wrote. These probes each trap once, which is why the file states the rule and cannot see it
 // broken; the case that shows it is two traps in one module with only the first saying anything.
 
-import { Change, Cli, Core, Exec } from "std/platform.wac";
+import { Change, Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }

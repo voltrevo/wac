@@ -53,8 +53,8 @@ import { T } from "../../packages/wactest/src/assert.wac";
 // `tracked` and `nonEmptyLines` moved to `packages/wactest/src/repo.wac` when
 // `duplicatedline_test.wac` became the second guard to want them.
 import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
-import { hashString } from "core/hash.wac";
+import { Core, Cli, Exec, FileResult } from "std";
+import { hashString } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 // ── the corpus ───────────────────────────────────────────────────────────────

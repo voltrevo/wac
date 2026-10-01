@@ -905,8 +905,8 @@ export string test_no_two_file_program_here_is_accepted_by_both() {
  */
 export string test_a_missing_method_decline_carries_its_line() {
   T t = T.create();
-  string src = "import { Map } from \"core/map.wac\";\n"
-             + "import { hashString, stringEq } from \"core/hash.wac\";\n"
+  string src = "import { Map } from \"core\";\n"
+             + "import { hashString, stringEq } from \"core\";\n"
              + "export i32 main() {\n"
              + "  Map<string, i32> m = Map.create(hashString, stringEq);\n"
              + "  return m.get(\"x\").noSuchMethodAtAll(0);\n"

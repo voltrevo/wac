@@ -21,7 +21,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_NOT_REPRESENTABLE, FAULT_REFUSED,
-         FileResult, Socket, Stat, faultWords } from "std/platform.wac";
+         FileResult, Socket, Stat, faultWords } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, isSpace, trimmed } from "../../../wactest/src/strings.wac";
 

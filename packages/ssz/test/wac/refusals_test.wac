@@ -42,7 +42,7 @@
 // went through the public entry point would be testing the outer guard twice.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { containerSpans, fieldBytes, fieldRoot, rootAt, hashTreeRoot, isFixed, fixedSize,
          KIND_LIST } from "../../src/container.wac";

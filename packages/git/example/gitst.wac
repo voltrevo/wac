@@ -17,9 +17,9 @@
 // answer a question about ignore rules. The program that already knows about environments resolves the
 // path and passes the bytes.
 
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { Fs } from "../../fs/src/fs.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { configOf } from "../src/config.wac";
 import { configChain, expandTilde } from "../src/configfiles.wac";
 import { RepoAt, openRepo, statusOf } from "../src/repo.wac";

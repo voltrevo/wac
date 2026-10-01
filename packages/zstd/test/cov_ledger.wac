@@ -35,7 +35,7 @@
 // sixteen nobody had written down. A staleness check cannot catch that; a two-way one fails it as an
 // entry listed but covered, because a point that does not exist is never in the uncovered set.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/zstd/test/cov_exercise.wac";

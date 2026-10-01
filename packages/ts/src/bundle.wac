@@ -30,7 +30,7 @@
 // `const go = () => fromB();` evaluates nothing at initialisation, and a rule counting braces would
 // say it does, because there are none to count.
 
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   Lexed, kEof, kIdent, kPunct, kStr,

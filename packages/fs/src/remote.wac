@@ -48,7 +48,7 @@
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from "core";
 import { Change, Cli, FAULT_OTHER, FileResult, Pending, Stat }
-  from "std/platform.wac";
+  from "std";
 import { Reader, putI64, putString } from "./wire.wac";
 
 // ── What a child can ask ──────────────────────────────────────────────────────

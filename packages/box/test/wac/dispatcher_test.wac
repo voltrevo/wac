@@ -11,7 +11,7 @@
 // `applets_test.wac` asserts what `dispatch` answers for a name it has not got — `UNKNOWN`, a sentinel
 // rather than a status. This is the other half: what `main` turns that into.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { main } from "../../src/box.wac";

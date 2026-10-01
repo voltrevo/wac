@@ -22,7 +22,7 @@
 // asked whether one is left. `.cache/` is the observation and the binary is what puts things in it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Exec, Change } from "std/platform.wac";
+import { Cli, Core, Exec, Change } from "std";
 import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

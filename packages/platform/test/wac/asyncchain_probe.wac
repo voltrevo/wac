@@ -31,7 +31,7 @@
 // only requires.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult, Pending, Sched } from "std/platform.wac";
+import { Cli, Core, FileResult, Pending, Sched } from "std";
 
 /**
  * A ticket that is already answered — the tail of a chain, and what a `return` becomes inside a

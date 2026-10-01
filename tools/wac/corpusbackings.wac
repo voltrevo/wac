@@ -51,13 +51,13 @@
 // `issues/system/0290b` unblocked, and the fourth done. It needed `Cli.execWithIn` for the host arm's
 // per-script directory and `builtApp` for the three binaries.
 
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
 import { builtApp, wacBinary } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { reachesTheMachine } from "../../packages/sh/test/wac/machinepaths.wac";
 

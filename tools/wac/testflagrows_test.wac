@@ -24,8 +24,8 @@
 // in six `test` rows. A flag is only covered by a row of *its own* subcommand.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Cli, Core, FileResult } from "std";
+import { Vec } from "core";
 
 /**
  * Where the flag lists live — **both, concatenated**, because they are moving.

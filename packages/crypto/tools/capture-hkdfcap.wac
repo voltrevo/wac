@@ -20,7 +20,7 @@
 //
 // Needs a `deno` on the path, and nothing default: `Cli.exec` runs it. `issues/system/0165`.
 
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 

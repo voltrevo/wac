@@ -39,10 +39,10 @@
 // system one as covered because the code names it is exactly the reasoning that makes a green suite mean
 // less than it appears to.
 
-import { Cli, FileResult } from "std/platform.wac";
+import { Cli, FileResult } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { Setting, parseConfig } from "./config.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 
 /** `$HOME`, or `""` when it is unset — which is not an error, only a search that finds less. */
 string homeOf(Cli cli) {

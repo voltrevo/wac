@@ -20,7 +20,7 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { encode } from "../../codec/src/hex.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 
 /** One name in a tree. */
 export struct Entry {

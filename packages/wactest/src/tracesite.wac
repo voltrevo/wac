@@ -23,7 +23,7 @@
 // So the repository cut lives here and happens always. A caller that wants a cosmetic shortening on
 // top does it to the result.
 
-import { Cli, FileResult } from "std/platform.wac";
+import { Cli, FileResult } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { splitLines, startsWith } from "./strings.wac";
 

@@ -16,7 +16,7 @@
 // values rather than aborts because a datagram that does not parse is routine — a packet arrives from
 // anyone at any time, so "this is not for me" cannot be an exceptional condition.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {

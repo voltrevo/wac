@@ -36,7 +36,7 @@
 // cases rather than being the whole corpus. `packages/fmt` fails that check — one point moves — and is
 // the other one that wants the sampling dealt with before a floor.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/bignum/test/cov_exercise.wac";

@@ -16,7 +16,7 @@
 // *parent's* grants, so an in-process frame cannot be given fewer than the test itself holds, and a
 // refusal test needs exactly that.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

@@ -8,7 +8,7 @@
 //
 // Arguments: the path, then `on` or `off`.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 export i32 main(Core core, Cli cli) {
   string path = string.fromBytes(cli.arg(0).wait());

@@ -13,7 +13,7 @@
 // `main`: a trap in `main` ends the run, and the report then looks identical to the one before the
 // wiring — which is `packages/bytes`' lesson and the tell is `test_traps_` in the name.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Item, bytesOf, itemsOf } from "../src/rlp.wac";
 import {

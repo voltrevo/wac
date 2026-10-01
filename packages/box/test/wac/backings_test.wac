@@ -35,11 +35,11 @@
 // real binaries outside the gate; the third is counted and reported rather than quietly applied, and the
 // predicate behind it is `packages/sh/test/wac/machinepaths.wac`, which both of them import.
 
-import { Cli, Core, Stat } from "std/platform.wac";
+import { Cli, Core, Stat } from "std";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";

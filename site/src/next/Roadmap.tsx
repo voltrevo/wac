@@ -22,7 +22,7 @@ $ exit
 # …and the writes are still there next time`;
 
 const CORE = `import { Read } from "core";        // embedded in the compiler
-import { Cli } from "std/platform.wac";   // so is std
+import { Cli } from "std";   // so is std
 import { Thing } from "@/lib/thing.wac";  // the project root, wherever it is`;
 
 /** A direction's steps and whether they exist. Done is the only state that gets the accent. */

@@ -68,10 +68,10 @@ export string test_a_supplied_relative_import_is_accepted() {
 export string test_the_builtin_trees_are_not_missing_files() {
   T t = T.create();
   i32[] core = dumpTypeErrors(
-    ("import { Vec } from \"core/vec.wac\";\nexport i32 f() { return 1; }\n").toBytes());
+    ("import { Vec } from \"core\";\nexport i32 f() { return 1; }\n").toBytes());
   t.eqI32(nOf(core), 0, "a core import is refused — " + itoa(nOf(core)) + " diagnostics");
   i32[] std = dumpTypeErrors(
-    ("import { Core, Cli } from \"std/platform.wac\";\nexport i32 f() { return 1; }\n").toBytes());
+    ("import { Core, Cli } from \"std\";\nexport i32 f() { return 1; }\n").toBytes());
   t.eqI32(nOf(std), 0, "a std import is refused — " + itoa(nOf(std)) + " diagnostics");
   return t.report();
 }
@@ -83,7 +83,7 @@ export string test_a_real_two_file_program_is_unaffected() {
     ["/main.wac", "/lib.wac"],
     [
              "import { E, add } from \"/lib.wac\";\n" +
-             "import { Core, Cli } from \"std/platform.wac\";\n" +
+             "import { Core, Cli } from \"std\";\n" +
              "export i32 f() { E e = E.A; return add(1, 2); }\n",
              "export enum E { A, B }\nexport i32 add(i32 a, i32 b) { return a + b; }\n"
     ],
@@ -103,7 +103,7 @@ export string test_a_real_two_file_program_is_unaffected() {
 export string test_a_mistyped_builtin_path_is_refused() {
   T t = T.create();
   i32[] out = dumpTypeErrors(
-    ("import { Read } from \"core/io.wac\";\nexport i32 f() { return 1; }\n").toBytes());
+    ("import { Read } from \"core/nope.wac\";\nexport i32 f() { return 1; }\n").toBytes());
   t.isTrue(nOf(out) > 0, "a core path with no file behind it is accepted");
   i32[] std = dumpTypeErrors(
     ("import { Core } from \"std/nope.wac\";\nexport i32 f() { return 1; }\n").toBytes());

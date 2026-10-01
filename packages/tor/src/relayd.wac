@@ -71,7 +71,7 @@
 // through these relays are what `network_tor_test.wac` builds, which is the standing evidence.
 
 import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS,
-         FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE } from "std/platform.wac";
+         FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE } from "std";
 import { Read } from "core";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Parsed, parseRequest } from "../../http/src/request.wac";

@@ -40,7 +40,7 @@
 // emitter, and a probe nobody runs in the suite can pay it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { blockedFiles, emitDeclineFiles } from "../../src/api.wac";
 import { typesGrewCatchAll } from "../../src/emit.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";

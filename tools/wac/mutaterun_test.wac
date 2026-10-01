@@ -10,7 +10,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { Verdict } from "./mutatenative.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
 import { Ran, controlFor, exitFor, locationsOf, refusalFor, runTests } from "./mutaterun.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Edit, Mutant } from "./mutateoperators.wac";
 

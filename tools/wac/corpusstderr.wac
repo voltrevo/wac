@@ -35,13 +35,13 @@
 // a guard that the two agree, `KNOWN` moved outright to `packages/sh/test/wac/knownstderr.wac` with
 // its last two readers, and this file was left needing nothing from TypeScript at all.
 
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { trimmed } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
 import { builtApp, wacBinary } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { Diff, known } from "../../packages/sh/test/wac/knownstderr.wac";
 import { sameName } from "../../packages/sh/test/wac/shname.wac";

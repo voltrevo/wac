@@ -29,7 +29,7 @@ const GRANTS = { read: true, write: true, net: true, run: true, env: true };
 const ENTRY = ".cache/lostbytes/jsprobe.wac";
 
 /** The parent gives up on a read, then asks again; the child answers late either way. */
-const PROGRAM = `import { Core, Cli, Child, Pending, GRANT_ALL } from "std/platform.wac";
+const PROGRAM = `import { Core, Cli, Child, Pending, GRANT_ALL } from "std";
 import { Read } from "core";
 
 export i32 main(Core core, Cli cli) {

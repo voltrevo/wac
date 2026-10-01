@@ -31,7 +31,7 @@
 // something that should be a value, and `design/lang/0002` is why it can be one.
 
 import { Captured, Change, Cli, Core, Datagram, FAULT_NONE, FAULT_NOT_GRANTED, FileResult, Pending,
-         Socket, Stat } from "std/platform.wac";
+         Socket, Stat } from "std";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from "core";
 

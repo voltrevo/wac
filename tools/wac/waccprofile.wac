@@ -24,7 +24,7 @@
 // was 5,994 ms and 180 files there. Passing the whole corpus is deliberate and free — `emitFiles`
 // documents that what is emitted is the closure, not the table.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { emitFiles } from "../../packages/wacc/src/api.wac";
 import { Corpus, loadCorpus } from "../../packages/wacc/test/wac/corpus_probe.wac";

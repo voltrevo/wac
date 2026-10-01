@@ -36,7 +36,7 @@
 // set: a probe reached only from a file nobody has committed is not reached.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";

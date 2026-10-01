@@ -20,8 +20,8 @@
 // of this genre that failed the other way would have said "all clear" and been believed.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Core, Cli, FileResult } from "std";
+import { Vec } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { codeLines, walk } from "./deadexports.wac";
 

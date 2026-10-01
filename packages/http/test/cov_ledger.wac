@@ -53,7 +53,7 @@
 // two callers did not need and a method on `Buf` does — the ten points that left this package are
 // seven that arrived there.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/http/test/cov_exercise.wac";

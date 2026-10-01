@@ -17,7 +17,7 @@
 // missing is the end of the selection story — `Grid.selectedText` exists and nothing here calls it,
 // so text can be selected and not copied out.
 
-import { Cli, Core, Event, Page, Pending } from "std/platform.wac";
+import { Cli, Core, Event, Page, Pending } from "std";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Grid } from "../../raster/src/grid.wac";
 import { Surface, cellHeight, cellWidth } from "../../raster/src/surface.wac";

@@ -43,7 +43,7 @@
 // compressor's, so it answers "what would this cost if we compressed it" rather than "what will a CDN
 // serve". The wasm column is unaffected and identical to the TypeScript's, byte for byte.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
 import { Sources, sourcesOf } from "../../packages/wactest/src/built.wac";

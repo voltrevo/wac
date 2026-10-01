@@ -34,7 +34,7 @@
 // three bundles and a compile. 82s of CPU across both, and the ladder is nearly all of it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Change, Exec, FileResult } from "std/platform.wac";
+import { Cli, Core, Change, Exec, FileResult } from "std";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 
@@ -50,7 +50,7 @@ import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
  * that can be wrong twice.
  */
 static string PROBE =
-  "import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
+  "import { Core, Cli, FileResult } from \"std\";\n" +
   "export i32 main(Core core, Cli cli) {\n" +
   "  cli.openOutput(\"probe.out\").wait();\n" +
   "  cli.write(\"redirected\\n\".toBytes());\n" +
@@ -62,7 +62,7 @@ static string PROBE =
 
 /** A program with no imports beyond `Core`, so what is being tested is the command and not a graph. */
 static string PROGRAM =
-  "import { Core } from \"std/platform.wac\";\n" +
+  "import { Core } from \"std\";\n" +
   "export i32 main(Core core) { core.log(\"it compiled and it ran\"); return 0; }\n";
 
 Exec sh(Cli cli, string script) {

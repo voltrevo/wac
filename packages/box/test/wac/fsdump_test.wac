@@ -16,7 +16,7 @@
 // what matters at this end is that the applet is wired up, labels its operands, and **fails** on
 // something that is not an image rather than printing an empty tree.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runApplet, runAppletIn } from "./replay.wac";
 

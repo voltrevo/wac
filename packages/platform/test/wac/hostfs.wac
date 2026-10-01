@@ -16,7 +16,7 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Core, Cli, Exec, Stat, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Stat, Pending } from "std";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { newestInClosure } from "../../../wactest/src/built.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";

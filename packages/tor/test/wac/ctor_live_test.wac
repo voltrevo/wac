@@ -39,7 +39,7 @@
 // coverage that was never there. Build it with `tools/tor.sh`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Stat, FileResult } from "std";
 import { Daemon, start, stop, logOf, waitForLogWithin, freePort }
   from "../../../wactest/src/daemon.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";

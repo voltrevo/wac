@@ -34,7 +34,7 @@
 
 import { lex, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
-import { isBuiltinSpec } from "./coretext.wac";
+import { coreExports, isBuiltinSpec } from "./coretext.wac";
 import { endsWith } from "./path.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
@@ -289,6 +289,13 @@ export i32 errAsyncLambdaSlot() { return 213; }
 export i32 errArrayLiteralType() { return 214; }
 /** An array literal where the slot wants something that is not an array. */
 export i32 errArrayLiteralSlot() { return 215; }
+/** `from "core"` — a path below a package names no package (`§wac-no-subpath-wqatc72`). */
+export i32 errBuiltinSubpath() { return 216; }
+
+/** Whether `spec` is a path below `core` or `std`, which is refused by its form alone. */
+export bool isBuiltinSubpath(string spec) {
+  return spec.len() > 5 && spec.slice(0, 5) == "core/" || spec.len() > 4 && spec.slice(0, 4) == "std/";
+}
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -9790,7 +9797,7 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         if (pathTok < 0) { continue; }
         string q = tokenText(c, pathTok);
         string bare = q.len() >= 2 ? q.slice(1, q.len() - 1) : "";
-        if (bare != "" && !isBuiltinSpec(bare)) { c.addUnresolved(bare); }
+        if (bare != "" && !isBuiltinSpec(bare) && !isBuiltinSubpath(bare)) { c.addUnresolved(bare); }
       }
       default: { }
     }
@@ -10480,11 +10487,18 @@ export void checkModule(C c, Program prog) {
         if (bare != "" && c.isUnresolved(bare)) {
           c.reportTok(errMissingImportFile(), pathTok, bare);
         }
+        // A specifier's form needs no file to judge, so this is refused whether or not anything uses
+        // what it imports.
+        if (isBuiltinSubpath(bare)) {
+          c.reportTok(errBuiltinSubpath(), pathTok, bare.slice(0, bare.indexOf("/")));
+        }
         if (bare == "core") {
+          string[] exported = coreExports();
           for (i32 i = 0; i < items.len(); i++) {
             string named = tokenText(c, items[i].nameTok);
-            if (named == "Read" || named == "Node" || named == "Attr") { continue; }
-            c.reportTok(errNoSuchExport(), items[i].nameTok, "");
+            bool found = false;
+            for (i32 k = 0; k < exported.len(); k++) { if (exported[k] == named) { found = true; } }
+            if (!found) { c.reportTok(errNoSuchExport(), items[i].nameTok, ""); }
           }
         }
         for (i32 i = 0; i < items.len(); i++) {

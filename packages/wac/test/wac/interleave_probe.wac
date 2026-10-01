@@ -5,7 +5,7 @@
 // slow or large on purpose: the bug it exists for is a race between two queues, and a race is
 // clearest when there is nothing else happening.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 export i32 main(Core core, Cli cli) {
   cli.write("one\n".toBytes());

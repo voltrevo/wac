@@ -26,7 +26,7 @@
 // language, so this still counts as **`reports`** in the gate's summary — which is the honest answer
 // and the one `0288b` was filed against.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { LedgerFlags, Measured, measure, report, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/sh/test/cov_exercise.wac";

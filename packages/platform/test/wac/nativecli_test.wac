@@ -31,7 +31,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 
 /** One file, with its directory made first. */
 /**

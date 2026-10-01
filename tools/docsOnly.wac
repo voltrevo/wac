@@ -51,8 +51,8 @@
 // What it may skip is work that reads *code* — the coverage ratchets measure branch coverage of each
 // package's own sources, and a markdown edit with no fence in it cannot move them.
 
-import { Cli, Core, Exec } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Cli, Core, Exec } from "std";
+import { Vec } from "core";
 import { itoa } from "../packages/fmt/src/itoa.wac";
 import { startsWith, endsWith, joined } from "../packages/wactest/src/strings.wac";
 import { nonEmptyLines } from "../packages/wactest/src/repo.wac";

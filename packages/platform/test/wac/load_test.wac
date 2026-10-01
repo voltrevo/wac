@@ -50,7 +50,7 @@
 // anything unbounded — and `spawn_test.wac` holds the other half.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { CallResult, Cli, Core, Exec, GRANT_ALL, LoadedModule } from "std/platform.wac";
+import { CallResult, Cli, Core, Exec, GRANT_ALL, LoadedModule } from "std";
 import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot }
   from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

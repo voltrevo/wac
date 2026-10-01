@@ -14,12 +14,12 @@
 // generates, `isMutationTarget` decides what is code under test, and `short` names them.
 // `issues/system/0161` step 6.
 
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, gather } from "../../packages/wac/src/sources.wac";
 import { Flags, parseFlags, targetsUnder } from "./mutatefiles.wac";
 import { fileCount, sampleMutants } from "./mutatesample.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
 import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";

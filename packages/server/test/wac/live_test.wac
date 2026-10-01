@@ -23,7 +23,7 @@
 // it is the subject here rather than the harness.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Socket, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Socket, Pending } from "std";
 import { Read } from "core";
 import { Daemon, Held, start, stop, waitForLogWithin, logOf } from "../../../wactest/src/daemon.wac";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";

@@ -15,7 +15,7 @@
 // depends on is neither — it is that `write` can answer false at all, which is the property both have
 // and the reason `write` returns a bool.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

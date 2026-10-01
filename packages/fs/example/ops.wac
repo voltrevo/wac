@@ -11,10 +11,10 @@
 // runs share nothing but the bytes, which is the same reason `packages/wacc`'s rungs project both sides
 // onto a printed form.
 
-import { Cli, Core, FAULT_NONE } from "std/platform.wac";
+import { Cli, Core, FAULT_NONE } from "std";
 import { Fs } from "../src/fs.wac";
 import { Sink } from "../../platform/src/stream.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();

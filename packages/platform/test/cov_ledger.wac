@@ -25,7 +25,7 @@
 // That is this package's whole subject. *No ambient capabilities* is the principle, the narrowing is
 // how it is enforced, and the enforcement is the part with no inputs.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

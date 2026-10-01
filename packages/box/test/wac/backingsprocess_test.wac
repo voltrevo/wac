@@ -25,7 +25,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change, FileResult, execReason} from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, execReason} from "std";
 import { madeDir } from "../../../wactest/src/host.wac";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */

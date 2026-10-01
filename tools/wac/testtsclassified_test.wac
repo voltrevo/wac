@@ -31,7 +31,7 @@
 // What it holds is that the name is on the page, which is the thing that goes missing by accident.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 

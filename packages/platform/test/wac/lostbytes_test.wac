@@ -42,7 +42,7 @@
  * way. It is the arm that would catch this case rotting into one that cannot fail.
  */
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec, Change } from "std";
 import { nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { binaryPath, nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
@@ -52,7 +52,7 @@ import { contains } from "../../../wactest/src/strings.wac";
  * queue when it gives up — the case only exists when the reader has nothing yet and waits.
  */
 static string PROGRAM =
-  "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std\";\n" +
   "import { Read } from \"core\";\n" +
   "\n" +
   "export i32 main(Core core, Cli cli) {\n" +
@@ -86,7 +86,7 @@ static string PROGRAM =
 
 /** An abandoned `readStdin` used to take the whole of standard input with it — `0310b`. */
 static string STDIN_PROGRAM =
-  "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Core, Cli, Child, Pending, GRANT_ALL } from \"std\";\n" +
   "\n" +
   "export i32 main(Core core, Cli cli) {\n" +
   "  i32 n = cli.argCount().wait();\n" +
@@ -129,7 +129,7 @@ static string STDIN_PROGRAM =
 
 /** An abandoned `accept` used to orphan the connection it had taken — `0310b`. */
 static string ACCEPT_PROGRAM =
-  "import { Core, Cli, Child, Pending, Socket, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Core, Cli, Child, Pending, Socket, GRANT_ALL } from \"std\";\n" +
   "import { itoa } from \"../../packages/fmt/src/itoa.wac\";\n" +
   "\n" +
   "export i32 main(Core core, Cli cli) {\n" +
@@ -186,7 +186,7 @@ static string ACCEPT_PROGRAM =
  * to nobody — which this sees as a read that never ends.
  */
 static string CONNECT_PROGRAM =
-  "import { Core, Cli, Pending, Socket, GRANT_ALL } from \"std/platform.wac\";\n" +
+  "import { Core, Cli, Pending, Socket, GRANT_ALL } from \"std\";\n" +
   "import { Read } from \"core\";\n" +
   "\n" +
   "export i32 main(Core core, Cli cli) {\n" +
@@ -239,7 +239,7 @@ static string CONNECT_PROGRAM =
  * looked like a broken instrument. A bug that hides evidence about other bugs.
  */
 static string OWNSTDIN_PROGRAM =
-  "import { Core, Cli, Pending, Exec } from \"std/platform.wac\";\n" +
+  "import { Core, Cli, Pending, Exec } from \"std\";\n" +
   "\n" +
   "export i32 main(Core core, Cli cli) {\n" +
   "  i32 n = cli.argCount().wait();\n" +

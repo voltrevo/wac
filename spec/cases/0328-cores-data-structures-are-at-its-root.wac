@@ -1,0 +1,15 @@
+// expect: answers f = 12
+// why: `core` is one module, and its data structures are exported at its root beside `Read`
+// from: subpath-free built-ins (design/lang/0016), spec/next ch37
+import { Vec, Map, Option, Result, hashString, stringEq } from "core";
+
+export i32 f() {
+  Vec<i32> v = Vec.create();
+  v.push(4);
+  v.push(5);
+  Map<string, i32> m = Map.create(hashString, stringEq);
+  m.set("three", 3);
+  Option<i32> got = m.get("three");
+  Result<i32, string> r = Result.Ok(v.get(0) + v.get(1));
+  return got.orElse(0) + r.orElse(0);
+}

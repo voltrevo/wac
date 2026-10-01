@@ -42,7 +42,7 @@
 // the guard is one point. The count of tests is not the count of what they reach, and only the canary
 // knows which.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet } from "../../tools/wac/covledger.wac";
 
 static string EXERCISE = "core/test/cov_exercise.wac";

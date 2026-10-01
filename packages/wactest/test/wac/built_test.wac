@@ -18,15 +18,15 @@
 // would each have to check fails the ones that remembered.
 
 import { T } from "../../src/assert.wac";
-import { Core, Cli, Exec, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, Stat } from "std";
 import { Sources, builtApp, builtProgram, sourcesOf } from "../../src/built.wac";
 import { freshDir, putFile } from "../../src/host.wac";
 import { contains, startsWith } from "../../src/strings.wac";
 
-static string GOOD = "import { Core, Cli } from \"std/platform.wac\";\n"
+static string GOOD = "import { Core, Cli } from \"std\";\n"
   + "export i32 main(Core core, Cli cli) { return 0; }\n";
 /** Same shape, and it does not compile: nothing declares `nosuchthing`. */
-static string BROKEN = "import { Core, Cli } from \"std/platform.wac\";\n"
+static string BROKEN = "import { Core, Cli } from \"std\";\n"
   + "export i32 main(Core core, Cli cli) { return nosuchthing(); }\n";
 
 export string test_a_program_that_stopped_compiling_is_not_served_from_before(Core core, Cli cli) {
@@ -78,7 +78,7 @@ export string test_a_built_app_runs_and_answers_its_own_exit_status(Core core, C
   string entry = dir + "/p.wac";
   // Exit 7, so the assertion cannot pass by accident on a 0 that means "did nothing".
   t.isTrue(putFile(cli, entry,
-      "import { Core, Cli } from \"std/platform.wac\";\n"
+      "import { Core, Cli } from \"std\";\n"
       + "export i32 main(Core core, Cli cli) { core.log(\"from the app\"); return 7; }\n") == "",
       "could not write the program");
 

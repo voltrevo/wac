@@ -37,7 +37,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
-import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "std";
 import { builtByDeno, builtProgram, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

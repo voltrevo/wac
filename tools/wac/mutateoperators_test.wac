@@ -17,7 +17,7 @@
 // one small enough that a disagreement can be read by eye.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { GenStats, Mutant, bumpLiteral, changedWacFiles, generate, isMutationTarget, short }
        from "./mutateoperators.wac";

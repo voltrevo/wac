@@ -41,7 +41,7 @@
 // freshness check rather than a build.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { stale, newestFor } from "./hostfs.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 

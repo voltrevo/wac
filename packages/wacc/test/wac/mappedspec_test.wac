@@ -20,7 +20,7 @@ import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { escapeRepo } from "../../../wacpkg/src/cache.wac";
-import { Change, Cli, Core, Exec, FileResult } from "std/platform.wac";
+import { Change, Cli, Core, Exec, FileResult } from "std";
 
 static string REPO = "https://example.invalid/dep.git";
 static string COMMIT = "0123456789abcdef0123456789abcdef01234567";
@@ -468,8 +468,8 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
   // both proves the resolution without the fixture having to build a generic container correctly.
   // What is being tested is whether a mapped file may *reach* a built-in, not what it does with one.
   t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                        "import { Map } from \"core/map.wac\";\n" +
-                        "import { hashString } from \"core/hash.wac\";\n" +
+                        "import { Map } from \"core\";\n" +
+                        "import { hashString } from \"core\";\n" +
                         "export i32 two() { return hashString(\"a\") == 0 ? 0 : 2; }\n"),
            "lib importing core/map.wac and core/hash.wac");
   Exec r = wacc(cli, home, dir, "run", "src/main.wac");
@@ -482,7 +482,7 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
   // And `std`, whose serving arrived separately.
   t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
                         "import { Read } from \"core\";\n" +
-                        "import { Stat } from \"std/platform.wac\";\n" +
+                        "import { Stat } from \"std\";\n" +
                         "export i32 two() { Read r = Read.End; match (r) { End: { return 2; } " +
                         "default: { return 0; } } }\n"),
            "lib importing std/platform.wac and core's root");
@@ -500,7 +500,7 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
   // mapped subdirectory"*. Every import in `core/map.wac` is itself a built-in specifier, which is
   // why the reported case is silent about this and why this row is here.
   t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                        "import { Result } from \"core/result.wac\";\n" +
+                        "import { Result } from \"core\";\n" +
                         "export i32 two() { Result<i32, bool> r = Result.Ok(2); return r.orElse(0); }\n"),
            "lib importing core/result.wac, whose own import is relative");
   Exec rel = wacc(cli, home, dir, "run", "src/main.wac");
@@ -541,8 +541,8 @@ export string test_a_whole_repository_mapping_may_import_the_builtins(Core core,
   // Both providers and the relative-import case in one file: what is under test is the `confine`
   // value, and a second manifest shape is what makes it different from the case above.
   t.isTrue(checkoutFile(cli, home, COMMIT, "lib/dep.wac",
-                        "import { Result } from \"core/result.wac\";\n" +
-                        "import { Stat } from \"std/platform.wac\";\n" +
+                        "import { Result } from \"core\";\n" +
+                        "import { Stat } from \"std\";\n" +
                         "export i32 two() { Result<i32, bool> r = Result.Ok(2); return r.orElse(0); }\n"),
            "the dependency, reaching both providers");
   Exec r = wacc(cli, home, dir, "run", "src/main.wac");

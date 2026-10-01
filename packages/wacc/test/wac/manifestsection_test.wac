@@ -20,7 +20,7 @@
 // thing the guard has to refuse.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { hollowWhy, manifestIn, withManifestSection } from "../../src/manifest.wac";
 import { emitFiles, manifestWire, exportSigsFiles, bindTypesFiles } from "../../src/api.wac";
 import { contains } from "../../../wactest/src/strings.wac";

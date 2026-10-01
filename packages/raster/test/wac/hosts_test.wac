@@ -24,7 +24,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
-import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 

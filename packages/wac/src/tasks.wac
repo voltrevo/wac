@@ -28,7 +28,7 @@
 // honest statement is that this is a developer command which runs the repository's own tooling, and a
 // caller who wants less says so on the command line — `wac task` narrows, it cannot widen.
 
-import { Cli, Core, Exec, FileResult } from "std/platform.wac";
+import { Cli, Core, Exec, FileResult } from "std";
 import { parseJson5 } from "../../json/src/json.wac";
 import { JsonObject, JsonValue, JsonMember } from "../../json/src/value.wac";
 

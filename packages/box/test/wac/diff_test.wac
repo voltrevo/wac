@@ -18,7 +18,7 @@
 // `Shell` route `example/boxsh.wac` wires up; only the oracle is spawned. The version this replaces
 // built a 900 KB application first and spawned it fourteen times as well.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";

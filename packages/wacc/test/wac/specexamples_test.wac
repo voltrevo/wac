@@ -6,7 +6,7 @@
 // meets more examples passes and says so; running the status program records them, and from then on they
 // are held too.
 
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { splitLines } from "../../../wactest/src/strings.wac";

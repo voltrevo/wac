@@ -4,7 +4,7 @@
 // kept between runs. `issues/system/0161` step 6.
 
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { hashString } from "core/hash.wac";
+import { hashString } from "core";
 
 export string CACHE_DIR() { return ".cache/mutate-profile"; }
 

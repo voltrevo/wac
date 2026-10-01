@@ -6,7 +6,7 @@
 // Run it after a change that moves the count, and commit both files: STATUS.md says where the implementation
 // stands, and MET is the ratchet — an example in it that stops being met fails the suite.
 
-import { Change, Cli, Core } from "std/platform.wac";
+import { Change, Cli, Core } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { ExJudged, ExVerdict, judgeAll } from "../test/wac/specexamples.wac";
 

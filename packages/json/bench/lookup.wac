@@ -87,7 +87,7 @@ export i32 buildOnly(i32 n, i32 reps) {
 // already in here, which is what this file's header means by the crossing being amortised away.
 // So the port moves the harness and not the measurement, and the numbers are the same numbers.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 i32 REPS() { return 200000; }
 i32 BUILD_REPS() { return 20000; }

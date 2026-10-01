@@ -19,7 +19,7 @@
 // "nothing" quietly — and every caller should still put a floor under the count, because git
 // succeeding with a short list is a different way to get the same wrong answer.
 
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { startsWith } from "./strings.wac";
 
 /** Every path git tracks, in git's order. Traps if git cannot say. */

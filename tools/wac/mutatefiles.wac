@@ -8,7 +8,7 @@
 //
 // `issues/system/0161` step 6.
 
-import { Cli } from "std/platform.wac";
+import { Cli } from "std";
 import { isMutationTarget } from "./mutateoperators.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 

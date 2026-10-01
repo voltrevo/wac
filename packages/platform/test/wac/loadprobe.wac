@@ -7,7 +7,7 @@
 //
 // One line per call, in a fixed order, so a diff says which shape moved.
 
-import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule } from "std/platform.wac";
+import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Every shape in the closed set, plus the two refusals — in the order the report prints them. */

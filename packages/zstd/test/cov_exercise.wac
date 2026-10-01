@@ -40,7 +40,7 @@
 // `evict` below call the same two batch builders `main` does rather than asking for the one frame they
 // want: a different question is a different key and a different spawn, once per export.
 
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { T } from "../../wactest/src/assert.wac";
 import { Lines, Answers, askCached, hex, word } from "../../wactest/src/oracle.wac";
 import { itoa } from "../../fmt/src/itoa.wac";

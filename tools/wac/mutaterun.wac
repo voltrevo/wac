@@ -54,7 +54,7 @@
 //
 // `issues/system/0161` step 6.
 
-import { Change, Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Change, Core, Cli, Exec, FileResult } from "std";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, gather } from "../../packages/wac/src/sources.wac";
 import { Flags, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
@@ -63,7 +63,7 @@ import { RunPlan, linesOf, runPlanFor } from "./mutateplan.wac";
 import { WAC_CACHE_DIR, treeKeyOf } from "./mutateprofile.wac";
 import { fileCount, sampleMutants } from "./mutatesample.wac";
 import { deadlineFor } from "./mutatedeadline.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Edit, GenStats, Mutant, generate } from "./mutateoperators.wac";
 import { Applied, applyEdits } from "./mutatescope.wac";
 import { Triage, signatureOf, triageOf, wasmHashOf } from "./mutatetriage.wac";

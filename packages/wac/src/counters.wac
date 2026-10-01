@@ -20,8 +20,8 @@
 // slot 0 is the cursor, the last slot is how many events *wanted* to be recorded, and the pairs
 // between are `(site, value)`. One array, two readings, which is why one reader serves both.
 
-import { CallResult, Cli, Core, FileResult, LoadedModule } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { CallResult, Cli, Core, FileResult, LoadedModule } from "std";
+import { Vec } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 import { manifestWire } from "../../wacc/src/api.wac";

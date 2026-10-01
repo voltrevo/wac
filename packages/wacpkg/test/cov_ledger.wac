@@ -40,7 +40,7 @@
 // first byte whatever it held would order every existing fixture correctly and put `alpine` before
 // `alpha`. There are four names sharing prefixes in `lock_test.wac` now.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/wacpkg/test/cov_exercise.wac";

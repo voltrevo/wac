@@ -28,7 +28,7 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          hitAt, partOf, partNone, partBody, partBar, partClose, raiseThenHit, gridRow, gridCursor,
          gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
          deskCloseDuringDrag, deskTyped, deskDrawn } from "./wac/scenes.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_generated_font_is_the_font_that_was_vendored as rt__the_generated_font_is_the_font_that_was_vendored,

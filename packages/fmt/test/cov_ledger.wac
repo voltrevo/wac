@@ -63,7 +63,7 @@
 // over exact big-integer comparisons, and the inputs that reach its corners are decimals chosen to sit
 // a few ulps from a boundary rather than anything a test writes down by hand.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/fmt/test/cov_exercise.wac";

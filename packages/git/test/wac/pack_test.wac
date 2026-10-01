@@ -25,8 +25,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std";
+import { Vec } from "core";
 import { Kind, nameOf } from "../../src/object.wac";
 import { Pack, Opened, Raw, Got, Indexed, openPack, openIndexed, rawAt, applyDelta,
          objectAt, objectNamed, indexPack } from "../../src/pack.wac";

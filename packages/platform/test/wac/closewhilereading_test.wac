@@ -24,7 +24,7 @@
 // smallest set that separates "cancel breaks it" from "any outstanding read breaks it".
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Socket, Pending } from "std/platform.wac";
+import { Core, Cli, Socket, Pending } from "std";
 import { Read } from "core";
 import { itoa } from "../../../fmt/src/itoa.wac";
 

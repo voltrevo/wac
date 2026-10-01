@@ -30,7 +30,7 @@
 // asks whether the two counts are non-trivial.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { tracked, under } from "../../packages/wactest/src/repo.wac";
 import { Vectors, load } from "../../packages/sh/test/wac/vectors.wac";

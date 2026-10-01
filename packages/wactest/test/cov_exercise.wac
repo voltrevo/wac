@@ -5,7 +5,7 @@
 //
 // One of the last packages `issues/system/0205` records as unmeasured.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {

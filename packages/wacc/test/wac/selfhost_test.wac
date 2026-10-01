@@ -23,7 +23,7 @@
 // has one file that needs `--allow-run` and it is this one. `issues/system/0165`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Stat, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, Stat, Pending } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";

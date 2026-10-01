@@ -2,7 +2,7 @@
 // why: a captured name and a parameter both survive a suspension, which is why a lambda is wanted
 // from: issues/lang/0294c
 // spec: §wac-async-lambda-captures-5mtj28r
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /** A ticket that is already answered — see `0305` for why it is built this way. */
 Pending<i32> ready(i32 v) {

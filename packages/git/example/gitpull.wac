@@ -36,10 +36,10 @@
 // as unarrangeable here, which was true of the case that had been tried — a *deepen* against GitHub,
 // which returns whole objects — and not true of an incremental fetch, which is a different conversation.
 
-import { Cli, Change, Core, FileResult } from "std/platform.wac";
+import { Cli, Change, Core, FileResult } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { Buf } from "../../bytes/src/buf.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { PackIndex, writeIdx } from "../src/idx.wac";

@@ -41,7 +41,7 @@
 import { T } from "../../wactest/src/assert.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 import { Lines, Answers, askDeno, word } from "../../wactest/src/oracle.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr,
          opMulSmall, opDivSmall, opRemSmall, opCmp, opCmpAbs, opBitLen, opIsZero,

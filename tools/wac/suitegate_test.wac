@@ -15,7 +15,7 @@
 // no failure reported rather than as anything about a format. So the shape is asserted directly.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult, Stat } from "std/platform.wac";
+import { Core, Cli, FileResult, Stat } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Note, Slot, announce, unannounce, heavyOthers, ownPid, alive, agentName,

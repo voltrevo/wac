@@ -21,7 +21,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, startsWith, trimmed, has } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { diagnoseGraph } from "../../src/api.wac";
 
 /**

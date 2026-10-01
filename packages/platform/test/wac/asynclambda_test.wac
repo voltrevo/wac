@@ -11,7 +11,7 @@
 // practice means a declaration, and a declaration is exactly where the type is available.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult, Pending } from "std/platform.wac";
+import { Cli, Core, FileResult, Pending } from "std";
 
 /** The oracle: the same answer with no machinery at all. */
 i32 sizeOf(Cli cli, string path) {

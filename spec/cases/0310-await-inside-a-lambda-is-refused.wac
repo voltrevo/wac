@@ -1,6 +1,6 @@
 // expect: refused
 // why: a lambda is a different function, and its return returns from the lambda
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered.

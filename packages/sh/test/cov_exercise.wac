@@ -20,8 +20,8 @@
 // number: a transcription slip changes which branches are reached, and `cov_ledger.wac` fails by name
 // on the first point that stops being covered.
 
-import { Core, Cli } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Core, Cli } from "std";
+import { Vec } from "core";
 import { shErr, shOut, shStatus, shTouchStubs, shWritten } from "./wac/probe.wac";
 
 /** Every script written out by hand, in the order the TypeScript listed them. */

@@ -14,7 +14,7 @@
 //
 // All eight tests take `(Core, Cli)`: every one of them opens a pty or asks a recorded oracle.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_oracle_is_the_configuration_this_module_implements as ln__the_oracle_is_the_configuration_this_module_implements,

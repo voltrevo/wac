@@ -21,7 +21,7 @@
 // an oracle agreeing with itself: the helper could drift from all four hosts and every assertion below
 // would stay green.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Frame, Grants, childCliGranted, childCore } from "../../../platform/src/frame.wac";
 import { UNKNOWN, dispatch } from "../../src/box.wac";

@@ -34,7 +34,7 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Cli, Core, FileResult, Socket } from "std/platform.wac";
+import { Cli, Core, FileResult, Socket } from "std";
 import { Conn, msgNewKeys } from "./conn.wac";
 import { clientVersion, clientVersionLine, Found, scanVersion, speaksV2, Version } from "./version.wac";
 import { keyLength } from "./cipher.wac";
@@ -48,7 +48,7 @@ import { Shell, runScript } from "../../sh/src/exec.wac";
 import { Line, Typed } from "../../tty/src/line.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../fs/src/image.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { AuthRequest, authFailure, authSuccess, channelClose, channelData, channelEof,
          pkOk,
          channelFailure, channelStderr, channelSuccess, ecdhReply, ephemeralPublic, exchangeHash, execCommand,

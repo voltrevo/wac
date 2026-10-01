@@ -31,7 +31,7 @@
 // suite never takes, so they are unreachable by construction from a green run — and they are the code
 // that runs at the exact moment somebody most needs it to be right.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

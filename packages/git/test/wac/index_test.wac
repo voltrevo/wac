@@ -32,9 +32,9 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std";
 import { Staged, GitIndex, IndexEntry, parseIndex, writeIndex } from "../../src/index.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { sha1 } from "../../../crypto/src/sha1.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 

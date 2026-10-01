@@ -23,7 +23,7 @@
 import { mapLower, mapUpper, mapFold, printable, decodeCode, decodeSize, valid, scalarCount,
          encodeOne, lower, upper, casefold, equalFold } from "./probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import {
   test_simple_case_mapping_agrees_with_the_host as u__simple_case_mapping_agrees_with_the_host,
   test_sharp_s_under_simple_uppercase as u__sharp_s_under_simple_uppercase,

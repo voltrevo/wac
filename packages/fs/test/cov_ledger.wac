@@ -52,7 +52,7 @@
 // times. The two-way ratchet fails it as listed-but-covered, which is how it was found. Both are gone
 // and 31 pins remain.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/fs/test/cov_exercise.wac";

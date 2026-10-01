@@ -19,8 +19,8 @@
 // blanked live code. `newestOf` was reported dead while its own file called it. The case is below.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Core, Cli } from "std";
+import { Vec } from "core";
 import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
 import { Decl, Scan, scanAt, report } from "./deadexports.wac";
 import { sortStrings } from "./covledger.wac";

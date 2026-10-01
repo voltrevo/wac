@@ -37,7 +37,7 @@
 // the TypeScript does; `main` returning 75 is what wac does, so `take` answers a `Slot` and the
 // caller decides. That is not politeness: a `main` that returns is a `main` whose lock gets released.
 
-import { Cli, Core, FileResult, Stat } from "std/platform.wac";
+import { Cli, Core, FileResult, Stat } from "std";
 import { itoa, itoa64, atoi } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { parse } from "../../packages/json/src/json.wac";

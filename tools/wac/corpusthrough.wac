@@ -27,13 +27,11 @@
 // `tools/wac/shvectors.wac` writes from that file — because it could not read wac data. This reads
 // the source.
 
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
-import { Vec } from "core/vec.wac";
-import { Map } from "core/map.wac";
-import { hashString, stringEq } from "core/hash.wac";
+import { Vec, Map, hashString, stringEq } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";

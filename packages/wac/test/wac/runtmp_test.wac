@@ -18,7 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec, Stat } from "std/platform.wac";
+import { Change, Cli, Core, Exec, Stat } from "std";
 
 /**
  * A `wac-run-<digits>` name that no process owns and no other checkout will pick.

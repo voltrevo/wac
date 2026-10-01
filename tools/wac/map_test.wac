@@ -13,7 +13,7 @@
 // — so a check placed there would be one nothing runs. `issues/system/0146` is what that cost.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Stat, FileResult } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 

@@ -1,6 +1,6 @@
 # core
 
-`core` — the declarations that ship inside the compiler, reached as `import { Read } from core;`.
+`core` — the declarations that ship inside the compiler, reached as `import { Read, Vec } from "core";`.
 
 **Why anything at all is in here.** wac has nominal types, and a `fn<…>` value does not capture —
 spec/spec/funcrefs.md — so two identical declarations of a type are two types and no adapter can
@@ -25,47 +25,28 @@ unresolvable rather than merely awkward, so `core` has to be one thing everywher
 with the compiler makes its version the compiler's version, which is the only story that has no
 diamond in it. See `design/0001` for the whole argument.
 
-## The tree, and who gets which file
+## One module, several files
 
-`core` is a directory because the two compilers embed different parts of it, and **which file a
-declaration is in is how that is said**:
+`core` is one module, named whole — `import { Vec, Map, Read } from "core"` — and a path below it
+(`"core/vec.wac"`) is refused, since a package is named whole (spec/next ch02,
+`§wac-no-subpath-wqatc72`). The files here are how it is kept readable, not a structure anybody
+imports: `tools/wac/gencore.wac` concatenates them, in the order its `coreTree()` lists, into
+`packages/wacc/src/coretext.wac`, blanking the imports between them. So everything they export is at
+`core`'s root (spec/next ch37), and a file of `core` reaches another file's declarations without
+importing it.
 
-| file | reference | wacc |
-|---|---|---|
-| `read.wac` | yes | yes |
-| `jsx.wac` | no — no JSX frontend | yes |
-
-`tools/wac/gencore.wac` holds those lists and writes the embedding:
-`packages/wacc/src/coretext.wac`. It is not edited by hand, and `wac task gen:core --check` fails
-when it is out of step. compiler/README.md carries the same omission as a row, which is where
-it was recorded before this directory existed.
+The embedding also records where each file starts, so a coverage point in the module is reported as
+`core/hash.wac:61` rather than as a line of the concatenation. The list of exported names is read off
+the declarations rather than kept by hand.
 
 **Run `wac task gen:core` after editing anything here.** The compiler reads the embedding and never
 this directory, and `./bootstrap.sh` does not regenerate it — so an edit has no effect at all until
 you do. `./bootstrap.sh` refuses rather than building against a stale one, and a compiler that gets
 past it says *"the compiler's copy of that built-in does not export this name"*. `issues/system/0291b`.
 
-The alternative was a marker inside one shared file. That is a third thing to invent, to parse and
-to keep true, for a distinction a directory already draws.
-
-## This directory and the specifier `core` are not the same thing
-
-`core/read.wac` here is the **source**. What a program imports is the copy embedded in whichever
-compiler is running, which `tools/wac/gencore.wac` writes from this directory and
-`tools/wac/gencore_test.wac` keeps in step.
-
-Today the two cannot be confused, because the only specifier that reaches the embedded tree is the
-bare `core` and a quoted `"core/read.wac"` is an ordinary relative path — in a directory with no
-`core/` it answers *cannot read core/read.wac*. After `design/lang/0009` D5 quotes every specifier
-that changes: `"core/read.wac"` has to mean the built-in, because D4 reserves `core`, `core/`, `std`
-and `std/` and says they cannot be remapped. A project with its own `core/` directory then cannot
-name it, which is what "reserved" costs and is the intended trade.
-
-Worth knowing here because **this repository is such a project**. From the root, that spelling will
-name the embedded copy rather than these files. It is benign — the embedded copy is generated from
-exactly these files and the check fails if it drifts — but the identity is a build step rather than
-a rule, and the reservation has to happen in the resolver *before* the filesystem is consulted or it
-holds in one project and not another.
+**This directory and the specifier are not the same thing.** What a program imports is the copy
+embedded in whichever compiler is running. A project's own `core/` directory is an ordinary
+directory, reached only by a relative path; `"core"` names the built-in whatever the project holds.
 
 ## The collections
 
@@ -78,11 +59,11 @@ That tree does not exist yet.
 Containers and the two sum types every program ends up wanting.
 
 ```wac
-import { Vec } from "core/vec.wac";
-import { Map } from "core/map.wac";
-import { Option } from "core/option.wac";
-import { Result } from "core/result.wac";
-import { hashString, stringEq } from "core/hash.wac";
+import { Vec } from "core";
+import { Map } from "core";
+import { Option } from "core";
+import { Result } from "core";
+import { hashString, stringEq } from "core";
 ```
 
 | type | what |

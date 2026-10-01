@@ -21,7 +21,7 @@
 // the comments, the single-quoted strings and the ECMAScript numbers dead code — the opposite of the
 // truth, since `test/wac/json5_test.wac` drives every one of them against the reference.
 
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../src/value.wac";
 import { parse, canonicalize, canonicalizeJson5, parseNumberValue } from "../src/json.wac";
 import { test_hex_digit, test_bytes_equal, test_json_array_growth,

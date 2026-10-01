@@ -8,7 +8,7 @@
 // every shape the four native-only commands need: `wac test` calls `string f(Core, Cli)`, and
 // `covdump`, `tracestat` and `ctcompare` call `__cov_init`, `__cov_len` and `__cov_get`.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 
 /** A test that passes: an empty report. */
 export string test_passes(Core core, Cli cli) { return ""; }

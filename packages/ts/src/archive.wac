@@ -14,7 +14,7 @@
 // archive this program wrote or a host wrote for it, and the central directory is the part a
 // general reader needs for archives that have been appended to.
 
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { crc32 } from "../../gzip/src/crc32.wac";
 
 /** One member of an archive. */

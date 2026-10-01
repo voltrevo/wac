@@ -25,7 +25,7 @@
 // be an export — and it is **data here rather than a command line**, so a name that stops being an
 // export is a compile error in this file instead of a warning nobody reads.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/gzip/test/cov_exercise.wac";

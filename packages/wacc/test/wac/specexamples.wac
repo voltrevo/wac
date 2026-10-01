@@ -11,8 +11,8 @@
 // **A fence this cannot read is reported, never skipped.** An unreadable fence counted as met would
 // let a typo in an expectation pass as a language that agrees with the spec.
 
-import { Change, Cli, FileResult, Exec } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Change, Cli, FileResult, Exec } from "std";
+import { Vec } from "core";
 import { itoa, utoa64 } from "../../../fmt/src/itoa.wac";
 import { startsWith, endsWith, trimmed, splitKeepingEmpty, splitLines } from "../../../wactest/src/strings.wac";
 import { diagnoseFilesIn, wireHasErrors, blockedFilesIn, emitFilesSelfDescribingIn,

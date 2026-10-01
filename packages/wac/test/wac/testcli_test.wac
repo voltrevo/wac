@@ -35,7 +35,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std";
 
 /** The binary under test, with whatever arguments, and its output as one string. */
 Exec wac(Cli cli, string[] args) {
@@ -164,7 +164,7 @@ export string test_the_summary_says_how_many_tests_were_skipped_for_a_grant(Core
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
   Change a = cli.writeFile(dir + "/y_test.wac",
-    ("import { Cli, Core } from \"std/platform.wac\";\n" +
+    ("import { Cli, Core } from \"std\";\n" +
      "export string test_needs_nothing() { return \"\"; }\n" +
      "export string test_wants_a_capability(Core core, Cli cli) { return \"\"; }\n").toBytes()).wait();
   Change b = cli.writeFile(dir + "/z_test.wac",

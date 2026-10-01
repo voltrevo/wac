@@ -4,11 +4,11 @@ The half of the built-in trees that is entangled with the host: `Core`, `Cli`, f
 processes, environment, terminal, clocks, randomness, page. `design/lang/0009` D4 is the decision,
 and [`../core/README.md`](../core/README.md) is the other half — the part that needs no capability.
 
-    import { Cli, Core } from "std/platform.wac";
+    import { Cli, Core } from "std";
 
-The specifier is the whole of how you reach it. `std` and `std/` are reserved: a project's own
-`std/platform.wac` does not shadow this one, which is what makes the name mean the same thing in
-every project that uses it.
+The specifier is the whole of how you reach it, and a path below it is refused. `std` is reserved: a
+project's own `std/` directory does not shadow this one, which is what makes the name mean the same
+thing in every project that uses it.
 
 ## What belongs here
 

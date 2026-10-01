@@ -30,7 +30,7 @@
 // `rpc.wac` and `getproof.wac` still contribute nothing; both take a `Cli` and talk to a socket, and
 // bringing them in-process needs a fake transport that does not exist yet.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

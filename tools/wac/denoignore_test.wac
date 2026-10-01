@@ -16,7 +16,7 @@
 // every time somebody legitimately added an exclusion.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { denoIgnoreRoots } from "../runTests.wac";
 
 /** The string entries of `deno.json`'s top-level `exclude` array. */

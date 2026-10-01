@@ -13,7 +13,7 @@
 //
 // `--reference` and `-R` are GNU's and are not here either.
 
-import { Change, Cli, Core, reasonOf } from "std/platform.wac";
+import { Change, Cli, Core, reasonOf } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";

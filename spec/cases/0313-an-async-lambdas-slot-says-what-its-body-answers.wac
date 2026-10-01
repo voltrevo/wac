@@ -2,7 +2,7 @@
 // why: a lambda writes no return type, so `fn<Pending<R>(…)>` is what permits `async` and names `R`
 // from: issues/lang/0294c
 // spec: §wac-async-lambda-slot-9wq4nkz
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered — the same helper `0305` uses, and for the same reason.

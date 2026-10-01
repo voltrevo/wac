@@ -12,12 +12,10 @@
 // so no translation is wanted — translating them is how a filter comes to match nothing and a mutant
 // is scored against a run of zero tests. `issues/system/0183`, `issues/system/0161` step 6.
 
-import { Change, Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
+import { Change, Cli, Core, Exec, FileResult, Stat } from "std";
 import { JsonArray, JsonObject, JsonValue } from "../../packages/json/src/value.wac";
 import { parse } from "../../packages/json/src/json.wac";
-import { Map } from "core/map.wac";
-import { hashString, stringEq } from "core/hash.wac";
-import { Vec } from "core/vec.wac";
+import { Map, hashString, stringEq, Vec } from "core";
 import { Profile } from "./mutateplan.wac";
 import { Decoded, KEEP, cachePath, decodeProfile, encodeProfile, isProfileFile, toEvict }
   from "./mutateprofile.wac";

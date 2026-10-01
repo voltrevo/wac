@@ -31,7 +31,7 @@
 // the encode-mismatch expectations were exact-match and wrong — every message is prefixed `member 0:`,
 // naming which argument, which is the more useful half and which the test now asserts.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

@@ -9,7 +9,7 @@
 // can be wrong in a way the other cancels out. A round trip through our own code alone would pass with
 // a compressor and a decompressor that agree on something nobody else can read.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

@@ -164,11 +164,8 @@
 // run out of reach, not that the compiler is right. Widening it is the work; a green sweep is the
 // signal to do so.
 //
-import { CallResult, Cli, Core, LoadedModule } from "std/platform.wac";
-import { Map } from "core/map.wac";
-import { Option } from "core/option.wac";
-import { Vec } from "core/vec.wac";
-import { hashString, stringEq } from "core/hash.wac";
+import { CallResult, Cli, Core, LoadedModule } from "std";
+import { Map, Option, Vec, hashString, stringEq } from "core";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Rng } from "../../packages/wactest/src/rng.wac";
 import { Built, buildLinked } from "../../packages/wacc/src/emit.wac";

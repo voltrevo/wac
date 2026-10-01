@@ -34,7 +34,7 @@ import { binaryPath, madeDir, putFile, scratch } from "../../../wactest/src/host
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { escapeRepo } from "../../src/cache.wac";
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 
 static string REPO = "https://example.invalid/dep.git";
 static string COMMIT = "0123456789abcdef0123456789abcdef01234567";

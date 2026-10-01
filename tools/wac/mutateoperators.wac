@@ -30,8 +30,7 @@
 // decides what the program means is this one".
 
 import { dumpErrors, lexTokenStride, lexTokensOf, tokenKindName } from "../../packages/wacc/src/api.wac";
-import { Map } from "core/map.wac";
-import { hashString, stringEq } from "core/hash.wac";
+import { Map, hashString, stringEq } from "core";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 
 /** A token as this file reads them: the four fields it actually asks for. */

@@ -40,7 +40,7 @@ static string ENTRY = "/t/main.wac";
 
 /** The reproduction, parameterised by the array element `Pending` is instantiated at. */
 string program(string elem) {
-  return "import { Pending } from \"std/platform.wac\";\n" +
+  return "import { Pending } from \"std\";\n" +
          "export struct C { fn<Pending<" + elem + "[]>(string)] f0; }\n" +
          "export i32 main(C c) { return 0; }\n";
 }

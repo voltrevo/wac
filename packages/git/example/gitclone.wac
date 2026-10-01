@@ -31,11 +31,11 @@
 // history was cut deliberately. This is the one file that is easy to forget and produces a failure that
 // looks like a bad pack rather than a missing line.
 
-import { Cli, Core, FAULT_NONE, Change } from "std/platform.wac";
+import { Cli, Core, FAULT_NONE, Change } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Ad, AdRef, Advertised, Reply, findPack, offers, parseAdvertisement, shallowsIn,
          symrefOfHead, wantRequest } from "../src/fetch.wac";
 import { Indexed, indexPack } from "../src/pack.wac";

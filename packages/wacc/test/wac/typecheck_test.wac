@@ -47,7 +47,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { assertCaught, assertQuiet, caughtAndQuiet, complaint,

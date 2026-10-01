@@ -39,7 +39,7 @@
 // the four CLI tests that then failed said nothing about a seed. Watching a directory when the
 // artefact is built from a *graph* is a guard whose scope is a guess; `closureOf` already computes
 // the graph, and is what the build itself walks.
-import { Core, Cli, Stat } from "std/platform.wac";
+import { Core, Cli, Stat } from "std";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Closure, SEED_ENTRY, WASMTIME_SEED, closureOf, nativeHost, nativeHostWhyNot, seedStale }

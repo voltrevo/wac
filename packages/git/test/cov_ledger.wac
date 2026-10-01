@@ -30,7 +30,7 @@
 // fixtures avoid. The corpus is GitHub, git itself, and this package's own writers — all of which
 // produce well-formed input.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

@@ -1,7 +1,7 @@
 // expect: answers answer = 5
 // why: awaiting the outer ticket yields the inner one, and neither await is redundant
 // spec: §wac-async-nested-6bqt3jf
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered.

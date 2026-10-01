@@ -10,7 +10,7 @@
 //
 // None of the 76 tests expects a trap.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {

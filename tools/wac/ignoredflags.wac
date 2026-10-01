@@ -27,13 +27,13 @@
 // letter added there is honoured here the next time this runs. It is the same gain as `corpus:through`
 // importing the corpus instead of a derivation of it.
 
-import { Core, Cli, Exec, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, Stat } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, joined, splitLines } from "../../packages/wactest/src/strings.wac";
 import { trimmed } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
 import { sortStrings } from "./covledger.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { acceptedFlags } from "../../packages/box/src/lib/flags.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";

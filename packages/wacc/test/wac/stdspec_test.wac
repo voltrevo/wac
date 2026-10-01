@@ -22,7 +22,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec } from "std/platform.wac";
+import { Change, Cli, Core, Exec } from "std";
 
 /**
  * `wac <cmd> <args…>` **with the working directory inside the fixture**, which is the whole point.
@@ -68,7 +68,7 @@ export string test_a_std_specifier_resolves_out_of_the_compiler(Core core, Cli c
   // No manifest and no `std/` directory: nothing on disk answers for this specifier, which is the
   // point — the text comes out of the compiler the way `core`'s does.
   t.isTrue(put(cli, dir + "/main.wac",
-               "import { Cli, Core } from \"std/platform.wac\";\n" +
+               "import { Cli, Core } from \"std\";\n" +
                "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
 
   Exec w = wacc(cli, dir, "run", ["main.wac"]);
@@ -90,7 +90,7 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core
   if (!made.ok()) { return t.report(); }
 
   t.isTrue(put(cli, dir + "/main.wac",
-               "import { Cli, Core } from \"std/platform.wac\";\n" +
+               "import { Cli, Core } from \"std\";\n" +
                "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
   // **A decoy at exactly the specifier's path.** It declares neither `Cli` nor `Core`, so if the
   // resolver preferred the file the program would not compile at all — which is what makes 7 an
@@ -108,7 +108,13 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core
   return t.report();
 }
 
-export string test_a_bare_std_names_the_file_to_write_instead(Core core, Cli cli) {
+/**
+ * `std` is named whole: the bare name runs, and a path below it says to write the name.
+ *
+ * Until spec/next it was the other way round — `std` had no root module and a program named its one
+ * file. A package is named whole now (`§wac-no-subpath-wqatc72`), so the file is the thing refused.
+ */
+export string test_std_is_named_whole(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "stdspec-root");
   cli.remove(dir, true).wait();
@@ -118,20 +124,25 @@ export string test_a_bare_std_names_the_file_to_write_instead(Core core, Cli cli
 
   t.isTrue(put(cli, dir + "/main.wac",
                "import { Core } from \"std\";\n" +
-               "export i32 main(Core core) { return 1; }\n"), "wrote main");
-
+               "export i32 main(Core core) { return 7; }\n"), "wrote main");
   Exec w = wacc(cli, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
-    string said = string.fromBytes(w.stderr);
-    t.isTrue(w.status != 1 || contains(said, "no root module"),
-             "a bare \"std\" did not say it has no root module — " + said);
-    // **The wrong answer this exists to keep out.** `cannot read std` is a sentence about a file,
-    // for a word that was never going to be one; a reader who gets it goes looking on disk.
-    t.isTrue(!contains(said, "cannot read std"),
-             "a bare \"std\" fell through to path arithmetic — " + said);
-    t.isTrue(contains(said, "std/platform.wac"),
-             "the refusal did not name a file that would work — " + said);
+    t.eqI32(w.status, 7, "a program importing \"std\" did not run — " + string.fromBytes(w.stderr));
+  }
+
+  t.isTrue(put(cli, dir + "/path.wac",
+               "import { Core } from \"std/platform.wac\";\n" +
+               "export i32 main(Core core) { return 7; }\n"), "wrote path");
+  Exec p = wacc(cli, dir, "run", ["path.wac"]);
+  t.isTrue(p.ran(), "wac did not run — " + p.error);
+  if (p.ran()) {
+    string said = string.fromBytes(p.stderr);
+    t.isTrue(p.status != 7, "a path below std was accepted — " + said);
+    // **The wrong answer this exists to keep out.** `cannot read std/platform.wac` is a sentence about
+    // a file; a reader who gets it goes looking on disk.
+    t.isTrue(!contains(said, "cannot read"), "a path below std fell through to path arithmetic — " + said);
+    t.isTrue(contains(said, "import from \"std\""), "the refusal did not name the package — " + said);
   }
   cli.remove(dir, true).wait();
   return t.report();

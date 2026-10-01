@@ -32,7 +32,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode, encodeUpper as hexEncodeUpper, decode as hexDecode }
   from "../../src/hex.wac";

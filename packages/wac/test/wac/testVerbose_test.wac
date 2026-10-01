@@ -21,7 +21,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec, Change } from "std";
 
 /**
  * Two ordinary passes and one that passes *by trapping*, which prints a different line.

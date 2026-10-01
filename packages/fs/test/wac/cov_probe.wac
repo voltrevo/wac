@@ -12,10 +12,10 @@
 // Each function builds its own filesystem and returns a transcript, because wac has no mutable
 // module-level state: there is nowhere to keep an `Fs` between two calls from the driver.
 
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { Change, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending, Stat }
-         from "std/platform.wac";
+         from "std";
 import { Fs, Mount, mountSystem } from "../../src/fs.wac";
 import { Loaded, Written, dump, read, write } from "../../src/image.wac";
 import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,

@@ -44,7 +44,7 @@
 // package left in `issues/system/0205` will need the same split, and the tell is `test_traps_` in the
 // name.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/bytes/test/cov_exercise.wac";

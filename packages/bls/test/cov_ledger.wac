@@ -59,7 +59,7 @@
 // the norm test above them already decides the question, and the whole SWU degenerate branch is
 // reached with probability about 2⁻³⁸¹.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

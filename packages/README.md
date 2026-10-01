@@ -131,7 +131,7 @@ import { T } from "../../../wactest/src/assert.wac";
 
 There is no module-alias mechanism in the language yet, so this is what it looks
 like. Keeping the tree at `packages/<name>/src` bounds the depth. One import is
-*not* a path — `import { Read } from core;` names the module the compiler ships —
+*not* a path — `import { Read } from "core";` names the module the compiler ships —
 and a prefix that maps to a directory is the next step of wac's
 `design/0001` — which had [issue 0092](../issues/system/closed/0092-the-capability-layer-should-be-its-own-repo.md)
 waiting on it until 2026-08-11, when the capability layer stopped being destined for a repo of its

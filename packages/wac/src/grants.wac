@@ -35,7 +35,7 @@
 // documents rather than the answer any particular host gives.
 
 import { Captured, Change, Child, Cli, Datagram, Exec, FileResult, Pending, Socket, Stat,
-         FAULT_NOT_GRANTED } from "std/platform.wac";
+         FAULT_NOT_GRANTED } from "std";
 import { Read } from "core";
 import { ready } from "../../platform/src/frame.wac";
 

@@ -18,9 +18,9 @@
 // stage spawns the test binary, which is not a shell that will stop. That test stays in `bin.test.ts`,
 // which builds a real program and runs it — the "one build-and-spawn per area" of `issues/system/0193`.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { Fs } from "../../../fs/src/fs.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { boxNames } from "../../src/shrun.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";

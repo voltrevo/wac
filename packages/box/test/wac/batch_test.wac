@@ -7,7 +7,7 @@
 // than an oracle: it never stops on its own and is ended by closing the pipe it writes to, which a
 // frame run does not have. It stays where a real process is.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

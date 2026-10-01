@@ -26,7 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec } from "std/platform.wac";
+import { Change, Cli, Core, Exec } from "std";
 
 
 /** `wac <cmd> <args…>` — the binary, which carries wacc. */

@@ -24,9 +24,7 @@
 // allocating a `string` per token. The edge is where they become text —
 // `JsonMember.keyStr()`, `JsonObject.getStr()`.
 
-import { Map } from "core/map.wac";
-import { Option } from "core/option.wac";
-import { hashBytes, bytesEq } from "core/hash.wac";
+import { Map, Option, hashBytes, bytesEq } from "core";
 
 export enum JsonValue {
   Null,

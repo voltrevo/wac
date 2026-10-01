@@ -38,7 +38,7 @@
 // and failing on one would make this guard everybody else's flake.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { tracked } from "../../packages/wactest/src/repo.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 

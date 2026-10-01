@@ -6,9 +6,9 @@
  * module reports nothing, and an oracle that agrees by construction reports nothing — so both are
  * pinned here rather than left to a green sweep, which is what either failure looks like.
  */
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Outcome, Ran, runProgram, sweep, wrapTo, TY_I32, TY_I64 } from "./langfuzz.wac";
 
 /**

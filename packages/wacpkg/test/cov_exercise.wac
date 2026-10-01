@@ -18,7 +18,7 @@
 // `covreport` builds this with `--coverage --allow-read` and runs its `main`, and skips any file with
 // `/test/` in its path — so neither these exercises nor the tests they call appear in the number.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { test_each_code_has_the_number_it_has_always_had as manifest_test_each_code_has_the_number_it_has_always_had,
          test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports,
          test_a_mapping_is_read_whole_including_the_trailing_slash,

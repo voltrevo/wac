@@ -16,7 +16,7 @@
 // variables differs between a program launched by `deno` and one launched by `node`, and neither
 // number is the claim. "Did the name we passed arrive" is.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 string yn(bool b) { return b ? "yes" : "no"; }

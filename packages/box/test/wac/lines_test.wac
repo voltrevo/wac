@@ -15,7 +15,7 @@
 // environment the suite happened to run in, which is the opposite of what a test is for. Its
 // non-ASCII answer is written down below instead, and `issues/system/0301c` is the open question.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

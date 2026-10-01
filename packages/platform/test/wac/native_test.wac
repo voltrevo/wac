@@ -31,7 +31,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile } from "../../../wactest/src/jsonfile.wac";

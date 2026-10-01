@@ -8,7 +8,7 @@
 // ordinary one. What is left is `verified.wac`, at 53.8%, which is the half that proves an answer
 // against a state root rather than the half that computes a name hash.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

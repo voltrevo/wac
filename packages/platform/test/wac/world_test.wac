@@ -14,7 +14,7 @@
 // because those drive `host/layout.ts` and `host/call.ts` rather than any wac program.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { binaryPath, freshDir, madeDir } from "../../../wactest/src/host.wac";

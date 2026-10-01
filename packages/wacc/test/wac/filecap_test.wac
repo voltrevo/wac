@@ -23,7 +23,7 @@
 // `wac check`, so this writes files and runs the command.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { putFile } from "../../../wactest/src/host.wac";

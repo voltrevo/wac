@@ -6,7 +6,7 @@
 // the reference catches that while both exist; the cases below outlive it. `issues/system/0161`.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Change, Core, Cli, Exec } from "std/platform.wac";
+import { Change, Core, Cli, Exec } from "std";
 import { firstFailureLine } from "./mutatewhy.wac";
 
 string ORACLE() { return ".cache/mutatewhy-oracle.ts"; }

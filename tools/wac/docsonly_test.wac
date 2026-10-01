@@ -33,7 +33,7 @@
 // whose whole job is to not miss a file should not be built on one that can.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, joined } from "../../packages/wactest/src/strings.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";

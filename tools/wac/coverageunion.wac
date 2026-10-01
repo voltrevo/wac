@@ -31,10 +31,8 @@
 // together is that there is now one of each. It also gained a task — it had none, and was run by
 // typing `deno run -A tools/coverageUnion.ts` from memory.
 
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
-import { Map } from "core/map.wac";
-import { hashString, stringEq } from "core/hash.wac";
-import { Vec } from "core/vec.wac";
+import { Core, Cli, Exec, FileResult } from "std";
+import { Map, hashString, stringEq, Vec } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
 import { Task, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";

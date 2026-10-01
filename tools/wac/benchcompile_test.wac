@@ -23,8 +23,8 @@
 // that still looks right.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Core, Cli, FileResult } from "std";
+import { Vec } from "core";
 
 string readOr(Cli cli, string path, T t) {
   FileResult r = cli.readFile(path).wait();

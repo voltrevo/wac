@@ -222,7 +222,7 @@ No manifest, no configuration, one file:
 
 ```wac
 // main.wac
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 
 export i32 main(Core core, Cli cli) {
   cli.write("hello from wac\n".toBytes());
@@ -246,8 +246,8 @@ your own with these names does not shadow them.
 
 ```wac
 import { Read } from "core";                 // the pure half — no capability needed
-import { Option } from "core/option.wac";    // …and its siblings, by path
-import { Cli, Core } from "std/platform.wac";// the capability half
+import { Option } from "core";    // …and its siblings, by path
+import { Cli, Core } from "std";// the capability half
 ```
 
 `core` holds `Read`, `Option`, `Result`, `Vec`, `Map`, hashing and equality, plus the JSX node types.
@@ -439,7 +439,7 @@ fields on `Cli`, and **argument 0 is the first argument to your program**, not t
 
 ```wac
 // greet.wac
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();

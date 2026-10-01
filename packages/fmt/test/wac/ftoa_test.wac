@@ -19,7 +19,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { ftoaBytes } from "../../src/ftoa.wac";
 import { atofSpan } from "../../src/atof.wac";

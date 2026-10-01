@@ -43,7 +43,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
-import { Core, Cli, Exec, FileResult, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult, Pending } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

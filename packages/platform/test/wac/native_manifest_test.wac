@@ -20,7 +20,7 @@
 // separate file, and it is gone.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { startsWith, endsWith, joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile, objectOf, strOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
@@ -202,7 +202,7 @@ export string test_a_program_declaring_a_name_platform_also_declares_still_runs(
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  string src = "import { Core, Cli } from \"std/platform.wac\";\n" +
+  string src = "import { Core, Cli } from \"std\";\n" +
                "struct Stat { i32 n; }\n" +
                "export i32 main(Core core, Cli cli) {\n" +
                "  Stat s = Stat(1);\n" +

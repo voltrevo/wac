@@ -15,7 +15,7 @@
 // spellings to the same meaning.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { pattern, sameName } from "./shname.wac";
 

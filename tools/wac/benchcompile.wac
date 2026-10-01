@@ -31,7 +31,7 @@
 // `issues/system/0161`. The file it was ported from is in git; naming its path here would leave a
 // backticked path to something deleted, which `tools/wac/links_test.wac` rightly refuses.
 
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, exactly, gather, resOf } from "../../packages/wac/src/sources.wac";
 import { Res } from "../../packages/wacc/src/path.wac";

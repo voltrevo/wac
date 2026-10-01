@@ -43,7 +43,7 @@
 // forward instead of measured, and 1020 MB was the Deno process's
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Sources, sourcesOf } from "../../../wactest/src/built.wac";

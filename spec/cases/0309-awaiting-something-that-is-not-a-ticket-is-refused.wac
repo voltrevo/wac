@@ -1,7 +1,7 @@
 // expect: refused
 // why: await takes a Pending<T>, and anything else is named rather than guessed at
 // spec: §wac-await-pending-9km2xtr
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered.

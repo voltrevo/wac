@@ -19,7 +19,7 @@
 // `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Change, Stat, Pending } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";

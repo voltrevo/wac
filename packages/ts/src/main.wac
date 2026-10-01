@@ -11,11 +11,11 @@
 // file and feeds the bytes in, exactly as `bootstrap/drivers/` already does. This is the same
 // `strip` behind a command line, for the machines that have one.
 
-import { Change, Cli, Core, FileResult } from "std/platform.wac";
+import { Change, Cli, Core, FileResult } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Stripped, strip } from "./strip.wac";
 import { Bundled, Import, bundle, importsIn, resolve } from "./bundle.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();

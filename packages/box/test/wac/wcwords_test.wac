@@ -15,7 +15,7 @@
 // reads it at all. A box built without the environment falls back to the C locale and counts bytes,
 // which is correct POSIX behaviour and a different question from the one the real `wc` is answering.
 
-import { Cli, Core, Exec } from "std/platform.wac";
+import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

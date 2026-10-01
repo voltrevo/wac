@@ -35,7 +35,7 @@
 // the expensive bug.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";

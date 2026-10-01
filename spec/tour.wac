@@ -863,7 +863,7 @@ export i32 methodRefs() {
 // - Two specifiers name modules the compiler ships rather than files on disk:
 //
 //       import { Read } from "core";              // no capability needed
-//       import { Cli, Core } from "std/platform.wac";   // the capability world
+//       import { Cli, Core } from "std";   // the capability world
 //
 //   Quoted like everything else. `core` was written bare until `design/lang/0009`
 //   D5 — it was the one unquoted specifier in the language — and that spelling is

@@ -13,7 +13,7 @@ import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
-         warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding } from "./check.wac";
+         warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath } from "./check.wac";
 import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -788,7 +788,7 @@ Edges edgesOfIn(string[] paths, string[] sources, Res res) {
   for (i32 i = 0; i < n; i++) {
     start[i] = at;
     for (i32 s = 0; s < specsOf[i].len(); s++) {
-      i32 t = indexVia(ix, paths, resolveVia(res, paths, paths[i], specsOf[i][s]));
+      i32 t = indexVia(ix, paths, keyOf(resolveVia(res, paths, paths[i], specsOf[i][s])));
       if (t >= 0) { to[at] = t; at = at + 1; }
     }
   }
@@ -1009,6 +1009,16 @@ i32 declarationsIn(u8[] src, Lexed lexed, Program prog) {
 
 /** The name `core` resolves to: a file no caller supplies, which the compiler carries. */
 string corePath() { return " core"; }
+
+/**
+ * A resolved specifier as the key this checker holds it under: `"core"` is the carried module.
+ *
+ * **One key, or two copies.** A caller that serves the built-ins itself — the CLI does — supplies
+ * `core` under `"core"`, and this checker adds the carried copy under `corePath()`. Read through both,
+ * `core` is two modules declaring every type twice, and a type that reaches a file only through a
+ * signature — `Map.get` answering an `Option` — is renamed apart from itself.
+ */
+string keyOf(string resolved) { return resolved == "core" ? corePath() : resolved; }
 
 /** Every named type mentioned anywhere in a `Ty`, appended to `out` with `n[0]` as the count. */
 void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
@@ -1251,6 +1261,12 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
   for (i32 i = 0; i < callerPaths.len(); i++) {
     paths[i] = callerPaths[i];
     sources[i] = i < callerSources.len() ? callerSources[i] : "";
+    // A caller's own copy of `core` stands down for the carried one — see `keyOf`.
+    if (paths[i] == "core") {
+      sources[i] = "";
+      if (i < progs.len()) { progs[i] = null; }
+      if (i < lexes.len()) { lexes[i] = null; }
+    }
   }
   paths[callerPaths.len()] = corePath();
   sources[callerSources.len()] = coreSource();
@@ -1319,7 +1335,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
           // two produced an absolute key for a relatively-keyed file, which is not the file, which is
           // silence again one step further along. On an empty `Res` this is `resolveImport`, so the
           // callers with no filesystem are unaffected. `issues/lang/0175a`.
-          : resolveVia(res, paths, entry, quoted.slice(1, quoted.len() - 1));
+          : keyOf(resolveVia(res, paths, entry, quoted.slice(1, quoted.len() - 1)));
         // **A specifier that resolves to a file nobody supplied is refused here** — the other half of
         // `issues/lang/0157`. The single-file entry point has said so since 2026-08-20, reading the
         // parse because one file means every non-builtin specifier is unsatisfiable; this one has a
@@ -1360,7 +1376,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
           // `res.base` is "" for a caller with no filesystem — the one that cannot resolve a `@/`
           // or a mapped specifier at all, and so may judge a relative path and nothing else.
           bool canJudge = relative || res.base != "";
-          if (canJudge && !isBuiltinSpec(spec) && !supplied) { c.addUnresolved(spec); }
+          if (canJudge && !isBuiltinSpec(spec) && !isBuiltinSubpath(spec) && !supplied) { c.addUnresolved(spec); }
         }
         for (i32 i = 0; i < items.len(); i++) {
           if (n >= wantName.len()) { continue; }

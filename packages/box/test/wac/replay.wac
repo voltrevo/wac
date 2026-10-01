@@ -20,7 +20,7 @@
 // The header is not decoration: an expectation is only as portable as the environment it was taken in,
 // and when a replay disagrees the first question is whether *we* changed or the tools did.
 
-import { Cli, Core, Exec, FileResult } from "std/platform.wac";
+import { Cli, Core, Exec, FileResult } from "std";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
@@ -30,7 +30,7 @@ import { parseList } from "../../src/lib/args.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Fixture } from "./cases.wac";
 
 /** What one shell said. */

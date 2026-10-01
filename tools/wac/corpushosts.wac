@@ -24,11 +24,11 @@
 // half already existed, and the pieces both need — the two builds, the two runners, the difference —
 // moved into `packages/platform/test/wac/hostfs.wac` so that there is one of each rather than two.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { nativeBinaryPath } from "../../packages/wactest/src/host.wac";
 import { announce, unannounce } from "./suitegate.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { Built, Ran, builds, denoAll, difference, hangReport, shell }
        from "../../packages/platform/test/wac/hostfs.wac";

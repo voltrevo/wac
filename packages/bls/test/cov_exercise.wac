@@ -21,7 +21,7 @@
 //
 // None of the fifty-three tests expects a trap.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_valid_points_decompress_to_the_coordinates_python_computed as cu__valid_points_decompress_to_the_coordinates_python_computed,

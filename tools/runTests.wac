@@ -74,7 +74,7 @@
 // and `core` in both runners. So a change here is checked by `wac task docs`, not by the suite it
 // orchestrates, which is worth knowing before trusting a green suite about it.
 
-import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std/platform.wac";
+import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std";
 import { itoa, itoa64, atoi } from "../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, joined, has, splitLines }
   from "../packages/wactest/src/strings.wac";

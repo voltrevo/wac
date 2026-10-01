@@ -34,7 +34,7 @@
 // and then `rootAt`'s span guard as well, leaves every case still refused. Executed is not the same as
 // load-bearing, and a branch count cannot tell them apart.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/ssz/test/cov_exercise.wac";

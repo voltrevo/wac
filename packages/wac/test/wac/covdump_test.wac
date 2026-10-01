@@ -24,12 +24,12 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std";
 import { manifestIn } from "../../../wacc/src/manifest.wac";
 
 /** A program that reads a file and says whether it could. */
 static string READER =
-  "import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
+  "import { Core, Cli, FileResult } from \"std\";\n" +
   "export i32 main(Core core, Cli cli) {\n" +
   "  FileResult r = cli.readFile(\"README.md\").wait();\n" +
   "  core.log(r.ok ? \"READ OK\" : \"REFUSED\");\n" +

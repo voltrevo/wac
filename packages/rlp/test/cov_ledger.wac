@@ -24,7 +24,7 @@
 // encodings of one value, and two encodings are two hashes for one object — which for a trie node or a
 // beacon container is the difference between a proof and a forgery.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

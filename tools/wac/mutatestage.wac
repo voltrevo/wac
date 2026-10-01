@@ -17,7 +17,7 @@
 // undo; this is a few lines and can be replaced by one later without anything outside noticing.
 // `issues/system/0161` has the argument in full.
 
-import { Change, Cli, Exec, FileResult, Stat } from "std/platform.wac";
+import { Change, Cli, Exec, FileResult, Stat } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /** `.cache/mutate/<n>` — distinct per mutant, and still there when the run ends. */

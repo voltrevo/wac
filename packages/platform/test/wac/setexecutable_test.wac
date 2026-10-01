@@ -27,7 +27,7 @@
 // agree on something wrong.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { freshDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 

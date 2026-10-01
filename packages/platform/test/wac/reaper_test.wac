@@ -18,7 +18,7 @@
  * are about names in `/tmp` and cannot see a process.
  */
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { reapMatching } from "../../../../tools/wac/suitehouse.wac";
 
 /** A process whose command line carries this workspace's `.cache`, which is what the rule matches. */

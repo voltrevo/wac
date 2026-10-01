@@ -28,7 +28,7 @@
 // bare `unreachable` that says nothing. Left for the step that can give it a sentence.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult, Pending } from "std/platform.wac";
+import { Cli, Core, FileResult, Pending } from "std";
 
 /** The initial value of a step slot: a machine that has not been armed cannot advance. */
 bool neverSteps() { return false; }

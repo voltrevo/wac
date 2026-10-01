@@ -13,14 +13,14 @@
 // What is held: `uid`, `gid` and the user's name, from `/etc/passwd` (`packages/fs/src/passwd.wac`),
 // looked up by the identity `packages/fs` enforces with — the same source `whoami` answers from.
 
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { extraOperand } from "../lib/operands.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { User, parsePasswd, userNamed } from "../../../fs/src/passwd.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 
 export i32 id(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }

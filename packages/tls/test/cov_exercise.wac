@@ -19,7 +19,7 @@
 // suite — so the interop tests do drive refusal paths. Whether that changes the shape of the gap is
 // the question worth asking of the first number rather than answering in advance.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_every_single_byte_tampering_is_refused as c__every_single_byte_tampering_is_refused,

@@ -13,8 +13,7 @@
 // Not implemented: IDNA, so a non-ASCII domain is rejected rather than mapped. See host.wac.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { bytesEq } from "core/hash.wac";
-import { Vec } from "core/vec.wac";
+import { bytesEq, Vec } from "core";
 import { Host, HostResult, parseHost, writeHost, isForbiddenHost } from "./host.wac";
 import { encodeInto, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
          SET_PATH, SET_USERINFO } from "./percent.wac";

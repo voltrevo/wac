@@ -24,7 +24,7 @@ import { encode, decode, inEncodeSet, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECI
          SET_PATH, SET_USERINFO, SET_COMPONENT } from "../src/percent.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Rng } from "../../wactest/src/rng.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import {
   test_fuzz_assembled_urls_agree_with_node as fuzz__fuzz_assembled_urls_agree_with_node,
   test_fuzz_a_second_seed_in_case_the_first_is_lucky as fuzz__fuzz_a_second_seed_in_case_the_first_is_lucky,

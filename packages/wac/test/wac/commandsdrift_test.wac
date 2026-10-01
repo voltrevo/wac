@@ -27,7 +27,7 @@
 // accept. That is the harmless direction and naming it here is cheaper than a second scan.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Exec, FAULT_NONE, FileResult } from "std/platform.wac";
+import { Cli, Core, Exec, FAULT_NONE, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -123,7 +123,7 @@ export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli)
   string prog = "/tmp/wac-flagshape.wac";
   FileResult had = cli.readFile(prog).wait();
   if (!had.ok) {
-    cli.writeFile(prog, ("import { Core } from \"std/platform.wac\";\n"
+    cli.writeFile(prog, ("import { Core } from \"std\";\n"
                        + "export i32 main(Core core) { return 0; }\n").toBytes()).wait();
   }
 

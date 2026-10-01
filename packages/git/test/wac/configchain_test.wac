@@ -34,7 +34,7 @@
 // would then be reading whatever identity the machine happens to have.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 

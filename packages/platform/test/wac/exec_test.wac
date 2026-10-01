@@ -24,7 +24,7 @@
 // constantly. `error` is non-empty only for the second.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending, execReason } from "std/platform.wac";
+import { Core, Cli, Exec, Pending, execReason } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 

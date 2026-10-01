@@ -10,7 +10,7 @@
 // undercounted the total and exited 0. A wrong number that looks like an answer is worse than a
 // failure, and both of these are answers a script goes on to use.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
 import { Ran, layFixtures, runCase } from "./replay.wac";

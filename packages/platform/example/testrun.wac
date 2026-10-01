@@ -5,7 +5,7 @@
 // The module is built with `wac build`; the names come out of its own manifest; a test that traps
 // passes when it is called `test_traps_*`, which is the convention the host used to own.
 
-import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule } from "std/platform.wac";
+import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule } from "std";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { manifestIn } from "../../wacc/src/manifest.wac";

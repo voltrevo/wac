@@ -6,7 +6,7 @@
 // `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Profiled, Share, WAC_LANE_GRANTS, buildProfile, looksLikeAPoint, shareFrom, shareOf }
   from "./mutatecoverage.wac";
 import { envOf, marker } from "./suitegate.wac";

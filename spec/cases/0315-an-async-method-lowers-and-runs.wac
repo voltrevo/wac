@@ -32,7 +32,7 @@
  * they are limits of the lowering as a whole rather than anything about a receiver. Checked, not
  * assumed: the free-function control fails identically. `issues/lang/0301b`.
  */
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered, built by hand — the same helper `0306` uses.

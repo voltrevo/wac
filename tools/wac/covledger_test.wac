@@ -22,7 +22,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Point, Pin, Rule, onlyClaims, ratchet, uncoveredLines } from "./covledger.wac";
 import { freshDir, scratch } from "../../packages/wactest/src/host.wac";
-import { Core, Cli, Change } from "std/platform.wac";
+import { Core, Cli, Change } from "std";
 
 /** Line 1 of the subject, which the covered point sits on. */
 static string COVERED_SNIPPET = "i32 reached() { return 1; }";

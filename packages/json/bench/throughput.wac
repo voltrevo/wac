@@ -11,7 +11,7 @@
 // bound `packages/json/src/json.wac` and drove it from JavaScript; the crossing was one call per
 // ~1 MiB document, so moving the harness into wac does not move the numbers. `issues/system/0161`.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Canonical, canonicalize, parse } from "../src/json.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { JsonValue } from "../src/value.wac";

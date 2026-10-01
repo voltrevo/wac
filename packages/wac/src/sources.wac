@@ -16,12 +16,12 @@
 // takes the answer, it does not go and find it. `wac.wac` imports it back from here, which is
 // cycle-free because nothing in this file knows about the command.
 
-import { Cli, FileResult } from "std/platform.wac";
+import { Cli, FileResult } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, resolveFromAt } from "../../wacc/src/path.wac";
-import { coreFile, coreFiles, coreSource, isBuiltinSpec, stdFile, stdFiles }
+import { coreSource, isBuiltinSpec, stdSource }
   from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Located, Manifest, Match, locate, manifestWhy, matchSpecifier, readManifest }
@@ -93,19 +93,15 @@ string noProject(string spec, string from) {
  * issue 22, a path the author never wrote and cannot find in their own source.
  */
 /**
- * What `Sources.why` says for a "core/" or "std/" specifier that names no built-in.
+ * What `Sources.why` says for a "core/" or "std/" specifier: a path below a package names no package.
  *
  * **Separated from `noMapping` because the reader's mistake is different and so is the fix.** A bare
- * `sub/lib.wac` may be a mapping the manifest is missing; a mistyped "core/" module cannot be — `core` and
- * `std` are served from text inside this compiler and the set is closed, so the useful answer is the
- * set. Before `issues/system/0234a` this said *"cannot read …/core/nope.wac"*, which named a path
- * nobody wrote but did at least point at the file; refusing without naming the alternatives would
- * have been a step back from that, which is the only reason this exists.
+ * `sub/lib.wac` may be a mapping the manifest is missing; a path below `core` or `std` cannot be — the
+ * two are named whole, and everything they export is at their root (`§wac-no-subpath-wqatc72`).
  */
-string noSuchBuiltin(string spec, string[] have) {
-  string names = "";
-  for (i32 i = 0; i < have.len(); i++) { names = names + (names == "" ? "" : ", ") + have[i]; }
-  return spec + " is not one of the modules this compiler carries: " + names;
+string noBuiltinSubpath(string spec) {
+  string pkg = spec.slice(0, spec.indexOf("/"));
+  return spec + " names no package: import from \"" + pkg + "\"";
 }
 
 string noMapping(string spec, string from) {
@@ -114,16 +110,6 @@ string noMapping(string spec, string from) {
          from + ")";
 }
 
-/**
- * What `Sources.why` says for a bare `"std"` — D4, and `§wac-std-no-root-2vp6xmk`.
- *
- * **`std` is reserved but has no root module**, so this specifier is neither a file to read nor a
- * built-in to serve, and the honest answer names the one thing that would work. Without it the
- * reader falls through to path arithmetic and reports *cannot read std* — a sentence about a file,
- * for a word that was never going to be one, which sends the reader looking in the wrong place.
- *
- * `core` does have a root, so `from "core"` stays correct and this says nothing about it.
- */
 /**
  * Is `path` inside `dir` — used to keep a mapped dependency inside the subdirectory it was mapped at.
  *
@@ -140,10 +126,6 @@ bool withinDir(string dir, string path) {
 string leavesMapping(string spec, string from, string dir) {
   return spec + " leaves the mapped subdirectory: " + from + " may import from " + dir +
          " and this resolves outside it";
-}
-
-string noStdRoot() {
-  return "\"std\" has no root module: import from one of its files, such as \"std/platform.wac\"";
 }
 
 /**
@@ -373,14 +355,7 @@ export Sources gather(Fs fs, Cli cli, string entry) {
     // answered *`wacc: cannot read core/option.wac`* from any other directory. That is the property
     // the tree was moved inside the compiler to have (`design/lang/0009` D3/D4), so it is worth
     // saying plainly: the CLI has no path to read these from, and the playground has no filesystem.
-    string builtin = path == "core" ? coreSource() : coreFile(path);
-    // **And `std`, which is the same tree and was not on this line.** It was added to `emit.wac`'s
-    // `sourceOf` when D4 landed and not to this walk, so `std/platform.wac` fell through to
-    // `readFile` and resolved off the repository's own `std/` directory — the *identical* fault the
-    // paragraph above records for `core/option.wac`, repeated within a day, in the function whose
-    // comment describes it. Every test still passed, because they all run with the repository root
-    // as the working directory. From anywhere default: `wacc: cannot read std/platform.wac`.
-    if (builtin == "") { builtin = stdFile(path); }
+    string builtin = path == "core" ? coreSource() : path == "std" ? stdSource() : "";
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
       FileResult r = fs.readFile(path);
@@ -433,9 +408,6 @@ export Sources gather(Fs fs, Cli cli, string entry) {
           continue;
         }
       }
-      if (specs[i] == "std") {
-        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", noStdRoot());
-      }
       string next = resolveFromAt(path, specs[i], roots[at], base);
       // **A `@/` with no project stops the walk, and saying so is the whole point.** D7 makes it a
       // compile error. Skipping the import instead is the outcome that looks like success: the
@@ -450,8 +422,7 @@ export Sources gather(Fs fs, Cli cli, string entry) {
       if (next == "") {
         string head5 = specs[i].len() >= 5 ? specs[i].slice(0, 5) : "";
         string head4 = specs[i].len() >= 4 ? specs[i].slice(0, 4) : "";
-        string why = head5 == "core/" ? noSuchBuiltin(specs[i], coreFiles())
-                   : head4 == "std/" ? noSuchBuiltin(specs[i], stdFiles())
+        string why = head5 == "core/" || head4 == "std/" ? noBuiltinSubpath(specs[i])
                    : isMappingCandidate(specs[i]) ? noMapping(specs[i], path)
                    : noProject(specs[i], path);
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", why);

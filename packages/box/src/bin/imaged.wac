@@ -31,10 +31,10 @@
 // (wac-mono 0116). So the pipeline streams, the stages are real children, and `/data/up` is still in the
 // image and still not on the host — which `test/imaged.test.ts` asks rather than assumes.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxApplet, boxNames, boxRun } from "../shrun.wac";

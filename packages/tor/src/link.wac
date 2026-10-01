@@ -10,8 +10,8 @@
 // nothing is not hypothetical.
 
 import { NTOR_KEY_MATERIAL, relayDataLen } from "./relay.wac";
-import { Core, Cli, Socket, Pending } from "std/platform.wac";
-import { Vec } from "core/vec.wac";
+import { Core, Cli, Socket, Pending } from "std";
+import { Vec, Read } from "core";
 import { Relay } from "./directory.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotExtended, gotBroken,
          gotDestroyed, extendedReply } from "./circuit.wac";
@@ -25,7 +25,6 @@ import { ntorClientRequest, ntorClientFinish } from "./ntor.wac";
 import { recordsReady } from "../../tls/src/record.wac";
 import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientPhase, tlsClientFailure }
   from "../../tls/src/client.wac";
-import { Read } from "core";
 
 /** `[state][toSend][appData]`, each behind a big-endian u32 length. */
 struct Step { u8[] state; u8[] toSend; u8[] appData; }

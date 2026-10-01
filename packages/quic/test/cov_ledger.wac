@@ -46,7 +46,7 @@
 // this datagram for a certificate and there is no certificate in it" — and the alternate packet
 // shapes a well-behaved peer never sends.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

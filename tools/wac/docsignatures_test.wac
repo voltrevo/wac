@@ -39,9 +39,9 @@
 // declaration structure; the tokens give the exact text.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { linesOf } from "../../packages/wacc/src/text.wac";
 import { tracked } from "../../packages/wactest/src/repo.wac";
@@ -50,7 +50,7 @@ import { kIdent } from "../../packages/wacc/src/kinds.wac";
 import { Program, Decl, DeclKind, Field, Method, Variant, Param } from "../../packages/wacc/src/ast.wac";
 import { P, parseProgram } from "../../packages/wacc/src/parse.wac";
 import { tokenTextOf } from "../../packages/wacc/src/emit.wac";
-import { coreSource, coreFile, coreFiles, stdFile, stdFiles } from "../../packages/wacc/src/coretext.wac";
+import { coreSource, stdSource } from "../../packages/wacc/src/coretext.wac";
 
 /** Read a file, or "". */
 string readAll(Cli cli, string path) {
@@ -214,13 +214,10 @@ Decls declarations(Core core, Cli cli) {
   // **The embedded trees, which are not under `packages/`.** `core` ships inside the compiler, and
   // `std/platform.wac` is where `Core` and `Cli` declare every capability — so `outputError()`,
   // `sleepMillis(ms)` and `Data(bytes)` are named by READMEs all over this repository and are the most
-  // real names here. Collecting only `coreSource()` left thirteen of them looking like inventions,
+  // real names here. Collecting only `core`'s root once left thirteen of them looking like inventions,
   // which is how this port found out it was reading a narrower tree than the file it replaces.
   collect(d, coreSource().toBytes());
-  string[] cf = coreFiles();
-  for (i32 i = 0; i < cf.len(); i++) { collect(d, coreFile(cf[i]).toBytes()); }
-  string[] sf = stdFiles();
-  for (i32 i = 0; i < sf.len(); i++) { collect(d, stdFile(sf[i]).toBytes()); }
+  collect(d, stdSource().toBytes());
   return d;
 }
 

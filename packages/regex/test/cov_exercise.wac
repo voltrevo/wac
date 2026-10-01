@@ -17,7 +17,7 @@ import { exec, accepts, execBasic, execExtended, basicAsExtended, whyBasic,
          whyExtended, execBudget } from "./probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import {
   test_literals_dot_and_anchors as rx__literals_dot_and_anchors,
   test_character_classes as rx__character_classes,

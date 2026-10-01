@@ -29,7 +29,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 import { startsWith, trimmed } from "../../packages/wactest/src/strings.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 
 /** How many tracked `.md` files sit directly under `dir`. */
 i32 countIn(string[] tracked, string dir) {

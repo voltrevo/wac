@@ -28,7 +28,7 @@
 // so a pair written with different shapes parts at event 1, which is the driver and not the routine.
 // Every driver here comes from one template with one array literal substituted.
 
-import { Core, Cli, Exec, Change, FileResult, execReason} from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, execReason} from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
 

@@ -23,7 +23,7 @@
 // be careful about are the three things this is careful about, for the same reasons.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 

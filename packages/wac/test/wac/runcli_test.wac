@@ -37,7 +37,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, nativeBinaryPath, scratch } from "../../../wactest/src/host.wac";
 import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec, Change } from "std";
 
 static string NOCAPS = "export i32 main() { return 3; }\n";
 
@@ -100,7 +100,7 @@ export string test_the_wasmtime_host_takes_one_too(Core core, Cli cli) {
 export string test_a_main_naming_a_capability_this_host_cannot_build_still_says_so(Core core, Cli cli) {
   T t = T.create();
   string dir = programIn(cli, t, "runcli-page",
-    "import { Page } from \"std/platform.wac\";\n" +
+    "import { Page } from \"std\";\n" +
     "export i32 main(Page page) { return 0; }\n");
 
   Exec r = wac(cli, ["run", dir + "/p.wac"]);

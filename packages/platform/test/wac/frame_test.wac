@@ -25,7 +25,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FAULT_NOT_GRANTED, FileResult, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, FAULT_NOT_GRANTED, FileResult, Stat } from "std";
 import { Frame, Grants, childCliGranted } from "../../src/frame.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { madeDir } from "../../../wactest/src/host.wac";

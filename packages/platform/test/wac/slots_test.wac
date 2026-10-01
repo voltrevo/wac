@@ -20,7 +20,7 @@
 // "no such declaration" has to be a failure, not a zero.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string WAC = "std/platform.wac";

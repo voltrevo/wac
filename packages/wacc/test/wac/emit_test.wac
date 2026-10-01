@@ -28,7 +28,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, contains, trimmed } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Ran, runEmittedOne, scratchDir, Validated,
          validateAll } from "./artifacts_probe.wac";
 import { emitFiles } from "../../src/api.wac";

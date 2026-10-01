@@ -27,7 +27,7 @@
 // down. `builtinNames()` is an export and the applets are a directory, so both sides can be asked.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { builtinNames } from "../../../sh/src/exec.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 

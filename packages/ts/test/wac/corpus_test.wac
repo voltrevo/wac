@@ -11,7 +11,7 @@
 // construct — `design/system/0009` D4 — so a run of this is a worklist rather than a verdict.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Stripped, strip } from "../../src/strip.wac";
 

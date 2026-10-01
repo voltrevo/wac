@@ -24,7 +24,7 @@
 // instead. `covdump` catches one trap per call, and `name:<n>` makes eleven of them one export name
 // (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
 
-import { Core } from "std/platform.wac";
+import { Core } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { test_option_basics as option__option_basics, test_option_holds_any_type as option__option_holds_any_type, test_option_match_is_exhaustive as option__option_match_is_exhaustive, test_map_option as option__map_option, test_result_basics as option__result_basics, test_result_error_type_varies as option__result_error_type_varies }
   from "./option_test.wac";

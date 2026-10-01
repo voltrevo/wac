@@ -8,7 +8,7 @@
 // sweep that is worth saying out loud, because the three lowest first runs so far were all caused by
 // the opposite.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {

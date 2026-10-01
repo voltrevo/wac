@@ -16,7 +16,7 @@
 // environment counts bytes. That is also what `tools/wac/appletvectors.wac` asks for when it captures
 // through `env -i … LC_ALL=C`, so the captured expectations and an unset environment agree.
 
-import { Cli } from "std/platform.wac";
+import { Cli } from "std";
 
 /** The first of `LC_ALL`, `LC_CTYPE`, `LANG` that is set and non-empty, or "". */
 string ctypeSetting(Cli cli) {

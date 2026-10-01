@@ -32,7 +32,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli, Exec, Socket, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Socket, Pending } from "std";
 
 static string PATIENCE = "packages/platform/example/patience.wac";
 

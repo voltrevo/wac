@@ -5,7 +5,7 @@
 //
 //     wac task app:build packages/ethrpc/example/blocknumber.wac --allow-net -o blocknumber
 //     ./blocknumber 127.0.0.1 8545
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { call, stringOf, Answer } from "../src/rpc.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 

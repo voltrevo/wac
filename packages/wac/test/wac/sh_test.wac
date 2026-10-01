@@ -23,7 +23,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
-import { Core, Cli, Exec, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, Stat } from "std";
 
 // ## It skipped itself until 2026-08-20 — `issues/system/0216a`
 //

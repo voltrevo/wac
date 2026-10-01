@@ -19,7 +19,7 @@
 import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, tokenStride,
          literalBodyStart, literalBodyEnd,
          unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
-import { coreFile, coreSource, stdFile } from "./coretext.wac";
+import { coreFileNames, coreFileStarts, coreSource, stdSource } from "./coretext.wac";
 import { Lowered, lowerProgram } from "./asynclower.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -3137,21 +3137,14 @@ export string resolveImportIn(string from, string rel, string root) {
 /**
  * A file's text: the caller's table, or the tree embedded in the compiler.
  *
- * **Built-ins are checked first and are not in the caller's arrays.** `core/option.wac` is a module
- * inside the compiler, exactly as the bare `core` is — the difference is only that it is named by
- * path. Every caller of this function asks "was this supplied", and a built-in is supplied by the
- * compiler rather than by them, so answering `""` made the linker report *an import of a file that
- * was not supplied* about a file nobody was ever going to supply. `design/lang/0009` D3.
+ * **Built-ins are checked first and are not in the caller's arrays.** `std` is a module inside the
+ * compiler, exactly as `core` is, and every caller of this function asks "was this supplied" — a
+ * built-in is supplied by the compiler rather than by them, so answering `""` made the linker report
+ * *an import of a file that was not supplied* about a file nobody was ever going to supply.
+ * `design/lang/0009` D3. `core` is keyed `" core"` and handled where the queue is read.
  */
 export string sourceOf(string[] paths, string[] sources, string path) {
-  string builtin = coreFile(path);
-  if (builtin != "") { return builtin; }
-  // `std` is the other embedded tree — the capability half, `design/lang/0009` D4. Asked here rather
-  // than at the call sites for the same reason `core` is: this is the one function that answers "what
-  // is the text of this path", so a tree wired in here is a tree the checker, the linker and the
-  // closure walker all see at once.
-  builtin = stdFile(path);
-  if (builtin != "") { return builtin; }
+  if (path == "std") { return stdSource(); }
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == path) { return sources[i]; }
   }
@@ -9013,6 +9006,19 @@ void covTableRow(Env env, i32 idx, string kind, i32 line, i32 col) {
   i32 f = env.curFile >= 0 ? env.curFile : (env.fileCount == 1 ? 0 : 0 - 1);
   i32 localLine = line;
   string path = f < env.filePaths.len() ? env.filePaths[f] : "";
+  // **`core` is one module and several files.** Its lines are the concatenation's, so they are put
+  // back as the file and line somebody has open — `core/hash.wac:61`, not ` core:225`. A mutant is made
+  // in a file, and a profile that names the module could select nothing to kill it.
+  if (path == " core") {
+    string[] names = coreFileNames();
+    i32[] starts = coreFileStarts();
+    for (i32 k = 0; k < starts.len(); k++) {
+      if (starts[k] <= line) {
+        path = names[k];
+        localLine = line - starts[k] + 1;
+      }
+    }
+  }
   env.covTable = env.covTable + numText(idx) + "\t" + numText(localLine) + "\t" + numText(col)
                  + "\t" + kind + "\t" + path + "\n";
 }

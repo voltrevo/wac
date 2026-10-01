@@ -15,7 +15,7 @@
 //
 // None of the nine tests expects a trap.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_a_bool_is_a_padded_zero_or_one_and_nothing_else as al__a_bool_is_a_padded_zero_or_one_and_nothing_else,

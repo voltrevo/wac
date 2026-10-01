@@ -1,7 +1,7 @@
 // expect: refused
 // why: await is only a thing inside an async function, and the fix is on the declaration
 // spec: §wac-await-inside-3nq7wbe
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered.

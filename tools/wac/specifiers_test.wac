@@ -23,7 +23,7 @@
 // Fixtures written as *strings* inside tests are deliberately not searched: a test of the resolver is
 // entitled to write a specifier the resolver should refuse, and this reads files as files.
 
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";

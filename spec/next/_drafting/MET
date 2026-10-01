@@ -26,6 +26,7 @@ spec/next/1-programs/02-modules-and-imports.md#19
 spec/next/1-programs/02-modules-and-imports.md#20
 spec/next/1-programs/02-modules-and-imports.md#23
 spec/next/1-programs/02-modules-and-imports.md#25
+spec/next/1-programs/02-modules-and-imports.md#28
 spec/next/1-programs/02-modules-and-imports.md#29
 spec/next/1-programs/02-modules-and-imports.md#30
 spec/next/1-programs/02-modules-and-imports.md#31
@@ -179,6 +180,7 @@ spec/next/3-expressions/25-control-flow.md#9
 spec/next/3-expressions/25-control-flow.md#10
 spec/next/3-expressions/25-control-flow.md#13
 spec/next/3-expressions/26-errors-and-results.md#1
+spec/next/3-expressions/26-errors-and-results.md#5
 spec/next/4-static/27-static-declarations.md#2
 spec/next/4-static/27-static-declarations.md#3
 spec/next/4-static/27-static-declarations.md#6
@@ -190,6 +192,10 @@ spec/next/4-static/29-static-dependencies.md#7
 spec/next/4-static/31-static-control.md#3
 spec/next/4-static/31-static-control.md#7
 spec/next/5-inference/32-widening.md#1
+spec/next/7-library/39-map-and-hash.md#1
+spec/next/7-library/39-map-and-hash.md#3
+spec/next/7-library/40-option-and-result.md#1
+spec/next/7-library/40-option-and-result.md#2
 spec/next/7-library/41-read.md#1
 spec/next/8-tooling/48-bindgen.md#1
 spec/next/8-tooling/48-bindgen.md#2

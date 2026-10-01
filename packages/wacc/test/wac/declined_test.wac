@@ -44,7 +44,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec } from "std/platform.wac";
+import { Change, Cli, Core, Exec } from "std";
 
 /** `wac build <file> -o <stem>` inside the fixture. */
 Exec build(Cli cli, string dir, string name) {

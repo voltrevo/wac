@@ -5,7 +5,7 @@
 // reading like somebody else's problem. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Change, Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
+import { Change, Core, Cli, Exec, FileResult, Stat } from "std";
 import { isSource, stageDir, stageInto, stagedFrom } from "./mutatestage.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 

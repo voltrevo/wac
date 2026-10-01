@@ -42,7 +42,7 @@
 // and so do the copies it forces.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { importSpecs } from "../../packages/wacc/src/files.wac";
 import { resolveFrom } from "../../packages/wacc/src/path.wac";
 import { isBuiltinSpec } from "../../packages/wacc/src/coretext.wac";

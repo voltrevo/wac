@@ -13,7 +13,7 @@
 // Every line is a verdict rather than a measurement: the ports differ per run, so printing them would
 // make two hosts disagree about nothing.
 
-import { Core, Cli, Socket, Datagram } from "std/platform.wac";
+import { Core, Cli, Socket, Datagram } from "std";
 export i32 main(Core core, Cli cli) {
   Socket a = cli.bindDatagram("127.0.0.1", 0).wait();
   Socket b = cli.bindDatagram("127.0.0.1", 0).wait();

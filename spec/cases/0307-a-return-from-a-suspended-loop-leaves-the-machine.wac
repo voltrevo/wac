@@ -1,7 +1,7 @@
 // expect: answers answer = 7
 // why: a return inside a flattened loop leaves the function, not the loop
 // from: design/lang/0014
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered.

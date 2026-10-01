@@ -16,7 +16,7 @@
 // scripts, the byte scan and the regex both answered 30, disagreeing on none. The classes are not
 // identical — see `pathStart` — so that agreement is a property of this corpus, not of the two rules.
 
-import { Cli, Stat } from "std/platform.wac";
+import { Cli, Stat } from "std";
 
 /**
  * The bytes a path can follow: the start of a word, in other words.

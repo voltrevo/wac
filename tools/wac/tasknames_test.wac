@@ -49,7 +49,7 @@
 // is usually a rule asking the wrong question.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { has } from "../../packages/wactest/src/strings.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";

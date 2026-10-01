@@ -20,7 +20,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { askArgvCached } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { contains, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Graph, graphOf } from "./graph.wac";

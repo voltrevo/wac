@@ -2,7 +2,7 @@
 // why: the declared type is what the body returns, and the caller receives a ticket for it
 // from: design/lang/0014
 // spec: §wac-async-decl-h3vq81m
-import { Pending } from "std/platform.wac";
+import { Pending } from "std";
 
 /**
  * A ticket that is already answered.

@@ -16,7 +16,7 @@
 // fails here, in the reader, which is why this message was worth more than that one.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { putFile } from "../../../wactest/src/host.wac";
 

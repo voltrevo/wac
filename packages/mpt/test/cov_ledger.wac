@@ -37,7 +37,7 @@
 // negatives beside it were passing for a reason I had not established. Without the control they would
 // have read as evidence about the payload check.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/mpt/test/cov_exercise.wac";

@@ -2,7 +2,7 @@
 //
 // The counterpart to `serve`, and the reason `connect` exists.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";

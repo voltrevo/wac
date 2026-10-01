@@ -8,7 +8,7 @@
 // `parseFlags` lives here too and is tested by `mutatelist_test.wac`, which was its home.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Flags, isTestFile, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 

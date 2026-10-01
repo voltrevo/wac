@@ -21,7 +21,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Outcome, oracle, wire } from "./nodeoracle.wac";
 import { ResponseOutcome, responseOracle, responseOutcomeOf } from "./responseoracle.wac";
@@ -29,7 +29,6 @@ import { Incoming, ParsedResponse, parseResponse, ERR_STATUS } from "../../src/i
 import { Outgoing, write as writeRequest } from "../../src/outgoing.wac";
 import { Headers } from "../../src/headers.wac";
 import { Response, write as writeResponse, statusHasBody } from "../../src/response.wac";
-import { Exec } from "std/platform.wac";
 
 i32 MAX_BODY() { return 1048576; }
 

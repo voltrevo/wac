@@ -21,7 +21,7 @@
 // step 5 of `design/system/0005`.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Change, FAULT_EXISTS, FileResult, Stat } from "std/platform.wac";
+import { Change, FAULT_EXISTS, FileResult, Stat } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { decode } from "../../codec/src/hex.wac";
 // **`Opened` is deliberately not imported**, although the `match` below names its variants. This file
@@ -39,7 +39,7 @@ import { GitIndex, IndexEntry, Staged, parseIndex, writeIndex } from "./index.wa
 import { Rule, ignored, parseIgnore } from "./ignore.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 
 /** An open repository. */
 export struct Repo {

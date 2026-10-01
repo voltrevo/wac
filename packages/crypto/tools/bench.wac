@@ -37,7 +37,7 @@
 // cost more than everything else combined and would put a private key in a tool that prints its
 // inputs.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../src/ed25519.wac";
 import { x25519Base } from "../src/x25519.wac";

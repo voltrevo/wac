@@ -21,7 +21,7 @@ import { endForFault, endMisc, endNotDirectory, endProtocol, endReason, endResou
 import { replyForEndReason, endReasonName, repFailure, repNetUnreachable, repOk, repRefused,
          repTtlExpired } from "../../src/socks5.wac";
 import { Cli, Core, FileResult, FAULT_NONE, FAULT_NOT_GRANTED, FAULT_REFUSED, FAULT_TIMED_OUT,
-         FAULT_UNREACHABLE } from "std/platform.wac";
+         FAULT_UNREACHABLE } from "std";
 
 /**
  * A failed connect reaches a person as what actually happened.

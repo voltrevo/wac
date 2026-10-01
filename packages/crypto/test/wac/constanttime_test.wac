@@ -48,7 +48,7 @@
 // export name is a call that never happens.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Pending, execReason} from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, Pending, execReason} from "std";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram, writeIfDifferent } from "../../../wactest/src/built.wac";

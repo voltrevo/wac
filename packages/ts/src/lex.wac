@@ -24,7 +24,7 @@
 //
 // Both are the reason `design/system/0009` D2 asks for a lexer rather than a pattern.
 
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 
 // ── Kinds ─────────────────────────────────────────────────────────────────────
 //

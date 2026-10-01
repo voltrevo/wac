@@ -35,7 +35,7 @@
 // thing somebody should be able to find.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std/platform.wac";
+import { Core, Cli, FileResult } from "std";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 

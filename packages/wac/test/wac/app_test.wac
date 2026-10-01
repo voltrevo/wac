@@ -16,7 +16,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryDir, binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std";
 
 /**
  * A shell, because `Cli.exec` passes no environment and no working directory.
@@ -38,7 +38,7 @@ Exec build(Cli cli, string entry, string grant, string dest) {
 /** A program with no imports beyond `Core`, so the build is a compile of two lines. */
 bool writeEntry(Cli cli, T t, string path) {
   Change wrote = cli.writeFile(path,
-    ("import { Core } from \"std/platform.wac\";\n" +
+    ("import { Core } from \"std\";\n" +
      "export i32 main(Core core) { core.log(\"an app ran\"); return 0; }\n").toBytes()).wait();
   t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
   return wrote.ok();
@@ -100,7 +100,7 @@ export string test_the_grants_are_in_the_module_and_not_the_preamble(Core core, 
 
   // A program that reads, so that the grant is the difference between working and refused.
   Change wrote = cli.writeFile(dir + "/read.wac",
-    ("import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
+    ("import { Core, Cli, FileResult } from \"std\";\n" +
      "export i32 main(Core core, Cli cli) {\n" +
      "  FileResult r = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();\n" +
      "  core.log(r.ok ? \"read ok\" : \"refused: \" + r.error);\n" +
@@ -389,7 +389,7 @@ export string test_a_closed_reader_stops_the_program(Core core, Cli cli) {
   t.isTrue(whyDir == "", whyDir);
 
   Change wrote = cli.writeFile(dir + "/forever.wac",
-    ("import { Core, Cli } from \"std/platform.wac\";\n" +
+    ("import { Core, Cli } from \"std\";\n" +
      "export i32 main(Core core, Cli cli) {\n" +
      // Unbounded, and the loop is the assertion: on a host that reports the closed reader this
      // returns, and on one that does not it never leaves the `while`.

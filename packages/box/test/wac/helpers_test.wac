@@ -17,7 +17,7 @@
 // tail of its own match and slices backwards. No caller passes such a separator, so this is a choice
 // of semantics rather than a bug that was biting; the standard one is kept and pinned below.
 
-import { Cli, Core } from "std/platform.wac";
+import { Cli, Core } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { differs, splitOn, trimEnd } from "./replay.wac";
 

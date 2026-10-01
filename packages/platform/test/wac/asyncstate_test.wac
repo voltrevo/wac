@@ -26,7 +26,7 @@
 // next increment and is the same in both: `then` on the ticket the machine is suspended at.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult, Pending } from "std/platform.wac";
+import { Cli, Core, FileResult, Pending } from "std";
 
 // ── One await, no loop — A2's shape ───────────────────────────────────────────
 

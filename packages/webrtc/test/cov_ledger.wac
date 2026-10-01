@@ -36,7 +36,7 @@
 // aiortc, coturn, OpenSSL, Chromium — sends well-formed messages. `packages/quic`'s
 // `test/wac/truncated_test.wac` is the shape that closes that class, and it has not been done here.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

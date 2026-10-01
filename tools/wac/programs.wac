@@ -14,7 +14,7 @@
 // made an eighth copy of the rule. Not a test file and not discovered as one: `wac test` walks
 // `*_test.wac`. `issues/system/0161`.
 
-import { Cli, FileResult, Stat } from "std/platform.wac";
+import { Cli, FileResult, Stat } from "std";
 import { isSpace } from "../../packages/wactest/src/strings.wac";
 
 /** A `main` — something with a command line. */

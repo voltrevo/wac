@@ -48,7 +48,7 @@
 // time or giving up and writing one paragraph that means nothing. Two rules are whole-file and give
 // up their file's floor deliberately, and both say why.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 

@@ -18,7 +18,7 @@
 // past before the log said `bytes=0`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Socket, Pending } from "std/platform.wac";
+import { Cli, Core, Socket, Pending } from "std";
 import { Read } from "core";
 
 /**

@@ -25,7 +25,7 @@
 // imported by half this package, and gives 32 bytes at a time — two of them for P-384's 48.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Big, DivMod, add, mul, divmod } from "../../../bignum/src/big.wac";

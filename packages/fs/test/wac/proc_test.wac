@@ -25,9 +25,9 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult, Pending } from "std/platform.wac";
+import { Core, Cli, FileResult, Pending } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { Proc, Procs } from "../../src/proc.wac";
 import { Fs } from "../../src/fs.wac";
 import { has } from "../../../wactest/src/strings.wac";

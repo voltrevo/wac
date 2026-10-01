@@ -7,7 +7,7 @@
 // two bindings silently, so a failure here is a worklist and not a wrong answer.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Bundled, bundle } from "../../src/bundle.wac";
 import { Stripped, strip } from "../../src/strip.wac";

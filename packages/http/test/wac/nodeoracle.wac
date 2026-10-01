@@ -37,7 +37,7 @@
 // nothing else — which is what `issues/system/0182` argued for and what closed it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec } from "std/platform.wac";
+import { Cli, Exec } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";

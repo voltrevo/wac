@@ -22,7 +22,7 @@
 // `issues/system/0316b`'s failure printed `0 passed, 6 failed` per file, which is a sentence a status
 // cannot carry.
 
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 

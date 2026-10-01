@@ -35,7 +35,7 @@
 // cost is that a line carrying both a covered and an uncovered point reads as uncovered, which is the
 // safe direction — it asks for an entry rather than hiding one.
 
-import { Core, Cli, Exec, Change, FileResult, execReason } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, execReason } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, trimmed } from "../../packages/wactest/src/strings.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";

@@ -23,7 +23,7 @@
 // closed. `Ctx` below carries that, one frame per open bracket, which is also what makes
 // `x?: T` — an optional parameter — distinguishable from `c ? x : y`.
 
-import { Vec } from "core/vec.wac";
+import { Vec } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   Lexed, kEof, kIdent, kNum, kPunct, kRegex, kStr, kTemplate,

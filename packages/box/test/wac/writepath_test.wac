@@ -10,7 +10,7 @@
 // version of "none of this happens without the write grant" would assert nothing. That is the same
 // attenuation gap `issues/system/0296c` notes; it is not this file's to close.
 
-import { Cli, Core, FileResult } from "std/platform.wac";
+import { Cli, Core, FileResult } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

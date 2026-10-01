@@ -27,7 +27,7 @@
 // `shname.wac` beside this file.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { startsWith, trimmed } from "../../../wactest/src/strings.wac";
 import { scratch } from "../../../wactest/src/host.wac";

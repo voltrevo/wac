@@ -44,7 +44,7 @@
 // is now a statement about the cache rather than about what else happened to be running.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir, madeDir, putFile } from "../../../wactest/src/host.wac";
@@ -247,7 +247,7 @@ export string test_a_grant_is_part_of_the_key(Core core, Cli cli) {
   string home = dir + "/home";
   string entry = dir + "/g.wac";
   t.isTrue(putFile(cli, entry,
-      "import { Core, Cli } from \"std/platform.wac\";\n"
+      "import { Core, Cli } from \"std\";\n"
       + "export i32 main(Core core, Cli cli) { core.log(\"hi\"); return 0; }\n") == "",
       "could not write the program");
   string out = dir + "/gx";

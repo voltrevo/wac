@@ -14,7 +14,7 @@
 // So this asserts the two things a refused world cannot fake: that it arrived, and that a capability
 // on it answers.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 
 export string test_a_test_is_handed_a_world_that_answers(Core core, Cli cli) {

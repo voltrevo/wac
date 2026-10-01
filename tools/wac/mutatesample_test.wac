@@ -10,7 +10,7 @@
 // required to pick the same members in the same order. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Change, Core, Cli, Exec } from "std/platform.wac";
+import { Change, Core, Cli, Exec } from "std";
 import { Edit, Mutant } from "./mutateoperators.wac";
 import { Rand, fileCount, mulberry32, next, sampleMutants } from "./mutatesample.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";

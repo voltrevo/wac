@@ -43,7 +43,7 @@
 // actually claims — "no input reaches it" against "reachable with the right scalar" — rather than from
 // which list it happened to live in.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/crypto/test/cov_exercise.wac";

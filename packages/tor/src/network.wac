@@ -97,7 +97,7 @@
 
 import {
   Child, Cli, Core, FileResult, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_NONE, Pending,
-} from "std/platform.wac";
+} from "std";
 import { Read } from "core";
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa } from "../../fmt/src/itoa.wac";

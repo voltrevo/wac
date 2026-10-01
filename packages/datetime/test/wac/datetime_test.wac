@@ -31,7 +31,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { Civil, isLeap, daysInMonth, isValidDate, daysFromCivil, civilFromDays, weekday,

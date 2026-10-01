@@ -12,7 +12,7 @@
 // All 28 tests are called directly; twenty take `(Core, Cli)` because they verify against Ethereum's
 // published roots through a host-side oracle. None expects a trap.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_two_empty_constants_are_what_they_claim_to_be as ac__the_two_empty_constants_are_what_they_claim_to_be,

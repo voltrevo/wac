@@ -59,7 +59,7 @@
 // below rather than the word "unreachable". Four say `proven: false` because they are reachable and I
 // did not build the input — the honest flag, and each names what the next person would have to do.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/regex/test/cov_exercise.wac";

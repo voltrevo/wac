@@ -35,7 +35,7 @@
 // that reports it. The six string helpers went the same way, and four of them turned out to be the
 // third copy of what `packages/wactest/src/strings.wac` already exported.
 
-import { Core, Cli } from "std/platform.wac";
+import { Core, Cli } from "std";
 import { Measured, measure, report, reportPoints } from "./covledger.wac";
 
 export i32 main(Core core, Cli cli) {
