@@ -309,9 +309,11 @@ export i32 kAsync() { return 86; }
 export i32 kAwait() { return 87; }
 /** `static` — a module-level declaration, evaluated at compile time. `design/lang/0016`. */
 export i32 kStatic() { return 88; }
+/** `private` — a member visible only inside its type's body. spec/next ch12. */
+export i32 kPrivate() { return 89; }
 
 /** How many kinds there are, for bounds checks and table sizing. */
-export i32 kindCount() { return 89; }
+export i32 kindCount() { return 90; }
 
 /**
  * How a token kind is spelled, for a diagnostic that has to name one.
@@ -411,5 +413,6 @@ export string kindName(i32 kind) {
   if (kind == 86) { return "async"; }
   if (kind == 87) { return "await"; }
   if (kind == 88) { return "static"; }
+  if (kind == 89) { return "private"; }
   return "something else";
 }

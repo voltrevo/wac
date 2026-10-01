@@ -1276,7 +1276,7 @@ Method[] loweredMethods(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, D
     Stmt[] body2 = lowerLambdasIn(first, ups, args, src2, lexed2, me.body);
     if (!me.isAsync) {
       out[m] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
-                      me.hasThis, me.thisConst, me.typeParams, false);
+                      me.hasThis, me.thisConst, me.typeParams, false, me.isPrivate);
       continue;
     }
     AsyncPlan plan = planBody(body2);
@@ -1290,7 +1290,8 @@ Method[] loweredMethods(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, D
                 i32[].filled(1, col + 1000), bool[].filled(1, false));
     Stmt[] machine = machineBody(c, body2, plan, me.returnType);
     out[m] = Method(me.nameTok, lowPendingTy(c, cloneTy(me.returnType)), me.params, machine,
-                    me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false);
+                    me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false,
+                    me.isPrivate);
   }
   return out;
 }

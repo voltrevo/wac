@@ -1,0 +1,18 @@
+// expect: answers deposited = 30
+// why: a private field and method are named freely inside the struct's own methods and statics
+// from: `private` (design/lang/0016), spec/next ch12 §wac-private-member-dgsxduu
+struct Account {
+  private i32 cents;
+  private i32 deposits;
+
+  Account open(i32 cents) { return Account(cents, 0); }
+  void deposit(this, i32 c) { this.cents = this.cents + c; this.tally(); }
+  i32 balance(const this) { return this.cents; }
+  private void tally(this) { this.deposits = this.deposits + 1; }
+}
+
+export i32 deposited() {
+  Account a = Account.open(10);
+  a.deposit(20);
+  return a.balance();
+}

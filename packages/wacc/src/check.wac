@@ -291,6 +291,31 @@ export i32 errArrayLiteralType() { return 214; }
 export i32 errArrayLiteralSlot() { return 215; }
 /** `from "core"` — a path below a package names no package (`§wac-no-subpath-wqatc72`). */
 export i32 errBuiltinSubpath() { return 216; }
+/** `acct.cents` outside `Account`'s body, where `cents` is `private`. */
+export i32 errPrivateMember() { return 217; }
+/** `Account(5, 0)` outside `Account`'s body, when it has a private field. */
+export i32 errPrivateConstruction() { return 218; }
+
+/** The first type up `name`'s chain that has a private field and is not the body being checked, or `""`. */
+string privateFieldOwnerElsewhere(C c, string name) {
+  string at = templateOf(name);
+  for (i32 hop = 0; hop <= c.structCount; hop++) {
+    if (at == "") { return ""; }
+    for (i32 i = 0; i < c.fieldCount; i++) {
+      if (c.fieldOwners[i] == at && c.isPrivate(at, c.fieldNames[i]) && at != c.bodyOf) { return at; }
+    }
+    at = c.parentOf(at);
+  }
+  return "";
+}
+
+/** `name` private to the type that declares it, refused unless this is that type's own body. */
+bool checkPrivateMember(C c, string owner, string name, i32 line, i32 col) {
+  string decl = c.privateOwner(owner, name);
+  if (decl == "" || decl == c.bodyOf) { return false; }
+  c.reportWith(errPrivateMember(), line, col, "'" + name + "' is private to " + decl);
+  return true;
+}
 
 /** Whether `spec` is a path below `core` or `std`, which is refused by its form alone. */
 export bool isBuiltinSubpath(string spec) {
@@ -1526,6 +1551,55 @@ export struct C {
     this.arrLitCount = this.arrLitCount + 1;
   }
 
+  /**
+   * `Owner.name` for every `private` member — field, method or static — spec/next ch12, ch13.
+   *
+   * Keyed by the declaring type, so a subtype's lookup finds its parent's private member by walking up
+   * and then refuses it: the subtype's body is not the parent's (`§wac-private-not-inherited-acpickk`).
+   */
+  string[] privateKeys;
+  i32 privateCount;
+  /** The struct or enum whose body is being checked, or `""` outside every body. */
+  string bodyOf;
+
+  void notePrivate(this, string owner, string name) {
+    if (this.privateCount >= this.privateKeys.len()) {
+      string[] grown = string[].defaulted(this.privateKeys.len() * 2 + 16);
+      for (i32 i = 0; i < this.privateCount; i++) { grown[i] = this.privateKeys[i]; }
+      this.privateKeys = grown;
+    }
+    this.privateKeys[this.privateCount] = owner + "." + name;
+    this.privateCount = this.privateCount + 1;
+  }
+
+  bool isPrivate(const this, string owner, string name) {
+    string key = owner + "." + name;
+    for (i32 i = 0; i < this.privateCount; i++) { if (this.privateKeys[i] == key) { return true; } }
+    return false;
+  }
+
+  /**
+   * The type that declares `name` as a private member, reached from `owner` up its parents, or `""`.
+   *
+   * The first type up the chain that has the name at all decides: a public member that shadows a
+   * parent's private one is the one meant.
+   */
+  string privateOwner(this, string owner, string name) {
+    string at = templateOf(owner);
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return ""; }
+      if (this.isPrivate(at, name)) { return at; }
+      for (i32 i = 0; i < this.fieldCount; i++) {
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) { return ""; }
+      }
+      for (i32 i = 0; i < this.methodCount; i++) {
+        if (this.methodOwners[i] == at && this.methodNames[i] == name) { return ""; }
+      }
+      at = this.parentOf(at);
+    }
+    return "";
+  }
+
 
 
   /**
@@ -1566,7 +1640,8 @@ export struct C {
              string[].defaulted(decls), i32[].filled(locals, 0 - 1), 0,
              string[].defaulted(decls), string[].defaulted(decls), 0,
              string[].defaulted(decls), 0, false,
-             i32[](), string[](), 0);
+             i32[](), string[](), 0,
+             string[](), 0, "");
   }
 
   /**
@@ -6068,6 +6143,12 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
         c.report(errNamedField(), at.line, at.col);
         return;
       }
+      // Construction sets fields, so a private one may be named only where it may be written.
+      i32 nt = named[i].nameTok;
+      if (nt >= 0 && checkPrivateMember(c, tmpl, tokenText(c, nt), c.toks[nt * tokenStride() + 3],
+                                        c.toks[nt * tokenStride() + 4])) {
+        return;
+      }
     }
     // **A field may be left out when its type is nullable, and not otherwise.** The strict rule was
     // right about the danger — a construction that quietly defaults a field it forgot is a wrong
@@ -6105,6 +6186,15 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
                      expectedFound(nwant, ngot));
       }
     }
+    return;
+  }
+  // **Positional construction supplies every field**, so it is refused wherever any of them is private
+  // to a body other than this one — outside the struct, and in a subtype everywhere, since a subtype's
+  // positional form takes its parent's fields first (`§wac-private-construction-4zbaya5`).
+  string privTo = privateFieldOwnerElsewhere(c, name);
+  if (privTo != "") {
+    c.reportWith(errPrivateConstruction(), at.line, at.col,
+                 privTo + " has private fields — positional construction is for its own body");
     return;
   }
   if (c.constructArity(name) != args.len()) { return; }
@@ -6204,6 +6294,9 @@ void checkWrite(C c, Lvalue lv) {
           return;
         }
         string ownerTmpl = templateOf(ownerT);
+        // Writing a private field outside its body is naming it there — and the way a local is
+        // built field by field from outside, which therefore cannot set one (spec/next ch12).
+        if (checkPrivateMember(c, ownerT, tokenText(c, nameTok), lv.line, lv.col)) { return; }
         if (c.isStruct(ownerTmpl) && !c.isGeneric(ownerTmpl)) {
           if (!c.hasField(ownerT, tokenText(c, nameTok)) &&
               c.methodAt(ownerT, tokenText(c, nameTok)) < 0) {
@@ -7548,6 +7641,9 @@ void checkMember(C c, Expr at, Expr obj, string name) {
     // which is the same argument the constructor-arity rule makes one screen up. The bail moves below
     // the lookups rather than away: a template whose *parent* this file cannot see still answers
     // nothing, which is the direction to be wrong in.
+    // A private field or method, named outside its type's body: the member exists, and this is not a
+    // place it may be named. Reported before the other questions, which would all say it is fine.
+    if (checkPrivateMember(c, t, name, at.line, at.col)) { return; }
     if (c.hasField(t, name)) { return; }
     if (c.isGeneric(t) && c.methodAt(templateOf(t), name) >= 0) { return; }
     // A method reached as a *value*. This function is only asked about members that are not the
@@ -7802,6 +7898,11 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   }
   if (recv == "string" && !isStringBuiltin(name)) {
     c.report(errNoMethod(), callee.line, callee.col);
+    return;
+  }
+  // A private method, called — instance or static — outside its type's body.
+  if ((c.isStruct(templateOf(recv)) || c.isEnum(templateOf(recv)))
+      && checkPrivateMember(c, recv, name, callee.line, callee.col)) {
     return;
   }
   // **A variant construction is a call with an arity.** `E.C(1, 0)` reaches here spelled like a
@@ -9957,6 +10058,7 @@ export void declareModule(C c, Program prog, string[] only) {
                                               : typeOfTy(c, methods[mi].returnType),
                                           methods[mi].isAsync), emps,
                           methods[mi].body, ownParamNames(c, methods[mi].typeParams));
+          if (methods[mi].isPrivate) { c.notePrivate(ename, tokenText(c, methods[mi].nameTok)); }
         }
       }
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -9984,6 +10086,7 @@ export void declareModule(C c, Program prog, string[] only) {
           // which is the whole point of the spelling: one word instead of one per field.
           c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
                               typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
+          if (fields[i].isPrivate) { c.notePrivate(name, tokenText(c, fields[i].nameTok)); }
         }
         for (i32 i = 0; i < methods.len(); i++) {
           // The method's own letters, so its declared types resolve while they are being recorded —
@@ -10011,6 +10114,7 @@ export void declareModule(C c, Program prog, string[] only) {
                                                      : typeOfTy(c, methods[i].returnType),
                                           methods[i].isAsync), mps,
                           methods[i].body, ownParamNames(c, methods[i].typeParams));
+          if (methods[i].isPrivate) { c.notePrivate(name, tokenText(c, methods[i].nameTok)); }
           c.activeParamCount = savedActive;
         }
       }
@@ -10383,6 +10487,15 @@ void setActiveParams(C c, i32[] typeParams) {
  * active when this is called; a method's own letters are added on top and taken off again.
  */
 void checkMethodBodies(C c, string owner, string parent, Method[] methods) {
+  // **The body a private member is visible in.** Set for exactly as long as this type's methods are
+  // being walked, and put back, so a lambda inside one is in the body too and the next type is not.
+  string outerBody = c.bodyOf;
+  c.bodyOf = owner;
+  checkMethodBodiesIn(c, owner, parent, methods);
+  c.bodyOf = outerBody;
+}
+
+void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
   for (i32 mi = 0; mi < methods.len(); mi++) {
     // The method's own letters, added to the owner's for as long as this method is being checked —
     // see `addActiveParams`. This is the pass that has `scopeTypes` on, so it is the one that reports

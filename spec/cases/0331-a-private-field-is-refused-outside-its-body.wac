@@ -1,0 +1,9 @@
+// expect: refused
+// why: naming a private field outside the body of the struct that declares it is refused
+// from: `private` (design/lang/0016), spec/next ch12 §wac-private-member-dgsxduu
+struct Account {
+  private i32 cents;
+  Account open(i32 c) { return Account(c); }
+}
+
+export i32 peek() { Account a = Account.open(3); return a.cents; }

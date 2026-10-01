@@ -25,7 +25,7 @@ import {
   kInt, kFloat, kString, kIdent, kEof, kTrue, kFalse, kNull, kVoid, kFn, kThis,
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
   kConst, kExport, kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
-  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kImport,
+  kReturn, kBreak, kContinue, kTrap, kStruct, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate, kImport,
   kOverride, kAssign,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq,
   kAndEq, kOrEq, kCaretEq, kShlEq, kShrEq, kShrUEq,
@@ -302,7 +302,7 @@ export struct P {
  * what found it.
  */
 bool isKeywordKind(i32 k) {
-  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait() || k == kStatic();
+  return (k >= kImport() && k <= kMatch()) || k == kAsync() || k == kAwait() || k == kStatic() || k == kPrivate();
 }
 
 bool atKeyword(P p) {
@@ -2347,6 +2347,8 @@ Decl parseStructDecl(P p, bool exported) {
   MethodList methods = MethodList.create();
 
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
+    // `private` comes first: it is about who may name the member, before anything about what it is.
+    bool memberPrivate = p.eat(kPrivate());
     i32 overrideTok = p.at;
     bool isOverride = p.eat(kOverride());
     if (!isOverride) { overrideTok = -1; }
@@ -2367,7 +2369,7 @@ Decl parseStructDecl(P p, bool exported) {
 
     if (p.at1(kSemi())) {
       p.advance();
-      fields.push(Field(memberTok, memberType, fieldConst));
+      fields.push(Field(memberTok, memberType, fieldConst, memberPrivate));
     } else if (p.at1(kLparen()) || p.at1(kLt())) {
       // **A method may introduce its own letters**: `Pending<U> then<U>(…)`. The owner's are already
       // in scope; these are the ones that appear nowhere but here. Empty for almost every method.
@@ -2393,7 +2395,7 @@ Decl parseStructDecl(P p, bool exported) {
       }
       p.expect(kRparen());
       methods.push(Method(memberTok, memberType, params.take(), parseBlock(p),
-        isOverride, overrideTok, hasThis, thisConst, mTypeParams, memberAsync));
+        isOverride, overrideTok, hasThis, thisConst, mTypeParams, memberAsync, memberPrivate));
     } else {
       p.fail(perrExpected());
       while (!p.at1(kRbrace()) && !p.at1(kSemi()) && !p.at1(kEof())) { p.advance(); }
@@ -2440,6 +2442,9 @@ Decl parseEnumDecl(P p, bool exported) {
   }
 
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
+    // A method may be `private`; a variant may not, since `match` binds its payload wherever the enum
+    // is matched (`§wac-enum-private-method-dmg67n7`) — and a `private` there reads as a method.
+    bool methodPrivate = p.eat(kPrivate());
     // `override` means nothing here — the variants are the compiler's own subtypes, so an override
     // would be per-variant dispatch, a different feature. Refused rather than quietly accepted.
     if (p.at1(kOverride())) {
@@ -2473,7 +2478,7 @@ Decl parseEnumDecl(P p, bool exported) {
     // so one is refused until that ambiguity is decided deliberately.
     if (!hasThis) { p.fail(perrEnumMethodThis()); }
     methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
-                        i32[](), false));
+                        i32[](), false, methodPrivate));
   }
 
   p.expect(kRbrace());
@@ -2489,7 +2494,7 @@ Decl parseEnumDecl(P p, bool exported) {
  * anything else is a variant. `override`, `void` and `fn` can only begin a method.
  */
 bool looksLikeEnumMethod(P p) {
-  if (p.at1(kOverride()) || p.at1(kVoid()) || p.at1(kFn())) { return true; }
+  if (p.at1(kPrivate()) || p.at1(kOverride()) || p.at1(kVoid()) || p.at1(kFn())) { return true; }
   if (!p.at1(kIdent())) { return false; }
   i32 j = 1;
   // The type's own suffixes: `i32[] name(…)`, `Node? name(…)`.

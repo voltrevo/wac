@@ -20,7 +20,7 @@ import {
   kImport, kExport, kStruct, kConst, kThis, kOverride,
   kIf, kElse, kWhile, kFor, kDo, kSwitch, kCase, kDefault,
   kBreak, kContinue, kReturn, kTrap, kTrue, kFalse, kNull,
-  kIs, kNot, kAs, kVoid, kFn, kEnum, kMatch, kAsync, kAwait, kStatic,
+  kIs, kNot, kAs, kVoid, kFn, kEnum, kMatch, kAsync, kAwait, kStatic, kPrivate,
   kAsBang, kAsTilde, kAsAt,
   kPlus, kMinus, kStar, kSlash, kPercent, kAssign, kEq, kNe,
   kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kAnd, kOr, kCaret, kTilde,
@@ -87,6 +87,8 @@ export i32 errBlockStringOpen()     { return 10; }
  * escape* is true and sends them looking for a typo.
  */
 export i32 errBlockInterp()         { return 11; }
+/** `@""`, or a `@"…` the line ends inside — a verbatim name holds some text, on one line. */
+export i32 errVerbatimName()        { return 12; }
 
 // ── Character classification ──────────────────────────────────────────────────
 //
@@ -185,6 +187,7 @@ i32 keywordKind(u8[] src, i32 start, i32 len) {
   }
   if (len == 7) {
     if (v == p7('d', 'e', 'f', 'a', 'u', 'l', 't')) { return kDefault(); }
+    if (v == p7('p', 'r', 'i', 'v', 'a', 't', 'e')) { return kPrivate(); }
     return kIdent();
   }
   if (v == p8('c', 'o', 'n', 't', 'i', 'n', 'u', 'e')) { return kContinue(); }
@@ -861,6 +864,28 @@ bool takeExponent(Lexer lx) {
 }
 
 /**
+ * `@"…"` — a name written verbatim, spec/next ch01 `§wac-verbatim-name-jzwznre`.
+ *
+ * **An identifier whose span is the quoted text**, so everything downstream that reads a name by its
+ * span reads the text: `@"n"` and `n` are one binding without anything else knowing verbatim names
+ * exist (`§wac-verbatim-same-name-axnpc5w`), and `@"for"` is a name rather than the keyword because the
+ * kind is decided here and never by the text. It has no escapes and ends at the next `"`, on its line.
+ */
+void lexVerbatimName(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
+  lx.advance();
+  lx.advance();
+  i32 start = lx.pos;
+  while (!lx.atEnd() && lx.peek(0) != '"' && lx.peek(0) != '\n') { lx.advance(); }
+  i32 len = lx.pos - start;
+  if (lx.atEnd() || lx.peek(0) != '"' || len == 0) {
+    fail(out, errVerbatimName(), startLine, startCol);
+    return;
+  }
+  lx.advance();
+  pushToken(out, kIdent(), start, len, startLine, startCol);
+}
+
+/**
  * `as`, `as!`, `as~` and `as@` — the one place an identifier can grow a suffix, so
  * it is handled where the identifier is recognised rather than with the operators.
  */
@@ -1074,7 +1099,8 @@ bool endsExpression(i32 kind) {
  */
 bool startsTag(Lexer lx, i32 offset) {
   i32 c = lx.peek(offset);
-  return c == '/' || c == '>' || isIdentStart(c);
+  // `<@"caption">` — a tag name written verbatim is a name like any other.
+  return c == '/' || c == '>' || isIdentStart(c) || (c == '@' && lx.peek(offset + 1) == '"');
 }
 
 /**
@@ -1215,6 +1241,8 @@ export Lexed lex(u8[] src) {
       lexChar(lx, out, startLine, startCol);
     } else if (isDigit(c)) {
       lexNumber(lx, out, startLine, startCol);
+    } else if (c == '@' && lx.peek(1) == '"') {
+      lexVerbatimName(lx, out, startLine, startCol);
     } else if (isIdentStart(c)) {
       i32 start = lx.pos;
       while (!lx.atEnd() && isIdentPart(lx.peek(0))) { lx.advance(); }

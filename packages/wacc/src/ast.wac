@@ -339,6 +339,8 @@ export struct Field {
   i32 nameTok;
   Ty type;
   bool isConst;
+  /** `private i32 cents;` — visible only inside the struct's body. spec/next ch12. */
+  bool isPrivate;
 }
 
 export struct Method {
@@ -379,6 +381,11 @@ export struct Method {
    * them would typecheck and mean something else.
    */
   bool isAsync;
+  /**
+   * `private` — visible only inside its type's body. spec/next ch12, ch13. Appended last, for the
+   * reason `typeParams` gives: three `bool`s already sit together here.
+   */
+  bool isPrivate;
 }
 
 /** One variant of an `enum` declaration. Payload fields are shaped like params. */

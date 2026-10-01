@@ -1,0 +1,9 @@
+// expect: refused
+// why: calling a private method outside its struct's body is refused
+// from: `private` (design/lang/0016), spec/next ch12 §wac-private-member-dgsxduu
+struct Account {
+  i32 n;
+  private void tally(this) { this.n = this.n + 1; }
+}
+
+export i32 f() { Account a = Account(0); a.tally(); return a.n; }

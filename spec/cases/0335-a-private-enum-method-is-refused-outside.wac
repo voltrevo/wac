@@ -1,0 +1,10 @@
+// expect: refused
+// why: a private enum method is visible only inside the enum's body
+// from: `private` (design/lang/0016), spec/next ch13 §wac-enum-private-method-dmg67n7
+enum Shape {
+  Square(i32 side),
+  i32 label(const this) { return this.area() + 1; }
+  private i32 area(const this) { return match (this) { Square(s): s * s }; }
+}
+
+export i32 f() { Shape s = Shape.Square(3); return s.area(); }

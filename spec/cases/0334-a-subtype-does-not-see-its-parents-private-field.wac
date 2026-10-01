@@ -1,0 +1,14 @@
+// expect: refused
+// why: a subtype's body is not its parent's, so a parent's private field is not visible in it
+// from: `private` (design/lang/0016), spec/next ch12 §wac-private-not-inherited-acpickk
+struct Account {
+  private i32 cents;
+  i32 balance(const this) { return this.cents; }
+}
+
+struct Savings : Account {
+  i32 rate;
+  i32 interest(const this) { return this.cents * this.rate / 100; }
+}
+
+export i32 f() { return 0; }
