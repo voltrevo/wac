@@ -141,13 +141,29 @@ export string dumpFirstTypeHint(u8[] src) {
  * because the oracle for this rung is that the caller can *run* what comes back.
  */
 export u8[] emit(u8[] src) {
+  // **An interpolation converts through core** (spec/next ch23), and core is linked by the
+  // many-file route — so a lone file that interpolates takes it, as a file set of one.
+  if (interpolates(src)) { return emitFiles(onePath(), oneSource(src), "main.wac"); }
   return emitModule(src);
 }
 
 /** Why a module was not emitted in full — the feature that stopped it, or `""`. */
 export string blocked(u8[] src) {
+  if (interpolates(src)) { return blockedFiles(onePath(), oneSource(src), "main.wac"); }
   return emitBlocked(src);
 }
+
+/** Whether a source holds an interpolated literal — a `\{` the lexer turns into a `+`. */
+bool interpolates(u8[] src) {
+  for (i32 i = 0; i + 1 < src.len(); i++) {
+    if (src[i] == 92 && src[i + 1] == 123) { return true; }   // `\` then `{`
+  }
+  return false;
+}
+
+string[] onePath() { return string[].filled(1, "main.wac"); }
+
+string[] oneSource(u8[] src) { return string[].filled(1, string.fromBytes(src)); }
 
 
 

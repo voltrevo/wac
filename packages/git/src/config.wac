@@ -78,7 +78,7 @@ export Vec<Setting> parseConfig(u8[] text) {
       Buf name = Buf.create();
       i32 i = from + 1;
       while (i < stop && text[i] != ']' && text[i] != '"' && !isSpace(text[i] as i32)) {
-        name.push(lowertext[i]);
+        name.push(lower(text[i] as i32) as@ u8);
         i = i + 1;
       }
       string sec = name.toStr();
@@ -110,7 +110,7 @@ export Vec<Setting> parseConfig(u8[] text) {
     for (i32 i = from; i < keyEnd; i++) {
       // A comment can follow a bare key, and there is no value to hide it in.
       if (eq < 0 && (text[i] == '#' || text[i] == ';')) { break; }
-      key.push(lowertext[i]);
+      key.push(lower(text[i] as i32) as@ u8);
     }
     if (key.len == 0) { continue; }
     string full = section == "" ? key.toStr() : section + "." + key.toStr();
