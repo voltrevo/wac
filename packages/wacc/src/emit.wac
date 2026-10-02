@@ -846,6 +846,14 @@ string templateNameOf(string inst) {
  * `typeOfE`, which has no slot to consult, cannot answer this shape at all.
  */
 string templateStatic(Env env, u8[] src, Lexed lexed, Expr obj, string want) {
+  // **A written instantiation names its own** — `__wacMachine<i32>.start(…)` — whatever the slot is.
+  match (obj.kind) {
+    TypeName(nt): {
+      string inst = typeOfTyName(env, src, lexed, nt);
+      return isInstance(inst) ? inst : "";
+    }
+    default: { }
+  }
   if (!isInstance(want)) { return ""; }
   match (obj.kind) {
     Ident(tok): {
@@ -13763,7 +13771,7 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
 /** Whether a wac type is a reference, which is the only kind of slot a `null` can fill. */
 bool isRefType(Env env, string t) {
   return isArrayType(t) || t == "string" || env.isStructName(t) || isFuncrefType(t) ||
-         t == "anyref" || t == "i31ref" || isBoxedName(t) || isTupleName(t);
+         t == "anyref" || t == "i31ref" || isBoxedName(t) || isTupleName(t) || isUnionName(t);
 }
 
 /**
@@ -16499,6 +16507,9 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     // three concrete copies until that landed, is the first.
     Lambda(lamParams, lamBody, lamAsync): { collectArrayTypes(env, src, lexed, lamBody); }
     Member(obj, nameTok): { collectArrayTypesOfExpr(env, src, lexed, obj); }
+    // **A written instantiation as a receiver** — `Cell<i32>.of(3)` — is an instance, registered here
+    // so its methods exist by the time the walk that judges the call asks for one.
+    TypeName(nt): { registerNamed(env, typeOfTyName(env, src, lexed, nt)); }
     // **`p?.n` on a number field answers a box**, which nothing in the source has to name — so its
     // type is registered here, before the type section is sized, as a written `i32?` would be.
     SafeMember(obj, nameTok): {

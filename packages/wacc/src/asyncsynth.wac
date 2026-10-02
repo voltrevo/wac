@@ -29,57 +29,54 @@ import { kIdent, kInt, kAssign, kVoid } from "./kinds.wac";
 /** The names that do not depend on the function being lowered. */
 string[] fixedWords() {
   return [
-                  "Ticket", "value", "park", "run", "step", "resolve", "settleWith",
-                  "__wacState", "__wacT", "__wacM", "__wacMachine",
-                  "__wacScheduleTarget", "__wacSetScheduleTarget",
-                  "=", "i32", "bool", "void", "__wacNoStep", "__wacStepFn", "__wacNothing",
-                  "Ok", "Err", "Result", "__wacTryV", "__wacTryE"
+                  "Ticket", "value", "Step", "Waiting", "Yielded", "Done", "Coroutine", "TicketBase",
+                  "never", "__wacState", "__wacRes", "__wacMachine", "__wacOrReady",
+                  "__wacSetScheduleTarget", "=", "i32", "bool", "void", "__wacStepFn",
+                  "Ok", "Err", "Result", "__wacTryV", "__wacTryE", "Generator", "AsyncGenerator", "start"
   ] as string[];
 }
 
 /** Index of each fixed word. A caller names it rather than counting. */
-/** `Ticket` — core's, which the machine hands back and its typed slots hold (spec/next ch35). */
-export i32 synthTicket()   { return 0; }
-export i32 synthValue()    { return 1; }
-export i32 synthPark()     { return 2; }
-export i32 synthRun()      { return 3; }
-export i32 synthStepName() { return 4; }
-export i32 synthResolve()  { return 5; }
-export i32 synthSettleWith()   { return 6; }
-export i32 synthState()    { return 7; }
-/** The ticket the machine hands back. */
-export i32 synthTicketVar() { return 8; }
-/** The machine: core's `__wacMachine`, holding the step and the schedule target it runs under. */
-export i32 synthMachineVar() { return 9; }
-export i32 synthMachineType() { return 10; }
-export i32 synthTargetGet() { return 11; }
-export i32 synthTargetSet() { return 12; }
+/** `Ticket` — core's, which a value-reading `await`'s slot holds (spec/next ch35). */
+export i32 synthTicket()     { return 0; }
+export i32 synthValue()      { return 1; }
+/** core's `Step` and its variants — what a machine's step answers (ch36). */
+export i32 synthStep()       { return 2; }
+export i32 synthWaiting()    { return 3; }
+export i32 synthYielded()    { return 4; }
+export i32 synthDone()       { return 5; }
+export i32 synthCoroutine()  { return 6; }
+export i32 synthTicketBase() { return 7; }
+export i32 synthNever()      { return 8; }
+export i32 synthState()      { return 9; }
+/** The cell a machine keeps its result in, so a step after `Done` can answer `Done` again. */
+export i32 synthRes()        { return 10; }
+/** core's `__wacMachine<R>`, whose static `start` runs an `async` call's coroutine and wraps it. */
+export i32 synthMachine()    { return 11; }
+/** core's `__wacOrReady`: what an `await` waits on, a bare one's being a ticket already settled. */
+export i32 synthOrReady()    { return 12; }
+export i32 synthTargetSet()  { return 13; }
 /** `=`. An `Assign` holds its operator's **token index**, which the emitter reads the kind out of —
  *  so a made-up one has to be a real token spelling a real `=`, not a sentinel. */
-export i32 synthAssign()  { return 13; }
-export i32 synthI32()     { return 14; }
-export i32 synthBool()    { return 15; }
-export i32 synthVoid()    { return 16; }
-/**
- * The step a machine is built with before its real one exists — a top-level function answering
- * `true`, since a funcref field needs something in it and the step lambda captures the machine.
- */
-export i32 synthNoStep()   { return 17; }
-/** Holds the step lambda on its way into the machine — a lambda written into a field is not typed. */
-export i32 synthStepFn()   { return 18; }
-
-/** What an `async void` body settles its ticket with: a local lambda answering nothing. */
-export i32 synthNothing()  { return 19; }
-
+export i32 synthAssign()     { return 14; }
+export i32 synthI32()        { return 15; }
+export i32 synthBool()       { return 16; }
+export i32 synthVoid()       { return 17; }
+/** Holds the step lambda: a lambda is typed by the declaration it initialises. */
+export i32 synthStepFn()     { return 18; }
 /** `try e` in a machine's body, as the `match` it becomes: the variants, the enum, the bindings. */
-export i32 synthOk()       { return 20; }
-export i32 synthErr()      { return 21; }
-export i32 synthResult()   { return 22; }
-export i32 synthTryV()     { return 23; }
-export i32 synthTryE()     { return 24; }
+export i32 synthOk()         { return 19; }
+export i32 synthErr()        { return 20; }
+export i32 synthResult()     { return 21; }
+export i32 synthTryV()       { return 22; }
+export i32 synthTryE()       { return 23; }
+/** What calling a generator answers, and an async generator (ch36). */
+export i32 synthGenerator()  { return 24; }
+export i32 synthAsyncGenerator() { return 25; }
+export i32 synthStartName()  { return 26; }
 
 /** How many words come before the generated suspension slots. */
-export i32 synthFixedCount() { return 25; }
+export i32 synthFixedCount() { return 27; }
 
 /**
  * The ticket slot for await number `k` — what a value-reading `await` suspended on, read back with

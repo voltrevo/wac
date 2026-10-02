@@ -138,44 +138,149 @@ export struct Queue<T> {
 }
 
 /**
- * The runtime half of a lowered `async` body: its ticket, its step, and the schedule target it runs
- * under. Nothing but the lowering names it.
- *
- * `step` runs the body from where it last stopped until it suspends (answering false) or ends
- * (answering true, having settled `ticket`). `run` wraps every step in the body's own schedule
- * target — the one in force where it was called, or whatever a `schedule` in it set since — and
- * hands the continuation of a suspension to the target in force *outside*, which is where the
- * suspended call was made (`§wac-schedule-target-fri2qzd`, `§wac-schedule-restored-b9qsydd`).
+ * What one step of a coroutine came to (spec/next ch36): it is waiting on a ticket, it yielded a
+ * value, or it is done with its result. `W` is `never` for a machine that cannot wait and `Y` for one
+ * that cannot yield.
  */
-export struct __wacMachine {
-  TicketBase ticket;
-  fn<bool()> step;
+export enum Step<W, Y, R> {
+  Waiting(W ticket),
+  Yielded(Y value),
+  Done(R result)
+
+  /** Whether this step is `Waiting`. For the lowering and the machines below. */
+  bool __wacIsWaiting(const this) {
+    return match (this) { Waiting(_): true, default: false };
+  }
+
+  /** The ticket a `Waiting` step waits on. */
+  W __wacWaitingOn(const this) {
+    match (this) {
+      Waiting(w): { return w; }
+      default: { trap; }
+    }
+  }
+
+  /** The result of a `Done` step. */
+  R __wacDoneOf(const this) {
+    match (this) {
+      Done(r): { return r; }
+      default: { trap; }
+    }
+  }
+
+  /** Whether this step is `Done`. */
+  bool __wacIsDone(const this) {
+    return match (this) { Done(_): true, default: false };
+  }
+
+  /** The value of a `Yielded` step. */
+  Y __wacYieldedOf(const this) {
+    match (this) {
+      Yielded(y): { return y; }
+      default: { trap; }
+    }
+  }
+}
+
+/**
+ * The machine under `async` and `gen`: each `step()` runs the body to its next suspension or its end.
+ * `coroutine f(…)` answers one without running anything (`§wac-coroutine-runs-nothing-zumpwje`), and
+ * a step after `Done` answers `Done` again (`§wac-step-finished-noop-2tenu9x`).
+ */
+export struct Coroutine<W, Y, R> {
+  fn<Step<W, Y, R>()> resume;
+
+  Step<W, Y, R> step(this) { return this.resume(); }
+}
+
+/** What calling a `gen<Y> R` function answers: a coroutine whose steps never wait. */
+export struct Generator<Y, R> {
+  Coroutine<never, Y, R> co;
+
+  Step<never, Y, R> step(this) { return this.co.step(); }
+}
+
+/** What calling an `async gen<Y> R` function answers: its step is a ticket that does the waiting itself. */
+export struct AsyncGenerator<Y, R> {
+  Coroutine<TicketBase, Y, R> co;
+
+  async Step<never, Y, R> step(this) {
+    Step<TicketBase, Y, R> s = this.co.step();
+    while (s.__wacIsWaiting()) {
+      await s.__wacWaitingOn();
+      s = this.co.step();
+    }
+    if (s.__wacIsDone()) { return Step.Done(s.__wacDoneOf()); }
+    return Step.Yielded(s.__wacYieldedOf());
+  }
+}
+
+/** The ticket a bare `await;` waits on: settled already, and a continuation parks on `null` for it. */
+struct __wacReadyTicket : TicketBase { }
+
+/** What `await t` waits on: `t`, or for a `null` — or a bare `await;` — a ticket already settled. */
+export TicketBase __wacOrReady(TicketBase? t) {
+  if (t is not null) { return t!; }
+  __wacReadyTicket r;
+  r.done = true;
+  return r;
+}
+
+/**
+ * The runtime half of a lowered `async` body: its ticket, its coroutine, and the schedule target it
+ * runs under. Nothing but the lowering names it.
+ *
+ * `run` steps the coroutine inside the body's own schedule target — the one in force where it was
+ * called, or whatever a `schedule` in it set since — and hands the continuation of a suspension to
+ * the target in force *outside*, which is where the suspended call was made
+ * (`§wac-schedule-target-fri2qzd`, `§wac-schedule-restored-b9qsydd`). `Done` settles the ticket.
+ */
+export struct __wacMachine<R> {
+  Ticket<R> ticket;
+  Coroutine<TicketBase, never, R> co;
   fn<void(Continuation)>? inner;
   /** Which suspension is current, so a continuation from an earlier one does nothing when called. */
   i32 seq;
 
+  /**
+   * An `async` call: its coroutine run at once to its first suspension, wrapped in a ticket. A static
+   * rather than a generic function, which another module could not call (`issues/lang/0304c`).
+   */
+  Ticket<R> start(Coroutine<TicketBase, never, R> co) {
+    Ticket<R> t;
+    __wacMachine<R> m = __wacMachine<R>(t, co, __wacScheduleTarget(), 0);
+    m.run();
+    return t;
+  }
+
   void run(this) {
     fn<void(Continuation)>? outer = __wacScheduleTarget();
     __wacSetScheduleTarget(this.inner);
-    bool finished = this.step();
+    Step<TicketBase, never, R> s = this.co.step();
     this.inner = __wacScheduleTarget();
     __wacSetScheduleTarget(outer);
-    if (finished) { return; }
+    if (!s.__wacIsWaiting()) {
+      this.ticket.settleWith(() => s.__wacDoneOf());
+      return;
+    }
+    this.park(s.__wacWaitingOn());
     Continuation? k = this.ticket.parked;
     if (outer is not null && k is not null) { outer!(k!); }
   }
 
-  /** Suspend on `on` — `null` for a bare `await;` — parking the continuation on this machine's ticket. */
-  void park(this, TicketBase? on) {
+  /** Park on `on` — a bare `await;`'s ready ticket parks as `null` (ch35). */
+  void park(this, TicketBase on) {
     this.seq++;
-    __wacResumer r = __wacResumer(this, this.seq);
-    this.ticket.parked = Continuation(on, r.call);
+    __wacResumer<R> r = __wacResumer<R>(this, this.seq);
+    TicketBase? t = on;
+    if (on is __wacReadyTicket) { t = null; }
+    this.ticket.parked = Continuation(t, r.call);
   }
 }
 
 /** One suspension's `call`: resumes the machine if that suspension is still the current one. */
-struct __wacResumer {
-  __wacMachine m;
+struct __wacResumer<R> {
+  __wacMachine<R> m;
   i32 seq;
 
   void call(this) {

@@ -404,7 +404,8 @@ export string pruneCoreMembers(string core, string[] paths, string[] sources) {
 bool isTicketFamily(string nm) {
   return nm == "Ticket" || nm == "TicketBase" || nm == "Continuation" || nm == "Queue"
       || nm == "__wacMachine" || nm == "__wacResumer" || nm == "__wacScheduleTarget"
-      || nm == "__wacSetScheduleTarget";
+      || nm == "__wacSetScheduleTarget" || nm == "Step" || nm == "Coroutine" || nm == "Generator"
+      || nm == "AsyncGenerator" || nm == "__wacReadyTicket" || nm == "__wacOrReady";
 }
 
 /**

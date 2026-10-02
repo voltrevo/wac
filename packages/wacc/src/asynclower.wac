@@ -62,9 +62,11 @@ import { Lexed, tokenStride } from "./lex.wac";
 import { AsyncPlan, awaitInBody, awaitInExpr, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
 import {
   synthSource, synthTokens, synthTok, synthTextAt,
-  synthTicket, synthValue, synthPark, synthRun, synthStepName, synthResolve, synthSettleWith,
-  synthNothing, synthOk, synthErr, synthResult, synthTryV, synthTryE, synthState, synthTicketVar, synthMachineVar, synthMachineType, synthTargetGet, synthTargetSet,
-  synthAssign, synthI32, synthBool, synthVoid, synthNoStep, synthStepFn,
+  synthTicket, synthValue, synthStep, synthWaiting, synthYielded, synthDone, synthCoroutine,
+  synthTicketBase, synthNever, synthState, synthRes, synthMachine, synthStartName, synthOrReady,
+  synthTargetSet,
+  synthAssign, synthI32, synthBool, synthVoid, synthStepFn,
+  synthOk, synthErr, synthResult, synthTryV, synthTryE, synthGenerator, synthAsyncGenerator,
   synthSlot, synthAw, synthNum, synthZero, synthOne, synthArg,
 } from "./asyncsynth.wac";
 import { kAndAnd, kAwait, kOrOr, kQuestion } from "./kinds.wac";
@@ -97,33 +99,37 @@ struct Ctx {
    * function the walk is in. Threading it would have changed every call site of `subExpr`.
    */
   bool[] inLam;
+  /** The state a finished machine sits in, answering `Done` again; set once the states are numbered. */
+  i32[] finState;
 }
 
-i32 tTicket(Ctx c)   { return synthTok(c.first, synthTicket()); }
-i32 tValue(Ctx c)    { return synthTok(c.first, synthValue()); }
-i32 tPark(Ctx c)     { return synthTok(c.first, synthPark()); }
-i32 tRun(Ctx c)      { return synthTok(c.first, synthRun()); }
-i32 tStepName(Ctx c) { return synthTok(c.first, synthStepName()); }
-i32 tResolve(Ctx c)  { return synthTok(c.first, synthResolve()); }
-i32 tSettleWith(Ctx c)   { return synthTok(c.first, synthSettleWith()); }
-i32 tState(Ctx c)    { return synthTok(c.first, synthState()); }
-i32 tT(Ctx c)        { return synthTok(c.first, synthTicketVar()); }
-i32 tM(Ctx c)        { return synthTok(c.first, synthMachineVar()); }
-i32 tMachineTy(Ctx c) { return synthTok(c.first, synthMachineType()); }
-i32 tTargetGet(Ctx c) { return synthTok(c.first, synthTargetGet()); }
-i32 tTargetSet(Ctx c) { return synthTok(c.first, synthTargetSet()); }
-i32 tEq(Ctx c)       { return synthTok(c.first, synthAssign()); }
-i32 tI32(Ctx c)      { return synthTok(c.first, synthI32()); }
-i32 tBool(Ctx c)     { return synthTok(c.first, synthBool()); }
-i32 tVoid(Ctx c)     { return synthTok(c.first, synthVoid()); }
-i32 tNoStep(Ctx c)   { return synthTok(c.first, synthNoStep()); }
-i32 tStepFn(Ctx c)   { return synthTok(c.first, synthStepFn()); }
-i32 tNothing(Ctx c)  { return synthTok(c.first, synthNothing()); }
-i32 tOk(Ctx c)       { return synthTok(c.first, synthOk()); }
-i32 tErr(Ctx c)      { return synthTok(c.first, synthErr()); }
-i32 tResult(Ctx c)   { return synthTok(c.first, synthResult()); }
-i32 tTryV(Ctx c)     { return synthTok(c.first, synthTryV()); }
-i32 tTryE(Ctx c)     { return synthTok(c.first, synthTryE()); }
+i32 tTicket(Ctx c)     { return synthTok(c.first, synthTicket()); }
+i32 tValue(Ctx c)      { return synthTok(c.first, synthValue()); }
+i32 tStep(Ctx c)       { return synthTok(c.first, synthStep()); }
+i32 tWaiting(Ctx c)    { return synthTok(c.first, synthWaiting()); }
+i32 tYielded(Ctx c)    { return synthTok(c.first, synthYielded()); }
+i32 tDone(Ctx c)       { return synthTok(c.first, synthDone()); }
+i32 tCoroutine(Ctx c)  { return synthTok(c.first, synthCoroutine()); }
+i32 tTicketBase(Ctx c) { return synthTok(c.first, synthTicketBase()); }
+i32 tNever(Ctx c)      { return synthTok(c.first, synthNever()); }
+i32 tState(Ctx c)      { return synthTok(c.first, synthState()); }
+i32 tRes(Ctx c)        { return synthTok(c.first, synthRes()); }
+i32 tMachine(Ctx c)    { return synthTok(c.first, synthMachine()); }
+i32 tStartName(Ctx c)  { return synthTok(c.first, synthStartName()); }
+i32 tOrReady(Ctx c)    { return synthTok(c.first, synthOrReady()); }
+i32 tTargetSet(Ctx c)  { return synthTok(c.first, synthTargetSet()); }
+i32 tEq(Ctx c)         { return synthTok(c.first, synthAssign()); }
+i32 tI32(Ctx c)        { return synthTok(c.first, synthI32()); }
+i32 tBool(Ctx c)       { return synthTok(c.first, synthBool()); }
+i32 tVoid(Ctx c)       { return synthTok(c.first, synthVoid()); }
+i32 tStepFn(Ctx c)     { return synthTok(c.first, synthStepFn()); }
+i32 tOk(Ctx c)         { return synthTok(c.first, synthOk()); }
+i32 tErr(Ctx c)        { return synthTok(c.first, synthErr()); }
+i32 tResult(Ctx c)     { return synthTok(c.first, synthResult()); }
+i32 tTryV(Ctx c)       { return synthTok(c.first, synthTryV()); }
+i32 tTryE(Ctx c)       { return synthTok(c.first, synthTryE()); }
+i32 tGenerator(Ctx c)  { return synthTok(c.first, synthGenerator()); }
+i32 tAsyncGenerator(Ctx c) { return synthTok(c.first, synthAsyncGenerator()); }
 
 i32 tUp(Ctx c, i32 k) { return synthTok(c.first, synthSlot(k)); }
 i32 tAw(Ctx c, i32 k) { return synthTok(c.first, synthAw(k)); }
@@ -308,20 +314,28 @@ Stmt sRet(Ctx c, Expr? v) { return Stmt(StmtKind.Return(v), c.line, c.col); }
 Stmt sBlock(Ctx c, Stmt[] b) { return Stmt(StmtKind.Block(b), c.line, c.col); }
 Stmt sExpr(Ctx c, Expr e) { return Stmt(StmtKind.ExprStmt(e), c.line, c.col); }
 
+/** `Step.v(args)` — a variant of `Step`, typed by the slot it is returned into. */
+Expr eStep(Ctx c, i32 variantTok, Expr[] args) {
+  return eMethod(c, eId(c, tStep(c)), variantTok, args);
+}
+
 /**
- * `__wacT.resolve(v); return true;` — how a `return` in the body ends — or
- * `__wacT.settleWith(__wacNothing)` for one that answers nothing, since a `void` argument is not
- * something a call can be handed.
+ * How a `return` in the body ends the machine: `__wacRes[0] = v; __wacState[0] = fin; return
+ * Step.Done(__wacRes[0]);` — the result kept, so a step after `Done` answers `Done` again with it
+ * (`§wac-step-finished-noop-2tenu9x`). A body answering nothing has no result to keep.
  */
 Stmt sFinish(Ctx c, Expr? v) {
-  Stmt[] out = Stmt[].filled(2, sRet(c, null));
-  if (v is not null) {
-    out[0] = sExpr(c, eMethod(c, eId(c, tT(c)), tResolve(c), Expr[].filled(1, v!)));
-  } else {
-    out[0] = sExpr(c, eMethod(c, eId(c, tT(c)), tSettleWith(c), Expr[].filled(1, eId(c, tNothing(c)))));
-  }
-  out[1] = sRet(c, eBool(c, true));
+  Stmt[] out = Stmt[].filled(v is null ? 2 : 3, sRet(c, null));
+  i32 at = 0;
+  if (v is not null) { out[at] = sCellSet(c, tRes(c), v!); at = at + 1; }
+  out[at] = sCellSet(c, tState(c), eInt(c, c.finState[0])); at = at + 1;
+  out[at] = sRet(c, doneStep(c, v is null));
   return sBlock(c, out);
+}
+
+/** `Step.Done(__wacRes[0])`, or `Step.Done()` for a machine answering nothing. */
+Expr doneStep(Ctx c, bool isVoid) {
+  return eStep(c, tDone(c), isVoid ? Expr[]() : Expr[].filled(1, eCell(c, tRes(c))));
 }
 
 // ── Substitution: a hoisted name becomes a cell, and `return` becomes a finish ─
@@ -716,17 +730,20 @@ i32 lowerSuspend(Bld b, Expr awaited, Ty? ty, i32 rest) {
   bool typed = ty is not null && k < b.slotTy.len();
   if (typed) { b.slotTy[k] = cloneTy(ty!); b.slotUsed[k] = true; }
 
+  // `__wacUpK = e; __wacState[0] = rest; return Step.Waiting(__wacOrReady(__wacUpK));` — and with no
+  // slot, the operand straight in. `__wacOrReady` answers a settled ticket for `null`, which is what a
+  // bare `await;` and an `await` on a null `TicketBase?` wait on.
   i32 susp = lowAlloc(b);
-  Stmt[] sus = Stmt[].filled(typed ? 4 : 3, sRet(c, null));
+  Stmt[] sus = Stmt[].filled(typed ? 3 : 2, sRet(c, null));
   i32 at = 0;
   Expr parked = awaited;
   if (typed) {
     sus[at] = sSet(c, tUp(c, k), awaited); at = at + 1;
     parked = eId(c, tUp(c, k));
   }
-  sus[at] = sExpr(c, eMethod(c, eId(c, tM(c)), tPark(c), Expr[].filled(1, parked))); at = at + 1;
   sus[at] = sCellSet(c, tState(c), eInt(c, rest)); at = at + 1;
-  sus[at] = sRet(c, eBool(c, false));
+  Expr ready = eCallFn(c, tOrReady(c), Expr[].filled(1, parked));
+  sus[at] = sRet(c, eStep(c, tWaiting(c), Expr[].filled(1, ready)));
   lowPut(b, susp, sus);
   return susp;
 }
@@ -843,16 +860,20 @@ struct Arms {
 Arms buildArms(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   Bld b = Bld(c, Stmt[][].filled(256, Stmt[]()), 0, i32[].filled(64, 0), i32[].filled(64, 0), 0, i32[].filled(1, 0),
               Ty[].filled(64, fnRet), bool[].filled(64, false), fnRet);
-  // Falling off the end settles a body that answers nothing; one that answers something returns on
+  // The state a finished machine stays in, answering `Done` again with what it kept.
+  i32 fin = lowAlloc(b);
+  c.finState[0] = fin;
+  lowPut(b, fin, Stmt[].filled(1, sRet(c, doneStep(c, isVoidTy(c, fnRet)))));
+  // Falling off the end finishes a body that answers nothing; one that answers something returns on
   // every path, so for it this state is unreachable.
   i32 done = lowAlloc(b);
-  lowPut(b, done, Stmt[].filled(1, isVoidTy(c, fnRet) ? sFinish(c, null) : sRet(c, eBool(c, true))));
+  lowPut(b, done, Stmt[].filled(1, isVoidTy(c, fnRet) ? sFinish(c, null) : sRet(c, doneStep(c, false))));
   i32 entry = lowerSeq(b, body, done);
   Case[] arms = Case[].filled(b.n + 1, Case(null, Stmt[](), c.line, c.col));
   for (i32 i = 0; i < b.n; i++) {
     arms[i] = Case(eInt(c, i), b.states[i], c.line, c.col);
   }
-  Stmt[] dflt = Stmt[].filled(1, sRet(c, eBool(c, true)));
+  Stmt[] dflt = Stmt[].filled(1, sRet(c, doneStep(c, isVoidTy(c, fnRet))));
   arms[b.n] = Case(null, dflt, c.line, c.col);
   return Arms(arms, entry, b.slotTy, b.slotUsed, b.slot[0]);
 }
@@ -868,21 +889,19 @@ Stmt[] stepBody(Ctx c, Case[] arms) {
 /**
  * The whole rewritten body.
  *
- * Order matters and is the order a reader would write it: the cells first, because everything else
- * mentions them; the machine next, with a placeholder step, because the step captures it; the step,
- * assigned in; and the eager `run` after that, because the body runs to its first `await` when it is
- * *called* rather than when it is driven (`§wac-async-eager-2rf9kdp`).
+ * The cells first, because everything else mentions them; the step, which captures them; the state
+ * set to where the flattening says the body starts; and the call handed back — for an `async`
+ * function, its coroutine run at once to its first suspension and wrapped in a ticket
+ * (`§wac-async-eager-2rf9kdp`).
  */
 Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   Arms made = buildArms(c, body, plan, fnRet);
-  i32 n = 9 + plan.hoist.len() + made.slots;
+  i32 n = 6 + plan.hoist.len() + made.slots;
   Stmt[] out = Stmt[].filled(n, sRet(c, null));
   i32 at = 0;
 
   out[at] = sCellDecl(c, tState(c), lowPrimTy(c, tI32(c))); at = at + 1;
-  // `Ticket<R> __wacT;` — a ticket made directly, which the body settles.
-  out[at] = Stmt(StmtKind.Var(lowTicketTy(c, fnRet), tT(c), null, false), c.line, freshCol(c));
-  at = at + 1;
+  if (!isVoidTy(c, fnRet)) { out[at] = sCellDecl(c, tRes(c), cloneTy(fnRet)); at = at + 1; }
   for (i32 i = 0; i < plan.hoist.len(); i++) {
     out[at] = sCellDecl(c, plan.hoist[i], cloneTy(plan.hoistTy[i])); at = at + 1;
   }
@@ -891,41 +910,29 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
     out[at] = sSlotDecl(c, tUp(c, k), cloneTy(made.slotTy[k]));
     at = at + 1;
   }
-  // `fn<void()> __wacNothing = () => { };` — what a body answering nothing settles its ticket with.
-  // A local rather than a function named as a value, which the step lambda would have to capture.
-  if (isVoidTy(c, fnRet)) {
-    out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tVoid(c)), Ty[]()), tNothing(c),
-                                eLambda(c, Param[](), Stmt[]()), false), c.line, freshCol(c));
-    at = at + 1;
-  }
 
-  // `__wacMachine __wacM = __wacMachine(__wacT, __wacNoStep, __wacScheduleTarget(), 0);` — the target
-  // in force here is the one the body starts under.
-  Expr[] margs = Expr[].filled(4, eNull(c));
-  margs[0] = eId(c, tT(c));
-  margs[1] = eId(c, tNoStep(c));
-  margs[2] = eCallFn(c, tTargetGet(c), Expr[]());
-  margs[3] = eInt(c, 0);
-  Ty mty = Ty(TyKind.Named(tMachineTy(c), Ty[]()), c.line, c.col);
-  Expr mk = Expr(ExprKind.Construct(Ty(TyKind.Named(tMachineTy(c), Ty[]()), c.line, c.col), margs,
-                                    NamedArg[]()), c.line, c.col);
-  out[at] = Stmt(StmtKind.Var(mty, tM(c), mk, false), c.line, freshCol(c)); at = at + 1;
-
-  // The step, bound to a local and then assigned in: a lambda written straight into a field is in a
-  // position the walk does not type.
+  // `fn<Step<TicketBase, never, R>()> __wacStepFn = () => { while (true) { switch … } };`
+  Ty[] targs = Ty[].filled(3, cloneTy(fnRet));
+  targs[0] = Ty(TyKind.Named(tTicketBase(c), Ty[]()), c.line, c.col);
+  targs[1] = lowPrimTy(c, tNever(c));
+  targs[2] = cloneTy(fnRet);
+  Ty stepTy = Ty(TyKind.Named(tStep(c), targs), c.line, c.col);
   Expr step = eLambda(c, Param[](), stepBody(c, made.cases));
-  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()), tStepFn(c), step, false),
-                 c.line, freshCol(c));
+  out[at] = Stmt(StmtKind.Var(lowFnTy(c, stepTy, Ty[]()), tStepFn(c), step, false), c.line, freshCol(c));
   at = at + 1;
-  Lvalue mstep = Lvalue(LvalueKind.LField(Lvalue(LvalueKind.LIdent(tM(c)), c.line, c.col),
-                                          tStepName(c)), c.line, c.col);
-  out[at] = Stmt(StmtKind.Assign(mstep, tEq(c), eId(c, tStepFn(c))), c.line, c.col); at = at + 1;
 
-  // **The machine starts where the flattening says, not at zero.** States are numbered as they are
-  // allocated and the entry is whatever the body's first statement became.
   out[at] = sCellSet(c, tState(c), eInt(c, made.entry)); at = at + 1;
-  out[at] = sExpr(c, eMethod(c, eId(c, tM(c)), tRun(c), Expr[]())); at = at + 1;
-  out[at] = sRet(c, eId(c, tT(c))); at = at + 1;
+
+  // `return __wacMachine<R>.start(Coroutine<TicketBase, never, R>(__wacStepFn));`
+  Ty[] cargs = Ty[].filled(3, cloneTy(fnRet));
+  cargs[0] = Ty(TyKind.Named(tTicketBase(c), Ty[]()), c.line, c.col);
+  cargs[1] = lowPrimTy(c, tNever(c));
+  cargs[2] = cloneTy(fnRet);
+  Expr co = Expr(ExprKind.Construct(Ty(TyKind.Named(tCoroutine(c), cargs), c.line, c.col),
+                                    Expr[].filled(1, eId(c, tStepFn(c))), NamedArg[]()), c.line, c.col);
+  Ty mty = Ty(TyKind.Named(tMachine(c), Ty[].filled(1, cloneTy(fnRet))), c.line, c.col);
+  Expr owner = Expr(ExprKind.TypeName(mty), c.line, c.col);
+  out[at] = sRet(c, eMethod(c, owner, tStartName(c), Expr[].filled(1, co))); at = at + 1;
 
   Stmt[] trimmed = Stmt[].filled(at, sRet(c, null));
   for (i32 i = 0; i < at; i++) { trimmed[i] = out[i]; }
@@ -1541,7 +1548,7 @@ struct Site {
  */
 Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   Ctx c0 = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-               i32[].filled(1, at.colBase), bool[].filled(1, false));
+               i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0));
   Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next);
   Stmt[] split = splitBody(z, body);
   AsyncPlan plan = planBody(split);
@@ -1553,7 +1560,8 @@ Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   string[] names = string[].filled(plan.hoist.len() + extra.len(), "");
   for (i32 i = 0; i < plan.hoist.len(); i++) { names[i] = synthTextAt(w.src, w.lexed, plan.hoist[i]); }
   for (i32 i = 0; i < extra.len(); i++) { names[plan.hoist.len() + i] = extra[i]; }
-  Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, names, w.src, w.lexed, c0.col2, c0.inLam);
+  Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, names, w.src, w.lexed, c0.col2, c0.inLam,
+              c0.finState);
   return machineBody(c, split, plan, ret);
 }
 
@@ -1585,7 +1593,7 @@ Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
             Stmt[]? mach = machineOf(w, at, lbody, tick!, pnames);
             if (mach is null) { continue; }
             Ctx c = Ctx(w.first, w.ups, w.args, init!.line, init!.col, pnames, w.src, w.lexed,
-                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false));
+                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false), i32[].filled(1, 0));
 
             Param[] ps2 = Param[].filled(lps.len(), lps.len() > 0 ? lps[0]
                                                                : Param(0 - 1, type, false));
@@ -1645,7 +1653,7 @@ Method[] loweredMethods(Lw w, Decl at) {
                                 body2, me.returnType, string[]());
     if (machine is null) { out[m] = me; continue; }
     Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-                i32[].filled(1, 0), bool[].filled(1, false));
+                i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0));
     out[m] = Method(me.nameTok, lowTicketTy(c, cloneTy(me.returnType)), me.params, machine!,
                     me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false,
                     me.isPrivate, me.isVirtual);
@@ -1676,8 +1684,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   Lexed lexed2 = synthTokens(lexed, src2, ups, states, args, 1, 1);
   Lw w = Lw(first, ups, args, src2, lexed2, prog, i32[].filled(1, 0), string[].filled(1, ""));
 
-  // **One extra declaration per file**: the step a machine holds before its real one is assigned.
-  Decl[] out = Decl[].filled(prog.decls.len() + 1, prog.decls[0]);
+  Decl[] out = Decl[].filled(prog.decls.len(), prog.decls[0]);
   for (i32 d = 0; d < prog.decls.len(); d++) {
     out[d] = prog.decls[d];
     match (prog.decls[d].kind) {
@@ -1696,7 +1703,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
         Stmt[]? machine = machineOf(w, at, body2, returnType, string[]());
         if (machine is null) { continue; }
         Ctx c = Ctx(first, ups, args, 1, 1, string[](), src2, lexed2, i32[].filled(1, 0),
-                    bool[].filled(1, false));
+                    bool[].filled(1, false), i32[].filled(1, 0));
         out[d] = Decl(DeclKind.Func(nameTok, lowTicketTy(c, cloneTy(returnType)), params, machine!,
                                     exported, typeParams, false),
                       prog.decls[d].line, prog.decls[d].col);
@@ -1718,10 +1725,6 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
       default: { }
     }
   }
-  Ctx top = Ctx(first, ups, args, 1, 1, string[](), src2, lexed2, i32[].filled(1, 1), bool[].filled(1, false));
-  Stmt[] noBody = Stmt[].filled(1, sRet(top, eBool(top, true)));
-  out[prog.decls.len()] = Decl(DeclKind.Func(tNoStep(top), lowPrimTy(top, tBool(top)), Param[](),
-                                             noBody, false, i32[](), false), 1, 1);
 
   return Lowered(Program(out), src2, lexed2, true, w.why[0]);
 }
