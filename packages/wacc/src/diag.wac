@@ -173,6 +173,8 @@ export string checkMessage(i32 code) {
   if (code == 241) { return "static_trap"; }
   if (code == 242) { return "a static_if condition must be computable at compile time"; }
   if (code == 243) { return "a static initialiser cannot read a runtime value"; }
+  if (code == 244) { return "this type reaches itself through aliases and nullable layers alone"; }
+  if (code == 245) { return "this local is used before it is declared"; }
   if (code == 237) { return "an async generator is iterated with `for await`, and only it"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }

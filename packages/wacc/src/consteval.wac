@@ -202,6 +202,16 @@ export struct Ev {
   string[] tpNames;
   string[] tpTypes;
   i32 tpCount;
+  /**
+   * The `type` declarations being computed, innermost last, each with how many guarding layers — a
+   * union of two or more, a tuple, a struct's arguments — stood around the computation when it began.
+   * Reaching one again with more guards since is recursion a type may have; with none, a cycle
+   * (spec/next ch29 `§wac-static-dep-recursion-guard-va5yec4`).
+   */
+  string[] typeStack;
+  i32[] typeGuards;
+  i32 typeDepth;
+  i32 guards;
 
   Ev create() {
     return Ev(evOk(), noneValue(), "", 0, 8000000,
@@ -211,7 +221,8 @@ export struct Ev {
               0, depthCeiling(), 0, "",
               i32[].filled(1024, 0), Value[].filled(1024, noneValue()), i32[].filled(1024, 0), string[].filled(1024, ""),
               i32[].filled(1024, 0), 0,
-              string[].filled(64, ""), string[].filled(64, ""), 0);
+              string[].filled(64, ""), string[].filled(64, ""), 0,
+              string[].filled(64, ""), i32[].filled(64, 0), 0, 0);
   }
 
   /** Bind type parameter `name` to the type spelled `ty` until the count is put back. */
@@ -2250,10 +2261,15 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
         return b!;
       }
       string[] args = string[].filled(typeArgs.len(), "");
+      // A type's arguments are behind a layer that guards recursion — a struct's field, or one of a
+      // union's two or more alternatives — except a union of one, which is its alternative.
+      bool guards = typeArgs.len() > 0 && !(spelled == "union" && typeArgs.len() < 2);
+      if (guards) { ev.guards = ev.guards + 1; }
       for (i32 i = 0; i < typeArgs.len(); i++) {
         args[i] = evTyName(ev, cx, fi, typeArgs[i]);
-        if (!evFinished(ev.status)) { return ""; }
+        if (!evFinished(ev.status)) { if (guards) { ev.guards = ev.guards - 1; } return ""; }
       }
+      if (guards) { ev.guards = ev.guards - 1; }
       i32 td = typeDeclAt(cx, spelled, fi);
       if (td >= 0) { return evalTypeDecl(ev, cx, td, args); }
       string key = cx.keyAt(spelled, fi);
@@ -2273,10 +2289,12 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
     }
     TupleOf(members): {
       string[] ms = string[].filled(members.len(), "");
+      ev.guards = ev.guards + 1;
       for (i32 i = 0; i < members.len(); i++) {
         ms[i] = evTyName(ev, cx, fi, members[i]);
-        if (!evFinished(ev.status)) { return ""; }
+        if (!evFinished(ev.status)) { ev.guards = ev.guards - 1; return ""; }
       }
+      ev.guards = ev.guards - 1;
       return tupleName(ms);
     }
     TypeOf(e): {
@@ -2317,11 +2335,26 @@ export string evalTypeDecl(Ev ev, Decls cx, i32 d, string[] args) {
   match (cx.decls[d].kind) {
     TypeDecl(nameTok, typeParams, alias, body, exported): {
       string name = tokText(cx.srcOf(fi), cx.lexOf(fi), nameTok);
+      // **Reached again**: through a guarding layer it is the type itself, named; through aliases
+      // and nullable layers alone, a type that is its own nullable, which no finite type is.
+      for (i32 k = ev.typeDepth - 1; k >= 0; k--) {
+        if (ev.typeStack[k] != name || args.len() > 0) { continue; }
+        if (ev.guards > ev.typeGuards[k]) { return name; }
+        ev.status = evCycle();
+        ev.message = "the type `" + name + "` reaches itself through aliases and nullable layers alone";
+        return "";
+      }
+      if (ev.typeDepth < ev.typeStack.len()) {
+        ev.typeStack[ev.typeDepth] = name;
+        ev.typeGuards[ev.typeDepth] = ev.guards;
+        ev.typeDepth = ev.typeDepth + 1;
+      }
       ev.depth = ev.depth + 1;
       if (ev.depth > ev.depthLimit) {
         ev.status = evLimit();
         ev.message = "computed types nested more than " + decimalText(ev.depthLimit) + " deep";
         ev.depth = ev.depth - 1;
+        if (ev.typeDepth > 0) { ev.typeDepth = ev.typeDepth - 1; }
         return "";
       }
       i32 tpMark = ev.tpCount;
@@ -2352,6 +2385,7 @@ export string evalTypeDecl(Ev ev, Decls cx, i32 d, string[] args) {
       popDemand(ev);
       ev.tpCount = tpMark;
       ev.depth = ev.depth - 1;
+      if (ev.typeDepth > 0) { ev.typeDepth = ev.typeDepth - 1; }
     }
     default: { }
   }

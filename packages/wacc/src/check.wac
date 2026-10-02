@@ -34,7 +34,7 @@
 
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
-         stringOf, truthy, StaticBind, bindStaticLocals, evTyName, typeDeclAt } from "./consteval.wac";
+         stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt } from "./consteval.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { coreExports, isBuiltinSpec } from "./coretext.wac";
@@ -908,7 +908,32 @@ string computedTypeC(C c, Ty t) {
   bool ok = evFinished(ev.status);
   ev.status = evOk();
   ev.tpCount = mark;
-  return ok ? spelled : typeNone();
+  return ok ? withoutEvalKeys(spelled) : typeNone();
+}
+
+/**
+ * A spelling from the evaluator with its own identity suffixes dropped: across files it keys a
+ * declaration `Node@0`, and this checker names one by the word its file wrote.
+ */
+string withoutEvalKeys(string t) {
+  if (t.indexOf("@") < 0) { return t; }
+  u8[] b = t.toBytes();
+  u8[] out = u8[].filled(b.len(), 0);
+  i32 n = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    if (b[i] == '@' && i + 1 < b.len() && b[i + 1] >= '0' && b[i + 1] <= '9') {
+      i = i + 1;
+      while (i < b.len() && b[i] >= '0' && b[i] <= '9') { i = i + 1; }
+      continue;
+    }
+    out[n] = b[i];
+    n = n + 1;
+    i = i + 1;
+  }
+  u8[] exact = u8[].filled(n, 0);
+  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  return string.fromBytes(exact);
 }
 
 /** Whether struct type `t` — or a parent — declares a `const` field. */
@@ -949,11 +974,25 @@ void checkDefiniteAssignment(C c, Stmt[] body) {
 }
 
 DA daBody(C c, Stmt[] body, DA st, DAExit loop) {
+  // **The names this block declares and has not reached yet** (spec/next ch27): an ordinary local
+  // is in scope from its declaration on, so reading one earlier is reading something not there — a
+  // `static` is the one kind visible before it.
+  // One segment per block, innermost last: `|` opens it, `;x;` is a name still to come, `+x;` one
+  // already declared — which shadows the same name pending further out.
+  string outerPending = c.pendingDecls;
+  c.pendingDecls = c.pendingDecls + "|";
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Var(type, nameTok, init, isConst): { c.pendingDecls = c.pendingDecls + ";" + tokenText(c, nameTok) + ";"; }
+      default: { }
+    }
+  }
   DA at = st;
   for (i32 i = 0; i < body.len(); i++) {
-    if (at.dead) { return at; }
+    if (at.dead) { break; }
     at = daStmt(c, body[i], at, loop);
   }
+  c.pendingDecls = outerPending;
   return at;
 }
 
@@ -979,8 +1018,15 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
     }
     Var(type, nameTok, init, isConst): {
       string name = tokenText(c, nameTok);
+      // In scope from here on: the initialiser is read first, as the language reads it.
+      if (init is not null) { daExpr(c, init!, st); }
+      // Declared in the innermost block, from here on.
+      i32 seg = lastBar(c.pendingDecls);
+      string inner = c.pendingDecls.slice(seg, c.pendingDecls.len());
+      i32 pend = inner.indexOf(";" + name + ";");
+      if (pend >= 0) { inner = inner.slice(0, pend) + inner.slice(pend + name.len() + 2, inner.len()); }
+      c.pendingDecls = c.pendingDecls.slice(0, seg) + inner + "+" + name + ";";
       if (init is not null) {
-        daExpr(c, init!, st);
         st.remove(name);
         return st;
       }
@@ -1066,7 +1112,9 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
       daExpr(c, iterable, st);
       DAExit hereIn = DAExit(DA.fresh());
       hereIn.breaks.dead = true;
+      string pIn = bindNames(c, [nameTok] as i32[]);
       daBody(c, inner, st.copy(), hereIn);
+      c.pendingDecls = pIn;
       return daJoin(st, hereIn.breaks);
     }
     Switch(subject, cases): {
@@ -1088,7 +1136,9 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
       DA out = DA.fresh();
       out.dead = true;
       for (i32 i = 0; i < arms.len(); i++) {
+        string pArm = bindNames(c, arms[i].bindingToks);
         out = daJoin(out, daBody(c, arms[i].body, st.copy(), loop));
+        c.pendingDecls = pArm;
       }
       return arms.len() == 0 ? st : out;
     }
@@ -1150,7 +1200,48 @@ void daLvalueReads(C c, Lvalue lv, DA st) {
  * A use of `name` as a whole. A struct local built field by field is complete here or never: every
  * field assigned on every path, or holding its type's default.
  */
+/**
+ * A segment of names a binding form declares around the block it guards — match-arm bindings, a
+ * `for … in` variable, a lambda's parameters — so they shadow a local of the same name pending
+ * further out. Answers the list to put back.
+ */
+string bindNames(C c, i32[] toks) {
+  string was = c.pendingDecls;
+  string seg = "|";
+  for (i32 i = 0; i < toks.len(); i++) {
+    if (toks[i] >= 0) { seg = seg + "+" + tokenText(c, toks[i]) + ";"; }
+  }
+  c.pendingDecls = was + seg;
+  return was;
+}
+
+/** Where the innermost block's segment of `daBody`'s pending list starts. */
+i32 lastBar(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '|') { return i; } }
+  return 0;
+}
+
+/** Whether `name`, read here, is a local some enclosing block declares further down — and no nearer one has. */
+bool pendingHere(string s, string name) {
+  if (s.indexOf(";" + name + ";") < 0) { return false; }
+  string rest = s;
+  while (rest.len() > 0) {
+    i32 seg = lastBar(rest);
+    string blk = rest.slice(seg, rest.len());
+    if (blk.indexOf("+" + name + ";") >= 0) { return false; }
+    if (blk.indexOf(";" + name + ";") >= 0) { return true; }
+    if (seg == 0) { return false; }
+    rest = rest.slice(0, seg);
+  }
+  return false;
+}
+
 void daRead(C c, string name, i32 line, i32 col, DA st) {
+  if (pendingHere(c.pendingDecls, name)) {
+    c.reportWith(errUsedBeforeDeclared(), line, col, "'" + name + "' is used before it is declared");
+    return;
+  }
   if (!st.has(name)) { return; }
   string t = c.typeOfName(name);
   if (c.isStruct(templateOf(t)) && !c.isGeneric(templateOf(t))) {
@@ -1237,7 +1328,11 @@ void daExpr(C c, Expr e, DA st) {
       for (i32 i = 0; i < params.len(); i++) { inner.remove(tokenText(c, params[i].nameTok)); }
       DAExit none = DAExit(DA.fresh());
       none.breaks.dead = true;
+      i32[] ptoks = i32[].filled(params.len(), 0);
+      for (i32 i = 0; i < params.len(); i++) { ptoks[i] = params[i].nameTok; }
+      string pLam = bindNames(c, ptoks);
       daBody(c, body, inner, none);
+      c.pendingDecls = pLam;
       // A capture refused once stays refused: the enclosing walk need not say it again.
       for (i32 i = 0; i < st.n; i++) {
         if (!inner.has(st.maybe[i]) && inner.reported(st.maybe[i])) { st.remove(st.maybe[i]); }
@@ -1534,6 +1629,10 @@ export i32 errStaticTrap() { return 241; }
 export i32 errStaticCondition() { return 242; }
 /** A static initialiser that reads a parameter or an ordinary local (spec/next ch27). */
 export i32 errStaticRuntime() { return 243; }
+/** `type X = X?` — a type reaching itself through aliases and nullable layers alone (spec/next ch29). */
+export i32 errTypeCycle() { return 244; }
+/** An ordinary local read before its declaration in the same block (spec/next ch27). */
+export i32 errUsedBeforeDeclared() { return 245; }
 /** Two declarations of one name at file scope. */
 export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
@@ -2913,6 +3012,8 @@ export struct C {
    * a `const` one is assigned twice, or after that use, is the definite-assignment walk's to say.
    */
   string pendingAt;
+  /** `;name;` of each local a block in the walk declares further down — see `daBody`. */
+  string pendingDecls;
   /**
    * The static evaluator (spec/next ch28) and what it reads — set once the declarations are in. A
    * `static_if`'s condition is decided here rather than left to the emitter, because the branch not
@@ -3034,7 +3135,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", null, null, 0 - 1, "", 0 - 1);
+             string[](), string[](), "", "", "", "", null, null, 0 - 1, "", 0 - 1);
   }
 
   /**
@@ -13074,6 +13175,24 @@ export void checkModule(C c, Program prog) {
   }
   Ev cev = c.sEv!;
   Decls ccx = c.sCx!;
+  // **A type declaration is computed too** (spec/next ch29-30), and one reaching itself through
+  // aliases and nullable layers alone is refused here, at the declaration. A generic one is computed
+  // at each instantiation instead.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      TypeDecl(nameTok, typeParams, alias, body, exported): {
+        if (typeParams.len() > 0) { continue; }
+        i32 td = typeDeclAt(ccx, tokenText(c, nameTok), c.sFile);
+        if (td < 0) { continue; }
+        cev.status = evOk();
+        cev.message = "";
+        evalTypeDecl(cev, ccx, td, string[]());
+        if (cev.status == evCycle()) { c.reportTok(errTypeCycle(), nameTok, cev.message); }
+        cev.status = evOk();
+      }
+      default: { }
+    }
+  }
   for (i32 ci = 0; ci < ccx.constCount; ci++) {
     if (ccx.constFiles[ci] != c.sFile) { continue; }
     Expr? cinit = ccx.constInits[ci];

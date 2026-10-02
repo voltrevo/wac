@@ -319,6 +319,19 @@ export Pruned pruneFor(string[] paths, string[] sources, Res res, string entry) 
     }
   }
 
+  // **Two declarations of one name are a fault of the file**, not of whatever reaches it (spec/next ch01
+  // `§wac-dup-any-kind-ctguh44`), so pruning one away must not hide it: both are kept to be refused.
+  for (i32 f = 0; f < n; f++) {
+    if (!w.needed[f] || builtinKey(paths[f])) { continue; }
+    Unit u = w.unit(f);
+    for (i32 a = 0; a < u.names.len(); a++) {
+      if (u.names[a] == "") { continue; }
+      for (i32 b = a + 1; b < u.names.len(); b++) {
+        if (u.names[b] == u.names[a]) { u.retained[a] = true; u.retained[b] = true; }
+      }
+    }
+  }
+
   // **A specifier's form needs no file to judge**, so an import naming a path inside `core` or `std`
   // stays to be refused whether or not anything uses it — spec/next ch02 `§wac-no-subpath-wqatc72`.
   for (i32 f = 0; f < n; f++) {
