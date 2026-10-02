@@ -108,14 +108,19 @@ export string test_a_program_that_asks_for_one_capability_is_described_by_one(Co
   // today's capabilities says nothing about the one added next week — and `Sched` arriving here is
   // exactly that rule working: a world now includes somewhere for continuations to wait, and a
   // program that never schedules still declares it, because it was handed one.
+  //
+  // **And the queue of continuations a `Sched` holds** (spec/next ch35), with the types it is made
+  // of — the program queue a `schedule`-less `async` call hands its continuation to. Interim: `Sys`
+  // (`design/lang/0016` phase 2) replaces `Core` and `Sched` and this list with them.
   t.eqStr(joinedWith(sorted(m.structs), ", "),
-          "Core, Pending<i64>, Pending<u8[]>, Pending<u8[]?>, Sched",
+          "Continuation, Core, Pending<i64>, Pending<u8[]>, Pending<u8[]?>, Queue<Continuation>, Sched, "
+            + "TicketBase, Vec<Continuation>",
           "hello.wac's declared boundary");
 
   // The callback signatures are the other half of the same boundary: each is a dispatcher the host
-  // may call into. Twelve for a program that logs, against 51 when every imported file's exports were
-  // roots.
-  t.isTrue(m.callbacks >= 0 && m.callbacks <= 12,
+  // may call into. Fifteen for a program that logs — the queue's `fn<void()>` and ticket drives among
+  // them — against 51 when every imported file's exports were roots.
+  t.isTrue(m.callbacks >= 0 && m.callbacks <= 15,
            itoa(m.callbacks) + " callback signatures");
   return t.report();
 }

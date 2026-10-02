@@ -339,9 +339,8 @@ void writeValType(B out, Env env, string t) {
   // program can construct (spec/next ch11). It still has a place in the enum's layout, so it is given
   // the cheapest storage there is; nothing will ever write to it or read from it.
   if (t == "never") { out.byte(127); return; }
-  // **So does a slot a `void` argument made** — `Result<void, E>.Ok`'s payload. Constructing one is
-  // declined where it is written (`design/lang/0016`); the layout still has to be writable, or every
-  // module naming `Result<void, E>` — `Ticket<void>.wait` — fails at its type section.
+  // **So does a slot a `void` argument made** — `Result<void, E>.Ok`'s payload, and a local binding
+  // one — which holds a placeholder nothing reads (spec/next ch11).
   if (t == "void") { out.byte(127); return; }
   if (!isWritableValType(t)) {
     // **And where**, because the type alone has repeatedly not been enough. `$cell$…` names a
@@ -2650,6 +2649,8 @@ export struct Env {
   i32 intrinsic;
   /** Why the async lowering declined a body, so the refusal of what is left can say so. */
   string asyncWhy;
+  /** While a lambda's body is walked, how many locals are outside it — a lower index is a capture. */
+  i32 captureFloor;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -2963,7 +2964,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "");
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0);
   }
 
   
@@ -4682,6 +4683,9 @@ bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
   }
   i32 at = env.localAt(nm);
   if (at < 0) { return false; }
+  // **A `void` local is a value of nothing**, so reading it emits nothing: a parameter a `void`
+  // argument erased has no slot, and a binding of a `void` payload holds only a placeholder.
+  if (env.localTypes[at] == "void") { return true; }
   fb.byte(32);
   fb.u32leb(at);
   // A promoted local's slot holds the cell, so reading the name means reading through it.
@@ -4691,6 +4695,12 @@ bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
     fb.u32leb(0);
   }
   return true;
+}
+
+/** An `if`'s or a block's result type: none for `void` — an arm that answers nothing leaves nothing. */
+void writeBlockType(B fb, Env env, string t) {
+  if (t == "void") { fb.byte(64); return; }
+  writeValType(fb, env, t);
 }
 
 /**
@@ -7024,9 +7034,26 @@ void emitVariantNew(B fb, u8[] src, Lexed lexed, Env env, string vname, Expr?[] 
   i32 n = env.fieldCountOf(en);
   fb.byte(65);
   fb.i32leb(env.variantTags[vi]);
+  // With its `void` payloads left out, the arguments fill the other slots in order.
+  bool short = args.len() < env.variantArity[vi];
+  i32 taken = 0;
   for (i32 slot = 1; slot < n; slot++) {
     i32 k = slot - env.variantSlot[vi];
     string ft = env.fieldTypeAt(en, slot);
+    if (short && k >= 0 && k < env.variantArity[vi]) {
+      if (ft == "void") { fb.byte(65); fb.i32leb(0); continue; }
+      k = taken;
+      taken = taken + 1;
+    }
+    // **A payload a `void` argument made holds nothing** — `Result<void, E>.Ok(…)`, ch11's
+    // payload-free variant. Its argument runs for its effect, and the slot gets a placeholder.
+    if (ft == "void") {
+      if (k >= 0 && k < env.variantArity[vi] && k < args.len() && !(args[k] is null)) {
+        emitExprAt(fb, src, lexed, env, args[k]!, ft);
+      }
+      fb.byte(65); fb.i32leb(0);   // i32.const 0
+      continue;
+    }
     if (k >= 0 && k < env.variantArity[vi] && k < args.len()) {
       if (!(args[k] is null)) {
         emitExprAt(fb, src, lexed, env, args[k]!, ft);
@@ -7038,6 +7065,27 @@ void emitVariantNew(B fb, u8[] src, Lexed lexed, Env env, string vname, Expr?[] 
   fb.byte(251);
   fb.u32leb(0);   // struct.new
   fb.u32leb(env.structType(en));
+}
+
+/** How many of variant `vi`'s payload slots a `void` argument made. */
+i32 voidSlots(Env env, i32 vi) {
+  i32 n = 0;
+  for (i32 k = 0; k < env.variantArity[vi]; k++) {
+    if (env.fieldTypeAt(env.variantOwners[vi], env.variantSlot[vi] + k) == "void") { n = n + 1; }
+  }
+  return n;
+}
+
+/** The payload slot argument `i` fills — skipping `void` slots when the call left them out. */
+i32 argSlot(Env env, i32 vi, i32 i, i32 given) {
+  if (given >= env.variantArity[vi]) { return i; }
+  i32 seen = 0;
+  for (i32 k = 0; k < env.variantArity[vi]; k++) {
+    if (env.fieldTypeAt(env.variantOwners[vi], env.variantSlot[vi] + k) == "void") { continue; }
+    if (seen == i) { return k; }
+    seen = seen + 1;
+  }
+  return i;
 }
 
 /**
@@ -7780,7 +7828,7 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
       fb.i32leb(nullCase ? -1 : env.variantTags[env.variantAt(vn)]);
       fb.byte(70);
       fb.byte(4);
-      writeValType(fb, env, rt);
+      writeBlockType(fb, env, rt);
       env.depth = env.depth + 1;
       opened = opened + 1;
     }
@@ -9891,7 +9939,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (tt == "") { tt = want; }
       emitExpr(fb, src, lexed, env, cond);
       fb.byte(4);
-      writeValType(fb, env, tt);
+      writeBlockType(fb, env, tt);
       // **A ternary is two decisions and had none.** `issues/lang/0112`: switching coverage to this
       // compiler dropped 157 `ternary-then` and 157 `ternary-else` points in `packages/fs` alone, and
       // a ratchet that stops instrumenting a construct does not go red — it goes *green*, with a
@@ -13023,8 +13071,12 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
       bb.byte(251); bb.u32leb(23);                      // ref.cast (ref $Receiver)
       bb.i32leb(env.structType(env.canonType(receiver)));
     }
+    // The parameters the signature has — one a `void` argument erased is not among them.
+    i32 real = 0;
     for (i32 wi = 0; wi < params.len(); wi++) {
-      bb.byte(32); bb.u32leb(wi + 1);
+      if (typeOfTyName(env, src, lexed, params[wi].type) == "void") { continue; }
+      real = real + 1;
+      bb.byte(32); bb.u32leb(real);
     }
     bb.byte(16); bb.u32leb(index);                      // call
     bb.byte(11);
@@ -13044,10 +13096,18 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   env.deferAt = 0 - 1;
   if (receiver != "") { env.addLocal("this", receiver); }
   for (i32 i = 0; i < params.len(); i++) {
-    env.addLocal(tokenTextOf(src, lexed, params[i].nameTok),
-                 typeOfTyName(env, src, lexed, params[i].type));
+    string vpt = typeOfTyName(env, src, lexed, params[i].type);
+    if (vpt == "void") { continue; }
+    env.addLocal(tokenTextOf(src, lexed, params[i].nameTok), vpt);
   }
   env.paramCount = env.localCount;
+  // **A parameter a `void` argument erased is not in the signature**, so it cannot take a parameter's
+  // index — every local after it would be off by one. It is named after the real ones, as a local
+  // nothing writes; reading it emits nothing.
+  for (i32 i = 0; i < params.len(); i++) {
+    if (typeOfTyName(env, src, lexed, params[i].type) != "void") { continue; }
+    env.addLocal(tokenTextOf(src, lexed, params[i].nameTok), "void");
+  }
 
   // **The body first, then the declaration that precedes it.** A scratch local is allocated while
   // emitting — a saturating cast needs one and nothing before the cast knows that — so the count is
@@ -13550,14 +13610,13 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
           string vw = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
           if (vw != "") {
             i32 vwi = env.variantAt(vw);
-            if (args.len() != env.variantArity[vwi]) { return "a variant with the wrong count"; }
+            if (args.len() != env.variantArity[vwi] && args.len() != env.variantArity[vwi] - voidSlots(env, vwi)) {
+              return "a variant with the wrong count";
+            }
             string vwo = env.variantOwners[vwi];
             for (i32 i = 0; i < args.len(); i++) {
-              if (env.fieldTypeAt(vwo, env.variantSlot[vwi] + i) == "void") {
-                return "a value of a type this emitter cannot write: void";
-              }
               string a7 = unsupportedValueAt(src, lexed, env, args[i],
-                                             env.fieldTypeAt(vwo, env.variantSlot[vwi] + i));
+                                             env.fieldTypeAt(vwo, env.variantSlot[vwi] + argSlot(env, vwi, i, args.len())));
               if (a7 != "") { return a7; }
             }
             return "";
@@ -13820,12 +13879,15 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // discovering an instance is too late to monomorphise it.
       {
         i32 lsaved = env.localCount;
+        i32 floorWas = env.captureFloor;
+        env.captureFloor = lsaved;
         for (i32 pi = 0; pi < params.len(); pi++) {
           env.addLocal(tokenTextOf(src, lexed, params[pi].nameTok),
                        typeOfTyName(env, src, lexed, params[pi].type));
         }
         string inner = unsupportedIn(src, lexed, env, body);
         env.localCount = lsaved;
+        env.captureFloor = floorWas;
         // Except one verdict: a capture of a parameter a `void` argument erased has nothing to put in
         // the cell, so the enclosing function is as uncallable as one reading it directly.
         if (inner == "a read of a parameter of type void") { return inner; }
@@ -13906,7 +13968,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // that reads it cannot be emitted. `Ticket<void>.resolve(T v)` is the one there is, and nothing
       // can call it: there is no `void` to pass.
       i32 li = env.localAt(nm);
-      if (li >= 0 && env.localTypes[li] == "void") { return "a read of a parameter of type void"; }
+      // Read in place it is nothing; *captured* by a lambda, there is nothing to put in the cell.
+      if (li >= 0 && li < env.captureFloor && env.localTypes[li] == "void") { return "a read of a parameter of type void"; }
       if (li >= 0) { return ""; }
       i32 ci = env.constAt(nm);
       // **Through the import that names it**, as emitting does: `import { LIMIT as L }` reads `L`.
@@ -14139,19 +14202,16 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           string vcall = variantOfMember(src, lexed, env, obj, nameTok);
           if (vcall != "") {
             i32 cvi = env.variantAt(vcall);
-            if (args.len() != env.variantArity[cvi]) { return "a variant with the wrong count"; }
+            if (args.len() != env.variantArity[cvi] && args.len() != env.variantArity[cvi] - voidSlots(env, cvi)) {
+              return "a variant with the wrong count";
+            }
             // The payload slots are known here, so a `null` among them can be asked about rather
             // than refused — `ExprKind.Is(e, null, null, negated)` is why `parse.wac` could not be
             // compiled by the compiler it is part of.
             string ven = env.variantOwners[cvi];
             for (i32 i = 0; i < args.len(); i++) {
-              // A payload slot a `void` argument made: no value goes in it, and the layout has no
-              // erased form yet (`design/lang/0016`).
-              if (env.fieldTypeAt(ven, env.variantSlot[cvi] + i) == "void") {
-                return "a value of a type this emitter cannot write: void";
-              }
               string a2 = unsupportedValueAt(src, lexed, env, args[i],
-                                             env.fieldTypeAt(ven, env.variantSlot[cvi] + i));
+                                             env.fieldTypeAt(ven, env.variantSlot[cvi] + argSlot(env, cvi, i, args.len())));
               if (a2 != "") { return a2; }
             }
             return "";
@@ -14447,10 +14507,7 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   // **Uncallable is not a defect.** A body that reads a parameter a `void` argument erased cannot be
   // called — there is no `void` to pass — so leaving it out loses nothing; whatever does reference it
   // declines in its own right, with its own reason.
-  // The same holds for a body that needs a `void` *value* — `Result<void, E>.Ok(…)` — since a `void`
-  // payload is not laid out yet (`design/lang/0016`): left out, and a caller says so.
-  bool uncallable = why == "a read of a parameter of type void"
-                    || why == "a value of a type this emitter cannot write: void";
+  bool uncallable = why == "a read of a parameter of type void";
   if (why != "" && !uncallable && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
   env.paramCount = savedParams;

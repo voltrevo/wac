@@ -302,8 +302,7 @@ export string test_an_async_void_function_has_a_ticket_with_no_answer(Core core,
   t.eqI32(log[0], 0, "suspended before doing its work");
   t.eqI32(core.drain(), 1, "the drain ran its one continuation");
   t.eqI32(log[0], 1, "and the body finished");
-  // Not `p.wait()`: that answers a `Result<void, string>`, and a `void` payload is not laid out yet
-  // (`design/lang/0016`). The drain settled it, which is the fact this asks about.
+  p.wait()!;
   t.isTrue(p.settled(), "the ticket answers nothing and is settled");
   return t.report();
 }
