@@ -365,18 +365,28 @@ export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
   string[] wacPaths = wacOnly(base.paths, base.paths);
   string[] wacSources = wacOnly(base.paths, base.sources);
 
+  bool project = isProjectFence(base.paths, base.sources);
   for (i32 e = 0; e < fence.expects.len(); e++) {
     ExExpect x = fence.expects[e];
     if (x.command != "" && !commandSupported(x.command)) {
       return ExVerdict(fence, "unsupported", "an expectation about `" + x.command + "`");
     }
-    string why = meets(cli, scratch, fence, x, wacPaths, wacSources, res, n * 100 + e);
+    string why = project
+      ? meetsByCommand(cli, scratch, fence, x, base.paths, base.sources, n * 100 + e)
+      : meets(cli, scratch, fence, x, wacPaths, wacSources, res, n * 100 + e);
     if (why != "") { return ExVerdict(fence, "missed", why); }
   }
 
   // Each `// ERROR:` block, uncommented alone, must be refused.
   for (i32 v = 1; v < fence.variants.len(); v++) {
     ExVariant var = fence.variants[v];
+    if (project) {
+      if (buildByCommand(cli, scratch, fence, var.paths, var.sources, n * 100 + 50 + v).ok) {
+        return ExVerdict(fence, "missed", "line " + itoa(var.errorLine) + " uncommented is accepted — ERROR: "
+                       + var.reason);
+      }
+      continue;
+    }
     string[] ps = wacOnly(var.paths, var.paths);
     string[] ss = wacOnly(var.paths, var.sources);
     string wire = diagnoseBuildIn(ps, ss, resolutionFor(var.paths, var.sources), fence.entry);
@@ -437,7 +447,68 @@ string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenP
   string path = scratch + "/ex" + itoa(id) + ".wasm";
   Change wrote = cli.writeFile(path, wasm).wait();
   if (!wrote.ok()) { return "could not write " + path; }
+  return runAndJudge(cli, x, path);
+}
 
+/**
+ * **A project is the command's to resolve** (spec/next ch02): a fence with a `wac.json5` and no
+ * package checkout is written to a directory of its own and built by `wac build`, so the boundary of
+ * each project, and what `@/` and a nested project's directory mean, are judged by the code a user's
+ * build runs rather than by a second reading of them here.
+ */
+bool isProjectFence(string[] paths, string[] sources) {
+  bool project = false;
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (startsWith(paths[i], "deps/")) { return false; }
+    if (paths[i] == "wac.json5" || endsWith(paths[i], "/wac.json5")) { project = true; }
+    // A `@/` with no manifest anywhere is a question about projects too — the command's to refuse.
+    if (sources[i].indexOf("\"@/") >= 0) { project = true; }
+  }
+  return project;
+}
+
+/** What `wac build` made of a fence written to disk: whether it succeeded, the module, and stderr. */
+struct ExBuilt {
+  bool ok;
+  string wasm;
+  string err;
+}
+
+ExBuilt buildByCommand(Cli cli, string scratch, ExFence fence, string[] paths, string[] sources, i32 id) {
+  string dir = scratch + "/p" + itoa(id);
+  for (i32 i = 0; i < paths.len(); i++) {
+    string full = dir + "/" + paths[i];
+    i32 cut = 0 - 1;
+    for (i32 k = 0; k < full.len(); k++) { if (full.slice(k, k + 1) == "/") { cut = k; } }
+    if (cut > 0) { cli.mkdir(full.slice(0, cut), true).wait(); }
+    cli.writeFile(full, sources[i].toBytes()).wait();
+  }
+  string out = dir + "/out";
+  Vec<string> argv = Vec.create();
+  argv.push("build");
+  argv.push(dir + "/" + fence.entry);
+  argv.push("-o");
+  argv.push(out);
+  Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac", argv.toArray(), u8[]()).wait();
+  bool ok = r.ran() && r.status == 0;
+  return ExBuilt(ok, out + ".wasm", string.fromBytes(r.stderr));
+}
+
+string meetsByCommand(Cli cli, string scratch, ExFence fence, ExExpect x, string[] paths, string[] sources, i32 id) {
+  ExBuilt b = buildByCommand(cli, scratch, fence, paths, sources, id);
+  if (x.kind == "refused") { return b.ok ? "accepted, and it must be refused" : ""; }
+  if (!b.ok) { return "refused: " + trimmed(firstLineOf(b.err)); }
+  if (x.kind == "emits") { return ""; }
+  return runAndJudge(cli, x, b.wasm);
+}
+
+string firstLineOf(string s) {
+  i32 nl = s.indexOf("\n");
+  return nl < 0 ? s : s.slice(0, nl);
+}
+
+/** Run the module at `path` as the expectation asks, and say why it does not hold, or "". */
+string runAndJudge(Cli cli, ExExpect x, string path) {
   Vec<string> argv = Vec.create();
   argv.push(path);
   if (x.kind == "answers" || x.kind == "traps") {

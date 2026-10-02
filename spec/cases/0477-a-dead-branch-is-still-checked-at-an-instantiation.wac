@@ -1,0 +1,9 @@
+// expect: refused
+// spec: §wac-if-folds-checks-both-795w3wt
+// why: an ordinary `if` folds per instance but checks both branches there, unlike `static_if`
+// from: spec/next ch31
+i32 size<T>(T x) {
+  if (typeref(T).isRef()) { return x.len(); }
+  return 0;
+}
+export i32 f() { return size("ab") + size(5 as i32); }

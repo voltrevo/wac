@@ -904,9 +904,10 @@ string typeArgAt(string inst, i32 want) {
       if (depth == 1) { from = i + 1; }
       continue;
     }
-    // This one already opened the angle bracket above, so it counts only the square ones.
-    if (c == "[") { depth = depth + 1; }
-    if (c == "]") { depth = depth - 1; }
+    // This one already opened the angle bracket above, so it counts only the square ones — and a
+    // tuple's parentheses, or `count<(i32, string)>` reads as two arguments, `(i32` and `string)`.
+    if (c == "[" || c == "(") { depth = depth + 1; }
+    if (c == "]" || c == ")") { depth = depth - 1; }
     if (c == ">") {
       depth = depth - 1;
       if (depth == 0) { return n == want ? inst.slice(from, i) : ""; }
@@ -9765,6 +9766,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     fb.u32leb(env.boxType(inner));
     return;
   }
+  // **A question about a type answers a constant** (spec/next ch30): `typeref(Ts).members().len()`
+  // in `count<(i32, string)>` is 2, decided per instance by the evaluator and written as a literal.
+  if (isStaticScalarType(want) && mentionsTypeRefE(e) && emitTypeRefScalar(fb, env, src, lexed, e, want)) { return; }
   match (e.kind) {
     // Declined by `unsupportedExpr`: a `typeref` exists only in static evaluation (spec/next ch30, Open).
     TypeRefOf(t): { fb.byte(0); }
@@ -17352,6 +17356,57 @@ bool emitStaticScalar(B fb, Env env, u8[] src, Lexed lexed, i32 ci, string want)
     fb.byte(68); fb.f64bits(v.fval);
     return true;
   }
+  return false;
+}
+
+/** Whether `e` reads a `typeref` anywhere — the expressions only the evaluator can answer. */
+bool mentionsTypeRefE(Expr e) {
+  match (e.kind) {
+    TypeRefOf(t): { return true; }
+    Call(callee, args, targs): {
+      if (mentionsTypeRefE(callee)) { return true; }
+      for (i32 i = 0; i < args.len(); i++) { if (mentionsTypeRefE(args[i])) { return true; } }
+      return false;
+    }
+    Member(obj, nameTok): { return mentionsTypeRefE(obj); }
+    Binary(op, left, right): { return mentionsTypeRefE(left) || mentionsTypeRefE(right); }
+    Unary(op, operand): { return mentionsTypeRefE(operand); }
+    Ternary(cond, then, els): { return mentionsTypeRefE(cond) || mentionsTypeRefE(then) || mentionsTypeRefE(els); }
+    default: { return false; }
+  }
+}
+
+/** `e` evaluated in this instance and written as a literal of `want`; false where it has no value. */
+bool emitTypeRefScalar(B fb, Env env, u8[] src, Lexed lexed, Expr e, string want) {
+  Ev ev = staticEvalOf(env, src, lexed);
+  if (env.staticCx is null) { return false; }
+  ev.status = 0;
+  ev.message = "";
+  i32 mark = ev.localCount;
+  i32 tpMark = bindInstanceTypes(env, ev);
+  Value v = evalExpr(ev, env.staticCx!, env.curFile, e, want);
+  ev.tpCount = tpMark;
+  ev.localCount = mark;
+  if (!evFinished(ev.status)) { ev.status = 0; return false; }
+  ev.status = 0;
+  return emitValueScalar(fb, v, want);
+}
+
+/** A number or a float the evaluator answered, as the one instruction that pushes it as `want`. */
+bool emitValueScalar(B fb, Value v, string want) {
+  if (v.kind == vNum()) {
+    if (valType(want) == 126) { fb.byte(66); fb.i64leb(v.bits); return true; }
+    if (want == "f32" || want == "f64") { return false; }
+    fb.byte(65); fb.i32leb(wrapTo("i32", v.bits) as@ i32);
+    return true;
+  }
+  if (v.kind == vF32() || v.kind == vF64()) {
+    if (want == "f32") { fb.byte(67); fb.f32bits(v.fval as~ f32); return true; }
+    if (want != "f64") { return false; }
+    fb.byte(68); fb.f64bits(v.fval);
+    return true;
+  }
+  if (want == "bool") { fb.byte(65); fb.i32leb(truthy(v) ? 1 : 0); return true; }
   return false;
 }
 

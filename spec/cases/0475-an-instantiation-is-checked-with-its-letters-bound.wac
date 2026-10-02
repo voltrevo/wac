@@ -1,0 +1,10 @@
+// expect: refused
+// spec: §wac-generic-template-check-2wkq7nm
+// why: nothing asks `T` for a `len` at the definition, and an `i32` has none at this instantiation
+// from: spec/next ch19
+i32 lengthOf<T>(T x) { return x.len(); }
+export i32 f() {
+  i32 a = lengthOf("abc");
+  i32 b = lengthOf(5 as i32);
+  return a + b;
+}

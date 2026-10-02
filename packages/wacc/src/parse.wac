@@ -2989,6 +2989,9 @@ void parseParams(P p, ParamList out) {
     if (p.at1(kRparen())) { return; }              // trailing comma
     bool isConst = p.eat(kConst());
     Ty t = parseType(p);
+    // `Ts ...items` — a variadic parameter (spec/next ch14): one tuple, which `lowerVariadics` has the
+    // call sites fill. The marker says how a call is written, not what the parameter is.
+    if (p.at1(kDot()) && p.kindAt(1) == kDot() && p.kindAt(2) == kDot()) { p.advance(); p.advance(); p.advance(); }
     i32 nameTok = -1;
     nameTok = declName(p, perrExpected(), "parameter name");
     out.push(Param(nameTok, t, isConst));
@@ -3306,6 +3309,9 @@ Decl parseFuncDecl(P p) {
   // between the visibility and the thing. `design/lang/0014` D3: the type written is what the *body*
   // answers, and the caller receives a `Pending<T>` of it.
   bool isAsync = p.eat(kAsync());
+  // `const Box shared()` — a result the caller may not mutate (spec/next ch17). Read; the permission
+  // on a returned reference is not yet carried, so the result is an ordinary one.
+  p.eat(kConst());
   Ty ret = parseReturnType(p);
   i32 nameTok = -1;
   nameTok = declName(p, perrExpected(), "function name");
@@ -3344,6 +3350,21 @@ Decl parseStaticDecl(P p, bool exported) {
 }
 
 /** `i32 counter = 0;` at `from`: a type, a name, and an `=` or `;` where a function would have `(`. */
+/** Whether a type at `from` is followed by a name and `(` or `<` — a function's head, not a variable's. */
+bool funcAhead(P p, i32 from) {
+  if (p.kindAt(from) != kIdent()) { return false; }
+  i32 j = from + 1;
+  i32 afterArgs = afterTypeArgs(p, j);
+  if (afterArgs > 0) { j = afterArgs; }
+  while (true) {
+    if (p.kindAt(j) == kLbrack() && p.kindAt(j + 1) == kRbrack()) { j += 2; }
+    else if (p.kindAt(j) == kQuestion()) { j++; }
+    else { break; }
+  }
+  if (p.kindAt(j) != kIdent()) { return false; }
+  return p.kindAt(j + 1) == kLparen() || p.kindAt(j + 1) == kLt();
+}
+
 bool moduleVarAhead(P p, i32 from) {
   if (p.kindAt(from) != kIdent()) { return false; }
   i32 j = from + 1;
@@ -3418,6 +3439,8 @@ export Program parseProgram(P p) {
       i32 symTok = p.advance();
       p.expect(kSemi());
       decls.push(Decl(DeclKind.SymbolDecl(symTok, exported), sline, scol));
+    } else if (k == kConst() && funcAhead(p, after + 1)) {
+      decls.push(parseFuncDecl(p));
     } else if (k == kStatic() || k == kConst() || moduleVarAhead(p, after)) {
       if (exported) { p.advance(); }
       decls.push(parseStaticDecl(p, exported));

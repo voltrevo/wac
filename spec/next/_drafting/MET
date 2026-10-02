@@ -39,8 +39,12 @@ spec/next/1-programs/02-modules-and-imports.md#16
 spec/next/1-programs/02-modules-and-imports.md#18
 spec/next/1-programs/02-modules-and-imports.md#19
 spec/next/1-programs/02-modules-and-imports.md#20
+spec/next/1-programs/02-modules-and-imports.md#21
+spec/next/1-programs/02-modules-and-imports.md#22
 spec/next/1-programs/02-modules-and-imports.md#23
+spec/next/1-programs/02-modules-and-imports.md#24
 spec/next/1-programs/02-modules-and-imports.md#25
+spec/next/1-programs/02-modules-and-imports.md#26
 spec/next/1-programs/02-modules-and-imports.md#27
 spec/next/1-programs/02-modules-and-imports.md#28
 spec/next/1-programs/02-modules-and-imports.md#29
@@ -194,6 +198,7 @@ spec/next/2-types/14-tuples.md#1
 spec/next/2-types/14-tuples.md#2
 spec/next/2-types/14-tuples.md#3
 spec/next/2-types/14-tuples.md#4
+spec/next/2-types/14-tuples.md#5
 spec/next/2-types/14-tuples.md#6
 spec/next/2-types/14-tuples.md#7
 spec/next/2-types/14-tuples.md#8
@@ -255,6 +260,7 @@ spec/next/2-types/19-generics.md#10
 spec/next/2-types/19-generics.md#11
 spec/next/2-types/19-generics.md#12
 spec/next/2-types/19-generics.md#13
+spec/next/2-types/19-generics.md#15
 spec/next/2-types/19-generics.md#16
 spec/next/2-types/19-generics.md#17
 spec/next/2-types/19-generics.md#18
@@ -280,6 +286,7 @@ spec/next/2-types/21-symbols.md#2
 spec/next/2-types/21-symbols.md#3
 spec/next/2-types/21-symbols.md#4
 spec/next/2-types/21-symbols.md#5
+spec/next/2-types/21-symbols.md#6
 spec/next/3-expressions/22-operators.md#1
 spec/next/3-expressions/22-operators.md#2
 spec/next/3-expressions/22-operators.md#3
@@ -367,12 +374,13 @@ spec/next/4-static/30-computed-types.md#2
 spec/next/4-static/30-computed-types.md#3
 spec/next/4-static/30-computed-types.md#4
 spec/next/4-static/30-computed-types.md#5
-spec/next/4-static/31-static-control.md#1
 spec/next/4-static/31-static-control.md#2
 spec/next/4-static/31-static-control.md#3
 spec/next/4-static/31-static-control.md#4
 spec/next/4-static/31-static-control.md#5
 spec/next/4-static/31-static-control.md#6
+spec/next/4-static/31-static-control.md#7
+spec/next/4-static/31-static-control.md#8
 spec/next/4-static/31-static-control.md#9
 spec/next/5-inference/32-widening.md#1
 spec/next/5-inference/32-widening.md#2

@@ -6,7 +6,8 @@
 // the canonical dump the parser's own tests read.
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
-import { kAs, kAsync, kComma, kExport, kGt, kIdent, kindName, kLbrace, kLparen, kLt, kRbrace, kShr } from "./kinds.wac";
+import { kAs, kAsync, kComma, kDot, kExport, kGt, kIdent, kindName, kLbrace, kLbrack, kLparen, kLt, kRbrace,
+         kRbrack, kRparen, kShr } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -1825,7 +1826,138 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string
  * (ch03), then `auto` results written in (ch34). Both are idempotent.
  */
 export string[] lowerSources(string[] paths, string[] sources, Res res) {
-  return lowerAutoReturns(paths, lowerExportInstances(lowerNamespaces(paths, sources, res)), res);
+  return lowerAutoReturns(paths, lowerExportInstances(lowerVariadics(lowerNamespaces(paths, sources, res))), res);
+}
+
+// ---- Variadic parameters — spec/next ch14 ----
+
+/**
+ * `i32 count<Ts>(Ts ...items)` called as `count(1 as i32, "a")`: the remaining arguments are one tuple,
+ * so the call is written `count((1 as i32, "a"))` — `(x,)` for one and `()` for none — and the
+ * declaration is an ordinary function with a tuple parameter whose type `Ts` is inferred from it.
+ * A free function named with no receiver; the names are gathered across every file supplied.
+ */
+string[] lowerVariadics(string[] sources) {
+  bool any = false;
+  for (i32 i = 0; i < sources.len(); i++) { if (sources[i].indexOf("...") >= 0) { any = true; } }
+  if (!any) { return sources; }
+  string names = "|";
+  string fixed = "|";
+  for (i32 f = 0; f < sources.len(); f++) {
+    if (sources[f].indexOf("...") < 0) { continue; }
+    u8[] src = sources[f].toBytes();
+    Lexed lx = lex(src);
+    Program prog = parseProgram(P.create(src, lx));
+    i32 st = tokenStride();
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+          if (params.len() == 0) { continue; }
+          i32 last = params[params.len() - 1].nameTok;
+          if (last < 3 || lx.tokens[(last - 1) * st] != kDot() || lx.tokens[(last - 2) * st] != kDot()
+              || lx.tokens[(last - 3) * st] != kDot()) { continue; }
+          names = names + tokenTextOf(src, lx, nameTok) + "|";
+          fixed = fixed + numText(params.len() - 1) + "|";
+        }
+        default: { }
+      }
+    }
+  }
+  if (names == "|") { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 f = 0; f < sources.len(); f++) { out[f] = variadicCallsOf(sources[f], names, fixed); }
+  return out;
+}
+
+/** The fixed-parameter count of variadic `name`, or -1. */
+i32 variadicFixed(string names, string fixed, string name) {
+  i32 at = names.indexOf("|" + name + "|");
+  if (at < 0) { return 0 - 1; }
+  i32 k = 0;
+  for (i32 i = 0; i < at; i++) { if (names.slice(i, i + 1) == "|") { k++; } }
+  string rest = fixed;
+  for (i32 i = 0; i < k; i++) { rest = rest.slice(rest.indexOf("|") + 1, rest.len()); }
+  rest = rest.slice(rest.indexOf("|") + 1, rest.len());
+  string digits = rest.slice(0, rest.indexOf("|"));
+  i32 n = 0;
+  for (i32 i = 0; i < digits.len(); i++) { n = n * 10 + (digits.toBytes()[i] as i32 - 48); }
+  return n;
+}
+
+string variadicCallsOf(string text, string names, string fixed) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  i32 st = tokenStride();
+  i32 n = lx.tokenCount;
+  // Insertions as `offset:text` pairs, in increasing offset — the walk meets them in that order.
+  i32[] at = i32[].filled(n * 2 + 2, 0);
+  string[] what = string[].filled(n * 2 + 2, "");
+  i32 count = 0;
+  for (i32 t = 0; t + 1 < n; t++) {
+    if (lx.tokens[t * st] != kIdent() || lx.tokens[(t + 1) * st] != kLparen()) { continue; }
+    if (t > 0 && lx.tokens[(t - 1) * st] == kDot()) { continue; }
+    i32 fx = variadicFixed(names, fixed, tokenTextOf(src, lx, t));
+    if (fx < 0) { continue; }
+    // A declaration is a name after a type, and a call is not: `i32 count<Ts>(…)` has `<` next, so
+    // only a non-generic declaration reaches here, and its parameters are typed — a `...` among them.
+    i32 depth = 0;
+    i32 u = t + 1;
+    i32 argIndex = 0 - 1;
+    i32 packAt = 0 - 1;
+    bool isDecl = false;
+    while (u < n) {
+      i32 k = lx.tokens[u * st];
+      if (k == kLparen() || k == kLbrack() || k == kLbrace()) {
+        depth++;
+        if (depth == 1) {
+          if (u + 1 < n && lx.tokens[(u + 1) * st] != kRparen()) {
+            argIndex = 0;
+            if (fx == 0) { packAt = lx.tokens[(u + 1) * st + 1]; }
+          }
+          u++;
+          continue;
+        }
+      }
+      if (k == kRparen() || k == kRbrack() || k == kRbrace()) {
+        depth--;
+        if (depth == 0) { break; }
+      }
+      if (depth == 1 && k == kDot() && u + 1 < n && lx.tokens[(u + 1) * st] == kDot()) { isDecl = true; }
+      if (depth == 1 && k == kComma()) {
+        argIndex++;
+        if (argIndex == fx && u + 1 < n) { packAt = lx.tokens[(u + 1) * st + 1]; }
+      }
+      u++;
+    }
+    i32 args = argIndex + 1;
+    if (isDecl || u >= n) { continue; }
+    i32 closeAt = lx.tokens[u * st + 1];
+    i32 packed = args - fx;
+    if (packed <= 0) {
+      at[count] = closeAt; what[count] = fx == 0 ? "()" : ", ()"; count++;
+    } else {
+      at[count] = packAt; what[count] = "("; count++;
+      at[count] = closeAt; what[count] = packed == 1 ? ",)" : ")"; count++;
+    }
+  }
+  if (count == 0) { return text; }
+  // Sorted by offset: a call nested in an argument is met after its enclosing call opened, and its
+  // own insertions fall between that call's two.
+  for (i32 i = 1; i < count; i++) {
+    i32 j = i;
+    while (j > 0 && at[j - 1] > at[j]) {
+      i32 ta = at[j]; at[j] = at[j - 1]; at[j - 1] = ta;
+      string tw = what[j]; what[j] = what[j - 1]; what[j - 1] = tw;
+      j--;
+    }
+  }
+  string res = "";
+  i32 from = 0;
+  for (i32 i = 0; i < count; i++) {
+    res = res + bytesBetween(src, from, at[i]) + what[i];
+    from = at[i];
+  }
+  return res + bytesBetween(src, from, src.len());
 }
 
 // ---- Instantiations in an export list — spec/next ch02, ch19 ----

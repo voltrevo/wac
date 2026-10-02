@@ -296,7 +296,7 @@ string flattenInline(string text, NsLocal info) {
  */
 i32 hoistStaticFields(NsFile f, NsEdits ed, NsLocal info, i32 structTok, bool exported) {
   i32 open = structTok + 2;
-  if (f.kind(open) == kLt()) { return 0 - 1; }
+  if (f.kind(open) == kLt()) { return hoistGenericStatics(f, ed, structTok, exported); }
   while (open < f.count() && f.kind(open) != kLbrace() && f.kind(open) != kSemi()) { open = open + 1; }
   if (f.kind(open) != kLbrace()) { return 0 - 1; }
   i32 close = f.matching(open);
@@ -308,6 +308,24 @@ i32 hoistStaticFields(NsFile f, NsEdits ed, NsLocal info, i32 structTok, bool ex
     if (depth == 0 && k == kStatic()) {
       i32 nameTok = f.declName(t);
       i32 end = f.declEnd(t);
+      // **`static i32 [size] = 7;` — a symbol-named one** (spec/next ch21), reached as `Foo.[size]`,
+      // which is rewritten here: the namespace walk follows names after a `.`, not brackets.
+      if (nameTok > 2 && f.kind(nameTok) == kRbrack() && f.kind(nameTok - 1) == kIdent()
+          && f.kind(nameTok - 2) == kLbrack()) {
+        string symQualified = owner + ".[" + f.text(nameTok - 1) + "]";
+        hoisted = hoisted + " " + (exported ? "export " : "") + "static"
+                + bytesText(f.src, f.end(t), f.start(nameTok - 2)) + "@\"" + symQualified + "\""
+                + bytesText(f.src, f.end(nameTok), f.end(end));
+        ed.add(f.start(t), f.end(end), blankOf(f.src, f.start(t), f.end(end)));
+        for (i32 u = 0; u + 4 < f.count(); u++) {
+          if (f.kind(u) == kIdent() && f.text(u) == owner && f.kind(u + 1) == kDot() && f.kind(u + 2) == kLbrack()
+              && f.kind(u + 3) == kIdent() && f.text(u + 3) == f.text(nameTok - 1) && f.kind(u + 4) == kRbrack()) {
+            ed.add(f.start(u), f.end(u + 4), "@\"" + symQualified + "\"");
+          }
+        }
+        t = end;
+        continue;
+      }
       if (nameTok < 0 || f.kind(nameTok) != kIdent()) { t = end; continue; }
       string qualified = owner + "." + f.text(nameTok);
       hoisted = hoisted + " " + (exported ? "export " : "") + "static"
@@ -325,6 +343,113 @@ i32 hoistStaticFields(NsFile f, NsEdits ed, NsLocal info, i32 structTok, bool ex
   if (!info.spaces.has(owner)) { info.spaces.push(owner); }
   ed.add(f.start(close), f.end(close), "}" + hoisted);
   return close;
+}
+
+/**
+ * **A generic struct's static fields, one per instantiation** (spec/next ch27
+ * `§wac-static-per-instantiation-79mu9di`): each `Cache<i32>.marker` this file writes gets a static of
+ * its own, `static Box @"Cache<i32>.marker" = …;` with the struct's letters replaced by the arguments,
+ * and the use is rewritten to that name. An instantiation written nowhere has no static, which is
+ * what an unused one costs. The fields are blanked where they stood, as for a plain struct.
+ */
+i32 hoistGenericStatics(NsFile f, NsEdits ed, i32 structTok, bool exported) {
+  string owner = f.text(structTok + 1);
+  i32 lt = structTok + 2;
+  i32 gt = lt;
+  string letters = "|";
+  while (gt < f.count() && f.kind(gt) != kGt()) {
+    if (f.kind(gt) == kIdent() && (f.kind(gt - 1) == kLt() || f.kind(gt - 1) == kComma())) {
+      letters = letters + f.text(gt) + "|";
+    }
+    gt = gt + 1;
+  }
+  i32 open = gt;
+  while (open < f.count() && f.kind(open) != kLbrace() && f.kind(open) != kSemi()) { open = open + 1; }
+  if (f.kind(open) != kLbrace()) { return 0 - 1; }
+  i32 close = f.matching(open);
+  // The fields: name, and the token range of each declaration from `static` to its `;`.
+  string names = "|";
+  i32[] froms = i32[].filled(16, 0);
+  i32[] tos = i32[].filled(16, 0);
+  i32[] nameToks = i32[].filled(16, 0);
+  i32 fields = 0;
+  i32 depth = 0;
+  for (i32 t = open + 1; t < close; t++) {
+    i32 k = f.kind(t);
+    if (depth == 0 && k == kStatic() && fields < 16) {
+      i32 nameTok = f.declName(t);
+      i32 end = f.declEnd(t);
+      if (nameTok < 0 || f.kind(nameTok) != kIdent()) { t = end; continue; }
+      names = names + f.text(nameTok) + "|";
+      froms[fields] = t;
+      tos[fields] = end;
+      nameToks[fields] = nameTok;
+      fields = fields + 1;
+      ed.add(f.start(t), f.end(end), blankOf(f.src, f.start(t), f.end(end)));
+      t = end;
+      continue;
+    }
+    if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
+    if (k == kRbrace() || k == kRparen() || k == kRbrack()) { depth = depth - 1; }
+  }
+  if (fields == 0) { return close; }
+  // The uses: `Owner < args > . field`, anywhere outside the struct itself.
+  string made = "|";
+  string hoisted = "";
+  for (i32 t = 0; t + 1 < f.count(); t++) {
+    if (t >= structTok && t <= close) { continue; }
+    if (f.kind(t) != kIdent() || f.text(t) != owner || f.kind(t + 1) != kLt()) { continue; }
+    i32 u = t + 1;
+    i32 d = 0;
+    string args = "";
+    string[] argList = string[].filled(8, "");
+    i32 argCount = 0;
+    while (u < f.count()) {
+      i32 k = f.kind(u);
+      if (k == kLt()) { d = d + 1; if (d == 1) { u = u + 1; continue; } }
+      if (k == kGt()) { d = d - 1; if (d == 0) { break; } }
+      if (k == kComma() && d == 1) {
+        if (argCount < 8) { argCount = argCount + 1; }
+        args = args + ",";
+        u = u + 1;
+        continue;
+      }
+      if (argCount < 8) { argList[argCount] = argList[argCount] + f.text(u); }
+      args = args + f.text(u);
+      u = u + 1;
+    }
+    argCount = argCount + 1;
+    if (u + 2 >= f.count() || f.kind(u + 1) != kDot() || f.kind(u + 2) != kIdent()) { continue; }
+    string field = f.text(u + 2);
+    if (names.indexOf("|" + field + "|") < 0) { continue; }
+    string qualified = owner + "<" + args + ">." + field;
+    ed.add(f.start(t), f.end(u + 2), "@\"" + qualified + "\"");
+    if (made.indexOf("|" + qualified + "|") >= 0) { continue; }
+    made = made + qualified + "|";
+    for (i32 fi = 0; fi < fields; fi++) {
+      if (f.text(nameToks[fi]) != field) { continue; }
+      string decl = (exported ? "export " : "") + "static";
+      for (i32 w = froms[fi] + 1; w <= tos[fi]; w++) {
+        string piece = f.text(w);
+        if (w == nameToks[fi]) { piece = "@\"" + qualified + "\""; }
+        else if (f.kind(w) == kIdent() && letters.indexOf("|" + piece + "|") >= 0) {
+          piece = letterArg(letters, piece, argList);
+        }
+        decl = decl + " " + piece;
+      }
+      hoisted = hoisted + " " + decl;
+    }
+  }
+  if (hoisted != "") { ed.add(f.start(close), f.end(close), "}" + hoisted); }
+  return close;
+}
+
+/** The argument standing for letter `name` — its position among `|T|U|`. */
+string letterArg(string letters, string name, string[] args) {
+  i32 at = letters.indexOf("|" + name + "|");
+  i32 k = 0;
+  for (i32 i = 1; i < at; i++) { if (letters.slice(i, i + 1) == "|") { k = k + 1; } }
+  return k < args.len() ? args[k] : name;
 }
 
 /** One `namespace name { … }` block, at tokens `first` (its `export` or `namespace`) to its `}`. */

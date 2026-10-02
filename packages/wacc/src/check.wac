@@ -928,6 +928,7 @@ i32 liveBranch(C c, Expr cond) {
   i32 mark = ev.localCount;
   i32 tpMark = ev.tpCount;
   for (i32 i = 0; i < c.activeParamCount; i++) { ev.bindType(c.activeParams[i], ""); }
+  bindInstanceLetters(c, ev);
   Value v = evalExpr(ev, c.sCx!, c.sFile, cond, "bool");
   ev.tpCount = tpMark;
   ev.localCount = mark;
@@ -954,6 +955,101 @@ i32 staticTupleIndexC(C c, i32 nameTok) {
   ev.status = evOk();
   i64 n = intOf(v);
   return n < 0 || n > 100000 ? 0 - 1 : n as! i32;
+}
+
+/** The letters an instance check has bound, into the evaluator — `T=i32` per line of `instBinding`. */
+void bindInstanceLetters(C c, Ev ev) {
+  string rest = c.instBinding;
+  while (rest.indexOf("\n") >= 0) {
+    string line = rest.slice(0, rest.indexOf("\n"));
+    rest = rest.slice(rest.indexOf("\n") + 1, rest.len());
+    i32 eq = line.indexOf("=");
+    if (eq > 0) { ev.bindType(line.slice(0, eq), line.slice(eq + 1, line.len())); }
+  }
+}
+
+/**
+ * **Each instantiation's body, checked again with its letters bound** (spec/next ch19): `lengthOf<i32>`
+ * asks an `i32` for a `len` that `lengthOf<T>` could not be asked about. A mistake that does not depend
+ * on the letters was reported at the definition and is not reported again — the list holds one copy of
+ * each position. Only this file's own templates; an instance found while checking one is queued too,
+ * up to a bound that a generic instantiating itself ever larger cannot pass.
+ */
+void checkInstances(C c, Program prog) {
+  i32 done = 0;
+  i32 pos = 1;
+  while (done < 64) {
+    string q = c.instQueue;
+    if (pos >= q.len()) { return; }
+    string rest = q.slice(pos, q.len());
+    i32 nl = rest.indexOf("\n");
+    if (nl < 0) { return; }
+    string line = rest.slice(0, nl);
+    pos = pos + nl + 1;
+    done++;
+    i32 bar = line.indexOf("|");
+    if (bar < 0) { continue; }
+    string name = line.slice(0, bar);
+    string[] types = splitDoubleSemi(line.slice(bar + 1, line.len()));
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+          if (tokenText(c, nameTok) != name || typeParams.len() != types.len()) { continue; }
+          string binding = "\n";
+          for (i32 i = 0; i < typeParams.len(); i++) {
+            binding = binding + tokenText(c, typeParams[i]) + "=" + types[i] + "\n";
+          }
+          c.instBinding = binding;
+          c.activeParamCount = 0;
+          c.activeFunc = name;
+          c.clearScope();
+          c.pushScope(body);
+          for (i32 i = 0; i < params.len(); i++) {
+            c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type), params[i].isConst);
+          }
+          declareAll(c, body);
+          bool wasAsync = c.inAsync;
+          c.inAsync = isAsync;
+          string wasTry = c.tryReturn;
+          string wasYield = c.yieldType;
+          c.tryReturn = typeOfTy(c, bodyReturnTy(c, returnType));
+          c.yieldType = yieldOf(typeOfTy(c, returnType));
+          checkAll(c, body, bodyReturnTy(c, returnType));
+          c.tryReturn = wasTry;
+          c.yieldType = wasYield;
+          c.inAsync = wasAsync;
+          c.popScope();
+          c.instBinding = "";
+        }
+        default: { }
+      }
+    }
+  }
+}
+
+/** The arm a `static_match` takes in the instance being checked — its type, or the default. */
+i32 staticArmC(C c, Ty subject, Ty[] types, i32 defaultAt) {
+  string st = typeOfTy(c, subject);
+  if (st == "" || st == typeNone()) { return 0 - 1; }
+  for (i32 i = 0; i < types.len(); i++) {
+    if (i == defaultAt) { continue; }
+    if (typeOfTy(c, types[i]) == st) { return i; }
+  }
+  return defaultAt;
+}
+
+string[] splitDoubleSemi(string s) {
+  i32 n = 1;
+  string rest = s;
+  while (rest.indexOf(";;") >= 0) { n++; rest = rest.slice(rest.indexOf(";;") + 2, rest.len()); }
+  string[] out = string[].filled(n, "");
+  rest = s;
+  for (i32 i = 0; i < n - 1; i++) {
+    out[i] = rest.slice(0, rest.indexOf(";;"));
+    rest = rest.slice(rest.indexOf(";;") + 2, rest.len());
+  }
+  out[n - 1] = rest;
+  return out;
 }
 
 /** What a `static_trap` says, or "" where its operand is not a string this evaluator can build. */
@@ -3144,6 +3240,13 @@ export struct C {
   string autoCollect;
   /** The `auto` results this collection assumes, `name=type` lines (empty where the path excludes one). */
   string autoAssume;
+  /**
+   * **The instantiations to check again** (spec/next ch19 `§wac-generic-template-check-2wkq7nm`):
+   * `name|T1;;T2` lines, each found where a call bound every letter, and the letters an instance check
+   * has bound, `T=i32` lines, which a `static_if` inside it reads.
+   */
+  string instQueue;
+  string instBinding;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -3252,7 +3355,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "");
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "");
   }
 
   /**
@@ -4308,6 +4411,15 @@ export string typeOfTy(C c, Ty t) {
     TypeOf(e): { return computedTypeC(c, t); }
     Named(tok, typeArgs): {
       if (namesTypeDeclC(c, tokenText(c, tok))) { return computedTypeC(c, t); }
+      // A letter an instance check has bound is that type (spec/next ch19).
+      if (typeArgs.len() == 0 && c.instBinding != "") {
+        string lkey = "\n" + tokenText(c, tok) + "=";
+        i32 la = c.instBinding.indexOf(lkey);
+        if (la >= 0) {
+          string lrest = c.instBinding.slice(la + lkey.len(), c.instBinding.len());
+          return lrest.slice(0, lrest.indexOf("\n"));
+        }
+      }
       // `null` written as a type is the literal's type, `never?` (spec/next ch10).
       if (typeArgs.len() == 0 && tokenKind(c, tok) == kNull()) { return "never?"; }
       // A bare `union` is what its scope gathered (`declareAll`), found by where it is written.
@@ -6200,6 +6312,18 @@ void checkExpr(C c, Expr e) {
         c.expectedUnknown = wantUnknown;
         checkExpr(c, values[i]);
       }
+      // **In an instance the arm is chosen** (spec/next ch31), and a `static_trap` there is reached.
+      if (c.instBinding != "") {
+        i32 arm = staticArmC(c, subject, types, defaultAt);
+        if (arm >= 0 && arm < values.len()) {
+          match (values[arm].kind) {
+            StaticTrapE(message): {
+              c.reportWith(errStaticTrap(), values[arm].line, values[arm].col, staticTrapText(c, message));
+            }
+            default: { }
+          }
+        }
+      }
     }
     // **Reported here rather than from `typeOfExpr`**, because that function is asked the same
     // question about the same node more than once and a diagnostic from it would arrive as many
@@ -8072,6 +8196,19 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     }
     default: { }
   }
+  if (written.len() > 0 && written.len() == n && c.activeParamCount == 0) {
+    // A written instantiation is checked again as an inferred one is.
+    string wkey = name + "|";
+    bool concrete = true;
+    for (i32 i = 0; i < n; i++) {
+      string wt = typeOfTyQuiet(c, written[i]);
+      if (wt == "" || wt == typeNone()) { concrete = false; }
+      wkey = wkey + (i > 0 ? ";;" : "") + wt;
+    }
+    if (concrete && c.instQueue.indexOf("\n" + wkey + "\n") < 0) {
+      c.instQueue = (c.instQueue == "" ? "\n" : c.instQueue) + wkey + "\n";
+    }
+  }
   if (written.len() > 0) {
     if (written.len() != n) {
       c.reportWith(errTypeArgCount(), call.line, call.col,
@@ -8194,6 +8331,15 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     c.reportWith(errInferType(), line, col,
                  "nothing in the call says what " + names[t] + " is");
     return;
+  }
+  // Every letter bound, outside any template: an instantiation whose body is checked again.
+  string key = name + "|";
+  for (i32 t = 0; t < n; t++) {
+    if (bound[t] == "" || mentionsActiveParam(c, bound[t])) { return; }
+    key = key + (t > 0 ? ";;" : "") + bound[t];
+  }
+  if (c.instQueue.indexOf("\n" + key + "\n") < 0) {
+    c.instQueue = (c.instQueue == "" ? "\n" : c.instQueue) + key + "\n";
   }
 }
 
@@ -13644,6 +13790,7 @@ export void checkModule(C c, Program prog) {
       default: { }
     }
   }
+  checkInstances(c, prog);
 }
 
 /**
